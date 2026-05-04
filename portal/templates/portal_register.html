@@ -1,0 +1,62 @@
+{% extends "portal_base.html" %}
+{% block title %}Register — QueryBot Portal{% endblock %}
+{% block content %}
+<div style="max-width:480px;margin:3rem auto">
+  <div style="text-align:center;margin-bottom:2rem">
+    <div style="font-size:32px;font-weight:900;color:var(--navy)">
+      Query<span style="color:var(--blue)">Bot</span>
+    </div>
+    {% if client_name %}
+    <p style="color:var(--gray-500);margin-top:6px">Setting up your account for <strong>{{ client_name }}</strong></p>
+    {% endif %}
+  </div>
+
+  {% if not token %}
+  <div class="alert alert-error">{{ error }}</div>
+  <p style="text-align:center;font-size:13px;color:var(--gray-500);margin-top:1rem">
+    Message your QueryBot in Zoom to receive a new registration link.
+  </p>
+  {% else %}
+  <div class="card">
+    <div class="card-header"><h2>Create your account</h2></div>
+    <div class="card-body" style="padding:1.5rem">
+      {% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+      <div class="alert alert-info" style="margin-bottom:1.25rem">
+        <div>
+          <strong>One-time registration link</strong><br>
+          <span style="font-size:12px">This link expires in 48 hours and can only be used once.</span>
+        </div>
+      </div>
+      <form method="post" action="/portal/register">
+        <input type="hidden" name="token" value="{{ token }}">
+        <div class="form-group">
+          <label>Full name</label>
+          <input type="text" name="name" autofocus required placeholder="Jane Smith">
+        </div>
+        <div class="form-group">
+          <label>Work email</label>
+          <input type="email" name="email" required placeholder="jane@company.com">
+        </div>
+        <div class="form-grid">
+          <div class="form-group">
+            <label>Password</label>
+            <input type="password" name="password" required placeholder="Min 8 characters">
+          </div>
+          <div class="form-group">
+            <label>Confirm password</label>
+            <input type="password" name="confirm_pw" required placeholder="Repeat password">
+          </div>
+        </div>
+        <button type="submit" class="btn btn-primary"
+          style="width:100%;justify-content:center;padding:10px;margin-top:.5rem">
+          Create account →
+        </button>
+      </form>
+    </div>
+  </div>
+  <p style="text-align:center;font-size:12px;color:var(--gray-500);margin-top:1rem">
+    After registering, your administrator will assign you to a group so you can start querying data.
+  </p>
+  {% endif %}
+</div>
+{% endblock %}

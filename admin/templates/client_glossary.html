@@ -1,0 +1,314 @@
+{% extends "base.html" %}
+{% block title %}Business Glossary — {{ client.client_name }}{% endblock %}
+{% block head %}
+<style>
+.term-card{border:1px solid var(--border);border-radius:var(--radius);
+  overflow:hidden;margin-bottom:1rem;background:var(--surface);box-shadow:var(--shadow)}
+.term-card-header{padding:.75rem 1rem;background:var(--surface-2);
+  border-bottom:1px solid var(--border);
+  display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.5rem}
+.term-card-body{padding:1rem}
+.term-title{font-size:15px;font-weight:800;color:var(--text)}
+.term-sub{font-size:12px;color:var(--text-muted);margin-top:2px}
+.kind-badge{display:inline-block;padding:2px 8px;border-radius:4px;
+  font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.03em}
+.kind-metric{background:var(--blue-light);color:var(--blue)}
+.kind-dimension{background:var(--green-light);color:var(--green)}
+.kind-filter{background:var(--amber-light);color:var(--amber)}
+.kind-entity{background:var(--violet-light);color:var(--violet)}
+.source-badge{display:inline-block;padding:2px 8px;border-radius:999px;
+  font-size:10px;font-weight:700;background:var(--surface-2);color:var(--text-muted);border:1px solid var(--border)}
+.source-manual{background:var(--green-light);color:var(--green)}
+.source-kb_extracted{background:var(--blue-light);color:var(--blue)}
+.expr-preview{font-family:monospace;font-size:11px;background:var(--surface-2);
+  border:1px solid var(--border);border-radius:var(--radius-sm);padding:.625rem .875rem;
+  white-space:pre-wrap;word-break:break-all;color:var(--text-soft);margin-top:.5rem}
+.alias-pill{display:inline-block;background:var(--blue-light);color:var(--blue);
+  font-size:10px;font-weight:600;padding:2px 8px;border-radius:4px;
+  margin:2px;font-family:monospace}
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));
+  gap:.75rem;margin-bottom:1.25rem}
+.stat-tile{background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--radius);padding:.75rem}
+.stat-label{font-size:11px;color:var(--text-muted);text-transform:uppercase;
+  letter-spacing:.04em;font-weight:700}
+.stat-value{font-size:22px;font-weight:800;color:var(--text);margin-top:2px}
+.clarif-opts{margin-top:.5rem;padding:.5rem .75rem;background:var(--amber-light);
+  border:1px solid color-mix(in srgb,var(--amber) 28%,transparent);border-radius:var(--radius-sm);font-size:12px}
+.clarif-opts-title{font-weight:700;color:var(--amber);margin-bottom:.25rem}
+.clarif-opts ul{margin:0;padding-left:1.25rem}
+.action-btns{display:flex;gap:.4rem;flex-wrap:wrap}
+details.edit-panel{margin-top:.6rem}
+details.edit-panel summary{cursor:pointer;font-size:12px;font-weight:600;
+  color:var(--gray-600);padding:.35rem .6rem;border-radius:6px;
+  background:var(--gray-50);display:inline-block;user-select:none}
+details[open].edit-panel summary{background:var(--gray-100)}
+.inline-form .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:.5rem}
+.inline-form textarea{font-family:monospace;font-size:12px;min-height:70px}
+</style>
+{% endblock %}
+{% block content %}
+
+<div style="display:flex;align-items:center;justify-content:space-between;
+  margin-bottom:1.25rem;flex-wrap:wrap;gap:.75rem">
+  <div>
+    <a href="/admin/clients/{{ client.account_id }}"
+      style="color:var(--gray-500);font-size:13px">
+      ← {{ client.client_name or client.account_id[:16] }}
+    </a>
+    <h1 style="font-size:20px;font-weight:700;margin-top:4px">Business Glossary</h1>
+    <p style="font-size:13px;color:var(--gray-500)">
+      The semantic layer — business terms, synonyms, and metric definitions.
+      Used by the clarification loop and the SQL generator to ground every
+      query in real domain meaning.
+    </p>
+  </div>
+  <form method="post"
+    action="/admin/clients/{{ client.account_id }}/glossary/auto-populate">
+    <button type="submit" class="btn btn-secondary btn-sm"
+      title="Re-extract terms from the current Knowledge Base. Manual edits are preserved.">
+      🔄 Auto-populate from KB
+    </button>
+  </form>
+</div>
+
+{% if saved %}
+  <div class="alert alert-success">
+    {{ saved if saved != "1" else "Saved successfully" }}
+  </div>
+{% endif %}
+{% if error %}
+  <div class="alert alert-error">{{ error }}</div>
+{% endif %}
+
+<div class="stats-grid">
+  <div class="stat-tile">
+    <div class="stat-label">Total terms</div>
+    <div class="stat-value">{{ stats.total or 0 }}</div>
+  </div>
+  <div class="stat-tile">
+    <div class="stat-label">Metrics</div>
+    <div class="stat-value">{{ stats.by_kind.metric or 0 }}</div>
+  </div>
+  <div class="stat-tile">
+    <div class="stat-label">Dimensions</div>
+    <div class="stat-value">{{ stats.by_kind.dimension or 0 }}</div>
+  </div>
+  <div class="stat-tile">
+    <div class="stat-label">Needs clarification</div>
+    <div class="stat-value">{{ stats.requires_clarification or 0 }}</div>
+  </div>
+  <div class="stat-tile">
+    <div class="stat-label">Manual</div>
+    <div class="stat-value">{{ stats.by_source.manual or 0 }}</div>
+  </div>
+  <div class="stat-tile">
+    <div class="stat-label">From KB</div>
+    <div class="stat-value">{{ stats.by_source.kb_extracted or 0 }}</div>
+  </div>
+</div>
+
+<details style="margin-bottom:1.5rem;background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--radius);padding:1rem">
+  <summary style="cursor:pointer;font-weight:700;font-size:14px;color:var(--gray-900)">
+    ➕ Add a new term
+  </summary>
+  <form method="post" action="/admin/clients/{{ client.account_id }}/glossary/create"
+    class="inline-form" style="margin-top:1rem">
+    <div class="form-grid">
+      <div>
+        <label style="font-size:12px;font-weight:600;color:var(--gray-600)">Term</label>
+        <input name="term" type="text" required placeholder="A business term your users ask about"
+          style="width:100%">
+      </div>
+      <div>
+        <label style="font-size:12px;font-weight:600;color:var(--gray-600)">Kind</label>
+        <select name="kind" style="width:100%">
+          <option value="metric">metric (a measurable number)</option>
+          <option value="dimension">dimension (a way to group)</option>
+          <option value="filter">filter (a WHERE clause)</option>
+          <option value="entity">entity (a business object)</option>
+        </select>
+      </div>
+    </div>
+    <div style="margin-top:.5rem">
+      <label style="font-size:12px;font-weight:600;color:var(--gray-600)">
+        Aliases (comma-separated plain-English synonyms)
+      </label>
+      <input name="aliases" type="text"
+        placeholder="Other words users might use for the same concept" style="width:100%">
+    </div>
+    <div style="margin-top:.5rem">
+      <label style="font-size:12px;font-weight:600;color:var(--gray-600)">
+        Canonical SQL expression
+      </label>
+      <textarea name="canonical_expression" placeholder="Structure (fill in with your own column names):
+  metric:    SUM(COLUMN_NAME)  or  COUNT(*)  or  SUM(CASE WHEN COL = 'value' THEN 1 ELSE 0 END)
+  dimension: COLUMN_NAME
+  filter:    WHERE COLUMN_NAME = 'value'"></textarea>
+    </div>
+    <div class="form-grid" style="margin-top:.5rem">
+      <div>
+        <label style="font-size:12px;font-weight:600;color:var(--gray-600)">
+          Tables involved (comma-separated)
+        </label>
+        <input name="tables_involved" type="text" placeholder="Table names this term depends on"
+          style="width:100%">
+      </div>
+      <div>
+        <label style="font-size:12px;font-weight:600;color:var(--gray-600)">
+          Definition (plain English)
+        </label>
+        <input name="definition" type="text"
+          placeholder="A one-line business description of what this term means" style="width:100%">
+      </div>
+    </div>
+    <div style="margin-top:.6rem;padding:.6rem .75rem;background:var(--amber-light);
+      border:1px solid color-mix(in srgb,var(--amber) 28%,transparent);border-radius:6px">
+      <label style="display:flex;align-items:center;gap:.4rem;font-weight:600;font-size:12px">
+        <input type="checkbox" name="requires_clarification" value="1">
+        This term needs clarification when asked — user must pick between options
+      </label>
+      <div style="margin-top:.4rem">
+        <label style="font-size:11px;font-weight:600;color:var(--gray-600)">
+          Clarification options (JSON array — shown to user when they use this term)
+        </label>
+        <textarea name="clarification_options_json" placeholder='Structure — define each meaning this term could have:
+[
+  {"label": "First interpretation (what the user might mean)", "expression": "SUM(...) / COUNT(*)  etc."},
+  {"label": "Second interpretation (another valid meaning)",    "expression": "COUNT(*) WHERE ..."}
+]'></textarea>
+      </div>
+    </div>
+    <div style="margin-top:.6rem">
+      <button type="submit" class="btn btn-primary btn-sm">Save term</button>
+    </div>
+  </form>
+</details>
+
+{% if terms %}
+  {% for t in terms %}
+    <div class="term-card">
+      <div class="term-card-header">
+        <div>
+          <span class="term-title">{{ t.term }}</span>
+          <span class="kind-badge kind-{{ t.kind }}">{{ t.kind }}</span>
+          <span class="source-badge source-{{ t.source }}">{{ t.source }}</span>
+          {% if not t.is_active %}
+            <span class="source-badge" style="background:var(--red-light);color:var(--red)">inactive</span>
+          {% endif %}
+          {% if t.requires_clarification %}
+            <span class="source-badge" style="background:var(--amber-light);color:var(--amber)">
+              ❓ needs clarification
+            </span>
+          {% endif %}
+          {% if t.definition %}
+            <div class="term-sub">{{ t.definition }}</div>
+          {% endif %}
+        </div>
+        <div class="action-btns">
+          <form method="post"
+            action="/admin/clients/{{ client.account_id }}/glossary/{{ t.id }}/delete"
+            onsubmit="return confirm('Delete this term? This cannot be undone.')"
+            style="display:inline">
+            <button type="submit" class="btn btn-secondary btn-sm">Delete</button>
+          </form>
+        </div>
+      </div>
+      <div class="term-card-body">
+        {% if t.aliases %}
+          <div style="margin-bottom:.4rem">
+            <span style="font-size:11px;font-weight:700;color:var(--gray-500);
+              text-transform:uppercase;letter-spacing:.04em">Aliases:</span>
+            {% for a in t.aliases.split(',') %}
+              {% if a.strip() %}<span class="alias-pill">{{ a.strip() }}</span>{% endif %}
+            {% endfor %}
+          </div>
+        {% endif %}
+        {% if t.tables_involved %}
+          <div style="font-size:12px;color:var(--gray-600);margin-bottom:.4rem">
+            <strong>Tables:</strong> {{ t.tables_involved }}
+            {% if t.grain %} &nbsp; <strong>Grain:</strong> {{ t.grain }}{% endif %}
+          </div>
+        {% endif %}
+        {% if t.canonical_expression %}
+          <div class="expr-preview">{{ t.canonical_expression }}</div>
+        {% endif %}
+        {% if t.requires_clarification and t.clarification_options_parsed %}
+          <div class="clarif-opts">
+            <div class="clarif-opts-title">Clarification options shown to user:</div>
+            <ul>
+              {% for opt in t.clarification_options_parsed %}
+                <li>
+                  <strong>{{ opt.label }}</strong>
+                  {% if opt.expression %}
+                    <code style="font-size:10px;color:var(--gray-600)">
+                      — {{ opt.expression[:80] }}{% if opt.expression|length > 80 %}…{% endif %}
+                    </code>
+                  {% endif %}
+                </li>
+              {% endfor %}
+            </ul>
+          </div>
+        {% endif %}
+
+        <details class="edit-panel">
+          <summary>Edit</summary>
+          <form method="post"
+            action="/admin/clients/{{ client.account_id }}/glossary/{{ t.id }}/update"
+            class="inline-form" style="margin-top:.6rem">
+            <div class="form-grid">
+              <input name="term" type="text" required value="{{ t.term }}">
+              <select name="kind">
+                <option value="metric" {% if t.kind == 'metric' %}selected{% endif %}>metric</option>
+                <option value="dimension" {% if t.kind == 'dimension' %}selected{% endif %}>dimension</option>
+                <option value="filter" {% if t.kind == 'filter' %}selected{% endif %}>filter</option>
+                <option value="entity" {% if t.kind == 'entity' %}selected{% endif %}>entity</option>
+              </select>
+            </div>
+            <input name="aliases" type="text" placeholder="Aliases"
+              value="{{ t.aliases }}" style="width:100%;margin-top:.4rem">
+            <textarea name="canonical_expression"
+              style="margin-top:.4rem">{{ t.canonical_expression }}</textarea>
+            <div class="form-grid" style="margin-top:.4rem">
+              <input name="tables_involved" type="text"
+                placeholder="Tables" value="{{ t.tables_involved }}">
+              <input name="definition" type="text"
+                placeholder="Definition" value="{{ t.definition }}">
+            </div>
+            <label style="display:flex;align-items:center;gap:.4rem;
+              font-weight:600;font-size:12px;margin-top:.4rem">
+              <input type="checkbox" name="requires_clarification" value="1"
+                {% if t.requires_clarification %}checked{% endif %}>
+              Requires clarification
+            </label>
+            <textarea name="clarification_options_json"
+              placeholder="Clarification options JSON"
+              style="margin-top:.4rem">{% if t.clarification_options_parsed %}{{ t.clarification_options|safe }}{% endif %}</textarea>
+            <div style="margin-top:.4rem">
+              <label style="font-size:12px">
+                <input type="checkbox" name="is_active" value="1"
+                  {% if t.is_active %}checked{% endif %}>
+                Active
+              </label>
+              <button type="submit" class="btn btn-primary btn-sm"
+                style="margin-left:.5rem">Save changes</button>
+            </div>
+          </form>
+        </details>
+      </div>
+    </div>
+  {% endfor %}
+{% else %}
+  <div style="text-align:center;padding:3rem 1rem;color:var(--gray-500)">
+    <div style="font-size:14px;font-weight:600;margin-bottom:.5rem">
+      No business terms defined yet
+    </div>
+    <div style="font-size:12px">
+      Click <strong>Auto-populate from KB</strong> above to extract terms
+      from the Knowledge Base, or add them manually.
+    </div>
+  </div>
+{% endif %}
+
+{% endblock %}

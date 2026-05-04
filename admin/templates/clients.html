@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Clients — QueryBot Admin{% endblock %}
+{% block content %}
+<div class="page-header" style="display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;flex-wrap:wrap">
+  <div>
+    <h1>Registered clients</h1>
+    <p>Every workspace registered with QueryBot. New clients are created from this page.</p>
+  </div>
+  <a href="/admin/clients/new" class="btn btn-primary">＋ Register client</a>
+</div>
+
+<!-- Search -->
+<form method="get" action="/admin/clients" style="display:flex;gap:.75rem;margin-bottom:1.25rem">
+  <input type="text" name="q" value="{{ search }}" placeholder="Search by client name or account ID…"
+    style="flex:1;padding:8px 12px;border:1px solid var(--gray-300);border-radius:6px;font-size:13px">
+  <button type="submit" class="btn btn-secondary">Search</button>
+  {% if search %}<a href="/admin/clients" class="btn btn-secondary">Clear</a>{% endif %}
+</form>
+
+{% if not clients %}
+<div class="card">
+  <div class="card-body" style="text-align:center;padding:3rem;color:var(--gray-500)">
+    {% if search %}No clients matching "{{ search }}".
+    {% else %}No clients yet. Once someone messages your bot they will appear here.{% endif %}
+  </div>
+</div>
+{% else %}
+<div class="card">
+  <div class="card-header">
+    <h2>Clients ({{ clients|length }}{% if search %} matching "{{ search }}"{% endif %})</h2>
+  </div>
+  <table class="table">
+    <tr>
+      <th>Client name</th>
+      <th>Account ID</th>
+      <th>Platform</th>
+      <th>State</th>
+      <th>Database</th>
+      <th>Queries limit</th>
+      <th>Connected</th>
+      <th></th>
+    </tr>
+    {% for c in clients %}
+    <tr>
+      <td style="font-weight:600;min-width:140px">{{ c.client_name or "—" }}</td>
+      <td style="font-family:monospace;font-size:11px;color:var(--gray-500)">{{ c.account_id[:24] }}…</td>
+      <td><span class="badge badge-blue">{{ c.platform_type }}</span></td>
+      <td>
+        {% if c.state == "READY" %}<span class="badge badge-green">READY</span>
+        {% elif c.state == "KB_BUILDING" %}<span class="badge badge-amber">BUILDING KB</span>
+        {% elif c.state == "SCHEMA_READY" %}<span class="badge badge-blue">SCHEMA READY</span>
+        {% else %}<span class="badge badge-gray">{{ c.state }}</span>{% endif %}
+      </td>
+      <td style="color:var(--gray-500);font-size:12px">{{ c.db_name }}</td>
+      <td style="font-size:12px;color:var(--gray-500)">{{ c.query_limit_monthly }}/mo</td>
+      <td style="font-size:12px;color:var(--gray-500)">{{ c.created_at[:10] }}</td>
+      <td>
+        <a href="/admin/clients/{{ c.account_id }}" class="btn btn-secondary btn-sm">Details</a>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endif %}
+{% endblock %}

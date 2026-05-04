@@ -1,0 +1,928 @@
+{% extends "base.html" %}
+{% block title %}Metric Registry — {{ client.client_name }}{% endblock %}
+{% block head %}
+<style>
+/* ── Layout ─────────────────────────────────────────────────────────── */
+.metrics-hero{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:1.25rem;flex-wrap:wrap;gap:.75rem}
+.metrics-hero h1{font-size:20px;font-weight:800;margin-top:4px}
+.metrics-hero p{font-size:13px;color:var(--text-muted);max-width:760px;line-height:1.6}
+.metric-card{border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:1rem;background:var(--surface);box-shadow:var(--shadow)}
+.metric-card-header{padding:.8rem 1rem;background:linear-gradient(180deg,var(--surface-2),var(--surface));border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:.75rem;flex-wrap:wrap}
+.metric-card-body{padding:1rem}
+.metric-name-row{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap}
+.metric-kind{display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;border-radius:999px;padding:3px 8px;background:var(--blue-light);color:var(--blue)}
+.metric-kind.query{background:var(--green-light);color:var(--green)}
+.sql-preview{font-family:Consolas,monospace;font-size:12px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:.75rem .875rem;white-space:pre-wrap;word-break:break-word;color:var(--text-soft);margin-top:.5rem;line-height:1.45}
+.syn-pill,.meta-pill{display:inline-flex;align-items:center;background:var(--blue-light);color:var(--blue);font-size:10px;font-weight:800;padding:3px 8px;border-radius:999px;margin:2px;font-family:Consolas,monospace}
+.meta-pill{background:var(--surface-2);color:var(--text-soft);border:1px solid var(--border)}
+.builder-shell{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(280px,.75fr);gap:1rem;align-items:start}
+.builder-panel{border:1px solid var(--border);border-radius:var(--radius);background:var(--surface-2);padding:.9rem}
+.builder-panel h3{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:var(--text-soft);margin-bottom:.6rem}
+.syntax-panel{border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);padding:.75rem;font-size:12px;color:var(--text-soft);line-height:1.6}
+.syntax-panel.good{border-color:color-mix(in srgb,var(--green) 28%,var(--border));background:color-mix(in srgb,var(--green-light) 46%,var(--surface))}
+.syntax-panel.warn{border-color:color-mix(in srgb,var(--amber) 36%,var(--border));background:color-mix(in srgb,var(--amber-light) 42%,var(--surface))}
+.syntax-panel.danger{border-color:color-mix(in srgb,var(--red) 32%,var(--border));background:color-mix(in srgb,var(--red-light) 40%,var(--surface))}
+.hint-list{margin:.5rem 0 0 1rem;color:var(--text-muted)}
+.hint-list li{margin:.25rem 0}
+.formula-example{font-family:Consolas,monospace;font-size:11px;border:1px dashed var(--border-strong);border-radius:var(--radius-sm);padding:.55rem;background:var(--surface);color:var(--text-soft);line-height:1.5}
+.metric-meta-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.75rem}
+.metric-meta-grid.two{grid-template-columns:repeat(2,minmax(0,1fr))}
+.metric-help{font-size:11px;color:var(--text-muted);line-height:1.55}
+/* ── Formula label + ƒ button row ────────────────────────────────────── */
+.formula-label-row{display:flex;align-items:center;gap:.5rem;margin-bottom:.35rem}
+.formula-label-row label{font-size:13px;font-weight:600;color:var(--text);margin:0}
+.fn-helper-btn{background:var(--blue-light);border:1px solid color-mix(in srgb,var(--blue) 25%,transparent);
+  color:var(--blue);border-radius:5px;padding:3px 9px;font-size:12px;font-weight:800;cursor:pointer;
+  font-family:Consolas,monospace;line-height:1;transition:all .15s}
+.fn-helper-btn:hover{background:var(--blue);color:#fff}
+/* ── Function helper popover ─────────────────────────────────────────── */
+#fn-popover{position:fixed;top:0;right:0;width:340px;height:100vh;overflow-y:auto;
+  background:var(--surface);border-left:1px solid var(--border);box-shadow:-4px 0 24px rgba(0,0,0,.12);
+  z-index:8000;display:none;flex-direction:column}
+#fn-popover.open{display:flex}
+.fn-pop-head{padding:.75rem 1rem;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:.5rem;position:sticky;top:0;background:var(--surface);z-index:1}
+.fn-pop-head h3{font-size:13px;font-weight:800;margin:0}
+.fn-pop-close{background:none;border:none;font-size:18px;cursor:pointer;color:var(--text-muted);padding:0 4px}
+.fn-pop-close:hover{color:var(--text)}
+.fn-search{width:100%;padding:8px 10px;border:none;border-bottom:1px solid var(--border);font-size:12px;outline:none;background:var(--surface-2);font-family:inherit}
+.fn-db-badge{font-family:Consolas,monospace;font-size:9px;font-weight:800;padding:2px 6px;border-radius:3px;background:color-mix(in srgb,var(--blue) 12%,transparent);color:var(--blue);border:1px solid color-mix(in srgb,var(--blue) 20%,transparent)}
+.fn-bucket{border-bottom:1px solid var(--border)}
+.fn-bucket-head{padding:.55rem 1rem;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:var(--text-muted);cursor:pointer;user-select:none;display:flex;align-items:center;justify-content:space-between;background:var(--surface-2)}
+.fn-bucket-head:hover{background:color-mix(in srgb,var(--blue) 5%,var(--surface-2))}
+.fn-bucket-body{display:none}
+.fn-bucket.open .fn-bucket-body{display:block}
+.fn-bucket-head .chevron{transition:transform .2s;font-size:10px}
+.fn-bucket.open .fn-bucket-head .chevron{transform:rotate(90deg)}
+.fn-item{padding:7px 12px 7px 14px;cursor:pointer;border-bottom:1px solid var(--border);transition:background .12s}
+.fn-item:last-child{border-bottom:none}
+.fn-item:hover{background:var(--blue-light)}
+.fn-item[data-hidden="1"]{display:none}
+.fn-item-name{font-family:Consolas,monospace;font-size:11px;font-weight:700;color:var(--text)}
+.fn-item-tpl{font-family:Consolas,monospace;font-size:10px;color:var(--text-muted);margin:.2rem 0}
+.fn-item-desc{font-size:10px;color:var(--text-muted);line-height:1.45;margin-top:1px}
+.fn-item-db{font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;margin-left:4px}
+.fn-item-db.tsql{background:#EBF8FF;color:#2B6CB0}
+.fn-item-db.snow{background:#EDF2FF;color:#434190}
+.fn-item-db.ora{background:#FFFAF0;color:#C05621}
+.fn-item-db.all{background:#F0FFF4;color:#276749}
+/* ── Column suggestion dropdown ───────────────────────────────────────── */
+#col-suggest{position:fixed;background:var(--surface);border:1px solid var(--border);border-radius:6px;
+  box-shadow:0 4px 16px rgba(0,0,0,.12);max-height:220px;overflow-y:auto;z-index:9999;min-width:260px;display:none}
+.col-suggest-item{padding:6px 10px;cursor:pointer;display:flex;align-items:center;gap:8px;font-size:12px;border-bottom:1px solid var(--border)}
+.col-suggest-item:last-child{border-bottom:none}
+.col-suggest-item:hover,.col-suggest-item.active{background:var(--blue-light)}
+.col-suggest-col{font-family:Consolas,monospace;font-weight:700;color:var(--text);flex:1}
+.col-suggest-table{font-size:10px;color:var(--text-muted);white-space:nowrap}
+.col-suggest-type{font-size:9px;background:var(--surface-2);border:1px solid var(--border);border-radius:999px;padding:1px 5px;color:var(--text-muted);white-space:nowrap}
+/* ── Field browser panel ──────────────────────────────────────────────── */
+.col-browser{margin-top:.75rem;max-height:240px;overflow-y:auto;border:1px solid var(--border);border-radius:4px}
+.col-browser-search{width:100%;padding:5px 8px;border:none;border-bottom:1px solid var(--border);font-size:12px;outline:none;background:var(--surface-2)}
+.col-browser-item{padding:5px 8px;cursor:pointer;display:flex;align-items:center;gap:6px;border-bottom:1px solid var(--border)}
+.col-browser-item:last-child{border-bottom:none}
+.col-browser-item:hover{background:var(--blue-light)}
+.col-browser-name{flex:1;font-family:Consolas,monospace;font-size:11px;color:var(--text)}
+.col-browser-tbl{font-size:9px;color:var(--text-muted)}
+.col-browser-dtype{font-size:9px;background:var(--surface-2);border:1px solid var(--border);border-radius:999px;padding:1px 5px;color:var(--text-muted)}
+@media(max-width:900px){.builder-shell,.metric-meta-grid,.metric-meta-grid.two{grid-template-columns:1fr}#fn-popover{width:100%;height:60vh;top:auto;bottom:0;right:0;border-left:none;border-top:1px solid var(--border)}}
+</style>
+<!-- Pass db_type to JS -->
+<script>window._qbDbType = "{{ db_type | default('azure_sql') }}";</script>
+{% endblock %}
+{% block content %}
+
+<div class="metrics-hero">
+  <div>
+    <a href="/admin/clients/{{ client.account_id }}" style="color:var(--text-muted);font-size:13px">
+      Back to {{ client.client_name or client.account_id[:16] }}
+    </a>
+    <h1>Metric Registry and Formula Builder</h1>
+    <p>
+      Define approved business calculations such as revenue, net profit, gross margin,
+      and profit percentage. Full SQL metrics run directly; formula metrics are injected
+      into SQL generation so grouped questions always use your trusted logic.
+    </p>
+  </div>
+  <form method="post" action="/admin/clients/{{ client.account_id }}/metrics/harvest">
+    <button type="submit" class="btn btn-secondary btn-sm">Refresh examples</button>
+  </form>
+</div>
+
+{% if saved %}<div class="alert alert-success">Saved successfully.</div>{% endif %}
+{% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+
+<div class="alert alert-info">
+  <strong>Production rule:</strong>
+  Use <strong>Formula expression</strong> for reusable measures like
+  <code>SUM(NetProfit) * 100.0 / NULLIF(SUM(Revenue), 0)</code>.
+  Use <strong>Full SQL query</strong> only when the whole SELECT should run directly.
+  Formulas run against a single table — column names are inserted without table prefix.
+</div>
+
+<div class="card">
+  <div class="card-header"><h2>Add approved metric or formula</h2></div>
+  <div class="card-body">
+    <form method="post" action="/admin/clients/{{ client.account_id }}/metrics/create" class="metric-form">
+      <div class="builder-shell">
+        <div>
+          <div class="form-grid">
+            <div class="form-group">
+              <label>Metric name *</label>
+              <input type="text" name="name" required placeholder="e.g. profit_percentage">
+              <p class="form-note">Use a stable name the team will recognize.</p>
+            </div>
+            <div class="form-group">
+              <label>Synonyms</label>
+              <input type="text" name="synonyms" placeholder="profit %, profit margin, margin percentage">
+              <p class="form-note">Comma separated words users may type.</p>
+            </div>
+          </div>
+
+          <div class="metric-meta-grid">
+            <div class="form-group">
+              <label>Builder mode</label>
+              <select name="formula_type" class="formula-type-select">
+                <option value="expression" selected>Formula expression</option>
+                <option value="query">Full SQL query</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Result format</label>
+              <select name="result_format">
+                <option value="number">Number</option>
+                <option value="currency">Currency</option>
+                <option value="percentage">Percentage</option>
+                <option value="date">Date</option>
+                <option value="text">Text</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Grain</label>
+              <input type="text" name="grain" placeholder="e.g. customer, month, order">
+            </div>
+          </div>
+
+          <div class="form-group">
+            <div class="formula-label-row">
+              <label class="formula-label">Approved formula *</label>
+              <button type="button" class="fn-helper-btn" onclick="openFnHelper(this)">ƒ Functions</button>
+            </div>
+            <textarea name="sql_template" rows="4" required class="formula-editor"
+              placeholder="SUM(NetProfit) * 100.0 / NULLIF(SUM(Revenue), 0)"></textarea>
+            <p class="form-note">
+              For expressions, write only the aggregate formula. For full SQL, write a complete SELECT.
+            </p>
+          </div>
+
+          <div class="metric-meta-grid two">
+            <div class="form-group">
+              <label>Required columns</label>
+              <input type="text" name="required_columns" placeholder="Revenue, NetProfit, CustomerID">
+              <p class="form-note">Exact columns the formula depends on.</p>
+            </div>
+            <div class="form-group">
+              <label>Allowed dimensions</label>
+              <input type="text" name="allowed_dimensions" placeholder="Customer, Segment, Date, Profit Center">
+              <p class="form-note">Dimensions users can group this metric by.</p>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label>Description</label>
+            <input type="text" name="description" placeholder="Net profit percentage after rebates and allocated costs.">
+          </div>
+          <div class="form-group">
+            <label>Example questions</label>
+            <textarea name="example_questions" rows="2" placeholder="What is profit percentage by customer?&#10;Show net profit by segment."></textarea>
+          </div>
+          <button type="submit" class="btn btn-primary">Add formula</button>
+        </div>
+
+        <aside class="builder-panel">
+          <h3>Syntax validator</h3>
+          <div class="syntax-panel formula-status">
+            Start with an aggregate formula. The validator will catch common production mistakes.
+          </div>
+          <ul class="hint-list">
+            <li>Use <code>NULLIF(denominator, 0)</code> when dividing.</li>
+            <li>For percentages, calculate from sums instead of averaging row percentages.</li>
+            <li>Use exact column names from the field browser below.</li>
+          </ul>
+          <div style="height:.75rem"></div>
+          <div class="formula-example">
+Profit %:
+SUM(NetProfit) * 100.0 / NULLIF(SUM(Revenue), 0)
+
+Net profit:
+SUM(GrossMargin) + SUM(Rebates) - SUM(AllocatedCosts)
+          </div>
+          <div style="height:.75rem"></div>
+          <h3 style="margin-top:.5rem">Available columns
+            <span id="col-browser-status" style="font-size:10px;font-weight:400;color:var(--text-muted);margin-left:6px;text-transform:none;letter-spacing:0">loading…</span>
+          </h3>
+          <div class="col-browser" id="colBrowser">
+            <input class="col-browser-search" id="colBrowserSearch" placeholder="Search columns…"
+              type="text" oninput="filterColBrowser(this.value)">
+            <div id="colBrowserList">
+              <div style="padding:8px;font-size:12px;color:var(--text-muted)">Schema not yet discovered — run Discovery first.</div>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ── Existing metrics ───────────────────────────────────────────────── -->
+{% if metrics %}
+<h2 style="font-size:16px;font-weight:800;margin:1.5rem 0 .75rem">Approved metrics ({{ metrics|length }})</h2>
+{% for m in metrics %}
+{% set m_type = m.formula_type if m.formula_type is defined and m.formula_type else 'query' %}
+<div class="metric-card">
+  <div class="metric-card-header">
+    <div class="metric-name-row">
+      <strong style="font-family:Consolas,monospace;font-size:13px">{{ m.name }}</strong>
+      <span class="metric-kind {{ m_type }}">{{ "Formula" if m_type == "expression" else "Direct SQL" }}</span>
+      {% if not m.is_active %}<span style="font-size:11px;color:var(--text-muted)">(inactive)</span>{% endif %}
+    </div>
+    <div style="display:flex;gap:.5rem;align-items:center">
+      <button class="btn btn-xs btn-secondary" onclick="toggleEdit('edit-{{ m.id }}')">Edit</button>
+      <form method="post" action="/admin/clients/{{ client.account_id }}/metrics/{{ m.id }}/delete"
+            onsubmit="return confirm('Delete this metric?')">
+        <button class="btn btn-xs btn-danger">Delete</button>
+      </form>
+    </div>
+  </div>
+  <div class="metric-card-body">
+    {% if m.description %}<p style="font-size:12px;margin-bottom:.5rem;color:var(--text-soft)">{{ m.description }}</p>{% endif %}
+    {% if m.synonyms %}
+      {% for s in m.synonyms.split(',') %}
+      <span class="syn-pill">{{ s.strip() }}</span>
+      {% endfor %}
+    {% endif %}
+    <div class="sql-preview">{{ m.sql_template }}</div>
+    <div style="margin-top:.5rem;display:flex;flex-wrap:wrap;gap:.25rem">
+      {% if m.required_columns %}<span class="meta-pill">cols: {{ m.required_columns }}</span>{% endif %}
+      {% if m.allowed_dimensions %}<span class="meta-pill">dims: {{ m.allowed_dimensions }}</span>{% endif %}
+      {% if m.grain %}<span class="meta-pill">grain: {{ m.grain }}</span>{% endif %}
+      {% if m.result_format and m.result_format != 'number' %}<span class="meta-pill">{{ m.result_format }}</span>{% endif %}
+    </div>
+
+    <!-- Edit form (hidden) -->
+    <div id="edit-{{ m.id }}" style="display:none;margin-top:1rem;border-top:1px solid var(--border);padding-top:1rem">
+      <form method="post" action="/admin/clients/{{ client.account_id }}/metrics/{{ m.id }}/update" class="metric-form">
+        <div class="metric-meta-grid two" style="margin-bottom:.75rem">
+          <div class="form-group">
+            <label>Metric name *</label>
+            <input type="text" name="name" value="{{ m.name }}" required>
+          </div>
+          <div class="form-group">
+            <label>Synonyms</label>
+            <input type="text" name="synonyms" value="{{ m.synonyms }}">
+          </div>
+        </div>
+        <div class="metric-meta-grid" style="margin-bottom:.75rem">
+          <div class="form-group">
+            <label>Builder mode</label>
+            <select name="formula_type" class="formula-type-select">
+              <option value="expression" {% if m_type == "expression" %}selected{% endif %}>Formula expression</option>
+              <option value="query" {% if m_type == "query" %}selected{% endif %}>Full SQL query</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Result format</label>
+            <select name="result_format">
+              {% for fmt in ['number','currency','percentage','date','text'] %}
+              <option value="{{ fmt }}" {% if m.result_format == fmt %}selected{% endif %}>{{ fmt|capitalize }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Grain</label>
+            <input type="text" name="grain" value="{{ m.grain }}" placeholder="customer, month, order">
+          </div>
+        </div>
+        <div class="form-group">
+          <div class="formula-label-row">
+            <label class="formula-label">Approved formula / SQL template *</label>
+            <button type="button" class="fn-helper-btn" onclick="openFnHelper(this)">ƒ Functions</button>
+          </div>
+          <textarea name="sql_template" rows="3" required class="formula-editor">{{ m.sql_template }}</textarea>
+        </div>
+        <div class="metric-meta-grid two" style="margin-bottom:.75rem">
+          <div class="form-group">
+            <label>Required columns</label>
+            <input type="text" name="required_columns" value="{{ m.required_columns }}">
+          </div>
+          <div class="form-group">
+            <label>Allowed dimensions</label>
+            <input type="text" name="allowed_dimensions" value="{{ m.allowed_dimensions }}">
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Description</label>
+          <input type="text" name="description" value="{{ m.description }}">
+        </div>
+        <div class="form-group">
+          <label>Example questions</label>
+          <textarea name="example_questions" rows="2">{{ m.example_questions }}</textarea>
+        </div>
+        <div style="display:flex;gap:.5rem;align-items:center">
+          <button type="submit" class="btn btn-primary btn-sm">Save changes</button>
+          <button type="button" class="btn btn-secondary btn-sm" onclick="toggleEdit('edit-{{ m.id }}')">Cancel</button>
+          <label style="font-size:12px;margin-left:auto;display:flex;align-items:center;gap:.4rem">
+            <input type="checkbox" name="is_active" value="1" {% if m.is_active %}checked{% endif %}> Active
+          </label>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endfor %}
+{% else %}
+<div class="card">
+  <div class="card-body" style="text-align:center;padding:2rem;color:var(--text-muted)">
+    No approved metrics yet. Add your first formula above.
+  </div>
+</div>
+{% endif %}
+
+<!-- ══ Function helper popover ══════════════════════════════════════════ -->
+<div id="fn-popover">
+  <div class="fn-pop-head">
+    <h3>ƒ Function helper
+      <span id="fn-db-label" class="fn-db-badge" style="margin-left:6px"></span>
+    </h3>
+    <button class="fn-pop-close" onclick="closeFnHelper()">✕</button>
+  </div>
+  <input class="fn-search" id="fnSearch" placeholder="Search functions…" oninput="filterFns(this.value)">
+  <div id="fn-buckets"></div>
+</div>
+<div id="fn-overlay" style="display:none;position:fixed;inset:0;z-index:7999" onclick="closeFnHelper()"></div>
+
+<!-- Column suggestion dropdown -->
+<div id="col-suggest"></div>
+
+<script>
+(function(){
+"use strict";
+
+// ══════════════════════════════════════════════════════════════════════
+// DB-AWARE FUNCTION CATALOGUE
+// Each entry: { name, tpl(db), desc, bucket, dbs? }
+// tpl is a function(db) → string template to insert
+// dbs: array of db types this applies to; omit = all
+// ══════════════════════════════════════════════════════════════════════
+var DB = window._qbDbType || "azure_sql";
+
+var DB_LABELS = {
+  azure_sql: "Azure SQL",
+  snowflake: "Snowflake",
+  oracle: "Oracle"
+};
+
+var FN_CATALOGUE = [
+  // ── Aggregation ─────────────────────────────────────────────────────
+  { bucket:"Aggregation", name:"SUM",
+    tpl:function(){ return "SUM()"; },
+    desc:"Total of a numeric column. Most common aggregate." },
+  { bucket:"Aggregation", name:"COUNT all rows",
+    tpl:function(){ return "COUNT(*)"; },
+    desc:"Count every row in the result, including nulls." },
+  { bucket:"Aggregation", name:"COUNT DISTINCT",
+    tpl:function(){ return "COUNT(DISTINCT )"; },
+    desc:"Count unique values only — unique customers, orders, SKUs." },
+  { bucket:"Aggregation", name:"AVG",
+    tpl:function(){ return "AVG()"; },
+    desc:"Mean value. Note: AVG silently ignores nulls — use COALESCE if that matters." },
+  { bucket:"Aggregation", name:"MIN",
+    tpl:function(){ return "MIN()"; },
+    desc:"Lowest value or earliest date in the set." },
+  { bucket:"Aggregation", name:"MAX",
+    tpl:function(){ return "MAX()"; },
+    desc:"Highest value or latest date in the set." },
+  { bucket:"Aggregation", name:"MEDIAN",
+    tpl:function(db){
+      if(db==="azure_sql") return "PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY )";
+      return "MEDIAN()";
+    },
+    desc:"Middle value of a distribution. Useful for salary and spend — less distorted by outliers than AVG.",
+    dbNote:{ azure_sql:"Uses PERCENTILE_CONT syntax", snowflake:"Native MEDIAN()", oracle:"Native MEDIAN()" } },
+  { bucket:"Aggregation", name:"STRING_AGG (list values)",
+    tpl:function(db){
+      if(db==="azure_sql") return "STRING_AGG(, ', ')";
+      if(db==="oracle")    return "LISTAGG(, ', ') WITHIN GROUP (ORDER BY 1)";
+      return "LISTAGG(, ', ')";
+    },
+    desc:"Concatenate values from multiple rows into one string — e.g. list all products per customer.",
+    dbNote:{ azure_sql:"STRING_AGG(col, sep)", snowflake:"LISTAGG(col, sep)", oracle:"LISTAGG with WITHIN GROUP" } },
+
+  // ── Ratio and Safe Division ──────────────────────────────────────────
+  { bucket:"Ratio & Division", name:"Safe divide (NULLIF denominator)",
+    tpl:function(){ return "SUM() / NULLIF(SUM(), 0)"; },
+    desc:"Prevents divide-by-zero. Always use this pattern for any ratio — without it a zero denominator crashes the query." },
+  { bucket:"Ratio & Division", name:"Percentage (rounded 2dp)",
+    tpl:function(){ return "ROUND(SUM() * 100.0 / NULLIF(SUM(), 0), 2)"; },
+    desc:"Standard percentage formula with safe divide and two decimal places. Replace the two SUM columns." },
+  { bucket:"Ratio & Division", name:"Period-over-period growth %",
+    tpl:function(){ return "ROUND((SUM(current_col) - SUM(prior_col)) * 100.0 / NULLIF(SUM(prior_col), 0), 2)"; },
+    desc:"Change percentage between two periods. Replace current_col and prior_col with actual column names." },
+  { bucket:"Ratio & Division", name:"NULLIF (zero → null)",
+    tpl:function(){ return "NULLIF(, 0)"; },
+    desc:"Turns a zero value into NULL. Primary use: make a denominator safe for division." },
+  { bucket:"Ratio & Division", name:"ROUND",
+    tpl:function(){ return "ROUND(, 2)"; },
+    desc:"Round to N decimal places. Every percentage or ratio should pass through ROUND before display." },
+  { bucket:"Ratio & Division", name:"ABS (absolute value)",
+    tpl:function(){ return "ABS()"; },
+    desc:"Strip the sign — useful for variance metrics where you want magnitude regardless of direction." },
+
+  // ── Conditional ──────────────────────────────────────────────────────
+  { bucket:"Conditional", name:"Conditional SUM (filter inside aggregate)",
+    tpl:function(){ return "SUM(CASE WHEN  = '' THEN  ELSE 0 END)"; },
+    desc:"Sum only rows matching a condition. Replaces WHERE when you need multiple measures in the same query." },
+  { bucket:"Conditional", name:"Conditional COUNT",
+    tpl:function(){ return "COUNT(CASE WHEN  = '' THEN 1 END)"; },
+    desc:"Count only rows matching a condition — e.g. count only active customers without a subquery." },
+  { bucket:"Conditional", name:"CASE expression (label/bucket values)",
+    tpl:function(){ return "CASE WHEN  > 0 THEN 'Positive' WHEN  < 0 THEN 'Negative' ELSE 'Zero' END"; },
+    desc:"Branch on conditions to produce labels or buckets. Works inside or outside an aggregate." },
+  { bucket:"Conditional", name:"IIF (inline if)",
+    tpl:function(db){
+      if(db==="oracle") return "CASE WHEN  THEN  ELSE  END";
+      return "IIF(, , )";
+    },
+    desc:"Compact two-branch conditional. Oracle uses CASE — IIF is T-SQL/Snowflake shorthand.",
+    dbNote:{ oracle:"Rewritten to CASE WHEN for Oracle" } },
+
+  // ── Null Handling ─────────────────────────────────────────────────────
+  { bucket:"Null Handling", name:"COALESCE (cross-DB, null → default)",
+    tpl:function(){ return "COALESCE(, 0)"; },
+    desc:"Returns the first non-null value. Works on all three supported databases. Use this over ISNULL or NVL for portability." },
+  { bucket:"Null Handling", name:"ISNULL (Azure SQL only)",
+    tpl:function(){ return "ISNULL(, 0)"; },
+    desc:"Azure SQL / SQL Server specific null replacement. Slightly faster than COALESCE but not portable.",
+    dbs:["azure_sql"] },
+  { bucket:"Null Handling", name:"NVL (Oracle only)",
+    tpl:function(){ return "NVL(, 0)"; },
+    desc:"Oracle-specific null replacement equivalent to COALESCE(col, default).",
+    dbs:["oracle"] },
+  { bucket:"Null Handling", name:"NULLIF (value → null)",
+    tpl:function(){ return "NULLIF(, 0)"; },
+    desc:"Turns a specific value into NULL. Opposite of COALESCE — mainly used on zero denominators." },
+
+  // ── Type Conversion ───────────────────────────────────────────────────
+  { bucket:"Type Conversion", name:"CAST to DECIMAL (fix integer division)",
+    tpl:function(){ return "CAST( AS DECIMAL(18,4))"; },
+    desc:"CRITICAL: integer ÷ integer = integer in SQL. 7/2 = 3 not 3.5. Always CAST before division." },
+  { bucket:"Type Conversion", name:"CAST to FLOAT",
+    tpl:function(){ return "CAST( AS FLOAT)"; },
+    desc:"Simpler decimal cast. Use DECIMAL(18,4) for financial data — FLOAT has binary rounding errors." },
+  { bucket:"Type Conversion", name:"CAST to INT",
+    tpl:function(){ return "CAST( AS INT)"; },
+    desc:"Truncate to whole number. Use FLOOR() if you need explicit round-down control." },
+  { bucket:"Type Conversion", name:"FLOOR / CEILING",
+    tpl:function(){ return "FLOOR()"; },
+    desc:"FLOOR rounds down, CEILING rounds up to nearest whole number. Useful for age bands and bin sizes." },
+
+  // ── String ────────────────────────────────────────────────────────────
+  { bucket:"String", name:"Concatenate",
+    tpl:function(db){
+      if(db==="azure_sql") return " + ' ' + ";
+      return " || ' ' || ";
+    },
+    desc:"Join two text fields. Azure SQL uses + operator; Snowflake and Oracle use ||.",
+    dbNote:{ azure_sql:"Uses + operator", snowflake:"Uses || operator", oracle:"Uses || operator" } },
+  { bucket:"String", name:"UPPER / LOWER",
+    tpl:function(){ return "UPPER()"; },
+    desc:"Standardise case before grouping — prevents 'London' and 'LONDON' appearing as separate groups." },
+  { bucket:"String", name:"TRIM",
+    tpl:function(){ return "TRIM()"; },
+    desc:"Remove leading and trailing spaces. Catches data quality issues that break GROUP BY matching." },
+  { bucket:"String", name:"LEFT / RIGHT",
+    tpl:function(db){
+      if(db==="oracle") return "SUBSTR(, 1, N)";
+      return "LEFT(, N)";
+    },
+    desc:"Extract N characters from the start or end. Oracle uses SUBSTR() instead of LEFT/RIGHT.",
+    dbNote:{ oracle:"Uses SUBSTR(col, 1, N) for LEFT" } },
+  { bucket:"String", name:"LEN / LENGTH (string length)",
+    tpl:function(db){
+      if(db==="azure_sql") return "LEN()";
+      return "LENGTH()";
+    },
+    desc:"Character count. Azure SQL uses LEN; Snowflake and Oracle use LENGTH.",
+    dbNote:{ azure_sql:"LEN()", snowflake:"LENGTH()", oracle:"LENGTH()" } },
+];
+
+// ══════════════════════════════════════════════════════════════════════
+// RENDER POPOVER
+// ══════════════════════════════════════════════════════════════════════
+var _activeEditor = null;
+
+function buildPopover(){
+  var buckets = {};
+  FN_CATALOGUE.forEach(function(fn){
+    if(fn.dbs && fn.dbs.indexOf(DB) === -1) return; // skip DB-incompatible
+    if(!buckets[fn.bucket]) buckets[fn.bucket] = [];
+    buckets[fn.bucket].push(fn);
+  });
+
+  var dbLabel = document.getElementById("fn-db-label");
+  if(dbLabel) dbLabel.textContent = DB_LABELS[DB] || DB;
+
+  var container = document.getElementById("fn-buckets");
+  container.innerHTML = "";
+  var firstOpen = true;
+  Object.keys(buckets).forEach(function(bName){
+    var div = document.createElement("div");
+    div.className = "fn-bucket" + (firstOpen ? " open" : "");
+    firstOpen = false;
+    var items = buckets[bName].map(function(fn){
+      var tpl = fn.tpl(DB);
+      var note = fn.dbNote && fn.dbNote[DB] ? fn.dbNote[DB] : "";
+      var noteHtml = note ? '<span class="fn-item-db all">'+note+'</span>' : "";
+      return '<div class="fn-item" data-insert="'+escHtml(tpl)+'" data-name="'+escHtml(fn.name.toLowerCase())+'" data-desc="'+escHtml(fn.desc.toLowerCase())+'">'
+        +'<div class="fn-item-name">'+escHtml(fn.name)+'</div>'
+        +'<div class="fn-item-tpl">'+escHtml(tpl)+noteHtml+'</div>'
+        +'<div class="fn-item-desc">'+escHtml(fn.desc)+'</div>'
+        +'</div>';
+    }).join("");
+    div.innerHTML = '<div class="fn-bucket-head" onclick="toggleBucket(this)">'
+      +escHtml(bName)+' <span class="chevron">▶</span></div>'
+      +'<div class="fn-bucket-body">'+items+'</div>';
+    container.appendChild(div);
+  });
+
+  // Click on a function item → insert
+  container.addEventListener("click", function(e){
+    var item = e.target.closest(".fn-item");
+    if(!item) return;
+    var tpl = item.getAttribute("data-insert") || "";
+    if(_activeEditor) insertAtCursor(_activeEditor, tpl);
+    closeFnHelper();
+  });
+}
+
+function escHtml(s){ return (s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+
+window.toggleBucket = function(head){
+  head.parentElement.classList.toggle("open");
+};
+
+window.openFnHelper = function(btn){
+  var form = btn.closest(".metric-form");
+  _activeEditor = form ? (form.querySelector(".formula-editor") || null) : null;
+  document.getElementById("fn-popover").classList.add("open");
+  document.getElementById("fn-overlay").style.display = "block";
+  document.getElementById("fnSearch").value = "";
+  filterFns("");
+  document.getElementById("fnSearch").focus();
+};
+
+window.closeFnHelper = function(){
+  document.getElementById("fn-popover").classList.remove("open");
+  document.getElementById("fn-overlay").style.display = "none";
+};
+
+window.filterFns = function(q){
+  var lc = (q||"").toLowerCase();
+  document.querySelectorAll(".fn-item").forEach(function(item){
+    var match = !lc
+      || item.dataset.name.includes(lc)
+      || item.dataset.desc.includes(lc)
+      || (item.querySelector(".fn-item-tpl")||{}).textContent.toLowerCase().includes(lc);
+    item.style.display = match ? "" : "none";
+  });
+  // Auto-open buckets that have visible items
+  document.querySelectorAll(".fn-bucket").forEach(function(bucket){
+    var hasVisible = Array.from(bucket.querySelectorAll(".fn-item"))
+      .some(function(i){ return i.style.display !== "none"; });
+    if(q) bucket.classList.toggle("open", hasVisible);
+  });
+};
+
+// ══════════════════════════════════════════════════════════════════════
+// insertAtCursor — place text at caret, park cursor inside empty parens
+// ══════════════════════════════════════════════════════════════════════
+function insertAtCursor(editor, text){
+  var start = editor.selectionStart || 0;
+  var end   = editor.selectionEnd   || 0;
+  editor.value = editor.value.slice(0, start) + text + editor.value.slice(end);
+  // Park cursor inside empty parens if present
+  var next = start + text.length;
+  var inner = text.match(/\(([^)]*)\)/);
+  if(inner && inner[1] === ""){
+    next = start + text.indexOf("(") + 1;
+  }
+  editor.focus();
+  editor.setSelectionRange(next, next);
+  updateFormulaHints(editor);
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// SYNTAX VALIDATOR — runs on every keystroke in formula editor
+// ══════════════════════════════════════════════════════════════════════
+function updateFormulaHints(editor){
+  var form  = editor.closest(".metric-form");
+  if(!form) return;
+  var panel = form.querySelector(".formula-status");
+  if(!panel) return;
+  var val   = (editor.value || "").trim();
+  var type  = (form.querySelector(".formula-type-select") || {}).value || "expression";
+
+  if(!val){ setStatus(panel,"","Start writing a formula. Use the ƒ Functions button to browse available functions."); return; }
+
+  var notes = [];
+  var state = "good";
+
+  if(type === "expression"){
+    // Rule 1: SELECT keyword in expression mode
+    if(/\bSELECT\b/i.test(val)){
+      notes.push("⚠ Remove SELECT — expression mode writes only the aggregate formula, not a full query.");
+      state = "danger";
+    }
+    // Rule 2: Division without NULLIF on denominator
+    if(/\//.test(val) && !/NULLIF/i.test(val)){
+      notes.push("⚠ Division detected without NULLIF. A zero denominator will crash the query at runtime. Wrap denominator: NULLIF(SUM(col), 0)");
+      state = state === "danger" ? "danger" : "warn";
+    }
+    // Rule 3: Integer division risk — dividing two non-cast integer-looking columns
+    if(/\bSUM\([^)]+\)\s*\/\s*SUM\([^)]+\)/i.test(val) && !/CAST/i.test(val) && !/\* 100/i.test(val) && !/1\.0/i.test(val)){
+      notes.push("⚠ Integer division risk: SUM/SUM may return 0 for values less than 1. Use * 100.0 / for percentages or CAST(SUM(col) AS FLOAT) to force decimal.");
+      state = state === "danger" ? "danger" : "warn";
+    }
+    // Rule 4: AVG without COALESCE — silent null exclusion
+    if(/\bAVG\(/i.test(val) && !/COALESCE/i.test(val) && !/ISNULL/i.test(val) && !/NVL\(/i.test(val)){
+      notes.push("ℹ AVG silently excludes null rows which may produce a higher-than-expected average. Wrap with COALESCE(col, 0) if nulls should count as zero.");
+    }
+    // Rule 5: MEDIAN check for Azure SQL
+    if(/\bMEDIAN\s*\(/i.test(val) && DB === "azure_sql"){
+      notes.push("⚠ MEDIAN() is not valid in Azure SQL. Use PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY col) — click ƒ → Aggregation → MEDIAN to insert correct syntax.");
+      state = "danger";
+    }
+    // Rule 6: DB-specific concat check
+    if(/\|\|/.test(val) && DB === "azure_sql"){
+      notes.push("⚠ || concatenation is not supported in Azure SQL. Use the + operator: FirstName + ' ' + LastName");
+      state = state === "danger" ? "danger" : "warn";
+    }
+    if(/[^|]\+[^0-9]/.test(val) && /[A-Za-z]/.test(val) && DB === "oracle"){
+      notes.push("ℹ Oracle uses || for string concatenation, not +. Use: col1 || ' ' || col2");
+    }
+    // Looks good
+    if(notes.length === 0){
+      notes.push("✓ Formula looks valid. Run a test query after saving to confirm results.");
+      state = "good";
+    }
+  } else {
+    // Full SQL mode
+    if(!/\bSELECT\b/i.test(val)){
+      notes.push("⚠ Full SQL mode requires a complete SELECT statement.");
+      state = "warn";
+    } else if(!/\bDROP\b|\bDELETE\b|\bUPDATE\b|\bINSERT\b/i.test(val)){
+      notes.push("✓ Full SQL query mode. Make sure this is a read-only SELECT and is not grouped — grouping happens at query time.");
+      state = "good";
+    } else {
+      notes.push("⚠ Destructive keywords detected (DROP/DELETE/UPDATE/INSERT). Only SELECT queries are permitted.");
+      state = "danger";
+    }
+  }
+  setStatus(panel, state, notes.map(function(n){ return "<div>"+n+"</div>"; }).join(""));
+}
+
+function setStatus(panel, state, html){
+  panel.className = "syntax-panel formula-status" + (state ? " "+state : "");
+  panel.innerHTML = html || "";
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// COLUMN SUGGESTION DROPDOWN
+// ══════════════════════════════════════════════════════════════════════
+var _allColumns = [];
+var _dupCols    = new Set();   // column names that appear in >1 table
+var _suggestIdx = -1;
+var _suggestTarget = null;
+
+function _buildDupSet(){
+  var seen = {};
+  _allColumns.forEach(function(c){
+    if(seen[c.column]) _dupCols.add(c.column);
+    else seen[c.column] = true;
+  });
+}
+
+function _displayLabel(c){
+  // Show TABLE.COLUMN when name is ambiguous, bare COLUMN otherwise
+  return _dupCols.has(c.column) ? c.table+"."+c.column : c.column;
+}
+
+function _currentToken(editor){
+  var pos  = editor.selectionStart || 0;
+  var text = editor.value.slice(0, pos);
+  var m    = text.match(/[A-Za-z_][A-Za-z0-9_]*$/);
+  return m ? m[0] : "";
+}
+
+function _showSuggestions(editor, token){
+  var el = document.getElementById("col-suggest");
+  if(!_allColumns.length || token.length < 2){ if(el) el.style.display="none"; return; }
+  var lc = token.toLowerCase();
+  var matches = _allColumns.filter(function(c){
+    return c.column.toLowerCase().startsWith(lc) || c.column.toLowerCase().includes(lc);
+  }).slice(0, 8);
+  if(!matches.length){ if(el) el.style.display="none"; return; }
+  _suggestTarget = editor;
+  _suggestIdx = -1;
+  el.innerHTML = matches.map(function(c, i){
+    var label = _displayLabel(c);
+    return '<div class="col-suggest-item" data-col="'+c.column+'" data-idx="'+i+'">'
+      +'<span class="col-suggest-col">'+label+'</span>'
+      +'<span class="col-suggest-table">'+(_dupCols.has(c.column) ? "" : c.table)+'</span>'
+      +'<span class="col-suggest-type">'+c.type+'</span></div>';
+  }).join("");
+  var rect = editor.getBoundingClientRect();
+  el.style.left    = rect.left+"px";
+  el.style.top     = (rect.bottom+2)+"px";
+  el.style.width   = Math.max(280, rect.width*0.6)+"px";
+  el.style.display = "block";
+}
+
+function _hideSuggestions(){
+  var el = document.getElementById("col-suggest");
+  if(el) el.style.display = "none";
+  _suggestIdx = -1; _suggestTarget = null;
+}
+
+function _insertSuggestion(bareColName){
+  // Always insert bare column name regardless of display label
+  var editor = _suggestTarget || _activeEditor;
+  if(!editor) return;
+  var pos     = editor.selectionStart || 0;
+  var before  = editor.value.slice(0, pos);
+  var replaced = before.replace(/[A-Za-z_][A-Za-z0-9_]*$/, bareColName);
+  editor.value = replaced + editor.value.slice(pos);
+  var next = replaced.length;
+  editor.focus(); editor.setSelectionRange(next, next);
+  updateFormulaHints(editor);
+  _hideSuggestions();
+}
+
+// Keyboard navigation for dropdown
+document.addEventListener("keydown", function(e){
+  var el = document.getElementById("col-suggest");
+  if(!el || el.style.display === "none") return;
+  var items = el.querySelectorAll(".col-suggest-item");
+  if(e.key === "ArrowDown"){ e.preventDefault(); _suggestIdx = Math.min(_suggestIdx+1, items.length-1); }
+  else if(e.key === "ArrowUp"){ e.preventDefault(); _suggestIdx = Math.max(_suggestIdx-1, 0); }
+  else if(e.key === "Enter" || e.key === "Tab"){
+    if(_suggestIdx >= 0){ e.preventDefault(); _insertSuggestion(items[_suggestIdx].dataset.col); return; }
+    _hideSuggestions();
+  }
+  else if(e.key === "Escape"){ _hideSuggestions(); return; }
+  items.forEach(function(item, i){ item.classList.toggle("active", i === _suggestIdx); });
+});
+
+document.addEventListener("click", function(e){
+  // Column suggestion dropdown click
+  var item = e.target.closest(".col-suggest-item");
+  if(item){ _insertSuggestion(item.dataset.col); return; }
+  if(!e.target.closest("#col-suggest")) _hideSuggestions();
+  // Tag input suggestion click
+  var tagItem = e.target.closest(".col-suggest-item[data-tag]");
+  if(tagItem && _suggestTarget){
+    _insertTagValue(_suggestTarget, tagItem.dataset.col);
+  }
+});
+
+// Tag-style suggestions for required_columns / allowed_dimensions
+function _showTagSuggestions(input, token){
+  var el = document.getElementById("col-suggest");
+  if(!_allColumns.length || token.length < 2){ if(el) el.style.display="none"; return; }
+  var lc = token.toLowerCase();
+  var matches = _allColumns.filter(function(c){ return c.column.toLowerCase().startsWith(lc); }).slice(0,6);
+  if(!matches.length){ if(el) el.style.display="none"; return; }
+  _suggestTarget = input; _suggestIdx = -1;
+  el.innerHTML = matches.map(function(c,i){
+    return '<div class="col-suggest-item" data-col="'+c.column+'" data-idx="'+i+'" data-tag="1">'
+      +'<span class="col-suggest-col">'+_displayLabel(c)+'</span>'
+      +'<span class="col-suggest-table">'+c.table+'</span>'
+      +'<span class="col-suggest-type">'+c.type+'</span></div>';
+  }).join("");
+  var rect = input.getBoundingClientRect();
+  el.style.left=rect.left+"px"; el.style.top=(rect.bottom+2)+"px";
+  el.style.width=Math.max(240,rect.width)+"px"; el.style.display="block";
+}
+
+function _insertTagValue(input, colName){
+  var parts = input.value.split(",").map(function(p){ return p.trim(); });
+  parts[parts.length-1] = colName;
+  input.value = parts.join(", ")+", ";
+  input.focus(); _hideSuggestions();
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// FIELD BROWSER (right panel)
+// ══════════════════════════════════════════════════════════════════════
+window.filterColBrowser = function(q){
+  var lc = (q||"").toLowerCase();
+  document.querySelectorAll(".col-browser-item").forEach(function(item){
+    var m = !lc || item.dataset.col.toLowerCase().includes(lc)
+                || (item.dataset.tbl||"").toLowerCase().includes(lc);
+    item.style.display = m ? "" : "none";
+  });
+};
+
+function _buildColBrowser(columns){
+  var list   = document.getElementById("colBrowserList");
+  var status = document.getElementById("col-browser-status");
+  if(!list) return;
+  if(!columns || !columns.length){
+    list.innerHTML = '<div style="padding:8px;font-size:12px;color:var(--text-muted)">Schema not yet discovered — run Discovery first.</div>';
+    if(status) status.textContent = "(no schema)";
+    return;
+  }
+  if(status) status.textContent = "("+columns.length+" cols)";
+  list.innerHTML = columns.map(function(c){
+    var label = _displayLabel(c);
+    return '<div class="col-browser-item" data-col="'+c.column+'" data-tbl="'+c.table
+      +'" onclick="insertColumnFromBrowser(\''+c.column+'\')" title="Click to insert at cursor">'
+      +'<span class="col-browser-name">'+label+'</span>'
+      +'<span class="col-browser-tbl">'+(_dupCols.has(c.column) ? "" : c.table)+'</span>'
+      +'<span class="col-browser-dtype">'+c.type+'</span></div>';
+  }).join("");
+}
+
+window.insertColumnFromBrowser = function(colName){
+  var editor = document.activeElement && document.activeElement.matches(".formula-editor")
+    ? document.activeElement : null;
+  // fall back to last focused editor
+  if(!editor){
+    var editors = document.querySelectorAll(".formula-editor");
+    if(editors.length) editor = editors[0];
+  }
+  if(editor) insertAtCursor(editor, colName);
+};
+
+// Load columns from API on page load
+(function loadColumns(){
+  var m = window.location.pathname.match(/\/clients\/([^\/]+)/);
+  if(!m) return;
+  fetch("/admin/clients/"+m[1]+"/api/columns")
+    .then(function(r){ return r.json(); })
+    .then(function(data){
+      if(data.status === "ok" && data.columns && data.columns.length){
+        _allColumns = data.columns;
+        _buildDupSet();
+        _buildColBrowser(_allColumns);
+      } else {
+        _buildColBrowser([]);
+      }
+    })
+    .catch(function(){ _buildColBrowser([]); });
+})();
+
+// ══════════════════════════════════════════════════════════════════════
+// WIRE ALL INPUT EVENTS
+// ══════════════════════════════════════════════════════════════════════
+document.addEventListener("focusin", function(e){
+  if(e.target.matches(".formula-editor")){
+    _activeEditor = e.target;
+    updateFormulaHints(e.target);
+  }
+});
+
+document.addEventListener("input", function(e){
+  if(e.target.matches(".formula-editor")){
+    _activeEditor = e.target;
+    updateFormulaHints(e.target);
+    _showSuggestions(e.target, _currentToken(e.target));
+  }
+  if(e.target.name === "required_columns" || e.target.name === "allowed_dimensions"){
+    var parts = e.target.value.split(",");
+    var last  = parts[parts.length-1].trim();
+    if(last.length >= 2) _showTagSuggestions(e.target, last);
+    else _hideSuggestions();
+  }
+});
+
+document.addEventListener("change", function(e){
+  if(e.target.matches(".formula-type-select")){
+    var form   = e.target.closest(".metric-form");
+    var editor = form ? form.querySelector(".formula-editor") : null;
+    var label  = form ? form.querySelector(".formula-label") : null;
+    if(label) label.textContent = e.target.value === "query" ? "Full SELECT query *" : "Approved formula *";
+    if(editor) updateFormulaHints(editor);
+  }
+});
+
+window.toggleEdit = function(id){
+  var el = document.getElementById(id);
+  if(el) el.style.display = el.style.display === "none" ? "block" : "none";
+};
+
+// Build the popover on load
+buildPopover();
+document.querySelectorAll(".formula-editor").forEach(updateFormulaHints);
+
+})();
+</script>
+{% endblock %}

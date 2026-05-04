@@ -1,0 +1,311 @@
+{% extends "base.html" %}
+{% block title %}System — QueryBot Admin{% endblock %}
+{% block head %}
+<style>
+.provider-switch{display:inline-flex;gap:.35rem;flex-wrap:wrap;padding:.3rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface-2);box-shadow:var(--shadow)}
+.provider-switch button{border:1px solid transparent;background:transparent;color:var(--text-muted);font-weight:850;font-size:12px;border-radius:var(--radius-sm);padding:8px 12px;cursor:pointer}
+.provider-switch button:hover{background:var(--surface);color:var(--text)}
+.provider-switch button.active{background:var(--blue);border-color:var(--blue);color:#fff;box-shadow:var(--shadow)}
+.provider-panel{display:none}
+.provider-panel.active{display:block}
+.provider-summary{display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap}
+.provider-summary p{font-size:12px;color:var(--text-muted);line-height:1.55;margin-top:.65rem;max-width:760px}
+</style>
+{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>System settings</h1>
+  <p>API keys, LLM providers, and admin password.</p>
+</div>
+
+{% if saved %}<div class="alert alert-success">Settings saved successfully.</div>{% endif %}
+{% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+
+<div class="alert alert-info">
+  <strong>Safe to update at any time.</strong> Changing API keys or LLM models only affects
+  new queries going forward. All existing client KB files, ChromaDB indexes, database connections,
+  platform credentials, and query history are stored independently and are never affected.
+  Per-client model overrides always take priority over these system defaults.
+</div>
+
+<form method="post" action="/admin/system">
+
+  <div class="card">
+    <div class="card-header"><h2>LLM provider setup</h2></div>
+    <div class="card-body provider-summary">
+      <div>
+        <div class="provider-switch" role="tablist" aria-label="LLM provider">
+          <button type="button" data-provider-button="anthropic">Anthropic</button>
+          <button type="button" data-provider-button="openai">OpenAI</button>
+          <button type="button" data-provider-button="azure_openai">Azure OpenAI</button>
+        </div>
+        <p>Only the selected provider's credentials are shown below. Existing saved keys are kept unless you enter a new value.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Anthropic ──────────────────────────────────────────────────────── -->
+  <div class="card provider-panel" data-provider-panel="anthropic">
+    <div class="card-header">
+      <h2>Anthropic (Claude)</h2>
+      <a href="https://console.anthropic.com" target="_blank"
+        style="font-size:12px;color:var(--blue)">console.anthropic.com ↗</a>
+    </div>
+    <div class="card-body">
+      <div class="form-group">
+        <label>Anthropic API key</label>
+        <input type="password" name="anthropic_key"
+          value="{{ cfg.get('anthropic_api_key','') }}"
+          placeholder="sk-ant-api03-...">
+        <p class="form-note">
+          Leave blank to keep existing key.
+          Changing this key only affects future queries — no existing client data is affected.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── OpenAI ────────────────────────────────────────────────────────── -->
+  <div class="card provider-panel" data-provider-panel="openai">
+    <div class="card-header">
+      <h2>OpenAI (GPT-4o)</h2>
+      <a href="https://platform.openai.com" target="_blank"
+        style="font-size:12px;color:var(--blue)">platform.openai.com ↗</a>
+    </div>
+    <div class="card-body">
+      <div class="form-group">
+        <label>OpenAI API key</label>
+        <input type="password" name="openai_key"
+          value="{{ cfg.get('openai_api_key','') }}"
+          placeholder="sk-...">
+        <p class="form-note">
+          Required if you want to use GPT-4o or GPT-4o-mini as your LLM.
+          Leave blank to keep existing key.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Azure OpenAI ────────────────────────────────────────────────────── -->
+  <div class="card provider-panel" data-provider-panel="azure_openai">
+    <div class="card-header">
+      <h2>Azure OpenAI</h2>
+      <a href="https://oai.azure.com" target="_blank"
+        style="font-size:12px;color:var(--blue)">Azure OpenAI Studio ↗</a>
+    </div>
+    <div class="card-body">
+      <div class="alert alert-info" style="margin-bottom:1rem">
+        <div>
+          <strong>Use Azure OpenAI if:</strong> you have Azure credits, your organisation
+          requires Azure data residency, or you want GPT-4o without a separate OpenAI account.
+          <br><br>
+          <strong>Note:</strong> Azure OpenAI does not host Claude models — use the Anthropic
+          key above for Claude. Azure OpenAI hosts GPT-4o, GPT-4o-mini, and GPT-3.5-turbo.
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>Azure OpenAI API key</label>
+        <input type="password" name="azure_openai_key"
+          value="{{ cfg.get('azure_openai_api_key','') }}"
+          placeholder="Your Azure OpenAI resource key">
+        <p class="form-note">
+          Found in Azure Portal → Your OpenAI resource → Keys and Endpoint.
+          Leave blank to keep existing key.
+        </p>
+      </div>
+
+      <div class="form-grid">
+        <div class="form-group">
+          <label>Endpoint URL</label>
+          <input type="text" name="azure_openai_endpoint"
+            value="{{ cfg.get('azure_openai_endpoint','') }}"
+            placeholder="https://yourresource.openai.azure.com">
+          <p class="form-note">
+            Found in Azure Portal → Your OpenAI resource → Keys and Endpoint.
+            Must include https:// and no trailing slash.
+          </p>
+        </div>
+        <div class="form-group">
+          <label>API version</label>
+          <input type="text" name="azure_api_version"
+            value="{{ cfg.get('azure_openai_api_version','2024-02-01') }}"
+            placeholder="2024-02-01">
+          <p class="form-note">
+            Leave as <code>2024-02-01</code> unless Azure requires a specific version.
+            Check Azure OpenAI documentation for latest stable version.
+          </p>
+        </div>
+      </div>
+
+      <!-- How to get deployment name -->
+      <div style="background:var(--gray-50);border:1px solid var(--gray-200);
+        border-radius:6px;padding:.875rem;margin-top:.25rem">
+        <p style="font-size:12px;font-weight:700;color:var(--gray-700);margin-bottom:.4rem">
+          ⚠️ Azure deployment name vs model name
+        </p>
+        <p style="font-size:12px;color:var(--gray-500);line-height:1.6">
+          When using Azure OpenAI, the <strong>model field below must match your Azure deployment
+          name</strong>, not the OpenAI model family name. For example: if you created a deployment
+          called <code>my-gpt4o-prod</code> in Azure OpenAI Studio, enter
+          <code>my-gpt4o-prod</code> as the model — not <code>gpt-4o</code>.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── LLM model defaults ──────────────────────────────────────────────── -->
+  <div class="card">
+    <div class="card-header"><h2>Default LLM selection</h2></div>
+    <div class="card-body">
+      <div class="form-grid">
+        <div class="form-group">
+          <label>Default provider</label>
+          <select name="default_provider">
+            <option value="anthropic"    {% if cfg.get('default_llm_provider') == 'anthropic'    %}selected{% endif %}>Anthropic (Claude)</option>
+            <option value="openai"       {% if cfg.get('default_llm_provider') == 'openai'       %}selected{% endif %}>OpenAI (api.openai.com)</option>
+            <option value="azure_openai" {% if cfg.get('default_llm_provider') == 'azure_openai' %}selected{% endif %}>Azure OpenAI</option>
+          </select>
+          <p class="form-note">Per-client overrides always take priority over this default.</p>
+        </div>
+        <div class="form-group">
+          <label>Default query model</label>
+          <select name="default_model">
+            {% for provider, model, label in query_models %}
+            <option value="{{ model }}" data-provider="{{ provider }}"
+              {% if cfg.get('default_llm_model') == model %}selected{% endif %}>
+              {{ label }}
+            </option>
+            {% endfor %}
+          </select>
+          <p class="form-note">
+            Used for every SQL query. For Azure OpenAI, enter your deployment name here.
+          </p>
+        </div>
+      </div>
+
+      <div class="form-group" style="max-width:50%">
+        <label>KB generation model</label>
+        <select name="kb_model">
+          {% for provider, model, label in kb_models %}
+          <option value="{{ model }}" data-provider="{{ provider }}"
+            {% if cfg.get('kb_llm_model') == model %}selected{% endif %}>
+            {{ label }}
+          </option>
+          {% endfor %}
+        </select>
+        <p class="form-note">
+          Used once per client to generate the enriched Knowledge Base.
+          Best quality model recommended — only runs on first setup.
+        </p>
+      </div>
+
+      <button type="submit" class="btn btn-primary">Save all settings</button>
+    </div>
+  </div>
+
+</form>
+
+<!-- ── Password change ─────────────────────────────────────────────────────── -->
+<div class="card">
+  <div class="card-header"><h2>Change admin password</h2></div>
+  <div class="card-body">
+    <form method="post" action="/admin/system/password">
+      <div class="form-grid">
+        <div class="form-group">
+          <label>New password</label>
+          <input type="password" name="new_password" minlength="8" required>
+        </div>
+        <div class="form-group">
+          <label>Confirm password</label>
+          <input type="password" name="confirm_password" minlength="8" required>
+        </div>
+      </div>
+      <button type="submit" class="btn btn-secondary">Change password</button>
+    </form>
+  </div>
+</div>
+
+<!-- ── Webhook reference ──────────────────────────────────────────────────── -->
+<div class="card">
+  <div class="card-header"><h2>Webhook URLs</h2></div>
+  <div class="card-body">
+    <p style="font-size:13px;color:var(--gray-500);margin-bottom:1rem">
+      Paste these into your platform's developer portal.
+      Zoom and Slack require HTTPS — use ngrok during development.
+    </p>
+    <table class="table">
+      <tr><th>Platform</th><th>Webhook URL</th><th>Where to paste</th></tr>
+      <tr>
+        <td><span class="badge badge-blue">Zoom</span></td>
+        <td><code>https://YOURDOMAIN/webhook/zoom</code></td>
+        <td style="font-size:12px;color:var(--gray-500)">
+          Marketplace → App → Features → Team Chat → Bot Endpoint URL
+        </td>
+      </tr>
+      <tr>
+        <td><span class="badge badge-blue">Teams</span></td>
+        <td><code>https://YOURDOMAIN/webhook/teams</code></td>
+        <td style="font-size:12px;color:var(--gray-500)">
+          Azure Bot Service → Messaging endpoint
+        </td>
+      </tr>
+      <tr>
+        <td><span class="badge badge-blue">Slack</span></td>
+        <td><code>https://YOURDOMAIN/webhook/slack</code></td>
+        <td style="font-size:12px;color:var(--gray-500)">
+          Slack App → Event Subscriptions → Request URL
+        </td>
+      </tr>
+    </table>
+  </div>
+</div>
+<script>
+(function(){
+  function ready(fn){
+    if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fn);
+    else fn();
+  }
+  function syncProvider(provider){
+    provider = provider || 'anthropic';
+    document.querySelectorAll('[data-provider-panel]').forEach(function(panel){
+      panel.classList.toggle('active', panel.dataset.providerPanel === provider);
+    });
+    document.querySelectorAll('[data-provider-button]').forEach(function(button){
+      const active = button.dataset.providerButton === provider;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-selected', active ? 'true' : 'false');
+    });
+    const providerSelect = document.querySelector('select[name="default_provider"]');
+    if(providerSelect && providerSelect.value !== provider) providerSelect.value = provider;
+    filterModelSelect(document.querySelector('select[name="default_model"]'), provider);
+    filterModelSelect(document.querySelector('select[name="kb_model"]'), provider);
+  }
+  function filterModelSelect(select, provider){
+    if(!select) return;
+    let selectedStillVisible = false;
+    let firstVisible = null;
+    Array.from(select.options).forEach(function(option){
+      const optionProvider = option.dataset.provider || '';
+      const visible = !optionProvider || optionProvider === provider;
+      option.hidden = !visible;
+      option.disabled = !visible;
+      if(visible && !firstVisible) firstVisible = option;
+      if(visible && option.selected) selectedStillVisible = true;
+    });
+    if(!selectedStillVisible && firstVisible) firstVisible.selected = true;
+  }
+  ready(function(){
+    const providerSelect = document.querySelector('select[name="default_provider"]');
+    const initial = (providerSelect && providerSelect.value) || 'anthropic';
+    syncProvider(initial);
+    document.querySelectorAll('[data-provider-button]').forEach(function(button){
+      button.addEventListener('click', function(){ syncProvider(button.dataset.providerButton); });
+    });
+    if(providerSelect){
+      providerSelect.addEventListener('change', function(){ syncProvider(providerSelect.value); });
+    }
+  });
+})();
+</script>
+{% endblock %}

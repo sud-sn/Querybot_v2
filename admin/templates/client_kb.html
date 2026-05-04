@@ -1,0 +1,231 @@
+{% extends "base.html" %}
+{% block title %}Knowledge Base Editor — {{ client.client_name or client.account_id[:16] }}{% endblock %}
+{% block head %}
+<style>
+.file-list{list-style:none;padding:0}
+.file-list li{display:flex;align-items:center;justify-content:space-between;
+  padding:.5rem .75rem;border-bottom:1px solid var(--gray-100)}
+.file-list li:last-child{border-bottom:none}
+.file-list li:hover{background:var(--gray-50)}
+.file-list .fname{font-family:monospace;font-size:12px;color:var(--blue)}
+.file-list .fname:hover{text-decoration:underline}
+.editor-area{width:100%;min-height:420px;padding:.75rem;font-family:Consolas,monospace;
+  font-size:12px;line-height:1.6;border:1px solid var(--gray-300);border-radius:6px;
+  resize:vertical;color:var(--gray-900)}
+.editor-area:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px rgba(37,99,235,.1)}
+.feedback-filters{display:flex;gap:.4rem;flex-wrap:wrap}
+.feedback-filter{border:1px solid var(--border);border-radius:999px;padding:4px 9px;font-size:11px;font-weight:800;color:var(--text-muted);background:var(--surface);text-decoration:none}
+.feedback-filter.active{background:var(--blue-light);border-color:color-mix(in srgb,var(--blue) 28%,transparent);color:var(--blue)}
+.semantic-feedback-table{width:100%;border-collapse:collapse;font-size:12px}
+.semantic-feedback-table th{padding:.6rem .75rem;background:var(--surface-2);border-bottom:1px solid var(--border);text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted)}
+.semantic-feedback-table td{padding:.75rem;border-bottom:1px solid var(--border);vertical-align:top;color:var(--text-soft)}
+.semantic-feedback-table tr:last-child td{border-bottom:none}
+.feedback-field{font-family:Consolas,monospace;font-weight:800;color:var(--text)}
+.feedback-muted{font-size:11px;color:var(--text-muted);margin-top:3px}
+.feedback-copy{display:grid;grid-template-columns:1fr 1fr;gap:.65rem;min-width:360px}
+.feedback-box{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:.55rem;min-height:76px}
+.feedback-box strong{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);margin-bottom:.35rem}
+.feedback-review-form textarea{width:100%;min-height:58px;border:1px solid var(--border);border-radius:var(--radius-sm);padding:.5rem;background:var(--surface);color:var(--text);resize:vertical}
+.feedback-review-form .actions{display:flex;gap:.4rem;flex-wrap:wrap;margin-top:.45rem}
+@media(max-width:900px){.feedback-copy{grid-template-columns:1fr;min-width:0}.semantic-feedback-table{display:block;overflow-x:auto}}
+</style>
+{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Knowledge Base Editor</h1>
+  <p>
+    <a href="/admin/clients/{{ client.account_id }}">← {{ client.client_name or client.account_id[:16] }}</a>
+  </p>
+</div>
+
+{% if saved %}<div class="alert alert-success">File saved and re-embedded into ChromaDB.</div>{% endif %}
+{% if feedback_saved == "approved" %}<div class="alert alert-success">Semantic Layer correction approved and KB re-embedded. The patched KB file is opened below. {% if feedback_msg %}<br><span style="font-size:12px">{{ feedback_msg }}</span>{% endif %}</div>{% endif %}
+{% if feedback_saved == "rejected" %}<div class="alert alert-info">Semantic Layer correction rejected. No KB changes made.</div>{% endif %}
+{% if feedback_saved == "error" %}<div class="alert alert-danger">⚠ Approval failed: {{ feedback_msg or "KB file could not be updated." }} The item remains pending.</div>{% endif %}
+
+<div class="card" id="semantic-feedback" style="margin-bottom:1.25rem">
+  <div class="card-header">
+    <div>
+      <h2>Semantic Layer review queue</h2>
+      <p style="font-size:12px;color:var(--gray-500);margin-top:3px">User-submitted field corrections wait here until an admin approves or rejects them.</p>
+    </div>
+    <div class="feedback-filters">
+      {% for s in ["pending", "approved", "rejected", "all"] %}
+      <a class="feedback-filter {% if semantic_feedback_status == s %}active{% endif %}"
+         href="/admin/clients/{{ client.account_id }}/kb?feedback_status={{ s }}#semantic-feedback">{{ s }}</a>
+      {% endfor %}
+    </div>
+  </div>
+  {% if not semantic_feedback %}
+  <div class="card-body" style="color:var(--gray-500);font-size:13px">No Semantic Layer corrections in this view.</div>
+  {% else %}
+  <div style="overflow:auto">
+    <table class="semantic-feedback-table">
+      <thead>
+        <tr>
+          <th>Field</th>
+          <th>Submitted by</th>
+          <th>Correction</th>
+          <th>Status</th>
+          <th style="width:260px">Admin action</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for item in semantic_feedback %}
+        <tr>
+          <td>
+            <div class="feedback-field">{{ item.table_fqn }}.{{ item.column_name }}</div>
+            <div class="feedback-muted">{{ item.created_at }}{% if item.confidence_score %} | {{ item.confidence_score }}% original confidence{% endif %}</div>
+            {% if item.status == "pending" %}
+            <div class="feedback-muted" style="margin-top:4px;color:var(--blue)">
+              Will patch:
+              {% if item.patch_file %}
+              <a href="/admin/clients/{{ client.account_id }}/kb?file={{ item.patch_file|urlencode }}#kb-editor"><code>{{ item.patch_file }}</code></a>
+              {% else %}
+              <code>{{ item.table_name }}_kb.md</code>
+              {% endif %}
+            </div>
+            {% endif %}
+          </td>
+          <td>
+            <strong>{{ item.submitted_by or "Portal user" }}</strong>
+            <div class="feedback-muted">{{ item.submitted_email or "" }}</div>
+          </td>
+          <td>
+            <div class="feedback-copy">
+              <div class="feedback-box">
+                <strong>Current</strong>
+                <div>{{ item.current_meaning or "No current meaning captured." }}</div>
+                <div class="feedback-muted">{{ item.current_use_case or "" }}</div>
+              </div>
+              <div class="feedback-box">
+                <strong>Suggested</strong>
+                <div>{{ item.suggested_meaning or item.current_meaning or "No suggested meaning." }}</div>
+                <div class="feedback-muted">{{ item.suggested_use_case or item.current_use_case or "" }}</div>
+                {% if item.user_comment %}<div class="feedback-muted" style="margin-top:.4rem">Comment: {{ item.user_comment }}</div>{% endif %}
+              </div>
+            </div>
+          </td>
+          <td>
+            {% if item.status == "approved" %}<span class="badge badge-green">approved</span>
+            {% elif item.status == "rejected" %}<span class="badge badge-red">rejected</span>
+            {% else %}<span class="badge badge-amber">pending</span>{% endif %}
+            {% if item.reviewed_at %}<div class="feedback-muted">Reviewed {{ item.reviewed_at }}</div>{% endif %}
+            {% if item.admin_note %}<div class="feedback-muted">{{ item.admin_note }}</div>{% endif %}
+            {% if item.status == "approved" and item.patch_file %}
+            <div class="feedback-muted"><a href="/admin/clients/{{ client.account_id }}/kb?file={{ item.patch_file|urlencode }}#kb-editor">Open patched KB file</a></div>
+            {% endif %}
+          </td>
+          <td>
+            {% if item.status == "pending" %}
+            <form method="post" action="/admin/clients/{{ client.account_id }}/semantic-feedback/{{ item.id }}/review" class="feedback-review-form">
+              <input type="hidden" name="status" id="status-{{ item.id }}" value="">
+              <textarea name="admin_note" placeholder="Optional admin note"></textarea>
+              <div class="actions">
+                <button type="button" class="btn btn-success btn-sm"
+                        onclick="submitReview('{{ item.id }}', 'approved', this)">
+                  Approve &amp; update KB
+                </button>
+                <button type="button" class="btn btn-danger btn-sm"
+                        onclick="submitReview('{{ item.id }}', 'rejected', this)">Reject</button>
+              </div>
+            </form>
+            {% else %}
+            <span class="feedback-muted">No action needed.</span>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</div>
+
+<div style="display:grid;grid-template-columns:260px 1fr;gap:1.25rem">
+
+  <!-- File list sidebar -->
+  <div>
+    {% if kb_files %}
+    <div class="card">
+      <div class="card-header"><h2>KB files (enriched)</h2></div>
+      <ul class="file-list">
+        {% for f in kb_files %}
+        <li>
+          <a href="?file={{ f|urlencode }}" class="fname">{{ f }}</a>
+          {% if file_view == f %}<span class="badge badge-blue">editing</span>{% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+
+    {% if schema_files %}
+    <div class="card">
+      <div class="card-header"><h2>Schema files (raw)</h2></div>
+      <ul class="file-list">
+        {% for f in schema_files %}
+        <li>
+          <a href="?file={{ f|urlencode }}&type=schema" class="fname">{{ f }}</a>
+          {% if file_view == f %}<span class="badge badge-amber">editing</span>{% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+
+    {% if not kb_files and not schema_files %}
+    <div class="card">
+      <div class="card-body" style="color:var(--gray-500);font-size:13px">
+        No files yet. Schema discovery must run first, then KB generation.
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- Editor -->
+  <div>
+    {% if file_view and file_content is not none %}
+    <div class="card" id="kb-editor">
+      <div class="card-header">
+        <h2>Editing: {{ file_view }}</h2>
+        <span style="font-size:11px;color:var(--gray-500)">
+          {% if "schema" in request.query_params.get("type","") %}Schema file — changes affect discovery only
+          {% else %}KB file — saved changes are immediately re-embedded into ChromaDB{% endif %}
+        </span>
+      </div>
+      <div class="card-body">
+        <form method="post" action="/admin/clients/{{ client.account_id }}/kb/save">
+          <input type="hidden" name="filename" value="{{ file_view }}">
+          <input type="hidden" name="file_type" value="{{ request.query_params.get('type','kb') }}">
+          <textarea name="content" class="editor-area">{{ file_content }}</textarea>
+          <div style="margin-top:.75rem;display:flex;gap:.5rem">
+            <button type="submit" class="btn btn-primary">Save &amp; re-embed</button>
+            <a href="/admin/clients/{{ client.account_id }}/kb" class="btn btn-secondary">Cancel</a>
+          </div>
+        </form>
+      </div>
+    </div>
+    {% else %}
+    <div class="card">
+      <div class="card-body" style="color:var(--gray-500);text-align:center;padding:3rem">
+        Select a file from the list to view and edit it.
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+</div>
+<script>
+function submitReview(itemId, status, btn) {
+  var form = btn.closest('form');
+  var hiddenStatus = document.getElementById('status-' + itemId);
+  if (hiddenStatus) hiddenStatus.value = status;
+  if (status === 'approved') {
+    btn.textContent = 'Approving…';
+    btn.disabled = true;
+  }
+  form.submit();
+}
+</script>
+{% endblock %}

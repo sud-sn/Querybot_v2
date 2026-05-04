@@ -1,0 +1,56 @@
+# ── Web framework ──────────────────────────────────────────────────────────────
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+httpx>=0.27.0
+python-multipart>=0.0.9
+jinja2>=3.1.0
+
+# ── LLM providers ─────────────────────────────────────────────────────────────
+anthropic>=0.28.0
+openai>=1.30.0
+
+# ── Database connectors ────────────────────────────────────────────────────────
+snowflake-connector-python>=3.10.0   # DB_TYPE=snowflake — pure Python, no OS deps
+oracledb>=2.0.0                       # DB_TYPE=oracle    — Thin mode, no Oracle client needed
+pyodbc>=5.0.0                         # DB_TYPE=azure_sql — Python binding only; see note below
+#
+# ⚠️  Azure SQL — OS-level driver REQUIRED in addition to pyodbc
+# ---------------------------------------------------------------
+# pyodbc is just the Python binding. The actual ODBC driver is an OS package
+# and must be installed separately. Our code hard-codes
+#   DRIVER={ODBC Driver 18 for SQL Server}
+# in core/schema.py and core/examples.py, so version 18 specifically is needed.
+#
+#   Ubuntu / Debian:
+#     bash install_linux_odbc18.sh
+#
+#   Or install it manually:
+#     curl https://packages.microsoft.com/keys/microsoft.asc | sudo apt-key add -
+#     curl https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/prod.list \
+#       | sudo tee /etc/apt/sources.list.d/mssql-release.list
+#     sudo apt-get update
+#     sudo ACCEPT_EULA=Y apt-get install -y msodbcsql18
+#
+#   macOS:
+#     brew tap microsoft/mssql-release https://github.com/Microsoft/homebrew-mssql-release
+#     brew update
+#     HOMEBREW_ACCEPT_EULA=Y brew install msodbcsql18
+#
+#   Azure VM deploy.sh already installs msodbcsql18 automatically.
+
+# ── Vector store + embeddings ──────────────────────────────────────────────────
+qdrant-client>=1.9.0
+sentence-transformers>=3.0.0
+
+# ── SQL validation ─────────────────────────────────────────────────────────────
+sqlglot>=23.0.0
+
+# ── Charts ─────────────────────────────────────────────────────────────────────
+matplotlib>=3.9.0
+
+# ── Security + storage ─────────────────────────────────────────────────────────
+cryptography>=42.0.0
+python-dotenv>=1.0.0
+
+# NOTE: Synthetic data generation (core/synthetic.py) uses Python stdlib only.
+# No additional packages needed for that feature.

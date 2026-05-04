@@ -1,0 +1,235 @@
+{% extends "base.html" %}
+{% block title %}Users — {{ client.client_name }}{% endblock %}
+{% block head %}
+<style>
+.temp-pw-box{background:var(--green-light);border:1px solid color-mix(in srgb,var(--green) 28%,transparent);border-radius:var(--radius);
+  padding:.875rem 1.25rem;margin-bottom:1.25rem}
+.temp-pw-box h3{font-size:13px;font-weight:700;color:var(--green);margin-bottom:.25rem}
+.temp-pw-code{font-family:monospace;font-size:18px;font-weight:800;color:var(--green);
+  letter-spacing:.05em;background:var(--surface);border:1px solid color-mix(in srgb,var(--green) 28%,transparent);padding:4px 12px;border-radius:var(--radius-sm);display:inline-block;margin-top:4px}
+.user-row-inactive{opacity:.5}
+.role-badge-admin{background:var(--amber-light);color:var(--amber)}
+.role-badge-analyst{background:var(--blue-light);color:var(--blue)}
+</style>
+{% endblock %}
+{% block content %}
+
+<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.25rem;flex-wrap:wrap;gap:.75rem">
+  <div>
+    <a href="/admin/clients/{{ client.account_id }}" style="color:var(--gray-500);font-size:13px">
+      ← {{ client.client_name or client.account_id[:16] }}
+    </a>
+    <h1 style="font-size:20px;font-weight:700;margin-top:4px">User Management</h1>
+    <p style="font-size:13px;color:var(--gray-500)">
+      Create portal users, assign groups, and manage access for <strong>{{ client.client_name }}</strong>.
+    </p>
+  </div>
+  <a href="/admin/clients/{{ client.account_id }}/groups" class="btn btn-secondary btn-sm">Manage groups →</a>
+</div>
+
+{% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+{% if saved and not new_user %}<div class="alert alert-success">Changes saved.</div>{% endif %}
+
+<!-- Password display — shown immediately after create or reset -->
+{% if saved and new_user and temp_pw %}
+<div class="temp-pw-box">
+  {% if is_temp == "0" %}
+  <h3>✅ User created — {{ new_user }}</h3>
+  <p style="font-size:12px;color:var(--green);margin-bottom:.375rem">
+    Password was set by you. The user can log in immediately with the credentials below
+    and will land directly on the chat page — no password change required.
+  </p>
+  {% else %}
+  <h3>✅ User created — {{ new_user }}</h3>
+  <p style="font-size:12px;color:var(--green);margin-bottom:.375rem">
+    This is a <strong>temporary password</strong>. Share it with the user — they will be
+    prompted to set their own password on first login. <strong>It will not be shown again.</strong>
+  </p>
+  {% endif %}
+  <div class="temp-pw-code">{{ temp_pw }}</div>
+  <p style="font-size:11px;color:var(--green);margin-top:.5rem">
+    Portal login: <strong>{{ request.base_url }}portal/login</strong>
+    · Account ID: <strong>{{ client.account_id }}</strong>
+    · Email: <strong>{{ request.query_params.get('email', '') or 'see above' }}</strong>
+  </p>
+</div>
+{% endif %}
+
+<!-- Create user -->
+<div class="card">
+  <div class="card-header"><h2>Add new user</h2></div>
+  <div class="card-body">
+    <form method="post" action="/admin/clients/{{ client.account_id }}/users/create">
+      <div class="form-grid">
+        <div class="form-group">
+          <label>Full name *</label>
+          <input type="text" name="name" required placeholder="Jane Smith">
+        </div>
+        <div class="form-group">
+          <label>Work email *</label>
+          <input type="email" name="email" required placeholder="jane@company.com">
+        </div>
+      </div>
+      <div class="form-grid">
+        <div class="form-group">
+          <label>Group</label>
+          <select name="group_id">
+            <option value="">— no group yet —</option>
+            {% for g in groups %}
+            <option value="{{ g.id }}">{{ g.name }}</option>
+            {% endfor %}
+          </select>
+          <p class="form-note">You can assign a group now or later. Users with no group have no table access.</p>
+        </div>
+        <div class="form-group">
+          <label>Role</label>
+          <select name="role">
+            <option value="analyst" selected>Analyst — can query assigned tables only</option>
+            <option value="admin">Admin — unrestricted access to all tables</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Password section -->
+      <div style="border-top:1px solid var(--border);margin:.75rem 0;padding-top:.75rem">
+        <p style="font-size:12px;font-weight:600;color:var(--gray-700);margin-bottom:.6rem">
+          Password
+        </p>
+        <div style="background:var(--blue-light);border:1px solid color-mix(in srgb,var(--blue) 28%,transparent);border-radius:6px;padding:.65rem .9rem;margin-bottom:.75rem;font-size:12px;color:var(--blue)">
+          <strong>Set a password now</strong> → user logs in directly, no password-change step.<br>
+          <strong>Leave blank</strong> → a temporary password is auto-generated; user must change it on first login.
+        </div>
+        <div class="form-grid">
+          <div class="form-group">
+            <label>Password <span style="font-weight:400;color:var(--gray-400)">(optional, min 8 chars)</span></label>
+            <input type="password" name="password" placeholder="Leave blank to auto-generate"
+                   autocomplete="new-password" minlength="8">
+          </div>
+          <div class="form-group">
+            <label>Confirm password</label>
+            <input type="password" name="confirm_password" placeholder="Repeat password"
+                   autocomplete="new-password">
+          </div>
+        </div>
+      </div>
+
+      <button type="submit" class="btn btn-primary">Create user</button>
+    </form>
+  </div>
+</div>
+
+<!-- User list -->
+{% if users %}
+<div class="card">
+  <div class="card-header">
+    <h2>Portal users ({{ users|length }})</h2>
+    <span style="font-size:11px;color:var(--gray-500)">
+      {{ users|selectattr("is_active","equalto",1)|list|length }} active
+    </span>
+  </div>
+  <table class="table">
+    <tr>
+      <th>Name</th>
+      <th>Email</th>
+      <th>Group</th>
+      <th>Role</th>
+      <th>Chat linked</th>
+      <th>Status</th>
+      <th>Actions</th>
+    </tr>
+    {% for u in users %}
+    <tr class="{% if not u.is_active %}user-row-inactive{% endif %}">
+      <td style="font-weight:600">{{ u.name }}</td>
+      <td style="font-size:12px;color:var(--gray-500)">{{ u.email }}</td>
+      <td>
+        {% if u.group_name %}
+          <span class="badge badge-blue">{{ u.group_name }}</span>
+        {% else %}
+          <span style="font-size:11px;color:var(--gray-400)">no group</span>
+        {% endif %}
+      </td>
+      <td>
+        <span class="badge role-badge-{{ u.role }}">{{ u.role }}</span>
+      </td>
+      <td>
+        {% if u.zoom_user_id %}
+          <span style="color:var(--green);font-size:12px">✓ linked</span>
+        {% elif client.portal_only %}
+          <span style="color:var(--blue);font-size:12px">portal only</span>
+        {% else %}
+          <span style="color:var(--gray-400);font-size:12px">not yet</span>
+        {% endif %}
+      </td>
+      <td>
+        {% if u.is_active %}
+          <span class="badge badge-green">Active</span>
+          {% if u.is_temp_pw %}<span class="badge badge-amber" style="margin-left:3px">Temp pw</span>{% endif %}
+        {% else %}
+          <span class="badge badge-gray">Inactive</span>
+        {% endif %}
+      </td>
+      <td>
+        <div style="display:flex;gap:.25rem;flex-wrap:wrap">
+          <!-- Quick edit group -->
+          <form method="post" action="/admin/clients/{{ client.account_id }}/users/{{ u.id }}/update"
+            style="display:inline-flex;gap:.25rem;align-items:center">
+            <select name="group_id" style="font-size:11px;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px">
+              <option value="">no group</option>
+              {% for g in groups %}
+              <option value="{{ g.id }}" {% if g.id == u.group_id %}selected{% endif %}>{{ g.name }}</option>
+              {% endfor %}
+            </select>
+            <button type="submit" class="btn btn-secondary btn-xs">Save</button>
+          </form>
+          <!-- Reset password -->
+          <form method="post" action="/admin/clients/{{ client.account_id }}/users/{{ u.id }}/reset-password"
+            style="display:inline" onsubmit="return confirm('Reset password for {{ u.name }}?')">
+            <button type="submit" class="btn btn-secondary btn-xs">Reset pw</button>
+          </form>
+          <!-- Toggle active -->
+          <form method="post" action="/admin/clients/{{ client.account_id }}/users/{{ u.id }}/update"
+            style="display:inline">
+            <input type="hidden" name="is_active" value="{{ '0' if u.is_active else '1' }}">
+            <button type="submit" class="btn btn-secondary btn-xs"
+              style="color:{% if u.is_active %}var(--amber){% else %}var(--green){% endif %}">
+              {{ 'Deactivate' if u.is_active else 'Activate' }}
+            </button>
+          </form>
+          <!-- Delete -->
+          <form method="post" action="/admin/clients/{{ client.account_id }}/users/{{ u.id }}/delete"
+            style="display:inline" onsubmit="return confirm('Delete {{ u.name }}? This removes their portal access and pinned charts.')">
+            <button type="submit" class="btn btn-danger btn-xs">Delete</button>
+          </form>
+        </div>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% else %}
+<div class="card">
+  <div class="card-body" style="text-align:center;padding:2.5rem;color:var(--gray-500)">
+    No users yet. Create your first user above.
+  </div>
+</div>
+{% endif %}
+
+<!-- How it works -->
+<div class="card">
+  <div class="card-header"><h2>How user access works</h2></div>
+  <div class="card-body" style="font-size:13px;color:var(--gray-700);line-height:1.8">
+    {% if client.portal_only %}
+    <strong>1. Create user</strong> — set a password or leave blank to auto-generate a temporary one. Share the credentials with the user.<br>
+    <strong>2. User logs in</strong> — user goes to <code>/portal/login</code>, enters their account ID, email, and password. If a temp password was set, they'll be asked to change it first.<br>
+    <strong>3. Assign group</strong> — assign the user to a group using the dropdown above. They immediately inherit that group's table access.<br>
+    <strong>4. Access enforced</strong> — the portal enforces their group's table restrictions on every query and the KB viewer shows only their allowed tables.
+    {% else %}
+    <strong>1. Create user</strong> — system generates a temporary password shown once. Share it securely with the user.<br>
+    <strong>2. User accesses</strong> — user messages the bot in Zoom / Teams / Slack and receives a registration link, or logs in directly at <code>/portal/login</code> using the temp password.<br>
+    <strong>3. Chat identity linked</strong> — when the user clicks the registration link, their chat platform identity is linked to their portal account automatically.<br>
+    <strong>4. Assign group</strong> — assign the user to a group using the dropdown above. They immediately inherit that group's table access.<br>
+    <strong>5. Access enforced</strong> — in the chat bot, table restrictions are applied to every query. In the portal, their dashboard and KB viewer show only their allowed tables.
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

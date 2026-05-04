@@ -1,0 +1,1053 @@
+"""
+core/schema.py
+
+Schema discovery for Snowflake, Oracle, and Azure SQL.
+
+v7 additions:
+  - Distinct value scan for categorical columns — LLM sees ALL possible values
+    for short-text columns (Status, Type, Department, Gender etc.) not just 5
+    sample rows. This fixes CANNOT_GENERATE for business concept queries.
+  - Auto join-map generation — writes _join_map.md documenting every FK
+    relationship so the LLM always knows how to JOIN across tables.
+  - Synthetic PII samples unchanged.
+"""
+
+import json
+import logging
+from pathlib import Path
+
+from core.synthetic import generate_synthetic_sample, should_use_synthetic
+
+log = logging.getLogger("querybot.schema")
+
+# ── Categorical column detection ───────────────────────────────────────────────
+# Columns whose name contains any of these words are scanned for distinct values
+_CATEGORICAL_NAME_HINTS = {
+    "status", "type", "flag", "gender", "sex", "category", "class",
+    "department", "dept", "division", "group", "team", "role", "level",
+    "grade", "rank", "priority", "severity", "state", "phase", "stage",
+    "mode", "method", "reason", "code", "indicator", "yn", "active",
+    "enabled", "attrition", "punch", "shift", "position", "title",
+    "country", "region", "zone", "area", "branch", "location",
+}
+
+# Max distinct values to scan — above this we skip (high-cardinality columns)
+_MAX_DISTINCT = 30
+
+# Column data types treated as potentially categorical
+_CATEGORICAL_TYPES = {
+    "varchar", "varchar2", "nvarchar", "char", "nchar",
+    "text", "string", "character varying",
+}
+
+
+def _is_categorical(col_name: str, col_type: str) -> bool:
+    """Return True if this column is likely categorical."""
+    name_lower  = col_name.lower()
+    type_lower  = (col_type or "").lower().split("(")[0].strip()
+    name_match  = any(h in name_lower for h in _CATEGORICAL_NAME_HINTS)
+    type_match  = any(t in type_lower for t in _CATEGORICAL_TYPES)
+    return name_match and type_match
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Public API
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _clean_identifier_part(value: str) -> str:
+    """Normalize a table/schema/database identifier for selection matching."""
+    return str(value or "").strip().strip('"').strip("'").strip("[]").upper()
+
+
+def _allowed_table_match(
+    allowed: set[str] | None,
+    table_name: str,
+    schema: str | None = None,
+    database: str | None = None,
+) -> bool:
+    """
+    Return True when a discovered table is included in the selected table set.
+
+    Supports both legacy bare names ("ORDERS") and schema-aware selections
+    ("SALES.ORDERS" or "CRM.SALES.ORDERS"). The admin schema browser stores
+    fully-qualified names so tables from non-default schemas are not dropped
+    during file generation.
+    """
+    if allowed is None:
+        return True
+
+    normalized = {_clean_identifier_part(x) for x in allowed if str(x).strip()}
+    table = _clean_identifier_part(table_name)
+    schema_part = _clean_identifier_part(schema) if schema else ""
+    db_part = _clean_identifier_part(database) if database else ""
+
+    candidates = {table}
+    if schema_part:
+        candidates.add(f"{schema_part}.{table}")
+    if db_part and schema_part:
+        candidates.add(f"{db_part}.{schema_part}.{table}")
+    return bool(candidates & normalized)
+
+
+def _allowed_has_qualified_refs(allowed: set[str] | None) -> bool:
+    return bool(allowed and any("." in str(x) for x in allowed))
+
+
+def _safe_table_file_stem(value: str) -> str:
+    stem = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in str(value))
+    return stem.strip("._-") or "table"
+
+
+def discover_and_write(
+    credentials: dict,
+    db_type: str,
+    output_dir: str,
+    allowed_tables: set[str] | None = None,
+) -> int:
+    """
+    Discover schema from the customer DB and write one .md file per table.
+
+    allowed_tables — optional set of table names (bare names, uppercase).
+    When provided, only tables whose name (uppercased) is in the set are
+    written. Tables not in the set are skipped entirely.
+    When None (the default), all tables are written — preserving the legacy
+    behaviour for clients that were set up before table selection existed.
+    """
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    # Normalise to uppercase set for case-insensitive matching
+    allowed = {t.upper() for t in allowed_tables} if allowed_tables is not None else None
+    if db_type == "snowflake":
+        return _discover_snowflake(credentials, out, allowed)
+    elif db_type == "oracle":
+        return _discover_oracle(credentials, out, allowed)
+    elif db_type == "azure_sql":
+        return _discover_azure_sql(credentials, out, allowed)
+    else:
+        raise ValueError(f"Unsupported db_type: {db_type!r}")
+
+
+def test_connection(credentials: dict, db_type: str) -> dict:
+    """
+    Open a read-only smoke-test connection and run a tiny metadata query.
+
+    Used by the admin "Test connection" button. It intentionally does not
+    persist credentials or discover schema files.
+    """
+    if db_type == "snowflake":
+        # Cap login_timeout at 15 s for test path — Snowflake default is 60 s
+        smoke_cfg = dict(credentials)
+        smoke_cfg["login_timeout"] = min(int(smoke_cfg.get("login_timeout", 15)), 15)
+        smoke_cfg["network_timeout"] = min(int(smoke_cfg.get("network_timeout", 15)), 15)
+        conn = _sf_connect(smoke_cfg, max_retries=1)
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT CURRENT_DATABASE(), CURRENT_SCHEMA(), CURRENT_USER()")
+            row = cur.fetchone()
+            return {
+                "database": str(row[0] or ""),
+                "schema": str(row[1] or ""),
+                "user": str(row[2] or ""),
+            }
+        finally:
+            conn.close()
+    elif db_type == "oracle":
+        conn = _ora_connect(credentials, max_retries=1)
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT SYS_CONTEXT('USERENV','CURRENT_SCHEMA'), USER FROM DUAL")
+            row = cur.fetchone()
+            return {
+                "schema": str(row[0] or ""),
+                "user": str(row[1] or ""),
+            }
+        finally:
+            conn.close()
+    elif db_type == "azure_sql":
+        smoke_cfg = dict(credentials)
+        # Cap the ODBC-level connection timeout at 15 s for the test path.
+        # The default is 60 s, which causes the route's asyncio.wait_for to
+        # fire before the driver has given up — producing a false "timeout"
+        # even when credentials are wrong and the error would have come back
+        # in under a second with a shorter timeout.
+        smoke_cfg["login_timeout"] = min(int(smoke_cfg.get("login_timeout", 15)), 15)
+        try:
+            conn = _az_connect(smoke_cfg, max_retries=1)
+        except Exception as e:
+            # Re-raise with a clean, human-readable message so the route can
+            # surface it directly instead of the cryptic ODBC error string.
+            err_str = str(e)
+            if "Login timeout expired" in err_str or "HYT00" in err_str:
+                raise TimeoutError(
+                    "Connection timed out after 15 s. Check the server name, "
+                    "firewall rules (is the VM's IP allowed?), and that the "
+                    "database is not paused."
+                )
+            if "Login failed" in err_str or "28000" in err_str:
+                raise PermissionError(
+                    f"Login failed — check the username and password. ({e})"
+                )
+            raise
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT DB_NAME(), SCHEMA_NAME(), SUSER_SNAME()")
+            row = cur.fetchone()
+            return {
+                "database": str(row[0] or ""),
+                "schema": str(row[1] or ""),
+                "user": str(row[2] or ""),
+            }
+        finally:
+            conn.close()
+    else:
+        raise ValueError(f"Unsupported db_type: {db_type!r}")
+
+
+def run_query(credentials: dict, db_type: str, sql: str, max_rows: int = 200) -> list[dict]:
+    if db_type == "snowflake":
+        return _run_snowflake(credentials, sql, max_rows)
+    elif db_type == "oracle":
+        return _run_oracle(credentials, sql, max_rows)
+    elif db_type == "azure_sql":
+        return _run_azure_sql(credentials, sql, max_rows)
+    else:
+        raise ValueError(f"Unsupported db_type: {db_type!r}")
+
+
+def load_known_tables(schema_dir: str) -> set[str]:
+    """
+    Load the set of known table identifiers from _schema.json.
+
+    Since schema.py now stores keys as 3-part FQNs (DB.SCHEMA.TABLE),
+    but the SQL validator receives bare table names or 2-part names from
+    sqlglot's parser (node.name), we expand every FQN key into all its
+    name variants so the validator's membership test works regardless of
+    how the LLM qualified the table name in the generated SQL.
+
+    Example: MYDB.HR.EMPLOYEES → also adds
+      HR.EMPLOYEES  and  EMPLOYEES
+    """
+    p = Path(schema_dir) / "_schema.json"
+    if not p.exists():
+        return set()
+    result: set[str] = set()
+    for key in json.loads(p.read_text(encoding="utf-8")):
+        upper = key.upper()
+        result.add(upper)                        # full FQN
+        parts = upper.split(".")
+        if len(parts) >= 2:
+            result.add(parts[-1])                # bare table name
+            result.add(".".join(parts[-2:]))     # schema.table
+    return result
+
+
+def load_schema_json(schema_dir: str) -> dict:
+    p = Path(schema_dir) / "_schema.json"
+    return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+
+
+def list_schema_files(schema_dir: str) -> list[str]:
+    d = Path(schema_dir)
+    if not d.exists():
+        return []
+    return sorted(f.name for f in d.glob("*.md"))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Join map generation
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _build_join_map(master: dict) -> str:
+    """
+    Analyse all discovered tables and auto-detect FK relationships by matching
+    column names across tables. Writes a human-readable join map the LLM can
+    use to construct multi-table JOINs without guessing.
+    """
+    lines = [
+        "# Cross-Table Join Map",
+        "",
+        "Use this document to determine how tables relate to each other.",
+        "When a question requires data from multiple tables, use these join paths.",
+        "",
+        "## Detected Relationships",
+        "",
+    ]
+
+    # Build index: column_name_upper → list of tables that have it
+    col_to_tables: dict[str, list[str]] = {}
+    for tbl_name, tbl_info in master.items():
+        for col in tbl_info.get("columns", []):
+            cname = col["name"].upper()
+            col_to_tables.setdefault(cname, []).append(tbl_name)
+
+    # Find columns shared across 2+ tables — these are likely join keys
+    join_pairs_seen = set()
+    relationships = []
+
+    for col_name, tables in col_to_tables.items():
+        if len(tables) < 2:
+            continue
+        # Skip very generic columns that are not real FKs
+        if col_name in {"ID", "NAME", "STATUS", "TYPE", "CODE", "DATE",
+                        "CREATED_AT", "UPDATED_AT", "DESCRIPTION", "NOTES"}:
+            continue
+
+        for i in range(len(tables)):
+            for j in range(i + 1, len(tables)):
+                t1, t2 = sorted([tables[i], tables[j]])
+                key = f"{t1}|{t2}|{col_name}"
+                if key in join_pairs_seen:
+                    continue
+                join_pairs_seen.add(key)
+
+                # Determine which is likely the fact and which the dimension
+                t1_cols = [c["name"] for c in master[t1].get("columns", [])]
+                t2_cols = [c["name"] for c in master[t2].get("columns", [])]
+
+                relationships.append({
+                    "left":  t1,
+                    "right": t2,
+                    "key":   col_name,
+                    "left_cols":  t1_cols,
+                    "right_cols": t2_cols,
+                })
+
+    if not relationships:
+        lines.append("No shared key columns detected automatically.")
+        lines.append("")
+        lines.append("Tip: Join columns typically end in _ID, _NO, _CODE, or _NUM.")
+        return "\n".join(lines)
+
+    for rel in relationships:
+        left_extra  = [c for c in rel["right_cols"] if c not in rel["left_cols"]][:6]
+        lines.append(f"### {rel['left']} ↔ {rel['right']}")
+        lines.append(f"**Join column:** `{rel['key']}`")
+        lines.append(f"```sql")
+        lines.append(f"JOIN [{rel['right']}] ON [{rel['left']}].{rel['key']} = [{rel['right']}].{rel['key']}")
+        lines.append(f"```")
+        if left_extra:
+            lines.append(
+                f"Joining gets from **{rel['right']}**: "
+                + ", ".join(f"`{c}`" for c in left_extra)
+            )
+        lines.append("")
+
+    lines.append("## Usage guidance")
+    lines.append("")
+    lines.append("- Always qualify column names with table names in multi-table queries")
+    lines.append("- Verify join columns exist in both tables before using")
+    lines.append("- Use LEFT JOIN when the right-side record may not exist")
+    lines.append("- Use INNER JOIN when you only want rows with matches in both tables")
+
+    return "\n".join(lines)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Snowflake
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _sf_connect(cfg: dict, max_retries: int = 3):
+    """Snowflake connection with retry for transient network failures."""
+    import snowflake.connector
+    import time as _time
+
+    allowed_keys = {
+        "account", "user", "password", "warehouse", "database", "schema", "role",
+        "authenticator", "login_timeout", "network_timeout",
+        "client_session_keep_alive",
+    }
+    connect_cfg = {k: v for k, v in cfg.items() if v and k in allowed_keys}
+    last_err = None
+    for attempt in range(max_retries):
+        try:
+            conn = snowflake.connector.connect(**connect_cfg)
+            if attempt > 0:
+                log.info("Snowflake connected on retry %d/%d", attempt + 1, max_retries)
+            return conn
+        except snowflake.connector.errors.OperationalError as e:
+            last_err = e
+            if attempt == max_retries - 1:
+                raise
+            wait = 2 ** (attempt + 1)
+            log.warning(
+                "Snowflake connection attempt %d/%d failed — retrying in %ds: %s",
+                attempt + 1, max_retries, wait, str(e)[:120],
+            )
+            _time.sleep(wait)
+        except Exception:
+            # Auth errors, config errors — fail fast, don't retry
+            raise
+    if last_err:
+        raise last_err
+    raise RuntimeError("Snowflake connection failed")
+
+
+def _sf_distinct(cur, schema: str, name: str, col_name: str) -> list[str]:
+    """Get distinct values for a categorical column in Snowflake."""
+    try:
+        cur.execute(
+            f'SELECT DISTINCT "{col_name}" FROM "{schema}"."{name}" '
+            f'WHERE "{col_name}" IS NOT NULL LIMIT {_MAX_DISTINCT + 1}'
+        )
+        vals = [str(r[0]) for r in cur.fetchall()]
+        if len(vals) > _MAX_DISTINCT:
+            return []  # Too many — not actually categorical
+        return sorted(vals)
+    except Exception:
+        return []
+
+
+def _discover_snowflake(cfg: dict, out: Path, allowed: set[str] | None = None) -> int:
+    import snowflake.connector
+    conn = _sf_connect(cfg)
+    master = {}
+    try:
+        cur = conn.cursor(snowflake.connector.DictCursor)
+        schema_filter = "" if allowed is not None else "AND TABLE_SCHEMA = CURRENT_SCHEMA()"
+        cur.execute(f"""
+            SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE, ROW_COUNT, COMMENT
+            FROM INFORMATION_SCHEMA.TABLES
+            WHERE TABLE_TYPE IN ('BASE TABLE','VIEW')
+              {schema_filter}
+            ORDER BY TABLE_SCHEMA, TABLE_NAME
+        """)
+        tables = [dict(r) for r in cur.fetchall()]
+
+        selected_tables = []
+        for tbl in tables:
+            name = tbl["TABLE_NAME"]
+            schema = tbl.get("TABLE_SCHEMA") or cfg.get("schema") or "PUBLIC"
+            database = tbl.get("TABLE_CATALOG") or cfg.get("database") or ""
+            if not _allowed_table_match(allowed, name, schema, database):
+                log.debug("Snowflake: skipping %s (not in selected tables)", name)
+                continue
+            selected_tables.append(tbl)
+
+        name_counts = {}
+        for tbl in selected_tables:
+            key_name = _clean_identifier_part(tbl["TABLE_NAME"])
+            name_counts[key_name] = name_counts.get(key_name, 0) + 1
+
+        for tbl in selected_tables:
+            name = tbl["TABLE_NAME"]
+            schema = tbl.get("TABLE_SCHEMA") or cfg.get("schema") or "PUBLIC"
+            database = tbl.get("TABLE_CATALOG") or cfg.get("database") or ""
+            normalized_name = _clean_identifier_part(name)
+            table_key = name if name_counts.get(normalized_name, 0) <= 1 else f"{schema}.{name}"
+            file_stem = name if table_key == name else f"{schema}__{name}"
+            cur.execute(f"""
+                SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE,
+                       CHARACTER_MAXIMUM_LENGTH, NUMERIC_PRECISION, COMMENT
+                FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE TABLE_SCHEMA = '{schema}' AND TABLE_NAME = '{name}'
+                ORDER BY ORDINAL_POSITION
+            """)
+            columns = [dict(r) for r in cur.fetchall()]
+
+            # Distinct value scan for categorical columns
+            distinct_map = {}
+            if not should_use_synthetic(name):
+                plain_cur = conn.cursor()
+                for col in columns:
+                    cname = col["COLUMN_NAME"]
+                    ctype = col["DATA_TYPE"]
+                    if _is_categorical(cname, ctype):
+                        vals = _sf_distinct(plain_cur, schema, name, cname)
+                        if vals:
+                            distinct_map[cname] = vals
+                            log.info("SF distinct values for %s.%s: %s", name, cname, vals)
+
+            # Sample rows
+            if should_use_synthetic(name):
+                col_defs = [{"name": c["COLUMN_NAME"], "type": c["DATA_TYPE"]} for c in columns]
+                sample = generate_synthetic_sample(col_defs)
+                log.info("Synthetic sample for sensitive table: %s", name)
+            else:
+                try:
+                    cur.execute(f'SELECT * FROM "{schema}"."{name}" LIMIT 5')
+                    sample = [dict(r) for r in cur.fetchall()]
+                except Exception:
+                    sample = []
+
+            (out / f"{_safe_table_file_stem(file_stem)}.md").write_text(
+                _sf_md(name, tbl, columns, sample, distinct_map), encoding="utf-8"
+            )
+            master[table_key] = {
+                "columns": [
+                    {"name": c["COLUMN_NAME"], "type": c["DATA_TYPE"],
+                     "nullable": c["IS_NULLABLE"] == "YES",
+                     "comment": c.get("COMMENT") or ""}
+                    for c in columns
+                ],
+                "row_count": tbl.get("ROW_COUNT"),
+                "comment":   tbl.get("COMMENT") or "",
+                "schema":    schema,
+                "database":  database,
+            }
+            log.info("Snowflake: discovered %s (%d cols, %d categorical)",
+                     name, len(columns), len(distinct_map))
+    finally:
+        conn.close()
+    _write_schema_json(out, master)
+    _write_join_map(out, master)
+    return len(master)
+
+
+def _run_snowflake(cfg: dict, sql: str, max_rows: int = 200) -> list[dict]:
+    import snowflake.connector
+    conn = _sf_connect(cfg)
+    try:
+        cur = conn.cursor(snowflake.connector.DictCursor)
+        cur.execute(sql)
+        return [dict(r) for r in cur.fetchmany(max_rows)]
+    finally:
+        conn.close()
+
+
+def _sf_md(name, meta, columns, sample, distinct_map: dict) -> str:
+    lines = [f"# {name}"]
+    if meta.get("COMMENT"):
+        lines.append(f"\n{meta['COMMENT']}")
+    lines.append(f"\n**Type:** {meta.get('TABLE_TYPE','TABLE')}  ")
+    lines.append(f"**Approximate row count:** {meta.get('ROW_COUNT','unknown')}")
+    lines.append("\n## Columns\n")
+    lines.append("| Column | Type | Nullable | Notes | Distinct Values |")
+    lines.append("|--------|------|:--------:|-------|-----------------|")
+    for c in columns:
+        nullable = "Yes" if c.get("IS_NULLABLE") == "YES" else "No"
+        comment  = (c.get("COMMENT") or "").replace("|", "\\|")
+        col_type = c["DATA_TYPE"]
+        if c.get("CHARACTER_MAXIMUM_LENGTH"):
+            col_type += f"({c['CHARACTER_MAXIMUM_LENGTH']})"
+        elif c.get("NUMERIC_PRECISION"):
+            col_type += f"({c['NUMERIC_PRECISION']})"
+        cname = c["COLUMN_NAME"]
+        dist  = ", ".join(f"'{v}'" for v in distinct_map.get(cname, []))
+        lines.append(f"| `{cname}` | {col_type} | {nullable} | {comment} | {dist} |")
+    _append_sample(lines, sample)
+    return "\n".join(lines)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Oracle
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _ora_connect(cfg: dict, max_retries: int = 3):
+    """Oracle connection with retry for transient network failures."""
+    import oracledb
+    import time as _time
+
+    last_err = None
+    for attempt in range(max_retries):
+        try:
+            conn = oracledb.connect(
+                user=cfg["user"], password=cfg["password"], dsn=cfg["dsn"]
+            )
+            if attempt > 0:
+                log.info("Oracle connected on retry %d/%d", attempt + 1, max_retries)
+            return conn
+        except oracledb.OperationalError as e:
+            last_err = e
+            if attempt == max_retries - 1:
+                raise
+            wait = 2 ** (attempt + 1)
+            log.warning(
+                "Oracle connection attempt %d/%d failed — retrying in %ds: %s",
+                attempt + 1, max_retries, wait, str(e)[:120],
+            )
+            _time.sleep(wait)
+        except Exception:
+            # Auth errors — fail fast
+            raise
+    if last_err:
+        raise last_err
+    raise RuntimeError("Oracle connection failed")
+
+
+def _ora_distinct(cur, owner: str, name: str, col_name: str) -> list[str]:
+    try:
+        cur.execute(
+            f'SELECT DISTINCT "{col_name}" FROM "{owner}"."{name}" '
+            f'WHERE "{col_name}" IS NOT NULL AND ROWNUM <= {_MAX_DISTINCT + 1}'
+        )
+        vals = [str(r[0]) for r in cur.fetchall()]
+        return sorted(vals) if len(vals) <= _MAX_DISTINCT else []
+    except Exception:
+        return []
+
+
+def _discover_oracle(cfg: dict, out: Path, allowed: set[str] | None = None) -> int:
+    owner = (cfg.get("schema") or cfg["user"]).upper()
+    conn  = _ora_connect(cfg)
+    master = {}
+    try:
+        cur = conn.cursor()
+        if allowed is None:
+            cur.execute("""
+            SELECT t.OWNER, t.TABLE_NAME, 'BASE TABLE' AS TABLE_TYPE, t.NUM_ROWS, tc.COMMENTS
+            FROM ALL_TABLES t
+            LEFT JOIN ALL_TAB_COMMENTS tc ON tc.OWNER=t.OWNER AND tc.TABLE_NAME=t.TABLE_NAME
+            WHERE t.OWNER = :owner ORDER BY t.TABLE_NAME
+            """, owner=owner)
+        else:
+            cur.execute("""
+            SELECT t.OWNER, t.TABLE_NAME, 'BASE TABLE' AS TABLE_TYPE, t.NUM_ROWS, tc.COMMENTS
+            FROM ALL_TABLES t
+            LEFT JOIN ALL_TAB_COMMENTS tc ON tc.OWNER=t.OWNER AND tc.TABLE_NAME=t.TABLE_NAME
+            ORDER BY t.OWNER, t.TABLE_NAME
+            """)
+        tables = [{"OWNER": r[0], "TABLE_NAME": r[1], "TABLE_TYPE": r[2],
+                   "ROW_COUNT": r[3], "COMMENT": r[4]} for r in cur.fetchall()]
+        if allowed is None:
+            cur.execute("""
+            SELECT v.OWNER, v.VIEW_NAME, 'VIEW' AS TABLE_TYPE, NULL, vc.COMMENTS
+            FROM ALL_VIEWS v
+            LEFT JOIN ALL_TAB_COMMENTS vc ON vc.OWNER=v.OWNER AND vc.TABLE_NAME=v.VIEW_NAME
+            WHERE v.OWNER = :owner ORDER BY v.VIEW_NAME
+            """, owner=owner)
+        else:
+            cur.execute("""
+            SELECT v.OWNER, v.VIEW_NAME, 'VIEW' AS TABLE_TYPE, NULL, vc.COMMENTS
+            FROM ALL_VIEWS v
+            LEFT JOIN ALL_TAB_COMMENTS vc ON vc.OWNER=v.OWNER AND vc.TABLE_NAME=v.VIEW_NAME
+            ORDER BY v.OWNER, v.VIEW_NAME
+            """)
+        tables += [{"OWNER": r[0], "TABLE_NAME": r[1], "TABLE_TYPE": r[2],
+                    "ROW_COUNT": r[3], "COMMENT": r[4]} for r in cur.fetchall()]
+
+        selected_tables = []
+        for tbl in tables:
+            name = tbl["TABLE_NAME"]
+            tbl_owner = (tbl.get("OWNER") or owner).upper()
+            if not _allowed_table_match(allowed, name, tbl_owner):
+                log.debug("Oracle: skipping %s (not in selected tables)", name)
+                continue
+            selected_tables.append(tbl)
+
+        name_counts = {}
+        for tbl in selected_tables:
+            key_name = _clean_identifier_part(tbl["TABLE_NAME"])
+            name_counts[key_name] = name_counts.get(key_name, 0) + 1
+
+        for tbl in selected_tables:
+            name = tbl["TABLE_NAME"]
+            tbl_owner = (tbl.get("OWNER") or owner).upper()
+            normalized_name = _clean_identifier_part(name)
+            table_key = name if name_counts.get(normalized_name, 0) <= 1 else f"{tbl_owner}.{name}"
+            file_stem = name if table_key == name else f"{tbl_owner}__{name}"
+            cur.execute("""
+                SELECT c.COLUMN_NAME, c.DATA_TYPE, c.NULLABLE,
+                       c.DATA_LENGTH, c.DATA_PRECISION, cc.COMMENTS
+                FROM ALL_TAB_COLUMNS c
+                LEFT JOIN ALL_COL_COMMENTS cc ON cc.OWNER=c.OWNER
+                    AND cc.TABLE_NAME=c.TABLE_NAME AND cc.COLUMN_NAME=c.COLUMN_NAME
+                WHERE c.OWNER=:owner AND c.TABLE_NAME=:tname ORDER BY c.COLUMN_ID
+            """, owner=tbl_owner, tname=name)
+            columns = [{"COLUMN_NAME": r[0], "DATA_TYPE": r[1],
+                        "IS_NULLABLE": "YES" if r[2] == "Y" else "NO",
+                        "DATA_LENGTH": r[3], "DATA_PRECISION": r[4],
+                        "COMMENT": r[5]} for r in cur.fetchall()]
+
+            distinct_map = {}
+            if not should_use_synthetic(name):
+                for col in columns:
+                    cname = col["COLUMN_NAME"]
+                    if _is_categorical(cname, col["DATA_TYPE"]):
+                        vals = _ora_distinct(cur, tbl_owner, name, cname)
+                        if vals:
+                            distinct_map[cname] = vals
+
+            if should_use_synthetic(name):
+                col_defs = [{"name": c["COLUMN_NAME"], "type": c["DATA_TYPE"]} for c in columns]
+                sample = generate_synthetic_sample(col_defs)
+            else:
+                try:
+                    cur.execute(f'SELECT * FROM "{tbl_owner}"."{name}" FETCH FIRST 5 ROWS ONLY')
+                    col_names = [d[0] for d in cur.description]
+                    sample = [dict(zip(col_names, row)) for row in cur.fetchall()]
+                except Exception:
+                    sample = []
+
+            (out / f"{_safe_table_file_stem(file_stem)}.md").write_text(
+                _ora_md(name, tbl, columns, sample, tbl_owner, distinct_map), encoding="utf-8"
+            )
+            master[table_key] = {
+                "columns": [{"name": c["COLUMN_NAME"], "type": c["DATA_TYPE"],
+                              "nullable": c["IS_NULLABLE"] == "YES",
+                              "comment": c.get("COMMENT") or ""}
+                             for c in columns],
+                "row_count": tbl.get("ROW_COUNT"),
+                "comment":   tbl.get("COMMENT") or "",
+                "owner":     tbl_owner,
+            }
+    finally:
+        conn.close()
+    _write_schema_json(out, master)
+    _write_join_map(out, master)
+    return len(master)
+
+
+def _run_oracle(cfg: dict, sql: str, max_rows: int = 200) -> list[dict]:
+    conn = _ora_connect(cfg)
+    try:
+        cur = conn.cursor()
+        cur.execute(sql)
+        col_names = [d[0] for d in cur.description]
+        return [dict(zip(col_names, row)) for row in cur.fetchmany(max_rows)]
+    finally:
+        conn.close()
+
+
+def _ora_md(name, meta, columns, sample, owner, distinct_map: dict) -> str:
+    lines = [f"# {owner}.{name}"]
+    if meta.get("COMMENT"):
+        lines.append(f"\n{meta['COMMENT']}")
+    lines.append(f"\n**Type:** {meta.get('TABLE_TYPE','TABLE')}  **Owner:** {owner}  ")
+    lines.append(f"**Approx row count:** {meta.get('ROW_COUNT','unknown')}")
+    lines.append("\n## Columns\n")
+    lines.append("| Column | Type | Nullable | Notes | Distinct Values |")
+    lines.append("|--------|------|:--------:|-------|-----------------|")
+    for c in columns:
+        nullable = "Yes" if c["IS_NULLABLE"] == "YES" else "No"
+        comment  = (c.get("COMMENT") or "").replace("|", "\\|")
+        col_type = c["DATA_TYPE"]
+        if c.get("DATA_PRECISION"):
+            col_type += f"({c['DATA_PRECISION']})"
+        elif c.get("DATA_LENGTH") and c["DATA_TYPE"] in ("VARCHAR2", "CHAR", "NVARCHAR2"):
+            col_type += f"({c['DATA_LENGTH']})"
+        cname = c["COLUMN_NAME"]
+        dist  = ", ".join(f"'{v}'" for v in distinct_map.get(cname, []))
+        lines.append(f"| `{cname}` | {col_type} | {nullable} | {comment} | {dist} |")
+    _append_sample(lines, sample)
+    return "\n".join(lines)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Azure SQL
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _az_connect(cfg: dict, max_retries: int = 4):
+    """
+    Open Azure SQL connection with retry + backoff.
+
+    database in cfg is now optional.  When omitted the driver connects to the
+    login's default database on the server — useful for server-level enumeration
+    when multiple databases need to be discovered.
+    """
+    import pyodbc
+    import time as _time
+    driver        = cfg.get("driver", "ODBC Driver 18 for SQL Server")
+    login_timeout = int(cfg.get("login_timeout", 60))
+    db_part       = f"DATABASE={cfg['database']};" if cfg.get("database") else ""
+    conn_str = (
+        f"DRIVER={{{driver}}};"
+        f"SERVER={cfg['server']};"
+        f"{db_part}"
+        f"UID={cfg['user']};"
+        f"PWD={cfg['password']};"
+        f"Encrypt=yes;TrustServerCertificate=no;"
+        f"Connection Timeout={login_timeout};"
+    )
+
+    # Transient error codes worth retrying — 40613 is Azure SQL auto-pause
+    _TRANSIENT_CODES = {"HYT00", "HYT01", "08001", "08S01", "08003", "08004", "40613"}
+    # Wait times per retry attempt (seconds) — longer for 40613 cold start
+    _WAIT_TIMES = [0, 5, 20, 30]
+
+    last_err = None
+    for attempt in range(max_retries):
+        try:
+            conn = pyodbc.connect(conn_str, timeout=login_timeout)
+            if attempt > 0:
+                log.info("Azure SQL connected on retry %d/%d", attempt + 1, max_retries)
+            return conn
+        except pyodbc.Error as e:
+            last_err = e
+            sqlstate = e.args[0] if e.args else ""
+            if sqlstate not in _TRANSIENT_CODES:
+                raise  # non-transient — bad credentials, wrong server etc.
+            if attempt == max_retries - 1:
+                raise  # exhausted all retries
+            wait = _WAIT_TIMES[attempt + 1] if attempt + 1 < len(_WAIT_TIMES) else 30
+            if sqlstate == "40613":
+                log.warning(
+                    "Azure SQL auto-pause detected (40613) — waiting %ds for DB to resume "
+                    "(attempt %d/%d). Disable auto-pause in Azure Portal to avoid this delay.",
+                    wait, attempt + 1, max_retries,
+                )
+            else:
+                log.warning(
+                    "Azure SQL transient error %s (attempt %d/%d) — retrying in %ds",
+                    sqlstate, attempt + 1, max_retries, wait,
+                )
+            _time.sleep(wait)
+    if last_err:
+        raise last_err
+    raise RuntimeError("Azure SQL connection failed — no error captured")
+
+
+def _az_distinct(cur, schema: str, name: str, col_name: str) -> list[str]:
+    try:
+        cur.execute(
+            f"SELECT DISTINCT TOP {_MAX_DISTINCT + 1} [{col_name}] "
+            f"FROM [{schema}].[{name}] WHERE [{col_name}] IS NOT NULL"
+        )
+        vals = [str(r[0]) for r in cur.fetchall()]
+        return sorted(vals) if len(vals) <= _MAX_DISTINCT else []
+    except Exception:
+        return []
+
+
+def _discover_azure_sql(cfg: dict, out: Path, allowed: set[str] | None = None) -> int:
+    """
+    Discover Azure SQL schema and write one .md per table.
+
+    Single-DB mode (database specified): one connection, writes md files for
+    all selected tables across all schemas in that database.
+
+    Multi-DB mode (database NOT specified): enumerates sys.databases, then
+    reconnects to each database separately.  Azure SQL Database (cloud) does
+    not support cross-database three-part references like
+    [db].INFORMATION_SCHEMA.TABLES (error 40515), so a new connection is
+    opened per database — no prefix syntax used.
+    """
+    master: dict = {}
+
+    def _process_db(db_cfg: dict) -> tuple[str, int]:
+        """Connect to one database, write .md files, return (db_name, count)."""
+        conn = _az_connect(db_cfg)
+        try:
+            cur = conn.cursor()
+            # Get actual DB name (handles case mismatches)
+            try:
+                cur.execute("SELECT DB_NAME()")
+                row = cur.fetchone()
+                db_upper = (row[0] if row else db_cfg.get("database", "")).upper()
+            except Exception:
+                db_upper = db_cfg.get("database", "").upper()
+
+            cur.execute("""
+                SELECT TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE
+                FROM   INFORMATION_SCHEMA.TABLES
+                WHERE  TABLE_TYPE IN ('BASE TABLE','VIEW')
+                ORDER  BY TABLE_SCHEMA, TABLE_NAME
+            """)
+            all_rows = [(r[0], r[1], r[2]) for r in cur.fetchall()]
+
+            # Filter to allowed tables
+            selected = [
+                (schema, name, ttype)
+                for schema, name, ttype in all_rows
+                if _allowed_table_match(allowed, name, schema, db_upper)
+            ]
+
+            if not selected:
+                return db_upper, 0
+
+            # Detect duplicate table names across schemas
+            name_counts: dict[str, int] = {}
+            for schema, name, _ in selected:
+                key = _clean_identifier_part(name)
+                name_counts[key] = name_counts.get(key, 0) + 1
+
+            written = 0
+            for schema, name, _ in selected:
+                normalized_name = _clean_identifier_part(name)
+                table_key = f"{db_upper}.{schema.upper()}.{name}"
+                file_stem = (
+                    name if name_counts.get(normalized_name, 0) <= 1
+                    else f"{schema}__{name}"
+                )
+
+                try:
+                    cur.execute("""
+                        SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE,
+                               CHARACTER_MAXIMUM_LENGTH, NUMERIC_PRECISION
+                        FROM   INFORMATION_SCHEMA.COLUMNS
+                        WHERE  TABLE_SCHEMA=? AND TABLE_NAME=?
+                        ORDER  BY ORDINAL_POSITION
+                    """, schema, name)
+                    columns = [
+                        {"COLUMN_NAME": r[0], "DATA_TYPE": r[1], "IS_NULLABLE": r[2],
+                         "CHARACTER_MAXIMUM_LENGTH": r[3], "NUMERIC_PRECISION": r[4]}
+                        for r in cur.fetchall()
+                    ]
+                except Exception as e:
+                    log.warning("AzSQL: cannot read columns for %s.%s: %s", schema, name, e)
+                    continue
+
+                distinct_map: dict[str, list[str]] = {}
+                if not should_use_synthetic(name):
+                    for col in columns:
+                        cname = col["COLUMN_NAME"]
+                        if _is_categorical(cname, col["DATA_TYPE"]):
+                            vals = _az_distinct(cur, schema, name, cname)
+                            if vals:
+                                distinct_map[cname] = vals
+                                log.info("AzSQL distinct values for %s.%s: %s",
+                                         name, cname, vals)
+
+                if should_use_synthetic(name):
+                    col_defs = [{"name": c["COLUMN_NAME"], "type": c["DATA_TYPE"]}
+                                for c in columns]
+                    sample = generate_synthetic_sample(col_defs)
+                    log.info("Synthetic sample for sensitive table: %s", name)
+                else:
+                    try:
+                        cur.execute(f"SELECT TOP 5 * FROM [{schema}].[{name}]")
+                        col_names = [d[0] for d in cur.description]
+                        sample = [dict(zip(col_names, r)) for r in cur.fetchall()]
+                    except Exception:
+                        sample = []
+
+                tbl_meta = {"TABLE_SCHEMA": schema, "TABLE_NAME": name,
+                            "TABLE_TYPE": "BASE TABLE", "TABLE_CATALOG": db_upper}
+                (out / f"{_safe_table_file_stem(file_stem)}.md").write_text(
+                    _az_md(name, tbl_meta, columns, sample, schema,
+                           distinct_map, database=db_upper),
+                    encoding="utf-8",
+                )
+                master[table_key] = {
+                    "columns": [{"name": c["COLUMN_NAME"], "type": c["DATA_TYPE"],
+                                 "nullable": c["IS_NULLABLE"] == "YES", "comment": ""}
+                                for c in columns],
+                    "row_count": None,
+                    "comment":   "",
+                    "schema":    schema,
+                    "database":  db_upper,
+                }
+                log.info("Azure SQL: discovered [%s].[%s].[%s] (%d cols, %d categorical)",
+                         db_upper, schema, name, len(columns), len(distinct_map))
+                written += 1
+
+            return db_upper, written
+        finally:
+            conn.close()
+
+    if cfg.get("database"):
+        # ── Single-DB mode ────────────────────────────────────────────────────
+        _process_db(cfg)
+    else:
+        # ── Multi-DB mode: enumerate then reconnect per database ──────────────
+        # First connection (no DB specified) just to enumerate sys.databases
+        enum_cfg = dict(cfg)
+        conn0 = _az_connect(enum_cfg)
+        try:
+            cur0 = conn0.cursor()
+            try:
+                cur0.execute("""
+                    SELECT name FROM sys.databases
+                    WHERE  name NOT IN ('master','tempdb','model','msdb')
+                      AND  state_desc = 'ONLINE'
+                    ORDER  BY name
+                """)
+                db_names = [r[0] for r in cur0.fetchall()]
+            except Exception as e:
+                log.warning("AzSQL: sys.databases enumeration failed: %s — "
+                            "using current DB", e)
+                try:
+                    cur0.execute("SELECT DB_NAME()")
+                    row = cur0.fetchone()
+                    db_names = [row[0]] if row and row[0] else []
+                except Exception:
+                    db_names = []
+        finally:
+            conn0.close()
+
+        if not db_names:
+            log.warning("AzSQL multi-DB: no user databases found")
+        else:
+            log.info("AzSQL multi-DB: discovered %d databases: %s",
+                     len(db_names), ", ".join(db_names))
+            for db in db_names:
+                per_cfg = dict(cfg)
+                per_cfg["database"] = db
+                try:
+                    _process_db(per_cfg)
+                except Exception as e:
+                    log.warning("AzSQL: skipping DB %s — %s", db, e)
+
+    _write_schema_json(out, master)
+    _write_join_map(out, master)
+    return len(master)
+
+
+def _run_azure_sql(cfg: dict, sql: str, max_rows: int = 200) -> list[dict]:
+    conn = _az_connect(cfg)
+    try:
+        cur = conn.cursor()
+        cur.execute(sql)
+        col_names = [d[0] for d in cur.description]
+        return [dict(zip(col_names, row)) for row in cur.fetchmany(max_rows)]
+    finally:
+        conn.close()
+
+
+def _az_md(name, meta, columns, sample, schema, distinct_map: dict,
+           database: str = "") -> str:
+    # Header uses full 3-part FQN for identification purposes (KB keys, Qdrant)
+    # but the SQL table name anchor uses 2-part [SCHEMA].[TABLE] because
+    # Azure SQL Database (cloud) does not support 3-part names in DML queries.
+    if database:
+        fqn = f"{database}.{schema}.{name}"
+        header = f"# {fqn}"
+    else:
+        fqn = f"{schema}.{name}"
+        header = f"# [{schema}].[{name}]"
+
+    lines = [header]
+    lines.append(
+        f"\n**Type:** {meta.get('TABLE_TYPE','TABLE')}  "
+        f"**Schema:** {schema}"
+        + (f"  **Database:** {database}" if database else "")
+    )
+    if schema:
+        # 2-part name for actual SQL — Azure SQL Database only supports [SCHEMA].[TABLE]
+        lines.append(
+            f"\n**SQL table name:** `[{schema}].[{name}]`  "
+            f"— always use this exact two-part name in generated SQL."
+        )
+    lines.append("\n## Columns\n")
+    lines.append("| Column | Type | Nullable | Distinct Values |")
+    lines.append("|--------|------|:--------:|-----------------|")
+    for c in columns:
+        nullable = "Yes" if c["IS_NULLABLE"] == "YES" else "No"
+        col_type = c["DATA_TYPE"]
+        if c.get("CHARACTER_MAXIMUM_LENGTH"):
+            col_type += f"({c['CHARACTER_MAXIMUM_LENGTH']})"
+        elif c.get("NUMERIC_PRECISION"):
+            col_type += f"({c['NUMERIC_PRECISION']})"
+        cname = c["COLUMN_NAME"]
+        dist  = ", ".join(f"'{v}'" for v in distinct_map.get(cname, []))
+        lines.append(f"| `{cname}` | {col_type} | {nullable} | {dist} |")
+    _append_sample(lines, sample)
+    return "\n".join(lines)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Shared helpers
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _append_sample(lines: list, sample: list) -> None:
+    if not sample:
+        return
+    lines.append("\n## Sample data\n")
+    headers = list(sample[0].keys())
+    lines.append("| " + " | ".join(headers) + " |")
+    lines.append("| " + " | ".join(["---"] * len(headers)) + " |")
+    for row in sample:
+        vals = [str(row.get(h, ""))[:40].replace("|", "\\|") for h in headers]
+        lines.append("| " + " | ".join(vals) + " |")
+
+
+def _write_schema_json(out: Path, master: dict) -> None:
+    (out / "_schema.json").write_text(
+        json.dumps(master, indent=2, default=str), encoding="utf-8"
+    )
+
+
+def _write_join_map(out: Path, master: dict) -> None:
+    """Write auto-detected cross-table join relationships to _join_map.md."""
+    content = _build_join_map(master)
+    (out / "_join_map.md").write_text(content, encoding="utf-8")
+    log.info("Join map written to %s/_join_map.md", out)
