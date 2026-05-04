@@ -1,0 +1,1789 @@
+{% extends "portal_base.html" %}
+{% block title %}Chat — QueryBot{% endblock %}
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap');
+.chat-page{max-width:1120px;margin:0 auto;display:flex;flex-direction:column;gap:1rem}
+.chat-hero{background:linear-gradient(135deg,color-mix(in srgb,var(--surface) 92%, var(--primary-soft) 8%),var(--surface-2));border:1px solid var(--border);border-radius:var(--radius);padding:1.1rem 1.2rem;display:flex;justify-content:space-between;gap:1rem;box-shadow:var(--shadow-md)}
+.chat-title{font-size:24px;font-weight:800;letter-spacing:-.03em;color:var(--text);margin-bottom:.35rem}
+.chat-subtitle{color:var(--text-muted);line-height:1.6;max-width:700px}
+.chat-pills,.hero-actions{display:flex;gap:.55rem;flex-wrap:wrap;margin-top:.9rem}
+.chat-pill,.hero-btn{display:inline-flex;align-items:center;gap:.45rem;padding:8px 12px;border-radius:999px;background:var(--surface);border:1px solid var(--border);color:var(--text-soft);font-size:12px;font-weight:700;box-shadow:var(--shadow)}
+.token-kpi-pill{background:linear-gradient(135deg,color-mix(in srgb,var(--primary-soft) 18%,var(--surface) 82%),var(--surface));border-color:color-mix(in srgb,var(--primary) 28%,var(--border) 72%);color:var(--text)}
+.token-kpi-pill .kpi-dot{width:8px;height:8px;border-radius:999px;background:linear-gradient(135deg,var(--success),var(--primary));box-shadow:0 0 0 4px color-mix(in srgb,var(--primary-soft) 30%,transparent)}
+.query-kpi-pill{background:linear-gradient(135deg,color-mix(in srgb,var(--success-soft) 26%,var(--surface) 74%),var(--surface));border-color:color-mix(in srgb,var(--success) 28%,var(--border) 72%);color:var(--text)}
+.query-kpi-pill .kpi-dot{width:8px;height:8px;border-radius:999px;background:linear-gradient(135deg,var(--success),var(--primary));box-shadow:0 0 0 4px color-mix(in srgb,var(--success-soft) 38%,transparent)}
+.query-kpi-pill.limit-warning{background:linear-gradient(135deg,color-mix(in srgb,var(--warning-soft) 42%,var(--surface) 58%),var(--surface));border-color:color-mix(in srgb,var(--warning) 35%,var(--border) 65%)}
+.query-kpi-pill.limit-warning .kpi-dot{background:var(--warning);box-shadow:0 0 0 4px color-mix(in srgb,var(--warning-soft) 50%,transparent)}
+.query-kpi-pill.limit-blocked{background:linear-gradient(135deg,color-mix(in srgb,var(--danger-soft) 42%,var(--surface) 58%),var(--surface));border-color:color-mix(in srgb,var(--danger) 35%,var(--border) 65%)}
+.query-kpi-pill.limit-blocked .kpi-dot{background:var(--danger);box-shadow:0 0 0 4px color-mix(in srgb,var(--danger-soft) 50%,transparent)}
+.query-limit-notice{display:none;margin:.35rem 0 0;border-radius:var(--radius);padding:.75rem .9rem;font-size:12px;font-weight:700;border:1px solid color-mix(in srgb,var(--warning) 30%,transparent);background:var(--warning-soft);color:var(--warning)}
+.query-limit-notice.show{display:flex;align-items:center;justify-content:space-between;gap:.75rem}
+.query-limit-notice.blocked{border-color:color-mix(in srgb,var(--danger) 30%,transparent);background:var(--danger-soft);color:var(--danger)}
+.hero-btn{cursor:pointer}
+.hero-btn:hover{text-decoration:none;border-color:var(--primary);color:var(--primary)}
+.chat-shell{background:color-mix(in srgb,var(--surface) 94%, transparent);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-lg);overflow:hidden}
+.chat-shell-header{padding:1rem 1.1rem;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:1rem;background:var(--surface)}
+.chat-shell-title{display:flex;align-items:center;gap:.75rem}
+.chat-shell-badge{width:42px;height:42px;border-radius:var(--radius);background:linear-gradient(135deg,var(--primary),var(--blue-soft));display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;box-shadow:var(--shadow)}
+.chat-shell-title h2{font-size:15px;font-weight:800;color:var(--text);margin-bottom:3px}
+.chat-shell-title p{font-size:12px;color:var(--text-muted)}
+.status-wrap{display:flex;align-items:center;gap:.6rem;flex-wrap:wrap}
+.status-badge{display:inline-flex;align-items:center;gap:.45rem;padding:7px 10px;border-radius:999px;background:var(--surface-2);border:1px solid var(--border);color:var(--text-soft);font-size:12px;font-weight:700}
+.status-led{width:8px;height:8px;border-radius:50%;background:var(--success)}
+.status-badge.offline .status-led{background:var(--danger)}
+.status-note{font-size:12px;color:var(--text-muted)}
+.chat-inner{padding:0 1rem 1rem}
+.chat-wrap{display:grid;grid-template-rows:minmax(420px,1fr) auto auto;min-height:68vh;max-height:calc(100vh - 60px - 6rem)}
+.chat-thread{overflow-y:auto;padding:1rem 0;display:flex;flex-direction:column;gap:1rem;scroll-behavior:smooth}
+.msg-system{align-self:center;max-width:80%;text-align:center;font-size:11px;color:var(--text-muted);padding:.45rem .7rem;border-radius:999px;background:var(--surface-2);border:1px solid var(--border)}
+.empty-state{padding:1.05rem 1.2rem;border:1px dashed var(--border);border-radius:var(--radius);background:var(--surface-2);color:var(--text-muted);line-height:1.7}
+.msg{display:flex;gap:.8rem;max-width:100%}
+.msg-user{flex-direction:row-reverse}
+.msg-avatar{width:38px;height:38px;border-radius:var(--radius);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:800;flex-shrink:0;box-shadow:var(--shadow)}
+.msg-user .msg-avatar{background:linear-gradient(135deg,var(--primary),var(--blue-soft));color:#fff}
+.msg-bot .msg-avatar{background:var(--surface-2);color:var(--primary);border:1px solid var(--border)}
+.msg-content{max-width:min(82%,780px);display:flex;flex-direction:column;gap:.4rem}
+.msg-meta{display:flex;align-items:center;gap:.45rem;font-size:11px;color:var(--text-muted);padding:0 .15rem}.msg-user .msg-meta{justify-content:flex-end}
+.msg-name{font-weight:800;color:var(--text-soft)}
+.msg-bubble{padding:1rem 1.05rem;border-radius:var(--radius-lg);font-size:13px;line-height:1.72;word-break:break-word;border:1px solid transparent}
+.msg-user .msg-bubble{background:linear-gradient(135deg,var(--primary),var(--primary-hover));color:#fff;border-bottom-right-radius:6px;box-shadow:0 10px 18px rgba(37,99,235,.18)}
+.msg-bot .msg-bubble{background:var(--surface);color:var(--text);border-color:var(--border);border-bottom-left-radius:6px;box-shadow:var(--shadow)}
+.msg-bot .msg-bubble pre{background:var(--bg-soft);border:1px solid var(--border);border-radius:var(--radius);padding:.75rem .85rem;overflow-x:auto;font-family:'JetBrains Mono',monospace;font-size:11px;margin:.55rem 0;white-space:pre-wrap;color:var(--text)}
+.msg-bot .msg-bubble code{font-family:'JetBrains Mono',monospace;font-size:11px;background:var(--surface-2);padding:2px 6px;border-radius:6px}
+.msg-bot .msg-bubble strong{color:var(--text)}
+.msg-bot .msg-bubble em{color:var(--text-soft);font-style:normal}
+.msg-actions{display:flex;gap:.45rem;flex-wrap:wrap;padding:0 .1rem}
+.msg-action{font-size:11px;font-weight:700;padding:6px 10px;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-soft);cursor:pointer;transition:all .15s}
+.msg-action:hover{background:var(--surface-3);border-color:var(--primary);color:var(--primary)}
+/* ── Processing row — just the floating mascot, no card ── */
+.processing-row{display:none;align-items:flex-end;gap:.7rem;padding:.2rem 0 .4rem .15rem}.processing-row.active{display:flex}
+/* Mascot wrap — small floating character */
+.mascot-wrap{position:relative;width:52px;height:52px;flex-shrink:0;cursor:default}
+.mascot-wrap svg{width:52px;height:52px;overflow:visible;filter:drop-shadow(0 2px 8px rgba(37,99,235,.18))}
+.mascot-tooltip{position:absolute;bottom:calc(100% + 7px);left:50%;transform:translateX(-50%);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:5px 11px;font-size:11px;font-weight:700;color:var(--text-soft);white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .18s;z-index:10;box-shadow:var(--shadow-md)}
+.mascot-tooltip::after{content:'';position:absolute;top:100%;left:50%;transform:translateX(-50%);border:5px solid transparent;border-top-color:var(--border)}
+.mascot-wrap:hover .mascot-tooltip{opacity:1}
+/* ============================================================================
+   Executive AI intelligence indicator — abstract orb that floats around the
+   composer. Replaces the previous cartoon mascot.
+   Design principles: no face, no cartoon, light + form communicate state.
+   States: idle · focus · typing · thinking · send · error
+   ============================================================================ */
+.chat-composer{position:relative;--ai-core:#2563eb;--ai-halo:rgba(37,99,235,.18);--ai-ring:rgba(37,99,235,.35)}
+.chat-input-wrap{position:relative;flex:1;display:flex;align-items:center}
+
+.ai-indicator{
+  position:absolute;
+  left:10px;top:50%;
+  width:22px;height:22px;
+  pointer-events:auto;
+  transform:translate(0,-50%);
+  transition:left .45s cubic-bezier(.22,.61,.36,1),
+             transform .45s cubic-bezier(.22,.61,.36,1),
+             opacity .25s;
+  z-index:3;
+}
+.ai-indicator.ai-hidden{opacity:0;pointer-events:none}
+
+/* Core halo — always-on soft glow */
+.ai-indicator .ai-halo{
+  position:absolute;inset:-14px;border-radius:50%;
+  background:radial-gradient(circle,var(--ai-halo) 0%,transparent 70%);
+  opacity:.55;transition:opacity .6s ease,transform .6s ease;
+  pointer-events:none;
+}
+
+/* Outer ring — reacts to attention */
+.ai-indicator .ai-ring{
+  position:absolute;inset:-3px;border-radius:50%;
+  border:1px solid var(--ai-ring);
+  opacity:.5;
+  transition:opacity .4s,transform .6s cubic-bezier(.22,.61,.36,1),border-color .4s;
+  pointer-events:none;
+}
+
+/* Inner core dot */
+.ai-indicator .ai-core{
+  position:absolute;inset:6px;border-radius:50%;
+  background:radial-gradient(circle at 35% 30%, #ffffff 0%, var(--ai-core) 60%, #1e3a8a 100%);
+  box-shadow:0 0 10px var(--ai-halo);
+  transition:background .45s,box-shadow .45s,transform .45s cubic-bezier(.22,.61,.36,1);
+}
+
+/* Data-flow arcs (visible only in thinking/processing) */
+.ai-indicator .ai-arc{
+  position:absolute;inset:-2px;border-radius:50%;
+  border:1px solid transparent;
+  opacity:0;
+  transition:opacity .3s;
+  pointer-events:none;
+}
+.ai-indicator .ai-arc-1{border-top-color:var(--ai-core);border-right-color:var(--ai-core)}
+.ai-indicator .ai-arc-2{border-bottom-color:var(--ai-core);inset:-6px}
+
+/* ── Idle — gentle breathing halo, very low intensity ────────────────────── */
+.ai-indicator.ai-idle .ai-halo{animation:ai-breathe 4.5s ease-in-out infinite}
+.ai-indicator.ai-idle .ai-core{animation:ai-core-breathe 4.5s ease-in-out infinite}
+.ai-indicator.ai-idle{animation:ai-drift 7s ease-in-out infinite}
+
+/* ── Focus — user focused the input; indicator slides in slightly, ring brightens */
+.ai-indicator.ai-focus{animation:none;transform:translate(0,-50%) scale(1.05)}
+.ai-indicator.ai-focus .ai-ring{opacity:.85;transform:scale(1.1)}
+.ai-indicator.ai-focus .ai-halo{opacity:.75}
+
+/* ── Typing — attentive. Core brightens, ring rotates with a data stroke ── */
+.ai-indicator.ai-typing .ai-core{
+  background:radial-gradient(circle at 35% 30%, #ffffff 0%, #60a5fa 55%, var(--ai-core) 100%);
+  box-shadow:0 0 14px rgba(96,165,250,.55);
+  animation:ai-pulse 1.2s ease-in-out infinite;
+}
+.ai-indicator.ai-typing .ai-ring{
+  opacity:.9;
+  border-color:transparent;
+  border-top-color:var(--ai-core);
+  border-right-color:var(--ai-core);
+  animation:ai-ring-spin 2.2s linear infinite;
+}
+.ai-indicator.ai-typing .ai-halo{opacity:.9;animation:ai-breathe 1.8s ease-in-out infinite}
+
+/* ── Thinking — user paused. Deeper tone, slower internal motion ─────────── */
+.ai-indicator.ai-thinking .ai-core{
+  background:radial-gradient(circle at 35% 30%, #ddd6fe 0%, #7c3aed 60%, #4c1d95 100%);
+  box-shadow:0 0 14px rgba(124,58,237,.5);
+  animation:ai-core-contract 2.8s ease-in-out infinite;
+}
+.ai-indicator.ai-thinking .ai-ring{opacity:.7;border-color:rgba(124,58,237,.4);animation:ai-ring-spin 4s linear infinite reverse}
+.ai-indicator.ai-thinking .ai-arc-1{opacity:.8;animation:ai-ring-spin 3s linear infinite}
+.ai-indicator.ai-thinking .ai-arc-2{opacity:.5;animation:ai-ring-spin 5s linear infinite reverse;border-top-color:#7c3aed;border-left-color:#7c3aed}
+
+/* ── Processing / Send — focused, stabilized, structured rotation ─────────── */
+.ai-indicator.ai-send .ai-core{
+  background:radial-gradient(circle at 35% 30%, #d1fae5 0%, #10b981 60%, #065f46 100%);
+  box-shadow:0 0 18px rgba(16,185,129,.6);
+  transform:scale(1.15);
+}
+.ai-indicator.ai-send .ai-ring{opacity:1;border-color:rgba(16,185,129,.55);animation:ai-ring-spin 1.4s linear infinite}
+.ai-indicator.ai-send .ai-halo{opacity:1;background:radial-gradient(circle,rgba(16,185,129,.25) 0%,transparent 70%)}
+
+/* ── Response ready — subtle highlight pulse, does not demand attention ──── */
+.ai-indicator.ai-ready{animation:ai-ready-pulse 1.6s ease-out 1}
+.ai-indicator.ai-ready .ai-core{background:radial-gradient(circle at 35% 30%, #ffffff 0%, #10b981 60%, #047857 100%)}
+
+/* ── Error — muted red, no shake. Executive: failure should be informative, not theatrical */
+.ai-indicator.ai-error .ai-core{
+  background:radial-gradient(circle at 35% 30%, #fecaca 0%, #dc2626 60%, #7f1d1d 100%);
+  box-shadow:0 0 14px rgba(220,38,38,.5);
+}
+.ai-indicator.ai-error .ai-ring{opacity:.9;border-color:rgba(220,38,38,.5)}
+.ai-indicator.ai-error .ai-halo{background:radial-gradient(circle,rgba(220,38,38,.22) 0%,transparent 70%);opacity:.9}
+
+/* Tooltip — minimal label, shown on hover/error only */
+.ai-tooltip{
+  position:absolute;bottom:calc(100% + 10px);left:50%;
+  transform:translateX(-50%) translateY(2px);
+  background:var(--surface);border:1px solid var(--border);border-radius:8px;
+  padding:4px 9px;font-size:10.5px;font-weight:500;color:var(--text-soft);
+  white-space:nowrap;pointer-events:none;
+  opacity:0;transition:opacity .18s,transform .18s;
+  z-index:10;box-shadow:var(--shadow-md);letter-spacing:.01em;
+}
+.ai-indicator:hover .ai-tooltip,
+.ai-indicator.ai-error .ai-tooltip{opacity:1;transform:translateX(-50%) translateY(0)}
+
+/* Motion keyframes */
+@keyframes ai-breathe{
+  0%,100%{opacity:.45;transform:scale(1)}
+  50%{opacity:.75;transform:scale(1.08)}
+}
+@keyframes ai-core-breathe{
+  0%,100%{transform:scale(1)}
+  50%{transform:scale(1.05)}
+}
+@keyframes ai-drift{
+  0%,100%{transform:translate(0,-50%)}
+  25%{transform:translate(1px,calc(-50% - 1.5px))}
+  50%{transform:translate(2px,-50%)}
+  75%{transform:translate(1px,calc(-50% + 1.5px))}
+}
+@keyframes ai-pulse{
+  0%,100%{transform:scale(1)}
+  50%{transform:scale(1.12)}
+}
+@keyframes ai-ring-spin{
+  from{transform:rotate(0deg)}
+  to  {transform:rotate(360deg)}
+}
+@keyframes ai-core-contract{
+  0%,100%{transform:scale(.95)}
+  50%{transform:scale(1.1)}
+}
+@keyframes ai-ready-pulse{
+  0%{box-shadow:0 0 0 0 rgba(16,185,129,.4)}
+  100%{box-shadow:0 0 0 18px rgba(16,185,129,0)}
+}
+
+/* Respect reduced-motion preferences (WCAG) */
+@media (prefers-reduced-motion: reduce){
+  .ai-indicator,
+  .ai-indicator *{animation:none !important;transition:opacity .2s !important}
+}
+
+/* Legacy class aliases so the existing websocket handlers keep working.
+   These map `composer-mascot-wrap` selectors to the new `.ai-indicator` shell. */
+.composer-mascot-wrap{display:none} /* hide the old cartoon if still present in DOM */
+
+/* Animations */
+@keyframes mascot-float{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
+@keyframes mascot-bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}
+@keyframes mascot-scan{0%,100%{transform:rotate(-6deg)}50%{transform:rotate(6deg)}}
+@keyframes mascot-type{0%,100%{transform:translateY(0) scale(1)}50%{transform:translateY(-3px) scale(1.04)}}
+@keyframes mascot-check{0%,100%{transform:rotate(0deg)}20%{transform:rotate(-10deg)}60%{transform:rotate(10deg)}}
+@keyframes mascot-run{0%,100%{transform:translateY(0)}40%{transform:translateY(-6px)}}
+@keyframes mascot-celebrate{0%,100%{transform:translateY(0) rotate(0deg)}30%{transform:translateY(-9px) rotate(-12deg)}70%{transform:translateY(-9px) rotate(12deg)}}
+@keyframes mascot-blink{0%,88%,100%{scaleY:1}94%{transform:scaleY(.08)}}
+@keyframes mascot-spin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
+@keyframes mascot-pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.14)}}
+@keyframes mascot-wave-arm{0%,100%{transform:rotate(0deg)}50%{transform:rotate(30deg)}}
+@keyframes mascot-error{0%,100%{transform:rotate(0deg) translateY(0)}15%{transform:rotate(-12deg) translateY(-2px)}35%{transform:rotate(12deg) translateY(-2px)}55%{transform:rotate(-8deg) translateY(0)}75%{transform:rotate(6deg) translateY(0)}}
+@keyframes mascot-question{0%,100%{transform:translateY(0) rotate(0deg)}30%{transform:translateY(-5px) rotate(-5deg)}60%{transform:translateY(-5px) rotate(5deg)}}
+/* Thinking dots shown next to mascot */
+.mascot-thinking{display:flex;align-items:center;gap:4px;margin-left:2px;align-self:flex-end;margin-bottom:14px}
+.mascot-dot{width:5px;height:5px;border-radius:50%;background:var(--text-muted);opacity:.35;animation:dot-bounce 1.3s ease-in-out infinite}
+.mascot-dot:nth-child(2){animation-delay:.18s}
+.mascot-dot:nth-child(3){animation-delay:.36s}
+@keyframes dot-bounce{0%,80%,100%{opacity:.3;transform:translateY(0)}40%{opacity:.9;transform:translateY(-4px)}}
+@keyframes spin{to{transform:rotate(360deg)}}
+.chart-card{background:linear-gradient(180deg,color-mix(in srgb,var(--surface) 96%, var(--primary-soft) 4%),var(--surface));border:1px solid var(--border);border-radius:var(--radius);padding:1rem;box-shadow:var(--shadow)}
+.chart-header{display:flex;justify-content:space-between;gap:1rem;align-items:flex-start;margin-bottom:.8rem}
+.chart-title{font-size:13px;font-weight:800;color:var(--text)}
+.chart-subtitle{font-size:11px;color:var(--text-muted);margin-top:.2rem}
+.chart-toolbar{display:flex;gap:.45rem;flex-wrap:wrap}
+.chart-btn{border:1px solid var(--border);background:var(--surface-2);color:var(--text-soft);padding:7px 10px;border-radius:999px;font-size:11px;font-weight:700;cursor:pointer}
+.chart-btn:hover{border-color:var(--primary);color:var(--primary);background:var(--surface-3)}
+.chart-canvas{height:320px;width:100%;border-radius:var(--radius);background:linear-gradient(180deg,color-mix(in srgb,var(--surface-2) 92%, transparent),transparent)}
+.chart-footer{margin-top:.75rem;display:flex;justify-content:space-between;gap:1rem;color:var(--text-muted);font-size:11px;flex-wrap:wrap}
+.assistant-card{background:linear-gradient(180deg,color-mix(in srgb,var(--surface) 97%, var(--primary-soft) 3%),var(--surface));border:1px solid var(--border);border-radius:var(--radius);padding:1rem;box-shadow:var(--shadow)}
+.assistant-card{padding:1rem 1rem .95rem}
+.result-topline{display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap;margin-bottom:.8rem}.result-kicker{font-size:11px;font-weight:850;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted)}
+.result-layout{display:flex;flex-direction:column;gap:.9rem}.result-chart-wrap{background:color-mix(in srgb,var(--surface-2) 65%, transparent);border:1px solid var(--border);border-radius:var(--radius);padding:.65rem}.chart-canvas.compact{height:300px}
+.data-table-wrap{background:color-mix(in srgb,var(--surface-2) 55%, transparent);border:1px solid var(--border);border-radius:var(--radius);padding:0;overflow:hidden}
+.data-table-scroll{max-height:340px;overflow:auto}
+.data-table{width:100%;border-collapse:collapse;font-size:12.5px;font-variant-numeric:tabular-nums}
+.data-table thead th{position:sticky;top:0;background:var(--surface-2);color:var(--text-soft);font-weight:800;text-align:left;padding:8px 12px;border-bottom:1px solid var(--border);font-size:11px;letter-spacing:.04em;text-transform:uppercase;white-space:nowrap;z-index:1}
+.data-table tbody td{padding:7px 12px;border-bottom:1px solid color-mix(in srgb,var(--border) 40%, transparent);color:var(--text);vertical-align:top;white-space:nowrap;max-width:260px;overflow:hidden;text-overflow:ellipsis}
+.data-table tbody tr:last-child td{border-bottom:none}
+.data-table tbody tr:hover td{background:color-mix(in srgb,var(--primary-soft) 18%, transparent)}
+.data-table-foot{padding:6px 12px;font-size:11px;color:var(--text-muted);background:color-mix(in srgb,var(--surface-2) 35%, transparent);border-top:1px solid var(--border)}
+.action-row{display:flex;gap:.5rem;flex-wrap:wrap;margin-top:.2rem}.analysis-card{background:linear-gradient(180deg,color-mix(in srgb,var(--surface) 98%, var(--primary-soft) 2%),var(--surface));border:1px solid var(--border);border-radius:var(--radius);padding:1rem;box-shadow:var(--shadow)}.analysis-title{font-size:15px;font-weight:850;color:var(--text);margin-bottom:.4rem}.analysis-body{font-size:13px;line-height:1.7;color:var(--text)}.analysis-secondary{margin-top:.7rem;padding:.8rem .9rem;border-radius:var(--radius);background:var(--surface-2);border:1px solid var(--border);font-size:12px;line-height:1.65;color:var(--text-soft)}.analysis-list{margin:.8rem 0 0 1rem;color:var(--text);font-size:12px;line-height:1.7}.analysis-list li+li{margin-top:.35rem}.analysis-meta{margin-top:.45rem;font-size:11px;color:var(--text-muted)}
+.answer-headline{font-size:18px;font-weight:850;letter-spacing:-.02em;color:var(--text);line-height:1.35;margin-bottom:.45rem}
+.answer-chip{display:inline-flex;align-items:center;gap:.4rem;padding:7px 10px;border-radius:999px;background:var(--surface-2);border:1px solid var(--border);font-size:11px;font-weight:800;color:var(--text-soft);margin-bottom:.8rem}
+.scope-badge{display:inline-flex;align-items:center;gap:.35rem;padding:6px 10px;border-radius:999px;background:color-mix(in srgb,var(--primary-soft) 24%, var(--surface));border:1px solid color-mix(in srgb,var(--primary) 18%, var(--border));font-size:11px;font-weight:800;color:var(--primary)}
+.scope-note{font-size:11.5px;color:var(--text-muted);line-height:1.55}
+.answer-sections{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(300px,.8fr);gap:1rem;align-items:start}
+.insight-panel{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius);padding:.95rem}
+.section-label{font-size:11px;font-weight:850;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted);margin-bottom:.45rem}
+.summary-copy{font-size:13px;line-height:1.7;color:var(--text)}
+.trust-box{margin-top:.9rem;border-top:1px solid var(--border);padding-top:.85rem}
+.trust-box summary{cursor:pointer;list-style:none;font-size:12px;font-weight:800;color:var(--text-soft)}
+.trust-box summary::-webkit-details-marker{display:none}
+.trust-grid{margin-top:.7rem;display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:.7rem}
+.trust-item{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius);padding:.75rem}
+.trust-k{font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted);margin-bottom:.25rem}
+.trust-v{font-size:12px;color:var(--text);line-height:1.55;word-break:break-word}
+.sql-box{margin-top:.7rem;background:var(--bg-soft);border:1px solid var(--border);border-radius:var(--radius);padding:.75rem .85rem;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text);white-space:pre-wrap;overflow:auto;max-height:180px}
+.clarification-card{padding:1rem 1.05rem;border-radius:var(--radius-lg);background:var(--surface);color:var(--text);border:1px solid var(--border);border-bottom-left-radius:6px;box-shadow:var(--shadow);display:flex;flex-direction:column;gap:.8rem}
+.clarification-question{line-height:1.6;color:var(--text)}
+.clarification-options{display:flex;gap:.55rem;flex-wrap:wrap}
+.clarification-option{font-size:12px;font-weight:700;padding:9px 12px;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-soft);cursor:pointer;transition:all .15s}
+.clarification-option:hover{border-color:var(--primary);color:var(--primary)}
+.clarification-option:disabled{opacity:.55;cursor:not-allowed}
+@media (max-width: 900px){.answer-sections{grid-template-columns:1fr}}
+
+.suggestions-wrap{border-top:1px solid var(--border);padding-top:.9rem}
+.follow-up-wrap{border-top:1px solid var(--border);padding-top:.75rem;margin-top:.75rem}
+.follow-up-chips{gap:.5rem}
+.follow-up-chip{border-color:color-mix(in srgb,var(--primary) 30%,var(--border));color:var(--primary);background:color-mix(in srgb,var(--primary) 5%,var(--surface))}
+.follow-up-chip:hover{background:color-mix(in srgb,var(--primary) 12%,var(--surface));border-color:var(--primary)}
+.suggestions-label{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:var(--text-muted);margin-bottom:.6rem}
+/* Schema selector tab bar */
+.schema-control-row{display:flex;align-items:center;justify-content:space-between;gap:.8rem;padding:.75rem 1.1rem;border-bottom:1px solid var(--border);background:linear-gradient(135deg,var(--surface-2),color-mix(in srgb,var(--surface) 90%,var(--primary-soft) 10%))}
+.schema-bar{display:flex;align-items:center;gap:.4rem;flex-wrap:wrap}
+.schema-tab{border:1px solid var(--border);background:var(--surface);color:var(--text-soft);font-size:11px;font-weight:800;padding:5px 13px;border-radius:999px;cursor:pointer;transition:all .15s;white-space:nowrap}
+.schema-tab:hover{border-color:var(--primary);color:var(--primary)}
+.schema-tab.active{background:var(--primary);border-color:var(--primary);color:#fff}
+.schema-bar-label{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:var(--text-muted);margin-right:.25rem;flex-shrink:0}
+.schema-current{font-size:11px;font-weight:800;color:var(--text-soft);padding:5px 10px;border-radius:999px;background:var(--surface);border:1px solid var(--border);white-space:nowrap}
+@media(max-width:760px){.schema-control-row{align-items:flex-start;flex-direction:column}.schema-current{display:none}}
+.suggestions{display:flex;flex-wrap:wrap;gap:.6rem}
+.suggestion-chip,.composer-chip{background:var(--surface);border:1px solid var(--border);color:var(--text-soft);font-size:12px;font-weight:700;padding:9px 13px;border-radius:999px;cursor:pointer;transition:all .15s;max-width:320px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;box-shadow:var(--shadow)}
+.suggestion-chip:hover,.composer-chip:hover{background:var(--surface-3);border-color:var(--primary);color:var(--primary);transform:translateY(-1px)}
+.chat-composer{margin-top:1rem;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:.95rem 1rem;box-shadow:var(--shadow-md)}
+.chat-input-bar{display:flex;align-items:flex-end;gap:.75rem}.chat-input{flex:1;background:transparent;border:none;outline:none;color:var(--text);font-size:14px;resize:none;max-height:140px;min-height:28px;line-height:1.55}.chat-input::placeholder{color:var(--text-muted)}
+.composer-side{display:flex;align-items:center;gap:.6rem;flex-shrink:0}.char-count{font-size:11px;color:var(--text-muted);min-width:34px;text-align:right}.send-btn{width:44px;height:44px;background:linear-gradient(135deg,var(--primary),var(--primary-hover));border:none;border-radius:var(--radius);cursor:pointer;display:flex;align-items:center;justify-content:center;color:#fff;font-size:17px;flex-shrink:0;transition:transform .15s,opacity .15s,filter .15s;box-shadow:0 10px 18px rgba(37,99,235,.22)}
+.send-btn:hover{transform:translateY(-1px);filter:brightness(1.02)}.send-btn:disabled{opacity:.45;cursor:not-allowed;box-shadow:none;transform:none}
+.composer-footer{display:flex;justify-content:space-between;gap:1rem;align-items:center;margin-top:.65rem;flex-wrap:wrap}.composer-hint{font-size:11px;color:var(--text-muted)}
+.composer-actions{display:flex;gap:.45rem;flex-wrap:wrap}
+.toast{position:fixed;right:20px;bottom:20px;padding:.75rem .95rem;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-lg);font-size:12px;color:var(--text);opacity:0;transform:translateY(8px);pointer-events:none;transition:all .18s;z-index:1200}
+.toast.show{opacity:1;transform:translateY(0)}
+.clarification-card{padding:1rem 1.05rem;border-radius:var(--radius-lg);background:var(--surface);color:var(--text);border:1px solid var(--border);border-bottom-left-radius:6px;box-shadow:var(--shadow);display:flex;flex-direction:column;gap:.8rem}
+.clarification-question{line-height:1.6;color:var(--text)}
+.clarification-options{display:flex;gap:.55rem;flex-wrap:wrap}
+.clarification-option{font-size:12px;font-weight:700;padding:9px 12px;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-soft);cursor:pointer;transition:all .15s}
+.clarification-option:hover{border-color:var(--primary);color:var(--primary)}
+.clarification-option:disabled{opacity:.55;cursor:not-allowed}
+@media (max-width: 900px){.chat-hero{flex-direction:column}.chat-wrap{max-height:none}.msg-content{max-width:calc(100% - 52px)}.chart-canvas{height:280px}}
+@media (max-width: 640px){.chat-shell-header{flex-direction:column;align-items:flex-start}.chat-inner{padding:0 .75rem .75rem}.chat-composer{padding:.8rem}.composer-footer{align-items:flex-start}.msg-content{max-width:100%}.chart-header{flex-direction:column}}
+</style>
+{% endblock %}
+
+{% block content %}
+{% if not enabled %}
+<div style="max-width:500px;margin:4rem auto;text-align:center">
+  <div style="font-size:48px;margin-bottom:1.5rem">🔒</div>
+  <h2 style="font-size:20px;font-weight:700;margin-bottom:.75rem">Internal Chat not enabled</h2>
+  <p style="color:var(--text-muted);line-height:1.7">Your administrator has not enabled the Internal Chat UI for your account.</p>
+  <a href="/portal/dashboard" class="btn btn-secondary" style="margin-top:1.5rem;display:inline-flex">← Back to dashboard</a>
+</div>
+{% else %}
+<div class="chat-page">
+  <section class="chat-hero">
+    <div>
+      <div class="chat-title">Ask your data in plain English</div>
+      <div class="chat-subtitle">Query live business data, get structured answers, and pin useful charts to your dashboard without leaving the conversation.</div>
+      <div class="chat-pills">
+        <span class="chat-pill">Workspace · {{ client.client_name or 'Your workspace' }}</span>
+        <span class="chat-pill">Role · {{ user.role|capitalize }}</span>
+        <span class="chat-pill">Group · {{ user.group_name or 'Not assigned' }}</span>
+        <span class="chat-pill token-kpi-pill"
+              title="Input {{ token_usage.input_label if token_usage else '0' }} · Output {{ token_usage.output_label if token_usage else '0' }}">
+          <span class="kpi-dot"></span>
+          Tokens this month · {{ token_usage.total_label if token_usage else '0' }}
+        </span>
+        <span class="chat-pill query-kpi-pill {% if query_status.blocked %}limit-blocked{% elif query_status.warning %}limit-warning{% endif %}"
+              id="queryLimitKpi"
+              title="{{ query_status.used_label }} / {{ query_status.limit_label }} queries used this month">
+          <span class="kpi-dot"></span>
+          <span id="queryLimitText">Queries left Â· {{ query_status.remaining_label }}</span>
+        </span>
+      </div>
+      <div id="queryLimitNotice"
+           class="query-limit-notice {% if query_status.blocked %}blocked show{% elif query_status.warning %}show{% endif %}">
+        <span id="queryLimitNoticeText">{{ query_status.message }}</span>
+      </div>
+    </div>
+
+  </section>
+
+  <section class="chat-shell">
+    <div class="chat-shell-header">
+      <div class="chat-shell-title">
+        <div class="chat-shell-badge">Q</div>
+        <div>
+          <h2>QueryBot live analyst</h2>
+          <p>Interactive answers, chart previews, and direct pinning from chat.</p>
+        </div>
+      </div>
+      <div class="status-wrap">
+        <div class="status-badge" id="connBadge"><span class="status-led"></span><span id="connText">Connecting…</span></div>
+        <div class="status-note" id="connNote">Waiting for live session</div>
+      </div>
+    </div>
+
+    {% if available_schemas and available_schemas|length > 1 %}
+    <div class="schema-control-row">
+      <div class="schema-bar" id="schemaBar">
+        <span class="schema-bar-label">Schema</span>
+        <button class="schema-tab active" data-schema=""
+                onclick="selectSchema(this.dataset.schema || '', this)">All</button>
+        {% for sch in available_schemas %}
+        <button class="schema-tab" data-schema="{{ sch.name }}"
+                onclick="selectSchema(this.dataset.schema || '', this)"
+                title="{{ sch.table_count }} table{{ 's' if sch.table_count != 1 else '' }}">
+          {{ sch.name }}
+          <span style="opacity:.65;font-weight:600;margin-left:3px">{{ sch.table_count }}</span>
+        </button>
+        {% endfor %}
+      </div>
+      <span class="schema-current" id="activeSchemaLabel">All schemas</span>
+    </div>
+    {% endif %}
+
+    <div class="chat-inner">
+      <div class="chat-wrap">
+        <div class="chat-thread" id="thread">
+          <div class="msg-system">QueryBot Internal Chat · {{ client.client_name or 'Your workspace' }}</div>
+          <div class="empty-state" id="welcomeState">Start with a business question such as revenue trends, overdue balances, customer performance, or period-over-period comparisons.</div>
+        </div>
+
+        <div class="processing-row" id="processingRow" aria-live="polite">
+          <div class="msg-avatar">Q</div>
+          <!-- Floating mascot — no card, reacts to each pipeline stage -->
+          <div class="mascot-wrap" id="mascotWrap">
+            <div class="mascot-tooltip" id="mascotTooltip">Thinking…</div>
+            <svg id="mascotSvg" viewBox="0 0 64 80" xmlns="http://www.w3.org/2000/svg">
+              <defs>
+                <radialGradient id="mg-head" cx="50%" cy="40%" r="55%">
+                  <stop id="mg-head-1" offset="0%" stop-color="#e2e8f0"/>
+                  <stop id="mg-head-2" offset="100%" stop-color="#94a3b8"/>
+                </radialGradient>
+                <radialGradient id="mg-body" cx="50%" cy="30%" r="60%">
+                  <stop id="mg-body-1" offset="0%" stop-color="#e2e8f0"/>
+                  <stop id="mg-body-2" offset="100%" stop-color="#94a3b8"/>
+                </radialGradient>
+                <radialGradient id="mg-visor" cx="50%" cy="45%" r="60%">
+                  <stop offset="0%" stop-color="#1e40af"/>
+                  <stop offset="100%" stop-color="#0f172a"/>
+                </radialGradient>
+                <filter id="mg-glow">
+                  <feGaussianBlur stdDeviation="1.5" result="blur"/>
+                  <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+                </filter>
+              </defs>
+
+              <!-- whole bot — animation applied here -->
+              <g id="mascotBody">
+                <!-- antenna -->
+                <line x1="32" y1="4" x2="32" y2="11" stroke="#94a3b8" stroke-width="2" stroke-linecap="round"/>
+                <circle id="mAntenna" cx="32" cy="3.5" r="3" fill="#60a5fa" filter="url(#mg-glow)"/>
+
+                <!-- head — rounded white shell like reference image -->
+                <ellipse cx="32" cy="22" rx="18" ry="16" fill="url(#mg-head)" stroke="#cbd5e1" stroke-width=".8"/>
+
+                <!-- ear side panels -->
+                <ellipse cx="14.5" cy="22" rx="3" ry="4.5" fill="#94a3b8" stroke="#cbd5e1" stroke-width=".6"/>
+                <ellipse cx="49.5" cy="22" rx="3" ry="4.5" fill="#94a3b8" stroke="#cbd5e1" stroke-width=".6"/>
+
+                <!-- visor dark screen -->
+                <ellipse cx="32" cy="22" rx="13" ry="9.5" fill="url(#mg-visor)" rx="13"/>
+                <!-- visor shine -->
+                <ellipse cx="27" cy="17" rx="5" ry="2.5" fill="white" opacity=".12" transform="rotate(-15,27,17)"/>
+
+                <!-- eyes — glowing on dark visor, blink via scaleY -->
+                <g id="mEyes" style="transform-origin:32px 22px">
+                  <!-- left eye -->
+                  <g style="transform-origin:26px 22px;animation:mascot-blink 3.8s ease-in-out infinite">
+                    <ellipse cx="26" cy="22" rx="3.8" ry="3.8" fill="#38bdf8" filter="url(#mg-glow)"/>
+                    <ellipse cx="26" cy="22" rx="2" ry="2" fill="#e0f2fe"/>
+                    <circle cx="27.2" cy="20.8" r=".8" fill="white" opacity=".9"/>
+                  </g>
+                  <!-- right eye -->
+                  <g style="transform-origin:38px 22px;animation:mascot-blink 3.8s ease-in-out infinite;animation-delay:.08s">
+                    <ellipse cx="38" cy="22" rx="3.8" ry="3.8" fill="#38bdf8" filter="url(#mg-glow)"/>
+                    <ellipse cx="38" cy="22" rx="2" ry="2" fill="#e0f2fe"/>
+                    <circle cx="39.2" cy="20.8" r=".8" fill="white" opacity=".9"/>
+                  </g>
+                </g>
+                <!-- smile — shown in idle/done states, hidden during work -->
+                <path id="mSmile" d="M 27 27 Q 32 31 37 27" fill="none" stroke="#38bdf8" stroke-width="1.8" stroke-linecap="round" opacity="0"/>
+
+                <!-- neck -->
+                <rect x="27" y="37" width="10" height="4" rx="2" fill="#94a3b8"/>
+
+                <!-- body torso — rounded white shell -->
+                <rect x="14" y="41" width="36" height="24" rx="10" fill="url(#mg-body)" stroke="#cbd5e1" stroke-width=".8"/>
+
+                <!-- chest arc reactor glow -->
+                <circle id="mCore" cx="32" cy="53" r="6" fill="none" stroke="#60a5fa" stroke-width="1.5" opacity=".6"/>
+                <circle cx="32" cy="53" r="3.5" fill="#60a5fa" opacity=".7" filter="url(#mg-glow)"/>
+
+                <!-- left arm -->
+                <g id="mArmL" style="transform-origin:14px 46px">
+                  <rect x="6" y="42" width="9" height="14" rx="4.5" fill="url(#mg-body)" stroke="#cbd5e1" stroke-width=".8"/>
+                  <!-- hand glow -->
+                  <circle id="mHandL" cx="10.5" cy="57" r="3.5" fill="#94a3b8" stroke="#cbd5e1" stroke-width=".6"/>
+                  <circle cx="10.5" cy="57" r="1.5" fill="#60a5fa" opacity=".5"/>
+                </g>
+
+                <!-- right arm -->
+                <g id="mArmR" style="transform-origin:50px 46px">
+                  <rect x="49" y="42" width="9" height="14" rx="4.5" fill="url(#mg-body)" stroke="#cbd5e1" stroke-width=".8"/>
+                  <circle id="mHandR" cx="53.5" cy="57" r="3.5" fill="#94a3b8" stroke="#cbd5e1" stroke-width=".6"/>
+                  <circle cx="53.5" cy="57" r="1.5" fill="#60a5fa" opacity=".5"/>
+                </g>
+
+                <!-- legs -->
+                <rect x="20" y="64" width="10" height="10" rx="4" fill="#94a3b8" stroke="#cbd5e1" stroke-width=".6"/>
+                <rect x="34" y="64" width="10" height="10" rx="4" fill="#94a3b8" stroke="#cbd5e1" stroke-width=".6"/>
+                <!-- feet -->
+                <ellipse cx="25" cy="74.5" rx="7" ry="3" fill="#64748b"/>
+                <ellipse cx="39" cy="74.5" rx="7" ry="3" fill="#64748b"/>
+              </g>
+
+              <!-- Overlays (stage tools — appear above right shoulder) -->
+              <!-- magnifying glass — validating -->
+              <g id="mGlass" style="display:none;opacity:0;transition:opacity .25s">
+                <circle cx="53" cy="10" r="6.5" fill="none" stroke="#38bdf8" stroke-width="2"/>
+                <line x1="57.6" y1="14.6" x2="63" y2="20" stroke="#38bdf8" stroke-width="2.2" stroke-linecap="round"/>
+                <circle cx="53" cy="10" r="3.5" fill="#38bdf8" opacity=".25"/>
+              </g>
+              <!-- wrench — repairing -->
+              <g id="mWrench" style="display:none;opacity:0;transition:opacity .25s;transform-origin:53px 10px">
+                <rect x="50" y="4" width="6" height="14" rx="2" fill="#fbbf24"/>
+                <rect x="48.5" y="4" width="3" height="4" rx="1" fill="#fbbf24"/>
+                <rect x="56.5" y="4" width="3" height="4" rx="1" fill="#fbbf24"/>
+              </g>
+              <!-- gear — executing -->
+              <g id="mGear" style="display:none;opacity:0;transition:opacity .25s;transform-origin:53px 10px">
+                <circle cx="53" cy="10" r="6" fill="none" stroke="#34d399" stroke-width="2"/>
+                <circle cx="53" cy="10" r="2.5" fill="#34d399"/>
+                <line x1="53" y1="2.5" x2="53" y2="1" stroke="#34d399" stroke-width="1.8" stroke-linecap="round"/>
+                <line x1="53" y1="17.5" x2="53" y2="19" stroke="#34d399" stroke-width="1.8" stroke-linecap="round"/>
+                <line x1="45.5" y1="10" x2="44" y2="10" stroke="#34d399" stroke-width="1.8" stroke-linecap="round"/>
+                <line x1="60.5" y1="10" x2="62" y2="10" stroke="#34d399" stroke-width="1.8" stroke-linecap="round"/>
+              </g>
+              <!-- checkmark — done -->
+              <g id="mCheck" style="display:none;opacity:0;transition:opacity .25s">
+                <circle cx="53" cy="10" r="8" fill="#34d399" opacity=".92"/>
+                <polyline points="48.5,10 52,13.5 58,6.5" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+              </g>
+            </svg>
+          </div>
+          <!-- Thinking dots next to mascot -->
+          <div class="mascot-thinking">
+            <span class="mascot-dot"></span>
+            <span class="mascot-dot"></span>
+            <span class="mascot-dot"></span>
+          </div>
+        </div>
+
+        {% if suggestions %}
+        {% if available_schemas and available_schemas|length > 1 %}
+        <!-- Schema selector — only shown when user has tables in multiple schemas -->
+        <div class="schema-bar legacy-schema-bar" hidden>
+          <span class="schema-bar-label">Schema</span>
+          <button class="schema-tab active" data-schema=""
+                  onclick="selectSchema('', this)">All</button>
+          {% for sch in available_schemas %}
+          <button class="schema-tab" data-schema="{{ sch.name }}"
+                  onclick="selectSchema('{{ sch.name }}', this)"
+                  title="{{ sch.table_count }} table{{ 's' if sch.table_count != 1 else '' }}">
+            {{ sch.name }}
+            <span style="opacity:.65;font-weight:600;margin-left:3px">{{ sch.table_count }}</span>
+          </button>
+          {% endfor %}
+        </div>
+        {% endif %}
+        <div class="suggestions-wrap" id="suggestionsWrap">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.6rem">
+            <div class="suggestions-label" style="margin-bottom:0">Suggested questions based on your connected data</div>
+            <button type="button" onclick="shuffleSuggestions()" style="font-size:11px;font-weight:700;padding:4px 10px;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-muted);cursor:pointer" title="Show different suggestions">↻ Refresh</button>
+          </div>
+          <div class="suggestions" id="suggestions">
+            {% for s in suggestions %}
+            <button class="suggestion-chip" type="button"
+                    onclick="sendSuggestion(this)"
+                    data-fqn="{{ s.fqn | default('') }}"
+                    title="{{ s.question }}">{{ s.question }}</button>
+            {% endfor %}
+          </div>
+        </div>
+        {% endif %}
+      </div>
+
+      <div class="chat-composer">
+                <div class="chat-input-bar">
+          <div class="chat-input-wrap" id="inputWrap">
+            <!-- Executive AI intelligence indicator (abstract, non-cartoon) -->
+            <div class="ai-indicator ai-idle" id="composerMascot" role="presentation" aria-hidden="true">
+              <div class="ai-tooltip" id="composerTooltip">Ready</div>
+              <div class="ai-halo"></div>
+              <div class="ai-ring"></div>
+              <div class="ai-arc ai-arc-1"></div>
+              <div class="ai-arc ai-arc-2"></div>
+              <div class="ai-core"></div>
+            </div>
+            <textarea id="input" class="chat-input" placeholder="Ask anything about your data…" rows="1" maxlength="500" style="padding-left:42px;padding-right:32px"></textarea>
+          </div>
+          <div class="composer-side">
+            <span class="char-count" id="charCount">500</span>
+            <button class="send-btn" id="sendBtn" onclick="sendMessage()" title="Send message" aria-label="Send message">↑</button>
+          </div>
+        </div>
+        <div class="composer-footer">
+          <div class="composer-hint">Press Enter to send · Shift + Enter for a new line</div>
+          {% if suggestions %}
+          <div class="composer-actions">
+            {% for s in suggestions[:3] %}
+            <button type="button" class="composer-chip"
+                    data-fqn="{{ s.fqn | default('') }}"
+                    onclick="sendSuggestion(this)">{{ s.question }}</button>
+            {% endfor %}
+          </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const ACCOUNT_ID = {{ user.account_id|tojson }};
+const USER_NAME = {{ user.name|tojson }};
+const USER_INIT = (USER_NAME[0] || 'U').toUpperCase();
+const USER_EMAIL = {{ user.email|default('', true)|tojson }};
+const CHAT_CACHE_LIMIT = 80;
+const CHAT_CACHE_KEY = `qb_chat_cache:${ACCOUNT_ID}:${USER_EMAIL || USER_NAME}`;
+let queryLimitLevel = {{ (query_status.level or 'normal')|tojson }};
+let queryLimitToastShown = false;
+const STATUS_FALLBACK = {
+  authorization: ['Checking access', 'Verifying workspace access and available data.'],
+  metric_registry: ['Using known metric', 'Found a trusted metric definition for this question.'],
+  retrieving_context: ['Understanding your data', 'Retrieving the most relevant schema, examples, and business context.'],
+  generating_sql: ['Generating query', 'Translating the business question into SQL.'],
+  validating_sql: ['Checking query safety', 'Verifying access, structure, and execution safety.'],
+  repairing_query: ['Repairing query', 'Fixing a validation or execution issue before retrying.'],
+  executing_query: ['Running query', 'Executing the query against your connected database.'],
+  formatting_results: ['Preparing results', 'Formatting the answer for chat.'],
+  chart_ready: ['Building chart', 'Rendering an interactive chart from the result set.']
+};
+
+let ws = null;
+let wsReady = false;
+let reconnectAttempts = 0;
+let restoringCache = false;
+let processingActive = false;
+let lastAssistantText = '';
+let chartCounter = 0;
+
+function thread(){ return document.getElementById('thread'); }
+function scrollBottom(){ const t = thread(); t.scrollTop = t.scrollHeight; }
+function nowLabel(){ return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
+function timeLabel(ts){ return ts || nowLabel(); }
+function hideWelcome(){ const el = document.getElementById('welcomeState'); if (el) el.style.display = 'none'; }
+function toast(msg){ const el = document.getElementById('toast'); el.textContent = msg; el.classList.add('show'); clearTimeout(window.__toastTimer); window.__toastTimer = setTimeout(() => el.classList.remove('show'), 1400); }
+function toastLong(msg){ const el = document.getElementById('toast'); el.textContent = msg; el.classList.add('show'); clearTimeout(window.__toastTimer); window.__toastTimer = setTimeout(() => el.classList.remove('show'), 5200); }
+function updateQueryLimitKpi(status, opts = {}){
+  if (!status) return;
+  const kpi = document.getElementById('queryLimitKpi');
+  const text = document.getElementById('queryLimitText');
+  const notice = document.getElementById('queryLimitNotice');
+  const noticeText = document.getElementById('queryLimitNoticeText');
+  const previous = queryLimitLevel || 'normal';
+  const level = status.level || 'normal';
+  queryLimitLevel = level;
+  if (text) text.textContent = `Queries left · ${status.remaining_label || status.remaining || 0}`;
+  if (kpi) {
+    kpi.classList.toggle('limit-warning', level === 'warning');
+    kpi.classList.toggle('limit-blocked', level === 'blocked');
+    kpi.title = `${status.used_label || status.used || 0} / ${status.limit_label || status.limit || 0} queries used this month`;
+  }
+  if (notice) {
+    notice.classList.toggle('show', level === 'warning' || level === 'blocked');
+    notice.classList.toggle('blocked', level === 'blocked');
+  }
+  if (noticeText) noticeText.textContent = status.message || '';
+  if (opts.toast && (level === 'warning' || level === 'blocked') && (level !== previous || !queryLimitToastShown)) {
+    queryLimitToastShown = true;
+    toastLong(status.message || status.title || 'Monthly query limit updated.');
+  }
+}
+async function refreshQueryLimitStatus(opts = {}){
+  try {
+    const resp = await fetch('/portal/api/query-limit-status', {credentials:'same-origin'});
+    if (!resp.ok) return;
+    const data = await resp.json();
+    if (data && data.ok) updateQueryLimitKpi(data.query_status, opts);
+  } catch (_err) {}
+}
+function setConnectionState(state, note){
+  const badge = document.getElementById('connBadge');
+  badge.classList.toggle('offline', state !== 'Connected');
+  document.getElementById('connText').textContent = state;
+  document.getElementById('connNote').textContent = note;
+}
+function setProcessing(active){
+  processingActive = active;
+  const row = document.getElementById('processingRow');
+  row.classList.toggle('active', !!active);
+  // Hide composer mascot while processing — show again when done
+  const cm = document.getElementById('composerMascot');
+  if (cm) cm.classList.toggle('cm-hidden', !!active);
+  if (active) {
+    startDoodle();
+  } else {
+    stopDoodle();
+    _resetStageSteps();
+    // Restore composer mascot (reset to idle unless in error state)
+    if (cm && !window._mascotInErrorState) {
+      cm.classList.remove('cm-hidden');
+    }
+  }
+  scrollBottom();
+}
+function updateProcessing(stage, label, detail){
+  setProcessing(true);
+  _updateStageSteps(stage);
+}
+function escHtml(str){ return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function safeJsonParse(text){ try { return JSON.parse(text); } catch { return null; } }
+function loadChatCache(){
+  try {
+    const raw = sessionStorage.getItem(CHAT_CACHE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+function saveChatCache(items){
+  try { sessionStorage.setItem(CHAT_CACHE_KEY, JSON.stringify(items.slice(-CHAT_CACHE_LIMIT))); } catch {}
+}
+function pushChatCache(entry){
+  if (!entry || restoringCache) return;
+  const items = loadChatCache();
+  items.push(entry);
+  saveChatCache(items);
+}
+function clearChatCache(){
+  try { sessionStorage.removeItem(CHAT_CACHE_KEY); } catch {}
+}
+function replayCachedEntry(entry){
+  if (!entry || typeof entry !== 'object') return;
+  const kind = entry.kind;
+  if (kind === 'user') appendUser(entry.text || '', { persist:false, timestamp: entry.timestamp });
+  else if (kind === 'system') appendSystem(entry.text || '', { persist:false, timestamp: entry.timestamp });
+  else if (kind === 'bot') appendBot(entry.text || '', { persist:false, timestamp: entry.timestamp });
+  else if (kind === 'assistant_response') appendAssistantResponse(entry.payload || {}, { persist:false, timestamp: entry.timestamp });
+  else if (kind === 'assistant_analysis') appendAnalysisResponse(entry.payload || {}, { persist:false, timestamp: entry.timestamp });
+  else if (kind === 'chart') appendChart(entry.payload || {}, { persist:false, timestamp: entry.timestamp });
+  else if (kind === 'clarification_prompt') renderClarificationPrompt(entry.payload || {}, { persist:false, timestamp: entry.timestamp });
+}
+function restoreChatCache(){
+  const items = loadChatCache();
+  if (!items.length) return;
+  restoringCache = true;
+  items.forEach(replayCachedEntry);
+  restoringCache = false;
+  hideWelcome();
+  scrollBottom();
+}
+function formatBotText(text){
+  let h = escHtml(text);
+  h = h.replace(/```([\s\S]*?)```/g, (_, code) => `<pre>${code.trim()}</pre>`);
+  h = h.replace(/`([^`]+)`/g, '<code>$1</code>');
+  h = h.replace(/\*([^*\n]+)\*/g, '<strong>$1</strong>');
+  h = h.replace(/_([^_\n]+)_/g, '<em>$1</em>');
+  h = h.replace(/^[-•]\s+(.+)$/gm, '• $1');
+  h = h.replace(/─{3,}/g, '<hr style="border:none;border-top:1px solid var(--border);margin:.65rem 0">');
+  h = h.replace(/\n/g, '<br>');
+  return h;
+}
+async function copyText(text){
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    try {
+      const area = document.createElement('textarea');
+      area.value = text;
+      area.setAttribute('readonly', 'readonly');
+      area.style.position = 'absolute';
+      area.style.left = '-9999px';
+      document.body.appendChild(area);
+      area.select();
+      document.execCommand('copy');
+      document.body.removeChild(area);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+function appendUser(text, opts = {}){
+  hideWelcome();
+  const timestamp = timeLabel(opts.timestamp);
+  const div = document.createElement('div');
+  div.className = 'msg msg-user';
+  div.innerHTML = `<div class="msg-avatar">${USER_INIT}</div><div class="msg-content"><div class="msg-meta"><span class="msg-name">You</span><span>•</span><span>${timestamp}</span></div><div class="msg-bubble">${escHtml(text)}</div></div>`;
+  thread().appendChild(div);
+  if (opts.persist !== false) pushChatCache({ kind:'user', text, timestamp });
+  scrollBottom();
+}
+function appendBot(rawText, opts = {}){
+  hideWelcome();
+  lastAssistantText = rawText;
+  const timestamp = timeLabel(opts.timestamp);
+  const div = document.createElement('div');
+  div.className = 'msg msg-bot';
+  div.innerHTML = `<div class="msg-avatar">Q</div><div class="msg-content"><div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timestamp}</span></div><div class="msg-bubble" data-raw="${encodeURIComponent(rawText)}">${formatBotText(rawText)}</div><div class="msg-actions"><button class="msg-action" type="button">Copy answer</button></div></div>`;
+  div.querySelector('.msg-action').addEventListener('click', async (e) => {
+    const bubble = e.currentTarget.closest('.msg-content').querySelector('.msg-bubble');
+    const raw = decodeURIComponent(bubble.dataset.raw || '');
+    const ok = await copyText(raw || bubble.innerText || '');
+    if (ok) {
+      const prev = e.currentTarget.textContent;
+      e.currentTarget.textContent = 'Copied!';
+      setTimeout(() => e.currentTarget.textContent = prev, 1400);
+      toast('Copied to clipboard');
+    } else {
+      toast('Copy failed');
+    }
+  });
+  thread().appendChild(div);
+  if (opts.persist !== false) pushChatCache({ kind:'bot', text: rawText, timestamp });
+  scrollBottom();
+}
+function buildChartOption(payload){
+  const rows = Array.isArray(payload?.rows) ? payload.rows : [];
+  const xKey = payload?.x_key;
+  const yKeys = Array.isArray(payload?.y_keys) ? payload.y_keys : [];
+  const yKey = yKeys[0];
+  const labels = rows.map(r => String((xKey && r?.[xKey]) ?? ''));
+  const values = rows.map(r => Number((yKey && r?.[yKey]) ?? 0));
+  const dark = document.documentElement.getAttribute('data-theme') === 'dark';
+  const axisColor = dark ? '#94a3b8' : '#64748b';
+  const gridColor = dark ? 'rgba(148,163,184,.18)' : 'rgba(100,116,139,.18)';
+  const surface = dark ? 'rgba(15,23,42,.96)' : '#ffffff';
+  const textColor = dark ? '#e2e8f0' : '#0f172a';
+  const maxLabel = labels.reduce((m, v) => Math.max(m, v.length), 0);
+  const longLabels = maxLabel > 14;
+  const manyLabels = labels.length > 8;
+  const temporal = /month|week|quarter|year|date|20\d{2}|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec/i.test(labels.slice(0,8).join(' '));
+  const type = payload?.chart_type === 'scatter' ? 'scatter' : ((payload?.chart_type === 'line' && temporal) ? 'line' : 'bar');
+  const horizontal = type === 'bar' && (longLabels || manyLabels) && !temporal;
+  const formatter = (val) => {
+    const s = String(val ?? '');
+    return s.length > 18 ? s.slice(0, 18) + '…' : s;
+  };
+  const option = {
+    backgroundColor: 'transparent',
+    animationDuration: 350,
+    grid: horizontal
+      ? { left: 140, right: 24, top: 24, bottom: 24 }
+      : { left: 52, right: 24, top: 24, bottom: longLabels ? 78 : 48 },
+    tooltip: {
+      trigger: type === 'line' ? 'axis' : 'item',
+      backgroundColor: surface,
+      borderColor: gridColor,
+      borderWidth: 1,
+      textStyle: { color: textColor },
+      formatter: (params) => {
+        const p = Array.isArray(params) ? params[0] : params;
+        return `<strong>${escHtml(String(p.name ?? ''))}</strong><br/>${escHtml(String(yKey || 'Value'))}: ${escHtml(String(p.value ?? ''))}`;
+      }
+    },
+    xAxis: horizontal ? {
+      type: 'value',
+      axisLabel: { color: axisColor },
+      splitLine: { show: true, lineStyle: { color: gridColor } },
+      axisTick: { show: false },
+      axisLine: { show: false }
+    } : {
+      type: 'category',
+      data: labels,
+      axisLabel: { color: axisColor, rotate: longLabels ? 30 : 0, interval: manyLabels ? 'auto' : 0, formatter },
+      axisLine: { lineStyle: { color: gridColor } },
+      axisTick: { show: false }
+    },
+    yAxis: horizontal ? {
+      type: 'category',
+      data: labels,
+      axisLabel: { color: axisColor, formatter },
+      axisLine: { show: false },
+      axisTick: { show: false }
+    } : {
+      type: 'value',
+      axisLabel: { color: axisColor },
+      splitLine: { show: true, lineStyle: { color: gridColor } },
+      axisTick: { show: false },
+      axisLine: { show: false }
+    },
+    series: []
+  };
+  if (type === 'line') {
+    option.series = [{ type: 'line', smooth: true, data: values, symbolSize: 8, lineStyle: { width: 3 }, areaStyle: { opacity: 0.15 } }];
+  } else if (type === 'scatter') {
+    const y2 = yKeys[1];
+    const points = rows.map(r => [Number(r?.[yKey] ?? 0), Number(r?.[y2] ?? 0), String((xKey && r?.[xKey]) ?? '')]);
+    option.xAxis = { type: 'value', axisLabel: { color: axisColor }, splitLine: { show: true, lineStyle: { color: gridColor } }, axisTick: { show: false }, axisLine: { show: false } };
+    option.yAxis = { type: 'value', axisLabel: { color: axisColor }, splitLine: { show: true, lineStyle: { color: gridColor } }, axisTick: { show: false }, axisLine: { show: false } };
+    option.series = [{ type: 'scatter', symbolSize: 14, data: points }];
+    option.tooltip.formatter = (p) => `<strong>${escHtml(String(p.value?.[2] ?? ''))}</strong><br/>${escHtml(String(yKey || 'X'))}: ${escHtml(String(p.value?.[0] ?? ''))}<br/>${escHtml(String(y2 || 'Y'))}: ${escHtml(String(p.value?.[1] ?? ''))}`;
+  } else {
+    option.series = [{ type: 'bar', data: values, barMaxWidth: horizontal ? 22 : 48, itemStyle: { borderRadius: horizontal ? [0, 8, 8, 0] : [8, 8, 0, 0] } }];
+  }
+  return option;
+}
+
+function renderChartInto(chartEl, payload){
+  if (!chartEl || !payload || !window.echarts) return;
+  try {
+    const existing = echarts.getInstanceByDom(chartEl);
+    if (existing) existing.dispose();
+    const chart = echarts.init(chartEl, document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : null, { renderer: 'canvas' });
+    chart.setOption(buildChartOption(payload), true);
+    window.__qbCharts = window.__qbCharts || [];
+    window.__qbCharts.push(chart);
+    // ResizeObserver fires when the element's box changes (CSS transition,
+    // grid reflow, maximize) — more reliable than the window resize event.
+    if (window.ResizeObserver) {
+      const ro = new ResizeObserver(() => { try { chart.resize(); } catch {} });
+      ro.observe(chartEl);
+      chart._qbRO = ro;  // store ref so dispose() can disconnect it
+    } else {
+      window.addEventListener('resize', () => { try { chart.resize(); } catch {} });
+    }
+    window.addEventListener('qb-theme-change', () => {
+      try {
+        chart.dispose();
+        const next = echarts.init(chartEl, document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : null, { renderer: 'canvas' });
+        next.setOption(buildChartOption(payload), true);
+        window.__qbCharts = window.__qbCharts || [];
+        window.__qbCharts.push(next);
+      } catch {}
+    }, { once: true });
+  } catch (err) {
+    chartEl.innerHTML = `<div class="msg-system" style="margin:0">Unable to render chart.</div>`;
+    console.error('Chart render failed', err, payload);
+  }
+}
+function sendAnalysisAction(action, context, label){
+  if (!wsReady) { toast('Live session is not ready'); return; }
+  appendSystem(`Running ${label.toLowerCase()}…`);
+  setProcessing(true);
+  updateProcessing('analysis', label, 'Using the returned result only — no new query is being run.');
+  ws.send(JSON.stringify({ action, context }));
+}
+function renderDataTable(data) {
+  if (!data || !Array.isArray(data.rows) || !data.rows.length) return '';
+  const headers = Array.isArray(data.headers) ? data.headers : Object.keys(data.rows[0] || {});
+  const headHtml = headers.map(h => `<th>${escHtml(h)}</th>`).join('');
+  const bodyHtml = data.rows.map(r =>
+    '<tr>' + headers.map(h => `<td>${escHtml(String(r[h] ?? ''))}</td>`).join('') + '</tr>'
+  ).join('');
+  const total = data.total_rows ?? data.rows.length;
+  const shown = data.rows.length;
+  const footHtml = (data.truncated || shown < total)
+    ? `<div class="data-table-foot">Showing first ${shown.toLocaleString()} of ${total.toLocaleString()} rows</div>`
+    : `<div class="data-table-foot">${shown.toLocaleString()} row${shown === 1 ? '' : 's'}</div>`;
+  return `<div class="data-table-wrap"><div class="data-table-scroll"><table class="data-table"><thead><tr>${headHtml}</tr></thead><tbody>${bodyHtml}</tbody></table></div>${footHtml}</div>`;
+}
+
+function appendAssistantResponse(msg, opts = {}){
+  hideWelcome();
+  lastAssistantText = msg.answer?.headline || '';
+  const timestamp = timeLabel(opts.timestamp);
+  chartCounter += 1;
+  const chartId = `assistant-chart-${chartCounter}`;
+  const answer = msg.answer || {};
+  const trust = msg.trust || {};
+  const resultScope = msg.result_scope || (msg.analysis_contract && msg.analysis_contract.result_scope) || {};
+  const hasChart = !!msg.chart;
+  const hasData = !!(msg.data && Array.isArray(msg.data.rows) && msg.data.rows.length);
+  const actions = Array.isArray(msg.next_actions) ? msg.next_actions : [];
+  const scopeBadgeHtml = resultScope.badge ? `<div class="scope-badge">${escHtml(resultScope.badge)}</div>` : '';
+  const scopeNoteHtml = (answer.scope_note || resultScope.note)
+    ? `<div class="scope-note">${escHtml(answer.scope_note || resultScope.note || '')}</div>`
+    : '';
+
+  const chipHtml = answer.short_value
+    ? `<div class="answer-chip">${escHtml(answer.short_value || '')}${answer.comparison ? ` • ${escHtml(answer.comparison)}` : ''}</div>`
+    : '';
+
+  // Body: prefer chart when present, otherwise the data table, otherwise the question echo
+  let bodyHtml = '';
+  if (hasChart) {
+    bodyHtml = `<div class="result-chart-wrap"><div id="${chartId}" class="chart-canvas compact"></div></div>`;
+    if (hasData) bodyHtml += renderDataTable(msg.data);
+  } else if (hasData) {
+    bodyHtml = renderDataTable(msg.data);
+  } else {
+    bodyHtml = `<div class="msg-bubble">${formatBotText(msg.question || '')}</div>`;
+  }
+
+  const actionsHtml = actions.length
+    ? `<div><div class="section-label">Next step</div><div class="action-row">${actions.map((a,i)=>`<button class="msg-action" type="button" data-action-index="${i}">${escHtml(a.label || 'Analyze')}</button>`).join('')}</div></div>`
+    : '';
+
+  const pinBtnHtml = (hasChart && msg.chart.pin_token)
+    ? '<button class="msg-action" type="button" data-pin="chart">📌 Pin to dashboard</button>'
+    : '';
+
+  // Follow-up suggestions — result-aware chips generated from the data brief
+  const followUpSugs = Array.isArray(msg.follow_up_suggestions) ? msg.follow_up_suggestions : [];
+  const followUpHtml = followUpSugs.length
+    ? `<div class="follow-up-wrap">
+        <div class="suggestions-label">Based on this result, you might ask:</div>
+        <div class="suggestions follow-up-chips">
+          ${followUpSugs.map(q => `<button class="suggestion-chip follow-up-chip" type="button"
+            data-follow-up="${escHtml(q)}">${escHtml(q)}</button>`).join('')}
+        </div>
+      </div>`
+    : '';
+
+  const trustHtml = `<details class="trust-box"><summary>View query details</summary><div class="trust-grid"><div class="trust-item"><div class="trust-k">Rows</div><div class="trust-v">${escHtml(String(trust.row_count ?? ''))}</div></div><div class="trust-item"><div class="trust-k">Runtime</div><div class="trust-v">${escHtml(trust.duration_label || '')}</div></div><div class="trust-item"><div class="trust-k">Data source</div><div class="trust-v">${escHtml((trust.data_source || '').toUpperCase())}</div></div><div class="trust-item"><div class="trust-k">Scope</div><div class="trust-v">${escHtml(trust.scope_badge || resultScope.badge || '')}</div></div></div><div class="sql-box">${escHtml(trust.sql || '')}</div></details>`;
+
+  const div = document.createElement('div');
+  div.className = 'msg msg-bot';
+  div.innerHTML =
+    `<div class="msg-avatar">Q</div>
+    <div class="msg-content">
+      <div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timestamp}</span></div>
+      <div class="assistant-card">
+        <div class="result-topline">
+          <div>
+            <div class="result-kicker">Result</div>
+            <div class="answer-headline">${escHtml(answer.headline || 'Answer ready')}</div>
+            ${scopeNoteHtml}
+          </div>
+          <div style="display:flex;flex-direction:column;gap:.45rem;align-items:flex-end">${scopeBadgeHtml}${chipHtml}</div>
+        </div>
+        <div class="result-layout">
+          ${bodyHtml}
+          ${actionsHtml}
+          <div class="msg-actions">
+            <button class="msg-action" type="button" data-copy="result">Copy result</button>
+            ${pinBtnHtml}
+          </div>
+          ${trustHtml}
+        </div>
+      </div>
+      ${followUpHtml}
+    </div>`;
+
+  thread().appendChild(div);
+  div.querySelectorAll('[data-action-index]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const idx = Number(btn.getAttribute('data-action-index'));
+      const action = actions[idx];
+      if (!action) return;
+      sendAnalysisAction(action.id, msg.analysis_contract || {}, action.label || 'Analysis');
+    });
+  });
+  const copyBtn = div.querySelector('[data-copy="result"]');
+  copyBtn?.addEventListener('click', async (e) => {
+    const copyPayload = [answer.headline || '', trust.sql ? ('SQL\n' + trust.sql) : ''].filter(Boolean).join('\n\n');
+    const ok = await copyText(copyPayload);
+    const prev = e.currentTarget.textContent;
+    e.currentTarget.textContent = ok ? 'Copied!' : 'Copy failed';
+    setTimeout(() => e.currentTarget.textContent = prev, 1400);
+    toast(ok ? 'Result copied' : 'Copy failed');
+  });
+  const pinBtn = div.querySelector('[data-pin="chart"]');
+  pinBtn?.addEventListener('click', async () => {
+    pinBtn.disabled = true;
+    try {
+      const res = await fetch('/portal/api/pin-chart', { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ token: msg.chart.pin_token, title: msg.chart.title || msg.question || 'Pinned chart' }) });
+      const data = await res.json();
+      pinBtn.textContent = data.ok ? 'Pinned!' : 'Pin failed';
+      toast(data.ok ? 'Chart added to dashboard' : (data.error || 'Unable to pin chart'));
+    } catch {
+      pinBtn.textContent = 'Pin failed';
+      toast('Unable to pin chart');
+    }
+  });
+  if (hasChart) renderChartInto(div.querySelector(`#${chartId}`), msg.chart);
+
+  // Wire follow-up suggestion chips
+  div.querySelectorAll('.follow-up-chip').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const q = btn.dataset.followUp || '';
+      if (q && wsReady) sendSuggestion(q);
+    });
+  });
+  if (opts.persist !== false) pushChatCache({ kind:'assistant_response', payload: msg, timestamp });
+  scrollBottom();
+}
+function appendAnalysisResponse(msg, opts = {}){
+  hideWelcome();
+  const timestamp = timeLabel(opts.timestamp);
+  const div = document.createElement('div');
+  div.className = 'msg msg-bot';
+  const bullets = Array.isArray(msg.bullets) ? msg.bullets : [];
+  const resultScope = msg.result_scope || {};
+  const metaHtml = resultScope.badge ? `<div class="analysis-meta">Based on: ${escHtml(resultScope.badge)}${resultScope.note ? ` â€¢ ${escHtml(resultScope.note)}` : ''}</div>` : '';
+  div.innerHTML = `<div class="msg-avatar">Q</div><div class="msg-content"><div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timestamp}</span></div><div class="analysis-card"><div class="section-label">${escHtml(msg.action || 'analysis')}</div><div class="analysis-title">${escHtml(msg.title || 'Analysis')}</div><div class="analysis-body">${escHtml(msg.body || '')}</div>${msg.secondary ? `<div class="analysis-secondary">${escHtml(msg.secondary)}</div>` : ''}${bullets.length ? `<ul class="analysis-list">${bullets.map(b => `<li>${escHtml(b)}</li>`).join('')}</ul>` : ''}<div class="msg-actions" style="margin-top:.85rem"><button class="msg-action" type="button" data-copy="analysis">Copy analysis</button></div></div></div>`;
+  thread().appendChild(div);
+  if (metaHtml) {
+    div.querySelector('.analysis-body')?.insertAdjacentHTML('afterend', metaHtml);
+  }
+  div.querySelector('[data-copy="analysis"]')?.addEventListener('click', async (e) => {
+    const payload = [msg.title || '', msg.body || '', msg.secondary || '', ...(msg.bullets || [])].filter(Boolean).join('\n');
+    const ok = await copyText(payload);
+    const prev = e.currentTarget.textContent;
+    e.currentTarget.textContent = ok ? 'Copied!' : 'Copy failed';
+    setTimeout(() => e.currentTarget.textContent = prev, 1400);
+    toast(ok ? 'Analysis copied' : 'Copy failed');
+  });
+  if (opts.persist !== false) pushChatCache({ kind:'assistant_analysis', payload: msg, timestamp });
+  scrollBottom();
+}
+function appendChart(payload, opts = {}){
+  hideWelcome();
+  const timestamp = timeLabel(opts.timestamp);
+  chartCounter += 1;
+  const chartId = `chat-chart-${chartCounter}`;
+  const rows = payload.rows || [];
+  const div = document.createElement('div');
+  div.className = 'msg msg-bot';
+  div.innerHTML = `<div class="msg-avatar">Q</div><div class="msg-content"><div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timestamp}</span></div><div class="chart-card"><div class="chart-header"><div><div class="chart-title">${escHtml(payload.title || payload.question || 'Chart result')}</div><div class="chart-subtitle">${rows.length} rows · ${escHtml(payload.duration_label || '')}</div></div><div class="chart-toolbar"><button type="button" class="chart-btn" data-action="pin">📌 Pin to dashboard</button><button type="button" class="chart-btn" data-action="copy">Copy summary</button></div></div><div id="${chartId}" class="chart-canvas"></div><div class="chart-footer"><span>${escHtml(payload.question || '')}</span><span>${escHtml((payload.chart_type || 'chart').toUpperCase())}</span></div></div></div>`;
+  thread().appendChild(div);
+  const [pinBtn, copyBtn] = div.querySelectorAll('.chart-btn');
+  if (!payload.pin_token) {
+    pinBtn.style.display = 'none';
+  } else {
+    pinBtn.addEventListener('click', async () => {
+      pinBtn.disabled = true;
+      try {
+        const res = await fetch('/portal/api/pin-chart', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: payload.pin_token, title: payload.title || payload.question || 'Pinned chart' })
+        });
+        const data = await res.json();
+        if (data.ok) {
+          pinBtn.textContent = 'Pinned!';
+          toast('Chart added to dashboard');
+        } else {
+          pinBtn.textContent = 'Pin failed';
+          toast(data.error || 'Unable to pin chart');
+        }
+      } catch {
+        pinBtn.textContent = 'Pin failed';
+        toast('Unable to pin chart');
+      }
+    });
+  }
+  copyBtn?.addEventListener('click', async (e) => {
+    const summary = `${payload.title || payload.question || 'Chart'}
+${rows.length} rows`;
+    const ok = await copyText(summary);
+    const prev = e.currentTarget.textContent;
+    e.currentTarget.textContent = ok ? 'Copied!' : 'Copy failed';
+    setTimeout(() => e.currentTarget.textContent = prev, 1400);
+    toast(ok ? 'Chart summary copied' : 'Copy failed');
+  });
+  renderChartInto(div.querySelector(`#${chartId}`), payload);
+  if (opts.persist !== false) pushChatCache({ kind:'chart', payload, timestamp });
+  scrollBottom();
+}
+function appendSystem(text, opts = {}){
+  const timestamp = timeLabel(opts.timestamp);
+  const div = document.createElement('div');
+  div.className = 'msg-system';
+  div.textContent = text;
+  div.dataset.timestamp = timestamp;
+  thread().appendChild(div);
+  if (opts.persist !== false) pushChatCache({ kind:'system', text, timestamp });
+  scrollBottom();
+}
+function renderClarificationPrompt(data, opts = {}){
+  hideWelcome();
+  const timestamp = timeLabel(opts.timestamp);
+  const div = document.createElement('div');
+  div.className = 'msg msg-bot';
+  const question = data.question || 'Please choose one option so I can continue.';
+  const options = Array.isArray(data.options) ? data.options : [];
+  div.innerHTML = `<div class="msg-avatar">Q</div><div class="msg-content"><div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timestamp}</span></div><div class="clarification-card"><div class="clarification-question">${escHtml(question)}</div><div class="clarification-options"></div></div></div>`;
+  const wrap = div.querySelector('.clarification-options');
+  options.forEach((opt) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'clarification-option';
+    btn.textContent = opt.label || opt.value || 'Choose';
+    btn.addEventListener('click', () => {
+      if (btn.dataset.clicked === '1' || !wsReady) return;
+      btn.dataset.clicked = '1';
+      wrap.querySelectorAll('button').forEach((b) => b.disabled = true);
+      appendUser(btn.textContent);
+      setProcessing(true);
+      updateProcessing('authorization', 'Resolving clarification', 'Applying your selected clarification and rerunning the query.');
+      ws.send(JSON.stringify({ type:'clarification_response', pending_id: data.pending_id || '', option_id: opt.id }));
+    });
+    wrap.appendChild(btn);
+  });
+  thread().appendChild(div);
+  if (opts.persist !== false) pushChatCache({ kind:'clarification_prompt', payload: data, timestamp });
+  scrollBottom();
+}
+// ── Schema selector ──────────────────────────────────────────────────────────
+let _activeSchema = "";   // "" = All schemas
+const SCHEMA_STORAGE_KEY = `querybot.activeSchema.${ACCOUNT_ID}`;
+
+function selectSchema(schemaName, btn, opts = {}) {
+  _activeSchema = (schemaName || "").trim().toUpperCase();
+
+  // Update active tab styling
+  document.querySelectorAll(".schema-tab").forEach(t => t.classList.remove("active"));
+  if (btn) btn.classList.add("active");
+
+  const label = document.getElementById("activeSchemaLabel");
+  if (label) label.textContent = _activeSchema ? `${_activeSchema} schema` : "All schemas";
+  if (opts.persist !== false) {
+    try { sessionStorage.setItem(SCHEMA_STORAGE_KEY, _activeSchema); } catch {}
+  }
+
+  // Refresh suggestions to show only this schema's questions
+  _refreshSuggestionsForSchema(_activeSchema);
+}
+
+function initSchemaSelector() {
+  const tabs = Array.from(document.querySelectorAll("#schemaBar .schema-tab"));
+  if (!tabs.length) return;
+  let saved = "";
+  try { saved = (sessionStorage.getItem(SCHEMA_STORAGE_KEY) || "").toUpperCase(); } catch {}
+  const selected = tabs.find(t => (t.dataset.schema || "").toUpperCase() === saved) || tabs[0];
+  selectSchema(selected.dataset.schema || "", selected, { persist: false });
+}
+
+function _refreshSuggestionsForSchema(schemaName) {
+  const chips = document.querySelectorAll(".suggestion-chip");
+  const composerChips = document.querySelectorAll(".composer-chip");
+  const wrap = document.getElementById("suggestionsWrap");
+
+  if (!schemaName) {
+    // Show all suggestions
+    chips.forEach(c => { c.style.display = ""; });
+    composerChips.forEach(c => { c.style.display = ""; });
+    if (wrap) wrap.style.display = chips.length ? "" : "none";
+    return;
+  }
+
+  let visibleCount = 0;
+  chips.forEach(c => {
+    const fqn = (c.dataset.fqn || "").toUpperCase();
+    const parts = fqn.split(".");
+    // schema is the second-to-last part in DB.SCHEMA.TABLE
+    const chipSchema = parts.length >= 2 ? parts[parts.length - 2] : "";
+    const matches = !fqn || chipSchema === schemaName.toUpperCase() || fqn === "";
+    c.style.display = matches ? "" : "none";
+    if (matches) visibleCount++;
+  });
+
+  // Composer chips — same filter
+  let composerVisible = 0;
+  composerChips.forEach(c => {
+    const fqn = (c.dataset.fqn || "").toUpperCase();
+    const parts = fqn.split(".");
+    const chipSchema = parts.length >= 2 ? parts[parts.length - 2] : "";
+    const matches = !fqn || chipSchema === schemaName.toUpperCase() || fqn === "";
+    c.style.display = matches ? "" : "none";
+    if (matches) composerVisible++;
+  });
+
+  // Hide the wrap if nothing visible
+  if (wrap) wrap.style.display = visibleCount === 0 ? "none" : "";
+}
+
+function sendMessage(tableHint){
+  const inp = document.getElementById('input');
+  const text = inp.value.trim();
+  if (!text || !wsReady) return;
+  // Clear any lingering error/clarify state before starting fresh
+  if (window._mascotInErrorState || window._mascotInClarifyState) {
+    window._mascotInErrorState = false;
+    window._mascotInClarifyState = false;
+    stopDoodle();
+    _resetStageSteps();
+    document.querySelectorAll('#mEyes ellipse[fill]').forEach(el => {
+      const f = el.getAttribute('fill');
+      if (f !== 'white' && f !== '#e0f2fe') el.setAttribute('fill','#38bdf8');
+    });
+    const ant = document.getElementById('mAntenna');
+    if (ant) ant.setAttribute('fill','#60a5fa');
+  }
+  // Reset composer mascot error state
+  if (window._composerMascotReset) window._composerMascotReset();
+  appendUser(text);
+  const payload = { text };
+  if (tableHint) payload.table_hint = tableHint;
+  if (_activeSchema) payload.schema_hint = _activeSchema;
+  ws.send(JSON.stringify(payload));
+  inp.value = '';
+  inp.style.height = 'auto';
+  updateCharCount();
+  updateProcessing('authorization', 'Starting analysis', 'Sending your request to the backend.');
+  const sug = document.getElementById('suggestionsWrap'); if (sug) sug.style.display = 'none';
+}
+function sendSuggestion(btn){
+  const q   = btn.textContent.trim();
+  const fqn = btn.dataset.fqn || '';
+  prefillComposer(q);
+  sendMessage(fqn || undefined);
+}
+function shuffleSuggestions(){
+  const wrap = document.getElementById('suggestions');
+  if (!wrap) return;
+  const chips = Array.from(wrap.querySelectorAll('.suggestion-chip'));
+  // Fisher-Yates shuffle then reattach in new order
+  for (let i = chips.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [chips[i], chips[j]] = [chips[j], chips[i]];
+  }
+  chips.forEach(c => { c.style.opacity='0'; c.style.transform='scale(.92)'; });
+  setTimeout(() => {
+    chips.forEach(c => wrap.appendChild(c));
+    chips.forEach(c => { c.style.transition='all .18s'; c.style.opacity='1'; c.style.transform='scale(1)'; });
+  }, 100);
+}
+function prefillComposer(text){ const inp = document.getElementById('input'); inp.value = text; inp.focus(); inp.dispatchEvent(new Event('input')); }
+function updateCharCount(){ const inp = document.getElementById('input'); document.getElementById('charCount').textContent = 500 - inp.value.length; }
+// ── Doodling particle engine ──────────────────────────────────────────────────
+// Draws soft flowing particles on the processing card canvas while the bot
+// is thinking. Subtle, calming, appropriate for a data analytics tool.
+// Automatically stops when processing ends.
+// ── Mascot character controller ───────────────────────────────────────────────
+// Each pipeline stage maps to a specific body animation + overlay element
+// + tooltip. The mascot reacts visually to exactly what the bot is doing.
+const MASCOT_STATES = {
+  authorization: {
+    body: 'mascot-float 1.8s ease-in-out infinite',
+    overlay: null, tooltip: '🔑 Checking your access…',
+    antenna: '#60a5fa', armL: '', armR: '',
+  },
+  metric_registry: {
+    body: 'mascot-bob .55s ease-in-out infinite',
+    overlay: null, tooltip: '⚡ Found a fast answer!',
+    antenna: '#fbbf24', armL: '', armR: '',
+  },
+  retrieving_context: {
+    body: 'mascot-scan .85s ease-in-out infinite',
+    overlay: null, tooltip: '📚 Reading your data schema…',
+    antenna: '#38bdf8', armL: '', armR: '',
+  },
+  generating_sql: {
+    body: 'mascot-type .4s ease-in-out infinite',
+    overlay: null, tooltip: '✏️ Translating to SQL…',
+    antenna: '#a78bfa',
+    armL: 'mascot-wave-arm .35s ease-in-out infinite',
+    armR: 'mascot-wave-arm .35s ease-in-out infinite reverse',
+  },
+  validating_sql: {
+    body: 'mascot-check .65s ease-in-out 4',
+    overlay: 'mGlass', tooltip: '🔍 Checking the query…',
+    antenna: '#38bdf8', armL: '', armR: '',
+  },
+  repairing_query: {
+    body: 'mascot-float 1s ease-in-out infinite',
+    overlay: 'mWrench', tooltip: '🔧 Fixing an issue…',
+    antenna: '#fbbf24', armL: '',
+    armR: 'mascot-wave-arm .5s ease-in-out infinite',
+    overlayAnim: 'mascot-spin 1.1s linear infinite',
+  },
+  executing_query: {
+    body: 'mascot-run .5s ease-in-out infinite',
+    overlay: 'mGear', tooltip: '🗄️ Querying your database…',
+    antenna: '#34d399',
+    armL: 'mascot-wave-arm .5s ease-in-out infinite reverse',
+    armR: 'mascot-wave-arm .5s ease-in-out infinite',
+    overlayAnim: 'mascot-spin .65s linear infinite',
+  },
+  formatting_results: {
+    body: 'mascot-bob .65s ease-in-out infinite',
+    overlay: null, tooltip: '📊 Preparing your answer…',
+    antenna: '#34d399', armL: '', armR: '',
+  },
+  chart_ready: {
+    body: 'mascot-celebrate .5s ease-in-out infinite',
+    overlay: 'mCheck', tooltip: '📈 Done — your answer is ready!',
+    antenna: '#34d399',
+    armL: 'mascot-wave-arm .45s ease-in-out infinite',
+    armR: 'mascot-wave-arm .45s ease-in-out infinite reverse',
+    overlayAnim: 'mascot-pulse .55s ease-in-out infinite',
+  },
+  _idle: {
+    body: 'mascot-float 2.2s ease-in-out infinite',
+    overlay: null, tooltip: 'QueryBot is thinking…',
+    antenna: '#60a5fa', armL: '', armR: '',
+  },
+  _error: {
+    body: 'mascot-error .6s ease-in-out 2',
+    overlay: null, tooltip: '❌ Something went wrong',
+    antenna: '#f87171', armL: '', armR: '',
+    eyeColor: '#f87171',
+  },
+  _clarify: {
+    body: 'mascot-question .7s ease-in-out infinite',
+    overlay: null, tooltip: '❓ I need a bit more context',
+    antenna: '#fbbf24', armL: '', armR: '',
+    eyeColor: '#fbbf24',
+  },
+};
+
+const _OVERLAY_IDS = ['mGlass','mWrench','mGear','mCheck'];
+let _currentMascotStage = '_idle';
+
+function _setMascotState(stageKey) {
+  const state   = MASCOT_STATES[stageKey] || MASCOT_STATES['_idle'];
+  const body    = document.getElementById('mascotBody');
+  const tooltip = document.getElementById('mascotTooltip');
+  const armL    = document.getElementById('mArmL');
+  const armR    = document.getElementById('mArmR');
+  const antenna = document.getElementById('mAntenna');
+  if (!body) return;
+
+  body.style.animation = state.body;
+  if (armL) armL.style.animation = state.armL || '';
+  if (armR) armR.style.animation = state.armR || '';
+  if (antenna && state.antenna) antenna.setAttribute('fill', state.antenna);
+  // Tint eyes for error/clarify states
+  const eyeL = document.querySelector('#mEyes ellipse:first-child');
+  const eyeR = document.querySelector('#mEyes ellipse:nth-child(5)');
+  const eyeColor = state.eyeColor || '#38bdf8';
+  document.querySelectorAll('#mEyes ellipse[fill]').forEach(el => {
+    if (el.getAttribute('fill') !== 'white' && el.getAttribute('fill') !== '#e0f2fe') {
+      el.setAttribute('fill', eyeColor);
+    }
+  });
+  if (tooltip) tooltip.textContent = state.tooltip;
+
+  _OVERLAY_IDS.forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (id === state.overlay) {
+      el.style.display = '';
+      requestAnimationFrame(() => { el.style.opacity = '1'; });
+      if (state.overlayAnim) el.style.animation = state.overlayAnim;
+    } else {
+      el.style.opacity = '0';
+      setTimeout(() => { if (el.style.opacity === '0') el.style.display = 'none'; }, 250);
+    }
+  });
+  _currentMascotStage = stageKey;
+}
+
+function startDoodle() {
+  // Start mascot in idle state
+  _setMascotState('_idle');
+}
+
+function stopDoodle() {
+  // Reset to idle, hide overlays cleanly
+  const body = document.getElementById('mascotBody');
+  if (body) body.style.animation = '';
+  _OVERLAY_IDS.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) { el.style.opacity = '0'; el.style.display = 'none'; }
+  });
+  // Reset LEDs to default
+  const defaultLeds = ['#34d399','#60a5fa','#fbbf24','#f472b6'];
+  ['mLed1','mLed2','mLed3','mLed4'].forEach((id, i) => {
+    const el = document.getElementById(id);
+    if (el) el.setAttribute('fill', defaultLeds[i]);
+  });
+}
+
+// ── Stage step tracker ────────────────────────────────────────────────────────
+const STAGE_ORDER = [
+  'authorization', 'metric_registry', 'retrieving_context',
+  'generating_sql', 'validating_sql', 'repairing_query',
+  'executing_query', 'formatting_results', 'chart_ready'
+];
+const STAGE_ICONS = {
+  authorization: '🔑', metric_registry: '⚡', retrieving_context: '📚',
+  generating_sql: '✏️', validating_sql: '🔍', repairing_query: '🔧',
+  executing_query: '🗄️', formatting_results: '📊', chart_ready: '📈'
+};
+let _completedStages = [];
+let _currentStage = null;
+
+function _updateStageSteps(stage) {
+  if (stage && MASCOT_STATES[stage]) _setMascotState(stage);
+  if (stage) _currentStage = stage;
+}
+
+function _resetStageSteps() {
+  _completedStages = [];
+  _currentStage = null;
+}
+
+function showMascotError() {
+  // Show error mascot — stays visible alongside the error bubble
+  // so the user can see the reaction. Hides when they start the next query.
+  _setMascotState('_error');
+  const row = document.getElementById('processingRow');
+  if (row) row.classList.add('active');
+  // Shake once, then switch to a sad-idle float — stays visible
+  setTimeout(() => {
+    const body = document.getElementById('mascotBody');
+    if (body) body.style.animation = 'mascot-float 2.5s ease-in-out infinite';
+  }, 1200);
+  // Mark that we are in an error display state so sendMessage() can clean up
+  window._mascotInErrorState = true;
+}
+
+function showMascotClarify() {
+  // Show clarification mascot — stays visible above the clarification card
+  _setMascotState('_clarify');
+  const row = document.getElementById('processingRow');
+  if (row) row.classList.add('active');
+  window._mascotInClarifyState = true;
+}
+
+// ── Theme-aware mascot color update ─────────────────────────────────────────
+function _updateMascotTheme() {
+  const dark = document.documentElement.getAttribute('data-theme') === 'dark';
+  // Processing mascot gradients
+  const pairs = [
+    ['mg-head-1', dark ? '#334155' : '#e2e8f0'],
+    ['mg-head-2', dark ? '#1e293b' : '#94a3b8'],
+    ['mg-body-1', dark ? '#334155' : '#e2e8f0'],
+    ['mg-body-2', dark ? '#1e293b' : '#94a3b8'],
+    // Composer mascot
+    ['cm-head-1', dark ? '#334155' : '#e2e8f0'],
+    ['cm-head-2', dark ? '#1e293b' : '#94a3b8'],
+  ];
+  pairs.forEach(([id, color]) => {
+    const el = document.getElementById(id);
+    if (el) el.setAttribute('stop-color', color);
+  });
+}
+// Run on load and on theme change
+document.addEventListener('DOMContentLoaded', _updateMascotTheme);
+window.addEventListener('qb-theme-change', _updateMascotTheme);
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Executive AI intelligence indicator — state machine
+//
+// A minimal, professional floating orb that represents the AI's attentional
+// state. NOT a character. NO face, NO emoji, NO bouncing. Light + form
+// communicate state. Idle → Focus → Typing → Thinking → Send → Ready → Error.
+//
+// Public API (preserved from the old mascot so websocket handlers keep working):
+//   window._composerMascotError(msg)  — enter error state with a tooltip label
+//   window._composerMascotReset()     — return to idle
+// ══════════════════════════════════════════════════════════════════════════════
+function _initComposerMascot() {
+  const inp    = document.getElementById('input');
+  const wrap   = document.getElementById('inputWrap');
+  const orb    = document.getElementById('composerMascot');
+  const tip    = document.getElementById('composerTooltip');
+  if (!inp || !wrap || !orb) return;
+
+  // All valid state tokens. The CSS drives animations off these class names.
+  const STATES = ['ai-idle', 'ai-focus', 'ai-typing', 'ai-thinking',
+                  'ai-send', 'ai-ready', 'ai-error', 'ai-hidden'];
+
+  // Short, executive-tone status labels per state. No exclamations, no emoji.
+  const LABELS = {
+    idle:     'Ready',
+    focus:    'Listening',
+    typing:   'Attending',
+    thinking: 'Considering',
+    send:     'Processing',
+    ready:    'Response ready',
+    error:    'Connection issue',
+  };
+
+  let current = 'idle';
+  let thinkTimer = null;
+
+  function _setState(name, opts) {
+    opts = opts || {};
+    if (name === current && !opts.force) return;
+    current = name;
+
+    clearTimeout(thinkTimer);
+    // Reset all state classes then apply the target one
+    orb.classList.remove.apply(orb.classList, STATES);
+    orb.classList.add('ai-' + name);
+
+    // Update tooltip label (executive tone; only shown on hover or error)
+    if (tip) {
+      tip.textContent = opts.msg || LABELS[name] || '';
+    }
+
+    // Drive slide position — stays within a defined radius of the input
+    _positionOrb(name);
+  }
+
+  // ── Position ───────────────────────────────────────────────────────────────
+  // The orb floats within a bounded zone at the LEFT edge of the input area.
+  // It NEVER tracks the caret or covers typed text — executive users read
+  // what they type. Position drifts only between idle/focus/thinking,
+  // constrained to a ~6px vertical radius to avoid jitter.
+  function _positionOrb(stateName) {
+    // Horizontal: pinned to the left gutter of the input.
+    // Executive UX: no "chase the cursor" motion. The orb is an ambient
+    // presence, not a follower.
+    const leftPx = 10;  // must match the CSS `left` value so transitions stay smooth
+    orb.style.left = leftPx + 'px';
+
+    // Vertical drift is handled by CSS animation `ai-drift` in idle state.
+    // Other states hold the orb centered.
+  }
+
+  // ── Transition helpers ────────────────────────────────────────────────────
+  function _scheduleThink() {
+    clearTimeout(thinkTimer);
+    thinkTimer = setTimeout(() => {
+      // After 1.4s of inactivity while text is present → thinking state
+      if (current === 'typing' && inp.value.trim()) _setState('thinking');
+    }, 1400);
+  }
+
+  // ── Input listeners ───────────────────────────────────────────────────────
+  // Focus/blur — listening state
+  inp.addEventListener('focus', () => {
+    if (!inp.value.trim()) _setState('focus');
+  });
+  inp.addEventListener('blur', () => {
+    if (!inp.value.trim()) _setState('idle');
+  });
+
+  // Typing — attentive state, with debounced transition to thinking
+  inp.addEventListener('input', () => {
+    const text = inp.value;
+    if (!text.trim()) {
+      _setState('focus');
+      return;
+    }
+    _setState('typing');
+    _scheduleThink();
+  });
+
+  // Submit — processing state. Return to idle after ~1.2s if no websocket
+  // status supersedes it. The WS handler calls _composerMascotReset() on
+  // response-ready, which walks us through `ready` → `idle`.
+  inp.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey && inp.value.trim()) {
+      _setState('send');
+    }
+  });
+
+  // Also catch clicks on the send button if it's the actual submit path
+  const sendBtn = document.getElementById('sendBtn');
+  if (sendBtn) {
+    sendBtn.addEventListener('click', () => {
+      if (inp.value.trim()) _setState('send');
+    });
+  }
+
+  // ── Public hooks (preserved from the previous mascot API) ────────────────
+  window._composerMascotError = function (msg) {
+    _setState('error', { force: true, msg: msg || LABELS.error });
+    // Error state auto-clears after 6s if nothing else supersedes it.
+    clearTimeout(orb._errResetT);
+    orb._errResetT = setTimeout(() => {
+      if (current === 'error') _setState('idle');
+    }, 6000);
+  };
+
+  window._composerMascotReset = function () {
+    // Response-ready flow: briefly show the ready pulse, then return to idle.
+    _setState('ready', { force: true });
+    setTimeout(() => {
+      if (current === 'ready') _setState('idle');
+    }, 1400);
+  };
+
+  // ── Kick off ──────────────────────────────────────────────────────────────
+  _setState('idle', { force: true });
+}
+
+function connect(){
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  setConnectionState(reconnectAttempts ? 'Reconnecting…' : 'Connecting…', reconnectAttempts ? 'Restoring live session' : 'Waiting for live session');
+  ws = new WebSocket(`${proto}//${location.host}/ws/chat/${ACCOUNT_ID}`);
+  ws.onopen = () => { wsReady = true; reconnectAttempts = 0; document.getElementById('sendBtn').disabled = false; setConnectionState('Connected', 'Live session active'); };
+  ws.onmessage = (evt) => {
+    const msg = safeJsonParse(evt.data); if (!msg) return;
+    if (msg.type === 'typing') {
+      setProcessing(!!msg.active);
+    } else if (msg.type === 'status') {
+      updateProcessing(msg.stage, msg.label, msg.detail);
+    } else if (msg.type === 'system') {
+      appendSystem(msg.content, { persist: !/^Connected as /i.test(msg.content || '') });
+    } else if (msg.type === 'clarification_prompt') {
+      showMascotClarify();
+      setTimeout(() => renderClarificationPrompt(msg), 500);
+    } else if (msg.type === 'message') {
+      const msgContent = msg.content || '';
+      const usageWarning = /queries used this month|tokens used this month/i.test(msgContent);
+      if (usageWarning && !/limit reached/i.test(msgContent)) {
+        appendSystem(msgContent);
+        refreshQueryLimitStatus({toast:true});
+        return;
+      }
+      // Detect failure messages — show error mascot briefly before rendering
+      if (msgContent.startsWith('❌') || msgContent.startsWith('❓')) {
+        if (msgContent.startsWith('❌')) {
+          showMascotError();
+          // Show contextual error on the composer mascot
+          const isDbPause = msgContent.includes('40613') || msgContent.includes('not currently available');
+          const isConn    = msgContent.includes('connection') || msgContent.includes('timeout');
+          const errMsg    = isDbPause
+            ? '🔄 DB is waking up — please try again in a moment'
+            : isConn
+              ? '📡 Connection issue — try again'
+              : '⚠️ Got an error — try rephrasing or retry';
+          if (window._composerMascotError) window._composerMascotError(errMsg);
+        }
+        // Keep mascot visible, render error after brief reaction
+        setTimeout(() => {
+          appendBot(msgContent);
+          refreshQueryLimitStatus({toast:true});
+        }, 400);
+      } else {
+        // Success text result — small delay so mascot celebration is seen
+        _setMascotState('chart_ready');
+        setTimeout(() => {
+          setProcessing(false);
+          appendBot(msgContent);
+          refreshQueryLimitStatus({toast:true});
+        }, 700);
+        return;
+      }
+    } else if (msg.type === 'assistant_response') {
+      // Show celebration state briefly so the user sees it before result renders
+      _setMascotState('chart_ready');
+      const row = document.getElementById('processingRow');
+      if (row) row.classList.add('active');
+      setTimeout(() => {
+        setProcessing(false);
+        appendAssistantResponse(msg);
+        refreshQueryLimitStatus({toast:true});
+      }, 900);
+      return; // prevent falling through to setProcessing(false) in 'typing' event
+    } else if (msg.type === 'assistant_analysis') {
+      appendAnalysisResponse(msg);
+    } else if (msg.type === 'chart') {
+      appendChart(msg.chart || {});
+    } else if (msg.type === 'error') {
+      showMascotError();
+      if (window._composerMascotError) window._composerMascotError('⚠️ Something went wrong — please retry');
+      appendSystem('⚠️ ' + msg.content);
+    }
+  };
+  ws.onclose = (evt) => {
+    wsReady = false;
+    document.getElementById('sendBtn').disabled = true;
+    setProcessing(false);
+    if ([4001, 4003, 4004].includes(evt.code)) {
+      const note = evt.code === 4004 ? 'Chat is not enabled for this workspace.' : 'Your session is invalid or no longer authorized.';
+      setConnectionState('Unavailable', note);
+      appendSystem('Chat session unavailable. Refresh the page or sign in again.');
+      return;
+    }
+    reconnectAttempts += 1;
+    const delay = Math.min(8000, 1000 * reconnectAttempts);
+    setConnectionState('Reconnecting…', `Connection lost. Retrying in ${Math.round(delay / 1000)}s`);
+    setTimeout(connect, delay);
+  };
+  ws.onerror = () => setConnectionState('Connection issue', 'Trying to recover live session');
+}
+document.addEventListener('DOMContentLoaded', () => {
+  _initComposerMascot();
+  _updateMascotTheme();
+  window.addEventListener('qb-query-limit-status', (event) => updateQueryLimitKpi(event.detail, {toast:false}));
+  const inp = document.getElementById('input');
+  inp.addEventListener('input', () => { inp.style.height = 'auto'; inp.style.height = Math.min(inp.scrollHeight, 140) + 'px'; updateCharCount(); });
+  inp.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
+  document.getElementById('sendBtn').disabled = true;
+  document.querySelectorAll('a[href="/portal/logout"]').forEach((el) => {
+    el.addEventListener('click', () => clearChatCache());
+  });
+  updateCharCount();
+  initSchemaSelector();
+  refreshQueryLimitStatus({toast:false});
+  window.setInterval(() => refreshQueryLimitStatus({toast:false}), 60000);
+  restoreChatCache();
+  connect();
+});
+</script>
+{% endif %}
+{% endblock %}

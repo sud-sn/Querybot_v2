@@ -1,0 +1,41 @@
+{% extends "portal_base.html" %}
+{% block title %}Pin Chart — QueryBot Portal{% endblock %}
+{% block content %}
+<div style="max-width:500px;margin:2rem auto">
+  <div class="page-header">
+    <h1>📌 Pin chart to dashboard</h1>
+    <p>Give it a title and it will refresh with live data every time you log in.</p>
+  </div>
+  <div class="card">
+    <div class="card-body" style="padding:1.5rem">
+      {% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+      <form method="post" action="/portal/pin-confirm">
+        <input type="hidden" name="token" value="{{ token }}">
+
+        <div class="form-group">
+          <label>Chart title</label>
+          <input type="text" name="title" value="{{ question[:60] }}" autofocus required
+            placeholder="e.g. Total revenue this month">
+        </div>
+
+        <div style="background:var(--gray-50);border-radius:8px;padding:.875rem;margin-bottom:1rem">
+          <div style="font-size:11px;font-weight:700;color:var(--gray-500);
+            text-transform:uppercase;letter-spacing:.05em;margin-bottom:.5rem">Original question</div>
+          <div style="font-size:13px;color:var(--gray-700)">{{ question }}</div>
+        </div>
+
+        <div style="background:var(--gray-50);border-radius:8px;padding:.875rem;margin-bottom:1rem">
+          <div style="font-size:11px;font-weight:700;color:var(--gray-500);
+            text-transform:uppercase;letter-spacing:.05em;margin-bottom:.5rem">SQL query (runs live on refresh)</div>
+          <code style="font-size:11px;color:var(--gray-700);word-break:break-all">{{ sql[:200] }}</code>
+        </div>
+
+        <div style="display:flex;gap:.75rem">
+          <button type="submit" class="btn btn-primary">📌 Pin to dashboard</button>
+          <a href="/portal/dashboard" class="btn btn-secondary">Cancel</a>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}First-time Setup — QueryBot Admin{% endblock %}
+{% block content %}
+<div style="max-width:560px;margin:2rem auto">
+  <div class="page-header">
+    <h1>Welcome — first-time setup</h1>
+    <p>Configure your admin password and AI credentials to get started.</p>
+  </div>
+  {% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+  <div class="card">
+    <div class="card-header"><h2>System configuration</h2></div>
+    <div class="card-body">
+      <form method="post" action="/admin/setup">
+
+        <div class="form-group">
+          <label>Admin password *</label>
+          <input type="password" name="admin_password" minlength="8" required autofocus>
+          <p class="form-note">Minimum 8 characters. Used to protect this admin panel.</p>
+        </div>
+
+        <hr style="border:none;border-top:1px solid var(--gray-200);margin:1.25rem 0">
+        <p style="font-size:12px;font-weight:700;color:var(--gray-700);margin-bottom:.75rem">AI PROVIDER CREDENTIALS</p>
+
+        <div class="form-grid">
+          <div class="form-group">
+            <label>Anthropic API key</label>
+            <input type="password" name="anthropic_key" placeholder="sk-ant-...">
+            <p class="form-note"><a href="https://console.anthropic.com" target="_blank">console.anthropic.com</a></p>
+          </div>
+          <div class="form-group">
+            <label>OpenAI API key (optional)</label>
+            <input type="password" name="openai_key" placeholder="sk-...">
+            <p class="form-note">Required if you want GPT-4o support</p>
+          </div>
+        </div>
+
+        <hr style="border:none;border-top:1px solid var(--gray-200);margin:1.25rem 0">
+        <p style="font-size:12px;font-weight:700;color:var(--gray-700);margin-bottom:.75rem">LLM DEFAULTS (can be changed per client later)</p>
+
+        <div class="form-grid">
+          <div class="form-group">
+            <label>Default provider</label>
+            <select name="default_provider">
+              <option value="anthropic" selected>Anthropic (Claude)</option>
+              <option value="openai">OpenAI (GPT)</option>
+              <option value="azure_openai">Azure OpenAI</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Query model</label>
+            <select name="default_model">
+              {% for provider, model, label in query_models %}
+              <option value="{{ model }}" {% if model == "claude-sonnet-4-6" %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+            <p class="form-note">Used for every SQL query</p>
+          </div>
+        </div>
+        <div class="form-group" style="max-width:50%">
+          <label>KB generation model</label>
+          <select name="kb_model">
+            {% for provider, model, label in kb_models %}
+            <option value="{{ model }}" {% if model == "claude-opus-4-5" %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+          <p class="form-note">Used once per client to enrich the knowledge base</p>
+        </div>
+
+        <button type="submit" class="btn btn-primary" style="width:100%;margin-top:.5rem">
+          Save and open dashboard →
+        </button>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

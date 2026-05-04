@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}Register Client — QueryBot Admin{% endblock %}
+{% block content %}
+
+<div style="margin-bottom:1.25rem">
+  <a href="/admin/clients" style="color:var(--gray-500);font-size:13px">← Clients</a>
+  <h1 style="font-size:20px;font-weight:700;margin-top:4px">Register a new client</h1>
+  <p style="font-size:13px;color:var(--gray-500)">
+    Create a new workspace entry. After saving, you'll be taken to the
+    Schema &amp; Knowledge Base setup page where you can run discovery
+    and generate the KB for this client.
+  </p>
+</div>
+
+{% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+
+<div class="card">
+  <div class="card-header"><h2>Client details</h2></div>
+  <div class="card-body">
+    <form method="post" action="/admin/clients/create">
+      <div class="form-grid">
+        <div class="form-group">
+          <label>Account ID *</label>
+          <input type="text" name="account_id" required
+            placeholder="e.g. zoom-acc-7D7A or tenant-guid or team_id">
+          <p class="form-note">
+            The unique workspace identifier your chat platform sends.
+            Zoom accountId · Teams tenantId · Slack team_id · or any
+            stable ID if you're only using the internal web chat.
+          </p>
+        </div>
+        <div class="form-group">
+          <label>Client name *</label>
+          <input type="text" name="client_name" required
+            placeholder="e.g. Acme Pharmacy">
+        </div>
+      </div>
+
+      <div class="form-group" style="margin-bottom:.75rem">
+        <label style="display:flex;align-items:flex-start;gap:.65rem;font-weight:600">
+          <input type="checkbox" name="portal_only" value="1" id="portal_only_chk"
+                 onchange="togglePlatformSection(this.checked)" style="margin-top:3px">
+          <span>
+            Web portal only — no chat platform (Zoom / Teams / Slack)
+            <span class="form-note" style="display:block;margin-top:4px">
+              Users log in at <code>/portal/login</code> with credentials you set in the Users tab.
+              They can start querying immediately — no registration link, no bot needed.
+            </span>
+          </span>
+        </label>
+      </div>
+
+      <div id="platform-section">
+        <div class="form-grid">
+          <div class="form-group">
+            <label>Platform</label>
+            <select name="platform_type">
+              <option value="">— none (portal only) —</option>
+              <option value="zoom">Zoom</option>
+              <option value="teams">Microsoft Teams</option>
+              <option value="slack">Slack</option>
+            </select>
+            <p class="form-note">Required only if users will message through a chat app.</p>
+          </div>
+          <div class="form-group">
+            <label>Assigned database</label>
+            <select name="db_config_id">
+              <option value="">— choose later —</option>
+              {% for db in dbs %}
+              <option value="{{ db.id }}">{{ db.name }} ({{ db.label }})</option>
+              {% endfor %}
+            </select>
+            <p class="form-note">You can assign this later on the Settings tab.</p>
+          </div>
+        </div>
+      </div><!-- /platform-section -->
+
+      <script>
+      function togglePlatformSection(portalOnly) {
+        document.getElementById('platform-section').style.display = portalOnly ? 'none' : '';
+      }
+      </script>
+
+      <div class="form-group">
+        <label>Business description</label>
+        <textarea name="business_desc" rows="3"
+          placeholder="e.g. We are a compounding pharmacy managing prescriptions, patients, drug inventory, and insurance claims."></textarea>
+        <p class="form-note">
+          Optional now — required before you generate the Knowledge Base.
+          This tells the LLM how to interpret the client's data.
+        </p>
+      </div>
+
+      <div style="display:flex;gap:.625rem">
+        <button type="submit" class="btn btn-primary">Register client →</button>
+        <a href="/admin/clients" class="btn btn-secondary">Cancel</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% endblock %}

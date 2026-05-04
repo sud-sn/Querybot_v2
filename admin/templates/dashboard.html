@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — QueryBot Admin{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Dashboard</h1>
+  <p>Live status of all connected clients and integrations.</p>
+</div>
+
+{% if not platforms %}
+<div class="alert alert-error">
+  ⚠️ No platform configured. <a href="/admin/platforms">Add a platform</a> (Zoom, Teams, or Slack) to start receiving messages.
+</div>
+{% endif %}
+{% if not dbs %}
+<div class="alert alert-error">
+  ⚠️ No database configured. <a href="/admin/databases">Add a database connection</a> so the bot can query data.
+</div>
+{% endif %}
+
+<div class="metrics">
+  <div class="metric">
+    <div class="metric-label">Connected clients</div>
+    <div class="metric-value">{{ clients|length }}</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Ready</div>
+    <div class="metric-value" style="color:var(--green)">
+      {{ clients|selectattr("state","equalto","READY")|list|length }}
+    </div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Total queries</div>
+    <div class="metric-value">{{ stats.total or 0 }}</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Total cost (USD)</div>
+    <div class="metric-value" style="font-size:18px">${{ "%.2f"|format(stats.total_cost_usd or 0) }}</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Platforms</div>
+    <div class="metric-value">{{ platforms|length }}</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Databases</div>
+    <div class="metric-value">{{ dbs|length }}</div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <h2>Connected clients</h2>
+    <a href="/admin/clients" class="btn btn-secondary btn-sm">View all</a>
+  </div>
+  {% if not clients %}
+  <div class="card-body" style="color:var(--gray-500);text-align:center;padding:2rem">
+    No clients connected yet. Once someone messages your bot they will appear here.
+  </div>
+  {% else %}
+  <table class="table">
+    <tr>
+      <th>Client name</th>
+      <th>Platform</th>
+      <th>State</th>
+      <th>Database</th>
+      <th>Last active</th>
+      <th></th>
+    </tr>
+    {% for c in clients %}
+    <tr>
+      <td>
+        <div style="font-weight:600">{{ c.client_name or "—" }}</div>
+        <div style="font-size:11px;color:var(--gray-500);font-family:monospace">{{ c.account_id[:20] }}…</div>
+      </td>
+      <td><span class="badge badge-blue">{{ c.platform_type }}</span></td>
+      <td>
+        {% if c.state == "READY" %}<span class="badge badge-green">READY</span>
+        {% elif c.state == "KB_BUILDING" %}<span class="badge badge-amber">BUILDING KB</span>
+        {% elif c.state == "SCHEMA_READY" %}<span class="badge badge-blue">SCHEMA READY</span>
+        {% else %}<span class="badge badge-gray">{{ c.state }}</span>{% endif %}
+      </td>
+      <td style="color:var(--gray-500);font-size:12px">{{ c.db_name }}</td>
+      <td style="color:var(--gray-500);font-size:12px">{{ c.updated_at[:16] }}</td>
+      <td><a href="/admin/clients/{{ c.account_id }}" class="btn btn-secondary btn-sm">Details</a></td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+</div>
+{% endblock %}

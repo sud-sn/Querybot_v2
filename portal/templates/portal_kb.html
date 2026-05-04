@@ -1,0 +1,219 @@
+{% extends "portal_base.html" %}
+{% block title %}Semantic Layer - QueryBot Portal{% endblock %}
+{% block head %}
+<style>
+.semantic-hero{display:flex;justify-content:space-between;gap:1rem;align-items:flex-start;margin-bottom:1.25rem}
+.semantic-title h1{font-size:24px;font-weight:850;letter-spacing:-.025em;margin-bottom:.35rem;color:var(--text)}
+.semantic-title p{color:var(--text-muted);line-height:1.65;max-width:760px}
+.semantic-actions{display:flex;gap:.55rem;flex-wrap:wrap;justify-content:flex-end}
+.schema-tabs{display:flex;gap:.45rem;flex-wrap:wrap;margin-bottom:1rem}
+.schema-tab{border:1px solid var(--border);background:var(--surface);color:var(--text-soft);border-radius:999px;padding:8px 13px;font-size:12px;font-weight:800;box-shadow:var(--shadow)}
+.schema-tab.active{background:var(--primary-soft);border-color:color-mix(in srgb,var(--primary) 32%,transparent);color:var(--primary)}
+.semantic-grid{display:grid;grid-template-columns:280px 1fr;gap:1.1rem;align-items:start}
+.table-list{position:sticky;top:76px}
+.table-link{display:flex;align-items:center;justify-content:space-between;gap:.7rem;padding:.7rem .85rem;border-bottom:1px solid var(--border);color:var(--text-soft);text-decoration:none}
+.table-link:hover{text-decoration:none;background:var(--surface-2)}
+.table-name{font-family:'JetBrains Mono','Cascadia Code',monospace;font-size:12px;font-weight:800;color:var(--text)}
+.table-meta{font-size:11px;color:var(--text-muted);margin-top:3px}
+.confidence-pill{display:inline-flex;align-items:center;gap:5px;border-radius:999px;padding:4px 8px;font-size:11px;font-weight:850;background:var(--surface-2);border:1px solid var(--border);color:var(--text-soft);white-space:nowrap}
+.confidence-pill.high{background:var(--success-soft);border-color:color-mix(in srgb,var(--success) 28%,transparent);color:var(--success)}
+.confidence-pill.med{background:var(--warning-soft);border-color:color-mix(in srgb,var(--warning) 28%,transparent);color:var(--warning)}
+.confidence-pill.low{background:var(--danger-soft);border-color:color-mix(in srgb,var(--danger) 28%,transparent);color:var(--danger)}
+.semantic-table-card{scroll-margin-top:84px}
+.table-head{display:flex;justify-content:space-between;gap:1rem;align-items:flex-start}
+.table-head h2{font-size:15px;font-weight:850;color:var(--text)}
+.table-head p{font-size:12px;color:var(--text-muted);line-height:1.6;margin-top:.25rem}
+.field-table{width:100%;border-collapse:separate;border-spacing:0}
+.field-table th{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--text-muted);text-align:left;padding:.7rem .75rem;background:var(--surface-2);border-bottom:1px solid var(--border)}
+.field-table td{padding:.8rem .75rem;border-bottom:1px solid var(--border);vertical-align:top;font-size:12px;line-height:1.55;color:var(--text-soft)}
+.field-table tr:last-child td{border-bottom:none}
+.field-col{font-family:'JetBrains Mono','Cascadia Code',monospace;font-weight:850;color:var(--text);white-space:nowrap}
+.field-type{font-size:11px;color:var(--text-muted);margin-top:.15rem}
+.values{font-size:11px;color:var(--text-muted);margin-top:.35rem;max-width:360px}
+.status-badges{display:flex;gap:.35rem;flex-wrap:wrap;margin-top:.45rem}
+.mini-badge{display:inline-flex;border-radius:999px;padding:3px 7px;font-size:10px;font-weight:850;background:var(--surface-2);border:1px solid var(--border);color:var(--text-muted)}
+.mini-badge.pending{background:var(--warning-soft);border-color:color-mix(in srgb,var(--warning) 28%,transparent);color:var(--warning)}
+.mini-badge.approved{background:var(--success-soft);border-color:color-mix(in srgb,var(--success) 28%,transparent);color:var(--success)}
+.review-toggle{border:1px solid var(--border);background:var(--surface);color:var(--primary);border-radius:999px;padding:7px 10px;font-size:11px;font-weight:850;cursor:pointer;white-space:nowrap}
+.review-toggle:hover{background:var(--primary-soft);border-color:color-mix(in srgb,var(--primary) 28%,transparent)}
+.review-row{display:none;background:color-mix(in srgb,var(--surface-2) 70%,transparent)}
+.review-row.open{display:table-row}
+.review-panel{display:grid;grid-template-columns:1fr 1fr;gap:.8rem;padding:.9rem}
+.review-panel label{display:block;font-size:11px;font-weight:850;color:var(--text-soft);margin-bottom:.35rem}
+.review-panel textarea{width:100%;min-height:84px;border:1.5px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--text);padding:.7rem;resize:vertical}
+.review-panel textarea:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(37,99,235,.12);outline:none}
+.review-full{grid-column:1/-1}
+.review-actions{grid-column:1/-1;display:flex;justify-content:space-between;gap:.8rem;align-items:center;flex-wrap:wrap}
+.review-note{font-size:11px;color:var(--text-muted)}
+@media(max-width:900px){.semantic-hero{flex-direction:column}.semantic-grid{grid-template-columns:1fr}.table-list{position:static}.review-panel{grid-template-columns:1fr}.field-table{display:block;overflow-x:auto}}
+</style>
+{% endblock %}
+{% block content %}
+<section class="semantic-hero">
+  <div class="semantic-title">
+    <h1>Semantic Layer</h1>
+    <p>Review the field meanings QueryBot uses for your assigned tables. If something is wrong, submit a correction for admin approval instead of changing the live Semantic Layer directly.</p>
+  </div>
+  <div class="semantic-actions">
+    <span class="confidence-pill {% if pending_count %}med{% else %}high{% endif %}">
+      {{ pending_count }} pending review{{ 's' if pending_count != 1 else '' }}
+    </span>
+    <a href="/portal/chat" class="btn btn-secondary btn-sm">Back to chat</a>
+  </div>
+</section>
+
+{% if saved %}
+<div class="alert alert-success">Your correction was sent to the admin review queue. It will update the Semantic Layer only after approval.</div>
+{% endif %}
+{% if request.query_params.get('error') == 'empty' %}
+<div class="alert alert-error">Add a suggested meaning, suggested use, or comment before submitting.</div>
+{% endif %}
+
+{% if not semantic_tables %}
+<div class="card">
+  <div class="card-body" style="text-align:center;padding:3rem;color:var(--text-muted)">
+    <div style="font-size:34px;margin-bottom:1rem">SL</div>
+    <p>No Semantic Layer metadata is available yet, or you have not been assigned to a table group.</p>
+  </div>
+</div>
+{% else %}
+<nav class="schema-tabs" aria-label="Schema selector">
+  {% for schema in schemas %}
+  <a class="schema-tab {% if selected_schema == schema %}active{% endif %}" href="/portal/kb?schema={{ schema|urlencode }}">{{ schema }}</a>
+  {% endfor %}
+</nav>
+
+<div class="semantic-grid">
+  <aside class="card table-list">
+    <div class="card-header"><h2>Tables in {{ selected_schema }}</h2></div>
+    <div>
+      {% for table in visible_tables %}
+      <a class="table-link" href="#table-{{ loop.index }}">
+        <span>
+          <span class="table-name">{{ table.table }}</span>
+          <span class="table-meta">{{ table.field_count }} fields · {{ table.fqn }}</span>
+        </span>
+        <span class="confidence-pill {% if table.confidence >= 85 %}high{% elif table.confidence >= 65 %}med{% else %}low{% endif %}">{{ table.confidence }}%</span>
+      </a>
+      {% endfor %}
+    </div>
+  </aside>
+
+  <main>
+    {% for table in visible_tables %}
+    {% set table_loop = loop.index0 %}
+    <section class="card semantic-table-card" id="table-{{ loop.index }}">
+      <div class="card-header table-head">
+        <div>
+          <h2>{{ table.schema }}.{{ table.table }}</h2>
+          <p>{{ table.overview or 'Field-level business metadata extracted from the approved KB.' }}</p>
+        </div>
+        <span class="confidence-pill {% if table.confidence >= 85 %}high{% elif table.confidence >= 65 %}med{% else %}low{% endif %}">{{ table.confidence }}% pass</span>
+      </div>
+      <div style="overflow:auto">
+        <table class="field-table">
+          <thead>
+            <tr>
+              <th style="width:18%">Field</th>
+              <th style="width:30%">What this field is</th>
+              <th>What it is used for</th>
+              <th style="width:120px">Confidence</th>
+              <th style="width:120px">Feedback</th>
+            </tr>
+          </thead>
+          <tbody>
+          {% for field in table.fields %}
+            {% set row_id = 'review-' ~ table_loop ~ '-' ~ loop.index0 %}
+            <tr class="semantic-field-row" data-table-fqn="{{ table.fqn }}" data-column-name="{{ field.column }}">
+              <td>
+                <div class="field-col">{{ field.column }}</div>
+                <div class="field-type">{{ field.type or 'type unknown' }}{% if field.nullable %} · nullable {{ field.nullable }}{% endif %}</div>
+                {% if field.distinct_values %}<div class="values">Values: {{ field.distinct_values }}</div>{% endif %}
+                <div class="status-badges">
+                  {% if field.pending %}<span class="mini-badge pending">pending review</span>{% endif %}
+                  {% if field.approved %}<span class="mini-badge approved">admin approved</span>{% endif %}
+                  {% if field.needs_context %}<span class="mini-badge pending">needs context</span>{% endif %}
+                </div>
+              </td>
+              <td class="field-meaning">{{ field.meaning }}</td>
+              <td class="field-use-case">{{ field.use_case }}</td>
+              <td>
+                <span class="confidence-pill field-confidence {% if field.confidence >= 85 %}high{% elif field.confidence >= 65 %}med{% else %}low{% endif %}">{{ field.confidence }}%</span>
+              </td>
+              <td><button type="button" class="review-toggle" data-review-target="{{ row_id }}" onclick="toggleReview(this.dataset.reviewTarget)">Suggest edit</button></td>
+            </tr>
+            <tr class="review-row" id="{{ row_id }}">
+              <td colspan="5">
+                <form method="post" action="/portal/kb/feedback" class="review-panel">
+                  <input type="hidden" name="table_fqn" value="{{ table.fqn }}">
+                  <input type="hidden" name="column_name" value="{{ field.column }}">
+                  <div>
+                    <label>Suggested field meaning</label>
+                    <textarea name="suggested_meaning" placeholder="What should this field mean?">{{ field.meaning }}</textarea>
+                  </div>
+                  <div>
+                    <label>Suggested use case</label>
+                    <textarea name="suggested_use_case" placeholder="How should QueryBot use this field?">{{ field.use_case }}</textarea>
+                  </div>
+                  <div class="review-full">
+                    <label>Comment for admin</label>
+                    <textarea name="user_comment" placeholder="Why should this be changed?"></textarea>
+                  </div>
+                  <div class="review-actions">
+                    <span class="review-note">This creates an admin approval request. The live Semantic Layer is unchanged until approved.</span>
+                    <button type="submit" class="btn btn-primary btn-sm">Send for approval</button>
+                  </div>
+                </form>
+              </td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+    {% endfor %}
+  </main>
+</div>
+{% endif %}
+
+<script>
+function toggleReview(id){
+  const row = document.getElementById(id);
+  if (!row) return;
+  row.classList.toggle('open');
+}
+function _semanticKey(value){
+  return String(value || '').toUpperCase();
+}
+function _setConfidenceClass(pill, value){
+  if(!pill) return;
+  pill.classList.remove('high', 'med', 'low');
+  pill.classList.add(value >= 85 ? 'high' : (value >= 65 ? 'med' : 'low'));
+  pill.textContent = value + '%';
+}
+window.addEventListener('qb-semantic-feedback-reviewed', function(event){
+  const msg = event.detail || {};
+  document.querySelectorAll('.semantic-field-row').forEach(function(row){
+    if(_semanticKey(row.dataset.tableFqn) !== _semanticKey(msg.table_fqn)) return;
+    if(_semanticKey(row.dataset.columnName) !== _semanticKey(msg.column_name)) return;
+    const badges = row.querySelector('.status-badges');
+    if(badges){
+      badges.querySelectorAll('.mini-badge.pending').forEach(function(node){ node.remove(); });
+    }
+    if(msg.status === 'approved'){
+      const meaning = row.querySelector('.field-meaning');
+      const useCase = row.querySelector('.field-use-case');
+      if(meaning && msg.suggested_meaning) meaning.textContent = msg.suggested_meaning;
+      if(useCase && msg.suggested_use_case) useCase.textContent = msg.suggested_use_case;
+      _setConfidenceClass(row.querySelector('.field-confidence'), 100);
+      if(badges && !badges.querySelector('.mini-badge.approved')){
+        const badge = document.createElement('span');
+        badge.className = 'mini-badge approved';
+        badge.textContent = 'admin approved';
+        badges.appendChild(badge);
+      }
+    }
+  });
+});
+</script>
+{% endblock %}

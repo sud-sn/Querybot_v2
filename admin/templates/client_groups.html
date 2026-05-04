@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% block title %}Groups — {{ client.client_name }}{% endblock %}
+{% block head %}
+<style>
+.table-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px;margin-top:.75rem}
+.table-check{display:flex;align-items:center;gap:.4rem;padding:5px 8px;
+  background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);cursor:pointer}
+.table-check input{cursor:pointer;accent-color:var(--blue)}
+.table-check label{font-size:11px;font-family:monospace;cursor:pointer;color:var(--text-soft)}
+.table-check:has(input:checked){background:var(--blue-light);border-color:color-mix(in srgb,var(--blue) 32%,transparent)}
+.group-card{border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:1rem;background:var(--surface);box-shadow:var(--shadow)}
+.group-card-header{padding:.75rem 1rem;background:var(--surface-2);border-bottom:1px solid var(--border);
+  display:flex;align-items:center;justify-content:space-between}
+.group-card-body{padding:1rem}
+</style>
+{% endblock %}
+{% block content %}
+
+<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.25rem;flex-wrap:wrap;gap:.75rem">
+  <div>
+    <div style="display:flex;align-items:center;gap:.5rem">
+      <a href="/admin/clients/{{ client.account_id }}" style="color:var(--gray-500);font-size:13px">
+        ← {{ client.client_name or client.account_id[:16] }}
+      </a>
+    </div>
+    <h1 style="font-size:20px;font-weight:700;margin-top:4px">Groups &amp; Table Access</h1>
+    <p style="font-size:13px;color:var(--gray-500)">Create groups and assign which tables each group can query.</p>
+  </div>
+  <a href="/admin/clients/{{ client.account_id }}/users" class="btn btn-secondary btn-sm">Manage users →</a>
+</div>
+
+{% if saved %}<div class="alert alert-success">Saved successfully.</div>{% endif %}
+{% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+
+{% if not all_tables %}
+<div class="alert alert-info">
+  No tables discovered yet for this client. The client must complete schema discovery first.
+</div>
+{% endif %}
+
+<!-- Create group -->
+<div class="card">
+  <div class="card-header"><h2>Create new group</h2></div>
+  <div class="card-body">
+    <form method="post" action="/admin/clients/{{ client.account_id }}/groups/create">
+      <div class="form-grid">
+        <div class="form-group">
+          <label>Group name *</label>
+          <input type="text" name="name" required placeholder="e.g. Operations, Finance, Compliance">
+        </div>
+        <div class="form-group">
+          <label>Description</label>
+          <input type="text" name="description" placeholder="Optional — describes the group's role">
+        </div>
+      </div>
+      <button type="submit" class="btn btn-primary">Create group</button>
+    </form>
+  </div>
+</div>
+
+<!-- Existing groups -->
+{% if groups %}
+<h2 style="font-size:14px;font-weight:700;margin-bottom:.875rem">
+  Groups ({{ groups|length }})
+</h2>
+{% for group in groups %}
+<div class="group-card">
+  <div class="group-card-header">
+    <div>
+      <span style="font-weight:700;font-size:14px">{{ group.name }}</span>
+      {% if group.description %}
+      <span style="color:var(--gray-500);font-size:12px;margin-left:.5rem">— {{ group.description }}</span>
+      {% endif %}
+      <span class="badge badge-blue" style="margin-left:.5rem">{{ group.member_count }} member{{ 's' if group.member_count != 1 else '' }}</span>
+      <span class="badge badge-gray" style="margin-left:.25rem">{{ group.tables|length }} table{{ 's' if group.tables|length != 1 else '' }}</span>
+    </div>
+    <form method="post" action="/admin/clients/{{ client.account_id }}/groups/{{ group.id }}/delete"
+      style="display:inline" onsubmit="return confirm('Delete group {{ group.name }}? Users will lose their access.')">
+      <button type="submit" class="btn btn-danger btn-sm">Delete group</button>
+    </form>
+  </div>
+  <div class="group-card-body">
+    {% if all_tables %}
+    <form method="post" action="/admin/clients/{{ client.account_id }}/groups/{{ group.id }}/tables">
+      <p style="font-size:12px;font-weight:600;color:var(--gray-700);margin-bottom:.5rem">
+        Tick the tables this group can query:
+      </p>
+      <div class="table-grid">
+        {% for table in all_tables %}
+        <label class="table-check">
+          <input type="checkbox" name="tables" value="{{ table }}"
+            {% if table in group.tables %}checked{% endif %}>
+          <span>{{ table }}</span>
+        </label>
+        {% endfor %}
+      </div>
+      <div style="margin-top:.875rem;display:flex;align-items:center;gap:.75rem">
+        <button type="submit" class="btn btn-primary btn-sm">Save table access</button>
+        <span style="font-size:11px;color:var(--gray-500)">
+          Currently: {{ group.tables|join(', ') if group.tables else 'No tables assigned' }}
+        </span>
+      </div>
+    </form>
+    {% else %}
+    <p style="font-size:12px;color:var(--gray-500)">Complete schema discovery to assign tables.</p>
+    {% endif %}
+  </div>
+</div>
+{% endfor %}
+{% else %}
+<div class="card">
+  <div class="card-body" style="text-align:center;padding:2.5rem;color:var(--gray-500)">
+    No groups yet. Create your first group above.
+  </div>
+</div>
+{% endif %}
+{% endblock %}

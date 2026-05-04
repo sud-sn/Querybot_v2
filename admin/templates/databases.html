@@ -1,0 +1,464 @@
+{% extends "base.html" %}
+{% block title %}Databases — QueryBot Admin{% endblock %}
+{% block head %}
+<style>
+.scope-panel{margin-top:1rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface-2);overflow:hidden}
+.scope-head{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.85rem 1rem;border-bottom:1px solid var(--border);background:var(--surface)}
+.scope-title{font-size:13px;font-weight:800;color:var(--text-soft)}
+.scope-note{font-size:12px;color:var(--text-muted);margin-top:.2rem}
+.scope-actions{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}
+.scope-status{display:none;padding:.7rem 1rem;font-size:12px;border-bottom:1px solid var(--border)}
+.scope-tree{display:none;padding:1rem;background:var(--surface)}
+.scope-summary{font-size:12px;color:var(--text-muted);margin-bottom:.85rem;padding-bottom:.75rem;border-bottom:1px solid var(--border)}
+.scope-db,.scope-schema{margin-bottom:.45rem}
+.scope-row{display:flex;align-items:center;gap:.5rem;padding:.34rem .45rem;border-radius:var(--radius-sm);color:var(--text-soft)}
+.scope-row:hover{background:var(--row-hover)}
+.scope-name{font-weight:800;color:var(--text)}
+.scope-schema-name{font-weight:700;color:var(--text-soft)}
+.scope-count{margin-left:auto;font-size:11px;color:var(--text-muted);white-space:nowrap}
+.scope-objects{margin-left:1.65rem}
+.scope-object{display:flex;align-items:center;gap:.45rem;padding:.22rem .45rem;border-radius:var(--radius-sm);font-size:12px;color:var(--text-soft)}
+.scope-object:hover{background:var(--row-hover)}
+.scope-check{width:14px;height:14px;accent-color:var(--blue)}
+.scope-section{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);margin:.45rem 0 .18rem .45rem}
+.scope-footer{display:none;align-items:center;gap:.6rem;padding:.75rem 1rem;border-top:1px solid var(--border);background:color-mix(in srgb,var(--blue-light) 34%,var(--surface))}
+</style>
+{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Database connections</h1>
+  <p>Configure Snowflake, Oracle, or Azure SQL credentials.</p>
+</div>
+
+{% if saved %}<div class="alert alert-success">{{ saved }}</div>{% endif %}
+{% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+
+<div class="card">
+  <div class="card-header"><h2>Add database connection</h2></div>
+  <div class="card-body">
+    <form method="post" action="/admin/databases/save" id="db-form">
+      <input type="hidden" name="db_id" value="">
+      <input type="hidden" name="selected_schema_tables" id="selected_schema_tables" value="">
+      <div class="form-grid">
+        <div class="form-group">
+          <label>Database type *</label>
+          <select name="db_type" id="db_type_sel" onchange="showDb(this.value)" required>
+            <option value="">— select type first —</option>
+            <option value="snowflake">Snowflake</option>
+            <option value="oracle">Oracle</option>
+            <option value="azure_sql">Azure SQL</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Friendly name *</label>
+          <input type="text" name="name" placeholder="e.g. Production Snowflake" required>
+        </div>
+      </div>
+
+      <!-- ══ SNOWFLAKE — all fields prefixed sf_ ══ -->
+      <div id="db-snowflake" style="display:none">
+        <div class="alert alert-info" style="margin-bottom:.75rem;font-size:12px">
+          Snowflake — format: <code>orgname-accountname</code> (no .snowflakecomputing.com)
+        </div>
+        <div class="form-grid">
+          <div class="form-group"><label>Account *</label>
+            <input type="text" name="sf_account" placeholder="orgname-accountname"></div>
+          <div class="form-group"><label>Warehouse *</label>
+            <input type="text" name="sf_warehouse" placeholder="COMPUTE_WH"></div>
+        </div>
+        <div class="form-grid">
+          <div class="form-group">
+            <label>Database <span style="font-weight:400;color:var(--text-muted)">(optional)</span></label>
+            <input type="text" name="sf_database" placeholder="MY_DATABASE (leave blank to discover all)">
+            <p class="form-note">Leave blank to browse all accessible databases on this account.</p>
+          </div>
+          <div class="form-group"><label>Schema</label>
+            <input type="text" name="sf_schema" value="PUBLIC" placeholder="PUBLIC"></div>
+        </div>
+        <div class="form-grid">
+          <div class="form-group"><label>User *</label>
+            <input type="text" name="sf_user" placeholder="your_username"></div>
+          <div class="form-group"><label>Password *</label>
+            <input type="password" name="sf_password"></div>
+        </div>
+        <div class="form-group"><label>Role (optional)</label>
+          <input type="text" name="sf_role" placeholder="leave blank to use default role"></div>
+      </div>
+
+      <!-- ══ ORACLE — all fields prefixed ora_ ══ -->
+      <div id="db-oracle" style="display:none">
+        <div class="alert alert-info" style="margin-bottom:.75rem;font-size:12px">
+          Oracle — Thin mode (no Oracle Client installation required on the server)
+        </div>
+        <div class="form-group"><label>DSN *</label>
+          <input type="text" name="ora_dsn" placeholder="hostname:1521/SERVICE_NAME">
+          <p class="form-note">Example: myserver.company.com:1521/ORCLPDB1</p>
+        </div>
+        <div class="form-grid">
+          <div class="form-group"><label>User *</label>
+            <input type="text" name="ora_user" placeholder="your_username"></div>
+          <div class="form-group"><label>Password *</label>
+            <input type="password" name="ora_password"></div>
+        </div>
+        <div class="form-group"><label>Schema / Owner (optional)</label>
+          <input type="text" name="ora_schema" placeholder="defaults to username if blank"></div>
+      </div>
+
+      <!-- ══ AZURE SQL — all fields prefixed az_ ══ -->
+      <div id="db-azure_sql" style="display:none">
+        <div class="alert alert-info" style="margin-bottom:.75rem;font-size:12px">
+          Azure SQL — requires ODBC Driver 18 installed on the VM
+          (<a href="https://learn.microsoft.com/sql/connect/odbc/linux-mac/installing-the-microsoft-odbc-driver-for-sql-server" target="_blank">install guide</a>)
+        </div>
+        <div class="form-group"><label>Server *</label>
+          <input type="text" name="az_server" placeholder="myserver.database.windows.net"></div>
+        <div class="form-grid">
+          <div class="form-group">
+            <label>Database <span style="font-weight:400;color:var(--text-muted)">(optional)</span></label>
+            <input type="text" name="az_database" placeholder="my_database (leave blank to discover all databases)">
+            <p class="form-note">Leave blank to browse and select tables from all accessible databases on this server.</p>
+          </div>
+          <div class="form-group"><label>Schema</label>
+            <input type="text" name="az_schema" value="dbo" placeholder="dbo"></div>
+        </div>
+        <div class="form-grid">
+          <div class="form-group"><label>User *</label>
+            <input type="text" name="az_user" placeholder="your_username"></div>
+          <div class="form-group"><label>Password *</label>
+            <input type="password" name="az_password"></div>
+        </div>
+        <div class="form-group"><label>ODBC Driver</label>
+          <input type="text" name="az_driver" value="ODBC Driver 18 for SQL Server"></div>
+      </div>
+
+      <div class="alert alert-info" style="margin-top:1rem;margin-bottom:0">
+        <label style="display:flex;align-items:flex-start;gap:.55rem;font-weight:700;color:var(--text-soft)">
+          <input type="checkbox" name="log_export_enabled" value="1" style="width:auto;margin-top:2px">
+          Store QueryBot logs in this database
+        </label>
+        <p class="form-note" style="margin:.35rem 0 .75rem 1.45rem">
+          Admin-only setup creates a log schema with query and LLM log tables. Chat users cannot run this DDL.
+        </p>
+        <div class="form-grid">
+          <div class="form-group" style="margin-bottom:0">
+            <label>Log schema</label>
+            <input type="text" name="log_schema" value="LOGS" placeholder="LOGS">
+          </div>
+          <div class="form-group" style="margin-bottom:0">
+            <label>Daily sync time</label>
+            <input type="time" name="log_export_time" value="02:00">
+            <p class="form-note">Server time. You can also sync manually below.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="scope-panel">
+        <div class="scope-head">
+          <div>
+            <div class="scope-title">Default KB schema/table scope</div>
+            <div class="scope-note">
+              Optional. Pick tables from any visible schema here; clients using this DB inherit this scope for KB creation.
+            </div>
+          </div>
+          <div class="scope-actions">
+            <button type="button" class="btn btn-secondary btn-sm" id="scope-clear-btn" disabled>Clear</button>
+            <button type="button" class="btn btn-secondary btn-sm" id="browse-scope-btn" disabled>Browse schemas</button>
+          </div>
+        </div>
+        <div id="db-scope-status" class="scope-status"></div>
+        <div id="db-scope-loading" style="display:none;padding:1rem;font-size:12px;color:var(--text-muted)">Connecting to database...</div>
+        <div id="db-scope-tree" class="scope-tree"></div>
+        <div id="db-scope-footer" class="scope-footer">
+          <strong id="db-scope-count" style="color:var(--blue)"></strong>
+          <span style="font-size:12px;color:var(--text-muted)">will be saved as the default KB scope for this database.</span>
+        </div>
+      </div>
+
+      <div style="margin-top:1rem;display:flex;align-items:center;gap:1rem">
+        <button type="submit" class="btn btn-primary" id="save-btn" disabled>Save database</button>
+        <button type="button" class="btn btn-secondary" id="test-btn" disabled>Test connection</button>
+        <span id="hint" style="font-size:12px;color:var(--gray-500)">Select a database type above</span>
+      </div>
+      <div id="db-test-result" style="display:none;margin-top:.75rem;font-size:12px"></div>
+    </form>
+  </div>
+</div>
+
+{% if dbs %}
+<div class="card">
+  <div class="card-header"><h2>Configured databases ({{ dbs|length }})</h2></div>
+  <table class="table">
+    <tr><th>Name</th><th>Type</th><th>Connection</th><th>KB scope</th><th>Log export</th><th>Created</th><th></th></tr>
+    {% for d in dbs %}
+    <tr>
+      <td style="font-weight:600">{{ d.name }}</td>
+      <td><span class="badge badge-blue">{{ d.label }}</span></td>
+      <td style="font-size:11px;color:var(--gray-500)">
+        {% if d.db_type == "snowflake" %}
+          {{ d.credentials.get("account","—") }} / {{ d.credentials.get("database","—") }} / {{ d.credentials.get("schema","PUBLIC") }}
+        {% elif d.db_type == "oracle" %}
+          {{ d.credentials.get("dsn","—") }}
+        {% else %}
+          {{ d.credentials.get("server","—") }} / {{ d.credentials.get("database","—") }}
+        {% endif %}
+      </td>
+      <td style="font-size:11px;color:var(--gray-500)">
+        {% if d.selected_schema_count %}
+          <span class="badge badge-blue">{{ d.selected_schema_count }} table{{ 's' if d.selected_schema_count != 1 else '' }}</span>
+        {% else %}
+          <span class="badge badge-gray">Default schema</span>
+        {% endif %}
+      </td>
+      <td style="font-size:11px;color:var(--gray-500)">
+        {% if d.log_export_enabled %}
+          <div><span class="badge badge-green">Enabled</span> {{ d.log_schema }} at {{ d.log_export_time }}</div>
+          {% if d.log_export_state %}
+            <div style="margin-top:4px">
+              Last: <span class="badge badge-gray">{{ d.log_export_state.last_status }}</span>
+              {{ d.log_export_state.last_message }}
+            </div>
+          {% else %}
+            <div style="margin-top:4px">Not synced yet</div>
+          {% endif %}
+          <div style="display:flex;gap:.35rem;flex-wrap:wrap;margin-top:.45rem">
+            <form method="post" action="/admin/databases/{{ d.id }}/logs/provision" style="display:inline">
+              <button type="submit" class="btn btn-secondary btn-sm">Provision log tables</button>
+            </form>
+            <form method="post" action="/admin/databases/{{ d.id }}/logs/sync" style="display:inline">
+              <button type="submit" class="btn btn-success btn-sm">Sync logs now</button>
+            </form>
+          </div>
+        {% else %}
+          <span class="badge badge-gray">Disabled</span>
+        {% endif %}
+      </td>
+      <td style="color:var(--gray-500);font-size:12px">{{ d.created_at[:10] }}</td>
+      <td>
+        <form method="post" action="/admin/databases/delete" style="display:inline">
+          <input type="hidden" name="db_id" value="{{ d.id }}">
+          <button type="submit" class="btn btn-danger btn-sm"
+            onclick="return confirm('Delete {{ d.name }}? Clients using this will lose their DB connection.')">Delete</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endif %}
+
+<script>
+const dbScopeSelected = new Set();
+
+function showDb(t){
+  ['snowflake','oracle','azure_sql'].forEach(x=>{
+    document.getElementById('db-'+x).style.display=x===t?'block':'none';
+  });
+  document.getElementById('save-btn').disabled=!t;
+  document.getElementById('test-btn').disabled=!t;
+  document.getElementById('browse-scope-btn').disabled=!t;
+  document.getElementById('hint').style.display=t?'none':'inline';
+  document.getElementById('db-test-result').style.display='none';
+  dbScopeClear(false);
+}
+
+document.getElementById('test-btn').addEventListener('click', async () => {
+  const form = document.getElementById('db-form');
+  const btn = document.getElementById('test-btn');
+  const result = document.getElementById('db-test-result');
+  btn.disabled = true;
+  btn.textContent = 'Testing...';
+  result.style.display = 'block';
+  result.setAttribute('style', 'display:block;margin-top:.75rem;font-size:12px;padding:.65rem .8rem;border-radius:6px;background:var(--blue-light);border:1px solid color-mix(in srgb,var(--blue) 28%,transparent);color:var(--blue)');
+  result.textContent = 'Opening a test connection...';
+  try {
+    const resp = await fetch('/admin/databases/test', {
+      method: 'POST',
+      credentials: 'same-origin',
+      body: new FormData(form),
+    });
+    const data = await resp.json();
+    if (data.status === 'ok') {
+      const detailText = data.details
+        ? Object.entries(data.details).filter(([,v]) => v).map(([k,v]) => `${k}: ${v}`).join(' · ')
+        : '';
+      result.setAttribute('style', 'display:block;margin-top:.75rem;font-size:12px;padding:.65rem .8rem;border-radius:6px;background:var(--green-light);border:1px solid color-mix(in srgb,var(--green) 28%,transparent);color:var(--green)');
+      result.textContent = detailText ? `${data.message} ${detailText}` : data.message;
+    } else {
+      result.setAttribute('style', 'display:block;margin-top:.75rem;font-size:12px;padding:.65rem .8rem;border-radius:6px;background:var(--red-light);border:1px solid color-mix(in srgb,var(--red) 28%,transparent);color:var(--red)');
+      result.textContent = data.message || 'Connection test failed.';
+    }
+  } catch (e) {
+    result.setAttribute('style', 'display:block;margin-top:.75rem;font-size:12px;padding:.65rem .8rem;border-radius:6px;background:var(--red-light);border:1px solid color-mix(in srgb,var(--red) 28%,transparent);color:var(--red)');
+    result.textContent = 'Network error: ' + e.message;
+  } finally {
+    btn.disabled = !document.getElementById('db_type_sel').value;
+    btn.textContent = 'Test connection';
+  }
+});
+document.getElementById('browse-scope-btn').addEventListener('click', async () => {
+  const form = document.getElementById('db-form');
+  const btn = document.getElementById('browse-scope-btn');
+  const tree = document.getElementById('db-scope-tree');
+  const loading = document.getElementById('db-scope-loading');
+  btn.disabled = true;
+  btn.textContent = 'Browsing...';
+  tree.style.display = 'none';
+  loading.style.display = 'block';
+  dbScopeStatus('', '');
+  try {
+    const resp = await fetch('/admin/databases/discover-schema', {
+      method: 'POST',
+      credentials: 'same-origin',
+      body: new FormData(form),
+    });
+    const data = await resp.json();
+    loading.style.display = 'none';
+    if (data.status !== 'ok') {
+      dbScopeStatus('error', data.message || 'Schema discovery failed.');
+      return;
+    }
+    dbScopeRender(data.tree || {});
+    dbScopeSync();
+  } catch (e) {
+    loading.style.display = 'none';
+    dbScopeStatus('error', 'Network error: ' + e.message);
+  } finally {
+    btn.disabled = !document.getElementById('db_type_sel').value;
+    btn.textContent = 'Browse schemas';
+  }
+});
+
+document.getElementById('scope-clear-btn').addEventListener('click', () => dbScopeClear(true));
+
+function dbScopeStatus(type, msg) {
+  const el = document.getElementById('db-scope-status');
+  if (!msg) {
+    el.style.display = 'none';
+    el.textContent = '';
+    return;
+  }
+  const palette = type === 'error'
+    ? 'background:var(--red-light);color:var(--red)'
+    : 'background:var(--blue-light);color:var(--blue)';
+  el.setAttribute('style', `display:block;padding:.7rem 1rem;font-size:12px;border-bottom:1px solid var(--border);${palette}`);
+  el.textContent = msg;
+}
+
+function dbScopeEsc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function dbScopeRef(db, schema, table) {
+  return `${db}.${schema}.${table}`.toUpperCase();
+}
+
+function dbScopeId(ref) {
+  return 'dbscope-' + String(ref).replace(/[^A-Z0-9_]/g, '_');
+}
+
+function dbScopeSync() {
+  const hidden = document.getElementById('selected_schema_tables');
+  const footer = document.getElementById('db-scope-footer');
+  const count = document.getElementById('db-scope-count');
+  const clear = document.getElementById('scope-clear-btn');
+  hidden.value = JSON.stringify([...dbScopeSelected]);
+  clear.disabled = dbScopeSelected.size === 0;
+  if (dbScopeSelected.size === 0) {
+    footer.style.display = 'none';
+  } else {
+    footer.style.display = 'flex';
+    count.textContent = `${dbScopeSelected.size} table${dbScopeSelected.size !== 1 ? 's' : ''}`;
+  }
+}
+
+function dbScopeClear(showStatus) {
+  dbScopeSelected.clear();
+  document.getElementById('selected_schema_tables').value = '';
+  document.getElementById('db-scope-tree').innerHTML = '';
+  document.getElementById('db-scope-tree').style.display = 'none';
+  document.getElementById('db-scope-loading').style.display = 'none';
+  dbScopeSync();
+  if (showStatus) dbScopeStatus('info', 'Default KB scope cleared. Saving now will use the connection default schema.');
+}
+
+window.dbScopeCheck = function(ref, checked) {
+  if (checked) dbScopeSelected.add(ref); else dbScopeSelected.delete(ref);
+  dbScopeSync();
+};
+
+window.dbScopeToggleSchema = function(refs, masterId) {
+  const master = document.getElementById(masterId);
+  const checked = master ? master.checked : true;
+  refs.forEach(ref => {
+    if (checked) dbScopeSelected.add(ref); else dbScopeSelected.delete(ref);
+    const cb = document.getElementById(dbScopeId(ref));
+    if (cb) cb.checked = checked;
+  });
+  dbScopeSync();
+};
+
+function dbScopeRender(tree) {
+  const wrap = document.getElementById('db-scope-tree');
+  wrap.innerHTML = '';
+  wrap.style.display = 'block';
+  const dbs = Object.keys(tree).sort();
+  if (!dbs.length) {
+    wrap.innerHTML = '<p style="font-size:12px;color:var(--text-muted)">No schemas or tables were visible with these credentials.</p>';
+    return;
+  }
+
+  let schemaCount = 0;
+  let tableCount = 0;
+  let viewCount = 0;
+  dbs.forEach(db => Object.values(tree[db]).forEach(s => {
+    schemaCount++;
+    tableCount += (s.tables || []).length;
+    viewCount += (s.views || []).length;
+  }));
+  const summary = document.createElement('div');
+  summary.className = 'scope-summary';
+  summary.innerHTML = `<strong>${dbs.length}</strong> db | <strong>${schemaCount}</strong> schemas | <strong style="color:var(--green)">${tableCount}</strong> tables | <strong style="color:var(--violet)">${viewCount}</strong> views`;
+  wrap.appendChild(summary);
+
+  dbs.forEach((db, dbi) => {
+    const dbEl = document.createElement('div');
+    dbEl.className = 'scope-db';
+    const schemas = Object.keys(tree[db]).sort();
+    dbEl.innerHTML = `<div class="scope-row"><span class="scope-name">${dbScopeEsc(db)}</span><span class="scope-count">${schemas.length} schemas</span></div>`;
+    wrap.appendChild(dbEl);
+
+    schemas.forEach((schema, si) => {
+      const objs = tree[db][schema] || {};
+      const tables = (objs.tables || []).sort();
+      const views = (objs.views || []).sort();
+      const refs = tables.map(t => dbScopeRef(db, schema, t));
+      const masterId = `dbscope-master-${dbi}-${si}`;
+      const selected = refs.filter(r => dbScopeSelected.has(r)).length;
+      let html = `<div class="scope-row"><input type="checkbox" class="scope-check" id="${masterId}" ${selected && selected === refs.length ? 'checked' : ''} onchange='dbScopeToggleSchema(${JSON.stringify(refs)}, "${masterId}")'><span class="scope-schema-name">${dbScopeEsc(schema)}</span><span class="scope-count">${tables.length} tables${views.length ? ' | ' + views.length + ' views' : ''}</span></div><div class="scope-objects">`;
+      if (tables.length) {
+        html += `<div class="scope-section">Tables</div>`;
+        tables.forEach(t => {
+          const ref = dbScopeRef(db, schema, t);
+          html += `<label class="scope-object" for="${dbScopeId(ref)}"><input type="checkbox" class="scope-check" id="${dbScopeId(ref)}" ${dbScopeSelected.has(ref) ? 'checked' : ''} onchange='dbScopeCheck(${JSON.stringify(ref)}, this.checked)'><span>${dbScopeEsc(t)}</span></label>`;
+        });
+      }
+      if (views.length) {
+        html += `<div class="scope-section" style="color:var(--violet)">Views are not included in KB</div>`;
+        views.forEach(v => {
+          html += `<div class="scope-object" style="opacity:.65"><span style="width:14px"></span><em>${dbScopeEsc(v)}</em></div>`;
+        });
+      }
+      html += '</div>';
+      const schemaEl = document.createElement('div');
+      schemaEl.className = 'scope-schema';
+      schemaEl.innerHTML = html;
+      dbEl.appendChild(schemaEl);
+      if (selected && selected !== refs.length) {
+        const master = schemaEl.querySelector('#' + masterId);
+        if (master) master.indeterminate = true;
+      }
+    });
+  });
+}
+</script>
+{% endblock %}

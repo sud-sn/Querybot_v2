@@ -1,0 +1,40 @@
+{% extends "portal_base.html" %}
+{% block title %}Sign In — QueryBot Portal{% endblock %}
+{% block content %}
+<div style="max-width:420px;margin:4rem auto">
+  <div style="text-align:center;margin-bottom:2rem">
+    <div style="font-size:36px;font-weight:900;color:var(--navy);letter-spacing:-.03em">
+      Query<span style="color:var(--blue)">Bot</span>
+    </div>
+    <p style="color:var(--gray-500);margin-top:6px;font-size:14px">Sign in to your analytics portal</p>
+  </div>
+  <div class="card">
+    <div class="card-body" style="padding:1.75rem">
+      {% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+      <form method="post" action="/portal/login">
+        <div class="form-group">
+          <label>Account ID</label>
+          <input type="text" name="account_id" autofocus required
+            placeholder="Your workspace account ID"
+            style="font-family:monospace;font-size:12px">
+          <p class="form-note">Ask your administrator for your Account ID</p>
+        </div>
+        <div class="form-group">
+          <label>Email</label>
+          <input type="email" name="email" required placeholder="you@company.com">
+        </div>
+        <div class="form-group">
+          <label>Password</label>
+          <input type="password" name="password" required placeholder="••••••••">
+        </div>
+        <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;padding:10px">
+          Sign in →
+        </button>
+      </form>
+    </div>
+  </div>
+  <p style="text-align:center;font-size:12px;color:var(--gray-500);margin-top:1rem">
+    First time? Message your organisation's QueryBot to get a registration link.
+  </p>
+</div>
+{% endblock %}

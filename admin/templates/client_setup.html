@@ -1,0 +1,786 @@
+{% extends "base.html" %}
+{% block title %}Setup — {{ client.client_name or client.account_id[:16] }}{% endblock %}
+{% block head %}
+<style>
+.setup-step{border:1.5px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:1.25rem;background:var(--surface);box-shadow:var(--shadow)}
+.step-head{padding:.875rem 1.25rem;display:flex;align-items:center;gap:.75rem;
+  border-bottom:1px solid var(--border);background:var(--surface-2);}
+.step-num{width:28px;height:28px;border-radius:50%;background:var(--text-soft);color:#fff;
+  font-size:12px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+.step-num.done{background:var(--green);}
+.step-num.active{background:var(--blue);}
+.step-title{font-size:14px;font-weight:700;}
+.step-body{padding:1.25rem;}
+.file-list{font-family:monospace;font-size:11px;color:var(--text-soft);
+  background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);
+  padding:.625rem .875rem;max-height:140px;overflow-y:auto;line-height:1.8;}
+.status-badge{font-size:11px;font-weight:800;padding:3px 10px;border-radius:999px;
+  font-family:monospace;letter-spacing:.04em;}
+.badge-ready{background:var(--green-light);color:var(--green);}
+.badge-building{background:var(--amber-light);color:var(--amber);}
+.badge-new{background:var(--surface-2);color:var(--text-muted);}
+.badge-schema{background:var(--blue-light);color:var(--blue);}
+.scope-panel{border:1px solid var(--border);border-radius:var(--radius);background:var(--surface-2);overflow:hidden}
+.scope-head{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.85rem 1rem;border-bottom:1px solid var(--border);background:var(--surface)}
+.scope-title{font-size:13px;font-weight:800;color:var(--text-soft)}
+.scope-note{font-size:12px;color:var(--text-muted);margin-top:.2rem}
+.scope-actions{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}
+.scope-status{display:none;padding:.7rem 1rem;font-size:12px;border-bottom:1px solid var(--border)}
+.scope-tree{display:none;padding:1rem;background:var(--surface)}
+.scope-summary{font-size:12px;color:var(--text-muted);margin-bottom:.85rem;padding-bottom:.75rem;border-bottom:1px solid var(--border)}
+.scope-db,.scope-schema{margin-bottom:.45rem}
+.scope-row{display:flex;align-items:center;gap:.5rem;padding:.34rem .45rem;border-radius:var(--radius-sm);color:var(--text-soft)}
+.scope-row:hover{background:var(--row-hover)}
+.scope-name{font-weight:800;color:var(--text)}
+.scope-schema-name{font-weight:700;color:var(--text-soft)}
+.scope-count{margin-left:auto;font-size:11px;color:var(--text-muted);white-space:nowrap}
+.scope-objects{margin-left:1.65rem}
+.scope-object{display:flex;align-items:center;gap:.45rem;padding:.22rem .45rem;border-radius:var(--radius-sm);font-size:12px;color:var(--text-soft)}
+.scope-object:hover{background:var(--row-hover)}
+.scope-check{width:14px;height:14px;accent-color:var(--blue)}
+.scope-section{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);margin:.45rem 0 .18rem .45rem}
+.scope-footer{display:none;align-items:center;gap:.6rem;padding:.75rem 1rem;border-top:1px solid var(--border);background:color-mix(in srgb,var(--blue-light) 34%,var(--surface))}
+.kb-live-status{display:none;align-items:center;gap:.75rem;flex-wrap:wrap;margin-top:.9rem;padding:.8rem 1rem;border-radius:var(--radius);border:1px solid color-mix(in srgb,var(--blue) 28%,transparent);background:var(--blue-light);color:var(--blue)}
+.kb-live-status.show{display:flex}
+.kb-live-status.ready{border-color:color-mix(in srgb,var(--green) 30%,transparent);background:var(--green-light);color:var(--green)}
+.kb-live-status.failed{border-color:color-mix(in srgb,var(--red) 30%,transparent);background:var(--red-light);color:var(--red)}
+.kb-progress-track{height:8px;min-width:190px;flex:1;border-radius:999px;background:color-mix(in srgb,var(--surface) 66%,transparent);overflow:hidden;border:1px solid color-mix(in srgb,currentColor 24%,transparent)}
+.kb-progress-fill{height:100%;width:0%;border-radius:999px;background:currentColor;transition:width .25s ease}
+.kb-progress-text{font-size:12px;font-weight:800}
+.kb-progress-percent{font-size:12px;font-weight:850;min-width:44px;text-align:right;font-variant-numeric:tabular-nums}
+.kb-progress-step{font-size:12px;font-weight:650;color:inherit;opacity:.9}
+</style>
+{% endblock %}
+{% block content %}
+
+<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.5rem;flex-wrap:wrap;gap:.75rem">
+  <div>
+    <a href="/admin/clients/{{ client.account_id }}" style="color:var(--gray-500);font-size:13px">
+      ← {{ client.client_name or client.account_id[:16] }}
+    </a>
+    <h1 style="font-size:20px;font-weight:700;margin-top:4px">Schema & Knowledge Base Setup</h1>
+    <p style="font-size:13px;color:var(--gray-500)">
+      Discover database tables and generate the Knowledge Base entirely from the admin panel.
+      No Zoom or Teams required.
+    </p>
+  </div>
+  <div style="display:flex;align-items:center;gap:.75rem">
+    <span class="status-badge
+      {% if state == 'READY' %}badge-ready
+      {% elif state == 'KB_BUILDING' %}badge-building
+      {% elif state == 'SCHEMA_READY' %}badge-schema
+      {% else %}badge-new{% endif %}">
+      {{ state }}
+    </span>
+    {% if db_cfg %}
+    <span style="font-size:12px;color:var(--text-muted);font-family:monospace">
+      {{ db_cfg.db_type }} · {{ db_cfg.name }}
+    </span>
+    {% endif %}
+  </div>
+</div>
+
+{% if saved %}<div class="alert alert-success">{{ saved }}</div>{% endif %}
+{% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+
+{% if state == 'KB_BUILDING' %}
+<div class="alert alert-info">
+  <strong>⏳ KB generation is running in the background.</strong>
+  Generating business context for each table — takes 5–10 minutes for 10+ tables.
+  This page listens for live progress and will show READY when the build completes.
+</div>
+{% endif %}
+
+<!-- ── Step 1: Database ─────────────────────────────────────────────────────── -->
+<div class="setup-step">
+  <div class="step-head">
+    <div class="step-num {% if db_cfg %}done{% else %}active{% endif %}">
+      {% if db_cfg %}✓{% else %}1{% endif %}
+    </div>
+    <div>
+      <div class="step-title">Database connection</div>
+      <div style="font-size:12px;color:var(--text-muted)">
+        Assign a database in the client Settings tab first
+      </div>
+    </div>
+    {% if not db_cfg %}
+    <a href="/admin/clients/{{ client.account_id }}" class="btn btn-secondary btn-sm"
+      style="margin-left:auto">Go to Settings →</a>
+    {% endif %}
+  </div>
+  <div class="step-body">
+    {% if db_cfg %}
+    <p style="font-size:13px;color:var(--green);font-weight:600">
+      ✓ Connected to <strong>{{ db_cfg.name }}</strong> ({{ db_cfg.db_type }})
+    </p>
+    {% else %}
+    <p style="font-size:13px;color:var(--text-muted)">
+      No database assigned. Go to the client Settings tab, assign a database, then return here.
+    </p>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Step 2: KB table scope -->
+<div class="setup-step">
+  <div class="step-head">
+    <div class="step-num {% if kb_table_count %}done{% elif db_cfg %}active{% endif %}">
+      {% if kb_table_count %}✓{% else %}2{% endif %}
+    </div>
+    <div>
+      <div class="step-title">Select tables for KB</div>
+      <div style="font-size:12px;color:var(--text-muted)">
+        Browse all schemas in your database and check exactly which tables to include
+      </div>
+    </div>
+    {% if kb_table_count %}
+    <span style="margin-left:auto;font-size:12px;color:var(--blue);font-weight:700">
+      {{ kb_table_count }} table{{ "s" if kb_table_count != 1 else "" }} saved
+      {% if kb_table_source == 'database' %} (from DB default){% endif %}
+      {% if schema_breakdown and schema_breakdown|length > 1 %}
+      · {{ schema_breakdown|length }} schemas
+      {% endif %}
+    </span>
+    {% endif %}
+  </div>
+  <div class="step-body">
+    {% if db_cfg %}
+    <!-- Saved selection summary — visible before user opens the browser -->
+    <div id="setup-saved-summary" style="display:none;margin-bottom:.75rem;padding:.65rem .875rem;background:var(--blue-light);border:1px solid color-mix(in srgb,var(--blue) 28%,transparent);border-radius:var(--radius);font-size:12px;color:var(--blue)">
+      <strong id="setup-saved-count"></strong> tables currently saved for KB generation.
+      Open the browser below to review or change the selection.
+    </div>
+    <div id="setup-no-selection-warn" style="display:none;margin-bottom:.75rem;padding:.65rem .875rem;background:var(--amber-light);border:1px solid color-mix(in srgb,var(--amber) 28%,transparent);border-radius:var(--radius);font-size:12px;color:var(--amber)">
+      ⚠ No tables selected yet. Browse schemas and save a selection before running discovery —
+      otherwise <strong>all</strong> tables in the database will be included in the KB.
+    </div>
+    <div class="scope-panel">
+      <div class="scope-head">
+        <div>
+          <div class="scope-title">Database schema browser</div>
+          <div class="scope-note">
+            Check tables to include · uncheck to exclude · Save selection before running discovery
+          </div>
+        </div>
+        <div class="scope-actions">
+          <button type="button" class="btn btn-secondary btn-sm" id="setup-scope-refresh">↻ Refresh DB</button>
+          <button type="button" class="btn btn-secondary btn-sm" id="setup-scope-browse">Browse schemas</button>
+        </div>
+      </div>
+      <div id="setup-scope-status" class="scope-status"></div>
+      <div id="setup-scope-loading" style="display:none;padding:1rem;font-size:12px;color:var(--text-muted)">Connecting to database...</div>
+      <div id="setup-scope-tree" class="scope-tree"></div>
+      <div id="setup-scope-footer" class="scope-footer">
+        <strong id="setup-scope-count" style="color:var(--blue)"></strong>
+        <span style="font-size:12px;color:var(--text-muted)">tables selected for KB generation.</span>
+        <button type="button" class="btn btn-primary btn-sm" id="setup-scope-save" style="margin-left:auto">Save selection</button>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="_setupScopeClear()">Clear all</button>
+      </div>
+    </div>
+    {% else %}
+    <p style="font-size:13px;color:var(--text-muted)">
+      Assign a database first (Settings tab), then return here to select tables.
+    </p>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Step 3: Schema Discovery -->
+<div class="setup-step">
+  <div class="step-head">
+    <div class="step-num {% if schema_files %}done{% elif db_cfg %}active{% endif %}">
+      {% if schema_files %}✓{% else %}3{% endif %}
+    </div>
+    <div>
+      <div class="step-title">Schema discovery</div>
+      <div style="font-size:12px;color:var(--text-muted)">
+        Writes one schema file per selected table — needed before KB generation
+      </div>
+    </div>
+    {% if schema_files %}
+    <span style="margin-left:auto;font-size:12px;color:var(--green);font-weight:600">
+      {{ schema_files|length }} table(s) found
+    </span>
+    {% endif %}
+  </div>
+  <div class="step-body">
+    {% if kb_table_count %}
+    <div style="margin-bottom:.75rem;padding:.65rem .875rem;background:var(--blue-light);border:1px solid color-mix(in srgb,var(--blue) 28%,transparent);border-radius:var(--radius);font-size:12px;color:var(--blue)">
+      Will discover <strong>{{ kb_table_count }}</strong> selected table{{ "s" if kb_table_count != 1 else "" }} only.
+      {% if schema_breakdown %}
+      Schemas included:
+      {% for schema, count in schema_breakdown.items() %}
+        <strong>{{ schema }}</strong> ({{ count }} table{{ "s" if count != 1 else "" }}){% if not loop.last %},{% endif %}
+      {% endfor %}.
+      {% endif %}
+      To change the scope go back to Step 2.
+    </div>
+    {% elif db_cfg %}
+    <div style="margin-bottom:.75rem;padding:.65rem .875rem;background:var(--amber-light);border:1px solid color-mix(in srgb,var(--amber) 28%,transparent);border-radius:var(--radius);font-size:12px;color:var(--amber)">
+      ⚠ No table selection saved. Discovery will scan <strong>all</strong> tables in the default schema.
+      Return to Step 2 to select specific tables first.
+    </div>
+    {% endif %}
+    {% if schema_files %}
+    <div class="file-list">
+      {% for f in schema_files %}{% if not f.name.startswith('_') %}{{ f.stem }}<br>{% endif %}{% endfor %}
+    </div>
+    <div style="margin-top:.875rem;display:flex;gap:.625rem">
+      <form method="post" action="/admin/clients/{{ client.account_id }}/setup/discover">
+        <button type="submit" class="btn btn-secondary btn-sm"
+          {% if not db_cfg %}disabled{% endif %}>
+          🔄 Re-discover (for schema changes or new table selection)
+        </button>
+      </form>
+    </div>
+    {% else %}
+    <p style="font-size:13px;color:var(--text-muted);margin-bottom:.875rem">
+      No schema files yet. Complete Step 2 first, then run discovery.
+    </p>
+    <form method="post" action="/admin/clients/{{ client.account_id }}/setup/discover">
+      <button type="submit" class="btn btn-primary"
+        {% if not db_cfg %}disabled title="Assign a database first"{% endif %}>
+        🔍 Discover schema
+      </button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Step 4: Knowledge Base Generation -->
+<div class="setup-step">
+  <div class="step-head">
+    <div class="step-num {% if state == 'READY' %}done{% elif schema_files %}active{% endif %}">
+      {% if state == 'READY' %}✓{% else %}4{% endif %}
+    </div>
+    <div>
+      <div class="step-title">Knowledge Base generation</div>
+      <div style="font-size:12px;color:var(--text-muted)">
+        Uses the LLM to generate business context for each table — takes 5–10 minutes
+      </div>
+    </div>
+    {% if kb_files %}
+    <span style="margin-left:auto;font-size:12px;color:var(--green);font-weight:600">
+      {{ kb_files|length }} KB file(s)
+    </span>
+    {% endif %}
+  </div>
+  <div class="step-body">
+    {% if kb_files %}
+    <div class="file-list" style="margin-bottom:.875rem">
+      {% for f in kb_files %}{{ f.stem }}<br>{% endfor %}
+    </div>
+    {% endif %}
+
+    <form method="post" action="/admin/clients/{{ client.account_id }}/setup/build-kb">
+      <div class="form-group">
+        <label>Business description *</label>
+        <textarea name="business_desc" rows="3" required
+          placeholder="e.g. We are a compounding pharmacy managing prescriptions, patients, drug inventory, and insurance claims."
+          style="font-size:13px">{{ biz_desc or '' }}</textarea>
+        <p class="form-note">
+          Describe what your business does and what data this database contains.
+          This tells the AI how to interpret your tables and columns.
+          One or two sentences is enough.
+        </p>
+      </div>
+
+      <div style="display:flex;gap:.625rem;align-items:center;flex-wrap:wrap">
+        <button type="submit" class="btn btn-primary" id="kbBuildButton"
+          {% if not schema_files or state == 'KB_BUILDING' %}
+          disabled title="{% if not schema_files %}Run schema discovery first{% else %}KB generation already running{% endif %}"
+          {% endif %}>
+          🧠 {% if kb_files %}Rebuild Knowledge Base{% else %}Generate Knowledge Base{% endif %}
+        </button>
+        {% if state == 'KB_BUILDING' %}
+        <span id="kbInlineStatus" style="font-size:12px;color:var(--amber);font-weight:600">
+          ⏳ Building… live progress will update here
+        </span>
+        {% elif state == 'READY' %}
+        <span id="kbInlineStatus" style="font-size:12px;color:var(--green);font-weight:600">
+          ✓ KB is ready — users can start querying
+        </span>
+        {% else %}
+        <span id="kbInlineStatus" style="font-size:12px;color:var(--text-muted);font-weight:600"></span>
+        {% endif %}
+      </div>
+      <div id="kbLiveStatus" class="kb-live-status {% if state == 'KB_BUILDING' %}show{% elif state == 'READY' %}show ready{% endif %}">
+        <span id="kbProgressText" class="kb-progress-text">{% if state == 'READY' %}Completed{% else %}0/{{ schema_files|length }}{% endif %}</span>
+        <div class="kb-progress-track"><div id="kbProgressFill" class="kb-progress-fill" style="width:{% if state == 'READY' %}100{% else %}0{% endif %}%"></div></div>
+        <span id="kbProgressPercent" class="kb-progress-percent">{% if state == 'READY' %}100%{% else %}0%{% endif %}</span>
+        <span id="kbProgressStep" class="kb-progress-step">{% if state == 'READY' %}Knowledge Base is ready{% else %}Waiting for progress{% endif %}</span>
+      </div>
+    </form>
+
+    {% if state == 'READY' %}
+    <div style="margin-top:1rem;padding:.75rem 1rem;background:var(--green-light);
+      border:1px solid color-mix(in srgb,var(--green) 28%,transparent);border-radius:var(--radius);font-size:12px;color:var(--green)">
+      <strong>✅ Knowledge Base is active.</strong>
+      Users can now ask data questions in Zoom, Teams, Slack, or the Internal Chat UI.
+      Use the Rebuild button above whenever the database schema changes or you want
+      to improve the KB quality.
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- ── Step 4: Quick links ──────────────────────────────────────────────────── -->
+{% if state == 'READY' %}
+<div class="card" style="margin-top:.5rem">
+  <div class="card-header"><h2>Next steps</h2></div>
+  <div class="card-body" style="display:flex;flex-wrap:wrap;gap:.75rem">
+    <a href="/admin/clients/{{ client.account_id }}/metrics" class="btn btn-secondary btn-sm">
+      📐 Define Metric Registry
+    </a>
+    <a href="/admin/clients/{{ client.account_id }}/graph" class="btn btn-secondary btn-sm">
+      🕸 Entity Graph
+    </a>
+    <a href="/admin/clients/{{ client.account_id }}/groups" class="btn btn-secondary btn-sm">
+      👥 Set up User Groups
+    </a>
+    <a href="/admin/clients/{{ client.account_id }}/kb" class="btn btn-secondary btn-sm">
+      📝 Edit KB Files
+    </a>
+    <a href="/admin/clients/{{ client.account_id }}" class="btn btn-secondary btn-sm">
+      📊 View Dashboard
+    </a>
+  </div>
+</div>
+{% endif %}
+
+<script>
+(function(){
+  const accountId = {{ client.account_id | tojson }};
+  const browseBtn = document.getElementById('setup-scope-browse');
+  const kbLiveStatus = document.getElementById('kbLiveStatus');
+  const kbProgressText = document.getElementById('kbProgressText');
+  const kbProgressPercent = document.getElementById('kbProgressPercent');
+  const kbProgressStep = document.getElementById('kbProgressStep');
+  const kbProgressFill = document.getElementById('kbProgressFill');
+  const kbInlineStatus = document.getElementById('kbInlineStatus');
+  const kbBuildButton = document.getElementById('kbBuildButton');
+
+  function applyKbStatus(state, progress, counts) {
+    if (!kbLiveStatus) return;
+    const p = progress || {};
+    const total = Number(p.total || (counts && counts.schema_file_count) || 0);
+    const current = Number(p.current || 0);
+    const pct = Number(p.percent || (total ? Math.round(current / total * 100) : 0));
+    const status = p.status || (state === 'READY' ? 'ready' : (state === 'KB_BUILDING' ? 'building' : ''));
+    kbLiveStatus.classList.toggle('show', state === 'KB_BUILDING' || state === 'READY' || status === 'failed');
+    kbLiveStatus.classList.toggle('ready', status === 'ready' || state === 'READY');
+    kbLiveStatus.classList.toggle('failed', status === 'failed');
+    if (kbProgressFill) kbProgressFill.style.width = Math.max(0, Math.min(pct, 100)) + '%';
+    if (kbProgressPercent) kbProgressPercent.textContent = Math.max(0, Math.min(pct, 100)) + '%';
+    if (kbProgressText) {
+      kbProgressText.textContent = status === 'ready' || state === 'READY'
+        ? (total ? `${total}/${total}` : 'Completed')
+        : (total ? `${current}/${total}` : 'Starting');
+    }
+    if (kbProgressStep) {
+      kbProgressStep.textContent = p.step || (status === 'ready' ? 'Success - Knowledge Base is ready' : 'Building Knowledge Base');
+    }
+    if (kbInlineStatus) {
+      if (status === 'ready' || state === 'READY') {
+        kbInlineStatus.style.color = 'var(--green)';
+        kbInlineStatus.textContent = '✓ KB is ready — users can start querying';
+      } else if (status === 'failed') {
+        kbInlineStatus.style.color = 'var(--red)';
+        kbInlineStatus.textContent = 'KB build failed — check logs and try again';
+      } else if (state === 'KB_BUILDING') {
+        kbInlineStatus.style.color = 'var(--amber)';
+        kbInlineStatus.textContent = total ? `Building… ${current}/${total} completed (${pct}%) - ${p.step || 'working'}` : 'Building…';
+      }
+    }
+    if (kbBuildButton) {
+      kbBuildButton.disabled = state === 'KB_BUILDING';
+      if (state === 'READY') {
+        kbBuildButton.textContent = '🧠 Rebuild Knowledge Base';
+        kbBuildButton.removeAttribute('title');
+      }
+    }
+  }
+
+  async function pollKbStatus() {
+    try {
+      const resp = await fetch(`/admin/clients/${accountId}/setup/status`, {credentials:'same-origin'});
+      if (!resp.ok) return;
+      const data = await resp.json();
+      applyKbStatus(data.state, data.progress, data);
+    } catch (_) {}
+  }
+
+  window.addEventListener('qb-admin-notification', (event) => {
+    const msg = event.detail || {};
+    if (msg.type !== 'kb_build_progress' || msg.account_id !== accountId) return;
+    applyKbStatus(msg.status === 'ready' ? 'READY' : (msg.status === 'failed' ? 'SCHEMA_READY' : 'KB_BUILDING'), msg.progress || {}, {});
+  });
+  pollKbStatus();
+  window.setInterval(pollKbStatus, 5000);
+
+  if (!browseBtn) return;
+
+  // Pre-populate from server-rendered kb_tables (already saved in state_data)
+  let selected = new Set(({{ kb_tables | tojson }} || []).map(t => String(t).toUpperCase()));
+
+  // Wire buttons
+  document.getElementById('setup-scope-refresh').addEventListener('click', () => loadSetupScope(true));
+  browseBtn.addEventListener('click', () => loadSetupScope(false));
+  document.getElementById('setup-scope-save').addEventListener('click', saveSetupScope);
+
+  // Show/hide the saved-selection summary banners on page load
+  _syncSummaryBanners();
+
+  function _syncSummaryBanners() {
+    const summaryEl = document.getElementById('setup-saved-summary');
+    const warnEl    = document.getElementById('setup-no-selection-warn');
+    const countEl   = document.getElementById('setup-saved-count');
+    if (!summaryEl || !warnEl) return;
+    if (selected.size > 0) {
+      if (countEl) countEl.textContent = selected.size;
+      summaryEl.style.display = 'block';
+      warnEl.style.display    = 'none';
+    } else {
+      summaryEl.style.display = 'none';
+      warnEl.style.display    = 'block';
+    }
+  }
+
+  // Clear all checkboxes
+  window._setupScopeClear = function() {
+    selected.clear();
+    document.querySelectorAll('.scope-check').forEach(cb => {
+      cb.checked = false; cb.indeterminate = false;
+    });
+    syncFooter();
+    _syncSummaryBanners();
+  };
+
+  async function loadSetupScope(force) {
+    const tree = document.getElementById('setup-scope-tree');
+    const loading = document.getElementById('setup-scope-loading');
+    const activeBtn = force ? document.getElementById('setup-scope-refresh') : browseBtn;
+    activeBtn.disabled = true;
+    activeBtn.textContent = force ? 'Refreshing...' : 'Browsing...';
+    tree.style.display = 'none';
+    loading.style.display = 'block';
+    showStatus('', '');
+
+    // Always re-fetch the latest saved selection before rendering the tree
+    // so checkboxes reflect what's in state_data even if the page was loaded a while ago
+    try {
+      const savedResp = await fetch(`/admin/clients/${accountId}/kb-tables`, {credentials:'same-origin'});
+      const saved = await savedResp.json();
+      selected = new Set((saved.tables || []).map(t => String(t).toUpperCase()));
+    } catch (_) {}
+
+    try {
+      const resp = await fetch(`/admin/clients/${accountId}/schema-tree${force ? '?refresh=1' : ''}`, {credentials:'same-origin'});
+      const data = await resp.json();
+      loading.style.display = 'none';
+      if (data.status === 'error') {
+        showStatus('error', data.message || 'Schema discovery failed.');
+        return;
+      }
+      if (data.status === 'cached') {
+        showStatus('info', 'Using cached schema. Click "↻ Refresh DB" to re-query the live database for new tables.');
+      }
+      renderTree(data.tree || {});
+      syncFooter();
+    } catch (e) {
+      loading.style.display = 'none';
+      showStatus('error', 'Network error: ' + e.message);
+    } finally {
+      activeBtn.disabled = false;
+      activeBtn.textContent = force ? '↻ Refresh DB' : 'Browse schemas';
+    }
+  }
+
+  async function saveSetupScope() {
+    if (!selected.size) {
+      showStatus('error', 'Select at least one table before saving.');
+      return;
+    }
+    const btn = document.getElementById('setup-scope-save');
+    btn.disabled = true;
+    btn.textContent = 'Saving...';
+    try {
+      const resp = await fetch(`/admin/clients/${accountId}/kb-tables`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({tables: [...selected]}),
+      });
+      const data = await resp.json();
+      if (data.status === 'ok') {
+        showStatus('info',
+          `✓ ${data.count} table${data.count !== 1 ? 's' : ''} saved. ` +
+          `Now run Schema discovery (Step 3) to write the schema files.`);
+        _syncSummaryBanners();
+      } else {
+        showStatus('error', data.message || 'Save failed.');
+      }
+    } catch (e) {
+      showStatus('error', 'Network error: ' + e.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Save selection';
+    }
+  }
+
+  function showStatus(type, msg) {
+    const el = document.getElementById('setup-scope-status');
+    if (!msg) {
+      el.style.display = 'none';
+      el.textContent = '';
+      return;
+    }
+    const palette = type === 'error'
+      ? 'background:var(--red-light);color:var(--red)'
+      : 'background:var(--blue-light);color:var(--blue)';
+    el.setAttribute('style', `display:block;padding:.7rem 1rem;font-size:12px;border-bottom:1px solid var(--border);${palette}`);
+    el.textContent = msg;
+  }
+
+  function esc(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  function ref(db, schema, table) {
+    return `${db}.${schema}.${table}`.toUpperCase();
+  }
+
+  function checkboxId(value) {
+    return 'setupscope-' + String(value).replace(/[^A-Z0-9_]/g, '_');
+  }
+
+  function syncFooter() {
+    const footer = document.getElementById('setup-scope-footer');
+    const count = document.getElementById('setup-scope-count');
+    if (!selected.size) {
+      footer.style.display = 'none';
+    } else {
+      footer.style.display = 'flex';
+      count.textContent = `${selected.size} table${selected.size !== 1 ? 's' : ''}`;
+    }
+  }
+
+  window.setupScopeCheck = function(value, checked) {
+    if (checked) selected.add(value); else selected.delete(value);
+    syncFooter();
+  };
+
+  window.setupScopeToggleSchema = function(values, masterId) {
+    const master = document.getElementById(masterId);
+    const checked = master ? master.checked : true;
+    values.forEach(value => {
+      if (checked) selected.add(value); else selected.delete(value);
+      const cb = document.getElementById(checkboxId(value));
+      if (cb) cb.checked = checked;
+    });
+    syncFooter();
+  };
+
+  function renderTree(tree) {
+    const wrap = document.getElementById('setup-scope-tree');
+    wrap.innerHTML = '';
+    wrap.style.display = 'block';
+    const dbs = Object.keys(tree).sort();
+    if (!dbs.length) {
+      wrap.innerHTML = '<p style="font-size:12px;color:var(--text-muted)">No schemas or tables were visible with this database connection.</p>';
+      return;
+    }
+
+    let schemaCount = 0;
+    let tableCount = 0;
+    let viewCount = 0;
+    dbs.forEach(db => Object.values(tree[db]).forEach(s => {
+      schemaCount++;
+      tableCount += (s.tables || []).length;
+      viewCount += (s.views || []).length;
+    }));
+
+    const summary = document.createElement('div');
+    summary.className = 'scope-summary';
+    summary.innerHTML = `<strong>${dbs.length}</strong> db | <strong>${schemaCount}</strong> schemas | <strong style="color:var(--green)">${tableCount}</strong> tables | <strong style="color:var(--violet)">${viewCount}</strong> views`;
+    wrap.appendChild(summary);
+
+    dbs.forEach((db, dbi) => {
+      const dbEl = document.createElement('div');
+      dbEl.className = 'scope-db';
+      const schemas = Object.keys(tree[db]).sort();
+      dbEl.innerHTML = `<div class="scope-row"><span class="scope-name">${esc(db)}</span><span class="scope-count">${schemas.length} schemas</span></div>`;
+      wrap.appendChild(dbEl);
+
+      schemas.forEach((schema, si) => {
+        const objs = tree[db][schema] || {};
+        const tables = (objs.tables || []).sort();
+        const views = (objs.views || []).sort();
+        const refs = tables.map(t => ref(db, schema, t));
+        const masterId = `setupscope-master-${dbi}-${si}`;
+        const selectedCount = refs.filter(r => selected.has(r)).length;
+        let html = `<div class="scope-row"><input type="checkbox" class="scope-check" id="${masterId}" ${selectedCount && selectedCount === refs.length ? 'checked' : ''} onchange='setupScopeToggleSchema(${JSON.stringify(refs)}, "${masterId}")'><span class="scope-schema-name">${esc(schema)}</span><span class="scope-count">${tables.length} tables${views.length ? ' | ' + views.length + ' views' : ''}</span></div><div class="scope-objects">`;
+        if (tables.length) {
+          html += '<div class="scope-section">Tables</div>';
+          tables.forEach(t => {
+            const value = ref(db, schema, t);
+            html += `<label class="scope-object" for="${checkboxId(value)}"><input type="checkbox" class="scope-check" id="${checkboxId(value)}" ${selected.has(value) ? 'checked' : ''} onchange='setupScopeCheck(${JSON.stringify(value)}, this.checked)'><span>${esc(t)}</span></label>`;
+          });
+        }
+        if (views.length) {
+          html += '<div class="scope-section" style="color:var(--violet)">Views are not included in KB</div>';
+          views.forEach(v => {
+            html += `<div class="scope-object" style="opacity:.65"><span style="width:14px"></span><em>${esc(v)}</em></div>`;
+          });
+        }
+        html += '</div>';
+        const schemaEl = document.createElement('div');
+        schemaEl.className = 'scope-schema';
+        schemaEl.innerHTML = html;
+        dbEl.appendChild(schemaEl);
+        if (selectedCount && selectedCount !== refs.length) {
+          const master = schemaEl.querySelector('#' + masterId);
+          if (master) master.indeterminate = true;
+        }
+      });
+    });
+  }
+})();
+</script>
+
+<!-- ── KB Data Egress Log ──────────────────────────────────────────────────── -->
+<div class="card" style="margin-top:1.5rem">
+  <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.5rem">
+    <div>
+      <h2 style="margin:0">Data egress transparency</h2>
+      <p style="font-size:12px;color:var(--text-muted);margin:.2rem 0 0">
+        Every table processed during schema discovery and KB build is recorded here.
+        This log shows exactly what data was sent to the LLM and what was protected.
+        The egress log is automatically included in the <strong>External Log Export</strong>
+        — configure it in <a href="/admin/databases" style="color:var(--blue)">Admin → Databases</a>
+        to sync this data to your production database alongside query and LLM logs.
+      </p>
+    </div>
+  </div>
+
+  {% if egress_summary and (egress_summary.total_tables_discovery or egress_summary.total_tables_kb_build) %}
+
+  <!-- Summary KPIs -->
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:1rem;padding:1rem;border-bottom:1px solid var(--border)">
+    <div class="metric">
+      <div class="metric-label">Tables discovered</div>
+      <div class="metric-value">{{ egress_summary.total_tables_discovery or 0 }}</div>
+    </div>
+    <div class="metric">
+      <div class="metric-label">Tables KB-built</div>
+      <div class="metric-value">{{ egress_summary.total_tables_kb_build or 0 }}</div>
+    </div>
+    <div class="metric">
+      <div class="metric-label" style="color:var(--green)">🔒 Synthetic (protected)</div>
+      <div class="metric-value" style="color:var(--green)">{{ egress_summary.synthetic_sample_count or 0 }}</div>
+    </div>
+    <div class="metric">
+      <div class="metric-label" style="color:var(--amber)">⚠ Real rows sent to LLM</div>
+      <div class="metric-value" style="color:var(--amber)">{{ egress_summary.real_sample_count or 0 }}</div>
+    </div>
+    <div class="metric">
+      <div class="metric-label">Last discovery</div>
+      <div class="metric-value" style="font-size:11px;font-weight:600">
+        {{ egress_summary.last_discovery_at[:16] if egress_summary.last_discovery_at else '—' }}
+      </div>
+    </div>
+    <div class="metric">
+      <div class="metric-label">Last KB build</div>
+      <div class="metric-value" style="font-size:11px;font-weight:600">
+        {{ egress_summary.last_kb_build_at[:16] if egress_summary.last_kb_build_at else '—' }}
+      </div>
+    </div>
+  </div>
+
+  <!-- Real rows warning -->
+  {% if egress_summary.real_sample_count and egress_summary.real_sample_count > 0 %}
+  <div class="alert alert-warning" style="margin:.75rem 1rem 0;border-radius:6px;font-size:12px">
+    <strong>⚠ {{ egress_summary.real_sample_count }} table{{ 's' if egress_summary.real_sample_count != 1 else '' }}
+    sent real sample rows to the LLM</strong> during KB build.
+    These tables were not matched by the synthetic guard.
+    Consider reviewing the table names below — if they contain personal or sensitive data,
+    contact GainInsights to add them to the protected table list.
+  </div>
+  {% endif %}
+
+  <!-- Most recent KB build detail -->
+  {% if egress_summary.kb_build_rows %}
+  <div style="padding:.75rem 1rem .25rem">
+    <h3 style="font-size:12px;font-weight:700;margin-bottom:.5rem">Most recent KB build — per-table detail</h3>
+    <table class="table" style="font-size:12px">
+      <thead>
+        <tr>
+          <th>Table</th>
+          <th>Schema</th>
+          <th>Database</th>
+          <th>Columns</th>
+          <th>Sample sent to LLM</th>
+          <th>Timestamp</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in egress_summary.kb_build_rows %}
+        <tr>
+          <td style="font-family:Consolas,monospace;font-weight:700">{{ row.table_name }}</td>
+          <td style="font-size:11px;color:var(--text-muted)">{{ row.schema_name or '—' }}</td>
+          <td style="font-size:11px;color:var(--text-muted)">{{ row.database_name or '—' }}</td>
+          <td>{{ row.column_count or '—' }}</td>
+          <td>
+            {% if row.sample_mode == 'synthetic' %}
+            <span style="color:var(--green);font-weight:700;font-size:11px">🔒 Synthetic</span>
+            {% elif row.sample_mode == 'real' %}
+            <span style="color:var(--amber);font-weight:700;font-size:11px">⚠ Real rows</span>
+            {% else %}
+            <span style="font-size:11px;color:var(--text-muted)">Schema only</span>
+            {% endif %}
+          </td>
+          <td style="font-size:10px;color:var(--text-muted)">{{ row.created_at[:16] if row.created_at else '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  <!-- Most recent discovery detail (collapsed by default) -->
+  {% if egress_summary.discovery_rows %}
+  <details style="padding:.75rem 1rem">
+    <summary style="font-size:12px;font-weight:700;cursor:pointer;color:var(--text-muted)">
+      Most recent schema discovery — {{ egress_summary.discovery_rows|length }} tables (click to expand)
+    </summary>
+    <table class="table" style="font-size:11px;margin-top:.5rem">
+      <thead>
+        <tr>
+          <th>Table</th><th>Schema</th><th>Database</th><th>Columns</th><th>Timestamp</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in egress_summary.discovery_rows %}
+        <tr>
+          <td style="font-family:Consolas,monospace">{{ row.table_name }}</td>
+          <td style="color:var(--text-muted)">{{ row.schema_name or '—' }}</td>
+          <td style="color:var(--text-muted)">{{ row.database_name or '—' }}</td>
+          <td>{{ row.column_count or '—' }}</td>
+          <td style="color:var(--text-muted)">{{ row.created_at[:16] if row.created_at else '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </details>
+  {% endif %}
+
+  {% else %}
+  <div class="card-body" style="color:var(--text-muted);text-align:center;padding:2rem;font-size:13px">
+    No egress data recorded yet.<br>
+    Run <strong>Schema Discovery</strong> and <strong>Build KB</strong> above
+    to populate this log.
+  </div>
+  {% endif %}
+</div>
+
+{% endblock %}

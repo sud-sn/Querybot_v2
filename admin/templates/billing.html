@@ -1,0 +1,223 @@
+{% extends "base.html" %}
+{% block title %}Billing — {{ client.client_name or client.account_id[:16] }}{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Billing &amp; Usage</h1>
+  <p><a href="/admin/clients/{{ client.account_id }}">← {{ client.client_name or client.account_id[:16] }}</a></p>
+</div>
+
+<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.25rem;flex-wrap:wrap;gap:.75rem">
+  <form method="get" style="display:flex;gap:.5rem;align-items:center">
+    <label style="font-size:13px;font-weight:600;color:var(--gray-700)">Month:</label>
+    <input type="month" name="month" value="{{ month }}"
+      style="padding:6px 10px;border:1px solid var(--gray-300);border-radius:6px;font-size:13px">
+    <button type="submit" class="btn btn-secondary btn-sm">Filter</button>
+    {% if month %}<a href="?" class="btn btn-secondary btn-sm">Current month</a>{% endif %}
+  </form>
+  <a href="/admin/clients/{{ client.account_id }}/billing/export.csv"
+     class="btn btn-success btn-sm">
+    Download CSV report
+  </a>
+</div>
+
+<!-- Summary metrics -->
+<div class="metrics">
+  <div class="metric">
+    <div class="metric-label">Total queries</div>
+    <div class="metric-value">{{ stats.total or 0 }}</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Successful</div>
+    <div class="metric-value" style="color:var(--green)">{{ stats.succeeded or 0 }}</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Failed</div>
+    <div class="metric-value" style="color:var(--red)">{{ (stats.total or 0) - (stats.succeeded or 0) }}</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Tokens in</div>
+    <div class="metric-value" style="font-size:16px">{{ "{:,}".format(stats.total_tokens_in or 0) }}</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Tokens out</div>
+    <div class="metric-value" style="font-size:16px">{{ "{:,}".format(stats.total_tokens_out or 0) }}</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Total cost (USD)</div>
+    <div class="metric-value" style="color:var(--blue)">${{ "%.4f"|format(stats.total_cost_usd or 0) }}</div>
+  </div>
+</div>
+
+<!-- ── LLM cost rates — editable ──────────────────────────────────────────── -->
+<div class="card" style="margin-bottom:1.5rem">
+  <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.5rem">
+    <div>
+      <h2 style="margin:0">LLM cost rates <span style="font-size:12px;font-weight:400;color:var(--text-muted)">(USD per 1M tokens)</span></h2>
+      <p style="font-size:12px;color:var(--text-muted);margin:.2rem 0 0">
+        Rates are stored in the database. Editing a row updates all future cost calculations immediately — no restart needed.
+        Historical rows keep the cost that was active at call time.
+      </p>
+    </div>
+    <button type="button" class="btn btn-secondary btn-sm" id="addModelBtn">+ Add new model</button>
+  </div>
+
+  {% if saved_pricing %}
+  <div class="alert alert-success" style="margin:.75rem 1rem 0;border-radius:6px">
+    Pricing updated successfully.
+  </div>
+  {% endif %}
+  {% if error_pricing %}
+  <div class="alert alert-error" style="margin:.75rem 1rem 0;border-radius:6px">
+    {{ error_pricing }}
+  </div>
+  {% endif %}
+
+  <table class="table" id="pricingTable">
+    <thead>
+      <tr>
+        <th>Model</th>
+        <th>Input (per 1M tokens)</th>
+        <th>Output (per 1M tokens)</th>
+        <th>Last updated</th>
+        <th style="width:90px"></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in pricing_rows %}
+      <tr id="pr-{{ loop.index }}">
+        <td>
+          <code style="font-size:12px">{{ row.model }}</code>
+          {% if row.source == 'default' %}
+          <span style="font-size:10px;color:var(--text-muted);margin-left:6px">(default)</span>
+          {% endif %}
+        </td>
+        <td>
+          <span class="pr-display-in">${{ "%.2f"|format(row.tokens_in) }}</span>
+          <input class="pr-input-in" type="number" step="0.01" min="0" value="{{ row.tokens_in }}"
+            style="display:none;width:90px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:13px">
+        </td>
+        <td>
+          <span class="pr-display-out">${{ "%.2f"|format(row.tokens_out) }}</span>
+          <input class="pr-input-out" type="number" step="0.01" min="0" value="{{ row.tokens_out }}"
+            style="display:none;width:90px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:13px">
+        </td>
+        <td style="font-size:12px;color:var(--text-muted)">
+          {{ row.updated_at[:16] if row.updated_at else '—' }}
+        </td>
+        <td>
+          <button type="button" class="btn btn-xs btn-secondary pr-edit-btn"
+            onclick="editPricingRow(this, '{{ row.model }}')">Edit</button>
+          <button type="button" class="btn btn-xs btn-primary pr-save-btn"
+            style="display:none"
+            onclick="savePricingRow(this, '{{ row.model }}', '{{ client.account_id }}')">Save</button>
+          <button type="button" class="btn btn-xs btn-secondary pr-cancel-btn"
+            style="display:none"
+            onclick="cancelPricingRow(this)">Cancel</button>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <!-- Add new model row (hidden by default) -->
+  <div id="addModelForm" style="display:none;padding:.75rem 1rem;border-top:1px solid var(--border);background:var(--surface-2)">
+    <form method="post" action="/admin/clients/{{ client.account_id }}/billing/pricing/save"
+          style="display:flex;gap:.5rem;align-items:flex-end;flex-wrap:wrap">
+      <div>
+        <label style="font-size:12px;font-weight:600;display:block;margin-bottom:3px">Model name</label>
+        <input type="text" name="model" placeholder="e.g. gpt-4o-2025" required
+          style="padding:6px 8px;border:1px solid var(--border);border-radius:4px;font-size:13px;font-family:monospace;width:200px">
+      </div>
+      <div>
+        <label style="font-size:12px;font-weight:600;display:block;margin-bottom:3px">Input (per 1M)</label>
+        <input type="number" name="tokens_in" placeholder="5.00" step="0.01" min="0" required
+          style="padding:6px 8px;border:1px solid var(--border);border-radius:4px;font-size:13px;width:100px">
+      </div>
+      <div>
+        <label style="font-size:12px;font-weight:600;display:block;margin-bottom:3px">Output (per 1M)</label>
+        <input type="number" name="tokens_out" placeholder="15.00" step="0.01" min="0" required
+          style="padding:6px 8px;border:1px solid var(--border);border-radius:4px;font-size:13px;width:100px">
+      </div>
+      <button type="submit" class="btn btn-primary btn-sm">Add model</button>
+      <button type="button" class="btn btn-secondary btn-sm" onclick="document.getElementById('addModelForm').style.display='none'">Cancel</button>
+    </form>
+  </div>
+</div>
+
+<!-- Daily breakdown -->
+{% if breakdown %}
+<div class="card">
+  <div class="card-header"><h2>Daily breakdown (current month)</h2></div>
+  <table class="table">
+    <tr><th>Date</th><th>Queries</th><th>Successful</th><th>Tokens in</th><th>Tokens out</th><th>Cost (USD)</th></tr>
+    {% for row in breakdown %}
+    <tr>
+      <td style="font-weight:600">{{ row.date }}</td>
+      <td>{{ row.total_queries }}</td>
+      <td style="color:var(--green)">{{ row.successful }}</td>
+      <td style="font-size:12px">{{ "{:,}".format(row.tokens_in or 0) }}</td>
+      <td style="font-size:12px">{{ "{:,}".format(row.tokens_out or 0) }}</td>
+      <td style="color:var(--blue)">${{ "%.4f"|format(row.cost_usd or 0) }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% else %}
+<div class="card">
+  <div class="card-body" style="color:var(--gray-500);text-align:center;padding:2rem">
+    No queries recorded for this period.
+  </div>
+</div>
+{% endif %}
+
+<script>
+document.getElementById('addModelBtn').addEventListener('click', function() {
+  var f = document.getElementById('addModelForm');
+  f.style.display = f.style.display === 'none' ? 'block' : 'none';
+});
+
+function editPricingRow(btn, model) {
+  var tr = btn.closest('tr');
+  tr.querySelector('.pr-display-in').style.display  = 'none';
+  tr.querySelector('.pr-display-out').style.display = 'none';
+  tr.querySelector('.pr-input-in').style.display    = 'inline-block';
+  tr.querySelector('.pr-input-out').style.display   = 'inline-block';
+  tr.querySelector('.pr-edit-btn').style.display    = 'none';
+  tr.querySelector('.pr-save-btn').style.display    = 'inline-block';
+  tr.querySelector('.pr-cancel-btn').style.display  = 'inline-block';
+  tr.querySelector('.pr-input-in').focus();
+}
+
+function cancelPricingRow(btn) {
+  var tr = btn.closest('tr');
+  tr.querySelector('.pr-display-in').style.display  = 'inline';
+  tr.querySelector('.pr-display-out').style.display = 'inline';
+  tr.querySelector('.pr-input-in').style.display    = 'none';
+  tr.querySelector('.pr-input-out').style.display   = 'none';
+  tr.querySelector('.pr-edit-btn').style.display    = 'inline-block';
+  tr.querySelector('.pr-save-btn').style.display    = 'none';
+  tr.querySelector('.pr-cancel-btn').style.display  = 'none';
+}
+
+function savePricingRow(btn, model, accountId) {
+  var tr     = btn.closest('tr');
+  var tIn    = tr.querySelector('.pr-input-in').value;
+  var tOut   = tr.querySelector('.pr-input-out').value;
+  if (!tIn || !tOut || isNaN(parseFloat(tIn)) || isNaN(parseFloat(tOut))) {
+    alert('Please enter valid numeric rates.');
+    return;
+  }
+  // Submit via a hidden inline form so we stay on the same page with feedback
+  var form = document.createElement('form');
+  form.method = 'post';
+  form.action = '/admin/clients/' + accountId + '/billing/pricing/save';
+  [['model', model], ['tokens_in', tIn], ['tokens_out', tOut]].forEach(function(pair) {
+    var inp = document.createElement('input');
+    inp.type = 'hidden'; inp.name = pair[0]; inp.value = pair[1];
+    form.appendChild(inp);
+  });
+  document.body.appendChild(form);
+  form.submit();
+}
+</script>
+{% endblock %}

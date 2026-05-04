@@ -1,0 +1,1304 @@
+{% extends "base.html" %}
+{% block title %}Entity Graph — {{ client.client_name }}{% endblock %}
+{% block head %}
+<style>
+/* ── Shell layout ──────────────────────────────────────────────────────────── */
+.graph-shell{display:grid;grid-template-columns:240px 1fr 300px;height:calc(100vh - 56px);overflow:hidden;gap:0}
+.graph-sidebar,.graph-detail{overflow-y:auto;border-right:1px solid var(--border);background:var(--surface);display:flex;flex-direction:column}
+.graph-detail{border-right:none;border-left:1px solid var(--border)}
+.graph-canvas-wrap{display:flex;flex-direction:column;background:var(--surface-2);overflow:hidden;position:relative}
+
+/* ── Sidebar ───────────────────────────────────────────────────────────────── */
+.gs-head{padding:.75rem;border-bottom:1px solid var(--border);font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);display:flex;align-items:center;justify-content:space-between}
+.gs-add-btn{background:var(--primary);color:#fff;border:none;border-radius:5px;padding:4px 10px;font-size:11px;font-weight:700;cursor:pointer;line-height:1}
+.gs-add-btn:hover{opacity:.85}
+.gs-entity-item{padding:.55rem .75rem;cursor:pointer;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:.5rem;font-size:12px;transition:background .12s}
+.gs-entity-item:hover{background:var(--surface-2)}
+.gs-entity-item.selected{background:color-mix(in srgb,var(--primary) 10%,var(--surface));border-left:3px solid var(--primary)}
+.gs-entity-item.selected{padding-left:calc(.75rem - 3px)}
+.entity-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.entity-type-badge{font-size:9px;font-weight:800;text-transform:uppercase;padding:2px 5px;border-radius:3px;margin-left:auto}
+.badge-fact{background:#FEF3C7;color:#92400E}
+.badge-dimension{background:#DBEAFE;color:#1E40AF}
+.badge-bridge{background:#F3E8FF;color:#6B21A8}
+.gs-empty{padding:1.5rem .75rem;color:var(--text-muted);font-size:12px;text-align:center}
+.gs-section{padding:.5rem .75rem;font-size:10px;font-weight:800;text-transform:uppercase;color:var(--text-muted);letter-spacing:.06em;background:var(--surface-2);border-bottom:1px solid var(--border)}
+.gs-rel-item{padding:.45rem .75rem;font-size:11px;color:var(--text-soft);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:.4rem;cursor:pointer}
+.gs-rel-item:hover{background:var(--surface-2)}
+.gs-rel-item.selected{background:color-mix(in srgb,var(--amber) 10%,var(--surface));border-left:3px solid var(--amber)}
+
+/* ── Canvas toolbar ────────────────────────────────────────────────────────── */
+.canvas-toolbar{padding:.5rem .75rem;border-bottom:1px solid var(--border);background:var(--surface);display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;flex-shrink:0}
+.tb-btn{background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:5px;padding:5px 10px;font-size:11px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:4px;transition:all .12s}
+.tb-btn:hover{background:var(--surface-3,var(--border));border-color:var(--border-strong)}
+.tb-btn.primary{background:var(--primary);color:#fff;border-color:var(--primary)}
+.tb-btn.primary:hover{opacity:.85}
+.tb-btn.danger{background:var(--red-light,#FEE2E2);color:var(--red,#DC2626);border-color:color-mix(in srgb,var(--red) 30%,transparent)}
+.tb-sep{width:1px;height:20px;background:var(--border);margin:0 .25rem}
+.tb-hint{font-size:11px;color:var(--text-muted);margin-left:auto}
+.canvas-status{position:absolute;bottom:.75rem;left:.75rem;font-size:11px;color:var(--text-muted);background:var(--surface);border:1px solid var(--border);border-radius:5px;padding:4px 10px;pointer-events:none;z-index:10;transition:opacity .3s}
+
+/* ── SVG canvas ────────────────────────────────────────────────────────────── */
+#graph-svg{width:100%;flex:1;cursor:default;user-select:none;overflow:hidden}
+.g-node{cursor:grab}
+.g-node:active{cursor:grabbing}
+.g-node.selected .node-body{stroke:var(--primary,#3B82F6);stroke-width:2.5}
+.g-node.hover .node-body{filter:brightness(0.92)}
+.node-body{rx:10;ry:10;filter:drop-shadow(0 2px 6px rgba(0,0,0,.10))}
+.node-label{font-family:system-ui,sans-serif;font-weight:800;font-size:13px;fill:#fff;text-anchor:middle;dominant-baseline:central;pointer-events:none}
+.node-sublabel{font-family:Consolas,monospace;font-size:10px;fill:rgba(255,255,255,.75);text-anchor:middle;dominant-baseline:central;pointer-events:none}
+.node-type-tag{font-family:system-ui,sans-serif;font-size:9px;font-weight:700;fill:rgba(255,255,255,.85);text-anchor:middle;dominant-baseline:central;pointer-events:none}
+.node-port{fill:#fff;stroke:var(--border);stroke-width:1.5;r:6;cursor:crosshair;opacity:0;transition:opacity .15s}
+.g-node:hover .node-port{opacity:1}
+.g-edge{pointer-events:stroke;cursor:pointer}
+.g-edge .edge-line{stroke:#94A3B8;stroke-width:2;fill:none}
+.g-edge.selected .edge-line{stroke:var(--amber,#F59E0B);stroke-width:2.5}
+.g-edge .edge-label{font-family:system-ui,sans-serif;font-size:10px;fill:var(--text-muted);text-anchor:middle;dominant-baseline:central}
+.g-edge .edge-label-bg{fill:var(--surface);rx:4;ry:4}
+.draw-line{stroke:var(--primary,#3B82F6);stroke-width:2;stroke-dasharray:6,4;fill:none;pointer-events:none}
+.g-node.suggested .node-body{stroke-dasharray:7,4;stroke:#F59E0B;stroke-width:2;opacity:.75}
+.g-node.suggested .node-label{opacity:.7}
+.g-edge.suggested .edge-line{stroke-dasharray:7,4;stroke:#F59E0B;opacity:.7}
+.conf-badge{font-size:9px;font-weight:800;padding:1px 5px;border-radius:999px;cursor:pointer;white-space:nowrap}
+.conf-high{background:#D1FAE5;color:#065F46}
+.conf-mid{background:#FEF3C7;color:#92400E}
+.conf-low{background:#FEE2E2;color:#991B1B}
+.conf-pct{font-family:Consolas,monospace}
+.role-playing-badge{fill:#7C3AED;font-size:8px;font-weight:800}
+.prop-row.suggested{opacity:.75;background:color-mix(in srgb,var(--amber) 6%,var(--surface))}
+.suggest-spinner{display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;animation:spin .6s linear infinite;vertical-align:middle;margin-right:4px}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ── Detail panel ──────────────────────────────────────────────────────────── */
+.gd-head{padding:.75rem;border-bottom:1px solid var(--border);font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);display:flex;align-items:center;justify-content:space-between}
+.gd-section{padding:.6rem .75rem;font-size:10px;font-weight:800;text-transform:uppercase;color:var(--text-muted);letter-spacing:.06em;background:var(--surface-2);border-bottom:1px solid var(--border)}
+.gd-body{padding:.75rem;flex:1}
+.gd-form-row{display:grid;grid-template-columns:1fr 1fr;gap:.5rem;margin-bottom:.6rem}
+.gd-form-row.full{grid-template-columns:1fr}
+.gd-label{font-size:11px;font-weight:600;color:var(--text-soft);margin-bottom:.2rem;display:block}
+.gd-input{width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:5px;font-size:12px;background:var(--surface);color:var(--text);outline:none;box-sizing:border-box}
+.gd-input:focus{border-color:var(--primary)}
+.gd-select{width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:5px;font-size:12px;background:var(--surface);color:var(--text);outline:none}
+.gd-textarea{width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:5px;font-size:12px;background:var(--surface);color:var(--text);resize:vertical;outline:none;min-height:60px}
+.gd-save-btn{background:var(--primary);color:#fff;border:none;border-radius:6px;padding:7px 16px;font-size:12px;font-weight:700;cursor:pointer;width:100%;margin-top:.5rem}
+.gd-save-btn:hover{opacity:.85}
+.gd-delete-btn{background:var(--red-light,#FEE2E2);color:var(--red,#DC2626);border:1px solid color-mix(in srgb,var(--red) 25%,transparent);border-radius:6px;padding:6px 14px;font-size:11px;font-weight:700;cursor:pointer;width:100%;margin-top:.4rem}
+.gd-delete-btn:hover{opacity:.8}
+.gd-placeholder{padding:2rem .75rem;color:var(--text-muted);font-size:12px;text-align:center;line-height:1.7}
+.prop-row{display:flex;align-items:center;gap:.4rem;padding:.35rem 0;border-bottom:1px dashed var(--border);font-size:11px}
+.prop-row:last-child{border-bottom:none}
+.prop-col{font-family:Consolas,monospace;font-weight:700;color:var(--text);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.prop-role{font-size:9px;font-weight:800;padding:2px 5px;border-radius:3px;text-transform:uppercase;cursor:pointer;white-space:nowrap}
+.role-metric{background:#D1FAE5;color:#065F46}
+.role-dimension{background:#DBEAFE;color:#1E40AF}
+.role-date{background:#FEF3C7;color:#92400E}
+.role-filter{background:#F3E8FF;color:#6B21A8}
+.role-identifier{background:#F1F5F9;color:#475569}
+.role-ignore{background:#F1F5F9;color:#94A3B8;text-decoration:line-through}
+.color-swatch{width:20px;height:20px;border-radius:4px;border:2px solid rgba(255,255,255,.4);cursor:pointer;flex-shrink:0}
+.resolver-output{font-family:Consolas,monospace;font-size:11px;background:var(--surface-2);border:1px solid var(--border);border-radius:5px;padding:.6rem;white-space:pre-wrap;word-break:break-all;line-height:1.5;color:var(--text-soft);margin-top:.5rem;max-height:160px;overflow-y:auto}
+.sync-badge{font-size:9px;font-weight:800;padding:2px 6px;border-radius:999px;background:var(--green-light,#D1FAE5);color:var(--green,#059669)}
+
+/* ── Modals ────────────────────────────────────────────────────────────────── */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:8000;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(3px)}
+.modal-box{background:var(--surface);border-radius:var(--radius,8px);width:440px;max-width:96vw;box-shadow:0 24px 64px rgba(0,0,0,.22);overflow:hidden}
+.modal-head{padding:.85rem 1.1rem;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;background:var(--surface-2)}
+.modal-head h3{font-size:14px;font-weight:800;margin:0}
+.modal-close{background:none;border:none;font-size:18px;cursor:pointer;color:var(--text-muted);padding:0 4px}
+.modal-body{padding:1rem 1.1rem}
+.modal-footer{padding:.75rem 1.1rem;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:.5rem}
+.m-btn{border:1px solid var(--border);border-radius:6px;padding:7px 16px;font-size:12px;font-weight:700;cursor:pointer;background:var(--surface)}
+.m-btn:hover{background:var(--surface-2)}
+.m-btn.primary{background:var(--primary);color:#fff;border-color:var(--primary)}
+.m-btn.primary:hover{opacity:.85}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="graph-shell">
+
+<!-- ══ LEFT SIDEBAR ══════════════════════════════════════════════════════════ -->
+<aside class="graph-sidebar">
+  <div class="gs-head">Entities
+    <button class="gs-add-btn" onclick="openEntityModal(null)">+ Add</button>
+  </div>
+  <div id="entity-list">
+    {% if not entities %}
+    <div class="gs-empty">No entities yet.<br>Click <strong>+ Add</strong> to define your first business object.</div>
+    {% endif %}
+    {% for e in entities %}
+    <div class="gs-entity-item" id="sib-{{ e.entity_name|replace(' ','_') }}"
+         onclick="selectEntity('{{ e.entity_name }}')">
+      <span class="entity-dot" style="background:{{ e.color or '#4F86C6' }}"></span>
+      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ e.display_name or e.entity_name }}</span>
+      <span class="entity-type-badge badge-{{ e.entity_type }}">{{ e.entity_type }}</span>
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="gs-section">Relationships</div>
+  <div id="rel-list">
+    {% if not relationships %}
+    <div class="gs-empty" style="font-size:11px">No relationships yet.<br>Hover a node and drag from its port.</div>
+    {% endif %}
+    {% for r in relationships %}
+    <div class="gs-rel-item" id="sib-rel-{{ r.id }}" onclick="selectRel({{ r.id }})">
+      <span>{{ r.from_entity }}</span>
+      <span style="color:var(--text-muted)">→</span>
+      <span>{{ r.to_entity }}</span>
+      <span style="margin-left:auto;font-size:9px;font-weight:700;color:var(--text-muted);text-transform:uppercase">{{ r.join_type }}</span>
+    </div>
+    {% endfor %}
+  </div>
+
+  <!-- Resolver tester -->
+  <div class="gs-section" style="margin-top:auto">Test resolver</div>
+  <div style="padding:.65rem">
+    <input id="resolve-q" class="gd-input" placeholder="Type a question to test…"
+           oninput="scheduleResolve(this.value)" style="margin-bottom:.4rem">
+    <div id="resolve-output" class="resolver-output" style="display:none"></div>
+  </div>
+</aside>
+
+<!-- ══ CANVAS ════════════════════════════════════════════════════════════════ -->
+<main class="graph-canvas-wrap">
+  <div class="canvas-toolbar">
+    <button class="tb-btn primary" onclick="openEntityModal(null)">＋ Entity</button>
+    <div class="tb-sep"></div>
+    <button class="tb-btn" onclick="autoLayout()" title="Auto-arrange nodes">⊞ Auto layout</button>
+    <button class="tb-btn" onclick="fitView()" title="Fit to screen">⤢ Fit</button>
+    <button class="tb-btn" id="del-btn" onclick="deleteSelected()" style="display:none" title="Delete selected (Del)">🗑 Delete</button>
+    <div class="tb-sep"></div>
+    <button class="tb-btn" onclick="openRelModal()" title="Add relationship by form">⇢ Link</button>
+    <button class="tb-btn" id="suggest-btn" onclick="runSuggest()" title="Use LLM to predict entities, field roles, and relationships from the discovered schema">
+      ✦ Suggest from schema
+    </button>
+    <span class="tb-hint" id="mode-hint">Click entity to select • Hover and drag port to connect • ✦ = LLM suggested</span>
+  </div>
+
+  <svg id="graph-svg" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5"
+              markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="#94A3B8"/>
+      </marker>
+      <marker id="arrow-sel" viewBox="0 0 10 10" refX="9" refY="5"
+              markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="#F59E0B"/>
+      </marker>
+    </defs>
+    <g id="zoom-group" transform="translate(0,0) scale(1)">
+      <g id="edges-layer"></g>
+      <g id="nodes-layer"></g>
+    </g>
+    <!-- Draw-line preview -->
+    <line id="draw-line" class="draw-line" style="display:none"/>
+  </svg>
+  <div class="canvas-status" id="canvas-status">Ready</div>
+</main>
+
+<!-- ══ DETAIL PANEL ══════════════════════════════════════════════════════════ -->
+<aside class="graph-detail">
+  <div class="gd-head" id="detail-head">
+    <span>Properties</span>
+    <span id="sync-badge" class="sync-badge" style="display:none">Synced to semantic layer</span>
+  </div>
+  <div id="detail-content">
+    <div class="gd-placeholder">
+      Select an entity or relationship on the canvas to view and edit its properties.
+      <br><br>
+      <strong>Tip:</strong> Hover a node and drag from the ◉ port to create a relationship.
+    </div>
+  </div>
+</aside>
+
+</div><!-- /graph-shell -->
+
+<!-- ══ ADD / EDIT ENTITY MODAL ═══════════════════════════════════════════ -->
+<div id="entity-modal" class="modal-overlay" style="display:none">
+  <div class="modal-box">
+    <div class="modal-head">
+      <h3 id="entity-modal-title">Add Entity</h3>
+      <button class="modal-close" onclick="closeEntityModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="gd-form-row">
+        <div>
+          <label class="gd-label">Entity name *</label>
+          <input class="gd-input" id="m-entity-name" placeholder="e.g. Customer">
+        </div>
+        <div>
+          <label class="gd-label">Type</label>
+          <select class="gd-select" id="m-entity-type">
+            <option value="dimension">Dimension</option>
+            <option value="fact">Fact</option>
+            <option value="bridge">Bridge</option>
+          </select>
+        </div>
+      </div>
+      <div class="gd-form-row">
+        <div>
+          <label class="gd-label">DB Table *</label>
+          <input class="gd-input" id="m-table-name" placeholder="DIM_CUSTOMER">
+        </div>
+        <div>
+          <label class="gd-label">Schema</label>
+          <input class="gd-input" id="m-schema-name" placeholder="dbo">
+        </div>
+      </div>
+      <div class="gd-form-row">
+        <div>
+          <label class="gd-label">Primary key column</label>
+          <input class="gd-input" id="m-pk-column" placeholder="CustomerID">
+        </div>
+        <div>
+          <label class="gd-label">Display name</label>
+          <input class="gd-input" id="m-display-name" placeholder="Customer">
+        </div>
+      </div>
+      <div class="gd-form-row full">
+        <label class="gd-label">Description</label>
+        <textarea class="gd-textarea" id="m-description" rows="2" placeholder="What does this entity represent?"></textarea>
+      </div>
+      <div class="gd-form-row">
+        <div>
+          <label class="gd-label">Node colour</label>
+          <input type="color" id="m-color" value="#4F86C6" style="width:100%;height:34px;border:1px solid var(--border);border-radius:5px;cursor:pointer">
+        </div>
+        <div style="display:flex;align-items:flex-end">
+          <label style="display:flex;align-items:center;gap:.4rem;font-size:12px;cursor:pointer">
+            <input type="checkbox" id="m-is-active" checked> Active
+          </label>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="m-btn" onclick="closeEntityModal()">Cancel</button>
+      <button class="m-btn primary" onclick="saveEntityFromModal()">Save entity</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ ADD RELATIONSHIP MODAL ═════════════════════════════════════════════ -->
+<div id="rel-modal" class="modal-overlay" style="display:none">
+  <div class="modal-box">
+    <div class="modal-head">
+      <h3 id="rel-modal-title">Add Relationship</h3>
+      <button class="modal-close" onclick="closeRelModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="gd-form-row">
+        <div>
+          <label class="gd-label">From entity (FK owner) *</label>
+          <select class="gd-select" id="rel-from-entity"></select>
+        </div>
+        <div>
+          <label class="gd-label">To entity *</label>
+          <select class="gd-select" id="rel-to-entity"></select>
+        </div>
+      </div>
+      <div class="gd-form-row">
+        <div>
+          <label class="gd-label">FK column (from)</label>
+          <input class="gd-input" id="rel-from-col" placeholder="CustomerID">
+        </div>
+        <div>
+          <label class="gd-label">Referenced column (to)</label>
+          <input class="gd-input" id="rel-to-col" placeholder="CustomerID">
+        </div>
+      </div>
+      <div class="gd-form-row">
+        <div>
+          <label class="gd-label">Cardinality</label>
+          <select class="gd-select" id="rel-cardinality">
+            <option value="many_to_one">Many to one</option>
+            <option value="one_to_one">One to one</option>
+            <option value="one_to_many">One to many</option>
+          </select>
+        </div>
+        <div>
+          <label class="gd-label">JOIN type</label>
+          <select class="gd-select" id="rel-join-type">
+            <option value="LEFT">LEFT JOIN</option>
+            <option value="INNER">INNER JOIN</option>
+          </select>
+        </div>
+      </div>
+      <div class="gd-form-row full">
+        <label class="gd-label">Relationship label</label>
+        <input class="gd-input" id="rel-label" placeholder="places, belongs to, prescribes…">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="m-btn" onclick="closeRelModal()">Cancel</button>
+      <button class="m-btn primary" onclick="saveRelFromModal()">Save relationship</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ════════════════════════════════════════════════════════════════════════════
+// DATA
+// ════════════════════════════════════════════════════════════════════════════
+const ACCOUNT_ID = "{{ client.account_id }}";
+const API_BASE   = `/admin/clients/${ACCOUNT_ID}/graph/api`;
+
+// Local graph state — synced with DB via API calls
+let graph = {
+  entities:      JSON.parse('{{ entities | tojson | safe }}'),
+  relationships: JSON.parse('{{ relationships | tojson | safe }}'),
+};
+
+// Selection state
+let selectedEntity  = null;   // entity_name string
+let selectedRelId   = null;   // relationship id int
+
+// Canvas pan/zoom state
+let pan  = { x: 0, y: 0 };
+let zoom = 1;
+
+// Drag state
+let dragging = null;   // { entity_name, startX, startY, origX, origY }
+let drawingEdge = null; // { from_entity, startSvgX, startSvgY }
+
+// ════════════════════════════════════════════════════════════════════════════
+// SVG CANVAS RENDERING
+// ════════════════════════════════════════════════════════════════════════════
+const NODE_W  = 160;
+const NODE_H  = 72;
+
+function renderGraph() {
+  renderEdges();
+  renderNodes();
+}
+
+function entityPos(e) {
+  return { x: e.pos_x || 120, y: e.pos_y || 120 };
+}
+
+function edgeMidpoint(rel) {
+  const fe = graph.entities.find(e => e.entity_name === rel.from_entity);
+  const te = graph.entities.find(e => e.entity_name === rel.to_entity);
+  if (!fe || !te) return null;
+  const fp = entityPos(fe), tp = entityPos(te);
+  return {
+    x: (fp.x + NODE_W/2 + tp.x + NODE_W/2) / 2,
+    y: (fp.y + NODE_H/2 + tp.y + NODE_H/2) / 2,
+  };
+}
+
+function renderNodes() {
+  const layer = document.getElementById('nodes-layer');
+  layer.innerHTML = '';
+  graph.entities.forEach(e => {
+    const { x, y } = entityPos(e);
+    const color = e.color || '#4F86C6';
+    const isSelected = selectedEntity === e.entity_name;
+    const isSuggested = (e.status === 'suggested');
+    const conf = e.confidence_score ?? 100;
+    // Detect role-playing: same table_name as another entity
+    const isRolePlaying = graph.entities.filter(x => x.table_name === e.table_name).length > 1;
+    const g = document.createElementNS('http://www.w3.org/2000/svg','g');
+    g.setAttribute('class','g-node' + (isSelected ? ' selected' : '') + (isSuggested ? ' suggested' : ''));
+    g.setAttribute('data-entity', e.entity_name);
+    g.setAttribute('transform',`translate(${x},${y})`);
+
+    // Node body
+    const rect = document.createElementNS('http://www.w3.org/2000/svg','rect');
+    rect.setAttribute('class','node-body');
+    rect.setAttribute('width', NODE_W);
+    rect.setAttribute('height', NODE_H);
+    rect.setAttribute('fill', color);
+    rect.setAttribute('rx',10); rect.setAttribute('ry',10);
+    if (isSelected) { rect.setAttribute('stroke','#fff'); rect.setAttribute('stroke-width','3'); }
+    g.appendChild(rect);
+
+    // Type stripe
+    if (e.entity_type === 'fact') {
+      const stripe = document.createElementNS('http://www.w3.org/2000/svg','rect');
+      stripe.setAttribute('x', NODE_W - 30); stripe.setAttribute('y', 0);
+      stripe.setAttribute('width', 30); stripe.setAttribute('height', NODE_H);
+      stripe.setAttribute('fill','rgba(0,0,0,.18)'); stripe.setAttribute('rx',0);
+      stripe.setAttribute('style','border-radius:0 10px 10px 0');
+      g.appendChild(stripe);
+      const ft = document.createElementNS('http://www.w3.org/2000/svg','text');
+      ft.setAttribute('class','node-type-tag'); ft.setAttribute('x', NODE_W - 15);
+      ft.setAttribute('y', NODE_H/2); ft.setAttribute('transform',`rotate(90, ${NODE_W-15}, ${NODE_H/2})`);
+      ft.textContent = 'FACT'; g.appendChild(ft);
+    }
+
+    // Label
+    const label = document.createElementNS('http://www.w3.org/2000/svg','text');
+    label.setAttribute('class','node-label');
+    label.setAttribute('x', (e.entity_type === 'fact' ? NODE_W - 30 : NODE_W) / 2);
+    label.setAttribute('y', NODE_H/2 - 10);
+    label.textContent = e.display_name || e.entity_name;
+    g.appendChild(label);
+
+    const sub = document.createElementNS('http://www.w3.org/2000/svg','text');
+    sub.setAttribute('class','node-sublabel');
+    sub.setAttribute('x', (e.entity_type === 'fact' ? NODE_W - 30 : NODE_W) / 2);
+    sub.setAttribute('y', NODE_H/2 + 8);
+    sub.textContent = e.table_name || '';
+    g.appendChild(sub);
+
+    if (e.pk_column) {
+      const pk = document.createElementNS('http://www.w3.org/2000/svg','text');
+      pk.setAttribute('class','node-sublabel');
+      pk.setAttribute('x', (e.entity_type === 'fact' ? NODE_W - 30 : NODE_W) / 2);
+      pk.setAttribute('y', NODE_H/2 + 22);
+      pk.textContent = '🔑 ' + e.pk_column;
+      g.appendChild(pk);
+    }
+
+    // Confidence badge for suggested entities
+    if (isSuggested) {
+      const bg = document.createElementNS('http://www.w3.org/2000/svg','rect');
+      bg.setAttribute('x', NODE_W - 36); bg.setAttribute('y', 2);
+      bg.setAttribute('width', 34); bg.setAttribute('height', 14);
+      bg.setAttribute('fill', conf >= 85 ? '#D1FAE5' : conf >= 65 ? '#FEF3C7' : '#FEE2E2');
+      bg.setAttribute('rx', 7); g.appendChild(bg);
+      const ct = document.createElementNS('http://www.w3.org/2000/svg','text');
+      ct.setAttribute('x', NODE_W - 19); ct.setAttribute('y', 9);
+      ct.setAttribute('text-anchor','middle'); ct.setAttribute('dominant-baseline','central');
+      ct.setAttribute('font-size','8'); ct.setAttribute('font-weight','800');
+      ct.setAttribute('fill', conf >= 85 ? '#065F46' : conf >= 65 ? '#92400E' : '#991B1B');
+      ct.textContent = conf + '%'; g.appendChild(ct);
+
+      // Confirm button (✓)
+      const cb = document.createElementNS('http://www.w3.org/2000/svg','text');
+      cb.setAttribute('x', 8); cb.setAttribute('y', 8);
+      cb.setAttribute('font-size','11'); cb.setAttribute('fill','rgba(255,255,255,.9)');
+      cb.setAttribute('cursor','pointer'); cb.setAttribute('title','Confirm entity');
+      cb.textContent = '✓';
+      cb.addEventListener('click', ev => { ev.stopPropagation(); confirmEntity(e.entity_name); });
+      g.appendChild(cb);
+    }
+
+    // Role-playing badge (same table used with different business meaning)
+    if (isRolePlaying) {
+      const rpbg = document.createElementNS('http://www.w3.org/2000/svg','rect');
+      rpbg.setAttribute('x', 2); rpbg.setAttribute('y', NODE_H - 16);
+      rpbg.setAttribute('width', 36); rpbg.setAttribute('height', 14);
+      rpbg.setAttribute('fill','rgba(124,58,237,.25)'); rpbg.setAttribute('rx',4);
+      g.appendChild(rpbg);
+      const rpt = document.createElementNS('http://www.w3.org/2000/svg','text');
+      rpt.setAttribute('class','role-playing-badge');
+      rpt.setAttribute('x', 20); rpt.setAttribute('y', NODE_H - 9);
+      rpt.setAttribute('text-anchor','middle'); rpt.setAttribute('dominant-baseline','central');
+      rpt.textContent = '⇄ ROLE'; g.appendChild(rpt);
+    }
+
+    // Connection ports (right, bottom, left)
+    [[NODE_W, NODE_H/2,'right'],[NODE_W/2, NODE_H,'bottom'],[0, NODE_H/2,'left']].forEach(([px,py,side]) => {
+      const port = document.createElementNS('http://www.w3.org/2000/svg','circle');
+      port.setAttribute('class','node-port');
+      port.setAttribute('cx', px); port.setAttribute('cy', py);
+      port.setAttribute('data-port', side);
+      port.addEventListener('mousedown', ev => startDrawEdge(ev, e.entity_name));
+      g.appendChild(port);
+    });
+
+    // Mouse events
+    g.addEventListener('mousedown', ev => {
+      if (ev.target.classList.contains('node-port')) return;
+      startDrag(ev, e.entity_name);
+    });
+    g.addEventListener('click', ev => {
+      if (ev.target.classList.contains('node-port')) return;
+      selectEntity(e.entity_name);
+    });
+    g.addEventListener('mouseenter', () => g.classList.add('hover'));
+    g.addEventListener('mouseleave', () => g.classList.remove('hover'));
+
+    layer.appendChild(g);
+  });
+}
+
+function renderEdges() {
+  const layer = document.getElementById('edges-layer');
+  layer.innerHTML = '';
+  graph.relationships.forEach(rel => {
+    const fe = graph.entities.find(e => e.entity_name === rel.from_entity);
+    const te = graph.entities.find(e => e.entity_name === rel.to_entity);
+    if (!fe || !te) return;
+    const fp = entityPos(fe), tp = entityPos(te);
+
+    const x1 = fp.x + NODE_W, y1 = fp.y + NODE_H/2;
+    const x2 = tp.x,          y2 = tp.y + NODE_H/2;
+    const cx1 = x1 + Math.abs(x2-x1)*0.5;
+    const cx2 = x2 - Math.abs(x2-x1)*0.5;
+    const isSelected = selectedRelId === rel.id;
+
+    const g = document.createElementNS('http://www.w3.org/2000/svg','g');
+    const relSuggested = (rel.status === 'suggested');
+    g.setAttribute('class','g-edge' + (isSelected ? ' selected' : '') + (relSuggested ? ' suggested' : ''));
+    g.setAttribute('data-rel', rel.id);
+
+    const path = document.createElementNS('http://www.w3.org/2000/svg','path');
+    path.setAttribute('class','edge-line');
+    path.setAttribute('d',`M${x1},${y1} C${cx1},${y1} ${cx2},${y2} ${x2},${y2}`);
+    path.setAttribute('marker-end', isSelected ? 'url(#arrow-sel)' : 'url(#arrow)');
+    if (isSelected) { path.setAttribute('stroke','#F59E0B'); path.setAttribute('stroke-width','2.5'); }
+    g.appendChild(path);
+
+    // Hit area
+    const hit = document.createElementNS('http://www.w3.org/2000/svg','path');
+    hit.setAttribute('d',`M${x1},${y1} C${cx1},${y1} ${cx2},${y2} ${x2},${y2}`);
+    hit.setAttribute('stroke','transparent'); hit.setAttribute('stroke-width','16');
+    hit.setAttribute('fill','none'); hit.style.cursor='pointer';
+    g.appendChild(hit);
+
+    // Label
+    const mid = edgeMidpoint(rel);
+    if (mid && rel.label) {
+      const lx = mid.x, ly = mid.y;
+      const lbg = document.createElementNS('http://www.w3.org/2000/svg','rect');
+      lbg.setAttribute('class','edge-label-bg');
+      const tw = rel.label.length * 6 + 12;
+      lbg.setAttribute('x', lx - tw/2); lbg.setAttribute('y', ly - 9);
+      lbg.setAttribute('width', tw); lbg.setAttribute('height', 18);
+      lbg.setAttribute('rx',4); g.appendChild(lbg);
+      const lt = document.createElementNS('http://www.w3.org/2000/svg','text');
+      lt.setAttribute('class','edge-label');
+      lt.setAttribute('x', lx); lt.setAttribute('y', ly);
+      lt.textContent = rel.label; g.appendChild(lt);
+    }
+
+    // JOIN badge
+    const mid2 = edgeMidpoint(rel);
+    if (mid2) {
+      const jt = document.createElementNS('http://www.w3.org/2000/svg','text');
+      jt.setAttribute('class','edge-label');
+      jt.setAttribute('x', mid2.x); jt.setAttribute('y', mid2.y + (rel.label ? 14 : 0));
+      jt.setAttribute('font-size','9');
+      jt.setAttribute('fill', rel.join_type === 'INNER' ? '#059669' : '#6366F1');
+      jt.textContent = rel.join_type + ' JOIN'; g.appendChild(jt);
+    }
+
+    g.addEventListener('click', () => selectRel(rel.id));
+    layer.appendChild(g);
+  });
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// DRAG TO MOVE NODES
+// ════════════════════════════════════════════════════════════════════════════
+function startDrag(ev, entityName) {
+  ev.preventDefault();
+  const e = graph.entities.find(x => x.entity_name === entityName);
+  const svgPt = svgPoint(ev);
+  dragging = { entity_name: entityName, startX: svgPt.x, startY: svgPt.y,
+               origX: e.pos_x || 120, origY: e.pos_y || 120 };
+}
+
+document.getElementById('graph-svg').addEventListener('mousemove', ev => {
+  if (dragging) {
+    const svgPt = svgPoint(ev);
+    const dx = svgPt.x - dragging.startX, dy = svgPt.y - dragging.startY;
+    const e = graph.entities.find(x => x.entity_name === dragging.entity_name);
+    e.pos_x = Math.max(0, dragging.origX + dx);
+    e.pos_y = Math.max(0, dragging.origY + dy);
+    renderGraph();
+    return;
+  }
+  if (drawingEdge) {
+    const svgPt = svgPoint(ev);
+    const dl = document.getElementById('draw-line');
+    dl.setAttribute('x1', drawingEdge.startSvgX); dl.setAttribute('y1', drawingEdge.startSvgY);
+    dl.setAttribute('x2', svgPt.x); dl.setAttribute('y2', svgPt.y);
+  }
+});
+
+document.getElementById('graph-svg').addEventListener('mouseup', async ev => {
+  if (dragging) {
+    const e = graph.entities.find(x => x.entity_name === dragging.entity_name);
+    dragging = null;
+    await api('POST', `${API_BASE}/entities`, e);
+    setStatus('Position saved');
+  }
+  if (drawingEdge) {
+    document.getElementById('draw-line').style.display = 'none';
+    const svgPt = svgPoint(ev);
+    // Find target node under cursor
+    const target = findEntityAt(svgPt.x, svgPt.y);
+    if (target && target !== drawingEdge.from_entity) {
+      prefillRelModal(drawingEdge.from_entity, target);
+      openRelModal();
+    }
+    drawingEdge = null;
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// DRAW EDGE FROM PORT
+// ════════════════════════════════════════════════════════════════════════════
+function startDrawEdge(ev, entityName) {
+  ev.preventDefault(); ev.stopPropagation();
+  const svgPt = svgPoint(ev);
+  drawingEdge = { from_entity: entityName, startSvgX: svgPt.x, startSvgY: svgPt.y };
+  const dl = document.getElementById('draw-line');
+  dl.style.display = '';
+  dl.setAttribute('x1', svgPt.x); dl.setAttribute('y1', svgPt.y);
+  dl.setAttribute('x2', svgPt.x); dl.setAttribute('y2', svgPt.y);
+}
+
+function findEntityAt(x, y) {
+  for (const e of graph.entities) {
+    const ex = e.pos_x || 120, ey = e.pos_y || 120;
+    if (x >= ex && x <= ex + NODE_W && y >= ey && y <= ey + NODE_H)
+      return e.entity_name;
+  }
+  return null;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// PAN & ZOOM
+// ════════════════════════════════════════════════════════════════════════════
+let isPanning = false, panStart = null;
+
+document.getElementById('graph-svg').addEventListener('mousedown', ev => {
+  if (ev.target.id === 'graph-svg' || ev.target.id === 'zoom-group') {
+    isPanning = true;
+    panStart = { x: ev.clientX - pan.x, y: ev.clientY - pan.y };
+    selectedEntity = null; selectedRelId = null;
+    document.getElementById('del-btn').style.display = 'none';
+    resetDetail();
+    renderGraph();
+  }
+});
+document.addEventListener('mousemove', ev => {
+  if (!isPanning) return;
+  pan.x = ev.clientX - panStart.x;
+  pan.y = ev.clientY - panStart.y;
+  document.getElementById('zoom-group').setAttribute('transform',`translate(${pan.x},${pan.y}) scale(${zoom})`);
+});
+document.addEventListener('mouseup', () => { isPanning = false; if (!dragging) document.getElementById('graph-svg').style.cursor = 'default'; });
+
+document.getElementById('graph-svg').addEventListener('wheel', ev => {
+  ev.preventDefault();
+  const delta = ev.deltaY > 0 ? 0.9 : 1.1;
+  zoom = Math.max(0.2, Math.min(3, zoom * delta));
+  document.getElementById('zoom-group').setAttribute('transform',`translate(${pan.x},${pan.y}) scale(${zoom})`);
+}, { passive: false });
+
+function fitView() {
+  if (!graph.entities.length) return;
+  const xs = graph.entities.map(e => e.pos_x || 120);
+  const ys = graph.entities.map(e => e.pos_y || 120);
+  const minX = Math.min(...xs), maxX = Math.max(...xs) + NODE_W;
+  const minY = Math.min(...ys), maxY = Math.max(...ys) + NODE_H;
+  const svg = document.getElementById('graph-svg');
+  const sw = svg.clientWidth, sh = svg.clientHeight;
+  zoom = Math.min(sw / (maxX - minX + 80), sh / (maxY - minY + 80), 2);
+  pan.x = (sw - (maxX - minX) * zoom) / 2 - minX * zoom;
+  pan.y = (sh - (maxY - minY) * zoom) / 2 - minY * zoom;
+  document.getElementById('zoom-group').setAttribute('transform',`translate(${pan.x},${pan.y}) scale(${zoom})`);
+}
+
+function autoLayout() {
+  const facts  = graph.entities.filter(e => e.entity_type === 'fact');
+  const dims   = graph.entities.filter(e => e.entity_type !== 'fact');
+  const svg    = document.getElementById('graph-svg');
+  const cx = svg.clientWidth/2, cy = svg.clientHeight/2;
+  const gap = 220;
+
+  facts.forEach((e, i) => {
+    e.pos_x = cx + (i - facts.length/2) * gap - NODE_W/2;
+    e.pos_y = cy - NODE_H/2;
+  });
+  const radius = Math.max(dims.length * 55, 240);
+  dims.forEach((e, i) => {
+    const angle = (i / dims.length) * 2 * Math.PI - Math.PI/2;
+    e.pos_x = cx + radius * Math.cos(angle) - NODE_W/2;
+    e.pos_y = cy + radius * Math.sin(angle) - NODE_H/2;
+  });
+
+  renderGraph();
+  // Batch save positions
+  graph.entities.forEach(e => api('POST', `${API_BASE}/entities`, e));
+  setStatus('Layout saved');
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// SELECTION
+// ════════════════════════════════════════════════════════════════════════════
+window.selectEntity = function(name) {
+  selectedEntity = name; selectedRelId = null;
+  document.querySelectorAll('.gs-entity-item').forEach(el => el.classList.remove('selected'));
+  const sib = document.getElementById('sib-' + name.replace(/ /g,'_'));
+  if (sib) sib.classList.add('selected');
+  document.getElementById('del-btn').style.display = '';
+  renderGraph();
+  renderEntityDetail(name);
+};
+
+window.selectRel = function(id) {
+  selectedRelId = id; selectedEntity = null;
+  document.querySelectorAll('.gs-rel-item').forEach(el => el.classList.remove('selected'));
+  const sib = document.getElementById('sib-rel-' + id);
+  if (sib) sib.classList.add('selected');
+  document.getElementById('del-btn').style.display = '';
+  renderGraph();
+  renderRelDetail(id);
+};
+
+function resetDetail() {
+  document.getElementById('detail-head').firstChild.textContent = 'Properties';
+  document.getElementById('sync-badge').style.display = 'none';
+  document.getElementById('detail-content').innerHTML =
+    '<div class="gd-placeholder">Select an entity or relationship to edit its properties.</div>';
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// DETAIL PANEL — ENTITY
+// ════════════════════════════════════════════════════════════════════════════
+function renderEntityDetail(name) {
+  const e = graph.entities.find(x => x.entity_name === name);
+  if (!e) return;
+  document.getElementById('detail-head').firstChild.textContent = e.display_name || name;
+  document.getElementById('sync-badge').style.display = '';
+
+  fetch(`${API_BASE}/properties/${name}`)
+    .then(r => r.json())
+    .then(data => {
+      const props = data.properties || [];
+      document.getElementById('detail-content').innerHTML = `
+        <div class="gd-section">Entity settings</div>
+        <div class="gd-body">
+          <div class="gd-form-row">
+            <div>
+              <label class="gd-label">Display name</label>
+              <input class="gd-input" id="de-display-name" value="${esc(e.display_name||'')}">
+            </div>
+            <div>
+              <label class="gd-label">Type</label>
+              <select class="gd-select" id="de-type">
+                ${['fact','dimension','bridge'].map(t=>`<option ${e.entity_type===t?'selected':''} value="${t}">${t}</option>`).join('')}
+              </select>
+            </div>
+          </div>
+          <div class="gd-form-row">
+            <div>
+              <label class="gd-label">Table</label>
+              <input class="gd-input" id="de-table" value="${esc(e.table_name||'')}">
+            </div>
+            <div>
+              <label class="gd-label">Schema</label>
+              <input class="gd-input" id="de-schema" value="${esc(e.schema_name||'')}">
+            </div>
+          </div>
+          <div class="gd-form-row">
+            <div>
+              <label class="gd-label">Primary key</label>
+              <input class="gd-input" id="de-pk" value="${esc(e.pk_column||'')}">
+            </div>
+            <div>
+              <label class="gd-label">Colour</label>
+              <input type="color" id="de-color" value="${e.color||'#4F86C6'}" style="width:100%;height:34px;border:1px solid var(--border);border-radius:5px;cursor:pointer">
+            </div>
+          </div>
+          <div class="gd-form-row full">
+            <label class="gd-label">Description</label>
+            <textarea class="gd-textarea" id="de-desc" rows="2">${esc(e.description||'')}</textarea>
+          </div>
+          <button class="gd-save-btn" onclick="saveEntityDetail('${name}')">Save entity</button>
+        </div>
+
+        <div class="gd-section">Field roles
+          <span style="float:right;font-weight:400;font-size:9px;cursor:pointer;color:var(--primary)" onclick="addFieldRow('${name}')">+ Add field</span>
+        </div>
+        <div class="gd-body" id="prop-list-${name}">
+          ${props.length === 0
+            ? '<div style="font-size:11px;color:var(--text-muted);text-align:center;padding:.5rem">No fields defined yet. Add column roles below.</div>'
+            : props.map(p => renderPropRow(p, name)).join('')}
+        </div>
+
+        <div class="gd-section">Add / update field</div>
+        <div class="gd-body">
+          <div class="gd-form-row">
+            <div>
+              <label class="gd-label">Column name</label>
+              <input class="gd-input" id="prop-col-${name}" placeholder="Revenue">
+            </div>
+            <div>
+              <label class="gd-label">Role</label>
+              <select class="gd-select" id="prop-role-${name}">
+                <option value="metric">Metric</option>
+                <option value="dimension" selected>Dimension</option>
+                <option value="date">Date</option>
+                <option value="filter">Filter</option>
+                <option value="identifier">Identifier</option>
+                <option value="ignore">Ignore</option>
+              </select>
+            </div>
+          </div>
+          <div class="gd-form-row">
+            <div>
+              <label class="gd-label">Business name</label>
+              <input class="gd-input" id="prop-dname-${name}" placeholder="Total Revenue">
+            </div>
+            <div>
+              <label class="gd-label">Synonyms</label>
+              <input class="gd-input" id="prop-syn-${name}" placeholder="revenue, income">
+            </div>
+          </div>
+          <button class="gd-save-btn" onclick="saveProp('${name}')">Save field → Sync to semantic layer</button>
+        </div>
+      `;
+    });
+}
+
+function renderPropRow(p, entityName) {
+  const roleClass = 'role-' + (p.role || 'dimension');
+  const conf = p.confidence_score ?? 100;
+  const isSug = (p.status === 'suggested');
+  const confClass = conf >= 85 ? 'conf-high' : conf >= 65 ? 'conf-mid' : 'conf-low';
+  const confHtml = isSug
+    ? `<span class="conf-badge ${confClass} conf-pct" title="LLM confidence. Click ✓ to confirm and sync to semantic layer at 100%">${conf}%</span>
+       <button style="background:none;border:none;cursor:pointer;font-size:12px;color:var(--green,#059669);padding:0 2px" onclick="confirmProp('${entityName}','${esc(p.column_name)}')" title="Confirm — syncs to semantic layer at 100%">✓</button>`
+    : `<span class="conf-badge conf-high conf-pct" title="Admin confirmed — 100% in semantic layer">100%</span>`;
+
+  return `<div class="prop-row${isSug ? ' suggested' : ''}">
+    <span class="prop-col" title="${esc(p.column_name)}">${esc(p.column_name)}</span>
+    <span style="flex:1;font-size:11px;color:var(--text-soft)">${esc(p.display_name||'')}</span>
+    <span class="prop-role ${roleClass}" onclick="cyclePropRole('${entityName}','${p.column_name}','${p.role||'dimension'}','${esc(p.display_name||'')}','${esc(p.synonyms||'')}')">${p.role||'dim'}</span>
+    ${confHtml}
+  </div>`;
+}
+
+window.cyclePropRole = async function(entityName, col, currentRole, displayName, synonyms) {
+  const roles = ['metric','dimension','date','filter','identifier','ignore'];
+  const next  = roles[(roles.indexOf(currentRole) + 1) % roles.length];
+  await savePropDirect(entityName, col, next, displayName, synonyms);
+  renderEntityDetail(entityName);
+};
+
+window.addFieldRow = function(entityName) {
+  document.getElementById(`prop-col-${entityName}`)?.focus();
+};
+
+async function savePropDirect(entityName, col, role, displayName, synonyms) {
+  await api('POST', `${API_BASE}/properties`, {
+    entity_name: entityName, column_name: col,
+    role, display_name: displayName, synonyms,
+  });
+  setStatus('Field synced to semantic layer ✓');
+  document.getElementById('sync-badge').style.display = '';
+}
+
+window.saveProp = async function(entityName) {
+  const col      = document.getElementById(`prop-col-${entityName}`)?.value?.trim();
+  const role     = document.getElementById(`prop-role-${entityName}`)?.value;
+  const dname    = document.getElementById(`prop-dname-${entityName}`)?.value?.trim();
+  const synonyms = document.getElementById(`prop-syn-${entityName}`)?.value?.trim();
+  if (!col) { alert('Column name is required'); return; }
+  await savePropDirect(entityName, col, role, dname, synonyms);
+  renderEntityDetail(entityName);
+};
+
+window.saveEntityDetail = async function(name) {
+  const e = graph.entities.find(x => x.entity_name === name);
+  e.display_name = document.getElementById('de-display-name')?.value?.trim() || '';
+  e.entity_type  = document.getElementById('de-type')?.value || 'dimension';
+  e.table_name   = document.getElementById('de-table')?.value?.trim() || '';
+  e.schema_name  = document.getElementById('de-schema')?.value?.trim() || '';
+  e.pk_column    = document.getElementById('de-pk')?.value?.trim() || '';
+  e.color        = document.getElementById('de-color')?.value || '#4F86C6';
+  e.description  = document.getElementById('de-desc')?.value?.trim() || '';
+  await api('POST', `${API_BASE}/entities`, e);
+  renderGraph();
+  updateSidebar();
+  setStatus('Entity saved ✓');
+};
+
+// ════════════════════════════════════════════════════════════════════════════
+// DETAIL PANEL — RELATIONSHIP
+// ════════════════════════════════════════════════════════════════════════════
+function renderRelDetail(id) {
+  const rel = graph.relationships.find(r => r.id === id);
+  if (!rel) return;
+  document.getElementById('detail-head').firstChild.textContent =
+    `${rel.from_entity} → ${rel.to_entity}`;
+  document.getElementById('detail-content').innerHTML = `
+    <div class="gd-section">Relationship settings</div>
+    <div class="gd-body">
+      <div class="gd-form-row">
+        <div>
+          <label class="gd-label">From entity</label>
+          <input class="gd-input" value="${esc(rel.from_entity)}" disabled>
+        </div>
+        <div>
+          <label class="gd-label">To entity</label>
+          <input class="gd-input" value="${esc(rel.to_entity)}" disabled>
+        </div>
+      </div>
+      <div class="gd-form-row">
+        <div>
+          <label class="gd-label">FK column (from)</label>
+          <input class="gd-input" id="rd-from-col" value="${esc(rel.from_column||'')}">
+        </div>
+        <div>
+          <label class="gd-label">Referenced col (to)</label>
+          <input class="gd-input" id="rd-to-col" value="${esc(rel.to_column||'')}">
+        </div>
+      </div>
+      <div class="gd-form-row">
+        <div>
+          <label class="gd-label">Cardinality</label>
+          <select class="gd-select" id="rd-cardinality">
+            ${['many_to_one','one_to_one','one_to_many'].map(t =>
+              `<option ${rel.relationship_type===t?'selected':''} value="${t}">${t}</option>`
+            ).join('')}
+          </select>
+        </div>
+        <div>
+          <label class="gd-label">JOIN type</label>
+          <select class="gd-select" id="rd-join-type">
+            <option ${rel.join_type==='LEFT'?'selected':''} value="LEFT">LEFT JOIN</option>
+            <option ${rel.join_type==='INNER'?'selected':''} value="INNER">INNER JOIN</option>
+          </select>
+        </div>
+      </div>
+      <div class="gd-form-row full">
+        <label class="gd-label">Label</label>
+        <input class="gd-input" id="rd-label" value="${esc(rel.label||'')}">
+      </div>
+      <button class="gd-save-btn" onclick="saveRelDetail(${id})">Save relationship</button>
+      ${rel.status === 'suggested'
+        ? `<button class="gd-save-btn" style="background:var(--green,#059669)" onclick="confirmRel(${id})">✓ Confirm relationship</button>`
+        : ''}
+      <button class="gd-delete-btn" onclick="deleteRel(${id})">Delete relationship</button>
+    </div>
+    <div class="gd-section">Generated JOIN SQL</div>
+    <div class="gd-body">
+      <div class="resolver-output">${generateJoinSQL(rel)}</div>
+    </div>
+  `;
+}
+
+function generateJoinSQL(rel) {
+  const fe = graph.entities.find(e => e.entity_name === rel.from_entity);
+  const te = graph.entities.find(e => e.entity_name === rel.to_entity);
+  if (!fe || !te) return 'Cannot resolve entities.';
+  const fAlias = rel.from_entity.toLowerCase().slice(0,3);
+  const tAlias = rel.to_entity.toLowerCase().slice(0,3);
+  const fTbl = fe.schema_name ? `[${fe.schema_name}].[${fe.table_name}]` : `[${fe.table_name}]`;
+  const tTbl = te.schema_name ? `[${te.schema_name}].[${te.table_name}]` : `[${te.table_name}]`;
+  return `FROM ${fTbl} ${fAlias}\n${rel.join_type||'LEFT'} JOIN ${tTbl} ${tAlias}\n  ON ${fAlias}.[${rel.from_column}] = ${tAlias}.[${rel.to_column}]`;
+}
+
+window.saveRelDetail = async function(id) {
+  const rel = graph.relationships.find(r => r.id === id);
+  rel.from_column       = document.getElementById('rd-from-col')?.value?.trim();
+  rel.to_column         = document.getElementById('rd-to-col')?.value?.trim();
+  rel.relationship_type = document.getElementById('rd-cardinality')?.value;
+  rel.join_type         = document.getElementById('rd-join-type')?.value;
+  rel.label             = document.getElementById('rd-label')?.value?.trim();
+  await api('POST', `${API_BASE}/relationships`, rel);
+  renderGraph();
+  renderRelDetail(id);
+  setStatus('Relationship saved ✓');
+};
+
+// ════════════════════════════════════════════════════════════════════════════
+// DELETE
+// ════════════════════════════════════════════════════════════════════════════
+window.deleteSelected = async function() {
+  if (selectedEntity) {
+    if (!confirm(`Delete entity "${selectedEntity}" and all its relationships?`)) return;
+    await deleteEntity(selectedEntity);
+  } else if (selectedRelId) {
+    if (!confirm('Delete this relationship?')) return;
+    await deleteRel(selectedRelId);
+  }
+};
+
+async function deleteEntity(name) {
+  await api('DELETE', `${API_BASE}/entities/${encodeURIComponent(name)}`);
+  graph.entities = graph.entities.filter(e => e.entity_name !== name);
+  graph.relationships = graph.relationships.filter(r => r.from_entity !== name && r.to_entity !== name);
+  selectedEntity = null;
+  document.getElementById('del-btn').style.display = 'none';
+  renderGraph(); updateSidebar(); resetDetail();
+  setStatus('Entity deleted');
+}
+
+window.deleteRel = async function(id) {
+  await api('DELETE', `${API_BASE}/relationships/${id}`);
+  graph.relationships = graph.relationships.filter(r => r.id !== id);
+  selectedRelId = null;
+  document.getElementById('del-btn').style.display = 'none';
+  renderGraph(); updateRelList(); resetDetail();
+  setStatus('Relationship deleted');
+};
+
+// ════════════════════════════════════════════════════════════════════════════
+// ENTITY MODAL
+// ════════════════════════════════════════════════════════════════════════════
+window.openEntityModal = function(entityName) {
+  const e = entityName ? graph.entities.find(x => x.entity_name === entityName) : null;
+  document.getElementById('entity-modal-title').textContent = e ? 'Edit Entity' : 'Add Entity';
+  document.getElementById('m-entity-name').value = e?.entity_name || '';
+  document.getElementById('m-entity-name').disabled = !!e;
+  document.getElementById('m-entity-type').value = e?.entity_type || 'dimension';
+  document.getElementById('m-table-name').value = e?.table_name || '';
+  document.getElementById('m-schema-name').value = e?.schema_name || '';
+  document.getElementById('m-pk-column').value = e?.pk_column || '';
+  document.getElementById('m-display-name').value = e?.display_name || '';
+  document.getElementById('m-description').value = e?.description || '';
+  document.getElementById('m-color').value = e?.color || '#4F86C6';
+  document.getElementById('m-is-active').checked = e ? !!e.is_active : true;
+  document.getElementById('entity-modal').style.display = 'flex';
+  document.getElementById('m-entity-name').focus();
+};
+
+window.closeEntityModal = function() {
+  document.getElementById('entity-modal').style.display = 'none';
+};
+
+window.saveEntityFromModal = async function() {
+  const name = document.getElementById('m-entity-name').value.trim();
+  if (!name) { alert('Entity name is required'); return; }
+  const svg = document.getElementById('graph-svg');
+  const payload = {
+    entity_name:  name,
+    entity_type:  document.getElementById('m-entity-type').value,
+    table_name:   document.getElementById('m-table-name').value.trim(),
+    schema_name:  document.getElementById('m-schema-name').value.trim(),
+    pk_column:    document.getElementById('m-pk-column').value.trim(),
+    display_name: document.getElementById('m-display-name').value.trim(),
+    description:  document.getElementById('m-description').value.trim(),
+    color:        document.getElementById('m-color').value,
+    is_active:    document.getElementById('m-is-active').checked ? 1 : 0,
+    pos_x: svg.clientWidth/2 + (Math.random()-0.5)*200,
+    pos_y: svg.clientHeight/2 + (Math.random()-0.5)*120,
+  };
+  const existing = graph.entities.find(e => e.entity_name === name);
+  if (existing) { Object.assign(existing, payload); }
+  else { graph.entities.push(payload); }
+  await api('POST', `${API_BASE}/entities`, payload);
+  closeEntityModal(); renderGraph(); updateSidebar();
+  selectEntity(name);
+  setStatus('Entity saved ✓');
+};
+
+// ════════════════════════════════════════════════════════════════════════════
+// RELATIONSHIP MODAL
+// ════════════════════════════════════════════════════════════════════════════
+function populateEntitySelects() {
+  ['rel-from-entity','rel-to-entity'].forEach(id => {
+    const sel = document.getElementById(id);
+    const cur = sel.value;
+    sel.innerHTML = graph.entities.map(e =>
+      `<option value="${esc(e.entity_name)}">${e.display_name || e.entity_name}</option>`
+    ).join('');
+    if (cur) sel.value = cur;
+  });
+}
+
+window.openRelModal = function() {
+  populateEntitySelects();
+  document.getElementById('rel-modal').style.display = 'flex';
+};
+
+window.closeRelModal = function() {
+  document.getElementById('rel-modal').style.display = 'none';
+};
+
+function prefillRelModal(fromEntity, toEntity) {
+  populateEntitySelects();
+  document.getElementById('rel-from-entity').value = fromEntity;
+  document.getElementById('rel-to-entity').value   = toEntity;
+  // Auto-fill FK hint from PK
+  const te = graph.entities.find(e => e.entity_name === toEntity);
+  if (te?.pk_column) {
+    document.getElementById('rel-to-col').value = te.pk_column;
+    document.getElementById('rel-from-col').value = te.pk_column;
+  }
+}
+
+window.saveRelFromModal = async function() {
+  const payload = {
+    from_entity:       document.getElementById('rel-from-entity').value,
+    to_entity:         document.getElementById('rel-to-entity').value,
+    from_column:       document.getElementById('rel-from-col').value.trim(),
+    to_column:         document.getElementById('rel-to-col').value.trim(),
+    relationship_type: document.getElementById('rel-cardinality').value,
+    join_type:         document.getElementById('rel-join-type').value,
+    label:             document.getElementById('rel-label').value.trim(),
+  };
+  if (!payload.from_column || !payload.to_column) { alert('FK columns are required'); return; }
+  const res = await api('POST', `${API_BASE}/relationships`, payload);
+  const body = await res.json();
+  payload.id = body.id;
+  graph.relationships.push(payload);
+  closeRelModal(); renderGraph(); updateRelList();
+  setStatus('Relationship saved ✓');
+};
+
+// ════════════════════════════════════════════════════════════════════════════
+// RESOLVER TESTER
+// ════════════════════════════════════════════════════════════════════════════
+let resolveTimer = null;
+window.scheduleResolve = function(q) {
+  clearTimeout(resolveTimer);
+  if (q.trim().length < 4) { document.getElementById('resolve-output').style.display='none'; return; }
+  resolveTimer = setTimeout(async () => {
+    const res = await fetch(`${API_BASE}/resolve?q=${encodeURIComponent(q)}`);
+    const data = await res.json();
+    const el = document.getElementById('resolve-output');
+    if (data.enabled) {
+      el.style.display = '';
+      el.textContent = `✓ Detected: ${data.detected.join(', ')}\n\n${data.join_skeleton}`;
+      el.style.color = 'var(--green, #059669)';
+    } else {
+      el.style.display = '';
+      el.textContent = `⚬ No entities detected (${data.entity_count} in graph)`;
+      el.style.color = 'var(--text-muted)';
+    }
+  }, 400);
+};
+
+// ════════════════════════════════════════════════════════════════════════════
+// UTILITIES
+// ════════════════════════════════════════════════════════════════════════════
+function svgPoint(ev) {
+  const svg = document.getElementById('graph-svg');
+  const pt  = svg.createSVGPoint();
+  pt.x = ev.clientX; pt.y = ev.clientY;
+  const inv = document.getElementById('zoom-group').getScreenCTM().inverse();
+  return pt.matrixTransform(inv);
+}
+
+function esc(s) {
+  return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+async function api(method, url, body) {
+  const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  if (body && method !== 'GET') opts.body = JSON.stringify(body);
+  const r = await fetch(url, opts);
+  return r;
+}
+
+function setStatus(msg) {
+  const el = document.getElementById('canvas-status');
+  el.textContent = msg;
+  el.style.opacity = '1';
+  setTimeout(() => el.style.opacity = '0', 2500);
+}
+
+function updateSidebar() {
+  const list = document.getElementById('entity-list');
+  if (!graph.entities.length) {
+    list.innerHTML = '<div class="gs-empty">No entities yet.<br>Click <strong>+ Add</strong> to define your first business object.</div>';
+    return;
+  }
+  list.innerHTML = graph.entities.map(e => `
+    <div class="gs-entity-item" id="sib-${e.entity_name.replace(/ /g,'_')}"
+         onclick="selectEntity('${esc(e.entity_name)}')"
+         ${selectedEntity === e.entity_name ? 'style="background:color-mix(in srgb,var(--primary) 10%,var(--surface));border-left:3px solid var(--primary)"' : ''}>
+      <span class="entity-dot" style="background:${e.color||'#4F86C6'}"></span>
+      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(e.display_name||e.entity_name)}</span>
+      <span class="entity-type-badge badge-${e.entity_type}">${e.entity_type}</span>
+    </div>`).join('');
+}
+
+function updateRelList() {
+  const list = document.getElementById('rel-list');
+  if (!graph.relationships.length) {
+    list.innerHTML = '<div class="gs-empty" style="font-size:11px">No relationships yet.<br>Hover a node and drag from its port.</div>';
+    return;
+  }
+  list.innerHTML = graph.relationships.map(r => `
+    <div class="gs-rel-item" id="sib-rel-${r.id}" onclick="selectRel(${r.id})">
+      <span>${esc(r.from_entity)}</span>
+      <span style="color:var(--text-muted)">→</span>
+      <span>${esc(r.to_entity)}</span>
+      <span style="margin-left:auto;font-size:9px;font-weight:700;color:var(--text-muted);text-transform:uppercase">${r.join_type}</span>
+    </div>`).join('');
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// SUGGEST FROM SCHEMA
+// ════════════════════════════════════════════════════════════════════════════
+window.runSuggest = async function() {
+  const btn = document.getElementById('suggest-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="suggest-spinner"></span>Predicting…';
+  try {
+    const res = await api('POST', `${API_BASE}/suggest`);
+    const data = await res.json();
+    if (data.status !== 'ok') {
+      alert('Suggestion failed: ' + (data.message || 'Unknown error'));
+      return;
+    }
+    // Reload graph data from server
+    const gr = await fetch(`${API_BASE}/graph.json`);
+    const fresh = await gr.json();
+    graph.entities      = fresh.entities      || [];
+    graph.relationships = fresh.relationships || [];
+    renderGraph(); updateSidebar(); updateRelList();
+    const rp = Object.keys(data.role_playing_detected || {});
+    const rpMsg = rp.length
+      ? `\n\nRole-playing dimensions detected: ${rp.join(', ')} — shown in purple.`
+      : '';
+    setStatus(`✓ Suggested ${data.saved_entities} entities, ${data.saved_rels} relationships.${rpMsg}`);
+    document.getElementById('canvas-status').style.opacity = '1';
+    setTimeout(() => fitView(), 100);
+  } catch(e) {
+    alert('Suggestion error: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '✦ Suggest from schema';
+  }
+};
+
+// ════════════════════════════════════════════════════════════════════════════
+// CONFIRM ACTIONS
+// ════════════════════════════════════════════════════════════════════════════
+window.confirmEntity = async function(name) {
+  await api('POST', `${API_BASE}/confirm/entity/${encodeURIComponent(name)}`);
+  const e = graph.entities.find(x => x.entity_name === name);
+  if (e) { e.status = 'confirmed'; e.confidence_score = 100; }
+  renderGraph();
+  setStatus(`Entity "${name}" confirmed ✓`);
+};
+
+window.confirmRel = async function(id) {
+  await api('POST', `${API_BASE}/confirm/relationship/${id}`);
+  const r = graph.relationships.find(x => x.id === id);
+  if (r) { r.status = 'confirmed'; r.confidence_score = 100; }
+  renderGraph();
+  setStatus('Relationship confirmed ✓');
+};
+
+window.confirmProp = async function(entityName, colName) {
+  await api('POST', `${API_BASE}/confirm/property`, {
+    entity_name: entityName, column_name: colName,
+  });
+  setStatus(`Field ${colName} confirmed → synced to semantic layer at 100% ✓`);
+  document.getElementById('sync-badge').style.display = '';
+  renderEntityDetail(entityName);
+};
+
+// Keyboard shortcuts
+document.addEventListener('keydown', ev => {
+  if (ev.key === 'Delete' || ev.key === 'Backspace') {
+    if (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA') return;
+    if (selectedEntity || selectedRelId) deleteSelected();
+  }
+  if (ev.key === 'Escape') {
+    closeEntityModal(); closeRelModal();
+    selectedEntity = null; selectedRelId = null;
+    document.getElementById('del-btn').style.display = 'none';
+    renderGraph(); resetDetail();
+  }
+});
+
+// Init
+renderGraph();
+if (graph.entities.length > 0) fitView();
+</script>
+{% endblock %}

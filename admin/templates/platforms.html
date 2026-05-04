@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+{% block title %}Platforms — QueryBot Admin{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Platform integrations</h1>
+  <p>Configure Zoom, Microsoft Teams, or Slack bot credentials.</p>
+</div>
+
+{% if saved %}<div class="alert alert-success">Platform saved successfully.</div>{% endif %}
+{% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+
+<div class="card">
+  <div class="card-header"><h2>Add platform</h2></div>
+  <div class="card-body">
+    <form method="post" action="/admin/platforms/save">
+      <input type="hidden" name="platform_id" value="">
+      <div class="form-grid">
+        <div class="form-group">
+          <label>Platform type *</label>
+          <select name="platform_type" onchange="showFields(this.value)" required>
+            <option value="">— select —</option>
+            <option value="zoom">Zoom Team Chat</option>
+            <option value="teams">Microsoft Teams</option>
+            <option value="slack">Slack</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Friendly name *</label>
+          <input type="text" name="name" placeholder="e.g. Production Zoom" required>
+        </div>
+      </div>
+
+      <!-- ZOOM -->
+      <div id="f-zoom" style="display:none">
+        <div class="alert alert-info" style="margin-bottom:1rem">
+          Webhook URL to paste in Zoom Marketplace → Features → Team Chat → Bot Endpoint URL:<br>
+          <code>http://YOUR-VM-IP:8000/webhook/zoom</code>
+        </div>
+        <div class="form-grid">
+          <div class="form-group"><label>Client ID *</label>
+            <input type="text" name="client_id" placeholder="From Zoom App Credentials"></div>
+          <div class="form-group"><label>Client Secret *</label>
+            <input type="password" name="client_secret"></div>
+        </div>
+        <div class="form-grid">
+          <div class="form-group"><label>Bot JID *</label>
+            <input type="text" name="bot_jid" placeholder="botname@xmpp.zoom.us"></div>
+          <div class="form-group"><label>Webhook Secret Token *</label>
+            <input type="password" name="webhook_secret" placeholder="From Zoom → Webhook section"></div>
+        </div>
+      </div>
+
+      <!-- TEAMS -->
+      <div id="f-teams" style="display:none">
+        <div class="alert alert-info" style="margin-bottom:1rem">
+          Webhook URL for Teams: <code>http://YOUR-VM-IP:8000/webhook/teams</code>
+        </div>
+        <div class="form-grid">
+          <div class="form-group"><label>Azure Bot App ID *</label>
+            <input type="text" name="app_id" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"></div>
+          <div class="form-group"><label>App Password *</label>
+            <input type="password" name="app_password"></div>
+        </div>
+        <div class="form-group"><label>Tenant ID</label>
+          <input type="text" name="tenant_id" placeholder="common (for multi-tenant) or your Azure AD tenant ID">
+          <p class="form-note">Use "common" for multi-tenant bots</p>
+        </div>
+      </div>
+
+      <!-- SLACK -->
+      <div id="f-slack" style="display:none">
+        <div class="alert alert-info" style="margin-bottom:1rem">
+          Webhook URL for Slack: <code>http://YOUR-VM-IP:8000/webhook/slack</code>
+        </div>
+        <div class="form-group"><label>Bot Token *</label>
+          <input type="password" name="bot_token" placeholder="xoxb-..."></div>
+        <div class="form-grid">
+          <div class="form-group"><label>Signing Secret *</label>
+            <input type="password" name="signing_secret"></div>
+          <div class="form-group"><label>App ID *</label>
+            <input type="text" name="app_id" placeholder="A0XXXXXXXXX"></div>
+        </div>
+      </div>
+
+      <div style="margin-top:1rem">
+        <button type="submit" class="btn btn-primary">Save platform</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% if platforms %}
+<div class="card">
+  <div class="card-header"><h2>Configured platforms ({{ platforms|length }})</h2></div>
+  <table class="table">
+    <tr><th>Name</th><th>Type</th><th>Credentials (masked)</th><th>Created</th><th></th></tr>
+    {% for p in platforms %}
+    <tr>
+      <td style="font-weight:600">{{ p.name }}</td>
+      <td><span class="badge badge-blue">{{ p.platform_type }}</span></td>
+      <td style="font-size:11px;color:var(--gray-500)">
+        {% for k,v in p.creds_masked.items() %}{{ k }}: {{ v }}&nbsp;&nbsp;{% endfor %}
+      </td>
+      <td style="color:var(--gray-500);font-size:12px">{{ p.created_at[:10] }}</td>
+      <td>
+        <form method="post" action="/admin/platforms/delete" style="display:inline">
+          <input type="hidden" name="platform_id" value="{{ p.id }}">
+          <button type="submit" class="btn btn-danger btn-sm"
+            onclick="return confirm('Delete {{ p.name }}?')">Delete</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endif %}
+
+<script>
+function showFields(t){
+  ['zoom','teams','slack'].forEach(x=>document.getElementById('f-'+x).style.display=x===t?'block':'none');
+}
+</script>
+{% endblock %}

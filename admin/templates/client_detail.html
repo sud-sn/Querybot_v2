@@ -1,0 +1,906 @@
+{% extends "base.html" %}
+{% block title %}{{ client.client_name or client.account_id[:16] }} — QueryBot Admin{% endblock %}
+{% block head %}
+<style>
+.overview-grid{display:grid;grid-template-columns:1fr 1fr;gap:1.25rem;margin-bottom:1.25rem}
+.overview-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1.25rem;box-shadow:var(--shadow)}
+.overview-card h3{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);margin-bottom:.75rem}
+.bar-row{display:flex;align-items:center;gap:.75rem;margin-bottom:.5rem}
+.bar-label{font-size:12px;color:var(--text-soft);width:120px;flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bar-wrap{flex:1;background:var(--surface-2);border:1px solid var(--border);border-radius:999px;height:14px;overflow:hidden}
+.bar-fill{height:100%;border-radius:999px;background:linear-gradient(90deg,var(--blue),var(--green))}
+.bar-val{font-size:11px;color:var(--gray-500);width:50px;text-align:right;flex-shrink:0}
+.tab-nav{display:flex;gap:.25rem;border:1px solid var(--border);background:color-mix(in srgb,var(--surface) 82%,var(--surface-2));border-radius:var(--radius);padding:.25rem;margin-bottom:1.25rem;overflow:auto;box-shadow:var(--shadow)}
+.tab-btn{padding:.55rem 1rem;font-size:13px;font-weight:800;color:var(--text-muted);background:transparent;border:1px solid transparent;border-radius:var(--radius-sm);cursor:pointer;white-space:nowrap;transition:background .15s,border-color .15s,color .15s,box-shadow .15s}
+.tab-btn:hover{color:var(--text);background:var(--surface-2)}
+.tab-btn.active{color:#fff;background:var(--blue);border-color:var(--blue);box-shadow:var(--shadow)}
+.tab-pane{display:none}.tab-pane.active{display:block}
+.sql-cell{display:flex;align-items:center;gap:.4rem;max-width:360px}
+.sql-cell code{flex:1;min-width:0;font-family:monospace;font-size:11px;color:var(--text-soft);background:var(--surface-2);border:1px solid var(--border);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
+.sql-hidden{position:absolute;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0}
+.copy-btn{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-muted);
+  padding:2px 7px;font-size:11px;cursor:pointer;flex-shrink:0;line-height:1.4}
+.copy-btn:hover{background:var(--surface-2);color:var(--text)}
+.sql-full{display:none;margin-top:.5rem;padding:.6rem .75rem;background:var(--code-bg);color:var(--code-text);border:1px solid var(--border);
+  border-radius:var(--radius-sm);font-family:monospace;font-size:11px;white-space:pre-wrap;word-break:break-word;
+  max-height:260px;overflow-y:auto}
+.sql-full.open{display:block}
+.audit-preview{max-width:680px;font-family:'SFMono-Regular',Menlo,Consolas,monospace;font-size:11.5px;line-height:1.55;white-space:pre-wrap;word-break:break-word;color:var(--text-soft);max-height:260px;overflow-y:auto;padding:4px 6px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm)}
+
+/* ── Grouped audit table (one row per user question) ── */
+.audit-table{table-layout:fixed;width:100%;border-collapse:collapse}
+.audit-table thead th{position:sticky;top:0;z-index:2;background:var(--surface-2);font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted);font-weight:800;padding:.65rem .75rem;border-bottom:2px solid var(--border);text-align:left;white-space:nowrap}
+/* Parent row — one per user question */
+.audit-group-row{background:var(--surface);cursor:pointer;border-bottom:1px solid var(--border)}
+.audit-group-row:hover{background:var(--row-hover)}
+.audit-group-row td{padding:.7rem .75rem;vertical-align:middle}
+.audit-expand-btn{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--gray-500);background:none;border:none;cursor:pointer;padding:0;line-height:1}
+.audit-expand-btn .chevron{transition:transform .18s ease;display:inline-block}
+.audit-expand-btn.open .chevron{transform:rotate(90deg)}
+/* Child rows — one per LLM call within the question */
+.audit-child-section{display:none}
+.audit-child-section.open{display:table-row-group}
+.audit-child-row{background:var(--surface-2)}
+.audit-child-row td{padding:.5rem .75rem .5rem 2.5rem;border-bottom:1px solid var(--border);font-size:11px;vertical-align:top}
+.audit-child-row:last-child td{border-bottom:2px solid var(--border)}
+.audit-time{font-size:11px;color:var(--gray-500);white-space:nowrap;font-variant-numeric:tabular-nums}
+.audit-req{font-size:11px;font-family:'SFMono-Regular',Menlo,Consolas,monospace;color:var(--text-soft);white-space:nowrap}
+.audit-comp code{font-size:11px;font-family:'SFMono-Regular',Menlo,Consolas,monospace;background:var(--surface);border:1px solid var(--border);padding:2px 5px;border-radius:var(--radius-sm);color:var(--text-soft);white-space:nowrap}
+.audit-model{font-size:11px;color:var(--gray-500);white-space:nowrap}
+.audit-chars{font-size:11px;color:var(--gray-500);text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.call-count-badge{display:inline-flex;align-items:center;gap:3px;font-size:10px;font-weight:800;background:var(--blue-light);color:var(--blue);border:1px solid color-mix(in srgb,var(--blue) 22%,transparent);border-radius:999px;padding:2px 8px;white-space:nowrap}
+</style>
+{% endblock %}
+{% block content %}
+
+<div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:1rem;margin-bottom:1.25rem">
+  <div>
+    <div style="display:flex;align-items:center;gap:.75rem;flex-wrap:wrap">
+      <h1 style="font-size:20px;font-weight:700">{{ client.client_name or "Unnamed client" }}</h1>
+      {% if client.state == "READY" %}<span class="badge badge-green">READY</span>
+      {% elif client.state == "KB_BUILDING" %}<span class="badge badge-amber">BUILDING KB</span>
+      {% elif client.state == "SCHEMA_READY" %}<span class="badge badge-blue">SCHEMA READY</span>
+      {% else %}<span class="badge badge-gray">{{ client.state }}</span>{% endif %}
+    </div>
+    <p style="font-size:11px;font-family:monospace;color:var(--gray-500);margin-top:3px">{{ client.account_id }}</p>
+  </div>
+  <div style="display:flex;gap:.5rem;flex-wrap:wrap">
+    <a href="/admin/clients/{{ client.account_id }}/setup" class="btn btn-primary btn-sm">🔧 Schema & KB Setup</a>
+    <a href="/admin/clients/{{ client.account_id }}/metrics" class="btn btn-secondary btn-sm">📐 Metrics</a>
+    <a href="/admin/clients/{{ client.account_id }}/glossary" class="btn btn-secondary btn-sm">📖 Glossary</a>
+    <form method="post" action="/admin/clients/{{ client.account_id }}/toggle-chat-ui" style="display:inline">
+      <button type="submit" class="btn btn-sm {% if client.chat_ui_enabled %}btn-success{% else %}btn-secondary{% endif %}">
+        {% if client.chat_ui_enabled %}💬 Chat UI: ON{% else %}💬 Chat UI: OFF{% endif %}
+      </button>
+    </form>
+    <a href="/admin/clients/{{ client.account_id }}/groups" class="btn btn-secondary btn-sm">👥 Groups</a>
+    <a href="/admin/clients/{{ client.account_id }}/users" class="btn btn-secondary btn-sm">👤 Users</a>
+    <a href="/admin/clients/{{ client.account_id }}/kb" class="btn btn-secondary btn-sm">📝 Edit KB</a>
+    <a href="/admin/clients/{{ client.account_id }}/billing" class="btn btn-secondary btn-sm">💰 Billing</a>
+  </div>
+</div>
+
+{% if saved %}<div class="alert alert-success">Settings saved.</div>{% endif %}
+
+<div class="metrics">
+  <div class="metric"><div class="metric-label">Total queries</div><div class="metric-value">{{ stats.total or 0 }}</div></div>
+  <div class="metric"><div class="metric-label">This month</div><div class="metric-value" style="color:var(--blue)">{{ monthly_count }}</div></div>
+  <div class="metric"><div class="metric-label">Success rate</div><div class="metric-value">{% if stats.total %}{{ ((stats.succeeded or 0)/stats.total*100)|round(1) }}%{% else %}—{% endif %}</div></div>
+  <div class="metric"><div class="metric-label">Cost (USD)</div><div class="metric-value" style="color:var(--blue)">${{ "%.4f"|format(stats.total_cost_usd or 0) }}</div></div>
+  <div class="metric"><div class="metric-label">Avg response</div><div class="metric-value" style="font-size:18px">{% if stats.avg_duration_ms %}{{ stats.avg_duration_ms|round(0)|int }}ms{% else %}—{% endif %}</div></div>
+  <div class="metric">
+    <div class="metric-label">Query limit</div>
+    <div class="metric-value" style="font-size:18px">
+      <span style="color:{% if limit_pct >= 80 %}var(--amber){% else %}var(--green){% endif %}">{{ monthly_count }}</span>
+      <span style="font-size:13px;color:var(--gray-500)">/ {{ client.query_limit_monthly or 500 }}</span>
+    </div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Token limit</div>
+    <div class="metric-value" style="font-size:18px">
+      {% if token_status.unlimited %}
+      <span style="color:var(--green)">Unlimited</span>
+      {% else %}
+      <span style="color:{% if token_status.limit_pct >= 80 %}var(--amber){% else %}var(--green){% endif %}">{{ "{:,}".format(token_status.remaining or 0) }}</span>
+      <span style="font-size:13px;color:var(--gray-500)"> left</span>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="tab-nav">
+  <button class="tab-btn active" onclick="showTab('overview',this)">Overview</button>
+  <button class="tab-btn" onclick="showTab('settings',this)">Settings</button>
+  <button class="tab-btn" onclick="showTab('schema-browser',this)" id="tab-schema-btn">Schema browser</button>
+  <button class="tab-btn" onclick="showTab('queries',this)">Query Log</button>
+  <button class="tab-btn" onclick="showTab('audit',this)">LLM Audit</button>
+  <button class="tab-btn" onclick="showTab('danger',this)">Danger Zone</button>
+</div>
+
+<!-- OVERVIEW TAB -->
+<div id="tab-overview" class="tab-pane active">
+  <div class="overview-grid">
+
+    <div class="overview-card">
+      <h3>Connection details</h3>
+      <table style="width:100%;font-size:13px;border-collapse:collapse">
+        <tr><td style="padding:5px 0;color:var(--gray-500);width:120px">Platform</td><td><span class="badge badge-blue">{{ client.platform_type }}</span></td></tr>
+        <tr><td style="padding:5px 0;color:var(--gray-500)">Database</td><td style="font-weight:600">{{ db_name }}</td></tr>
+        <tr><td style="padding:5px 0;color:var(--gray-500)">LLM model</td><td>{{ client.llm_model or system_model }}</td></tr>
+        <tr><td style="padding:5px 0;color:var(--gray-500)">Connected</td><td>{{ client.created_at[:10] }}</td></tr>
+        <tr><td style="padding:5px 0;color:var(--gray-500)">Last active</td><td>{{ client.updated_at[:16] }}</td></tr>
+      </table>
+      {% if client.business_desc %}
+      <div style="margin-top:.75rem;padding:.6rem .75rem;background:var(--gray-50);border-radius:5px;font-size:12px;color:var(--gray-700)">
+        {{ client.business_desc[:150] }}{% if client.business_desc|length > 150 %}…{% endif %}
+      </div>
+      {% endif %}
+    </div>
+
+    <div class="overview-card">
+      <h3>Monthly usage  —  {{ limit_pct }}% of limit</h3>
+      <div style="margin-bottom:1rem">
+        <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px">
+          <span style="color:var(--gray-500)">{{ monthly_count }} used</span>
+          <span style="color:var(--gray-500)">{{ (client.query_limit_monthly or 500) - monthly_count }} remaining</span>
+        </div>
+        <div style="background:var(--gray-100);border-radius:4px;height:16px;overflow:hidden">
+          <div style="width:{{ [limit_pct,100]|min }}%;height:100%;border-radius:4px;background:{% if limit_pct >= 80 %}var(--amber){% else %}var(--blue){% endif %}"></div>
+        </div>
+        {% if limit_pct >= 80 %}<p style="font-size:11px;color:var(--amber);margin-top:4px">⚠️ Approaching limit</p>{% endif %}
+      </div>
+      <h3>Top questions</h3>
+      {% if top_questions %}
+        {% set max_cnt = top_questions[0][1] %}
+        {% for q, cnt in top_questions[:5] %}
+        <div class="bar-row">
+          <span class="bar-label" title="{{ q }}">{{ q[:28] }}{% if q|length > 28 %}…{% endif %}</span>
+          <div class="bar-wrap"><div class="bar-fill" style="width:{{ (cnt/max_cnt*100)|round(0)|int }}%"></div></div>
+          <span class="bar-val">{{ cnt }}x</span>
+        </div>
+        {% endfor %}
+      {% else %}<p style="font-size:12px;color:var(--gray-500)">No queries yet.</p>{% endif %}
+    </div>
+
+    <div class="overview-card">
+      <h3>Knowledge Base</h3>
+      {% if kb_file_count > 0 %}
+        <div style="display:flex;gap:.5rem;align-items:center;margin-bottom:.75rem">
+          <span style="font-size:18px">✅</span>
+          <div>
+        <div style="font-weight:700;font-size:13px">{{ kb_file_count }} KB files ready</div>
+        <div style="font-size:11px;color:var(--gray-500)">{{ schema_file_count }} schema + {{ kb_file_count - schema_file_count }} enriched</div>
+        <div id="semanticPendingInline" class="semantic-review-chip" {% if not semantic_pending_count %}hidden{% endif %}>
+          <a href="/admin/clients/{{ client.account_id }}/kb#semantic-feedback" title="Open Semantic Layer review queue">
+            <span class="semantic-review-count">{{ semantic_pending_count or 0 }}</span>
+            <span class="semantic-review-label">pending Semantic Layer review{{ 's' if semantic_pending_count != 1 else '' }}</span>
+          </a>
+        </div>
+      </div>
+        </div>
+      {% elif schema_file_count > 0 %}
+        <div style="display:flex;gap:.5rem;align-items:center;margin-bottom:.75rem">
+          <span style="font-size:18px">⏳</span>
+          <div>
+            <div style="font-weight:700;font-size:13px">Schema ready — KB pending</div>
+            <div style="font-size:11px;color:var(--gray-500)">{{ schema_file_count }} tables discovered. Open the Setup page to generate the Knowledge Base.</div>
+          </div>
+        </div>
+      {% else %}
+        <p style="font-size:13px;color:var(--gray-500)">No schema yet. Open the Schema &amp; KB Setup page to run discovery.</p>
+      {% endif %}
+      <a href="/admin/clients/{{ client.account_id }}/kb" class="btn btn-secondary btn-sm" style="margin-top:.25rem">View &amp; Edit KB files</a>
+    </div>
+
+    <div class="overview-card">
+      <h3>Recent errors</h3>
+      {% if failed_queries %}
+        {% for q in failed_queries[:5] %}
+        <div style="border-left:3px solid var(--red);padding:.4rem .6rem;margin-bottom:.4rem;background:var(--red-light);border-radius:0 4px 4px 0">
+          <div style="font-size:11px;color:var(--gray-500)">{{ q.created_at[5:16] }}</div>
+          <div style="font-size:12px;font-weight:600;color:var(--gray-700);margin-bottom:1px">{{ (q.question or "")[:55] }}{% if (q.question or "")|length > 55 %}…{% endif %}</div>
+          <div style="font-size:11px;color:var(--red)">{{ (q.error_msg or "")[:75] }}{% if (q.error_msg or "")|length > 75 %}…{% endif %}</div>
+        </div>
+        {% endfor %}
+      {% else %}
+        <p style="font-size:12px;color:var(--green)">✅ No recent errors.</p>
+      {% endif %}
+    </div>
+
+  </div>
+</div>
+
+<!-- SETTINGS TAB -->
+<div id="tab-settings" class="tab-pane">
+  <div class="card">
+    <div class="card-header"><h2>Client configuration</h2></div>
+    <div class="card-body">
+      <form method="post" action="/admin/clients/{{ client.account_id }}/update">
+        <div class="form-grid">
+          <div class="form-group">
+            <label>Client name</label>
+            <input type="text" name="client_name" value="{{ client.client_name }}" placeholder="e.g. Acme Pharmacy">
+          </div>
+          <div class="form-group">
+            <label>Assigned database</label>
+            <select name="db_config_id">
+              <option value="">— not assigned —</option>
+              {% for db in all_dbs %}
+              <option value="{{ db.id }}" {% if db.id == client.db_config_id %}selected{% endif %}>{{ db.name }} ({{ db.label }})</option>
+              {% endfor %}
+            </select>
+            <p class="form-note">Each client queries its own database independently. Changing this does not affect other clients.</p>
+          </div>
+        </div>
+        <div class="form-grid">
+          <div class="form-group">
+            <label>Monthly query limit</label>
+            <input type="number" name="query_limit_monthly" value="{{ client.query_limit_monthly or 500 }}" min="1">
+            <p class="form-note">Bot warns user at 80% and blocks at 100%.</p>
+          </div>
+          <div class="form-group">
+            <label>Monthly token limit</label>
+            <input type="number" name="token_limit_monthly" value="{{ client.token_limit_monthly or 0 }}" min="0">
+            <p class="form-note">0 means unlimited. Portal shows remaining tokens and bot blocks at 100%.</p>
+          </div>
+          <div class="form-group">
+            <label>LLM model override</label>
+            <select name="llm_model">
+              <option value="">System default — {{ system_model }}</option>
+              {% for provider, model, label in query_models %}
+              <option value="{{ model }}" {% if model == client.llm_model %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+            <p class="form-note">Overrides the system default for this client only. All other clients are unaffected.</p>
+          </div>
+        </div>
+        <div class="form-group" style="margin-top:.25rem">
+          <label style="display:flex;align-items:flex-start;gap:.65rem;font-weight:600">
+            <input type="checkbox" name="enable_llm_audit" value="1" {% if client.enable_llm_audit %}checked{% endif %} style="margin-top:3px">
+            <span>
+              Enable per-query LLM audit logging
+              <span class="form-note" style="display:block;margin-top:4px">
+                Stores a sanitized preview of each prompt sent to the LLM, grouped by request ID and component.
+              </span>
+            </span>
+          </label>
+        </div>
+        <div class="form-group" style="margin-top:.25rem">
+          <label style="display:flex;align-items:flex-start;gap:.65rem;font-weight:600">
+            <input type="checkbox" name="portal_only" value="1" {% if client.portal_only %}checked{% endif %} style="margin-top:3px">
+            <span>
+              Web portal only (no chat platform required)
+              <span class="form-note" style="display:block;margin-top:4px">
+                Users access QueryBot exclusively through the internal web portal.
+                No Zoom, Teams, or Slack integration needed. Enables the chat UI automatically.
+                Users created in the Users tab can log in immediately with their credentials.
+              </span>
+            </span>
+          </label>
+        </div>
+        <button type="submit" class="btn btn-primary">Save settings</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- SCHEMA BROWSER TAB -->
+<div id="tab-schema-browser" class="tab-pane">
+  <div class="card">
+    <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;gap:1rem">
+      <div>
+        <h2 style="margin:0">Schema browser</h2>
+        <p style="margin:.25rem 0 0;font-size:12px;color:var(--gray-500)">
+          All databases, schemas, tables and views visible to this client's DB credentials.
+          Results are cached 24 hours — click Refresh to re-query the live database.
+        </p>
+      </div>
+      <div style="display:flex;gap:.5rem;align-items:center">
+        <button onclick="loadSchemaTree(true)"
+          style="padding:.4rem .9rem;border:1px solid var(--border);border-radius:6px;background:var(--surface);cursor:pointer;font-size:12px;font-weight:600;color:var(--gray-700)">
+          ↻ Refresh
+        </button>
+        <button id="sb-browse-btn" onclick="loadSchemaTree(false)"
+          style="padding:.4rem .9rem;background:var(--blue);color:white;border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600">
+          Browse schemas
+        </button>
+      </div>
+    </div>
+
+    <div id="sb-status" style="display:none;padding:.7rem 1.25rem;font-size:12px"></div>
+    <div id="sb-loading" style="display:none;padding:2rem;text-align:center;color:var(--gray-400);font-size:13px">Connecting to database…</div>
+    <div id="sb-tree"   style="display:none;padding:1rem 1.25rem"></div>
+  </div>
+</div>
+
+<style>
+.sb-db{margin-bottom:.75rem}
+.sb-db-hd{display:flex;align-items:center;gap:.5rem;cursor:pointer;padding:.4rem .5rem;border-radius:6px;user-select:none}
+.sb-db-hd:hover,.sb-schema-hd:hover{background:var(--row-hover)}
+.sb-db-hd .sb-chev,.sb-schema-hd .sb-chev{font-size:10px;color:var(--gray-400);transition:transform .15s;display:inline-block;width:14px;flex-shrink:0}
+.sb-db-hd.open .sb-chev,.sb-schema-hd.open .sb-chev{transform:rotate(90deg)}
+.sb-db-label{font-size:13px;font-weight:700;color:var(--gray-800)}
+.sb-count{font-size:10.5px;color:var(--gray-400);margin-left:auto;white-space:nowrap}
+.sb-schemas{display:none;margin-left:1.5rem}
+.sb-schemas.open{display:block}
+.sb-schema{margin-bottom:.4rem}
+.sb-schema-hd{display:flex;align-items:center;gap:.5rem;cursor:pointer;padding:.3rem .5rem;border-radius:5px;user-select:none}
+.sb-schema-label{font-size:12px;font-weight:600;color:var(--gray-700)}
+.sb-objects{display:none;margin-left:1.5rem}
+.sb-objects.open{display:block}
+.sb-section-lbl{font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--gray-400);margin:.4rem 0 .15rem .25rem}
+.sb-obj-row{display:flex;align-items:center;gap:.4rem;padding:.18rem .25rem;border-radius:4px;font-size:12px;color:var(--gray-700)}
+.sb-obj-row:hover{background:var(--row-hover)}
+.sb-obj-row:hover .sb-copy{opacity:1}
+.sb-copy{margin-left:auto;padding:1px 5px;font-size:10px;border:1px solid var(--border);border-radius:3px;cursor:pointer;background:var(--surface);color:var(--text-muted);opacity:0;transition:opacity .1s,background .15s,color .15s;flex-shrink:0}
+.sb-copy:hover{background:var(--surface-2);color:var(--text)}
+.sb-chkbox{width:14px;height:14px;cursor:pointer;flex-shrink:0;accent-color:var(--blue)}
+.sb-footer{position:sticky;bottom:0;background:color-mix(in srgb,var(--surface) 94%,transparent);border-top:2px solid var(--blue);padding:.75rem 1.25rem;display:none;align-items:center;gap:1rem;z-index:10;box-shadow:0 -2px 8px rgba(0,0,0,.07);backdrop-filter:blur(12px)}
+</style>
+
+<!-- Sticky footer — appears when tables are checked -->
+<div id="sb-footer" class="sb-footer">
+  <span id="sb-sel-count" style="font-size:13px;font-weight:700;color:var(--blue)"></span>
+  <span style="font-size:12px;color:var(--gray-500)">selected for KB generation</span>
+  <button id="sb-save-btn" onclick="saveKbTables()"
+    style="margin-left:auto;padding:.45rem 1.2rem;background:var(--blue);color:white;border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:700">
+    Save as KB tables
+  </button>
+  <button onclick="_sbClearAll()"
+    style="padding:.45rem .9rem;border:1px solid var(--border);border-radius:6px;background:var(--surface);cursor:pointer;font-size:12px;color:var(--gray-600)">
+    Clear all
+  </button>
+</div>
+
+<script>
+(function(){
+  const AID = {{ client.account_id | tojson }};
+  let _loaded  = false;
+  let _selected = new Set();   // uppercase DB.SCHEMA.TABLE refs
+
+  // ── Main load entry point ────────────────────────────────────────────────
+  window.loadSchemaTree = async function(force) {
+    const treeEl = document.getElementById('sb-tree');
+    const loadEl = document.getElementById('sb-loading');
+    const statEl = document.getElementById('sb-status');
+    treeEl.style.display = loadEl.style.display = 'none';
+    statEl.style.display = 'none';
+    loadEl.style.display = 'block';
+
+    // Pre-load existing selection so checkboxes reflect saved state
+    try {
+      const er = await fetch(`/admin/clients/${AID}/kb-tables`, {credentials:'same-origin'});
+      const ed = await er.json();
+      _selected = new Set((ed.tables || []).map(t => t.toUpperCase()));
+    } catch(_) {}
+
+    let data;
+    try {
+      const r = await fetch(`/admin/clients/${AID}/schema-tree${force?'?refresh=1':''}`, {credentials:'same-origin'});
+      data = await r.json();
+    } catch(e) {
+      loadEl.style.display = 'none';
+      _stat('error', 'Network error: ' + e.message);
+      return;
+    }
+    loadEl.style.display = 'none';
+    if (data.status === 'error') { _stat('error', data.message); return; }
+    if (data.status === 'cached') {
+      _stat('info', 'Cached results (24 h TTL). Click Refresh to re-query the live DB.');
+    }
+    _render(data.tree);
+    _updateFooter();
+  };
+
+  // ── Selection helpers ────────────────────────────────────────────────────
+  window._sbCheck = function(upper, checked) {
+    if (checked) _selected.add(upper); else _selected.delete(upper);
+    _updateFooter();
+  };
+
+  window._sbToggleSchema = function(tableRefs, masterCbId) {
+    const masterCb = document.getElementById(masterCbId);
+    const checked  = masterCb ? masterCb.checked : true;
+    tableRefs.forEach(ref => {
+      const upper = ref.toUpperCase();
+      if (checked) _selected.add(upper); else _selected.delete(upper);
+      const cb = document.getElementById(_cbId(upper));
+      if (cb) { cb.checked = checked; cb.indeterminate = false; }
+    });
+    _updateFooter();
+  };
+
+  window._sbClearAll = function() {
+    _selected.clear();
+    document.querySelectorAll('.sb-chkbox').forEach(cb => {
+      cb.checked = false; cb.indeterminate = false;
+    });
+    _updateFooter();
+  };
+
+  function _updateFooter() {
+    const footer  = document.getElementById('sb-footer');
+    const countEl = document.getElementById('sb-sel-count');
+    if (!footer) return;
+    if (_selected.size === 0) {
+      footer.style.display = 'none';
+    } else {
+      footer.style.display = 'flex';
+      countEl.textContent  = `${_selected.size} table${_selected.size !== 1 ? 's' : ''}`;
+    }
+  }
+
+  // ── Save selection ───────────────────────────────────────────────────────
+  window.saveKbTables = async function() {
+    const btn = document.getElementById('sb-save-btn');
+    if (!btn) return;
+    btn.disabled = true;
+    btn.textContent = 'Saving…';
+    try {
+      const resp = await fetch(`/admin/clients/${AID}/kb-tables`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({tables: [..._selected]}),
+      });
+      const d = await resp.json();
+      if (d.status === 'ok') {
+        _stat('info',
+          `✓ ${d.count} table${d.count !== 1 ? 's' : ''} saved for KB generation. ` +
+          `Run "Discover schema" on the Setup tab to apply the selection.`);
+      } else {
+        _stat('error', d.message || 'Save failed');
+      }
+    } catch(e) {
+      _stat('error', 'Network error: ' + e.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Save as KB tables';
+    }
+  };
+
+  // ── Status banner ────────────────────────────────────────────────────────
+  function _stat(type, msg) {
+    const el = document.getElementById('sb-status');
+    const p  = type === 'error'
+      ? 'background:var(--red-light);border-top:1px solid color-mix(in srgb,var(--red) 28%,transparent);color:var(--red)'
+      : 'background:var(--blue-light);border-top:1px solid color-mix(in srgb,var(--blue) 28%,transparent);color:var(--blue)';
+    el.setAttribute('style', `display:block;padding:.7rem 1.25rem;font-size:12px;${p}`);
+    el.textContent = msg;
+  }
+
+  function _esc(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  function _ref(db, schema, table) {
+    return `${db}.${schema}.${table}`.toUpperCase();
+  }
+
+  function _cbId(ref) {
+    return 'cb-' + String(ref).replace(/[^A-Z0-9_]/g, '_');
+  }
+
+  // ── Tree render ──────────────────────────────────────────────────────────
+  function _render(tree) {
+    const wrap = document.getElementById('sb-tree');
+    wrap.innerHTML = '';
+    wrap.style.display = 'block';
+    const dbs = Object.keys(tree).sort();
+
+    if (!dbs.length) {
+      wrap.innerHTML = '<p style="color:var(--gray-400);font-size:13px">No accessible databases found for these credentials.</p>';
+      return;
+    }
+
+    // Summary bar
+    let tT = 0, tV = 0, tS = 0;
+    dbs.forEach(db => Object.values(tree[db]).forEach(s => {
+      tS++; tT += (s.tables||[]).length; tV += (s.views||[]).length;
+    }));
+    const sum = document.createElement('div');
+    sum.style.cssText = 'font-size:12px;color:var(--gray-500);margin-bottom:1rem;padding-bottom:.75rem;border-bottom:1px solid var(--border)';
+    sum.innerHTML =
+      `<strong>${dbs.length}</strong> db &nbsp;·&nbsp; ` +
+      `<strong>${tS}</strong> schema${tS!==1?'s':''} &nbsp;·&nbsp; ` +
+      `<span style="color:var(--green)"><strong>${tT}</strong> table${tT!==1?'s':''}</span> &nbsp;·&nbsp; ` +
+      `<span style="color:var(--violet)"><strong>${tV}</strong> view${tV!==1?'s':''}</span> &nbsp;·&nbsp; ` +
+      `<em style="color:var(--gray-400)">Check tables to include in KB · views are read-only references, not included</em>`;
+    wrap.appendChild(sum);
+
+    dbs.forEach((db, di) => {
+      const skeys   = Object.keys(tree[db]).sort();
+      const dbTotal = skeys.reduce((a,s) =>
+        a + (tree[db][s].tables||[]).length + (tree[db][s].views||[]).length, 0);
+      const dbId = 'sb' + di;
+
+      const dbEl = document.createElement('div');
+      dbEl.className = 'sb-db';
+      dbEl.innerHTML =
+        `<div class="sb-db-hd" onclick="_sbToggle('${dbId}')">` +
+          `<span class="sb-chev">▶</span>` +
+          `<span style="font-size:14px">🗄️</span>` +
+          `<span class="sb-db-label">${_esc(db)}</span>` +
+          `<span class="sb-count">${skeys.length} schema${skeys.length!==1?'s':''} · ${dbTotal} objects</span>` +
+        `</div>` +
+        `<div class="sb-schemas" id="${dbId}s"></div>`;
+      wrap.appendChild(dbEl);
+
+      const schemasEl = dbEl.querySelector('#' + dbId + 's');
+
+      skeys.forEach((schema, si) => {
+        const objs   = tree[db][schema];
+        const tables = (objs.tables||[]).sort();
+        const views  = (objs.views ||[]).sort();
+        const sid    = `${dbId}s${si}`;
+        const mcbId  = `${sid}cb`;
+
+        // Determine master-checkbox state for this schema
+        const selCount    = tables.filter(t => _selected.has(_ref(db, schema, t))).length;
+        const allChecked  = tables.length > 0 && selCount === tables.length;
+        const someChecked = selCount > 0 && !allChecked;
+        const tablesJson  = JSON.stringify(tables.map(t => _ref(db, schema, t)));
+
+        // Build object rows HTML
+        let objHtml = '';
+        if (tables.length) {
+          objHtml += `<div class="sb-section-lbl">Tables (${tables.length})</div>`;
+          tables.forEach(t => {
+            const upper = _ref(db, schema, t);
+            const fqn   = `${db}.${schema}.${t}`;
+            const chk   = _selected.has(upper) ? 'checked' : '';
+            const cbId  = _cbId(upper);
+            objHtml +=
+              `<div class="sb-obj-row">` +
+                `<input type="checkbox" id="${cbId}" class="sb-chkbox" ${chk}` +
+                ` onchange="_sbCheck(${JSON.stringify(upper)}, this.checked)">` +
+                `<span style="color:var(--green);font-size:11px">▣</span>` +
+                `<label for="${cbId}" style="cursor:pointer;flex:1;margin:0">${_esc(t)}</label>` +
+                `<button class="sb-copy"` +
+                ` onclick="navigator.clipboard.writeText(${JSON.stringify(fqn)})"` +
+                ` title="Copy fully-qualified name">copy</button>` +
+              `</div>`;
+          });
+        }
+        if (views.length) {
+          objHtml += `<div class="sb-section-lbl" style="color:var(--violet)">Views (${views.length}) — not included in KB</div>`;
+          views.forEach(v => {
+            const fqn = `${db}.${schema}.${v}`;
+            objHtml +=
+              `<div class="sb-obj-row" style="opacity:.55">` +
+                `<span style="width:16px;flex-shrink:0"></span>` +
+                `<span style="color:var(--violet);font-size:11px">◈</span>` +
+                `<span style="font-style:italic;flex:1">${_esc(v)}</span>` +
+                `<button class="sb-copy"` +
+                ` onclick="navigator.clipboard.writeText(${JSON.stringify(fqn)})"` +
+                ` title="Copy fully-qualified name">copy</button>` +
+              `</div>`;
+          });
+        }
+
+        const schEl = document.createElement('div');
+        schEl.className = 'sb-schema';
+        schEl.innerHTML =
+          `<div class="sb-schema-hd">` +
+            `<span class="sb-chev" onclick="_sbToggle('${sid}')" style="cursor:pointer">▶</span>` +
+            `<span style="font-size:12px">📂</span>` +
+            `<input type="checkbox" id="${mcbId}" class="sb-chkbox" ${allChecked ? 'checked' : ''}` +
+            ` onchange="_sbToggleSchema(${tablesJson}, '${mcbId}')"` +
+            ` title="Select / deselect all tables in ${schema}">` +
+            `<span class="sb-schema-label" onclick="_sbToggle('${sid}')" style="cursor:pointer">${_esc(schema)}</span>` +
+            `<span class="sb-count">${tables.length} table${tables.length!==1?'s':''}` +
+              `${views.length ? ` · ${views.length} view${views.length!==1?'s':''}` : ''}</span>` +
+          `</div>` +
+          `<div class="sb-objects" id="${sid}o">${objHtml}</div>`;
+        schemasEl.appendChild(schEl);
+
+        // Indeterminate cannot be set via HTML — must be JS
+        if (someChecked) {
+          const mcb = schEl.querySelector('#' + mcbId);
+          if (mcb) mcb.indeterminate = true;
+        }
+      });
+    });
+  }
+
+  // ── Expand/collapse toggle ───────────────────────────────────────────────
+  window._sbToggle = function(id) {
+    const hd   = document.querySelector(`[onclick="_sbToggle('${id}')"]`);
+    const body = document.getElementById(id + 's') || document.getElementById(id + 'o');
+    if (hd)   hd.classList.toggle('open');
+    if (body) body.classList.toggle('open');
+  };
+
+  // Auto-load on first tab click
+  document.getElementById('tab-schema-btn').addEventListener('click', function() {
+    if (!_loaded) { _loaded = true; loadSchemaTree(false); }
+  });
+})();
+</script>
+
+<!-- QUERIES TAB -->
+<div id="tab-queries" class="tab-pane">
+  <div class="card">
+    <div class="card-header">
+      <h2>Query log (last 50)</h2>
+      <a href="/admin/clients/{{ client.account_id }}/billing" class="btn btn-secondary btn-sm">Full billing report →</a>
+    </div>
+    {% if not queries %}
+    <div class="card-body" style="color:var(--gray-500);text-align:center;padding:2rem">No queries yet.</div>
+    {% else %}
+    <table class="table">
+      <tr><th>Time</th><th>User</th><th>Question</th><th>Model</th><th>SQL</th><th>Rows</th><th>Cost</th><th>ms</th><th>Status</th></tr>
+      {% for q in queries %}
+      <tr>
+        <td style="font-size:11px;color:var(--gray-500);white-space:nowrap">{{ q.created_at[5:16] }}</td>
+        <td style="font-size:11px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+            title="{{ q.user_email or q.zoom_user_id or 'unknown' }}">
+          {% if q.user_name %}<strong>{{ q.user_name }}</strong>
+          {% elif q.zoom_user_id %}<span style="color:var(--gray-500);font-family:monospace">{{ q.zoom_user_id[:14] }}</span>
+          {% else %}<span style="color:var(--gray-400)">—</span>{% endif %}
+        </td>
+        <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px" title="{{ q.question }}">{{ q.question }}</td>
+        <td style="font-size:11px;color:var(--gray-500)">{{ q.llm_model or "—" }}</td>
+        <td>
+          {% if q.sql_generated %}
+          <div class="sql-cell">
+            <code title="Click to expand" onclick="toggleSql(this)">{{ q.sql_generated[:60] }}{% if q.sql_generated|length > 60 %}…{% endif %}</code>
+            <button type="button" class="copy-btn" onclick="copySql(this)">📋 Copy</button>
+            <textarea class="sql-hidden" readonly>{{ q.sql_generated }}</textarea>
+          </div>
+          <pre class="sql-full">{{ q.sql_generated }}</pre>
+          {% else %}
+          <span style="font-size:11px;color:var(--gray-400)">—</span>
+          {% endif %}
+        </td>
+        <td style="font-size:12px">{{ q.row_count }}</td>
+        <td style="font-size:11px">${{ "%.4f"|format(q.cost_usd or 0) }}</td>
+        <td style="font-size:11px;color:var(--gray-500)">{{ q.duration_ms }}</td>
+        <td>{% if q.success %}<span class="badge badge-green">OK</span>{% else %}<span class="badge badge-red" title="{{ q.error_msg }}">FAIL</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% endif %}
+  </div>
+</div>
+
+<!-- LLM AUDIT TAB -->
+<div id="tab-audit" class="tab-pane">
+  <div class="card">
+    <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;gap:1rem">
+      <div>
+        <h2 style="margin:0">LLM audit log</h2>
+        <p style="margin:.25rem 0 0;font-size:12px;color:var(--gray-500)">
+          Every prompt sent to the LLM for this client, with literals and identifiers sanitized. Showing up to the 100 most recent calls matching the current filters.
+        </p>
+      </div>
+      {% if client.enable_llm_audit %}
+      <span class="badge badge-green">Enabled</span>
+      {% else %}
+      <span class="badge badge-gray">Disabled</span>
+      {% endif %}
+    </div>
+
+    {% if not client.enable_llm_audit %}
+    <div class="card-body" style="color:var(--gray-500)">
+      LLM audit logging is currently off for this client. Turn on <strong>Enable per-query LLM audit logging</strong> in Settings to capture future prompts.
+    </div>
+    {% else %}
+
+    <!-- Component glossary -->
+    <div class="card-body" style="border-bottom:1px solid var(--border);padding-top:.75rem;padding-bottom:.75rem">
+      <details style="font-size:12px;color:var(--gray-600)">
+        <summary style="cursor:pointer;font-weight:600;color:var(--gray-700)">What does each component mean?</summary>
+        <div style="margin-top:.75rem;display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:.4rem .75rem">
+          <div><code style="background:var(--surface-3,#f3f4f6);padding:1px 5px;border-radius:3px">sql_generation</code> — initial SQL written from the user's question.</div>
+          <div><code style="background:var(--surface-3,#f3f4f6);padding:1px 5px;border-radius:3px">sql_repair</code> — one-shot retry after a validator or execution failure.</div>
+          <div><code style="background:var(--surface-3,#f3f4f6);padding:1px 5px;border-radius:3px">clarification_menu</code> — constrained-menu ambiguity check against the glossary.</div>
+          <div><code style="background:var(--surface-3,#f3f4f6);padding:1px 5px;border-radius:3px">clarification_fallback</code> — plain CLEAR/AMBIGUOUS classifier when the glossary is sparse.</div>
+          <div><code style="background:var(--surface-3,#f3f4f6);padding:1px 5px;border-radius:3px">analysis_narrative</code> — natural-language explain/compare/why on a result set.</div>
+          <div><code style="background:var(--surface-3,#f3f4f6);padding:1px 5px;border-radius:3px">drilldown_planner</code> — deterministic next-step SQL templates after a result.</div>
+          <div><code style="background:var(--surface-3,#f3f4f6);padding:1px 5px;border-radius:3px">kb_business_vocab</code> — business-vocabulary document generated during KB build.</div>
+          <div><code style="background:var(--surface-3,#f3f4f6);padding:1px 5px;border-radius:3px">kb_table_doc</code> — per-table KB document (Stage 1) generated during KB build.</div>
+          <div><code style="background:var(--surface-3,#f3f4f6);padding:1px 5px;border-radius:3px">kb_query_examples</code> — per-table question→SQL examples (Stage 2).</div>
+        </div>
+      </details>
+    </div>
+
+    <!-- Filter bar -->
+    <div class="card-body" style="padding-top:.85rem;padding-bottom:.85rem;border-bottom:1px solid var(--border);background:var(--surface-2,#fafafa)">
+      <form method="get" style="display:flex;gap:1rem;align-items:end;flex-wrap:wrap;margin:0">
+        <div style="min-width:200px">
+          <label style="display:block;font-size:11px;font-weight:600;color:var(--gray-600);margin-bottom:3px">Component</label>
+          <select name="audit_component" onchange="this.form.submit()" style="width:100%">
+            <option value="">All components</option>
+            {% for c in ["sql_generation", "sql_repair", "clarification", "clarification_menu", "clarification_fallback", "analysis", "analysis_narrative", "drilldown_planner", "kb_build", "kb_business_vocab", "kb_table_doc", "kb_query_examples"] %}
+            <option value="{{ c }}" {% if audit_component == c %}selected{% endif %}>{{ c }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div style="min-width:140px">
+          <label style="display:block;font-size:11px;font-weight:600;color:var(--gray-600);margin-bottom:3px">Status</label>
+          <select name="audit_status" onchange="this.form.submit()" style="width:100%">
+            <option value="">All</option>
+            <option value="success" {% if audit_status == "success" %}selected{% endif %}>Success</option>
+            <option value="error"   {% if audit_status == "error"   %}selected{% endif %}>Error</option>
+          </select>
+        </div>
+        {% if audit_component or audit_status %}
+        <a href="?" style="font-size:12px;color:var(--gray-600);text-decoration:underline;padding-bottom:.5rem">Clear filters</a>
+        {% endif %}
+      </form>
+    </div>
+
+    {% if not llm_calls %}
+    <div class="card-body" style="color:var(--gray-500);text-align:center;padding:2rem">
+      No LLM audit rows match these filters.
+    </div>
+    {% else %}
+    <div style="overflow-x:auto">
+      <table class="audit-table">
+        <colgroup>
+          <col style="width:30px">   <!-- expand toggle -->
+          <col style="width:100px">  <!-- time -->
+          <col style="width:90px">   <!-- call count -->
+          <col style="width:80px">   <!-- status -->
+          <col style="width:70px;text-align:right"> <!-- total chars -->
+          <col style="width:220px">  <!-- components -->
+          <col>                      <!-- question -->
+        </colgroup>
+        <thead>
+          <tr>
+            <th></th>
+            <th>Time</th>
+            <th>Calls</th>
+            <th>Status</th>
+            <th style="text-align:right">Chars</th>
+            <th>Components</th>
+            <th>User question</th>
+          </tr>
+        </thead>
+        {% for group in llm_calls %}
+        {% set gid = loop.index %}
+        <!-- ── Parent row (one per user question) ── -->
+        <tbody>
+        <tr class="audit-group-row" onclick="toggleAuditGroup({{ gid }}, this)">
+          <td style="padding:.7rem .5rem .7rem .75rem">
+            <button class="audit-expand-btn" id="btn-{{ gid }}" aria-expanded="false" aria-label="Expand calls">
+              <span class="chevron">▶</span>
+            </button>
+          </td>
+          <td class="audit-time">{{ group.first_call[5:16] }}</td>
+          <td>
+            <span class="call-count-badge">
+              {{ group.call_count }} call{{ "s" if group.call_count != 1 else "" }}
+            </span>
+          </td>
+          <td>
+            {% if group.any_error %}
+            <span class="badge badge-red">ERROR</span>
+            {% else %}
+            <span class="badge badge-green">OK</span>
+            {% endif %}
+          </td>
+          <td class="audit-chars">{{ group.total_chars }}</td>
+          <td style="font-size:11px;color:var(--gray-600)">
+            {% for comp in group.components.split(", ") %}
+            <code style="font-size:10px;font-family:'SFMono-Regular',monospace;background:var(--surface-3,#ebebec);padding:1px 4px;border-radius:3px;margin-right:2px;white-space:nowrap">{{ comp }}</code>
+            {% endfor %}
+          </td>
+          <td style="font-size:12px;color:var(--gray-800);max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{ group.question }}">
+            {{ group.question or "—" }}
+          </td>
+        </tr>
+        </tbody>
+
+        <!-- ── Child rows (one per LLM call in this question) ── -->
+        <tbody class="audit-child-section" id="children-{{ gid }}">
+          <!-- child header -->
+          <tr class="audit-child-row" style="background:var(--surface-3,#f0f1f3)">
+            <td colspan="2" style="font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--gray-500);padding:.4rem .75rem .4rem 2.5rem">Call</td>
+            <td colspan="2" style="font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--gray-500);padding:.4rem .5rem">Component / Model</td>
+            <td colspan="2" style="font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--gray-500);padding:.4rem .5rem">Status</td>
+            <td style="font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--gray-500);padding:.4rem .75rem">Sanitized prompt preview</td>
+          </tr>
+          {% for call in group.calls %}
+          <tr class="audit-child-row">
+            <td class="audit-time" colspan="2" style="padding-left:2.5rem">{{ call.created_at[5:16] }}</td>
+            <td colspan="2">
+              <div><code class="audit-comp" style="font-size:10.5px">{{ call.component }}</code></div>
+              <div class="audit-model" style="margin-top:2px">{{ call.llm_model or "—" }}</div>
+            </td>
+            <td colspan="2">
+              {% if call.status == "success" %}
+              <span class="badge badge-green">OK</span>
+              {% else %}
+              <span class="badge badge-red" title="{{ call.error_msg }}">ERROR</span>
+              {% endif %}
+              <div class="audit-chars" style="margin-top:3px;text-align:left">{{ call.prompt_chars }} ch</div>
+            </td>
+            <td>
+              <div class="audit-preview">{{ call.payload_preview_sanitized or "—" }}</div>
+              {% if call.error_msg %}
+              <div style="margin-top:.35rem;font-size:11px;color:var(--red)">{{ call.error_msg }}</div>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+
+        {% endfor %}
+      </table>
+    </div>
+
+    <script>
+    function toggleAuditGroup(gid, row) {
+      const children = document.getElementById('children-' + gid);
+      const btn      = document.getElementById('btn-' + gid);
+      const isOpen   = children.classList.toggle('open');
+      btn.classList.toggle('open', isOpen);
+      btn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+    }
+    </script>
+
+    {% endif %}
+    {% endif %}
+  </div>
+</div>
+
+<!-- DANGER ZONE TAB -->
+<div id="tab-danger" class="tab-pane">
+  <div class="danger-zone">
+    <div class="card-header"><h2 style="color:var(--red)">Danger zone</h2></div>
+    <div class="card-body" style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:1rem">
+      <div>
+        <p style="font-weight:600;margin-bottom:4px">Reset this client</p>
+        <p style="font-size:12px;color:var(--gray-500);max-width:480px">Permanently deletes all schema files, KB files, ChromaDB vector index, and the client row. You will need to re-register the client from the Clients page.</p>
+      </div>
+      <form method="post" action="/admin/clients/{{ client.account_id }}/reset">
+        <button type="submit" class="btn btn-danger"
+          onclick="return confirm('Delete all KB and schema data for {{ client.client_name or client.account_id[:16] }}? Cannot be undone.')">Reset client</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script>
+function showTab(name, btn) {
+  document.querySelectorAll('.tab-pane').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+  btn.classList.add('active');
+}
+
+function copySql(btn) {
+  const ta = btn.parentElement.querySelector('textarea.sql-hidden');
+  if (!ta) return;
+  const text = ta.value;
+  const done = () => {
+    const original = btn.textContent;
+    btn.textContent = '✓ Copied';
+    setTimeout(() => { btn.textContent = original; }, 1200);
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(done).catch(() => {
+      // Fallback if the Clipboard API is blocked (e.g. non-https)
+      ta.style.position = 'static'; ta.style.opacity = '1';
+      ta.select(); document.execCommand('copy');
+      ta.style.position = 'absolute'; ta.style.opacity = '0';
+      done();
+    });
+  } else {
+    ta.style.position = 'static'; ta.style.opacity = '1';
+    ta.select(); document.execCommand('copy');
+    ta.style.position = 'absolute'; ta.style.opacity = '0';
+    done();
+  }
+}
+
+function toggleSql(codeEl) {
+  const td = codeEl.closest('td');
+  const pre = td && td.querySelector('pre.sql-full');
+  if (pre) pre.classList.toggle('open');
+}
+</script>
+{% endblock %}

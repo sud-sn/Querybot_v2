@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Login — QueryBot Admin{% endblock %}
+{% block content %}
+<div style="max-width:380px;margin:5rem auto">
+  <div style="text-align:center;margin-bottom:1.5rem">
+    <div style="font-size:28px;font-weight:800;color:var(--navy)">Query<span style="color:var(--blue)">Bot</span></div>
+    <div style="color:var(--gray-500);font-size:13px;margin-top:4px">Admin Panel</div>
+  </div>
+  <div class="card">
+    <div class="card-header"><h2>Sign in</h2></div>
+    <div class="card-body">
+      {% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+      <form method="post" action="/admin/login">
+        <div class="form-group">
+          <label>Password</label>
+          <input type="password" name="password" autofocus required placeholder="Enter admin password">
+        </div>
+        <button type="submit" class="btn btn-primary" style="width:100%">Sign in →</button>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

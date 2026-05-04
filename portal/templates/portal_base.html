@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{% block title %}QueryBot Portal{% endblock %}</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --radius:8px;--radius-sm:6px;--radius-lg:10px;
+  --shadow:0 1px 2px rgba(15,23,42,.05),0 8px 22px rgba(15,23,42,.06);
+  --shadow-md:0 16px 34px rgba(15,23,42,.09),0 6px 14px rgba(15,23,42,.05);
+  --shadow-lg:0 24px 48px rgba(15,23,42,.12),0 10px 18px rgba(15,23,42,.06);
+
+  --navy:#111827;--blue:#2563EB;--blue-mid:#1D4ED8;--blue-soft:#3B82F6;
+  --green:#059669;--red:#DC2626;--amber:#B45309;--violet:#6D28D9;
+
+  --bg:#F2F7FC;--bg-soft:#E8F0F8;--bg-muted:#D7E3F1;
+  --surface:#FFFFFF;--surface-2:#F8FBFF;--surface-3:#EEF6FF;
+  --text:#0F172A;--text-soft:#334155;--text-muted:#64748B;
+  --border:#D7E3F1;--border-strong:#AFC1D6;
+  --primary:#2563EB;--primary-hover:#1D4ED8;--primary-soft:#DBEAFE;
+  --success:#059669;--success-soft:#ECFDF5;
+  --danger:#DC2626;--danger-soft:#FEF2F2;
+  --warning:#B45309;--warning-soft:#FEF3C7;
+  --row-hover:#F3F8FF;
+
+  --gray-50:#F8FBFF;--gray-100:#EEF4FB;--gray-200:#D7E3F1;--gray-300:#AFC1D6;
+  --gray-400:#8CA0B6;--gray-500:#64748B;--gray-600:#475569;--gray-700:#334155;--gray-800:#1E293B;--gray-900:#0F172A;
+}
+html[data-theme="dark"],body[data-theme="dark"]{
+  --bg:#07111F;--bg-soft:#0D1726;--bg-muted:#1D2B40;
+  --surface:#101A2A;--surface-2:#0C1524;--surface-3:#14243A;
+  --text:#E8EEF7;--text-soft:#D2DBE8;--text-muted:#9AA8BA;
+  --border:#23344D;--border-strong:#40546E;
+  --primary:#60A5FA;--primary-hover:#3B82F6;--primary-soft:rgba(96,165,250,.16);
+  --success:#34D399;--success-soft:rgba(16,185,129,.14);
+  --danger:#F87171;--danger-soft:rgba(248,113,113,.14);
+  --warning:#FBBF24;--warning-soft:rgba(251,191,36,.14);
+  --violet:#A78BFA;--row-hover:#14243A;
+  --gray-50:#0A1320;--gray-100:#101A2A;--gray-200:#1D2B40;--gray-300:#40546E;
+  --gray-400:#71839A;--gray-500:#9AA8BA;--gray-600:#B9C5D4;--gray-700:#D2DBE8;--gray-800:#E5EEF9;--gray-900:#F8FAFC;
+  --shadow:0 1px 3px rgba(0,0,0,.24),0 1px 2px rgba(0,0,0,.20);
+  --shadow-md:0 12px 24px rgba(0,0,0,.30),0 6px 12px rgba(0,0,0,.20);
+  --shadow-lg:0 24px 44px rgba(0,0,0,.36),0 12px 20px rgba(0,0,0,.24);
+}
+html,body{min-height:100%}
+body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:
+  linear-gradient(180deg,color-mix(in srgb,var(--surface-3) 54%,var(--bg)) 0,color-mix(in srgb,var(--bg) 92%,var(--surface)) 260px,var(--bg) 100%);
+  color:var(--text);font-size:14px;transition:background .2s,color .2s}
+a{color:var(--primary);text-decoration:none}a:hover{text-decoration:underline}
+button,input,select,textarea{font:inherit}
+button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,a:focus-visible{
+  outline:3px solid rgba(37,99,235,.18);outline-offset:2px}
+
+/* Topbar */
+.topbar{background:color-mix(in srgb, var(--surface) 88%, transparent);backdrop-filter:blur(16px);
+  height:60px;display:flex;align-items:center;padding:0 1.5rem;gap:1rem;position:sticky;top:0;z-index:100;
+  border-bottom:1px solid var(--border);box-shadow:var(--shadow)}
+.topbar-brand{font-size:16px;font-weight:800;color:var(--text);letter-spacing:-.02em}
+.topbar-brand span{color:var(--primary)}
+.topbar-nav{display:flex;gap:6px;margin-left:1.5rem}
+.topbar-nav a{color:var(--text-muted);font-size:13px;font-weight:700;padding:8px 12px;border-radius:var(--radius);border:1px solid transparent;transition:background .15s,border-color .15s,color .15s,transform .15s}
+.topbar-nav a:hover{color:var(--text);background:var(--surface-2);border-color:var(--border);text-decoration:none}
+.topbar-nav a.active{color:var(--primary);background:var(--primary-soft);border-color:color-mix(in srgb,var(--primary) 26%,transparent);text-decoration:none}
+.topbar-right{margin-left:auto;display:flex;align-items:center;gap:.75rem}
+.topbar-user{display:flex;align-items:center;gap:.5rem}
+.avatar{width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,var(--primary),var(--blue-soft));
+  display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#fff;flex-shrink:0;box-shadow:var(--shadow)}
+.topbar-user-name{font-size:13px;font-weight:700;color:var(--text)}
+.topbar-user-role{font-size:11px;color:var(--text-muted)}
+.theme-toggle{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:var(--radius);border:1px solid var(--border);
+  background:var(--surface);color:var(--text-soft);cursor:pointer;box-shadow:var(--shadow);transition:all .15s}
+.theme-toggle:hover{background:var(--surface-2);border-color:var(--border-strong);color:var(--text);transform:translateY(-1px)}
+.theme-toggle .theme-icon{font-size:14px;line-height:1}
+
+/* Layout */
+.main{max-width:1200px;margin:0 auto;padding:1.5rem}
+
+/* Cards */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;margin-bottom:1.25rem;transition:border-color .15s,box-shadow .15s}
+.card:hover{border-color:var(--border-strong);box-shadow:var(--shadow-md)}
+.card-header{padding:.95rem 1.25rem;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;background:linear-gradient(180deg,var(--surface-2),color-mix(in srgb,var(--surface-2) 72%,var(--surface)))}
+.card-header h2{font-size:13px;font-weight:700;color:var(--text-soft);letter-spacing:.01em}
+.card-body{padding:1.25rem}
+
+/* Buttons */
+.btn{display:inline-flex;align-items:center;gap:6px;padding:9px 16px;border-radius:var(--radius);font-size:13px;font-weight:700;cursor:pointer;border:none;
+  text-decoration:none;transition:all .15s;line-height:1;box-shadow:var(--shadow)}
+.btn:hover{text-decoration:none;transform:translateY(-1px)}
+.btn:active{transform:translateY(0)}
+.btn-primary{background:var(--primary);color:#fff}
+.btn-primary:hover{background:var(--primary-hover);color:#fff}
+.btn-secondary{background:var(--surface);border:1px solid var(--border);color:var(--text-soft)}
+.btn-secondary:hover{background:var(--surface-2);border-color:var(--border-strong)}
+.btn-danger{background:var(--danger);color:#fff}.btn-danger:hover{background:#B91C1C;color:#fff}
+.btn-success{background:var(--success);color:#fff}.btn-sm{padding:7px 12px;font-size:12px}.btn-xs{padding:4px 8px;font-size:11px}
+
+/* Forms */
+.form-group{margin-bottom:1rem}
+.form-group label{display:block;font-size:12px;font-weight:700;color:var(--text-soft);margin-bottom:5px;letter-spacing:.01em}
+.form-group input,.form-group select,.form-group textarea{
+  width:100%;padding:10px 12px;border:1.5px solid var(--border);border-radius:var(--radius);font-size:13px;color:var(--text);background:var(--surface);
+  transition:border-color .15s,box-shadow .15s,background .15s;outline:none}
+.form-group input:focus,.form-group select:focus,.form-group textarea:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(37,99,235,.12)}
+.form-note{font-size:11px;color:var(--text-muted);margin-top:4px}.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:.875rem}
+
+/* Alerts */
+.alert{padding:.875rem 1rem;border-radius:10px;font-size:13px;margin-bottom:1rem;display:flex;align-items:flex-start;gap:.625rem;border:1px solid transparent}
+.alert-success{background:var(--success-soft);color:var(--success);border-color:color-mix(in srgb, var(--success) 28%, transparent)}
+.alert-error{background:var(--danger-soft);color:var(--danger);border-color:color-mix(in srgb, var(--danger) 28%, transparent)}
+.alert-info{background:var(--primary-soft);color:var(--primary);border-color:color-mix(in srgb, var(--primary) 28%, transparent)}
+.alert-amber{background:var(--warning-soft);color:var(--warning);border-color:color-mix(in srgb, var(--warning) 28%, transparent)}
+
+/* Badges */
+.badge{display:inline-block;font-size:10px;font-weight:800;padding:3px 8px;border-radius:999px;letter-spacing:.03em}
+.badge-blue{background:var(--primary-soft);color:var(--primary)}.badge-green{background:var(--success-soft);color:var(--success)}
+.badge-amber{background:var(--warning-soft);color:var(--warning)}.badge-gray{background:var(--surface-2);color:var(--text-soft)}
+
+/* Page header */
+.page-header{margin-bottom:1.5rem}.page-header h1{font-size:22px;font-weight:800;color:var(--text);letter-spacing:-.02em;margin-bottom:4px}
+.page-header p{color:var(--text-muted);font-size:13px}
+
+/* Metrics row */
+.metrics{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px;margin-bottom:1.5rem}
+.metric{background:linear-gradient(180deg,var(--surface),var(--surface-2));border:1px solid var(--border);border-radius:var(--radius);padding:1rem;box-shadow:var(--shadow)}
+.metric-label{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);margin-bottom:6px}
+.metric-value{font-size:22px;font-weight:800;letter-spacing:-.02em;color:var(--text)}
+.portal-live-toast{position:fixed;right:20px;bottom:20px;max-width:360px;background:var(--surface);border:1px solid var(--border-strong);border-left:4px solid var(--success);border-radius:var(--radius);box-shadow:var(--shadow-lg);padding:.85rem 1rem;z-index:2500;opacity:0;transform:translateY(10px);pointer-events:none;transition:opacity .18s,transform .18s}
+.portal-live-toast.show{opacity:1;transform:translateY(0);pointer-events:auto}
+.portal-live-toast.warning{border-left-color:var(--warning)}
+.portal-live-toast.blocked{border-left-color:var(--danger)}
+.portal-live-toast-title{font-size:13px;font-weight:850;color:var(--text);margin-bottom:3px}
+.portal-live-toast-body{font-size:12px;color:var(--text-muted);line-height:1.45}
+html[data-theme="dark"] [style*="background:#fff"],html[data-theme="dark"] [style*="background: #fff"],html[data-theme="dark"] [style*="background:#FFFFFF"],html[data-theme="dark"] [style*="background: #FFFFFF"]{background:var(--surface)!important;color:var(--text)!important;border-color:var(--border)!important}
+html[data-theme="dark"] [style*="background:#EFF6FF"],html[data-theme="dark"] [style*="background:#DBEAFE"]{background:var(--primary-soft)!important;border-color:color-mix(in srgb,var(--primary) 28%,transparent)!important}
+html[data-theme="dark"] [style*="background:#FEF2F2"]{background:var(--danger-soft)!important;border-color:color-mix(in srgb,var(--danger) 28%,transparent)!important}
+html[data-theme="dark"] [style*="background:#FEF3C7"],html[data-theme="dark"] [style*="background:#FFFBEB"]{background:var(--warning-soft)!important;border-color:color-mix(in srgb,var(--warning) 28%,transparent)!important}
+
+@media (max-width: 900px){
+  .topbar{padding:0 1rem;gap:.75rem;flex-wrap:wrap;height:auto;min-height:60px}
+  .topbar-nav{margin-left:0;order:3;width:100%;padding-bottom:.75rem;overflow:auto}
+  .main{padding:1rem}
+}
+</style>
+<script>
+(function(){
+  const key = 'qb-portal-theme';
+  const saved = localStorage.getItem(key);
+  const preferred = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  const theme = saved || preferred;
+  document.documentElement.setAttribute('data-theme', theme);
+  document.documentElement.style.colorScheme = theme;
+  document.addEventListener('DOMContentLoaded', () => {
+    document.body.setAttribute('data-theme', theme);
+    updateThemeToggle(theme);
+  });
+  window.__qbSetTheme = function(next){
+    document.documentElement.setAttribute('data-theme', next);
+    document.body.setAttribute('data-theme', next);
+    document.documentElement.style.colorScheme = next;
+    localStorage.setItem(key, next);
+    updateThemeToggle(next);
+    window.dispatchEvent(new CustomEvent('qb-theme-change', { detail: { theme: next } }));
+  };
+  window.__qbToggleTheme = function(){
+    const current = document.documentElement.getAttribute('data-theme') || theme;
+    window.__qbSetTheme(current === 'dark' ? 'light' : 'dark');
+  };
+  function updateThemeToggle(current){
+    const nodes = document.querySelectorAll('[data-theme-toggle]');
+    nodes.forEach(node => {
+      const icon = node.querySelector('.theme-icon');
+      const label = node.querySelector('.theme-label');
+      if (icon) icon.textContent = current === 'dark' ? '☀️' : '🌙';
+      if (label) label.textContent = current === 'dark' ? 'Light mode' : 'Dark mode';
+      node.setAttribute('aria-label', current === 'dark' ? 'Switch to light mode' : 'Switch to dark mode');
+      node.setAttribute('title', current === 'dark' ? 'Switch to light mode' : 'Switch to dark mode');
+    });
+  }
+})();
+</script>
+{% block head %}{% endblock %}
+</head>
+<body>
+{% if user %}
+<nav class="topbar">
+  <span class="topbar-brand">Query<span>Bot</span></span>
+  <div class="topbar-nav">
+    <a href="/portal/dashboard" class="{% if 'dashboard' in request.url.path %}active{% endif %}">Dashboard</a>
+    <a href="/portal/kb" class="{% if '/kb' in request.url.path %}active{% endif %}">Semantic Layer</a>
+    <a href="/portal/chat" class="{% if '/chat' in request.url.path %}active{% endif %}">💬 Chat</a>
+  </div>
+  <div class="topbar-right">
+    <button type="button" class="theme-toggle" data-theme-toggle onclick="window.__qbToggleTheme()">
+      <span class="theme-icon">🌙</span><span class="theme-label">Dark mode</span>
+    </button>
+    <div class="topbar-user">
+      <div class="avatar">{{ (user.name or 'U')[0].upper() }}</div>
+      <div>
+        <div class="topbar-user-name">{{ user.name }}</div>
+        <div class="topbar-user-role">{{ user.group_name or 'No group' }} · {{ user.role }}</div>
+      </div>
+    </div>
+    <a href="/portal/change-password" class="btn btn-secondary btn-sm">⚙ Settings</a>
+    <a href="/portal/logout" class="btn btn-secondary btn-sm">Logout</a>
+  </div>
+</nav>
+{% endif %}
+<div class="main">{% block content %}{% endblock %}</div>
+{% if user %}
+<div class="portal-live-toast" id="portalLiveToast" role="status" aria-live="polite">
+  <div class="portal-live-toast-title" id="portalLiveToastTitle">Semantic Layer updated</div>
+  <div class="portal-live-toast-body" id="portalLiveToastBody"></div>
+</div>
+<script>
+(function(){
+  let socket = null;
+  let reconnectMs = 1000;
+  let toastTimer = null;
+  const seenKey = 'qb-portal-reviewed-feedback';
+  const queryLimitSeenKey = 'qb-portal-query-limit:{{ user.account_id }}';
+
+  function seenSet(){
+    try { return new Set(JSON.parse(sessionStorage.getItem(seenKey) || '[]')); }
+    catch(_err){ return new Set(); }
+  }
+  function markSeen(key){
+    const seen = seenSet();
+    seen.add(key);
+    sessionStorage.setItem(seenKey, JSON.stringify(Array.from(seen).slice(-200)));
+  }
+  function isSeen(key){ return seenSet().has(key); }
+
+  function showPortalToast(title, body, level){
+    const toast = document.getElementById('portalLiveToast');
+    const titleEl = document.getElementById('portalLiveToastTitle');
+    const bodyEl = document.getElementById('portalLiveToastBody');
+    if(!toast || !titleEl || !bodyEl) return;
+    titleEl.textContent = title;
+    bodyEl.textContent = body;
+    toast.classList.toggle('warning', level === 'warning');
+    toast.classList.toggle('blocked', level === 'blocked');
+    toast.classList.add('show');
+    window.clearTimeout(toastTimer);
+    toastTimer = window.setTimeout(function(){ toast.classList.remove('show'); }, 7000);
+  }
+
+  function handleSemanticMessage(msg, fromPoll){
+    if(!msg || msg.type !== 'semantic_feedback_reviewed') return;
+    const key = msg.feedback_id + ':' + msg.status;
+    if(fromPoll && isSeen(key)) return;
+    markSeen(key);
+    window.dispatchEvent(new CustomEvent('qb-semantic-feedback-reviewed', {detail: msg}));
+    const statusText = msg.status === 'approved' ? 'approved' : 'rejected';
+    showPortalToast(
+      msg.status === 'approved' ? 'Semantic Layer change approved' : 'Semantic Layer change rejected',
+      (msg.column_name || 'Field') + ' was ' + statusText + ' by admin.',
+      msg.status === 'approved' ? 'success' : 'warning'
+    );
+  }
+
+  function handleQueryLimitStatus(status, fromPoll){
+    if(!status) return;
+    window.dispatchEvent(new CustomEvent('qb-query-limit-status', {detail: status}));
+    const level = status.level || 'normal';
+    if(level !== 'warning' && level !== 'blocked') return;
+    if(location.pathname === '/portal/chat') return;
+    const key = level + ':' + status.used + ':' + status.limit;
+    if(fromPoll && sessionStorage.getItem(queryLimitSeenKey) === key) return;
+    sessionStorage.setItem(queryLimitSeenKey, key);
+    showPortalToast(
+      status.title || 'Monthly query limit',
+      status.message || '',
+      level
+    );
+  }
+
+  async function pollQueryLimit(){
+    try{
+      const resp = await fetch('/portal/api/query-limit-status', {credentials:'same-origin'});
+      if(!resp.ok) return;
+      const data = await resp.json();
+      if(data && data.ok) handleQueryLimitStatus(data.query_status, true);
+    }catch(_err){}
+  }
+
+  async function pollReviewed(){
+    try{
+      const resp = await fetch('/portal/api/semantic-feedback/updates', {credentials:'same-origin'});
+      if(!resp.ok) return;
+      const data = await resp.json();
+      (data.items || []).forEach(function(item){
+        handleSemanticMessage({
+          type:'semantic_feedback_reviewed',
+          feedback_id:item.id,
+          status:item.status,
+          table_fqn:item.table_fqn,
+          column_name:item.column_name,
+          suggested_meaning:item.suggested_meaning,
+          suggested_use_case:item.suggested_use_case,
+          admin_note:item.admin_note
+        }, true);
+      });
+    }catch(_err){}
+  }
+
+  function connectSocket(){
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    socket = new WebSocket(proto + '://' + location.host + '/portal/ws/notifications');
+    socket.onopen = function(){ reconnectMs = 1000; };
+    socket.onmessage = function(event){
+      try{ handleSemanticMessage(JSON.parse(event.data), false); }catch(_err){}
+    };
+    socket.onclose = function(){
+      window.setTimeout(connectSocket, reconnectMs);
+      reconnectMs = Math.min(Math.round(reconnectMs * 1.7), 15000);
+    };
+    socket.onerror = function(){ try{ socket.close(); }catch(_err){} };
+  }
+
+  document.addEventListener('DOMContentLoaded', function(){
+    connectSocket();
+    pollReviewed();
+    pollQueryLimit();
+    window.setInterval(pollReviewed, 30000);
+    window.setInterval(pollQueryLimit, 60000);
+    window.setInterval(function(){
+      if(socket && socket.readyState === WebSocket.OPEN){
+        try{ socket.send('ping'); }catch(_err){}
+      }
+    }, 25000);
+  });
+})();
+</script>
+{% endif %}
+</body>
+</html>

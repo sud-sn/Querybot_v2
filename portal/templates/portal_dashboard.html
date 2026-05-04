@@ -1,0 +1,315 @@
+{% extends "portal_base.html" %}
+{% block title %}Dashboard — QueryBot Portal{% endblock %}
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<style>
+.chart-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(460px,1fr));gap:1.25rem;margin-bottom:1.5rem}
+.chart-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-md);overflow:hidden;transition:box-shadow .2s,transform .2s}
+.chart-card:hover{box-shadow:var(--shadow-lg);transform:translateY(-1px)}
+.chart-card-header{padding:.95rem 1rem;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;background:linear-gradient(180deg,color-mix(in srgb,var(--surface-2) 84%, var(--primary-soft) 16%),var(--surface))}
+.chart-card-title{font-size:14px;font-weight:800;color:var(--text);line-height:1.4}
+.chart-card-sub{font-size:11px;color:var(--text-muted);margin-top:4px}
+.chart-card-body{padding:1rem}
+.chart-canvas{height:320px;width:100%;border-radius:var(--radius);background:linear-gradient(180deg,color-mix(in srgb,var(--surface-2) 92%, transparent),transparent)}
+.chart-meta{font-size:11px;color:var(--gray-500);margin-top:.8rem;display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap}
+.chart-error{padding:2rem;text-align:center;color:var(--text-muted);font-size:12px;background:var(--surface-2);border-radius:var(--radius);border:1px dashed var(--border)}
+.empty-state{text-align:center;padding:4rem 2rem;color:var(--gray-500)}
+#chart-modal{animation:fadeIn .15s ease}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+.empty-state .icon{font-size:48px;margin-bottom:1rem}
+.empty-state h3{font-size:17px;font-weight:700;color:var(--gray-700);margin-bottom:.5rem}
+.table-pill{display:inline-block;background:var(--primary-soft);color:var(--primary);font-size:10px;font-weight:700;padding:2px 8px;border-radius:999px;margin:2px;font-family:monospace}
+.welcome-banner{background:linear-gradient(135deg,var(--blue-mid),var(--blue));border-radius:var(--radius);padding:1.5rem;color:#fff;margin-bottom:1.5rem;display:flex;justify-content:space-between;align-items:center;gap:1rem;box-shadow:var(--shadow-lg)}
+.metric-progress{height:6px;border-radius:999px;background:var(--surface-2);border:1px solid var(--border);overflow:hidden;margin-top:.55rem}
+.metric-progress span{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,var(--success),var(--primary))}
+.metric-progress.warning span{background:linear-gradient(90deg,var(--warning),var(--primary))}
+.metric-progress.blocked span{background:var(--danger)}
+@media (max-width: 640px){.chart-grid{grid-template-columns:1fr}.welcome-banner{flex-direction:column;align-items:flex-start}.chart-canvas{height:280px}}
+</style>
+{% endblock %}
+{% block content %}
+
+{% if welcome %}
+<div class="welcome-banner">
+  <div>
+    <div style="font-size:20px;font-weight:800;margin-bottom:4px">Welcome to QueryBot, {{ user.name.split()[0] }}! 🎉</div>
+    <div style="opacity:.9;font-size:13px">Your account is ready. Pin charts from chat and they will refresh with live data every time you log in.</div>
+  </div>
+  <a href="/portal/chat" class="btn btn-secondary btn-sm" style="flex-shrink:0">Open chat →</a>
+</div>
+{% endif %}
+
+<div class="page-header">
+  <h1>My Dashboard</h1>
+  <p>Your pinned charts refresh with live data every time you log in.</p>
+</div>
+
+<div class="metrics">
+  <div class="metric"><div class="metric-label">Pinned charts</div><div class="metric-value">{{ charts|length }}</div></div>
+  <div class="metric"><div class="metric-label">Queries this month</div><div class="metric-value" style="color:var(--blue)">{{ monthly_count }}</div></div>
+  <div class="metric">
+    <div class="metric-label">Query limit</div>
+    <div class="metric-value" style="font-size:18px;color:{% if query_status.blocked %}var(--danger){% elif query_status.warning %}var(--warning){% else %}var(--success){% endif %}">
+      {{ query_status.remaining_label }} left
+    </div>
+    <div style="font-size:11px;color:var(--text-muted);margin-top:4px">
+      {{ query_status.used_label }} / {{ query_status.limit_label }} used
+    </div>
+    <div class="metric-progress {% if query_status.blocked %}blocked{% elif query_status.warning %}warning{% endif %}">
+      <span style="width:{{ query_status.limit_pct }}%"></span>
+    </div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Remaining tokens</div>
+    <div class="metric-value" style="font-size:18px;color:{% if token_status.unlimited or token_status.limit_pct < 80 %}var(--success){% else %}var(--warning){% endif %}">
+      {{ token_status.remaining_label }}
+    </div>
+    <div style="font-size:11px;color:var(--text-muted);margin-top:4px">
+      {% if token_status.unlimited %}No monthly token cap{% else %}{{ token_status.used_label }} / {{ token_status.limit_label }} used{% endif %}
+    </div>
+  </div>
+  <div class="metric"><div class="metric-label">Group</div><div class="metric-value" style="font-size:15px;margin-top:4px">{{ user.group_name or "—" }}</div></div>
+  <div class="metric"><div class="metric-label">Tables access</div><div class="metric-value" style="font-size:15px;margin-top:4px">{% if allowed_tables is none %}All{% else %}{{ allowed_tables|length }}{% endif %}</div></div>
+</div>
+
+{% if query_status.blocked %}
+<div class="alert alert-error">Monthly query limit reached: {{ query_status.used_label }} / {{ query_status.limit_label }} used. Ask your administrator to increase the workspace limit.</div>
+{% elif query_status.warning %}
+<div class="alert alert-amber">Query usage is above 80%: {{ query_status.used_label }} / {{ query_status.limit_label }} used this month.</div>
+{% endif %}
+
+{% if allowed_tables %}
+<div class="card" style="margin-bottom:1.5rem">
+  <div class="card-header">
+    <h2>Your table access ({{ allowed_tables|length }} tables)</h2>
+    <a href="/portal/kb" class="btn btn-secondary btn-sm">View Semantic Layer →</a>
+  </div>
+  <div class="card-body" style="padding:.875rem 1.25rem">
+    {% for t in allowed_tables %}<span class="table-pill">{{ t }}</span>{% endfor %}
+  </div>
+</div>
+{% elif allowed_tables is not none and allowed_tables|length == 0 %}
+<div class="alert alert-amber">⚠️ You haven't been assigned to a group yet. Contact your administrator to get table access.</div>
+{% endif %}
+
+{% if charts %}
+<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;gap:1rem;flex-wrap:wrap">
+  <h2 style="font-size:15px;font-weight:700">Pinned charts</h2>
+  <span style="font-size:12px;color:var(--gray-500)">Interactive charts refreshed with live data on login</span>
+</div>
+<div class="chart-grid">
+  {% for chart in charts %}
+  <div class="chart-card">
+    <div class="chart-card-header">
+      <div>
+        <div class="chart-card-title">📊 {{ chart.title }}</div>
+        <div class="chart-card-sub">{{ chart.row_count }} rows · {{ chart.last_refreshed[:16] if chart.last_refreshed else 'Just now' }}</div>
+      </div>
+      <div style="display:flex;gap:.5rem;flex-shrink:0;align-items:center">
+        <button type="button" class="btn btn-xs btn-secondary"
+          onclick="openChartModal(this.closest('.chart-card'))"
+          title="Expand chart" style="font-size:12px;padding:4px 8px">⤢ Expand</button>
+        <form method="post" action="/portal/unpin" style="margin:0">
+          <input type="hidden" name="chart_id" value="{{ chart.id }}">
+          <button type="submit" class="btn btn-xs btn-secondary" onclick="return confirm('Unpin this chart?')" style="color:var(--gray-500)">✕ Unpin</button>
+        </form>
+      </div>
+      </form>
+    </div>
+    <div class="chart-card-body">
+      {% if chart.error %}
+      <div class="chart-error"><div style="font-size:20px;margin-bottom:.5rem">⚠️</div><div style="font-weight:600;margin-bottom:4px">Chart could not refresh</div><div style="font-size:11px">{{ chart.error }}</div></div>
+      {% elif chart.chart_json %}
+      <div class="chart-canvas" id="dashboard-chart-{{ chart.id }}" data-chart='{{ chart.chart_json|safe }}'></div>
+      {% else %}
+      <div class="chart-error">No data returned for this query.</div>
+      {% endif %}
+      <div class="chart-meta">
+        <span title="{{ chart.question }}">{{ chart.question[:70] }}{% if chart.question|length > 70 %}…{% endif %}</span>
+        <span>{{ (chart.chart_type or 'chart')|upper }}</span>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="empty-state">
+  <div class="icon">📊</div>
+  <h3>No pinned charts yet</h3>
+  <p style="max-width:420px;margin:0 auto;line-height:1.6">When chat returns a chart, use <strong>📌 Pin to dashboard</strong> to save it here as a live interactive chart.</p>
+  <div style="margin-top:1.5rem">
+    <a href="/portal/kb" class="btn btn-secondary">Browse Semantic Layer →</a>
+    <a href="/portal/chat" class="btn btn-primary" style="margin-left:.5rem">💬 Open Chat</a>
+  </div>
+</div>
+{% endif %}
+
+<script>
+function chartThemeTokens(){
+  const dark = document.documentElement.getAttribute('data-theme') === 'dark';
+  return {
+    dark,
+    axis: dark ? '#94A3B8' : '#64748B',
+    axisLine: dark ? '#334155' : '#B8C8DE',
+    split: dark ? 'rgba(148,163,184,.14)' : 'rgba(148,163,184,.18)',
+    tooltipBg: dark ? 'rgba(15,23,42,.94)' : 'rgba(255,255,255,.98)',
+    tooltipText: dark ? '#fff' : '#0F172A',
+    line: '#3B82F6',
+    barTop: '#60A5FA',
+    barBottom: '#2563EB',
+    areaTop: dark ? 'rgba(59,130,246,.24)' : 'rgba(59,130,246,.18)',
+    areaBottom: dark ? 'rgba(59,130,246,.03)' : 'rgba(59,130,246,.04)'
+  };
+}
+function isTemporalLabel(value){
+  const s = String(value || '').toLowerCase();
+  return /(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|q[1-4]|week|month|year|date|day|\d{4}[-/]\d{1,2}([-/]\d{1,2})?)/.test(s);
+}
+function truncateLabel(label, maxLen = 16){
+  const str = String(label ?? '');
+  return str.length > maxLen ? str.slice(0, Math.max(3, maxLen - 1)) + '…' : str;
+}
+function chooseChartLayout(payload, labels){
+  if ((payload.chart_type || 'bar') === 'scatter') return 'scatter';
+  const maxLen = labels.reduce((m, s) => Math.max(m, String(s).length), 0);
+  const avgLen = labels.length ? labels.reduce((n, s) => n + String(s).length, 0) / labels.length : 0;
+  const temporal = labels.every(isTemporalLabel) || labels.some(isTemporalLabel);
+  if (payload.chart_type === 'line' && temporal) return 'line';
+  if (maxLen >= 16 || (labels.length > 7 && avgLen > 9)) return 'horizontal-bar';
+  if (payload.chart_type === 'line' && !temporal) return 'bar';
+  return payload.chart_type === 'line' ? 'line' : 'bar';
+}
+function buildTooltip(params){
+  const rows = Array.isArray(params) ? params : [params];
+  if (!rows.length) return '';
+  const title = rows[0].axisValueLabel || rows[0].name || '';
+  return `<div style="font-weight:700;margin-bottom:6px">${title}</div>` + rows.map(item => `${item.seriesName || 'Value'}: <strong>${Number(item.value ?? 0).toLocaleString()}</strong>`).join('<br>');
+}
+function buildDashboardOption(payload){
+  const rows = payload.rows || [];
+  const xKey = payload.x_key;
+  const yKey = (payload.y_keys || [])[0];
+  const chartType = payload.chart_type || 'bar';
+  const theme = chartThemeTokens();
+  if (chartType === 'scatter' && payload.y_keys && payload.y_keys.length >= 2) {
+    return {
+      tooltip: { trigger: 'item', backgroundColor: theme.tooltipBg, borderColor: theme.axisLine, textStyle: { color: theme.tooltipText } },
+      xAxis: { type: 'value', name: payload.y_keys[0], axisLine:{ lineStyle:{ color: theme.axisLine } }, axisLabel:{ color: theme.axis }, splitLine:{ lineStyle:{ color: theme.split } } },
+      yAxis: { type: 'value', name: payload.y_keys[1], axisLine:{ lineStyle:{ color: theme.axisLine } }, axisLabel:{ color: theme.axis }, splitLine:{ lineStyle:{ color: theme.split } } },
+      series: [{ type:'scatter', symbolSize:14, itemStyle:{ color: theme.line, shadowBlur:16, shadowColor:'rgba(59,130,246,.28)' }, data: rows.map(r => [r[payload.y_keys[0]], r[payload.y_keys[1]], r[xKey]]) }]
+    };
+  }
+  const labels = rows.map(r => String(r[xKey] ?? ''));
+  const values = rows.map(r => Number(r[yKey] ?? 0));
+  const layout = chooseChartLayout(payload, labels);
+  const horizontal = layout === 'horizontal-bar';
+  const rotation = !horizontal && labels.reduce((m, s) => Math.max(m, s.length), 0) > 10 ? 24 : 0;
+  const shortLabels = labels.map(l => truncateLabel(l, horizontal ? 22 : 16));
+  const interval = horizontal ? 0 : (labels.length > 10 ? Math.ceil(labels.length / 6) - 1 : 0);
+  return {
+    grid: horizontal ? { left: 56, right: 18, top: 24, bottom: 16, containLabel: true } : { left: 48, right: 18, top: 24, bottom: rotation ? 68 : 42, containLabel: true },
+    tooltip: { trigger: horizontal ? 'item' : 'axis', backgroundColor: theme.tooltipBg, borderColor: theme.axisLine, textStyle: { color: theme.tooltipText }, formatter: buildTooltip },
+    xAxis: horizontal ? { type: 'value', axisLine:{ show:false }, splitLine:{ lineStyle:{ color: theme.split } }, axisLabel:{ color: theme.axis } } : { type: 'category', data: shortLabels, axisTick:{ show:false }, axisLine:{ lineStyle:{ color: theme.axisLine } }, axisLabel:{ color: theme.axis, interval, rotate: rotation, formatter: (value, idx) => shortLabels[idx] } },
+    yAxis: horizontal ? { type: 'category', data: shortLabels, axisTick:{ show:false }, axisLine:{ show:false }, axisLabel:{ color: theme.axis } } : { type: 'value', splitLine:{ lineStyle:{ color: theme.split } }, axisLabel:{ color: theme.axis } },
+    series: [{
+      name: yKey || 'Value',
+      type: layout === 'line' ? 'line' : 'bar',
+      smooth: layout === 'line',
+      data: values,
+      showSymbol: values.length <= 18,
+      barMaxWidth: horizontal ? 26 : 42,
+      lineStyle: { width: 3, color: theme.line },
+      itemStyle: { color: new echarts.graphic.LinearGradient(0,0,0,1,[{ offset:0,color:theme.barTop },{ offset:1,color:theme.barBottom }]), borderRadius: layout === 'line' ? 0 : (horizontal ? [0,10,10,0] : [10,10,0,0]) },
+      areaStyle: layout === 'line' ? { color: new echarts.graphic.LinearGradient(0,0,0,1,[{ offset:0,color:theme.areaTop },{ offset:1,color:theme.areaBottom }]) } : undefined
+    }]
+  };
+}
+function initDashboardChart(node) {
+  const payload = JSON.parse(node.dataset.chart || '{}');
+  if (!payload.rows || !payload.rows.length) return;
+  const existing = echarts.getInstanceByDom(node);
+  if (existing) existing.dispose();
+  const theme = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : null;
+  const chart = echarts.init(node, theme, { renderer: 'canvas' });
+  chart.setOption(buildDashboardOption(payload));
+  // ResizeObserver handles CSS grid reflow, card expand, and maximize transitions
+  if (window.ResizeObserver) {
+    if (node._qbRO) node._qbRO.disconnect();
+    const ro = new ResizeObserver(() => { try { chart.resize(); } catch {} });
+    ro.observe(node);
+    node._qbRO = ro;
+  }
+  return chart;
+}
+function renderDashboardCharts() {
+  // requestAnimationFrame ensures grid layout has settled before ECharts reads dimensions
+  requestAnimationFrame(() => {
+    document.querySelectorAll('[data-chart]').forEach(initDashboardChart);
+  });
+}
+document.addEventListener('DOMContentLoaded', () => {
+  renderDashboardCharts();
+  // Keep persistent resize for browsers without ResizeObserver
+  if (!window.ResizeObserver) {
+    window.addEventListener('resize', () => {
+      document.querySelectorAll('[data-chart]').forEach((node) => {
+        const instance = echarts.getInstanceByDom(node);
+        if (instance) instance.resize();
+      });
+    });
+  }
+});
+window.addEventListener('qb-theme-change', () => setTimeout(renderDashboardCharts, 50));
+
+// ── Chart maximize modal ───────────────────────────────────────────────────
+function openChartModal(cardEl) {
+  const node = cardEl.querySelector('[data-chart]');
+  if (!node) return;
+  const payload = JSON.parse(node.dataset.chart || '{}');
+  const title   = cardEl.querySelector('.chart-card-title')?.textContent || 'Chart';
+
+  let modal = document.getElementById('chart-modal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'chart-modal';
+    modal.style.cssText = 'position:fixed;inset:0;z-index:9000;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;backdrop-filter:blur(3px)';
+    modal.innerHTML = `
+      <div id="chart-modal-inner" style="background:var(--surface);border-radius:var(--radius);width:calc(100vw - 64px);height:calc(100vh - 80px);max-width:1400px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 24px 64px rgba(0,0,0,.28)">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:.85rem 1.25rem;border-bottom:1px solid var(--border);background:var(--surface-2);flex-shrink:0">
+          <span id="chart-modal-title" style="font-weight:800;font-size:14px"></span>
+          <button onclick="closeChartModal()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-muted);padding:0 4px" title="Close (Esc)">✕</button>
+        </div>
+        <div id="chart-modal-canvas" style="flex:1;padding:1rem;min-height:0"></div>
+      </div>`;
+    document.body.appendChild(modal);
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') closeChartModal(); });
+  }
+  document.getElementById('chart-modal-title').textContent = title;
+  modal.style.display = 'flex';
+
+  // Init fresh chart inside modal at full size
+  const canvas = document.getElementById('chart-modal-canvas');
+  const existing = echarts.getInstanceByDom(canvas);
+  if (existing) existing.dispose();
+  const theme = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : null;
+  const mc = echarts.init(canvas, theme, { renderer: 'canvas' });
+  mc.setOption(buildDashboardOption(payload));
+  // Resize once the modal has fully painted
+  requestAnimationFrame(() => { try { mc.resize(); } catch {} });
+  if (window.ResizeObserver) {
+    const ro = new ResizeObserver(() => { try { mc.resize(); } catch {} });
+    ro.observe(canvas);
+    canvas._qbRO = ro;
+  }
+  modal._modalChart = mc;
+  // Click outside to close
+  modal.addEventListener('click', e => { if (e.target === modal) closeChartModal(); }, { once: true });
+}
+function closeChartModal() {
+  const modal = document.getElementById('chart-modal');
+  if (!modal) return;
+  if (modal._modalChart) { try { modal._modalChart.dispose(); } catch {} modal._modalChart = null; }
+  modal.style.display = 'none';
+}
+</script>
+{% endblock %}
