@@ -2933,7 +2933,10 @@ async def admin_save_masking_only(request: Request, account_id: str):
     state_data = json.loads(client.get("state_data") or "{}")
     state_data["masking_config"] = masking_config
     store.save_client_state(account_id, state_data)
-    return JSONResponse({"status": "ok", "count": len(masking_config)})
+    # Immediately reflect the masking config in the egress log
+    # so the admin panel shows the change without waiting for KB rebuild
+    updated = store.update_egress_masking(account_id, masking_config)
+    return JSONResponse({"status": "ok", "count": len(masking_config), "egress_updated": updated})
 
 
 @router.get("/clients/{account_id}/setup/column-sensitivity")
