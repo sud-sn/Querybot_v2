@@ -93,6 +93,64 @@ def _allowed_has_qualified_refs(allowed: set[str] | None) -> bool:
     return bool(allowed and any("." in str(x) for x in allowed))
 
 
+def _apply_masking(
+    fetch_fn,
+    col_defs: list[dict],
+    mode: str,
+    explicit_fields: set[str],
+    table_name: str,
+) -> tuple[list[dict], set[str], bool]:
+    """
+    Centralised masking helper shared by all three DB backends.
+
+    Returns (sample_rows, masked_field_names, synthetic_fallback_used).
+
+    mode values:
+      "none"      — read real rows, no masking
+      "all"       — read real rows, mask every field
+      "selective" — read real rows, mask only explicit_fields
+      "auto"      — read real rows, mask PII-detected fields (default)
+
+    If the DB read fails, falls back to generate_synthetic_sample() and
+    returns synthetic_fallback_used=True.
+    """
+    from core.masking import detect_sensitive_columns, mask_rows
+
+    # Determine which fields to mask
+    if mode == "none":
+        masked_fields: set[str] = set()
+    elif mode == "all":
+        masked_fields = {c["name"] for c in col_defs}
+    elif mode == "selective":
+        masked_fields = explicit_fields or set()
+    else:  # "auto"
+        detected = detect_sensitive_columns(col_defs)
+        masked_fields = set(detected.keys())
+
+    # Fetch real rows
+    try:
+        rows = fetch_fn()
+    except Exception:
+        rows = []
+
+    if not rows:
+        # Fallback: fully synthetic rows (DB unreachable or empty table)
+        log.info("schema: synthetic fallback for %s (DB read returned 0 rows)", table_name)
+        return generate_synthetic_sample(col_defs), set(), True
+
+    # Apply masking
+    if masked_fields:
+        rows = mask_rows(rows, masked_fields, col_defs)
+        log.info("schema: masked %d field(s) in %s (mode=%s)", len(masked_fields), table_name, mode)
+
+    return rows, masked_fields, False
+
+
+def _sf_fetch_sample(cur, schema: str, name: str) -> list[dict]:
+    cur.execute(f'SELECT * FROM "{schema}"."{name}" LIMIT 5')
+    return [dict(r) for r in cur.fetchall()]
+
+
 def _safe_table_file_stem(value: str) -> str:
     stem = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in str(value))
     return stem.strip("._-") or "table"
@@ -103,26 +161,31 @@ def discover_and_write(
     db_type: str,
     output_dir: str,
     allowed_tables: set[str] | None = None,
+    masking_config: dict | None = None,
 ) -> int:
     """
     Discover schema from the customer DB and write one .md file per table.
 
-    allowed_tables — optional set of table names (bare names, uppercase).
-    When provided, only tables whose name (uppercased) is in the set are
-    written. Tables not in the set are skipped entirely.
-    When None (the default), all tables are written — preserving the legacy
-    behaviour for clients that were set up before table selection existed.
+    allowed_tables  — optional set of table FQNs (DB.SCHEMA.TABLE, uppercase).
+    masking_config  — optional dict keyed by table FQN (uppercase):
+                      {
+                        "DB.SCHEMA.TABLE": {
+                          "mode": "none"|"all"|"selective"|"auto",
+                          "masked_fields": ["ColA", "ColB"]   # for "selective"
+                        }
+                      }
+                      Absent FQN → default "auto" (detect PII cols by name pattern).
     """
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
-    # Normalise to uppercase set for case-insensitive matching
-    allowed = {t.upper() for t in allowed_tables} if allowed_tables is not None else None
+    allowed  = {t.upper() for t in allowed_tables} if allowed_tables is not None else None
+    mc       = {k.upper(): v for k, v in (masking_config or {}).items()}
     if db_type == "snowflake":
-        return _discover_snowflake(credentials, out, allowed)
+        return _discover_snowflake(credentials, out, allowed, mc)
     elif db_type == "oracle":
-        return _discover_oracle(credentials, out, allowed)
+        return _discover_oracle(credentials, out, allowed, mc)
     elif db_type == "azure_sql":
-        return _discover_azure_sql(credentials, out, allowed)
+        return _discover_azure_sql(credentials, out, allowed, mc)
     else:
         raise ValueError(f"Unsupported db_type: {db_type!r}")
 
@@ -343,6 +406,194 @@ def _build_join_map(master: dict) -> str:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# Entity graph auto-generation from discovered schema
+# ══════════════════════════════════════════════════════════════════════════════
+
+_FACT_PREFIXES   = {"fact_", "fct_"}
+_FACT_SUFFIXES   = {"_fact", "_fct"}
+_BRIDGE_PREFIXES = {"bridge_", "brg_", "xref_", "map_", "rel_"}
+_BRIDGE_SUFFIXES = {"_bridge", "_brg", "_xref", "_map"}
+
+# Colors per entity type
+_ENTITY_COLORS = {
+    "fact":      "#C0392B",   # red — fact tables stand out
+    "dimension": "#4F86C6",   # blue
+    "bridge":    "#9B59B6",   # purple
+}
+
+# Generic columns that are NOT reliable join keys
+_GENERIC_COLS = {
+    "ID", "NAME", "STATUS", "TYPE", "CODE", "DATE",
+    "CREATED_AT", "UPDATED_AT", "DESCRIPTION", "NOTES",
+    "CREATED_BY", "UPDATED_BY", "IS_ACTIVE", "ACTIVE",
+}
+
+
+def _infer_entity_type(table_name: str) -> str:
+    n = table_name.lower()
+    if any(n.startswith(p) for p in _FACT_PREFIXES) or any(n.endswith(s) for s in _FACT_SUFFIXES):
+        return "fact"
+    if any(n.startswith(p) for p in _BRIDGE_PREFIXES) or any(n.endswith(s) for s in _BRIDGE_SUFFIXES):
+        return "bridge"
+    return "dimension"
+
+
+def _infer_pk_column(table_name: str, columns: list[dict]) -> str:
+    """Heuristic: find the most likely primary-key column for a table."""
+    bare = table_name.split(".")[-1].upper()
+    col_names_upper = [c["name"].upper() for c in columns]
+
+    # 1. <TABLE>_ID pattern (e.g. CUSTOMER_ID in DIM_CUSTOMER)
+    for suffix in ("_ID", "_KEY", "_NO", "_NUM", "_CODE"):
+        candidate = bare.lstrip("DIM_").lstrip("FACT_").lstrip("FCT_") + suffix
+        # try the full bare name too
+        for check in (bare + suffix, candidate):
+            if check in col_names_upper:
+                idx = col_names_upper.index(check)
+                return columns[idx]["name"]
+
+    # 2. Column literally named "ID"
+    if "ID" in col_names_upper:
+        return columns[col_names_upper.index("ID")]["name"]
+
+    # 3. First column whose name ends with _ID
+    for col in columns:
+        if col["name"].upper().endswith("_ID"):
+            return col["name"]
+
+    # 4. Fallback: first column
+    return columns[0]["name"] if columns else ""
+
+
+def _display_name_from_table(table_name: str) -> str:
+    """DIM_CUSTOMER → Customer, FACT_DAILY_SALES → Daily Sales"""
+    bare = table_name.split(".")[-1]
+    for prefix in ("DIM_", "FACT_", "FCT_", "BRIDGE_", "BRG_", "XREF_", "MAP_", "REL_", "STG_", "VW_", "V_"):
+        if bare.upper().startswith(prefix):
+            bare = bare[len(prefix):]
+            break
+    return " ".join(w.capitalize() for w in bare.replace("_", " ").split())
+
+
+def build_entity_graph_from_schema(schema_dir: str) -> dict:
+    """
+    Parse _schema.json to auto-generate a starter entity graph.
+
+    Returns:
+        {
+          "entities":      [{"entity_name", "table_name", "schema_name",
+                             "pk_column", "display_name", "entity_type",
+                             "color", "pos_x", "pos_y"}],
+          "relationships": [{"from_entity", "to_entity",
+                             "from_column", "to_column"}],
+        }
+
+    Both sets are annotated with confidence_score=75 / status='suggested'
+    so the admin sees them as drafts requiring confirmation.
+    """
+    schema_json = Path(schema_dir) / "_schema.json"
+    if not schema_json.exists():
+        return {"entities": [], "relationships": []}
+
+    master: dict = json.loads(schema_json.read_text(encoding="utf-8"))
+    if not master:
+        return {"entities": [], "relationships": []}
+
+    # ── Build entity list ────────────────────────────────────────────────────
+    entities: list[dict] = []
+    # Maps FQN key → bare entity_name for relationship building
+    fqn_to_entity: dict[str, str] = {}
+
+    for idx, (fqn, tbl_info) in enumerate(master.items()):
+        parts = fqn.split(".")
+        bare_table  = parts[-1]
+        schema_part = parts[-2] if len(parts) >= 2 else ""
+
+        entity_name = bare_table          # unique within account, short
+        entity_type = _infer_entity_type(bare_table)
+        columns     = tbl_info.get("columns", [])
+        pk_col      = _infer_pk_column(bare_table, columns)
+        display     = _display_name_from_table(bare_table)
+        color       = _ENTITY_COLORS.get(entity_type, "#4F86C6")
+
+        # Arrange in a simple grid (facts centred, dims around)
+        col_pos = idx % 5
+        row_pos = idx // 5
+        pos_x   = 80 + col_pos * 220
+        pos_y   = 80 + row_pos * 180
+
+        fqn_to_entity[fqn] = entity_name
+        entities.append({
+            "entity_name":      entity_name,
+            "table_name":       bare_table,
+            "schema_name":      schema_part,
+            "pk_column":        pk_col,
+            "display_name":     display,
+            "entity_type":      entity_type,
+            "color":            color,
+            "pos_x":            pos_x,
+            "pos_y":            pos_y,
+            "confidence_score": 75,
+            "status":           "suggested",
+        })
+
+    # ── Build relationship list (reuse shared-column logic from _build_join_map) ─
+    col_to_fqns: dict[str, list[str]] = {}
+    for fqn, tbl_info in master.items():
+        for col in tbl_info.get("columns", []):
+            cname = col["name"].upper()
+            col_to_fqns.setdefault(cname, []).append(fqn)
+
+    seen_pairs: set[str] = set()
+    relationships: list[dict] = []
+
+    entity_names_set = {e["entity_name"] for e in entities}
+
+    for col_name, fqns in col_to_fqns.items():
+        if len(fqns) < 2 or col_name in _GENERIC_COLS:
+            continue
+        for i in range(len(fqns)):
+            for j in range(i + 1, len(fqns)):
+                f1 = fqns[i]
+                f2 = fqns[j]
+                e1 = fqn_to_entity.get(f1, f1.split(".")[-1])
+                e2 = fqn_to_entity.get(f2, f2.split(".")[-1])
+                if e1 not in entity_names_set or e2 not in entity_names_set:
+                    continue
+
+                # Prefer fact as from_entity (FK owner)
+                t1_type = _infer_entity_type(e1)
+                t2_type = _infer_entity_type(e2)
+                if t2_type == "fact" and t1_type != "fact":
+                    e1, e2 = e2, e1   # swap so fact is from_entity
+
+                pair_key = f"{min(e1,e2)}|{max(e1,e2)}|{col_name}"
+                if pair_key in seen_pairs:
+                    continue
+                seen_pairs.add(pair_key)
+
+                # Resolve actual case of the column from master
+                actual_col = col_name   # uppercase; resolver handles quoting
+                for col in master[f1].get("columns", []):
+                    if col["name"].upper() == col_name:
+                        actual_col = col["name"]
+                        break
+
+                relationships.append({
+                    "from_entity":      e1,
+                    "to_entity":        e2,
+                    "from_column":      actual_col,
+                    "to_column":        actual_col,
+                    "relationship_type": "many_to_one",
+                    "join_type":        "INNER",
+                    "confidence_score": 70,
+                    "status":           "suggested",
+                })
+
+    return {"entities": entities, "relationships": relationships}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Snowflake
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -397,7 +648,7 @@ def _sf_distinct(cur, schema: str, name: str, col_name: str) -> list[str]:
         return []
 
 
-def _discover_snowflake(cfg: dict, out: Path, allowed: set[str] | None = None) -> int:
+def _discover_snowflake(cfg: dict, out: Path, allowed: set[str] | None = None, mc: dict | None = None) -> int:
     import snowflake.connector
     conn = _sf_connect(cfg)
     master = {}
@@ -444,30 +695,34 @@ def _discover_snowflake(cfg: dict, out: Path, allowed: set[str] | None = None) -
             """)
             columns = [dict(r) for r in cur.fetchall()]
 
-            # Distinct value scan for categorical columns
+            # ── Masking resolution ────────────────────────────────────────
+            _sf_db   = (database or cfg.get("database", "")).upper()
+            _fqn     = f"{_sf_db}.{schema}.{name}".upper()
+            _tbl_cfg = (mc or {}).get(_fqn, {})
+            _mode    = _tbl_cfg.get("mode", "auto")
+
+            col_defs = [{"name": c["COLUMN_NAME"], "type": c["DATA_TYPE"]} for c in columns]
+
+            # Distinct value scan (always for real-row tables)
             distinct_map = {}
-            if not should_use_synthetic(name):
+            if _mode != "all":  # "all" masking makes distinct values pointless
                 plain_cur = conn.cursor()
                 for col in columns:
-                    cname = col["COLUMN_NAME"]
-                    ctype = col["DATA_TYPE"]
+                    cname, ctype = col["COLUMN_NAME"], col["DATA_TYPE"]
                     if _is_categorical(cname, ctype):
                         vals = _sf_distinct(plain_cur, schema, name, cname)
                         if vals:
                             distinct_map[cname] = vals
-                            log.info("SF distinct values for %s.%s: %s", name, cname, vals)
 
-            # Sample rows
-            if should_use_synthetic(name):
-                col_defs = [{"name": c["COLUMN_NAME"], "type": c["DATA_TYPE"]} for c in columns]
-                sample = generate_synthetic_sample(col_defs)
-                log.info("Synthetic sample for sensitive table: %s", name)
-            else:
-                try:
-                    cur.execute(f'SELECT * FROM "{schema}"."{name}" LIMIT 5')
-                    sample = [dict(r) for r in cur.fetchall()]
-                except Exception:
-                    sample = []
+            # Read real rows then mask, or fall back to fully synthetic
+            _sf_schema, _sf_name = schema, name  # capture for lambda
+            sample, _masked_set, _synthetic_used = _apply_masking(
+                fetch_fn=lambda: _sf_fetch_sample(cur, _sf_schema, _sf_name),
+                col_defs=col_defs,
+                mode=_mode,
+                explicit_fields=set(_tbl_cfg.get("masked_fields", [])),
+                table_name=name,
+            )
 
             (out / f"{_safe_table_file_stem(file_stem)}.md").write_text(
                 _sf_md(name, tbl, columns, sample, distinct_map), encoding="utf-8"
@@ -479,10 +734,15 @@ def _discover_snowflake(cfg: dict, out: Path, allowed: set[str] | None = None) -
                      "comment": c.get("COMMENT") or ""}
                     for c in columns
                 ],
-                "row_count": tbl.get("ROW_COUNT"),
-                "comment":   tbl.get("COMMENT") or "",
-                "schema":    schema,
-                "database":  database,
+                "row_count":      tbl.get("ROW_COUNT"),
+                "comment":        tbl.get("COMMENT") or "",
+                "schema":         schema,
+                "database":       database,
+                "fields_sent":    [c["COLUMN_NAME"] for c in columns],
+                "row_count_sent": len(sample),
+                "masked_fields":  sorted(_masked_set),
+                "mask_mode":      _mode,
+                "synthetic_used": _synthetic_used,
             }
             log.info("Snowflake: discovered %s (%d cols, %d categorical)",
                      name, len(columns), len(distinct_map))
@@ -576,7 +836,7 @@ def _ora_distinct(cur, owner: str, name: str, col_name: str) -> list[str]:
         return []
 
 
-def _discover_oracle(cfg: dict, out: Path, allowed: set[str] | None = None) -> int:
+def _discover_oracle(cfg: dict, out: Path, allowed: set[str] | None = None, mc: dict | None = None) -> int:
     owner = (cfg.get("schema") or cfg["user"]).upper()
     conn  = _ora_connect(cfg)
     master = {}
@@ -648,8 +908,15 @@ def _discover_oracle(cfg: dict, out: Path, allowed: set[str] | None = None) -> i
                         "DATA_LENGTH": r[3], "DATA_PRECISION": r[4],
                         "COMMENT": r[5]} for r in cur.fetchall()]
 
+            # ── Masking resolution ────────────────────────────────────────
+            _fqn     = f"{tbl_owner}.{name}".upper()
+            _tbl_cfg = (mc or {}).get(_fqn, {})
+            _mode    = _tbl_cfg.get("mode", "auto")
+
+            col_defs = [{"name": c["COLUMN_NAME"], "type": c["DATA_TYPE"]} for c in columns]
+
             distinct_map = {}
-            if not should_use_synthetic(name):
+            if _mode != "all":
                 for col in columns:
                     cname = col["COLUMN_NAME"]
                     if _is_categorical(cname, col["DATA_TYPE"]):
@@ -657,16 +924,21 @@ def _discover_oracle(cfg: dict, out: Path, allowed: set[str] | None = None) -> i
                         if vals:
                             distinct_map[cname] = vals
 
-            if should_use_synthetic(name):
-                col_defs = [{"name": c["COLUMN_NAME"], "type": c["DATA_TYPE"]} for c in columns]
-                sample = generate_synthetic_sample(col_defs)
-            else:
+            def _ora_fetch():
                 try:
                     cur.execute(f'SELECT * FROM "{tbl_owner}"."{name}" FETCH FIRST 5 ROWS ONLY')
                     col_names = [d[0] for d in cur.description]
-                    sample = [dict(zip(col_names, row)) for row in cur.fetchall()]
+                    return [dict(zip(col_names, row)) for row in cur.fetchall()]
                 except Exception:
-                    sample = []
+                    return []
+
+            sample, _masked_set, _synthetic_used = _apply_masking(
+                fetch_fn=_ora_fetch,
+                col_defs=col_defs,
+                mode=_mode,
+                explicit_fields=set(_tbl_cfg.get("masked_fields", [])),
+                table_name=name,
+            )
 
             (out / f"{_safe_table_file_stem(file_stem)}.md").write_text(
                 _ora_md(name, tbl, columns, sample, tbl_owner, distinct_map), encoding="utf-8"
@@ -676,9 +948,14 @@ def _discover_oracle(cfg: dict, out: Path, allowed: set[str] | None = None) -> i
                               "nullable": c["IS_NULLABLE"] == "YES",
                               "comment": c.get("COMMENT") or ""}
                              for c in columns],
-                "row_count": tbl.get("ROW_COUNT"),
-                "comment":   tbl.get("COMMENT") or "",
-                "owner":     tbl_owner,
+                "row_count":      tbl.get("ROW_COUNT"),
+                "comment":        tbl.get("COMMENT") or "",
+                "owner":          tbl_owner,
+                "fields_sent":    [c["COLUMN_NAME"] for c in columns],
+                "row_count_sent": len(sample),
+                "masked_fields":  sorted(_masked_set),
+                "mask_mode":      _mode,
+                "synthetic_used": _synthetic_used,
             }
     finally:
         conn.close()
@@ -798,7 +1075,7 @@ def _az_distinct(cur, schema: str, name: str, col_name: str) -> list[str]:
         return []
 
 
-def _discover_azure_sql(cfg: dict, out: Path, allowed: set[str] | None = None) -> int:
+def _discover_azure_sql(cfg: dict, out: Path, allowed: set[str] | None = None, mc: dict | None = None) -> int:
     """
     Discover Azure SQL schema and write one .md per table.
 
@@ -876,8 +1153,16 @@ def _discover_azure_sql(cfg: dict, out: Path, allowed: set[str] | None = None) -
                     log.warning("AzSQL: cannot read columns for %s.%s: %s", schema, name, e)
                     continue
 
+                # ── Masking resolution ────────────────────────────────────
+                _fqn     = f"{db_upper}.{schema}.{name}".upper()
+                _tbl_cfg = (mc or {}).get(_fqn, {})
+                _mode    = _tbl_cfg.get("mode", "auto")
+
+                col_defs = [{"name": c["COLUMN_NAME"], "type": c["DATA_TYPE"]}
+                            for c in columns]
+
                 distinct_map: dict[str, list[str]] = {}
-                if not should_use_synthetic(name):
+                if _mode != "all":
                     for col in columns:
                         cname = col["COLUMN_NAME"]
                         if _is_categorical(cname, col["DATA_TYPE"]):
@@ -887,18 +1172,21 @@ def _discover_azure_sql(cfg: dict, out: Path, allowed: set[str] | None = None) -
                                 log.info("AzSQL distinct values for %s.%s: %s",
                                          name, cname, vals)
 
-                if should_use_synthetic(name):
-                    col_defs = [{"name": c["COLUMN_NAME"], "type": c["DATA_TYPE"]}
-                                for c in columns]
-                    sample = generate_synthetic_sample(col_defs)
-                    log.info("Synthetic sample for sensitive table: %s", name)
-                else:
+                def _az_fetch():
                     try:
                         cur.execute(f"SELECT TOP 5 * FROM [{schema}].[{name}]")
                         col_names = [d[0] for d in cur.description]
-                        sample = [dict(zip(col_names, r)) for r in cur.fetchall()]
+                        return [dict(zip(col_names, r)) for r in cur.fetchall()]
                     except Exception:
-                        sample = []
+                        return []
+
+                sample, _masked_set, _synthetic_used = _apply_masking(
+                    fetch_fn=_az_fetch,
+                    col_defs=col_defs,
+                    mode=_mode,
+                    explicit_fields=set(_tbl_cfg.get("masked_fields", [])),
+                    table_name=name,
+                )
 
                 tbl_meta = {"TABLE_SCHEMA": schema, "TABLE_NAME": name,
                             "TABLE_TYPE": "BASE TABLE", "TABLE_CATALOG": db_upper}
@@ -911,10 +1199,15 @@ def _discover_azure_sql(cfg: dict, out: Path, allowed: set[str] | None = None) -
                     "columns": [{"name": c["COLUMN_NAME"], "type": c["DATA_TYPE"],
                                  "nullable": c["IS_NULLABLE"] == "YES", "comment": ""}
                                 for c in columns],
-                    "row_count": None,
-                    "comment":   "",
-                    "schema":    schema,
-                    "database":  db_upper,
+                    "row_count":      None,
+                    "comment":        "",
+                    "schema":         schema,
+                    "database":       db_upper,
+                    "fields_sent":    [c["COLUMN_NAME"] for c in columns],
+                    "row_count_sent": len(sample),
+                    "masked_fields":  sorted(_masked_set),
+                    "mask_mode":      _mode,
+                    "synthetic_used": _synthetic_used,
                 }
                 log.info("Azure SQL: discovered [%s].[%s].[%s] (%d cols, %d categorical)",
                          db_upper, schema, name, len(columns), len(distinct_map))

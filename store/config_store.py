@@ -1106,37 +1106,49 @@ def log_kb_egress(
     operation: str,           # 'discovery' | 'kb_build'
     db_type: str,
     table_name: str,
-    sample_mode: str,         # 'synthetic' | 'real' | 'none'
+    sample_mode: str,         # 'masked' | 'real' | 'synthetic' | 'none'
     database_name: str = "",
     schema_name: str = "",
     column_count: int = 0,
     distinct_col_count: int = 0,
     triggered_by: str = "admin",
+    fields_sent: list | None = None,
+    row_count_sent: int = 0,
+    masked_fields: list | None = None,
+    mask_mode: str = "none",
 ) -> None:
     """
     Write one row to kb_data_egress_log for a single processed table.
 
-    Called by:
-      • admin_discover_schema   — after each table .md file is written
-      • admin_build_kb          — after Stage 1 KB doc is generated per table
-
     sample_mode values:
-      'synthetic'  — fake rows were used; no real data reached the LLM
-      'real'       — 5 actual production rows were sent to the LLM
-      'none'       — no sample rows included (discovery writes schema only)
+      'masked'     — real rows fetched, PII fields replaced locally before sending
+      'real'       — actual production rows sent unchanged (admin explicit opt-in)
+      'synthetic'  — fully fake rows (fallback: DB unreachable or admin forced)
+      'none'       — schema-only, no sample rows sent
+
+    fields_sent    — every column name present in the LLM prompt
+    row_count_sent — number of sample rows sent (0 for synthetic / schema-only)
+    masked_fields  — subset of fields_sent that had masking applied
+    mask_mode      — 'none' | 'all' | 'selective' | 'auto'
     """
+    import json as _json
     try:
         with get_db() as conn:
             conn.execute("""
                 INSERT INTO kb_data_egress_log
                     (account_id, operation, db_type,
                      database_name, schema_name, table_name,
-                     column_count, sample_mode, distinct_col_count, triggered_by)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     column_count, sample_mode, distinct_col_count, triggered_by,
+                     fields_sent, row_count_sent, masked_fields, mask_mode)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 account_id, operation, db_type,
                 database_name or "", schema_name or "", table_name,
                 column_count, sample_mode, distinct_col_count, triggered_by,
+                _json.dumps(fields_sent or []),
+                row_count_sent,
+                _json.dumps(masked_fields or []),
+                mask_mode,
             ))
     except Exception as exc:
         log.warning("kb_data_egress_log write failed for %s/%s: %s",
@@ -1186,14 +1198,15 @@ def get_kb_egress_summary(account_id: str) -> dict:
                 SUM(CASE WHEN operation='discovery' THEN 1 ELSE 0 END)   AS total_tables_discovery,
                 SUM(CASE WHEN operation='kb_build'  THEN 1 ELSE 0 END)   AS total_tables_kb_build,
                 SUM(CASE WHEN sample_mode='real'      THEN 1 ELSE 0 END) AS real_sample_count,
-                SUM(CASE WHEN sample_mode='synthetic' THEN 1 ELSE 0 END) AS synthetic_sample_count
+                SUM(CASE WHEN sample_mode='synthetic' THEN 1 ELSE 0 END) AS synthetic_sample_count,
+                SUM(CASE WHEN sample_mode='masked'    THEN 1 ELSE 0 END) AS masked_sample_count
             FROM kb_data_egress_log
             WHERE account_id = ?
         """, (account_id,)).fetchone()
 
     if agg:
         raw = dict(agg)
-        # SQLite SUM/MAX return NULL for empty sets — normalise to 0/"" 
+        # SQLite SUM/MAX return NULL for empty sets — normalise to 0/""
         summary = {
             "last_discovery_at":     raw.get("last_discovery_at") or "",
             "last_kb_build_at":      raw.get("last_kb_build_at")  or "",
@@ -1201,12 +1214,14 @@ def get_kb_egress_summary(account_id: str) -> dict:
             "total_tables_kb_build": int(raw.get("total_tables_kb_build")  or 0),
             "real_sample_count":     int(raw.get("real_sample_count")      or 0),
             "synthetic_sample_count":int(raw.get("synthetic_sample_count") or 0),
+            "masked_sample_count":   int(raw.get("masked_sample_count")    or 0),
         }
     else:
         summary = {
             "last_discovery_at": "", "last_kb_build_at": "",
             "total_tables_discovery": 0, "total_tables_kb_build": 0,
             "real_sample_count": 0, "synthetic_sample_count": 0,
+            "masked_sample_count": 0,
         }
 
     # Fetch rows from the latest discovery run (identified by its timestamp bucket)
@@ -1237,8 +1252,20 @@ def get_kb_egress_summary(account_id: str) -> dict:
                 ORDER BY created_at DESC
             """, (account_id, latest_kb_build)).fetchall()]
 
-    summary["discovery_rows"] = disc_rows
-    summary["kb_build_rows"]  = kb_rows
+    import json as _json
+
+    def _parse_row(row: dict) -> dict:
+        for key, dest in (("fields_sent", "fields_sent_list"),
+                          ("masked_fields", "masked_fields_list")):
+            raw = row.get(key) or "[]"
+            try:
+                row[dest] = _json.loads(raw) if isinstance(raw, str) else (raw or [])
+            except Exception:
+                row[dest] = []
+        return row
+
+    summary["discovery_rows"] = [_parse_row(r) for r in disc_rows]
+    summary["kb_build_rows"]  = [_parse_row(r) for r in kb_rows]
     return summary
 
 
@@ -1343,26 +1370,29 @@ def save_relationship(
     join_type: str = "INNER",
     label: str = "",
     rel_id: int = 0,
+    join_conditions: list | None = None,
 ) -> int:
     """Insert or update a relationship edge. Returns its id."""
+    import json as _json
+    jc_json = _json.dumps(join_conditions or [])
     with get_db() as conn:
         if rel_id:
             conn.execute("""
                 UPDATE entity_relationships SET
                     from_entity=?, to_entity=?, from_column=?, to_column=?,
-                    relationship_type=?, join_type=?, label=?
+                    relationship_type=?, join_type=?, label=?, join_conditions=?
                 WHERE id=? AND account_id=?
             """, (from_entity, to_entity, from_column, to_column,
-                  relationship_type, join_type, label, rel_id, account_id))
+                  relationship_type, join_type, label, jc_json, rel_id, account_id))
             return rel_id
         conn.execute("""
             INSERT INTO entity_relationships
                 (account_id, from_entity, to_entity, from_column, to_column,
                  relationship_type, join_type, label, is_active,
-                 confidence_score, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+                 confidence_score, status, join_conditions)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
         """, (account_id, from_entity, to_entity, from_column, to_column,
-              relationship_type, join_type, label, confidence_score, status))
+              relationship_type, join_type, label, confidence_score, status, jc_json))
         row = conn.execute("SELECT last_insert_rowid() AS id").fetchone()
     return row["id"] if row else -1
 
