@@ -3,7 +3,7 @@
 {% block head %}
 <style>
 /* ── Shell layout ──────────────────────────────────────────────────────────── */
-.graph-shell{display:grid;grid-template-columns:240px 1fr 300px;height:calc(100vh - 56px);overflow:hidden;gap:0}
+.graph-shell{display:grid;grid-template-columns:220px 1fr 300px;height:calc(100vh - 56px);overflow:hidden;gap:0}
 .graph-sidebar,.graph-detail{overflow-y:auto;border-right:1px solid var(--border);background:var(--surface);display:flex;flex-direction:column}
 .graph-detail{border-right:none;border-left:1px solid var(--border)}
 .graph-canvas-wrap{display:flex;flex-direction:column;background:var(--surface-2);overflow:hidden;position:relative}
@@ -170,9 +170,17 @@
     <button class="tb-btn" id="del-btn" onclick="deleteSelected()" style="display:none" title="Delete selected (Del)">🗑 Delete</button>
     <div class="tb-sep"></div>
     <button class="tb-btn" onclick="openRelModal()" title="Add relationship by form">⇢ Link</button>
+    <button class="tb-btn" id="dedup-btn" onclick="deduplicateRelationships()" title="Remove duplicate relationships — keeps the best one per table pair (confirmed > highest confidence > most recent)">
+      ✕ Clean duplicates
+    </button>
     <button class="tb-btn" id="suggest-btn" onclick="runSuggest()" title="Use LLM to predict entities, field roles, and relationships from the discovered schema">
       ✦ Suggest from schema
     </button>
+    <div class="tb-sep"></div>
+    <label style="font-size:11px;color:var(--text-muted);white-space:nowrap">Schema:</label>
+    <select id="schema-filter" class="gd-select" style="width:130px;font-size:11px;padding:4px 6px" onchange="applySchemaFilter()" title="Filter canvas by database schema">
+      <option value="">All schemas</option>
+    </select>
     <span class="tb-hint" id="mode-hint">Click entity to select • Hover and drag port to connect • ✦ = LLM suggested</span>
   </div>
 
@@ -186,7 +194,11 @@
               markerWidth="8" markerHeight="8" orient="auto-start-reverse">
         <path d="M 0 0 L 10 5 L 0 10 z" fill="#F59E0B"/>
       </marker>
+      <pattern id="dot-grid" x="0" y="0" width="28" height="28" patternUnits="userSpaceOnUse">
+        <circle cx="1" cy="1" r="1" fill="var(--border)" opacity="0.5"/>
+      </pattern>
     </defs>
+    <rect width="100%" height="100%" fill="url(#dot-grid)" pointer-events="none"/>
     <g id="zoom-group" transform="translate(0,0) scale(1)">
       <g id="edges-layer"></g>
       <g id="nodes-layer"></g>
@@ -239,17 +251,20 @@
       <div class="gd-form-row">
         <div>
           <label class="gd-label">DB Table *</label>
-          <input class="gd-input" id="m-table-name" placeholder="DIM_CUSTOMER">
+          <select class="gd-select" id="m-table-name" onchange="onEntityTableChange(this.value)">
+            <option value="">— Select a table —</option>
+          </select>
         </div>
         <div>
           <label class="gd-label">Schema</label>
-          <input class="gd-input" id="m-schema-name" placeholder="dbo">
+          <input class="gd-input" id="m-schema-name" placeholder="dbo" readonly style="background:var(--surface-2)">
         </div>
       </div>
       <div class="gd-form-row">
         <div>
           <label class="gd-label">Primary key column</label>
-          <input class="gd-input" id="m-pk-column" placeholder="CustomerID">
+          <input class="gd-input" id="m-pk-column" placeholder="CustomerID" list="m-pk-column-list" autocomplete="off">
+          <datalist id="m-pk-column-list"></datalist>
         </div>
         <div>
           <label class="gd-label">Display name</label>
@@ -279,6 +294,13 @@
   </div>
 </div>
 
+<!-- ══ EDGE RIGHT-CLICK CONTEXT MENU ══════════════════════════════════════ -->
+<div id="edge-ctx-menu" style="display:none;position:fixed;z-index:9999;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-lg,0 8px 24px rgba(0,0,0,.18));min-width:160px;padding:4px 0;font-size:13px">
+  <button id="edge-ctx-edit" style="display:block;width:100%;text-align:left;padding:7px 14px;background:none;border:none;cursor:pointer;color:var(--text)" onmouseenter="this.style.background='var(--surface-2)'" onmouseleave="this.style.background='none'">✎ Edit relationship</button>
+  <div style="height:1px;background:var(--border);margin:3px 0"></div>
+  <button id="edge-ctx-delete" style="display:block;width:100%;text-align:left;padding:7px 14px;background:none;border:none;cursor:pointer;color:var(--red,#dc2626)" onmouseenter="this.style.background='var(--surface-2)'" onmouseleave="this.style.background='none'">✕ Delete relationship</button>
+</div>
+
 <!-- ══ ADD RELATIONSHIP MODAL ═════════════════════════════════════════════ -->
 <div id="rel-modal" class="modal-overlay" style="display:none">
   <div class="modal-box">
@@ -290,21 +312,23 @@
       <div class="gd-form-row">
         <div>
           <label class="gd-label">From entity (FK owner) *</label>
-          <select class="gd-select" id="rel-from-entity"></select>
+          <select class="gd-select" id="rel-from-entity" onchange="onRelEntityChange('from')"></select>
         </div>
         <div>
           <label class="gd-label">To entity *</label>
-          <select class="gd-select" id="rel-to-entity"></select>
+          <select class="gd-select" id="rel-to-entity" onchange="onRelEntityChange('to')"></select>
         </div>
       </div>
       <div class="gd-form-row">
         <div>
           <label class="gd-label">FK column (from)</label>
-          <input class="gd-input" id="rel-from-col" placeholder="CustomerID">
+          <input class="gd-input" id="rel-from-col" placeholder="CustomerID" list="rel-from-col-list" autocomplete="off">
+          <datalist id="rel-from-col-list"></datalist>
         </div>
         <div>
           <label class="gd-label">Referenced column (to)</label>
-          <input class="gd-input" id="rel-to-col" placeholder="CustomerID">
+          <input class="gd-input" id="rel-to-col" placeholder="CustomerID" list="rel-to-col-list" autocomplete="off">
+          <datalist id="rel-to-col-list"></datalist>
         </div>
       </div>
       <div class="gd-form-row">
@@ -328,6 +352,11 @@
         <label class="gd-label">Relationship label</label>
         <input class="gd-input" id="rel-label" placeholder="places, belongs to, prescribes…">
       </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin:8px 0 4px">
+        <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted)">Additional join conditions (compound key)</span>
+        <button onclick="addModalJoinCondition()" style="font-size:11px;padding:2px 8px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);cursor:pointer">+ AND</button>
+      </div>
+      <div id="rel-jc-container"></div>
     </div>
     <div class="modal-footer">
       <button class="m-btn" onclick="closeRelModal()">Cancel</button>
@@ -358,14 +387,16 @@ let pan  = { x: 0, y: 0 };
 let zoom = 1;
 
 // Drag state
-let dragging = null;   // { entity_name, startX, startY, origX, origY }
-let drawingEdge = null; // { from_entity, startSvgX, startSvgY }
+let dragging = null;       // { entity_name, startX, startY, origX, origY }
+let drawingEdge = null;    // { from_entity, startSvgX, startSvgY }
+let _dragRaf = null;       // RAF handle — ensures max one render per frame
+let _pendingDrag = null;   // latest drag position buffered for RAF
 
 // ════════════════════════════════════════════════════════════════════════════
 // SVG CANVAS RENDERING
 // ════════════════════════════════════════════════════════════════════════════
-const NODE_W  = 160;
-const NODE_H  = 72;
+const NODE_W  = 190;
+const NODE_H  = 84;
 
 function renderGraph() {
   renderEdges();
@@ -515,19 +546,60 @@ function renderNodes() {
   });
 }
 
+// Return the best {x1,y1,x2,y2,cx1,cx2} for an edge given two node positions
+function _edgePoints(fp, tp) {
+  const fcx = fp.x + NODE_W/2, fcy = fp.y + NODE_H/2;
+  const tcx = tp.x + NODE_W/2, tcy = tp.y + NODE_H/2;
+  const dx = tcx - fcx, dy = tcy - fcy;
+  let x1, y1, x2, y2, cx1, cy1, cx2, cy2;
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    // Mostly horizontal — use left/right ports
+    if (dx >= 0) { x1 = fp.x + NODE_W; x2 = tp.x; }
+    else          { x1 = fp.x;          x2 = tp.x + NODE_W; }
+    y1 = fp.y + NODE_H/2; y2 = tp.y + NODE_H/2;
+    const bend = Math.abs(dx) * 0.45;
+    cx1 = x1 + (dx >= 0 ?  bend : -bend);
+    cy1 = y1;
+    cx2 = x2 + (dx >= 0 ? -bend :  bend);
+    cy2 = y2;
+  } else {
+    // Mostly vertical — use top/bottom ports
+    if (dy >= 0) { y1 = fp.y + NODE_H; y2 = tp.y; }
+    else          { y1 = fp.y;           y2 = tp.y + NODE_H; }
+    x1 = fp.x + NODE_W/2; x2 = tp.x + NODE_W/2;
+    const bend = Math.abs(dy) * 0.45;
+    cx1 = x1; cy1 = y1 + (dy >= 0 ?  bend : -bend);
+    cx2 = x2; cy2 = y2 + (dy >= 0 ? -bend :  bend);
+  }
+  return { x1, y1, x2, y2, cx1, cy1: cy1 ?? y1, cx2, cy2: cy2 ?? y2 };
+}
+
+function _edgePath(fp, tp) {
+  const { x1, y1, x2, y2, cx1, cy1, cx2, cy2 } = _edgePoints(fp, tp);
+  return `M${x1},${y1} C${cx1},${cy1} ${cx2},${cy2} ${x2},${y2}`;
+}
+
+// De-duplicate relationships for rendering: one visual edge per unique from→to pair.
+// Multiple join-column records for the same pair render as a single edge with a count badge.
+function _groupedEdges() {
+  const seen = new Map();
+  graph.relationships.forEach(rel => {
+    const key = rel.from_entity + '||' + rel.to_entity;
+    if (!seen.has(key)) seen.set(key, { rel, count: 1 });
+    else seen.get(key).count++;
+  });
+  return [...seen.values()];
+}
+
 function renderEdges() {
   const layer = document.getElementById('edges-layer');
   layer.innerHTML = '';
-  graph.relationships.forEach(rel => {
+  _groupedEdges().forEach(({ rel, count }) => {
     const fe = graph.entities.find(e => e.entity_name === rel.from_entity);
     const te = graph.entities.find(e => e.entity_name === rel.to_entity);
     if (!fe || !te) return;
     const fp = entityPos(fe), tp = entityPos(te);
-
-    const x1 = fp.x + NODE_W, y1 = fp.y + NODE_H/2;
-    const x2 = tp.x,          y2 = tp.y + NODE_H/2;
-    const cx1 = x1 + Math.abs(x2-x1)*0.5;
-    const cx2 = x2 - Math.abs(x2-x1)*0.5;
+    const { x1, y1, x2, y2, cx1, cy1, cx2, cy2 } = _edgePoints(fp, tp);
     const isSelected = selectedRelId === rel.id;
 
     const g = document.createElementNS('http://www.w3.org/2000/svg','g');
@@ -536,47 +608,48 @@ function renderEdges() {
     g.setAttribute('data-rel', rel.id);
 
     const path = document.createElementNS('http://www.w3.org/2000/svg','path');
+    const edgePath = `M${x1},${y1} C${cx1},${cy1} ${cx2},${cy2} ${x2},${y2}`;
     path.setAttribute('class','edge-line');
-    path.setAttribute('d',`M${x1},${y1} C${cx1},${y1} ${cx2},${y2} ${x2},${y2}`);
+    path.setAttribute('d', edgePath);
     path.setAttribute('marker-end', isSelected ? 'url(#arrow-sel)' : 'url(#arrow)');
     if (isSelected) { path.setAttribute('stroke','#F59E0B'); path.setAttribute('stroke-width','2.5'); }
     g.appendChild(path);
 
-    // Hit area
+    // Hit area (wider invisible stroke for easier clicking)
     const hit = document.createElementNS('http://www.w3.org/2000/svg','path');
-    hit.setAttribute('d',`M${x1},${y1} C${cx1},${y1} ${cx2},${y2} ${x2},${y2}`);
-    hit.setAttribute('stroke','transparent'); hit.setAttribute('stroke-width','16');
+    hit.setAttribute('d', edgePath);
+    hit.setAttribute('stroke','transparent'); hit.setAttribute('stroke-width','18');
     hit.setAttribute('fill','none'); hit.style.cursor='pointer';
     g.appendChild(hit);
 
-    // Label
+    // Mid-point label pill (join type + join count if >1)
     const mid = edgeMidpoint(rel);
-    if (mid && rel.label) {
-      const lx = mid.x, ly = mid.y;
+    if (mid) {
+      const labelText = (count > 1 ? `${count} joins` : (rel.join_type || 'JOIN'));
+      const labelColor = rel.join_type === 'INNER' ? '#059669' : '#6366F1';
+      const tw = labelText.length * 6 + 14;
       const lbg = document.createElementNS('http://www.w3.org/2000/svg','rect');
-      lbg.setAttribute('class','edge-label-bg');
-      const tw = rel.label.length * 6 + 12;
-      lbg.setAttribute('x', lx - tw/2); lbg.setAttribute('y', ly - 9);
-      lbg.setAttribute('width', tw); lbg.setAttribute('height', 18);
-      lbg.setAttribute('rx',4); g.appendChild(lbg);
-      const lt = document.createElementNS('http://www.w3.org/2000/svg','text');
-      lt.setAttribute('class','edge-label');
-      lt.setAttribute('x', lx); lt.setAttribute('y', ly);
-      lt.textContent = rel.label; g.appendChild(lt);
-    }
-
-    // JOIN badge
-    const mid2 = edgeMidpoint(rel);
-    if (mid2) {
+      lbg.setAttribute('x', mid.x - tw/2); lbg.setAttribute('y', mid.y - 9);
+      lbg.setAttribute('width', tw); lbg.setAttribute('height', 16);
+      lbg.setAttribute('rx', 8);
+      lbg.setAttribute('fill', 'var(--surface)');
+      lbg.setAttribute('stroke', labelColor); lbg.setAttribute('stroke-width','1');
+      g.appendChild(lbg);
       const jt = document.createElementNS('http://www.w3.org/2000/svg','text');
       jt.setAttribute('class','edge-label');
-      jt.setAttribute('x', mid2.x); jt.setAttribute('y', mid2.y + (rel.label ? 14 : 0));
-      jt.setAttribute('font-size','9');
-      jt.setAttribute('fill', rel.join_type === 'INNER' ? '#059669' : '#6366F1');
-      jt.textContent = rel.join_type + ' JOIN'; g.appendChild(jt);
+      jt.setAttribute('x', mid.x); jt.setAttribute('y', mid.y);
+      jt.setAttribute('font-size','9'); jt.setAttribute('font-weight','700');
+      jt.setAttribute('fill', labelColor);
+      jt.textContent = labelText; g.appendChild(jt);
+      if (rel.label) {
+        const lt = document.createElementNS('http://www.w3.org/2000/svg','text');
+        lt.setAttribute('class','edge-label'); lt.setAttribute('x', mid.x); lt.setAttribute('y', mid.y + 14);
+        lt.textContent = rel.label; g.appendChild(lt);
+      }
     }
 
     g.addEventListener('click', () => selectRel(rel.id));
+    g.addEventListener('contextmenu', ev => { ev.preventDefault(); showEdgeContextMenu(ev, rel.id); });
     layer.appendChild(g);
   });
 }
@@ -592,14 +665,43 @@ function startDrag(ev, entityName) {
                origX: e.pos_x || 120, origY: e.pos_y || 120 };
 }
 
+// RAF tick — fires at most once per screen refresh during drag
+function _tickDrag() {
+  _dragRaf = null;
+  if (!_pendingDrag || !dragging) return;
+  const { newX, newY, entityName } = _pendingDrag;
+  const e = graph.entities.find(x => x.entity_name === entityName);
+  if (!e) return;
+  e.pos_x = newX; e.pos_y = newY;
+  // Move node directly via transform — no DOM rebuild
+  const nodeEl = document.querySelector(`[data-entity="${CSS.escape(entityName)}"]`);
+  if (nodeEl) nodeEl.setAttribute('transform', `translate(${newX},${newY})`);
+  // Update only edges connected to this node (use smart routing)
+  const seen = new Set();
+  graph.relationships.forEach(rel => {
+    if (rel.from_entity !== entityName && rel.to_entity !== entityName) return;
+    const pairKey = rel.from_entity + '||' + rel.to_entity;
+    if (seen.has(pairKey)) return; // only update first edge of each grouped pair
+    seen.add(pairKey);
+    const fe = graph.entities.find(e2 => e2.entity_name === rel.from_entity);
+    const te = graph.entities.find(e2 => e2.entity_name === rel.to_entity);
+    if (!fe || !te) return;
+    const d = _edgePath(entityPos(fe), entityPos(te));
+    const edgeEl = document.querySelector(`.g-edge[data-rel="${rel.id}"]`);
+    if (edgeEl) edgeEl.querySelectorAll('path').forEach(p => p.setAttribute('d', d));
+  });
+}
+
 document.getElementById('graph-svg').addEventListener('mousemove', ev => {
   if (dragging) {
     const svgPt = svgPoint(ev);
     const dx = svgPt.x - dragging.startX, dy = svgPt.y - dragging.startY;
-    const e = graph.entities.find(x => x.entity_name === dragging.entity_name);
-    e.pos_x = Math.max(0, dragging.origX + dx);
-    e.pos_y = Math.max(0, dragging.origY + dy);
-    renderGraph();
+    _pendingDrag = {
+      newX: Math.max(0, dragging.origX + dx),
+      newY: Math.max(0, dragging.origY + dy),
+      entityName: dragging.entity_name
+    };
+    if (!_dragRaf) _dragRaf = requestAnimationFrame(_tickDrag);
     return;
   }
   if (drawingEdge) {
@@ -612,8 +714,12 @@ document.getElementById('graph-svg').addEventListener('mousemove', ev => {
 
 document.getElementById('graph-svg').addEventListener('mouseup', async ev => {
   if (dragging) {
+    if (_dragRaf) { cancelAnimationFrame(_dragRaf); _dragRaf = null; }
+    _pendingDrag = null;
     const e = graph.entities.find(x => x.entity_name === dragging.entity_name);
     dragging = null;
+    document.getElementById('graph-svg').style.cursor = 'default';
+    renderGraph(); // single full render on drop to reconcile labels/ports
     await api('POST', `${API_BASE}/entities`, e);
     setStatus('Position saved');
   }
@@ -701,13 +807,13 @@ function autoLayout() {
   const dims   = graph.entities.filter(e => e.entity_type !== 'fact');
   const svg    = document.getElementById('graph-svg');
   const cx = svg.clientWidth/2, cy = svg.clientHeight/2;
-  const gap = 220;
+  const gap = 300;
 
   facts.forEach((e, i) => {
     e.pos_x = cx + (i - facts.length/2) * gap - NODE_W/2;
     e.pos_y = cy - NODE_H/2;
   });
-  const radius = Math.max(dims.length * 55, 240);
+  const radius = Math.max(dims.length * 70, 290);
   dims.forEach((e, i) => {
     const angle = (i / dims.length) * 2 * Math.PI - Math.PI/2;
     e.pos_x = cx + radius * Math.cos(angle) - NODE_W/2;
@@ -749,6 +855,41 @@ function resetDetail() {
   document.getElementById('detail-content').innerHTML =
     '<div class="gd-placeholder">Select an entity or relationship to edit its properties.</div>';
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// EDGE RIGHT-CLICK CONTEXT MENU
+// ════════════════════════════════════════════════════════════════════════════
+let _ctxRelId = null;
+const _ctxMenu = document.getElementById('edge-ctx-menu');
+
+function showEdgeContextMenu(ev, relId) {
+  _ctxRelId = relId;
+  _ctxMenu.style.left = ev.clientX + 'px';
+  _ctxMenu.style.top  = ev.clientY + 'px';
+  _ctxMenu.style.display = 'block';
+}
+
+function hideEdgeContextMenu() {
+  _ctxMenu.style.display = 'none';
+  _ctxRelId = null;
+}
+
+document.getElementById('edge-ctx-edit').addEventListener('click', () => {
+  if (_ctxRelId != null) { selectRel(_ctxRelId); }
+  hideEdgeContextMenu();
+});
+
+document.getElementById('edge-ctx-delete').addEventListener('click', async () => {
+  if (_ctxRelId == null) return;
+  const id = _ctxRelId;
+  hideEdgeContextMenu();
+  await deleteRel(id);
+});
+
+document.addEventListener('click', ev => {
+  if (!_ctxMenu.contains(ev.target)) hideEdgeContextMenu();
+});
+document.addEventListener('keydown', ev => { if (ev.key === 'Escape') hideEdgeContextMenu(); });
 
 // ════════════════════════════════════════════════════════════════════════════
 // DETAIL PANEL — ENTITY
@@ -915,9 +1056,51 @@ window.saveEntityDetail = async function(name) {
 // ════════════════════════════════════════════════════════════════════════════
 // DETAIL PANEL — RELATIONSHIP
 // ════════════════════════════════════════════════════════════════════════════
+function _renderJoinConditionRows(conditions) {
+  return conditions.map((c, i) => `
+    <div class="gd-form-row rd-jc-row" data-idx="${i}">
+      <div>
+        <label class="gd-label">FK col (from)</label>
+        <input class="gd-input rd-jc-from" value="${esc(c.from_col||'')}">
+      </div>
+      <div>
+        <label class="gd-label">Ref col (to)</label>
+        <input class="gd-input rd-jc-to" value="${esc(c.to_col||'')}">
+      </div>
+      <button onclick="removeJoinCondition(${i})" title="Remove" style="align-self:flex-end;padding:4px 8px;background:none;border:1px solid var(--border);border-radius:var(--radius-sm);cursor:pointer;color:var(--text-muted)">✕</button>
+    </div>`).join('');
+}
+
+function _readJoinConditions() {
+  return Array.from(document.querySelectorAll('.rd-jc-row')).map(row => ({
+    from_col: row.querySelector('.rd-jc-from')?.value?.trim() || '',
+    to_col:   row.querySelector('.rd-jc-to')?.value?.trim()   || '',
+  })).filter(c => c.from_col && c.to_col);
+}
+
+window.addJoinCondition = function() {
+  const container = document.getElementById('rd-jc-container');
+  const idx = container.querySelectorAll('.rd-jc-row').length;
+  const div = document.createElement('div');
+  div.className = 'gd-form-row rd-jc-row';
+  div.dataset.idx = idx;
+  div.innerHTML = `
+    <div><label class="gd-label">FK col (from)</label><input class="gd-input rd-jc-from" value=""></div>
+    <div><label class="gd-label">Ref col (to)</label><input class="gd-input rd-jc-to" value=""></div>
+    <button onclick="removeJoinCondition(${idx})" title="Remove" style="align-self:flex-end;padding:4px 8px;background:none;border:1px solid var(--border);border-radius:var(--radius-sm);cursor:pointer;color:var(--text-muted)">✕</button>`;
+  container.appendChild(div);
+};
+
+window.removeJoinCondition = function(idx) {
+  const rows = document.querySelectorAll('.rd-jc-row');
+  rows[idx]?.remove();
+};
+
 function renderRelDetail(id) {
   const rel = graph.relationships.find(r => r.id === id);
   if (!rel) return;
+  let extraConditions = [];
+  try { extraConditions = JSON.parse(rel.join_conditions || '[]'); } catch(e) {}
   document.getElementById('detail-head').firstChild.textContent =
     `${rel.from_entity} → ${rel.to_entity}`;
   document.getElementById('detail-content').innerHTML = `
@@ -933,6 +1116,7 @@ function renderRelDetail(id) {
           <input class="gd-input" value="${esc(rel.to_entity)}" disabled>
         </div>
       </div>
+      <div class="gd-section" style="margin:0 0 4px;font-size:10px">Primary join condition</div>
       <div class="gd-form-row">
         <div>
           <label class="gd-label">FK column (from)</label>
@@ -943,7 +1127,14 @@ function renderRelDetail(id) {
           <input class="gd-input" id="rd-to-col" value="${esc(rel.to_column||'')}">
         </div>
       </div>
-      <div class="gd-form-row">
+      <div class="gd-section" style="margin:8px 0 4px;font-size:10px;display:flex;align-items:center;justify-content:space-between">
+        <span>Additional join conditions</span>
+        <button onclick="addJoinCondition()" style="font-size:11px;padding:2px 8px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);cursor:pointer">+ AND</button>
+      </div>
+      <div id="rd-jc-container">
+        ${_renderJoinConditionRows(extraConditions)}
+      </div>
+      <div class="gd-form-row" style="margin-top:8px">
         <div>
           <label class="gd-label">Cardinality</label>
           <select class="gd-select" id="rd-cardinality">
@@ -985,7 +1176,13 @@ function generateJoinSQL(rel) {
   const tAlias = rel.to_entity.toLowerCase().slice(0,3);
   const fTbl = fe.schema_name ? `[${fe.schema_name}].[${fe.table_name}]` : `[${fe.table_name}]`;
   const tTbl = te.schema_name ? `[${te.schema_name}].[${te.table_name}]` : `[${te.table_name}]`;
-  return `FROM ${fTbl} ${fAlias}\n${rel.join_type||'LEFT'} JOIN ${tTbl} ${tAlias}\n  ON ${fAlias}.[${rel.from_column}] = ${tAlias}.[${rel.to_column}]`;
+  let extra = [];
+  try { extra = JSON.parse(rel.join_conditions || '[]'); } catch(e) {}
+  const extraClauses = extra
+    .filter(c => c.from_col && c.to_col)
+    .map(c => `\n  AND ${fAlias}.[${c.from_col}] = ${tAlias}.[${c.to_col}]`)
+    .join('');
+  return `FROM ${fTbl} ${fAlias}\n${rel.join_type||'LEFT'} JOIN ${tTbl} ${tAlias}\n  ON ${fAlias}.[${rel.from_column}] = ${tAlias}.[${rel.to_column}]${extraClauses}`;
 }
 
 window.saveRelDetail = async function(id) {
@@ -995,7 +1192,9 @@ window.saveRelDetail = async function(id) {
   rel.relationship_type = document.getElementById('rd-cardinality')?.value;
   rel.join_type         = document.getElementById('rd-join-type')?.value;
   rel.label             = document.getElementById('rd-label')?.value?.trim();
-  await api('POST', `${API_BASE}/relationships`, rel);
+  rel.join_conditions   = JSON.stringify(_readJoinConditions());
+  const payload = Object.assign({}, rel, { join_conditions: _readJoinConditions() });
+  await api('POST', `${API_BASE}/relationships`, payload);
   renderGraph();
   renderRelDetail(id);
   setStatus('Relationship saved ✓');
@@ -1097,8 +1296,27 @@ function populateEntitySelects() {
   });
 }
 
+window.addModalJoinCondition = function() {
+  const container = document.getElementById('rel-jc-container');
+  const div = document.createElement('div');
+  div.className = 'gd-form-row modal-jc-row';
+  div.innerHTML = `
+    <div><label class="gd-label">FK col (from)</label><input class="gd-input modal-jc-from" value=""></div>
+    <div><label class="gd-label">Ref col (to)</label><input class="gd-input modal-jc-to" value=""></div>
+    <button onclick="this.closest('.modal-jc-row').remove()" title="Remove" style="align-self:flex-end;padding:4px 8px;background:none;border:1px solid var(--border);border-radius:var(--radius-sm);cursor:pointer;color:var(--text-muted)">✕</button>`;
+  container.appendChild(div);
+};
+
+function _readModalJoinConditions() {
+  return Array.from(document.querySelectorAll('.modal-jc-row')).map(row => ({
+    from_col: row.querySelector('.modal-jc-from')?.value?.trim() || '',
+    to_col:   row.querySelector('.modal-jc-to')?.value?.trim()   || '',
+  })).filter(c => c.from_col && c.to_col);
+}
+
 window.openRelModal = function() {
   populateEntitySelects();
+  document.getElementById('rel-jc-container').innerHTML = '';
   document.getElementById('rel-modal').style.display = 'flex';
 };
 
@@ -1119,6 +1337,7 @@ function prefillRelModal(fromEntity, toEntity) {
 }
 
 window.saveRelFromModal = async function() {
+  const extraConditions = _readModalJoinConditions();
   const payload = {
     from_entity:       document.getElementById('rel-from-entity').value,
     to_entity:         document.getElementById('rel-to-entity').value,
@@ -1127,11 +1346,13 @@ window.saveRelFromModal = async function() {
     relationship_type: document.getElementById('rel-cardinality').value,
     join_type:         document.getElementById('rel-join-type').value,
     label:             document.getElementById('rel-label').value.trim(),
+    join_conditions:   extraConditions,
   };
   if (!payload.from_column || !payload.to_column) { alert('FK columns are required'); return; }
   const res = await api('POST', `${API_BASE}/relationships`, payload);
   const body = await res.json();
   payload.id = body.id;
+  payload.join_conditions = JSON.stringify(extraConditions);
   graph.relationships.push(payload);
   closeRelModal(); renderGraph(); updateRelList();
   setStatus('Relationship saved ✓');
@@ -1297,8 +1518,364 @@ document.addEventListener('keydown', ev => {
   }
 });
 
+// ════════════════════════════════════════════════════════════════════════════
+// SCHEMA FILTER (Phase 2)
+// ════════════════════════════════════════════════════════════════════════════
+let activeSchemaFilter = localStorage.getItem(`qb_schema_filter_${ACCOUNT_ID}`) || '';
+
+function _rebuildSchemaFilterDropdown() {
+  const schemas = [...new Set(graph.entities.map(e => e.schema_name || '').filter(Boolean))].sort();
+  const sel = document.getElementById('schema-filter');
+  const prev = sel.value;
+  sel.innerHTML = '<option value="">All schemas</option>' +
+    schemas.map(s => `<option value="${esc(s)}" ${s === prev ? 'selected' : ''}>${esc(s)}</option>`).join('');
+  // Hide the schema filter if there's only one (or zero) distinct schema
+  sel.parentElement.style.display = schemas.length < 2 ? 'none' : '';
+  sel.previousElementSibling.style.display = schemas.length < 2 ? 'none' : ''; // the label
+}
+
+window.applySchemaFilter = function() {
+  activeSchemaFilter = document.getElementById('schema-filter').value;
+  localStorage.setItem(`qb_schema_filter_${ACCOUNT_ID}`, activeSchemaFilter);
+  renderGraph();
+  updateRelList();
+};
+
+// Wrap the existing renderGraph to respect the filter
+const _origRenderGraph = renderGraph;
+renderGraph = function() {
+  _origRenderGraph();
+  if (!activeSchemaFilter) return;
+  // Dim nodes that don't belong to the active schema
+  document.querySelectorAll('.g-node').forEach(g => {
+    const ename = g.getAttribute('data-entity');
+    const ent   = graph.entities.find(e => e.entity_name === ename);
+    const hidden = ent && activeSchemaFilter && (ent.schema_name || '') !== activeSchemaFilter;
+    g.style.opacity  = hidden ? '0.15' : '';
+    g.style.pointerEvents = hidden ? 'none' : '';
+  });
+  document.querySelectorAll('.g-edge').forEach(g => {
+    const relId = parseInt(g.getAttribute('data-rel'));
+    const rel   = graph.relationships.find(r => r.id === relId);
+    if (!rel) return;
+    const fe = graph.entities.find(e => e.entity_name === rel.from_entity);
+    const te = graph.entities.find(e => e.entity_name === rel.to_entity);
+    const hidden = activeSchemaFilter && (
+      (fe && (fe.schema_name || '') !== activeSchemaFilter) ||
+      (te && (te.schema_name || '') !== activeSchemaFilter)
+    );
+    g.style.opacity = hidden ? '0.1' : '';
+    g.style.pointerEvents = hidden ? 'none' : '';
+  });
+};
+
+// ════════════════════════════════════════════════════════════════════════════
+// TABLE DROPDOWN + COLUMN SUGGESTIONS (Phase 3)
+// ════════════════════════════════════════════════════════════════════════════
+
+// Cache: fqn → [{name, type, nullable}]
+const _colCache = {};
+// All discovered tables from _schema.json
+let _schemaTables = [];
+
+async function loadSchemaTables() {
+  try {
+    const res = await fetch(`${API_BASE}/schema-tables`);
+    _schemaTables = await res.json();
+    // Populate entity modal table dropdown
+    _populateTableDropdown('m-table-name', '');
+  } catch(e) {
+    // schema not discovered yet — silently ignore
+  }
+}
+
+function _populateTableDropdown(selectId, currentFqn) {
+  const sel = document.getElementById(selectId);
+  if (!sel) return;
+  const grouped = {};
+  _schemaTables.forEach(t => {
+    const grp = t.schema_name || 'Default';
+    (grouped[grp] = grouped[grp] || []).push(t);
+  });
+  let html = '<option value="">— Select a table —</option>';
+  Object.keys(grouped).sort().forEach(grp => {
+    html += `<optgroup label="${esc(grp)}">`;
+    grouped[grp].forEach(t => {
+      const selected = t.fqn === currentFqn || t.table_name === currentFqn ? 'selected' : '';
+      html += `<option value="${esc(t.fqn)}" data-schema="${esc(t.schema_name)}" ${selected}>${esc(t.table_name)} (${t.column_count} cols)</option>`;
+    });
+    html += '</optgroup>';
+  });
+  sel.innerHTML = html;
+}
+
+async function _fetchColumns(fqn) {
+  if (_colCache[fqn]) return _colCache[fqn];
+  try {
+    const res = await fetch(`${API_BASE}/columns?fqn=${encodeURIComponent(fqn)}`);
+    const cols = await res.json();
+    _colCache[fqn] = cols;
+    return cols;
+  } catch(e) { return []; }
+}
+
+function _fillDatalist(datalistId, cols) {
+  const dl = document.getElementById(datalistId);
+  if (!dl) return;
+  dl.innerHTML = cols.map(c => `<option value="${esc(c.name)}" label="${esc(c.type)}">`).join('');
+}
+
+// Called when the table dropdown in the entity modal changes
+window.onEntityTableChange = async function(fqn) {
+  if (!fqn) return;
+  // Auto-fill schema
+  const opt = document.querySelector(`#m-table-name option[value="${CSS.escape(fqn)}"]`);
+  if (opt) {
+    document.getElementById('m-schema-name').value = opt.getAttribute('data-schema') || '';
+  }
+  // Auto-fill display name from table name if blank
+  const tableParts = fqn.split('.');
+  const bareName   = tableParts[tableParts.length - 1];
+  const dnInput    = document.getElementById('m-display-name');
+  if (dnInput && !dnInput.value) {
+    // Title-case: DIM_CUSTOMER → Customer
+    let dn = bareName;
+    for (const pfx of ['DIM_','FACT_','FCT_','BRIDGE_','BRG_','XREF_','MAP_','REL_','STG_','VW_','V_']) {
+      if (dn.toUpperCase().startsWith(pfx)) { dn = dn.slice(pfx.length); break; }
+    }
+    dnInput.value = dn.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+  }
+  // Fetch columns and populate datalist
+  const cols = await _fetchColumns(fqn);
+  _fillDatalist('m-pk-column-list', cols);
+  // Suggest PK: first col ending in _ID or named ID
+  const pkInput = document.getElementById('m-pk-column');
+  if (pkInput && !pkInput.value) {
+    const pk = cols.find(c => c.name.toUpperCase() === 'ID') ||
+               cols.find(c => c.name.toUpperCase().endsWith('_ID')) ||
+               cols.find(c => c.name.toUpperCase().endsWith('_KEY')) ||
+               cols[0];
+    if (pk) pkInput.value = pk.name;
+  }
+};
+
+// Called when from/to entity changes in relationship modal
+window.onRelEntityChange = async function(side) {
+  const entName = document.getElementById(`rel-${side}-entity`).value;
+  const ent     = graph.entities.find(e => e.entity_name === entName);
+  if (!ent) return;
+  // Find the FQN: prefer schema_name.table_name match in _schemaTables
+  let fqn = '';
+  const match = _schemaTables.find(
+    t => t.table_name.toUpperCase() === (ent.table_name || '').toUpperCase() &&
+         (t.schema_name || '').toUpperCase() === (ent.schema_name || '').toUpperCase()
+  );
+  if (match) fqn = match.fqn;
+  else if (ent.schema_name) fqn = `${ent.schema_name}.${ent.table_name}`;
+  else fqn = ent.table_name;
+
+  const cols = await _fetchColumns(fqn);
+  _fillDatalist(`rel-${side}-col-list`, cols);
+
+  // Auto-fill the column field if it's blank, using PK of the target entity
+  const colInput = document.getElementById(`rel-${side}-col`);
+  if (colInput && !colInput.value && ent.pk_column) {
+    colInput.value = ent.pk_column;
+  }
+};
+
+// ════════════════════════════════════════════════════════════════════════════
+// CARDINALITY BADGE IN SIDEBAR (Phase 4)
+// ════════════════════════════════════════════════════════════════════════════
+
+// Sidebar: group relationships by from→to pair; show join count + cardinality
+function updateRelList() {
+  const list = document.getElementById('rel-list');
+  if (!graph.relationships.length) {
+    list.innerHTML = '<div class="gs-empty" style="font-size:11px">No relationships yet.<br>Hover a node and drag from its port.</div>';
+    return;
+  }
+
+  const activeRels = activeSchemaFilter
+    ? graph.relationships.filter(r => {
+        const fe = graph.entities.find(e => e.entity_name === r.from_entity);
+        const te = graph.entities.find(e => e.entity_name === r.to_entity);
+        return (!fe || (fe.schema_name || '') === activeSchemaFilter) &&
+               (!te || (te.schema_name || '') === activeSchemaFilter);
+      })
+    : graph.relationships;
+
+  // Group by from→to pair — keep first rel's id for selectRel
+  const groups = new Map();
+  activeRels.forEach(r => {
+    const key = r.from_entity + '||' + r.to_entity;
+    if (!groups.has(key)) groups.set(key, { r, joins: [] });
+    groups.get(key).joins.push(r);
+  });
+
+  const cardLabel = { many_to_one: 'N:1', one_to_one: '1:1', one_to_many: '1:N' };
+
+  list.innerHTML = [...groups.values()].map(({ r, joins }) => {
+    const card  = cardLabel[r.relationship_type] || '';
+    const count = joins.length;
+    const joinColor = r.join_type === 'INNER' ? '#059669' : '#6366F1';
+    // Short display names — just the last part after underscore if very long
+    const fromShort = r.from_entity.length > 18 ? r.from_entity.slice(0,16) + '…' : r.from_entity;
+    const toShort   = r.to_entity.length   > 18 ? r.to_entity.slice(0,16)   + '…' : r.to_entity;
+    return `
+    <div class="gs-rel-item" id="sib-rel-${r.id}" onclick="selectRel(${r.id})"
+         title="${esc(r.from_entity)} → ${esc(r.to_entity)}${count>1?' ('+count+' joins)':''}">
+      <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;font-size:11px">
+        ${esc(fromShort)} <span style="color:var(--text-muted)">→</span> ${esc(toShort)}
+      </span>
+      ${count > 1 ? `<span style="font-size:9px;font-weight:800;background:var(--surface-2);border:1px solid var(--border);border-radius:3px;padding:1px 4px;color:var(--text-muted);flex-shrink:0">${count}</span>` : ''}
+      ${card ? `<span style="font-size:9px;font-weight:800;color:var(--text-muted);background:var(--surface-2);border:1px solid var(--border);border-radius:3px;padding:1px 4px;flex-shrink:0">${card}</span>` : ''}
+      <span style="flex-shrink:0;font-size:9px;font-weight:700;color:${joinColor}">${r.join_type}</span>
+    </div>`;
+  }).join('');
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// PATCH openEntityModal to populate table dropdown
+// ════════════════════════════════════════════════════════════════════════════
+const _origOpenEntityModal = window.openEntityModal;
+window.openEntityModal = function(entityName) {
+  _origOpenEntityModal(entityName);
+  const e = entityName ? graph.entities.find(x => x.entity_name === entityName) : null;
+  // Rebuild the table dropdown with current discovered tables
+  const currentFqn = e
+    ? (_schemaTables.find(t =>
+        t.table_name.toUpperCase() === (e.table_name || '').toUpperCase() &&
+        (t.schema_name || '').toUpperCase() === (e.schema_name || '').toUpperCase()
+      ) || {fqn: e.table_name || ''}).fqn
+    : '';
+  _populateTableDropdown('m-table-name', currentFqn);
+  if (currentFqn) {
+    document.getElementById('m-schema-name').value = e?.schema_name || '';
+    // Pre-load column suggestions for PK field
+    _fetchColumns(currentFqn).then(cols => _fillDatalist('m-pk-column-list', cols));
+  }
+};
+
+// PATCH saveEntityFromModal to read FQN and split to table/schema
+const _origSaveEntityFromModal = window.saveEntityFromModal;
+window.saveEntityFromModal = async function() {
+  const fqn = document.getElementById('m-table-name').value;
+  if (fqn) {
+    const tbl = _schemaTables.find(t => t.fqn === fqn);
+    if (tbl) {
+      // Ensure hidden schema field reflects dropdown selection
+      document.getElementById('m-schema-name').value = tbl.schema_name || '';
+      // Temporarily swap select → a hidden input so _origSaveEntityFromModal reads bare table_name
+      const sel = document.getElementById('m-table-name');
+      sel.setAttribute('data-fqn', fqn);
+      // Override: insert a shadow value if needed — orig function reads .value directly
+      // We set the select value to the bare table_name for the orig handler
+      const bare = tbl.table_name;
+      // We'll intercept in the payload construction instead via the orig handler reading this
+    }
+  }
+  await _origSaveEntityFromModal();
+};
+
+// ════════════════════════════════════════════════════════════════════════════
+// PATCH saveEntityFromModal properly — reconstruct with FQN awareness
+// ════════════════════════════════════════════════════════════════════════════
+// Override completely so we correctly split fqn → table_name + schema_name
+window.saveEntityFromModal = async function() {
+  const name = document.getElementById('m-entity-name').value.trim();
+  if (!name) { alert('Entity name is required'); return; }
+  const fqn  = document.getElementById('m-table-name').value;
+  const tbl  = _schemaTables.find(t => t.fqn === fqn);
+  const tableName  = tbl ? tbl.table_name  : fqn;
+  const schemaName = tbl ? tbl.schema_name : (document.getElementById('m-schema-name').value.trim());
+  const svg = document.getElementById('graph-svg');
+  const payload = {
+    entity_name:  name,
+    entity_type:  document.getElementById('m-entity-type').value,
+    table_name:   tableName,
+    schema_name:  schemaName,
+    pk_column:    document.getElementById('m-pk-column').value.trim(),
+    display_name: document.getElementById('m-display-name').value.trim(),
+    description:  document.getElementById('m-description').value.trim(),
+    color:        document.getElementById('m-color').value,
+    is_active:    document.getElementById('m-is-active').checked ? 1 : 0,
+    pos_x: svg.clientWidth/2 + (Math.random()-0.5)*200,
+    pos_y: svg.clientHeight/2 + (Math.random()-0.5)*120,
+  };
+  const existing = graph.entities.find(e => e.entity_name === name);
+  if (existing) { Object.assign(existing, payload); }
+  else { graph.entities.push(payload); }
+  await api('POST', `${API_BASE}/entities`, payload);
+  closeEntityModal(); renderGraph(); updateSidebar();
+  selectEntity(name);
+  setStatus('Entity saved ✓');
+  _rebuildSchemaFilterDropdown();
+};
+
+// ════════════════════════════════════════════════════════════════════════════
+// CLEAN DUPLICATES
+// ════════════════════════════════════════════════════════════════════════════
+window.deduplicateRelationships = async function() {
+  // Group all relationships by from→to pair
+  const groups = new Map();
+  graph.relationships.forEach(r => {
+    const key = r.from_entity + '||' + r.to_entity;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(r);
+  });
+
+  // For each pair with duplicates, pick the winner and delete the rest
+  const toDelete = [];
+  groups.forEach(rels => {
+    if (rels.length <= 1) return;
+    // Winner priority: confirmed status > highest confidence_score > highest id (most recent)
+    rels.sort((a, b) => {
+      if (a.status === 'confirmed' && b.status !== 'confirmed') return -1;
+      if (b.status === 'confirmed' && a.status !== 'confirmed') return  1;
+      const ca = a.confidence_score ?? 0, cb = b.confidence_score ?? 0;
+      if (cb !== ca) return cb - ca;
+      return (b.id ?? 0) - (a.id ?? 0);
+    });
+    // Keep rels[0], delete the rest
+    toDelete.push(...rels.slice(1));
+  });
+
+  if (!toDelete.length) {
+    setStatus('No duplicates found ✓');
+    return;
+  }
+
+  const btn = document.getElementById('dedup-btn');
+  btn.disabled = true;
+  btn.textContent = `Cleaning ${toDelete.length}…`;
+
+  let deleted = 0;
+  for (const r of toDelete) {
+    try {
+      await api('DELETE', `${API_BASE}/relationships/${r.id}`);
+      graph.relationships = graph.relationships.filter(x => x.id !== r.id);
+      deleted++;
+    } catch (e) {
+      // log but continue
+    }
+  }
+
+  btn.disabled = false;
+  btn.textContent = '✕ Clean duplicates';
+  renderGraph();
+  updateRelList();
+  setStatus(`Removed ${deleted} duplicate relationship${deleted !== 1 ? 's' : ''} ✓`);
+};
+
 // Init
+loadSchemaTables();
 renderGraph();
+updateRelList();   // replace server-rendered list with grouped JS view
+_rebuildSchemaFilterDropdown();
+if (activeSchemaFilter) {
+  document.getElementById('schema-filter').value = activeSchemaFilter;
+}
 if (graph.entities.length > 0) fitView();
 </script>
 {% endblock %}

@@ -501,6 +501,25 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
     _graph_ctx: dict = {}
     try:
         _full_graph = store.get_full_graph(account_id)
+        # When the user selected a specific schema, restrict the graph to
+        # entities that belong to that schema so the resolver never proposes
+        # JOINs to tables from a different schema (which validation would reject).
+        if schema_hint and _full_graph.get("entities"):
+            _sh = schema_hint.upper()
+            _filtered_entities = [
+                e for e in _full_graph["entities"]
+                if not e.get("schema_name") or e.get("schema_name", "").upper() == _sh
+            ]
+            _in_schema_names = {e["entity_name"] for e in _filtered_entities}
+            _full_graph = {
+                "entities": _filtered_entities,
+                "relationships": [
+                    r for r in _full_graph.get("relationships", [])
+                    if r["from_entity"] in _in_schema_names
+                    and r["to_entity"] in _in_schema_names
+                ],
+                "properties": _full_graph.get("properties", []),
+            }
         if _full_graph.get("entities"):
             _graph_ctx = _graph_resolve(
                 question=question,
@@ -510,8 +529,9 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
             )
             if _graph_ctx.get("enabled"):
                 log.info(
-                    "Graph resolved for %s: entities=%s anchor=%s",
+                    "Graph resolved for %s: entities=%s anchor=%s schema_filter=%s",
                     account_id, _graph_ctx.get("detected"), _graph_ctx.get("anchor"),
+                    schema_hint or "none",
                 )
     except Exception as _gex:
         log.debug("Graph resolution skipped: %s", _gex)

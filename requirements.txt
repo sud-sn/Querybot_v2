@@ -52,5 +52,6 @@ matplotlib>=3.9.0
 cryptography>=42.0.0
 python-dotenv>=1.0.0
 
-# NOTE: Synthetic data generation (core/synthetic.py) uses Python stdlib only.
-# No additional packages needed for that feature.
+# ── Data masking ───────────────────────────────────────────────────────────────
+faker>=25.0.0                             # core/masking.py — realistic fake PII values
+# Falls back to stdlib-only masking if not installed, so this is optional but recommended.

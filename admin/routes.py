@@ -55,6 +55,22 @@ from core.portal_notifications import notify_portal_semantic_feedback_changed
 
 log = logging.getLogger("querybot.admin")
 
+
+def _sync_all_log_exports_bg() -> None:
+    """Push logs to all log-export-enabled DB configs. Runs in a background thread."""
+    try:
+        from store.config_store import list_db_configs
+        for cfg in list_db_configs():
+            if is_log_export_enabled(cfg):
+                try:
+                    sync_external_logs(cfg)
+                except Exception as _exc:
+                    log.warning("Event-triggered log sync failed for db_config_id=%s: %s",
+                                cfg.get("id"), _exc)
+    except Exception as _exc:
+        log.warning("Event-triggered log sync (enumerate configs) failed: %s", _exc)
+
+
 router    = APIRouter(prefix="/admin")
 templates = Jinja2Templates(
     directory=str(Path(__file__).parent / "templates")
@@ -1485,6 +1501,74 @@ async def user_delete(request: Request, account_id: str, user_id: int):
 # Entity Graph — admin routes
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _auto_populate_entity_graph(account_id: str, schema_dir: str) -> tuple[int, int]:
+    """
+    Parse _schema.json and insert auto-detected entities/relationships with
+    status='suggested'. Only inserts rows that don't already exist — never
+    overwrites confirmed admin edits.
+
+    Returns (entities_added, relationships_added).
+    """
+    from core.schema import build_entity_graph_from_schema
+
+    graph_data = build_entity_graph_from_schema(schema_dir)
+    if not graph_data["entities"]:
+        return 0, 0
+
+    existing_entities = {e["entity_name"] for e in store.list_entities(account_id, active_only=False)}
+    existing_rels     = store.list_relationships(account_id, active_only=False)
+    existing_rel_keys = {
+        (r["from_entity"], r["to_entity"], r["from_column"].upper())
+        for r in existing_rels
+    }
+
+    ent_added = 0
+    for ent in graph_data["entities"]:
+        if ent["entity_name"] in existing_entities:
+            continue
+        store.save_entity(
+            account_id       = account_id,
+            entity_name      = ent["entity_name"],
+            table_name       = ent["table_name"],
+            schema_name      = ent.get("schema_name", ""),
+            pk_column        = ent.get("pk_column", ""),
+            display_name     = ent.get("display_name", ""),
+            entity_type      = ent.get("entity_type", "dimension"),
+            color            = ent.get("color", "#4F86C6"),
+            pos_x            = ent.get("pos_x", 120),
+            pos_y            = ent.get("pos_y", 120),
+            confidence_score = ent.get("confidence_score", 75),
+            status           = ent.get("status", "suggested"),
+        )
+        ent_added += 1
+
+    rel_added = 0
+    for rel in graph_data["relationships"]:
+        key = (rel["from_entity"], rel["to_entity"], rel["from_column"].upper())
+        if key in existing_rel_keys:
+            continue
+        # Both entities must be present (auto-added or pre-existing)
+        all_entities = {e["entity_name"] for e in store.list_entities(account_id, active_only=False)}
+        if rel["from_entity"] not in all_entities or rel["to_entity"] not in all_entities:
+            continue
+        store.save_relationship(
+            account_id        = account_id,
+            from_entity       = rel["from_entity"],
+            to_entity         = rel["to_entity"],
+            from_column       = rel["from_column"],
+            to_column         = rel["to_column"],
+            relationship_type = rel.get("relationship_type", "many_to_one"),
+            join_type         = rel.get("join_type", "INNER"),
+            label             = "",
+            confidence_score  = rel.get("confidence_score", 70),
+            status            = rel.get("status", "suggested"),
+        )
+        existing_rel_keys.add(key)
+        rel_added += 1
+
+    return ent_added, rel_added
+
+
 @router.get("/clients/{account_id}/graph", response_class=HTMLResponse)
 async def graph_page(request: Request, account_id: str):
     """Interactive entity graph builder page."""
@@ -1638,6 +1722,12 @@ async def graph_api_rel_upsert(request: Request, account_id: str):
     if not _is_auth(request):
         raise HTTPException(status_code=401)
     data = await request.json()
+    raw_jc = data.get("join_conditions") or []
+    join_conditions = [
+        {"from_col": str(c.get("from_col","")).strip(), "to_col": str(c.get("to_col","")).strip()}
+        for c in raw_jc if isinstance(c, dict)
+        if str(c.get("from_col","")).strip() and str(c.get("to_col","")).strip()
+    ]
     rid = store.save_relationship(
         account_id        = account_id,
         from_entity       = data.get("from_entity", "").strip(),
@@ -1647,6 +1737,7 @@ async def graph_api_rel_upsert(request: Request, account_id: str):
         relationship_type = data.get("relationship_type", "many_to_one"),
         join_type         = data.get("join_type", "LEFT"),
         label             = data.get("label", "").strip(),
+        join_conditions   = join_conditions,
     )
     return JSONResponse({"status": "ok", "id": rid})
 
@@ -1688,6 +1779,97 @@ async def graph_api_prop_save(request: Request, account_id: str):
     return JSONResponse({"status": "ok"})
 
 
+@router.get("/clients/{account_id}/graph/api/schema-tables")
+async def graph_api_schema_tables(request: Request, account_id: str):
+    """
+    Return all discovered tables for this client, grouped by schema.
+    Used to populate the table dropdown in the entity and relationship modals.
+    Response: [{"fqn": "DB.SCHEMA.TABLE", "schema_name": "dbo",
+                "table_name": "DIM_CUSTOMER", "column_count": 12}]
+    """
+    if not _is_auth(request):
+        raise HTTPException(status_code=401)
+
+    client = store.get_client(account_id)
+    if not client:
+        raise HTTPException(status_code=404)
+
+    state      = store.get_client_state(account_id)
+    schema_dir = (state or {}).get("schema_dir") or ""
+
+    from pathlib import Path as _Path
+    import json as _json
+
+    schema_path = _Path(schema_dir) / "_schema.json" if schema_dir else None
+    if not schema_path or not schema_path.exists():
+        return JSONResponse([])
+
+    master = _json.loads(schema_path.read_text(encoding="utf-8"))
+    tables = []
+    for fqn, info in master.items():
+        parts       = fqn.split(".")
+        table_name  = parts[-1]
+        schema_name = parts[-2] if len(parts) >= 2 else ""
+        tables.append({
+            "fqn":          fqn,
+            "schema_name":  schema_name,
+            "table_name":   table_name,
+            "column_count": len(info.get("columns", [])),
+        })
+
+    tables.sort(key=lambda t: (t["schema_name"], t["table_name"]))
+    return JSONResponse(tables)
+
+
+@router.get("/clients/{account_id}/graph/api/columns")
+async def graph_api_columns(request: Request, account_id: str):
+    """
+    Return column list for a specific table FQN.
+    Query param: fqn=DB.SCHEMA.TABLE
+    Response: [{"name": "CustomerID", "type": "int", "nullable": false}]
+    """
+    if not _is_auth(request):
+        raise HTTPException(status_code=401)
+
+    fqn = request.query_params.get("fqn", "").strip()
+    if not fqn:
+        return JSONResponse([])
+
+    client = store.get_client(account_id)
+    if not client:
+        raise HTTPException(status_code=404)
+
+    state      = store.get_client_state(account_id)
+    schema_dir = (state or {}).get("schema_dir") or ""
+
+    from pathlib import Path as _Path
+    import json as _json
+
+    schema_path = _Path(schema_dir) / "_schema.json" if schema_dir else None
+    if not schema_path or not schema_path.exists():
+        return JSONResponse([])
+
+    master = _json.loads(schema_path.read_text(encoding="utf-8"))
+    # Exact match first, then case-insensitive fallback
+    info = master.get(fqn)
+    if info is None:
+        fqn_upper = fqn.upper()
+        for k, v in master.items():
+            if k.upper() == fqn_upper:
+                info = v
+                break
+    if info is None:
+        return JSONResponse([])
+
+    cols = [
+        {
+            "name":     c.get("name", ""),
+            "type":     c.get("type", ""),
+            "nullable": c.get("nullable", True),
+        }
+        for c in info.get("columns", [])
+    ]
+    return JSONResponse(cols)
 
 
 @router.post("/clients/{account_id}/graph/api/suggest")
@@ -2118,6 +2300,109 @@ async def metric_delete(request: Request, account_id: str, metric_id: int):
         return RedirectResponse("/admin/login", status_code=303)
     store.delete_metric(metric_id)
     return RedirectResponse(f"/admin/clients/{account_id}/metrics", status_code=303)
+
+
+@router.post("/clients/{account_id}/metrics/test-formula")
+async def metrics_test_formula(request: Request, account_id: str):
+    """Run a metric formula as a live SELECT against the account's DB and return the result."""
+    if not _is_auth(request):
+        return JSONResponse({"status": "error", "detail": "Not authenticated"}, status_code=401)
+
+    body = await request.json()
+    formula = (body.get("formula") or "").strip()
+    if not formula:
+        return JSONResponse({"status": "error", "detail": "Formula is empty"})
+
+    client = store.get_client(account_id)
+    if not client:
+        return JSONResponse({"status": "error", "detail": "Account not found"}, status_code=404)
+
+    db_cfg_id = client.get("db_config_id")
+    if not db_cfg_id:
+        return JSONResponse({"status": "error", "detail": "No database configured for this account"})
+
+    raw_cfg = store.get_db_config(db_cfg_id)
+    if not raw_cfg:
+        return JSONResponse({"status": "error", "detail": "Database config not found"})
+
+    db_type = raw_cfg.get("db_type", "azure_sql")
+    creds   = raw_cfg.get("credentials", {})
+
+    # Find the first available table from the schema to anchor the query
+    import json as _json
+    from pathlib import Path as _Path
+
+    state      = store.get_client_state(account_id)
+    schema_dir = (state or {}).get("schema_dir") or ""
+    schema_path = _Path(schema_dir) / "_schema.json" if schema_dir else None
+
+    first_table_sql = None
+    if schema_path and schema_path.exists():
+        master = _json.loads(schema_path.read_text(encoding="utf-8"))
+        for fqn in master:
+            parts = fqn.split(".")
+            if db_type == "azure_sql" and len(parts) >= 2:
+                first_table_sql = f"[{parts[-2]}].[{parts[-1]}]"
+            elif db_type == "snowflake" and len(parts) >= 3:
+                first_table_sql = f'"{parts[0]}"."{parts[1]}"."{parts[2]}"'
+            elif db_type == "oracle" and len(parts) >= 2:
+                first_table_sql = f'"{parts[-2]}"."{parts[-1]}"'
+            if first_table_sql:
+                break
+
+    if not first_table_sql:
+        return JSONResponse({"status": "error", "detail": "No tables found in schema — run discovery first"})
+
+    if db_type == "azure_sql":
+        probe = f"SELECT TOP 1 ({formula}) AS _result FROM {first_table_sql} WITH (NOLOCK)"
+    elif db_type == "snowflake":
+        probe = f"SELECT ({formula}) AS _result FROM {first_table_sql} LIMIT 1"
+    else:  # oracle
+        probe = f"SELECT ({formula}) AS _result FROM {first_table_sql} WHERE ROWNUM <= 1"
+
+    try:
+        from core.schema import _az_connect, _sf_connect, _ora_connect
+
+        def _run():
+            if db_type == "azure_sql":
+                conn = _az_connect(creds)
+                try:
+                    cur = conn.cursor()
+                    cur.execute(probe)
+                    row = cur.fetchone()
+                    return row[0] if row else None
+                finally:
+                    conn.close()
+            elif db_type == "snowflake":
+                conn = _sf_connect(creds)
+                try:
+                    cur = conn.cursor()
+                    cur.execute(probe)
+                    row = cur.fetchone()
+                    return row[0] if row else None
+                finally:
+                    conn.close()
+            else:
+                conn = _ora_connect(creds)
+                try:
+                    cur = conn.cursor()
+                    cur.execute(probe)
+                    row = cur.fetchone()
+                    return row[0] if row else None
+                finally:
+                    conn.close()
+
+        loop   = asyncio.get_running_loop()
+        result = await asyncio.wait_for(loop.run_in_executor(None, _run), timeout=20)
+        # Coerce non-serialisable types (Decimal, date, etc.) to string
+        if result is not None and not isinstance(result, (int, float, str, bool)):
+            result = str(result)
+        return JSONResponse({"status": "ok", "result": result})
+
+    except asyncio.TimeoutError:
+        return JSONResponse({"status": "error", "detail": "Query timed out (20 s)"})
+    except Exception as exc:
+        return JSONResponse({"status": "error", "detail": str(exc)})
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2579,6 +2864,11 @@ async def admin_save_kb_tables(
     try:
         body = await request.json()
         tables = _parse_selected_schema_tables(body.get("tables") or [])
+        # masking_config: { "DB.SCHEMA.TABLE": {"mode": "none"|"all"|"selective"|"auto",
+        #                                        "masked_fields": ["ColA", ...]} }
+        raw_mc = body.get("masking_config") or {}
+        masking_config = {k.upper(): v for k, v in raw_mc.items()
+                          if isinstance(v, dict) and v.get("mode") in ("none","all","selective","auto")}
     except Exception:
         return JSONResponse({"status": "error", "message": "Invalid JSON body"}, status_code=400)
 
@@ -2587,16 +2877,22 @@ async def admin_save_kb_tables(
 
     # Merge into existing state_data — don't overwrite schema_dir / kb_dir etc.
     state_data = json.loads(client.get("state_data") or "{}")
-    state_data["kb_tables"] = tables
+    state_data["kb_tables"]      = tables
+    state_data["masking_config"] = masking_config
+    # Remove old synthetic_flags key if present from a previous install
+    state_data.pop("synthetic_flags", None)
     store.update_client_state(
         account_id,
         client.get("state") or "PENDING",
         state_data,
     )
 
-    log.info("KB tables saved for %s: %d tables — %s",
-             account_id, len(tables), ", ".join(tables[:8]) + ("…" if len(tables) > 8 else ""))
-    return JSONResponse({"status": "ok", "count": len(tables), "tables": tables})
+    mask_count = sum(1 for v in masking_config.values() if v.get("mode") != "none")
+    log.info("KB tables saved for %s: %d tables, %d with masking — %s",
+             account_id, len(tables), mask_count,
+             ", ".join(tables[:8]) + ("…" if len(tables) > 8 else ""))
+    return JSONResponse({"status": "ok", "count": len(tables), "tables": tables,
+                         "masking_config": masking_config})
 
 
 @router.get("/clients/{account_id}/kb-tables")
@@ -2609,13 +2905,90 @@ async def admin_get_kb_tables(request: Request, account_id: str):
         return JSONResponse({"status": "error", "message": "Client not found"}, status_code=404)
     state_data = json.loads(client.get("state_data") or "{}")
     tables = _parse_selected_schema_tables(state_data.get("kb_tables"))
+    masking_config = state_data.get("masking_config") or {}
     source = "client" if tables else "none"
     if not tables and client.get("db_config_id"):
         raw = get_db_config(client["db_config_id"])
         if raw:
             tables = _parse_selected_schema_tables(raw["credentials"].get("selected_schema_tables"))
             source = "database" if tables else "none"
-    return JSONResponse({"status": "ok", "tables": tables, "count": len(tables), "source": source})
+    return JSONResponse({"status": "ok", "tables": tables, "count": len(tables),
+                         "source": source, "masking_config": masking_config})
+
+
+@router.post("/clients/{account_id}/kb-tables/masking")
+async def admin_save_masking_only(request: Request, account_id: str):
+    """Save only the masking_config without requiring table re-selection."""
+    if not _is_auth(request):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    client = store.get_client(account_id)
+    if not client:
+        return JSONResponse({"status": "error", "message": "Client not found"}, status_code=404)
+    body = await request.json()
+    raw_mc = body.get("masking_config") or {}
+    masking_config = {
+        k.upper(): v for k, v in raw_mc.items()
+        if isinstance(v, dict) and v.get("mode") in ("none", "all", "selective", "auto")
+    }
+    state_data = json.loads(client.get("state_data") or "{}")
+    state_data["masking_config"] = masking_config
+    store.save_client_state(account_id, state_data)
+    return JSONResponse({"status": "ok", "count": len(masking_config)})
+
+
+@router.get("/clients/{account_id}/setup/column-sensitivity")
+async def admin_column_sensitivity(request: Request, account_id: str, fqn: str = ""):
+    """
+    Return columns for a table plus auto-detected PII fields.
+
+    Query param: fqn — fully-qualified table name (DB.SCHEMA.TABLE, upper-cased).
+    Reads from _schema.json written by discovery; no live DB call.
+    Response: {status, columns:[{name,type}], auto_masked:[colname,...]}
+    """
+    if not _is_auth(request):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    if not fqn:
+        raise HTTPException(status_code=400, detail="fqn query param required")
+
+    client = store.get_client(account_id)
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+
+    schema_dir = Path("clients") / account_id / "schema"
+    schema_path = schema_dir / "_schema.json"
+    if not schema_path.exists():
+        return JSONResponse({"status": "not_discovered", "columns": [], "auto_masked": []})
+
+    try:
+        schema_data = json.loads(schema_path.read_text())
+    except Exception as exc:
+        log.warning("column-sensitivity: failed to read _schema.json for %s: %s", account_id, exc)
+        return JSONResponse({"status": "error", "columns": [], "auto_masked": []})
+
+    # Schema keys are stored as DB.SCHEMA.TABLE (upper); match case-insensitively
+    fqn_upper = fqn.upper()
+    table_meta = None
+    for key, meta in schema_data.items():
+        if key.upper() == fqn_upper:
+            table_meta = meta
+            break
+
+    if table_meta is None:
+        return JSONResponse({"status": "not_found", "columns": [], "auto_masked": []})
+
+    columns = table_meta.get("columns") or []
+    # Auto-detect PII from column names using the masking engine
+    try:
+        from core.masking import detect_sensitive_columns
+        auto_masked = list(detect_sensitive_columns(columns).keys())
+    except Exception:
+        auto_masked = []
+
+    return JSONResponse({
+        "status": "ok",
+        "columns": columns,
+        "auto_masked": auto_masked,
+    })
 
 
 @router.post("/clients/{account_id}/setup/discover")
@@ -2672,7 +3045,10 @@ async def admin_discover_schema(
                             f.unlink()
                         except Exception:
                             pass
-            count = discover_and_write(creds, db_type, schema_dir, allowed_tables=allowed_set)
+            _masking_config = state_data_existing.get("masking_config") or None
+            count = discover_and_write(creds, db_type, schema_dir,
+                                       allowed_tables=allowed_set,
+                                       masking_config=_masking_config)
             next_state = dict(state_data_existing)
             next_state["schema_dir"] = schema_dir
             if kb_tables_selected:
@@ -2683,41 +3059,64 @@ async def admin_discover_schema(
                          count, len(allowed_set), account_id)
             else:
                 log.info("Admin schema discovery: %d tables for %s (all tables)", count, account_id)
-            # ── Egress log ────────────────────────────────────────────────────
-            # Read the schema.json written by discover_and_write to get
-            # per-table metadata and determine sample_mode without touching
-            # schema.py internals.
+            # ── Egress log (discovery) ───────────────────────────────────────
+            # schema.json now carries fields_sent, row_count_sent, synthetic_used,
+            # synthetic_override — written by _discover_* functions.
             try:
                 import json as _json
                 from pathlib import Path as _Path
-                from core.synthetic import should_use_synthetic as _sus
                 _schema_path = _Path(schema_dir) / "_schema.json"
                 if _schema_path.exists():
                     _schema = _json.loads(_schema_path.read_text())
                     for _tkey, _tmeta in _schema.items():
-                        # table key format: DB.SCHEMA.TABLE or SCHEMA.TABLE or TABLE
-                        _tparts     = _tkey.split(".")
-                        _tname      = _tparts[-1]
-                        _tschema    = _tparts[-2] if len(_tparts) >= 2 else ""
-                        _tdb        = _tparts[-3] if len(_tparts) >= 3 else ""
-                        _col_count  = len(_tmeta.get("columns") or [])
-                        # Discovery writes schema-only; sample rows happen in KB build
-                        _mode = "none"
+                        _tparts    = _tkey.split(".")
+                        _tname     = _tparts[-1]
+                        _tschema   = _tparts[-2] if len(_tparts) >= 2 else ""
+                        _tdb       = _tparts[-3] if len(_tparts) >= 3 else ""
+                        _col_count = len(_tmeta.get("columns") or [])
+                        # Resolve sample_mode from what was actually written
+                        _syn_used     = _tmeta.get("synthetic_used", False)
+                        _row_ct       = _tmeta.get("row_count_sent", 0)
+                        _mf           = _tmeta.get("masked_fields") or []
+                        _mk_mode      = _tmeta.get("mask_mode", "auto")
+                        if _syn_used:
+                            _smode = "synthetic"
+                        elif _mf:
+                            _smode = "masked"
+                        elif _row_ct > 0:
+                            _smode = "real"
+                        else:
+                            _smode = "none"
                         store.log_kb_egress(
                             account_id=account_id,
                             operation="discovery",
                             db_type=db_type,
                             table_name=_tname,
-                            sample_mode=_mode,
+                            sample_mode=_smode,
                             database_name=_tdb,
                             schema_name=_tschema,
                             column_count=_col_count,
                             distinct_col_count=0,
                             triggered_by="admin",
+                            fields_sent=_tmeta.get("fields_sent") or [],
+                            row_count_sent=_row_ct,
+                            masked_fields=_mf,
+                            mask_mode=_mk_mode,
                         )
             except Exception as _elog_exc:
                 log.warning("KB egress log (discovery) write failed for %s: %s",
                             account_id, _elog_exc)
+            # ── Entity graph auto-populate ─────────────────────────────────
+            try:
+                _ent, _rel = _auto_populate_entity_graph(account_id, schema_dir)
+                log.info(
+                    "Entity graph auto-populated for %s: %d entities, %d relationships (suggested)",
+                    account_id, _ent, _rel,
+                )
+            except Exception as _gex:
+                log.warning("Entity graph auto-populate failed for %s: %s", account_id, _gex)
+            import threading as _threading
+            _threading.Thread(target=_sync_all_log_exports_bg, daemon=True).start()
         except Exception as e:
             log.error("Admin schema discovery failed for %s: %s", account_id, e)
 
@@ -2857,37 +3256,46 @@ async def admin_build_kb(
                 )
 
             # ── Egress log (KB build) ─────────────────────────────────────────
-            # Log one row per table to record that GPT-4o was called with
-            # that table's schema (including sample rows where applicable).
-            # sample_mode is determined by should_use_synthetic so the log
-            # faithfully records whether real or synthetic data reached the LLM.
+            # Read audit fields written by _discover_* into _schema.json.
+            # This faithfully records what was actually sent — no re-evaluation.
             try:
                 import json as _json
                 from pathlib import Path as _Path
-                from core.synthetic import should_use_synthetic as _sus
                 _schema_path = _Path(schema_dir) / "_schema.json"
                 if _schema_path.exists():
                     _schema = _json.loads(_schema_path.read_text())
                     for _tkey, _tmeta in _schema.items():
-                        _tparts     = _tkey.split(".")
-                        _tname      = _tparts[-1]
-                        _tschema    = _tparts[-2] if len(_tparts) >= 2 else ""
-                        _tdb        = _tparts[-3] if len(_tparts) >= 3 else ""
-                        _col_count  = len(_tmeta.get("columns") or [])
-                        # sample_mode reflects what was actually sent to the LLM
-                        _mode = "synthetic" if _sus(_tname) else "real"
+                        _tparts    = _tkey.split(".")
+                        _tname     = _tparts[-1]
+                        _tschema   = _tparts[-2] if len(_tparts) >= 2 else ""
+                        _tdb       = _tparts[-3] if len(_tparts) >= 3 else ""
+                        _col_count = len(_tmeta.get("columns") or [])
+                        _syn_used  = _tmeta.get("synthetic_used", False)
+                        _mf        = _tmeta.get("masked_fields") or []
+                        _mk_mode   = _tmeta.get("mask_mode", "auto")
+                        if _syn_used:
+                            _smode = "synthetic"
+                        elif _mf:
+                            _smode = "masked"
+                        elif _tmeta.get("row_count_sent", 0) > 0:
+                            _smode = "real"
+                        else:
+                            _smode = "none"
                         store.log_kb_egress(
                             account_id=account_id,
                             operation="kb_build",
                             db_type=db_type,
                             table_name=_tname,
-                            sample_mode=_mode,
+                            sample_mode=_smode,
                             database_name=_tdb,
                             schema_name=_tschema,
                             column_count=_col_count,
-                            distinct_col_count=0,   # distinct values are in KB but
-                                                     # count not tracked per-table here
+                            distinct_col_count=0,
                             triggered_by="admin",
+                            fields_sent=_tmeta.get("fields_sent") or [],
+                            row_count_sent=_tmeta.get("row_count_sent", 0),
+                            masked_fields=_mf,
+                            mask_mode=_mk_mode,
                         )
             except Exception as _elog_exc:
                 log.warning("KB egress log (kb_build) write failed for %s: %s",
@@ -2975,6 +3383,8 @@ async def admin_build_kb(
             )
 
             log.info("Admin KB build complete: %d tables for %s", count, account_id)
+            import threading as _threading
+            _threading.Thread(target=_sync_all_log_exports_bg, daemon=True).start()
         except Exception as e:
             log.error("Admin KB build failed for %s: %s", account_id, e)
             failed_state = dict(state_data)

@@ -35,6 +35,11 @@
   color:var(--blue);border-radius:5px;padding:3px 9px;font-size:12px;font-weight:800;cursor:pointer;
   font-family:Consolas,monospace;line-height:1;transition:all .15s}
 .fn-helper-btn:hover{background:var(--blue);color:#fff}
+.formula-test-btn{background:var(--green-light,#f0fff4);border:1px solid color-mix(in srgb,var(--green,#38a169) 25%,transparent);
+  color:var(--green,#38a169);border-radius:5px;padding:3px 9px;font-size:12px;font-weight:800;cursor:pointer;
+  font-family:Consolas,monospace;line-height:1;transition:all .15s}
+.formula-test-btn:hover{background:var(--green,#38a169);color:#fff}
+.formula-test-btn:disabled{opacity:.5;cursor:default}
 /* ── Function helper popover ─────────────────────────────────────────── */
 #fn-popover{position:fixed;top:0;right:0;width:340px;height:100vh;overflow-y:auto;
   background:var(--surface);border-left:1px solid var(--border);box-shadow:-4px 0 24px rgba(0,0,0,.12);
@@ -165,6 +170,7 @@
             <div class="formula-label-row">
               <label class="formula-label">Approved formula *</label>
               <button type="button" class="fn-helper-btn" onclick="openFnHelper(this)">ƒ Functions</button>
+              <button type="button" class="formula-test-btn" onclick="testFormula(this)">▶ Test</button>
             </div>
             <textarea name="sql_template" rows="4" required class="formula-editor"
               placeholder="SUM(NetProfit) * 100.0 / NULLIF(SUM(Revenue), 0)"></textarea>
@@ -305,6 +311,7 @@ SUM(GrossMargin) + SUM(Rebates) - SUM(AllocatedCosts)
           <div class="formula-label-row">
             <label class="formula-label">Approved formula / SQL template *</label>
             <button type="button" class="fn-helper-btn" onclick="openFnHelper(this)">ƒ Functions</button>
+            <button type="button" class="formula-test-btn" onclick="testFormula(this)">▶ Test</button>
           </div>
           <textarea name="sql_template" rows="3" required class="formula-editor">{{ m.sql_template }}</textarea>
         </div>
@@ -668,6 +675,33 @@ function updateFormulaHints(editor){
     if(/[^|]\+[^0-9]/.test(val) && /[A-Za-z]/.test(val) && DB === "oracle"){
       notes.push("ℹ Oracle uses || for string concatenation, not +. Use: col1 || ' ' || col2");
     }
+    // Unknown column check — only when schema is loaded
+    if(_allColumns.length){
+      var _knownCols = new Set(_allColumns.map(function(c){ return c.column.toLowerCase(); }));
+      var _knownQual = new Set(_allColumns.map(function(c){ return (c.table+"."+c.column).toLowerCase(); }));
+      var _sqlKw = new Set(["SUM","AVG","COUNT","MIN","MAX","NULLIF","ISNULL","COALESCE","CAST","AS",
+        "FLOAT","INT","INTEGER","BIGINT","VARCHAR","NVARCHAR","DECIMAL","NUMERIC","BY","OVER",
+        "PARTITION","ORDER","CASE","WHEN","THEN","ELSE","END","AND","OR","NOT","IN","IS","NULL",
+        "DISTINCT","PERCENTILE_CONT","WITHIN","GROUP","MEDIAN","NVL","ROUND","FLOOR","CEIL",
+        "CEILING","ABS","POWER","SQRT","MOD","LEN","LENGTH","TRIM","UPPER","LOWER","REPLACE",
+        "SUBSTRING","DATEADD","DATEDIFF","GETDATE","CURRENT_DATE","YEAR","MONTH","DAY","IIF",
+        "SIGN","TOP","SELECT","FROM","WHERE","HAVING","TRY_CAST","CONVERT","FORMAT",
+        "STRING_AGG","LISTAGG","CONCAT","ILIKE","LIKE"]);
+      var _tokens = val.match(/[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*/g) || [];
+      var _unknown = _tokens.filter(function(tok){
+        if(_sqlKw.has(tok.toUpperCase())) return false;
+        if(/^\d/.test(tok)) return false;
+        if(tok.includes(".")) return !_knownQual.has(tok.toLowerCase());
+        return !_knownCols.has(tok.toLowerCase());
+      });
+      var _uniq = _unknown.filter(function(v,i,a){ return a.indexOf(v)===i; });
+      if(_uniq.length){
+        notes.push("⚠ Unknown identifier(s): "+_uniq.map(function(t){
+          return "<code style='font-family:Consolas,monospace'>"+t+"</code>";
+        }).join(", ")+". Verify spelling or pick from the field browser.");
+        state = state === "danger" ? "danger" : "warn";
+      }
+    }
     // Looks good
     if(notes.length === 0){
       notes.push("✓ Formula looks valid. Run a test query after saving to confirm results.");
@@ -718,7 +752,8 @@ function _displayLabel(c){
 function _currentToken(editor){
   var pos  = editor.selectionStart || 0;
   var text = editor.value.slice(0, pos);
-  var m    = text.match(/[A-Za-z_][A-Za-z0-9_]*$/);
+  // Match TABLE.COLUMN or bare COLUMN
+  var m = text.match(/[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?$/);
   return m ? m[0] : "";
 }
 
@@ -726,17 +761,28 @@ function _showSuggestions(editor, token){
   var el = document.getElementById("col-suggest");
   if(!_allColumns.length || token.length < 2){ if(el) el.style.display="none"; return; }
   var lc = token.toLowerCase();
-  var matches = _allColumns.filter(function(c){
-    return c.column.toLowerCase().startsWith(lc) || c.column.toLowerCase().includes(lc);
-  }).slice(0, 8);
+  var matches;
+  if(lc.includes(".")){
+    // TABLE.COL pattern — filter columns belonging to that table prefix
+    var dotParts = lc.split(".");
+    var tblPfx = dotParts[0], colPfx = dotParts[1] || "";
+    matches = _allColumns.filter(function(c){
+      return c.table.toLowerCase() === tblPfx && c.column.toLowerCase().startsWith(colPfx);
+    }).slice(0, 8);
+  } else {
+    matches = _allColumns.filter(function(c){
+      return c.column.toLowerCase().startsWith(lc) || c.column.toLowerCase().includes(lc);
+    }).slice(0, 8);
+  }
   if(!matches.length){ if(el) el.style.display="none"; return; }
   _suggestTarget = editor;
   _suggestIdx = -1;
   el.innerHTML = matches.map(function(c, i){
     var label = _displayLabel(c);
-    return '<div class="col-suggest-item" data-col="'+c.column+'" data-idx="'+i+'">'
+    var isDup = _dupCols.has(c.column) ? "1" : "0";
+    return '<div class="col-suggest-item" data-col="'+c.column+'" data-table="'+c.table+'" data-dup="'+isDup+'" data-idx="'+i+'">'
       +'<span class="col-suggest-col">'+label+'</span>'
-      +'<span class="col-suggest-table">'+(_dupCols.has(c.column) ? "" : c.table)+'</span>'
+      +'<span class="col-suggest-table">'+(isDup==="1" ? "" : c.table)+'</span>'
       +'<span class="col-suggest-type">'+c.type+'</span></div>';
   }).join("");
   var rect = editor.getBoundingClientRect();
@@ -752,13 +798,15 @@ function _hideSuggestions(){
   _suggestIdx = -1; _suggestTarget = null;
 }
 
-function _insertSuggestion(bareColName){
-  // Always insert bare column name regardless of display label
+function _insertSuggestion(bareColName, tableName, isDup){
+  // Insert TABLE.COLUMN for ambiguous (duplicate) columns, bare name otherwise
+  var insertName = (isDup && tableName) ? tableName + "." + bareColName : bareColName;
   var editor = _suggestTarget || _activeEditor;
   if(!editor) return;
   var pos     = editor.selectionStart || 0;
   var before  = editor.value.slice(0, pos);
-  var replaced = before.replace(/[A-Za-z_][A-Za-z0-9_]*$/, bareColName);
+  // Replace TABLE.COLUMN or bare COLUMN token at cursor
+  var replaced = before.replace(/[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?$/, insertName);
   editor.value = replaced + editor.value.slice(pos);
   var next = replaced.length;
   editor.focus(); editor.setSelectionRange(next, next);
@@ -774,7 +822,12 @@ document.addEventListener("keydown", function(e){
   if(e.key === "ArrowDown"){ e.preventDefault(); _suggestIdx = Math.min(_suggestIdx+1, items.length-1); }
   else if(e.key === "ArrowUp"){ e.preventDefault(); _suggestIdx = Math.max(_suggestIdx-1, 0); }
   else if(e.key === "Enter" || e.key === "Tab"){
-    if(_suggestIdx >= 0){ e.preventDefault(); _insertSuggestion(items[_suggestIdx].dataset.col); return; }
+    if(_suggestIdx >= 0){
+      var sel = items[_suggestIdx];
+      e.preventDefault();
+      _insertSuggestion(sel.dataset.col, sel.dataset.table, sel.dataset.dup === "1");
+      return;
+    }
     _hideSuggestions();
   }
   else if(e.key === "Escape"){ _hideSuggestions(); return; }
@@ -784,7 +837,7 @@ document.addEventListener("keydown", function(e){
 document.addEventListener("click", function(e){
   // Column suggestion dropdown click
   var item = e.target.closest(".col-suggest-item");
-  if(item){ _insertSuggestion(item.dataset.col); return; }
+  if(item){ _insertSuggestion(item.dataset.col, item.dataset.table, item.dataset.dup === "1"); return; }
   if(!e.target.closest("#col-suggest")) _hideSuggestions();
   // Tag input suggestion click
   var tagItem = e.target.closest(".col-suggest-item[data-tag]");
@@ -817,6 +870,42 @@ function _insertTagValue(input, colName){
   parts[parts.length-1] = colName;
   input.value = parts.join(", ")+", ";
   input.focus(); _hideSuggestions();
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// FORMULA TEST RUNNER
+// ══════════════════════════════════════════════════════════════════════
+async function testFormula(btn){
+  var form   = btn.closest(".metric-form");
+  var editor = form ? form.querySelector(".formula-editor") : null;
+  if(!editor || !editor.value.trim()){ alert("Write a formula first."); return; }
+  var panel  = form ? form.querySelector(".formula-status") : null;
+  var origText = btn.textContent;
+  btn.disabled = true; btn.textContent = "…";
+  try {
+    var m = location.pathname.match(/\/clients\/([^/]+)\//);
+    if(!m) throw new Error("Cannot determine account from URL");
+    var resp = await fetch("/admin/clients/"+m[1]+"/metrics/test-formula", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ formula: editor.value.trim() })
+    });
+    var data = await resp.json();
+    if(data.status === "ok"){
+      var resultLine = data.result !== undefined && data.result !== null
+        ? "<div style='font-family:Consolas,monospace;margin-top:4px;font-size:11px'>Result: "
+          + JSON.stringify(data.result) + "</div>"
+        : "";
+      if(panel) setStatus(panel, "good",
+        "<div>✓ Test passed — formula executed against the database.</div>" + resultLine);
+    } else {
+      if(panel) setStatus(panel, "danger", "<div>✗ Test failed: " + (data.detail||"unknown error") + "</div>");
+    }
+  } catch(err){
+    if(panel) setStatus(panel, "danger", "<div>✗ " + err.message + "</div>");
+  } finally {
+    btn.disabled = false; btn.textContent = origText;
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════════

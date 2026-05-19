@@ -46,6 +46,7 @@ EGRESS_COLUMNS = [
     "DATABASE_NAME", "SCHEMA_NAME", "TABLE_NAME",
     "COLUMN_COUNT", "SAMPLE_MODE", "DISTINCT_COL_COUNT",
     "TRIGGERED_BY", "CREATED_AT",
+    "FIELDS_SENT", "ROW_COUNT_SENT", "MASKED_FIELDS", "MASK_MODE",
 ]
 
 
@@ -290,9 +291,26 @@ def _provision_snowflake(cur, schema: str) -> None:
             DISTINCT_COL_COUNT NUMBER,
             TRIGGERED_BY VARCHAR,
             CREATED_AT VARCHAR,
+            FIELDS_SENT VARCHAR,
+            ROW_COUNT_SENT NUMBER,
+            MASKED_FIELDS VARCHAR,
+            MASK_MODE VARCHAR,
             EXPORTED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
         )
     """)
+    # Add columns to existing tables that were provisioned before this migration
+    for col, typedef in (
+        ("FIELDS_SENT",    "VARCHAR"),
+        ("ROW_COUNT_SENT", "NUMBER"),
+        ("MASKED_FIELDS",  "VARCHAR"),
+        ("MASK_MODE",      "VARCHAR"),
+    ):
+        try:
+            cur.execute(
+                f'ALTER TABLE "{schema}"."{EGRESS_TABLE}" ADD COLUMN IF NOT EXISTS {col} {typedef}'
+            )
+        except Exception:
+            pass  # column already exists or DB doesn't support IF NOT EXISTS
 
 
 def _provision_azure_sql(cur, schema: str) -> None:
@@ -362,10 +380,25 @@ def _provision_azure_sql(cur, schema: str) -> None:
                 DISTINCT_COL_COUNT BIGINT NULL,
                 TRIGGERED_BY NVARCHAR(100) NULL,
                 CREATED_AT NVARCHAR(40) NULL,
+                FIELDS_SENT NVARCHAR(MAX) NULL,
+                ROW_COUNT_SENT BIGINT NULL,
+                MASKED_FIELDS NVARCHAR(MAX) NULL,
+                MASK_MODE NVARCHAR(50) NULL,
                 EXPORTED_AT DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
             )
         END
     """)
+    # Add columns to existing tables
+    for col, typedef in (
+        ("FIELDS_SENT",    "NVARCHAR(MAX) NULL"),
+        ("ROW_COUNT_SENT", "BIGINT NULL"),
+        ("MASKED_FIELDS",  "NVARCHAR(MAX) NULL"),
+        ("MASK_MODE",      "NVARCHAR(50) NULL"),
+    ):
+        cur.execute(f"""
+            IF COL_LENGTH(N'[{schema}].[{EGRESS_TABLE}]', N'{col}') IS NULL
+            ALTER TABLE [{schema}].[{EGRESS_TABLE}] ADD [{col}] {typedef}
+        """)
 
 
 def _provision_oracle(cur, schema: str) -> None:
@@ -398,9 +431,25 @@ def _provision_oracle(cur, schema: str) -> None:
                 DISTINCT_COL_COUNT NUMBER,
                 TRIGGERED_BY VARCHAR2(100),
                 CREATED_AT VARCHAR2(40),
+                FIELDS_SENT CLOB,
+                ROW_COUNT_SENT NUMBER,
+                MASKED_FIELDS CLOB,
+                MASK_MODE VARCHAR2(50),
                 EXPORTED_AT TIMESTAMP DEFAULT SYSTIMESTAMP
             )
         """)
+    else:
+        # Add columns to existing tables; Oracle raises ORA-01430 if column exists
+        for col, typedef in (
+            ("FIELDS_SENT",    "CLOB"),
+            ("ROW_COUNT_SENT", "NUMBER"),
+            ("MASKED_FIELDS",  "CLOB"),
+            ("MASK_MODE",      "VARCHAR2(50)"),
+        ):
+            try:
+                cur.execute(f'ALTER TABLE "{schema}"."{EGRESS_TABLE}" ADD ("{col}" {typedef})')
+            except Exception:
+                pass  # ORA-01430: column already exists
     if not _oracle_table_exists(cur, schema, QUERY_TABLE):
         cur.execute(f"""
             CREATE TABLE "{schema}"."{QUERY_TABLE}" (
@@ -501,7 +550,11 @@ def _fetch_egress_rows_after(last_id: int, limit: int) -> list[tuple]:
             SELECT id, account_id, operation, db_type,
                    database_name, schema_name, table_name,
                    column_count, sample_mode, distinct_col_count,
-                   triggered_by, created_at
+                   triggered_by, created_at,
+                   COALESCE(fields_sent,   '[]') AS fields_sent,
+                   COALESCE(row_count_sent, 0)   AS row_count_sent,
+                   COALESCE(masked_fields, '[]') AS masked_fields,
+                   COALESCE(mask_mode,     'none') AS mask_mode
               FROM kb_data_egress_log
              WHERE id > ?
              ORDER BY id

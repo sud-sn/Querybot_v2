@@ -421,7 +421,8 @@ CREATE TABLE IF NOT EXISTS entity_relationships (
     join_type         TEXT    NOT NULL DEFAULT 'INNER',       -- INNER|LEFT
     label             TEXT    NOT NULL DEFAULT '',            -- "places", "prescribes"
     is_active         INTEGER NOT NULL DEFAULT 1,
-    created_at        TEXT    DEFAULT (datetime('now'))
+    created_at        TEXT    DEFAULT (datetime('now')),
+    join_conditions   TEXT    NOT NULL DEFAULT '[]'           -- JSON: [{from_col,to_col},...] extra join conditions
 );
 CREATE INDEX IF NOT EXISTS idx_entity_rel_account
     ON entity_relationships(account_id, is_active);
@@ -529,6 +530,13 @@ def _run_migrations() -> None:
         ("entity_relationships", "status",           "TEXT DEFAULT 'confirmed'"),
         ("entity_properties",    "confidence_score", "INTEGER DEFAULT 100"),
         ("entity_properties",    "status",           "TEXT DEFAULT 'confirmed'"),
+        # v19: egress log — per-table detail of what actually reached the LLM
+        ("kb_data_egress_log", "fields_sent",    "TEXT DEFAULT '[]'"),
+        ("kb_data_egress_log", "row_count_sent", "INTEGER DEFAULT 0"),
+        ("kb_data_egress_log", "masked_fields",  "TEXT DEFAULT '[]'"),
+        ("kb_data_egress_log", "mask_mode",      "TEXT DEFAULT 'none'"),
+        # v20: compound (multi-column) join conditions
+        ("entity_relationships", "join_conditions", "TEXT NOT NULL DEFAULT '[]'"),
     ]
     with get_db() as conn:
         _ensure_llm_call_log_table(conn)
