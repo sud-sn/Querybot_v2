@@ -1155,6 +1155,57 @@ def log_kb_egress(
                     account_id, table_name, exc)
 
 
+def update_egress_masking(
+    account_id: str,
+    masking_config: dict,
+) -> int:
+    """
+    Immediately reflect a saved masking config in the most recent egress log row
+    for each configured table. Updates sample_mode → 'masked', masked_fields, and
+    mask_mode so the admin egress panel shows the change without waiting for KB rebuild.
+
+    masking_config keys are FQN strings (SCHEMA.TABLE or TABLE), values are
+    dicts with 'mode' and 'masked_fields'.
+
+    Returns the number of rows updated.
+    """
+    import json as _json
+    updated = 0
+    try:
+        with get_db() as conn:
+            for fqn, cfg in masking_config.items():
+                if not isinstance(cfg, dict):
+                    continue
+                mode = cfg.get("mode", "selective")
+                mf   = cfg.get("masked_fields") or []
+                # Derive table_name from the last segment of the FQN
+                table_name = fqn.split(".")[-1].upper()
+                sample_mode = "masked" if (mode != "none" and mf) else "real"
+                conn.execute("""
+                    UPDATE kb_data_egress_log
+                    SET sample_mode   = ?,
+                        masked_fields = ?,
+                        mask_mode     = ?
+                    WHERE id = (
+                        SELECT id FROM kb_data_egress_log
+                        WHERE account_id = ?
+                          AND UPPER(table_name) = ?
+                        ORDER BY created_at DESC
+                        LIMIT 1
+                    )
+                """, (
+                    sample_mode,
+                    _json.dumps(mf),
+                    mode,
+                    account_id,
+                    table_name,
+                ))
+                updated += conn.execute("SELECT changes()").fetchone()[0]
+    except Exception as exc:
+        log.warning("update_egress_masking failed for %s: %s", account_id, exc)
+    return updated
+
+
 def list_kb_egress(
     account_id: str,
     operation: Optional[str] = None,
