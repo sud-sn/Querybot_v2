@@ -388,17 +388,26 @@ def _provision_azure_sql(cur, schema: str) -> None:
             )
         END
     """)
-    # Add columns to existing tables
+    # Add columns to existing tables — use INFORMATION_SCHEMA instead of
+    # COL_LENGTH because COL_LENGTH does not reliably handle bracketed names.
     for col, typedef in (
         ("FIELDS_SENT",    "NVARCHAR(MAX) NULL"),
         ("ROW_COUNT_SENT", "BIGINT NULL"),
         ("MASKED_FIELDS",  "NVARCHAR(MAX) NULL"),
         ("MASK_MODE",      "NVARCHAR(50) NULL"),
     ):
-        cur.execute(f"""
-            IF COL_LENGTH(N'[{schema}].[{EGRESS_TABLE}]', N'{col}') IS NULL
-            ALTER TABLE [{schema}].[{EGRESS_TABLE}] ADD [{col}] {typedef}
-        """)
+        try:
+            cur.execute(f"""
+                IF NOT EXISTS (
+                    SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+                    WHERE TABLE_SCHEMA = N'{schema}'
+                      AND TABLE_NAME   = N'{EGRESS_TABLE}'
+                      AND COLUMN_NAME  = N'{col}'
+                )
+                ALTER TABLE [{schema}].[{EGRESS_TABLE}] ADD [{col}] {typedef}
+            """)
+        except Exception as _col_exc:
+            log.debug("Azure SQL add column %s skipped: %s", col, _col_exc)
 
 
 def _provision_oracle(cur, schema: str) -> None:
@@ -573,10 +582,19 @@ def _insert_rows(cur, db_type: str, schema: str, table: str, columns: list[str],
         for row in rows:
             cur.execute(sql, row)
     elif db_type == "azure_sql":
-        placeholders = ", ".join(["?"] * len(columns))
-        sql = f"INSERT INTO [{schema}].[{table}] ({column_sql}) VALUES ({placeholders})"
+        placeholders  = ", ".join(["?"] * len(columns))
+        bracketed_cols = ", ".join(f"[{c}]" for c in columns)
+        sql = f"INSERT INTO [{schema}].[{table}] ({bracketed_cols}) VALUES ({placeholders})"
         for row in rows:
-            cur.execute(sql, row)
+            try:
+                cur.execute(sql, row)
+            except Exception as _row_exc:
+                err_str = str(_row_exc)
+                if "duplicate" in err_str.lower() or "primary key" in err_str.lower() or "2627" in err_str or "2601" in err_str:
+                    log.debug("Azure SQL insert skip duplicate SOURCE_ID in %s: %s", table, err_str[:120])
+                else:
+                    log.warning("Azure SQL insert error in %s: %s", table, err_str[:200])
+                    raise
     elif db_type == "oracle":
         bind_sql = ", ".join([f":{col}" for col in columns])
         sql = f'INSERT INTO "{schema}"."{table}" ({column_sql}) VALUES ({bind_sql})'

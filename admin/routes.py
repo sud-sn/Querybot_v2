@@ -739,7 +739,9 @@ async def database_logs_sync(request: Request, db_id: int):
             loop.run_in_executor(None, sync_external_logs, raw),
             timeout=120,
         )
-        msg = f"Synced {result['query_count']} query rows and {result['llm_count']} LLM rows to {result['schema']}"
+        msg = (f"Synced {result['query_count']} query, "
+               f"{result['llm_count']} LLM, "
+               f"{result.get('egress_count', 0)} egress rows to {result['schema']}")
         return RedirectResponse(f"/admin/databases?saved={quote(msg)}", status_code=303)
     except asyncio.TimeoutError:
         return RedirectResponse(
