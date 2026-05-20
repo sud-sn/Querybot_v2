@@ -323,6 +323,14 @@ def get_client(account_id: str) -> Optional[dict]:
     return dict(row) if row else None
 
 
+def get_client_state(account_id: str) -> dict:
+    """Return the parsed state_data dict for a client (empty dict if not found)."""
+    client = get_client(account_id)
+    if not client:
+        return {}
+    return json.loads(client.get("state_data") or "{}")
+
+
 def list_clients(search: Optional[str] = None) -> list[dict]:
     with get_db() as conn:
         if search:
