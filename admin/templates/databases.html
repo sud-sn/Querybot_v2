@@ -227,6 +227,8 @@
             <form method="post" action="/admin/databases/{{ d.id }}/logs/sync" style="display:inline">
               <button type="submit" class="btn btn-success btn-sm">Sync logs now</button>
             </form>
+            <button type="button" class="btn btn-secondary btn-sm"
+              onclick="diagnoseLogs({{ d.id }})">🔍 Diagnose</button>
           </div>
         {% else %}
           <span class="badge badge-gray">Disabled</span>
@@ -459,6 +461,87 @@ function dbScopeRender(tree) {
       }
     });
   });
+}
+
+async function diagnoseLogs(dbId) {
+  // Show a small modal with a spinner then replace with results
+  let modal = document.getElementById('diag-modal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'diag-modal';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:900;display:flex;align-items:center;justify-content:center;padding:1rem';
+    modal.innerHTML = `
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:1.5rem;min-width:420px;max-width:640px;box-shadow:0 8px 32px rgba(0,0,0,.3)">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+          <strong style="font-size:14px">🔍 Log Export Diagnostic</strong>
+          <button onclick="document.getElementById('diag-modal').remove()" style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--text-muted)">✕</button>
+        </div>
+        <div id="diag-body" style="font-size:13px;color:var(--text-muted)">Checking…</div>
+      </div>`;
+    document.body.appendChild(modal);
+    modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+  } else {
+    document.getElementById('diag-body').innerHTML = 'Checking…';
+    modal.style.display = 'flex';
+  }
+
+  try {
+    const resp = await fetch(`/admin/databases/${dbId}/logs/diagnose`, {credentials:'same-origin'});
+    const d = await resp.json();
+    const bodyEl = document.getElementById('diag-body');
+
+    if (d.error && !d.local_egress_count && d.local_egress_count !== 0) {
+      bodyEl.innerHTML = `<span style="color:var(--red)">Error: ${d.error}</span>`;
+      return;
+    }
+
+    const ok  = v => `<span style="color:var(--green);font-weight:700">${v}</span>`;
+    const warn = v => `<span style="color:var(--amber);font-weight:700">${v}</span>`;
+    const bad  = v => `<span style="color:var(--red);font-weight:700">${v}</span>`;
+
+    let html = `<table style="width:100%;border-collapse:collapse;font-size:12px">`;
+    html += row('Local egress rows',   d.local_egress_count > 0 ? ok(d.local_egress_count) : warn(d.local_egress_count));
+    html += row('Local max id',        d.local_egress_max_id);
+    html += row('External table exists', d.external_table_exists ? ok('Yes') : bad('No — run Provision first'));
+    if (d.external_table_exists) {
+      html += row('External egress rows',   d.external_egress_count);
+      html += row('External max SOURCE_ID', d.external_egress_max_id);
+      const newRows = d.local_egress_max_id - (d.external_egress_max_id || 0);
+      html += row('Rows to export',
+        newRows > 0 ? ok(newRows + ' pending') :
+        newRows === 0 ? ok('All synced') : warn('Check IDs'));
+      if (d.missing_columns && d.missing_columns.length > 0) {
+        html += row('Missing columns', bad(d.missing_columns.join(', ') + ' — run Provision to add them'));
+      } else {
+        html += row('Column schema', ok('All columns present'));
+      }
+    }
+    if (d.error) {
+      html += row('Error', bad(d.error));
+    }
+    html += `</table>`;
+
+    if (d.local_egress_count === 0) {
+      html += `<p style="margin-top:.75rem;color:var(--amber);font-size:11px">
+        ⚠ No egress rows in local DB yet. Run Schema Discovery or KB Build first —
+        masking config alone does not create egress rows.</p>`;
+    } else if (d.external_table_exists && d.missing_columns && d.missing_columns.length > 0) {
+      html += `<p style="margin-top:.75rem;color:var(--amber);font-size:11px">
+        ⚠ External table is missing columns. Click <strong>Provision log tables</strong>
+        to add them, then sync again.</p>`;
+    }
+
+    bodyEl.innerHTML = html;
+  } catch(e) {
+    document.getElementById('diag-body').innerHTML = `<span style="color:var(--red)">Request failed: ${e.message}</span>`;
+  }
+}
+
+function row(label, value) {
+  return `<tr>
+    <td style="padding:.3rem .5rem;color:var(--text-muted);white-space:nowrap">${label}</td>
+    <td style="padding:.3rem .5rem;font-weight:600">${value}</td>
+  </tr>`;
 }
 </script>
 {% endblock %}
