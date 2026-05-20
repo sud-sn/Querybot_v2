@@ -103,11 +103,71 @@ def provision_external_log_store(db_cfg: dict, *, record_state: bool = True) -> 
         raise
 
 
+def reset_egress_and_sync(db_cfg: dict, *, limit: int = 10000) -> dict:
+    """
+    Truncate the external KB_DATA_EGRESS_LOG table and re-export all local
+    egress rows from scratch.  Use this when the external table has a higher
+    max SOURCE_ID than the local SQLite (e.g. after a server reinstall).
+    """
+    db_id = int(db_cfg.get("id") or 0)
+    started_at = _now_utc()
+    if db_id:
+        _write_export_state(db_id, status="running",
+                            message="Reset egress + re-sync running", started_at=started_at)
+    try:
+        provision_external_log_store(db_cfg, record_state=False)
+        conn, db_type, schema = _connect_for_export(db_cfg)
+        try:
+            cur = conn.cursor()
+            # Truncate external egress table so we can re-insert from local
+            if db_type == "snowflake":
+                cur.execute(f'TRUNCATE TABLE "{schema}"."{EGRESS_TABLE}"')
+            elif db_type == "azure_sql":
+                cur.execute(f"TRUNCATE TABLE [{schema}].[{EGRESS_TABLE}]")
+            else:  # oracle
+                cur.execute(f'TRUNCATE TABLE "{schema}"."{EGRESS_TABLE}"')
+            _commit(conn)
+            # Now re-export all local rows (watermark = 0)
+            egress_rows = _fetch_egress_rows_after(0, limit)
+            _insert_rows(cur, db_type, schema, EGRESS_TABLE, EGRESS_COLUMNS, egress_rows)
+            _commit(conn)
+        finally:
+            _close(conn)
+
+        result = {
+            "schema": schema,
+            "egress_count": len(egress_rows),
+            "reset": True,
+        }
+        if db_id:
+            _write_export_state(
+                db_id,
+                status="success",
+                message=f"Egress reset + re-exported {len(egress_rows)} rows",
+                started_at=started_at,
+                finished_at=_now_utc(),
+                run_date=datetime.now().date().isoformat(),
+                egress_count=len(egress_rows),
+                last_egress_id=max([int(r[0]) for r in egress_rows if r[0] is not None] or [0]),
+            )
+        return result
+    except Exception as exc:
+        if db_id:
+            _write_export_state(db_id, status="failed", message=str(exc),
+                                started_at=started_at, finished_at=_now_utc(),
+                                run_date=datetime.now().date().isoformat())
+        raise
+
+
 def sync_external_logs(db_cfg: dict, *, limit: int = 10000) -> dict:
     """
     Provision, then copy new local query/LLM logs to the external log tables.
     Uses SOURCE_ID from local SQLite and only exports rows higher than the
     target table's current max SOURCE_ID.
+
+    If the external table's max SOURCE_ID is HIGHER than the local max id
+    (can happen after a server reinstall with a fresh SQLite), the watermark
+    is clamped to the local max so new local rows are still exported.
     """
     db_id = int(db_cfg.get("id") or 0)
     started_at = _now_utc()
@@ -122,6 +182,26 @@ def sync_external_logs(db_cfg: dict, *, limit: int = 10000) -> dict:
             query_last_id  = _target_max_source_id(cur, db_type, schema, QUERY_TABLE)
             llm_last_id    = _target_max_source_id(cur, db_type, schema, LLM_TABLE)
             egress_last_id = _target_max_source_id(cur, db_type, schema, EGRESS_TABLE)
+
+            # Guard: if external max > local max, clamp to avoid perpetual 0-row exports.
+            # The rows that exist only in the external table (from a previous install) stay;
+            # we start exporting from just below the local min to catch all current rows.
+            with get_db() as _lconn:
+                _lrow = _lconn.execute(
+                    "SELECT COALESCE(MIN(id),0), COALESCE(MAX(id),0) FROM kb_data_egress_log"
+                ).fetchone()
+                local_egress_min = int(_lrow[0] or 0)
+                local_egress_max = int(_lrow[1] or 0)
+
+            if egress_last_id > local_egress_max and local_egress_max > 0:
+                log.warning(
+                    "sync_external_logs: external egress max (%d) > local max (%d) — "
+                    "clamping watermark to %d so local rows are exported. "
+                    "Use Reset Egress & Re-sync to fully refresh the external table.",
+                    egress_last_id, local_egress_max, local_egress_min - 1,
+                )
+                egress_last_id = max(0, local_egress_min - 1)
+
             query_rows  = _fetch_query_rows_after(query_last_id, limit)
             llm_rows    = _fetch_llm_rows_after(llm_last_id, limit)
             egress_rows = _fetch_egress_rows_after(egress_last_id, limit)
