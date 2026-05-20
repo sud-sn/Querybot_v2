@@ -1597,6 +1597,67 @@ async def user_delete(request: Request, account_id: str, user_id: int):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# Schema drift detection
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _compute_schema_drift(old: dict, new: dict) -> dict:
+    """
+    Diff two _schema.json dicts and return a structured change report.
+
+    Each key in the dicts is a fully-qualified table name (e.g. "DB.SCHEMA.TABLE").
+    Each value has a "columns" list of {"name": str, "type": str, ...} dicts.
+
+    Returns:
+      {
+        "has_changes":    bool,
+        "added_tables":   [fqn, ...],
+        "removed_tables": [fqn, ...],
+        "column_changes": {
+          fqn: {
+            "added":        [col_name, ...],
+            "removed":      [col_name, ...],
+            "type_changes": [{"column": name, "old_type": t1, "new_type": t2}, ...]
+          }
+        },
+        "detected_at": ISO-8601 string
+      }
+    """
+    old_map = {k.upper(): k for k in old}
+    new_map = {k.upper(): k for k in new}
+    old_keys = set(old_map)
+    new_keys = set(new_map)
+
+    added_tables   = sorted(new_keys - old_keys)
+    removed_tables = sorted(old_keys - new_keys)
+
+    column_changes: dict[str, dict] = {}
+    for uk in sorted(old_keys & new_keys):
+        old_cols = {c["name"].upper(): c for c in (old[old_map[uk]].get("columns") or [])}
+        new_cols = {c["name"].upper(): c for c in (new[new_map[uk]].get("columns") or [])}
+        added_cols   = sorted(new_cols.keys() - old_cols.keys())
+        removed_cols = sorted(old_cols.keys() - new_cols.keys())
+        type_changes = [
+            {"column": nc, "old_type": old_cols[nc].get("type",""), "new_type": new_cols[nc].get("type","")}
+            for nc in sorted(old_cols.keys() & new_cols.keys())
+            if old_cols[nc].get("type") != new_cols[nc].get("type")
+        ]
+        if added_cols or removed_cols or type_changes:
+            column_changes[uk] = {
+                "added":        added_cols,
+                "removed":      removed_cols,
+                "type_changes": type_changes,
+            }
+
+    return {
+        "has_changes":    bool(added_tables or removed_tables or column_changes),
+        "added_tables":   added_tables,
+        "removed_tables": removed_tables,
+        "column_changes": column_changes,
+        "detected_at":    datetime.now(timezone.utc).isoformat(),
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Entity Graph — admin routes
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -2770,6 +2831,9 @@ async def client_setup_page(request: Request, account_id: str):
     # Initial masking config for the Field Masking section
     saved_masking_config = state_data.get("masking_config") or {}
 
+    # Schema drift — populated after re-discovery when columns/tables changed
+    schema_drift = state_data.get("schema_drift") or {}
+
     return _resp(request, "client_setup.html", {
         "client":               client,
         "state":                state,
@@ -2783,6 +2847,7 @@ async def client_setup_page(request: Request, account_id: str):
         "biz_desc":             biz_desc,
         "egress_summary":       egress_summary,
         "saved_masking_config": saved_masking_config,  # for JS init
+        "schema_drift":         schema_drift,           # populated after re-discovery
         "saved":                request.query_params.get("saved"),
         "error":                request.query_params.get("error"),
     })
@@ -3421,6 +3486,14 @@ async def admin_discover_schema(
         try:
             from core.schema import discover_and_write
             from main import save_state
+            # ── Snapshot old schema for drift detection ───────────────────────
+            _old_schema: dict = {}
+            _old_schema_path = Path(schema_dir) / "_schema.json"
+            if _old_schema_path.exists():
+                try:
+                    _old_schema = json.loads(_old_schema_path.read_text(encoding="utf-8"))
+                except Exception:
+                    pass
             # Clean the schema dir so tables removed from the source DB don't
             # linger on disk from a previous discovery run.
             sp = Path(schema_dir)
@@ -3437,6 +3510,25 @@ async def admin_discover_schema(
                                        masking_config=_masking_config)
             next_state = dict(state_data_existing)
             next_state["schema_dir"] = schema_dir
+            # ── Schema drift detection ─────────────────────────────────────────
+            if _old_schema:
+                try:
+                    _new_schema_path = Path(schema_dir) / "_schema.json"
+                    if _new_schema_path.exists():
+                        _new_schema = json.loads(_new_schema_path.read_text(encoding="utf-8"))
+                        _drift = _compute_schema_drift(_old_schema, _new_schema)
+                        if _drift["has_changes"]:
+                            next_state["schema_drift"] = _drift
+                            log.info(
+                                "Schema drift for %s: +%d/-%d tables, %d tables with column changes",
+                                account_id, len(_drift["added_tables"]),
+                                len(_drift["removed_tables"]), len(_drift["column_changes"]),
+                            )
+                        else:
+                            # Clear any previous drift report
+                            next_state.pop("schema_drift", None)
+                except Exception as _dex:
+                    log.warning("Schema drift detection failed for %s: %s", account_id, _dex)
             if kb_tables_selected:
                 next_state.setdefault("kb_tables", kb_tables_selected)
             save_state(account_id, "SCHEMA_READY", next_state)
