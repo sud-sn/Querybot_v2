@@ -65,6 +65,9 @@ def detect_chart_type(rows: list[dict]) -> Optional[str]:
 
     n = len(rows)
     if text_cols and numeric_cols:
+        # Pie: small categorical sets (≤8 slices) with a single value column
+        if n <= 8 and len(numeric_cols) == 1:
+            return "pie"
         labels = [str(r.get(text_cols[0], "")) for r in rows]
         if _looks_temporal_labels(labels):
             return "line" if n <= 36 else "bar"
@@ -194,12 +197,19 @@ def build_chart_payload(rows: list[dict], chart_type: str, title: str = "Results
         return None
 
     x_key = text_cols[0] if text_cols else headers[0]
-    y_keys = numeric_cols[:2] if chart_type == "scatter" else numeric_cols[:1]
+    if chart_type == "scatter":
+        y_keys = numeric_cols[:2]
+    elif chart_type == "pie":
+        y_keys = numeric_cols[:1]
+    else:
+        # bar / line — expose all numeric columns for multi-series rendering
+        y_keys = numeric_cols
 
     clean_rows = []
     for r in rows:
         item = {}
-        for key in [x_key, *y_keys]:
+        all_keys = [x_key, *y_keys]
+        for key in all_keys:
             val = r.get(key)
             if key in y_keys:
                 try:
