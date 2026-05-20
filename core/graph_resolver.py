@@ -234,8 +234,16 @@ def build_join_skeleton(
         return alias
 
     anchor_ent  = entities_map.get(anchor_entity, {})
+    _anchor_tbl_name = (anchor_ent.get("table_name") or "").strip()
+    if not _anchor_tbl_name:
+        log.warning(
+            "Graph resolver: anchor entity %r has no table_name configured — "
+            "JOIN skeleton disabled. Fix the entity's table_name in the Entity Graph admin.",
+            anchor_entity,
+        )
+        return ""
     anchor_tbl  = _quote_table(
-        anchor_ent.get("table_name", anchor_entity),
+        _anchor_tbl_name,
         anchor_ent.get("schema_name", ""),
         db_type,
     )
@@ -259,8 +267,17 @@ def build_join_skeleton(
             continue  # already joined
 
         new_meta = entities_map.get(new_ent, {})
+        _new_tbl_name = (new_meta.get("table_name") or "").strip()
+        if not _new_tbl_name:
+            log.warning(
+                "Graph resolver: entity %r has no table_name configured — "
+                "skipping this JOIN. Fix the entity's table_name in the Entity Graph admin.",
+                new_ent,
+            )
+            seen_nodes.add(new_ent)   # mark visited so we don't loop over it again
+            continue
         new_tbl  = _quote_table(
-            new_meta.get("table_name", new_ent),
+            _new_tbl_name,
             new_meta.get("schema_name", ""),
             db_type,
         )
@@ -338,8 +355,16 @@ def resolve_for_question(
     if len(detected) < 2 or not rels:
         # Single entity — still useful: tells the LLM which table to anchor on
         ent = {e["entity_name"]: e for e in entities}.get(detected[0], {})
+        _single_tbl_name = (ent.get("table_name") or "").strip()
+        if not _single_tbl_name:
+            log.warning(
+                "Graph resolver: single entity %r has no table_name configured — "
+                "graph injection disabled. Fix the entity's table_name in the Entity Graph admin.",
+                detected[0],
+            )
+            return {**empty, "entity_count": entity_count}
         anchor_tbl = _quote_table(
-            ent.get("table_name", detected[0]),
+            _single_tbl_name,
             ent.get("schema_name", ""),
             db_type,
         )

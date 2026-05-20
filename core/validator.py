@@ -149,6 +149,37 @@ def validate_sql(
             "Please rephrase your question using only the available tables."
         ), "unknown_table"
 
+    # ── Layer 4: ORDER BY alias drift check ──────────────────────────────────
+    # Collect SELECT-level aliases.  Only run when aliases are present so we
+    # don't false-positive on queries that ORDER BY bare column names.
+    select_aliases: set[str] = set()
+    for alias_node in tree.find_all(sg_exp.Alias):
+        if alias_node.alias:
+            select_aliases.add(alias_node.alias.upper())
+
+    if select_aliases:
+        bad_order: list[str] = []
+        for ordered_node in tree.find_all(sg_exp.Ordered):
+            col_expr = ordered_node.this
+            # Only check unqualified column references (no table prefix).
+            # Qualified refs like f.AMOUNT are real column names, not aliases.
+            if isinstance(col_expr, sg_exp.Column) and not col_expr.table:
+                col_name = col_expr.name
+                if col_name and col_name.upper() not in select_aliases:
+                    bad_order.append(col_name)
+
+        if bad_order:
+            alias_list = ", ".join(sorted(set(bad_order)))
+            log.warning(
+                "ORDER BY alias drift detected: %s not in SELECT aliases %s",
+                alias_list, select_aliases,
+            )
+            return False, (
+                f"ORDER BY references column(s) not defined as a SELECT alias: "
+                f"*{alias_list}*\n\n"
+                "Make sure every ORDER BY name matches the exact alias used in SELECT."
+            ), "order_alias_mismatch"
+
     return True, "OK", "ok"
 
 

@@ -64,6 +64,10 @@ _SQL_SYNTAX: dict[str, str] = {
         "The Knowledge Base shows 'SQL table name: [SCHEMA].[TABLE]' for each table — "
         "use that exact two-part format. "
         "NEVER use three-part names like [DATABASE].[SCHEMA].[TABLE] — Azure SQL rejects them with error 40515.\n"
+        "- BIT COLUMN RULE: SQL Server has no TRUE/FALSE literals. For BIT or boolean columns "
+        "ALWAYS use 1 (true / yes / active / included) or 0 (false / no / inactive / excluded) "
+        "in WHERE clauses. NEVER write True, False, 'True', or 'False' — SQL Server treats "
+        "those as column names and raises error 207 (invalid column name).\n"
         "- Null handling: ISNULL() or COALESCE()\n"
         "- Split name concat: CONCAT(FIRST_NAME, ' ', LAST_NAME) AS FULL_NAME\n"
         "- CRITICAL TIME RULE: When the question uses relative time (last month, last week, "
@@ -124,6 +128,27 @@ def build_sql_system_prompt(
     """
     label  = _DB_LABELS.get(db_type, db_type)
     syntax = _SQL_SYNTAX.get(db_type, "- Use standard ANSI SQL\n")
+
+    # Dialect-correct pattern for the CROSS-TABLE QUERY RULE example.
+    # This prevents the generic LIMIT 20 example from overriding the per-dialect
+    # "NEVER use LIMIT" rule for Azure SQL / Oracle.
+    if db_type == "azure_sql":
+        _xjoin_pattern = (
+            "Pattern: SELECT TOP 20 d.NAME_COL, SUM(f.METRIC_COL) FROM FACT f "
+            "JOIN DIM d ON f.FK = d.PK GROUP BY d.NAME_COL ORDER BY 2 DESC"
+        )
+    elif db_type == "oracle":
+        _xjoin_pattern = (
+            "Pattern: SELECT d.NAME_COL, SUM(f.METRIC_COL) FROM FACT f "
+            "JOIN DIM d ON f.FK = d.PK GROUP BY d.NAME_COL ORDER BY 2 DESC "
+            "FETCH FIRST 20 ROWS ONLY"
+        )
+    else:  # snowflake and ANSI
+        _xjoin_pattern = (
+            "Pattern: SELECT d.NAME_COL, SUM(f.METRIC_COL) FROM FACT f "
+            "JOIN DIM d ON f.FK = d.PK GROUP BY d.NAME_COL ORDER BY 2 DESC LIMIT 20"
+        )
+
     base = (
         f"You are a {label} SQL expert. "
         "Convert the user's plain-English question into a valid SQL SELECT query.\n\n"
@@ -147,8 +172,12 @@ def build_sql_system_prompt(
         "average, amount) BY or PER a dimension (name, category, region, type, department) "
         "you MUST write a JOIN. Metric columns live in FACT tables. Grouping columns live "
         "in DIMENSION tables. Use the Join Keys from the Knowledge Base. "
-        "Pattern: SELECT d.NAME_COL, SUM(f.METRIC_COL) FROM FACT f "
-        "JOIN DIM d ON f.FK = d.PK GROUP BY d.NAME_COL ORDER BY 2 DESC LIMIT 20\n"
+        f"{_xjoin_pattern}\n"
+        "- ORDER BY ALIAS RULE: When you define a column alias in SELECT (e.g. "
+        "SELECT SUM(col) AS TOTAL_COST), you MUST use that EXACT alias in ORDER BY "
+        "(ORDER BY TOTAL_COST DESC). Never add, remove, or change underscores, spaces, "
+        "or any characters in the alias. If you ORDER BY a name that was not defined "
+        "in the SELECT clause the query will fail at runtime.\n"
         "- APPROVED METRIC FORMULA RULE: If the Knowledge Base context includes "
         "'APPROVED METRIC FORMULAS' and the user asks for that metric or synonym, "
         "use the approved calculation exactly. For by/per/grouped-by questions, "
