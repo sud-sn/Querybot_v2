@@ -227,6 +227,10 @@
             <form method="post" action="/admin/databases/{{ d.id }}/logs/sync" style="display:inline">
               <button type="submit" class="btn btn-success btn-sm">Sync logs now</button>
             </form>
+            <form method="post" action="/admin/databases/{{ d.id }}/logs/reset-egress" style="display:inline"
+              onsubmit="return confirm('This will TRUNCATE the external KB_DATA_EGRESS_LOG table and re-export all local rows. Continue?')">
+              <button type="submit" class="btn btn-warning btn-sm">↺ Reset egress</button>
+            </form>
             <button type="button" class="btn btn-secondary btn-sm"
               onclick="diagnoseLogs({{ d.id }})">🔍 Diagnose</button>
           </div>
@@ -506,10 +510,14 @@ async function diagnoseLogs(dbId) {
     if (d.external_table_exists) {
       html += row('External egress rows',   d.external_egress_count);
       html += row('External max SOURCE_ID', d.external_egress_max_id);
-      const newRows = d.local_egress_max_id - (d.external_egress_max_id || 0);
-      html += row('Rows to export',
-        newRows > 0 ? ok(newRows + ' pending') :
-        newRows === 0 ? ok('All synced') : warn('Check IDs'));
+      const extMax   = d.external_egress_max_id || 0;
+      const locMax   = d.local_egress_max_id || 0;
+      const newRows  = locMax - extMax;
+      let exportStatus;
+      if (newRows > 0)       exportStatus = ok(newRows + ' pending — click Sync logs now');
+      else if (newRows === 0) exportStatus = ok('All synced ✓');
+      else                   exportStatus = warn('External max (' + extMax + ') &gt; local max (' + locMax + ') — server was reinstalled. Use ↺ Reset egress to fix.');
+      html += row('Rows to export', exportStatus);
       if (d.missing_columns && d.missing_columns.length > 0) {
         html += row('Missing columns', bad(d.missing_columns.join(', ') + ' — run Provision to add them'));
       } else {
@@ -521,10 +529,18 @@ async function diagnoseLogs(dbId) {
     }
     html += `</table>`;
 
+    const extMax2 = d.external_egress_max_id || 0;
+    const locMax2 = d.local_egress_max_id || 0;
     if (d.local_egress_count === 0) {
       html += `<p style="margin-top:.75rem;color:var(--amber);font-size:11px">
         ⚠ No egress rows in local DB yet. Run Schema Discovery or KB Build first —
         masking config alone does not create egress rows.</p>`;
+    } else if (d.external_table_exists && extMax2 > locMax2) {
+      html += `<p style="margin-top:.75rem;color:var(--red);font-size:11px">
+        ⚠ <strong>External table has rows from a previous server installation</strong>
+        (SOURCE_ID ${extMax2} vs local max ${locMax2}).
+        Click <strong>↺ Reset egress</strong> to truncate the external table and
+        re-export all ${d.local_egress_count} current local rows cleanly.</p>`;
     } else if (d.external_table_exists && d.missing_columns && d.missing_columns.length > 0) {
       html += `<p style="margin-top:.75rem;color:var(--amber);font-size:11px">
         ⚠ External table is missing columns. Click <strong>Provision log tables</strong>
