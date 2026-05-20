@@ -3136,6 +3136,10 @@ async def admin_discover_schema(
             log.error("Admin schema discovery failed for %s: %s", account_id, e)
 
     bg.add_task(_do_discover)
+    # Return JSON when called from JavaScript (AJAX), redirect otherwise
+    if request.headers.get("accept", "").startswith("application/json") or \
+       request.headers.get("x-requested-with") == "XMLHttpRequest":
+        return JSONResponse({"status": "ok", "message": "Discovery started"})
     from urllib.parse import quote
     return RedirectResponse(
         f"/admin/clients/{account_id}/setup?saved={quote('Schema discovery started — refresh in 60 seconds')}",

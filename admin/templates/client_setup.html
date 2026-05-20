@@ -219,13 +219,22 @@
       <div id="mask-table-list"></div>
       <div style="margin-top:1rem;display:flex;align-items:center;gap:.75rem;flex-wrap:wrap;padding-top:.75rem;border-top:1px solid var(--border)">
         <button type="button" class="btn btn-primary btn-sm" id="mask-create-btn" onclick="createMasking()">
-          🔒 Create Masking
+          🔒 Create Masking &amp; Discover Schema
         </button>
         <button type="button" class="btn btn-secondary btn-sm" onclick="skipMasking()">
-          Skip →
+          Skip masking →
         </button>
         <span id="mask-apply-status" style="font-size:12px"></span>
       </div>
+      <!-- Discovery progress bar — shown while polling -->
+      <div id="mask-progress-bar" style="display:none;margin-top:.85rem;align-items:center;gap:.75rem;padding:.65rem .875rem;border-radius:var(--radius);border:1px solid color-mix(in srgb,var(--blue) 28%,transparent);background:var(--blue-light);color:var(--blue)">
+        <span id="mask-disc-text" style="font-size:12px;font-weight:700;min-width:260px">Discovering schema…</span>
+        <div style="flex:1;height:8px;border-radius:999px;background:color-mix(in srgb,var(--surface) 60%,transparent);overflow:hidden;border:1px solid color-mix(in srgb,var(--blue) 25%,transparent)">
+          <div id="mask-disc-fill" style="height:100%;width:0%;border-radius:999px;background:currentColor;transition:width .4s ease"></div>
+        </div>
+      </div>
+      <!-- Completion summary — shown after discovery finishes -->
+      <div id="mask-completion-summary" style="display:none"></div>
     </div>
   </div>
 </div>
@@ -760,55 +769,171 @@
   }
 
   window.createMasking = async function() {
-    const btn      = document.getElementById('mask-create-btn');
-    const statusEl = document.getElementById('mask-apply-status');
-    btn.disabled = true; btn.textContent = 'Applying…';
+    const btn        = document.getElementById('mask-create-btn');
+    const skipBtn    = document.querySelector('#masking-section .btn-secondary');
+    const statusEl   = document.getElementById('mask-apply-status');
+    const progressEl = document.getElementById('mask-progress-bar');
+    btn.disabled = true; btn.textContent = 'Saving config…';
+    if (skipBtn) skipBtn.disabled = true;
     statusEl.textContent = '';
 
-    // Convert maskingConfig (Set values) to serialisable format
+    // Build serialisable masking config (Set → array)
     const config = {};
     maskingConfig.forEach((cfg, fqn) => {
-      if (cfg.masked_fields.size > 0) {
-        config[fqn] = { mode: 'selective', masked_fields: [...cfg.masked_fields] };
-      }
+      config[fqn] = { mode: cfg.mode || 'selective', masked_fields: [...cfg.masked_fields] };
     });
 
     try {
-      const resp = await fetch(`/admin/clients/${accountId}/kb-tables/masking`, {
+      // ── Step 1: save masking config ─────────────────────────────────────────
+      const saveResp = await fetch(`/admin/clients/${accountId}/kb-tables/masking`, {
         method: 'POST', credentials: 'same-origin',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({ masking_config: config }),
       });
-      const data = await resp.json();
-      if (data.status === 'ok') {
-        const totalFields = Object.values(config).reduce((s,c) => s + (c.masked_fields||[]).length, 0);
-        const tableCount  = Object.keys(config).length;
-        statusEl.style.color = 'var(--green)';
-        statusEl.textContent =
-          `✓ Masking created — ${tableCount} table${tableCount!==1?'s':''} configured ` +
-          `(${totalFields} field${totalFields!==1?'s':''} total). ` +
-          `Now run Schema Discovery (Step 3) to apply.`;
-        const badge = document.getElementById('mask-done-badge');
-        const num   = document.getElementById('mask-step-num');
-        if (badge) badge.style.display = '';
-        if (num)   { num.style.background = 'var(--green)'; num.textContent = '✓'; num.style.fontSize = ''; }
-      } else {
+      const saveData = await saveResp.json();
+      if (saveData.status !== 'ok') {
         statusEl.style.color = 'var(--red)';
-        statusEl.textContent = data.message || 'Save failed.';
+        statusEl.textContent = saveData.message || 'Failed to save masking config.';
+        return;
       }
+
+      // ── Step 2: trigger schema discovery ───────────────────────────────────
+      btn.textContent = 'Starting discovery…';
+      statusEl.style.color = 'var(--blue)';
+      statusEl.textContent = '⏳ Masking config saved. Starting schema discovery…';
+      if (progressEl) progressEl.style.display = 'flex';
+
+      const discResp = await fetch(`/admin/clients/${accountId}/setup/discover`, {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Accept': 'application/json' },
+      });
+      if (!discResp.ok && discResp.status !== 303) {
+        throw new Error(`Discovery trigger failed (HTTP ${discResp.status})`);
+      }
+
+      // ── Step 3: poll until discovery completes ──────────────────────────────
+      btn.textContent = 'Discovering…';
+      statusEl.textContent = '⏳ Schema discovery running — masking fields as configured…';
+      await _pollUntilDiscoveryDone();
+
+      // ── Step 4: show completion summary ────────────────────────────────────
+      _showMaskingComplete(config);
+
     } catch(e) {
       statusEl.style.color = 'var(--red)';
-      statusEl.textContent = 'Network error: ' + e.message;
-    } finally {
+      statusEl.textContent = 'Error: ' + e.message;
       btn.disabled = false; btn.textContent = '🔒 Create Masking';
+      if (skipBtn) skipBtn.disabled = false;
+      if (progressEl) progressEl.style.display = 'none';
     }
   };
+
+  async function _pollUntilDiscoveryDone() {
+    const progressBar  = document.getElementById('mask-disc-fill');
+    const progressText = document.getElementById('mask-disc-text');
+    let   elapsed = 0;
+    while (true) {
+      await new Promise(r => setTimeout(r, 3000));
+      elapsed += 3;
+      try {
+        const r = await fetch(`/admin/clients/${accountId}/setup/status`, {credentials:'same-origin'});
+        const d = await r.json();
+        const state = d.state || 'NEW';
+        const schemaCount = d.schema_file_count || 0;
+        // Animate a fake progress bar (discovery has no incremental events)
+        const fakeP = Math.min(95, Math.round(elapsed / 1.5));
+        if (progressBar) progressBar.style.width = fakeP + '%';
+        if (progressText) progressText.textContent = `Discovering… (${schemaCount} tables found so far)`;
+        if (state === 'SCHEMA_READY' || state === 'READY') {
+          if (progressBar) progressBar.style.width = '100%';
+          return schemaCount;
+        }
+        if (elapsed > 300) throw new Error('Discovery timed out after 5 minutes');
+      } catch(pollErr) {
+        if (String(pollErr).includes('timed out')) throw pollErr;
+        // Network hiccup — keep waiting
+      }
+    }
+  }
+
+  function _showMaskingComplete(config) {
+    const btn        = document.getElementById('mask-create-btn');
+    const skipBtn    = document.querySelector('#masking-section .btn-secondary');
+    const statusEl   = document.getElementById('mask-apply-status');
+    const progressEl = document.getElementById('mask-progress-bar');
+    const summaryEl  = document.getElementById('mask-completion-summary');
+
+    if (progressEl) progressEl.style.display = 'none';
+    if (btn)     { btn.style.display = 'none'; }
+    if (skipBtn) { skipBtn.style.display = 'none'; }
+
+    // Mark step as done
+    const badge = document.getElementById('mask-done-badge');
+    const num   = document.getElementById('mask-step-num');
+    if (badge) badge.style.display = '';
+    if (num)   { num.style.background = 'var(--green)'; num.textContent = '✓'; num.style.fontSize = '12px'; }
+
+    statusEl.style.color = 'var(--green)';
+    statusEl.textContent = '✓ Schema discovery complete. Tables are now ready for KB generation.';
+
+    // Build per-table summary
+    if (!summaryEl) return;
+    let html =
+      `<div style="margin-top:.85rem;padding:.85rem 1rem;background:var(--green-light);` +
+      `border:1px solid color-mix(in srgb,var(--green) 30%,transparent);border-radius:var(--radius);font-size:12px">` +
+      `<div style="font-weight:700;color:var(--green);margin-bottom:.6rem">` +
+        `✅ ${selected.size} table${selected.size!==1?'s are':' is'} ready for KB generation` +
+      `</div>`;
+
+    [...selected].sort().forEach(fqn => {
+      const parts = fqn.split('.');
+      const tName = parts[parts.length - 1];
+      const cfg   = config[fqn];
+      const count = cfg ? (cfg.masked_fields || []).length : 0;
+      html +=
+        `<div style="display:flex;align-items:flex-start;gap:.5rem;padding:.3rem 0;border-top:1px solid color-mix(in srgb,var(--green) 20%,transparent)">` +
+        `<span style="flex-shrink:0;margin-top:1px">${count > 0 ? '🔒' : '📋'}</span>` +
+        `<div style="flex:1">` +
+          `<span style="font-weight:700">${esc(tName)}</span>` +
+          `<span style="color:var(--text-muted);margin-left:.35rem;font-size:11px">${esc(fqn)}</span>`;
+      if (count > 0) {
+        const fields = cfg.masked_fields || [];
+        const cache  = _maskFieldsCache.get(fqn) || {};
+        const smap   = cache.strategy_map || {};
+        html += `<div style="margin-top:.2rem;display:flex;flex-wrap:wrap;gap:3px">`;
+        fields.forEach(f => {
+          const strategy = smap[f] || smap[f.toUpperCase()] || '';
+          const label    = strategy ? (STRATEGY_LABELS[strategy] || strategy) : '';
+          html +=
+            `<span style="background:color-mix(in srgb,var(--amber) 14%,var(--surface));` +
+            `border:1px solid color-mix(in srgb,var(--amber) 35%,transparent);` +
+            `border-radius:3px;padding:1px 5px;font-size:10px;color:var(--amber)">` +
+            `${esc(f)}${label ? ' <span style="color:var(--blue);font-style:italic">' + esc(label) + '</span>' : ''}` +
+            `</span>`;
+        });
+        html += `</div>`;
+      } else {
+        html += `<div style="font-size:11px;color:var(--text-muted);margin-top:.15rem">No masking — real sample rows</div>`;
+      }
+      html += `</div></div>`;
+    });
+
+    html +=
+      `<div style="margin-top:.75rem;padding-top:.6rem;border-top:1px solid color-mix(in srgb,var(--green) 25%,transparent)">` +
+      `<strong>Next step →</strong> Scroll down to <strong>Step 4: Knowledge Base generation</strong> ` +
+      `and click <strong>Generate Knowledge Base</strong>.` +
+      `</div></div>`;
+
+    summaryEl.innerHTML = html;
+    summaryEl.style.display = 'block';
+    summaryEl.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+  }
 
   window.skipMasking = function() {
     const statusEl = document.getElementById('mask-apply-status');
     if (statusEl) {
       statusEl.style.color = 'var(--text-muted)';
-      statusEl.textContent = 'Masking skipped — sample rows will be sent to the LLM as-is.';
+      statusEl.textContent = 'Masking skipped — sample rows will be sent to the LLM as-is. Run Schema Discovery in Step 3.';
     }
   };
 
