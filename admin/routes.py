@@ -45,6 +45,7 @@ from core.log_export import (
     provision_external_log_store,
     sync_external_logs,
     reset_egress_and_sync,
+    reset_all_and_sync,
     diagnose_external_log_store,
 )
 from core.admin_notifications import (
@@ -754,6 +755,43 @@ async def database_logs_sync(request: Request, db_id: int):
         log.warning("External log sync failed for db_config_id=%s: %s", db_id, e)
         return RedirectResponse(
             f"/admin/databases?error={quote('Log sync failed: ' + str(e)[:160])}",
+            status_code=303,
+        )
+
+
+@router.post("/databases/{db_id}/logs/reset-all")
+async def database_logs_reset_all(request: Request, db_id: int):
+    """Truncate ALL three external log tables and re-export everything from local SQLite."""
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    raw = store.get_db_config(db_id)
+    if not raw:
+        return RedirectResponse(
+            f"/admin/databases?error={quote('Database config not found')}",
+            status_code=303,
+        )
+    try:
+        loop   = asyncio.get_running_loop()
+        result = await asyncio.wait_for(
+            loop.run_in_executor(None, reset_all_and_sync, raw),
+            timeout=180,
+        )
+        msg = (
+            f"Full reset complete — re-exported "
+            f"{result['query_count']} query, "
+            f"{result['llm_count']} LLM, "
+            f"{result['egress_count']} egress rows to {result['schema']}"
+        )
+        return RedirectResponse(f"/admin/databases?saved={quote(msg)}", status_code=303)
+    except asyncio.TimeoutError:
+        return RedirectResponse(
+            f"/admin/databases?error={quote('Reset timed out (>3 min)')}",
+            status_code=303,
+        )
+    except Exception as e:
+        log.warning("Full log reset failed for db_config_id=%s: %s", db_id, e)
+        return RedirectResponse(
+            f"/admin/databases?error={quote('Full reset failed: ' + str(e)[:160])}",
             status_code=303,
         )
 
