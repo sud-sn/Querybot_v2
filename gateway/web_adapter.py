@@ -108,6 +108,32 @@ class WebAdapter(PlatformAdapter):
         """Clear session history — called on WebSocket close."""
         self._history.clear()
 
+    def load_history(self, history: list[dict]) -> None:
+        """
+        Hydrate conversation history from client-side localStorage.
+
+        Called once on WebSocket connect when the browser sends a
+        ``history_sync`` message containing the turns it persisted from the
+        previous session.  Only the last _HISTORY_MAXLEN turns are kept.
+        SQL is re-sanitized so any value that slipped through on the client
+        side is stripped before it re-enters the LLM prompt.
+        """
+        self._history.clear()
+        for turn in list(history)[-_HISTORY_MAXLEN:]:
+            if not isinstance(turn, dict):
+                continue
+            q = (turn.get("question") or "").strip()
+            sql = (turn.get("sql") or "").strip()
+            if not q or not sql:
+                continue
+            self._history.append({
+                "question":  q,
+                "sql":       self._sanitize_sql_for_history(sql),
+                "columns":   turn.get("columns") or [],
+                "row_count": int(turn.get("row_count") or 0),
+            })
+        log.debug("History hydrated from client: %d turn(s)", len(self._history))
+
     def cache_result(
         self,
         rows: list[dict],

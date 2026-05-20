@@ -263,6 +263,10 @@
 .chart-btn{border:1px solid var(--border);background:var(--surface-2);color:var(--text-soft);padding:7px 10px;border-radius:999px;font-size:11px;font-weight:700;cursor:pointer}
 .chart-btn:hover{border-color:var(--primary);color:var(--primary);background:var(--surface-3)}
 .chart-canvas{height:320px;width:100%;border-radius:var(--radius);background:linear-gradient(180deg,color-mix(in srgb,var(--surface-2) 92%, transparent),transparent)}
+.chart-type-toggle{display:flex;gap:.35rem;margin-top:.55rem;padding-top:.45rem;border-top:1px solid color-mix(in srgb,var(--border) 50%,transparent)}
+.ctt-btn{padding:4px 12px;font-size:11px;font-weight:700;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-muted);cursor:pointer;transition:all .15s}
+.ctt-btn:hover{border-color:var(--primary);color:var(--primary)}
+.ctt-btn.ctt-active{background:var(--primary);border-color:var(--primary);color:#fff}
 .chart-footer{margin-top:.75rem;display:flex;justify-content:space-between;gap:1rem;color:var(--text-muted);font-size:11px;flex-wrap:wrap}
 .assistant-card{background:linear-gradient(180deg,color-mix(in srgb,var(--surface) 97%, var(--primary-soft) 3%),var(--surface));border:1px solid var(--border);border-radius:var(--radius);padding:1rem;box-shadow:var(--shadow)}
 .assistant-card{padding:1rem 1rem .95rem}
@@ -602,7 +606,10 @@
           </div>
         </div>
         <div class="composer-footer">
-          <div class="composer-hint">Press Enter to send · Shift + Enter for a new line</div>
+          <div style="display:flex;align-items:center;gap:.75rem;flex-wrap:wrap">
+            <div class="composer-hint">Press Enter to send · Shift + Enter for a new line</div>
+            <div id="memoryBadge" style="display:none;align-items:center;gap:.35rem;font-size:11px;font-weight:700;padding:3px 9px;border-radius:999px;background:var(--surface-2);border:1px solid var(--border);color:var(--text-soft);cursor:default" title=""></div>
+          </div>
           {% if suggestions %}
           <div class="composer-actions">
             {% for s in suggestions[:3] %}
@@ -626,6 +633,11 @@ const USER_INIT = (USER_NAME[0] || 'U').toUpperCase();
 const USER_EMAIL = {{ user.email|default('', true)|tojson }};
 const CHAT_CACHE_LIMIT = 80;
 const CHAT_CACHE_KEY = `qb_chat_cache:${ACCOUNT_ID}:${USER_EMAIL || USER_NAME}`;
+// Multi-turn memory — localStorage key for persisting up to 3 history turns
+const HISTORY_STORAGE_KEY = `querybot.history:${ACCOUNT_ID}:${USER_EMAIL || USER_NAME}`;
+const HISTORY_MAX_TURNS = 3;
+// In-memory mirror of the last N successful turns (synced with localStorage)
+let _localHistory = [];
 let queryLimitLevel = {{ (query_status.level or 'normal')|tojson }};
 let queryLimitToastShown = false;
 const STATUS_FALLBACK = {
@@ -826,13 +838,50 @@ function appendBot(rawText, opts = {}){
   if (opts.persist !== false) pushChatCache({ kind:'bot', text: rawText, timestamp });
   scrollBottom();
 }
+// ── Multi-turn conversation memory helpers ────────────────────────────────────
+function _loadStoredHistory() {
+  try {
+    const raw = localStorage.getItem(HISTORY_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+}
+function _saveHistory(turns) {
+  try { localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(turns)); } catch {}
+}
+function _pushHistory(turn) {
+  // Append a new turn and keep only the last HISTORY_MAX_TURNS entries
+  _localHistory.push(turn);
+  if (_localHistory.length > HISTORY_MAX_TURNS) {
+    _localHistory = _localHistory.slice(-HISTORY_MAX_TURNS);
+  }
+  _saveHistory(_localHistory);
+  _updateMemoryBadge();
+}
+function _updateMemoryBadge() {
+  const badge = document.getElementById('memoryBadge');
+  if (!badge) return;
+  const n = _localHistory.length;
+  if (n > 0) {
+    badge.textContent = `💬 ${n} turn${n === 1 ? '' : 's'} of context`;
+    badge.style.display = 'inline-flex';
+    badge.title = _localHistory.map((t, i) => `${i + 1}. ${t.question}`).join('\n');
+  } else {
+    badge.style.display = 'none';
+  }
+}
+
+// ── Per-chart payload registry (for type-toggle re-renders) ──────────────────
+window._chartPayloads = window._chartPayloads || {};
+
+// Palette for multi-series charts
+const _CHART_COLORS = ['#378ADD','#34d399','#f472b6','#fbbf24','#a78bfa','#fb923c','#22d3ee','#e879f9'];
+
 function buildChartOption(payload){
   const rows = Array.isArray(payload?.rows) ? payload.rows : [];
   const xKey = payload?.x_key;
   const yKeys = Array.isArray(payload?.y_keys) ? payload.y_keys : [];
   const yKey = yKeys[0];
   const labels = rows.map(r => String((xKey && r?.[xKey]) ?? ''));
-  const values = rows.map(r => Number((yKey && r?.[yKey]) ?? 0));
   const dark = document.documentElement.getAttribute('data-theme') === 'dark';
   const axisColor = dark ? '#94a3b8' : '#64748b';
   const gridColor = dark ? 'rgba(148,163,184,.18)' : 'rgba(100,116,139,.18)';
@@ -842,28 +891,70 @@ function buildChartOption(payload){
   const longLabels = maxLabel > 14;
   const manyLabels = labels.length > 8;
   const temporal = /month|week|quarter|year|date|20\d{2}|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec/i.test(labels.slice(0,8).join(' '));
-  const type = payload?.chart_type === 'scatter' ? 'scatter' : ((payload?.chart_type === 'line' && temporal) ? 'line' : 'bar');
+  // Resolve effective type (supports override for toggle buttons)
+  const requestedType = payload?.chart_type;
+  let type;
+  if (requestedType === 'pie') type = 'pie';
+  else if (requestedType === 'scatter') type = 'scatter';
+  else if (requestedType === 'line' || (requestedType !== 'bar' && temporal)) type = 'line';
+  else type = 'bar';
   const horizontal = type === 'bar' && (longLabels || manyLabels) && !temporal;
   const formatter = (val) => {
     const s = String(val ?? '');
     return s.length > 18 ? s.slice(0, 18) + '…' : s;
   };
+
+  // ── Pie chart ──────────────────────────────────────────────────────────────
+  if (type === 'pie') {
+    const pieData = rows.map(r => ({
+      name: String((xKey && r?.[xKey]) ?? ''),
+      value: Number((yKey && r?.[yKey]) ?? 0),
+    }));
+    return {
+      backgroundColor: 'transparent',
+      animationDuration: 400,
+      color: _CHART_COLORS,
+      tooltip: {
+        trigger: 'item',
+        backgroundColor: surface,
+        borderColor: gridColor,
+        borderWidth: 1,
+        textStyle: { color: textColor },
+        formatter: (p) => `<strong>${escHtml(String(p.name ?? ''))}</strong><br/>${escHtml(String(yKey || 'Value'))}: ${escHtml(String(p.value ?? ''))}<br/><span style="opacity:.7">${p.percent?.toFixed(1)}%</span>`,
+      },
+      legend: {
+        orient: 'vertical',
+        right: 12,
+        top: 'middle',
+        textStyle: { color: axisColor, fontSize: 11 },
+        formatter: (name) => name.length > 16 ? name.slice(0, 16) + '…' : name,
+      },
+      series: [{
+        type: 'pie',
+        radius: ['38%', '70%'],
+        center: ['40%', '50%'],
+        data: pieData,
+        label: { show: true, formatter: '{d}%', color: axisColor, fontSize: 11 },
+        labelLine: { show: true, length: 8, length2: 6 },
+        itemStyle: { borderRadius: 6, borderColor: surface, borderWidth: 2 },
+        emphasis: { itemStyle: { shadowBlur: 10, shadowOffsetX: 0, shadowColor: 'rgba(0,0,0,.25)' } },
+      }],
+    };
+  }
+
   const option = {
     backgroundColor: 'transparent',
     animationDuration: 350,
+    color: _CHART_COLORS,
     grid: horizontal
-      ? { left: 140, right: 24, top: 24, bottom: 24 }
-      : { left: 52, right: 24, top: 24, bottom: longLabels ? 78 : 48 },
+      ? { left: 140, right: 24, top: 32, bottom: 24 }
+      : { left: 52, right: 24, top: yKeys.length > 1 ? 44 : 24, bottom: longLabels ? 78 : 48 },
     tooltip: {
-      trigger: type === 'line' ? 'axis' : 'item',
+      trigger: type === 'line' ? 'axis' : (type === 'scatter' ? 'item' : 'item'),
       backgroundColor: surface,
       borderColor: gridColor,
       borderWidth: 1,
       textStyle: { color: textColor },
-      formatter: (params) => {
-        const p = Array.isArray(params) ? params[0] : params;
-        return `<strong>${escHtml(String(p.name ?? ''))}</strong><br/>${escHtml(String(yKey || 'Value'))}: ${escHtml(String(p.value ?? ''))}`;
-      }
     },
     xAxis: horizontal ? {
       type: 'value',
@@ -893,17 +984,65 @@ function buildChartOption(payload){
     },
     series: []
   };
-  if (type === 'line') {
-    option.series = [{ type: 'line', smooth: true, data: values, symbolSize: 8, lineStyle: { width: 3 }, areaStyle: { opacity: 0.15 } }];
-  } else if (type === 'scatter') {
+
+  if (type === 'scatter') {
     const y2 = yKeys[1];
     const points = rows.map(r => [Number(r?.[yKey] ?? 0), Number(r?.[y2] ?? 0), String((xKey && r?.[xKey]) ?? '')]);
-    option.xAxis = { type: 'value', axisLabel: { color: axisColor }, splitLine: { show: true, lineStyle: { color: gridColor } }, axisTick: { show: false }, axisLine: { show: false } };
-    option.yAxis = { type: 'value', axisLabel: { color: axisColor }, splitLine: { show: true, lineStyle: { color: gridColor } }, axisTick: { show: false }, axisLine: { show: false } };
-    option.series = [{ type: 'scatter', symbolSize: 14, data: points }];
+    option.xAxis = { type: 'value', name: yKey, nameTextStyle: { color: axisColor }, axisLabel: { color: axisColor }, splitLine: { show: true, lineStyle: { color: gridColor } }, axisTick: { show: false }, axisLine: { show: false } };
+    option.yAxis = { type: 'value', name: y2, nameTextStyle: { color: axisColor }, axisLabel: { color: axisColor }, splitLine: { show: true, lineStyle: { color: gridColor } }, axisTick: { show: false }, axisLine: { show: false } };
+    option.series = [{ type: 'scatter', symbolSize: 14, data: points, itemStyle: { color: _CHART_COLORS[0] } }];
     option.tooltip.formatter = (p) => `<strong>${escHtml(String(p.value?.[2] ?? ''))}</strong><br/>${escHtml(String(yKey || 'X'))}: ${escHtml(String(p.value?.[0] ?? ''))}<br/>${escHtml(String(y2 || 'Y'))}: ${escHtml(String(p.value?.[1] ?? ''))}`;
+  } else if (type === 'line') {
+    // Multi-series line: one series per y_key
+    option.legend = yKeys.length > 1
+      ? { top: 4, textStyle: { color: axisColor, fontSize: 11 }, data: yKeys }
+      : undefined;
+    option.series = yKeys.map((k, i) => ({
+      name: k,
+      type: 'line',
+      smooth: true,
+      data: rows.map(r => Number(r?.[k] ?? 0)),
+      symbolSize: 7,
+      lineStyle: { width: 2.5, color: _CHART_COLORS[i % _CHART_COLORS.length] },
+      itemStyle: { color: _CHART_COLORS[i % _CHART_COLORS.length] },
+      areaStyle: yKeys.length === 1 ? { opacity: 0.12 } : undefined,
+    }));
+    option.tooltip.trigger = 'axis';
+    if (yKeys.length > 1) {
+      option.tooltip.formatter = (params) => {
+        const label = Array.isArray(params) ? (params[0]?.name ?? '') : '';
+        const lines = (Array.isArray(params) ? params : [params])
+          .map(p => `${escHtml(String(p.seriesName || ''))}: <strong>${escHtml(String(p.value ?? ''))}</strong>`)
+          .join('<br/>');
+        return `<strong>${escHtml(String(label))}</strong><br/>${lines}`;
+      };
+    }
   } else {
-    option.series = [{ type: 'bar', data: values, barMaxWidth: horizontal ? 22 : 48, itemStyle: { borderRadius: horizontal ? [0, 8, 8, 0] : [8, 8, 0, 0] } }];
+    // Bar — multi-series grouped
+    const isMulti = yKeys.length > 1;
+    option.legend = isMulti
+      ? { top: 4, textStyle: { color: axisColor, fontSize: 11 }, data: yKeys }
+      : undefined;
+    option.series = yKeys.map((k, i) => ({
+      name: k,
+      type: 'bar',
+      data: rows.map(r => Number(r?.[k] ?? 0)),
+      barMaxWidth: horizontal ? 18 : (isMulti ? 28 : 48),
+      itemStyle: {
+        borderRadius: horizontal ? [0, 6, 6, 0] : [6, 6, 0, 0],
+        color: _CHART_COLORS[i % _CHART_COLORS.length],
+      },
+    }));
+    if (isMulti) {
+      option.tooltip.trigger = 'axis';
+      option.tooltip.formatter = (params) => {
+        const label = Array.isArray(params) ? (params[0]?.name ?? '') : '';
+        const lines = (Array.isArray(params) ? params : [params])
+          .map(p => `${escHtml(String(p.seriesName || ''))}: <strong>${escHtml(String(p.value ?? ''))}</strong>`)
+          .join('<br/>');
+        return `<strong>${escHtml(String(label))}</strong><br/>${lines}`;
+      };
+    }
   }
   return option;
 }
@@ -1075,7 +1214,44 @@ function appendAssistantResponse(msg, opts = {}){
       toast('Unable to pin chart');
     }
   });
-  if (hasChart) renderChartInto(div.querySelector(`#${chartId}`), msg.chart);
+  if (hasChart) {
+    renderChartInto(div.querySelector(`#${chartId}`), msg.chart);
+    // Store payload for chart type toggle re-renders
+    window._chartPayloads[chartId] = Object.assign({}, msg.chart);
+    // Inject chart type toggle strip
+    const chartWrap = div.querySelector('.result-chart-wrap');
+    if (chartWrap) {
+      const ct = (msg.chart.chart_type || 'bar');
+      const toggleHtml = `<div class="chart-type-toggle" data-chart-id="${chartId}">
+        <button type="button" class="ctt-btn${ct==='bar'?' ctt-active':''}" data-type="bar">Bar</button>
+        <button type="button" class="ctt-btn${ct==='line'?' ctt-active':''}" data-type="line">Line</button>
+        <button type="button" class="ctt-btn${ct==='pie'?' ctt-active':''}" data-type="pie">Pie</button>
+      </div>`;
+      chartWrap.insertAdjacentHTML('beforeend', toggleHtml);
+      chartWrap.querySelectorAll('.ctt-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const newType = btn.dataset.type;
+          const stored = window._chartPayloads[chartId];
+          if (!stored) return;
+          const overridden = Object.assign({}, stored, { chart_type: newType });
+          renderChartInto(div.querySelector(`#${chartId}`), overridden);
+          window._chartPayloads[chartId] = overridden;
+          chartWrap.querySelectorAll('.ctt-btn').forEach(b => b.classList.toggle('ctt-active', b.dataset.type === newType));
+        });
+      });
+    }
+  }
+  // Record this turn in frontend history for localStorage persistence
+  // (fires for chart AND data-table responses so follow-ups always have context)
+  if (msg.trust?.sql && msg.question) {
+    const cols = (msg.data?.rows?.length ? Object.keys(msg.data.rows[0]) : []);
+    _pushHistory({
+      question: msg.question,
+      sql: msg.trust.sql,
+      columns: cols,
+      row_count: msg.trust.row_count ?? 0,
+    });
+  }
 
   // Wire follow-up suggestion chips
   div.querySelectorAll('.follow-up-chip').forEach(btn => {
@@ -1157,6 +1333,29 @@ ${rows.length} rows`;
     toast(ok ? 'Chart summary copied' : 'Copy failed');
   });
   renderChartInto(div.querySelector(`#${chartId}`), payload);
+  // Store payload and add chart type toggle
+  window._chartPayloads[chartId] = Object.assign({}, payload);
+  const _chartCardCanvas = div.querySelector(`#${chartId}`);
+  if (_chartCardCanvas) {
+    const ct2 = (payload.chart_type || 'bar');
+    const _toggleHtml = `<div class="chart-type-toggle" data-chart-id="${chartId}" style="margin-top:.5rem">
+      <button type="button" class="ctt-btn${ct2==='bar'?' ctt-active':''}" data-type="bar">Bar</button>
+      <button type="button" class="ctt-btn${ct2==='line'?' ctt-active':''}" data-type="line">Line</button>
+      <button type="button" class="ctt-btn${ct2==='pie'?' ctt-active':''}" data-type="pie">Pie</button>
+    </div>`;
+    _chartCardCanvas.insertAdjacentHTML('afterend', _toggleHtml);
+    div.querySelectorAll('.ctt-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const newType = btn.dataset.type;
+        const stored = window._chartPayloads[chartId];
+        if (!stored) return;
+        const overridden = Object.assign({}, stored, { chart_type: newType });
+        renderChartInto(div.querySelector(`#${chartId}`), overridden);
+        window._chartPayloads[chartId] = overridden;
+        div.querySelectorAll('.ctt-btn').forEach(b => b.classList.toggle('ctt-active', b.dataset.type === newType));
+      });
+    });
+  }
   if (opts.persist !== false) pushChatCache({ kind:'chart', payload, timestamp });
   scrollBottom();
 }
@@ -1679,7 +1878,20 @@ function connect(){
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   setConnectionState(reconnectAttempts ? 'Reconnecting…' : 'Connecting…', reconnectAttempts ? 'Restoring live session' : 'Waiting for live session');
   ws = new WebSocket(`${proto}//${location.host}/ws/chat/${ACCOUNT_ID}`);
-  ws.onopen = () => { wsReady = true; reconnectAttempts = 0; document.getElementById('sendBtn').disabled = false; setConnectionState('Connected', 'Live session active'); };
+  ws.onopen = () => {
+    wsReady = true;
+    reconnectAttempts = 0;
+    document.getElementById('sendBtn').disabled = false;
+    setConnectionState('Connected', 'Live session active');
+    // Restore history from localStorage and sync with server
+    _localHistory = _loadStoredHistory();
+    _updateMemoryBadge();
+    if (_localHistory.length > 0) {
+      try {
+        ws.send(JSON.stringify({ type: 'history_sync', history: _localHistory }));
+      } catch {}
+    }
+  };
   ws.onmessage = (evt) => {
     const msg = safeJsonParse(evt.data); if (!msg) return;
     if (msg.type === 'typing') {
@@ -1769,6 +1981,9 @@ function connect(){
 document.addEventListener('DOMContentLoaded', () => {
   _initComposerMascot();
   _updateMascotTheme();
+  // Restore conversation history badge on page load
+  _localHistory = _loadStoredHistory();
+  _updateMemoryBadge();
   window.addEventListener('qb-query-limit-status', (event) => updateQueryLimitKpi(event.detail, {toast:false}));
   const inp = document.getElementById('input');
   inp.addEventListener('input', () => { inp.style.height = 'auto'; inp.style.height = Math.min(inp.scrollHeight, 140) + 'px'; updateCharCount(); });

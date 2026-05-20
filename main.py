@@ -379,6 +379,17 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
             _log_q(account_id, question, sql_from_metric, len(rows), True, "",
                    "metric_registry", "deterministic", 0, 0, duration_ms,
                    portal_user_id=pu_id, zoom_user_id=zid)
+            # Record metric-registry hits in conversation history too so
+            # follow-up questions ("filter to top 5", "break that down by region")
+            # can reference the returned columns and SQL shape.
+            _add_history = getattr(adapter, "add_to_history", None)
+            if callable(_add_history) and rows:
+                _add_history(
+                    question=question,
+                    sql=sql_from_metric,
+                    columns=list(rows[0].keys()) if rows else [],
+                    row_count=len(rows),
+                )
             await _send_results(event, adapter, question, rows, sql_from_metric,
                                 duration_ms, portal_user, account_id, db_cfg,
                                 question_id=audit_request_id)
@@ -1344,9 +1355,9 @@ async def ws_chat(websocket: WebSocket, account_id: str):
     })
 
     log.info("WebSocket chat connected: user=%d account=%s", user_id, account_id)
-    # Clear any stale history on reconnect (fresh session)
-    if hasattr(adapter, "clear_history"):
-        adapter.clear_history()
+    # History is NOT cleared on reconnect — the browser will send a
+    # `history_sync` message immediately after opening the socket with
+    # turns persisted in localStorage so multi-turn memory survives refreshes.
 
     try:
         while True:
@@ -1360,6 +1371,16 @@ async def ws_chat(websocket: WebSocket, account_id: str):
             # schema_hint: schema name selected by the user in the portal UI
             # e.g. "HR" or "PHARMACY" — filters allowed_tables to that schema only
             schema_hint = (data.get("schema_hint") or "").strip().upper()
+
+            # ── history_sync: browser restores prior-session history ──────────
+            if msg_type == "history_sync":
+                incoming = data.get("history")
+                if isinstance(incoming, list):
+                    load_fn = getattr(adapter, "load_history", None)
+                    if callable(load_fn):
+                        load_fn(incoming)
+                        log.debug("history_sync: loaded %d turn(s) from client", len(incoming))
+                continue
 
             if msg_type == "clarification_response":
                 pending = get_pending(account_id, zoom_user_id)
