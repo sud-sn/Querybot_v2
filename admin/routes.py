@@ -2946,6 +2946,184 @@ async def admin_save_masking_only(request: Request, account_id: str):
     return JSONResponse({"status": "ok", "count": len(masking_config), "egress_updated": updated})
 
 
+@router.get("/clients/{account_id}/setup/mask-preview")
+async def admin_mask_preview(request: Request, account_id: str, fqn: str = ""):
+    """
+    Fetch up to 3 real rows for a table, apply the saved masking config,
+    and return a side-by-side before/after so admins can verify masking works.
+
+    Query param: fqn — fully-qualified table name (DB.SCHEMA.TABLE, upper-cased).
+    Response: {status, columns, before:[row,...], after:[row,...], masked_fields:[...]}
+    """
+    if not _is_auth(request):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    if not fqn:
+        raise HTTPException(status_code=400, detail="fqn query param required")
+
+    client = store.get_client(account_id)
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+
+    db_cfg_id = client.get("db_config_id")
+    if not db_cfg_id:
+        return JSONResponse({"status": "no_db", "message": "No database configured"})
+
+    raw_cfg = store.get_db_config(db_cfg_id)
+    if not raw_cfg:
+        return JSONResponse({"status": "no_db", "message": "Database config not found"})
+
+    db_type = raw_cfg.get("db_type", "azure_sql")
+    creds   = raw_cfg.get("credentials", {})
+    parts   = fqn.upper().split(".")  # [DB, SCHEMA, TABLE] or [SCHEMA, TABLE]
+
+    # Load masking config for this table
+    state_data     = store.get_client_state(account_id)
+    masking_config = state_data.get("masking_config") or {}
+    # Match FQN key case-insensitively
+    mc_entry: dict = {}
+    for k, v in masking_config.items():
+        if k.upper() == fqn.upper():
+            mc_entry = v
+            break
+
+    mask_mode     = mc_entry.get("mode", "selective")
+    masked_fields = set(f.upper() for f in (mc_entry.get("masked_fields") or []))
+
+    if mask_mode == "none" or not masked_fields:
+        return JSONResponse({
+            "status": "no_masking",
+            "message": "No masking configured for this table",
+        })
+
+    try:
+        from core.schema import _az_connect, _sf_connect, _ora_connect
+        from core.masking import mask_rows, detect_sensitive_columns
+
+        def _fetch_sample() -> tuple[list[dict], list[dict]]:
+            """Returns (col_defs, sample_rows) — 3 real rows."""
+            col_defs: list[dict] = []
+            rows:     list[dict] = []
+
+            if db_type == "azure_sql":
+                tbl    = parts[-1]
+                schema = parts[-2] if len(parts) >= 2 else "dbo"
+                db     = parts[0]  if len(parts) >= 3 else ""
+                conn   = _az_connect(creds)
+                try:
+                    cur = conn.cursor()
+                    if db:
+                        cur.execute(f"USE [{db}]")
+                    cur.execute(
+                        "SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS "
+                        "WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION",
+                        schema, tbl,
+                    )
+                    col_defs = [{"name": r[0].upper(), "type": r[1]} for r in cur.fetchall()]
+                    if col_defs:
+                        cols_sql = ", ".join(f"[{c['name']}]" for c in col_defs)
+                        cur.execute(f"SELECT TOP 3 {cols_sql} FROM [{schema}].[{tbl}] WITH (NOLOCK)")
+                        col_names = [c["name"] for c in col_defs]
+                        rows = [dict(zip(col_names, row)) for row in cur.fetchall()]
+                finally:
+                    conn.close()
+
+            elif db_type == "snowflake":
+                tbl    = parts[-1]
+                schema = parts[-2] if len(parts) >= 2 else "PUBLIC"
+                db     = parts[0]  if len(parts) >= 3 else ""
+                conn   = _sf_connect(creds)
+                try:
+                    cur = conn.cursor()
+                    query = ("SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS "
+                             "WHERE TABLE_NAME = %s AND TABLE_SCHEMA = %s")
+                    params: list = [tbl, schema]
+                    if db:
+                        query += " AND TABLE_CATALOG = %s"
+                        params.append(db)
+                    cur.execute(query + " ORDER BY ORDINAL_POSITION", params)
+                    col_defs = [{"name": str(r[0]).upper(), "type": r[1]} for r in cur.fetchall()]
+                    if col_defs:
+                        cols_sql = ", ".join(f'"{c["name"]}"' for c in col_defs)
+                        db_prefix = f'"{db}".' if db else ""
+                        cur.execute(f'SELECT {cols_sql} FROM {db_prefix}"{schema}"."{tbl}" LIMIT 3')
+                        col_names = [c["name"] for c in col_defs]
+                        rows = [dict(zip(col_names, row)) for row in cur.fetchall()]
+                finally:
+                    conn.close()
+
+            else:  # oracle
+                tbl   = parts[-1]
+                owner = parts[-2] if len(parts) >= 2 else creds.get("username", "").upper()
+                conn  = _ora_connect(creds)
+                try:
+                    cur = conn.cursor()
+                    cur.execute(
+                        "SELECT COLUMN_NAME, DATA_TYPE FROM ALL_TAB_COLUMNS "
+                        "WHERE OWNER = :owner AND TABLE_NAME = :tbl ORDER BY COLUMN_ID",
+                        {"owner": owner, "tbl": tbl},
+                    )
+                    col_defs = [{"name": str(r[0]).upper(), "type": r[1]} for r in cur.fetchall()]
+                    if col_defs:
+                        cols_sql = ", ".join(f'"{c["name"]}"' for c in col_defs)
+                        cur.execute(
+                            f'SELECT {cols_sql} FROM "{owner}"."{tbl}" FETCH FIRST 3 ROWS ONLY'
+                        )
+                        col_names = [c["name"] for c in col_defs]
+                        rows = [dict(zip(col_names, row)) for row in cur.fetchall()]
+                finally:
+                    conn.close()
+
+            return col_defs, rows
+
+        loop = asyncio.get_running_loop()
+        col_defs, real_rows = await asyncio.wait_for(
+            loop.run_in_executor(None, _fetch_sample), timeout=20
+        )
+
+    except asyncio.TimeoutError:
+        return JSONResponse({"status": "timeout", "message": "DB query timed out"})
+    except Exception as exc:
+        log.warning("mask-preview failed for %s fqn=%s: %s", account_id, fqn, exc)
+        return JSONResponse({"status": "error", "message": str(exc)})
+
+    if not real_rows:
+        return JSONResponse({"status": "empty", "message": "Table has no rows to preview"})
+
+    # Apply masking to a copy
+    from core.masking import mask_rows as _mask_rows
+    masked_rows = _mask_rows(
+        [dict(r) for r in real_rows],
+        masked_fields,
+        col_defs,
+    )
+
+    # Serialise — convert non-JSON types (Decimal, date, etc.) to string
+    import decimal, datetime as _dt
+
+    def _safe(v):
+        if v is None:
+            return None
+        if isinstance(v, (int, float, str, bool)):
+            return v
+        if isinstance(v, decimal.Decimal):
+            return float(v)
+        if isinstance(v, (_dt.date, _dt.datetime)):
+            return str(v)
+        return str(v)
+
+    def _safe_row(row: dict) -> dict:
+        return {k: _safe(v) for k, v in row.items()}
+
+    return JSONResponse({
+        "status":        "ok",
+        "fqn":           fqn,
+        "columns":       [c["name"] for c in col_defs],
+        "masked_fields": sorted(masked_fields),
+        "before":        [_safe_row(r) for r in real_rows],
+        "after":         [_safe_row(r) for r in masked_rows],
+    })
+
+
 @router.get("/clients/{account_id}/setup/column-sensitivity")
 async def admin_column_sensitivity(request: Request, account_id: str, fqn: str = ""):
     """

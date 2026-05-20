@@ -51,6 +51,19 @@
 .mask-item-badge.has-mask{background:color-mix(in srgb,var(--amber) 12%,var(--surface));border-color:color-mix(in srgb,var(--amber) 35%,transparent);color:var(--amber)}
 .mask-item-body{display:none;border-top:1px solid var(--border)}
 .mask-item-body.open{display:block}
+/* ── Mask preview modal ── */
+.mask-preview-overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:900;display:flex;align-items:center;justify-content:center;padding:1rem}
+.mask-preview-modal{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);width:100%;max-width:900px;max-height:90vh;display:flex;flex-direction:column;box-shadow:0 8px 40px rgba(0,0,0,.35)}
+.mask-preview-head{display:flex;align-items:center;justify-content:space-between;padding:.875rem 1.25rem;border-bottom:1px solid var(--border);background:var(--surface-2)}
+.mask-preview-title{font-size:14px;font-weight:800}
+.mask-preview-body{overflow:auto;padding:1rem 1.25rem;flex:1}
+.mask-preview-table{width:100%;border-collapse:collapse;font-size:11px;font-family:monospace}
+.mask-preview-table th{padding:.35rem .6rem;text-align:left;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);border-bottom:2px solid var(--border);white-space:nowrap}
+.mask-preview-table td{padding:.32rem .6rem;border-bottom:1px solid var(--border);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:top}
+.mask-preview-table tr:last-child td{border-bottom:none}
+.mp-real{color:var(--text)}
+.mp-fake{color:var(--green);font-weight:700}
+.mp-masked-col{background:color-mix(in srgb,var(--amber) 5%,var(--surface))}
 .scope-section{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);margin:.45rem 0 .18rem .45rem}
 .scope-footer{display:none;align-items:center;gap:.6rem;padding:.75rem 1rem;border-top:1px solid var(--border);background:color-mix(in srgb,var(--blue-light) 34%,var(--surface))}
 .kb-live-status{display:none;align-items:center;gap:.75rem;flex-wrap:wrap;margin-top:.9rem;padding:.8rem 1rem;border-radius:var(--radius);border:1px solid color-mix(in srgb,var(--blue) 28%,transparent);background:var(--blue-light);color:var(--blue)}
@@ -638,6 +651,7 @@
           `<span class="mask-item-name">${esc(tableName)}</span>` +
           `<span class="mask-item-fqn">&nbsp;${esc(fqn)}</span>` +
           `<span class="mask-item-badge" id="mask-badge-${key}">No masking</span>` +
+          `<button class="btn-xs btn-ghost" id="mask-preview-btn-${key}" style="display:none;flex-shrink:0;font-size:10px;padding:2px 8px" onclick="event.stopPropagation();previewMasking('${fqn}')">👁 Preview</button>` +
         `</div>` +
         `<div class="mask-item-body" id="mask-body-${key}"></div>`;
       listEl.appendChild(item);
@@ -769,6 +783,9 @@
     const count = cfg ? cfg.masked_fields.size : 0;
     badgeEl.textContent = count > 0 ? `${count} field${count!==1?'s':''} masked` : 'No masking';
     badgeEl.className   = 'mask-item-badge' + (count > 0 ? ' has-mask' : '');
+    // Show preview button only when fields are selected
+    const previewBtn = document.getElementById('mask-preview-btn-' + key);
+    if (previewBtn) previewBtn.style.display = count > 0 ? '' : 'none';
   }
 
   window.createMasking = async function() {
@@ -939,6 +956,132 @@
       statusEl.textContent = 'Masking skipped — sample rows will be sent to the LLM as-is. Run Schema Discovery in Step 3.';
     }
   };
+
+  // ── Mask Preview modal ─────────────────────────────────────────────────────
+  window.previewMasking = async function(fqn) {
+    // Show modal with spinner
+    let modal = document.getElementById('mask-preview-overlay');
+    if (!modal) {
+      modal = document.createElement('div');
+      modal.id = 'mask-preview-overlay';
+      modal.className = 'mask-preview-overlay';
+      modal.innerHTML =
+        `<div class="mask-preview-modal">` +
+          `<div class="mask-preview-head">` +
+            `<span class="mask-preview-title" id="mask-preview-title">Masking Preview</span>` +
+            `<button class="btn-xs btn-ghost" onclick="document.getElementById('mask-preview-overlay').remove()">✕ Close</button>` +
+          `</div>` +
+          `<div class="mask-preview-body" id="mask-preview-body">` +
+            `<div style="padding:2rem;text-align:center;color:var(--text-muted);font-size:13px">Loading preview…</div>` +
+          `</div>` +
+        `</div>`;
+      document.body.appendChild(modal);
+      modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+    } else {
+      document.getElementById('mask-preview-body').innerHTML =
+        `<div style="padding:2rem;text-align:center;color:var(--text-muted);font-size:13px">Loading preview…</div>`;
+    }
+    document.getElementById('mask-preview-title').textContent = `Masking Preview — ${fqn}`;
+
+    try {
+      const resp = await fetch(
+        `/admin/clients/${accountId}/setup/mask-preview?fqn=${encodeURIComponent(fqn)}`,
+        {credentials: 'same-origin'}
+      );
+      const data = await resp.json();
+      _renderMaskPreview(data, fqn);
+    } catch(e) {
+      document.getElementById('mask-preview-body').innerHTML =
+        `<div style="padding:1.5rem;color:var(--red)">Error: ${esc(e.message)}</div>`;
+    }
+  };
+
+  function _renderMaskPreview(data, fqn) {
+    const bodyEl = document.getElementById('mask-preview-body');
+    if (!bodyEl) return;
+
+    if (data.status !== 'ok') {
+      const msgs = {
+        no_masking: 'No masking fields selected for this table.',
+        no_db:      'No database configured for this account.',
+        empty:      'Table returned no rows — nothing to preview.',
+        timeout:    'Database query timed out.',
+        error:      data.message || 'Unknown error.',
+      };
+      bodyEl.innerHTML =
+        `<div style="padding:1.5rem;color:var(--amber);font-size:13px">⚠ ${esc(msgs[data.status] || data.message || data.status)}</div>`;
+      return;
+    }
+
+    const columns      = data.columns || [];
+    const maskedSet    = new Set(data.masked_fields || []);
+    const beforeRows   = data.before || [];
+    const afterRows    = data.after  || [];
+
+    // Legend
+    let html =
+      `<div style="display:flex;align-items:center;gap:1.5rem;margin-bottom:.85rem;font-size:11px;flex-wrap:wrap">` +
+        `<span><span style="color:var(--text)">■</span> Original value</span>` +
+        `<span><span style="color:var(--green);font-weight:700">■</span> Masked value (sent to LLM)</span>` +
+        `<span style="color:var(--text-muted)">${maskedSet.size} of ${columns.length} fields masked</span>` +
+      `</div>` +
+      `<div style="overflow-x:auto">` +
+      `<table class="mask-preview-table">` +
+        `<thead><tr>` +
+          `<th style="color:var(--text-muted)">#</th>`;
+
+    // Column headers — highlight masked ones
+    for (const col of columns) {
+      const isMasked = maskedSet.has(col);
+      html += `<th class="${isMasked ? 'mp-masked-col' : ''}">${esc(col)}${isMasked ? ' 🔒' : ''}</th>`;
+    }
+    html += `</tr></thead><tbody>`;
+
+    // Interleave BEFORE / AFTER rows
+    for (let i = 0; i < beforeRows.length; i++) {
+      const bRow = beforeRows[i];
+      const aRow = afterRows[i] || {};
+
+      // BEFORE row
+      html += `<tr><td rowspan="2" style="font-size:10px;color:var(--text-muted);text-align:center;vertical-align:middle">Row ${i+1}</td>`;
+      for (const col of columns) {
+        const isMasked = maskedSet.has(col);
+        const val = bRow[col];
+        html += `<td class="${isMasked ? 'mp-masked-col mp-real' : 'mp-real'}" title="${esc(String(val ?? ''))}">` +
+                `${esc(val === null || val === undefined ? '∅ null' : String(val))}` +
+                `</td>`;
+      }
+      html += `</tr>`;
+
+      // AFTER row
+      html += `<tr>`;
+      for (const col of columns) {
+        const isMasked = maskedSet.has(col);
+        const bVal = bRow[col];
+        const aVal = aRow[col];
+        const changed = isMasked && String(bVal) !== String(aVal);
+        html += `<td class="${isMasked ? 'mp-masked-col' : ''}" title="${esc(String(aVal ?? ''))}">` +
+                `<span class="${changed ? 'mp-fake' : 'mp-real'}">` +
+                `${esc(aVal === null || aVal === undefined ? '∅ null' : String(aVal))}` +
+                `</span></td>`;
+      }
+      html += `</tr>`;
+
+      // Divider between rows
+      if (i < beforeRows.length - 1) {
+        html += `<tr><td colspan="${columns.length + 1}" style="height:6px;background:var(--surface-2);border:none"></td></tr>`;
+      }
+    }
+
+    html += `</tbody></table></div>`;
+    html +=
+      `<p style="margin-top:.85rem;font-size:11px;color:var(--text-muted)">` +
+      `These are the exact values the LLM will receive for sample rows of <strong>${esc(fqn)}</strong>. ` +
+      `Original values never leave your database.` +
+      `</p>`;
+
+    bodyEl.innerHTML = html;
+  }
 
   async function saveSetupScope() {
     if (!selected.size) {
