@@ -2951,8 +2951,9 @@ async def admin_column_sensitivity(request: Request, account_id: str, fqn: str =
     Return columns for a table plus auto-detected PII fields.
 
     Query param: fqn — fully-qualified table name (DB.SCHEMA.TABLE, upper-cased).
-    Reads from _schema.json written by discovery; no live DB call.
-    Response: {status, columns:[{name,type}], auto_masked:[colname,...]}
+    First tries _schema.json written by discovery; falls back to a live DB query
+    so fields are visible in the masking section BEFORE discovery has run.
+    Response: {status, columns:[{name,type}], auto_masked:[colname,...], strategy_map:{}}
     """
     if not _is_auth(request):
         raise HTTPException(status_code=401, detail="Not authenticated")
@@ -2963,35 +2964,130 @@ async def admin_column_sensitivity(request: Request, account_id: str, fqn: str =
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
 
-    schema_dir = Path("clients") / account_id / "schema"
+    # ── 1. Try _schema.json first (fast path after discovery) ───────────────
+    schema_dir  = Path("clients") / account_id / "schema"
     schema_path = schema_dir / "_schema.json"
-    if not schema_path.exists():
-        return JSONResponse({"status": "not_discovered", "columns": [], "auto_masked": []})
+    columns: list[dict] = []
 
-    try:
-        schema_data = json.loads(schema_path.read_text())
-    except Exception as exc:
-        log.warning("column-sensitivity: failed to read _schema.json for %s: %s", account_id, exc)
-        return JSONResponse({"status": "error", "columns": [], "auto_masked": []})
+    if schema_path.exists():
+        try:
+            schema_data = json.loads(schema_path.read_text(encoding="utf-8"))
+            fqn_upper = fqn.upper()
+            for key, meta in schema_data.items():
+                if key.upper() == fqn_upper:
+                    columns = meta.get("columns") or []
+                    break
+        except Exception as exc:
+            log.warning("column-sensitivity: failed to read _schema.json for %s: %s", account_id, exc)
 
-    # Schema keys are stored as DB.SCHEMA.TABLE (upper); match case-insensitively
-    fqn_upper = fqn.upper()
-    table_meta = None
-    for key, meta in schema_data.items():
-        if key.upper() == fqn_upper:
-            table_meta = meta
-            break
+    # ── 2. Live DB fallback when schema not yet discovered / table not found ─
+    if not columns:
+        db_cfg_id = client.get("db_config_id")
+        if not db_cfg_id:
+            return JSONResponse({"status": "no_db", "columns": [], "auto_masked": [], "strategy_map": {}})
 
-    if table_meta is None:
-        return JSONResponse({"status": "not_found", "columns": [], "auto_masked": []})
+        raw_cfg = store.get_db_config(db_cfg_id)
+        if not raw_cfg:
+            return JSONResponse({"status": "no_db", "columns": [], "auto_masked": [], "strategy_map": {}})
 
-    columns = table_meta.get("columns") or []
-    # Auto-detect PII from column names using the masking engine
+        db_type = raw_cfg.get("db_type", "azure_sql")
+        creds   = raw_cfg.get("credentials", {})
+        parts   = fqn.split(".")   # DB.SCHEMA.TABLE  (upper-cased)
+
+        try:
+            from core.schema import _az_connect, _sf_connect, _ora_connect
+
+            def _fetch_columns_live() -> list[dict]:
+                """Query INFORMATION_SCHEMA / ALL_TAB_COLUMNS for the table's columns."""
+                result: list[dict] = []
+
+                if db_type == "azure_sql":
+                    # parts: [DB, SCHEMA, TABLE]  (may be 2 or 3 elements)
+                    tbl    = parts[-1]
+                    schema = parts[-2] if len(parts) >= 2 else "dbo"
+                    db     = parts[0]  if len(parts) >= 3 else ""
+                    conn   = _az_connect(creds)
+                    try:
+                        cur = conn.cursor()
+                        if db:
+                            cur.execute(f"USE [{db}]")
+                        cur.execute(
+                            "SELECT COLUMN_NAME, DATA_TYPE "
+                            "FROM INFORMATION_SCHEMA.COLUMNS "
+                            "WHERE TABLE_SCHEMA=? AND TABLE_NAME=? "
+                            "ORDER BY ORDINAL_POSITION",
+                            schema, tbl,
+                        )
+                        for row in cur.fetchall():
+                            result.append({"name": row[0].upper(), "type": row[1]})
+                    finally:
+                        conn.close()
+
+                elif db_type == "snowflake":
+                    # parts: [DB, SCHEMA, TABLE]
+                    tbl    = parts[-1]
+                    schema = parts[-2] if len(parts) >= 2 else "PUBLIC"
+                    db     = parts[0]  if len(parts) >= 3 else ""
+                    conn   = _sf_connect(creds)
+                    try:
+                        cur = conn.cursor()
+                        query = (
+                            "SELECT COLUMN_NAME, DATA_TYPE "
+                            "FROM INFORMATION_SCHEMA.COLUMNS "
+                            "WHERE TABLE_NAME = %s AND TABLE_SCHEMA = %s"
+                        )
+                        params: list = [tbl, schema]
+                        if db:
+                            query += " AND TABLE_CATALOG = %s"
+                            params.append(db)
+                        query += " ORDER BY ORDINAL_POSITION"
+                        cur.execute(query, params)
+                        for row in cur.fetchall():
+                            result.append({"name": str(row[0]).upper(), "type": row[1]})
+                    finally:
+                        conn.close()
+
+                else:  # oracle
+                    # parts: [OWNER/SCHEMA, TABLE]  (2 parts)
+                    tbl   = parts[-1]
+                    owner = parts[-2] if len(parts) >= 2 else creds.get("username", "").upper()
+                    conn  = _ora_connect(creds)
+                    try:
+                        cur = conn.cursor()
+                        cur.execute(
+                            "SELECT COLUMN_NAME, DATA_TYPE "
+                            "FROM ALL_TAB_COLUMNS "
+                            "WHERE OWNER = :owner AND TABLE_NAME = :tbl "
+                            "ORDER BY COLUMN_ID",
+                            {"owner": owner, "tbl": tbl},
+                        )
+                        for row in cur.fetchall():
+                            result.append({"name": str(row[0]).upper(), "type": row[1]})
+                    finally:
+                        conn.close()
+
+                return result
+
+            loop    = asyncio.get_running_loop()
+            columns = await asyncio.wait_for(
+                loop.run_in_executor(None, _fetch_columns_live), timeout=20
+            )
+        except asyncio.TimeoutError:
+            log.warning("column-sensitivity live fallback timed out for %s fqn=%s", account_id, fqn)
+            return JSONResponse({"status": "timeout", "columns": [], "auto_masked": [], "strategy_map": {}})
+        except Exception as exc:
+            log.warning("column-sensitivity live fallback failed for %s fqn=%s: %s", account_id, fqn, exc)
+            return JSONResponse({"status": "error", "columns": [], "auto_masked": [], "strategy_map": {}})
+
+    if not columns:
+        return JSONResponse({"status": "not_found", "columns": [], "auto_masked": [], "strategy_map": {}})
+
+    # ── 3. PII detection ─────────────────────────────────────────────────────
     auto_masked: list[str] = []
     strategy_map: dict[str, str] = {}
     try:
         from core.masking import detect_sensitive_columns
-        detected = detect_sensitive_columns(columns)
+        detected     = detect_sensitive_columns(columns)
         auto_masked  = list(detected.keys())
         strategy_map = detected   # {col_name: strategy_name}
     except Exception:
@@ -3001,7 +3097,7 @@ async def admin_column_sensitivity(request: Request, account_id: str, fqn: str =
         "status": "ok",
         "columns": columns,
         "auto_masked": auto_masked,
-        "strategy_map": strategy_map,   # {col_name: strategy_name} for PII fields
+        "strategy_map": strategy_map,
     })
 
 

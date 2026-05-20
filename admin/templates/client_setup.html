@@ -672,9 +672,12 @@
       );
       const data = await resp.json();
       if (data.status !== 'ok') {
+        let msg = '⚠ Could not load fields for this table.';
+        if (data.status === 'no_db')      msg = '⚠ No database configured for this account. Assign a DB first.';
+        else if (data.status === 'timeout') msg = '⚠ DB query timed out. Check your database connection.';
+        else if (data.status === 'not_found') msg = '⚠ Table not found. Run Schema Discovery first.';
         bodyEl.innerHTML =
-          '<div style="padding:.6rem 1rem;font-size:12px;color:var(--amber)">' +
-          '⚠ Run Schema Discovery (Step 3) first to load field information.</div>';
+          `<div style="padding:.6rem 1rem;font-size:12px;color:var(--amber)">${msg}</div>`;
         _maskPanelOpened.delete(fqn);
         return;
       }
