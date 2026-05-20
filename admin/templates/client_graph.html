@@ -45,9 +45,12 @@
 .g-node.selected .node-body{stroke:var(--primary,#3B82F6);stroke-width:2.5}
 .g-node.hover .node-body{filter:brightness(0.92)}
 .node-body{rx:10;ry:10;filter:drop-shadow(0 2px 6px rgba(0,0,0,.10))}
-.node-label{font-family:system-ui,sans-serif;font-weight:800;font-size:13px;fill:#fff;text-anchor:middle;dominant-baseline:central;pointer-events:none}
-.node-sublabel{font-family:Consolas,monospace;font-size:10px;fill:rgba(255,255,255,.75);text-anchor:middle;dominant-baseline:central;pointer-events:none}
-.node-type-tag{font-family:system-ui,sans-serif;font-size:9px;font-weight:700;fill:rgba(255,255,255,.85);text-anchor:middle;dominant-baseline:central;pointer-events:none}
+/* ── Node card (Batch 1) ─────────────────────────────────────────────────── */
+.node-card{filter:drop-shadow(0 3px 10px rgba(0,0,0,.12));transition:filter .15s}
+.g-node.hover .node-card{filter:drop-shadow(0 5px 16px rgba(0,0,0,.18))}
+.node-label{font-family:system-ui,sans-serif;font-weight:800;font-size:13px;fill:#fff;text-anchor:start;dominant-baseline:central;pointer-events:none}
+.node-sublabel{font-family:Consolas,monospace;font-size:10px;fill:rgba(255,255,255,.78);text-anchor:start;dominant-baseline:central;pointer-events:none}
+.node-type-tag{font-family:system-ui,sans-serif;font-size:9px;font-weight:700;fill:rgba(255,255,255,.88);text-anchor:middle;dominant-baseline:central;pointer-events:none}
 .node-port{fill:#fff;stroke:var(--border);stroke-width:1.5;r:6;cursor:crosshair;opacity:0;transition:opacity .15s}
 .g-node:hover .node-port{opacity:1}
 .g-edge{pointer-events:stroke;cursor:pointer}
@@ -193,6 +196,38 @@
       <marker id="arrow-sel" viewBox="0 0 10 10" refX="9" refY="5"
               markerWidth="8" markerHeight="8" orient="auto-start-reverse">
         <path d="M 0 0 L 10 5 L 0 10 z" fill="#F59E0B"/>
+      </marker>
+      <!-- ── Crow's foot ERD markers (Batch 3) ──────────────────────────────
+           refX=13 places the entity-side bar exactly at the path endpoint.
+           orient="auto-start-reverse" makes the same def work for both
+           marker-start (flipped 180°) and marker-end (normal).              -->
+      <marker id="cft-many" viewBox="0 0 14 14" refX="13" refY="7"
+              markerWidth="10" markerHeight="10" orient="auto-start-reverse">
+        <!-- three diverging lines from node back along path -->
+        <line x1="13" y1="7" x2="3" y2="7"  stroke="#94A3B8" stroke-width="1.8" stroke-linecap="round"/>
+        <line x1="13" y1="7" x2="3" y2="2"  stroke="#94A3B8" stroke-width="1.5" stroke-linecap="round"/>
+        <line x1="13" y1="7" x2="3" y2="12" stroke="#94A3B8" stroke-width="1.5" stroke-linecap="round"/>
+        <!-- stop-bar at foot -->
+        <line x1="3"  y1="1" x2="3"  y2="13" stroke="#94A3B8" stroke-width="1.5" stroke-linecap="round"/>
+      </marker>
+      <marker id="cft-one" viewBox="0 0 14 14" refX="13" refY="7"
+              markerWidth="10" markerHeight="10" orient="auto-start-reverse">
+        <!-- double perpendicular bar = "exactly one" -->
+        <line x1="13" y1="1" x2="13" y2="13" stroke="#94A3B8" stroke-width="2" stroke-linecap="round"/>
+        <line x1="8"  y1="1" x2="8"  y2="13" stroke="#94A3B8" stroke-width="2" stroke-linecap="round"/>
+      </marker>
+      <!-- Selected (amber) variants -->
+      <marker id="cft-many-sel" viewBox="0 0 14 14" refX="13" refY="7"
+              markerWidth="10" markerHeight="10" orient="auto-start-reverse">
+        <line x1="13" y1="7" x2="3" y2="7"  stroke="#F59E0B" stroke-width="1.8" stroke-linecap="round"/>
+        <line x1="13" y1="7" x2="3" y2="2"  stroke="#F59E0B" stroke-width="1.5" stroke-linecap="round"/>
+        <line x1="13" y1="7" x2="3" y2="12" stroke="#F59E0B" stroke-width="1.5" stroke-linecap="round"/>
+        <line x1="3"  y1="1" x2="3"  y2="13" stroke="#F59E0B" stroke-width="1.5" stroke-linecap="round"/>
+      </marker>
+      <marker id="cft-one-sel" viewBox="0 0 14 14" refX="13" refY="7"
+              markerWidth="10" markerHeight="10" orient="auto-start-reverse">
+        <line x1="13" y1="1" x2="13" y2="13" stroke="#F59E0B" stroke-width="2" stroke-linecap="round"/>
+        <line x1="8"  y1="1" x2="8"  y2="13" stroke="#F59E0B" stroke-width="2" stroke-linecap="round"/>
       </marker>
       <pattern id="dot-grid" x="0" y="0" width="28" height="28" patternUnits="userSpaceOnUse">
         <circle cx="1" cy="1" r="1" fill="var(--border)" opacity="0.5"/>
@@ -395,8 +430,8 @@ let _pendingDrag = null;   // latest drag position buffered for RAF
 // ════════════════════════════════════════════════════════════════════════════
 // SVG CANVAS RENDERING
 // ════════════════════════════════════════════════════════════════════════════
-const NODE_W  = 190;
-const NODE_H  = 84;
+const NODE_W  = 240;
+const NODE_H  = 200;
 
 function renderGraph() {
   renderEdges();
@@ -421,116 +456,173 @@ function edgeMidpoint(rel) {
 function renderNodes() {
   const layer = document.getElementById('nodes-layer');
   layer.innerHTML = '';
+  const NS = 'http://www.w3.org/2000/svg';
+
   graph.entities.forEach(e => {
     const { x, y } = entityPos(e);
     const color = e.color || '#4F86C6';
     const isSelected = selectedEntity === e.entity_name;
     const isSuggested = (e.status === 'suggested');
     const conf = e.confidence_score ?? 100;
-    // Detect role-playing: same table_name as another entity
-    const isRolePlaying = graph.entities.filter(x => x.table_name === e.table_name).length > 1;
-    const g = document.createElementNS('http://www.w3.org/2000/svg','g');
-    g.setAttribute('class','g-node' + (isSelected ? ' selected' : '') + (isSuggested ? ' suggested' : ''));
+    // Detect role-playing: same table_name used by multiple entities
+    const isRolePlaying = graph.entities.filter(e2 => e2.table_name && e2.table_name === e.table_name).length > 1;
+
+    const g = document.createElementNS(NS, 'g');
+    g.setAttribute('class', 'g-node' + (isSelected ? ' selected' : '') + (isSuggested ? ' suggested' : ''));
     g.setAttribute('data-entity', e.entity_name);
-    g.setAttribute('transform',`translate(${x},${y})`);
+    g.setAttribute('transform', `translate(${x},${y})`);
 
-    // Node body
-    const rect = document.createElementNS('http://www.w3.org/2000/svg','rect');
-    rect.setAttribute('class','node-body');
-    rect.setAttribute('width', NODE_W);
-    rect.setAttribute('height', NODE_H);
-    rect.setAttribute('fill', color);
-    rect.setAttribute('rx',10); rect.setAttribute('ry',10);
-    if (isSelected) { rect.setAttribute('stroke','#fff'); rect.setAttribute('stroke-width','3'); }
-    g.appendChild(rect);
+    // ── White card background ────────────────────────────────────────────
+    const card = document.createElementNS(NS, 'rect');
+    card.setAttribute('class', 'node-card');
+    card.setAttribute('width', NODE_W); card.setAttribute('height', NODE_H);
+    card.setAttribute('rx', 10); card.setAttribute('ry', 10);
+    card.setAttribute('fill', 'var(--surface, #fff)');
+    card.setAttribute('stroke', isSelected ? color : 'var(--border, #E2E8F0)');
+    card.setAttribute('stroke-width', isSelected ? '2.5' : '1.5');
+    g.appendChild(card);
 
-    // Type stripe
-    if (e.entity_type === 'fact') {
-      const stripe = document.createElementNS('http://www.w3.org/2000/svg','rect');
-      stripe.setAttribute('x', NODE_W - 30); stripe.setAttribute('y', 0);
-      stripe.setAttribute('width', 30); stripe.setAttribute('height', NODE_H);
-      stripe.setAttribute('fill','rgba(0,0,0,.18)'); stripe.setAttribute('rx',0);
-      stripe.setAttribute('style','border-radius:0 10px 10px 0');
-      g.appendChild(stripe);
-      const ft = document.createElementNS('http://www.w3.org/2000/svg','text');
-      ft.setAttribute('class','node-type-tag'); ft.setAttribute('x', NODE_W - 15);
-      ft.setAttribute('y', NODE_H/2); ft.setAttribute('transform',`rotate(90, ${NODE_W-15}, ${NODE_H/2})`);
-      ft.textContent = 'FACT'; g.appendChild(ft);
-    }
+    // ── Colored header band ──────────────────────────────────────────────
+    const hdr = document.createElementNS(NS, 'rect');
+    hdr.setAttribute('x', 0); hdr.setAttribute('y', 0);
+    hdr.setAttribute('width', NODE_W); hdr.setAttribute('height', 52);
+    hdr.setAttribute('rx', 10); hdr.setAttribute('ry', 10);
+    hdr.setAttribute('fill', color);
+    g.appendChild(hdr);
+    // Fill the bottom-rounded gap of the header band so it looks flat at y=52
+    const hdrFill = document.createElementNS(NS, 'rect');
+    hdrFill.setAttribute('x', 0); hdrFill.setAttribute('y', 42);
+    hdrFill.setAttribute('width', NODE_W); hdrFill.setAttribute('height', 10);
+    hdrFill.setAttribute('fill', color);
+    g.appendChild(hdrFill);
 
-    // Label
-    const label = document.createElementNS('http://www.w3.org/2000/svg','text');
-    label.setAttribute('class','node-label');
-    label.setAttribute('x', (e.entity_type === 'fact' ? NODE_W - 30 : NODE_W) / 2);
-    label.setAttribute('y', NODE_H/2 - 10);
-    label.textContent = e.display_name || e.entity_name;
-    g.appendChild(label);
+    // ── Divider ──────────────────────────────────────────────────────────
+    const divider = document.createElementNS(NS, 'line');
+    divider.setAttribute('x1', 0); divider.setAttribute('y1', 52);
+    divider.setAttribute('x2', NODE_W); divider.setAttribute('y2', 52);
+    divider.setAttribute('stroke', 'var(--border, #E2E8F0)');
+    divider.setAttribute('stroke-width', '1');
+    g.appendChild(divider);
 
-    const sub = document.createElementNS('http://www.w3.org/2000/svg','text');
-    sub.setAttribute('class','node-sublabel');
-    sub.setAttribute('x', (e.entity_type === 'fact' ? NODE_W - 30 : NODE_W) / 2);
-    sub.setAttribute('y', NODE_H/2 + 8);
-    sub.textContent = e.table_name || '';
+    // ── Entity display name ──────────────────────────────────────────────
+    const lbl = document.createElementNS(NS, 'text');
+    lbl.setAttribute('class', 'node-label');
+    lbl.setAttribute('x', 14); lbl.setAttribute('y', 22);
+    lbl.setAttribute('text-anchor', 'start'); lbl.setAttribute('dominant-baseline', 'central');
+    lbl.textContent = (e.display_name || e.entity_name).slice(0, 22);
+    g.appendChild(lbl);
+
+    // ── Schema.Table name ────────────────────────────────────────────────
+    const sub = document.createElementNS(NS, 'text');
+    sub.setAttribute('class', 'node-sublabel');
+    sub.setAttribute('x', 14); sub.setAttribute('y', 41);
+    sub.setAttribute('text-anchor', 'start'); sub.setAttribute('dominant-baseline', 'central');
+    const fullTbl = (e.schema_name ? e.schema_name + '.' : '') + (e.table_name || '');
+    sub.textContent = fullTbl.slice(0, 26);
     g.appendChild(sub);
 
+    // ── Type badge (top-right of header) ─────────────────────────────────
+    const typeMap = { fact: 'FACT', dimension: 'DIM', bridge: 'BRG' };
+    const tbTxt = typeMap[e.entity_type] || (e.entity_type || '').slice(0, 4).toUpperCase();
+    const tbW = tbTxt.length * 6 + 10;
+    const tbBg = document.createElementNS(NS, 'rect');
+    tbBg.setAttribute('x', NODE_W - tbW - 8); tbBg.setAttribute('y', 8);
+    tbBg.setAttribute('width', tbW); tbBg.setAttribute('height', 16);
+    tbBg.setAttribute('rx', 8); tbBg.setAttribute('fill', 'rgba(255,255,255,.22)');
+    g.appendChild(tbBg);
+    const tbT = document.createElementNS(NS, 'text');
+    tbT.setAttribute('class', 'node-type-tag');
+    tbT.setAttribute('x', NODE_W - tbW / 2 - 8); tbT.setAttribute('y', 16);
+    tbT.setAttribute('text-anchor', 'middle'); tbT.setAttribute('dominant-baseline', 'central');
+    tbT.textContent = tbTxt;
+    g.appendChild(tbT);
+
+    // ── Primary key row ──────────────────────────────────────────────────
     if (e.pk_column) {
-      const pk = document.createElementNS('http://www.w3.org/2000/svg','text');
-      pk.setAttribute('class','node-sublabel');
-      pk.setAttribute('x', (e.entity_type === 'fact' ? NODE_W - 30 : NODE_W) / 2);
-      pk.setAttribute('y', NODE_H/2 + 22);
-      pk.textContent = '🔑 ' + e.pk_column;
-      g.appendChild(pk);
+      const pkDot = document.createElementNS(NS, 'circle');
+      pkDot.setAttribute('cx', 18); pkDot.setAttribute('cy', 68);
+      pkDot.setAttribute('r', 4); pkDot.setAttribute('fill', '#F59E0B');
+      g.appendChild(pkDot);
+      const pkT = document.createElementNS(NS, 'text');
+      pkT.setAttribute('x', 30); pkT.setAttribute('y', 68);
+      pkT.setAttribute('dominant-baseline', 'central');
+      pkT.setAttribute('font-family', 'Consolas,monospace');
+      pkT.setAttribute('font-size', '11'); pkT.setAttribute('font-weight', '700');
+      pkT.setAttribute('fill', 'var(--text, #1E293B)'); pkT.setAttribute('pointer-events', 'none');
+      pkT.textContent = e.pk_column.slice(0, 24);
+      g.appendChild(pkT);
+      const pkLbl = document.createElementNS(NS, 'text');
+      pkLbl.setAttribute('x', NODE_W - 8); pkLbl.setAttribute('y', 68);
+      pkLbl.setAttribute('text-anchor', 'end'); pkLbl.setAttribute('dominant-baseline', 'central');
+      pkLbl.setAttribute('font-size', '8'); pkLbl.setAttribute('font-weight', '800');
+      pkLbl.setAttribute('fill', '#F59E0B'); pkLbl.setAttribute('pointer-events', 'none');
+      pkLbl.textContent = 'PK';
+      g.appendChild(pkLbl);
     }
 
-    // Confidence badge for suggested entities
+    // ── Description hint (when no PK set) ───────────────────────────────
+    if (!e.pk_column && e.description) {
+      const descT = document.createElementNS(NS, 'text');
+      descT.setAttribute('x', 14); descT.setAttribute('y', 68);
+      descT.setAttribute('dominant-baseline', 'central');
+      descT.setAttribute('font-size', '10');
+      descT.setAttribute('fill', 'var(--text-muted, #94A3B8)'); descT.setAttribute('pointer-events', 'none');
+      descT.textContent = e.description.slice(0, 30);
+      g.appendChild(descT);
+    }
+
+    // ── Confidence badge (suggested entities) ────────────────────────────
     if (isSuggested) {
-      const bg = document.createElementNS('http://www.w3.org/2000/svg','rect');
-      bg.setAttribute('x', NODE_W - 36); bg.setAttribute('y', 2);
-      bg.setAttribute('width', 34); bg.setAttribute('height', 14);
-      bg.setAttribute('fill', conf >= 85 ? '#D1FAE5' : conf >= 65 ? '#FEF3C7' : '#FEE2E2');
-      bg.setAttribute('rx', 7); g.appendChild(bg);
-      const ct = document.createElementNS('http://www.w3.org/2000/svg','text');
-      ct.setAttribute('x', NODE_W - 19); ct.setAttribute('y', 9);
-      ct.setAttribute('text-anchor','middle'); ct.setAttribute('dominant-baseline','central');
-      ct.setAttribute('font-size','8'); ct.setAttribute('font-weight','800');
-      ct.setAttribute('fill', conf >= 85 ? '#065F46' : conf >= 65 ? '#92400E' : '#991B1B');
-      ct.textContent = conf + '%'; g.appendChild(ct);
+      const confBg = document.createElementNS(NS, 'rect');
+      confBg.setAttribute('x', 8); confBg.setAttribute('y', 8);
+      confBg.setAttribute('width', 34); confBg.setAttribute('height', 14);
+      confBg.setAttribute('rx', 7);
+      confBg.setAttribute('fill', conf >= 85 ? '#D1FAE5' : conf >= 65 ? '#FEF3C7' : '#FEE2E2');
+      g.appendChild(confBg);
+      const confT = document.createElementNS(NS, 'text');
+      confT.setAttribute('x', 25); confT.setAttribute('y', 15);
+      confT.setAttribute('text-anchor', 'middle'); confT.setAttribute('dominant-baseline', 'central');
+      confT.setAttribute('font-size', '8'); confT.setAttribute('font-weight', '800');
+      confT.setAttribute('fill', conf >= 85 ? '#065F46' : conf >= 65 ? '#92400E' : '#991B1B');
+      confT.textContent = conf + '%';
+      g.appendChild(confT);
 
       // Confirm button (✓)
-      const cb = document.createElementNS('http://www.w3.org/2000/svg','text');
-      cb.setAttribute('x', 8); cb.setAttribute('y', 8);
-      cb.setAttribute('font-size','11'); cb.setAttribute('fill','rgba(255,255,255,.9)');
-      cb.setAttribute('cursor','pointer'); cb.setAttribute('title','Confirm entity');
-      cb.textContent = '✓';
-      cb.addEventListener('click', ev => { ev.stopPropagation(); confirmEntity(e.entity_name); });
-      g.appendChild(cb);
+      const confBtn = document.createElementNS(NS, 'text');
+      confBtn.setAttribute('x', 8); confBtn.setAttribute('y', 8);
+      confBtn.setAttribute('font-size', '11'); confBtn.setAttribute('fill', 'rgba(255,255,255,.9)');
+      confBtn.setAttribute('cursor', 'pointer'); confBtn.setAttribute('title', 'Confirm entity');
+      confBtn.textContent = '✓';
+      confBtn.addEventListener('click', ev => { ev.stopPropagation(); confirmEntity(e.entity_name); });
+      g.appendChild(confBtn);
     }
 
-    // Role-playing badge (same table used with different business meaning)
+    // ── Role-playing badge ───────────────────────────────────────────────
     if (isRolePlaying) {
-      const rpbg = document.createElementNS('http://www.w3.org/2000/svg','rect');
-      rpbg.setAttribute('x', 2); rpbg.setAttribute('y', NODE_H - 16);
-      rpbg.setAttribute('width', 36); rpbg.setAttribute('height', 14);
-      rpbg.setAttribute('fill','rgba(124,58,237,.25)'); rpbg.setAttribute('rx',4);
-      g.appendChild(rpbg);
-      const rpt = document.createElementNS('http://www.w3.org/2000/svg','text');
-      rpt.setAttribute('class','role-playing-badge');
-      rpt.setAttribute('x', 20); rpt.setAttribute('y', NODE_H - 9);
-      rpt.setAttribute('text-anchor','middle'); rpt.setAttribute('dominant-baseline','central');
-      rpt.textContent = '⇄ ROLE'; g.appendChild(rpt);
+      const rpBg = document.createElementNS(NS, 'rect');
+      rpBg.setAttribute('x', 2); rpBg.setAttribute('y', NODE_H - 18);
+      rpBg.setAttribute('width', 44); rpBg.setAttribute('height', 14);
+      rpBg.setAttribute('fill', 'rgba(124,58,237,.18)'); rpBg.setAttribute('rx', 4);
+      g.appendChild(rpBg);
+      const rpT = document.createElementNS(NS, 'text');
+      rpT.setAttribute('class', 'role-playing-badge');
+      rpT.setAttribute('x', 24); rpT.setAttribute('y', NODE_H - 11);
+      rpT.setAttribute('text-anchor', 'middle'); rpT.setAttribute('dominant-baseline', 'central');
+      rpT.textContent = '⇄ ROLE';
+      g.appendChild(rpT);
     }
 
-    // Connection ports (right, bottom, left)
-    [[NODE_W, NODE_H/2,'right'],[NODE_W/2, NODE_H,'bottom'],[0, NODE_H/2,'left']].forEach(([px,py,side]) => {
-      const port = document.createElementNS('http://www.w3.org/2000/svg','circle');
-      port.setAttribute('class','node-port');
+    // ── Connection ports (right, bottom, left) ───────────────────────────
+    [[NODE_W, NODE_H / 2, 'right'], [NODE_W / 2, NODE_H, 'bottom'], [0, NODE_H / 2, 'left']].forEach(([px, py, side]) => {
+      const port = document.createElementNS(NS, 'circle');
+      port.setAttribute('class', 'node-port');
       port.setAttribute('cx', px); port.setAttribute('cy', py);
       port.setAttribute('data-port', side);
       port.addEventListener('mousedown', ev => startDrawEdge(ev, e.entity_name));
       g.appendChild(port);
     });
 
-    // Mouse events
+    // ── Mouse events ─────────────────────────────────────────────────────
     g.addEventListener('mousedown', ev => {
       if (ev.target.classList.contains('node-port')) return;
       startDrag(ev, e.entity_name);
@@ -591,6 +683,23 @@ function _groupedEdges() {
   return [...seen.values()];
 }
 
+// ── Batch 3: Crow's foot marker selector ─────────────────────────────────────
+// Returns the correct marker-start / marker-end URLs for a given cardinality.
+// Both use orient="auto-start-reverse" so one def works for both ends.
+function _cardinalityMarkers(cardinality, isSelected) {
+  const s = isSelected ? '-sel' : '';
+  const M = `url(#cft-many${s})`;  // crow's foot  = many
+  const O = `url(#cft-one${s})`;   // double bar   = one
+  const A = isSelected ? 'url(#arrow-sel)' : 'url(#arrow)'; // fallback
+  return (
+    cardinality === 'many_to_one'  ? { start: M, end: O } :
+    cardinality === 'one_to_many'  ? { start: O, end: M } :
+    cardinality === 'one_to_one'   ? { start: O, end: O } :
+    cardinality === 'many_to_many' ? { start: M, end: M } :
+    { start: A, end: A }
+  );
+}
+
 function renderEdges() {
   const layer = document.getElementById('edges-layer');
   layer.innerHTML = '';
@@ -611,7 +720,9 @@ function renderEdges() {
     const edgePath = `M${x1},${y1} C${cx1},${cy1} ${cx2},${cy2} ${x2},${y2}`;
     path.setAttribute('class','edge-line');
     path.setAttribute('d', edgePath);
-    path.setAttribute('marker-end', isSelected ? 'url(#arrow-sel)' : 'url(#arrow)');
+    const { start: mStart, end: mEnd } = _cardinalityMarkers(rel.relationship_type, isSelected);
+    path.setAttribute('marker-start', mStart);
+    path.setAttribute('marker-end', mEnd);
     if (isSelected) { path.setAttribute('stroke','#F59E0B'); path.setAttribute('stroke-width','2.5'); }
     g.appendChild(path);
 
@@ -807,13 +918,13 @@ function autoLayout() {
   const dims   = graph.entities.filter(e => e.entity_type !== 'fact');
   const svg    = document.getElementById('graph-svg');
   const cx = svg.clientWidth/2, cy = svg.clientHeight/2;
-  const gap = 300;
+  const gap = 380;
 
   facts.forEach((e, i) => {
     e.pos_x = cx + (i - facts.length/2) * gap - NODE_W/2;
     e.pos_y = cy - NODE_H/2;
   });
-  const radius = Math.max(dims.length * 70, 290);
+  const radius = Math.max(dims.length * 90, 360);
   dims.forEach((e, i) => {
     const angle = (i / dims.length) * 2 * Math.PI - Math.PI/2;
     e.pos_x = cx + radius * Math.cos(angle) - NODE_W/2;
