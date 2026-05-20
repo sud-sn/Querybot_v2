@@ -227,9 +227,13 @@
             <form method="post" action="/admin/databases/{{ d.id }}/logs/sync" style="display:inline">
               <button type="submit" class="btn btn-success btn-sm">Sync logs now</button>
             </form>
+            <form method="post" action="/admin/databases/{{ d.id }}/logs/reset-all" style="display:inline"
+              onsubmit="return confirm('⚠ TRUNCATE all 3 external log tables (QUERY_LOG, LLM_CALL_LOG, KB_DATA_EGRESS_LOG) and re-export all local rows?\n\nThis is safe after a server reinstall. The original data in those tables will be lost.')">
+              <button type="submit" class="btn btn-danger btn-sm">↺ Reset all logs</button>
+            </form>
             <form method="post" action="/admin/databases/{{ d.id }}/logs/reset-egress" style="display:inline"
               onsubmit="return confirm('This will TRUNCATE the external KB_DATA_EGRESS_LOG table and re-export all local rows. Continue?')">
-              <button type="submit" class="btn btn-warning btn-sm">↺ Reset egress</button>
+              <button type="submit" class="btn btn-warning btn-sm">↺ Reset egress only</button>
             </form>
             <button type="button" class="btn btn-secondary btn-sm"
               onclick="diagnoseLogs({{ d.id }})">🔍 Diagnose</button>

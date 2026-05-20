@@ -159,6 +159,78 @@ def reset_egress_and_sync(db_cfg: dict, *, limit: int = 10000) -> dict:
         raise
 
 
+def reset_all_and_sync(db_cfg: dict, *, limit: int = 10000) -> dict:
+    """
+    Truncate ALL three external log tables (QUERY_LOG, LLM_CALL_LOG,
+    KB_DATA_EGRESS_LOG) and re-export every local row from scratch.
+    Use this after a server reinstall where the external DB has higher
+    SOURCE_IDs than the fresh local SQLite.
+    """
+    db_id = int(db_cfg.get("id") or 0)
+    started_at = _now_utc()
+    if db_id:
+        _write_export_state(db_id, status="running",
+                            message="Full reset + re-sync running", started_at=started_at)
+    try:
+        provision_external_log_store(db_cfg, record_state=False)
+        conn, db_type, schema = _connect_for_export(db_cfg)
+        try:
+            cur = conn.cursor()
+            # Truncate all three tables
+            for tbl in (QUERY_TABLE, LLM_TABLE, EGRESS_TABLE):
+                if db_type == "snowflake":
+                    cur.execute(f'TRUNCATE TABLE "{schema}"."{tbl}"')
+                elif db_type == "azure_sql":
+                    cur.execute(f"TRUNCATE TABLE [{schema}].[{tbl}]")
+                else:  # oracle
+                    cur.execute(f'TRUNCATE TABLE "{schema}"."{tbl}"')
+            _commit(conn)
+
+            # Re-export all local rows from id = 0
+            query_rows  = _fetch_query_rows_after(0, limit)
+            llm_rows    = _fetch_llm_rows_after(0, limit)
+            egress_rows = _fetch_egress_rows_after(0, limit)
+            _insert_rows(cur, db_type, schema, QUERY_TABLE,  QUERY_COLUMNS,  query_rows)
+            _insert_rows(cur, db_type, schema, LLM_TABLE,    LLM_COLUMNS,    llm_rows)
+            _insert_rows(cur, db_type, schema, EGRESS_TABLE, EGRESS_COLUMNS, egress_rows)
+            _commit(conn)
+        finally:
+            _close(conn)
+
+        result = {
+            "schema":        schema,
+            "query_count":   len(query_rows),
+            "llm_count":     len(llm_rows),
+            "egress_count":  len(egress_rows),
+            "reset":         True,
+        }
+        if db_id:
+            _write_export_state(
+                db_id,
+                status="success",
+                message=(
+                    f"Full reset: re-exported {len(query_rows)} query, "
+                    f"{len(llm_rows)} LLM, {len(egress_rows)} egress rows"
+                ),
+                started_at=started_at,
+                finished_at=_now_utc(),
+                run_date=datetime.now().date().isoformat(),
+                query_count=len(query_rows),
+                llm_count=len(llm_rows),
+                last_query_id=max([int(r[0]) for r in query_rows  if r[0] is not None] or [0]),
+                last_llm_id=max([int(r[0])   for r in llm_rows    if r[0] is not None] or [0]),
+                egress_count=len(egress_rows),
+                last_egress_id=max([int(r[0]) for r in egress_rows if r[0] is not None] or [0]),
+            )
+        return result
+    except Exception as exc:
+        if db_id:
+            _write_export_state(db_id, status="failed", message=str(exc),
+                                started_at=started_at, finished_at=_now_utc(),
+                                run_date=datetime.now().date().isoformat())
+        raise
+
+
 def sync_external_logs(db_cfg: dict, *, limit: int = 10000) -> dict:
     """
     Provision, then copy new local query/LLM logs to the external log tables.
