@@ -2936,9 +2936,10 @@ async def admin_save_masking_only(request: Request, account_id: str):
         k.upper(): v for k, v in raw_mc.items()
         if isinstance(v, dict) and v.get("mode") in ("none", "all", "selective", "auto")
     }
+    current_state = client.get("state") or "configured"
     state_data = json.loads(client.get("state_data") or "{}")
     state_data["masking_config"] = masking_config
-    store.update_client_state(account_id, state_data)
+    store.update_client_state(account_id, current_state, state_data)
     # Immediately reflect the masking config in the egress log
     # so the admin panel shows the change without waiting for KB rebuild
     updated = store.update_egress_masking(account_id, masking_config)
