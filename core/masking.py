@@ -84,6 +84,56 @@ def detect_sensitive_columns(columns: list[dict]) -> dict[str, str]:
     return result
 
 
+# Human-readable labels for each masking strategy (used in UI + egress log).
+STRATEGY_LABELS: dict[str, str] = {
+    "redact":        "→ [REDACTED]",
+    "name":          "→ fake full name",
+    "first_name":    "→ fake first name",
+    "last_name":     "→ fake last name",
+    "email":         "→ fake email",
+    "phone":         "→ fake phone number",
+    "address":       "→ fake address",
+    "city":          "→ fake city",
+    "zip":           "→ fake zip code",
+    "state":         "→ fake state",
+    "country":       "→ fake country code",
+    "ssn":           "→ fake SSN",
+    "credit_card":   "→ ****-****-****-XXXX",
+    "ip_address":    "→ fake IP address",
+    "coordinate":    "→ shifted ±0.5°",
+    "birthdate":     "→ shifted ±730 days",
+    "date_shift":    "→ shifted ±5 days",
+    "salary":        "→ shifted ±15%",
+    "numeric_shift": "→ shifted ±10%",
+    "text_mask":     "→ format-preserving mask",
+}
+
+
+def get_strategy_map(masked_fields: set[str], col_defs: list[dict]) -> dict[str, str]:
+    """
+    Return {field_name: strategy_name} for every field in *masked_fields*.
+
+    Uses the same resolution logic as ``mask_rows`` — name-based PII pattern
+    first, then type-based fallback.  Strategy names are the raw keys used
+    internally (e.g. ``"email"``, ``"numeric_shift"``).
+    """
+    col_type_map = {c["name"]: c.get("type", "varchar") for c in col_defs}
+    result: dict[str, str] = {}
+    for field in masked_fields:
+        s = _strategy_for_name(field)
+        if not s:
+            ct = col_type_map.get(field, "varchar").lower()
+            if any(t in ct for t in ("int", "bigint", "decimal", "numeric",
+                                     "float", "real", "money", "number")):
+                s = "numeric_shift"
+            elif any(t in ct for t in ("date", "time", "timestamp")):
+                s = "date_shift"
+            else:
+                s = "text_mask"
+        result[field] = s
+    return result
+
+
 def mask_rows(
     rows: list[dict],
     masked_fields: set[str],

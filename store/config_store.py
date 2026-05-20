@@ -1116,6 +1116,7 @@ def log_kb_egress(
     row_count_sent: int = 0,
     masked_fields: list | None = None,
     mask_mode: str = "none",
+    mask_replacement_map: dict | None = None,
 ) -> None:
     """
     Write one row to kb_data_egress_log for a single processed table.
@@ -1126,10 +1127,12 @@ def log_kb_egress(
       'synthetic'  — fully fake rows (fallback: DB unreachable or admin forced)
       'none'       — schema-only, no sample rows sent
 
-    fields_sent    — every column name present in the LLM prompt
-    row_count_sent — number of sample rows sent (0 for synthetic / schema-only)
-    masked_fields  — subset of fields_sent that had masking applied
-    mask_mode      — 'none' | 'all' | 'selective' | 'auto'
+    fields_sent          — every column name present in the LLM prompt
+    row_count_sent       — number of sample rows sent (0 for synthetic / schema-only)
+    masked_fields        — subset of fields_sent that had masking applied
+    mask_mode            — 'none' | 'all' | 'selective' | 'auto'
+    mask_replacement_map — {field_name: strategy_name} for every masked field
+                           e.g. {"EMAIL": "email", "FIRST_NAME": "first_name"}
     """
     import json as _json
     try:
@@ -1139,8 +1142,9 @@ def log_kb_egress(
                     (account_id, operation, db_type,
                      database_name, schema_name, table_name,
                      column_count, sample_mode, distinct_col_count, triggered_by,
-                     fields_sent, row_count_sent, masked_fields, mask_mode)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     fields_sent, row_count_sent, masked_fields, mask_mode,
+                     mask_replacement_map)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 account_id, operation, db_type,
                 database_name or "", schema_name or "", table_name,
@@ -1149,6 +1153,7 @@ def log_kb_egress(
                 row_count_sent,
                 _json.dumps(masked_fields or []),
                 mask_mode,
+                _json.dumps(mask_replacement_map or {}),
             ))
     except Exception as exc:
         log.warning("kb_data_egress_log write failed for %s/%s: %s",
@@ -1172,6 +1177,10 @@ def update_egress_masking(
     import json as _json
     updated = 0
     try:
+        # Resolve masking strategy names for each field so we can store the
+        # replacement map even when updating without re-running discovery.
+        from core.masking import get_strategy_map as _get_strategy_map
+
         with get_db() as conn:
             for fqn, cfg in masking_config.items():
                 if not isinstance(cfg, dict):
@@ -1181,11 +1190,16 @@ def update_egress_masking(
                 # Derive table_name from the last segment of the FQN
                 table_name = fqn.split(".")[-1].upper()
                 sample_mode = "masked" if (mode != "none" and mf) else "real"
+                # Build replacement map: field → strategy (no col_defs available
+                # here, so we use name-only detection via empty col_defs list —
+                # fields without a matching PII pattern get "text_mask" fallback)
+                replacement_map = _get_strategy_map(set(mf), [])
                 conn.execute("""
                     UPDATE kb_data_egress_log
-                    SET sample_mode   = ?,
-                        masked_fields = ?,
-                        mask_mode     = ?
+                    SET sample_mode          = ?,
+                        masked_fields        = ?,
+                        mask_mode            = ?,
+                        mask_replacement_map = ?
                     WHERE id = (
                         SELECT id FROM kb_data_egress_log
                         WHERE account_id = ?
@@ -1197,6 +1211,7 @@ def update_egress_masking(
                     sample_mode,
                     _json.dumps(mf),
                     mode,
+                    _json.dumps(replacement_map),
                     account_id,
                     table_name,
                 ))
@@ -1306,13 +1321,16 @@ def get_kb_egress_summary(account_id: str) -> dict:
     import json as _json
 
     def _parse_row(row: dict) -> dict:
-        for key, dest in (("fields_sent", "fields_sent_list"),
-                          ("masked_fields", "masked_fields_list")):
-            raw = row.get(key) or "[]"
+        for key, dest, default in (
+            ("fields_sent",          "fields_sent_list",      "[]"),
+            ("masked_fields",        "masked_fields_list",    "[]"),
+            ("mask_replacement_map", "replacement_map_parsed", "{}"),
+        ):
+            raw = row.get(key) or default
             try:
-                row[dest] = _json.loads(raw) if isinstance(raw, str) else (raw or [])
+                row[dest] = _json.loads(raw) if isinstance(raw, str) else (raw or ([] if default == "[]" else {}))
             except Exception:
-                row[dest] = []
+                row[dest] = [] if default == "[]" else {}
         return row
 
     summary["discovery_rows"] = [_parse_row(r) for r in disc_rows]

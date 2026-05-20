@@ -38,16 +38,19 @@
 .scope-object{display:flex;align-items:center;gap:.45rem;padding:.22rem .45rem;border-radius:var(--radius-sm);font-size:12px;color:var(--text-soft)}
 .scope-object:hover{background:var(--row-hover)}
 .scope-check{width:14px;height:14px;accent-color:var(--blue)}
-.mask-toggle{margin-left:auto;border:none;border-radius:3px;padding:1px 7px;font-size:10px;font-weight:700;cursor:pointer;font-family:Consolas,monospace;line-height:1.5;transition:all .12s;white-space:nowrap}
-.mask-off{background:var(--surface-2);color:var(--text-muted);border:1px solid var(--border)}
-.mask-off:hover{background:var(--border);color:var(--text)}
-.mask-on{background:color-mix(in srgb,var(--amber) 13%,var(--surface));color:var(--amber);border:1px solid color-mix(in srgb,var(--amber) 32%,transparent)}
-.mask-on:hover{background:color-mix(in srgb,var(--amber) 22%,var(--surface))}
-.mask-fields-panel{display:none;margin:.35rem 0 .35rem 1.2rem;padding:.5rem .75rem;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm)}
-.mask-fields-panel.open{display:block}
-.mask-fields-loading{font-size:11px;color:var(--text-muted)}
-.mask-field-row{display:flex;align-items:center;gap:.4rem;padding:.18rem 0;font-size:11px;color:var(--text-soft)}
+.mask-field-row{display:flex;align-items:center;gap:.4rem;padding:.22rem 0;font-size:11px;color:var(--text-soft)}
 .mask-field-pii{color:var(--amber);font-size:10px;font-weight:700}
+/* ── New masking section ── */
+.mask-item{border:1px solid var(--border);border-radius:var(--radius-sm);margin-bottom:.5rem;background:var(--surface);overflow:hidden}
+.mask-item-hd{display:flex;align-items:center;gap:.5rem;padding:.55rem .85rem;cursor:pointer;user-select:none;background:var(--surface-2)}
+.mask-item-hd:hover{background:var(--row-hover)}
+.mask-item-chev{font-size:10px;color:var(--gray-400);transition:transform .15s;display:inline-block;flex-shrink:0}
+.mask-item-name{font-size:12px;font-weight:700;color:var(--text)}
+.mask-item-fqn{font-size:10px;color:var(--text-muted);font-family:monospace;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mask-item-badge{flex-shrink:0;font-size:10px;font-weight:700;padding:2px 8px;border-radius:999px;background:var(--surface);border:1px solid var(--border);color:var(--text-muted)}
+.mask-item-badge.has-mask{background:color-mix(in srgb,var(--amber) 12%,var(--surface));border-color:color-mix(in srgb,var(--amber) 35%,transparent);color:var(--amber)}
+.mask-item-body{display:none;border-top:1px solid var(--border)}
+.mask-item-body.open{display:block}
 .scope-section{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);margin:.45rem 0 .18rem .45rem}
 .scope-footer{display:none;align-items:center;gap:.6rem;padding:.75rem 1rem;border-top:1px solid var(--border);background:color-mix(in srgb,var(--blue-light) 34%,var(--surface))}
 .kb-live-status{display:none;align-items:center;gap:.75rem;flex-wrap:wrap;margin-top:.9rem;padding:.8rem 1rem;border-radius:var(--radius);border:1px solid color-mix(in srgb,var(--blue) 28%,transparent);background:var(--blue-light);color:var(--blue)}
@@ -184,9 +187,6 @@
         <strong id="setup-scope-count" style="color:var(--blue)"></strong>
         <span style="font-size:12px;color:var(--text-muted)">tables selected.</span>
         <button type="button" class="btn btn-primary btn-sm" id="setup-scope-save" style="margin-left:auto">Save selection</button>
-        <button type="button" class="btn btn-sm" id="setup-mask-save"
-          style="display:none;background:color-mix(in srgb,var(--amber) 13%,var(--surface));color:var(--amber);border:1px solid color-mix(in srgb,var(--amber) 32%,transparent);font-weight:700"
-          onclick="saveMaskingOnly()">✎ Save masking</button>
         <button type="button" class="btn btn-secondary btn-sm" onclick="_setupScopeClear()">Clear all</button>
       </div>
     </div>
@@ -195,6 +195,38 @@
       Assign a database first (Settings tab), then return here to select tables.
     </p>
     {% endif %}
+  </div>
+</div>
+
+<!-- Step 2.5: Field Masking -->
+<div class="setup-step" id="masking-section">
+  <div class="step-head">
+    <div class="step-num" id="mask-step-num" style="background:color-mix(in srgb,var(--amber) 80%,#fff);font-size:15px">🛡</div>
+    <div style="flex:1">
+      <div class="step-title">Field Masking &nbsp;<span style="font-size:11px;font-weight:600;color:var(--text-muted)">(Optional)</span></div>
+      <div style="font-size:12px;color:var(--text-muted)">
+        Configure which fields are masked before sample rows are sent to the LLM during KB generation.
+        PII columns are auto-detected and pre-checked. Masking is applied locally — no real values leave your network.
+      </div>
+    </div>
+    <span id="mask-done-badge" style="display:none;font-size:12px;color:var(--amber);font-weight:700;flex-shrink:0;margin-left:1rem">✓ Masking configured</span>
+  </div>
+  <div class="step-body">
+    <div id="mask-no-tables" style="font-size:13px;color:var(--text-muted)">
+      No tables selected yet — save a table selection in Step 2 above, then this section will populate automatically.
+    </div>
+    <div id="mask-panel" style="display:none">
+      <div id="mask-table-list"></div>
+      <div style="margin-top:1rem;display:flex;align-items:center;gap:.75rem;flex-wrap:wrap;padding-top:.75rem;border-top:1px solid var(--border)">
+        <button type="button" class="btn btn-primary btn-sm" id="mask-create-btn" onclick="createMasking()">
+          🔒 Create Masking
+        </button>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="skipMasking()">
+          Skip →
+        </button>
+        <span id="mask-apply-status" style="font-size:12px"></span>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -435,6 +467,18 @@
 
   // Pre-populate from server-rendered kb_tables (already saved in state_data)
   let selected = new Set(({{ kb_tables | tojson }} || []).map(t => String(t).toUpperCase()));
+  // Restore saved masking config on page load
+  ;(function() {
+    const mc = {{ saved_masking_config | tojson }} || {};
+    Object.entries(mc).forEach(([k, v]) => {
+      if (v && typeof v.mode === 'string') {
+        maskingConfig.set(k.toUpperCase(), {
+          mode: v.mode,
+          masked_fields: new Set((v.masked_fields || []).map(f => String(f).toUpperCase())),
+        });
+      }
+    });
+  })();
 
   // Wire buttons
   document.getElementById('setup-scope-refresh').addEventListener('click', () => loadSetupScope(true));
@@ -443,6 +487,8 @@
 
   // Show/hide the saved-selection summary banners on page load
   _syncSummaryBanners();
+  // Initialise masking panel based on server-rendered kb_tables
+  _refreshMaskingPanel();
 
   function _syncSummaryBanners() {
     const summaryEl = document.getElementById('setup-saved-summary');
@@ -459,14 +505,16 @@
     }
   }
 
-  // Clear all checkboxes
+  // Clear all checkboxes and masking config
   window._setupScopeClear = function() {
     selected.clear();
+    maskingConfig.clear();
     document.querySelectorAll('.scope-check').forEach(cb => {
       cb.checked = false; cb.indeterminate = false;
     });
     syncFooter();
     _syncSummaryBanners();
+    _refreshMaskingPanel();
   };
 
   async function loadSetupScope(force) {
@@ -485,12 +533,16 @@
       const savedResp = await fetch(`/admin/clients/${accountId}/kb-tables`, {credentials:'same-origin'});
       const saved = await savedResp.json();
       selected = new Set((saved.tables || []).map(t => String(t).toUpperCase()));
-      // Restore saved masking config
+      // Restore saved masking config into the new maskingConfig map
       maskingConfig.clear();
       Object.entries(saved.masking_config || {}).forEach(([k, v]) => {
-        if (v && typeof v.mode === 'string') maskingConfig.set(k.toUpperCase(), v);
+        if (v && typeof v.mode === 'string') {
+          maskingConfig.set(k.toUpperCase(), {
+            mode: v.mode,
+            masked_fields: new Set((v.masked_fields || []).map(f => String(f).toUpperCase())),
+          });
+        }
       });
-      _syncMaskSaveBtn();
     } catch (_) {}
 
     try {
@@ -505,13 +557,8 @@
         showStatus('info', 'Using cached schema. Click "↻ Refresh DB" to re-query the live database for new tables.');
       }
       renderTree(data.tree || {});
-      // Auto-load field panels for tables that have masking turned on
-      maskingConfig.forEach((cfg, fqn) => {
-        const panelId = 'maskpanel-' + fqn.replace(/[^A-Z0-9_]/g, '_');
-        const panel   = document.getElementById(panelId);
-        if (panel) { panel.classList.add('open'); _loadFieldPanel(fqn, panel); }
-      });
       syncFooter();
+      _refreshMaskingPanel();
     } catch (e) {
       loading.style.display = 'none';
       showStatus('error', 'Network error: ' + e.message);
@@ -522,107 +569,247 @@
   }
 
   // ── Field-level masking state ─────────────────────────────────────────────
-  // Map: FQN (upper) → {mode: 'selective', masked_fields: string[]}
-  // Toggle is simply on (selective) or off (none). Turning it on shows the
-  // full field list with PII fields pre-checked; admin adjusts as needed.
+  // Map: FQN (upper) → { mode: 'selective', masked_fields: Set<string> }
+  // Populated by _refreshMaskingPanel() and user checkbox interactions.
   const maskingConfig = new Map();
 
-  function _maskOn(fqn) {
-    return maskingConfig.has(fqn.toUpperCase());
-  }
+  // Cache of {columns, auto_masked, strategy_map} keyed by FQN (upper)
+  const _maskFieldsCache = new Map();
+  const _maskPanelOpened = new Set();
 
-  function _syncMaskSaveBtn() {
-    const btn = document.getElementById('setup-mask-save');
-    if (btn) btn.style.display = maskingConfig.size > 0 ? '' : 'none';
-  }
-
-  window.toggleMask = function(fqn, btn) {
-    const key = fqn.toUpperCase();
-    const panelId = 'maskpanel-' + key.replace(/[^A-Z0-9_]/g, '_');
-    const panel   = document.getElementById(panelId);
-    if (_maskOn(fqn)) {
-      maskingConfig.delete(key);
-      btn.textContent = '○ Mask';
-      btn.className   = 'mask-toggle mask-off';
-      btn.title       = 'Click to enable field masking for this table';
-      if (panel) panel.classList.remove('open');
-    } else {
-      maskingConfig.set(key, { mode: 'selective', masked_fields: [] });
-      btn.textContent = '◉ Masking';
-      btn.className   = 'mask-toggle mask-on';
-      btn.title       = 'Masking on — checked fields will be masked before sending to LLM';
-      if (panel) { panel.classList.add('open'); _loadFieldPanel(fqn, panel); }
-    }
-    _syncMaskSaveBtn();
+  // Human-readable strategy labels for UI display
+  const STRATEGY_LABELS = {
+    redact: '→ [REDACTED]', name: '→ fake full name', first_name: '→ fake first name',
+    last_name: '→ fake last name', email: '→ fake email', phone: '→ fake phone number',
+    address: '→ fake address', city: '→ fake city', zip: '→ fake zip code',
+    state: '→ fake state', country: '→ fake country code', ssn: '→ fake SSN',
+    credit_card: '→ ****-****-****-XXXX', ip_address: '→ fake IP address',
+    coordinate: '→ shifted ±0.5°', birthdate: '→ shifted ±730 days',
+    date_shift: '→ shifted ±5 days', salary: '→ shifted ±15%',
+    numeric_shift: '→ shifted ±10%', text_mask: '→ format-preserving mask',
   };
 
-  // Lazy-load columns from server; only fetches once per FQN per page load
-  const _panelLoaded = new Set();
-  async function _loadFieldPanel(fqn, panel) {
-    const key = fqn.toUpperCase();
-    if (_panelLoaded.has(key)) return;
-    _panelLoaded.add(key);
-    panel.innerHTML = '<div class="mask-fields-loading">Loading columns…</div>';
+  // Rebuild the masking panel whenever the selected set changes
+  function _refreshMaskingPanel() {
+    const noTablesEl = document.getElementById('mask-no-tables');
+    const panelEl    = document.getElementById('mask-panel');
+    const listEl     = document.getElementById('mask-table-list');
+    if (!noTablesEl || !panelEl || !listEl) return;
+
+    if (!selected.size) {
+      noTablesEl.style.display = 'block';
+      panelEl.style.display    = 'none';
+      return;
+    }
+    noTablesEl.style.display = 'none';
+    panelEl.style.display    = 'block';
+
+    // Keep existing DOM items; add/remove as needed
+    const fqns = [...selected].sort();
+    const existingIds = new Set([...listEl.querySelectorAll('.mask-item')].map(el => el.dataset.fqn));
+
+    // Remove items no longer selected
+    listEl.querySelectorAll('.mask-item').forEach(el => {
+      if (!selected.has(el.dataset.fqn)) el.remove();
+    });
+
+    // Add new items
+    fqns.forEach(fqn => {
+      if (existingIds.has(fqn)) return; // already in DOM
+      const key = fqn.replace(/[^A-Z0-9_]/g, '_');
+      const parts = fqn.split('.');
+      const tableName = parts[parts.length - 1];
+      const item = document.createElement('div');
+      item.className = 'mask-item';
+      item.dataset.fqn = fqn;
+      item.innerHTML =
+        `<div class="mask-item-hd" onclick="_toggleMaskItem('${fqn}')">` +
+          `<span class="mask-item-chev" id="mask-chev-${key}">▶</span>` +
+          `<span style="font-size:12px;flex-shrink:0">🗒</span>` +
+          `<span class="mask-item-name">${esc(tableName)}</span>` +
+          `<span class="mask-item-fqn">&nbsp;${esc(fqn)}</span>` +
+          `<span class="mask-item-badge" id="mask-badge-${key}">No masking</span>` +
+        `</div>` +
+        `<div class="mask-item-body" id="mask-body-${key}"></div>`;
+      listEl.appendChild(item);
+      _updateMaskBadge(fqn);
+    });
+  }
+
+  window._toggleMaskItem = function(fqn) {
+    const key    = fqn.replace(/[^A-Z0-9_]/g, '_');
+    const bodyEl = document.getElementById('mask-body-' + key);
+    const chevEl = document.getElementById('mask-chev-' + key);
+    if (!bodyEl) return;
+    const open = !bodyEl.classList.contains('open');
+    bodyEl.classList.toggle('open', open);
+    if (chevEl) chevEl.style.transform = open ? 'rotate(90deg)' : '';
+    if (open && !_maskPanelOpened.has(fqn)) {
+      _maskPanelOpened.add(fqn);
+      _loadMaskFields(fqn, bodyEl);
+    }
+  };
+
+  async function _loadMaskFields(fqn, bodyEl) {
+    if (_maskFieldsCache.has(fqn)) {
+      _renderMaskFields(fqn, bodyEl, _maskFieldsCache.get(fqn));
+      return;
+    }
+    bodyEl.innerHTML = '<div style="padding:.6rem 1rem;font-size:12px;color:var(--text-muted)">Loading fields…</div>';
     try {
       const resp = await fetch(
-        `/admin/clients/${accountId}/setup/column-sensitivity?fqn=${encodeURIComponent(key)}`,
+        `/admin/clients/${accountId}/setup/column-sensitivity?fqn=${encodeURIComponent(fqn)}`,
         {credentials: 'same-origin'}
       );
       const data = await resp.json();
       if (data.status !== 'ok') {
-        panel.innerHTML = '<div class="mask-fields-loading">Schema not discovered yet — run Step 3 first, then re-open masking.</div>';
-        _panelLoaded.delete(key); // allow retry after discovery
+        bodyEl.innerHTML =
+          '<div style="padding:.6rem 1rem;font-size:12px;color:var(--amber)">' +
+          '⚠ Run Schema Discovery (Step 3) first to load field information.</div>';
+        _maskPanelOpened.delete(fqn);
         return;
       }
-      _renderFieldPanel(fqn, panel, data.columns, data.auto_masked);
-    } catch (e) {
-      panel.innerHTML = `<div class="mask-fields-loading" style="color:var(--red)">Error: ${esc(e.message)}</div>`;
-      _panelLoaded.delete(key);
+      _maskFieldsCache.set(fqn, data);
+      _renderMaskFields(fqn, bodyEl, data);
+    } catch(e) {
+      bodyEl.innerHTML = `<div style="padding:.6rem 1rem;font-size:12px;color:var(--red)">Error: ${esc(e.message)}</div>`;
+      _maskPanelOpened.delete(fqn);
     }
   }
 
-  function _renderFieldPanel(fqn, panel, columns, autoMasked) {
-    const key    = fqn.toUpperCase();
-    const cfg    = maskingConfig.get(key) || { mode: 'selective', masked_fields: [] };
-    const autoSet = new Set((autoMasked || []).map(f => f.toUpperCase()));
+  function _renderMaskFields(fqn, bodyEl, data) {
+    const columns     = data.columns || [];
+    const autoSet     = new Set((data.auto_masked || []).map(f => f.toUpperCase()));
+    const strategyMap = data.strategy_map || {};
 
-    // Seed checked fields from saved config, or fall back to auto-detected PII
-    let savedFields = new Set((cfg.masked_fields || []).map(f => f.toUpperCase()));
-    if (!savedFields.size) {
-      savedFields = new Set(autoSet);
-      cfg.masked_fields = [...autoSet];
-      maskingConfig.set(key, cfg);
+    // Initialise cfg from saved maskingConfig, or pre-check auto-PII
+    if (!maskingConfig.has(fqn)) {
+      maskingConfig.set(fqn, { mode: 'selective', masked_fields: new Set(autoSet) });
+    } else {
+      const existing = maskingConfig.get(fqn);
+      // if no fields selected yet, seed from auto
+      if (!existing.masked_fields.size && autoSet.size) {
+        existing.masked_fields = new Set(autoSet);
+      }
     }
+    const cfg = maskingConfig.get(fqn);
+    const allSelected = columns.length > 0 && cfg.masked_fields.size === columns.length;
 
-    const piiCount  = autoSet.size;
-    const hintParts = [];
-    if (piiCount) hintParts.push(`${piiCount} PII field${piiCount !== 1 ? 's' : ''} auto-detected`);
-    hintParts.push('check any additional fields to mask');
+    let html =
+      `<div style="padding:.45rem 1rem;border-bottom:1px solid var(--border);background:var(--surface-2);display:flex;align-items:center;gap:1rem;font-size:11px;color:var(--text-muted)">` +
+      `<span><strong>${columns.length}</strong> fields total &nbsp;·&nbsp; <strong style="color:var(--amber)">${autoSet.size}</strong> PII auto-detected</span>` +
+      `<label style="margin-left:auto;cursor:pointer;display:flex;align-items:center;gap:.35rem">` +
+        `<input type="checkbox" ${allSelected ? 'checked' : ''} onchange="_maskSelectAll('${fqn}',this.checked)"> Select all` +
+      `</label>` +
+      `</div>` +
+      `<div style="padding:.35rem .85rem;max-height:240px;overflow-y:auto">`;
 
-    let html = `<div style="font-size:10px;color:var(--text-muted);margin-bottom:.4rem">${esc(hintParts.join(' · '))}</div>`;
     columns.forEach(col => {
-      const colUpper = col.name.toUpperCase();
-      const isAuto   = autoSet.has(colUpper);
-      const checked  = savedFields.has(colUpper);
-      html += `<label class="mask-field-row">`
-        + `<input type="checkbox" class="scope-check" ${checked ? 'checked' : ''} `
-        + `onchange="_toggleMaskField(${JSON.stringify(key)},${JSON.stringify(col.name)},this.checked)">`
-        + `<span style="flex:1">${esc(col.name)}</span>`
-        + `<span style="font-size:10px;color:var(--text-muted);margin-right:.25rem">${esc(col.type || '')}</span>`
-        + (isAuto ? `<span class="mask-field-pii" title="Auto-detected PII field">PII</span>` : '')
-        + `</label>`;
+      const colUpper  = col.name.toUpperCase();
+      const isPii     = autoSet.has(colUpper);
+      const checked   = cfg.masked_fields.has(colUpper);
+      const strategy  = strategyMap[col.name] || strategyMap[colUpper] || '';
+      const stratLbl  = STRATEGY_LABELS[strategy] || '';
+      html +=
+        `<label class="mask-field-row">` +
+        `<input type="checkbox" class="scope-check" ${checked ? 'checked' : ''} ` +
+          `onchange="_toggleMaskField2('${fqn}','${col.name}',this.checked)">` +
+        `<span style="flex:1;font-weight:${isPii?'700':'400'}">${esc(col.name)}</span>` +
+        `<span style="font-size:10px;color:var(--text-muted);margin-right:.3rem">${esc(col.type||'')}</span>` +
+        (stratLbl ? `<span style="font-size:10px;color:var(--blue);font-style:italic;margin-right:.3rem;white-space:nowrap">${esc(stratLbl)}</span>` : '') +
+        (isPii ? `<span class="mask-field-pii" title="Auto-detected PII field">PII</span>` : '') +
+        `</label>`;
     });
-    if (!columns.length) html += '<div class="mask-fields-loading">No columns found.</div>';
-    panel.innerHTML = html;
+    if (!columns.length) html += '<div style="padding:.5rem;font-size:12px;color:var(--text-muted)">No columns found.</div>';
+    html += '</div>';
+    bodyEl.innerHTML = html;
+    _updateMaskBadge(fqn);
   }
 
-  window._toggleMaskField = function(fqnKey, colName, checked) {
-    const cfg    = maskingConfig.get(fqnKey) || { mode: 'selective', masked_fields: [] };
-    const fields = new Set((cfg.masked_fields || []).map(f => f.toUpperCase()));
-    if (checked) fields.add(colName.toUpperCase());
-    else fields.delete(colName.toUpperCase());
-    cfg.masked_fields = [...fields];
-    maskingConfig.set(fqnKey, cfg);
+  window._maskSelectAll = function(fqn, checked) {
+    const data = _maskFieldsCache.get(fqn);
+    if (!data) return;
+    const cfg = maskingConfig.get(fqn) || { mode: 'selective', masked_fields: new Set() };
+    if (checked) {
+      data.columns.forEach(c => cfg.masked_fields.add(c.name.toUpperCase()));
+    } else {
+      cfg.masked_fields.clear();
+    }
+    maskingConfig.set(fqn, cfg);
+    const key    = fqn.replace(/[^A-Z0-9_]/g, '_');
+    const bodyEl = document.getElementById('mask-body-' + key);
+    if (bodyEl) _renderMaskFields(fqn, bodyEl, data);
+  };
+
+  window._toggleMaskField2 = function(fqn, colName, checked) {
+    const cfg = maskingConfig.get(fqn) || { mode: 'selective', masked_fields: new Set() };
+    if (checked) cfg.masked_fields.add(colName.toUpperCase());
+    else cfg.masked_fields.delete(colName.toUpperCase());
+    maskingConfig.set(fqn, cfg);
+    _updateMaskBadge(fqn);
+  };
+
+  function _updateMaskBadge(fqn) {
+    const key     = fqn.replace(/[^A-Z0-9_]/g, '_');
+    const badgeEl = document.getElementById('mask-badge-' + key);
+    if (!badgeEl) return;
+    const cfg   = maskingConfig.get(fqn);
+    const count = cfg ? cfg.masked_fields.size : 0;
+    badgeEl.textContent = count > 0 ? `${count} field${count!==1?'s':''} masked` : 'No masking';
+    badgeEl.className   = 'mask-item-badge' + (count > 0 ? ' has-mask' : '');
+  }
+
+  window.createMasking = async function() {
+    const btn      = document.getElementById('mask-create-btn');
+    const statusEl = document.getElementById('mask-apply-status');
+    btn.disabled = true; btn.textContent = 'Applying…';
+    statusEl.textContent = '';
+
+    // Convert maskingConfig (Set values) to serialisable format
+    const config = {};
+    maskingConfig.forEach((cfg, fqn) => {
+      if (cfg.masked_fields.size > 0) {
+        config[fqn] = { mode: 'selective', masked_fields: [...cfg.masked_fields] };
+      }
+    });
+
+    try {
+      const resp = await fetch(`/admin/clients/${accountId}/kb-tables/masking`, {
+        method: 'POST', credentials: 'same-origin',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ masking_config: config }),
+      });
+      const data = await resp.json();
+      if (data.status === 'ok') {
+        const totalFields = Object.values(config).reduce((s,c) => s + (c.masked_fields||[]).length, 0);
+        const tableCount  = Object.keys(config).length;
+        statusEl.style.color = 'var(--green)';
+        statusEl.textContent =
+          `✓ Masking created — ${tableCount} table${tableCount!==1?'s':''} configured ` +
+          `(${totalFields} field${totalFields!==1?'s':''} total). ` +
+          `Now run Schema Discovery (Step 3) to apply.`;
+        const badge = document.getElementById('mask-done-badge');
+        const num   = document.getElementById('mask-step-num');
+        if (badge) badge.style.display = '';
+        if (num)   { num.style.background = 'var(--green)'; num.textContent = '✓'; num.style.fontSize = ''; }
+      } else {
+        statusEl.style.color = 'var(--red)';
+        statusEl.textContent = data.message || 'Save failed.';
+      }
+    } catch(e) {
+      statusEl.style.color = 'var(--red)';
+      statusEl.textContent = 'Network error: ' + e.message;
+    } finally {
+      btn.disabled = false; btn.textContent = '🔒 Create Masking';
+    }
+  };
+
+  window.skipMasking = function() {
+    const statusEl = document.getElementById('mask-apply-status');
+    if (statusEl) {
+      statusEl.style.color = 'var(--text-muted)';
+      statusEl.textContent = 'Masking skipped — sample rows will be sent to the LLM as-is.';
+    }
   };
 
   async function saveSetupScope() {
@@ -634,18 +821,25 @@
     btn.disabled = true;
     btn.textContent = 'Saving...';
     try {
+      // Serialise maskingConfig (Set values → arrays)
+      const serialisedMasking = {};
+      maskingConfig.forEach((cfg, fqn) => {
+        if (cfg.masked_fields.size > 0) {
+          serialisedMasking[fqn] = { mode: cfg.mode || 'selective', masked_fields: [...cfg.masked_fields] };
+        }
+      });
       const resp = await fetch(`/admin/clients/${accountId}/kb-tables`, {
         method: 'POST',
         credentials: 'same-origin',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({
           tables: [...selected],
-          masking_config: Object.fromEntries(maskingConfig),
+          masking_config: serialisedMasking,
         }),
       });
       const data = await resp.json();
       if (data.status === 'ok') {
-        const maskCount = maskingConfig.size;
+        const maskCount = Object.keys(serialisedMasking).length;
         showStatus('info',
           `✓ ${data.count} table${data.count !== 1 ? 's' : ''} saved` +
           (maskCount ? ` (${maskCount} table${maskCount !== 1 ? 's' : ''} with field masking)` : '') +
@@ -662,27 +856,7 @@
     }
   }
 
-  async function saveMaskingOnly() {
-    const btn = document.getElementById('setup-mask-save');
-    btn.disabled = true; btn.textContent = 'Saving…';
-    try {
-      const resp = await fetch(`/admin/clients/${accountId}/kb-tables/masking`, {
-        method: 'POST', credentials: 'same-origin',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ masking_config: Object.fromEntries(maskingConfig) }),
-      });
-      const data = await resp.json();
-      if (data.status === 'ok') {
-        showStatus('info', `✓ Masking saved for ${data.count} table${data.count !== 1 ? 's' : ''}. Re-run Schema Discovery to apply.`);
-      } else {
-        showStatus('error', data.message || 'Save failed.');
-      }
-    } catch (e) {
-      showStatus('error', 'Network error: ' + e.message);
-    } finally {
-      btn.disabled = false; btn.textContent = '✎ Save masking';
-    }
-  }
+  // saveMaskingOnly() has been replaced by createMasking() in the Field Masking section above.
 
   function showStatus(type, msg) {
     const el = document.getElementById('setup-scope-status');
@@ -724,6 +898,7 @@
   window.setupScopeCheck = function(value, checked) {
     if (checked) selected.add(value); else selected.delete(value);
     syncFooter();
+    _refreshMaskingPanel();
   };
 
   window.setupScopeToggleSchema = function(values, masterId) {
@@ -735,6 +910,7 @@
       if (cb) cb.checked = checked;
     });
     syncFooter();
+    _refreshMaskingPanel();
   };
 
   function renderTree(tree) {
@@ -779,18 +955,12 @@
         if (tables.length) {
           html += '<div class="scope-section">Tables</div>';
           tables.forEach(t => {
-            const value   = ref(db, schema, t);
-            const isOn    = _maskOn(value);
-            const panelId = 'maskpanel-' + value.replace(/[^A-Z0-9_]/g, '_');
+            const value = ref(db, schema, t);
             html += `<div>`
               + `<label class="scope-object" for="${checkboxId(value)}">`
               + `<input type="checkbox" class="scope-check" id="${checkboxId(value)}" ${selected.has(value) ? 'checked' : ''} onchange='setupScopeCheck(${JSON.stringify(value)}, this.checked)'>`
               + `<span style="flex:1">${esc(t)}</span>`
-              + `<button type="button" class="mask-toggle ${isOn ? 'mask-on' : 'mask-off'}" `
-              + `title="${isOn ? 'Masking on — checked fields will be masked before sending to LLM' : 'Click to enable field masking for this table'}" `
-              + `onclick='event.preventDefault();toggleMask(${JSON.stringify(value)},this)'>${isOn ? '◉ Masking' : '○ Mask'}</button>`
               + `</label>`
-              + `<div class="mask-fields-panel${isOn ? ' open' : ''}" id="${panelId}"></div>`
               + `</div>`;
           });
         }
@@ -891,7 +1061,7 @@
           <th>Rows sent</th>
           <th>Sample mode</th>
           <th>Fields sent to LLM</th>
-          <th>Masked fields</th>
+          <th>Masked fields &amp; replacement</th>
           <th>Timestamp</th>
         </tr>
       </thead>
@@ -933,13 +1103,21 @@
             </details>
             {% else %}<span style="color:var(--text-muted)">—</span>{% endif %}
           </td>
-          <td style="font-size:10px;max-width:200px">
+          <td style="font-size:10px;max-width:220px">
             {% if mfields %}
+            {% set rmap = row.replacement_map_parsed or {} %}
             <details>
               <summary style="cursor:pointer;color:var(--amber);font-weight:700">{{ mfields|length }} masked</summary>
-              <div style="margin-top:4px;display:flex;flex-wrap:wrap;gap:3px">
+              <div style="margin-top:4px;display:flex;flex-direction:column;gap:3px">
               {% for f in mfields %}
-              <code style="background:color-mix(in srgb,var(--amber) 12%,var(--surface));border:1px solid color-mix(in srgb,var(--amber) 30%,transparent);border-radius:3px;padding:1px 4px;font-size:10px;color:var(--amber)">{{ f }}</code>
+              <div style="display:flex;align-items:center;gap:3px">
+                <code style="background:color-mix(in srgb,var(--amber) 12%,var(--surface));border:1px solid color-mix(in srgb,var(--amber) 30%,transparent);border-radius:3px;padding:1px 4px;font-size:10px;color:var(--amber)">{{ f }}</code>
+                {% if rmap.get(f) or rmap.get(f.upper()) %}
+                <span style="font-size:9px;color:var(--blue);font-style:italic">
+                  {{ rmap.get(f) or rmap.get(f.upper()) }}
+                </span>
+                {% endif %}
+              </div>
               {% endfor %}
               </div>
             </details>
@@ -966,7 +1144,7 @@
     <table class="table" style="font-size:11px;margin-top:.5rem">
       <thead>
         <tr>
-          <th>Table</th><th>Schema / DB</th><th>Cols</th><th>Rows sampled</th><th>Sample mode</th><th>Fields sent</th><th>Masked fields</th><th>Timestamp</th>
+          <th>Table</th><th>Schema / DB</th><th>Cols</th><th>Rows sampled</th><th>Sample mode</th><th>Fields sent</th><th>Masked &amp; replacement</th><th>Timestamp</th>
         </tr>
       </thead>
       <tbody>
@@ -997,9 +1175,17 @@
           </td>
           <td style="font-size:10px">
             {% if dmfields %}
+            {% set drmap = row.replacement_map_parsed or {} %}
             <details><summary style="cursor:pointer;color:var(--amber);font-weight:700">{{ dmfields|length }} masked</summary>
-              <div style="margin-top:3px;display:flex;flex-wrap:wrap;gap:2px">
-              {% for f in dmfields %}<code style="background:color-mix(in srgb,var(--amber) 12%,var(--surface));border:1px solid color-mix(in srgb,var(--amber) 30%,transparent);border-radius:3px;padding:1px 4px;font-size:10px;color:var(--amber)">{{ f }}</code>{% endfor %}
+              <div style="margin-top:3px;display:flex;flex-direction:column;gap:2px">
+              {% for f in dmfields %}
+              <div style="display:flex;align-items:center;gap:3px">
+                <code style="background:color-mix(in srgb,var(--amber) 12%,var(--surface));border:1px solid color-mix(in srgb,var(--amber) 30%,transparent);border-radius:3px;padding:1px 4px;font-size:10px;color:var(--amber)">{{ f }}</code>
+                {% if drmap.get(f) or drmap.get(f.upper()) %}
+                <span style="font-size:9px;color:var(--blue);font-style:italic">{{ drmap.get(f) or drmap.get(f.upper()) }}</span>
+                {% endif %}
+              </div>
+              {% endfor %}
               </div></details>
             {% else %}<span style="color:var(--text-muted)">none</span>{% endif %}
           </td>

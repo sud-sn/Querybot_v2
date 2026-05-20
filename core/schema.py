@@ -99,11 +99,14 @@ def _apply_masking(
     mode: str,
     explicit_fields: set[str],
     table_name: str,
-) -> tuple[list[dict], set[str], bool]:
+) -> tuple[list[dict], set[str], dict[str, str], bool]:
     """
     Centralised masking helper shared by all three DB backends.
 
-    Returns (sample_rows, masked_field_names, synthetic_fallback_used).
+    Returns (sample_rows, masked_field_names, replacement_map, synthetic_fallback_used).
+
+    replacement_map is {field_name: strategy_name} for each masked field,
+    e.g. {"EMAIL": "email", "FIRST_NAME": "first_name"}.
 
     mode values:
       "none"      — read real rows, no masking
@@ -114,7 +117,7 @@ def _apply_masking(
     If the DB read fails, falls back to generate_synthetic_sample() and
     returns synthetic_fallback_used=True.
     """
-    from core.masking import detect_sensitive_columns, mask_rows
+    from core.masking import detect_sensitive_columns, mask_rows, get_strategy_map
 
     # Determine which fields to mask
     if mode == "none":
@@ -136,14 +139,16 @@ def _apply_masking(
     if not rows:
         # Fallback: fully synthetic rows (DB unreachable or empty table)
         log.info("schema: synthetic fallback for %s (DB read returned 0 rows)", table_name)
-        return generate_synthetic_sample(col_defs), set(), True
+        return generate_synthetic_sample(col_defs), set(), {}, True
 
     # Apply masking
+    replacement_map: dict[str, str] = {}
     if masked_fields:
         rows = mask_rows(rows, masked_fields, col_defs)
+        replacement_map = get_strategy_map(masked_fields, col_defs)
         log.info("schema: masked %d field(s) in %s (mode=%s)", len(masked_fields), table_name, mode)
 
-    return rows, masked_fields, False
+    return rows, masked_fields, replacement_map, False
 
 
 def _sf_fetch_sample(cur, schema: str, name: str) -> list[dict]:
@@ -716,7 +721,7 @@ def _discover_snowflake(cfg: dict, out: Path, allowed: set[str] | None = None, m
 
             # Read real rows then mask, or fall back to fully synthetic
             _sf_schema, _sf_name = schema, name  # capture for lambda
-            sample, _masked_set, _synthetic_used = _apply_masking(
+            sample, _masked_set, _replacement_map, _synthetic_used = _apply_masking(
                 fetch_fn=lambda: _sf_fetch_sample(cur, _sf_schema, _sf_name),
                 col_defs=col_defs,
                 mode=_mode,
@@ -734,15 +739,16 @@ def _discover_snowflake(cfg: dict, out: Path, allowed: set[str] | None = None, m
                      "comment": c.get("COMMENT") or ""}
                     for c in columns
                 ],
-                "row_count":      tbl.get("ROW_COUNT"),
-                "comment":        tbl.get("COMMENT") or "",
-                "schema":         schema,
-                "database":       database,
-                "fields_sent":    [c["COLUMN_NAME"] for c in columns],
-                "row_count_sent": len(sample),
-                "masked_fields":  sorted(_masked_set),
-                "mask_mode":      _mode,
-                "synthetic_used": _synthetic_used,
+                "row_count":           tbl.get("ROW_COUNT"),
+                "comment":             tbl.get("COMMENT") or "",
+                "schema":              schema,
+                "database":            database,
+                "fields_sent":         [c["COLUMN_NAME"] for c in columns],
+                "row_count_sent":      len(sample),
+                "masked_fields":       sorted(_masked_set),
+                "mask_mode":           _mode,
+                "mask_replacement_map": _replacement_map,
+                "synthetic_used":      _synthetic_used,
             }
             log.info("Snowflake: discovered %s (%d cols, %d categorical)",
                      name, len(columns), len(distinct_map))
@@ -932,7 +938,7 @@ def _discover_oracle(cfg: dict, out: Path, allowed: set[str] | None = None, mc: 
                 except Exception:
                     return []
 
-            sample, _masked_set, _synthetic_used = _apply_masking(
+            sample, _masked_set, _replacement_map, _synthetic_used = _apply_masking(
                 fetch_fn=_ora_fetch,
                 col_defs=col_defs,
                 mode=_mode,
@@ -948,14 +954,15 @@ def _discover_oracle(cfg: dict, out: Path, allowed: set[str] | None = None, mc: 
                               "nullable": c["IS_NULLABLE"] == "YES",
                               "comment": c.get("COMMENT") or ""}
                              for c in columns],
-                "row_count":      tbl.get("ROW_COUNT"),
-                "comment":        tbl.get("COMMENT") or "",
-                "owner":          tbl_owner,
-                "fields_sent":    [c["COLUMN_NAME"] for c in columns],
-                "row_count_sent": len(sample),
-                "masked_fields":  sorted(_masked_set),
-                "mask_mode":      _mode,
-                "synthetic_used": _synthetic_used,
+                "row_count":           tbl.get("ROW_COUNT"),
+                "comment":             tbl.get("COMMENT") or "",
+                "owner":               tbl_owner,
+                "fields_sent":         [c["COLUMN_NAME"] for c in columns],
+                "row_count_sent":      len(sample),
+                "masked_fields":       sorted(_masked_set),
+                "mask_mode":           _mode,
+                "mask_replacement_map": _replacement_map,
+                "synthetic_used":      _synthetic_used,
             }
     finally:
         conn.close()
@@ -1180,7 +1187,7 @@ def _discover_azure_sql(cfg: dict, out: Path, allowed: set[str] | None = None, m
                     except Exception:
                         return []
 
-                sample, _masked_set, _synthetic_used = _apply_masking(
+                sample, _masked_set, _replacement_map, _synthetic_used = _apply_masking(
                     fetch_fn=_az_fetch,
                     col_defs=col_defs,
                     mode=_mode,
@@ -1199,15 +1206,16 @@ def _discover_azure_sql(cfg: dict, out: Path, allowed: set[str] | None = None, m
                     "columns": [{"name": c["COLUMN_NAME"], "type": c["DATA_TYPE"],
                                  "nullable": c["IS_NULLABLE"] == "YES", "comment": ""}
                                 for c in columns],
-                    "row_count":      None,
-                    "comment":        "",
-                    "schema":         schema,
-                    "database":       db_upper,
-                    "fields_sent":    [c["COLUMN_NAME"] for c in columns],
-                    "row_count_sent": len(sample),
-                    "masked_fields":  sorted(_masked_set),
-                    "mask_mode":      _mode,
-                    "synthetic_used": _synthetic_used,
+                    "row_count":           None,
+                    "comment":             "",
+                    "schema":              schema,
+                    "database":            db_upper,
+                    "fields_sent":         [c["COLUMN_NAME"] for c in columns],
+                    "row_count_sent":      len(sample),
+                    "masked_fields":       sorted(_masked_set),
+                    "mask_mode":           _mode,
+                    "mask_replacement_map": _replacement_map,
+                    "synthetic_used":      _synthetic_used,
                 }
                 log.info("Azure SQL: discovered [%s].[%s].[%s] (%d cols, %d categorical)",
                          db_upper, schema, name, len(columns), len(distinct_map))
