@@ -292,6 +292,28 @@
     <div class="file-list">
       {% for f in schema_files %}{% if not f.name.startswith('_') %}{{ f.stem }}<br>{% endif %}{% endfor %}
     </div>
+
+    {% if schema_drift and schema_drift.has_changes %}
+    <div style="margin-top:.875rem;padding:.75rem 1rem;background:var(--amber-light);border:1px solid color-mix(in srgb,var(--amber) 30%,transparent);border-radius:var(--radius);font-size:12px;color:var(--amber)">
+      <strong>🔄 Schema drift detected</strong> compared to the previous discovery:
+      {% if schema_drift.added_tables %}
+      <br>• <strong>{{ schema_drift.added_tables|length }} new table(s):</strong>
+        {{ schema_drift.added_tables[:6]|join(', ') }}{% if schema_drift.added_tables|length > 6 %}… (+{{ schema_drift.added_tables|length - 6 }} more){% endif %}
+      {% endif %}
+      {% if schema_drift.removed_tables %}
+      <br>• <strong>{{ schema_drift.removed_tables|length }} removed table(s):</strong>
+        {{ schema_drift.removed_tables[:6]|join(', ') }}{% if schema_drift.removed_tables|length > 6 %}… (+{{ schema_drift.removed_tables|length - 6 }} more){% endif %}
+      {% endif %}
+      {% if schema_drift.column_changes %}
+      <br>• <strong>{{ schema_drift.column_changes|length }} table(s) with column changes</strong>
+        ({% for fqn, ch in schema_drift.column_changes.items() %}
+          {{ fqn.split('.')[-1] }}: {% if ch.added %}+{{ ch.added|length }} col{% endif %}{% if ch.removed %} -{{ ch.removed|length }} col{% endif %}{% if ch.type_changes %} {{ ch.type_changes|length }} type change{% endif %}{% if not loop.last %}, {% endif %}
+        {% endfor %})
+      {% endif %}
+      <br><span style="font-size:11px;opacity:.75">Detected {{ schema_drift.detected_at[:16]|replace('T',' ') }} UTC — rebuild the KB to pick up these changes.</span>
+    </div>
+    {% endif %}
+
     <div style="margin-top:.875rem;display:flex;gap:.625rem">
       <form method="post" action="/admin/clients/{{ client.account_id }}/setup/discover">
         <button type="submit" class="btn btn-secondary btn-sm"

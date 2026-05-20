@@ -1061,14 +1061,60 @@ function _renderJoinConditionRows(conditions) {
     <div class="gd-form-row rd-jc-row" data-idx="${i}">
       <div>
         <label class="gd-label">FK col (from)</label>
-        <input class="gd-input rd-jc-from" value="${esc(c.from_col||'')}">
+        <input class="gd-input rd-jc-from" value="${esc(c.from_col||'')}" list="rd-jc-from-list-${i}" autocomplete="off">
+        <datalist id="rd-jc-from-list-${i}"></datalist>
       </div>
       <div>
         <label class="gd-label">Ref col (to)</label>
-        <input class="gd-input rd-jc-to" value="${esc(c.to_col||'')}">
+        <input class="gd-input rd-jc-to" value="${esc(c.to_col||'')}" list="rd-jc-to-list-${i}" autocomplete="off">
+        <datalist id="rd-jc-to-list-${i}"></datalist>
       </div>
       <button onclick="removeJoinCondition(${i})" title="Remove" style="align-self:flex-end;padding:4px 8px;background:none;border:1px solid var(--border);border-radius:var(--radius-sm);cursor:pointer;color:var(--text-muted)">✕</button>
     </div>`).join('');
+}
+
+// Helper: resolve FQN for a graph entity object
+function _resolveEntityFqn(ent) {
+  if (!ent) return '';
+  const match = _schemaTables.find(
+    t => t.table_name.toUpperCase() === (ent.table_name || '').toUpperCase() &&
+         (t.schema_name || '').toUpperCase() === (ent.schema_name || '').toUpperCase()
+  );
+  if (match) return match.fqn;
+  if (ent.schema_name) return `${ent.schema_name}.${ent.table_name}`;
+  return ent.table_name || '';
+}
+
+// Populate datalists for all rd-jc-row elements in the detail panel
+async function _populateJcDetailDatalist(relId) {
+  const rel = graph.relationships.find(r => r.id === relId);
+  if (!rel) return;
+  const fromEnt = graph.entities.find(e => e.entity_name === rel.from_entity);
+  const toEnt   = graph.entities.find(e => e.entity_name === rel.to_entity);
+  const [fromCols, toCols] = await Promise.all([
+    _fetchColumns(_resolveEntityFqn(fromEnt)),
+    _fetchColumns(_resolveEntityFqn(toEnt)),
+  ]);
+  document.querySelectorAll('.rd-jc-row').forEach((row, i) => {
+    _fillDatalist(`rd-jc-from-list-${i}`, fromCols);
+    _fillDatalist(`rd-jc-to-list-${i}`,   toCols);
+  });
+}
+
+// Populate datalists for all modal-jc-row elements in the relationship modal
+async function _populateModalJcDatalist() {
+  const fromEntName = document.getElementById('rel-from-entity')?.value;
+  const toEntName   = document.getElementById('rel-to-entity')?.value;
+  const fromEnt = graph.entities.find(e => e.entity_name === fromEntName);
+  const toEnt   = graph.entities.find(e => e.entity_name === toEntName);
+  const [fromCols, toCols] = await Promise.all([
+    fromEnt ? _fetchColumns(_resolveEntityFqn(fromEnt)) : Promise.resolve([]),
+    toEnt   ? _fetchColumns(_resolveEntityFqn(toEnt))   : Promise.resolve([]),
+  ]);
+  document.querySelectorAll('.modal-jc-row').forEach((row, i) => {
+    _fillDatalist(`modal-jc-from-list-${i}`, fromCols);
+    _fillDatalist(`modal-jc-to-list-${i}`,   toCols);
+  });
 }
 
 function _readJoinConditions() {
@@ -1078,17 +1124,19 @@ function _readJoinConditions() {
   })).filter(c => c.from_col && c.to_col);
 }
 
-window.addJoinCondition = function() {
+window.addJoinCondition = async function() {
   const container = document.getElementById('rd-jc-container');
   const idx = container.querySelectorAll('.rd-jc-row').length;
   const div = document.createElement('div');
   div.className = 'gd-form-row rd-jc-row';
   div.dataset.idx = idx;
   div.innerHTML = `
-    <div><label class="gd-label">FK col (from)</label><input class="gd-input rd-jc-from" value=""></div>
-    <div><label class="gd-label">Ref col (to)</label><input class="gd-input rd-jc-to" value=""></div>
+    <div><label class="gd-label">FK col (from)</label><input class="gd-input rd-jc-from" value="" list="rd-jc-from-list-${idx}" autocomplete="off"><datalist id="rd-jc-from-list-${idx}"></datalist></div>
+    <div><label class="gd-label">Ref col (to)</label><input class="gd-input rd-jc-to" value="" list="rd-jc-to-list-${idx}" autocomplete="off"><datalist id="rd-jc-to-list-${idx}"></datalist></div>
     <button onclick="removeJoinCondition(${idx})" title="Remove" style="align-self:flex-end;padding:4px 8px;background:none;border:1px solid var(--border);border-radius:var(--radius-sm);cursor:pointer;color:var(--text-muted)">✕</button>`;
   container.appendChild(div);
+  // Populate the new row's datalists immediately from the cached columns
+  if (selectedRelId) await _populateJcDetailDatalist(selectedRelId);
 };
 
 window.removeJoinCondition = function(idx) {
@@ -1166,6 +1214,8 @@ function renderRelDetail(id) {
       <div class="resolver-output">${generateJoinSQL(rel)}</div>
     </div>
   `;
+  // Populate column datalists for existing join condition rows (async, non-blocking)
+  _populateJcDetailDatalist(id);
 }
 
 function generateJoinSQL(rel) {
@@ -1296,15 +1346,18 @@ function populateEntitySelects() {
   });
 }
 
-window.addModalJoinCondition = function() {
+window.addModalJoinCondition = async function() {
   const container = document.getElementById('rel-jc-container');
+  const idx = container.querySelectorAll('.modal-jc-row').length;
   const div = document.createElement('div');
   div.className = 'gd-form-row modal-jc-row';
   div.innerHTML = `
-    <div><label class="gd-label">FK col (from)</label><input class="gd-input modal-jc-from" value=""></div>
-    <div><label class="gd-label">Ref col (to)</label><input class="gd-input modal-jc-to" value=""></div>
+    <div><label class="gd-label">FK col (from)</label><input class="gd-input modal-jc-from" value="" list="modal-jc-from-list-${idx}" autocomplete="off"><datalist id="modal-jc-from-list-${idx}"></datalist></div>
+    <div><label class="gd-label">Ref col (to)</label><input class="gd-input modal-jc-to" value="" list="modal-jc-to-list-${idx}" autocomplete="off"><datalist id="modal-jc-to-list-${idx}"></datalist></div>
     <button onclick="this.closest('.modal-jc-row').remove()" title="Remove" style="align-self:flex-end;padding:4px 8px;background:none;border:1px solid var(--border);border-radius:var(--radius-sm);cursor:pointer;color:var(--text-muted)">✕</button>`;
   container.appendChild(div);
+  // Populate datalists from cached columns for the currently selected entities
+  await _populateModalJcDatalist();
 };
 
 function _readModalJoinConditions() {
@@ -1681,6 +1734,10 @@ window.onRelEntityChange = async function(side) {
   const colInput = document.getElementById(`rel-${side}-col`);
   if (colInput && !colInput.value && ent.pk_column) {
     colInput.value = ent.pk_column;
+  }
+  // Refresh any existing compound join condition datalists
+  if (document.querySelectorAll('.modal-jc-row').length > 0) {
+    await _populateModalJcDatalist();
   }
 };
 
