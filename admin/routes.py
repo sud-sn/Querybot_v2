@@ -2670,20 +2670,24 @@ async def client_setup_page(request: Request, account_id: str):
     # KB data egress summary — shown in the Data Egress section on this page
     egress_summary = store.get_kb_egress_summary(account_id)
 
+    # Initial masking config for the Field Masking section
+    saved_masking_config = state_data.get("masking_config") or {}
+
     return _resp(request, "client_setup.html", {
-        "client":           client,
-        "state":            state,
-        "db_cfg":           db_cfg,
-        "schema_files":     schema_files,
-        "kb_files":         kb_files,
-        "kb_tables":        kb_tables,
-        "kb_table_count":   len(kb_tables),
-        "kb_table_source":  kb_table_source if kb_tables else "none",
-        "schema_breakdown": schema_breakdown,   # {schema_name: table_count}
-        "biz_desc":         biz_desc,
-        "egress_summary":   egress_summary,
-        "saved":            request.query_params.get("saved"),
-        "error":            request.query_params.get("error"),
+        "client":               client,
+        "state":                state,
+        "db_cfg":               db_cfg,
+        "schema_files":         schema_files,
+        "kb_files":             kb_files,
+        "kb_tables":            kb_tables,
+        "kb_table_count":       len(kb_tables),
+        "kb_table_source":      kb_table_source if kb_tables else "none",
+        "schema_breakdown":     schema_breakdown,   # {schema_name: table_count}
+        "biz_desc":             biz_desc,
+        "egress_summary":       egress_summary,
+        "saved_masking_config": saved_masking_config,  # for JS init
+        "saved":                request.query_params.get("saved"),
+        "error":                request.query_params.get("error"),
     })
 
 
@@ -2983,16 +2987,21 @@ async def admin_column_sensitivity(request: Request, account_id: str, fqn: str =
 
     columns = table_meta.get("columns") or []
     # Auto-detect PII from column names using the masking engine
+    auto_masked: list[str] = []
+    strategy_map: dict[str, str] = {}
     try:
         from core.masking import detect_sensitive_columns
-        auto_masked = list(detect_sensitive_columns(columns).keys())
+        detected = detect_sensitive_columns(columns)
+        auto_masked  = list(detected.keys())
+        strategy_map = detected   # {col_name: strategy_name}
     except Exception:
-        auto_masked = []
+        pass
 
     return JSONResponse({
         "status": "ok",
         "columns": columns,
         "auto_masked": auto_masked,
+        "strategy_map": strategy_map,   # {col_name: strategy_name} for PII fields
     })
 
 
@@ -3107,6 +3116,7 @@ async def admin_discover_schema(
                             row_count_sent=_row_ct,
                             masked_fields=_mf,
                             mask_mode=_mk_mode,
+                            mask_replacement_map=_tmeta.get("mask_replacement_map") or {},
                         )
             except Exception as _elog_exc:
                 log.warning("KB egress log (discovery) write failed for %s: %s",
@@ -3301,6 +3311,7 @@ async def admin_build_kb(
                             row_count_sent=_tmeta.get("row_count_sent", 0),
                             masked_fields=_mf,
                             mask_mode=_mk_mode,
+                            mask_replacement_map=_tmeta.get("mask_replacement_map") or {},
                         )
             except Exception as _elog_exc:
                 log.warning("KB egress log (kb_build) write failed for %s: %s",

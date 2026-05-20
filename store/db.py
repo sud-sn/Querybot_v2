@@ -380,6 +380,13 @@ CREATE TABLE IF NOT EXISTS kb_data_egress_log (
     -- production values were scanned and embedded in the KB context
     distinct_col_count INTEGER NOT NULL DEFAULT 0,
     triggered_by    TEXT    NOT NULL DEFAULT 'admin',   -- 'admin' | 'api' | 'system'
+    -- v19: fields sent/masked detail
+    fields_sent     TEXT    NOT NULL DEFAULT '[]',
+    row_count_sent  INTEGER NOT NULL DEFAULT 0,
+    masked_fields   TEXT    NOT NULL DEFAULT '[]',
+    mask_mode       TEXT    NOT NULL DEFAULT 'none',
+    -- v21: per-field replacement strategy map {field: strategy_name}
+    mask_replacement_map TEXT NOT NULL DEFAULT '{}',
     created_at      TEXT    DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_kb_egress_account_op
@@ -537,6 +544,8 @@ def _run_migrations() -> None:
         ("kb_data_egress_log", "mask_mode",      "TEXT DEFAULT 'none'"),
         # v20: compound (multi-column) join conditions
         ("entity_relationships", "join_conditions", "TEXT NOT NULL DEFAULT '[]'"),
+        # v21: per-field masking replacement strategy map
+        ("kb_data_egress_log", "mask_replacement_map", "TEXT NOT NULL DEFAULT '{}'"),
     ]
     with get_db() as conn:
         _ensure_llm_call_log_table(conn)
