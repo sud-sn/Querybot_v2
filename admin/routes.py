@@ -44,6 +44,7 @@ from core.log_export import (
     is_log_export_enabled,
     provision_external_log_store,
     sync_external_logs,
+    diagnose_external_log_store,
 )
 from core.admin_notifications import (
     admin_notification_hub,
@@ -754,6 +755,31 @@ async def database_logs_sync(request: Request, db_id: int):
             f"/admin/databases?error={quote('Log sync failed: ' + str(e)[:160])}",
             status_code=303,
         )
+
+
+@router.get("/databases/{db_id}/logs/diagnose")
+async def database_logs_diagnose(request: Request, db_id: int):
+    """
+    Return a JSON diagnostic showing local vs external egress row counts,
+    whether the external table exists, and any missing columns.
+    Useful for debugging why sync is not exporting egress rows.
+    """
+    if not _is_auth(request):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    raw = store.get_db_config(db_id)
+    if not raw:
+        return JSONResponse({"error": "Database config not found"}, status_code=404)
+    try:
+        loop   = asyncio.get_running_loop()
+        result = await asyncio.wait_for(
+            loop.run_in_executor(None, diagnose_external_log_store, raw),
+            timeout=30,
+        )
+    except asyncio.TimeoutError:
+        result = {"error": "Diagnostic timed out (>30s)"}
+    except Exception as exc:
+        result = {"error": str(exc)}
+    return JSONResponse(result)
 
 
 @router.post("/databases/delete")

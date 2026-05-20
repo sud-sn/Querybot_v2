@@ -562,22 +562,141 @@ def _fetch_llm_rows_after(last_id: int, limit: int) -> list[tuple]:
 
 def _fetch_egress_rows_after(last_id: int, limit: int) -> list[tuple]:
     with get_db() as conn:
-        rows = conn.execute("""
+        # Detect which optional columns exist so we can handle DBs that haven't
+        # had every migration applied yet — fall back to safe defaults for each.
+        existing_cols = {
+            row[1] for row in
+            conn.execute("PRAGMA table_info(kb_data_egress_log)").fetchall()
+        }
+        def _col(name: str, fallback: str) -> str:
+            return f"COALESCE({name}, {fallback})" if name in existing_cols else fallback
+
+        sql = f"""
             SELECT id, account_id, operation, db_type,
                    database_name, schema_name, table_name,
                    column_count, sample_mode, distinct_col_count,
                    triggered_by, created_at,
-                   COALESCE(fields_sent,          '[]') AS fields_sent,
-                   COALESCE(row_count_sent,        0)   AS row_count_sent,
-                   COALESCE(masked_fields,         '[]') AS masked_fields,
-                   COALESCE(mask_mode,             'none') AS mask_mode,
-                   COALESCE(mask_replacement_map,  '{}') AS mask_replacement_map
+                   {_col('fields_sent',          "'[]'")} AS fields_sent,
+                   {_col('row_count_sent',        '0')}   AS row_count_sent,
+                   {_col('masked_fields',         "'[]'")} AS masked_fields,
+                   {_col('mask_mode',             "'none'")} AS mask_mode,
+                   {_col('mask_replacement_map',  "'{}'")} AS mask_replacement_map
               FROM kb_data_egress_log
              WHERE id > ?
              ORDER BY id
              LIMIT ?
-        """, (int(last_id), int(limit))).fetchall()
+        """
+        rows = conn.execute(sql, (int(last_id), int(limit))).fetchall()
+
+    local_total = 0
+    with get_db() as conn:
+        row = conn.execute("SELECT COUNT(*) FROM kb_data_egress_log").fetchone()
+        local_total = row[0] if row else 0
+
+    log.info(
+        "egress fetch: last_id=%d  found=%d  local_total=%d",
+        last_id, len(rows), local_total,
+    )
     return [tuple(r) for r in rows]
+
+
+def diagnose_external_log_store(db_cfg: dict) -> dict:
+    """
+    Return a diagnostic dict without modifying anything:
+      local_egress_count     — rows in local kb_data_egress_log
+      local_egress_max_id    — highest local id
+      external_table_exists  — whether KB_DATA_EGRESS_LOG exists in external DB
+      external_egress_count  — rows in external table (None if table missing)
+      external_egress_max_id — max SOURCE_ID in external table (None if missing)
+      missing_columns        — columns expected by EGRESS_COLUMNS but absent
+      error                  — error string if connection/query failed, else None
+    """
+    result: dict = {
+        "local_egress_count":    0,
+        "local_egress_max_id":   0,
+        "external_table_exists": False,
+        "external_egress_count": None,
+        "external_egress_max_id": None,
+        "missing_columns":       [],
+        "error":                 None,
+    }
+
+    # Local counts
+    try:
+        with get_db() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*), COALESCE(MAX(id),0) FROM kb_data_egress_log"
+            ).fetchone()
+            result["local_egress_count"]  = int(row[0] or 0)
+            result["local_egress_max_id"] = int(row[1] or 0)
+    except Exception as exc:
+        result["error"] = f"Local DB read failed: {exc}"
+        return result
+
+    # External DB
+    try:
+        conn, db_type, schema = _connect_for_export(db_cfg)
+        try:
+            cur = conn.cursor()
+
+            # Does the table exist?
+            if db_type == "azure_sql":
+                cur.execute(
+                    f"SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES "
+                    f"WHERE TABLE_SCHEMA=N'{schema}' AND TABLE_NAME=N'{EGRESS_TABLE}'"
+                )
+            elif db_type == "snowflake":
+                cur.execute(
+                    f"SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES "
+                    f"WHERE TABLE_SCHEMA='{schema}' AND TABLE_NAME='{EGRESS_TABLE}'"
+                )
+            else:  # oracle
+                cur.execute(
+                    "SELECT COUNT(*) FROM ALL_TABLES "
+                    "WHERE OWNER=:s AND TABLE_NAME=:t",
+                    {"s": schema, "t": EGRESS_TABLE},
+                )
+            tbl_exists = int((cur.fetchone() or [0])[0] or 0) > 0
+            result["external_table_exists"] = tbl_exists
+
+            if tbl_exists:
+                # Row / id counts
+                result["external_egress_max_id"]  = _target_max_source_id(cur, db_type, schema, EGRESS_TABLE)
+                if db_type == "azure_sql":
+                    cur.execute(f"SELECT COUNT(*) FROM [{schema}].[{EGRESS_TABLE}]")
+                elif db_type == "snowflake":
+                    cur.execute(f'SELECT COUNT(*) FROM "{schema}"."{EGRESS_TABLE}"')
+                else:
+                    cur.execute(f'SELECT COUNT(*) FROM "{schema}"."{EGRESS_TABLE}"')
+                result["external_egress_count"] = int((cur.fetchone() or [0])[0] or 0)
+
+                # Column check
+                if db_type == "azure_sql":
+                    cur.execute(
+                        f"SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS "
+                        f"WHERE TABLE_SCHEMA=N'{schema}' AND TABLE_NAME=N'{EGRESS_TABLE}'"
+                    )
+                elif db_type == "snowflake":
+                    cur.execute(
+                        f"SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS "
+                        f"WHERE TABLE_SCHEMA='{schema}' AND TABLE_NAME='{EGRESS_TABLE}'"
+                    )
+                else:
+                    cur.execute(
+                        "SELECT COLUMN_NAME FROM ALL_TAB_COLUMNS "
+                        "WHERE OWNER=:s AND TABLE_NAME=:t",
+                        {"s": schema, "t": EGRESS_TABLE},
+                    )
+                existing = {r[0].upper() for r in cur.fetchall()}
+                result["missing_columns"] = [
+                    c for c in EGRESS_COLUMNS if c not in existing
+                ]
+        finally:
+            _close(conn)
+    except Exception as exc:
+        result["error"] = str(exc)
+
+    return result
 
 
 def _insert_rows(cur, db_type: str, schema: str, table: str, columns: list[str], rows: list[tuple]) -> None:
