@@ -61,7 +61,7 @@ def _sync_all_log_exports_bg() -> None:
     try:
         from store.config_store import list_db_configs
         for cfg in list_db_configs():
-            if is_log_export_enabled(cfg):
+            if is_log_export_enabled(cfg.get("credentials", {})):
                 try:
                     sync_external_logs(cfg)
                 except Exception as _exc:
