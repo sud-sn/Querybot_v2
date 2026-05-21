@@ -391,6 +391,13 @@ def summarize_result_context(rows: list[dict], question: str, sql: str = "") -> 
 
 
 def _dynamic_actions(ctx: dict) -> list[dict]:
+    """
+    Action buttons for the result card.
+
+    "Why this pattern?" has been removed — the Insight Layer (inline
+    summary sentence + anomaly callouts + follow-up suggestions) surfaces
+    this analysis automatically without requiring a button click.
+    """
     mode = ctx.get("mode")
     actions: list[dict] = []
     if mode == "time_series":
@@ -398,7 +405,6 @@ def _dynamic_actions(ctx: dict) -> list[dict]:
             {"id": "explain", "label": "Explain result"},
             {"id": "analyze", "label": "Analyze trend"},
             {"id": "compare", "label": "Compare periods"},
-            {"id": "why",     "label": "Why this pattern?"},
         ]
         if ctx.get("row_count", 0) >= 3:
             actions.append({"id": "predict", "label": "Predict next period"})
@@ -407,7 +413,6 @@ def _dynamic_actions(ctx: dict) -> list[dict]:
             {"id": "explain", "label": "Explain result"},
             {"id": "analyze", "label": "Analyze ranking"},
             {"id": "compare", "label": "Compare top results"},
-            {"id": "why",     "label": "Why this pattern?"},
         ]
     elif mode == "numeric_table":
         actions = [
@@ -417,6 +422,153 @@ def _dynamic_actions(ctx: dict) -> list[dict]:
     else:
         actions = [{"id": "explain", "label": "Explain result"}]
     return actions
+
+
+# ── Insight Layer helpers — pure statistics, no LLM call ─────────────────────
+
+def _build_insight_summary(rows: list[dict], ctx: dict, brief: dict) -> str:
+    """
+    Generate a one-sentence plain-English summary from the data brief.
+
+    Purely stat-driven — no LLM call, no latency added.
+    Returns empty string when there is not enough structure to say anything useful.
+    """
+    mode = ctx.get("mode", "table")
+    row_count = len(rows)
+
+    if mode == "single_value":
+        col = (brief.get("value_column") or "").replace("_", " ").title()
+        val = brief.get("value", "")
+        return f"{col}: {_format_number(val)}." if col else ""
+
+    if mode == "time_series":
+        ts = brief.get("time_series") or {}
+        direction = ts.get("direction", "stable")
+        pct = ts.get("overall_pct_change")
+        first = ts.get("first_period", "")
+        last_ = ts.get("last_period", "")
+        value_col = (ctx.get("value_col") or "").replace("_", " ").title()
+        dir_word = {"increasing": "up", "decreasing": "down", "stable": "flat"}.get(direction, direction)
+        if pct is not None:
+            base = f"{value_col} trended {dir_word} {abs(pct):.1f}% from {first} to {last_}."
+        else:
+            base = f"{value_col} remained {dir_word} between {first} and {last_}."
+        peak = ts.get("peak") or {}
+        if peak and direction in ("increasing", "decreasing"):
+            base += f" Peak: {_format_number(peak.get('value', 0))} in {peak.get('period', '')}."
+        return base
+
+    if mode == "ranking":
+        cat = brief.get("category_breakdown") or {}
+        top5 = cat.get("top_5") or []
+        if top5:
+            leader = top5[0]
+            leader_share = cat.get("leader_share_pct")
+            label_col = (cat.get("label_column") or "").replace("_", " ").lower()
+            count = cat.get("category_count", row_count)
+            share_str = f" ({leader_share}% of total)" if leader_share else ""
+            return (
+                f"{leader['label']} leads at {_format_number(leader['value'])}{share_str}"
+                f" across {count} {label_col or 'entries'}."
+            )
+
+    if mode == "numeric_table":
+        value_col = (ctx.get("value_col") or "").replace("_", " ").title()
+        mn = ctx.get("min_value", 0)
+        mx = ctx.get("max_value", 0)
+        avg = ctx.get("avg_value", 0)
+        return (
+            f"{row_count} records — {value_col} ranges "
+            f"{_format_number(mn)} to {_format_number(mx)}, avg {_format_number(avg)}."
+        )
+
+    return ""
+
+
+def _build_anomaly_callouts(brief: dict) -> list[dict]:
+    """
+    Detect notable statistical patterns from the data brief.
+
+    Returns a list of up to 3 callout dicts:
+      {"type": str, "icon": str, "message": str, "severity": "warning"|"success"|"info"}
+
+    Severity → UI colour:
+      warning  = amber   (drops, streaks)
+      success  = green   (gains)
+      info     = blue    (concentration, outliers)
+    """
+    callouts: list[dict] = []
+    mode = brief.get("mode", "table")
+
+    if mode == "time_series":
+        ts = brief.get("time_series") or {}
+        drop = ts.get("biggest_period_drop") or {}
+        gain = ts.get("biggest_period_gain") or {}
+        streak = ts.get("longest_decline_streak", 0)
+
+        if drop.get("pct_change") is not None and drop["pct_change"] < -10:
+            callouts.append({
+                "type": "drop", "icon": "↓",
+                "message": (
+                    f"Biggest drop: {drop['from_period']} → {drop['to_period']} "
+                    f"({drop['pct_change']:.1f}%)"
+                ),
+                "severity": "warning",
+            })
+        if gain.get("pct_change") is not None and gain["pct_change"] > 10:
+            callouts.append({
+                "type": "gain", "icon": "↑",
+                "message": (
+                    f"Biggest gain: {gain['from_period']} → {gain['to_period']} "
+                    f"(+{gain['pct_change']:.1f}%)"
+                ),
+                "severity": "success",
+            })
+        if streak >= 3:
+            callouts.append({
+                "type": "streak", "icon": "⚠",
+                "message": f"{streak} consecutive periods of decline",
+                "severity": "warning",
+            })
+
+    elif mode == "ranking":
+        cat = brief.get("category_breakdown") or {}
+        for _col, stats in (brief.get("numeric_summaries") or {}).items():
+            conc = stats.get("top_3_concentration_pct")
+            if conc and conc >= 80:
+                callouts.append({
+                    "type": "concentration", "icon": "◉",
+                    "message": f"Top 3 entries account for {conc}% of total — highly concentrated",
+                    "severity": "info",
+                })
+                break
+        leader_share = cat.get("leader_share_pct")
+        top5 = cat.get("top_5") or []
+        if leader_share and leader_share >= 50 and top5 and len(callouts) < 2:
+            callouts.append({
+                "type": "dominance", "icon": "★",
+                "message": f"{top5[0]['label']} holds {leader_share}% of the total",
+                "severity": "info",
+            })
+
+    # Outlier detection across numeric columns (all modes)
+    if len(callouts) < 3:
+        for col, stats in (brief.get("numeric_summaries") or {}).items():
+            std = stats.get("std_dev")
+            mean_v = stats.get("mean")
+            mx_v = stats.get("max")
+            if std and mean_v and std > 0 and mx_v and mx_v > mean_v + 2.5 * std:
+                callouts.append({
+                    "type": "outlier", "icon": "◆",
+                    "message": (
+                        f"Outlier in {col.replace('_', ' ')}: "
+                        f"max {_format_number(mx_v)} vs avg {_format_number(mean_v)}"
+                    ),
+                    "severity": "info",
+                })
+                break
+
+    return callouts[:3]
 
 
 def _why_it_matters(ctx: dict) -> str:
@@ -651,6 +803,12 @@ def build_assistant_response(*, question: str, rows: list[dict], sql: str, durat
         context=ctx,
     )
 
+    # ── Insight Layer — pure-stats, zero-latency ─────────────────────────────
+    # Generate a summary sentence and anomaly callouts from the data brief.
+    # These are computed entirely from statistics — no LLM call, no extra latency.
+    insight_summary  = _build_insight_summary(rows, ctx, brief)
+    anomaly_callouts = _build_anomaly_callouts(brief)
+
     # Include the actual row data (bounded) so the frontend can render a table.
     # Frontend is the ONLY consumer of raw rows — LLM insight path never sees these.
     # We cap at 200 rows to keep WebSocket payload reasonable; full set is already
@@ -668,6 +826,8 @@ def build_assistant_response(*, question: str, rows: list[dict], sql: str, durat
         "question": question,
         "answer": answer,
         "chart": chart,
+        "insight_summary": insight_summary,
+        "anomaly_callouts": anomaly_callouts,
         "summary": {"executive_summary": ""},
         "next_actions": _dynamic_actions(ctx),
         "analysis_contract": ctx,

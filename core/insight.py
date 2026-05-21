@@ -1278,10 +1278,12 @@ async def generate_followup_suggestions(
 
     try:
         import json as _json
+        import store as _store
         from core.llm import llm_complete, resolve_provider
         from core.llm_audit import llm_audit_scope
 
-        provider, model, api_key, az_kwargs, _ = resolve_provider(account_id)
+        _client = _store.get_client(account_id) or {}
+        provider, model, api_key, az_kwargs = resolve_provider(_client, purpose="query")
         with llm_audit_scope(
             account_id=account_id,
             question=question,
