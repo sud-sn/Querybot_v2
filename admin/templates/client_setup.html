@@ -525,8 +525,8 @@
   })();
 
   // Wire buttons
-  document.getElementById('setup-scope-refresh').addEventListener('click', () => loadSetupScope(true));
-  browseBtn.addEventListener('click', () => loadSetupScope(true));  // always live-query so all schemas appear
+  document.getElementById('setup-scope-refresh').addEventListener('click', () => loadSetupScope(document.getElementById('setup-scope-refresh')));
+  browseBtn.addEventListener('click', () => loadSetupScope(browseBtn));
   document.getElementById('setup-scope-save').addEventListener('click', saveSetupScope);
 
   // Show/hide the saved-selection summary banners on page load
@@ -561,23 +561,25 @@
     _refreshMaskingPanel();
   };
 
-  async function loadSetupScope(force) {
-    const tree = document.getElementById('setup-scope-tree');
+  async function loadSetupScope(callerBtn) {
+    const isRefresh = callerBtn && callerBtn.id === 'setup-scope-refresh';
+    const tree    = document.getElementById('setup-scope-tree');
     const loading = document.getElementById('setup-scope-loading');
-    const activeBtn = force ? document.getElementById('setup-scope-refresh') : browseBtn;
-    activeBtn.disabled = true;
-    activeBtn.textContent = force ? 'Refreshing...' : 'Browsing...';
+    const origText = callerBtn ? callerBtn.textContent : '';
+
+    if (callerBtn) { callerBtn.disabled = true; callerBtn.textContent = isRefresh ? 'Refreshing…' : 'Loading schemas…'; }
     tree.style.display = 'none';
     loading.style.display = 'block';
     showStatus('', '');
 
-    // Always re-fetch the latest saved selection before rendering the tree
-    // so checkboxes reflect what's in state_data even if the page was loaded a while ago
+    // Scroll the panel into view so the user can see the loading indicator
+    document.querySelector('.scope-panel')?.scrollIntoView({behavior:'smooth', block:'nearest'});
+
+    // Re-fetch latest saved selection so checkboxes stay in sync
     try {
       const savedResp = await fetch(`/admin/clients/${accountId}/kb-tables`, {credentials:'same-origin'});
       const saved = await savedResp.json();
       selected = new Set((saved.tables || []).map(t => String(t).toUpperCase()));
-      // Restore saved masking config into the new maskingConfig map
       maskingConfig.clear();
       Object.entries(saved.masking_config || {}).forEach(([k, v]) => {
         if (v && typeof v.mode === 'string') {
@@ -590,30 +592,34 @@
     } catch (_) {}
 
     try {
-      // Always force-refresh so Browse schemas always shows live DB state
-      let resp = await fetch(`/admin/clients/${accountId}/schema-tree?refresh=1`, {credentials:'same-origin'});
-      let data = await resp.json();
+      // Always query live DB so all schemas are visible (never use stale cache)
+      const resp = await fetch(`/admin/clients/${accountId}/schema-tree?refresh=1`, {credentials:'same-origin'});
+      const data = await resp.json();
 
       loading.style.display = 'none';
       if (data.status === 'error') {
         showStatus('error', data.message || 'Schema discovery failed — check DB connection.');
         return;
       }
-      if (!Object.keys(data.tree || {}).length) {
-        showStatus('info', 'No schemas or tables visible with this DB connection — check the role/user permissions.');
+      const treeKeys = Object.keys(data.tree || {});
+      if (!treeKeys.length) {
+        showStatus('error', 'No schemas or tables visible with this DB connection — check the DB user / role permissions.');
         return;
       }
-      const schemaCount = Object.values(data.tree || {}).reduce((n, schemas) => n + Object.keys(schemas).length, 0);
-      showStatus('info', `Live DB query complete — ${schemaCount} schema${schemaCount !== 1 ? 's' : ''} found. Check tables to include then click Save selection.`);
-      renderTree(data.tree || {});
+      const schemaCount = Object.values(data.tree).reduce((n, schemas) => n + Object.keys(schemas).length, 0);
+      const tableCount  = Object.values(data.tree).reduce((n, schemas) =>
+        n + Object.values(schemas).reduce((m, s) => m + (s.tables || []).length, 0), 0);
+      showStatus('info', `${schemaCount} schema${schemaCount !== 1 ? 's' : ''}, ${tableCount} tables found — check the ones to include, then click Save selection.`);
+      renderTree(data.tree);
       syncFooter();
       _refreshMaskingPanel();
+      // Scroll tree into view after render
+      tree.scrollIntoView({behavior:'smooth', block:'nearest'});
     } catch (e) {
       loading.style.display = 'none';
-      showStatus('error', 'Network error: ' + e.message);
+      showStatus('error', 'Network error — could not reach the server: ' + e.message);
     } finally {
-      activeBtn.disabled = false;
-      activeBtn.textContent = force ? '↻ Refresh DB' : 'Browse schemas';
+      if (callerBtn) { callerBtn.disabled = false; callerBtn.textContent = origText; }
     }
   }
 
