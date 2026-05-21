@@ -190,7 +190,7 @@
         </div>
         <div class="scope-actions">
           <button type="button" class="btn btn-secondary btn-sm" id="setup-scope-refresh">↻ Refresh DB</button>
-          <button type="button" class="btn btn-secondary btn-sm" id="setup-scope-browse">Browse schemas</button>
+          <button type="button" class="btn btn-primary btn-sm" id="setup-scope-browse">Browse schemas</button>
         </div>
       </div>
       <div id="setup-scope-status" class="scope-status"></div>
@@ -526,7 +526,7 @@
 
   // Wire buttons
   document.getElementById('setup-scope-refresh').addEventListener('click', () => loadSetupScope(true));
-  browseBtn.addEventListener('click', () => loadSetupScope(false));
+  browseBtn.addEventListener('click', () => loadSetupScope(true));  // always live-query so all schemas appear
   document.getElementById('setup-scope-save').addEventListener('click', saveSetupScope);
 
   // Show/hide the saved-selection summary banners on page load
@@ -590,24 +590,21 @@
     } catch (_) {}
 
     try {
-      let resp = await fetch(`/admin/clients/${accountId}/schema-tree${force ? '?refresh=1' : ''}`, {credentials:'same-origin'});
+      // Always force-refresh so Browse schemas always shows live DB state
+      let resp = await fetch(`/admin/clients/${accountId}/schema-tree?refresh=1`, {credentials:'same-origin'});
       let data = await resp.json();
-
-      // Auto-refresh: if Browse (not force) returns empty/no cache, silently re-fetch live
-      if (!force && (data.status === 'no_schema' || !Object.keys(data.tree || {}).length)) {
-        showStatus('info', 'Schema cache empty — fetching live schema from database…');
-        resp = await fetch(`/admin/clients/${accountId}/schema-tree?refresh=1`, {credentials:'same-origin'});
-        data = await resp.json();
-      }
 
       loading.style.display = 'none';
       if (data.status === 'error') {
-        showStatus('error', data.message || 'Schema discovery failed.');
+        showStatus('error', data.message || 'Schema discovery failed — check DB connection.');
         return;
       }
-      if (data.status === 'cached') {
-        showStatus('info', 'Using cached schema. Click "↻ Refresh DB" to re-query the live database for new tables.');
+      if (!Object.keys(data.tree || {}).length) {
+        showStatus('info', 'No schemas or tables visible with this DB connection — check the role/user permissions.');
+        return;
       }
+      const schemaCount = Object.values(data.tree || {}).reduce((n, schemas) => n + Object.keys(schemas).length, 0);
+      showStatus('info', `Live DB query complete — ${schemaCount} schema${schemaCount !== 1 ? 's' : ''} found. Check tables to include then click Save selection.`);
       renderTree(data.tree || {});
       syncFooter();
       _refreshMaskingPanel();
