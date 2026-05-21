@@ -376,14 +376,14 @@
             <span style="font-size:11px;font-weight:800;font-family:monospace;color:var(--text-soft);background:var(--surface-2);border:1px solid var(--border);border-radius:4px;padding:4px 8px;white-space:nowrap;margin-top:2px">{{ schema_name }}<br><span style="font-weight:400;color:var(--text-muted)">{{ tbl_count }} table{{ 's' if tbl_count != 1 else '' }}</span></span>
             <textarea class="schema-desc-input" data-schema="{{ schema_name }}" rows="2"
               placeholder="e.g. Contains profitability and cost data for orders and invoices."
-              style="flex:1;font-size:12px;padding:.4rem .6rem;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);resize:vertical">{% if biz_desc and ('[' + schema_name + ']') in biz_desc %}{{ biz_desc | regex_search('\[' + schema_name + '\]:\\s*([^\[]+)') }}{% endif %}</textarea>
+              style="flex:1;font-size:12px;padding:.4rem .6rem;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);resize:vertical">{{ biz_desc_parsed.schemas.get(schema_name, '') }}</textarea>
           </div>
           {% endfor %}
           <div style="display:flex;gap:.5rem;align-items:flex-start">
             <span style="font-size:11px;font-weight:800;font-family:monospace;color:var(--text-soft);background:var(--surface-2);border:1px solid var(--border);border-radius:4px;padding:4px 8px;white-space:nowrap;margin-top:2px">Overall<br><span style="font-weight:400;color:var(--text-muted)">optional</span></span>
             <textarea id="overall-biz-desc" rows="2"
               placeholder="e.g. We are a manufacturing company tracking sales and costs."
-              style="flex:1;font-size:12px;padding:.4rem .6rem;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);resize:vertical">{% if biz_desc %}{{ biz_desc | regex_search('^([^\[]+)') }}{% endif %}</textarea>
+              style="flex:1;font-size:12px;padding:.4rem .6rem;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);resize:vertical">{{ biz_desc_parsed.overall }}</textarea>
           </div>
         </div>
         {# Hidden textarea that gets populated on submit with the combined value #}
@@ -408,13 +408,9 @@
           {% endif %}>
           🧠 {% if kb_files %}Rebuild Knowledge Base{% else %}Generate Knowledge Base{% endif %}
         </button>
-        {% if kb_files %}
-        <form method="post" action="/admin/clients/{{ client.account_id }}/setup/delete-kb"
-              onsubmit="return confirm('Delete the generated KB and vector index? Schema discovery files will be kept — you can rebuild the KB at any time.')">
-          <button type="submit" class="btn btn-secondary btn-sm" style="color:var(--red);border-color:var(--red)">
-            🗑 Delete KB only
-          </button>
-        </form>
+        {% if state == 'KB_BUILDING' %}
+        <button type="button" class="btn btn-secondary btn-sm" style="color:var(--amber);border-color:var(--amber)"
+          onclick="stopKbBuild()">⏹ Stop KB build</button>
         {% endif %}
         {% if state == 'KB_BUILDING' %}
         <span id="kbInlineStatus" style="font-size:12px;color:var(--amber);font-weight:600">
@@ -435,6 +431,25 @@
         <span id="kbProgressStep" class="kb-progress-step">{% if state == 'READY' %}Knowledge Base is ready{% else %}Waiting for progress{% endif %}</span>
       </div>
     </form>
+
+    {# Delete KB — separate from the build form so it always works independently #}
+    {% if kb_files or state == 'READY' %}
+    <div style="margin-top:.875rem;padding:.75rem 1rem;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius);display:flex;align-items:center;gap:1rem;flex-wrap:wrap">
+      <div style="flex:1;min-width:0">
+        <div style="font-size:12px;font-weight:700;color:var(--text)">Delete generated KB</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:2px">
+          Removes all KB files, vector embeddings, and cached query examples for this client.
+          Schema discovery files are <strong>kept</strong> — you can rebuild the KB immediately.
+        </div>
+      </div>
+      <form method="post" action="/admin/clients/{{ client.account_id }}/setup/delete-kb"
+            onsubmit="return confirm('This will delete:\n• All KB markdown files\n• Qdrant vector embeddings\n• Cached SQL query examples\n\nSchema discovery files will be kept.\n\nContinue?')">
+        <button type="submit" class="btn btn-secondary btn-sm" style="color:var(--red);border-color:var(--red);white-space:nowrap">
+          🗑 Delete KB
+        </button>
+      </form>
+    </div>
+    {% endif %}
     <script>
     // Combine per-schema description fields into the hidden business_desc textarea on submit
     (function() {
@@ -538,6 +553,10 @@
       } else if (status === 'failed') {
         kbInlineStatus.style.color = 'var(--red)';
         kbInlineStatus.textContent = 'KB build failed — check logs and try again';
+      } else if (status === 'stopped') {
+        kbInlineStatus.style.color = 'var(--amber)';
+        kbInlineStatus.textContent = 'KB build stopped — partial KB saved. Re-run to complete.';
+        window.setTimeout(() => window.location.reload(), 1500);
       } else if (state === 'KB_BUILDING') {
         kbInlineStatus.style.color = 'var(--amber)';
         kbInlineStatus.textContent = total ? `Building… ${current}/${total} completed (${pct}%) - ${p.step || 'working'}` : 'Building…';
@@ -564,10 +583,33 @@
   window.addEventListener('qb-admin-notification', (event) => {
     const msg = event.detail || {};
     if (msg.type !== 'kb_build_progress' || msg.account_id !== accountId) return;
-    applyKbStatus(msg.status === 'ready' ? 'READY' : (msg.status === 'failed' ? 'SCHEMA_READY' : 'KB_BUILDING'), msg.progress || {}, {});
+    const wsState = msg.status === 'ready' ? 'READY' : (msg.status === 'failed' || msg.status === 'stopped' ? 'SCHEMA_READY' : 'KB_BUILDING');
+    applyKbStatus(wsState, msg.progress || {}, {});
   });
   pollKbStatus();
   window.setInterval(pollKbStatus, 5000);
+
+  window.stopKbBuild = async function stopKbBuild() {
+    const btn = document.querySelector('[onclick="stopKbBuild()"]');
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Stopping…'; }
+    try {
+      const resp = await fetch(`/admin/clients/${accountId}/setup/stop-kb`, {
+        method: 'POST', credentials: 'same-origin',
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (data.ok) {
+        // Briefly show feedback then reload so the page reflects SCHEMA_READY
+        if (btn) btn.textContent = '✓ Stopping after current table…';
+        window.setTimeout(() => window.location.reload(), 2000);
+      } else {
+        if (btn) { btn.disabled = false; btn.textContent = '⏹ Stop KB build'; }
+        alert('Could not send stop signal: ' + (data.error || 'unknown error'));
+      }
+    } catch (err) {
+      if (btn) { btn.disabled = false; btn.textContent = '⏹ Stop KB build'; }
+      alert('Stop request failed: ' + err);
+    }
+  };
 
   if (!browseBtn) return;
 

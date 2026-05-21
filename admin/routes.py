@@ -59,6 +59,9 @@ from core.portal_notifications import notify_portal_semantic_feedback_changed
 
 log = logging.getLogger("querybot.admin")
 
+# Per-account stop events for in-progress KB builds.
+# Set the event to request cancellation; cleared on build start.
+_kb_stop_events: dict[str, asyncio.Event] = {}
 
 def _sync_all_log_exports_bg() -> None:
     """Push logs to all log-export-enabled DB configs. Runs in a background thread."""
@@ -2825,6 +2828,15 @@ async def client_setup_page(request: Request, account_id: str):
     # Business description stored in state
     biz_desc = state_data.get("business_desc", client.get("business_desc", ""))
 
+    # Parse per-schema descriptions for the multi-schema UI
+    # Returns (overall_text, {SCHEMA: description})
+    try:
+        from core.knowledge import _parse_schema_descriptions
+        _biz_overall, _biz_schemas = _parse_schema_descriptions(biz_desc)
+    except Exception:
+        _biz_overall, _biz_schemas = biz_desc, {}
+    biz_desc_parsed = {"overall": _biz_overall, "schemas": _biz_schemas}
+
     # Build schema breakdown from selected tables so admin can see which
     # schemas are included in the KB scope before running discovery/build.
     schema_breakdown: dict[str, int] = {}
@@ -2854,6 +2866,7 @@ async def client_setup_page(request: Request, account_id: str):
         "kb_table_source":      kb_table_source if kb_tables else "none",
         "schema_breakdown":     schema_breakdown,   # {schema_name: table_count}
         "biz_desc":             biz_desc,
+        "biz_desc_parsed":      biz_desc_parsed,    # {overall, schemas: {SCHEMA: text}}
         "egress_summary":       egress_summary,
         "saved_masking_config": saved_masking_config,  # for JS init
         "schema_drift":         schema_drift,           # populated after re-discovery
@@ -3507,6 +3520,36 @@ async def admin_delete_kb_only(request: Request, account_id: str):
     )
 
 
+@router.post("/clients/{account_id}/setup/stop-kb")
+async def admin_stop_kb_build(request: Request, account_id: str):
+    """
+    Signal a running KB build to stop after the current table finishes.
+    Rolls state back to SCHEMA_READY so the page shows the build as cancelled.
+    """
+    if not _is_auth(request):
+        return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
+
+    ev = _kb_stop_events.get(account_id)
+    if ev is not None:
+        ev.set()
+        log.info("Stop signal sent for KB build of %s", account_id)
+        return JSONResponse({"ok": True, "message": "Stop signal sent — build will finish the current table then stop."})
+
+    # No active build — maybe it already finished or the server restarted.
+    # Defensively roll state to SCHEMA_READY if still in KB_BUILDING.
+    client = store.get_client(account_id)
+    if client:
+        state_data = json.loads(client.get("state_data") or "{}")
+        if client.get("state") == "KB_BUILDING":
+            from main import save_state
+            fallback_state = dict(state_data)
+            fallback_state.pop("kb_progress", None)
+            save_state(account_id, "SCHEMA_READY", fallback_state)
+            log.info("KB stop: no active task found for %s, rolled state to SCHEMA_READY", account_id)
+
+    return JSONResponse({"ok": True, "message": "No active KB build found."})
+
+
 @router.post("/clients/{account_id}/setup/discover")
 async def admin_discover_schema(
     request: Request,
@@ -3717,6 +3760,10 @@ async def admin_build_kb(
     # uses account_id as the tenant key — no filesystem path needed.
     chroma_dir = account_id
 
+    # Register a fresh stop event for this build so the stop route can cancel it
+    _stop_ev = asyncio.Event()
+    _kb_stop_events[account_id] = _stop_ev
+
     async def _do_build():
         try:
             from main import save_state, _run_example_validation, _run_log_harvest
@@ -3801,7 +3848,22 @@ async def admin_build_kb(
                     business_desc=business_desc, provider=provider, model=model,
                     api_key=api_key, extra_kwargs=az_kw,
                     progress_callback=_on_kb_progress,
+                    stop_event=_stop_ev,
                 )
+
+            # If user requested a stop, roll back to SCHEMA_READY and exit
+            if _stop_ev.is_set():
+                _kb_stop_events.pop(account_id, None)
+                stopped_state = dict(building_state)
+                stopped_state.pop("kb_progress", None)
+                save_state(account_id, "SCHEMA_READY", stopped_state)
+                await notify_kb_build_changed(
+                    account_id=account_id,
+                    status="stopped",
+                    progress={"status": "stopped", "step": "Build stopped by user"},
+                )
+                log.info("KB build cancelled by user for %s (%d tables done)", account_id, count)
+                return
 
             # ── Egress log (KB build) ─────────────────────────────────────────
             # Read audit fields written by _discover_* into _schema.json.
@@ -3932,9 +3994,11 @@ async def admin_build_kb(
             )
 
             log.info("Admin KB build complete: %d tables for %s", count, account_id)
+            _kb_stop_events.pop(account_id, None)
             import threading as _threading
             _threading.Thread(target=_sync_all_log_exports_bg, daemon=True).start()
         except Exception as e:
+            _kb_stop_events.pop(account_id, None)
             log.error("Admin KB build failed for %s: %s", account_id, e)
             failed_state = dict(state_data)
             failed_state["schema_dir"] = schema_dir
