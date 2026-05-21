@@ -3451,6 +3451,62 @@ async def admin_column_sensitivity(request: Request, account_id: str, fqn: str =
     })
 
 
+@router.post("/clients/{account_id}/setup/delete-kb")
+async def admin_delete_kb_only(request: Request, account_id: str):
+    """
+    Delete only the KB files and vector store for this client.
+    Keeps schema discovery files intact so KB can be rebuilt without
+    re-running discovery.
+    """
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    client = store.get_client(account_id)
+    if not client:
+        return RedirectResponse("/admin/clients", status_code=303)
+
+    from urllib.parse import quote as _quote
+    state_data = json.loads(client.get("state_data") or "{}")
+    kb_dir     = state_data.get("kb_dir", "")
+
+    # 1. Delete KB markdown files
+    deleted_files = 0
+    if kb_dir and Path(kb_dir).exists():
+        for f in Path(kb_dir).iterdir():
+            if f.is_file():
+                try:
+                    f.unlink()
+                    deleted_files += 1
+                except Exception as _e:
+                    log.warning("Could not delete KB file %s: %s", f, _e)
+
+    # 2. Clear Qdrant vectors for this account
+    try:
+        from core.vector_store import delete_kb_for_client
+        delete_kb_for_client(account_id)
+        log.info("Qdrant KB vectors cleared for %s", account_id)
+    except Exception as _e:
+        log.warning("Could not clear Qdrant KB for %s: %s", account_id, _e)
+
+    # 3. Clear validated examples (SQL-pair cache)
+    try:
+        with _get_db() as _conn:
+            _conn.execute("DELETE FROM validated_examples WHERE account_id=?", (account_id,))
+    except Exception as _e:
+        log.warning("Could not clear validated_examples for %s: %s", account_id, _e)
+
+    # 4. Roll state back to SCHEMA_READY so the KB step shows as pending
+    from main import save_state
+    next_state = dict(state_data)
+    next_state.pop("kb_progress", None)
+    save_state(account_id, "SCHEMA_READY", next_state)
+
+    log.info("KB deleted for %s: %d files removed", account_id, deleted_files)
+    return RedirectResponse(
+        f"/admin/clients/{account_id}/setup?saved={_quote('KB deleted — schema discovery is still intact. Re-run KB generation when ready.')}",
+        status_code=303,
+    )
+
+
 @router.post("/clients/{account_id}/setup/discover")
 async def admin_discover_schema(
     request: Request,
