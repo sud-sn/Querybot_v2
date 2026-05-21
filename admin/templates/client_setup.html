@@ -364,13 +364,40 @@
     <form method="post" action="/admin/clients/{{ client.account_id }}/setup/build-kb">
       <div class="form-group">
         <label>Business description *</label>
+
+        {% if schema_breakdown and schema_breakdown|length > 1 %}
+        {# Multi-schema: show per-schema helper that builds the combined description #}
+        <p class="form-note" style="margin-bottom:.6rem;color:var(--blue)">
+          You have <strong>{{ schema_breakdown|length }} schemas</strong> in scope. Fill in each schema's purpose below — they'll be combined into the business description automatically.
+        </p>
+        <div id="schema-desc-blocks" style="display:flex;flex-direction:column;gap:.5rem;margin-bottom:.5rem">
+          {% for schema_name, tbl_count in schema_breakdown.items() %}
+          <div style="display:flex;gap:.5rem;align-items:flex-start">
+            <span style="font-size:11px;font-weight:800;font-family:monospace;color:var(--text-soft);background:var(--surface-2);border:1px solid var(--border);border-radius:4px;padding:4px 8px;white-space:nowrap;margin-top:2px">{{ schema_name }}<br><span style="font-weight:400;color:var(--text-muted)">{{ tbl_count }} table{{ 's' if tbl_count != 1 else '' }}</span></span>
+            <textarea class="schema-desc-input" data-schema="{{ schema_name }}" rows="2"
+              placeholder="e.g. Contains profitability and cost data for orders and invoices."
+              style="flex:1;font-size:12px;padding:.4rem .6rem;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);resize:vertical">{% if biz_desc and ('[' + schema_name + ']') in biz_desc %}{{ biz_desc | regex_search('\[' + schema_name + '\]:\\s*([^\[]+)') }}{% endif %}</textarea>
+          </div>
+          {% endfor %}
+          <div style="display:flex;gap:.5rem;align-items:flex-start">
+            <span style="font-size:11px;font-weight:800;font-family:monospace;color:var(--text-soft);background:var(--surface-2);border:1px solid var(--border);border-radius:4px;padding:4px 8px;white-space:nowrap;margin-top:2px">Overall<br><span style="font-weight:400;color:var(--text-muted)">optional</span></span>
+            <textarea id="overall-biz-desc" rows="2"
+              placeholder="e.g. We are a manufacturing company tracking sales and costs."
+              style="flex:1;font-size:12px;padding:.4rem .6rem;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);resize:vertical">{% if biz_desc %}{{ biz_desc | regex_search('^([^\[]+)') }}{% endif %}</textarea>
+          </div>
+        </div>
+        {# Hidden textarea that gets populated on submit with the combined value #}
+        <textarea name="business_desc" id="business_desc_combined" style="display:none" required>{{ biz_desc or '' }}</textarea>
+        {% else %}
+        {# Single schema: plain textarea #}
         <textarea name="business_desc" rows="3" required
           placeholder="e.g. We are a compounding pharmacy managing prescriptions, patients, drug inventory, and insurance claims."
           style="font-size:13px">{{ biz_desc or '' }}</textarea>
+        {% endif %}
+
         <p class="form-note">
-          Describe what your business does and what data this database contains.
-          This tells the AI how to interpret your tables and columns.
-          One or two sentences is enough.
+          Describe what your business does and what data each schema contains.
+          The AI uses this to understand your tables and generate accurate queries.
         </p>
       </div>
 
@@ -400,6 +427,33 @@
         <span id="kbProgressStep" class="kb-progress-step">{% if state == 'READY' %}Knowledge Base is ready{% else %}Waiting for progress{% endif %}</span>
       </div>
     </form>
+    <script>
+    // Combine per-schema description fields into the hidden business_desc textarea on submit
+    (function() {
+      const form = document.querySelector('form[action*="build-kb"]');
+      const combined = document.getElementById('business_desc_combined');
+      if (!form || !combined) return;
+      form.addEventListener('submit', function(e) {
+        const inputs = document.querySelectorAll('.schema-desc-input');
+        if (!inputs.length) return; // single-schema mode — plain textarea handles it
+        const parts = [];
+        const overall = (document.getElementById('overall-biz-desc')?.value || '').trim();
+        if (overall) parts.push(overall);
+        inputs.forEach(ta => {
+          const schema = ta.dataset.schema;
+          const val = ta.value.trim();
+          if (val) parts.push(`[${schema}]: ${val}`);
+        });
+        if (!parts.length) {
+          e.preventDefault();
+          alert('Please enter at least one schema description before building the KB.');
+          return;
+        }
+        combined.value = parts.join('\n\n');
+        combined.removeAttribute('required'); // already populated
+      });
+    })();
+    </script>
 
     {% if state == 'READY' %}
     <div style="margin-top:1rem;padding:.75rem 1rem;background:var(--green-light);
