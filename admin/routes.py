@@ -2396,6 +2396,8 @@ async def metric_create(
     allowed_dimensions: str = Form(""),
     example_questions: str = Form(""),
     grain: str = Form(""),
+    category: str = Form(""),
+    default_time_column: str = Form(""),
 ):
     if not _is_auth(request):
         return RedirectResponse("/admin/login", status_code=303)
@@ -2405,16 +2407,18 @@ async def metric_create(
             f"/admin/clients/{account_id}/metrics?error={quote('Name and SQL are required')}",
             status_code=303)
     store.save_metric(account_id, {
-        "name":         name.strip(),
-        "synonyms":     synonyms.strip(),
-        "sql_template": sql_template.strip(),
-        "description":  description.strip(),
-        "formula_type": formula_type.strip(),
-        "result_format": result_format.strip(),
-        "required_columns": required_columns.strip(),
-        "allowed_dimensions": allowed_dimensions.strip(),
-        "example_questions": example_questions.strip(),
-        "grain": grain.strip(),
+        "name":                name.strip(),
+        "synonyms":            synonyms.strip(),
+        "sql_template":        sql_template.strip(),
+        "description":         description.strip(),
+        "formula_type":        formula_type.strip(),
+        "result_format":       result_format.strip(),
+        "required_columns":    required_columns.strip(),
+        "allowed_dimensions":  allowed_dimensions.strip(),
+        "example_questions":   example_questions.strip(),
+        "grain":               grain.strip(),
+        "category":            category.strip(),
+        "default_time_column": default_time_column.strip(),
     })
     return RedirectResponse(f"/admin/clients/{account_id}/metrics?saved=1", status_code=303)
 
@@ -2434,22 +2438,26 @@ async def metric_update(
     allowed_dimensions: str = Form(""),
     example_questions: str = Form(""),
     grain: str = Form(""),
+    category: str = Form(""),
+    default_time_column: str = Form(""),
     is_active:    str = Form("1"),
 ):
     if not _is_auth(request):
         return RedirectResponse("/admin/login", status_code=303)
     store.update_metric(metric_id, {
-        "name":         name.strip(),
-        "synonyms":     synonyms.strip(),
-        "sql_template": sql_template.strip(),
-        "description":  description.strip(),
-        "formula_type": formula_type.strip(),
-        "result_format": result_format.strip(),
-        "required_columns": required_columns.strip(),
-        "allowed_dimensions": allowed_dimensions.strip(),
-        "example_questions": example_questions.strip(),
-        "grain": grain.strip(),
-        "is_active":    int(is_active),
+        "name":                name.strip(),
+        "synonyms":            synonyms.strip(),
+        "sql_template":        sql_template.strip(),
+        "description":         description.strip(),
+        "formula_type":        formula_type.strip(),
+        "result_format":       result_format.strip(),
+        "required_columns":    required_columns.strip(),
+        "allowed_dimensions":  allowed_dimensions.strip(),
+        "example_questions":   example_questions.strip(),
+        "grain":               grain.strip(),
+        "category":            category.strip(),
+        "default_time_column": default_time_column.strip(),
+        "is_active":           int(is_active),
     })
     return RedirectResponse(f"/admin/clients/{account_id}/metrics?saved=1", status_code=303)
 

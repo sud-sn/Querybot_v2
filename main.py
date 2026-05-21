@@ -239,6 +239,8 @@ def _format_metric_formula_context(metrics: list[dict]) -> str:
             lines.append(f"   Grain: {metric.get('grain')}")
         if metric.get("example_questions"):
             lines.append(f"   Example questions: {metric.get('example_questions')}")
+        if metric.get("default_time_column"):
+            lines.append(f"   Default time column: {metric.get('default_time_column')} — use this column when grouping by date/period")
         lines.append(f"   Approved calculation: {metric.get('sql_template', '').strip()}")
         blocks.append("\n".join(lines))
     return "\n\n".join(blocks)

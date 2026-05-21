@@ -546,6 +546,9 @@ def _run_migrations() -> None:
         ("entity_relationships", "join_conditions", "TEXT NOT NULL DEFAULT '[]'"),
         # v21: per-field masking replacement strategy map
         ("kb_data_egress_log", "mask_replacement_map", "TEXT NOT NULL DEFAULT '{}'"),
+        # v22: metric registry — category/domain and default time column
+        ("metric_registry", "category",             "TEXT DEFAULT ''"),
+        ("metric_registry", "default_time_column",  "TEXT DEFAULT ''"),
     ]
     with get_db() as conn:
         _ensure_llm_call_log_table(conn)
