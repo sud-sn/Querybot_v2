@@ -511,6 +511,12 @@
 
   // Pre-populate from server-rendered kb_tables (already saved in state_data)
   let selected = new Set(({{ kb_tables | tojson }} || []).map(t => String(t).toUpperCase()));
+
+  // ── Field-level masking state — declared HERE so it exists before the init IIFE below
+  const maskingConfig    = new Map();
+  const _maskFieldsCache = new Map();
+  const _maskPanelOpened = new Set();
+
   // Restore saved masking config on page load
   ;(function() {
     const mc = {{ saved_masking_config | tojson }} || {};
@@ -622,15 +628,6 @@
       if (callerBtn) { callerBtn.disabled = false; callerBtn.textContent = origText; }
     }
   }
-
-  // ── Field-level masking state ─────────────────────────────────────────────
-  // Map: FQN (upper) → { mode: 'selective', masked_fields: Set<string> }
-  // Populated by _refreshMaskingPanel() and user checkbox interactions.
-  const maskingConfig = new Map();
-
-  // Cache of {columns, auto_masked, strategy_map} keyed by FQN (upper)
-  const _maskFieldsCache = new Map();
-  const _maskPanelOpened = new Set();
 
   // Human-readable strategy labels for UI display
   const STRATEGY_LABELS = {
