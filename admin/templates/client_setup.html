@@ -272,7 +272,7 @@
   </div>
   <div class="step-body">
     {% if kb_table_count %}
-    <div style="margin-bottom:.75rem;padding:.65rem .875rem;background:var(--blue-light);border:1px solid color-mix(in srgb,var(--blue) 28%,transparent);border-radius:var(--radius);font-size:12px;color:var(--blue)">
+    <div id="discovery-scope-hint" style="margin-bottom:.75rem;padding:.65rem .875rem;background:var(--blue-light);border:1px solid color-mix(in srgb,var(--blue) 28%,transparent);border-radius:var(--radius);font-size:12px;color:var(--blue)">
       Will discover <strong>{{ kb_table_count }}</strong> selected table{{ "s" if kb_table_count != 1 else "" }} only.
       {% if schema_breakdown %}
       Schemas included:
@@ -289,7 +289,7 @@
     </div>
     {% endif %}
     {% if schema_files %}
-    <div class="file-list">
+    <div class="file-list" id="discovery-file-list">
       {% for f in schema_files %}{% if not f.name.startswith('_') %}{{ f.stem }}<br>{% endif %}{% endfor %}
     </div>
 
@@ -408,6 +408,14 @@
           {% endif %}>
           🧠 {% if kb_files %}Rebuild Knowledge Base{% else %}Generate Knowledge Base{% endif %}
         </button>
+        {% if kb_files %}
+        <form method="post" action="/admin/clients/{{ client.account_id }}/setup/delete-kb"
+              onsubmit="return confirm('Delete the generated KB and vector index? Schema discovery files will be kept — you can rebuild the KB at any time.')">
+          <button type="submit" class="btn btn-secondary btn-sm" style="color:var(--red);border-color:var(--red)">
+            🗑 Delete KB only
+          </button>
+        </form>
+        {% endif %}
         {% if state == 'KB_BUILDING' %}
         <span id="kbInlineStatus" style="font-size:12px;color:var(--amber);font-weight:600">
           ⏳ Building… live progress will update here
@@ -1200,6 +1208,8 @@
           (maskCount ? ` (${maskCount} table${maskCount !== 1 ? 's' : ''} with field masking)` : '') +
           `. Now run Schema discovery (Step 3) to write the schema files.`);
         _syncSummaryBanners();
+        // Update the schema discovery "Will discover X tables" banner live
+        _updateDiscoveryScopeHint(data.tables || [...selected]);
       } else {
         showStatus('error', data.message || 'Save failed.');
       }
@@ -1247,6 +1257,39 @@
     } else {
       footer.style.display = 'flex';
       count.textContent = `${selected.size} table${selected.size !== 1 ? 's' : ''}`;
+    }
+  }
+
+  function _updateDiscoveryScopeHint(tables) {
+    // Rebuild schema breakdown from saved table FQNs
+    const schemaMap = {};
+    (tables || []).forEach(fqn => {
+      const parts = String(fqn).split('.');
+      const schema = parts.length >= 2 ? parts[parts.length - 2].toUpperCase() : 'DEFAULT';
+      schemaMap[schema] = (schemaMap[schema] || 0) + 1;
+    });
+    const total = tables ? tables.length : 0;
+    if (!total) return;
+
+    // Update the "Will discover N tables" banner
+    const hint = document.getElementById('discovery-scope-hint');
+    if (hint) {
+      const schemaText = Object.entries(schemaMap)
+        .map(([s, n]) => `<strong>${s}</strong> (${n} table${n !== 1 ? 's' : ''})`)
+        .join(', ');
+      hint.innerHTML = `Will discover <strong>${total}</strong> selected table${total !== 1 ? 's' : ''} only. `
+        + (schemaText ? `Schemas included: ${schemaText}. ` : '')
+        + `<em style="color:var(--amber)">⚠ Re-run Schema discovery to apply the new selection.</em>`;
+    }
+
+    // Update the file list to preview pending tables
+    const fileList = document.getElementById('discovery-file-list');
+    if (fileList) {
+      const sorted = [...(tables || [])].sort();
+      fileList.innerHTML = sorted.map(fqn => {
+        const bare = String(fqn).split('.').pop();
+        return `<span style="color:var(--amber)" title="Pending re-discovery">${bare}</span><br>`;
+      }).join('');
     }
   }
 
