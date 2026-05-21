@@ -285,16 +285,20 @@
       </div>
       <div class="gd-form-row">
         <div>
+          <label class="gd-label">Schema</label>
+          <select class="gd-select" id="m-schema-filter" onchange="onModalSchemaFilterChange()">
+            <option value="">All schemas</option>
+          </select>
+        </div>
+        <div>
           <label class="gd-label">DB Table *</label>
           <select class="gd-select" id="m-table-name" onchange="onEntityTableChange(this.value)">
             <option value="">— Select a table —</option>
           </select>
         </div>
-        <div>
-          <label class="gd-label">Schema</label>
-          <input class="gd-input" id="m-schema-name" placeholder="dbo" readonly style="background:var(--surface-2)">
-        </div>
       </div>
+      <!-- hidden: auto-filled from table selection, read by saveEntityFromModal -->
+      <input type="hidden" id="m-schema-name" value="">
       <div class="gd-form-row">
         <div>
           <label class="gd-label">Primary key column</label>
@@ -1764,7 +1768,8 @@ async function loadSchemaTables() {
   try {
     const res = await fetch(`${API_BASE}/schema-tables`);
     _schemaTables = await res.json();
-    // Populate entity modal table dropdown
+    // Populate entity modal schema filter + table dropdown
+    _populateSchemaFilterDropdown('m-schema-filter', '');
     _populateTableDropdown('m-table-name', '');
   } catch(e) {
     // schema not discovered yet — silently ignore
@@ -1854,11 +1859,15 @@ function _checkDetailDuplicate(editingEntityName) {
   }
 }
 
-function _populateTableDropdown(selectId, currentFqn) {
+function _populateTableDropdown(selectId, currentFqn, schemaFilter) {
   const sel = document.getElementById(selectId);
   if (!sel) return;
+  const filterUC = (schemaFilter || '').toUpperCase();
+  const rows = filterUC
+    ? _schemaTables.filter(t => (t.schema_name || '').toUpperCase() === filterUC)
+    : _schemaTables;
   const grouped = {};
-  _schemaTables.forEach(t => {
+  rows.forEach(t => {
     const grp = t.schema_name || 'Default';
     (grouped[grp] = grouped[grp] || []).push(t);
   });
@@ -1873,6 +1882,32 @@ function _populateTableDropdown(selectId, currentFqn) {
   });
   sel.innerHTML = html;
 }
+
+function _populateSchemaFilterDropdown(selectId, currentSchema) {
+  const sel = document.getElementById(selectId);
+  if (!sel) return;
+  const schemas = [...new Set(_schemaTables.map(t => t.schema_name || ''))].filter(Boolean).sort();
+  if (schemas.length <= 1) { sel.style.display = 'none'; return; }  // hide if only 1 schema
+  sel.style.display = '';
+  let html = '<option value="">All schemas</option>';
+  schemas.forEach(s => {
+    const selected = s.toUpperCase() === (currentSchema || '').toUpperCase() ? 'selected' : '';
+    html += `<option value="${esc(s)}" ${selected}>${esc(s)}</option>`;
+  });
+  sel.innerHTML = html;
+}
+
+window.onModalSchemaFilterChange = function() {
+  const schema = document.getElementById('m-schema-filter')?.value || '';
+  const currentFqn = document.getElementById('m-table-name')?.value || '';
+  _populateTableDropdown('m-table-name', currentFqn, schema);
+  // Reset table selection if it doesn't belong to new schema
+  const tbl = _schemaTables.find(t => t.fqn === currentFqn);
+  if (tbl && schema && tbl.schema_name.toUpperCase() !== schema.toUpperCase()) {
+    document.getElementById('m-table-name').value = '';
+    document.getElementById('m-schema-name').value = '';
+  }
+};
 
 async function _fetchColumns(fqn) {
   if (_colCache[fqn]) return _colCache[fqn];
@@ -1893,10 +1928,14 @@ function _fillDatalist(datalistId, cols) {
 // Called when the table dropdown in the entity modal changes
 window.onEntityTableChange = async function(fqn) {
   if (!fqn) return;
-  // Auto-fill schema
+  // Auto-fill schema (hidden input + sync schema filter dropdown)
   const opt = document.querySelector(`#m-table-name option[value="${CSS.escape(fqn)}"]`);
   if (opt) {
-    document.getElementById('m-schema-name').value = opt.getAttribute('data-schema') || '';
+    const schema = opt.getAttribute('data-schema') || '';
+    document.getElementById('m-schema-name').value = schema;
+    // Sync schema filter select to reflect the chosen table's schema
+    const sf = document.getElementById('m-schema-filter');
+    if (sf && schema) sf.value = schema;
   }
   // Auto-fill display name from table name if blank
   const tableParts = fqn.split('.');
@@ -2011,6 +2050,7 @@ const _origOpenEntityModal = window.openEntityModal;
 window.openEntityModal = function(entityName) {
   _origOpenEntityModal(entityName);
   const e = entityName ? graph.entities.find(x => x.entity_name === entityName) : null;
+  const currentSchema = e?.schema_name || '';
   // Rebuild the table dropdown with current discovered tables
   const currentFqn = e
     ? (_schemaTables.find(t =>
@@ -2018,9 +2058,11 @@ window.openEntityModal = function(entityName) {
         (t.schema_name || '').toUpperCase() === (e.schema_name || '').toUpperCase()
       ) || {fqn: e.table_name || ''}).fqn
     : '';
-  _populateTableDropdown('m-table-name', currentFqn);
+  // Populate schema filter first, then table list filtered by that schema
+  _populateSchemaFilterDropdown('m-schema-filter', currentSchema);
+  _populateTableDropdown('m-table-name', currentFqn, currentSchema);
   if (currentFqn) {
-    document.getElementById('m-schema-name').value = e?.schema_name || '';
+    document.getElementById('m-schema-name').value = currentSchema;
     // Pre-load column suggestions for PK field
     _fetchColumns(currentFqn).then(cols => _fillDatalist('m-pk-column-list', cols));
   }
