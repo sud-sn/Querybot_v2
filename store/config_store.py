@@ -768,6 +768,8 @@ def _ensure_metric_registry_schema(conn) -> None:
             allowed_dimensions TEXT DEFAULT '',
             example_questions TEXT DEFAULT '',
             grain        TEXT    DEFAULT '',
+            category     TEXT    DEFAULT '',
+            default_time_column TEXT DEFAULT '',
             is_active    INTEGER NOT NULL DEFAULT 1,
             created_at   TEXT    DEFAULT (datetime('now')),
             updated_at   TEXT    DEFAULT (datetime('now'))
@@ -783,6 +785,8 @@ def _ensure_metric_registry_schema(conn) -> None:
         "allowed_dimensions": "TEXT DEFAULT ''",
         "example_questions": "TEXT DEFAULT ''",
         "grain": "TEXT DEFAULT ''",
+        "category": "TEXT DEFAULT ''",
+        "default_time_column": "TEXT DEFAULT ''",
     }
     for column, definition in columns.items():
         if column not in existing:
@@ -810,8 +814,9 @@ def save_metric(account_id: str, metric: dict) -> int:
             INSERT INTO metric_registry
                 (account_id, name, synonyms, sql_template, description,
                  formula_type, result_format, required_columns,
-                 allowed_dimensions, example_questions, grain)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 allowed_dimensions, example_questions, grain,
+                 category, default_time_column)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             account_id,
             metric["name"],
@@ -824,6 +829,8 @@ def save_metric(account_id: str, metric: dict) -> int:
             metric.get("allowed_dimensions", ""),
             metric.get("example_questions", ""),
             metric.get("grain", ""),
+            metric.get("category", ""),
+            metric.get("default_time_column", ""),
         ))
         return cur.lastrowid
 
@@ -871,7 +878,8 @@ def update_metric(metric_id: int, updates: dict) -> None:
     for key in (
         "name", "synonyms", "sql_template", "description", "formula_type",
         "result_format", "required_columns", "allowed_dimensions",
-        "example_questions", "grain", "is_active",
+        "example_questions", "grain", "category", "default_time_column",
+        "is_active",
     ):
         if key in updates:
             fields.append(f"{key}=?")
