@@ -1032,18 +1032,20 @@ function renderEntityDetail(name) {
           </div>
           <div class="gd-form-row">
             <div>
-              <label class="gd-label">Table</label>
-              <input class="gd-input" id="de-table" value="${esc(e.table_name||'')}">
+              <label class="gd-label">Schema</label>
+              ${_buildDetailSchemaSelect(e.schema_name||'')}
             </div>
             <div>
-              <label class="gd-label">Schema</label>
-              <input class="gd-input" id="de-schema" value="${esc(e.schema_name||'')}">
+              <label class="gd-label">Table</label>
+              ${_buildDetailTableSelect(e.schema_name||'', e.table_name||'')}
             </div>
           </div>
+          <div id="de-dup-warn" style="display:none;font-size:11px;color:var(--amber,#d97706);padding:.4rem .6rem;background:var(--amber-light,#fef3c7);border-radius:4px;margin-top:.3rem;margin-bottom:.2rem"></div>
+          <datalist id="de-pk-list"></datalist>
           <div class="gd-form-row">
             <div>
               <label class="gd-label">Primary key</label>
-              <input class="gd-input" id="de-pk" value="${esc(e.pk_column||'')}">
+              <input class="gd-input" id="de-pk" list="de-pk-list" value="${esc(e.pk_column||'')}">
             </div>
             <div>
               <label class="gd-label">Colour</label>
@@ -1098,6 +1100,8 @@ function renderEntityDetail(name) {
           <button class="gd-save-btn" onclick="saveProp('${name}')">Save field → Sync to semantic layer</button>
         </div>
       `;
+      // Pre-populate PK datalist for the current table selection
+      if (e.table_name) onDetailTableChange();
     });
 }
 
@@ -1153,11 +1157,25 @@ window.saveEntityDetail = async function(name) {
   const e = graph.entities.find(x => x.entity_name === name);
   e.display_name = document.getElementById('de-display-name')?.value?.trim() || '';
   e.entity_type  = document.getElementById('de-type')?.value || 'dimension';
-  e.table_name   = document.getElementById('de-table')?.value?.trim() || '';
-  e.schema_name  = document.getElementById('de-schema')?.value?.trim() || '';
+  // support both <select> and <input> for table/schema (select rendered when _schemaTables available)
+  const tableEl  = document.getElementById('de-table');
+  const schemaEl = document.getElementById('de-schema');
+  e.table_name   = (tableEl?.value  || '').trim();
+  e.schema_name  = (schemaEl?.value || '').trim();
   e.pk_column    = document.getElementById('de-pk')?.value?.trim() || '';
   e.color        = document.getElementById('de-color')?.value || '#4F86C6';
   e.description  = document.getElementById('de-desc')?.value?.trim() || '';
+
+  // Duplicate schema.table check — shows warning in panel but still allows save
+  _checkDetailDuplicate(name);
+  const warnEl = document.getElementById('de-dup-warn');
+  if (warnEl && warnEl.style.display !== 'none') {
+    // Append "saved anyway" note so user knows the save went through despite the warning
+    if (!warnEl.textContent.includes('saved anyway')) {
+      warnEl.textContent = warnEl.textContent.replace(/\.$/, '') + ' — saved anyway.';
+    }
+  }
+
   await api('POST', `${API_BASE}/entities`, e);
   renderGraph();
   updateSidebar();
@@ -1750,6 +1768,89 @@ async function loadSchemaTables() {
     _populateTableDropdown('m-table-name', '');
   } catch(e) {
     // schema not discovered yet — silently ignore
+  }
+}
+
+// ── Schema-aware helpers for entity detail panel ─────────────────────────────
+
+function _buildDetailSchemaSelect(currentSchema) {
+  const schemas = [...new Set(_schemaTables.map(t => t.schema_name || '').filter(Boolean))].sort();
+  if (!schemas.length) {
+    // No schema data yet — fall back to plain input
+    return `<input class="gd-input" id="de-schema" value="${esc(currentSchema)}" placeholder="e.g. dbo" oninput="onDetailSchemaChange()">`;
+  }
+  let html = `<select class="gd-select" id="de-schema" onchange="onDetailSchemaChange()" style="font-size:12px">`;
+  html += `<option value="">— Any schema —</option>`;
+  schemas.forEach(s => {
+    html += `<option value="${esc(s)}" ${s === currentSchema ? 'selected' : ''}>${esc(s)}</option>`;
+  });
+  html += `</select>`;
+  return html;
+}
+
+function _buildDetailTableSelect(currentSchema, currentTable) {
+  const tables = currentSchema
+    ? _schemaTables.filter(t => (t.schema_name || '').toUpperCase() === currentSchema.toUpperCase())
+    : _schemaTables;
+  if (!tables.length) {
+    return `<input class="gd-input" id="de-table" value="${esc(currentTable)}" placeholder="e.g. FACT_ORDERS" oninput="onDetailTableChange()">`;
+  }
+  const sorted = [...tables].sort((a, b) => a.table_name.localeCompare(b.table_name));
+  let html = `<select class="gd-select" id="de-table" onchange="onDetailTableChange()" style="font-size:12px">`;
+  html += `<option value="">— Select table —</option>`;
+  sorted.forEach(t => {
+    const sel = t.table_name.toUpperCase() === (currentTable || '').toUpperCase() ? 'selected' : '';
+    html += `<option value="${esc(t.table_name)}" data-fqn="${esc(t.fqn)}" ${sel}>${esc(t.table_name)} (${t.column_count} cols)</option>`;
+  });
+  html += `</select>`;
+  return html;
+}
+
+window.onDetailSchemaChange = function() {
+  const schemaEl = document.getElementById('de-schema');
+  const schema   = schemaEl ? schemaEl.value : '';
+  const currentTable = (document.getElementById('de-table') || {}).value || '';
+  // Rebuild table dropdown filtered to new schema
+  const tableEl  = document.getElementById('de-table');
+  if (tableEl) tableEl.outerHTML = _buildDetailTableSelect(schema, currentTable);
+  _checkDetailDuplicate();
+};
+
+window.onDetailTableChange = async function() {
+  const tableEl  = document.getElementById('de-table');
+  const schemaEl = document.getElementById('de-schema');
+  if (!tableEl) return;
+  const tableName = tableEl.value;
+  const schema    = schemaEl ? schemaEl.value : '';
+  // Find FQN to fetch columns for PK autocomplete
+  const opt  = tableEl.querySelector ? tableEl.querySelector(`option[value="${CSS.escape(tableName)}"]`) : null;
+  const fqn  = (opt && opt.dataset.fqn) || (schema ? `${schema}.${tableName}` : tableName);
+  if (fqn) {
+    const cols = await _fetchColumns(fqn);
+    const dl = document.getElementById('de-pk-list');
+    if (dl) dl.innerHTML = cols.map(c => `<option value="${esc(c.name)}">`).join('');
+  }
+  _checkDetailDuplicate();
+};
+
+function _checkDetailDuplicate(editingEntityName) {
+  const tableEl  = document.getElementById('de-table');
+  const schemaEl = document.getElementById('de-schema');
+  const warnEl   = document.getElementById('de-dup-warn');
+  if (!tableEl || !warnEl) return;
+  const table  = (tableEl.value || '').toUpperCase();
+  const schema = ((schemaEl ? schemaEl.value : '') || '').toUpperCase();
+  if (!table) { warnEl.style.display = 'none'; return; }
+  const dup = graph.entities.find(e =>
+    e.entity_name !== editingEntityName &&
+    (e.table_name || '').toUpperCase() === table &&
+    (e.schema_name || '').toUpperCase() === schema
+  );
+  if (dup) {
+    warnEl.textContent = `⚠ "${dup.entity_name}" already maps to ${schema ? schema+'.' : ''}${table} — each table should map to one entity.`;
+    warnEl.style.display = 'block';
+  } else {
+    warnEl.style.display = 'none';
   }
 }
 

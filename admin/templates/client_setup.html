@@ -590,8 +590,16 @@
     } catch (_) {}
 
     try {
-      const resp = await fetch(`/admin/clients/${accountId}/schema-tree${force ? '?refresh=1' : ''}`, {credentials:'same-origin'});
-      const data = await resp.json();
+      let resp = await fetch(`/admin/clients/${accountId}/schema-tree${force ? '?refresh=1' : ''}`, {credentials:'same-origin'});
+      let data = await resp.json();
+
+      // Auto-refresh: if Browse (not force) returns empty/no cache, silently re-fetch live
+      if (!force && (data.status === 'no_schema' || !Object.keys(data.tree || {}).length)) {
+        showStatus('info', 'Schema cache empty — fetching live schema from database…');
+        resp = await fetch(`/admin/clients/${accountId}/schema-tree?refresh=1`, {credentials:'same-origin'});
+        data = await resp.json();
+      }
+
       loading.style.display = 'none';
       if (data.status === 'error') {
         showStatus('error', data.message || 'Schema discovery failed.');
@@ -1206,6 +1214,22 @@
     _refreshMaskingPanel();
   };
 
+  // ── Schema tree search/filter ───────────────────────────────────────────────
+  window.filterScopeTree = function(q) {
+    const lc = (q || '').toLowerCase().trim();
+    // Each table row has a data-table-name attribute
+    document.querySelectorAll('#setup-scope-tree .scope-object[data-table-name]').forEach(row => {
+      const name = (row.dataset.tableName || '').toLowerCase();
+      row.style.display = !lc || name.includes(lc) ? '' : 'none';
+    });
+    // Show/hide schema sections: hide if all their table rows are hidden
+    document.querySelectorAll('#setup-scope-tree .scope-schema').forEach(schemaEl => {
+      const rows = schemaEl.querySelectorAll('.scope-object[data-table-name]');
+      const anyVisible = Array.from(rows).some(r => r.style.display !== 'none');
+      schemaEl.style.display = rows.length === 0 || anyVisible ? '' : 'none';
+    });
+  };
+
   function renderTree(tree) {
     const wrap = document.getElementById('setup-scope-tree');
     wrap.innerHTML = '';
@@ -1227,7 +1251,16 @@
 
     const summary = document.createElement('div');
     summary.className = 'scope-summary';
-    summary.innerHTML = `<strong>${dbs.length}</strong> db | <strong>${schemaCount}</strong> schemas | <strong style="color:var(--green)">${tableCount}</strong> tables | <strong style="color:var(--violet)">${viewCount}</strong> views`;
+    summary.style.display = 'flex';
+    summary.style.alignItems = 'center';
+    summary.style.gap = '.75rem';
+    summary.style.flexWrap = 'wrap';
+    summary.innerHTML = `
+      <span><strong>${dbs.length}</strong> db | <strong>${schemaCount}</strong> schemas | <strong style="color:var(--green)">${tableCount}</strong> tables | <strong style="color:var(--violet)">${viewCount}</strong> views</span>
+      <input id="scope-tree-search" type="text" placeholder="🔍  Filter tables by name…"
+        style="margin-left:auto;padding:5px 9px;border:1px solid var(--border);border-radius:5px;font-size:12px;outline:none;width:220px;background:var(--surface)"
+        oninput="filterScopeTree(this.value)">
+    `;
     wrap.appendChild(summary);
 
     dbs.forEach((db, dbi) => {
@@ -1249,10 +1282,10 @@
           html += '<div class="scope-section">Tables</div>';
           tables.forEach(t => {
             const value = ref(db, schema, t);
-            html += `<div>`
-              + `<label class="scope-object" for="${checkboxId(value)}">`
+            html += `<div class="scope-object" data-table-name="${esc(t.toLowerCase())}">`
+              + `<label style="display:flex;align-items:center;gap:.45rem;width:100%;cursor:pointer" for="${checkboxId(value)}">`
               + `<input type="checkbox" class="scope-check" id="${checkboxId(value)}" ${selected.has(value) ? 'checked' : ''} onchange='setupScopeCheck(${JSON.stringify(value)}, this.checked)'>`
-              + `<span style="flex:1">${esc(t)}</span>`
+              + `<span style="flex:1;font-size:12px">${esc(t)}</span>`
               + `</label>`
               + `</div>`;
           });
