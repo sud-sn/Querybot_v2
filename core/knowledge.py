@@ -36,6 +36,55 @@ _EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 _COLLECTION_NAME = "kb_store"
 
 
+def _parse_schema_descriptions(business_desc: str) -> tuple[str, dict[str, str]]:
+    """
+    Parse a business description that may contain per-schema sections.
+
+    Format (produced by the multi-schema UI):
+        Overall context sentence.
+
+        [PROFITABILITY]: Contains cost and order profitability data.
+        [ORDERS]: Contains customer order and billing data.
+
+    Returns:
+        (overall_desc, {schema_name_upper: description, ...})
+
+    If no [SCHEMA]: blocks are found, returns (full_text, {}) so single-schema
+    descriptions work unchanged.
+    """
+    overall_parts: list[str] = []
+    schema_map: dict[str, str] = {}
+
+    for line in (business_desc or "").splitlines():
+        m = re.match(r"^\[([A-Za-z0-9_$#]+)\]:\s*(.+)$", line.strip())
+        if m:
+            schema_map[m.group(1).upper()] = m.group(2).strip()
+        else:
+            overall_parts.append(line)
+
+    overall = "\n".join(overall_parts).strip()
+    return overall, schema_map
+
+
+def _build_table_business_desc(business_desc: str, schema_name: str) -> str:
+    """
+    Build the business context string to inject into a per-table KB prompt.
+    If per-schema descriptions are present, combines overall + schema-specific.
+    """
+    overall, schema_map = _parse_schema_descriptions(business_desc)
+    schema_key = (schema_name or "").upper()
+    schema_specific = schema_map.get(schema_key, "")
+
+    if schema_specific:
+        parts = []
+        if overall:
+            parts.append(overall)
+        parts.append(f"This table belongs to the [{schema_key}] schema: {schema_specific}")
+        return "\n".join(parts)
+    # No per-schema blocks — return as-is (single-schema or plain description)
+    return business_desc or ""
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # KB generation — public entry point
 # ══════════════════════════════════════════════════════════════════════════════
@@ -183,8 +232,15 @@ async def build_kb(
             if join_slice else ""
         )
 
+        # Extract schema name from sql_table_name (e.g. [profitability].[TABLE] → profitability)
+        _schema_part = ""
+        _sql_parts = sql_table_name.strip("[]").replace("[", "").replace("]", "").split(".")
+        if len(_sql_parts) >= 2:
+            _schema_part = _sql_parts[-2]
+        table_biz_desc = _build_table_business_desc(business_desc, _schema_part)
+
         stage1_user = (
-            f"Business description:\n{business_desc}\n\n"
+            f"Business description:\n{table_biz_desc}\n\n"
             f"Table schema for: {table_name}\n"
             f"Exact column names in this table (ONLY use these): {col_list}\n\n"
             f"Full schema with distinct values:\n{schema_md}\n"
@@ -208,7 +264,7 @@ async def build_kb(
         # ── Stage 2: Question-SQL translation from actual KB content ──────────
         # Pass the SQL-formatted table name (e.g. [SCHEMA].[TABLE] for Azure SQL)
         # so the LLM generates examples with the correct table name format.
-        query_user = build_kb_query_prompt(sql_table_name, kb_text, business_desc)
+        query_user = build_kb_query_prompt(sql_table_name, kb_text, table_biz_desc)
         with llm_audit_component("kb_query_examples"):
             query_text, _, _ = await llm_complete(
                 system, query_user, provider, model, api_key,
