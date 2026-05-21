@@ -49,6 +49,51 @@ from core.semantic_registry import find_registry_clarification, validated_option
 log = logging.getLogger("querybot.clarification")
 
 _EXPIRE_MINUTES = 5
+
+# ── KB annotation noise patterns that must never appear in chip labels ────────
+_KB_NOISE_RES = [
+    re.compile(r'\[NEEDS\s+CONTEXT[^\]]*\]', re.I),
+    re.compile(r'\[SPLIT\s+NAME[^\]]*\]', re.I),
+    re.compile(r'PRIMARY\s+MEASURE\s+FOR\s+[^.]+\.?', re.I),
+    re.compile(r'business\s+rule\s+unknown[^.]*\.?', re.I),
+    re.compile(r'do\s+not\s+use\s+in\s+filters\.?', re.I),
+    re.compile(r'always\s+(concatenate|exclude)[^.]*\.?', re.I),
+]
+
+
+def _clean_chip_label(definition: str, term_name: str = "") -> str:
+    """
+    Return a short, user-friendly label for a clarification chip.
+
+    Strips KB annotation markers ([NEEDS CONTEXT], PRIMARY MEASURE FOR…,
+    etc.) that are meaningful to the SQL prompt but confusing to end users.
+    Falls back to the term name if the cleaned text is too short or still
+    contains KB syntax noise.
+    """
+    fallback = (term_name or "").replace("_", " ").strip().title() or "Option"
+
+    text = (definition or "").strip()
+    if not text:
+        return fallback
+
+    # Strip all noise patterns
+    for pattern in _KB_NOISE_RES:
+        text = pattern.sub("", text)
+
+    # Strip leading/trailing punctuation and whitespace left behind
+    text = re.sub(r"^[\s.,;:\-–—]+|[\s.,;:\-–—]+$", "", text)
+    # Collapse multiple spaces
+    text = re.sub(r"\s{2,}", " ", text)
+
+    # If still looks noisy or too short, fall back
+    if len(text) < 4 or re.search(r"\[|\]|PRIMARY\s+MEASURE|NEEDS\s+CONTEXT", text, re.I):
+        return fallback
+
+    # Truncate for display
+    if len(text) > 55:
+        text = text[:52].rstrip() + "…"
+
+    return text
 _RECENT_EXPIRY_GRACE_SECONDS = 600  # 10 min — for "your clarification expired" hint
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -589,7 +634,7 @@ async def check_ambiguity_glossary_first(
     if len(metric_matches) >= 2:
         implicit_opts = [
             {
-                "label": m.get("definition") or m["term"].title(),
+                "label": _clean_chip_label(m.get("definition", ""), m["term"]),
                 "value": m["term"],
                 "expression": m.get("canonical_expression", ""),
                 "definition": m.get("definition", ""),
@@ -865,7 +910,7 @@ async def _llm_ambiguity_check_constrained(
         t = id_to_term[tid]
         options.append({
             "id": f"opt{idx}",
-            "label": t.get("definition") or t["term"].title(),
+            "label": _clean_chip_label(t.get("definition", ""), t["term"]),
             "value": t["term"],
             "expression": t.get("canonical_expression", ""),
             "_term_id": t["id"],
