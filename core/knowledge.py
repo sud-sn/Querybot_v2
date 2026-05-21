@@ -99,6 +99,7 @@ async def build_kb(
     api_key: str,
     extra_kwargs: dict | None = None,
     progress_callback=None,
+    stop_event=None,
 ) -> int:
     """
     Two-stage KB generation for every table discovered in schema_dir.
@@ -197,6 +198,10 @@ async def build_kb(
     # ── Per-table KB — two stages ─────────────────────────────────────────────
     processed = 0
     for md_file in md_files:
+        # Check for stop signal before each table
+        if stop_event is not None and stop_event.is_set():
+            log.info("KB build stopped by user after %d tables", processed)
+            break
         schema_md = md_file.read_text(encoding="utf-8")
         table_name = md_file.stem
 
