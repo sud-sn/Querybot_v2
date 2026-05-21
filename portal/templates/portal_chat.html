@@ -311,6 +311,13 @@
 .follow-up-chip{border-color:color-mix(in srgb,var(--primary) 30%,var(--border));color:var(--primary);background:color-mix(in srgb,var(--primary) 5%,var(--surface))}
 .follow-up-chip:hover{background:color-mix(in srgb,var(--primary) 12%,var(--surface));border-color:var(--primary)}
 .suggestions-label{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:var(--text-muted);margin-bottom:.6rem}
+/* ── Insight Layer — summary sentence + anomaly callouts ── */
+.insight-summary{font-size:13px;line-height:1.65;color:var(--text-soft);margin:.1rem 0 .85rem;padding:.55rem .8rem;background:color-mix(in srgb,var(--primary-soft) 14%,var(--surface));border-radius:var(--radius);border-left:3px solid var(--primary)}
+.insight-callouts{display:flex;flex-direction:column;gap:.35rem;margin-bottom:.7rem}
+.insight-callout{display:inline-flex;align-items:flex-start;gap:.45rem;padding:.5rem .75rem;border-radius:var(--radius);font-size:12px;line-height:1.5;font-weight:600}
+.insight-callout.warning{background:color-mix(in srgb,var(--warning-soft,#fef3c7) 55%,var(--surface));border:1px solid color-mix(in srgb,var(--warning,#f59e0b) 22%,transparent);color:var(--text)}
+.insight-callout.success{background:color-mix(in srgb,var(--success-soft,#d1fae5) 55%,var(--surface));border:1px solid color-mix(in srgb,var(--success,#10b981) 22%,transparent);color:var(--text)}
+.insight-callout.info{background:color-mix(in srgb,var(--primary-soft) 18%,var(--surface));border:1px solid color-mix(in srgb,var(--primary) 16%,transparent);color:var(--text)}
 /* Schema selector tab bar */
 .schema-control-row{display:flex;align-items:center;justify-content:space-between;gap:.8rem;padding:.75rem 1.1rem;border-bottom:1px solid var(--border);background:linear-gradient(135deg,var(--surface-2),color-mix(in srgb,var(--surface) 90%,var(--primary-soft) 10%))}
 .schema-bar{display:flex;align-items:center;gap:.4rem;flex-wrap:wrap}
@@ -1112,7 +1119,6 @@ function appendAssistantResponse(msg, opts = {}){
   const resultScope = msg.result_scope || (msg.analysis_contract && msg.analysis_contract.result_scope) || {};
   const hasChart = !!msg.chart;
   const hasData = !!(msg.data && Array.isArray(msg.data.rows) && msg.data.rows.length);
-  const actions = Array.isArray(msg.next_actions) ? msg.next_actions : [];
   const scopeBadgeHtml = resultScope.badge ? `<div class="scope-badge">${escHtml(resultScope.badge)}</div>` : '';
   const scopeNoteHtml = (answer.scope_note || resultScope.note)
     ? `<div class="scope-note">${escHtml(answer.scope_note || resultScope.note || '')}</div>`
@@ -1133,8 +1139,20 @@ function appendAssistantResponse(msg, opts = {}){
     bodyHtml = `<div class="msg-bubble">${formatBotText(msg.question || '')}</div>`;
   }
 
-  const actionsHtml = actions.length
-    ? `<div><div class="section-label">Next step</div><div class="action-row">${actions.map((a,i)=>`<button class="msg-action" type="button" data-action-index="${i}">${escHtml(a.label || 'Analyze')}</button>`).join('')}</div></div>`
+  // ── Insight Layer — summary sentence + anomaly callouts ───────────────────
+  // Generated server-side from pure statistics (no LLM call). Displayed inline
+  // above the result so every answer automatically explains itself.
+  const insightSummary = msg.insight_summary || '';
+  const insightSummaryHtml = insightSummary
+    ? `<div class="insight-summary">${escHtml(insightSummary)}</div>`
+    : '';
+  const callouts = Array.isArray(msg.anomaly_callouts) ? msg.anomaly_callouts : [];
+  const anomalyCalloutsHtml = callouts.length
+    ? `<div class="insight-callouts">${callouts.map(c =>
+        `<div class="insight-callout ${escHtml(c.severity || 'info')}">`
+        + `<span style="font-size:13px;line-height:1">${escHtml(c.icon || '◆')}</span>`
+        + `<span>${escHtml(c.message || '')}</span></div>`
+      ).join('')}</div>`
     : '';
 
   const pinBtnHtml = (hasChart && msg.chart.pin_token)
@@ -1170,9 +1188,10 @@ function appendAssistantResponse(msg, opts = {}){
           </div>
           <div style="display:flex;flex-direction:column;gap:.45rem;align-items:flex-end">${scopeBadgeHtml}${chipHtml}</div>
         </div>
+        ${insightSummaryHtml}
         <div class="result-layout">
+          ${anomalyCalloutsHtml}
           ${bodyHtml}
-          ${actionsHtml}
           <div class="msg-actions">
             <button class="msg-action" type="button" data-copy="result">Copy result</button>
             ${pinBtnHtml}
@@ -1184,14 +1203,6 @@ function appendAssistantResponse(msg, opts = {}){
     </div>`;
 
   thread().appendChild(div);
-  div.querySelectorAll('[data-action-index]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const idx = Number(btn.getAttribute('data-action-index'));
-      const action = actions[idx];
-      if (!action) return;
-      sendAnalysisAction(action.id, msg.analysis_contract || {}, action.label || 'Analysis');
-    });
-  });
   const copyBtn = div.querySelector('[data-copy="result"]');
   copyBtn?.addEventListener('click', async (e) => {
     const copyPayload = [answer.headline || '', trust.sql ? ('SQL\n' + trust.sql) : ''].filter(Boolean).join('\n\n');
