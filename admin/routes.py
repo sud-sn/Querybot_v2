@@ -1183,7 +1183,6 @@ async def semantic_feedback_review(
 
         if not success:
             # KB patch failed — do NOT mark as approved, keep pending
-            from urllib.parse import quote
             return RedirectResponse(
                 f"/admin/clients/{account_id}/kb"
                 f"?feedback=error&feedback_msg={quote(msg)}"
