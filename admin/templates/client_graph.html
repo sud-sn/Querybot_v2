@@ -61,10 +61,19 @@
 .node-port{fill:#fff;stroke:var(--border);stroke-width:1.5;r:6;cursor:crosshair;opacity:.2;transition:opacity .2s}
 .g-node:hover .node-port{opacity:1;r:7}
 /* ── Bridge table modal ──────────────────────────────────────────────────── */
-.bridge-map-row{display:grid;grid-template-columns:1fr 1fr 1fr 28px;gap:.35rem;align-items:center;margin-bottom:.3rem}
-.bridge-map-row select,.bridge-map-row input{font-size:12px;padding:4px 6px}
-.bridge-map-del{background:none;border:1px solid var(--border);border-radius:4px;cursor:pointer;color:var(--text-muted);font-size:13px;width:26px;height:26px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
-.bridge-map-del:hover{background:#FEE2E2;color:var(--red);border-color:var(--red)}
+.bridge-src-block{border:1px solid var(--border);border-radius:6px;margin-bottom:.5rem;overflow:hidden}
+.bridge-src-head{display:flex;align-items:center;gap:.4rem;padding:.4rem .5rem;background:var(--surface-2);border-bottom:1px solid var(--border)}
+.bridge-src-head select{flex:1;font-size:12px;padding:3px 6px}
+.bridge-src-del{background:none;border:1px solid var(--border);border-radius:4px;cursor:pointer;color:var(--text-muted);font-size:12px;width:24px;height:24px;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:background .15s}
+.bridge-src-del:hover{background:#FEE2E2;color:var(--red);border-color:var(--red)}
+.bridge-col-list{padding:.3rem .4rem}
+.bridge-col-row{display:grid;grid-template-columns:18px 1fr 28px 100px 110px;gap:.3rem;align-items:center;padding:2px 0;border-radius:4px}
+.bridge-col-row:hover{background:var(--surface-2)}
+.bridge-col-row input[type=checkbox]{accent-color:#7C3AED;width:14px;height:14px;cursor:pointer;margin:0}
+.bridge-col-name{font-size:12px;font-family:Consolas,monospace;color:var(--text-soft);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bridge-col-arrow{font-size:11px;color:var(--text-muted);text-align:center}
+.bridge-col-alias,.bridge-col-flag{font-size:12px;padding:2px 5px}
+.bridge-col-loading{font-size:11px;color:var(--text-muted);padding:.4rem .2rem;font-style:italic}
 /* ── Multi-link modal ────────────────────────────────────────────────────── */
 .ml-dim-row{display:grid;grid-template-columns:20px 1fr 140px 110px;gap:.4rem;align-items:center;padding:.3rem .4rem;border-radius:5px;transition:background .12s}
 .ml-dim-row:hover{background:var(--surface-2)}
@@ -436,15 +445,18 @@
 
 <!-- ══ BRIDGE TABLE MODAL ════════════════════════════════════════════════ -->
 <div id="bridge-modal" class="modal-overlay" style="display:none">
-  <div class="modal-box" style="max-width:600px">
+  <div class="modal-box" style="max-width:640px">
     <div class="modal-head">
       <h3 style="color:#7C3AED">⬡ Create Bridge Table</h3>
       <button class="modal-close" onclick="closeBridgeModal()">✕</button>
     </div>
     <div class="modal-body">
       <p style="font-size:12px;color:var(--text-muted);margin:0 0 .75rem">
-        Each mapping row is one <code>LOAD … Resident</code> block. The same source entity can appear multiple times with different columns and flags — exactly like a Qlik link table.
+        Select a source table → pick which columns map into the bridge key → assign a flag for each.
+        Each checked column becomes one <code>LOAD … Resident</code> / <code>Concatenate</code> block.
       </p>
+
+      <!-- Row 1: name + color -->
       <div class="gd-form-row">
         <div>
           <label class="gd-label">Bridge entity name *</label>
@@ -455,9 +467,11 @@
           <input type="color" id="bridge-color" value="#7C3AED" style="width:100%;height:34px;border:1px solid var(--border);border-radius:5px;cursor:pointer">
         </div>
       </div>
+
+      <!-- Row 2: key col + flag col (read-only labels shown in column rows) -->
       <div class="gd-form-row">
         <div>
-          <label class="gd-label">Bridge key column <span style="font-size:10px;color:var(--text-muted)">(shared field in bridge, e.g. date_id)</span></label>
+          <label class="gd-label">Bridge key column <span style="font-size:10px;color:var(--text-muted)">(alias target, e.g. date_id)</span></label>
           <input class="gd-input" id="bridge-key-col" value="date_id" placeholder="date_id" oninput="updateBridgePreview()">
         </div>
         <div>
@@ -466,20 +480,16 @@
         </div>
       </div>
 
-      <!-- Mappings table -->
-      <div style="margin-top:.5rem">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.35rem">
-          <label class="gd-label" style="margin:0">Mappings <span style="font-size:10px;color:var(--text-muted)">(add 2 or more rows)</span></label>
-          <button onclick="addBridgeMapping()" style="font-size:11px;padding:3px 10px;background:color-mix(in srgb,#7C3AED 12%,var(--surface));border:1px solid #C4B5FD;border-radius:5px;cursor:pointer;color:#7C3AED;font-weight:700">＋ Add mapping</button>
+      <!-- Source blocks -->
+      <div style="margin-top:.55rem">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.4rem">
+          <label class="gd-label" style="margin:0">Source tables <span style="font-size:10px;color:var(--text-muted)">(add one block per source; same table OK multiple times)</span></label>
+          <button onclick="addBridgeSourceBlock()" style="font-size:11px;padding:3px 10px;background:color-mix(in srgb,#7C3AED 12%,var(--surface));border:1px solid #C4B5FD;border-radius:5px;cursor:pointer;color:#7C3AED;font-weight:700">＋ Add source</button>
         </div>
-        <!-- Header -->
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr 28px;gap:.35rem;padding:0 .35rem .2rem;font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text-muted)">
-          <span>Source entity</span><span>Source column → bridge key</span><span>Flag value</span><span></span>
-        </div>
-        <div id="bridge-mappings" style="max-height:220px;overflow-y:auto"></div>
+        <div id="bridge-src-blocks" style="max-height:320px;overflow-y:auto"></div>
       </div>
 
-      <div id="bridge-preview" style="display:none;margin-top:.6rem;background:var(--surface-2);border:1px solid var(--border);border-radius:5px;padding:.5rem .65rem;font-size:11px;font-family:Consolas,monospace;color:var(--text-soft);white-space:pre;overflow-x:auto"></div>
+      <div id="bridge-preview" style="display:none;margin-top:.6rem;background:var(--surface-2);border:1px solid var(--border);border-radius:5px;padding:.5rem .65rem;font-size:11px;font-family:Consolas,monospace;color:var(--text-soft);white-space:pre;overflow-x:auto;max-height:160px"></div>
       <div id="bridge-error" style="display:none;font-size:12px;color:var(--red);padding:.4rem .6rem;background:#FEE2E2;border-radius:4px;margin-top:.4rem"></div>
     </div>
     <div class="modal-footer">
@@ -2060,29 +2070,26 @@ window.confirmProp = async function(entityName, colName) {
 };
 
 // ════════════════════════════════════════════════════════════════════════════
-// BRIDGE TABLE  (Qlik CONCATENATE / multi-mapping pattern)
+// BRIDGE TABLE  (Qlik CONCATENATE pattern — entity → columns → flag per col)
 // ════════════════════════════════════════════════════════════════════════════
 
-// Cache of visible entities for the dropdown — refreshed each time modal opens
-let _bridgeEntities = [];
+let _bridgeEntities = [];   // schema-filtered entity list, refreshed on open
 
 window.openBridgeModal = function() {
   _bridgeEntities = (typeof activeSchemaFilter !== 'undefined' && activeSchemaFilter)
     ? graph.entities.filter(e => (e.schema_name || '') === activeSchemaFilter)
     : graph.entities;
 
-  // Reset inputs
-  document.getElementById('bridge-name').value    = '';
-  document.getElementById('bridge-key-col').value = 'date_id';
+  document.getElementById('bridge-name').value     = '';
+  document.getElementById('bridge-key-col').value  = 'date_id';
   document.getElementById('bridge-flag-col').value = 'Flag';
-  document.getElementById('bridge-color').value   = '#7C3AED';
+  document.getElementById('bridge-color').value    = '#7C3AED';
   document.getElementById('bridge-error').style.display   = 'none';
   document.getElementById('bridge-preview').style.display = 'none';
+  document.getElementById('bridge-src-blocks').innerHTML  = '';
 
-  // Clear mappings and add 2 empty starter rows
-  document.getElementById('bridge-mappings').innerHTML = '';
-  addBridgeMapping();
-  addBridgeMapping();
+  // Start with one blank source block
+  addBridgeSourceBlock();
 
   document.getElementById('bridge-modal').style.display = 'flex';
   document.getElementById('bridge-name').focus();
@@ -2092,67 +2099,104 @@ window.closeBridgeModal = function() {
   document.getElementById('bridge-modal').style.display = 'none';
 };
 
-/** Build the entity <select> options string */
-function _bridgeEntityOptions(selectedName) {
-  if (!_bridgeEntities.length) {
-    return '<option value="">— no entities —</option>';
+/** Add a new source-entity block */
+window.addBridgeSourceBlock = function() {
+  const container = document.getElementById('bridge-src-blocks');
+  const block = document.createElement('div');
+  block.className = 'bridge-src-block';
+
+  const opts = _bridgeEntities.length
+    ? _bridgeEntities.map(e =>
+        `<option value="${esc(e.entity_name)}">${esc(e.display_name || e.entity_name)}</option>`
+      ).join('')
+    : '<option value="">— no entities in graph —</option>';
+
+  block.innerHTML = `
+    <div class="bridge-src-head">
+      <select class="gd-select bridge-src-sel" onchange="onBridgeSrcEntityChange(this)">
+        <option value="">— pick source table —</option>
+        ${opts}
+      </select>
+      <button class="bridge-src-del" title="Remove this source block" onclick="this.closest('.bridge-src-block').remove();updateBridgePreview()">✕</button>
+    </div>
+    <div class="bridge-col-list">
+      <div class="bridge-col-loading" style="display:none">Loading columns…</div>
+      <div class="bridge-col-rows"></div>
+    </div>`;
+  container.appendChild(block);
+};
+
+/** When a source entity is chosen, fetch its columns and render rows */
+window.onBridgeSrcEntityChange = async function(sel) {
+  const block   = sel.closest('.bridge-src-block');
+  const loadEl  = block.querySelector('.bridge-col-loading');
+  const rowsEl  = block.querySelector('.bridge-col-rows');
+  const keyCol  = document.getElementById('bridge-key-col').value.trim() || 'date_id';
+  const flagCol = document.getElementById('bridge-flag-col').value.trim() || 'Flag';
+
+  rowsEl.innerHTML = '';
+  if (!sel.value) return;
+
+  loadEl.style.display = '';
+  const ent  = _bridgeEntities.find(e => e.entity_name === sel.value);
+  const fqn  = ent ? _resolveEntityFqn(ent) : '';
+  const cols = fqn ? await _fetchColumns(fqn) : [];
+  loadEl.style.display = 'none';
+
+  if (!cols.length) {
+    rowsEl.innerHTML = '<div class="bridge-col-loading">No columns found for this table.</div>';
+    return;
   }
-  return _bridgeEntities.map(e => {
-    const sel = e.entity_name === selectedName ? ' selected' : '';
-    return `<option value="${esc(e.entity_name)}"${sel}>${esc(e.display_name || e.entity_name)}</option>`;
-  }).join('');
-}
 
-window.addBridgeMapping = function(entityName, srcCol, flagVal) {
-  const container = document.getElementById('bridge-mappings');
-  const idx = container.children.length;
+  // Column list header
+  rowsEl.innerHTML = `
+    <div style="display:grid;grid-template-columns:18px 1fr 28px 100px 110px;gap:.3rem;padding:2px 4px .15rem;font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text-muted)">
+      <span></span><span>Column</span><span></span><span>→ ${esc(keyCol)}</span><span>${esc(flagCol)} value</span>
+    </div>` +
+    cols.map(c => `
+      <div class="bridge-col-row">
+        <input type="checkbox" class="bc-check" onchange="updateBridgePreview()">
+        <span class="bridge-col-name" title="${esc(c)}">${esc(c)}</span>
+        <span class="bridge-col-arrow">→</span>
+        <input class="gd-input bridge-col-alias" value="${esc(keyCol)}" oninput="updateBridgePreview()">
+        <input class="gd-input bridge-col-flag" placeholder="e.g. Order" oninput="updateBridgePreview()">
+      </div>`).join('');
 
-  const row = document.createElement('div');
-  row.className = 'bridge-map-row';
-  row.dataset.idx = idx;
-  row.innerHTML = `
-    <select class="gd-input bm-entity" onchange="updateBridgePreview()">
-      <option value="">— choose entity —</option>
-      ${_bridgeEntityOptions(entityName || '')}
-    </select>
-    <input class="gd-input bm-col" placeholder="source_column"
-           value="${esc(srcCol || '')}" oninput="updateBridgePreview()">
-    <input class="gd-input bm-flag" placeholder="Flag value (e.g. Order)"
-           value="${esc(flagVal || '')}" oninput="updateBridgePreview()">
-    <button class="bridge-map-del" title="Remove row" onclick="removeBridgeMapping(this)">✕</button>`;
-  container.appendChild(row);
   updateBridgePreview();
 };
 
-window.removeBridgeMapping = function(btn) {
-  btn.closest('.bridge-map-row').remove();
-  updateBridgePreview();
-};
-
+/** Rebuild the Qlik-style pseudocode preview */
 window.updateBridgePreview = function() {
-  const name    = document.getElementById('bridge-name').value.trim() || 'BridgeName';
-  const keyCol  = document.getElementById('bridge-key-col').value.trim()  || 'date_id';
+  const name    = document.getElementById('bridge-name').value.trim()     || 'BridgeName';
   const flagCol = document.getElementById('bridge-flag-col').value.trim() || 'Flag';
   const preEl   = document.getElementById('bridge-preview');
 
-  const rows = [...document.querySelectorAll('#bridge-mappings .bridge-map-row')];
-  const mappings = rows.map(r => ({
-    entity:  r.querySelector('.bm-entity').value,
-    col:     r.querySelector('.bm-col').value.trim(),
-    flag:    r.querySelector('.bm-flag').value.trim(),
-  })).filter(m => m.entity && m.col && m.flag);
+  // Collect every checked column row across all source blocks
+  const mappings = [];
+  document.querySelectorAll('.bridge-src-block').forEach(block => {
+    const entity = block.querySelector('.bridge-src-sel')?.value;
+    if (!entity) return;
+    block.querySelectorAll('.bridge-col-row').forEach(row => {
+      if (!row.querySelector('.bc-check')?.checked) return;
+      const col   = row.querySelector('.bridge-col-name')?.textContent?.trim();
+      const alias = row.querySelector('.bridge-col-alias')?.value?.trim();
+      const flag  = row.querySelector('.bridge-col-flag')?.value?.trim();
+      if (col) mappings.push({ entity, col, alias: alias || col, flag: flag || '?' });
+    });
+  });
 
   if (!mappings.length) { preEl.style.display = 'none'; return; }
 
   const lines = mappings.map((m, i) => {
     const hdr = i === 0 ? `${name}:` : `Concatenate (${name})`;
-    return `${hdr}\nLOAD Distinct\n  <RevenueKey>,\n  ${m.col} as ${keyCol},\n  '${m.flag}' as ${flagCol}\nResident ${m.entity};`;
+    return `${hdr}\nLOAD Distinct\n  ${m.col} as ${m.alias},\n  '${m.flag}' as ${flagCol}\nResident ${m.entity};`;
   });
 
   preEl.textContent = lines.join('\n\n');
   preEl.style.display = '';
 };
 
+/** Save: create bridge entity + one relationship per checked column row */
 window.saveBridgeTable = async function() {
   const errEl  = document.getElementById('bridge-error');
   errEl.style.display = 'none';
@@ -2167,16 +2211,28 @@ window.saveBridgeTable = async function() {
     errEl.style.display = ''; return;
   }
 
-  // Collect all mapping rows
-  const mappings = [...document.querySelectorAll('#bridge-mappings .bridge-map-row')].map(r => ({
-    entity: r.querySelector('.bm-entity').value,
-    col:    r.querySelector('.bm-col').value.trim(),
-    flag:   r.querySelector('.bm-flag').value.trim(),
-  }));
+  // Collect checked mappings
+  const mappings = [];
+  document.querySelectorAll('.bridge-src-block').forEach(block => {
+    const entity = block.querySelector('.bridge-src-sel')?.value;
+    if (!entity) return;
+    block.querySelectorAll('.bridge-col-row').forEach(row => {
+      if (!row.querySelector('.bc-check')?.checked) return;
+      const col   = row.querySelector('.bridge-col-name')?.textContent?.trim();
+      const alias = row.querySelector('.bridge-col-alias')?.value?.trim() || keyCol;
+      const flag  = row.querySelector('.bridge-col-flag')?.value?.trim();
+      if (col && flag) mappings.push({ entity, col, alias, flag });
+    });
+  });
 
-  const complete = mappings.filter(m => m.entity && m.col && m.flag);
-  if (complete.length < 2) {
-    errEl.textContent = 'Add at least 2 complete mapping rows (entity + source column + flag).';
+  if (mappings.length < 2) {
+    errEl.textContent = 'Tick at least 2 column rows (across one or more source tables) and fill in a flag value for each.';
+    errEl.style.display = ''; return;
+  }
+
+  const missingFlag = mappings.find(m => !m.flag);
+  if (missingFlag) {
+    errEl.textContent = `Fill in the flag value for column "${missingFlag.col}".`;
     errEl.style.display = ''; return;
   }
 
@@ -2184,16 +2240,15 @@ window.saveBridgeTable = async function() {
   btn.disabled = true; btn.textContent = 'Creating…';
 
   try {
-    // Position bridge entity at the centroid of mapped source entities
-    const srcEntities = [...new Set(complete.map(m => m.entity))]
-      .map(n => graph.entities.find(e => e.entity_name === n)).filter(Boolean);
+    // Position bridge below the centroid of source entities
+    const uniqueNames  = [...new Set(mappings.map(m => m.entity))];
+    const srcEntities  = uniqueNames.map(n => graph.entities.find(e => e.entity_name === n)).filter(Boolean);
     const cx = srcEntities.reduce((s, e) => s + (e.pos_x || 120) + NODE_W / 2, 0) / Math.max(srcEntities.length, 1) - NODE_W / 2;
-    const cy = srcEntities.reduce((s, e) => s + (e.pos_y || 120) + NODE_H / 2, 0) / Math.max(srcEntities.length, 1) - NODE_H / 2 + 160;
+    const cy = srcEntities.reduce((s, e) => s + (e.pos_y || 120) + NODE_H / 2, 0) / Math.max(srcEntities.length, 1) - NODE_H / 2 + 180;
     const schemaName = (typeof activeSchemaFilter !== 'undefined' && activeSchemaFilter)
       ? activeSchemaFilter : (srcEntities[0]?.schema_name || '');
 
     // 1. Create the bridge entity
-    const uniqueSources = [...new Set(complete.map(m => m.entity))];
     const eres = await api('POST', `${API_BASE}/entities`, {
       entity_name:  name,
       display_name: name,
@@ -2201,7 +2256,7 @@ window.saveBridgeTable = async function() {
       table_name:   name,
       schema_name:  schemaName,
       pk_column:    keyCol,
-      description:  `Bridge table. Sources: ${uniqueSources.join(', ')}. Key: ${keyCol}. Flag: ${flagCol}.`,
+      description:  `Bridge table. Sources: ${uniqueNames.join(', ')}. Key: ${keyCol}. Flag: ${flagCol}.`,
       color:        color,
       pos_x:        Math.round(cx),
       pos_y:        Math.round(cy),
@@ -2209,16 +2264,16 @@ window.saveBridgeTable = async function() {
     });
     if (!eres.ok) throw new Error('Failed to create bridge entity');
 
-    // 2. Create one relationship per mapping row (flag value becomes the label)
-    for (const m of complete) {
+    // 2. One relationship per checked column (flag = relationship label)
+    for (const m of mappings) {
       await api('POST', `${API_BASE}/relationships`, {
         from_entity:       m.entity,
         to_entity:         name,
         from_column:       m.col,
-        to_column:         keyCol,
+        to_column:         m.alias,
         relationship_type: 'many_to_one',
         join_type:         'INNER',
-        label:             m.flag,           // e.g. "Order" / "Booked"
+        label:             m.flag,
         join_conditions:   [],
       });
     }
@@ -2231,7 +2286,7 @@ window.saveBridgeTable = async function() {
     renderGraph(); updateSidebar(); updateRelList();
     _rebuildSchemaFilterDropdown();
     closeBridgeModal();
-    setStatus(`Bridge table "${name}" created with ${complete.length} mapping(s) ✓`);
+    setStatus(`Bridge "${name}" created with ${mappings.length} column mapping(s) ✓`);
 
   } catch (err) {
     errEl.textContent = 'Error: ' + err.message; errEl.style.display = '';
