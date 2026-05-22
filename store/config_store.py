@@ -1373,18 +1373,20 @@ def save_entity(
     color: str = "#4F86C6",
     confidence_score: int = 100,
     status: str = "confirmed",
+    entity_filter: str = "",
 ) -> int:
     """Upsert an entity. Returns its id.
     status: 'suggested' = LLM prediction awaiting admin review
             'confirmed' = admin-approved, feeds into SQL generation
+    entity_filter: static SQL WHERE conditions always applied when this table is joined
     """
     with get_db() as conn:
         conn.execute("""
             INSERT INTO entity_graph
                 (account_id, entity_name, table_name, schema_name, pk_column,
                  display_name, description, entity_type, is_active,
-                 pos_x, pos_y, color, confidence_score, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 pos_x, pos_y, color, confidence_score, status, entity_filter)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(account_id, entity_name) DO UPDATE SET
                 table_name       = excluded.table_name,
                 schema_name      = excluded.schema_name,
@@ -1397,10 +1399,11 @@ def save_entity(
                 pos_y            = excluded.pos_y,
                 color            = excluded.color,
                 confidence_score = excluded.confidence_score,
-                status           = excluded.status
+                status           = excluded.status,
+                entity_filter    = excluded.entity_filter
         """, (account_id, entity_name, table_name, schema_name, pk_column,
               display_name, description, entity_type, is_active,
-              pos_x, pos_y, color, confidence_score, status))
+              pos_x, pos_y, color, confidence_score, status, entity_filter))
         row = conn.execute(
             "SELECT id FROM entity_graph WHERE account_id=? AND entity_name=?",
             (account_id, entity_name)

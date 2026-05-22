@@ -1499,54 +1499,160 @@ function _buildJoinsPaneContent(entityName) {
   const rels = graph.relationships.filter(
     r => r.from_entity === entityName || r.to_entity === entityName
   );
+  const ent = graph.entities.find(e => e.entity_name === entityName) || {};
+  const savedFilter = esc(ent.entity_filter || '');
 
-  if (!rels.length) {
-    return `<div style="padding:1.5rem .75rem;text-align:center;color:var(--text-muted)">
-        <div style="font-size:32px;margin-bottom:.5rem">⛓️</div>
-        <div style="font-size:12px;font-weight:600;margin-bottom:.35rem">No joins yet</div>
-        <div style="font-size:11px;margin-bottom:.75rem">Hover a node on the canvas and drag from the ◉ port, or use the ⇢ Link button.</div>
-        <button class="gd-save-btn" style="width:auto;padding:6px 16px;margin:0" onclick="openRelModal()">
-          + Add join
+  // ── Entity-level static filter block (always shown at top) ──────────────
+  const filterBlock = `
+    <div style="border-bottom:2px solid var(--border);background:color-mix(in srgb,#0369A1 5%,var(--surface));padding:.5rem .75rem">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.35rem">
+        <span style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#0369A1">
+          🔒 Entity filter
+        </span>
+        <span style="font-size:10px;color:var(--text-muted)">Always applied when this table is joined</span>
+      </div>
+      <div id="ef-rows-${esc(entityName)}" style="margin-bottom:.3rem"></div>
+      <div style="display:flex;gap:.4rem;align-items:center">
+        <button onclick="addEntityFilterRow('${esc(entityName)}')"
+          style="font-size:11px;padding:2px 10px;background:color-mix(in srgb,#0369A1 10%,var(--surface));border:1px solid #BAE6FD;border-radius:var(--radius-sm,4px);cursor:pointer;color:#0369A1;font-weight:700;white-space:nowrap">
+          + Condition
         </button>
-      </div>`;
-  }
+        ${savedFilter
+          ? `<span style="font-size:10px;font-family:Consolas,monospace;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1" title="${savedFilter}">
+               Saved: ${savedFilter}
+             </span>`
+          : `<span style="font-size:10px;color:var(--text-muted);font-style:italic">No filter set</span>`}
+        <button onclick="saveEntityFilter('${esc(entityName)}')"
+          style="font-size:11px;padding:2px 10px;background:var(--primary);color:#fff;border:none;border-radius:var(--radius-sm,4px);cursor:pointer;font-weight:700;white-space:nowrap">
+          Save filter
+        </button>
+      </div>
+    </div>`;
 
+  // ── Join rows ────────────────────────────────────────────────────────────
   const cardLabel = { many_to_one:'N:1', one_to_one:'1:1', one_to_many:'1:N' };
-  const rows = rels.map(r => {
-    const isFrom    = r.from_entity === entityName;
-    const partner   = isFrom ? r.to_entity : r.from_entity;
-    const dir       = isFrom ? '→' : '←';
-    const joinColor = r.join_type === 'INNER' ? 'var(--green,#059669)' : '#6366F1';
-    const card      = cardLabel[r.relationship_type] || '';
-    const whereTag  = r.where_clause
-      ? `<span class="ej-where" title="${esc(r.where_clause)}">WHERE</span>` : '';
-    return `
-      <div class="ej-row" id="ej-row-${r.id}">
-        <div class="ej-summary" onclick="toggleRelEdit(${r.id},'${esc(entityName)}')">
-          <span class="ej-toggle" id="ej-toggle-${r.id}">▶</span>
-          <span class="ej-partner" title="${esc(partner)}">${esc(partner)}</span>
-          <span class="ej-dir">${dir}</span>
-          <span style="font-size:10px;font-weight:700;color:${joinColor};flex-shrink:0">${r.join_type||'LEFT'}</span>
-          ${card ? `<span style="font-size:9px;color:var(--text-muted);background:var(--surface-2);border:1px solid var(--border);border-radius:3px;padding:0 3px;flex-shrink:0">${card}</span>` : ''}
-          <span class="ej-cols">${esc(r.from_column||'')} → ${esc(r.to_column||'')}</span>
-          ${whereTag}
-          <button class="ej-del" title="Delete join"
-            onclick="event.stopPropagation();deleteRel(${r.id})">✕</button>
-        </div>
-        <div class="ej-edit-panel" id="ej-edit-${r.id}" style="display:none">
-          <div style="font-size:11px;color:var(--text-muted);padding:.3rem">Loading columns…</div>
-        </div>
-      </div>`;
-  }).join('');
+  const joinRows = rels.length === 0
+    ? `<div style="padding:1.5rem .75rem;text-align:center;color:var(--text-muted)">
+        <div style="font-size:28px;margin-bottom:.4rem">⛓️</div>
+        <div style="font-size:12px;font-weight:600;margin-bottom:.3rem">No joins yet</div>
+        <div style="font-size:11px;margin-bottom:.6rem">Drag from the ◉ port on the canvas, or use ⇢ Link.</div>
+        <button class="gd-save-btn" style="width:auto;padding:5px 14px;margin:0" onclick="openRelModal()">+ Add join</button>
+      </div>`
+    : rels.map(r => {
+        const isFrom    = r.from_entity === entityName;
+        const partner   = isFrom ? r.to_entity : r.from_entity;
+        const dir       = isFrom ? '→' : '←';
+        const joinColor = r.join_type === 'INNER' ? 'var(--green,#059669)' : '#6366F1';
+        const card      = cardLabel[r.relationship_type] || '';
+        const whereTag  = r.where_clause
+          ? `<span class="ej-where" title="${esc(r.where_clause)}">WHERE</span>` : '';
+        return `
+          <div class="ej-row" id="ej-row-${r.id}">
+            <div class="ej-summary" onclick="toggleRelEdit(${r.id},'${esc(entityName)}')">
+              <span class="ej-toggle" id="ej-toggle-${r.id}">▶</span>
+              <span class="ej-partner" title="${esc(partner)}">${esc(partner)}</span>
+              <span class="ej-dir">${dir}</span>
+              <span style="font-size:10px;font-weight:700;color:${joinColor};flex-shrink:0">${r.join_type||'LEFT'}</span>
+              ${card ? `<span style="font-size:9px;color:var(--text-muted);background:var(--surface-2);border:1px solid var(--border);border-radius:3px;padding:0 3px;flex-shrink:0">${card}</span>` : ''}
+              <span class="ej-cols">${esc(r.from_column||'')} → ${esc(r.to_column||'')}</span>
+              ${whereTag}
+              <button class="ej-del" title="Delete join"
+                onclick="event.stopPropagation();deleteRel(${r.id})">✕</button>
+            </div>
+            <div class="ej-edit-panel" id="ej-edit-${r.id}" style="display:none">
+              <div style="font-size:11px;color:var(--text-muted);padding:.3rem">Loading columns…</div>
+            </div>
+          </div>`;
+      }).join('');
 
-  return `<div style="display:flex;align-items:center;justify-content:space-between;padding:.5rem .75rem .4rem;border-bottom:1px solid var(--border)">
+  const joinHeader = rels.length > 0 ? `
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:.45rem .75rem .35rem;border-bottom:1px solid var(--border)">
       <span style="font-size:10px;font-weight:800;text-transform:uppercase;color:var(--text-muted);letter-spacing:.06em">${rels.length} join${rels.length!==1?'s':''}</span>
-      <button style="font-size:11px;padding:3px 10px;background:color-mix(in srgb,var(--primary) 10%,var(--surface));border:1px solid color-mix(in srgb,var(--primary) 30%,transparent);border-radius:var(--radius-sm,4px);cursor:pointer;color:var(--primary);font-weight:700" onclick="openRelModal()">
+      <button style="font-size:11px;padding:2px 9px;background:color-mix(in srgb,var(--primary) 10%,var(--surface));border:1px solid color-mix(in srgb,var(--primary) 30%,transparent);border-radius:var(--radius-sm,4px);cursor:pointer;color:var(--primary);font-weight:700" onclick="openRelModal()">
         + Add join
       </button>
-    </div>
-    <div style="padding:.35rem .5rem">${rows}</div>`;
+    </div>` : '';
+
+  return filterBlock + joinHeader + `<div style="padding:.35rem .5rem">${joinRows}</div>`;
 }
+
+// ── Entity filter row builder ────────────────────────────────────────────────
+const _EF_OPS = ['=','!=','>','>=','<','<=','LIKE','NOT LIKE','IN','NOT IN','IS NULL','IS NOT NULL'];
+const _EF_NO_VAL = new Set(['IS NULL','IS NOT NULL']);
+
+window.addEntityFilterRow = async function(entityName) {
+  const cont = document.getElementById(`ef-rows-${entityName}`);
+  if (!cont) return;
+
+  // Fetch columns for this entity (DB → semantic fallback)
+  const ent = graph.entities.find(e => e.entity_name === entityName);
+  let cols = [];
+  if (ent) {
+    const fqn = _resolveEntityFqn(ent);
+    if (fqn) {
+      const raw = await _fetchColumns(fqn);
+      cols = raw.map(c => typeof c === 'string' ? c : c.name).filter(Boolean);
+    }
+    if (!cols.length) {
+      try {
+        const res  = await fetch(`${API_BASE}/properties/${encodeURIComponent(entityName)}`);
+        const data = await res.json();
+        cols = (data.properties || []).map(p => p.column_name).filter(Boolean);
+      } catch (_) {}
+    }
+  }
+
+  const colOpts = '<option value="">— column —</option>' +
+    cols.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+  const opOpts  = _EF_OPS.map(op => `<option>${op}</option>`).join('');
+
+  const row = document.createElement('div');
+  row.className = 'ej-wc-row';
+  row.innerHTML = `
+    <select class="gd-select ef-col">${colOpts}</select>
+    <select class="gd-select ef-op" onchange="
+      const v=this.closest('.ej-wc-row').querySelector('.ef-val');
+      if(v)v.style.visibility=['IS NULL','IS NOT NULL'].includes(this.value)?'hidden':'visible'
+    ">${opOpts}</select>
+    <input class="gd-input ef-val" placeholder="value">
+    <button class="ej-wc-del" onclick="this.closest('.ej-wc-row').remove()">✕</button>`;
+  cont.appendChild(row);
+};
+
+window.saveEntityFilter = async function(entityName) {
+  const cont = document.getElementById(`ef-rows-${entityName}`);
+  if (!cont) return;
+
+  // Build SQL from rows
+  const parts = [];
+  cont.querySelectorAll('.ej-wc-row').forEach(row => {
+    const col = row.querySelector('.ef-col')?.value?.trim();
+    const op  = row.querySelector('.ef-op')?.value;
+    const val = row.querySelector('.ef-val')?.value?.trim();
+    if (!col || !op) return;
+    if (_EF_NO_VAL.has(op)) { parts.push(`${entityName}.${col} ${op}`); return; }
+    if (!val) return;
+    if (op === 'IN' || op === 'NOT IN') {
+      parts.push(`${entityName}.${col} ${op} (${val})`);
+    } else {
+      const quoted = (op === 'LIKE' || op === 'NOT LIKE' || isNaN(val))
+        ? `'${val.replace(/'/g,"''")}'` : val;
+      parts.push(`${entityName}.${col} ${op} ${quoted}`);
+    }
+  });
+  const filterSql = parts.join(' AND ');
+
+  // Save to entity
+  const ent = graph.entities.find(e => e.entity_name === entityName);
+  if (!ent) return;
+  ent.entity_filter = filterSql;
+
+  const res = await api('POST', `${API_BASE}/entities`, { ...ent, entity_filter: filterSql });
+  if (!res.ok) { alert('Save failed'); return; }
+
+  setStatus(`Entity filter saved for ${entityName} ✓`);
+  renderEntityDetail(entityName);   // refresh to show saved value
+};
 
 window.toggleRelEdit = async function(relId, entityName) {
   const panel  = document.getElementById(`ej-edit-${relId}`);
