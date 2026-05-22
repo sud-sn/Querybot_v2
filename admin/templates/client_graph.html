@@ -154,6 +154,15 @@
 .resolver-output{font-family:Consolas,monospace;font-size:11px;background:var(--surface-2);border:1px solid var(--border);border-radius:5px;padding:.6rem;white-space:pre-wrap;word-break:break-all;line-height:1.5;color:var(--text-soft);margin-top:.5rem;max-height:160px;overflow-y:auto}
 .sync-badge{font-size:9px;font-weight:800;padding:2px 6px;border-radius:999px;background:var(--green-light,#D1FAE5);color:var(--green,#059669)}
 
+/* ── Detail panel tabs ─────────────────────────────────────────────────────── */
+.gd-tab-bar{display:flex;border-bottom:2px solid var(--border);background:var(--surface);flex-shrink:0;overflow-x:auto}
+.gd-tab{padding:.55rem .9rem;font-size:11px;font-weight:700;color:var(--text-muted);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px;white-space:nowrap;transition:color .12s,border-color .12s;display:flex;align-items:center;gap:.3rem}
+.gd-tab:hover{color:var(--text)}
+.gd-tab.active{color:var(--primary);border-bottom-color:var(--primary)}
+.gd-tab-badge{font-size:9px;font-weight:800;padding:0 5px;border-radius:999px;background:color-mix(in srgb,var(--primary) 15%,var(--surface));color:var(--primary);line-height:16px;min-width:16px;text-align:center}
+.gd-tab-pane{display:none;overflow-y:auto;flex:1}
+.gd-tab-pane.active{display:block}
+
 /* ── Modals ────────────────────────────────────────────────────────────────── */
 .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:8000;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(3px)}
 .modal-box{background:var(--surface);border-radius:var(--radius,8px);width:440px;max-width:96vw;box-shadow:0 24px 64px rgba(0,0,0,.22);overflow:hidden}
@@ -305,12 +314,13 @@
 </main>
 
 <!-- ══ DETAIL PANEL ══════════════════════════════════════════════════════════ -->
-<aside class="graph-detail">
+<aside class="graph-detail" style="display:flex;flex-direction:column;overflow:hidden">
   <div class="gd-head" id="detail-head">
     <span>Properties</span>
     <span id="sync-badge" class="sync-badge" style="display:none">Synced to semantic layer</span>
   </div>
-  <div id="detail-content">
+  <div id="detail-tab-bar" class="gd-tab-bar" style="display:none"></div>
+  <div id="detail-content" style="overflow-y:auto;flex:1">
     <div class="gd-placeholder">
       Select an entity or relationship on the canvas to view and edit its properties.
       <br><br>
@@ -1195,6 +1205,8 @@ window.selectRel = function(id) {
 function resetDetail() {
   document.getElementById('detail-head').firstChild.textContent = 'Properties';
   document.getElementById('sync-badge').style.display = 'none';
+  const tb = document.getElementById('detail-tab-bar');
+  if (tb) { tb.style.display = 'none'; tb.innerHTML = ''; }
   document.getElementById('detail-content').innerHTML =
     '<div class="gd-placeholder">Select an entity or relationship to edit its properties.</div>';
 }
@@ -1237,107 +1249,167 @@ document.addEventListener('click', ev => {
 // ════════════════════════════════════════════════════════════════════════════
 // DETAIL PANEL — ENTITY
 // ════════════════════════════════════════════════════════════════════════════
-function renderEntityDetail(name) {
+// Track which detail tab is active per entity
+let _detailTab = 'joins';
+
+function renderEntityDetail(name, forceTab) {
   const e = graph.entities.find(x => x.entity_name === name);
   if (!e) return;
   document.getElementById('detail-head').firstChild.textContent = e.display_name || name;
   document.getElementById('sync-badge').style.display = '';
 
+  // Choose tab: forceTab → caller override, else _detailTab (sticky), default 'joins'
+  const activeTab = forceTab || _detailTab || 'joins';
+
   fetch(`${API_BASE}/properties/${name}`)
     .then(r => r.json())
     .then(data => {
       const props = data.properties || [];
+      const relCount = graph.relationships.filter(
+        r => r.from_entity === name || r.to_entity === name
+      ).length;
+
+      // ── Tab bar ──────────────────────────────────────────────────────────
+      const tabBar = document.getElementById('detail-tab-bar');
+      tabBar.style.display = 'flex';
+      tabBar.innerHTML = `
+        <div class="gd-tab ${activeTab==='joins'?'active':''}"
+             onclick="switchEntityTab('joins','${esc(name)}')">
+          Joins
+          <span class="gd-tab-badge">${relCount}</span>
+        </div>
+        <div class="gd-tab ${activeTab==='fields'?'active':''}"
+             onclick="switchEntityTab('fields','${esc(name)}')">
+          Fields
+          <span class="gd-tab-badge">${props.length}</span>
+        </div>
+        <div class="gd-tab ${activeTab==='info'?'active':''}"
+             onclick="switchEntityTab('info','${esc(name)}')">
+          Info
+        </div>`;
+
+      // ── Tab panes ────────────────────────────────────────────────────────
       document.getElementById('detail-content').innerHTML = `
-        <div class="gd-section">Entity settings</div>
-        <div class="gd-body">
-          <div class="gd-form-row">
-            <div>
-              <label class="gd-label">Display name</label>
-              <input class="gd-input" id="de-display-name" value="${esc(e.display_name||'')}">
-            </div>
-            <div>
-              <label class="gd-label">Type</label>
-              <select class="gd-select" id="de-type">
-                ${['fact','dimension','bridge'].map(t=>`<option ${e.entity_type===t?'selected':''} value="${t}">${t}</option>`).join('')}
-              </select>
-            </div>
-          </div>
-          <div class="gd-form-row">
-            <div>
-              <label class="gd-label">Schema</label>
-              ${_buildDetailSchemaSelect(e.schema_name||'')}
-            </div>
-            <div>
-              <label class="gd-label">Table</label>
-              ${_buildDetailTableSelect(e.schema_name||'', e.table_name||'')}
-            </div>
-          </div>
-          <div id="de-dup-warn" style="display:none;font-size:11px;color:var(--amber,#d97706);padding:.4rem .6rem;background:var(--amber-light,#fef3c7);border-radius:4px;margin-top:.3rem;margin-bottom:.2rem"></div>
-          <datalist id="de-pk-list"></datalist>
-          <div class="gd-form-row">
-            <div>
-              <label class="gd-label">Primary key</label>
-              <input class="gd-input" id="de-pk" list="de-pk-list" value="${esc(e.pk_column||'')}">
-            </div>
-            <div>
-              <label class="gd-label">Colour</label>
-              <input type="color" id="de-color" value="${e.color||'#4F86C6'}" style="width:100%;height:34px;border:1px solid var(--border);border-radius:5px;cursor:pointer">
-            </div>
-          </div>
-          <div class="gd-form-row full">
-            <label class="gd-label">Description</label>
-            <textarea class="gd-textarea" id="de-desc" rows="2">${esc(e.description||'')}</textarea>
-          </div>
-          <button class="gd-save-btn" onclick="saveEntityDetail('${name}')">Save entity</button>
+        <!-- JOINS TAB -->
+        <div class="gd-tab-pane ${activeTab==='joins'?'active':''}" id="det-pane-joins">
+          ${_buildJoinsPaneContent(name)}
         </div>
 
-        <div class="gd-section">Field roles
-          <span style="float:right;font-weight:400;font-size:9px;cursor:pointer;color:var(--primary)" onclick="addFieldRow('${name}')">+ Add field</span>
-        </div>
-        <div class="gd-body" id="prop-list-${name}">
-          ${props.length === 0
-            ? '<div style="font-size:11px;color:var(--text-muted);text-align:center;padding:.5rem">No fields defined yet. Add column roles below.</div>'
-            : props.map(p => renderPropRow(p, name)).join('')}
+        <!-- FIELDS TAB -->
+        <div class="gd-tab-pane ${activeTab==='fields'?'active':''}" id="det-pane-fields">
+          <div class="gd-section">Field roles
+            <span style="float:right;font-weight:400;font-size:9px;cursor:pointer;color:var(--primary)"
+                  onclick="addFieldRow('${esc(name)}')">+ Add field</span>
+          </div>
+          <div class="gd-body" id="prop-list-${esc(name)}">
+            ${props.length === 0
+              ? '<div style="font-size:11px;color:var(--text-muted);text-align:center;padding:.5rem">No fields defined yet. Add column roles below.</div>'
+              : props.map(p => renderPropRow(p, name)).join('')}
+          </div>
+          <div class="gd-section">Add / update field</div>
+          <div class="gd-body">
+            <div class="gd-form-row">
+              <div>
+                <label class="gd-label">Column name</label>
+                <input class="gd-input" id="prop-col-${esc(name)}" placeholder="Revenue">
+              </div>
+              <div>
+                <label class="gd-label">Role</label>
+                <select class="gd-select" id="prop-role-${esc(name)}">
+                  <option value="metric">Metric</option>
+                  <option value="dimension" selected>Dimension</option>
+                  <option value="date">Date</option>
+                  <option value="filter">Filter</option>
+                  <option value="identifier">Identifier</option>
+                  <option value="ignore">Ignore</option>
+                </select>
+              </div>
+            </div>
+            <div class="gd-form-row">
+              <div>
+                <label class="gd-label">Business name</label>
+                <input class="gd-input" id="prop-dname-${esc(name)}" placeholder="Total Revenue">
+              </div>
+              <div>
+                <label class="gd-label">Synonyms</label>
+                <input class="gd-input" id="prop-syn-${esc(name)}" placeholder="revenue, income">
+              </div>
+            </div>
+            <button class="gd-save-btn" onclick="saveProp('${esc(name)}')">Save field → Sync to semantic layer</button>
+          </div>
         </div>
 
-        <div class="gd-section">Add / update field</div>
-        <div class="gd-body">
-          <div class="gd-form-row">
-            <div>
-              <label class="gd-label">Column name</label>
-              <input class="gd-input" id="prop-col-${name}" placeholder="Revenue">
+        <!-- INFO TAB -->
+        <div class="gd-tab-pane ${activeTab==='info'?'active':''}" id="det-pane-info">
+          <div class="gd-section">Entity settings</div>
+          <div class="gd-body">
+            <div class="gd-form-row">
+              <div>
+                <label class="gd-label">Display name</label>
+                <input class="gd-input" id="de-display-name" value="${esc(e.display_name||'')}">
+              </div>
+              <div>
+                <label class="gd-label">Type</label>
+                <select class="gd-select" id="de-type">
+                  ${['fact','dimension','bridge'].map(t=>`<option ${e.entity_type===t?'selected':''} value="${t}">${t}</option>`).join('')}
+                </select>
+              </div>
             </div>
-            <div>
-              <label class="gd-label">Role</label>
-              <select class="gd-select" id="prop-role-${name}">
-                <option value="metric">Metric</option>
-                <option value="dimension" selected>Dimension</option>
-                <option value="date">Date</option>
-                <option value="filter">Filter</option>
-                <option value="identifier">Identifier</option>
-                <option value="ignore">Ignore</option>
-              </select>
+            <div class="gd-form-row">
+              <div>
+                <label class="gd-label">Schema</label>
+                ${_buildDetailSchemaSelect(e.schema_name||'')}
+              </div>
+              <div>
+                <label class="gd-label">Table</label>
+                ${_buildDetailTableSelect(e.schema_name||'', e.table_name||'')}
+              </div>
             </div>
+            <div id="de-dup-warn" style="display:none;font-size:11px;color:var(--amber,#d97706);padding:.4rem .6rem;background:var(--amber-light,#fef3c7);border-radius:4px;margin-top:.3rem;margin-bottom:.2rem"></div>
+            <datalist id="de-pk-list"></datalist>
+            <div class="gd-form-row">
+              <div>
+                <label class="gd-label">Primary key</label>
+                <input class="gd-input" id="de-pk" list="de-pk-list" value="${esc(e.pk_column||'')}">
+              </div>
+              <div>
+                <label class="gd-label">Colour</label>
+                <input type="color" id="de-color" value="${e.color||'#4F86C6'}" style="width:100%;height:34px;border:1px solid var(--border);border-radius:5px;cursor:pointer">
+              </div>
+            </div>
+            <div class="gd-form-row full">
+              <label class="gd-label">Description</label>
+              <textarea class="gd-textarea" id="de-desc" rows="2">${esc(e.description||'')}</textarea>
+            </div>
+            <button class="gd-save-btn" onclick="saveEntityDetail('${esc(name)}')">Save entity</button>
           </div>
-          <div class="gd-form-row">
-            <div>
-              <label class="gd-label">Business name</label>
-              <input class="gd-input" id="prop-dname-${name}" placeholder="Total Revenue">
-            </div>
-            <div>
-              <label class="gd-label">Synonyms</label>
-              <input class="gd-input" id="prop-syn-${name}" placeholder="revenue, income">
-            </div>
-          </div>
-          <button class="gd-save-btn" onclick="saveProp('${name}')">Save field → Sync to semantic layer</button>
         </div>
-
-        ${_buildJoinsSection(name)}
       `;
-      // Pre-populate PK datalist for the current table selection
-      if (e.table_name) onDetailTableChange();
+      // Pre-populate PK datalist for the current table selection (only if Info tab active)
+      if (e.table_name && activeTab === 'info') onDetailTableChange();
     });
 }
+
+window.switchEntityTab = function(tab, entityName) {
+  _detailTab = tab;
+  // Update tab bar active state
+  document.querySelectorAll('#detail-tab-bar .gd-tab').forEach(el => el.classList.remove('active'));
+  const tabEls = document.querySelectorAll('#detail-tab-bar .gd-tab');
+  const idx = ['joins', 'fields', 'info'].indexOf(tab);
+  if (tabEls[idx]) tabEls[idx].classList.add('active');
+
+  // Show/hide panes
+  ['joins','fields','info'].forEach(t => {
+    const pane = document.getElementById(`det-pane-${t}`);
+    if (pane) pane.classList.toggle('active', t === tab);
+  });
+
+  // Lazy: initialise PK datalist when Info tab first opened
+  if (tab === 'info' && entityName) {
+    const e = graph.entities.find(x => x.entity_name === entityName);
+    if (e && e.table_name) onDetailTableChange();
+  }
+};
 
 function renderPropRow(p, entityName) {
   const roleClass = 'role-' + (p.role || 'dimension');
@@ -1423,29 +1495,30 @@ window.saveEntityDetail = async function(name) {
 const _WC_OPS_INLINE = ['=','!=','>','>=','<','<=','LIKE','NOT LIKE','IN','NOT IN','IS NULL','IS NOT NULL'];
 const _WC_NO_VAL_INLINE = new Set(['IS NULL','IS NOT NULL']);
 
-function _buildJoinsSection(entityName) {
+function _buildJoinsPaneContent(entityName) {
   const rels = graph.relationships.filter(
     r => r.from_entity === entityName || r.to_entity === entityName
   );
 
-  const addBtn = `<span style="float:right;font-weight:400;font-size:9px;cursor:pointer;color:var(--primary)"
-    onclick="openRelModal()">+ Add join</span>`;
-
   if (!rels.length) {
-    return `<div class="gd-section">Joins (0) ${addBtn}</div>
-      <div class="gd-body" style="font-size:11px;color:var(--text-muted);text-align:center;padding:.5rem">
-        No joins yet. Hover node → drag ◉ port, or use ⇢ Link.
+    return `<div style="padding:1.5rem .75rem;text-align:center;color:var(--text-muted)">
+        <div style="font-size:32px;margin-bottom:.5rem">⛓️</div>
+        <div style="font-size:12px;font-weight:600;margin-bottom:.35rem">No joins yet</div>
+        <div style="font-size:11px;margin-bottom:.75rem">Hover a node on the canvas and drag from the ◉ port, or use the ⇢ Link button.</div>
+        <button class="gd-save-btn" style="width:auto;padding:6px 16px;margin:0" onclick="openRelModal()">
+          + Add join
+        </button>
       </div>`;
   }
 
   const cardLabel = { many_to_one:'N:1', one_to_one:'1:1', one_to_many:'1:N' };
   const rows = rels.map(r => {
-    const isFrom   = r.from_entity === entityName;
-    const partner  = isFrom ? r.to_entity : r.from_entity;
-    const dir      = isFrom ? '→' : '←';
+    const isFrom    = r.from_entity === entityName;
+    const partner   = isFrom ? r.to_entity : r.from_entity;
+    const dir       = isFrom ? '→' : '←';
     const joinColor = r.join_type === 'INNER' ? 'var(--green,#059669)' : '#6366F1';
-    const card     = cardLabel[r.relationship_type] || '';
-    const whereTag = r.where_clause
+    const card      = cardLabel[r.relationship_type] || '';
+    const whereTag  = r.where_clause
       ? `<span class="ej-where" title="${esc(r.where_clause)}">WHERE</span>` : '';
     return `
       <div class="ej-row" id="ej-row-${r.id}">
@@ -1453,9 +1526,9 @@ function _buildJoinsSection(entityName) {
           <span class="ej-toggle" id="ej-toggle-${r.id}">▶</span>
           <span class="ej-partner" title="${esc(partner)}">${esc(partner)}</span>
           <span class="ej-dir">${dir}</span>
-          <span style="font-size:10px;font-weight:700;color:${joinColor};flex-shrink:0">${r.join_type}</span>
+          <span style="font-size:10px;font-weight:700;color:${joinColor};flex-shrink:0">${r.join_type||'LEFT'}</span>
           ${card ? `<span style="font-size:9px;color:var(--text-muted);background:var(--surface-2);border:1px solid var(--border);border-radius:3px;padding:0 3px;flex-shrink:0">${card}</span>` : ''}
-          <span class="ej-cols">${esc(r.from_column)} → ${esc(r.to_column)}</span>
+          <span class="ej-cols">${esc(r.from_column||'')} → ${esc(r.to_column||'')}</span>
           ${whereTag}
           <button class="ej-del" title="Delete join"
             onclick="event.stopPropagation();deleteRel(${r.id})">✕</button>
@@ -1466,8 +1539,13 @@ function _buildJoinsSection(entityName) {
       </div>`;
   }).join('');
 
-  return `<div class="gd-section">Joins (${rels.length}) ${addBtn}</div>
-    <div class="gd-body" style="padding:.35rem .5rem">${rows}</div>`;
+  return `<div style="display:flex;align-items:center;justify-content:space-between;padding:.5rem .75rem .4rem;border-bottom:1px solid var(--border)">
+      <span style="font-size:10px;font-weight:800;text-transform:uppercase;color:var(--text-muted);letter-spacing:.06em">${rels.length} join${rels.length!==1?'s':''}</span>
+      <button style="font-size:11px;padding:3px 10px;background:color-mix(in srgb,var(--primary) 10%,var(--surface));border:1px solid color-mix(in srgb,var(--primary) 30%,transparent);border-radius:var(--radius-sm,4px);cursor:pointer;color:var(--primary);font-weight:700" onclick="openRelModal()">
+        + Add join
+      </button>
+    </div>
+    <div style="padding:.35rem .5rem">${rows}</div>`;
 }
 
 window.toggleRelEdit = async function(relId, entityName) {
@@ -1773,6 +1851,9 @@ window.removeJoinCondition = function(idx) {
 function renderRelDetail(id) {
   const rel = graph.relationships.find(r => r.id === id);
   if (!rel) return;
+  // Hide the entity tab bar when showing a relationship
+  const tb = document.getElementById('detail-tab-bar');
+  if (tb) { tb.style.display = 'none'; }
   let extraConditions = [];
   try { extraConditions = JSON.parse(rel.join_conditions || '[]'); } catch(e) {}
   document.getElementById('detail-head').firstChild.textContent =
@@ -1904,7 +1985,13 @@ window.deleteRel = async function(id) {
   graph.relationships = graph.relationships.filter(r => r.id !== id);
   selectedRelId = null;
   document.getElementById('del-btn').style.display = 'none';
-  renderGraph(); updateRelList(); resetDetail();
+  renderGraph(); updateRelList();
+  // If an entity is selected, refresh its Joins tab; otherwise reset
+  if (selectedEntity) {
+    renderEntityDetail(selectedEntity);
+  } else {
+    resetDetail();
+  }
   setStatus('Relationship deleted');
 };
 
@@ -2044,6 +2131,8 @@ window.saveRelFromModal = async function() {
   payload.join_conditions = JSON.stringify(extraConditions);
   graph.relationships.push(payload);
   closeRelModal(); renderGraph(); updateRelList();
+  // Refresh the entity detail panel on the Joins tab if an entity is selected
+  if (selectedEntity) renderEntityDetail(selectedEntity);
   setStatus('Relationship saved ✓');
 };
 
@@ -2214,6 +2303,8 @@ window.saveMultiLinks = async function() {
 
     renderGraph(); updateRelList();
     closeMultiLinkModal();
+    // Refresh entity detail if the center entity is currently selected
+    if (selectedEntity === centerName) renderEntityDetail(centerName);
     setStatus(`${created} relationship${created > 1 ? 's' : ''} created from "${centerName}" ✓${errors.length ? ` (${errors.length} failed)` : ''}`);
 
   } catch (err) {
