@@ -1045,7 +1045,7 @@ function buildChartOption(payload) {
     const y2 = yKeys[1];
     option.xAxis = { type:'value', name: yKey, nameTextStyle:{color:axisColor}, axisLabel:{color:axisColor,formatter:_fmtNum}, splitLine:{show:true,lineStyle:{color:gridColor}}, axisTick:{show:false}, axisLine:{show:false} };
     option.yAxis = { type:'value', name: y2,  nameTextStyle:{color:axisColor}, axisLabel:{color:axisColor,formatter:_fmtNum}, splitLine:{show:true,lineStyle:{color:gridColor}}, axisTick:{show:false}, axisLine:{show:false} };
-    option.series = [{ type:'scatter', symbolSize:12, data: rows.map(r=>[Number(r?.[yKey]??0),Number(r?.[y2]??0),String((xKey&&r?.[xKey]??''))]), itemStyle:{color:colors[0], opacity:.8} }];
+    option.series = [{ type:'scatter', symbolSize:12, data: rows.map(r=>[Number(r?.[yKey]??0),Number(r?.[y2]??0),String(xKey ? (r?.[xKey]??'') : '')]), itemStyle:{color:colors[0], opacity:.8} }];
     option.tooltip.formatter = p => `<strong>${escHtml(String(p.value?.[2]??''))}</strong><br/>${escHtml(String(yKey||'X'))}: <strong>${_fmtNum(p.value?.[0])}</strong><br/>${escHtml(String(y2||'Y'))}: <strong>${_fmtNum(p.value?.[1])}</strong>`;
     return option;
   }
