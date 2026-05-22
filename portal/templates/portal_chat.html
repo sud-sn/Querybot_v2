@@ -280,13 +280,23 @@
 .result-topline{display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap;margin-bottom:.8rem}.result-kicker{font-size:11px;font-weight:850;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted)}
 .result-layout{display:flex;flex-direction:column;gap:.9rem}.result-chart-wrap{background:color-mix(in srgb,var(--surface-2) 65%, transparent);border:1px solid var(--border);border-radius:var(--radius);padding:.65rem}.chart-canvas.compact{height:320px}
 .data-table-wrap{background:color-mix(in srgb,var(--surface-2) 55%, transparent);border:1px solid var(--border);border-radius:var(--radius);padding:0;overflow:hidden}
+.data-table-toolbar{display:flex;align-items:center;gap:.5rem;padding:6px 10px;background:color-mix(in srgb,var(--surface-2) 70%, transparent);border-bottom:1px solid var(--border);flex-wrap:wrap}
+.data-table-filter{flex:1;min-width:130px;max-width:260px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:12px;outline:none}
+.data-table-filter:focus{border-color:var(--primary);box-shadow:0 0 0 2px color-mix(in srgb,var(--primary) 18%, transparent)}
+.data-table-ask{padding:4px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--primary);font-size:11.5px;font-weight:700;cursor:pointer;white-space:nowrap;transition:background .15s}
+.data-table-ask:hover{background:color-mix(in srgb,var(--primary-soft) 30%, var(--surface))}
+.data-table-agg{font-size:11px;color:var(--text-muted);margin-left:auto;white-space:nowrap}
 .data-table-scroll{max-height:340px;overflow:auto}
 .data-table{width:100%;border-collapse:collapse;font-size:12.5px;font-variant-numeric:tabular-nums}
-.data-table thead th{position:sticky;top:0;background:var(--surface-2);color:var(--text-soft);font-weight:800;text-align:left;padding:8px 12px;border-bottom:1px solid var(--border);font-size:11px;letter-spacing:.04em;text-transform:uppercase;white-space:nowrap;z-index:1}
+.data-table thead th{position:sticky;top:0;background:var(--surface-2);color:var(--text-soft);font-weight:800;text-align:left;padding:8px 12px;border-bottom:1px solid var(--border);font-size:11px;letter-spacing:.04em;text-transform:uppercase;white-space:nowrap;z-index:1;cursor:pointer;user-select:none}
+.data-table thead th:hover{background:color-mix(in srgb,var(--primary-soft) 20%, var(--surface-2))}
+.data-table thead th.sort-asc::after{content:' ↑';opacity:.7}
+.data-table thead th.sort-desc::after{content:' ↓';opacity:.7}
 .data-table tbody td{padding:7px 12px;border-bottom:1px solid color-mix(in srgb,var(--border) 40%, transparent);color:var(--text);vertical-align:top;white-space:nowrap;max-width:260px;overflow:hidden;text-overflow:ellipsis}
 .data-table tbody tr:last-child td{border-bottom:none}
 .data-table tbody tr:hover td{background:color-mix(in srgb,var(--primary-soft) 18%, transparent)}
-.data-table-foot{padding:6px 12px;font-size:11px;color:var(--text-muted);background:color-mix(in srgb,var(--surface-2) 35%, transparent);border-top:1px solid var(--border)}
+.data-table tbody tr.dt-hidden{display:none}
+.data-table-foot{padding:6px 12px;font-size:11px;color:var(--text-muted);background:color-mix(in srgb,var(--surface-2) 35%, transparent);border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;gap:.5rem;flex-wrap:wrap}
 .action-row{display:flex;gap:.5rem;flex-wrap:wrap;margin-top:.2rem}.analysis-card{background:linear-gradient(180deg,color-mix(in srgb,var(--surface) 98%, var(--primary-soft) 2%),var(--surface));border:1px solid var(--border);border-radius:var(--radius);padding:1rem;box-shadow:var(--shadow)}.analysis-title{font-size:15px;font-weight:850;color:var(--text);margin-bottom:.4rem}.analysis-body{font-size:13px;line-height:1.7;color:var(--text)}.analysis-secondary{margin-top:.7rem;padding:.8rem .9rem;border-radius:var(--radius);background:var(--surface-2);border:1px solid var(--border);font-size:12px;line-height:1.65;color:var(--text-soft)}.analysis-list{margin:.8rem 0 0 1rem;color:var(--text);font-size:12px;line-height:1.7}.analysis-list li+li{margin-top:.35rem}.analysis-meta{margin-top:.45rem;font-size:11px;color:var(--text-muted)}
 .answer-headline{font-size:18px;font-weight:850;letter-spacing:-.02em;color:var(--text);line-height:1.35;margin-bottom:.45rem}
 .answer-chip{display:inline-flex;align-items:center;gap:.4rem;padding:7px 10px;border-radius:999px;background:var(--surface-2);border:1px solid var(--border);font-size:11px;font-weight:800;color:var(--text-soft);margin-bottom:.8rem}
@@ -1206,19 +1216,166 @@ function sendAnalysisAction(action, context, label){
   updateProcessing('analysis', label, 'Using the returned result only — no new query is being run.');
   ws.send(JSON.stringify({ action, context }));
 }
-function renderDataTable(data) {
+// ── Tier-1 table: sortable columns, text filter, numeric footer, "Ask" shortcut ──
+let _dtIdCounter = 0;
+function renderDataTable(data, { question = '' } = {}) {
   if (!data || !Array.isArray(data.rows) || !data.rows.length) return '';
   const headers = Array.isArray(data.headers) ? data.headers : Object.keys(data.rows[0] || {});
-  const headHtml = headers.map(h => `<th>${escHtml(h)}</th>`).join('');
+  const dtId = `dt-${++_dtIdCounter}`;
+
+  const headHtml = headers.map((h, i) =>
+    `<th data-col="${i}">${escHtml(h)}</th>`
+  ).join('');
+
   const bodyHtml = data.rows.map(r =>
     '<tr>' + headers.map(h => `<td>${escHtml(String(r[h] ?? ''))}</td>`).join('') + '</tr>'
   ).join('');
+
   const total = data.total_rows ?? data.rows.length;
   const shown = data.rows.length;
-  const footHtml = (data.truncated || shown < total)
-    ? `<div class="data-table-foot">Showing first ${shown.toLocaleString()} of ${total.toLocaleString()} rows</div>`
-    : `<div class="data-table-foot">${shown.toLocaleString()} row${shown === 1 ? '' : 's'}</div>`;
-  return `<div class="data-table-wrap"><div class="data-table-scroll"><table class="data-table"><thead><tr>${headHtml}</tr></thead><tbody>${bodyHtml}</tbody></table></div>${footHtml}</div>`;
+  const truncNote = (data.truncated || shown < total)
+    ? `<span>Showing first ${shown.toLocaleString()} of ${total.toLocaleString()} rows</span>`
+    : `<span>${shown.toLocaleString()} row${shown === 1 ? '' : 's'}</span>`;
+
+  // Detect numeric columns for aggregate footer display
+  const numCols = headers.filter(h => {
+    const vals = data.rows.slice(0, 20).map(r => r[h]);
+    return vals.some(v => v !== null && v !== '' && !isNaN(Number(String(v).replace(/,/g, ''))));
+  });
+
+  const toolbarHtml = `<div class="data-table-toolbar">
+    <input class="data-table-filter" type="text" placeholder="Filter rows…" aria-label="Filter table rows" data-dt="${dtId}">
+    <button class="data-table-ask" type="button" data-dt-ask="${dtId}">💬 Ask about these results</button>
+    <span class="data-table-agg" id="${dtId}-agg"></span>
+  </div>`;
+
+  return `<div class="data-table-wrap" id="${dtId}-wrap">
+    ${toolbarHtml}
+    <div class="data-table-scroll">
+      <table class="data-table" id="${dtId}">
+        <thead><tr>${headHtml}</tr></thead>
+        <tbody>${bodyHtml}</tbody>
+      </table>
+    </div>
+    <div class="data-table-foot" id="${dtId}-foot">${truncNote}</div>
+  </div>`;
+}
+
+function _mountDataTableControls(wrapEl, question) {
+  if (!wrapEl) return;
+  const table = wrapEl.querySelector('.data-table');
+  if (!table) return;
+  const dtId   = table.id;
+  const tbody  = table.querySelector('tbody');
+  const headers = Array.from(table.querySelectorAll('thead th'));
+  const foot    = wrapEl.querySelector(`#${dtId}-foot`);
+  const aggEl   = wrapEl.querySelector(`#${dtId}-agg`);
+
+  // Infer numeric columns
+  const allRows = Array.from(tbody.querySelectorAll('tr'));
+  const numColIndexes = headers.map((_, ci) => {
+    const vals = allRows.slice(0, 20).map(r => r.cells[ci]?.textContent ?? '');
+    return vals.some(v => v !== '' && !isNaN(Number(v.replace(/,/g, ''))));
+  });
+
+  let sortCol = -1, sortDir = 1;
+
+  function getVisibleRows() {
+    return allRows.filter(r => !r.classList.contains('dt-hidden'));
+  }
+
+  function updateAgg() {
+    const vis = getVisibleRows();
+    if (!vis.length || !aggEl) return;
+    // Show sum for the first numeric column
+    const ci = numColIndexes.findIndex(Boolean);
+    if (ci < 0) { aggEl.textContent = ''; return; }
+    const sum = vis.reduce((acc, r) => {
+      const v = parseFloat((r.cells[ci]?.textContent ?? '').replace(/,/g, ''));
+      return acc + (isNaN(v) ? 0 : v);
+    }, 0);
+    const colName = headers[ci]?.textContent ?? '';
+    aggEl.textContent = `Σ ${colName}: ${sum.toLocaleString(undefined, {maximumFractionDigits: 2})}`;
+  }
+
+  function applySort() {
+    if (sortCol < 0) return;
+    const rows = Array.from(tbody.querySelectorAll('tr'));
+    rows.sort((a, b) => {
+      const av = a.cells[sortCol]?.textContent ?? '';
+      const bv = b.cells[sortCol]?.textContent ?? '';
+      const an = parseFloat(av.replace(/,/g, ''));
+      const bn = parseFloat(bv.replace(/,/g, ''));
+      if (!isNaN(an) && !isNaN(bn)) return (an - bn) * sortDir;
+      return av.localeCompare(bv) * sortDir;
+    });
+    rows.forEach(r => tbody.appendChild(r));
+  }
+
+  function updateFoot() {
+    if (!foot) return;
+    const vis = getVisibleRows();
+    const total = allRows.length;
+    if (vis.length < total) {
+      foot.innerHTML = `<span>${vis.toLocaleString ? vis.length.toLocaleString() : vis.length} of ${total.toLocaleString()} rows shown</span>`;
+    } else {
+      foot.innerHTML = `<span>${total.toLocaleString()} row${total === 1 ? '' : 's'}</span>`;
+    }
+    updateAgg();
+  }
+
+  // Sort on header click
+  headers.forEach((th, ci) => {
+    th.addEventListener('click', () => {
+      if (sortCol === ci) {
+        sortDir *= -1;
+      } else {
+        sortCol = ci;
+        sortDir = 1;
+      }
+      headers.forEach((h, i) => {
+        h.classList.toggle('sort-asc',  i === ci && sortDir ===  1);
+        h.classList.toggle('sort-desc', i === ci && sortDir === -1);
+      });
+      applySort();
+      updateFoot();
+    });
+  });
+
+  // Filter on text input
+  const filterEl = wrapEl.querySelector(`.data-table-filter[data-dt="${dtId}"]`);
+  if (filterEl) {
+    filterEl.addEventListener('input', () => {
+      const term = filterEl.value.toLowerCase();
+      allRows.forEach(r => {
+        const text = Array.from(r.cells).map(c => c.textContent).join(' ').toLowerCase();
+        r.classList.toggle('dt-hidden', term.length > 0 && !text.includes(term));
+      });
+      updateFoot();
+    });
+  }
+
+  // "Ask about these results" shortcut — pre-fills the input box
+  const askBtn = wrapEl.querySelector(`[data-dt-ask="${dtId}"]`);
+  if (askBtn) {
+    askBtn.addEventListener('click', () => {
+      const inp = document.getElementById('chat-input');
+      if (!inp) return;
+      inp.focus();
+      // Insert a contextual prompt if the box is empty
+      if (!inp.value.trim()) {
+        inp.value = '';
+        inp.placeholder = 'e.g. "who is below average?" or "rank these by value"';
+        // Remove placeholder hint after a moment
+        setTimeout(() => {
+          inp.placeholder = 'Ask anything about your data…';
+        }, 4000);
+      }
+      inp.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+  }
+
+  updateAgg();
 }
 
 function appendAssistantResponse(msg, opts = {}){
@@ -1245,9 +1402,9 @@ function appendAssistantResponse(msg, opts = {}){
   let bodyHtml = '';
   if (hasChart) {
     bodyHtml = `<div class="result-chart-wrap"><div id="${chartId}" class="chart-canvas compact"></div></div>`;
-    if (hasData) bodyHtml += renderDataTable(msg.data);
+    if (hasData) bodyHtml += renderDataTable(msg.data, { question: msg.question || '' });
   } else if (hasData) {
-    bodyHtml = renderDataTable(msg.data);
+    bodyHtml = renderDataTable(msg.data, { question: msg.question || '' });
   } else {
     bodyHtml = `<div class="msg-bubble">${formatBotText(msg.question || '')}</div>`;
   }
@@ -1358,6 +1515,10 @@ function appendAssistantResponse(msg, opts = {}){
       renderChartInto(div.querySelector(`#${chartId}`), updated);
     });
   }
+  // Mount Tier-1 table controls (sort, filter, ask button) on every data table
+  div.querySelectorAll('.data-table-wrap').forEach(wrap => {
+    _mountDataTableControls(wrap, msg.question || '');
+  });
   // Record this turn in frontend history for localStorage persistence
   // (fires for chart AND data-table responses so follow-ups always have context)
   if (msg.trust?.sql && msg.question) {

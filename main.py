@@ -39,6 +39,8 @@ from core.response_builder import build_assistant_response
 from core.insight import generate_followup_suggestions
 from core.graph_resolver import resolve_for_question as _graph_resolve
 from core.llm_audit import llm_audit_scope, make_llm_audit_request_id
+from core.result_cache import result_cache
+from core.query_router import should_route_to_result_cache, build_duckdb_system_prompt
 from admin import router as admin_router
 from portal import router as portal_router
 
@@ -344,6 +346,33 @@ async def handle_unregistered_user(account_id, zoom_user_id, event, adapter):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# DuckDB helper — generate SQL for in-memory result cache queries
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def _generate_duckdb_sql(question: str, system_prompt: str) -> str:
+    """
+    Use the LLM to generate a DuckDB SELECT query for the virtual `result` table.
+
+    Returns the raw SQL string, or "CANNOT_GENERATE" if the LLM signals it
+    cannot answer the question from the cached data.
+    """
+    try:
+        provider, model = resolve_provider()
+        sql = await llm_complete(
+            system=system_prompt,
+            user=question,
+            provider=provider,
+            model=model,
+            temperature=0.0,
+            max_tokens=512,
+        )
+        return (sql or "").strip()
+    except Exception as exc:
+        log.warning("_generate_duckdb_sql failed: %s", exc)
+        return "CANNOT_GENERATE"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Query pipeline — table-aware
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -436,6 +465,43 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
         await adapter.send_message(event,
             "⚠️ No tables are available to query. Contact your administrator.")
         return
+
+    # ── Step 2.5: Tier-2 DuckDB routing — answer from cached result set ──────
+    # When the user's question clearly refers to the already-returned data
+    # ("who is below average?", "rank these", "show outliers"), run the query
+    # against the in-memory DuckDB result cache instead of hitting the
+    # production database.  Fast, private, supports full analytic SQL.
+    _session_id = getattr(adapter, "session_id", None)
+    if _session_id and should_route_to_result_cache(question, result_cache.has_result(_session_id)):
+        log.info("Routing to DuckDB result cache for session %s", _session_id[:16])
+        await _send_live_stage(adapter, event, "retrieving_context", "Analysing results", "Running analytics on the previously returned data.")
+        try:
+            _duck_schema = result_cache.get_schema(_session_id)
+            _duck_sys_prompt = build_duckdb_system_prompt(_duck_schema, db_type=db_cfg.get("db_type", "azure_sql"))
+            _duck_sql = await _generate_duckdb_sql(question, _duck_sys_prompt)
+            if _duck_sql and _duck_sql.strip().upper() != "CANNOT_GENERATE":
+                await _send_live_stage(adapter, event, "executing_query", "Running query", "Querying in-memory result set.")
+                _duck_rows = result_cache.query(_session_id, _duck_sql)
+                if _duck_rows is not None:
+                    duration_ms = int(time.time() * 1000) - start_ms
+                    _log_q(account_id, question, _duck_sql, len(_duck_rows), True, "",
+                           "duckdb_cache", "duckdb", 0, 0, duration_ms,
+                           portal_user_id=pu_id, zoom_user_id=zid)
+                    _add_history = getattr(adapter, "add_to_history", None)
+                    if callable(_add_history) and _duck_rows:
+                        _add_history(
+                            question=question,
+                            sql=_duck_sql,
+                            columns=list(_duck_rows[0].keys()) if _duck_rows else [],
+                            row_count=len(_duck_rows),
+                        )
+                    await _send_results(event, adapter, question, _duck_rows, _duck_sql,
+                                        duration_ms, portal_user, account_id, db_cfg,
+                                        question_id=audit_request_id)
+                    return
+        except Exception as _duck_exc:
+            log.warning("DuckDB cache route failed, falling through to normal pipeline: %s", _duck_exc)
+        # Fall through to normal pipeline if DuckDB routing fails
 
     # ── Step 3: Metric registry — deterministic SQL for known metrics ────────
     # If the question matches a defined metric, assemble SQL without the LLM.
@@ -991,6 +1057,7 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
                     result_scope=result_scope,
                     db_cfg=db_cfg,
                     account_id=account_id,
+                    rows=rows,           # statistical signal computation — no raw values sent to LLM
                     audit_enabled=True,
                     audit_request_id=str(audit_rid),
                 )
