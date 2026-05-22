@@ -251,6 +251,8 @@ def build_join_skeleton(
     lines = [f"FROM {anchor_tbl} {anchor_alias}"]
 
     seen_nodes = {anchor_entity}
+    global_where: list[str] = []   # conditions on anchor/already-joined tables → SQL WHERE
+
     for step in join_path:
         fwd = step["_direction"] == "forward"
         from_ent = step["from_entity"]
@@ -286,28 +288,44 @@ def build_join_skeleton(
 
         # Resolve ON columns depending on direction
         if from_ent == old_ent:
-            # forward: old_ent.from_col = new_ent.to_col
             on_clause = (
                 f"{old_alias}.{_quote_col(from_col, db_type)} = "
                 f"{new_alias}.{_quote_col(to_col, db_type)}"
             )
         else:
-            # backward: new_ent.from_col = old_ent.to_col
             on_clause = (
                 f"{new_alias}.{_quote_col(from_col, db_type)} = "
                 f"{old_alias}.{_quote_col(to_col, db_type)}"
             )
 
-        # Append WHERE conditions stored on the relationship (uses entity.col notation)
+        # ── WHERE conditions stored on this relationship ──────────────────
+        # After alias substitution, split individual AND parts and route them:
+        #   • Condition starts with new_alias.  → stays in JOIN ON  (dim-side filter;
+        #     keeping it in ON preserves LEFT JOIN semantics correctly)
+        #   • Condition references anchor or already-joined table → SQL WHERE clause
+        #     (putting an anchor/fact-table filter in an ON clause of a LEFT JOIN
+        #      would NOT exclude rows — it must be a hard WHERE filter instead)
         where_sql = (step.get("where_clause") or "").strip()
         if where_sql:
-            # Replace entity name prefixes with SQL aliases (aliases built so far)
+            # Substitute entity names → SQL aliases
             for ent_name, a in aliases.items():
                 where_sql = where_sql.replace(f"{ent_name}.", f"{a}.")
-            on_clause += f" AND {where_sql}"
+            # Split on AND (case-insensitive) to evaluate each condition
+            parts = [p.strip() for p in re.split(r"\bAND\b", where_sql, flags=re.IGNORECASE) if p.strip()]
+            for part in parts:
+                if part.upper().startswith(f"{new_alias.upper()}."):
+                    # condition on the newly-joined dim → goes into ON clause
+                    on_clause += f" AND {part}"
+                else:
+                    # condition on fact/anchor or previously-joined table → SQL WHERE
+                    global_where.append(part)
 
         lines.append(f"{jtype:5} JOIN {new_tbl} {new_alias} ON {on_clause}")
         seen_nodes.add(new_ent)
+
+    # Append static WHERE clause for fact/anchor-table conditions
+    if global_where:
+        lines.append("WHERE " + "\n  AND ".join(global_where))
 
     return "\n".join(lines)
 
