@@ -16,6 +16,42 @@ import httpx
 
 log = logging.getLogger("querybot.chart")
 
+# ── Dimension / ID column detection ──────────────────────────────────────────
+# Columns whose names end with these suffixes are identifiers, not metrics.
+_DIM_SUFFIX_RE = _re.compile(
+    r"(?i)(^|_)(id|key|code|num|no|nbr|nr|ref|pk|fk|seq|idx|index|rank|number)$"
+)
+_DIM_EXACT = frozenset({"id", "key", "code", "number", "num", "no", "ref", "rank", "index"})
+
+
+def _is_dimension_col(col_name: str, values: list) -> bool:
+    """
+    Return True when a numeric column is really a dimension/identifier that
+    should NOT be plotted as a metric series.
+
+    Two checks (either is enough):
+    1. Column name ends with a known ID/key suffix  (e.g. Prescriber_ID, order_no)
+    2. High-cardinality integers: >80 % of values are unique AND all are whole
+       numbers  (IDs like 200425, 213947 pass this; aggregated dollar amounts don't)
+    """
+    if _DIM_SUFFIX_RE.search(col_name):
+        return True
+    if col_name.lower() in _DIM_EXACT:
+        return True
+    # Cardinality / integer check
+    if values:
+        try:
+            int_vals = [int(float(v)) for v in values if v is not None]
+            if len(int_vals) >= 2 and len(int_vals) == len([v for v in values if v is not None]):
+                # All values are whole numbers
+                float_vals = [float(v) for v in values if v is not None]
+                all_int = all(fv == int(fv) for fv in float_vals)
+                if all_int and len(set(int_vals)) / len(int_vals) > 0.8:
+                    return True
+        except (ValueError, TypeError):
+            pass
+    return False
+
 
 def _looks_temporal_labels(values: list[str]) -> bool:
     sample = " ".join(v.lower() for v in values[:8] if v)
@@ -60,6 +96,10 @@ def detect_chart_type(rows: list[dict]) -> Optional[str]:
         except (ValueError, TypeError):
             text_cols.append(h)
 
+    # Strip out ID/dimension columns — they parse as numeric but aren't metrics
+    numeric_cols = [h for h in numeric_cols
+                    if not _is_dimension_col(h, [r.get(h) for r in rows])]
+
     if not numeric_cols:
         return None
 
@@ -102,7 +142,7 @@ def generate_chart(rows: list[dict], chart_type: str, title: str = "Results") ->
 def _render(rows, chart_type, title, plt) -> bytes:
     headers = list(rows[0].keys())
 
-    # Separate numeric and text columns
+    # Separate numeric and text columns — exclude ID/dimension cols from metrics
     numeric_cols, text_cols = [], []
     for h in headers:
         try:
@@ -110,6 +150,8 @@ def _render(rows, chart_type, title, plt) -> bytes:
             numeric_cols.append(h)
         except (ValueError, TypeError):
             text_cols.append(h)
+    numeric_cols = [h for h in numeric_cols
+                    if not _is_dimension_col(h, [r.get(h) for r in rows])]
 
     y_col    = numeric_cols[0]
     y_values = [float(str(r.get(y_col) or 0).replace(",", "")) for r in rows]
@@ -193,9 +235,14 @@ def build_chart_payload(rows: list[dict], chart_type: str, title: str = "Results
         except (ValueError, TypeError):
             text_cols.append(h)
 
+    # Strip out ID/dimension columns — they parse as numeric but aren't metrics
+    numeric_cols = [h for h in numeric_cols
+                    if not _is_dimension_col(h, [r.get(h) for r in rows])]
+
     if not numeric_cols:
         return None
 
+    # If all numeric columns were stripped, fall back to using the first one as x-axis label
     x_key = text_cols[0] if text_cols else headers[0]
     if chart_type == "scatter":
         y_keys = numeric_cols[:2]
