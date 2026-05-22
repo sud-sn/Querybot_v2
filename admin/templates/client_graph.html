@@ -2138,22 +2138,39 @@ window.onBridgeSrcEntityChange = async function(sel) {
   if (!sel.value) return;
 
   loadEl.style.display = '';
-  const ent  = _bridgeEntities.find(e => e.entity_name === sel.value);
-  const fqn  = ent ? _resolveEntityFqn(ent) : '';
-  const cols = fqn ? await _fetchColumns(fqn) : [];
+  const ent = _bridgeEntities.find(e => e.entity_name === sel.value);
+
+  // --- 1. Try DB columns via FQN ---
+  let colNames = [];
+  const fqn = ent ? _resolveEntityFqn(ent) : '';
+  if (fqn) {
+    const cols = await _fetchColumns(fqn);
+    // _fetchColumns returns [{name, type}, ...] objects
+    colNames = cols.map(c => (typeof c === 'string' ? c : c.name)).filter(Boolean);
+  }
+
+  // --- 2. Fallback: semantic layer properties (always available for modelled entities) ---
+  if (!colNames.length && ent) {
+    try {
+      const res  = await fetch(`${API_BASE}/properties/${encodeURIComponent(ent.entity_name)}`);
+      const data = await res.json();
+      colNames = (data.properties || []).map(p => p.column_name).filter(Boolean);
+    } catch (_) {}
+  }
+
   loadEl.style.display = 'none';
 
-  if (!cols.length) {
-    rowsEl.innerHTML = '<div class="bridge-col-loading">No columns found for this table.</div>';
+  if (!colNames.length) {
+    rowsEl.innerHTML = '<div class="bridge-col-loading" style="color:var(--text-muted)">No columns found — run schema discovery or add fields to this entity first.</div>';
     return;
   }
 
-  // Column list header
+  // Column list header + rows
   rowsEl.innerHTML = `
-    <div style="display:grid;grid-template-columns:18px 1fr 28px 100px 110px;gap:.3rem;padding:2px 4px .15rem;font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text-muted)">
+    <div style="display:grid;grid-template-columns:18px 1fr 28px 100px 110px;gap:.3rem;padding:4px 4px .2rem;font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text-muted);border-bottom:1px solid var(--border);margin-bottom:.2rem">
       <span></span><span>Column</span><span></span><span>→ ${esc(keyCol)}</span><span>${esc(flagCol)} value</span>
     </div>` +
-    cols.map(c => `
+    colNames.map(c => `
       <div class="bridge-col-row">
         <input type="checkbox" class="bc-check" onchange="updateBridgePreview()">
         <span class="bridge-col-name" title="${esc(c)}">${esc(c)}</span>
