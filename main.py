@@ -472,7 +472,8 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
     # against the in-memory DuckDB result cache instead of hitting the
     # production database.  Fast, private, supports full analytic SQL.
     _session_id = getattr(adapter, "session_id", None)
-    if _session_id and should_route_to_result_cache(question, result_cache.has_result(_session_id)):
+    _cached_cols = [s["name"] for s in result_cache.get_schema(_session_id)] if _session_id else []
+    if _session_id and should_route_to_result_cache(question, result_cache.has_result(_session_id), cached_col_names=_cached_cols):
         log.info("Routing to DuckDB result cache for session %s", _session_id[:16])
         await _send_live_stage(adapter, event, "retrieving_context", "Analysing results", "Running analytics on the previously returned data.")
         try:
@@ -1550,6 +1551,70 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     if callable(load_fn):
                         load_fn(incoming)
                         log.debug("history_sync: loaded %d turn(s) from client", len(incoming))
+                continue
+
+            # ── result_chat: inline card chat — always DuckDB, no routing ────
+            # Sent by the inline mini-chat panel inside each result card.
+            # result_id tags the response so the browser renders it inside
+            # the correct card rather than the main thread.
+            if msg_type == "result_chat":
+                rc_question  = (data.get("question") or "").strip()
+                rc_result_id = (data.get("result_id") or "").strip()
+                if not rc_question:
+                    await websocket.send_json({
+                        "type": "result_chat_error",
+                        "result_id": rc_result_id,
+                        "content": "Please type a question.",
+                    })
+                    continue
+                await websocket.send_json({
+                    "type": "result_chat_typing",
+                    "result_id": rc_result_id,
+                    "active": True,
+                })
+                try:
+                    _sid = getattr(adapter, "session_id", None)
+                    if not _sid or not result_cache.has_result(_sid):
+                        await websocket.send_json({
+                            "type": "result_chat_error",
+                            "result_id": rc_result_id,
+                            "content": "No cached result found. Please run a query first.",
+                        })
+                        continue
+                    _rc_schema  = result_cache.get_schema(_sid)
+                    _rc_db_cfg  = get_client_db(account_id) or {}
+                    _rc_sys     = build_duckdb_system_prompt(_rc_schema, db_type=_rc_db_cfg.get("db_type", "azure_sql"))
+                    _rc_sql    = await _generate_duckdb_sql(rc_question, _rc_sys)
+                    if not _rc_sql or _rc_sql.strip().upper() == "CANNOT_GENERATE":
+                        await websocket.send_json({
+                            "type": "result_chat_error",
+                            "result_id": rc_result_id,
+                            "content": "I couldn't answer that from the current result. Try rephrasing or ask a fresh question.",
+                        })
+                        continue
+                    _rc_rows = result_cache.query(_sid, _rc_sql)
+                    await websocket.send_json({
+                        "type":      "result_chat_response",
+                        "result_id": rc_result_id,
+                        "question":  rc_question,
+                        "sql":       _rc_sql,
+                        "rows":      _rc_rows,
+                        "row_count": len(_rc_rows),
+                    })
+                    log.info("result_chat answered %r → %d rows via DuckDB", rc_question[:60], len(_rc_rows))
+                except Exception as _rce:
+                    log.warning("result_chat error: %s", _rce)
+                    await websocket.send_json({
+                        "type": "result_chat_error",
+                        "result_id": rc_result_id,
+                        "content": "Something went wrong. Please try again.",
+                    })
+                finally:
+                    await websocket.send_json({
+                        "type": "result_chat_typing",
+                        "result_id": rc_result_id,
+                        "active": False,
+                    })
                 continue
 
             if msg_type == "clarification_response":
