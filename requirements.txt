@@ -45,6 +45,16 @@ sentence-transformers>=3.0.0
 # ── SQL validation ─────────────────────────────────────────────────────────────
 sqlglot>=23.0.0
 
+# ── In-memory analytics (Tier-2 result cache) ──────────────────────────────────
+duckdb>=1.0.0
+# Used by core/result_cache.py to execute analytical follow-up questions
+# ("who is below average?", "rank these", "show outliers") against the
+# already-fetched result rows entirely in-process — no round-trip to the
+# production database. Supports MEDIAN(), STDDEV_POP(), PERCENTILE_CONT(),
+# CORR(), window functions (RANK, NTILE, LAG, LEAD), QUALIFY clause.
+# Falls back to a pure-Python mini-executor if not installed, but that
+# fallback only handles simple SELECT/WHERE/ORDER BY/LIMIT.
+
 # ── Charts ─────────────────────────────────────────────────────────────────────
 matplotlib>=3.9.0
 
