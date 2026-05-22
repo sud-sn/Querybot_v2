@@ -39,7 +39,14 @@
 .canvas-status{position:absolute;bottom:.75rem;left:.75rem;font-size:11px;color:var(--text-muted);background:var(--surface);border:1px solid var(--border);border-radius:5px;padding:4px 10px;pointer-events:none;z-index:10;transition:opacity .3s}
 
 /* ── SVG canvas ────────────────────────────────────────────────────────────── */
-#graph-svg{width:100%;flex:1;cursor:default;user-select:none;overflow:hidden}
+#graph-svg{width:100%;flex:1;cursor:grab;user-select:none;overflow:hidden}
+#graph-svg.is-panning{cursor:grabbing !important}
+#graph-svg.is-space{cursor:grab !important}
+/* ── Zoom controls overlay ─────────────────────────────────────────────── */
+.zoom-controls{position:absolute;bottom:.75rem;right:.75rem;display:flex;align-items:center;gap:2px;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:3px 5px;z-index:11;box-shadow:0 2px 8px rgba(0,0,0,.08)}
+.zoom-controls button{background:none;border:none;cursor:pointer;font-size:15px;line-height:1;width:24px;height:24px;border-radius:4px;display:flex;align-items:center;justify-content:center;color:var(--text);flex-shrink:0}
+.zoom-controls button:hover{background:var(--surface-2)}
+#zoom-label{font-size:11px;font-weight:600;color:var(--text-muted);min-width:40px;text-align:center;font-family:Consolas,monospace}
 .g-node{cursor:grab}
 .g-node:active{cursor:grabbing}
 .g-node.selected .node-body{stroke:var(--primary,#3B82F6);stroke-width:2.5}
@@ -242,6 +249,12 @@
     <line id="draw-line" class="draw-line" style="display:none"/>
   </svg>
   <div class="canvas-status" id="canvas-status">Ready</div>
+  <div class="zoom-controls">
+    <button onclick="zoomStep(-1)" title="Zoom out (−)">−</button>
+    <span id="zoom-label">100%</span>
+    <button onclick="zoomStep(1)" title="Zoom in (+)">+</button>
+    <button onclick="fitView()" title="Fit to screen" style="font-size:13px">⤢</button>
+  </div>
 </main>
 
 <!-- ══ DETAIL PANEL ══════════════════════════════════════════════════════════ -->
@@ -430,6 +443,25 @@ let dragging = null;       // { entity_name, startX, startY, origX, origY }
 let drawingEdge = null;    // { from_entity, startSvgX, startSvgY }
 let _dragRaf = null;       // RAF handle — ensures max one render per frame
 let _pendingDrag = null;   // latest drag position buffered for RAF
+
+// Space key — held down = pan mode (overrides node drag)
+let isSpaceDown = false;
+
+// ════════════════════════════════════════════════════════════════════════════
+// TRANSFORM HELPER — single function updates zoom-group + dot-grid + label
+// ════════════════════════════════════════════════════════════════════════════
+function _applyTransform() {
+  document.getElementById('zoom-group').setAttribute('transform',
+    `translate(${pan.x},${pan.y}) scale(${zoom})`);
+  // Make dot-grid track pan/zoom so it feels like an infinite canvas
+  const ds = 28 * zoom;
+  const tx = ((pan.x % ds) + ds) % ds;
+  const ty = ((pan.y % ds) + ds) % ds;
+  document.getElementById('dot-grid').setAttribute('patternTransform',
+    `translate(${tx},${ty}) scale(${zoom})`);
+  const lbl = document.getElementById('zoom-label');
+  if (lbl) lbl.textContent = Math.round(zoom * 100) + '%';
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 // SVG CANVAS RENDERING
@@ -629,6 +661,14 @@ function renderNodes() {
     // ── Mouse events ─────────────────────────────────────────────────────
     g.addEventListener('mousedown', ev => {
       if (ev.target.classList.contains('node-port')) return;
+      // Space held or middle-mouse button → pan instead of drag
+      if (isSpaceDown || ev.button === 1) {
+        ev.preventDefault(); ev.stopPropagation();
+        isPanning = true;
+        panStart = { x: ev.clientX - pan.x, y: ev.clientY - pan.y };
+        document.getElementById('graph-svg').classList.add('is-panning');
+        return;
+      }
       startDrag(ev, e.entity_name);
     });
     g.addEventListener('click', ev => {
@@ -812,8 +852,8 @@ document.getElementById('graph-svg').addEventListener('mousemove', ev => {
     const svgPt = svgPoint(ev);
     const dx = svgPt.x - dragging.startX, dy = svgPt.y - dragging.startY;
     _pendingDrag = {
-      newX: Math.max(0, dragging.origX + dx),
-      newY: Math.max(0, dragging.origY + dy),
+      newX: dragging.origX + dx,
+      newY: dragging.origY + dy,
       entityName: dragging.entity_name
     };
     if (!_dragRaf) _dragRaf = requestAnimationFrame(_tickDrag);
@@ -833,7 +873,7 @@ document.getElementById('graph-svg').addEventListener('mouseup', async ev => {
     _pendingDrag = null;
     const e = graph.entities.find(x => x.entity_name === dragging.entity_name);
     dragging = null;
-    document.getElementById('graph-svg').style.cursor = 'default';
+    document.getElementById('graph-svg').style.cursor = 'grab';
     renderGraph(); // single full render on drop to reconcile labels/ports
     await api('POST', `${API_BASE}/entities`, e);
     setStatus('Position saved');
@@ -879,42 +919,67 @@ function findEntityAt(x, y) {
 let isPanning = false, panStart = null;
 
 document.getElementById('graph-svg').addEventListener('mousedown', ev => {
-  if (ev.target.id === 'graph-svg' || ev.target.id === 'zoom-group') {
+  // Middle-mouse always pans (even over nodes, edges)
+  if (ev.button === 1) { ev.preventDefault(); }
+  const onBackground = ev.target.id === 'graph-svg' || ev.target.id === 'zoom-group'
+    || ev.target.tagName === 'rect' && ev.target.getAttribute('fill') === 'url(#dot-grid)';
+  if (onBackground || ev.button === 1 || isSpaceDown) {
     isPanning = true;
     panStart = { x: ev.clientX - pan.x, y: ev.clientY - pan.y };
-    selectedEntity = null; selectedRelId = null;
-    document.getElementById('del-btn').style.display = 'none';
-    resetDetail();
-    renderGraph();
+    document.getElementById('graph-svg').classList.add('is-panning');
+    // Deselect only on plain left-click on background (not Space or middle)
+    if (onBackground && ev.button === 0 && !isSpaceDown) {
+      selectedEntity = null; selectedRelId = null;
+      document.getElementById('del-btn').style.display = 'none';
+      resetDetail();
+      renderGraph();
+    }
   }
 });
 document.addEventListener('mousemove', ev => {
   if (!isPanning) return;
   pan.x = ev.clientX - panStart.x;
   pan.y = ev.clientY - panStart.y;
-  document.getElementById('zoom-group').setAttribute('transform',`translate(${pan.x},${pan.y}) scale(${zoom})`);
+  _applyTransform();
 });
-document.addEventListener('mouseup', () => { isPanning = false; if (!dragging) document.getElementById('graph-svg').style.cursor = 'default'; });
+document.addEventListener('mouseup', () => {
+  isPanning = false;
+  const svg = document.getElementById('graph-svg');
+  svg.classList.remove('is-panning');
+  if (!dragging) svg.style.cursor = '';  // let CSS .grab take over
+});
 
 document.getElementById('graph-svg').addEventListener('wheel', ev => {
   ev.preventDefault();
   const delta = ev.deltaY > 0 ? 0.9 : 1.1;
-  zoom = Math.max(0.2, Math.min(3, zoom * delta));
-  document.getElementById('zoom-group').setAttribute('transform',`translate(${pan.x},${pan.y}) scale(${zoom})`);
+  const newZoom = Math.max(0.2, Math.min(3, zoom * delta));
+  // Zoom towards the mouse cursor — keep the SVG point under the cursor fixed
+  const rect = document.getElementById('graph-svg').getBoundingClientRect();
+  const mx = ev.clientX - rect.left;
+  const my = ev.clientY - rect.top;
+  pan.x = mx - (mx - pan.x) * (newZoom / zoom);
+  pan.y = my - (my - pan.y) * (newZoom / zoom);
+  zoom = newZoom;
+  _applyTransform();
 }, { passive: false });
 
 function fitView() {
-  if (!graph.entities.length) return;
-  const xs = graph.entities.map(e => e.pos_x || 120);
-  const ys = graph.entities.map(e => e.pos_y || 120);
+  // Only fit to entities that are currently visible (respects schema filter)
+  const visible = (typeof activeSchemaFilter !== 'undefined' && activeSchemaFilter)
+    ? graph.entities.filter(e => (e.schema_name || '') === activeSchemaFilter)
+    : graph.entities;
+  if (!visible.length) return;
+  const xs = visible.map(e => e.pos_x || 120);
+  const ys = visible.map(e => e.pos_y || 120);
   const minX = Math.min(...xs), maxX = Math.max(...xs) + NODE_W;
   const minY = Math.min(...ys), maxY = Math.max(...ys) + NODE_H;
   const svg = document.getElementById('graph-svg');
   const sw = svg.clientWidth, sh = svg.clientHeight;
-  zoom = Math.min(sw / (maxX - minX + 80), sh / (maxY - minY + 80), 2);
+  const pad = 60;
+  zoom = Math.min(sw / (maxX - minX + pad * 2), sh / (maxY - minY + pad * 2), 2);
   pan.x = (sw - (maxX - minX) * zoom) / 2 - minX * zoom;
   pan.y = (sh - (maxY - minY) * zoom) / 2 - minY * zoom;
-  document.getElementById('zoom-group').setAttribute('transform',`translate(${pan.x},${pan.y}) scale(${zoom})`);
+  _applyTransform();
 }
 
 function autoLayout() {
@@ -1004,7 +1069,7 @@ document.getElementById('edge-ctx-delete').addEventListener('click', async () =>
 document.addEventListener('click', ev => {
   if (!_ctxMenu.contains(ev.target)) hideEdgeContextMenu();
 });
-document.addEventListener('keydown', ev => { if (ev.key === 'Escape') hideEdgeContextMenu(); });
+// (Escape for context menu is handled in the main keyboard shortcut block below)
 
 // ════════════════════════════════════════════════════════════════════════════
 // DETAIL PANEL — ENTITY
@@ -1698,17 +1763,65 @@ window.confirmProp = async function(entityName, colName) {
   renderEntityDetail(entityName);
 };
 
+// ── Zoom step (for +/− buttons) ────────────────────────────────────────────
+window.zoomStep = function(dir) {
+  const newZoom = Math.max(0.2, Math.min(3, zoom * (dir > 0 ? 1.2 : 1 / 1.2)));
+  // Zoom towards canvas centre
+  const svg = document.getElementById('graph-svg');
+  const mx = svg.clientWidth / 2, my = svg.clientHeight / 2;
+  pan.x = mx - (mx - pan.x) * (newZoom / zoom);
+  pan.y = my - (my - pan.y) * (newZoom / zoom);
+  zoom = newZoom;
+  _applyTransform();
+};
+
 // Keyboard shortcuts
 document.addEventListener('keydown', ev => {
+  // Never fire shortcuts when an input/textarea is focused
+  const inField = document.activeElement.tagName === 'INPUT'
+               || document.activeElement.tagName === 'TEXTAREA'
+               || document.activeElement.tagName === 'SELECT';
+
+  // Space — enable pan-anywhere mode
+  if (ev.key === ' ' && !inField) {
+    ev.preventDefault();
+    if (!isSpaceDown) {
+      isSpaceDown = true;
+      document.getElementById('graph-svg').classList.add('is-space');
+    }
+    return;
+  }
+
   if (ev.key === 'Delete' || ev.key === 'Backspace') {
-    if (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA') return;
+    if (inField) return;
     if (selectedEntity || selectedRelId) deleteSelected();
   }
   if (ev.key === 'Escape') {
     closeEntityModal(); closeRelModal();
+    hideEdgeContextMenu();
     selectedEntity = null; selectedRelId = null;
     document.getElementById('del-btn').style.display = 'none';
     renderGraph(); resetDetail();
+  }
+  // +/= zoom in, -/_ zoom out
+  if ((ev.key === '+' || ev.key === '=') && !inField) { ev.preventDefault(); zoomStep(1); }
+  if ((ev.key === '-' || ev.key === '_') && !inField) { ev.preventDefault(); zoomStep(-1); }
+  // 0 — reset zoom to 100%
+  if (ev.key === '0' && !inField) {
+    ev.preventDefault();
+    const svg = document.getElementById('graph-svg');
+    const mx = svg.clientWidth / 2, my = svg.clientHeight / 2;
+    pan.x = mx - (mx - pan.x) * (1 / zoom);
+    pan.y = my - (my - pan.y) * (1 / zoom);
+    zoom = 1;
+    _applyTransform();
+  }
+});
+
+document.addEventListener('keyup', ev => {
+  if (ev.key === ' ') {
+    isSpaceDown = false;
+    document.getElementById('graph-svg').classList.remove('is-space');
   }
 });
 
@@ -2216,6 +2329,7 @@ if (activeSchemaFilter) {
 renderGraph();    // respects activeSchemaFilter (hides other schema nodes)
 updateSidebar();  // filters sidebar entity list to active schema
 updateRelList();  // filters rel list to active schema
+_applyTransform(); // sets dot-grid + zoom label on first paint
 if (graph.entities.length > 0) fitView();
 </script>
 {% endblock %}
