@@ -283,8 +283,6 @@
 .data-table-toolbar{display:flex;align-items:center;gap:.5rem;padding:6px 10px;background:color-mix(in srgb,var(--surface-2) 70%, transparent);border-bottom:1px solid var(--border);flex-wrap:wrap}
 .data-table-filter{flex:1;min-width:130px;max-width:260px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:12px;outline:none}
 .data-table-filter:focus{border-color:var(--primary);box-shadow:0 0 0 2px color-mix(in srgb,var(--primary) 18%, transparent)}
-.data-table-ask{padding:4px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--primary);font-size:11.5px;font-weight:700;cursor:pointer;white-space:nowrap;transition:background .15s}
-.data-table-ask:hover{background:color-mix(in srgb,var(--primary-soft) 30%, var(--surface))}
 .data-table-agg{font-size:11px;color:var(--text-muted);margin-left:auto;white-space:nowrap}
 .data-table-scroll{max-height:340px;overflow:auto}
 .data-table{width:100%;border-collapse:collapse;font-size:12.5px;font-variant-numeric:tabular-nums}
@@ -297,6 +295,32 @@
 .data-table tbody tr:hover td{background:color-mix(in srgb,var(--primary-soft) 18%, transparent)}
 .data-table tbody tr.dt-hidden{display:none}
 .data-table-foot{padding:6px 12px;font-size:11px;color:var(--text-muted);background:color-mix(in srgb,var(--surface-2) 35%, transparent);border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;gap:.5rem;flex-wrap:wrap}
+/* ── Inline result chat ──────────────────────────────────────────────────── */
+.rc-toggle{display:inline-flex;align-items:center;gap:.4rem;padding:5px 12px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--primary);font-size:12px;font-weight:700;cursor:pointer;transition:background .15s,border-color .15s}
+.rc-toggle:hover{background:color-mix(in srgb,var(--primary-soft) 25%, var(--surface));border-color:var(--primary)}
+.rc-toggle.open{background:color-mix(in srgb,var(--primary-soft) 20%, var(--surface));border-color:var(--primary)}
+.rc-panel{display:none;flex-direction:column;border-top:1px solid var(--border);background:color-mix(in srgb,var(--surface-2) 60%, transparent);border-radius:0 0 var(--radius) var(--radius);overflow:hidden}
+.rc-panel.open{display:flex}
+.rc-thread{display:flex;flex-direction:column;gap:.55rem;padding:.75rem .9rem;max-height:320px;overflow-y:auto}
+.rc-bubble{max-width:88%;padding:.55rem .85rem;border-radius:10px;font-size:13px;line-height:1.6}
+.rc-bubble.user{align-self:flex-end;background:var(--primary);color:#fff;border-bottom-right-radius:3px}
+.rc-bubble.bot{align-self:flex-start;background:var(--surface);border:1px solid var(--border);color:var(--text);border-bottom-left-radius:3px}
+.rc-bubble.bot.error{background:color-mix(in srgb,#ef4444 8%, var(--surface));border-color:#ef4444;color:#ef4444}
+.rc-typing{align-self:flex-start;padding:.4rem .7rem;font-size:12px;color:var(--text-muted);font-style:italic}
+.rc-table-wrap{margin-top:.45rem;border-radius:7px;overflow:hidden;border:1px solid var(--border)}
+.rc-table{width:100%;border-collapse:collapse;font-size:12px;font-variant-numeric:tabular-nums}
+.rc-table thead th{background:var(--surface-2);color:var(--text-soft);font-weight:800;font-size:10.5px;letter-spacing:.04em;text-transform:uppercase;padding:6px 10px;border-bottom:1px solid var(--border);white-space:nowrap}
+.rc-table tbody td{padding:5px 10px;border-bottom:1px solid color-mix(in srgb,var(--border) 35%, transparent);color:var(--text);white-space:nowrap}
+.rc-table tbody tr:last-child td{border-bottom:none}
+.rc-table tbody tr:hover td{background:color-mix(in srgb,var(--primary-soft) 14%, transparent)}
+.rc-foot{padding:4px 10px;font-size:10.5px;color:var(--text-muted);background:color-mix(in srgb,var(--surface-2) 40%, transparent);border-top:1px solid var(--border)}
+.rc-input-row{display:flex;gap:.4rem;padding:.55rem .7rem;border-top:1px solid var(--border);background:var(--surface);align-items:center}
+.rc-input{flex:1;padding:6px 10px;border-radius:7px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);font-size:13px;outline:none;resize:none;min-height:36px;max-height:100px;line-height:1.5}
+.rc-input:focus{border-color:var(--primary);box-shadow:0 0 0 2px color-mix(in srgb,var(--primary) 15%, transparent)}
+.rc-send{padding:6px 14px;border-radius:7px;border:none;background:var(--primary);color:#fff;font-size:12.5px;font-weight:700;cursor:pointer;white-space:nowrap;transition:opacity .15s}
+.rc-send:hover{opacity:.88}
+.rc-send:disabled{opacity:.45;cursor:default}
+.rc-hint{padding:.4rem .9rem;font-size:11px;color:var(--text-muted);border-top:1px solid var(--border);background:color-mix(in srgb,var(--surface-2) 40%, transparent)}
 .action-row{display:flex;gap:.5rem;flex-wrap:wrap;margin-top:.2rem}.analysis-card{background:linear-gradient(180deg,color-mix(in srgb,var(--surface) 98%, var(--primary-soft) 2%),var(--surface));border:1px solid var(--border);border-radius:var(--radius);padding:1rem;box-shadow:var(--shadow)}.analysis-title{font-size:15px;font-weight:850;color:var(--text);margin-bottom:.4rem}.analysis-body{font-size:13px;line-height:1.7;color:var(--text)}.analysis-secondary{margin-top:.7rem;padding:.8rem .9rem;border-radius:var(--radius);background:var(--surface-2);border:1px solid var(--border);font-size:12px;line-height:1.65;color:var(--text-soft)}.analysis-list{margin:.8rem 0 0 1rem;color:var(--text);font-size:12px;line-height:1.7}.analysis-list li+li{margin-top:.35rem}.analysis-meta{margin-top:.45rem;font-size:11px;color:var(--text-muted)}
 .answer-headline{font-size:18px;font-weight:850;letter-spacing:-.02em;color:var(--text);line-height:1.35;margin-bottom:.45rem}
 .answer-chip{display:inline-flex;align-items:center;gap:.4rem;padding:7px 10px;border-radius:999px;background:var(--surface-2);border:1px solid var(--border);font-size:11px;font-weight:800;color:var(--text-soft);margin-bottom:.8rem}
@@ -1245,7 +1269,6 @@ function renderDataTable(data, { question = '' } = {}) {
 
   const toolbarHtml = `<div class="data-table-toolbar">
     <input class="data-table-filter" type="text" placeholder="Filter rows…" aria-label="Filter table rows" data-dt="${dtId}">
-    <button class="data-table-ask" type="button" data-dt-ask="${dtId}">💬 Ask about these results</button>
     <span class="data-table-agg" id="${dtId}-agg"></span>
   </div>`;
 
@@ -1355,26 +1378,134 @@ function _mountDataTableControls(wrapEl, question) {
     });
   }
 
-  // "Ask about these results" shortcut — pre-fills the input with a prompt prefix
-  const askBtn = wrapEl.querySelector(`[data-dt-ask="${dtId}"]`);
-  if (askBtn) {
-    askBtn.addEventListener('click', () => {
-      const inp = document.getElementById('chat-input');
-      if (!inp) return;
-      // Pre-fill with a useful prefix only if the box is currently empty
-      if (!inp.value.trim()) {
-        inp.value = 'From these results, ';
-      }
-      inp.focus();
-      // Place cursor at end
-      const len = inp.value.length;
-      inp.setSelectionRange(len, len);
-      inp.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    });
-  }
-
   updateAgg();
 }
+
+// ── Inline result card chat ───────────────────────────────────────────────────
+function _mountResultChat(cardEl, rcId) {
+  const toggleBtn = cardEl.querySelector(`[data-rc-toggle="${rcId}"]`);
+  const panel     = cardEl.querySelector(`#${rcId}`);
+  const thread    = cardEl.querySelector(`#${rcId}-thread`);
+  const input     = cardEl.querySelector(`#${rcId}-input`);
+  const sendBtn   = cardEl.querySelector(`#${rcId}-send`);
+  if (!toggleBtn || !panel || !thread || !input || !sendBtn) return;
+
+  // Toggle panel open/close
+  toggleBtn.addEventListener('click', () => {
+    const isOpen = panel.classList.toggle('open');
+    toggleBtn.classList.toggle('open', isOpen);
+    toggleBtn.textContent = isOpen ? '✕ Close' : '💬 Ask about this result';
+    if (isOpen) {
+      input.focus();
+      panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  });
+
+  // Auto-resize textarea
+  input.addEventListener('input', () => {
+    input.style.height = 'auto';
+    input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+  });
+
+  // Send on Enter (Shift+Enter = newline)
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      _rcSend();
+    }
+  });
+  sendBtn.addEventListener('click', _rcSend);
+
+  function _rcSend() {
+    const q = input.value.trim();
+    if (!q) return;
+    if (!wsReady) { _rcAppend('error', 'Connection not ready. Please wait.'); return; }
+
+    // Render user bubble
+    _rcAppend('user', q);
+    input.value = '';
+    input.style.height = 'auto';
+    sendBtn.disabled = true;
+
+    // Show typing indicator
+    const typingEl = document.createElement('div');
+    typingEl.className = 'rc-typing';
+    typingEl.textContent = 'Thinking…';
+    typingEl.id = `${rcId}-typing`;
+    thread.appendChild(typingEl);
+    thread.scrollTop = thread.scrollHeight;
+
+    // Send to server
+    ws.send(JSON.stringify({ type: 'result_chat', result_id: rcId, question: q }));
+  }
+
+  function _rcAppend(role, content) {
+    // content can be a string (text bubble) or a DOM element
+    const bubble = document.createElement('div');
+    bubble.className = `rc-bubble ${role}`;
+    if (typeof content === 'string') {
+      bubble.textContent = content;
+    } else {
+      bubble.appendChild(content);
+    }
+    thread.appendChild(bubble);
+    thread.scrollTop = thread.scrollHeight;
+  }
+
+  function _rcRenderTable(rows) {
+    if (!rows || !rows.length) return null;
+    const headers = Object.keys(rows[0]);
+    const headHtml = headers.map(h => `<th>${escHtml(h)}</th>`).join('');
+    const bodyHtml = rows.map(r =>
+      '<tr>' + headers.map(h => `<td>${escHtml(String(r[h] ?? ''))}</td>`).join('') + '</tr>'
+    ).join('');
+    const wrap = document.createElement('div');
+    wrap.innerHTML = `
+      <div class="rc-table-wrap">
+        <table class="rc-table"><thead><tr>${headHtml}</tr></thead><tbody>${bodyHtml}</tbody></table>
+        <div class="rc-foot">${rows.length.toLocaleString()} row${rows.length === 1 ? '' : 's'}</div>
+      </div>`;
+    return wrap.firstElementChild;
+  }
+
+  // Register this panel to receive server messages tagged with rcId
+  _rcPanels[rcId] = {
+    onTyping(active) {
+      const el = document.getElementById(`${rcId}-typing`);
+      if (!active) {
+        el?.remove();
+        sendBtn.disabled = false;
+        input.focus();
+      }
+    },
+    onResponse(msg) {
+      const rows = msg.rows || [];
+      if (!rows.length) {
+        _rcAppend('bot', 'No rows matched that query in the current result.');
+        return;
+      }
+      const tableEl = _rcRenderTable(rows);
+      if (tableEl) {
+        // Wrap in a bot bubble
+        const bubble = document.createElement('div');
+        bubble.className = 'rc-bubble bot';
+        bubble.style.padding = '0';
+        bubble.style.background = 'none';
+        bubble.style.border = 'none';
+        bubble.style.maxWidth = '100%';
+        bubble.appendChild(tableEl);
+        thread.appendChild(bubble);
+        thread.scrollTop = thread.scrollHeight;
+      }
+    },
+    onError(msg) {
+      _rcAppend('bot error', msg.content || 'Something went wrong.');
+    },
+  };
+}
+
+// Registry of active inline chat panels keyed by rcId
+const _rcPanels = {};
 
 function appendAssistantResponse(msg, opts = {}){
   hideWelcome();
@@ -1441,6 +1572,9 @@ function appendAssistantResponse(msg, opts = {}){
 
   const trustHtml = `<details class="trust-box"><summary>View query details</summary><div class="trust-grid"><div class="trust-item"><div class="trust-k">Rows</div><div class="trust-v">${escHtml(String(trust.row_count ?? ''))}</div></div><div class="trust-item"><div class="trust-k">Runtime</div><div class="trust-v">${escHtml(trust.duration_label || '')}</div></div><div class="trust-item"><div class="trust-k">Data source</div><div class="trust-v">${escHtml((trust.data_source || '').toUpperCase())}</div></div><div class="trust-item"><div class="trust-k">Scope</div><div class="trust-v">${escHtml(trust.scope_badge || resultScope.badge || '')}</div></div></div><div class="sql-box">${escHtml(trust.sql || '')}</div></details>`;
 
+  // Each result card gets a unique ID for the inline chat
+  const rcId = `rc-${chartCounter}`;
+
   const div = document.createElement('div');
   div.className = 'msg msg-bot';
   div.innerHTML =
@@ -1463,8 +1597,18 @@ function appendAssistantResponse(msg, opts = {}){
           <div class="msg-actions">
             <button class="msg-action" type="button" data-copy="result">Copy result</button>
             ${pinBtnHtml}
+            <button class="rc-toggle" type="button" data-rc-toggle="${rcId}">💬 Ask about this result</button>
           </div>
           ${trustHtml}
+        </div>
+      </div>
+      <div class="rc-panel" id="${rcId}">
+        <div class="rc-hint">Ask any question about the data above — answers stay here, no new database query needed.</div>
+        <div class="rc-thread" id="${rcId}-thread"></div>
+        <div class="rc-input-row">
+          <textarea class="rc-input" id="${rcId}-input" rows="1"
+            placeholder="e.g. what is the avg? who is above average? show top 5…"></textarea>
+          <button class="rc-send" type="button" id="${rcId}-send">Ask</button>
         </div>
       </div>
       ${followUpHtml}
@@ -1517,6 +1661,8 @@ function appendAssistantResponse(msg, opts = {}){
   div.querySelectorAll('.data-table-wrap').forEach(wrap => {
     _mountDataTableControls(wrap, msg.question || '');
   });
+  // Wire inline result card chat
+  _mountResultChat(div, rcId);
   // Record this turn in frontend history for localStorage persistence
   // (fires for chart AND data-table responses so follow-ups always have context)
   if (msg.trust?.sql && msg.question) {
@@ -2218,6 +2364,14 @@ function connect(){
       showMascotError();
       if (window._composerMascotError) window._composerMascotError('⚠️ Something went wrong — please retry');
       appendSystem('⚠️ ' + msg.content);
+    } else if (msg.type === 'result_chat_typing') {
+      _rcPanels[msg.result_id]?.onTyping(!!msg.active);
+    } else if (msg.type === 'result_chat_response') {
+      _rcPanels[msg.result_id]?.onTyping(false);
+      _rcPanels[msg.result_id]?.onResponse(msg);
+    } else if (msg.type === 'result_chat_error') {
+      _rcPanels[msg.result_id]?.onTyping(false);
+      _rcPanels[msg.result_id]?.onError(msg);
     }
   };
   ws.onclose = (evt) => {
