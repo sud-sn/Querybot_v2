@@ -200,6 +200,81 @@ def _looks_like_new_query(text: str, original_q: str = "") -> bool:
 
 
 
+def _extract_kb_synonym_injection(context: str) -> str:
+    """
+    Scan retrieved KB text for ## Business Synonyms and ## Key Metrics sections
+    and build a compact 'Plain-English term → exact column' injection block.
+
+    This fires at every query — even follow-ups — because it works directly from
+    the already-retrieved KB chunks without needing the glossary DB to be populated.
+    It is the last-resort guard against the LLM inventing CamelCase column names.
+    """
+    import re as _re
+
+    synonym_rows: list[tuple[str, str]] = []   # (plain-english terms, column)
+    metric_rows:  list[tuple[str, str]] = []   # (metric name, column)
+
+    in_synonyms = False
+    in_metrics  = False
+
+    for line in context.splitlines():
+        stripped = line.strip()
+
+        # KB chunk separator — reset section state
+        if stripped == "---":
+            in_synonyms = False
+            in_metrics  = False
+            continue
+
+        # Section detection
+        if stripped.startswith("## ") or stripped.startswith("### "):
+            header = stripped.lstrip("#").strip().lower()
+            in_synonyms = header.startswith("business synonym")
+            in_metrics  = header.startswith("key metric")
+            continue
+
+        # Business Synonyms table rows: | Plain English | Column | Notes |
+        if in_synonyms and stripped.startswith("|") and "---" not in stripped:
+            cells = [c.strip() for c in stripped.strip("|").split("|")]
+            if len(cells) >= 2:
+                eng  = cells[0].strip("`").strip()
+                col  = cells[1].strip("`").strip()
+                if col and eng and eng.lower() not in ("plain english", "column", ""):
+                    synonym_rows.append((eng, col))
+
+        # Key Metrics lines: - **Metric name**: `COLUMN_NAME` — ...
+        if in_metrics and stripped.startswith("-"):
+            m = _re.match(
+                r"-\s*\*\*([^*]+)\*\*\s*:?\s*`?([A-Za-z_][A-Za-z0-9_]*)`?",
+                stripped,
+            )
+            if m:
+                metric_name = m.group(1).strip()
+                col_name    = m.group(2).strip()
+                if metric_name and col_name:
+                    metric_rows.append((metric_name, col_name))
+
+    if not synonym_rows and not metric_rows:
+        return ""
+
+    lines = [
+        "COLUMN SYNONYM MAP (authoritative — use EXACT column names shown here):",
+        "When the user's question mentions any of the plain-English terms below, "
+        "use the exact column name on the right. Do NOT invent CamelCase variants.",
+    ]
+    seen_cols: set[str] = set()
+    for eng, col in synonym_rows[:25]:
+        if col.upper() not in seen_cols:
+            lines.append(f"  • '{eng}' → exact column: {col}")
+            seen_cols.add(col.upper())
+    for metric, col in metric_rows[:15]:
+        if col.upper() not in seen_cols:
+            lines.append(f"  • '{metric}' → exact column: {col}")
+            seen_cols.add(col.upper())
+
+    return "\n".join(lines) + "\n"
+
+
 async def _send_live_stage(adapter, event, stage: str, label: str, detail: str = "") -> None:
     sender = getattr(adapter, "send_status", None)
     if callable(sender):
@@ -489,11 +564,17 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
             f"with the {schema_hint} schema in the generated SQL."
         )
 
+    # Scan already-retrieved KB for Business Synonyms / Key Metrics → compact map.
+    # This runs even when the glossary DB is empty and guards against the LLM
+    # inventing CamelCase column names for well-known business terms.
+    kb_synonym_injection = _extract_kb_synonym_injection(context)
+
     context_parts = [
         part for part in (
             selected_schema_injection,
             table_hint_injection,
             term_injection,
+            kb_synonym_injection,
             schema_grounded_hint,
             generic_hints,
             metric_formula_context,
@@ -670,12 +751,32 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
 
     if retryable:
         if exec_error is not None:
+            import re as _re_retry
+            # Extract column name(s) flagged as invalid by the DB engine.
+            # SQL Server / Azure SQL format: "Invalid column name 'XYZ'"
+            bad_cols = _re_retry.findall(
+                r"Invalid column name '([^']+)'", exec_error, _re_retry.IGNORECASE
+            )
+            col_fix_note = ""
+            if bad_cols:
+                cols_list = ", ".join(f"'{c}'" for c in bad_cols)
+                col_fix_note = (
+                    f"\n⚠️  COLUMN NAME ERROR: The column(s) {cols_list} do NOT exist in the database.\n"
+                    f"These column names were invented — they are NOT in the schema.\n"
+                    f"MANDATORY: Look at the 'COLUMN SYNONYM MAP' and 'BUSINESS TERM DEFINITIONS' "
+                    f"sections in the system prompt to find the EXACT column name for each concept.\n"
+                    f"Also check the 'Session context' section — if the previous turn returned a column "
+                    f"that represents the same concept, reuse that EXACT column name verbatim.\n"
+                    f"NEVER guess, never use CamelCase variants of column names.\n"
+                )
             retry_user = (
                 f"The following SQL failed with this error:\n"
                 f"SQL: {sql}\n"
-                f"Error: {exec_error}\n\n"
+                f"Error: {exec_error}\n"
+                f"{col_fix_note}\n"
                 f"The original question was: {question}\n\n"
-                f"Rewrite the SQL to fix the error. "
+                f"Rewrite the SQL to fix the error. Use ONLY column names that appear "
+                f"verbatim in the Knowledge Base (system prompt). "
                 f"Return only the corrected SQL, no explanation."
             )
         else:
