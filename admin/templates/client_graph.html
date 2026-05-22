@@ -1602,7 +1602,15 @@ function updateSidebar() {
     list.innerHTML = '<div class="gs-empty">No entities yet.<br>Click <strong>+ Add</strong> to define your first business object.</div>';
     return;
   }
-  list.innerHTML = graph.entities.map(e => `
+  // When a schema filter is active, show only entities in that schema
+  const visibleEntities = activeSchemaFilter
+    ? graph.entities.filter(e => (e.schema_name || '') === activeSchemaFilter)
+    : graph.entities;
+  if (!visibleEntities.length) {
+    list.innerHTML = `<div class="gs-empty">No entities in schema <strong>${esc(activeSchemaFilter)}</strong> yet.</div>`;
+    return;
+  }
+  list.innerHTML = visibleEntities.map(e => `
     <div class="gs-entity-item" id="sib-${e.entity_name.replace(/ /g,'_')}"
          onclick="selectEntity('${esc(e.entity_name)}')"
          ${selectedEntity === e.entity_name ? 'style="background:color-mix(in srgb,var(--primary) 10%,var(--surface));border-left:3px solid var(--primary)"' : ''}>
@@ -1723,22 +1731,41 @@ function _rebuildSchemaFilterDropdown() {
 window.applySchemaFilter = function() {
   activeSchemaFilter = document.getElementById('schema-filter').value;
   localStorage.setItem(`qb_schema_filter_${ACCOUNT_ID}`, activeSchemaFilter);
+  // Deselect anything that belongs to a now-hidden schema
+  if (activeSchemaFilter) {
+    if (selectedEntity) {
+      const e = graph.entities.find(e => e.entity_name === selectedEntity);
+      if (e && (e.schema_name || '') !== activeSchemaFilter) { selectedEntity = null; resetDetail(); }
+    }
+    if (selectedRelId) {
+      const r = graph.relationships.find(r => r.id === selectedRelId);
+      if (r) {
+        const fe = graph.entities.find(e => e.entity_name === r.from_entity);
+        const te = graph.entities.find(e => e.entity_name === r.to_entity);
+        if ((fe && (fe.schema_name||'') !== activeSchemaFilter) ||
+            (te && (te.schema_name||'') !== activeSchemaFilter)) { selectedRelId = null; resetDetail(); }
+      }
+    }
+  }
   renderGraph();
+  updateSidebar();
   updateRelList();
+  // Auto-fit when switching to a specific schema so new nodes fill the viewport
+  if (activeSchemaFilter) window.setTimeout(fitView, 60);
 };
 
-// Wrap the existing renderGraph to respect the filter
+// Wrap the existing renderGraph to respect the schema filter —
+// nodes/edges for other schemas are fully hidden (not just dimmed)
 const _origRenderGraph = renderGraph;
 renderGraph = function() {
   _origRenderGraph();
   if (!activeSchemaFilter) return;
-  // Dim nodes that don't belong to the active schema
   document.querySelectorAll('.g-node').forEach(g => {
     const ename = g.getAttribute('data-entity');
     const ent   = graph.entities.find(e => e.entity_name === ename);
-    const hidden = ent && activeSchemaFilter && (ent.schema_name || '') !== activeSchemaFilter;
-    g.style.opacity  = hidden ? '0.15' : '';
-    g.style.pointerEvents = hidden ? 'none' : '';
+    const hide  = ent && (ent.schema_name || '') !== activeSchemaFilter;
+    g.style.display       = hide ? 'none' : '';
+    g.style.pointerEvents = hide ? 'none' : '';
   });
   document.querySelectorAll('.g-edge').forEach(g => {
     const relId = parseInt(g.getAttribute('data-rel'));
@@ -1746,12 +1773,10 @@ renderGraph = function() {
     if (!rel) return;
     const fe = graph.entities.find(e => e.entity_name === rel.from_entity);
     const te = graph.entities.find(e => e.entity_name === rel.to_entity);
-    const hidden = activeSchemaFilter && (
-      (fe && (fe.schema_name || '') !== activeSchemaFilter) ||
-      (te && (te.schema_name || '') !== activeSchemaFilter)
-    );
-    g.style.opacity = hidden ? '0.1' : '';
-    g.style.pointerEvents = hidden ? 'none' : '';
+    const hide = (fe && (fe.schema_name || '') !== activeSchemaFilter) ||
+                 (te && (te.schema_name || '') !== activeSchemaFilter);
+    g.style.display       = hide ? 'none' : '';
+    g.style.pointerEvents = hide ? 'none' : '';
   });
 };
 
@@ -1999,10 +2024,6 @@ window.onRelEntityChange = async function(side) {
 // Sidebar: group relationships by from→to pair; show join count + cardinality
 function updateRelList() {
   const list = document.getElementById('rel-list');
-  if (!graph.relationships.length) {
-    list.innerHTML = '<div class="gs-empty" style="font-size:11px">No relationships yet.<br>Hover a node and drag from its port.</div>';
-    return;
-  }
 
   const activeRels = activeSchemaFilter
     ? graph.relationships.filter(r => {
@@ -2012,6 +2033,13 @@ function updateRelList() {
                (!te || (te.schema_name || '') === activeSchemaFilter);
       })
     : graph.relationships;
+
+  if (!activeRels.length) {
+    list.innerHTML = activeSchemaFilter
+      ? `<div class="gs-empty" style="font-size:11px">No relationships in schema <strong>${esc(activeSchemaFilter)}</strong> yet.</div>`
+      : '<div class="gs-empty" style="font-size:11px">No relationships yet.<br>Hover a node and drag from its port.</div>';
+    return;
+  }
 
   // Group by from→to pair — keep first rel's id for selectRel
   const groups = new Map();
@@ -2181,12 +2209,13 @@ window.deduplicateRelationships = async function() {
 
 // Init
 loadSchemaTables();
-renderGraph();
-updateRelList();   // replace server-rendered list with grouped JS view
 _rebuildSchemaFilterDropdown();
 if (activeSchemaFilter) {
   document.getElementById('schema-filter').value = activeSchemaFilter;
 }
+renderGraph();    // respects activeSchemaFilter (hides other schema nodes)
+updateSidebar();  // filters sidebar entity list to active schema
+updateRelList();  // filters rel list to active schema
 if (graph.entities.length > 0) fitView();
 </script>
 {% endblock %}
