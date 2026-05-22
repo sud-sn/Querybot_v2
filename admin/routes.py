@@ -1856,18 +1856,19 @@ async def graph_api_entity_upsert(request: Request, account_id: str):
         raise HTTPException(status_code=401)
     data = await request.json()
     eid = store.save_entity(
-        account_id   = account_id,
-        entity_name  = data.get("entity_name", "").strip(),
-        table_name   = data.get("table_name", "").strip(),
-        schema_name  = data.get("schema_name", "").strip(),
-        pk_column    = data.get("pk_column", "").strip(),
-        display_name = data.get("display_name", "").strip(),
-        description  = data.get("description", "").strip(),
-        entity_type  = data.get("entity_type", "dimension"),
-        is_active    = int(data.get("is_active", 1)),
-        pos_x        = float(data.get("pos_x", 120)),
-        pos_y        = float(data.get("pos_y", 120)),
-        color        = data.get("color", "#4F86C6"),
+        account_id    = account_id,
+        entity_name   = data.get("entity_name", "").strip(),
+        table_name    = data.get("table_name", "").strip(),
+        schema_name   = data.get("schema_name", "").strip(),
+        pk_column     = data.get("pk_column", "").strip(),
+        display_name  = data.get("display_name", "").strip(),
+        description   = data.get("description", "").strip(),
+        entity_type   = data.get("entity_type", "dimension"),
+        is_active     = int(data.get("is_active", 1)),
+        pos_x         = float(data.get("pos_x", 120)),
+        pos_y         = float(data.get("pos_y", 120)),
+        color         = data.get("color", "#4F86C6"),
+        entity_filter = data.get("entity_filter", "").strip(),
     )
     return JSONResponse({"status": "ok", "id": eid})
 

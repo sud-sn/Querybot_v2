@@ -213,9 +213,10 @@ def build_sql_system_prompt(
         detected  = ", ".join(graph_context.get("detected", []))
         has_where = "WHERE " in skeleton.upper()
         where_instruction = (
-            "The skeleton already contains a WHERE clause with static filters "
-            "that MUST always be applied. Add any question-driven conditions "
-            "using AND — do NOT write a second WHERE keyword."
+            "The skeleton already contains a WHERE clause with static entity filters "
+            "that MUST always be applied — they enforce business rules (active records, "
+            "valid statuses, etc.). Add any question-driven conditions using AND after "
+            "the existing WHERE clause — do NOT write a second WHERE keyword."
             if has_where else
             "Only write the SELECT clause, GROUP BY, ORDER BY, WHERE, and HAVING "
             "on top of this skeleton."
@@ -224,7 +225,9 @@ def build_sql_system_prompt(
             "\n\n## Entity graph — pre-resolved JOIN structure\n"
             "The following FROM + JOIN structure has been resolved deterministically "
             "from the business entity graph. You MUST use it exactly as shown. "
-            "Do NOT change table names, aliases, or JOIN/ON conditions.\n"
+            "Do NOT change table names, aliases, JOIN/ON conditions, or any static "
+            "filters already present in the ON or WHERE clauses — those are permanent "
+            "business rules set by the admin.\n"
             "Detected entities: " + detected + "\n\n"
             "```sql\n" + skeleton + "\n```\n\n"
             + where_instruction + " Do not add or remove JOINs."

@@ -320,8 +320,44 @@ def build_join_skeleton(
                     # condition on fact/anchor or previously-joined table → SQL WHERE
                     global_where.append(part)
 
+        # ── Entity-level static filter (always applies to this table) ─────
+        # entity_filter is stored on the entity itself, not on a specific join.
+        # It always targets new_ent's columns, so it always goes into the ON clause.
+        # e.g. "DIM_Patient.status = 'Active'" → joined as "AND pat.status = 'Active'"
+        entity_filter_sql = (new_meta.get("entity_filter") or "").strip()
+        if entity_filter_sql:
+            ef = entity_filter_sql
+            # Substitute entity name prefix → alias (e.g. "DIM_Patient." → "pat.")
+            for ent_name, a in aliases.items():
+                ef = ef.replace(f"{ent_name}.", f"{a}.")
+            # If user wrote bare column names (no table prefix), prepend new alias
+            ef_parts = [p.strip() for p in re.split(r"\bAND\b", ef, flags=re.IGNORECASE) if p.strip()]
+            for part in ef_parts:
+                # If part already has an alias prefix, keep as-is; else prepend new_alias
+                if "." not in part.split()[0]:
+                    on_clause += f" AND {new_alias}.{part}"
+                else:
+                    on_clause += f" AND {part}"
+
         lines.append(f"{jtype:5} JOIN {new_tbl} {new_alias} ON {on_clause}")
         seen_nodes.add(new_ent)
+
+    # ── Apply entity_filter for the anchor table → SQL WHERE ─────────────────
+    # Anchor is in the FROM clause, not in a JOIN ON, so its entity_filter
+    # must go into the SQL WHERE clause.
+    anchor_meta = entities_map.get(anchor_entity, {})
+    anchor_filter_sql = (anchor_meta.get("entity_filter") or "").strip()
+    if anchor_filter_sql:
+        anchor_alias = aliases.get(anchor_entity, anchor_entity[:3].lower())
+        af = anchor_filter_sql
+        for ent_name, a in aliases.items():
+            af = af.replace(f"{ent_name}.", f"{a}.")
+        af_parts = [p.strip() for p in re.split(r"\bAND\b", af, flags=re.IGNORECASE) if p.strip()]
+        for part in af_parts:
+            if "." not in part.split()[0]:
+                global_where.append(f"{anchor_alias}.{part}")
+            else:
+                global_where.append(part)
 
     # Append static WHERE clause for fact/anchor-table conditions
     if global_where:

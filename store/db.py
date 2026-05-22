@@ -551,6 +551,8 @@ def _run_migrations() -> None:
         ("metric_registry", "default_time_column",  "TEXT DEFAULT ''"),
         # v23: WHERE conditions always applied to this join
         ("entity_relationships", "where_clause", "TEXT NOT NULL DEFAULT ''"),
+        # v24: static entity-level filter applied whenever this table is joined
+        ("entity_graph", "entity_filter", "TEXT NOT NULL DEFAULT ''"),
     ]
     with get_db() as conn:
         _ensure_llm_call_log_table(conn)
