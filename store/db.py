@@ -553,6 +553,8 @@ def _run_migrations() -> None:
         ("entity_relationships", "where_clause", "TEXT NOT NULL DEFAULT ''"),
         # v24: static entity-level filter applied whenever this table is joined
         ("entity_graph", "entity_filter", "TEXT NOT NULL DEFAULT ''"),
+        # v25: user-chosen colour palette for each pinned chart
+        ("pinned_chart", "color_palette", "TEXT NOT NULL DEFAULT 'default'"),
     ]
     with get_db() as conn:
         _ensure_llm_call_log_table(conn)

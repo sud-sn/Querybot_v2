@@ -262,16 +262,23 @@
 .chart-toolbar{display:flex;gap:.45rem;flex-wrap:wrap}
 .chart-btn{border:1px solid var(--border);background:var(--surface-2);color:var(--text-soft);padding:7px 10px;border-radius:999px;font-size:11px;font-weight:700;cursor:pointer}
 .chart-btn:hover{border-color:var(--primary);color:var(--primary);background:var(--surface-3)}
-.chart-canvas{height:320px;width:100%;border-radius:var(--radius);background:linear-gradient(180deg,color-mix(in srgb,var(--surface-2) 92%, transparent),transparent)}
-.chart-type-toggle{display:flex;gap:.35rem;margin-top:.55rem;padding-top:.45rem;border-top:1px solid color-mix(in srgb,var(--border) 50%,transparent)}
-.ctt-btn{padding:4px 12px;font-size:11px;font-weight:700;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-muted);cursor:pointer;transition:all .15s}
+.chart-canvas{height:340px;width:100%;border-radius:var(--radius);background:linear-gradient(180deg,color-mix(in srgb,var(--surface-2) 92%, transparent),transparent)}
+/* ── Chart type toggle ───────────────────────────────────────────────── */
+.chart-type-toggle{display:flex;gap:.3rem;margin-top:.5rem;padding-top:.4rem;border-top:1px solid color-mix(in srgb,var(--border) 50%,transparent);flex-wrap:wrap}
+.ctt-btn{padding:4px 11px;font-size:10.5px;font-weight:700;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-muted);cursor:pointer;transition:all .15s;white-space:nowrap}
 .ctt-btn:hover{border-color:var(--primary);color:var(--primary)}
 .ctt-btn.ctt-active{background:var(--primary);border-color:var(--primary);color:#fff}
+/* ── Palette switcher ────────────────────────────────────────────────── */
+.chart-palette-row{display:flex;gap:.3rem;align-items:center;margin-top:.35rem;padding-top:.35rem;border-top:1px solid color-mix(in srgb,var(--border) 40%,transparent)}
+.cpt-label{font-size:10px;font-weight:700;color:var(--text-muted);margin-right:.15rem;white-space:nowrap}
+.cpt-swatch{width:30px;height:14px;border-radius:5px;border:2px solid transparent;cursor:pointer;transition:transform .12s,border-color .12s;flex-shrink:0}
+.cpt-swatch:hover{transform:scale(1.15)}
+.cpt-swatch.cpt-active{border-color:var(--primary);box-shadow:0 0 0 1px var(--primary)}
 .chart-footer{margin-top:.75rem;display:flex;justify-content:space-between;gap:1rem;color:var(--text-muted);font-size:11px;flex-wrap:wrap}
 .assistant-card{background:linear-gradient(180deg,color-mix(in srgb,var(--surface) 97%, var(--primary-soft) 3%),var(--surface));border:1px solid var(--border);border-radius:var(--radius);padding:1rem;box-shadow:var(--shadow)}
 .assistant-card{padding:1rem 1rem .95rem}
 .result-topline{display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap;margin-bottom:.8rem}.result-kicker{font-size:11px;font-weight:850;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted)}
-.result-layout{display:flex;flex-direction:column;gap:.9rem}.result-chart-wrap{background:color-mix(in srgb,var(--surface-2) 65%, transparent);border:1px solid var(--border);border-radius:var(--radius);padding:.65rem}.chart-canvas.compact{height:300px}
+.result-layout{display:flex;flex-direction:column;gap:.9rem}.result-chart-wrap{background:color-mix(in srgb,var(--surface-2) 65%, transparent);border:1px solid var(--border);border-radius:var(--radius);padding:.65rem}.chart-canvas.compact{height:320px}
 .data-table-wrap{background:color-mix(in srgb,var(--surface-2) 55%, transparent);border:1px solid var(--border);border-radius:var(--radius);padding:0;overflow:hidden}
 .data-table-scroll{max-height:340px;overflow:auto}
 .data-table{width:100%;border-collapse:collapse;font-size:12.5px;font-variant-numeric:tabular-nums}
@@ -880,177 +887,222 @@ function _updateMemoryBadge() {
 // ── Per-chart payload registry (for type-toggle re-renders) ──────────────────
 window._chartPayloads = window._chartPayloads || {};
 
-// Palette for multi-series charts
-const _CHART_COLORS = ['#378ADD','#34d399','#f472b6','#fbbf24','#a78bfa','#fb923c','#22d3ee','#e879f9'];
+// ── Named colour palettes ─────────────────────────────────────────────────────
+const _PALETTES = {
+  default:  ['#378ADD','#34d399','#f472b6','#fbbf24','#a78bfa','#fb923c','#22d3ee','#e879f9'],
+  ocean:    ['#0EA5E9','#06B6D4','#0284C7','#38BDF8','#0369A1','#0891B2','#7DD3FC','#BAE6FD'],
+  sunset:   ['#F97316','#EF4444','#EC4899','#F59E0B','#DC2626','#E11D48','#D97706','#B45309'],
+  forest:   ['#10B981','#059669','#047857','#34D399','#065F46','#6EE7B7','#84CC16','#BEF264'],
+  candy:    ['#8B5CF6','#EC4899','#14B8A6','#F97316','#6366F1','#06B6D4','#FACC15','#EF4444'],
+  mono:     ['#334155','#475569','#64748b','#94a3b8','#cbd5e1','#1e293b','#0f172a','#e2e8f0'],
+};
+// Gradient pair: [bright top, muted bottom] for each palette primary
+const _PAL_GRAD = {
+  default:  ['#4A96E8','#1A68C6'],
+  ocean:    ['#38BDF8','#0369A1'],
+  sunset:   ['#FB923C','#DC2626'],
+  forest:   ['#34D399','#047857'],
+  candy:    ['#A78BFA','#6D28D9'],
+  mono:     ['#64748b','#1e293b'],
+};
 
-function buildChartOption(payload){
-  const rows = Array.isArray(payload?.rows) ? payload.rows : [];
-  const xKey = payload?.x_key;
-  const yKeys = Array.isArray(payload?.y_keys) ? payload.y_keys : [];
-  const yKey = yKeys[0];
-  const labels = rows.map(r => String((xKey && r?.[xKey]) ?? ''));
-  const dark = document.documentElement.getAttribute('data-theme') === 'dark';
-  const axisColor = dark ? '#94a3b8' : '#64748b';
-  const gridColor = dark ? 'rgba(148,163,184,.18)' : 'rgba(100,116,139,.18)';
-  const surface = dark ? 'rgba(15,23,42,.96)' : '#ffffff';
-  const textColor = dark ? '#e2e8f0' : '#0f172a';
-  const maxLabel = labels.reduce((m, v) => Math.max(m, v.length), 0);
-  const longLabels = maxLabel > 14;
-  const manyLabels = labels.length > 8;
-  const temporal = /month|week|quarter|year|date|20\d{2}|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec/i.test(labels.slice(0,8).join(' '));
-  // Resolve effective type (supports override for toggle buttons)
-  const requestedType = payload?.chart_type;
+// ── Number formatter for tooltips / axis labels ───────────────────────────────
+function _fmtNum(v) {
+  const n = Number(v);
+  if (isNaN(n)) return String(v ?? '');
+  const abs = Math.abs(n);
+  if (abs >= 1e9)  return (n/1e9).toFixed(1).replace(/\.0$/,'') + 'B';
+  if (abs >= 1e6)  return (n/1e6).toFixed(1).replace(/\.0$/,'') + 'M';
+  if (abs >= 1e3)  return (n/1e3).toFixed(1).replace(/\.0$/,'') + 'K';
+  return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
+function buildChartOption(payload) {
+  const rows        = Array.isArray(payload?.rows) ? payload.rows : [];
+  const xKey        = payload?.x_key;
+  const yKeys       = Array.isArray(payload?.y_keys) ? payload.y_keys : [];
+  const yKey        = yKeys[0];
+  const palName     = payload?.color_palette || 'default';
+  const colors      = _PALETTES[palName] || _PALETTES.default;
+  const gradPair    = _PAL_GRAD[palName]  || _PAL_GRAD.default;
+  const labels      = rows.map(r => String((xKey && r?.[xKey]) ?? ''));
+  const dark        = document.documentElement.getAttribute('data-theme') === 'dark';
+  const axisColor   = dark ? '#94a3b8' : '#64748b';
+  const gridColor   = dark ? 'rgba(148,163,184,.14)' : 'rgba(100,116,139,.14)';
+  const surface     = dark ? 'rgba(15,23,42,.97)' : 'rgba(255,255,255,.98)';
+  const textColor   = dark ? '#e2e8f0' : '#0f172a';
+  const maxLabel    = labels.reduce((m, v) => Math.max(m, v.length), 0);
+  const longLabels  = maxLabel > 14;
+  const manyLabels  = labels.length > 9;
+  const temporal    = /month|week|quarter|year|date|20\d{2}|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec/i.test(labels.slice(0,8).join(' '));
+  const labelFmt    = v => { const s = String(v??''); return s.length>18 ? s.slice(0,17)+'…' : s; };
+
+  // Resolve effective chart type
+  const req  = (payload?.chart_type || 'bar').toLowerCase();
   let type;
-  if (requestedType === 'pie') type = 'pie';
-  else if (requestedType === 'scatter') type = 'scatter';
-  else if (requestedType === 'line' || (requestedType !== 'bar' && temporal)) type = 'line';
-  else type = 'bar';
+  if      (req === 'pie')    type = 'pie';
+  else if (req === 'donut')  type = 'donut';
+  else if (req === 'scatter') type = 'scatter';
+  else if (req === 'area')   type = 'area';
+  else if (req === 'line' || (req !== 'bar' && temporal && req !== 'bar')) type = 'line';
+  else                       type = 'bar';
+
   const horizontal = type === 'bar' && (longLabels || manyLabels) && !temporal;
-  const formatter = (val) => {
-    const s = String(val ?? '');
-    return s.length > 18 ? s.slice(0, 18) + '…' : s;
+
+  // ── Shared tooltip helpers ────────────────────────────────────────────────
+  const tooltipStyle = {
+    backgroundColor: surface,
+    borderColor: gridColor,
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: [8,12],
+    textStyle: { color: textColor, fontSize: 12 },
+    extraCssText: 'box-shadow:0 4px 24px rgba(0,0,0,.14)',
+  };
+  const multiTooltipFmt = (params) => {
+    const arr = Array.isArray(params) ? params : [params];
+    const lbl = arr[0]?.axisValueLabel || arr[0]?.name || '';
+    return `<div style="font-weight:700;margin-bottom:4px">${escHtml(String(lbl))}</div>`
+      + arr.map(p => `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${p.color};margin-right:5px"></span>`
+        + `${escHtml(String(p.seriesName||''))}: <strong>${_fmtNum(p.value)}</strong>`).join('<br/>');
   };
 
-  // ── Pie chart ──────────────────────────────────────────────────────────────
-  if (type === 'pie') {
+  // ── Pie / Donut ───────────────────────────────────────────────────────────
+  if (type === 'pie' || type === 'donut') {
     const pieData = rows.map(r => ({
-      name: String((xKey && r?.[xKey]) ?? ''),
+      name:  String((xKey && r?.[xKey]) ?? ''),
       value: Number((yKey && r?.[yKey]) ?? 0),
     }));
+    const innerR = type === 'donut' ? '42%' : '0%';
+    const outerR = '70%';
     return {
       backgroundColor: 'transparent',
-      animationDuration: 400,
-      color: _CHART_COLORS,
+      animationDuration: 500,
+      animationEasing: 'cubicOut',
+      color: colors,
       tooltip: {
+        ...tooltipStyle,
         trigger: 'item',
-        backgroundColor: surface,
-        borderColor: gridColor,
-        borderWidth: 1,
-        textStyle: { color: textColor },
-        formatter: (p) => `<strong>${escHtml(String(p.name ?? ''))}</strong><br/>${escHtml(String(yKey || 'Value'))}: ${escHtml(String(p.value ?? ''))}<br/><span style="opacity:.7">${p.percent?.toFixed(1)}%</span>`,
+        formatter: p => `<strong>${escHtml(String(p.name??''))}</strong><br/>`
+          + `${escHtml(String(yKey||'Value'))}: <strong>${_fmtNum(p.value)}</strong><br/>`
+          + `<span style="opacity:.7">${p.percent?.toFixed(1)}%</span>`,
       },
       legend: {
-        orient: 'vertical',
-        right: 12,
-        top: 'middle',
+        orient: 'vertical', right: 10, top: 'middle',
         textStyle: { color: axisColor, fontSize: 11 },
-        formatter: (name) => name.length > 16 ? name.slice(0, 16) + '…' : name,
+        formatter: name => name.length > 18 ? name.slice(0,17)+'…' : name,
       },
       series: [{
         type: 'pie',
-        radius: ['38%', '70%'],
+        radius: [innerR, outerR],
         center: ['40%', '50%'],
         data: pieData,
-        label: { show: true, formatter: '{d}%', color: axisColor, fontSize: 11 },
-        labelLine: { show: true, length: 8, length2: 6 },
-        itemStyle: { borderRadius: 6, borderColor: surface, borderWidth: 2 },
-        emphasis: { itemStyle: { shadowBlur: 10, shadowOffsetX: 0, shadowColor: 'rgba(0,0,0,.25)' } },
+        label: { show: labels.length <= 8, formatter: '{d}%', color: axisColor, fontSize: 11 },
+        labelLine: { show: labels.length <= 8, length: 8, length2: 6 },
+        itemStyle: { borderRadius: 6, borderColor: dark ? '#0f172a' : '#fff', borderWidth: 2 },
+        emphasis: { itemStyle: { shadowBlur: 14, shadowColor: 'rgba(0,0,0,.2)' }, scale: true, scaleSize: 6 },
       }],
     };
   }
 
+  // ── Shared cartesian base ─────────────────────────────────────────────────
   const option = {
     backgroundColor: 'transparent',
-    animationDuration: 350,
-    color: _CHART_COLORS,
+    animationDuration: 400,
+    animationEasing: 'cubicOut',
+    color: colors,
     grid: horizontal
-      ? { left: 140, right: 24, top: 32, bottom: 24 }
-      : { left: 52, right: 24, top: yKeys.length > 1 ? 44 : 24, bottom: longLabels ? 78 : 48 },
+      ? { left: 148, right: 28, top: 28, bottom: 20, containLabel: false }
+      : { left: 56, right: 24, top: yKeys.length > 1 ? 44 : 24, bottom: longLabels ? 82 : 48 },
     tooltip: {
-      trigger: type === 'line' ? 'axis' : (type === 'scatter' ? 'item' : 'item'),
-      backgroundColor: surface,
-      borderColor: gridColor,
-      borderWidth: 1,
-      textStyle: { color: textColor },
+      ...tooltipStyle,
+      trigger: (type === 'scatter') ? 'item' : 'axis',
     },
     xAxis: horizontal ? {
-      type: 'value',
-      axisLabel: { color: axisColor },
+      type: 'value', axisLabel: { color: axisColor, formatter: _fmtNum },
       splitLine: { show: true, lineStyle: { color: gridColor } },
-      axisTick: { show: false },
-      axisLine: { show: false }
+      axisTick: { show: false }, axisLine: { show: false },
     } : {
-      type: 'category',
-      data: labels,
-      axisLabel: { color: axisColor, rotate: longLabels ? 30 : 0, interval: manyLabels ? 'auto' : 0, formatter },
-      axisLine: { lineStyle: { color: gridColor } },
-      axisTick: { show: false }
+      type: 'category', data: labels,
+      axisLabel: { color: axisColor, rotate: longLabels ? 30 : 0, interval: manyLabels ? 'auto' : 0, formatter: labelFmt, fontSize: 11 },
+      axisLine: { lineStyle: { color: gridColor } }, axisTick: { show: false },
     },
     yAxis: horizontal ? {
-      type: 'category',
-      data: labels,
-      axisLabel: { color: axisColor, formatter },
-      axisLine: { show: false },
-      axisTick: { show: false }
+      type: 'category', data: labels,
+      axisLabel: { color: axisColor, formatter: labelFmt, fontSize: 11 },
+      axisLine: { show: false }, axisTick: { show: false },
     } : {
       type: 'value',
-      axisLabel: { color: axisColor },
+      axisLabel: { color: axisColor, formatter: _fmtNum, fontSize: 11 },
       splitLine: { show: true, lineStyle: { color: gridColor } },
-      axisTick: { show: false },
-      axisLine: { show: false }
+      axisTick: { show: false }, axisLine: { show: false },
     },
-    series: []
+    series: [],
   };
 
+  // ── Scatter ───────────────────────────────────────────────────────────────
   if (type === 'scatter') {
     const y2 = yKeys[1];
-    const points = rows.map(r => [Number(r?.[yKey] ?? 0), Number(r?.[y2] ?? 0), String((xKey && r?.[xKey]) ?? '')]);
-    option.xAxis = { type: 'value', name: yKey, nameTextStyle: { color: axisColor }, axisLabel: { color: axisColor }, splitLine: { show: true, lineStyle: { color: gridColor } }, axisTick: { show: false }, axisLine: { show: false } };
-    option.yAxis = { type: 'value', name: y2, nameTextStyle: { color: axisColor }, axisLabel: { color: axisColor }, splitLine: { show: true, lineStyle: { color: gridColor } }, axisTick: { show: false }, axisLine: { show: false } };
-    option.series = [{ type: 'scatter', symbolSize: 14, data: points, itemStyle: { color: _CHART_COLORS[0] } }];
-    option.tooltip.formatter = (p) => `<strong>${escHtml(String(p.value?.[2] ?? ''))}</strong><br/>${escHtml(String(yKey || 'X'))}: ${escHtml(String(p.value?.[0] ?? ''))}<br/>${escHtml(String(y2 || 'Y'))}: ${escHtml(String(p.value?.[1] ?? ''))}`;
-  } else if (type === 'line') {
-    // Multi-series line: one series per y_key
-    option.legend = yKeys.length > 1
-      ? { top: 4, textStyle: { color: axisColor, fontSize: 11 }, data: yKeys }
-      : undefined;
-    option.series = yKeys.map((k, i) => ({
-      name: k,
-      type: 'line',
-      smooth: true,
-      data: rows.map(r => Number(r?.[k] ?? 0)),
-      symbolSize: 7,
-      lineStyle: { width: 2.5, color: _CHART_COLORS[i % _CHART_COLORS.length] },
-      itemStyle: { color: _CHART_COLORS[i % _CHART_COLORS.length] },
-      areaStyle: yKeys.length === 1 ? { opacity: 0.12 } : undefined,
-    }));
-    option.tooltip.trigger = 'axis';
-    if (yKeys.length > 1) {
-      option.tooltip.formatter = (params) => {
-        const label = Array.isArray(params) ? (params[0]?.name ?? '') : '';
-        const lines = (Array.isArray(params) ? params : [params])
-          .map(p => `${escHtml(String(p.seriesName || ''))}: <strong>${escHtml(String(p.value ?? ''))}</strong>`)
-          .join('<br/>');
-        return `<strong>${escHtml(String(label))}</strong><br/>${lines}`;
-      };
-    }
-  } else {
-    // Bar — multi-series grouped
-    const isMulti = yKeys.length > 1;
-    option.legend = isMulti
-      ? { top: 4, textStyle: { color: axisColor, fontSize: 11 }, data: yKeys }
-      : undefined;
-    option.series = yKeys.map((k, i) => ({
-      name: k,
-      type: 'bar',
-      data: rows.map(r => Number(r?.[k] ?? 0)),
-      barMaxWidth: horizontal ? 18 : (isMulti ? 28 : 48),
-      itemStyle: {
-        borderRadius: horizontal ? [0, 6, 6, 0] : [6, 6, 0, 0],
-        color: _CHART_COLORS[i % _CHART_COLORS.length],
-      },
-    }));
-    if (isMulti) {
-      option.tooltip.trigger = 'axis';
-      option.tooltip.formatter = (params) => {
-        const label = Array.isArray(params) ? (params[0]?.name ?? '') : '';
-        const lines = (Array.isArray(params) ? params : [params])
-          .map(p => `${escHtml(String(p.seriesName || ''))}: <strong>${escHtml(String(p.value ?? ''))}</strong>`)
-          .join('<br/>');
-        return `<strong>${escHtml(String(label))}</strong><br/>${lines}`;
-      };
-    }
+    option.xAxis = { type:'value', name: yKey, nameTextStyle:{color:axisColor}, axisLabel:{color:axisColor,formatter:_fmtNum}, splitLine:{show:true,lineStyle:{color:gridColor}}, axisTick:{show:false}, axisLine:{show:false} };
+    option.yAxis = { type:'value', name: y2,  nameTextStyle:{color:axisColor}, axisLabel:{color:axisColor,formatter:_fmtNum}, splitLine:{show:true,lineStyle:{color:gridColor}}, axisTick:{show:false}, axisLine:{show:false} };
+    option.series = [{ type:'scatter', symbolSize:12, data: rows.map(r=>[Number(r?.[yKey]??0),Number(r?.[y2]??0),String((xKey&&r?.[xKey]??''))]), itemStyle:{color:colors[0], opacity:.8} }];
+    option.tooltip.formatter = p => `<strong>${escHtml(String(p.value?.[2]??''))}</strong><br/>${escHtml(String(yKey||'X'))}: <strong>${_fmtNum(p.value?.[0])}</strong><br/>${escHtml(String(y2||'Y'))}: <strong>${_fmtNum(p.value?.[1])}</strong>`;
+    return option;
   }
+
+  // ── Area / Line ───────────────────────────────────────────────────────────
+  if (type === 'line' || type === 'area') {
+    const isArea = type === 'area';
+    option.legend = yKeys.length > 1
+      ? { top: 4, textStyle: { color: axisColor, fontSize: 11 }, data: yKeys, icon: 'roundRect' }
+      : undefined;
+    option.tooltip.trigger = 'axis';
+    option.tooltip.formatter = yKeys.length > 1 ? multiTooltipFmt : undefined;
+    option.series = yKeys.map((k, i) => ({
+      name: k, type: 'line', smooth: true,
+      data: rows.map(r => Number(r?.[k] ?? 0)),
+      symbolSize: rows.length <= 20 ? 6 : 0,
+      lineStyle: { width: 2.5, color: colors[i % colors.length] },
+      itemStyle: { color: colors[i % colors.length] },
+      areaStyle: isArea
+        ? { color: new echarts.graphic.LinearGradient(0,0,0,1,[{offset:0,color:colors[i%colors.length]+'55'},{offset:1,color:colors[i%colors.length]+'08'}]) }
+        : yKeys.length === 1
+          ? { color: new echarts.graphic.LinearGradient(0,0,0,1,[{offset:0,color:colors[0]+'28'},{offset:1,color:colors[0]+'05'}]) }
+          : undefined,
+    }));
+    return option;
+  }
+
+  // ── Bar (default) ─────────────────────────────────────────────────────────
+  const isMulti = yKeys.length > 1;
+  option.legend = isMulti
+    ? { top: 4, textStyle: { color: axisColor, fontSize: 11 }, data: yKeys, icon: 'roundRect' }
+    : undefined;
+  option.tooltip.trigger = isMulti ? 'axis' : 'item';
+  if (isMulti) option.tooltip.formatter = multiTooltipFmt;
+  else {
+    option.tooltip.formatter = p => {
+      const lbl = horizontal ? (p.name||'') : (p.name||p.axisValueLabel||'');
+      return `<strong>${escHtml(String(lbl))}</strong><br/>${escHtml(String(yKey||'Value'))}: <strong>${_fmtNum(p.value)}</strong>`;
+    };
+  }
+  option.series = yKeys.map((k, i) => {
+    const c = colors[i % colors.length];
+    const grad = i === 0
+      ? new echarts.graphic.LinearGradient(...(horizontal ? [1,0,0,0] : [0,0,0,1]),
+          [{offset:0,color:gradPair[0]},{offset:1,color:gradPair[1]}])
+      : c;
+    return {
+      name: k, type: 'bar',
+      data: rows.map(r => Number(r?.[k] ?? 0)),
+      barMaxWidth: horizontal ? 20 : (isMulti ? 28 : 50),
+      itemStyle: {
+        borderRadius: horizontal ? [0, 8, 8, 0] : [8, 8, 0, 0],
+        color: isMulti ? c : grad,
+      },
+      emphasis: { itemStyle: { opacity: 0.85 } },
+    };
+  });
   return option;
 }
 
@@ -1086,6 +1138,67 @@ function renderChartInto(chartEl, payload){
     console.error('Chart render failed', err, payload);
   }
 }
+
+/**
+ * Inject type-toggle + palette-switcher strips into `wrapEl` for chart `chartId`.
+ * `onUpdate(newPayload)` is called whenever the user changes type or palette.
+ */
+function _mountChartControls(wrapEl, chartId, onUpdate) {
+  if (!wrapEl) return;
+  const stored = () => window._chartPayloads[chartId] || {};
+  const ct   = stored().chart_type || 'bar';
+  const pal  = stored().color_palette || 'default';
+
+  // Type toggle
+  const TYPES = [
+    { k:'bar',     label:'Bar' },
+    { k:'line',    label:'Line' },
+    { k:'area',    label:'Area' },
+    { k:'pie',     label:'Pie' },
+    { k:'donut',   label:'Donut' },
+    { k:'scatter', label:'Scatter' },
+  ];
+  const typeHtml = TYPES.map(t =>
+    `<button type="button" class="ctt-btn${ct===t.k?' ctt-active':''}" data-type="${t.k}">${t.label}</button>`
+  ).join('');
+
+  // Palette switcher: small gradient swatches
+  const palHtml = Object.entries(_PALETTES).map(([name, cols]) =>
+    `<button type="button" class="cpt-swatch${pal===name?' cpt-active':''}"
+       data-palette="${name}" title="${name}"
+       style="background:linear-gradient(90deg,${cols[0]} 0%,${cols[0]} 33%,${cols[1]} 33%,${cols[1]} 66%,${cols[2]} 66%)">
+     </button>`
+  ).join('');
+
+  wrapEl.insertAdjacentHTML('beforeend', `
+    <div class="chart-type-toggle" data-ctrl-for="${chartId}">${typeHtml}</div>
+    <div class="chart-palette-row" data-ctrl-for="${chartId}">
+      <span class="cpt-label">Palette</span>${palHtml}
+    </div>`);
+
+  // Wire events
+  wrapEl.querySelectorAll(`.chart-type-toggle[data-ctrl-for="${chartId}"] .ctt-btn`).forEach(btn => {
+    btn.addEventListener('click', () => {
+      const newType = btn.dataset.type;
+      const updated = Object.assign({}, window._chartPayloads[chartId], { chart_type: newType });
+      window._chartPayloads[chartId] = updated;
+      wrapEl.querySelectorAll(`.chart-type-toggle[data-ctrl-for="${chartId}"] .ctt-btn`)
+        .forEach(b => b.classList.toggle('ctt-active', b.dataset.type === newType));
+      onUpdate(updated);
+    });
+  });
+  wrapEl.querySelectorAll(`.chart-palette-row[data-ctrl-for="${chartId}"] .cpt-swatch`).forEach(btn => {
+    btn.addEventListener('click', () => {
+      const newPal = btn.dataset.palette;
+      const updated = Object.assign({}, window._chartPayloads[chartId], { color_palette: newPal });
+      window._chartPayloads[chartId] = updated;
+      wrapEl.querySelectorAll(`.chart-palette-row[data-ctrl-for="${chartId}"] .cpt-swatch`)
+        .forEach(b => b.classList.toggle('cpt-active', b.dataset.palette === newPal));
+      onUpdate(updated);
+    });
+  });
+}
+
 function sendAnalysisAction(action, context, label){
   if (!wsReady) { toast('Live session is not ready'); return; }
   appendSystem(`Running ${label.toLowerCase()}…`);
@@ -1216,9 +1329,20 @@ function appendAssistantResponse(msg, opts = {}){
   pinBtn?.addEventListener('click', async () => {
     pinBtn.disabled = true;
     try {
-      const res = await fetch('/portal/api/pin-chart', { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ token: msg.chart.pin_token, title: msg.chart.title || msg.question || 'Pinned chart' }) });
+      // Use the *live* payload (reflects any type/palette toggle the user did)
+      const live = window._chartPayloads[chartId] || msg.chart || {};
+      const res = await fetch('/portal/api/pin-chart', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          token:         msg.chart.pin_token,
+          title:         live.title || msg.chart?.title || msg.question || 'Pinned chart',
+          chart_type:    live.chart_type,
+          color_palette: live.color_palette || 'default',
+        }),
+      });
       const data = await res.json();
-      pinBtn.textContent = data.ok ? 'Pinned!' : 'Pin failed';
+      pinBtn.textContent = data.ok ? '✓ Pinned!' : 'Pin failed';
       toast(data.ok ? 'Chart added to dashboard' : (data.error || 'Unable to pin chart'));
     } catch {
       pinBtn.textContent = 'Pin failed';
@@ -1226,31 +1350,13 @@ function appendAssistantResponse(msg, opts = {}){
     }
   });
   if (hasChart) {
-    renderChartInto(div.querySelector(`#${chartId}`), msg.chart);
-    // Store payload for chart type toggle re-renders
     window._chartPayloads[chartId] = Object.assign({}, msg.chart);
-    // Inject chart type toggle strip
+    renderChartInto(div.querySelector(`#${chartId}`), msg.chart);
+    // Mount type-toggle + palette-switcher
     const chartWrap = div.querySelector('.result-chart-wrap');
-    if (chartWrap) {
-      const ct = (msg.chart.chart_type || 'bar');
-      const toggleHtml = `<div class="chart-type-toggle" data-chart-id="${chartId}">
-        <button type="button" class="ctt-btn${ct==='bar'?' ctt-active':''}" data-type="bar">Bar</button>
-        <button type="button" class="ctt-btn${ct==='line'?' ctt-active':''}" data-type="line">Line</button>
-        <button type="button" class="ctt-btn${ct==='pie'?' ctt-active':''}" data-type="pie">Pie</button>
-      </div>`;
-      chartWrap.insertAdjacentHTML('beforeend', toggleHtml);
-      chartWrap.querySelectorAll('.ctt-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-          const newType = btn.dataset.type;
-          const stored = window._chartPayloads[chartId];
-          if (!stored) return;
-          const overridden = Object.assign({}, stored, { chart_type: newType });
-          renderChartInto(div.querySelector(`#${chartId}`), overridden);
-          window._chartPayloads[chartId] = overridden;
-          chartWrap.querySelectorAll('.ctt-btn').forEach(b => b.classList.toggle('ctt-active', b.dataset.type === newType));
-        });
-      });
-    }
+    _mountChartControls(chartWrap, chartId, updated => {
+      renderChartInto(div.querySelector(`#${chartId}`), updated);
+    });
   }
   // Record this turn in frontend history for localStorage persistence
   // (fires for chart AND data-table responses so follow-ups always have context)
@@ -1315,19 +1421,20 @@ function appendChart(payload, opts = {}){
     pinBtn.addEventListener('click', async () => {
       pinBtn.disabled = true;
       try {
+        const live = window._chartPayloads[chartId] || payload;
         const res = await fetch('/portal/api/pin-chart', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token: payload.pin_token, title: payload.title || payload.question || 'Pinned chart' })
+          body: JSON.stringify({
+            token:         payload.pin_token,
+            title:         live.title || payload.question || 'Pinned chart',
+            chart_type:    live.chart_type,
+            color_palette: live.color_palette || 'default',
+          }),
         });
         const data = await res.json();
-        if (data.ok) {
-          pinBtn.textContent = 'Pinned!';
-          toast('Chart added to dashboard');
-        } else {
-          pinBtn.textContent = 'Pin failed';
-          toast(data.error || 'Unable to pin chart');
-        }
+        pinBtn.textContent = data.ok ? '✓ Pinned!' : 'Pin failed';
+        toast(data.ok ? 'Chart added to dashboard' : (data.error || 'Unable to pin chart'));
       } catch {
         pinBtn.textContent = 'Pin failed';
         toast('Unable to pin chart');
@@ -1335,38 +1442,20 @@ function appendChart(payload, opts = {}){
     });
   }
   copyBtn?.addEventListener('click', async (e) => {
-    const summary = `${payload.title || payload.question || 'Chart'}
-${rows.length} rows`;
+    const summary = `${payload.title || payload.question || 'Chart'}\n${rows.length} rows`;
     const ok = await copyText(summary);
     const prev = e.currentTarget.textContent;
     e.currentTarget.textContent = ok ? 'Copied!' : 'Copy failed';
     setTimeout(() => e.currentTarget.textContent = prev, 1400);
     toast(ok ? 'Chart summary copied' : 'Copy failed');
   });
-  renderChartInto(div.querySelector(`#${chartId}`), payload);
-  // Store payload and add chart type toggle
   window._chartPayloads[chartId] = Object.assign({}, payload);
-  const _chartCardCanvas = div.querySelector(`#${chartId}`);
-  if (_chartCardCanvas) {
-    const ct2 = (payload.chart_type || 'bar');
-    const _toggleHtml = `<div class="chart-type-toggle" data-chart-id="${chartId}" style="margin-top:.5rem">
-      <button type="button" class="ctt-btn${ct2==='bar'?' ctt-active':''}" data-type="bar">Bar</button>
-      <button type="button" class="ctt-btn${ct2==='line'?' ctt-active':''}" data-type="line">Line</button>
-      <button type="button" class="ctt-btn${ct2==='pie'?' ctt-active':''}" data-type="pie">Pie</button>
-    </div>`;
-    _chartCardCanvas.insertAdjacentHTML('afterend', _toggleHtml);
-    div.querySelectorAll('.ctt-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const newType = btn.dataset.type;
-        const stored = window._chartPayloads[chartId];
-        if (!stored) return;
-        const overridden = Object.assign({}, stored, { chart_type: newType });
-        renderChartInto(div.querySelector(`#${chartId}`), overridden);
-        window._chartPayloads[chartId] = overridden;
-        div.querySelectorAll('.ctt-btn').forEach(b => b.classList.toggle('ctt-active', b.dataset.type === newType));
-      });
-    });
-  }
+  renderChartInto(div.querySelector(`#${chartId}`), payload);
+  // Mount type-toggle + palette-switcher below the canvas
+  const chartCardEl = div.querySelector('.chart-card');
+  _mountChartControls(chartCardEl, chartId, updated => {
+    renderChartInto(div.querySelector(`#${chartId}`), updated);
+  });
   if (opts.persist !== false) pushChatCache({ kind:'chart', payload, timestamp });
   scrollBottom();
 }

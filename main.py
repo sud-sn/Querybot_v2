@@ -841,7 +841,7 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
     row_word   = "row" if len(rows) == 1 else "rows"
     dur_label  = f"{duration_ms}ms" if duration_ms < 1000 else f"{duration_ms/1000:.1f}s"
 
-    chart_type = detect_chart_type(rows)
+    chart_type = detect_chart_type(rows, question=question)
     pin_token = None
     chart_payload = None
     if chart_type and portal_user:
