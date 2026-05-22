@@ -1355,22 +1355,20 @@ function _mountDataTableControls(wrapEl, question) {
     });
   }
 
-  // "Ask about these results" shortcut — pre-fills the input box
+  // "Ask about these results" shortcut — pre-fills the input with a prompt prefix
   const askBtn = wrapEl.querySelector(`[data-dt-ask="${dtId}"]`);
   if (askBtn) {
     askBtn.addEventListener('click', () => {
       const inp = document.getElementById('chat-input');
       if (!inp) return;
-      inp.focus();
-      // Insert a contextual prompt if the box is empty
+      // Pre-fill with a useful prefix only if the box is currently empty
       if (!inp.value.trim()) {
-        inp.value = '';
-        inp.placeholder = 'e.g. "who is below average?" or "rank these by value"';
-        // Remove placeholder hint after a moment
-        setTimeout(() => {
-          inp.placeholder = 'Ask anything about your data…';
-        }, 4000);
+        inp.value = 'From these results, ';
       }
+      inp.focus();
+      // Place cursor at end
+      const len = inp.value.length;
+      inp.setSelectionRange(len, len);
       inp.scrollIntoView({ behavior: 'smooth', block: 'center' });
     });
   }

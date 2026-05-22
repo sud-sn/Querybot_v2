@@ -1252,9 +1252,13 @@ async def generate_followup_suggestions(
         f"\nAlready suggested (do NOT repeat): {suggestions}\n" if suggestions else ""
     )
 
+    # Columns already present in the result — LLM must not suggest grouping by these
+    existing_cols_str = ", ".join(col_names[:8])
+
     user_msg = (
         f"The user asked: {question!r}\n"
         f"Result: {row_count} rows\n"
+        f"Columns already in this result: {existing_cols_str}\n"
         f"{signal_ctx}"
         f"{existing_str}\n"
         f"Generate exactly {needed} short follow-up question(s) (max 12 words each) "
@@ -1263,11 +1267,13 @@ async def generate_followup_suggestions(
         f"Rules:\n"
         f"  - Each question must map to a pattern listed above — do NOT invent new patterns\n"
         f"  - Questions must be answerable by SQL (aggregations, filters, rankings, groupings)\n"
+        f"  - Do NOT suggest 'break down by X' or 'group by X' when X is already a column "
+        f"in the result — the result is ALREADY broken down by those columns\n"
         f"  - For two numeric columns: phrase as 'Show X vs Y' not 'Are they correlated'\n"
         f"  - Never suggest statistical functions (correlation coeff, regression, p-value)\n"
         f"Return ONLY a JSON array of {needed} string(s). No markdown. No explanation.\n"
         f'Example (3 needed): ["Who had the highest total charge?", '
-        f'"Show bottom 5 by prescription count", "Break this down by drug category"]'
+        f'"Show bottom 5 by prescription count", "Which items are above average?"]'
     )
 
     system_msg = (
