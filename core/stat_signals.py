@@ -340,11 +340,13 @@ def template_suggestions(
         s = by_type["low_variance"]
         _add(f"Why are {s['col']} values so uniform across all rows?")
 
-    # 11 — Large result — suggest segmentation
+    # 11 — Large result — suggest segmentation by a column NOT already in the result
     if "large_result" in by_type:
         cat = by_type["large_result"]["col"]
-        if cat:
-            _add(f"Break this down by {cat} to find the main patterns")
+        # Only suggest breakdown if there are OTHER text columns not already the grouping dim
+        other_text = [c for c in text_cols if c != cat]
+        if other_text:
+            _add(f"Break this down by {other_text[0]} to find the main patterns")
 
     # 12 — Small result — suggest drilling deeper
     if "small_result" in by_type and num_cols:
