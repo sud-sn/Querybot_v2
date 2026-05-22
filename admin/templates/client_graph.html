@@ -1044,12 +1044,23 @@ document.getElementById('graph-svg').addEventListener('mouseup', async ev => {
   if (dragging) {
     if (_dragRaf) { cancelAnimationFrame(_dragRaf); _dragRaf = null; }
     _pendingDrag = null;
-    const e = graph.entities.find(x => x.entity_name === dragging.entity_name);
+    const entityName = dragging.entity_name;
+    const e = graph.entities.find(x => x.entity_name === entityName);
+    const moved = e && (Math.abs((e.pos_x||120) - dragging.origX) > 3
+                     || Math.abs((e.pos_y||120) - dragging.origY) > 3);
     dragging = null;
     document.getElementById('graph-svg').style.cursor = 'grab';
-    renderGraph(); // single full render on drop to reconcile labels/ports
-    await api('POST', `${API_BASE}/entities`, e);
-    setStatus('Position saved');
+    if (moved) {
+      // Real drag: persist position and refresh canvas
+      renderGraph();
+      await api('POST', `${API_BASE}/entities`, e);
+      setStatus('Position saved');
+    } else {
+      // Simple click (no movement): select entity directly
+      // Cannot rely on the 'click' event because renderGraph() would
+      // destroy the <g> node before the click fires.
+      selectEntity(entityName);
+    }
   }
   if (drawingEdge) {
     document.getElementById('draw-line').style.display = 'none';
