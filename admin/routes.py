@@ -1902,6 +1902,7 @@ async def graph_api_rel_upsert(request: Request, account_id: str):
         label             = data.get("label", "").strip(),
         join_conditions   = join_conditions,
         where_clause      = data.get("where_clause", "").strip(),
+        rel_id            = int(data.get("rel_id") or 0),
     )
     return JSONResponse({"status": "ok", "id": rid})
 

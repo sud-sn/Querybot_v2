@@ -298,6 +298,14 @@ def build_join_skeleton(
                 f"{old_alias}.{_quote_col(to_col, db_type)}"
             )
 
+        # Append WHERE conditions stored on the relationship (uses entity.col notation)
+        where_sql = (step.get("where_clause") or "").strip()
+        if where_sql:
+            # Replace entity name prefixes with SQL aliases (aliases built so far)
+            for ent_name, a in aliases.items():
+                where_sql = where_sql.replace(f"{ent_name}.", f"{a}.")
+            on_clause += f" AND {where_sql}"
+
         lines.append(f"{jtype:5} JOIN {new_tbl} {new_alias} ON {on_clause}")
         seen_nodes.add(new_ent)
 

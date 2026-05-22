@@ -74,6 +74,22 @@
 .bridge-col-arrow{font-size:11px;color:var(--text-muted);text-align:center}
 .bridge-col-alias,.bridge-col-flag{font-size:12px;padding:2px 5px}
 .bridge-col-loading{font-size:11px;color:var(--text-muted);padding:.4rem .2rem;font-style:italic}
+/* ── Entity detail — Joins panel ─────────────────────────────────────────── */
+.ej-row{border:1px solid var(--border);border-radius:5px;margin-bottom:.35rem;overflow:hidden}
+.ej-summary{display:flex;align-items:center;gap:.35rem;padding:.35rem .45rem;cursor:pointer;background:var(--surface);transition:background .12s;font-size:12px;min-width:0}
+.ej-summary:hover{background:var(--surface-2)}
+.ej-toggle{font-size:9px;color:var(--text-muted);flex-shrink:0;width:10px}
+.ej-partner{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0}
+.ej-dir{color:var(--text-muted);flex-shrink:0}
+.ej-cols{font-size:10px;color:var(--text-muted);font-family:Consolas,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0}
+.ej-where{font-size:9px;font-weight:700;color:#0369A1;background:#EFF6FF;border:1px solid #BAE6FD;border-radius:3px;padding:0 4px;flex-shrink:0}
+.ej-del{background:none;border:none;cursor:pointer;color:var(--text-muted);font-size:12px;padding:0 2px;flex-shrink:0;line-height:1}
+.ej-del:hover{color:var(--red)}
+.ej-edit-panel{background:var(--surface-2);border-top:1px solid var(--border);padding:.45rem .5rem}
+.ej-wc-row{display:grid;grid-template-columns:1fr 100px 1fr 24px;gap:.3rem;align-items:center;margin-bottom:.25rem}
+.ej-wc-row select,.ej-wc-row input{font-size:11px;padding:3px 5px}
+.ej-wc-del{background:none;border:1px solid var(--border);border-radius:3px;cursor:pointer;color:var(--text-muted);font-size:11px;width:22px;height:22px;display:flex;align-items:center;justify-content:center}
+.ej-wc-del:hover{background:#FEE2E2;color:var(--red);border-color:var(--red)}
 /* ── Relationship modal — WHERE conditions ───────────────────────────────── */
 .wc-row{display:grid;grid-template-columns:1fr 120px 1fr 26px;gap:.3rem;align-items:center;margin-bottom:.3rem}
 .wc-row select,.wc-row input{font-size:12px;padding:3px 6px}
@@ -1315,6 +1331,8 @@ function renderEntityDetail(name) {
           </div>
           <button class="gd-save-btn" onclick="saveProp('${name}')">Save field → Sync to semantic layer</button>
         </div>
+
+        ${_buildJoinsSection(name)}
       `;
       // Pre-populate PK datalist for the current table selection
       if (e.table_name) onDetailTableChange();
@@ -1396,6 +1414,269 @@ window.saveEntityDetail = async function(name) {
   renderGraph();
   updateSidebar();
   setStatus('Entity saved ✓');
+};
+
+// ════════════════════════════════════════════════════════════════════════════
+// DETAIL PANEL — ENTITY JOINS SECTION
+// ════════════════════════════════════════════════════════════════════════════
+
+const _WC_OPS_INLINE = ['=','!=','>','>=','<','<=','LIKE','NOT LIKE','IN','NOT IN','IS NULL','IS NOT NULL'];
+const _WC_NO_VAL_INLINE = new Set(['IS NULL','IS NOT NULL']);
+
+function _buildJoinsSection(entityName) {
+  const rels = graph.relationships.filter(
+    r => r.from_entity === entityName || r.to_entity === entityName
+  );
+
+  const addBtn = `<span style="float:right;font-weight:400;font-size:9px;cursor:pointer;color:var(--primary)"
+    onclick="openRelModal()">+ Add join</span>`;
+
+  if (!rels.length) {
+    return `<div class="gd-section">Joins (0) ${addBtn}</div>
+      <div class="gd-body" style="font-size:11px;color:var(--text-muted);text-align:center;padding:.5rem">
+        No joins yet. Hover node → drag ◉ port, or use ⇢ Link.
+      </div>`;
+  }
+
+  const cardLabel = { many_to_one:'N:1', one_to_one:'1:1', one_to_many:'1:N' };
+  const rows = rels.map(r => {
+    const isFrom   = r.from_entity === entityName;
+    const partner  = isFrom ? r.to_entity : r.from_entity;
+    const dir      = isFrom ? '→' : '←';
+    const joinColor = r.join_type === 'INNER' ? 'var(--green,#059669)' : '#6366F1';
+    const card     = cardLabel[r.relationship_type] || '';
+    const whereTag = r.where_clause
+      ? `<span class="ej-where" title="${esc(r.where_clause)}">WHERE</span>` : '';
+    return `
+      <div class="ej-row" id="ej-row-${r.id}">
+        <div class="ej-summary" onclick="toggleRelEdit(${r.id},'${esc(entityName)}')">
+          <span class="ej-toggle" id="ej-toggle-${r.id}">▶</span>
+          <span class="ej-partner" title="${esc(partner)}">${esc(partner)}</span>
+          <span class="ej-dir">${dir}</span>
+          <span style="font-size:10px;font-weight:700;color:${joinColor};flex-shrink:0">${r.join_type}</span>
+          ${card ? `<span style="font-size:9px;color:var(--text-muted);background:var(--surface-2);border:1px solid var(--border);border-radius:3px;padding:0 3px;flex-shrink:0">${card}</span>` : ''}
+          <span class="ej-cols">${esc(r.from_column)} → ${esc(r.to_column)}</span>
+          ${whereTag}
+          <button class="ej-del" title="Delete join"
+            onclick="event.stopPropagation();deleteRel(${r.id})">✕</button>
+        </div>
+        <div class="ej-edit-panel" id="ej-edit-${r.id}" style="display:none">
+          <div style="font-size:11px;color:var(--text-muted);padding:.3rem">Loading columns…</div>
+        </div>
+      </div>`;
+  }).join('');
+
+  return `<div class="gd-section">Joins (${rels.length}) ${addBtn}</div>
+    <div class="gd-body" style="padding:.35rem .5rem">${rows}</div>`;
+}
+
+window.toggleRelEdit = async function(relId, entityName) {
+  const panel  = document.getElementById(`ej-edit-${relId}`);
+  const toggle = document.getElementById(`ej-toggle-${relId}`);
+  if (!panel) return;
+
+  // Collapse if open
+  if (panel.style.display !== 'none') {
+    panel.style.display = 'none';
+    toggle.textContent = '▶';
+    return;
+  }
+
+  // If already rendered (has dataset), just show
+  if (panel.dataset.rendered) {
+    panel.style.display = '';
+    toggle.textContent = '▼';
+    return;
+  }
+
+  // First expand: fetch columns and render
+  const rel = graph.relationships.find(r => r.id === relId);
+  if (!rel) return;
+
+  const partnerName = rel.from_entity === entityName ? rel.to_entity : rel.from_entity;
+  toggle.textContent = '▼';
+  panel.style.display = '';
+
+  // Fetch columns for both entities (DB → semantic fallback)
+  const _getEntityCols = async (entName) => {
+    const ent = graph.entities.find(e => e.entity_name === entName);
+    if (!ent) return [];
+    let cols = [];
+    const fqn = _resolveEntityFqn(ent);
+    if (fqn) {
+      const raw = await _fetchColumns(fqn);
+      cols = raw.map(c => typeof c === 'string' ? c : c.name).filter(Boolean);
+    }
+    if (!cols.length) {
+      try {
+        const res  = await fetch(`${API_BASE}/properties/${encodeURIComponent(entName)}`);
+        const data = await res.json();
+        cols = (data.properties || []).map(p => p.column_name).filter(Boolean);
+      } catch (_) {}
+    }
+    return cols;
+  };
+
+  const [myCols, partnerCols] = await Promise.all([
+    _getEntityCols(entityName),
+    _getEntityCols(partnerName),
+  ]);
+
+  // Store column data for addInlineWhere
+  panel.dataset.rendered = '1';
+  panel.dataset.myCols    = JSON.stringify(myCols.map(c => ({ l: `${entityName}.${c}`, v: `${entityName}.${c}` })));
+  panel.dataset.partCols  = JSON.stringify(partnerCols.map(c => ({ l: `${partnerName}.${c}`, v: `${partnerName}.${c}` })));
+
+  // Column opts for FK selects
+  const fromCols = rel.from_entity === entityName ? myCols : partnerCols;
+  const toCols   = rel.to_entity   === entityName ? myCols : partnerCols;
+  const mkOpts = (cols, current) => cols.map(c =>
+    `<option value="${esc(c)}"${c===current?' selected':''}>${esc(c)}</option>`).join('');
+
+  panel.innerHTML = `
+    <div class="gd-form-row" style="margin-bottom:.35rem">
+      <div>
+        <label class="gd-label" style="font-size:10px">FK col — ${esc(rel.from_entity)}</label>
+        <select class="gd-select" id="ej-fc-${relId}" style="font-size:12px">
+          <option value="">—</option>${mkOpts(fromCols, rel.from_column)}
+        </select>
+      </div>
+      <div>
+        <label class="gd-label" style="font-size:10px">Ref col — ${esc(rel.to_entity)}</label>
+        <select class="gd-select" id="ej-tc-${relId}" style="font-size:12px">
+          <option value="">—</option>${mkOpts(toCols, rel.to_column)}
+        </select>
+      </div>
+    </div>
+    <div class="gd-form-row" style="margin-bottom:.35rem">
+      <div>
+        <label class="gd-label" style="font-size:10px">Join type</label>
+        <select class="gd-select" id="ej-jt-${relId}" style="font-size:12px">
+          <option value="LEFT"${rel.join_type==='LEFT'?' selected':''}>LEFT JOIN</option>
+          <option value="INNER"${rel.join_type==='INNER'?' selected':''}>INNER JOIN</option>
+        </select>
+      </div>
+      <div>
+        <label class="gd-label" style="font-size:10px">Cardinality</label>
+        <select class="gd-select" id="ej-card-${relId}" style="font-size:12px">
+          <option value="many_to_one"${rel.relationship_type==='many_to_one'?' selected':''}>many → one</option>
+          <option value="one_to_one"${rel.relationship_type==='one_to_one'?' selected':''}>one → one</option>
+          <option value="one_to_many"${rel.relationship_type==='one_to_many'?' selected':''}>one → many</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- WHERE conditions -->
+    <div style="display:flex;align-items:center;justify-content:space-between;margin:.35rem 0 .25rem">
+      <span style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text-muted)">WHERE conditions</span>
+      <button onclick="addInlineWhere(${relId})"
+        style="font-size:11px;padding:2px 8px;background:color-mix(in srgb,#0369A1 10%,var(--surface));border:1px solid #BAE6FD;border-radius:var(--radius-sm);cursor:pointer;color:#0369A1">
+        + WHERE
+      </button>
+    </div>
+    <div id="ej-wc-hdr-${relId}" style="display:none;grid-template-columns:1fr 100px 1fr 24px;gap:.3rem;padding:0 0 .1rem;font-size:9px;font-weight:700;text-transform:uppercase;color:var(--text-muted)">
+      <span>Column</span><span>Operator</span><span>Value</span><span></span>
+    </div>
+    <div id="ej-wc-${relId}"></div>
+    ${rel.where_clause ? `<div style="font-size:10px;color:var(--text-muted);font-family:Consolas,monospace;padding:2px 4px;background:var(--surface);border:1px solid var(--border);border-radius:3px;margin-top:.2rem">
+      Saved: ${esc(rel.where_clause)}</div>` : ''}
+
+    <div style="display:flex;gap:.4rem;margin-top:.45rem;padding-top:.35rem;border-top:1px solid var(--border)">
+      <button class="gd-save-btn" style="flex:1;margin:0;font-size:11px"
+        onclick="saveRelInline(${relId},'${esc(entityName)}')">Save join</button>
+      <button style="padding:3px 10px;background:none;border:1px solid var(--border);border-radius:var(--radius-sm);cursor:pointer;font-size:11px;color:var(--text-muted)"
+        onclick="toggleRelEdit(${relId},'${esc(entityName)}')">Cancel</button>
+    </div>`;
+};
+
+window.addInlineWhere = function(relId) {
+  const panel = document.getElementById(`ej-edit-${relId}`);
+  const hdr   = document.getElementById(`ej-wc-hdr-${relId}`);
+  const cont  = document.getElementById(`ej-wc-${relId}`);
+  if (!cont) return;
+  if (hdr) hdr.style.display = 'grid';
+
+  // Build column options from stored data
+  const myCols   = JSON.parse(panel?.dataset.myCols  || '[]');
+  const partCols = JSON.parse(panel?.dataset.partCols || '[]');
+  const allCols  = [...myCols, ...partCols];
+  const colOpts  = '<option value="">— column —</option>' +
+    allCols.map(o => `<option value="${esc(o.v)}">${esc(o.l)}</option>`).join('');
+  const opOpts   = _WC_OPS_INLINE.map(op => `<option>${op}</option>`).join('');
+
+  const row = document.createElement('div');
+  row.className = 'ej-wc-row';
+  row.innerHTML = `
+    <select class="gd-select ej-wc-col">${colOpts}</select>
+    <select class="gd-select ej-wc-op" onchange="
+      const v=this.closest('.ej-wc-row').querySelector('.ej-wc-val');
+      if(v)v.style.visibility=['IS NULL','IS NOT NULL'].includes(this.value)?'hidden':'visible'
+    ">${opOpts}</select>
+    <input class="gd-input ej-wc-val" placeholder="value">
+    <button class="ej-wc-del" onclick="
+      this.closest('.ej-wc-row').remove();
+      if(!document.querySelectorAll('#ej-wc-${relId} .ej-wc-row').length){
+        const h=document.getElementById('ej-wc-hdr-${relId}');if(h)h.style.display='none';
+      }">✕</button>`;
+  cont.appendChild(row);
+};
+
+function _buildInlineWhereClause(relId) {
+  const parts = [];
+  document.querySelectorAll(`#ej-wc-${relId} .ej-wc-row`).forEach(row => {
+    const col = row.querySelector('.ej-wc-col')?.value?.trim();
+    const op  = row.querySelector('.ej-wc-op')?.value;
+    const val = row.querySelector('.ej-wc-val')?.value?.trim();
+    if (!col || !op) return;
+    if (_WC_NO_VAL_INLINE.has(op)) { parts.push(`${col} ${op}`); return; }
+    if (!val) return;
+    if (op === 'IN' || op === 'NOT IN') {
+      parts.push(`${col} ${op} (${val})`);
+    } else {
+      const quoted = (op === 'LIKE' || op === 'NOT LIKE' || isNaN(val))
+        ? `'${val.replace(/'/g, "''")}'` : val;
+      parts.push(`${col} ${op} ${quoted}`);
+    }
+  });
+  return parts.join(' AND ');
+}
+
+window.saveRelInline = async function(relId, entityName) {
+  const rel = graph.relationships.find(r => r.id === relId);
+  if (!rel) return;
+
+  const fromCol    = document.getElementById(`ej-fc-${relId}`)?.value;
+  const toCol      = document.getElementById(`ej-tc-${relId}`)?.value;
+  const joinType   = document.getElementById(`ej-jt-${relId}`)?.value || rel.join_type;
+  const card       = document.getElementById(`ej-card-${relId}`)?.value || rel.relationship_type;
+  const whereClause = _buildInlineWhereClause(relId);
+
+  if (!fromCol || !toCol) { alert('Select FK columns for both sides'); return; }
+
+  const payload = {
+    from_entity:       rel.from_entity,
+    to_entity:         rel.to_entity,
+    from_column:       fromCol,
+    to_column:         toCol,
+    relationship_type: card,
+    join_type:         joinType,
+    label:             rel.label || '',
+    join_conditions:   [],
+    where_clause:      whereClause,
+    rel_id:            relId,
+  };
+
+  const res = await api('POST', `${API_BASE}/relationships`, payload);
+  if (!res.ok) { alert('Save failed'); return; }
+
+  // Update local state
+  Object.assign(rel, { from_column: fromCol, to_column: toCol,
+    join_type: joinType, relationship_type: card, where_clause: whereClause });
+
+  // Refresh panel + graph edge
+  renderGraph(); updateRelList();
+  renderEntityDetail(entityName);
+  setStatus('Join updated ✓');
 };
 
 // ════════════════════════════════════════════════════════════════════════════
