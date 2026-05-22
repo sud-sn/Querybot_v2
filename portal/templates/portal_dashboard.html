@@ -7,12 +7,22 @@
 .chart-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-md);overflow:hidden;transition:box-shadow .2s,transform .2s}
 .chart-card:hover{box-shadow:var(--shadow-lg);transform:translateY(-1px)}
 .chart-card-header{padding:.95rem 1rem;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;background:linear-gradient(180deg,color-mix(in srgb,var(--surface-2) 84%, var(--primary-soft) 16%),var(--surface))}
-.chart-card-title{font-size:14px;font-weight:800;color:var(--text);line-height:1.4}
+.chart-card-title{font-size:14px;font-weight:800;color:var(--text);line-height:1.4;cursor:text}
+.chart-card-title[contenteditable=true]{outline:none;border-bottom:2px solid var(--primary);padding-bottom:1px}
 .chart-card-sub{font-size:11px;color:var(--text-muted);margin-top:4px}
 .chart-card-body{padding:1rem}
 .chart-canvas{height:320px;width:100%;border-radius:var(--radius);background:linear-gradient(180deg,color-mix(in srgb,var(--surface-2) 92%, transparent),transparent)}
-.chart-meta{font-size:11px;color:var(--gray-500);margin-top:.8rem;display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap}
+.chart-meta{font-size:11px;color:var(--gray-500);margin-top:.6rem;display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap;align-items:center}
 .chart-error{padding:2rem;text-align:center;color:var(--text-muted);font-size:12px;background:var(--surface-2);border-radius:var(--radius);border:1px dashed var(--border)}
+/* ── Dashboard chart controls ───────────────────────────────────────────── */
+.dash-ctrl-row{display:flex;gap:.3rem;flex-wrap:wrap;margin-top:.55rem;padding-top:.45rem;border-top:1px solid color-mix(in srgb,var(--border) 50%,transparent);align-items:center}
+.dash-ctrl-sep{width:1px;height:14px;background:var(--border);margin:0 .2rem;flex-shrink:0}
+.dctt-btn{padding:3px 10px;font-size:10.5px;font-weight:700;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-muted);cursor:pointer;transition:all .15s;white-space:nowrap}
+.dctt-btn:hover{border-color:var(--primary);color:var(--primary)}
+.dctt-btn.dctt-active{background:var(--primary);border-color:var(--primary);color:#fff}
+.dcpt-swatch{width:26px;height:13px;border-radius:4px;border:2px solid transparent;cursor:pointer;transition:transform .12s,border-color .12s;flex-shrink:0}
+.dcpt-swatch:hover{transform:scale(1.15)}
+.dcpt-swatch.dcpt-active{border-color:var(--primary);box-shadow:0 0 0 1px var(--primary)}
 .empty-state{text-align:center;padding:4rem 2rem;color:var(--gray-500)}
 #chart-modal{animation:fadeIn .15s ease}
 @keyframes fadeIn{from{opacity:0}to{opacity:1}}
@@ -99,10 +109,13 @@
 </div>
 <div class="chart-grid">
   {% for chart in charts %}
-  <div class="chart-card">
+  <div class="chart-card" data-chart-id="{{ chart.id }}">
     <div class="chart-card-header">
-      <div>
-        <div class="chart-card-title">📊 {{ chart.title }}</div>
+      <div style="flex:1;min-width:0">
+        <div class="chart-card-title"
+             title="Double-click to rename"
+             ondblclick="startRenameChart(this, {{ chart.id }})"
+             id="chart-title-{{ chart.id }}">{{ chart.title }}</div>
         <div class="chart-card-sub">{{ chart.row_count }} rows · {{ chart.last_refreshed[:16] if chart.last_refreshed else 'Just now' }}</div>
       </div>
       <div style="display:flex;gap:.5rem;flex-shrink:0;align-items:center">
@@ -111,10 +124,9 @@
           title="Expand chart" style="font-size:12px;padding:4px 8px">⤢ Expand</button>
         <form method="post" action="/portal/unpin" style="margin:0">
           <input type="hidden" name="chart_id" value="{{ chart.id }}">
-          <button type="submit" class="btn btn-xs btn-secondary" onclick="return confirm('Unpin this chart?')" style="color:var(--gray-500)">✕ Unpin</button>
+          <button type="submit" class="btn btn-xs btn-secondary" onclick="return confirm('Unpin this chart?')" style="color:var(--gray-500)">✕</button>
         </form>
       </div>
-      </form>
     </div>
     <div class="chart-card-body">
       {% if chart.error %}
@@ -125,9 +137,14 @@
       <div class="chart-error">No data returned for this query.</div>
       {% endif %}
       <div class="chart-meta">
-        <span title="{{ chart.question }}">{{ chart.question[:70] }}{% if chart.question|length > 70 %}…{% endif %}</span>
-        <span>{{ (chart.chart_type or 'chart')|upper }}</span>
+        <span title="{{ chart.question }}" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ chart.question[:70] }}{% if chart.question|length > 70 %}…{% endif %}</span>
+        <span id="chart-type-badge-{{ chart.id }}" style="font-weight:700;color:var(--primary);flex-shrink:0">{{ (chart.chart_type or 'bar')|upper }}</span>
       </div>
+      {% if chart.chart_json %}
+      <div class="dash-ctrl-row" id="chart-ctrl-{{ chart.id }}" data-chart-id="{{ chart.id }}">
+        <!-- type toggles and palette swatches injected by JS -->
+      </div>
+      {% endif %}
     </div>
   </div>
   {% endfor %}
@@ -145,139 +162,304 @@
 {% endif %}
 
 <script>
+// ── Colour palettes (matches portal_chat.html) ──────────────────────────────
+const _PALETTES = {
+  default:  ['#378ADD','#34d399','#f472b6','#fbbf24','#a78bfa','#fb923c','#22d3ee','#e879f9'],
+  ocean:    ['#0EA5E9','#06B6D4','#0284C7','#38BDF8','#0369A1','#0891B2','#7DD3FC','#BAE6FD'],
+  sunset:   ['#F97316','#EF4444','#EC4899','#F59E0B','#DC2626','#E11D48','#D97706','#B45309'],
+  forest:   ['#10B981','#059669','#047857','#34D399','#065F46','#6EE7B7','#84CC16','#BEF264'],
+  candy:    ['#8B5CF6','#EC4899','#14B8A6','#F97316','#6366F1','#06B6D4','#FACC15','#EF4444'],
+  mono:     ['#334155','#475569','#64748b','#94a3b8','#cbd5e1','#1e293b','#0f172a','#e2e8f0'],
+};
+const _PAL_GRAD = {
+  default:  ['#4A96E8','#1A68C6'],
+  ocean:    ['#38BDF8','#0369A1'],
+  sunset:   ['#FB923C','#DC2626'],
+  forest:   ['#34D399','#047857'],
+  candy:    ['#A78BFA','#6D28D9'],
+  mono:     ['#64748b','#1e293b'],
+};
+
+function _fmtNum(v){
+  const n=Number(v); if(isNaN(n)) return String(v??'');
+  const a=Math.abs(n);
+  if(a>=1e9) return (n/1e9).toFixed(1).replace(/\.0$/,'')+'B';
+  if(a>=1e6) return (n/1e6).toFixed(1).replace(/\.0$/,'')+'M';
+  if(a>=1e3) return (n/1e3).toFixed(1).replace(/\.0$/,'')+'K';
+  return n.toLocaleString(undefined,{maximumFractionDigits:2});
+}
+
 function chartThemeTokens(){
   const dark = document.documentElement.getAttribute('data-theme') === 'dark';
   return {
     dark,
-    axis: dark ? '#94A3B8' : '#64748B',
-    axisLine: dark ? '#334155' : '#B8C8DE',
-    split: dark ? 'rgba(148,163,184,.14)' : 'rgba(148,163,184,.18)',
-    tooltipBg: dark ? 'rgba(15,23,42,.94)' : 'rgba(255,255,255,.98)',
-    tooltipText: dark ? '#fff' : '#0F172A',
-    line: '#3B82F6',
-    barTop: '#60A5FA',
-    barBottom: '#2563EB',
-    areaTop: dark ? 'rgba(59,130,246,.24)' : 'rgba(59,130,246,.18)',
-    areaBottom: dark ? 'rgba(59,130,246,.03)' : 'rgba(59,130,246,.04)'
+    axis:       dark ? '#94A3B8' : '#64748B',
+    axisLine:   dark ? '#334155' : '#CBD5E1',
+    split:      dark ? 'rgba(148,163,184,.12)' : 'rgba(148,163,184,.15)',
+    tooltipBg:  dark ? 'rgba(15,23,42,.96)' : 'rgba(255,255,255,.98)',
+    tooltipText:dark ? '#e2e8f0' : '#0F172A',
   };
 }
-function isTemporalLabel(value){
-  const s = String(value || '').toLowerCase();
-  return /(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|q[1-4]|week|month|year|date|day|\d{4}[-/]\d{1,2}([-/]\d{1,2})?)/.test(s);
+
+function isTemporalLabel(v){
+  return /(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|q[1-4]|week|month|year|date|day|\d{4}[-/]\d{1,2})/.test(String(v||'').toLowerCase());
 }
-function truncateLabel(label, maxLen = 16){
-  const str = String(label ?? '');
-  return str.length > maxLen ? str.slice(0, Math.max(3, maxLen - 1)) + '…' : str;
-}
-function chooseChartLayout(payload, labels){
-  if ((payload.chart_type || 'bar') === 'scatter') return 'scatter';
-  const maxLen = labels.reduce((m, s) => Math.max(m, String(s).length), 0);
-  const avgLen = labels.length ? labels.reduce((n, s) => n + String(s).length, 0) / labels.length : 0;
-  const temporal = labels.every(isTemporalLabel) || labels.some(isTemporalLabel);
-  if (payload.chart_type === 'line' && temporal) return 'line';
-  if (maxLen >= 16 || (labels.length > 7 && avgLen > 9)) return 'horizontal-bar';
-  if (payload.chart_type === 'line' && !temporal) return 'bar';
-  return payload.chart_type === 'line' ? 'line' : 'bar';
-}
-function buildTooltip(params){
-  const rows = Array.isArray(params) ? params : [params];
-  if (!rows.length) return '';
-  const title = rows[0].axisValueLabel || rows[0].name || '';
-  return `<div style="font-weight:700;margin-bottom:6px">${title}</div>` + rows.map(item => `${item.seriesName || 'Value'}: <strong>${Number(item.value ?? 0).toLocaleString()}</strong>`).join('<br>');
-}
+function truncateLabel(l, n=16){ const s=String(l??''); return s.length>n?s.slice(0,n-1)+'…':s; }
+
 function buildDashboardOption(payload){
-  const rows = payload.rows || [];
-  const xKey = payload.x_key;
-  const yKey = (payload.y_keys || [])[0];
-  const chartType = payload.chart_type || 'bar';
-  const theme = chartThemeTokens();
-  if (chartType === 'scatter' && payload.y_keys && payload.y_keys.length >= 2) {
+  const rows     = payload.rows || [];
+  const xKey     = payload.x_key;
+  const yKeys    = payload.y_keys || [];
+  const yKey     = yKeys[0];
+  const palName  = payload.color_palette || 'default';
+  const colors   = _PALETTES[palName] || _PALETTES.default;
+  const gradPair = _PAL_GRAD[palName]  || _PAL_GRAD.default;
+  const theme    = chartThemeTokens();
+  const reqType  = (payload.chart_type || 'bar').toLowerCase();
+
+  const ttBase = {
+    backgroundColor: theme.tooltipBg, borderColor: theme.axisLine,
+    borderRadius: 8, padding:[8,12],
+    textStyle: { color: theme.tooltipText, fontSize:12 },
+    extraCssText: 'box-shadow:0 4px 24px rgba(0,0,0,.14)',
+  };
+
+  // ── Scatter ────────────────────────────────────────────────────────────────
+  if (reqType === 'scatter' && yKeys.length >= 2) {
     return {
-      tooltip: { trigger: 'item', backgroundColor: theme.tooltipBg, borderColor: theme.axisLine, textStyle: { color: theme.tooltipText } },
-      xAxis: { type: 'value', name: payload.y_keys[0], axisLine:{ lineStyle:{ color: theme.axisLine } }, axisLabel:{ color: theme.axis }, splitLine:{ lineStyle:{ color: theme.split } } },
-      yAxis: { type: 'value', name: payload.y_keys[1], axisLine:{ lineStyle:{ color: theme.axisLine } }, axisLabel:{ color: theme.axis }, splitLine:{ lineStyle:{ color: theme.split } } },
-      series: [{ type:'scatter', symbolSize:14, itemStyle:{ color: theme.line, shadowBlur:16, shadowColor:'rgba(59,130,246,.28)' }, data: rows.map(r => [r[payload.y_keys[0]], r[payload.y_keys[1]], r[xKey]]) }]
+      color: colors,
+      tooltip: { ...ttBase, trigger:'item', formatter: p => `<strong>${String(p.value?.[2]??'')}</strong><br/>${yKeys[0]}: <strong>${_fmtNum(p.value?.[0])}</strong><br/>${yKeys[1]}: <strong>${_fmtNum(p.value?.[1])}</strong>` },
+      xAxis: { type:'value', name:yKeys[0], axisLine:{lineStyle:{color:theme.axisLine}}, axisLabel:{color:theme.axis,formatter:_fmtNum}, splitLine:{lineStyle:{color:theme.split}} },
+      yAxis: { type:'value', name:yKeys[1], axisLine:{lineStyle:{color:theme.axisLine}}, axisLabel:{color:theme.axis,formatter:_fmtNum}, splitLine:{lineStyle:{color:theme.split}} },
+      series: [{ type:'scatter', symbolSize:12, itemStyle:{color:colors[0],opacity:.85}, data:rows.map(r=>[r[yKeys[0]],r[yKeys[1]],r[xKey]]) }],
     };
   }
-  const labels = rows.map(r => String(r[xKey] ?? ''));
-  const values = rows.map(r => Number(r[yKey] ?? 0));
-  const layout = chooseChartLayout(payload, labels);
-  const horizontal = layout === 'horizontal-bar';
-  const rotation = !horizontal && labels.reduce((m, s) => Math.max(m, s.length), 0) > 10 ? 24 : 0;
-  const shortLabels = labels.map(l => truncateLabel(l, horizontal ? 22 : 16));
-  const interval = horizontal ? 0 : (labels.length > 10 ? Math.ceil(labels.length / 6) - 1 : 0);
+
+  // ── Pie / Donut ────────────────────────────────────────────────────────────
+  if (reqType === 'pie' || reqType === 'donut') {
+    const pieData = rows.map(r => ({ name:String(r[xKey]??''), value:Number(r[yKey]??0) }));
+    const innerR  = reqType === 'donut' ? '40%' : '0%';
+    return {
+      color: colors,
+      tooltip: { ...ttBase, trigger:'item', formatter: p => `<strong>${p.name}</strong><br/>${yKey||'Value'}: <strong>${_fmtNum(p.value)}</strong><br/><span style="opacity:.7">${p.percent?.toFixed(1)}%</span>` },
+      legend: { orient:'vertical', right:8, top:'middle', textStyle:{color:theme.axis,fontSize:11}, formatter:n=>n.length>18?n.slice(0,17)+'…':n },
+      series: [{ type:'pie', radius:[innerR,'68%'], center:['40%','50%'], data:pieData,
+        label:{show:pieData.length<=8,formatter:'{d}%',color:theme.axis,fontSize:11},
+        itemStyle:{borderRadius:5,borderColor:theme.dark?'#0f172a':'#fff',borderWidth:2},
+        emphasis:{itemStyle:{shadowBlur:12,shadowColor:'rgba(0,0,0,.18)'},scale:true,scaleSize:5},
+      }],
+    };
+  }
+
+  // ── Cartesian (bar / line / area) ──────────────────────────────────────────
+  const labels    = rows.map(r => String(r[xKey]??''));
+  const values    = rows.map(r => Number(r[yKey]??0));
+  const maxLLen   = labels.reduce((m,s)=>Math.max(m,s.length),0);
+  const temporal  = labels.some(isTemporalLabel);
+  const horizontal= reqType==='bar' && (maxLLen>=14 || (labels.length>7 && !temporal));
+  const rotation  = (!horizontal && maxLLen>10) ? 24 : 0;
+  const interval  = horizontal ? 0 : (labels.length>10 ? Math.ceil(labels.length/6)-1 : 0);
+  const shortLbl  = labels.map(l=>truncateLabel(l, horizontal?22:16));
+  const isLine    = reqType==='line' || reqType==='area' || (reqType!=='bar' && temporal);
+  const isArea    = reqType==='area';
+
+  const gradColor = new echarts.graphic.LinearGradient(
+    ...(horizontal?[1,0,0,0]:[0,0,0,1]),
+    [{offset:0,color:gradPair[0]},{offset:1,color:gradPair[1]}]
+  );
+  const areaColor = new echarts.graphic.LinearGradient(0,0,0,1,[
+    {offset:0,color:colors[0]+(isArea?'50':'22')},
+    {offset:1,color:colors[0]+'05'},
+  ]);
+  const multiTT = (params) => {
+    const arr = Array.isArray(params)?params:[params];
+    const lbl = arr[0]?.axisValueLabel||arr[0]?.name||'';
+    return `<div style="font-weight:700;margin-bottom:4px">${lbl}</div>`
+      + arr.map(p=>`<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${p.color};margin-right:5px"></span>${p.seriesName||'Value'}: <strong>${_fmtNum(p.value)}</strong>`).join('<br>');
+  };
+
   return {
-    grid: horizontal ? { left: 56, right: 18, top: 24, bottom: 16, containLabel: true } : { left: 48, right: 18, top: 24, bottom: rotation ? 68 : 42, containLabel: true },
-    tooltip: { trigger: horizontal ? 'item' : 'axis', backgroundColor: theme.tooltipBg, borderColor: theme.axisLine, textStyle: { color: theme.tooltipText }, formatter: buildTooltip },
-    xAxis: horizontal ? { type: 'value', axisLine:{ show:false }, splitLine:{ lineStyle:{ color: theme.split } }, axisLabel:{ color: theme.axis } } : { type: 'category', data: shortLabels, axisTick:{ show:false }, axisLine:{ lineStyle:{ color: theme.axisLine } }, axisLabel:{ color: theme.axis, interval, rotate: rotation, formatter: (value, idx) => shortLabels[idx] } },
-    yAxis: horizontal ? { type: 'category', data: shortLabels, axisTick:{ show:false }, axisLine:{ show:false }, axisLabel:{ color: theme.axis } } : { type: 'value', splitLine:{ lineStyle:{ color: theme.split } }, axisLabel:{ color: theme.axis } },
-    series: [{
-      name: yKey || 'Value',
-      type: layout === 'line' ? 'line' : 'bar',
-      smooth: layout === 'line',
-      data: values,
-      showSymbol: values.length <= 18,
-      barMaxWidth: horizontal ? 26 : 42,
-      lineStyle: { width: 3, color: theme.line },
-      itemStyle: { color: new echarts.graphic.LinearGradient(0,0,0,1,[{ offset:0,color:theme.barTop },{ offset:1,color:theme.barBottom }]), borderRadius: layout === 'line' ? 0 : (horizontal ? [0,10,10,0] : [10,10,0,0]) },
-      areaStyle: layout === 'line' ? { color: new echarts.graphic.LinearGradient(0,0,0,1,[{ offset:0,color:theme.areaTop },{ offset:1,color:theme.areaBottom }]) } : undefined
-    }]
+    color: colors,
+    grid: horizontal
+      ? {left:56,right:18,top:24,bottom:12,containLabel:true}
+      : {left:48,right:18,top:yKeys.length>1?44:24,bottom:rotation?72:42,containLabel:true},
+    tooltip: { ...ttBase, trigger:isLine?'axis':'item', formatter: yKeys.length>1?multiTT:undefined },
+    xAxis: horizontal
+      ? {type:'value',axisLine:{show:false},splitLine:{lineStyle:{color:theme.split}},axisLabel:{color:theme.axis,formatter:_fmtNum}}
+      : {type:'category',data:shortLbl,axisTick:{show:false},axisLine:{lineStyle:{color:theme.axisLine}},axisLabel:{color:theme.axis,interval,rotate:rotation,formatter:(v,i)=>shortLbl[i]}},
+    yAxis: horizontal
+      ? {type:'category',data:shortLbl,axisTick:{show:false},axisLine:{show:false},axisLabel:{color:theme.axis}}
+      : {type:'value',splitLine:{lineStyle:{color:theme.split}},axisLabel:{color:theme.axis,formatter:_fmtNum}},
+    legend: yKeys.length>1?{top:4,textStyle:{color:theme.axis,fontSize:11},data:yKeys,icon:'roundRect'}:undefined,
+    series: yKeys.length>1
+      ? yKeys.map((k,i)=>({
+          name:k, type:isLine?'line':'bar', smooth:isLine,
+          data:rows.map(r=>Number(r[k]??0)),
+          showSymbol:isLine&&rows.length<=20,
+          lineStyle:{width:2.5,color:colors[i%colors.length]},
+          itemStyle:{color:colors[i%colors.length],borderRadius:isLine?0:(horizontal?[0,6,6,0]:[6,6,0,0])},
+          barMaxWidth:horizontal?18:28,
+          areaStyle:isArea?{color:new echarts.graphic.LinearGradient(0,0,0,1,[{offset:0,color:colors[i%colors.length]+'44'},{offset:1,color:colors[i%colors.length]+'05'}])}:undefined,
+        }))
+      : [{
+          name:yKey||'Value', type:isLine?'line':'bar', smooth:isLine,
+          data:values,
+          showSymbol:isLine&&values.length<=20,
+          barMaxWidth:horizontal?26:44,
+          lineStyle:{width:3,color:colors[0]},
+          itemStyle:{color:isLine?colors[0]:gradColor, borderRadius:isLine?0:(horizontal?[0,10,10,0]:[10,10,0,0])},
+          areaStyle:isLine?{color:areaColor}:undefined,
+        }],
   };
 }
+
+// ── Dashboard chart init ──────────────────────────────────────────────────────
+// Live payload registry — mirrors what's rendered for each chart node
+window._dashPayloads = window._dashPayloads || {};
+
 function initDashboardChart(node) {
   const payload = JSON.parse(node.dataset.chart || '{}');
   if (!payload.rows || !payload.rows.length) return;
+  if (payload.chart_id) window._dashPayloads[payload.chart_id] = payload;
   const existing = echarts.getInstanceByDom(node);
   if (existing) existing.dispose();
-  const theme = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : null;
-  const chart = echarts.init(node, theme, { renderer: 'canvas' });
+  const themeKey = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : null;
+  const chart = echarts.init(node, themeKey, { renderer: 'canvas' });
   chart.setOption(buildDashboardOption(payload));
-  // ResizeObserver handles CSS grid reflow, card expand, and maximize transitions
   if (window.ResizeObserver) {
     if (node._qbRO) node._qbRO.disconnect();
     const ro = new ResizeObserver(() => { try { chart.resize(); } catch {} });
-    ro.observe(node);
-    node._qbRO = ro;
+    ro.observe(node); node._qbRO = ro;
   }
   return chart;
 }
 function renderDashboardCharts() {
-  // requestAnimationFrame ensures grid layout has settled before ECharts reads dimensions
   requestAnimationFrame(() => {
     document.querySelectorAll('[data-chart]').forEach(initDashboardChart);
+    document.querySelectorAll('.dash-ctrl-row[data-chart-id]').forEach(mountDashChartControls);
   });
 }
 document.addEventListener('DOMContentLoaded', () => {
   renderDashboardCharts();
-  // Keep persistent resize for browsers without ResizeObserver
   if (!window.ResizeObserver) {
     window.addEventListener('resize', () => {
-      document.querySelectorAll('[data-chart]').forEach((node) => {
-        const instance = echarts.getInstanceByDom(node);
-        if (instance) instance.resize();
+      document.querySelectorAll('[data-chart]').forEach(n => {
+        try { echarts.getInstanceByDom(n)?.resize(); } catch {}
       });
     });
   }
 });
 window.addEventListener('qb-theme-change', () => setTimeout(renderDashboardCharts, 50));
 
-// ── Chart maximize modal ───────────────────────────────────────────────────
+// ── Per-card type toggle + palette switcher ───────────────────────────────────
+const DASH_TYPES = ['bar','line','area','pie','donut','scatter'];
+
+function mountDashChartControls(ctrlRow) {
+  const chartId = Number(ctrlRow.dataset.chartId);
+  if (!chartId) return;
+  const payload = window._dashPayloads[chartId];
+  if (!payload) return;
+  const ct  = payload.chart_type || 'bar';
+  const pal = payload.color_palette || 'default';
+
+  const typeHtml = DASH_TYPES.map(t =>
+    `<button class="dctt-btn${ct===t?' dctt-active':''}" data-type="${t}">${t.charAt(0).toUpperCase()+t.slice(1)}</button>`
+  ).join('');
+  const palHtml = Object.entries(_PALETTES).map(([n,c]) =>
+    `<button class="dcpt-swatch${pal===n?' dcpt-active':''}" data-palette="${n}" title="${n}"
+       style="background:linear-gradient(90deg,${c[0]} 33%,${c[1]} 33%,${c[1]} 66%,${c[2]} 66%)"></button>`
+  ).join('');
+
+  ctrlRow.innerHTML = typeHtml
+    + `<span class="dash-ctrl-sep"></span>`
+    + palHtml;
+
+  ctrlRow.querySelectorAll('.dctt-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const newType = btn.dataset.type;
+      const updated = Object.assign({}, window._dashPayloads[chartId], { chart_type: newType });
+      window._dashPayloads[chartId] = updated;
+      ctrlRow.querySelectorAll('.dctt-btn').forEach(b => b.classList.toggle('dctt-active', b.dataset.type===newType));
+      const node = document.getElementById(`dashboard-chart-${chartId}`);
+      if (node) {
+        const inst = echarts.getInstanceByDom(node);
+        if (inst) inst.setOption(buildDashboardOption(updated), true);
+      }
+      const badge = document.getElementById(`chart-type-badge-${chartId}`);
+      if (badge) badge.textContent = newType.toUpperCase();
+      _updateChart(chartId, { chart_type: newType });
+    });
+  });
+  ctrlRow.querySelectorAll('.dcpt-swatch').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const newPal = btn.dataset.palette;
+      const updated = Object.assign({}, window._dashPayloads[chartId], { color_palette: newPal });
+      window._dashPayloads[chartId] = updated;
+      ctrlRow.querySelectorAll('.dcpt-swatch').forEach(b => b.classList.toggle('dcpt-active', b.dataset.palette===newPal));
+      const node = document.getElementById(`dashboard-chart-${chartId}`);
+      if (node) {
+        const inst = echarts.getInstanceByDom(node);
+        if (inst) inst.setOption(buildDashboardOption(updated), true);
+      }
+      _updateChart(chartId, { color_palette: newPal });
+    });
+  });
+}
+
+async function _updateChart(chartId, fields) {
+  try {
+    await fetch('/portal/api/update-chart', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ chart_id: chartId, ...fields }),
+    });
+  } catch {}
+}
+
+// ── Inline title editing ──────────────────────────────────────────────────────
+function startRenameChart(el, chartId) {
+  if (el.isContentEditable) return;
+  el.contentEditable = 'true';
+  el.focus();
+  // Select all text
+  const range = document.createRange();
+  range.selectNodeContents(el);
+  window.getSelection().removeAllRanges();
+  window.getSelection().addRange(range);
+
+  const commit = async () => {
+    el.contentEditable = 'false';
+    const newTitle = el.textContent.trim() || el.dataset.orig;
+    if (newTitle !== el.dataset.orig) {
+      _updateChart(chartId, { title: newTitle });
+    }
+  };
+  el.dataset.orig = el.textContent.trim();
+  el.addEventListener('blur', commit, { once: true });
+  el.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); el.blur(); }
+    if (e.key === 'Escape') { el.textContent = el.dataset.orig; el.blur(); }
+  }, { once: true });
+}
+
+// ── Chart maximize modal ──────────────────────────────────────────────────────
 function openChartModal(cardEl) {
-  const node = cardEl.querySelector('[data-chart]');
+  const chartId = Number(cardEl.dataset.chartId || 0);
+  const node    = cardEl.querySelector('[data-chart]');
   if (!node) return;
-  const payload = JSON.parse(node.dataset.chart || '{}');
-  const title   = cardEl.querySelector('.chart-card-title')?.textContent || 'Chart';
+  const payload = window._dashPayloads[chartId] || JSON.parse(node.dataset.chart || '{}');
+  const title   = cardEl.querySelector('.chart-card-title')?.textContent?.trim() || 'Chart';
 
   let modal = document.getElementById('chart-modal');
   if (!modal) {
     modal = document.createElement('div');
     modal.id = 'chart-modal';
-    modal.style.cssText = 'position:fixed;inset:0;z-index:9000;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;backdrop-filter:blur(3px)';
+    modal.style.cssText = 'position:fixed;inset:0;z-index:9000;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px)';
     modal.innerHTML = `
       <div id="chart-modal-inner" style="background:var(--surface);border-radius:var(--radius);width:calc(100vw - 64px);height:calc(100vh - 80px);max-width:1400px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 24px 64px rgba(0,0,0,.28)">
-        <div style="display:flex;align-items:center;justify-content:space-between;padding:.85rem 1.25rem;border-bottom:1px solid var(--border);background:var(--surface-2);flex-shrink:0">
-          <span id="chart-modal-title" style="font-weight:800;font-size:14px"></span>
-          <button onclick="closeChartModal()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-muted);padding:0 4px" title="Close (Esc)">✕</button>
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:.85rem 1.25rem;border-bottom:1px solid var(--border);background:var(--surface-2);flex-shrink:0;gap:1rem">
+          <span id="chart-modal-title" style="font-weight:800;font-size:14px;flex:1"></span>
+          <div id="chart-modal-ctrl" style="display:flex;gap:.3rem;flex-wrap:wrap;align-items:center"></div>
+          <button onclick="closeChartModal()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-muted);padding:0 4px;flex-shrink:0" title="Close (Esc)">✕</button>
         </div>
         <div id="chart-modal-canvas" style="flex:1;padding:1rem;min-height:0"></div>
       </div>`;
@@ -286,23 +468,69 @@ function openChartModal(cardEl) {
   }
   document.getElementById('chart-modal-title').textContent = title;
   modal.style.display = 'flex';
+  modal._chartId = chartId;
 
-  // Init fresh chart inside modal at full size
+  // Build type + palette controls inside modal header
+  const ctrlEl = document.getElementById('chart-modal-ctrl');
+  const ct  = payload.chart_type  || 'bar';
+  const pal = payload.color_palette || 'default';
+  ctrlEl.innerHTML = DASH_TYPES.map(t =>
+    `<button class="dctt-btn${ct===t?' dctt-active':''}" data-type="${t}">${t.charAt(0).toUpperCase()+t.slice(1)}</button>`
+  ).join('')
+  + `<span class="dash-ctrl-sep"></span>`
+  + Object.entries(_PALETTES).map(([n,c]) =>
+    `<button class="dcpt-swatch${pal===n?' dcpt-active':''}" data-palette="${n}" title="${n}"
+       style="background:linear-gradient(90deg,${c[0]} 33%,${c[1]} 33%,${c[1]} 66%,${c[2]} 66%)"></button>`
+  ).join('');
+
   const canvas = document.getElementById('chart-modal-canvas');
   const existing = echarts.getInstanceByDom(canvas);
   if (existing) existing.dispose();
-  const theme = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : null;
-  const mc = echarts.init(canvas, theme, { renderer: 'canvas' });
+  const themeKey = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : null;
+  const mc = echarts.init(canvas, themeKey, { renderer: 'canvas' });
   mc.setOption(buildDashboardOption(payload));
-  // Resize once the modal has fully painted
   requestAnimationFrame(() => { try { mc.resize(); } catch {} });
   if (window.ResizeObserver) {
     const ro = new ResizeObserver(() => { try { mc.resize(); } catch {} });
-    ro.observe(canvas);
-    canvas._qbRO = ro;
+    ro.observe(canvas); canvas._qbRO = ro;
   }
   modal._modalChart = mc;
-  // Click outside to close
+  modal._modalPayload = Object.assign({}, payload);
+
+  // Wire modal controls
+  ctrlEl.querySelectorAll('.dctt-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const newType = btn.dataset.type;
+      modal._modalPayload = Object.assign({}, modal._modalPayload, { chart_type: newType });
+      ctrlEl.querySelectorAll('.dctt-btn').forEach(b => b.classList.toggle('dctt-active', b.dataset.type===newType));
+      mc.setOption(buildDashboardOption(modal._modalPayload), true);
+      // Sync back to card
+      if (chartId) {
+        window._dashPayloads[chartId] = Object.assign({}, window._dashPayloads[chartId]||{}, { chart_type: newType });
+        const cardCtrl = document.querySelector(`.dash-ctrl-row[data-chart-id="${chartId}"]`);
+        cardCtrl?.querySelectorAll('.dctt-btn').forEach(b => b.classList.toggle('dctt-active', b.dataset.type===newType));
+        document.getElementById(`chart-type-badge-${chartId}`)?.setAttribute('data-text', newType.toUpperCase());
+        _updateChart(chartId, { chart_type: newType });
+      }
+    });
+  });
+  ctrlEl.querySelectorAll('.dcpt-swatch').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const newPal = btn.dataset.palette;
+      modal._modalPayload = Object.assign({}, modal._modalPayload, { color_palette: newPal });
+      ctrlEl.querySelectorAll('.dcpt-swatch').forEach(b => b.classList.toggle('dcpt-active', b.dataset.palette===newPal));
+      mc.setOption(buildDashboardOption(modal._modalPayload), true);
+      if (chartId) {
+        window._dashPayloads[chartId] = Object.assign({}, window._dashPayloads[chartId]||{}, { color_palette: newPal });
+        const cardNode = document.getElementById(`dashboard-chart-${chartId}`);
+        if (cardNode) { const i=echarts.getInstanceByDom(cardNode); i?.setOption(buildDashboardOption(window._dashPayloads[chartId]),true); }
+        const cardCtrl = document.querySelector(`.dash-ctrl-row[data-chart-id="${chartId}"]`);
+        cardCtrl?.querySelectorAll('.dcpt-swatch').forEach(b => b.classList.toggle('dcpt-active', b.dataset.palette===newPal));
+        _updateChart(chartId, { color_palette: newPal });
+      }
+    });
+  });
+
   modal.addEventListener('click', e => { if (e.target === modal) closeChartModal(); }, { once: true });
 }
 function closeChartModal() {

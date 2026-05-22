@@ -75,10 +75,26 @@ def _looks_temporal_labels(values: list[str]) -> bool:
 
 # ── Chart detection ───────────────────────────────────────────────────────────
 
-def detect_chart_type(rows: list[dict]) -> Optional[str]:
+_TREND_RE = _re.compile(
+    r"\b(trend|over time|monthly|weekly|daily|yearly|by month|by week|"
+    r"by year|by quarter|evolution|progression|growth|history|timeline)\b",
+    _re.IGNORECASE,
+)
+_SHARE_RE = _re.compile(
+    r"\b(share|proportion|breakdown|distribution|percent|percentage|"
+    r"split|composition|mix|by .{1,20} type|by .{1,20} category)\b",
+    _re.IGNORECASE,
+)
+
+
+def detect_chart_type(rows: list[dict], question: str = "") -> Optional[str]:
     """
-    Inspect result columns and row count to choose the best chart type.
-    Returns: 'bar' | 'line' | 'scatter' | None
+    Inspect result columns, row count, and optional question text to choose
+    the best chart type.
+
+    Returns: 'bar' | 'line' | 'area' | 'scatter' | 'pie' | 'donut' | None
+      • area  — temporal line with prominent fill (good for trend questions)
+      • donut — ring-style pie (good for share/breakdown questions)
     """
     if not rows or len(rows) < 2:
         return None
@@ -103,15 +119,25 @@ def detect_chart_type(rows: list[dict]) -> Optional[str]:
     if not numeric_cols:
         return None
 
+    q = question or ""
+    trend_q = bool(_TREND_RE.search(q))
+    share_q = bool(_SHARE_RE.search(q))
+
     n = len(rows)
     if text_cols and numeric_cols:
-        # Pie: small categorical sets (≤8 slices) with a single value column
-        if n <= 8 and len(numeric_cols) == 1:
-            return "pie"
         labels = [str(r.get(text_cols[0], "")) for r in rows]
-        if _looks_temporal_labels(labels):
-            return "line" if n <= 36 else "bar"
+        temporal = _looks_temporal_labels(labels)
+
+        # Donut / Pie — small categorical sets with a single value column
+        if n <= 10 and len(numeric_cols) == 1:
+            return "donut" if share_q else "pie"
+
+        # Area / Line — temporal data or explicit trend question
+        if trend_q or temporal:
+            return "area" if n <= 36 else "line"
+
         return "bar"
+
     if len(numeric_cols) >= 2:
         return "scatter"
     return None
@@ -246,10 +272,10 @@ def build_chart_payload(rows: list[dict], chart_type: str, title: str = "Results
     x_key = text_cols[0] if text_cols else headers[0]
     if chart_type == "scatter":
         y_keys = numeric_cols[:2]
-    elif chart_type == "pie":
+    elif chart_type in ("pie", "donut"):
         y_keys = numeric_cols[:1]
     else:
-        # bar / line — expose all numeric columns for multi-series rendering
+        # bar / line / area — expose all numeric columns for multi-series rendering
         y_keys = numeric_cols
 
     clean_rows = []

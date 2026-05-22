@@ -364,6 +364,7 @@ def pin_chart(
     sql_query: str,
     chart_type: str,
     db_config_id: int,
+    color_palette: str = "default",
 ) -> int:
     with get_db() as conn:
         # Get next position
@@ -374,9 +375,11 @@ def pin_chart(
         pos = row["next"] if row else 1
         cur = conn.execute("""
             INSERT INTO pinned_chart
-                (user_id, account_id, title, question, sql_query, chart_type, db_config_id, position)
-            VALUES (?,?,?,?,?,?,?,?)
-        """, (user_id, account_id, title, question, sql_query, chart_type, db_config_id, pos))
+                (user_id, account_id, title, question, sql_query, chart_type,
+                 db_config_id, position, color_palette)
+            VALUES (?,?,?,?,?,?,?,?,?)
+        """, (user_id, account_id, title, question, sql_query, chart_type,
+               db_config_id, pos, color_palette))
         cid = cur.lastrowid
     log.info("Pinned chart %d for user %d", cid, user_id)
     return cid
@@ -404,6 +407,32 @@ def update_pinned_chart_title(chart_id: int, user_id: int, title: str) -> None:
         conn.execute(
             "UPDATE pinned_chart SET title=? WHERE id=? AND user_id=?",
             (title, chart_id, user_id)
+        )
+
+
+def update_pinned_chart(
+    chart_id: int,
+    user_id: int,
+    title: str | None = None,
+    chart_type: str | None = None,
+    color_palette: str | None = None,
+) -> None:
+    """Update title, chart_type, and/or color_palette for a pinned chart."""
+    fields: list[str] = []
+    values: list = []
+    if title is not None:
+        fields.append("title=?"); values.append(title.strip()[:120])
+    if chart_type is not None:
+        fields.append("chart_type=?"); values.append(chart_type.strip())
+    if color_palette is not None:
+        fields.append("color_palette=?"); values.append(color_palette.strip())
+    if not fields:
+        return
+    values.extend([chart_id, user_id])
+    with get_db() as conn:
+        conn.execute(
+            f"UPDATE pinned_chart SET {', '.join(fields)} WHERE id=? AND user_id=?",
+            values,
         )
 
 

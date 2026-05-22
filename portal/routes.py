@@ -733,9 +733,11 @@ def _refresh_chart(chart: dict, db_cfg: dict | None) -> dict:
         rows = run_query(db_cfg["credentials"], db_cfg["db_type"], chart["sql_query"])
         result["row_count"] = len(rows)
         if rows:
-            chart_type = chart.get("chart_type") or detect_chart_type(rows)
+            chart_type = chart.get("chart_type") or detect_chart_type(rows, question=chart.get("question", ""))
             payload = build_chart_payload(rows, chart_type, title=chart["title"]) if chart_type else None
             if payload:
+                payload["color_palette"] = chart.get("color_palette") or "default"
+                payload["chart_id"] = chart["id"]   # lets dashboard JS call update-chart
                 result["chart_json"] = json.dumps(payload)
         store.update_chart_refreshed(chart["id"])
     except Exception as e:
@@ -912,8 +914,12 @@ async def pin_chart_api(request: Request):
     except Exception:
         payload = {}
 
-    token = str(payload.get("token") or "").strip()
-    title = str(payload.get("title") or "").strip()
+    token          = str(payload.get("token") or "").strip()
+    title          = str(payload.get("title") or "").strip()
+    # Allow the frontend to send the currently-active chart type / palette
+    # (user may have toggled type or changed palette before pinning)
+    type_override    = str(payload.get("chart_type") or "").strip() or None
+    palette_override = str(payload.get("color_palette") or "default").strip()
     if not token:
         return JSONResponse({"ok": False, "error": "Missing pin token."}, status_code=400)
 
@@ -927,8 +933,32 @@ async def pin_chart_api(request: Request):
         title=title or pin_data["question"][:50],
         question=pin_data["question"],
         sql_query=pin_data["sql_query"],
-        chart_type=pin_data["chart_type"],
+        chart_type=type_override or pin_data["chart_type"],
         db_config_id=pin_data["db_config_id"],
+        color_palette=palette_override,
+    )
+    return JSONResponse({"ok": True})
+
+
+@router.post("/api/update-chart")
+async def update_chart_api(request: Request):
+    """Update chart_type, color_palette, or title for a pinned chart."""
+    user = _get_portal_user(request)
+    if not user:
+        return JSONResponse({"ok": False, "error": "Authentication required."}, status_code=401)
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    chart_id = int(payload.get("chart_id") or 0)
+    if not chart_id:
+        return JSONResponse({"ok": False, "error": "chart_id required."}, status_code=400)
+    store.update_pinned_chart(
+        chart_id=chart_id,
+        user_id=user["id"],
+        title=str(payload["title"]).strip() if "title" in payload else None,
+        chart_type=str(payload["chart_type"]).strip() if "chart_type" in payload else None,
+        color_palette=str(payload["color_palette"]).strip() if "color_palette" in payload else None,
     )
     return JSONResponse({"ok": True})
 
