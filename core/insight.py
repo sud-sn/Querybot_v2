@@ -1189,104 +1189,91 @@ async def generate_followup_suggestions(
     result_scope: dict,
     db_cfg: dict,
     account_id: str,
+    rows: list[dict] | None = None,
     audit_enabled: bool = False,
     audit_request_id: str = "",
 ) -> list[str]:
     """
-    Generate 3 result-aware follow-up questions using a lightweight LLM call.
+    Generate 3 result-aware follow-up questions.
 
-    Uses the already-computed data_brief (statistical summary) so raw rows
-    never reach the LLM. Returns [] on any failure — follow-ups are a UX
-    enhancement, not a critical path.
+    Method 4 (templates, zero LLM) runs first — instant, statistically grounded.
+    Method 3 (constrained LLM) fills any remaining slots using only signal
+    labels + column names — raw rows never reach the LLM.
 
-    The suggestions are specific to the actual columns and distributions
-    returned, not generic slot-filling templates.
+    Returns [] on any failure — follow-ups are a UX enhancement, not critical.
     """
     if not brief:
         return []
 
-    # Only generate suggestions when there is meaningful structure to react to
-    columns = brief.get("columns") or []
+    columns   = brief.get("columns") or {}
     row_count = brief.get("row_count", 0)
     if row_count == 0 or len(columns) < 2:
         return []
 
-    # ── Build context from statistical brief only — NO raw row values ────────
-    # brief["columns"] is a dict {column_name: "numeric"|"text"}
-    # brief["category_breakdown"]["top_5"] is already redacted by _display_label()
-    #   in compute_data_brief for sensitive column names — we enforce that here too
-    # brief["numeric_summaries"] contains min/max/mean — safe to include
-
-    col_names = list(columns.keys()) if isinstance(columns, dict) else                 [str(c) for c in columns]
+    col_names = list(columns.keys()) if isinstance(columns, dict) else [str(c) for c in columns]
     col_types = columns if isinstance(columns, dict) else {}
 
-    col_summary = ", ".join(
-        f"{c} ({col_types.get(c, 'unknown')})" for c in col_names[:8]
+    # ── Tier 1: Statistical signals → instant template suggestions ───────────
+    suggestions: list[str] = []
+    signals: list[dict]    = []
+
+    if rows and len(rows) >= 2:
+        try:
+            from core.stat_signals import compute_signals, template_suggestions, format_signals_for_llm
+            signals     = compute_signals(rows)
+            suggestions = template_suggestions(signals, col_names)
+            log.debug("Template suggestions (%d signals): %s", len(signals), suggestions)
+        except Exception as _te:
+            log.debug("Template suggestion error (non-critical): %s", _te)
+
+    if len(suggestions) >= 3:
+        return suggestions[:3]   # templates covered all 3 — no LLM needed
+
+    # ── Tier 2: LLM gap-fill with signal context only (no raw rows) ──────────
+    needed = 3 - len(suggestions)
+
+    # Build signal context: only labels + column names, never row values
+    if signals:
+        from core.stat_signals import format_signals_for_llm
+        signal_ctx = format_signals_for_llm(signals, col_names)
+    else:
+        # No rows available — fall back to brief stats (min/max only)
+        num_lines = []
+        for cn, stats in (brief.get("numeric_summaries") or {}).items():
+            if stats.get("min") is not None:
+                num_lines.append(f"  {cn}: min={stats['min']}, max={stats['max']}, mean={stats.get('mean','?')}")
+        signal_ctx = (
+            f"Columns: {', '.join(f'{c} ({col_types.get(c,\"?\")})' for c in col_names[:8])}\n"
+            + ("\n".join(num_lines) if num_lines else "")
+        )
+
+    existing_str = (
+        f"\nAlready suggested (do NOT repeat): {suggestions}\n" if suggestions else ""
     )
 
-    # Category labels from category_breakdown — already passed through
-    # _display_label() which redacts sensitive column names.
-    # Apply _is_sensitive_field() as an additional guard here before sending.
-    top_vals_lines = []
-    cat = brief.get("category_breakdown") or {}
-    label_col = cat.get("label_column", "")
-    if cat.get("top_5") and not _is_sensitive_field(label_col):
-        safe_labels = [
-            item["label"] for item in cat["top_5"]
-            if item.get("label") and item["label"] != "redacted segment"
-        ]
-        if safe_labels:
-            top_vals_lines.append(
-                f"  {label_col}: {', '.join(str(v) for v in safe_labels[:3])}"
-            )
-
-    top_vals_str = "\n".join(top_vals_lines) if top_vals_lines else ""
-
-    # Numeric ranges from summaries — these are aggregates, not raw values
-    numeric_lines = []
-    for col_name, stats in (brief.get("numeric_summaries") or {}).items():
-        mn = stats.get("min")
-        mx = stats.get("max")
-        if mn is not None and mx is not None:
-            numeric_lines.append(f"  {col_name}: min={mn}, max={mx}")
-
-    numeric_str = "\n".join(numeric_lines) if numeric_lines else ""
-
-    user_msg_parts = [
-        f"The user asked: {question!r}",
-        f"Result: {row_count} rows",
-        f"Columns: {col_summary}",
-    ]
-    if top_vals_str:
-        user_msg_parts.append(f"Sample category values:\n{top_vals_str}")
-    if numeric_str:
-        user_msg_parts.append(f"Numeric ranges:\n{numeric_str}")
-
-    user_msg_parts.append(
-        "\nGenerate exactly 3 short follow-up questions (max 12 words each) "
-        "a business analyst would naturally ask next based on this specific result.\n"
-        "IMPORTANT — only generate questions that a SQL SELECT query can answer:\n"
-        "  ✓ Top/bottom N rankings (e.g. 'Who had the highest total charge?')\n"
-        "  ✓ Filters/subsets (e.g. 'Show only prescribers with more than 20 fills')\n"
-        "  ✓ Aggregations (e.g. 'What is the average prescription count?')\n"
-        "  ✓ Grouping/breakdown (e.g. 'Break this down by drug type')\n"
-        "  ✓ Time trends (e.g. 'Show this by month')\n"
-        "  ✓ Scatter comparisons — phrase as 'Show X vs Y' NOT 'Are X and Y correlated'\n"
-        "  ✗ NEVER suggest: correlation coefficient, regression, clustering, p-value, "
-        "statistical tests, or any phrasing that implies computing a statistical function\n"
-        "Return ONLY a JSON array of 3 strings, no markdown, no preamble.\n"
-        'Example: ["Who had the highest total charge amount?", "Show bottom 5 by prescription count", "Break this down by drug category"]'
+    user_msg = (
+        f"The user asked: {question!r}\n"
+        f"Result: {row_count} rows\n"
+        f"{signal_ctx}"
+        f"{existing_str}\n"
+        f"Generate exactly {needed} short follow-up question(s) (max 12 words each) "
+        f"that a business analyst would naturally ask, based ONLY on the detected "
+        f"patterns listed above.\n"
+        f"Rules:\n"
+        f"  - Each question must map to a pattern listed above — do NOT invent new patterns\n"
+        f"  - Questions must be answerable by SQL (aggregations, filters, rankings, groupings)\n"
+        f"  - For two numeric columns: phrase as 'Show X vs Y' not 'Are they correlated'\n"
+        f"  - Never suggest statistical functions (correlation coeff, regression, p-value)\n"
+        f"Return ONLY a JSON array of {needed} string(s). No markdown. No explanation.\n"
+        f'Example (3 needed): ["Who had the highest total charge?", '
+        f'"Show bottom 5 by prescription count", "Break this down by drug category"]'
     )
-    user_msg = "\n".join(user_msg_parts)
 
     system_msg = (
-        "You generate result-aware follow-up questions for a business SQL analytics chatbot. "
-        "Every question you suggest MUST be answerable by a standard SQL SELECT query "
-        "(aggregations, filters, rankings, groupings, or returning two columns for scatter comparison). "
-        "Never suggest statistical computations (correlation, regression, clustering, p-value). "
-        "For comparing two numeric columns, phrase as 'Show [col1] vs [col2]' not 'Are they correlated'. "
-        "Questions must be specific to the data columns shown, not generic. "
-        "Return only a JSON array of exactly 3 short strings. No markdown fences. No explanation."
+        "You generate statistically-grounded follow-up questions for a SQL analytics chatbot. "
+        "You ONLY phrase questions from the detected statistical patterns provided — you never "
+        "invent new patterns. Questions must be SQL-answerable. "
+        "Return a JSON array only. No markdown fences. No explanation."
     )
 
     try:
@@ -1307,24 +1294,27 @@ async def generate_followup_suggestions(
         ):
             raw, _, _ = await llm_complete(
                 system_msg, user_msg, provider, model, api_key,
-                max_tokens=160, temperature=0.6, **az_kwargs,
+                max_tokens=160, temperature=0.5, **az_kwargs,
             )
 
-        # Strip markdown fences if LLM wraps anyway
         clean = raw.strip()
         if clean.startswith("```"):
             clean = clean.split("\n", 1)[1].rsplit("```", 1)[0].strip()
 
-        suggestions = _json.loads(clean)
-        if not isinstance(suggestions, list):
-            return []
+        llm_suggestions = _json.loads(clean)
+        if not isinstance(llm_suggestions, list):
+            llm_suggestions = []
+
+        for s in llm_suggestions:
+            s = str(s).strip()[:80]
+            if s and s not in suggestions:
+                suggestions.append(s)
+            if len(suggestions) >= 3:
+                break
 
         # Normalise: strings only, stripped, max 80 chars, max 3
-        result = [str(s).strip()[:80] for s in suggestions if str(s).strip()][:3]
-        import logging as _log
-        _log.getLogger("querybot.insight").debug(
-            "Follow-up suggestions generated: %s", result
-        )
+        result = suggestions[:3]
+        log.debug("Follow-up suggestions (template+LLM): %s", result)
         return result
 
     except Exception as exc:

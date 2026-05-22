@@ -134,6 +134,11 @@ class WebAdapter(PlatformAdapter):
             })
         log.debug("History hydrated from client: %d turn(s)", len(self._history))
 
+    @property
+    def session_id(self) -> str:
+        """Stable session key for the result cache (user-scoped)."""
+        return f"{self._account}:{self._user_id}"
+
     def cache_result(
         self,
         rows: list[dict],
@@ -143,7 +148,7 @@ class WebAdapter(PlatformAdapter):
         rag_context: str = "",
         question_id: str | None = None,
     ) -> None:
-        """Cache the last query result for insight follow-ups."""
+        """Cache the last query result for insight follow-ups and Tier-2 DuckDB queries."""
         self.last_result = {
             "rows":        rows,
             "question":    question,
@@ -152,10 +157,17 @@ class WebAdapter(PlatformAdapter):
             "rag_context": rag_context,
         }
         # Persist the parent question_id so drilldowns can reference it.
-        # If no id is provided (legacy callers) we generate one here so the
-        # first follow-up at least has something consistent to attach to.
         if question_id:
             self.last_question_id = question_id
+
+        # Also populate the module-level DuckDB result cache so follow-up
+        # analytical questions ("who is below average?") can be answered
+        # from the already-fetched rows without hitting the production DB.
+        try:
+            from core.result_cache import result_cache
+            result_cache.store(self.session_id, rows, question, sql)
+        except Exception as _ce:
+            log.debug("Result cache store failed (non-critical): %s", _ce)
 
     async def verify_request(self, body: bytes, headers: dict) -> bool:
         return True
