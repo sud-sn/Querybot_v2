@@ -74,6 +74,11 @@
 .bridge-col-arrow{font-size:11px;color:var(--text-muted);text-align:center}
 .bridge-col-alias,.bridge-col-flag{font-size:12px;padding:2px 5px}
 .bridge-col-loading{font-size:11px;color:var(--text-muted);padding:.4rem .2rem;font-style:italic}
+/* ── Relationship modal — WHERE conditions ───────────────────────────────── */
+.wc-row{display:grid;grid-template-columns:1fr 120px 1fr 26px;gap:.3rem;align-items:center;margin-bottom:.3rem}
+.wc-row select,.wc-row input{font-size:12px;padding:3px 6px}
+.wc-del{background:none;border:1px solid var(--border);border-radius:4px;cursor:pointer;color:var(--text-muted);font-size:12px;width:24px;height:24px;display:flex;align-items:center;justify-content:center}
+.wc-del:hover{background:#FEE2E2;color:var(--red);border-color:var(--red)}
 /* ── Multi-link modal ────────────────────────────────────────────────────── */
 .ml-dim-row{display:grid;grid-template-columns:20px 1fr 140px 110px;gap:.4rem;align-items:center;padding:.3rem .4rem;border-radius:5px;transition:background .12s}
 .ml-dim-row:hover{background:var(--surface-2)}
@@ -397,16 +402,19 @@
           <select class="gd-select" id="rel-to-entity" onchange="onRelEntityChange('to')"></select>
         </div>
       </div>
+      <!-- FK column selects (populated on entity change) -->
       <div class="gd-form-row">
         <div>
-          <label class="gd-label">FK column (from)</label>
-          <input class="gd-input" id="rel-from-col" placeholder="CustomerID" list="rel-from-col-list" autocomplete="off">
-          <datalist id="rel-from-col-list"></datalist>
+          <label class="gd-label">FK column (from) *</label>
+          <select class="gd-select" id="rel-from-col">
+            <option value="">— select entity first —</option>
+          </select>
         </div>
         <div>
-          <label class="gd-label">Referenced column (to)</label>
-          <input class="gd-input" id="rel-to-col" placeholder="CustomerID" list="rel-to-col-list" autocomplete="off">
-          <datalist id="rel-to-col-list"></datalist>
+          <label class="gd-label">Referenced column (to) *</label>
+          <select class="gd-select" id="rel-to-col">
+            <option value="">— select entity first —</option>
+          </select>
         </div>
       </div>
       <div class="gd-form-row">
@@ -430,11 +438,24 @@
         <label class="gd-label">Relationship label</label>
         <input class="gd-input" id="rel-label" placeholder="places, belongs to, prescribes…">
       </div>
+
+      <!-- Compound key: additional JOIN ON conditions -->
       <div style="display:flex;align-items:center;justify-content:space-between;margin:8px 0 4px">
         <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted)">Additional join conditions (compound key)</span>
         <button onclick="addModalJoinCondition()" style="font-size:11px;padding:2px 8px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);cursor:pointer">+ AND</button>
       </div>
       <div id="rel-jc-container"></div>
+
+      <!-- WHERE filter conditions -->
+      <div style="display:flex;align-items:center;justify-content:space-between;margin:10px 0 4px;padding-top:8px;border-top:1px solid var(--border)">
+        <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted)">WHERE conditions <span style="font-weight:400;text-transform:none;letter-spacing:0">(always-on filters applied to this join)</span></span>
+        <button onclick="addWhereCondition()" style="font-size:11px;padding:2px 8px;background:color-mix(in srgb,#0369A1 10%,var(--surface));border:1px solid #BAE6FD;border-radius:var(--radius-sm);cursor:pointer;color:#0369A1">+ WHERE</button>
+      </div>
+      <!-- Column header for WHERE rows -->
+      <div id="wc-header" style="display:none;grid-template-columns:1fr 120px 1fr 26px;gap:.3rem;padding:0 0 .15rem;font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text-muted)">
+        <span>Column</span><span>Operator</span><span>Value</span><span></span>
+      </div>
+      <div id="rel-wc-container"></div>
     </div>
     <div class="modal-footer">
       <button class="m-btn" onclick="closeRelModal()">Cancel</button>
@@ -1696,7 +1717,12 @@ function _readModalJoinConditions() {
 
 window.openRelModal = function() {
   populateEntitySelects();
+  document.getElementById('rel-from-col').innerHTML = '<option value="">— select entity first —</option>';
+  document.getElementById('rel-to-col').innerHTML   = '<option value="">— select entity first —</option>';
   document.getElementById('rel-jc-container').innerHTML = '';
+  document.getElementById('rel-wc-container').innerHTML = '';
+  document.getElementById('wc-header').style.display = 'none';
+  document.getElementById('rel-label').value = '';
   document.getElementById('rel-modal').style.display = 'flex';
 };
 
@@ -1708,27 +1734,29 @@ function prefillRelModal(fromEntity, toEntity) {
   populateEntitySelects();
   document.getElementById('rel-from-entity').value = fromEntity;
   document.getElementById('rel-to-entity').value   = toEntity;
-  // Auto-fill FK hint from PK
-  const te = graph.entities.find(e => e.entity_name === toEntity);
-  if (te?.pk_column) {
-    document.getElementById('rel-to-col').value = te.pk_column;
-    document.getElementById('rel-from-col').value = te.pk_column;
-  }
+  document.getElementById('rel-jc-container').innerHTML = '';
+  document.getElementById('rel-wc-container').innerHTML = '';
+  document.getElementById('wc-header').style.display = 'none';
+  // Trigger column fetch for both sides — will auto-select PK
+  onRelEntityChange('from');
+  onRelEntityChange('to');
 }
 
 window.saveRelFromModal = async function() {
   const extraConditions = _readModalJoinConditions();
+  const whereClause     = _buildWhereClause();
   const payload = {
     from_entity:       document.getElementById('rel-from-entity').value,
     to_entity:         document.getElementById('rel-to-entity').value,
-    from_column:       document.getElementById('rel-from-col').value.trim(),
-    to_column:         document.getElementById('rel-to-col').value.trim(),
+    from_column:       document.getElementById('rel-from-col').value,
+    to_column:         document.getElementById('rel-to-col').value,
     relationship_type: document.getElementById('rel-cardinality').value,
     join_type:         document.getElementById('rel-join-type').value,
     label:             document.getElementById('rel-label').value.trim(),
     join_conditions:   extraConditions,
+    where_clause:      whereClause,
   };
-  if (!payload.from_column || !payload.to_column) { alert('FK columns are required'); return; }
+  if (!payload.from_column || !payload.to_column) { alert('Select FK columns for both sides'); return; }
   const res = await api('POST', `${API_BASE}/relationships`, payload);
   const body = await res.json();
   payload.id = body.id;
@@ -2654,30 +2682,118 @@ window.onEntityTableChange = async function(fqn) {
 window.onRelEntityChange = async function(side) {
   const entName = document.getElementById(`rel-${side}-entity`).value;
   const ent     = graph.entities.find(e => e.entity_name === entName);
-  if (!ent) return;
-  // Find the FQN: prefer schema_name.table_name match in _schemaTables
-  let fqn = '';
-  const match = _schemaTables.find(
-    t => t.table_name.toUpperCase() === (ent.table_name || '').toUpperCase() &&
-         (t.schema_name || '').toUpperCase() === (ent.schema_name || '').toUpperCase()
-  );
-  if (match) fqn = match.fqn;
-  else if (ent.schema_name) fqn = `${ent.schema_name}.${ent.table_name}`;
-  else fqn = ent.table_name;
+  const colSel  = document.getElementById(`rel-${side}-col`);
+  if (!ent || !colSel) return;
 
-  const cols = await _fetchColumns(fqn);
-  _fillDatalist(`rel-${side}-col-list`, cols);
-
-  // Auto-fill the column field if it's blank, using PK of the target entity
-  const colInput = document.getElementById(`rel-${side}-col`);
-  if (colInput && !colInput.value && ent.pk_column) {
-    colInput.value = ent.pk_column;
+  // Fetch columns (DB first, then semantic fallback)
+  let colNames = [];
+  const fqn = _resolveEntityFqn(ent);
+  if (fqn) {
+    const cols = await _fetchColumns(fqn);
+    colNames = cols.map(c => (typeof c === 'string' ? c : c.name)).filter(Boolean);
   }
-  // Refresh any existing compound join condition datalists
+  if (!colNames.length) {
+    try {
+      const res  = await fetch(`${API_BASE}/properties/${encodeURIComponent(ent.entity_name)}`);
+      const data = await res.json();
+      colNames = (data.properties || []).map(p => p.column_name).filter(Boolean);
+    } catch (_) {}
+  }
+
+  // Populate the <select> — preserve current selection if still valid
+  const prev = colSel.value;
+  colSel.innerHTML = '<option value="">— choose column —</option>' +
+    colNames.map(c => `<option value="${esc(c)}"${c === prev ? ' selected' : ''}>${esc(c)}</option>`).join('');
+
+  // Auto-select PK if blank
+  if (!colSel.value && ent.pk_column) colSel.value = ent.pk_column;
+
+  // Refresh compound join condition datalists if any exist
   if (document.querySelectorAll('.modal-jc-row').length > 0) {
     await _populateModalJcDatalist();
   }
+
+  // Refresh WHERE condition column options
+  _refreshWhereColOptions();
 };
+
+// ── WHERE condition helpers ────────────────────────────────────────────────
+
+const _WC_OPS = ['=','!=','>','>=','<','<=','LIKE','NOT LIKE','IN','NOT IN','IS NULL','IS NOT NULL'];
+const _WC_NO_VAL = new Set(['IS NULL','IS NOT NULL']);
+
+/** Collect column names from both selected entities for WHERE col dropdown */
+function _whereColOptions() {
+  const opts = [];
+  ['from','to'].forEach(side => {
+    const entName = document.getElementById(`rel-${side}-entity`)?.value;
+    if (!entName) return;
+    const sel = document.getElementById(`rel-${side}-col`);
+    // gather all option values from the col select (already fetched)
+    if (sel) {
+      [...sel.options].forEach(o => {
+        if (o.value) opts.push({ label: `${entName}.${o.value}`, val: `${entName}.${o.value}` });
+      });
+    }
+  });
+  return opts;
+}
+
+function _refreshWhereColOptions() {
+  const opts = _whereColOptions();
+  document.querySelectorAll('#rel-wc-container .wc-col').forEach(sel => {
+    const prev = sel.value;
+    sel.innerHTML = '<option value="">— choose column —</option>' +
+      opts.map(o => `<option value="${esc(o.val)}"${o.val === prev ? ' selected' : ''}>${esc(o.label)}</option>`).join('');
+    if (prev) sel.value = prev;
+  });
+}
+
+window.addWhereCondition = function() {
+  const container = document.getElementById('rel-wc-container');
+  const header    = document.getElementById('wc-header');
+  header.style.display = 'grid';
+
+  const opts = _whereColOptions();
+  const colOpts = '<option value="">— column —</option>' +
+    opts.map(o => `<option value="${esc(o.val)}">${esc(o.label)}</option>`).join('');
+  const opOpts  = _WC_OPS.map(op => `<option value="${op}">${op}</option>`).join('');
+
+  const row = document.createElement('div');
+  row.className = 'wc-row';
+  row.innerHTML = `
+    <select class="gd-select wc-col">${colOpts}</select>
+    <select class="gd-select wc-op" onchange="
+      const v=document.querySelector('.wc-val',this.closest('.wc-row'));
+      if(v)v.style.visibility=['IS NULL','IS NOT NULL'].includes(this.value)?'hidden':'visible'
+    ">${opOpts}</select>
+    <input class="gd-input wc-val" placeholder="value (e.g. Active, 2024, %Smith%)">
+    <button class="wc-del" onclick="this.closest('.wc-row').remove();
+      if(!document.querySelectorAll('.wc-row').length)document.getElementById('wc-header').style.display='none'
+    ">✕</button>`;
+  container.appendChild(row);
+};
+
+/** Compile WHERE rows → SQL string e.g. "entity.col = 'Active' AND entity.col2 IS NULL" */
+function _buildWhereClause() {
+  const parts = [];
+  document.querySelectorAll('#rel-wc-container .wc-row').forEach(row => {
+    const col = row.querySelector('.wc-col')?.value?.trim();
+    const op  = row.querySelector('.wc-op')?.value;
+    const val = row.querySelector('.wc-val')?.value?.trim();
+    if (!col || !op) return;
+    if (_WC_NO_VAL.has(op)) { parts.push(`${col} ${op}`); return; }
+    if (!val) return;
+    if (op === 'IN' || op === 'NOT IN') {
+      parts.push(`${col} ${op} (${val})`);
+    } else {
+      const quoted = (op === 'LIKE' || op === 'NOT LIKE' || isNaN(val))
+        ? `'${val.replace(/'/g, "''")}'` : val;
+      parts.push(`${col} ${op} ${quoted}`);
+    }
+  });
+  return parts.join(' AND ');
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 // CARDINALITY BADGE IN SIDEBAR (Phase 4)

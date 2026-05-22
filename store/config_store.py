@@ -1456,6 +1456,7 @@ def save_relationship(
     label: str = "",
     rel_id: int = 0,
     join_conditions: list | None = None,
+    where_clause: str = "",
 ) -> int:
     """Insert or update a relationship edge. Returns its id."""
     import json as _json
@@ -1465,19 +1466,22 @@ def save_relationship(
             conn.execute("""
                 UPDATE entity_relationships SET
                     from_entity=?, to_entity=?, from_column=?, to_column=?,
-                    relationship_type=?, join_type=?, label=?, join_conditions=?
+                    relationship_type=?, join_type=?, label=?, join_conditions=?,
+                    where_clause=?
                 WHERE id=? AND account_id=?
             """, (from_entity, to_entity, from_column, to_column,
-                  relationship_type, join_type, label, jc_json, rel_id, account_id))
+                  relationship_type, join_type, label, jc_json,
+                  where_clause, rel_id, account_id))
             return rel_id
         conn.execute("""
             INSERT INTO entity_relationships
                 (account_id, from_entity, to_entity, from_column, to_column,
                  relationship_type, join_type, label, is_active,
-                 confidence_score, status, join_conditions)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
+                 confidence_score, status, join_conditions, where_clause)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
         """, (account_id, from_entity, to_entity, from_column, to_column,
-              relationship_type, join_type, label, confidence_score, status, jc_json))
+              relationship_type, join_type, label, confidence_score, status,
+              jc_json, where_clause))
         row = conn.execute("SELECT last_insert_rowid() AS id").fetchone()
     return row["id"] if row else -1
 

@@ -549,6 +549,8 @@ def _run_migrations() -> None:
         # v22: metric registry — category/domain and default time column
         ("metric_registry", "category",             "TEXT DEFAULT ''"),
         ("metric_registry", "default_time_column",  "TEXT DEFAULT ''"),
+        # v23: WHERE conditions always applied to this join
+        ("entity_relationships", "where_clause", "TEXT NOT NULL DEFAULT ''"),
     ]
     with get_db() as conn:
         _ensure_llm_call_log_table(conn)
