@@ -1263,16 +1263,29 @@ async def generate_followup_suggestions(
         user_msg_parts.append(f"Numeric ranges:\n{numeric_str}")
 
     user_msg_parts.append(
-        "\nGenerate exactly 3 short follow-up questions (max 10 words each) "
+        "\nGenerate exactly 3 short follow-up questions (max 12 words each) "
         "a business analyst would naturally ask next based on this specific result.\n"
+        "IMPORTANT — only generate questions that a SQL SELECT query can answer:\n"
+        "  ✓ Top/bottom N rankings (e.g. 'Who had the highest total charge?')\n"
+        "  ✓ Filters/subsets (e.g. 'Show only prescribers with more than 20 fills')\n"
+        "  ✓ Aggregations (e.g. 'What is the average prescription count?')\n"
+        "  ✓ Grouping/breakdown (e.g. 'Break this down by drug type')\n"
+        "  ✓ Time trends (e.g. 'Show this by month')\n"
+        "  ✓ Scatter comparisons — phrase as 'Show X vs Y' NOT 'Are X and Y correlated'\n"
+        "  ✗ NEVER suggest: correlation coefficient, regression, clustering, p-value, "
+        "statistical tests, or any phrasing that implies computing a statistical function\n"
         "Return ONLY a JSON array of 3 strings, no markdown, no preamble.\n"
-        'Example: ["Which customer had the highest revenue?", "Show bottom 5 by net profit", "Break this down by segment"]'
+        'Example: ["Who had the highest total charge amount?", "Show bottom 5 by prescription count", "Break this down by drug category"]'
     )
     user_msg = "\n".join(user_msg_parts)
 
     system_msg = (
-        "You generate result-aware follow-up questions for a business analytics chatbot. "
-        "Questions must be specific to the data structure shown, not generic. "
+        "You generate result-aware follow-up questions for a business SQL analytics chatbot. "
+        "Every question you suggest MUST be answerable by a standard SQL SELECT query "
+        "(aggregations, filters, rankings, groupings, or returning two columns for scatter comparison). "
+        "Never suggest statistical computations (correlation, regression, clustering, p-value). "
+        "For comparing two numeric columns, phrase as 'Show [col1] vs [col2]' not 'Are they correlated'. "
+        "Questions must be specific to the data columns shown, not generic. "
         "Return only a JSON array of exactly 3 short strings. No markdown fences. No explanation."
     )
 
