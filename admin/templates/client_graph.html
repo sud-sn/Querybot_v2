@@ -58,8 +58,13 @@
 .node-label{font-family:system-ui,sans-serif;font-weight:800;font-size:13px;fill:#fff;text-anchor:start;dominant-baseline:central;pointer-events:none}
 .node-sublabel{font-family:Consolas,monospace;font-size:10px;fill:rgba(255,255,255,.78);text-anchor:start;dominant-baseline:central;pointer-events:none}
 .node-type-tag{font-family:system-ui,sans-serif;font-size:9px;font-weight:700;fill:rgba(255,255,255,.88);text-anchor:middle;dominant-baseline:central;pointer-events:none}
-.node-port{fill:#fff;stroke:var(--border);stroke-width:1.5;r:6;cursor:crosshair;opacity:0;transition:opacity .15s}
-.g-node:hover .node-port{opacity:1}
+.node-port{fill:#fff;stroke:var(--border);stroke-width:1.5;r:6;cursor:crosshair;opacity:.2;transition:opacity .2s}
+.g-node:hover .node-port{opacity:1;r:7}
+/* ── Bridge table modal ──────────────────────────────────────────────────── */
+.bridge-source-row{display:flex;align-items:center;gap:.5rem;padding:.4rem .5rem;border:1px solid var(--border);border-radius:5px;margin-bottom:.35rem;background:var(--surface-2);font-size:12px}
+.bridge-source-row input[type=checkbox]{width:15px;height:15px;cursor:pointer;flex-shrink:0}
+.bridge-source-row label{flex:1;font-weight:600;cursor:pointer}
+.bridge-source-row .bridge-fk-input{width:120px;font-size:11px;padding:3px 6px}
 .g-edge{pointer-events:stroke;cursor:pointer}
 .g-edge .edge-line{stroke:#94A3B8;stroke-width:2;fill:none}
 .g-edge.selected .edge-line{stroke:var(--amber,#F59E0B);stroke-width:2.5}
@@ -174,6 +179,7 @@
 <main class="graph-canvas-wrap">
   <div class="canvas-toolbar">
     <button class="tb-btn primary" onclick="openEntityModal(null)">＋ Entity</button>
+    <button class="tb-btn" onclick="openBridgeModal()" title="Create a bridge/link table connecting multiple entities (Qlik-style)" style="color:#7C3AED;border-color:#C4B5FD">⬡ Bridge</button>
     <div class="tb-sep"></div>
     <button class="tb-btn" onclick="autoLayout()" title="Auto-arrange nodes">⊞ Auto layout</button>
     <button class="tb-btn" onclick="fitView()" title="Fit to screen">⤢ Fit</button>
@@ -191,7 +197,7 @@
     <select id="schema-filter" class="gd-select" style="width:130px;font-size:11px;padding:4px 6px" onchange="applySchemaFilter()" title="Filter canvas by database schema">
       <option value="">All schemas</option>
     </select>
-    <span class="tb-hint" id="mode-hint">Click entity to select • Hover and drag port to connect • ✦ = LLM suggested</span>
+    <span class="tb-hint" id="mode-hint">Click to select • Hover node → drag ◉ port to connect • ⇢ Link to connect by form • ✦ = LLM suggested</span>
   </div>
 
   <svg id="graph-svg" xmlns="http://www.w3.org/2000/svg">
@@ -413,6 +419,50 @@
     <div class="modal-footer">
       <button class="m-btn" onclick="closeRelModal()">Cancel</button>
       <button class="m-btn primary" onclick="saveRelFromModal()">Save relationship</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ BRIDGE TABLE MODAL ════════════════════════════════════════════════ -->
+<div id="bridge-modal" class="modal-overlay" style="display:none">
+  <div class="modal-box" style="max-width:520px">
+    <div class="modal-head">
+      <h3 style="color:#7C3AED">⬡ Create Bridge Table</h3>
+      <button class="modal-close" onclick="closeBridgeModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:12px;color:var(--text-muted);margin:0 0 .75rem">
+        A bridge table concatenates keys from multiple tables with a flag column identifying the source — same pattern as Qlik link tables.
+      </p>
+      <div class="gd-form-row">
+        <div>
+          <label class="gd-label">Bridge entity name *</label>
+          <input class="gd-input" id="bridge-name" placeholder="e.g. Date_Bridge">
+        </div>
+        <div>
+          <label class="gd-label">Node colour</label>
+          <input type="color" id="bridge-color" value="#7C3AED" style="width:100%;height:34px;border:1px solid var(--border);border-radius:5px;cursor:pointer">
+        </div>
+      </div>
+      <div class="gd-form-row">
+        <div>
+          <label class="gd-label">Bridge key column <span style="font-size:10px;color:var(--text-muted)">(shared join field)</span></label>
+          <input class="gd-input" id="bridge-key-col" value="Bridge_Key" placeholder="Bridge_Key">
+        </div>
+        <div>
+          <label class="gd-label">Source flag column <span style="font-size:10px;color:var(--text-muted)">(identifies row origin)</span></label>
+          <input class="gd-input" id="bridge-flag-col" value="Source_Type" placeholder="Source_Type">
+        </div>
+      </div>
+      <div style="margin-bottom:.4rem">
+        <label class="gd-label">Source entities <span style="font-size:10px;color:var(--text-muted)">(select 2 or more)</span></label>
+        <div id="bridge-source-list" style="max-height:220px;overflow-y:auto;margin-top:.3rem"></div>
+      </div>
+      <div id="bridge-error" style="display:none;font-size:12px;color:var(--red);padding:.4rem .6rem;background:#FEE2E2;border-radius:4px;margin-top:.4rem"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="m-btn" onclick="closeBridgeModal()">Cancel</button>
+      <button class="m-btn primary" id="bridge-save-btn" onclick="saveBridgeTable()" style="background:#7C3AED;border-color:#7C3AED">⬡ Create Bridge</button>
     </div>
   </div>
 </div>
@@ -648,8 +698,8 @@ function renderNodes() {
       g.appendChild(rpT);
     }
 
-    // ── Connection ports (right, bottom, left) ───────────────────────────
-    [[NODE_W, NODE_H / 2, 'right'], [NODE_W / 2, NODE_H, 'bottom'], [0, NODE_H / 2, 'left']].forEach(([px, py, side]) => {
+    // ── Connection ports (all 4 sides) ───────────────────────────────────
+    [[NODE_W / 2, 0, 'top'], [NODE_W, NODE_H / 2, 'right'], [NODE_W / 2, NODE_H, 'bottom'], [0, NODE_H / 2, 'left']].forEach(([px, py, side]) => {
       const port = document.createElementNS(NS, 'circle');
       port.setAttribute('class', 'node-port');
       port.setAttribute('cx', px); port.setAttribute('cy', py);
@@ -1761,6 +1811,134 @@ window.confirmProp = async function(entityName, colName) {
   setStatus(`Field ${colName} confirmed → synced to semantic layer at 100% ✓`);
   document.getElementById('sync-badge').style.display = '';
   renderEntityDetail(entityName);
+};
+
+// ════════════════════════════════════════════════════════════════════════════
+// BRIDGE TABLE
+// ════════════════════════════════════════════════════════════════════════════
+window.openBridgeModal = function() {
+  // Populate source entity list from current graph (respect schema filter)
+  const visible = (typeof activeSchemaFilter !== 'undefined' && activeSchemaFilter)
+    ? graph.entities.filter(e => (e.schema_name || '') === activeSchemaFilter)
+    : graph.entities;
+
+  const list = document.getElementById('bridge-source-list');
+  if (!visible.length) {
+    list.innerHTML = '<div style="font-size:12px;color:var(--text-muted);padding:.5rem">No entities in graph yet. Add entities first.</div>';
+  } else {
+    list.innerHTML = visible.map(e => `
+      <div class="bridge-source-row">
+        <input type="checkbox" id="bsrc-${esc(e.entity_name)}" value="${esc(e.entity_name)}"
+               onchange="onBridgeSourceChange()">
+        <label for="bsrc-${esc(e.entity_name)}">
+          <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${e.color||'#4F86C6'};margin-right:4px"></span>
+          ${esc(e.display_name || e.entity_name)}
+          <span style="font-size:10px;color:var(--text-muted);margin-left:4px">${e.entity_type}</span>
+        </label>
+        <div class="bridge-fk-row" id="bfk-${esc(e.entity_name)}" style="display:none">
+          <input class="gd-input bridge-fk-input" id="bfk-val-${esc(e.entity_name)}"
+                 placeholder="${esc(e.pk_column || 'FK_column')}"
+                 value="${esc(e.pk_column || '')}"
+                 title="Column in '${esc(e.entity_name)}' that links to the bridge key">
+        </div>
+      </div>`).join('');
+  }
+
+  document.getElementById('bridge-name').value = '';
+  document.getElementById('bridge-error').style.display = 'none';
+  document.getElementById('bridge-modal').style.display = 'flex';
+  document.getElementById('bridge-name').focus();
+};
+
+window.closeBridgeModal = function() {
+  document.getElementById('bridge-modal').style.display = 'none';
+};
+
+window.onBridgeSourceChange = function() {
+  // Show/hide the FK column input for each checked source
+  document.querySelectorAll('#bridge-source-list input[type=checkbox]').forEach(cb => {
+    const fkRow = document.getElementById('bfk-' + cb.value);
+    if (fkRow) fkRow.style.display = cb.checked ? 'flex' : 'none';
+  });
+};
+
+window.saveBridgeTable = async function() {
+  const errEl  = document.getElementById('bridge-error');
+  errEl.style.display = 'none';
+
+  const name     = document.getElementById('bridge-name').value.trim();
+  const keyCol   = document.getElementById('bridge-key-col').value.trim() || 'Bridge_Key';
+  const flagCol  = document.getElementById('bridge-flag-col').value.trim() || 'Source_Type';
+  const color    = document.getElementById('bridge-color').value || '#7C3AED';
+
+  if (!name) { errEl.textContent = 'Bridge entity name is required.'; errEl.style.display = ''; return; }
+
+  // Collect checked sources + their FK field
+  const sources = [];
+  document.querySelectorAll('#bridge-source-list input[type=checkbox]:checked').forEach(cb => {
+    const fkInput = document.getElementById('bfk-val-' + cb.value);
+    sources.push({ entity_name: cb.value, fk_col: fkInput ? fkInput.value.trim() : '' });
+  });
+
+  if (sources.length < 2) {
+    errEl.textContent = 'Select at least 2 source entities.'; errEl.style.display = ''; return;
+  }
+
+  const btn = document.getElementById('bridge-save-btn');
+  btn.disabled = true; btn.textContent = 'Creating…';
+
+  try {
+    // Position bridge entity at the centroid of selected source positions
+    const srcEntities = sources.map(s => graph.entities.find(e => e.entity_name === s.entity_name)).filter(Boolean);
+    const cx = srcEntities.reduce((s, e) => s + (e.pos_x || 120) + NODE_W / 2, 0) / srcEntities.length - NODE_W / 2;
+    const cy = srcEntities.reduce((s, e) => s + (e.pos_y || 120) + NODE_H / 2, 0) / srcEntities.length - NODE_H / 2;
+    const schemaName = (typeof activeSchemaFilter !== 'undefined' && activeSchemaFilter) ? activeSchemaFilter : (srcEntities[0]?.schema_name || '');
+
+    // 1. Create the bridge entity
+    const eres = await api('POST', `${API_BASE}/entities`, {
+      entity_name:  name,
+      display_name: name,
+      entity_type:  'bridge',
+      table_name:   name,
+      schema_name:  schemaName,
+      pk_column:    keyCol,
+      description:  `Bridge table linking: ${sources.map(s => s.entity_name).join(', ')}. Key: ${keyCol}. Flag: ${flagCol}.`,
+      color:        color,
+      pos_x:        Math.round(cx),
+      pos_y:        Math.round(cy),
+      is_active:    1,
+    });
+    if (!eres.ok) throw new Error('Failed to create bridge entity');
+
+    // 2. Create a relationship from each source → bridge (many_to_one)
+    for (const src of sources) {
+      await api('POST', `${API_BASE}/relationships`, {
+        from_entity:       src.entity_name,
+        to_entity:         name,
+        from_column:       src.fk_col || keyCol,
+        to_column:         keyCol,
+        relationship_type: 'many_to_one',
+        join_type:         'INNER',
+        label:             `via ${flagCol}`,
+        join_conditions:   [],
+      });
+    }
+
+    // 3. Refresh graph
+    const gres = await api('GET', `${API_BASE}/graph.json`);
+    const fresh = await gres.json();
+    graph.entities      = fresh.entities      || [];
+    graph.relationships = fresh.relationships || [];
+    renderGraph(); updateSidebar(); updateRelList();
+    _rebuildSchemaFilterDropdown();
+    closeBridgeModal();
+    setStatus(`Bridge table "${name}" created with ${sources.length} source links ✓`);
+
+  } catch (err) {
+    errEl.textContent = 'Error: ' + err.message; errEl.style.display = '';
+  } finally {
+    btn.disabled = false; btn.textContent = '⬡ Create Bridge';
+  }
 };
 
 // ── Zoom step (for +/− buttons) ────────────────────────────────────────────
