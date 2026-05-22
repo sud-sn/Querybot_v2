@@ -85,6 +85,11 @@ _SHARE_RE = _re.compile(
     r"split|composition|mix|by .{1,20} type|by .{1,20} category)\b",
     _re.IGNORECASE,
 )
+_SCATTER_RE = _re.compile(
+    r"\b(correlat|vs\.?|versus|scatter|relationship between|compare .{1,30} with|"
+    r"related to|association between|show .{1,30} vs|x vs y)\b",
+    _re.IGNORECASE,
+)
 
 
 def detect_chart_type(rows: list[dict], question: str = "") -> Optional[str]:
@@ -120,8 +125,14 @@ def detect_chart_type(rows: list[dict], question: str = "") -> Optional[str]:
         return None
 
     q = question or ""
-    trend_q = bool(_TREND_RE.search(q))
-    share_q = bool(_SHARE_RE.search(q))
+    trend_q   = bool(_TREND_RE.search(q))
+    share_q   = bool(_SHARE_RE.search(q))
+    scatter_q = bool(_SCATTER_RE.search(q))
+
+    # Scatter — explicit correlation/vs question with 2+ numeric cols, OR
+    # question signals scatter intent and data has at least 2 numeric cols
+    if scatter_q and len(numeric_cols) >= 2:
+        return "scatter"
 
     n = len(rows)
     if text_cols and numeric_cols:
@@ -129,7 +140,7 @@ def detect_chart_type(rows: list[dict], question: str = "") -> Optional[str]:
         temporal = _looks_temporal_labels(labels)
 
         # Donut / Pie — small categorical sets with a single value column
-        if n <= 10 and len(numeric_cols) == 1:
+        if n <= 10 and len(numeric_cols) == 1 and not scatter_q:
             return "donut" if share_q else "pie"
 
         # Area / Line — temporal data or explicit trend question
