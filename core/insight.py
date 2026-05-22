@@ -1242,8 +1242,9 @@ async def generate_followup_suggestions(
         for cn, stats in (brief.get("numeric_summaries") or {}).items():
             if stats.get("min") is not None:
                 num_lines.append(f"  {cn}: min={stats['min']}, max={stats['max']}, mean={stats.get('mean','?')}")
+        _unknown = "?"
         signal_ctx = (
-            f"Columns: {', '.join(f'{c} ({col_types.get(c,\"?\")})' for c in col_names[:8])}\n"
+            f"Columns: {', '.join(f'{c} ({col_types.get(c, _unknown)})' for c in col_names[:8])}\n"
             + ("\n".join(num_lines) if num_lines else "")
         )
 
