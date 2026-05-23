@@ -2382,10 +2382,45 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                 _fb_generic_hints = build_generic_query_hints(rc_question)
 
                                 # 6. Entity graph — deterministic JOIN path resolution
+                                # SCOPE to the schemas used in the original SQL so the
+                                # resolver never pulls in unrelated tables (e.g. PROFITABILITY
+                                # tables when the original query was against PHARMACY).
                                 _fb_graph_ctx: dict = {}
                                 try:
                                     _fb_full_graph = store.get_full_graph(account_id)
                                     if _fb_full_graph.get("entities"):
+                                        # Extract schema names present in the original SQL
+                                        # e.g. [PHARMACY].[TABLE] → {"PHARMACY"}
+                                        import re as _fb_schema_re
+                                        _orig_schemas = {
+                                            m.upper()
+                                            for m in _fb_schema_re.findall(
+                                                r'\[([A-Za-z_][A-Za-z0-9_]*)\]\.\[',
+                                                _cached_result.get("sql", ""),
+                                            )
+                                        }
+                                        if _orig_schemas:
+                                            # Filter graph to only entities from original schemas
+                                            _fb_ents = [
+                                                e for e in _fb_full_graph["entities"]
+                                                if not e.get("schema_name")
+                                                or e.get("schema_name", "").upper() in _orig_schemas
+                                            ]
+                                            if _fb_ents:
+                                                _fb_ent_names = {e["entity_name"] for e in _fb_ents}
+                                                _fb_full_graph = {
+                                                    "entities": _fb_ents,
+                                                    "relationships": [
+                                                        r for r in _fb_full_graph.get("relationships", [])
+                                                        if r["from_entity"] in _fb_ent_names
+                                                        and r["to_entity"]   in _fb_ent_names
+                                                    ],
+                                                    "properties": _fb_full_graph.get("properties", []),
+                                                }
+                                                log.debug(
+                                                    "result_chat fallback graph scoped to schemas %s",
+                                                    _orig_schemas,
+                                                )
                                         _fb_graph_ctx = _graph_resolve(
                                             question   = rc_question,
                                             account_id = account_id,
@@ -2530,12 +2565,68 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                                 _fb_ok = True
                                                 log.info("result_chat fallback SQL repair succeeded")
                                     if _fb_ok:
-                                        _fb_rows = run_query(
-                                            _fb_db_cfg["credentials"],
-                                            _fb_db_cfg["db_type"],
-                                            _fb_sql_raw,
-                                        )
-                                        _fb_sql = _fb_sql_raw
+                                        try:
+                                            _fb_rows = run_query(
+                                                _fb_db_cfg["credentials"],
+                                                _fb_db_cfg["db_type"],
+                                                _fb_sql_raw,
+                                            )
+                                            _fb_sql = _fb_sql_raw
+                                        except Exception as _exec_exc:
+                                            # Execution failed (e.g. Invalid column name).
+                                            # One repair attempt — same pattern as main pipeline.
+                                            import re as _re_exec
+                                            _exec_err = str(_exec_exc)
+                                            log.info(
+                                                "result_chat fallback execution failed: %s — retrying",
+                                                _exec_err[:120],
+                                            )
+                                            _bad_cols = _re_exec.findall(
+                                                r"Invalid column name '([^']+)'",
+                                                _exec_err, _re_exec.IGNORECASE,
+                                            )
+                                            _col_note = ""
+                                            if _bad_cols:
+                                                _cols_str = ", ".join(f"'{c}'" for c in _bad_cols)
+                                                _col_note = (
+                                                    f"\n⚠️  COLUMN NAME ERROR: The column(s) {_cols_str} "
+                                                    f"do NOT exist in the database.\n"
+                                                    f"Find the EXACT column names in the Knowledge Base "
+                                                    f"(system prompt). NEVER guess or use CamelCase variants.\n"
+                                                )
+                                            _exec_retry_user = (
+                                                f"The following SQL failed with this error:\n"
+                                                f"SQL: {_fb_sql_raw}\n"
+                                                f"Error: {_exec_err}\n"
+                                                f"{_col_note}\n"
+                                                f"The original question was: {rc_question}\n\n"
+                                                "Rewrite the SQL to fix the error. Use ONLY column names "
+                                                "that appear verbatim in the Knowledge Base. "
+                                                "Return only the corrected SQL."
+                                            )
+                                            _exec_retry_raw, _, _ = await llm_complete(
+                                                _fb_system, _exec_retry_user,
+                                                _fb_prov, _fb_model, _fb_key,
+                                                max_tokens=512, **_fb_az,
+                                            )
+                                            if _exec_retry_raw and _exec_retry_raw.startswith("```"):
+                                                _exec_retry_raw = "\n".join(
+                                                    _exec_retry_raw.split("\n")[1:]
+                                                ).rsplit("```", 1)[0].strip()
+                                            if _exec_retry_raw and "CANNOT_GENERATE" not in _exec_retry_raw.upper():
+                                                _exec_ok, _, _ = validate_sql(
+                                                    _exec_retry_raw, _ws_known_tables,
+                                                    _fb_db_cfg.get("db_type", "azure_sql"),
+                                                    None,
+                                                )
+                                                if _exec_ok:
+                                                    _fb_rows = run_query(
+                                                        _fb_db_cfg["credentials"],
+                                                        _fb_db_cfg["db_type"],
+                                                        _exec_retry_raw,
+                                                    )
+                                                    _fb_sql = _exec_retry_raw
+                                                    log.info("result_chat fallback execution repair succeeded")
                         except Exception as _fb_exc:
                             _fb_err = str(_fb_exc)
                             log.warning("result_chat DB fallback failed: %s", _fb_exc)
