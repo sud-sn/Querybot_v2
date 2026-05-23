@@ -349,7 +349,7 @@ async def handle_unregistered_user(account_id, zoom_user_id, event, adapter):
 # DuckDB helper — generate SQL for in-memory result cache queries
 # ══════════════════════════════════════════════════════════════════════════════
 
-async def _generate_duckdb_sql(question: str, system_prompt: str) -> str:
+async def _generate_duckdb_sql(question: str, system_prompt: str, client: dict) -> str:
     """
     Use the LLM to generate a DuckDB SELECT query for the virtual `result` table.
 
@@ -357,14 +357,16 @@ async def _generate_duckdb_sql(question: str, system_prompt: str) -> str:
     cannot answer the question from the cached data.
     """
     try:
-        provider, model = resolve_provider()
+        provider, model, api_key, az_kwargs = resolve_provider(client, purpose="query")
         sql = await llm_complete(
             system=system_prompt,
             user=question,
             provider=provider,
             model=model,
+            api_key=api_key,
             temperature=0.0,
             max_tokens=512,
+            **az_kwargs,
         )
         return (sql or "").strip()
     except Exception as exc:
@@ -479,7 +481,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
         try:
             _duck_schema = result_cache.get_schema(_session_id)
             _duck_sys_prompt = build_duckdb_system_prompt(_duck_schema, db_type=db_cfg.get("db_type", "azure_sql"))
-            _duck_sql = await _generate_duckdb_sql(question, _duck_sys_prompt)
+            _duck_sql = await _generate_duckdb_sql(question, _duck_sys_prompt, client)
             if _duck_sql and _duck_sql.strip().upper() != "CANNOT_GENERATE":
                 await _send_live_stage(adapter, event, "executing_query", "Running query", "Querying in-memory result set.")
                 _duck_rows = result_cache.query(_session_id, _duck_sql)
@@ -1624,7 +1626,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     _rc_schema  = result_cache.get_schema(_sid)
                     _rc_db_cfg  = get_client_db(account_id) or {}
                     _rc_sys     = build_duckdb_system_prompt(_rc_schema, db_type=_rc_db_cfg.get("db_type", "azure_sql"))
-                    _rc_sql    = await _generate_duckdb_sql(rc_question, _rc_sys)
+                    _rc_sql    = await _generate_duckdb_sql(rc_question, _rc_sys, client)
                     if not _rc_sql or _rc_sql.strip().upper() == "CANNOT_GENERATE":
                         await websocket.send_json({
                             "type": "result_chat_error",
