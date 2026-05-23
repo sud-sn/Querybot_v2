@@ -162,7 +162,8 @@ def build_duckdb_system_prompt(
             "use this to write correct SQL, avoid inventing values):"
         ]
         for c in data_stats["columns"]:
-            parts = [f"  {c['name']}  ({c['type']})"]
+            currency_tag = "  [CURRENCY USD - prefix with $]" if c.get("is_currency") else ""
+            parts = [f"  {c['name']}  ({c['type']}){currency_tag}"]
             if "min" in c:
                 parts.append(
                     f"min={c['min']:,}  max={c['max']:,}  avg={c['avg']:,}"
@@ -223,6 +224,10 @@ def build_duckdb_system_prompt(
         "- For 'running total': SELECT col, SUM(metric) OVER (ORDER BY col) AS running_total\n"
         "- For 'ratio': SELECT col_a / NULLIF(col_b, 0) AS ratio\n"
         "- Row limit: use no LIMIT unless the user specifies a number\n"
+        "- CURRENCY RULE: Columns tagged [CURRENCY USD] in the DATA SNAPSHOT "
+        "represent US dollar amounts. When referencing values from those columns "
+        "in computed aliases or comparisons, treat them as dollar figures. "
+        "The UI will display them with $ prefix automatically.\n"
         "- Return ONLY the raw SQL. No markdown fences. No explanation.\n"
         "- If the question cannot be answered from this in-memory table "
         "(e.g. it needs data not present in the result columns), "
