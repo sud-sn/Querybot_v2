@@ -158,7 +158,7 @@ def validate_sql(
             select_aliases.add(alias_node.alias.upper())
 
     if select_aliases:
-        bad_order: list[str] = []
+        bad_order: set[str] = set()
         for ordered_node in tree.find_all(sg_exp.Ordered):
             col_expr = ordered_node.this
             # Only check unqualified column references (no table prefix).
@@ -166,10 +166,10 @@ def validate_sql(
             if isinstance(col_expr, sg_exp.Column) and not col_expr.table:
                 col_name = col_expr.name
                 if col_name and col_name.upper() not in select_aliases:
-                    bad_order.append(col_name)
+                    bad_order.add(col_name)
 
         if bad_order:
-            alias_list = ", ".join(sorted(set(bad_order)))
+            alias_list = ", ".join(sorted(bad_order))
             log.warning(
                 "ORDER BY alias drift detected: %s not in SELECT aliases %s",
                 alias_list, select_aliases,

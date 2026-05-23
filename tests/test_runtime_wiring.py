@@ -31,10 +31,39 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
-# ── Helper ────────────────────────────────────────────────────────────────────
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _read(rel: str) -> str:
     return (ROOT / rel).read_text(encoding="utf-8", errors="replace")
+
+
+def _collect_defined_names(path: str, *, include_assigns: bool = False) -> set[str]:
+    """
+    Parse a Python source file and return the set of names that are defined or
+    imported at any scope level.  Used to verify that every name called at
+    runtime actually resolves — catching NameError bugs before they hit prod.
+
+    include_assigns: also collect bare Name targets from assignment statements
+    (e.g. ``MY_CONST = ...``).  Useful for modules that expose constants as
+    their public API.
+    """
+    src = _read(path)
+    tree = ast.parse(src)
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(node.name)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                names.add(alias.asname or alias.name.split(".")[0])
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                names.add(alias.asname or alias.name)
+        elif include_assigns and isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    names.add(target.id)
+    return names
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -54,22 +83,7 @@ class PortalRoutesFunctionPresenceTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.src = _read("portal/routes.py")
-        # Collect all defined names in the module
-        tree = ast.parse(cls.src)
-        cls.defined = set()
-        for node in ast.walk(tree):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                cls.defined.add(node.name)
-            elif isinstance(node, ast.Assign):
-                for t in node.targets:
-                    if isinstance(t, ast.Name):
-                        cls.defined.add(t.id)
-            elif isinstance(node, ast.Import):
-                for alias in node.names:
-                    cls.defined.add(alias.asname or alias.name.split(".")[0])
-            elif isinstance(node, ast.ImportFrom):
-                for alias in node.names:
-                    cls.defined.add(alias.asname or alias.name)
+        cls.defined = _collect_defined_names("portal/routes.py", include_assigns=True)
 
     def _assert_defined(self, name: str):
         self.assertIn(
@@ -158,14 +172,7 @@ class AdminRoutesFunctionPresenceTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.src = _read("admin/routes.py")
-        tree = ast.parse(cls.src)
-        cls.defined = set()
-        for node in ast.walk(tree):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                cls.defined.add(node.name)
-            elif isinstance(node, ast.ImportFrom):
-                for alias in node.names:
-                    cls.defined.add(alias.asname or alias.name)
+        cls.defined = _collect_defined_names("admin/routes.py")
 
     def _assert_defined(self, name: str):
         self.assertIn(name, self.defined,

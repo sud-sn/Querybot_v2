@@ -256,54 +256,43 @@ class TestSQLSanitizationInHistory(unittest.TestCase):
 class TestFollowupBriefRedaction(unittest.TestCase):
     """A4 — generate_followup_suggestions reads brief correctly and redacts."""
 
+    @classmethod
+    def setUpClass(cls):
+        # Cache the file once — avoids repeated disk reads across test methods.
+        cls._src = _src(INSIGHT)
+        _start = cls._src.find("async def generate_followup_suggestions")
+        cls._fn_body = cls._src[_start: _start + 3000]
+        cls._fn_sig  = cls._src[_start: _start + 400]
+        cls._fn_tail = cls._src[_start:]
+
     def test_reads_columns_as_dict(self):
-        src = _src(INSIGHT)
-        self.assertIn("isinstance(columns, dict)", src)
+        self.assertIn("isinstance(columns, dict)", self._src)
 
     def test_uses_category_breakdown_not_columns_list(self):
-        src = _src(INSIGHT)
-        fn = src[src.find("async def generate_followup_suggestions"):
-                 src.find("async def generate_followup_suggestions") + 3000]
-        self.assertIn("category_breakdown", fn)
+        self.assertIn("category_breakdown", self._fn_body)
 
     def test_sensitive_label_col_excluded(self):
-        src = _src(INSIGHT)
-        fn = src[src.find("async def generate_followup_suggestions"):
-                 src.find("async def generate_followup_suggestions") + 3000]
-        self.assertIn("not _is_sensitive_field(label_col)", fn)
+        self.assertIn("not _is_sensitive_field(label_col)", self._fn_body)
 
     def test_redacted_segment_filtered(self):
-        src = _src(INSIGHT)
-        fn = src[src.find("async def generate_followup_suggestions"):
-                 src.find("async def generate_followup_suggestions") + 3000]
-        self.assertIn("redacted segment", fn)
+        self.assertIn("redacted segment", self._fn_body)
 
     def test_numeric_ranges_from_summaries(self):
-        src = _src(INSIGHT)
-        fn = src[src.find("async def generate_followup_suggestions"):
-                 src.find("async def generate_followup_suggestions") + 3000]
-        self.assertIn("numeric_summaries", fn)
+        self.assertIn("numeric_summaries", self._fn_body)
 
     def test_no_raw_rows_param(self):
-        src = _src(INSIGHT)
-        fn_sig = src[src.find("async def generate_followup_suggestions"):
-                     src.find("async def generate_followup_suggestions") + 400]
-        self.assertNotIn("rows: list", fn_sig)
-        self.assertNotIn("raw_rows", fn_sig)
+        self.assertNotIn("rows: list", self._fn_sig)
+        self.assertNotIn("raw_rows", self._fn_sig)
 
     def test_max_160_tokens(self):
-        src = _src(INSIGHT)
-        self.assertIn("max_tokens=160", src)
+        self.assertIn("max_tokens=160", self._src)
 
     def test_audit_component_followup_suggestions(self):
-        src = _src(INSIGHT)
-        self.assertIn('"followup_suggestions"', src)
+        self.assertIn('"followup_suggestions"', self._src)
 
     def test_failure_returns_empty_list(self):
-        src = _src(INSIGHT)
-        fn = src[src.find("async def generate_followup_suggestions"):]
-        self.assertIn("return []", fn)
-        self.assertIn("except Exception", fn)
+        self.assertIn("return []", self._fn_tail)
+        self.assertIn("except Exception", self._fn_tail)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -777,11 +766,15 @@ class TestFormulaEditorPopover(unittest.TestCase):
 class TestSyntaxValidator(unittest.TestCase):
     """F3 — validator rules present in template."""
 
-    def _validator(self):
-        src = (ROOT/"admin"/"templates"/"client_metrics.html").read_text()
+    @classmethod
+    def setUpClass(cls):
+        src   = (ROOT / "admin" / "templates" / "client_metrics.html").read_text()
         start = src.find("function updateFormulaHints")
         end   = src.find("function setStatus", start)
-        return src[start:end]
+        cls._validator_src = src[start:end]
+
+    def _validator(self):
+        return self._validator_src
 
     def test_select_in_expression_rule(self):
         self.assertIn("SELECT", self._validator())
