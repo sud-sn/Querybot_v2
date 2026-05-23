@@ -358,7 +358,7 @@ async def _generate_duckdb_sql(question: str, system_prompt: str, client: dict) 
     """
     try:
         provider, model, api_key, az_kwargs = resolve_provider(client, purpose="query")
-        sql = await llm_complete(
+        sql, _, _ = await llm_complete(
             system=system_prompt,
             user=question,
             provider=provider,
