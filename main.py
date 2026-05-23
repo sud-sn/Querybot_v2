@@ -1440,11 +1440,17 @@ async def _generate_result_narration(
         return ""
 
 
-def _build_cannot_generate_hint(schema: list[dict], stats: dict) -> str:
+def _build_cannot_generate_hint(
+    schema: list[dict],
+    stats: dict,
+    prev_rows: list[dict] | None = None,
+    prev_question: str = "",
+) -> str:
     """
     Build a column-aware suggestion message when DuckDB AND the production
     DB fallback both fail to answer.  Lists what the user CAN ask based on
-    the available columns.
+    the available columns, and adds a rephrasing tip with explicit values
+    when the question likely references entities from the previous result.
     """
     if not schema:
         return "Try asking a fresh question in the main chat."
@@ -1481,9 +1487,86 @@ def _build_cannot_generate_hint(schema: list[dict], stats: dict) -> str:
         f"The current result only has these columns: {col_summary}.\n"
         "Questions you can ask:\n"
         + "\n".join(f"  • {s}" for s in suggestions[:4])
-        + "\n\nFor anything else, ask a fresh question in the main chat."
     )
+
+    # If we have the actual result values, suggest a rephrased question
+    # that names them explicitly so the main chat can answer it directly.
+    if prev_rows and text_cols:
+        key_col = text_cols[0]
+        values  = list(dict.fromkeys(
+            str(r[key_col]) for r in prev_rows if r.get(key_col) is not None
+        ))[:5]
+        if values:
+            names = ", ".join(values)
+            hint += (
+                f"\n\nFor anything else, ask a fresh question in the main chat — "
+                f"for example, name them explicitly:\n"
+                f"  *'... for {names}'*"
+            )
+    else:
+        hint += "\n\nFor anything else, ask a fresh question in the main chat."
+
     return hint
+
+
+def _build_drilldown_context(
+    prev_question: str,
+    prev_rows: list[dict],
+    schema: list[dict],
+) -> str:
+    """
+    Build a context block injected into the production-DB fallback prompt
+    so the LLM can answer follow-up questions that reference entities from
+    the previous result ("these top 5 prescribers", "the ones shown", etc.).
+
+    Extracts the distinct values for each TEXT/categorical column and emits
+    them as ready-to-use IN-list hints.  The LLM can then generate:
+
+        WHERE PRESCRIBER_NAME IN ('Dr. Donna Walker', 'Dr. Betty Jackson', ...)
+
+    instead of failing with CANNOT_GENERATE.
+    """
+    if not prev_rows or not schema:
+        return ""
+
+    parts: list[str] = []
+    if prev_question:
+        parts.append(
+            "The user is following up on a previous database result.\n"
+            f'The previous question was: "{prev_question}"'
+        )
+    else:
+        parts.append("The user is following up on a previous database result.")
+
+    col_names = ", ".join(s["name"] for s in schema)
+    parts.append(
+        f"That result returned {len(prev_rows)} row(s) with columns: {col_names}."
+    )
+
+    # Emit IN-list hints for up to 3 TEXT/categorical columns, 15 values each.
+    hints: list[str] = []
+    for col_info in schema:
+        col   = col_info["name"]
+        dtype = col_info.get("type", "TEXT").upper()
+        if dtype not in ("TEXT", "VARCHAR", "STRING", "NVARCHAR", "CHAR"):
+            continue
+        values = list(dict.fromkeys(
+            str(r[col]) for r in prev_rows if r.get(col) is not None
+        ))[:15]
+        if values:
+            in_list = ", ".join(f"'{v}'" for v in values)
+            hints.append(f"  - {col}: {in_list}")
+        if len(hints) >= 3:
+            break
+
+    if hints:
+        parts.append(
+            "Key values from that result — use in a WHERE ... IN (...) clause "
+            "when the follow-up references 'these', 'the above', 'top N shown', etc.:\n"
+            + "\n".join(hints)
+        )
+
+    return "\n".join(parts)
 
 
 def _sanitize_rows(rows: list[dict]) -> list[dict]:
@@ -2043,6 +2126,17 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                     _fb_db_cfg.get("db_type", "azure_sql"),
                                     _fb_rag_ctx,
                                 )
+                                # Inject drill-down context so the LLM can filter
+                                # by the exact values from the previous result when
+                                # the user says "these prescribers", "the top 5", etc.
+                                _prev_rows = _cached_result.get("rows") or []
+                                _drill_ctx = _build_drilldown_context(
+                                    _cached_result.get("question", ""),
+                                    _prev_rows,
+                                    _rc_schema,
+                                )
+                                if _drill_ctx:
+                                    _fb_system = _fb_system + "\n\n---\n\n" + _drill_ctx
                                 _fb_sql_raw, _, _ = await llm_complete(
                                     _fb_system, rc_question,
                                     _fb_prov, _fb_model, _fb_key,
@@ -2115,7 +2209,13 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                             )
                         else:
                             # Both DuckDB and DB fallback failed — give a column-aware hint
-                            _hint = _build_cannot_generate_hint(_rc_schema, _rc_stats)
+                            # with a rephrasing tip that includes the actual values
+                            _prev_rows_hint = (_cached_result.get("rows") or []) if _cached_result else []
+                            _hint = _build_cannot_generate_hint(
+                                _rc_schema, _rc_stats,
+                                prev_rows=_prev_rows_hint,
+                                prev_question=_cached_result.get("question", "") if _cached_result else "",
+                            )
                             _trace_finish(_rc_trace_id, status="error", answer_type="error", error_message=_hint)
                             await websocket.send_json({
                                 "type":      "result_chat_error",
