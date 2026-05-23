@@ -2122,6 +2122,22 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                             _cached_result = getattr(adapter, "last_result", None) or {}
                             _fb_rag_ctx    = _cached_result.get("rag_context", "")
                             _fb_db_cfg     = _cached_result.get("db_cfg") or _rc_db_cfg
+                            if _fb_db_cfg:
+                                # Re-retrieve KB for the follow-up question so the LLM
+                                # has the right schema context (e.g. prescriber tables)
+                                # rather than just the original question's formula schema.
+                                # Merge: follow-up context first (most relevant) + original.
+                                try:
+                                    _fb_retriever  = load_retriever(account_id)
+                                    _fb_fresh_docs = _fb_retriever.retrieve(rc_question, n=6)
+                                    _fb_fresh_ctx  = "\n\n---\n\n".join(_fb_fresh_docs)
+                                    _fb_rag_ctx = (
+                                        _fb_fresh_ctx + "\n\n---\n\n" + _fb_rag_ctx
+                                        if _fb_rag_ctx else _fb_fresh_ctx
+                                    )
+                                except Exception as _ret_exc:
+                                    log.debug("result_chat fallback KB re-retrieval failed: %s", _ret_exc)
+
                             if _fb_db_cfg and _fb_rag_ctx:
                                 await websocket.send_json({
                                     "type": "result_chat_typing",
@@ -2136,9 +2152,8 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                     _fb_db_cfg.get("db_type", "azure_sql"),
                                     _fb_rag_ctx,
                                 )
-                                # Inject drill-down context so the LLM can filter
-                                # by the exact values from the previous result when
-                                # the user says "these prescribers", "the top 5", etc.
+                                # Inject drill-down context: the specific values from the
+                                # previous result the user is referencing ("these top 5").
                                 _prev_rows = _cached_result.get("rows") or []
                                 _drill_ctx = _build_drilldown_context(
                                     _cached_result.get("question", ""),
@@ -2151,6 +2166,10 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                     _fb_system, rc_question,
                                     _fb_prov, _fb_model, _fb_key,
                                     max_tokens=512, **_fb_az,
+                                )
+                                log.info(
+                                    "result_chat DB fallback generated SQL: %s",
+                                    (_fb_sql_raw or "None")[:300],
                                 )
                                 if _fb_sql_raw and _fb_sql_raw.startswith("```"):
                                     _fb_sql_raw = "\n".join(
