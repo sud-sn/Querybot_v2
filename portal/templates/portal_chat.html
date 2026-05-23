@@ -313,7 +313,12 @@
 .rc-table tbody td{padding:5px 10px;border-bottom:1px solid color-mix(in srgb,var(--border) 35%, transparent);color:var(--text);white-space:nowrap}
 .rc-table tbody tr:last-child td{border-bottom:none}
 .rc-table tbody tr:hover td{background:color-mix(in srgb,var(--primary-soft) 14%, transparent)}
-.rc-foot{padding:4px 10px;font-size:10.5px;color:var(--text-muted);background:color-mix(in srgb,var(--surface-2) 40%, transparent);border-top:1px solid var(--border)}
+.rc-foot{padding:4px 10px;font-size:10.5px;color:var(--text-muted);background:color-mix(in srgb,var(--surface-2) 40%, transparent);border-top:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:.5rem}
+.rc-csv-btn{display:inline-flex;align-items:center;gap:.3rem;padding:2px 8px;border-radius:4px;border:1px solid var(--border);background:var(--surface);color:var(--text-soft);font-size:10px;font-weight:700;cursor:pointer;white-space:nowrap;transition:background .12s}
+.rc-csv-btn:hover{background:color-mix(in srgb,var(--primary-soft) 20%, var(--surface));color:var(--primary);border-color:var(--primary)}
+.rc-narration{font-size:12.5px;line-height:1.55;color:var(--text);font-style:italic;padding:.35rem .1rem .2rem;border-left:2px solid var(--primary);padding-left:.55rem;margin-bottom:.4rem;opacity:.85}
+.rc-source-badge{display:inline-flex;align-items:center;gap:.3rem;padding:2px 7px;border-radius:4px;background:color-mix(in srgb,#6366f1 10%, var(--surface));border:1px solid color-mix(in srgb,#6366f1 25%, var(--border));color:#6366f1;font-size:10px;font-weight:700;margin-bottom:.35rem}
+.rc-turn-divider{border:none;border-top:1px dashed color-mix(in srgb,var(--border) 60%, transparent);margin:.2rem 0}
 .rc-input-row{display:flex;gap:.4rem;padding:.55rem .7rem;border-top:1px solid var(--border);background:var(--surface);align-items:center}
 .rc-input{flex:1;padding:6px 10px;border-radius:7px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);font-size:13px;outline:none;resize:none;min-height:36px;max-height:100px;line-height:1.5}
 .rc-input:focus{border-color:var(--primary);box-shadow:0 0 0 2px color-mix(in srgb,var(--primary) 15%, transparent)}
@@ -1452,19 +1457,59 @@ function _mountResultChat(cardEl, rcId) {
     thread.scrollTop = thread.scrollHeight;
   }
 
-  function _rcRenderTable(rows) {
+  function _rcRenderTable(rows, currencyCols) {
     if (!rows || !rows.length) return null;
+    const ccSet = new Set((currencyCols || []).map(c => c.toLowerCase()));
     const headers = Object.keys(rows[0]);
+
+    function _fmtCell(h, val) {
+      if (val === null || val === undefined || val === '') return '';
+      if (ccSet.has(h.toLowerCase())) {
+        const n = parseFloat(String(val).replace(/,/g, ''));
+        if (!isNaN(n)) return '$' + n.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+      }
+      return escHtml(String(val));
+    }
+
     const headHtml = headers.map(h => `<th>${escHtml(h)}</th>`).join('');
     const bodyHtml = rows.map(r =>
-      '<tr>' + headers.map(h => `<td>${escHtml(String(r[h] ?? ''))}</td>`).join('') + '</tr>'
+      '<tr>' + headers.map(h => `<td>${_fmtCell(h, r[h])}</td>`).join('') + '</tr>'
     ).join('');
+
+    // CSV export helper — attached after DOM insert
+    const csvId = 'csv-' + Math.random().toString(36).slice(2, 8);
     const wrap = document.createElement('div');
     wrap.innerHTML = `
       <div class="rc-table-wrap">
         <table class="rc-table"><thead><tr>${headHtml}</tr></thead><tbody>${bodyHtml}</tbody></table>
-        <div class="rc-foot">${rows.length.toLocaleString()} row${rows.length === 1 ? '' : 's'}</div>
+        <div class="rc-foot">
+          <span>${rows.length.toLocaleString()} row${rows.length === 1 ? '' : 's'}</span>
+          <button id="${csvId}" class="rc-csv-btn" title="Download CSV">
+            <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v9M4 7l4 4 4-4"/><path d="M2 14h12"/></svg>
+            CSV
+          </button>
+        </div>
       </div>`;
+    // Wire up CSV download after node is in the fragment
+    setTimeout(() => {
+      const btn = document.getElementById(csvId);
+      if (!btn) return;
+      btn.addEventListener('click', () => {
+        const esc = v => {
+          const s = String(v ?? '');
+          return s.includes(',') || s.includes('"') || s.includes('\n')
+            ? '"' + s.replace(/"/g, '""') + '"' : s;
+        };
+        const lines = [headers.map(esc).join(',')];
+        rows.forEach(r => lines.push(headers.map(h => esc(r[h])).join(',')));
+        const blob = new Blob([lines.join('\r\n')], {type: 'text/csv;charset=utf-8;'});
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'results.csv';
+        a.click();
+        URL.revokeObjectURL(a.href);
+      });
+    }, 0);
     return wrap.firstElementChild;
   }
 
@@ -1480,13 +1525,37 @@ function _mountResultChat(cardEl, rcId) {
     },
     onResponse(msg) {
       const rows = msg.rows || [];
+      const currencyCols = msg.currency_columns || [];
+
+      // Turn divider between Q&A pairs
+      const divider = document.createElement('hr');
+      divider.className = 'rc-turn-divider';
+      thread.appendChild(divider);
+
+      // 1-sentence narration (if present)
+      if (msg.narration) {
+        const nar = document.createElement('div');
+        nar.className = 'rc-narration';
+        nar.textContent = msg.narration;
+        thread.appendChild(nar);
+      }
+
+      // Source badge when query hit the production DB (fallback path)
+      if (msg.source === 'database') {
+        const badge = document.createElement('div');
+        badge.className = 'rc-source-badge';
+        badge.innerHTML = `<svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="8" cy="4" rx="6" ry="2"/><path d="M2 4v4c0 1.1 2.7 2 6 2s6-.9 6-2V4"/><path d="M2 8v4c0 1.1 2.7 2 6 2s6-.9 6-2V8"/></svg> Live DB`;
+        thread.appendChild(badge);
+      }
+
       if (!rows.length) {
         _rcAppend('bot', 'No rows matched that query in the current result.');
+        thread.scrollTop = thread.scrollHeight;
         return;
       }
-      const tableEl = _rcRenderTable(rows);
+
+      const tableEl = _rcRenderTable(rows, currencyCols);
       if (tableEl) {
-        // Wrap in a bot bubble
         const bubble = document.createElement('div');
         bubble.className = 'rc-bubble bot';
         bubble.style.padding = '0';
@@ -1499,7 +1568,15 @@ function _mountResultChat(cardEl, rcId) {
       }
     },
     onError(msg) {
-      _rcAppend('bot error', msg.content || 'Something went wrong.');
+      const content = msg.content || 'Something went wrong.';
+      // Render newlines as line-breaks (hint messages contain \n)
+      const div = document.createElement('div');
+      div.className = 'rc-bubble bot error';
+      div.style.fontSize = '12.5px';
+      div.style.whiteSpace = 'pre-line';
+      div.textContent = content;
+      thread.appendChild(div);
+      thread.scrollTop = thread.scrollHeight;
     },
   };
 }
