@@ -1316,7 +1316,7 @@ def _build_cannot_generate_hint(schema: list[dict], stats: dict) -> str:
     ]
     text_cols = [
         c["name"] for c in stats.get("columns", [])
-        if c.get("sample_values") is not None
+        if c.get("sample_values")   # truthy: empty list [] (numeric cols) is falsy
     ]
     currency_cols = [
         c["name"] for c in stats.get("columns", [])
@@ -1926,15 +1926,24 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                    portal_user_id=_rc_pu_id, zoom_user_id=zoom_user_id,
                                    question_id=_rc_question_id,
                                    parent_question_id=_rc_parent_qid)
-                            await websocket.send_json({
-                                "type":      "result_chat_response",
-                                "result_id": rc_result_id,
+                            # Store this fallback turn in history so follow-up questions
+                            # have context even when DuckDB couldn't answer.
+                            _rc_history.append({
                                 "question":  rc_question,
                                 "sql":       _fb_sql,
-                                "rows":      _fb_rows,
                                 "row_count": len(_fb_rows),
-                                "source":    "database",
-                                "source_note": "Answer required a full database query.",
+                            })
+                            _result_chat_histories[rc_result_id] = _rc_history[-5:]
+                            await websocket.send_json({
+                                "type":             "result_chat_response",
+                                "result_id":        rc_result_id,
+                                "question":         rc_question,
+                                "sql":              _fb_sql,
+                                "rows":             _fb_rows,
+                                "row_count":        len(_fb_rows),
+                                "source":           "database",
+                                "source_note":      "Answer required a full database query.",
+                                "currency_columns": _rc_currency,
                             })
                             log.info(
                                 "result_chat DB fallback succeeded: %r → %d rows",
