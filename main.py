@@ -697,6 +697,46 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
     except Exception as _gex:
         log.debug("Graph resolution skipped: %s", _gex)
 
+    # ── Table coverage guarantee ──────────────────────────────────────────────
+    # After graph resolution we know which tables are required (from detected
+    # entities) and which are already covered by the retrieved KB docs.
+    # For any gap — a table the graph needs but RAG missed — we do a direct
+    # Qdrant filter fetch (not a semantic search) and append the KB doc to
+    # context_with_terms so the LLM sees every table's column definitions.
+    #
+    # Why this matters: dense + BM25 retrieval ranks by similarity to the
+    # *question*.  Secondary JOIN tables (e.g. a patient dim that's never
+    # mentioned by name) often score below the cutoff and are dropped.  The
+    # LLM then hallucinates column names for those tables → CANNOT_GENERATE.
+    #
+    # Capped at 3 gap-fill docs; all failures are swallowed so this never
+    # blocks SQL generation.
+    if _graph_ctx.get("enabled"):
+        try:
+            from core.table_coverage import build_required_fqns, guarantee_table_coverage
+            _required_fqns = build_required_fqns(_graph_ctx, _full_graph)
+            if _required_fqns:
+                _gap_docs = guarantee_table_coverage(
+                    account_id    = account_id,
+                    required_fqns = _required_fqns,
+                    retrieved_docs = relevant_kbs,   # what actually went into context
+                    rag_filter    = rag_filter,       # ACL scope (None = admin)
+                    max_fill      = 3,
+                )
+                if _gap_docs:
+                    context_with_terms = (
+                        context_with_terms
+                        + "\n\n---\n\n"
+                        + "\n\n---\n\n".join(_gap_docs)
+                    )
+                    log.info(
+                        "Table coverage: injected %d gap-fill doc(s) into prompt "
+                        "for %s — missing tables now covered",
+                        len(_gap_docs), sorted(_required_fqns),
+                    )
+        except Exception as _cov_exc:
+            log.debug("Table coverage guarantee skipped: %s", _cov_exc)
+
     system = build_sql_system_prompt(
         db_cfg["db_type"], context_with_terms,
         conversation_history=_conv_history or None,

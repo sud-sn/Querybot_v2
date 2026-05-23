@@ -43,6 +43,21 @@ _RESULT_REF_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Medium signals: analytical operations on "top N / bottom N" of the result,
+# or explicit aggregate requests that make no sense without a prior result
+_ANALYTIC_TOPN_RE = re.compile(
+    r"\b("
+    r"(avg|average|mean|sum|total|min|max|minimum|maximum|count)\s+of\s+(top|bottom)\s+\d+|"
+    r"(top|bottom)\s+\d+\s+(avg|average|mean|sum|total|min|max|by|with|having)|"
+    r"(avg|average|mean|median)\s+of\s+(these|this|the\s+\w+)|"
+    r"(highest|lowest|best|worst)\s+\d+\s+\w+|"
+    r"which\s+(one|ones|item|items|row|rows)\s+(is|are)\s+(the\s+)?(highest|lowest|best|worst)|"
+    r"sort\s+(these|this|them|by)|order\s+(these|this|them)\s+by|"
+    r"show\s+(only|me)?\s*(top|bottom)\s+\d+"
+    r")\b",
+    re.IGNORECASE,
+)
+
 # Weaker signals — only route if combined with a result-reference context word
 _ANALYTIC_RE = re.compile(
     r"\b(average|mean|median|sum|total|minimum|maximum|percentile|rank|sort)\b",
@@ -54,10 +69,17 @@ _THESE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Prefix set by the "Ask about these results" button in the UI
+_FROM_RESULTS_PREFIX_RE = re.compile(
+    r"^from (these|this) results?,?\s*",
+    re.IGNORECASE,
+)
+
 
 def should_route_to_result_cache(
     question: str,
     has_cached_result: bool,
+    cached_col_names: list[str] | None = None,
 ) -> bool:
     """
     Return True when the question should be answered from the cached result
@@ -65,19 +87,41 @@ def should_route_to_result_cache(
 
     Conservative: only routes when there is a clear reference to the current
     result set. Ambiguous questions always go to the DB (safe default).
+
+    cached_col_names: column names from the last result. When provided,
+    routing also fires if the question mentions an analytic operation
+    AND one of those column names appears in the question.
     """
     if not has_cached_result:
         return False
 
     q = question.strip()
 
+    # Explicit "From these results, ..." prefix (set by the Ask button)
+    if _FROM_RESULTS_PREFIX_RE.match(q):
+        return True
+
     # Strong match — always route
     if _RESULT_REF_RE.search(q):
+        return True
+
+    # Medium match — "avg of top 5 formulas", "top 3 by revenue", etc.
+    if _ANALYTIC_TOPN_RE.search(q):
         return True
 
     # Weak match — route only when user also references "these / this result"
     if _ANALYTIC_RE.search(q) and _THESE_RE.search(q):
         return True
+
+    # Column-name match — analytic question that names a column from the result
+    # e.g. "what is the avg of TOTAL_REVENUE?" when TOTAL_REVENUE is in the cache
+    if cached_col_names and _ANALYTIC_RE.search(q):
+        q_lower = q.lower()
+        for col in cached_col_names:
+            # Match the column name or a natural-language version of it
+            col_lower = col.lower().replace("_", " ")
+            if col_lower in q_lower or col.lower() in q_lower:
+                return True
 
     return False
 

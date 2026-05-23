@@ -45,6 +45,14 @@ sentence-transformers>=3.0.0
 # ── SQL validation ─────────────────────────────────────────────────────────────
 sqlglot>=23.0.0
 
+# ── Hybrid RAG — BM25 keyword retriever ────────────────────────────────────────
+rank-bm25>=0.2.2
+# Used by core/vector_store.py for BM25 keyword search in the hybrid retrieval
+# pipeline (BM25 + dense HNSW → RRF fusion → cross-encoder re-rank).
+# If not installed the pipeline gracefully falls back to dense-only retrieval.
+# The cross-encoder model (ms-marco-MiniLM-L6-v2) is loaded via the already-
+# required sentence-transformers package — no extra install needed.
+
 # ── In-memory analytics (Tier-2 result cache) ──────────────────────────────────
 duckdb>=1.0.0
 # Used by core/result_cache.py to execute analytical follow-up questions
