@@ -729,6 +729,13 @@ def _discover_snowflake(cfg: dict, out: Path, allowed: set[str] | None = None, m
                 table_name=name,
             )
 
+            # Strip raw distinct values for any column that is being masked.
+            # Without this, real PII (names, emails, etc.) leaks into the KB
+            # markdown even when the column itself is masked in the sample rows.
+            _masked_upper = {f.upper() for f in _masked_set}
+            distinct_map = {k: v for k, v in distinct_map.items()
+                            if k.upper() not in _masked_upper}
+
             (out / f"{_safe_table_file_stem(file_stem)}.md").write_text(
                 _sf_md(name, tbl, columns, sample, distinct_map), encoding="utf-8"
             )
@@ -945,6 +952,11 @@ def _discover_oracle(cfg: dict, out: Path, allowed: set[str] | None = None, mc: 
                 explicit_fields=set(_tbl_cfg.get("masked_fields", [])),
                 table_name=name,
             )
+
+            # Strip raw distinct values for masked columns
+            _masked_upper = {f.upper() for f in _masked_set}
+            distinct_map = {k: v for k, v in distinct_map.items()
+                            if k.upper() not in _masked_upper}
 
             (out / f"{_safe_table_file_stem(file_stem)}.md").write_text(
                 _ora_md(name, tbl, columns, sample, tbl_owner, distinct_map), encoding="utf-8"
@@ -1194,6 +1206,11 @@ def _discover_azure_sql(cfg: dict, out: Path, allowed: set[str] | None = None, m
                     explicit_fields=set(_tbl_cfg.get("masked_fields", [])),
                     table_name=name,
                 )
+
+                # Strip raw distinct values for masked columns
+                _masked_upper = {f.upper() for f in _masked_set}
+                distinct_map = {k: v for k, v in distinct_map.items()
+                                if k.upper() not in _masked_upper}
 
                 tbl_meta = {"TABLE_SCHEMA": schema, "TABLE_NAME": name,
                             "TABLE_TYPE": "BASE TABLE", "TABLE_CATALOG": db_upper}
