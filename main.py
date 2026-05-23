@@ -489,7 +489,8 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                     duration_ms = int(time.time() * 1000) - start_ms
                     _log_q(account_id, question, _duck_sql, len(_duck_rows), True, "",
                            "duckdb_cache", "duckdb", 0, 0, duration_ms,
-                           portal_user_id=pu_id, zoom_user_id=zid)
+                           portal_user_id=pu_id, zoom_user_id=zid,
+                           question_id=audit_request_id)
                     _add_history = getattr(adapter, "add_to_history", None)
                     if callable(_add_history) and _duck_rows:
                         _add_history(
@@ -524,7 +525,8 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
             duration_ms = int(time.time()*1000) - start_ms
             _log_q(account_id, question, sql_from_metric, len(rows), True, "",
                    "metric_registry", "deterministic", 0, 0, duration_ms,
-                   portal_user_id=pu_id, zoom_user_id=zid)
+                   portal_user_id=pu_id, zoom_user_id=zid,
+                   question_id=audit_request_id)
             # Record metric-registry hits in conversation history too so
             # follow-up questions ("filter to top 5", "break that down by region")
             # can reference the returned columns and SQL shape.
@@ -759,7 +761,8 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
     except Exception as e:
         _log_q(account_id, question, "", 0, False, str(e), provider, model, 0, 0,
                int(time.time()*1000)-start_ms,
-               portal_user_id=pu_id, zoom_user_id=zid)
+               portal_user_id=pu_id, zoom_user_id=zid,
+               question_id=audit_request_id)
         await adapter.send_message(event, f"⚠️ AI error: {e}")
         return
 
@@ -775,7 +778,8 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
     if "CANNOT_GENERATE" in sql.upper():
         _log_q(account_id, question, "", 0, False, "CANNOT_GENERATE",
                provider, model, tok_in, tok_out, int(time.time()*1000)-start_ms,
-               portal_user_id=pu_id, zoom_user_id=zid)
+               portal_user_id=pu_id, zoom_user_id=zid,
+               question_id=audit_request_id)
 
         # Skip ambiguity check when this IS a clarification reply — prevents infinite loop
         if not is_clarification:
@@ -951,7 +955,8 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
     if not ok:
         _log_q(account_id, question, sql, 0, False, last_reason, provider, model,
                tok_in, tok_out, int(time.time()*1000) - start_ms,
-               portal_user_id=pu_id, zoom_user_id=zid)
+               portal_user_id=pu_id, zoom_user_id=zid,
+               question_id=audit_request_id)
         await adapter.send_message(event, f"❌ {last_reason}")
         return
 
@@ -960,7 +965,8 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                exec_error or "Unknown error",
                provider, model, tok_in, tok_out,
                int(time.time()*1000) - start_ms,
-               portal_user_id=pu_id, zoom_user_id=zid)
+               portal_user_id=pu_id, zoom_user_id=zid,
+               question_id=audit_request_id)
         sql_preview = sql[:200] + "..." if len(sql) > 200 else sql
         await adapter.send_message(event,
             f"❌ Database error — could not execute after retry.\n"
@@ -972,7 +978,8 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
     duration_ms = int(time.time()*1000) - start_ms
     _log_q(account_id, question, sql, len(rows), True, "", provider, model,
            tok_in, tok_out, duration_ms,
-           portal_user_id=pu_id, zoom_user_id=zid)
+           portal_user_id=pu_id, zoom_user_id=zid,
+           question_id=audit_request_id)
 
     # Zero rows — try clarification only if NOT already a clarification reply
     # AND there is some ambiguity signal (Fix #3). Blind LLM ambiguity checks
@@ -1193,13 +1200,15 @@ def _create_pin_token(
 
 def _log_q(account_id, question, sql, rows, success, error,
            provider, model, tok_in, tok_out, dur_ms,
-           portal_user_id=None, zoom_user_id=""):
+           portal_user_id=None, zoom_user_id="",
+           question_id="", parent_question_id=""):
     store.log_query(
         account_id=account_id, question=question, sql_generated=sql,
         row_count=rows, success=success, error_msg=error,
         llm_provider=provider, llm_model=model,
         tokens_in=tok_in, tokens_out=tok_out, duration_ms=dur_ms,
         portal_user_id=portal_user_id, zoom_user_id=zoom_user_id or "",
+        question_id=question_id or "", parent_question_id=parent_question_id or "",
     )
 
 
@@ -1671,6 +1680,10 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     "result_id": rc_result_id,
                     "active": True,
                 })
+                _rc_start_ms = int(time.time() * 1000)
+                _rc_question_id      = make_llm_audit_request_id()
+                _rc_parent_qid       = getattr(adapter, "last_question_id", "") or ""
+                _rc_pu_id            = portal_user.get("id") if portal_user else None
                 try:
                     _sid = getattr(adapter, "session_id", None)
                     if not _sid or not result_cache.has_result(_sid):
@@ -1685,6 +1698,12 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     _rc_sys     = build_duckdb_system_prompt(_rc_schema, db_type=_rc_db_cfg.get("db_type", "azure_sql"))
                     _rc_sql    = await _generate_duckdb_sql(rc_question, _rc_sys, client)
                     if not _rc_sql or _rc_sql.strip().upper() == "CANNOT_GENERATE":
+                        _log_q(account_id, rc_question, _rc_sql or "", 0, False,
+                               "CANNOT_GENERATE", "result_chat", "duckdb", 0, 0,
+                               int(time.time() * 1000) - _rc_start_ms,
+                               portal_user_id=_rc_pu_id, zoom_user_id=zoom_user_id,
+                               question_id=_rc_question_id,
+                               parent_question_id=_rc_parent_qid)
                         await websocket.send_json({
                             "type": "result_chat_error",
                             "result_id": rc_result_id,
@@ -1692,6 +1711,12 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                         })
                         continue
                     _rc_rows = result_cache.query(_sid, _rc_sql)
+                    _rc_dur_ms = int(time.time() * 1000) - _rc_start_ms
+                    _log_q(account_id, rc_question, _rc_sql, len(_rc_rows), True, "",
+                           "result_chat", "duckdb", 0, 0, _rc_dur_ms,
+                           portal_user_id=_rc_pu_id, zoom_user_id=zoom_user_id,
+                           question_id=_rc_question_id,
+                           parent_question_id=_rc_parent_qid)
                     await websocket.send_json({
                         "type":      "result_chat_response",
                         "result_id": rc_result_id,
@@ -1700,9 +1725,16 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                         "rows":      _rc_rows,
                         "row_count": len(_rc_rows),
                     })
-                    log.info("result_chat answered %r → %d rows via DuckDB", rc_question[:60], len(_rc_rows))
+                    log.info("result_chat answered %r → %d rows via DuckDB (parent=%s)",
+                             rc_question[:60], len(_rc_rows), _rc_parent_qid[:16] or "none")
                 except Exception as _rce:
                     log.warning("result_chat error: %s", _rce)
+                    _log_q(account_id, rc_question, "", 0, False, str(_rce),
+                           "result_chat", "duckdb", 0, 0,
+                           int(time.time() * 1000) - _rc_start_ms,
+                           portal_user_id=_rc_pu_id, zoom_user_id=zoom_user_id,
+                           question_id=_rc_question_id,
+                           parent_question_id=_rc_parent_qid)
                     await websocket.send_json({
                         "type": "result_chat_error",
                         "result_id": rc_result_id,
