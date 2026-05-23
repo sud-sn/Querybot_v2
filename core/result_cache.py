@@ -252,6 +252,70 @@ class ResultCache:
         entry = self._get(session_id)
         return entry.schema if entry else []
 
+    def get_stats(self, session_id: str) -> dict:
+        """
+        Return a statistical summary of the cached result for DuckDB prompt
+        injection.  Gives the LLM concrete knowledge of the data shape so it
+        writes correct GROUP BY clauses and meaningful aggregates.
+
+        Returns:
+            {
+                "row_count": int,
+                "columns": [
+                    {
+                        "name": str, "type": str,
+                        "min": float|None, "max": float|None, "avg": float|None,
+                        "unique_count": int, "null_count": int,
+                        "sample_values": list[str],   # top 5 for TEXT cols
+                    }, ...
+                ]
+            }
+        Returns {} when session is unknown or expired.
+        """
+        entry = self._get(session_id)
+        if not entry or not entry.rows:
+            return {}
+
+        rows = entry.rows
+        col_stats: list[dict] = []
+
+        for col_info in entry.schema:
+            col   = col_info["name"]
+            dtype = col_info["type"]
+            values     = [r.get(col) for r in rows]
+            non_null   = [v for v in values if v is not None]
+            null_count = len(values) - len(non_null)
+
+            stat: dict = {
+                "name":         col,
+                "type":         dtype,
+                "null_count":   null_count,
+                "unique_count": len({str(v) for v in non_null}),
+                "sample_values": [],
+            }
+
+            if dtype in ("DOUBLE", "REAL", "FLOAT", "BIGINT", "INTEGER"):
+                try:
+                    nums = [float(v) for v in non_null]
+                    if nums:
+                        stat["min"] = round(min(nums), 2)
+                        stat["max"] = round(max(nums), 2)
+                        stat["avg"] = round(sum(nums) / len(nums), 2)
+                except (ValueError, TypeError):
+                    pass
+            else:
+                # Categorical — list first 5 distinct values (insertion order)
+                seen: dict = {}
+                for v in non_null:
+                    seen[str(v)] = None
+                    if len(seen) >= 5:
+                        break
+                stat["sample_values"] = list(seen.keys())
+
+            col_stats.append(stat)
+
+        return {"row_count": len(rows), "columns": col_stats}
+
     def has_result(self, session_id: str) -> bool:
         entry = self._get(session_id)
         return entry is not None
