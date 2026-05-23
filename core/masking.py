@@ -6,8 +6,9 @@ Local, zero-network field-level data masking for KB generation.
 Entry points
 ------------
 detect_sensitive_columns(columns)  → {col_name: strategy}
-    Regex scan of column names.  Used by the admin UI to pre-check likely-PII
-    fields when the admin enables masking on a table.
+    Regex scan of column names + type-based free-text detection.
+    Used by the admin UI to pre-check likely-PII fields when the admin
+    enables masking on a table.
 
 mask_rows(rows, masked_fields, columns) → list[dict]
     Apply per-column masking strategies to a sample of real rows.
@@ -64,7 +65,61 @@ _PII_PATTERNS: list[tuple[str, str]] = [
     # IP / geo
     (r"ip[_\s]?address|ip[_\s]?addr\b", "ip_address"),
     (r"latitude|longitude|lat\b|lng\b|lon\b", "coordinate"),
+    # Free-text / narrative columns — may contain anything; always redact
+    # Matched AFTER the more specific patterns above so that e.g. "address_line"
+    # hits the address strategy, not the free_text strategy.
+    (r"\bnotes?\b|\bcomments?\b|\bremarks?\b|description|narrative|"
+     r"\bmemo\b|\bmessage\b|address_line|reason_text|feedback|"
+     r"\binstructions?\b|\bsummary\b|\btranscript\b|\bdetails?\b|"
+     r"\bbody\b|text_field|\bcontent\b|\bfreetext\b|free[_\s]?text",
+     "free_text"),
 ]
+
+# ── Type-based free-text detection ────────────────────────────────────────────
+# Column *types* that indicate an unbounded or very long text field.
+# Used in detect_sensitive_columns() as a second detection pass when the
+# column name alone does not signal PII.
+_FREE_TEXT_BASE_TYPES = {
+    "text", "ntext", "longtext", "mediumtext", "tinytext",
+    "clob", "nclob", "long", "blob",
+}
+# VARCHAR / NVARCHAR declared length above this threshold → treated as free text
+_LONG_VARCHAR_THRESHOLD = 500
+
+# Column name fragments that are safe business fields even when they use a
+# long text type — skip the type-based free_text flag for these.
+_SAFE_LONG_TEXT_NAMES = {
+    "status", "type", "flag", "gender", "sex", "category", "class",
+    "department", "dept", "division", "group", "team", "role", "level",
+    "grade", "rank", "priority", "severity", "state", "phase", "stage",
+    "mode", "method", "code", "indicator", "active", "enabled",
+    "country", "region", "zone", "area", "branch", "location", "title",
+    "currency", "unit", "format", "language", "locale", "timezone",
+}
+
+
+def _is_free_text_type(col_type: str) -> bool:
+    """
+    Return True if the column type indicates an unbounded or very long text
+    field that is likely to contain unstructured, potentially sensitive content.
+
+    Handles:
+      TEXT / NTEXT / CLOB / LONG          → always True
+      VARCHAR(-1) / NVARCHAR(-1)          → SQL Server MAX, always True
+      VARCHAR(n) with n > threshold       → True
+    """
+    ct = (col_type or "").lower().strip()
+    base = ct.split("(")[0].strip()
+    if base in _FREE_TEXT_BASE_TYPES:
+        return True
+    if "varchar" in base or "character varying" in base:
+        m = re.search(r"\((-?\d+)\)", ct)
+        if m:
+            length = int(m.group(1))
+            # -1 = MAX in SQL Server; large declared lengths suggest free text
+            if length < 0 or length > _LONG_VARCHAR_THRESHOLD:
+                return True
+    return False
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -74,19 +129,44 @@ def detect_sensitive_columns(columns: list[dict]) -> dict[str, str]:
     Return {column_name: masking_strategy} for columns likely to contain PII.
 
     ``columns`` is a list of dicts with at least a ``name`` key (and optionally
-    ``type``).  Only columns whose names match a PII pattern are returned.
+    ``type``).
+
+    Detection runs in two passes:
+    1. Name-based regex scan (_PII_PATTERNS) — catches obvious PII by column name.
+    2. Type-based free-text detection — flags unbounded text columns (TEXT, NTEXT,
+       VARCHAR(MAX), CLOB, etc.) whose name does not indicate a known-safe business
+       field.  These columns can contain arbitrary user input and should be redacted
+       even if the name is vague (e.g. FIELD_REMARKS, ATTR_TEXT).
     """
     result: dict[str, str] = {}
     for col in columns:
-        strategy = _strategy_for_name(col.get("name", ""))
+        col_name = col.get("name", "")
+        col_type = col.get("type", "")
+
+        # Pass 1 — name-based
+        strategy = _strategy_for_name(col_name)
         if strategy:
-            result[col["name"]] = strategy
+            result[col_name] = strategy
+            continue
+
+        # Pass 2 — type-based free-text detection
+        if _is_free_text_type(col_type):
+            name_lower = col_name.lower()
+            # Skip columns whose name clearly identifies a safe business category
+            if not any(hint in name_lower for hint in _SAFE_LONG_TEXT_NAMES):
+                result[col_name] = "free_text"
+                log.debug(
+                    "masking: type-based free_text flag on %r (type=%r)",
+                    col_name, col_type,
+                )
+
     return result
 
 
 # Human-readable labels for each masking strategy (used in UI + egress log).
 STRATEGY_LABELS: dict[str, str] = {
     "redact":        "→ [REDACTED]",
+    "free_text":     "→ [FREE TEXT - REDACTED]",
     "name":          "→ fake full name",
     "first_name":    "→ fake first name",
     "last_name":     "→ fake last name",
@@ -128,6 +208,10 @@ def get_strategy_map(masked_fields: set[str], col_defs: list[dict]) -> dict[str,
                 s = "numeric_shift"
             elif any(t in ct for t in ("date", "time", "timestamp")):
                 s = "date_shift"
+            elif _is_free_text_type(ct):
+                # Unbounded text col that slipped through name detection —
+                # treat as free text rather than the noisy text_mask fallback.
+                s = "free_text"
             else:
                 s = "text_mask"
         result[field] = s
@@ -194,6 +278,9 @@ def _mask_row(row: dict, strategy_map: dict[str, str], faker) -> dict:
 def _apply(value: Any, strategy: str, faker) -> Any:  # noqa: C901
     if strategy == "redact":
         return "[REDACTED]"
+
+    if strategy == "free_text":
+        return "[FREE TEXT - REDACTED]"
 
     if strategy == "name":
         return faker.name() if faker else _stdlib_name()
