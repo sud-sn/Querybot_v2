@@ -1238,6 +1238,36 @@ def _format_value(val) -> str:
     return str(val)
 
 
+def _sanitize_rows(rows: list[dict]) -> list[dict]:
+    """
+    Convert non-JSON-serializable cell values to safe Python primitives.
+
+    Covers the types that database drivers and DuckDB commonly return:
+      decimal.Decimal  → float  (DB numeric/money columns)
+      datetime / date  → ISO string
+      bytes            → hex string
+      anything else    → str()
+
+    Safe to call on rows that are already clean — passes through
+    int/float/str/None unchanged.
+    """
+    import decimal as _decimal
+    import datetime as _datetime
+
+    def _safe(v):
+        if v is None or isinstance(v, (bool, int, float, str)):
+            return v
+        if isinstance(v, _decimal.Decimal):
+            return float(v)
+        if isinstance(v, (_datetime.datetime, _datetime.date)):
+            return v.isoformat()
+        if isinstance(v, bytes):
+            return v.hex()
+        return str(v)
+
+    return [{k: _safe(val) for k, val in row.items()} for row in (rows or [])]
+
+
 def _inject_distinct_if_needed(sql: str, question: str) -> str:
     """
     Safety net: if the LLM forgot SELECT DISTINCT on a list-entity query, add it.
@@ -1710,7 +1740,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                             "content": "I couldn't answer that from the current result. Try rephrasing or ask a fresh question.",
                         })
                         continue
-                    _rc_rows = result_cache.query(_sid, _rc_sql)
+                    _rc_rows = _sanitize_rows(result_cache.query(_sid, _rc_sql))
                     _rc_dur_ms = int(time.time() * 1000) - _rc_start_ms
                     _log_q(account_id, rc_question, _rc_sql, len(_rc_rows), True, "",
                            "result_chat", "duckdb", 0, 0, _rc_dur_ms,
