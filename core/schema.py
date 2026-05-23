@@ -151,6 +151,24 @@ def _apply_masking(
     return rows, masked_fields, replacement_map, False
 
 
+def _resolve_masking_fields(
+    col_defs: list[dict],
+    mode: str,
+    explicit_fields: set[str],
+) -> set[str]:
+    """Return columns that must not expose raw values in samples or distinct lists."""
+    from core.masking import detect_sensitive_columns
+
+    if mode == "none":
+        return set()
+    if mode == "all":
+        return {c["name"] for c in col_defs}
+    if mode == "selective":
+        return explicit_fields or set()
+    detected = detect_sensitive_columns(col_defs)
+    return set(detected.keys())
+
+
 def _sf_fetch_sample(cur, schema: str, name: str) -> list[dict]:
     cur.execute(f'SELECT * FROM "{schema}"."{name}" LIMIT 5')
     return [dict(r) for r in cur.fetchall()]
@@ -707,6 +725,9 @@ def _discover_snowflake(cfg: dict, out: Path, allowed: set[str] | None = None, m
             _mode    = _tbl_cfg.get("mode", "auto")
 
             col_defs = [{"name": c["COLUMN_NAME"], "type": c["DATA_TYPE"]} for c in columns]
+            _pre_masked_fields = _resolve_masking_fields(
+                col_defs, _mode, set(_tbl_cfg.get("masked_fields", []))
+            )
 
             # Distinct value scan (always for real-row tables)
             distinct_map = {}
@@ -714,6 +735,8 @@ def _discover_snowflake(cfg: dict, out: Path, allowed: set[str] | None = None, m
                 plain_cur = conn.cursor()
                 for col in columns:
                     cname, ctype = col["COLUMN_NAME"], col["DATA_TYPE"]
+                    if cname in _pre_masked_fields:
+                        continue
                     if _is_categorical(cname, ctype):
                         vals = _sf_distinct(plain_cur, schema, name, cname)
                         if vals:
@@ -927,11 +950,16 @@ def _discover_oracle(cfg: dict, out: Path, allowed: set[str] | None = None, mc: 
             _mode    = _tbl_cfg.get("mode", "auto")
 
             col_defs = [{"name": c["COLUMN_NAME"], "type": c["DATA_TYPE"]} for c in columns]
+            _pre_masked_fields = _resolve_masking_fields(
+                col_defs, _mode, set(_tbl_cfg.get("masked_fields", []))
+            )
 
             distinct_map = {}
             if _mode != "all":
                 for col in columns:
                     cname = col["COLUMN_NAME"]
+                    if cname in _pre_masked_fields:
+                        continue
                     if _is_categorical(cname, col["DATA_TYPE"]):
                         vals = _ora_distinct(cur, tbl_owner, name, cname)
                         if vals:
@@ -1179,11 +1207,16 @@ def _discover_azure_sql(cfg: dict, out: Path, allowed: set[str] | None = None, m
 
                 col_defs = [{"name": c["COLUMN_NAME"], "type": c["DATA_TYPE"]}
                             for c in columns]
+                _pre_masked_fields = _resolve_masking_fields(
+                    col_defs, _mode, set(_tbl_cfg.get("masked_fields", []))
+                )
 
                 distinct_map: dict[str, list[str]] = {}
                 if _mode != "all":
                     for col in columns:
                         cname = col["COLUMN_NAME"]
+                        if cname in _pre_masked_fields:
+                            continue
                         if _is_categorical(cname, col["DATA_TYPE"]):
                             vals = _az_distinct(cur, schema, name, cname)
                             if vals:

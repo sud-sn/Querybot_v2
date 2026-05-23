@@ -34,6 +34,8 @@ import time
 from collections import OrderedDict
 from typing import Any
 
+from core.duckdb_sql_validator import ensure_duckdb_result_sql, validate_duckdb_result_sql
+
 # ── Currency column name heuristic ────────────────────────────────────────────
 # Matches column names that almost certainly represent monetary values.
 # Used to auto-detect which columns should be prefixed with $ in the UI.
@@ -211,6 +213,11 @@ class ResultCache:
         if entry is None:
             return []
 
+        verdict = validate_duckdb_result_sql(sql)
+        if not verdict.ok:
+            log.warning("Rejected DuckDB result-cache SQL: %s (%s)", verdict.reason, verdict.code)
+            return []
+
         try:
             import duckdb
             return self._duckdb_query(entry.rows, entry.schema, sql)
@@ -251,7 +258,8 @@ class ResultCache:
                     f"INSERT INTO result ({cols_str}) VALUES ({placeholders})", batch
                 )
 
-            result = conn.execute(sql).fetchall()
+            safe_sql = ensure_duckdb_result_sql(sql)
+            result = conn.execute(safe_sql).fetchall()
             col_names_out = [desc[0] for desc in conn.description]
             return [dict(zip(col_names_out, row)) for row in result]
         finally:

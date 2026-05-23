@@ -1,0 +1,31 @@
+cases:
+  - id: hr_001
+    question: "How many employees are active?"
+    schema: "HR"
+    expected_tables:
+      - Employee
+    expected_columns:
+      - Status
+    expected_sql_contains:
+      - COUNT
+    forbidden_columns:
+      - SSN
+      - Password
+    expected_result_type: aggregate
+    min_score: 0.85
+
+  - id: hr_002
+    question: "Show employee count by department"
+    schema: "HR"
+    expected_tables:
+      - Employee
+    expected_columns:
+      - Department
+    expected_sql_contains:
+      - GROUP BY
+      - COUNT
+    forbidden_columns:
+      - Salary
+      - SSN
+    expected_result_type: table
+    min_score: 0.85

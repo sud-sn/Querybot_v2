@@ -166,7 +166,6 @@ def detect_sensitive_columns(columns: list[dict]) -> dict[str, str]:
 # Human-readable labels for each masking strategy (used in UI + egress log).
 STRATEGY_LABELS: dict[str, str] = {
     "redact":        "→ [REDACTED]",
-    "free_text":     "→ [FREE TEXT - REDACTED]",
     "name":          "→ fake full name",
     "first_name":    "→ fake first name",
     "last_name":     "→ fake last name",
@@ -186,7 +185,24 @@ STRATEGY_LABELS: dict[str, str] = {
     "salary":        "→ shifted ±15%",
     "numeric_shift": "→ shifted ±10%",
     "text_mask":     "→ format-preserving mask",
+    "free_text":     "→ [REDACTED TEXT]",
 }
+
+
+def strategy_for_field(field: str, col_type: str = "varchar") -> str:
+    """Resolve the masking strategy for a field name/type pair."""
+    s = _strategy_for_name(field)
+    if s:
+        return s
+    ct = (col_type or "varchar").lower()
+    if any(t in ct for t in ("int", "bigint", "decimal", "numeric",
+                             "float", "real", "money", "number")):
+        return "numeric_shift"
+    if any(t in ct for t in ("date", "time", "timestamp")):
+        return "date_shift"
+    if _is_free_text_type(ct):
+        return "free_text"
+    return "text_mask"
 
 
 def get_strategy_map(masked_fields: set[str], col_defs: list[dict]) -> dict[str, str]:
@@ -200,21 +216,7 @@ def get_strategy_map(masked_fields: set[str], col_defs: list[dict]) -> dict[str,
     col_type_map = {c["name"]: c.get("type", "varchar") for c in col_defs}
     result: dict[str, str] = {}
     for field in masked_fields:
-        s = _strategy_for_name(field)
-        if not s:
-            ct = col_type_map.get(field, "varchar").lower()
-            if any(t in ct for t in ("int", "bigint", "decimal", "numeric",
-                                     "float", "real", "money", "number")):
-                s = "numeric_shift"
-            elif any(t in ct for t in ("date", "time", "timestamp")):
-                s = "date_shift"
-            elif _is_free_text_type(ct):
-                # Unbounded text col that slipped through name detection —
-                # treat as free text rather than the noisy text_mask fallback.
-                s = "free_text"
-            else:
-                s = "text_mask"
-        result[field] = s
+        result[field] = strategy_for_field(field, col_type_map.get(field, "varchar"))
     return result
 
 
@@ -237,17 +239,7 @@ def mask_rows(
     col_type_map = {c["name"]: c.get("type", "varchar") for c in columns}
     strategy_map: dict[str, str] = {}
     for field in masked_fields:
-        s = _strategy_for_name(field)
-        if not s:
-            ct = col_type_map.get(field, "varchar").lower()
-            if any(t in ct for t in ("int", "bigint", "decimal", "numeric",
-                                     "float", "real", "money", "number")):
-                s = "numeric_shift"
-            elif any(t in ct for t in ("date", "time", "timestamp")):
-                s = "date_shift"
-            else:
-                s = "text_mask"
-        strategy_map[field] = s
+        strategy_map[field] = strategy_for_field(field, col_type_map.get(field, "varchar"))
 
     faker = _get_faker()
     return [_mask_row(row, strategy_map, faker) for row in rows]
@@ -278,9 +270,6 @@ def _mask_row(row: dict, strategy_map: dict[str, str], faker) -> dict:
 def _apply(value: Any, strategy: str, faker) -> Any:  # noqa: C901
     if strategy == "redact":
         return "[REDACTED]"
-
-    if strategy == "free_text":
-        return "[FREE TEXT - REDACTED]"
 
     if strategy == "name":
         return faker.name() if faker else _stdlib_name()
@@ -325,6 +314,8 @@ def _apply(value: Any, strategy: str, faker) -> Any:  # noqa: C901
         return _shift_numeric(value, pct=0.10)
     if strategy == "text_mask":
         return _mask_text(str(value))
+    if strategy == "free_text":
+        return "[REDACTED TEXT]"
 
     return value  # unknown strategy — pass through
 
