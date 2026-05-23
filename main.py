@@ -1483,6 +1483,33 @@ def _build_cannot_generate_hint(
         suggestions.append(f"'filter by {label}'")
 
     col_summary = ", ".join(f"`{c['name']}`" for c in schema)
+
+    # ── Special case: pure aggregate result ────────────────────────────────────
+    # When every column is numeric (count/sum/avg) and there are no identifier
+    # columns the user cannot drill into it — the result is just a total.
+    # Give a direct redirect instead of analytcis suggestions that make no sense.
+    if not text_cols and numeric_cols:
+        num_col = numeric_cols[0].lower().replace("_", " ")
+        # For single-row aggregate results like "Total Prescriptions: 16"
+        if prev_rows and len(prev_rows) == 1:
+            val = list(prev_rows[0].values())[0] if prev_rows[0] else ""
+            return (
+                f"This result shows a summary total ({col_summary} = **{val}**). "
+                f"There are no patient or record identifiers here to drill into.\n\n"
+                f"To list the actual records, ask a **fresh question in the main chat** — for example:\n"
+                f"  • *'List all prescriptions with their patient details'*\n"
+                f"  • *'Show me the prescriptions that make up this total'*\n"
+                f"  • *'List patients with prescription counts'*"
+            )
+        # Multi-row aggregate (e.g. count per doctor)
+        return (
+            f"The current result only has summary columns: {col_summary}.\n"
+            "Questions you can ask here:\n"
+            + "\n".join(f"  • {s}" for s in suggestions[:3])
+            + "\n\nTo see record-level details, ask a fresh question in the main chat."
+        )
+
+    # ── Normal result with identifier columns ─────────────────────────────────
     hint = (
         f"The current result only has these columns: {col_summary}.\n"
         "Questions you can ask:\n"
@@ -1507,6 +1534,25 @@ def _build_cannot_generate_hint(
         hint += "\n\nFor anything else, ask a fresh question in the main chat."
 
     return hint
+
+
+def _result_has_identifiers(schema: list[dict]) -> bool:
+    """
+    Return True if the cached result contains at least one text/categorical
+    column that could serve as an entity identifier for a drill-down query.
+
+    A pure-aggregate result (only numeric columns like TOTAL_PRESCRIPTIONS,
+    AVG_CHARGES, etc.) has no identifier to filter on — drilling into it
+    via the production DB is structurally impossible.
+    """
+    _TEXT_TYPES = {
+        "TEXT", "VARCHAR", "STRING", "NVARCHAR", "CHAR",
+        "CHARACTER VARYING", "NCHAR",
+    }
+    return any(
+        s.get("type", "TEXT").upper().split("(")[0].strip() in _TEXT_TYPES
+        for s in (schema or [])
+    )
 
 
 def _build_drilldown_context(
@@ -2103,8 +2149,10 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     if not _rc_sql or _rc_sql.strip().upper() == "CANNOT_GENERATE":
                         _trace_update(_rc_trace_id, route="result_chat_db_fallback", sql_validation_status="cannot_generate")
                         log.info(
-                            "result_chat CANNOT_GENERATE for %r — attempting production DB fallback",
+                            "result_chat CANNOT_GENERATE for %r — %s",
                             rc_question[:60],
+                            "attempting production DB fallback" if _result_has_identifiers(_rc_schema)
+                            else "skipping DB fallback (aggregate-only result, no identifiers)",
                         )
                         _log_q(account_id, rc_question, "", 0, False,
                                "CANNOT_GENERATE→DB_FALLBACK", "result_chat", "duckdb", 0, 0,
@@ -2115,14 +2163,19 @@ async def ws_chat(websocket: WebSocket, account_id: str):
 
                         # Try to answer from the production database using the
                         # KB context stored with the last result card.
+                        # Skip entirely when the cached result is a pure aggregate
+                        # (no text/identifier columns) — there are no entity values
+                        # to build a WHERE filter from, so the LLM will always
+                        # return CANNOT_GENERATE, wasting a round-trip.
                         _fb_rows = None
                         _fb_sql  = None
                         _fb_err  = None
+                        _fb_has_ids = _result_has_identifiers(_rc_schema)
                         try:
                             _cached_result = getattr(adapter, "last_result", None) or {}
                             _fb_rag_ctx    = _cached_result.get("rag_context", "")
                             _fb_db_cfg     = _cached_result.get("db_cfg") or _rc_db_cfg
-                            if _fb_db_cfg:
+                            if _fb_db_cfg and _fb_has_ids:
                                 # Re-retrieve KB for the follow-up question so the LLM
                                 # has the right schema context (e.g. prescriber tables)
                                 # rather than just the original question's formula schema.
@@ -2138,7 +2191,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                 except Exception as _ret_exc:
                                     log.debug("result_chat fallback KB re-retrieval failed: %s", _ret_exc)
 
-                            if _fb_db_cfg and _fb_rag_ctx:
+                            if _fb_db_cfg and _fb_rag_ctx and _fb_has_ids:
                                 await websocket.send_json({
                                     "type": "result_chat_typing",
                                     "result_id": rc_result_id,
