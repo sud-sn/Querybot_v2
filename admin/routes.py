@@ -3425,6 +3425,7 @@ async def admin_mask_preview(request: Request, account_id: str, fqn: str = ""):
         [dict(r) for r in real_rows],
         masked_fields,
         col_defs,
+        seed_key=account_id,
     )
 
     # Serialise — convert non-JSON types (Decimal, date, etc.) to string
@@ -3761,7 +3762,8 @@ async def admin_discover_schema(
             _masking_config = state_data_existing.get("masking_config") or None
             count = discover_and_write(creds, db_type, schema_dir,
                                        allowed_tables=allowed_set,
-                                       masking_config=_masking_config)
+                                       masking_config=_masking_config,
+                                       seed_key=account_id)
             next_state = dict(state_data_existing)
             next_state["schema_dir"] = schema_dir
             # ── Schema drift detection ─────────────────────────────────────────

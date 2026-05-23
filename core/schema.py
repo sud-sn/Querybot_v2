@@ -99,6 +99,7 @@ def _apply_masking(
     mode: str,
     explicit_fields: set[str],
     table_name: str,
+    seed_key: str = "",
 ) -> tuple[list[dict], set[str], dict[str, str], bool]:
     """
     Centralised masking helper shared by all three DB backends.
@@ -114,12 +115,19 @@ def _apply_masking(
       "selective" — read real rows, mask only explicit_fields
       "auto"      — read real rows, mask PII-detected fields (default)
 
+    seed_key: when non-empty, masking is deterministic (HMAC-based) so the
+    same real value always maps to the same fake across all tables — preserving
+    FK consistency. Typically set to account_id by the caller.
+
     If the DB read fails, falls back to generate_synthetic_sample() and
     returns synthetic_fallback_used=True.
     """
-    from core.masking import detect_sensitive_columns, mask_rows, get_strategy_map
+    from core.masking import (
+        detect_sensitive_columns, mask_rows, get_strategy_map,
+        scan_values_for_pii,
+    )
 
-    # Determine which fields to mask
+    # Determine which fields to mask based on mode
     if mode == "none":
         masked_fields: set[str] = set()
     elif mode == "all":
@@ -141,12 +149,46 @@ def _apply_masking(
         log.info("schema: synthetic fallback for %s (DB read returned 0 rows)", table_name)
         return generate_synthetic_sample(col_defs), set(), {}, True
 
+    # ── Value-based PII detection (auto mode only) ────────────────────────────
+    # Scans actual sample values for emails, SSNs, credit cards, etc. that
+    # name-based detection would miss (e.g. a column called FIELD_01 containing
+    # email addresses).  Only runs in auto mode — other modes either mask
+    # everything (all), nothing (none), or exactly what the admin specified
+    # (selective), so adding extra columns would be surprising.
+    value_strategy_overrides: dict[str, str] = {}
+    if mode == "auto":
+        value_hits = scan_values_for_pii(rows, col_defs)
+        for col_name, hit in value_hits.items():
+            if col_name not in masked_fields:
+                masked_fields.add(col_name)
+                log.info(
+                    "schema: value-scan auto-masked %r as %s (%.0f%% confidence)",
+                    col_name, hit["pii_type"], hit["confidence"] * 100,
+                )
+            # Override takes effect even if the column was already name-detected,
+            # since the value-scan result is more specific (e.g. a column named
+            # CONTACT_INFO that actually contains emails → use "email" strategy
+            # instead of the generic "text_mask" fallback).
+            value_strategy_overrides[col_name] = hit["strategy"]
+
     # Apply masking
     replacement_map: dict[str, str] = {}
     if masked_fields:
-        rows = mask_rows(rows, masked_fields, col_defs)
+        rows = mask_rows(
+            rows, masked_fields, col_defs,
+            seed_key=seed_key,
+            strategy_overrides=value_strategy_overrides or None,
+        )
         replacement_map = get_strategy_map(masked_fields, col_defs)
-        log.info("schema: masked %d field(s) in %s (mode=%s)", len(masked_fields), table_name, mode)
+        # Patch replacement_map so value-scan-detected strategies are reflected
+        # in the egress log and admin UI (not just the generic name-based label).
+        for col_name, strategy in value_strategy_overrides.items():
+            if col_name in masked_fields:
+                replacement_map[col_name] = strategy
+        log.info(
+            "schema: masked %d field(s) in %s (mode=%s, value_scan=%d)",
+            len(masked_fields), table_name, mode, len(value_strategy_overrides),
+        )
 
     return rows, masked_fields, replacement_map, False
 
@@ -185,6 +227,7 @@ def discover_and_write(
     output_dir: str,
     allowed_tables: set[str] | None = None,
     masking_config: dict | None = None,
+    seed_key: str = "",
 ) -> int:
     """
     Discover schema from the customer DB and write one .md file per table.
@@ -198,17 +241,20 @@ def discover_and_write(
                         }
                       }
                       Absent FQN → default "auto" (detect PII cols by name pattern).
+    seed_key        — when non-empty, masking uses HMAC-based deterministic
+                      pseudonyms so FK relationships are preserved across tables.
+                      Pass account_id from the calling route.
     """
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
     allowed  = {t.upper() for t in allowed_tables} if allowed_tables is not None else None
     mc       = {k.upper(): v for k, v in (masking_config or {}).items()}
     if db_type == "snowflake":
-        return _discover_snowflake(credentials, out, allowed, mc)
+        return _discover_snowflake(credentials, out, allowed, mc, seed_key=seed_key)
     elif db_type == "oracle":
-        return _discover_oracle(credentials, out, allowed, mc)
+        return _discover_oracle(credentials, out, allowed, mc, seed_key=seed_key)
     elif db_type == "azure_sql":
-        return _discover_azure_sql(credentials, out, allowed, mc)
+        return _discover_azure_sql(credentials, out, allowed, mc, seed_key=seed_key)
     else:
         raise ValueError(f"Unsupported db_type: {db_type!r}")
 
@@ -671,7 +717,7 @@ def _sf_distinct(cur, schema: str, name: str, col_name: str) -> list[str]:
         return []
 
 
-def _discover_snowflake(cfg: dict, out: Path, allowed: set[str] | None = None, mc: dict | None = None) -> int:
+def _discover_snowflake(cfg: dict, out: Path, allowed: set[str] | None = None, mc: dict | None = None, seed_key: str = "") -> int:
     import snowflake.connector
     conn = _sf_connect(cfg)
     master = {}
@@ -750,6 +796,7 @@ def _discover_snowflake(cfg: dict, out: Path, allowed: set[str] | None = None, m
                 mode=_mode,
                 explicit_fields=set(_tbl_cfg.get("masked_fields", [])),
                 table_name=name,
+                seed_key=seed_key,
             )
 
             # Strip raw distinct values for any column that is being masked.
@@ -872,7 +919,7 @@ def _ora_distinct(cur, owner: str, name: str, col_name: str) -> list[str]:
         return []
 
 
-def _discover_oracle(cfg: dict, out: Path, allowed: set[str] | None = None, mc: dict | None = None) -> int:
+def _discover_oracle(cfg: dict, out: Path, allowed: set[str] | None = None, mc: dict | None = None, seed_key: str = "") -> int:
     owner = (cfg.get("schema") or cfg["user"]).upper()
     conn  = _ora_connect(cfg)
     master = {}
@@ -979,6 +1026,7 @@ def _discover_oracle(cfg: dict, out: Path, allowed: set[str] | None = None, mc: 
                 mode=_mode,
                 explicit_fields=set(_tbl_cfg.get("masked_fields", [])),
                 table_name=name,
+                seed_key=seed_key,
             )
 
             # Strip raw distinct values for masked columns
@@ -1122,7 +1170,7 @@ def _az_distinct(cur, schema: str, name: str, col_name: str) -> list[str]:
         return []
 
 
-def _discover_azure_sql(cfg: dict, out: Path, allowed: set[str] | None = None, mc: dict | None = None) -> int:
+def _discover_azure_sql(cfg: dict, out: Path, allowed: set[str] | None = None, mc: dict | None = None, seed_key: str = "") -> int:
     """
     Discover Azure SQL schema and write one .md per table.
 
@@ -1238,6 +1286,7 @@ def _discover_azure_sql(cfg: dict, out: Path, allowed: set[str] | None = None, m
                     mode=_mode,
                     explicit_fields=set(_tbl_cfg.get("masked_fields", [])),
                     table_name=name,
+                    seed_key=seed_key,
                 )
 
                 # Strip raw distinct values for masked columns

@@ -29,6 +29,11 @@ _LONG_TOKEN_RE = re.compile(r"\b[A-Za-z0-9_\-]{20,}\b")
 
 _PHONE_RE = re.compile(r"\+?\d[\d\-\s()]{7,}\d")
 
+# Pre-compiled patterns used inside _mask_long_token to classify identifiers.
+# Defined at module level so re.fullmatch doesn't compile them on every call.
+_RE_UPPER_IDENT = re.compile(r"[A-Z0-9_]+")   # SCREAMING_SNAKE / schema names
+_RE_LOWER_IDENT = re.compile(r"[a-z0-9_]+")   # lowercase_snake identifiers
+
 # Quoted literals. We match 1–120 chars (not 2+) so that a short literal like
 # 'Y' doesn't get skipped — if skipped, the regex engine would then consume
 # text between a pair of alternating quotes and treat it as one long literal.
@@ -86,14 +91,24 @@ def _mask_long_token(match: re.Match) -> str:
     """
     s = match.group(0)
     # Pure uppercase + underscores + digits → almost always a schema identifier.
-    if re.fullmatch(r"[A-Z0-9_]+", s):
+    if _RE_UPPER_IDENT.fullmatch(s):
         return s
     # Lowercase snake_case identifier (must contain an underscore so random
     # hex strings like 'a1b2c3d4...' don't get a free pass).
-    if re.fullmatch(r"[a-z0-9_]+", s) and "_" in s:
+    if _RE_LOWER_IDENT.fullmatch(s) and "_" in s:
         return s
     # Otherwise treat as opaque token.
     return "[token]"
+
+
+# Module-level callables for _SINGLE_QUOTED_RE / _DOUBLE_QUOTED_RE substitutions.
+# Avoids recreating a closure object on every sanitize_llm_text() call.
+def _mask_single_quoted(match: re.Match) -> str:
+    return _mask_quoted(match, "'")
+
+
+def _mask_double_quoted(match: re.Match) -> str:
+    return _mask_quoted(match, '"')
 
 
 def make_llm_audit_request_id() -> str:
@@ -161,8 +176,8 @@ def sanitize_llm_text(text: str, *, limit: int = 1200) -> str:
     cleaned = _PHONE_RE.sub("[phone]", cleaned)
     cleaned = _LONG_NUMBER_RE.sub("[number]", cleaned)
     cleaned = _LONG_TOKEN_RE.sub(_mask_long_token, cleaned)
-    cleaned = _SINGLE_QUOTED_RE.sub(lambda m: _mask_quoted(m, "'"), cleaned)
-    cleaned = _DOUBLE_QUOTED_RE.sub(lambda m: _mask_quoted(m, '"'), cleaned)
+    cleaned = _SINGLE_QUOTED_RE.sub(_mask_single_quoted, cleaned)
+    cleaned = _DOUBLE_QUOTED_RE.sub(_mask_double_quoted, cleaned)
     cleaned = cleaned.strip()
     if len(cleaned) > limit:
         cleaned = cleaned[: limit - 3].rstrip() + "..."

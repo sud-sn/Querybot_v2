@@ -10,21 +10,28 @@ detect_sensitive_columns(columns)  → {col_name: strategy}
     Used by the admin UI to pre-check likely-PII fields when the admin
     enables masking on a table.
 
-mask_rows(rows, masked_fields, columns) → list[dict]
+scan_values_for_pii(rows, col_defs)  → {col_name: {pii_type, strategy, confidence}}
+    Scan actual sample values for value-level PII patterns (email, SSN, PAN,
+    Aadhaar, credit card, IP, phone).  High-confidence hits (>60%) are merged
+    into masked_fields in auto mode.
+
+mask_rows(rows, masked_fields, columns, seed_key="") → list[dict]
     Apply per-column masking strategies to a sample of real rows.
-    Only fields listed in masked_fields are altered; everything else is
-    returned verbatim so the LLM still sees real categorical values,
-    real numeric ranges, real date structures.
+    When seed_key is non-empty, each value is masked deterministically:
+    the same real value always maps to the same fake value across all
+    tables — preserving FK consistency without storing a lookup table.
 
 Performance
 -----------
-Faker is imported once and reused.  At ~0.3 ms per field call and
-5 rows × 30 columns = 150 calls, total masking time is < 50 ms per table.
-Falls back to stdlib-only masking if Faker is not installed.
+Faker is imported once and reused.  Falls back to stdlib-only masking
+if Faker is not installed.  Deterministic path bypasses Faker entirely
+and uses a seeded random.Random instance per cell.
 """
 
 from __future__ import annotations
 
+import hashlib
+import hmac as _hmac_mod
 import logging
 import random
 import re
@@ -65,7 +72,7 @@ _PII_PATTERNS: list[tuple[str, str]] = [
     # IP / geo
     (r"ip[_\s]?address|ip[_\s]?addr\b", "ip_address"),
     (r"latitude|longitude|lat\b|lng\b|lon\b", "coordinate"),
-    # Free-text / narrative columns — may contain anything; always redact
+    # Free-text / narrative columns — may contain anything; always redact.
     # Matched AFTER the more specific patterns above so that e.g. "address_line"
     # hits the address strategy, not the free_text strategy.
     (r"\bnotes?\b|\bcomments?\b|\bremarks?\b|description|narrative|"
@@ -76,18 +83,12 @@ _PII_PATTERNS: list[tuple[str, str]] = [
 ]
 
 # ── Type-based free-text detection ────────────────────────────────────────────
-# Column *types* that indicate an unbounded or very long text field.
-# Used in detect_sensitive_columns() as a second detection pass when the
-# column name alone does not signal PII.
 _FREE_TEXT_BASE_TYPES = {
     "text", "ntext", "longtext", "mediumtext", "tinytext",
     "clob", "nclob", "long", "blob",
 }
-# VARCHAR / NVARCHAR declared length above this threshold → treated as free text
 _LONG_VARCHAR_THRESHOLD = 500
 
-# Column name fragments that are safe business fields even when they use a
-# long text type — skip the type-based free_text flag for these.
 _SAFE_LONG_TEXT_NAMES = {
     "status", "type", "flag", "gender", "sex", "category", "class",
     "department", "dept", "division", "group", "team", "role", "level",
@@ -101,12 +102,7 @@ _SAFE_LONG_TEXT_NAMES = {
 def _is_free_text_type(col_type: str) -> bool:
     """
     Return True if the column type indicates an unbounded or very long text
-    field that is likely to contain unstructured, potentially sensitive content.
-
-    Handles:
-      TEXT / NTEXT / CLOB / LONG          → always True
-      VARCHAR(-1) / NVARCHAR(-1)          → SQL Server MAX, always True
-      VARCHAR(n) with n > threshold       → True
+    field likely to contain unstructured, potentially sensitive content.
     """
     ct = (col_type or "").lower().strip()
     base = ct.split("(")[0].strip()
@@ -116,10 +112,179 @@ def _is_free_text_type(col_type: str) -> bool:
         m = re.search(r"\((-?\d+)\)", ct)
         if m:
             length = int(m.group(1))
-            # -1 = MAX in SQL Server; large declared lengths suggest free text
             if length < 0 or length > _LONG_VARCHAR_THRESHOLD:
                 return True
     return False
+
+
+# ── Value-level PII regex patterns ────────────────────────────────────────────
+# Used by scan_values_for_pii() to detect PII in actual sample data.
+
+_RE_EMAIL   = re.compile(r"^[\w.+\-]+@[\w\-]+\.[\w.]{2,}$", re.IGNORECASE)
+_RE_SSN     = re.compile(r"^\d{3}-\d{2}-\d{4}$")
+_RE_PAN     = re.compile(r"^[A-Z]{5}\d{4}[A-Z]$")            # Indian PAN card
+_RE_AADHAAR = re.compile(r"^\d{4}[\s\-]?\d{4}[\s\-]?\d{4}$") # Indian Aadhaar
+_RE_IP      = re.compile(r"^(?:\d{1,3}\.){3}\d{1,3}$")
+
+# Phone — must have 7-15 digits; allow +, spaces, hyphens, parens, dots
+_RE_PHONE_FMT = re.compile(r"^\+?[\d\s\-\(\)\.]{7,20}$")
+
+
+def _is_phone_like(v: str) -> bool:
+    digit_count = sum(c.isdigit() for c in v)
+    return 7 <= digit_count <= 15 and bool(_RE_PHONE_FMT.match(v))
+
+
+def _luhn_check(n: str) -> bool:
+    """Validate a digit string using the Luhn algorithm."""
+    digits = [int(c) for c in n if c.isdigit()]
+    if len(digits) < 13 or len(digits) > 19:
+        return False
+    total = 0
+    for i, d in enumerate(reversed(digits)):
+        if i % 2 == 1:
+            d *= 2
+            if d > 9:
+                d -= 9
+        total += d
+    return total % 10 == 0
+
+
+def _could_be_credit_card(v: str) -> bool:
+    """True if v looks like a credit card number (13-19 digits, passes Luhn)."""
+    stripped = _RE_CC_STRIP.sub("", v)
+    if not stripped.isdigit():
+        return False
+    return _luhn_check(stripped)
+
+
+# ── Value-scan type-skip sets (module-level so they aren't rebuilt each call) ─
+_NUMERIC_TYPE_HINTS: frozenset[str] = frozenset({
+    "int", "bigint", "smallint", "tinyint", "decimal",
+    "numeric", "float", "real", "money", "number", "bit",
+})
+_DATE_TYPE_HINTS: frozenset[str] = frozenset({
+    "date", "time", "datetime", "timestamp",
+})
+
+# Pre-compiled regex for stripping separators in credit-card candidates.
+# Defined at module level so it isn't recompiled on every _could_be_credit_card call.
+_RE_CC_STRIP = re.compile(r"[\s\-]")
+
+# Maps detected PII type → masking strategy
+_VALUE_PII_STRATEGY: dict[str, str] = {
+    "email":       "email",
+    "ssn":         "ssn",
+    "pan":         "ssn",        # Indian PAN — treat as government ID
+    "aadhaar":     "ssn",        # Indian Aadhaar — treat as government ID
+    "credit_card": "credit_card",
+    "ip":          "ip_address",
+    "phone":       "phone",
+}
+
+# Ordered list for stable priority when multiple types could match one value
+_VALUE_PII_ORDER = ["email", "ssn", "pan", "aadhaar", "credit_card", "ip", "phone"]
+
+
+def _value_pii_types(v: str) -> list[str]:
+    """Return list of PII types that match value v."""
+    matches: list[str] = []
+    if _RE_EMAIL.match(v):
+        matches.append("email")
+    if _RE_SSN.match(v):
+        matches.append("ssn")
+    if _RE_PAN.match(v):
+        matches.append("pan")
+    if _RE_AADHAAR.match(v):
+        matches.append("aadhaar")
+    if _could_be_credit_card(v):
+        matches.append("credit_card")
+    if _RE_IP.match(v):
+        matches.append("ip")
+    elif _is_phone_like(v):          # phone check: skip if already matched as IP
+        matches.append("phone")
+    return matches
+
+
+def _check_value_pii(values: list[str]) -> tuple[str, float] | None:
+    """
+    Examine a sample of string values for a single column.
+
+    Returns (pii_type, confidence) if >60 % of values match a single PII
+    pattern, else None.  When multiple types match (e.g. Aadhaar also looks
+    like a phone number), the highest-priority type wins.
+    """
+    if not values:
+        return None
+    total = len(values)
+    counts: dict[str, int] = {k: 0 for k in _VALUE_PII_ORDER}
+    for v in values:
+        for pii_type in _value_pii_types(v):
+            counts[pii_type] += 1
+
+    best_type: str | None = None
+    best_ratio = 0.0
+    for pii_type in _VALUE_PII_ORDER:
+        ratio = counts[pii_type] / total
+        if ratio >= 0.60 and ratio > best_ratio:
+            best_type = pii_type
+            best_ratio = ratio
+    if best_type:
+        return best_type, best_ratio
+    return None
+
+
+def scan_values_for_pii(
+    rows: list[dict],
+    col_defs: list[dict],
+) -> dict[str, dict]:
+    """
+    Scan actual sample values for value-level PII patterns.
+
+    Returns {col_name: {"pii_type": str, "strategy": str, "confidence": float}}
+    for columns where >60 % of non-null values match a PII pattern.
+
+    Only examines string/text columns — numeric and date columns are skipped
+    because patterns like SSN or phone would cause false positives on
+    employee IDs, revenue figures, etc.
+    """
+    if not rows:
+        return {}
+
+    col_type_map = {c["name"]: c.get("type", "varchar").lower() for c in col_defs}
+    result: dict[str, dict] = {}
+
+    for col_name, col_type in col_type_map.items():
+        ct_base = col_type.split("(")[0].strip()
+        if any(t in ct_base for t in _NUMERIC_TYPE_HINTS):
+            continue
+        if any(t in ct_base for t in _DATE_TYPE_HINTS):
+            continue
+
+        values = [
+            str(row[col_name]).strip()
+            for row in rows
+            if col_name in row and row[col_name] is not None
+            and str(row[col_name]).strip()
+        ]
+        if not values:
+            continue
+
+        hit = _check_value_pii(values)
+        if hit:
+            pii_type, confidence = hit
+            strategy = _VALUE_PII_STRATEGY.get(pii_type, "redact")
+            result[col_name] = {
+                "pii_type":  pii_type,
+                "strategy":  strategy,
+                "confidence": round(confidence, 2),
+            }
+            log.info(
+                "masking: value-scan detected %s in %r (%.0f%% match → strategy=%s)",
+                pii_type, col_name, confidence * 100, strategy,
+            )
+
+    return result
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -128,15 +293,10 @@ def detect_sensitive_columns(columns: list[dict]) -> dict[str, str]:
     """
     Return {column_name: masking_strategy} for columns likely to contain PII.
 
-    ``columns`` is a list of dicts with at least a ``name`` key (and optionally
-    ``type``).
-
     Detection runs in two passes:
-    1. Name-based regex scan (_PII_PATTERNS) — catches obvious PII by column name.
-    2. Type-based free-text detection — flags unbounded text columns (TEXT, NTEXT,
-       VARCHAR(MAX), CLOB, etc.) whose name does not indicate a known-safe business
-       field.  These columns can contain arbitrary user input and should be redacted
-       even if the name is vague (e.g. FIELD_REMARKS, ATTR_TEXT).
+    1. Name-based regex scan (_PII_PATTERNS).
+    2. Type-based free-text detection — flags unbounded text columns whose
+       name does not indicate a known-safe business field.
     """
     result: dict[str, str] = {}
     for col in columns:
@@ -152,7 +312,6 @@ def detect_sensitive_columns(columns: list[dict]) -> dict[str, str]:
         # Pass 2 — type-based free-text detection
         if _is_free_text_type(col_type):
             name_lower = col_name.lower()
-            # Skip columns whose name clearly identifies a safe business category
             if not any(hint in name_lower for hint in _SAFE_LONG_TEXT_NAMES):
                 result[col_name] = "free_text"
                 log.debug(
@@ -208,10 +367,6 @@ def strategy_for_field(field: str, col_type: str = "varchar") -> str:
 def get_strategy_map(masked_fields: set[str], col_defs: list[dict]) -> dict[str, str]:
     """
     Return {field_name: strategy_name} for every field in *masked_fields*.
-
-    Uses the same resolution logic as ``mask_rows`` — name-based PII pattern
-    first, then type-based fallback.  Strategy names are the raw keys used
-    internally (e.g. ``"email"``, ``"numeric_shift"``).
     """
     col_type_map = {c["name"]: c.get("type", "varchar") for c in col_defs}
     result: dict[str, str] = {}
@@ -224,14 +379,22 @@ def mask_rows(
     rows: list[dict],
     masked_fields: set[str],
     columns: list[dict],
+    seed_key: str = "",
+    strategy_overrides: dict[str, str] | None = None,
 ) -> list[dict]:
     """
     Apply column-level masking to *rows*.
 
-    - Fields not in *masked_fields* are left unchanged.
-    - The masking strategy for each field is resolved from the column name.
-      If no named strategy matches, a type-based fallback is used.
-    - None values are passed through as None (no masking needed).
+    Parameters
+    ----------
+    rows             : real sample rows from the DB
+    masked_fields    : set of column names to mask
+    columns          : [{name, type}, ...] column metadata
+    seed_key         : when non-empty, use HMAC-based deterministic masking
+                       so the same real value → same fake across all tables.
+                       Typically set to the account_id.
+    strategy_overrides: per-column strategy overrides (from value-scan).
+                       These take highest priority over name/type detection.
     """
     if not rows or not masked_fields:
         return rows
@@ -239,10 +402,105 @@ def mask_rows(
     col_type_map = {c["name"]: c.get("type", "varchar") for c in columns}
     strategy_map: dict[str, str] = {}
     for field in masked_fields:
-        strategy_map[field] = strategy_for_field(field, col_type_map.get(field, "varchar"))
+        # Value-based override takes highest priority
+        if strategy_overrides and field in strategy_overrides:
+            strategy_map[field] = strategy_overrides[field]
+        else:
+            strategy_map[field] = strategy_for_field(field, col_type_map.get(field, "varchar"))
 
     faker = _get_faker()
-    return [_mask_row(row, strategy_map, faker) for row in rows]
+    return [
+        _mask_row(row, strategy_map, faker,
+                  seed_key=seed_key, col_type_map=col_type_map)
+        for row in rows
+    ]
+
+
+# ── Deterministic masking (Item 3) ────────────────────────────────────────────
+
+def _hmac_seed(value: Any, col_type: str, seed_key: str) -> int:
+    """
+    Derive a stable integer seed from (value, col_type, seed_key).
+
+    Using HMAC-SHA256 ensures:
+    - Same value → same seed across tables (FK consistency).
+    - Different values → different seeds (no collisions within strategy).
+    - seed_key isolates one account from another.
+
+    Only called from _mask_row when seed_key is non-empty (guarded by
+    ``if seed_key:``), so seed_key is always truthy here.
+    """
+    msg = f"{col_type}:{value}".encode("utf-8")
+    digest = _hmac_mod.new(seed_key.encode("utf-8"), msg, hashlib.sha256).digest()
+    return int.from_bytes(digest[:8], "big")
+
+
+def _apply_det(value: Any, strategy: str, rng: random.Random) -> Any:
+    """
+    Deterministic masking using a pre-seeded RNG.
+
+    Mirrors _apply() but replaces all random calls with rng.* so the same
+    (value, strategy, seed_key) always produces the same output.
+    """
+    if strategy == "redact":
+        return "[REDACTED]"
+    if strategy == "free_text":
+        return "[FREE TEXT - REDACTED]"
+    if strategy == "name":
+        return f"{rng.choice(_FIRST)} {rng.choice(_LAST)}"
+    if strategy == "first_name":
+        return rng.choice(_FIRST)
+    if strategy == "last_name":
+        return rng.choice(_LAST)
+    if strategy == "email":
+        digits = "".join(rng.choices(string.digits, k=4))
+        domain = rng.choice(["example.com", "mail.test", "test.org", "sample.net"])
+        return f"user{digits}@{domain}"
+    if strategy == "phone":
+        return (
+            f"+1-{rng.randint(200, 999)}-"
+            f"{rng.randint(100, 999)}-"
+            f"{rng.randint(1000, 9999)}"
+        )
+    if strategy == "address":
+        return f"{rng.randint(1, 9999)} {rng.choice(_STREET_NAMES)} St"
+    if strategy == "city":
+        return rng.choice(_CITIES)
+    if strategy == "zip":
+        return str(rng.randint(10000, 99999))
+    if strategy == "state":
+        return rng.choice(_STATES)
+    if strategy == "country":
+        return rng.choice(_COUNTRIES)
+    if strategy == "ssn":
+        return (
+            f"{rng.randint(100, 999)}-"
+            f"{rng.randint(10, 99)}-"
+            f"{rng.randint(1000, 9999)}"
+        )
+    if strategy == "credit_card":
+        return f"****-****-****-{rng.randint(1000, 9999)}"
+    if strategy == "ip_address":
+        return (
+            f"{rng.randint(10, 192)}.{rng.randint(0, 255)}."
+            f"{rng.randint(0, 255)}.{rng.randint(1, 254)}"
+        )
+    if strategy == "coordinate":
+        try:
+            return round(float(value) + rng.uniform(-0.5, 0.5), 6)
+        except Exception:
+            return value
+    if strategy == "birthdate":
+        return _shift_date(value, max_days=730, rng=rng)
+    if strategy == "date_shift":
+        return _shift_date(value, max_days=5, rng=rng)
+    if strategy == "salary":
+        return _shift_numeric(value, pct=0.15, rng=rng)
+    if strategy == "numeric_shift":
+        return _shift_numeric(value, pct=0.10, rng=rng)
+    if strategy == "text_mask":
+        return _mask_text(str(value), rng=rng)
+    return value  # unknown strategy — pass through
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
@@ -255,13 +513,25 @@ def _strategy_for_name(col_name: str) -> str | None:
     return None
 
 
-def _mask_row(row: dict, strategy_map: dict[str, str], faker) -> dict:
+def _mask_row(
+    row: dict,
+    strategy_map: dict[str, str],
+    faker,
+    seed_key: str = "",
+    col_type_map: dict[str, str] | None = None,
+) -> dict:
     result = dict(row)
     for field, strategy in strategy_map.items():
         if field not in result or result[field] is None:
             continue
         try:
-            result[field] = _apply(result[field], strategy, faker)
+            if seed_key:
+                col_type = (col_type_map or {}).get(field, "varchar")
+                seed = _hmac_seed(result[field], col_type, seed_key)
+                rng = random.Random(seed)
+                result[field] = _apply_det(result[field], strategy, rng)
+            else:
+                result[field] = _apply(result[field], strategy, faker)
         except Exception:
             result[field] = "[MASKED]"
     return result
@@ -320,29 +590,36 @@ def _apply(value: Any, strategy: str, faker) -> Any:  # noqa: C901
     return value  # unknown strategy — pass through
 
 
-def _shift_date(value: Any, max_days: int = 5) -> Any:
+def _shift_date(
+    value: Any,
+    max_days: int = 5,
+    rng: random.Random | None = None,
+) -> Any:
     from datetime import timedelta, date, datetime
-
-    shift = random.randint(-max_days, max_days)
+    _rng = rng or random
+    shift = _rng.randint(-max_days, max_days)
     if isinstance(value, datetime):
         return value + timedelta(days=shift)
     if isinstance(value, date):
         return value + timedelta(days=shift)
-    # Try common string formats
     for fmt in ("%Y-%m-%d", "%Y-%m-%d %H:%M:%S", "%d/%m/%Y", "%m/%d/%Y", "%Y/%m/%d"):
         try:
             d = datetime.strptime(str(value), fmt)
             return (d + timedelta(days=shift)).strftime(fmt)
         except ValueError:
             continue
-    return value  # unrecognised format — leave as-is
+    return value
 
 
-def _shift_numeric(value: Any, pct: float = 0.10) -> Any:
+def _shift_numeric(
+    value: Any,
+    pct: float = 0.10,
+    rng: random.Random | None = None,
+) -> Any:
+    _rng = rng or random
     try:
         n = float(value)
-        n_new = n * (1.0 + random.uniform(-pct, pct))
-        # Preserve integer-ness
+        n_new = n * (1.0 + _rng.uniform(-pct, pct))
         if isinstance(value, int):
             return max(0, int(round(n_new)))
         if isinstance(value, str) and value.isdigit():
@@ -352,15 +629,16 @@ def _shift_numeric(value: Any, pct: float = 0.10) -> Any:
         return value
 
 
-def _mask_text(value: str) -> str:
+def _mask_text(value: str, rng: random.Random | None = None) -> str:
     """Format-preserving text mask: replace alpha→alpha, digit→digit, keep rest."""
+    _rng = rng or random
     result = []
     for ch in value:
         if ch.isalpha():
             pool = string.ascii_lowercase if ch.islower() else string.ascii_uppercase
-            result.append(random.choice(pool))
+            result.append(_rng.choice(pool))
         elif ch.isdigit():
-            result.append(str(random.randint(0, 9)))
+            result.append(str(_rng.randint(0, 9)))
         else:
             result.append(ch)
     return "".join(result)
@@ -378,7 +656,7 @@ def _get_faker():
     try:
         from faker import Faker  # type: ignore
         _faker_instance = Faker()
-        Faker.seed(42)           # deterministic within a session
+        Faker.seed(42)
         log.debug("masking: Faker loaded")
         return _faker_instance
     except ImportError:
@@ -387,16 +665,34 @@ def _get_faker():
         return None
 
 
-# ── Stdlib fallback data ──────────────────────────────────────────────────────
+# ── Stdlib fallback data pools ────────────────────────────────────────────────
+# 30 names each so deterministic sampling has good variety
 
-_FIRST = ["Alex", "Jordan", "Taylor", "Morgan", "Casey", "Riley",
-          "Quinn", "Avery", "Blake", "Cameron", "Dana", "Ellis"]
-_LAST  = ["Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia",
-          "Miller", "Davis", "Wilson", "Moore", "Anderson", "Lee"]
-_CITIES   = ["Springfield", "Riverside", "Fairview", "Madison", "Georgetown",
-             "Burlington", "Salem", "Greenville", "Franklin", "Arlington"]
+_FIRST = [
+    "Alex", "Jordan", "Taylor", "Morgan", "Casey", "Riley",
+    "Quinn", "Avery", "Blake", "Cameron", "Dana", "Ellis",
+    "Finley", "Harper", "Hayden", "Jamie", "Jesse", "Kendall",
+    "Lee", "Logan", "London", "Madison", "Mason", "Peyton",
+    "Reese", "River", "Rowan", "Sage", "Skylar", "Sydney",
+]
+_LAST = [
+    "Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia",
+    "Miller", "Davis", "Wilson", "Moore", "Anderson", "Lee",
+    "Taylor", "Thomas", "Jackson", "White", "Harris", "Martin",
+    "Thompson", "Young", "Lewis", "Walker", "Hall", "Allen",
+    "King", "Wright", "Scott", "Green", "Baker", "Adams",
+]
+_CITIES = [
+    "Springfield", "Riverside", "Fairview", "Madison", "Georgetown",
+    "Burlington", "Salem", "Greenville", "Franklin", "Arlington",
+    "Clinton", "Milford", "Newport", "Chester", "Ashland",
+]
 _STATES   = ["CA", "TX", "NY", "FL", "IL", "WA", "OH", "GA", "NC", "PA"]
 _COUNTRIES = ["US", "GB", "CA", "AU", "DE", "FR", "SG", "IN", "JP", "BR"]
+_STREET_NAMES = [
+    "Oak", "Maple", "Cedar", "Pine", "Elm", "Birch",
+    "Willow", "Spruce", "Aspen", "Walnut", "Chestnut", "Magnolia",
+]
 
 
 def _stdlib_name() -> str:
