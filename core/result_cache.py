@@ -34,7 +34,7 @@ import time
 from collections import OrderedDict
 from typing import Any
 
-from core.duckdb_sql_validator import ensure_duckdb_result_sql, validate_duckdb_result_sql
+from core.duckdb_sql_validator import ensure_duckdb_result_sql
 
 # ── Currency column name heuristic ────────────────────────────────────────────
 # Matches column names that almost certainly represent monetary values.
@@ -213,27 +213,28 @@ class ResultCache:
         if entry is None:
             return []
 
-        verdict = validate_duckdb_result_sql(sql)
-        if not verdict.ok:
-            log.warning("Rejected DuckDB result-cache SQL: %s (%s)", verdict.reason, verdict.code)
+        try:
+            safe_sql = ensure_duckdb_result_sql(sql)
+        except ValueError as exc:
+            log.warning("Rejected DuckDB result-cache SQL: %s", exc)
             return []
 
         try:
             import duckdb
-            return self._duckdb_query(entry.rows, entry.schema, sql)
+            return self._duckdb_query(entry.rows, entry.schema, safe_sql)
         except ImportError:
             log.debug("DuckDB not installed — using Python fallback")
-            return _python_fallback_query(entry.rows, sql)
+            return _python_fallback_query(entry.rows, safe_sql)
         except Exception as exc:
             log.warning("DuckDB query failed: %s — trying fallback", exc)
             try:
-                return _python_fallback_query(entry.rows, sql)
+                return _python_fallback_query(entry.rows, safe_sql)
             except Exception as fb_exc:
                 log.warning("Python fallback also failed: %s", fb_exc)
                 return []
 
     def _duckdb_query(
-        self, rows: list[dict], schema: list[dict], sql: str
+        self, rows: list[dict], schema: list[dict], safe_sql: str
     ) -> list[dict]:
         import duckdb
 
@@ -258,7 +259,6 @@ class ResultCache:
                     f"INSERT INTO result ({cols_str}) VALUES ({placeholders})", batch
                 )
 
-            safe_sql = ensure_duckdb_result_sql(sql)
             result = conn.execute(safe_sql).fetchall()
             col_names_out = [desc[0] for desc in conn.description]
             return [dict(zip(col_names_out, row)) for row in result]
