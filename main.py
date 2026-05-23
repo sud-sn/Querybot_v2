@@ -1243,6 +1243,109 @@ def _format_value(val) -> str:
     return str(val)
 
 
+async def _generate_result_narration(
+    question: str,
+    rows: list[dict],
+    currency_cols: list[str],
+    client: dict,
+) -> str:
+    """
+    Generate a 1-2 sentence plain-English insight from a drill-down result.
+    Uses a minimal 150-token LLM call.  Returns "" on any failure so callers
+    can silently skip it.
+    """
+    if not rows:
+        return ""
+    try:
+        # Build a compact data summary — top 5 rows only, no raw dumps
+        col_names = list(rows[0].keys())
+        preview_rows = rows[:5]
+        row_lines = []
+        for r in preview_rows:
+            parts = []
+            for k, v in r.items():
+                if k in currency_cols and v is not None:
+                    try:
+                        parts.append(f"{k}=${float(v):,.2f}")
+                    except (ValueError, TypeError):
+                        parts.append(f"{k}={v}")
+                else:
+                    parts.append(f"{k}={v}")
+            row_lines.append("  " + ", ".join(parts))
+        total = len(rows)
+        summary = (
+            f"Question: {question}\n"
+            f"Result ({total} row{'s' if total != 1 else ''}):\n"
+            + "\n".join(row_lines)
+            + (f"\n  ...and {total - 5} more rows" if total > 5 else "")
+        )
+        provider, model, api_key, az_kwargs = resolve_provider(client, purpose="query")
+        narration, _, _ = await llm_complete(
+            system=(
+                "You are a data analyst. Given a question and a query result, "
+                "write exactly ONE concise sentence (max 30 words) summarising "
+                "the key insight or direct answer. Be specific — include the top "
+                "value or most notable number. No padding, no 'The data shows'."
+            ),
+            user=summary,
+            provider=provider,
+            model=model,
+            api_key=api_key,
+            max_tokens=80,
+            temperature=0.2,
+            **az_kwargs,
+        )
+        return (narration or "").strip()
+    except Exception as _exc:
+        log.debug("result_chat narration skipped: %s", _exc)
+        return ""
+
+
+def _build_cannot_generate_hint(schema: list[dict], stats: dict) -> str:
+    """
+    Build a column-aware suggestion message when DuckDB AND the production
+    DB fallback both fail to answer.  Lists what the user CAN ask based on
+    the available columns.
+    """
+    if not schema:
+        return "Try asking a fresh question in the main chat."
+
+    numeric_cols = [
+        c["name"] for c in stats.get("columns", [])
+        if c.get("min") is not None
+    ]
+    text_cols = [
+        c["name"] for c in stats.get("columns", [])
+        if c.get("sample_values") is not None
+    ]
+    currency_cols = [
+        c["name"] for c in stats.get("columns", [])
+        if c.get("is_currency")
+    ]
+
+    suggestions = []
+    if numeric_cols:
+        col = numeric_cols[0]
+        prefix = "$" if col in currency_cols else ""
+        suggestions += [
+            f"'what is the average {col.lower().replace('_', ' ')}'",
+            f"'show rows where {col.lower().replace('_', ' ')} is above average'",
+            f"'rank by {col.lower().replace('_', ' ')}'",
+        ]
+    if text_cols:
+        col = text_cols[0]
+        suggestions.append(f"'filter by {col.lower().replace(\"_\", \" \")}'")
+
+    col_summary = ", ".join(f"`{c['name']}`" for c in schema)
+    hint = (
+        f"The current result only has these columns: {col_summary}.\n"
+        "Questions you can ask:\n"
+        + "\n".join(f"  • {s}" for s in suggestions[:4])
+        + "\n\nFor anything else, ask a fresh question in the main chat."
+    )
+    return hint
+
+
 def _sanitize_rows(rows: list[dict]) -> list[dict]:
     """
     Convert non-JSON-serializable cell values to safe Python primitives.
@@ -1734,10 +1837,11 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                         })
                         continue
 
-                    _rc_schema  = result_cache.get_schema(_sid)
-                    _rc_stats   = result_cache.get_stats(_sid)
-                    _rc_db_cfg  = get_client_db(account_id) or {}
-                    _rc_history = _result_chat_histories.get(rc_result_id, [])
+                    _rc_schema      = result_cache.get_schema(_sid)
+                    _rc_stats       = result_cache.get_stats(_sid)
+                    _rc_currency    = result_cache.get_currency_columns(_sid)
+                    _rc_db_cfg      = get_client_db(account_id) or {}
+                    _rc_history     = _result_chat_histories.get(rc_result_id, [])
 
                     _rc_sys = build_duckdb_system_prompt(
                         _rc_schema,
@@ -1837,15 +1941,12 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                 rc_question[:60], len(_fb_rows),
                             )
                         else:
-                            # Both DuckDB and DB fallback failed — surface a helpful message
+                            # Both DuckDB and DB fallback failed — give a column-aware hint
+                            _hint = _build_cannot_generate_hint(_rc_schema, _rc_stats)
                             await websocket.send_json({
-                                "type":    "result_chat_error",
+                                "type":      "result_chat_error",
                                 "result_id": rc_result_id,
-                                "content": (
-                                    "I couldn't answer that from the current result "
-                                    "or from the database. Try asking a fresh question "
-                                    "in the main chat."
-                                ),
+                                "content":   _hint,
                             })
                         continue
 
@@ -1865,20 +1966,41 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                         "sql":       _rc_sql,
                         "row_count": len(_rc_rows),
                     })
-                    _result_chat_histories[rc_result_id] = _rc_history[-5:]  # keep last 5
+                    _result_chat_histories[rc_result_id] = _rc_history[-5:]
+
+                    # Auto-chart detection
+                    _rc_chart = None
+                    try:
+                        _rc_chart_type = detect_chart_type(_rc_rows, question=rc_question)
+                        if _rc_chart_type:
+                            _rc_chart = build_chart_payload(
+                                _rc_rows, _rc_chart_type, title=rc_question
+                            )
+                    except Exception:
+                        pass
+
+                    # 1-sentence narration (lightweight LLM call, silent on failure)
+                    _rc_narration = await _generate_result_narration(
+                        rc_question, _rc_rows, _rc_currency, client
+                    )
 
                     await websocket.send_json({
-                        "type":      "result_chat_response",
-                        "result_id": rc_result_id,
-                        "question":  rc_question,
-                        "sql":       _rc_sql,
-                        "rows":      _rc_rows,
-                        "row_count": len(_rc_rows),
-                        "source":    "cache",
+                        "type":             "result_chat_response",
+                        "result_id":        rc_result_id,
+                        "question":         rc_question,
+                        "sql":              _rc_sql,
+                        "rows":             _rc_rows,
+                        "row_count":        len(_rc_rows),
+                        "source":           "cache",
+                        "currency_columns": _rc_currency,
+                        "chart":            _rc_chart,
+                        "narration":        _rc_narration or None,
                     })
                     log.info(
-                        "result_chat answered %r → %d rows via DuckDB (parent=%s)",
+                        "result_chat answered %r → %d rows via DuckDB (parent=%s, "
+                        "chart=%s, narration=%s)",
                         rc_question[:60], len(_rc_rows), _rc_parent_qid[:16] or "none",
+                        bool(_rc_chart), bool(_rc_narration),
                     )
 
                 except Exception as _rce:

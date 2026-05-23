@@ -29,9 +29,21 @@ result_cache  — module-level singleton
 from __future__ import annotations
 
 import logging
+import re
 import time
 from collections import OrderedDict
 from typing import Any
+
+# ── Currency column name heuristic ────────────────────────────────────────────
+# Matches column names that almost certainly represent monetary values.
+# Used to auto-detect which columns should be prefixed with $ in the UI.
+_CURRENCY_NAME_RE = re.compile(
+    r"\b(revenue|amount|cost|price|total|sales|charge|fee|payment|spend|"
+    r"value|income|profit|loss|margin|earning|billing|invoice|budget|"
+    r"gross|net|balance|credit|debit|cash|dollar|usd|gbp|eur|salary|"
+    r"wage|commission|rebate|discount|tax|surcharge|reimbursement)\b",
+    re.IGNORECASE,
+)
 
 log = logging.getLogger("querybot.result_cache")
 
@@ -294,7 +306,8 @@ class ResultCache:
                 "sample_values": [],
             }
 
-            if dtype in ("DOUBLE", "REAL", "FLOAT", "BIGINT", "INTEGER"):
+            is_numeric = dtype in ("DOUBLE", "REAL", "FLOAT", "BIGINT", "INTEGER")
+            if is_numeric:
                 try:
                     nums = [float(v) for v in non_null]
                     if nums:
@@ -312,9 +325,26 @@ class ResultCache:
                         break
                 stat["sample_values"] = list(seen.keys())
 
+            # Currency detection: name heuristic + numeric type
+            stat["is_currency"] = bool(
+                is_numeric and _CURRENCY_NAME_RE.search(col)
+            )
+
             col_stats.append(stat)
 
         return {"row_count": len(rows), "columns": col_stats}
+
+    def get_currency_columns(self, session_id: str) -> list[str]:
+        """
+        Return column names from the cached result that are auto-detected as
+        currency/monetary values.  Used to apply $ formatting and inform the
+        LLM that these are dollar amounts.
+        """
+        stats = self.get_stats(session_id)
+        return [
+            c["name"] for c in stats.get("columns", [])
+            if c.get("is_currency")
+        ]
 
     def has_result(self, session_id: str) -> bool:
         entry = self._get(session_id)
