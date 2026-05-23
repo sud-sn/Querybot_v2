@@ -1588,15 +1588,19 @@ def _build_aggregate_drilldown_context(
         "Rewrite that SQL as a detail query that:",
         "  1. Keeps the exact same FROM clause and WHERE conditions (if any).",
         "  2. Removes the aggregate function (COUNT, SUM, AVG, etc.) from SELECT.",
-        "  3. Selects the specific columns the user is asking for (patient name,",
-        "     prescription details, etc.) based on the follow-up question and the",
-        "     Knowledge Base schema context.",
+        "  3. Tries to select the specific columns the user is asking for (e.g. patient",
+        "     name, prescription details) based on the Knowledge Base schema.",
         "  4. Adds a row limit (TOP 20 / LIMIT 20) unless the user specified a number.",
         "",
-        "CRITICAL: Use ONLY column names that appear verbatim in the Knowledge Base.",
+        "FALLBACK RULE (important):",
+        "  If you are unsure which exact columns to select, write a SELECT TOP 20 * (or",
+        "  LIMIT 20) from the same table(s) and WHERE conditions in the original SQL.",
+        "  A generic SELECT * that returns all columns is FAR BETTER than CANNOT_GENERATE.",
+        "  Only return CANNOT_GENERATE if you cannot even identify the table to query.",
+        "",
+        "CRITICAL: Use ONLY column names / table names that appear in the Knowledge Base.",
         "Do NOT use the aggregate alias (e.g. TOTAL_PRESCRIPTIONS) as a column name —",
         "that was a SELECT alias, not a real column in the database.",
-        "Do NOT invent column names. If unsure, return CANNOT_GENERATE.",
     ]
     return "\n".join(lines)
 
@@ -2289,11 +2293,46 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                     _fb_sql_raw or "", rc_question
                                 )
                                 if _fb_sql_raw and "CANNOT_GENERATE" not in _fb_sql_raw.upper():
-                                    _fb_ok, _, _ = validate_sql(
+                                    _fb_ok, _fb_reason, _fb_code = validate_sql(
                                         _fb_sql_raw, _ws_known_tables,
                                         _fb_db_cfg.get("db_type", "azure_sql"),
                                         None,
                                     )
+                                    # One repair attempt when validation fails
+                                    # (unknown_table or parse error — same as main pipeline)
+                                    if not _fb_ok and _fb_code in ("unknown_table", "parse"):
+                                        log.info(
+                                            "result_chat fallback SQL failed validation (%s): %s — retrying",
+                                            _fb_code, _fb_reason,
+                                        )
+                                        _fb_retry_user = (
+                                            f"The following SQL failed validation: {_fb_reason}\n"
+                                            f"SQL: {_fb_sql_raw}\n\n"
+                                            f"The original question was: {rc_question}\n\n"
+                                            "Rewrite the SQL using ONLY table and column names that "
+                                            "appear verbatim in the Knowledge Base. "
+                                            "If unsure of column names, use SELECT TOP 20 * from the "
+                                            "same table. Return only the corrected SQL."
+                                        )
+                                        _fb_retry_raw, _, _ = await llm_complete(
+                                            _fb_system, _fb_retry_user,
+                                            _fb_prov, _fb_model, _fb_key,
+                                            max_tokens=512, **_fb_az,
+                                        )
+                                        if _fb_retry_raw and _fb_retry_raw.startswith("```"):
+                                            _fb_retry_raw = "\n".join(
+                                                _fb_retry_raw.split("\n")[1:]
+                                            ).rsplit("```", 1)[0].strip()
+                                        if _fb_retry_raw and "CANNOT_GENERATE" not in _fb_retry_raw.upper():
+                                            _fb_ok2, _, _ = validate_sql(
+                                                _fb_retry_raw, _ws_known_tables,
+                                                _fb_db_cfg.get("db_type", "azure_sql"),
+                                                None,
+                                            )
+                                            if _fb_ok2:
+                                                _fb_sql_raw = _fb_retry_raw
+                                                _fb_ok = True
+                                                log.info("result_chat fallback SQL repair succeeded")
                                     if _fb_ok:
                                         _fb_rows = run_query(
                                             _fb_db_cfg["credentials"],
