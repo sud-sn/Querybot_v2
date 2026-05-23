@@ -633,15 +633,24 @@
     <table class="table">
       <tr><th>Time</th><th>User</th><th>Question</th><th>Model</th><th>SQL</th><th>Rows</th><th>Cost</th><th>ms</th><th>Status</th></tr>
       {% for q in queries %}
-      <tr>
-        <td style="font-size:11px;color:var(--gray-500);white-space:nowrap">{{ q.created_at[5:16] }}</td>
+      {% set is_drilldown = q.parent_question_id and q.parent_question_id != '' %}
+      <tr style="{% if is_drilldown %}background:rgba(99,102,241,0.06);border-left:3px solid var(--indigo-400,#818cf8){% endif %}">
+        <td style="font-size:11px;color:var(--gray-500);white-space:nowrap">
+          {% if is_drilldown %}<span style="color:var(--gray-400);margin-right:4px">↳</span>{% endif %}
+          {{ q.created_at[5:16] }}
+        </td>
         <td style="font-size:11px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
             title="{{ q.user_email or q.zoom_user_id or 'unknown' }}">
           {% if q.user_name %}<strong>{{ q.user_name }}</strong>
           {% elif q.zoom_user_id %}<span style="color:var(--gray-500);font-family:monospace">{{ q.zoom_user_id[:14] }}</span>
           {% else %}<span style="color:var(--gray-400)">—</span>{% endif %}
         </td>
-        <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px" title="{{ q.question }}">{{ q.question }}</td>
+        <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px" title="{{ q.question }}">
+          {% if is_drilldown %}
+            <span style="display:inline-block;font-size:10px;background:rgba(99,102,241,0.15);color:#818cf8;border-radius:3px;padding:1px 5px;margin-right:4px;white-space:nowrap">drill-down</span>
+          {% endif %}
+          {{ q.question }}
+        </td>
         <td style="font-size:11px;color:var(--gray-500)">{{ q.llm_model or "—" }}</td>
         <td>
           {% if q.sql_generated %}

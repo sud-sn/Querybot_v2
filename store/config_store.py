@@ -503,6 +503,8 @@ def log_query(
     duration_ms: int = 0,
     portal_user_id: Optional[int] = None,
     zoom_user_id: str = "",
+    question_id: str = "",
+    parent_question_id: str = "",
 ) -> None:
     cost = calculate_cost(llm_model, tokens_in, tokens_out)
     with get_db() as conn:
@@ -511,12 +513,14 @@ def log_query(
                 (account_id, portal_user_id, zoom_user_id,
                  question, sql_generated, row_count,
                  success, error_msg, llm_provider, llm_model,
-                 tokens_in, tokens_out, cost_usd, duration_ms)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 tokens_in, tokens_out, cost_usd, duration_ms,
+                 question_id, parent_question_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (account_id, portal_user_id, zoom_user_id or "",
               question, sql_generated, row_count,
               1 if success else 0, error_msg, llm_provider, llm_model,
-              tokens_in, tokens_out, cost, duration_ms))
+              tokens_in, tokens_out, cost, duration_ms,
+              question_id or "", parent_question_id or ""))
 
 
 def get_query_stats(account_id: Optional[str] = None, month: Optional[str] = None) -> dict:

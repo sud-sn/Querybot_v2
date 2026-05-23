@@ -83,22 +83,24 @@ CREATE TABLE IF NOT EXISTS client (
 
 -- ── Query log (usage tracking + billing) ──────────────────────────────────────
 CREATE TABLE IF NOT EXISTS query_log (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    account_id    TEXT    REFERENCES client(account_id) ON DELETE CASCADE,
-    portal_user_id INTEGER REFERENCES portal_user(id) ON DELETE SET NULL,
-    zoom_user_id  TEXT    DEFAULT '',
-    question      TEXT,
-    sql_generated TEXT,
-    row_count     INTEGER DEFAULT 0,
-    success       INTEGER NOT NULL DEFAULT 1,
-    error_msg     TEXT    DEFAULT '',
-    llm_provider  TEXT    DEFAULT '',
-    llm_model     TEXT    DEFAULT '',
-    tokens_in     INTEGER DEFAULT 0,
-    tokens_out    INTEGER DEFAULT 0,
-    cost_usd      REAL    DEFAULT 0.0,
-    duration_ms   INTEGER DEFAULT 0,
-    created_at    TEXT    DEFAULT (datetime('now'))
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id         TEXT    REFERENCES client(account_id) ON DELETE CASCADE,
+    portal_user_id     INTEGER REFERENCES portal_user(id) ON DELETE SET NULL,
+    zoom_user_id       TEXT    DEFAULT '',
+    question           TEXT,
+    sql_generated      TEXT,
+    row_count          INTEGER DEFAULT 0,
+    success            INTEGER NOT NULL DEFAULT 1,
+    error_msg          TEXT    DEFAULT '',
+    llm_provider       TEXT    DEFAULT '',
+    llm_model          TEXT    DEFAULT '',
+    tokens_in          INTEGER DEFAULT 0,
+    tokens_out         INTEGER DEFAULT 0,
+    cost_usd           REAL    DEFAULT 0.0,
+    duration_ms        INTEGER DEFAULT 0,
+    question_id        TEXT    DEFAULT '',
+    parent_question_id TEXT    DEFAULT '',
+    created_at         TEXT    DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS llm_call_log (
@@ -555,6 +557,9 @@ def _run_migrations() -> None:
         ("entity_graph", "entity_filter", "TEXT NOT NULL DEFAULT ''"),
         # v25: user-chosen colour palette for each pinned chart
         ("pinned_chart", "color_palette", "TEXT NOT NULL DEFAULT 'default'"),
+        # v26: link drill-down result_chat queries to their parent main query
+        ("query_log", "question_id",        "TEXT DEFAULT ''"),
+        ("query_log", "parent_question_id", "TEXT DEFAULT ''"),
     ]
     with get_db() as conn:
         _ensure_llm_call_log_table(conn)
