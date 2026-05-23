@@ -766,6 +766,11 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
     if sql.startswith("```"):
         sql = "\n".join(sql.split("\n")[1:]).rsplit("```", 1)[0].strip()
 
+    # ── Safety net: inject SELECT DISTINCT for list-entity questions ──────────
+    # Fires only when the LLM forgot DISTINCT on a non-aggregate list query.
+    # Silently skipped for aggregate / GROUP BY / already-DISTINCT queries.
+    sql = _inject_distinct_if_needed(sql, question)
+
     # CANNOT_GENERATE — try clarification before giving up (Approach B)
     if "CANNOT_GENERATE" in sql.upper():
         _log_q(account_id, question, "", 0, False, "CANNOT_GENERATE",
@@ -915,6 +920,8 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                 )
             if sql_retry.startswith("```"):
                 sql_retry = "\n".join(sql_retry.split("\n")[1:]).rsplit("```", 1)[0].strip()
+
+            sql_retry = _inject_distinct_if_needed(sql_retry, question)
 
             if "CANNOT_GENERATE" not in sql_retry.upper() and len(sql_retry) > 10:
                 ok2, reason2, code2 = validate_sql(
@@ -1220,6 +1227,56 @@ def _format_value(val) -> str:
     if isinstance(val, int) and val > 999:
         return f"{val:,}"
     return str(val)
+
+
+def _inject_distinct_if_needed(sql: str, question: str) -> str:
+    """
+    Safety net: if the LLM forgot SELECT DISTINCT on a list-entity query, add it.
+
+    Fires only when ALL of:
+      1. The question is a "list entities" question (list/show/who/which/find/get/what)
+      2. The SQL has no aggregate functions (SUM/COUNT/AVG/MIN/MAX) in the SELECT clause
+      3. The SQL has no GROUP BY clause
+      4. SELECT DISTINCT is not already present
+
+    This prevents duplicate rows when a dimension table is joined to a fact table
+    without deduplication (e.g. prescribers × fill records = many rows per prescriber).
+    """
+    import re as _re
+
+    # Only fire on list/entity questions
+    _LIST_Q_RE = _re.compile(
+        r"^\s*(list|show|who|which|find|get|what\s+(are|is)\s+the|"
+        r"give\s+me|display|return|fetch|identify)",
+        _re.IGNORECASE,
+    )
+    if not _LIST_Q_RE.match(question.strip()):
+        return sql
+
+    sql_upper = sql.upper()
+
+    # Don't touch if already DISTINCT
+    if "SELECT DISTINCT" in sql_upper:
+        return sql
+
+    # Don't touch aggregates — they deduplicate via GROUP BY
+    _AGG_RE = _re.compile(
+        r"\b(SUM|COUNT|AVG|MIN|MAX|STDEV|VARIANCE|PERCENTILE)\s*\(",
+        _re.IGNORECASE,
+    )
+    if _AGG_RE.search(sql):
+        return sql
+
+    # Don't touch GROUP BY queries
+    if "GROUP BY" in sql_upper:
+        return sql
+
+    # Don't touch subqueries that are already wrapped in an outer SELECT DISTINCT
+    # Only patch the outermost SELECT
+    patched = _re.sub(r"(?i)^(\s*SELECT\s+)", r"\1DISTINCT ", sql, count=1)
+    if patched != sql:
+        log.info("DISTINCT injected into list-entity SQL for question: %r", question[:80])
+    return patched
 
 
 def _rows_to_table(rows) -> str:
