@@ -1555,6 +1555,52 @@ def _result_has_identifiers(schema: list[dict]) -> bool:
     )
 
 
+def _build_aggregate_drilldown_context(
+    original_sql: str,
+    original_question: str,
+    follow_up_question: str,
+) -> str:
+    """
+    Build a context block for the production-DB fallback when the previous
+    result was a pure aggregate (COUNT/SUM/AVG — no identifier columns).
+
+    Strategy: give the LLM the ORIGINAL aggregate SQL and ask it to rewrite
+    as a detail query.  The WHERE conditions and FROM clause are preserved
+    exactly; only the SELECT list changes to return the columns the user wants.
+
+    This is far more reliable than reverse-engineering filter values from the
+    result rows (which don't exist for aggregates).
+    """
+    if not original_sql:
+        return ""
+
+    lines = [
+        "AGGREGATE DRILL-DOWN REQUEST:",
+        "The user previously ran an aggregate query (COUNT/SUM/AVG) and now",
+        "wants to see the underlying detail records that make up that total.",
+        "",
+        f'The original question was: "{original_question}"',
+        "",
+        "The original aggregate SQL was:",
+        original_sql.strip(),
+        "",
+        "YOUR TASK:",
+        "Rewrite that SQL as a detail query that:",
+        "  1. Keeps the exact same FROM clause and WHERE conditions (if any).",
+        "  2. Removes the aggregate function (COUNT, SUM, AVG, etc.) from SELECT.",
+        "  3. Selects the specific columns the user is asking for (patient name,",
+        "     prescription details, etc.) based on the follow-up question and the",
+        "     Knowledge Base schema context.",
+        "  4. Adds a row limit (TOP 20 / LIMIT 20) unless the user specified a number.",
+        "",
+        "CRITICAL: Use ONLY column names that appear verbatim in the Knowledge Base.",
+        "Do NOT use the aggregate alias (e.g. TOTAL_PRESCRIPTIONS) as a column name —",
+        "that was a SELECT alias, not a real column in the database.",
+        "Do NOT invent column names. If unsure, return CANNOT_GENERATE.",
+    ]
+    return "\n".join(lines)
+
+
 def _build_drilldown_context(
     prev_question: str,
     prev_rows: list[dict],
@@ -2149,10 +2195,11 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     if not _rc_sql or _rc_sql.strip().upper() == "CANNOT_GENERATE":
                         _trace_update(_rc_trace_id, route="result_chat_db_fallback", sql_validation_status="cannot_generate")
                         log.info(
-                            "result_chat CANNOT_GENERATE for %r — %s",
+                            "result_chat CANNOT_GENERATE for %r — attempting production DB fallback "
+                            "(strategy: %s)",
                             rc_question[:60],
-                            "attempting production DB fallback" if _result_has_identifiers(_rc_schema)
-                            else "skipping DB fallback (aggregate-only result, no identifiers)",
+                            "value-drill-down" if _result_has_identifiers(_rc_schema)
+                            else "aggregate-rewrite",
                         )
                         _log_q(account_id, rc_question, "", 0, False,
                                "CANNOT_GENERATE→DB_FALLBACK", "result_chat", "duckdb", 0, 0,
@@ -2175,10 +2222,10 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                             _cached_result = getattr(adapter, "last_result", None) or {}
                             _fb_rag_ctx    = _cached_result.get("rag_context", "")
                             _fb_db_cfg     = _cached_result.get("db_cfg") or _rc_db_cfg
-                            if _fb_db_cfg and _fb_has_ids:
+                            if _fb_db_cfg:
                                 # Re-retrieve KB for the follow-up question so the LLM
-                                # has the right schema context (e.g. prescriber tables)
-                                # rather than just the original question's formula schema.
+                                # has the right schema context (e.g. prescriber/patient tables)
+                                # rather than just the original question's KB context.
                                 # Merge: follow-up context first (most relevant) + original.
                                 try:
                                     _fb_retriever  = load_retriever(account_id)
@@ -2191,7 +2238,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                 except Exception as _ret_exc:
                                     log.debug("result_chat fallback KB re-retrieval failed: %s", _ret_exc)
 
-                            if _fb_db_cfg and _fb_rag_ctx and _fb_has_ids:
+                            if _fb_db_cfg and _fb_rag_ctx:
                                 await websocket.send_json({
                                     "type": "result_chat_typing",
                                     "result_id": rc_result_id,
@@ -2205,14 +2252,24 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                     _fb_db_cfg.get("db_type", "azure_sql"),
                                     _fb_rag_ctx,
                                 )
-                                # Inject drill-down context: the specific values from the
-                                # previous result the user is referencing ("these top 5").
+                                # Inject drill-down context.
+                                # For aggregate results (no identifier columns): use the
+                                # original SQL so the LLM can rewrite it as a detail query.
+                                # For normal results (has identifier columns): inject the
+                                # specific values from the result rows as a WHERE IN hint.
                                 _prev_rows = _cached_result.get("rows") or []
-                                _drill_ctx = _build_drilldown_context(
-                                    _cached_result.get("question", ""),
-                                    _prev_rows,
-                                    _rc_schema,
-                                )
+                                if not _fb_has_ids:
+                                    _drill_ctx = _build_aggregate_drilldown_context(
+                                        original_sql=_cached_result.get("sql", ""),
+                                        original_question=_cached_result.get("question", ""),
+                                        follow_up_question=rc_question,
+                                    )
+                                else:
+                                    _drill_ctx = _build_drilldown_context(
+                                        _cached_result.get("question", ""),
+                                        _prev_rows,
+                                        _rc_schema,
+                                    )
                                 if _drill_ctx:
                                     _fb_system = _fb_system + "\n\n---\n\n" + _drill_ctx
                                 _fb_sql_raw, _, _ = await llm_complete(
