@@ -445,7 +445,7 @@ def _apply_det(value: Any, strategy: str, rng: random.Random) -> Any:
     if strategy == "redact":
         return "[REDACTED]"
     if strategy == "free_text":
-        return "[FREE TEXT - REDACTED]"
+        return "[REDACTED TEXT]"
     if strategy == "name":
         return f"{rng.choice(_FIRST)} {rng.choice(_LAST)}"
     if strategy == "first_name":
