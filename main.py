@@ -1520,11 +1520,10 @@ def _build_drilldown_context(
     the previous result ("these top 5 prescribers", "the ones shown", etc.).
 
     Extracts the distinct values for each TEXT/categorical column and emits
-    them as ready-to-use IN-list hints.  The LLM can then generate:
-
-        WHERE PRESCRIBER_NAME IN ('Dr. Donna Walker', 'Dr. Betty Jackson', ...)
-
-    instead of failing with CANNOT_GENERATE.
+    them as filter-value hints.  IMPORTANT: only the VALUES are provided —
+    the LLM must use its KB schema context to identify the correct production
+    table and column name to filter on.  The result column names are aliases
+    that may differ from the underlying DB column names.
     """
     if not prev_rows or not schema:
         return ""
@@ -1543,8 +1542,12 @@ def _build_drilldown_context(
         f"That result returned {len(prev_rows)} row(s) with columns: {col_names}."
     )
 
-    # Emit IN-list hints for up to 3 TEXT/categorical columns, 15 values each.
-    hints: list[str] = []
+    # Collect VALUES (not column aliases) for up to 3 TEXT/categorical columns.
+    # We deliberately do NOT tell the LLM to use the result column name directly,
+    # because result aliases (e.g. "Formula_Name") may not exist in production tables.
+    # The LLM should use these values in an IN-list while finding the right
+    # table.column from the KB schema context.
+    value_groups: list[tuple[str, list[str]]] = []
     for col_info in schema:
         col   = col_info["name"]
         dtype = col_info.get("type", "TEXT").upper()
@@ -1554,16 +1557,23 @@ def _build_drilldown_context(
             str(r[col]) for r in prev_rows if r.get(col) is not None
         ))[:15]
         if values:
-            in_list = ", ".join(f"'{v}'" for v in values)
-            hints.append(f"  - {col}: {in_list}")
-        if len(hints) >= 3:
+            value_groups.append((col, values))
+        if len(value_groups) >= 3:
             break
 
-    if hints:
+    if value_groups:
+        hint_lines: list[str] = []
+        for col, values in value_groups:
+            in_list = ", ".join(f"'{v}'" for v in values)
+            hint_lines.append(
+                f"  - The result column '{col}' contained these specific values: {in_list}"
+            )
         parts.append(
-            "Key values from that result — use in a WHERE ... IN (...) clause "
-            "when the follow-up references 'these', 'the above', 'top N shown', etc.:\n"
-            + "\n".join(hints)
+            "The follow-up question references items from that result.\n"
+            "Use the values below to build a WHERE ... IN (...) filter, but identify "
+            "the correct production table and column name from the KB schema context — "
+            "do NOT use the result column name directly as a database column:\n"
+            + "\n".join(hint_lines)
         )
 
     return "\n".join(parts)
