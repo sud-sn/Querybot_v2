@@ -41,6 +41,7 @@ from core.graph_resolver import resolve_for_question as _graph_resolve
 from core.llm_audit import llm_audit_scope, make_llm_audit_request_id
 from core.result_cache import result_cache
 from core.query_router import should_route_to_result_cache, build_duckdb_system_prompt
+from core.duckdb_sql_validator import validate_duckdb_result_sql
 from admin import router as admin_router
 from portal import router as portal_router
 
@@ -389,8 +390,19 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
     # Identity passed through every query-log row for audit + billing.
     pu_id  = portal_user.get("id") if portal_user else None
     zid    = event.user_id or ""
+    trace_id = _trace_create(
+        account_id=account_id,
+        question_id=audit_request_id,
+        question=question,
+        portal_user_id=pu_id,
+        platform_user_id=zid,
+        session_id=getattr(adapter, "session_id", "") or "",
+        request_source=getattr(event, "platform", "") or "",
+    )
+    _trace_step(trace_id, "receive_question", output_summary={"question_id": audit_request_id})
 
     if not db_cfg:
+        _trace_finish(trace_id, status="error", answer_type="error", error_message="No database assigned")
         await adapter.send_message(event, "⚠️ No database assigned. Contact your administrator.")
         return
 
@@ -398,6 +410,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
 
     within_limit, used, limit = check_query_limit(account_id)
     if not within_limit:
+        _trace_finish(trace_id, status="error", answer_type="error", error_message="Monthly query limit reached")
         await adapter.send_message(event, f"❌ Monthly query limit reached ({used}/{limit}).")
         return
     if used >= int(limit * 0.8):
@@ -405,6 +418,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
 
     within_token_limit, tokens_used, token_limit = check_token_limit(account_id)
     if not within_token_limit:
+        _trace_finish(trace_id, status="error", answer_type="error", error_message="Monthly token limit reached")
         await adapter.send_message(event, f"❌ Monthly token limit reached ({tokens_used}/{token_limit}).")
         return
     if token_limit and tokens_used >= int(token_limit * 0.8):
@@ -412,7 +426,9 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
 
     try:
         provider, model, api_key, az_kwargs = resolve_provider(client, purpose="query")
+        _trace_update(trace_id, llm_provider=provider, llm_model=model, db_type=db_cfg.get("db_type", ""))
     except RuntimeError as e:
+        _trace_finish(trace_id, status="error", answer_type="error", error_message=str(e))
         await adapter.send_message(event, f"⚠️ Config error: {e}")
         return
 
@@ -455,7 +471,19 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                 f"Switch to a different schema or ask your administrator to grant access.")
             return
 
+    _trace_update(
+        trace_id,
+        selected_schema=schema_hint,
+        allowed_tables_snapshot=sorted(effective),
+    )
+    _trace_step(
+        trace_id,
+        "resolve_user_permissions",
+        output_summary={"tables_available": len(effective), "schema": schema_hint or ""},
+    )
+
     if portal_user and allowed_tables is not None and not effective:
+        _trace_finish(trace_id, status="error", answer_type="error", error_message="No table access assigned")
         await adapter.send_message(event,
             "🔒 *No table access assigned.*\n\n"
             "Your account is not yet linked to any tables in this workspace. "
@@ -464,6 +492,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
         return
 
     if not effective:
+        _trace_finish(trace_id, status="error", answer_type="error", error_message="No tables available")
         await adapter.send_message(event,
             "⚠️ No tables are available to query. Contact your administrator.")
         return
@@ -476,6 +505,8 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
     _session_id = getattr(adapter, "session_id", None)
     _cached_cols = [s["name"] for s in result_cache.get_schema(_session_id)] if _session_id else []
     if _session_id and should_route_to_result_cache(question, result_cache.has_result(_session_id), cached_col_names=_cached_cols):
+        _trace_update(trace_id, route="duckdb_cache")
+        _trace_step(trace_id, "route", output_summary="duckdb_cache")
         log.info("Routing to DuckDB result cache for session %s", _session_id[:16])
         await _send_live_stage(adapter, event, "retrieving_context", "Analysing results", "Running analytics on the previously returned data.")
         try:
@@ -488,6 +519,23 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
             )
             _duck_sql = await _generate_duckdb_sql(question, _duck_sys_prompt, client)
             if _duck_sql and _duck_sql.strip().upper() != "CANNOT_GENERATE":
+                _duck_verdict = validate_duckdb_result_sql(_duck_sql)
+                _trace_update(
+                    trace_id,
+                    generated_sql=_duck_sql,
+                    sql_validation_status="pass" if _duck_verdict.ok else "fail",
+                    sql_validation_error="" if _duck_verdict.ok else _duck_verdict.reason,
+                )
+                _trace_step(
+                    trace_id,
+                    "validate_sql",
+                    input_summary=_duck_sql,
+                    output_summary=_duck_verdict.reason,
+                    status="success" if _duck_verdict.ok else "error",
+                    metadata={"code": _duck_verdict.code},
+                )
+                if not _duck_verdict.ok:
+                    raise ValueError(f"DuckDB SQL rejected: {_duck_verdict.reason}")
                 await _send_live_stage(adapter, event, "executing_query", "Running query", "Querying in-memory result set.")
                 _duck_rows = result_cache.query(_session_id, _duck_sql)
                 if _duck_rows is not None:
@@ -507,6 +555,14 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                     await _send_results(event, adapter, question, _duck_rows, _duck_sql,
                                         duration_ms, portal_user, account_id, db_cfg,
                                         question_id=audit_request_id)
+                    _trace_finish(
+                        trace_id,
+                        status="success",
+                        answer_type="table",
+                        row_count=len(_duck_rows),
+                        duration_ms=duration_ms,
+                        final_answer_summary="Answered from in-memory DuckDB result cache",
+                    )
                     return
         except Exception as _duck_exc:
             log.warning("DuckDB cache route failed, falling through to normal pipeline: %s", _duck_exc)
@@ -521,6 +577,8 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
 
     matched_metric = store.match_metric(account_id, question)
     if matched_metric:
+        _trace_update(trace_id, route="metric_registry", generated_sql=matched_metric["sql_template"].strip())
+        _trace_step(trace_id, "route", output_summary={"route": "metric_registry", "metric": matched_metric.get("name", "")})
         await _send_live_stage(adapter, event, "metric_registry", "Using known metric", "Found a trusted metric definition for this question.")
         sql_from_metric = matched_metric["sql_template"].strip()
         log.info("Metric registry hit: %s → %s", matched_metric["name"], sql_from_metric[:60])
@@ -532,6 +590,13 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                    "metric_registry", "deterministic", 0, 0, duration_ms,
                    portal_user_id=pu_id, zoom_user_id=zid,
                    question_id=audit_request_id)
+            _trace_update(
+                trace_id,
+                sql_validation_status="trusted_metric",
+                query_row_count=len(rows),
+                query_duration_ms=duration_ms,
+            )
+            _trace_step(trace_id, "execute_sql", input_summary=sql_from_metric, output_summary={"rows": len(rows)}, duration_ms=duration_ms)
             # Record metric-registry hits in conversation history too so
             # follow-up questions ("filter to top 5", "break that down by region")
             # can reference the returned columns and SQL shape.
@@ -546,8 +611,10 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
             await _send_results(event, adapter, question, rows, sql_from_metric,
                                 duration_ms, portal_user, account_id, db_cfg,
                                 question_id=audit_request_id)
+            _trace_finish(trace_id, status="success", answer_type="table", row_count=len(rows), duration_ms=duration_ms, final_answer_summary="Answered by metric registry")
             return
         except Exception as e:
+            _trace_step(trace_id, "execute_sql", input_summary=sql_from_metric, output_summary=str(e), status="error")
             log.warning("Metric registry SQL failed, falling through to LLM: %s", e)
             # Fall through to normal LLM pipeline
 
@@ -582,6 +649,12 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
 
         relevant_kbs = (pinned + table_kbs)[:7]
         context = "\n\n---\n\n".join(relevant_kbs)
+        _trace_update(
+            trace_id,
+            route="normal_sql",
+            retrieved_kb_chunk_ids=store.kb_chunk_refs(relevant_kbs),
+        )
+        _trace_step(trace_id, "retrieve_kb", output_summary={"chunks": len(relevant_kbs)})
 
         # ── Step 2: Retrieve validated SQL examples — few-shot grounding ─────
         # Examples now live in Qdrant alongside KB docs — no chroma_dir needed
@@ -591,9 +664,11 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
         if examples:
             context = format_examples_for_prompt(examples) + "\n\n---\n\n" + context
             log.info("Injected %d validated examples into prompt", len(examples))
+            _trace_step(trace_id, "retrieve_examples", output_summary={"examples": len(examples)})
 
     except Exception as e:
         log.error("RAG retrieval failed: %s", e)
+        _trace_finish(trace_id, status="error", answer_type="error", error_message=f"RAG retrieval failed: {e}")
         await adapter.send_message(event, "⚠️ Knowledge Base not ready.")
         return
 
@@ -763,11 +838,23 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
         ):
             sql, tok_in, tok_out = await llm_complete(
                 system, question, provider, model, api_key, max_tokens=512, **az_kwargs)
+            _trace_update(
+                trace_id,
+                generated_sql=sql,
+                prompt_tokens=tok_in,
+                completion_tokens=tok_out,
+            )
+            _trace_step(
+                trace_id,
+                "llm_generate_sql",
+                output_summary={"tokens_in": tok_in, "tokens_out": tok_out},
+            )
     except Exception as e:
         _log_q(account_id, question, "", 0, False, str(e), provider, model, 0, 0,
                int(time.time()*1000)-start_ms,
                portal_user_id=pu_id, zoom_user_id=zid,
                question_id=audit_request_id)
+        _trace_finish(trace_id, status="error", answer_type="error", error_message=f"AI error: {e}")
         await adapter.send_message(event, f"⚠️ AI error: {e}")
         return
 
@@ -781,6 +868,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
 
     # CANNOT_GENERATE — try clarification before giving up (Approach B)
     if "CANNOT_GENERATE" in sql.upper():
+        _trace_update(trace_id, generated_sql=sql, sql_validation_status="cannot_generate")
         _log_q(account_id, question, "", 0, False, "CANNOT_GENERATE",
                provider, model, tok_in, tok_out, int(time.time()*1000)-start_ms,
                portal_user_id=pu_id, zoom_user_id=zid,
@@ -858,13 +946,29 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
 
     await _send_live_stage(adapter, event, "validating_sql", "Checking query safety", "Verifying table access, structure, and execution safety.")
     ok, reason, code = validate_sql(sql, all_known, db_cfg["db_type"], query_scope_tables)
+    _trace_update(
+        trace_id,
+        generated_sql=sql,
+        sql_validation_status="pass" if ok else "fail",
+        sql_validation_error="" if ok else reason,
+    )
+    _trace_step(
+        trace_id,
+        "validate_sql",
+        input_summary=sql,
+        output_summary=reason,
+        status="success" if ok else "error",
+        metadata={"code": code},
+    )
 
     if ok:
         try:
             await _send_live_stage(adapter, event, "executing_query", "Running query", "Executing the SQL against your connected data source.")
             rows = run_query(db_cfg["credentials"], db_cfg["db_type"], sql)
+            _trace_step(trace_id, "execute_sql", input_summary=sql, output_summary={"rows": len(rows)})
         except Exception as first_error:
             exec_error = str(first_error)
+            _trace_step(trace_id, "execute_sql", input_summary=sql, output_summary=exec_error, status="error")
             log.warning("First execution failed for %s: %s",
                         account_id, exec_error[:100])
     else:
@@ -962,6 +1066,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                tok_in, tok_out, int(time.time()*1000) - start_ms,
                portal_user_id=pu_id, zoom_user_id=zid,
                question_id=audit_request_id)
+        _trace_finish(trace_id, status="error", answer_type="error", error_message=last_reason)
         await adapter.send_message(event, f"❌ {last_reason}")
         return
 
@@ -972,6 +1077,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                int(time.time()*1000) - start_ms,
                portal_user_id=pu_id, zoom_user_id=zid,
                question_id=audit_request_id)
+        _trace_finish(trace_id, status="error", answer_type="error", error_message=exec_error or "Unknown error")
         sql_preview = sql[:200] + "..." if len(sql) > 200 else sql
         await adapter.send_message(event,
             f"❌ Database error — could not execute after retry.\n"
@@ -1000,6 +1106,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
 
         if not (_zr_has_required or _zr_has_multi_metric):
             # No ambiguity signal — just tell the user there's no data.
+            _trace_finish(trace_id, status="success", answer_type="empty", row_count=0, duration_ms=duration_ms, final_answer_summary="Query returned no rows")
             await adapter.send_message(event,
                 "The query ran successfully but returned *no rows*.\n\n"
                 "Try broadening the filter (e.g. a wider date range) or "
@@ -1054,6 +1161,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
     await _send_results(event, adapter, question, rows, sql, duration_ms,
                         portal_user, account_id, db_cfg,
                         rag_context=context, question_id=audit_request_id)
+    _trace_finish(trace_id, status="success", answer_type="table", row_count=len(rows), duration_ms=duration_ms, final_answer_summary="Answered from database query")
 
 
 async def _send_results(event, adapter, question, rows, sql, duration_ms,
@@ -1217,6 +1325,37 @@ def _log_q(account_id, question, sql, rows, success, error,
     )
 
 
+def _trace_create(**kwargs) -> int | None:
+    try:
+        if "question" in kwargs and "question_text" not in kwargs:
+            kwargs["question_text"] = kwargs.pop("question")
+        return store.create_answer_trace(**kwargs)
+    except Exception as exc:
+        log.debug("answer trace create failed: %s", exc)
+        return None
+
+
+def _trace_update(trace_id: int | None, **fields) -> None:
+    try:
+        store.update_answer_trace(trace_id, **fields)
+    except Exception as exc:
+        log.debug("answer trace update failed: %s", exc)
+
+
+def _trace_step(trace_id: int | None, step_name: str, **kwargs) -> None:
+    try:
+        store.log_answer_trace_step(trace_id, step_name=step_name, **kwargs)
+    except Exception as exc:
+        log.debug("answer trace step failed: %s", exc)
+
+
+def _trace_finish(trace_id: int | None, **kwargs) -> None:
+    try:
+        store.finish_answer_trace(trace_id, **kwargs)
+    except Exception as exc:
+        log.debug("answer trace finish failed: %s", exc)
+
+
 def _format_value(val) -> str:
     """
     Format a single cell value for clean display.
@@ -1334,7 +1473,8 @@ def _build_cannot_generate_hint(schema: list[dict], stats: dict) -> str:
         ]
     if text_cols:
         col = text_cols[0]
-        suggestions.append(f"'filter by {col.lower().replace(\"_\", \" \")}'")
+        label = col.lower().replace("_", " ")
+        suggestions.append(f"'filter by {label}'")
 
     col_summary = ", ".join(f"`{c['name']}`" for c in schema)
     hint = (
@@ -1827,9 +1967,22 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 _rc_question_id = make_llm_audit_request_id()
                 _rc_parent_qid  = getattr(adapter, "last_question_id", "") or ""
                 _rc_pu_id       = portal_user.get("id") if portal_user else None
+                _rc_trace_id = _trace_create(
+                    account_id=account_id,
+                    question_id=_rc_question_id,
+                    parent_question_id=_rc_parent_qid,
+                    question=rc_question,
+                    portal_user_id=_rc_pu_id,
+                    platform_user_id=zoom_user_id or "",
+                    session_id=getattr(adapter, "session_id", "") or "",
+                    request_source="portal",
+                    route="result_chat",
+                )
+                _trace_step(_rc_trace_id, "receive_question", output_summary={"result_id": rc_result_id})
                 try:
                     _sid = getattr(adapter, "session_id", None)
                     if not _sid or not result_cache.has_result(_sid):
+                        _trace_finish(_rc_trace_id, status="error", answer_type="error", error_message="No cached result found")
                         await websocket.send_json({
                             "type": "result_chat_error",
                             "result_id": rc_result_id,
@@ -1850,9 +2003,12 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                         history   = _rc_history,
                     )
                     _rc_sql = await _generate_duckdb_sql(rc_question, _rc_sys, client)
+                    _trace_update(_rc_trace_id, generated_sql=_rc_sql, db_type="duckdb")
+                    _trace_step(_rc_trace_id, "llm_generate_sql", output_summary={"sql": (_rc_sql or "")[:300]})
 
                     # ── DuckDB CANNOT_GENERATE → fallback to production DB ────
                     if not _rc_sql or _rc_sql.strip().upper() == "CANNOT_GENERATE":
+                        _trace_update(_rc_trace_id, route="result_chat_db_fallback", sql_validation_status="cannot_generate")
                         log.info(
                             "result_chat CANNOT_GENERATE for %r — attempting production DB fallback",
                             rc_question[:60],
@@ -1945,6 +2101,14 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                 "source_note":      "Answer required a full database query.",
                                 "currency_columns": _rc_currency,
                             })
+                            _trace_update(
+                                _rc_trace_id,
+                                generated_sql=_fb_sql,
+                                sql_validation_status="pass",
+                                query_row_count=len(_fb_rows),
+                                query_duration_ms=_fb_dur,
+                            )
+                            _trace_finish(_rc_trace_id, status="success", answer_type="table", row_count=len(_fb_rows), duration_ms=_fb_dur, final_answer_summary="Result-chat answered by production DB fallback")
                             log.info(
                                 "result_chat DB fallback succeeded: %r → %d rows",
                                 rc_question[:60], len(_fb_rows),
@@ -1952,6 +2116,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                         else:
                             # Both DuckDB and DB fallback failed — give a column-aware hint
                             _hint = _build_cannot_generate_hint(_rc_schema, _rc_stats)
+                            _trace_finish(_rc_trace_id, status="error", answer_type="error", error_message=_hint)
                             await websocket.send_json({
                                 "type":      "result_chat_error",
                                 "result_id": rc_result_id,
@@ -1960,8 +2125,25 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                         continue
 
                     # ── DuckDB answered — run query ───────────────────────────
+                    _rc_verdict = validate_duckdb_result_sql(_rc_sql)
+                    _trace_update(
+                        _rc_trace_id,
+                        sql_validation_status="pass" if _rc_verdict.ok else "fail",
+                        sql_validation_error="" if _rc_verdict.ok else _rc_verdict.reason,
+                    )
+                    _trace_step(
+                        _rc_trace_id,
+                        "validate_sql",
+                        input_summary=_rc_sql,
+                        output_summary=_rc_verdict.reason,
+                        status="success" if _rc_verdict.ok else "error",
+                        metadata={"code": _rc_verdict.code},
+                    )
+                    if not _rc_verdict.ok:
+                        raise ValueError(f"DuckDB SQL rejected: {_rc_verdict.reason}")
                     _rc_rows   = _sanitize_rows(result_cache.query(_sid, _rc_sql))
                     _rc_dur_ms = int(time.time() * 1000) - _rc_start_ms
+                    _trace_step(_rc_trace_id, "execute_sql", input_summary=_rc_sql, output_summary={"rows": len(_rc_rows)}, duration_ms=_rc_dur_ms)
 
                     _log_q(account_id, rc_question, _rc_sql, len(_rc_rows), True, "",
                            "result_chat", "duckdb", 0, 0, _rc_dur_ms,
@@ -2005,6 +2187,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                         "chart":            _rc_chart,
                         "narration":        _rc_narration or None,
                     })
+                    _trace_finish(_rc_trace_id, status="success", answer_type="table", row_count=len(_rc_rows), duration_ms=_rc_dur_ms, final_answer_summary="Result-chat answered from DuckDB cache")
                     log.info(
                         "result_chat answered %r → %d rows via DuckDB (parent=%s, "
                         "chart=%s, narration=%s)",
@@ -2014,6 +2197,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
 
                 except Exception as _rce:
                     log.warning("result_chat error: %s", _rce)
+                    _trace_finish(_rc_trace_id, status="error", answer_type="error", error_message=str(_rce))
                     _log_q(account_id, rc_question, "", 0, False, str(_rce),
                            "result_chat", "duckdb", 0, 0,
                            int(time.time() * 1000) - _rc_start_ms,

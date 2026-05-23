@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}Answer Traces — {{ client.client_name or client.account_id[:16] }}{% endblock %}
+{% block head %}
+<style>
+.trace-grid{display:grid;grid-template-columns:360px 1fr;gap:1rem}
+.trace-list{max-height:720px;overflow:auto}
+.trace-item{display:block;padding:.75rem;border-bottom:1px solid var(--border);color:var(--text);text-decoration:none}
+.trace-item:hover{background:var(--row-hover);text-decoration:none}
+.trace-item.active{background:var(--blue-light)}
+.trace-q{font-size:12px;font-weight:800;line-height:1.35}
+.trace-meta{font-size:11px;color:var(--text-muted);margin-top:4px}
+.trace-kv{display:grid;grid-template-columns:150px 1fr;gap:.45rem .75rem;font-size:12px}
+.trace-kv div:nth-child(odd){color:var(--text-muted);font-weight:800}
+.trace-pre{white-space:pre-wrap;word-break:break-word;background:var(--code-bg);color:var(--code-text);padding:.75rem;border-radius:var(--radius-sm);font-size:12px;max-height:280px;overflow:auto}
+.step{border:1px solid var(--border);border-radius:var(--radius-sm);padding:.65rem;margin-bottom:.55rem;background:var(--surface-2)}
+.step-head{display:flex;justify-content:space-between;gap:.75rem;font-size:12px;font-weight:850}
+.step-body{font-size:11px;color:var(--text-muted);margin-top:.45rem;white-space:pre-wrap;word-break:break-word}
+</style>
+{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Answer Traces</h1>
+  <p><a href="/admin/clients/{{ client.account_id }}">← {{ client.client_name or client.account_id[:16] }}</a></p>
+</div>
+
+<div class="trace-grid">
+  <div class="card trace-list">
+    <div class="card-header"><h2>Recent answers</h2></div>
+    {% if not traces %}
+    <div class="card-body" style="color:var(--text-muted)">No traces captured yet.</div>
+    {% endif %}
+    {% for t in traces %}
+    <a class="trace-item {% if selected and selected.id == t.id %}active{% endif %}"
+       href="/admin/clients/{{ client.account_id }}/traces?trace_id={{ t.id }}">
+      <div class="trace-q">{{ t.question_text_sanitized[:120] or "(no question)" }}</div>
+      <div class="trace-meta">{{ t.created_at }} | {{ t.route or "unknown" }} | {{ t.status }}</div>
+    </a>
+    {% endfor %}
+  </div>
+
+  <div>
+    {% if selected %}
+    <div class="card">
+      <div class="card-header"><h2>Trace #{{ selected.id }}</h2><span class="badge badge-{% if selected.status == 'success' %}green{% elif selected.status == 'started' %}amber{% else %}red{% endif %}">{{ selected.status }}</span></div>
+      <div class="card-body">
+        <div class="trace-kv">
+          <div>Question</div><div>{{ selected.question_text_sanitized }}</div>
+          <div>Route</div><div>{{ selected.route or "—" }}</div>
+          <div>Question ID</div><div><code>{{ selected.question_id }}</code></div>
+          <div>Parent</div><div><code>{{ selected.parent_question_id or "—" }}</code></div>
+          <div>Model</div><div>{{ selected.llm_provider }} / {{ selected.llm_model }}</div>
+          <div>Validation</div><div>{{ selected.sql_validation_status or "—" }}{% if selected.sql_validation_error %}: {{ selected.sql_validation_error }}{% endif %}</div>
+          <div>Rows</div><div>{{ selected.query_row_count }}</div>
+          <div>Duration</div><div>{{ selected.query_duration_ms }} ms</div>
+        </div>
+        {% if selected.generated_sql %}
+        <h3 style="font-size:12px;margin:1rem 0 .45rem">Generated SQL</h3>
+        <pre class="trace-pre">{{ selected.generated_sql }}</pre>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><h2>Steps</h2></div>
+      <div class="card-body">
+        {% for s in selected.steps %}
+        <div class="step">
+          <div class="step-head">
+            <span>{{ s.step_order }}. {{ s.step_name }}</span>
+            <span>{{ s.status }} | {{ s.duration_ms }} ms</span>
+          </div>
+          {% if s.input_summary %}<div class="step-body"><strong>Input:</strong> {{ s.input_summary }}</div>{% endif %}
+          {% if s.output_summary %}<div class="step-body"><strong>Output:</strong> {{ s.output_summary }}</div>{% endif %}
+          {% if s.metadata_json and s.metadata_json != '{}' %}<div class="step-body"><strong>Metadata:</strong> {{ s.metadata_json }}</div>{% endif %}
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% else %}
+    <div class="card"><div class="card-body" style="color:var(--text-muted)">Select a trace to inspect the full path from question to SQL to response.</div></div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

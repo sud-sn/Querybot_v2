@@ -162,6 +162,55 @@ def _resp(request, name, ctx=None):
     return templates.TemplateResponse(request=request, name=name, context=ctx or {})
 
 
+def _eval_case_files(account_id: str) -> list[Path]:
+    root = Path("evals") / "clients" / account_id
+    if not root.exists():
+        return []
+    return sorted(root.glob("**/golden_questions.y*ml")) + sorted(root.glob("**/golden_questions.json"))
+
+
+async def _run_default_evals_async(account_id: str, *, generate: bool = True, execute: bool = False) -> list[int]:
+    """Run all configured eval case files for a client. Best-effort."""
+    from evals.run import run_eval_suite
+
+    run_ids: list[int] = []
+    for case_file in _eval_case_files(account_id):
+        schema = case_file.parent.name or "default"
+        out_dir = Path("evals") / "reports" / account_id / schema / datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        try:
+            _, run_id = await run_eval_suite(
+                account_id=account_id,
+                schema=schema,
+                cases_path=case_file,
+                generate=generate,
+                execute=execute,
+                out_dir=out_dir,
+            )
+            run_ids.append(run_id)
+        except Exception as exc:
+            log.warning("Automatic eval failed for %s/%s: %s", account_id, case_file, exc)
+    return run_ids
+
+
+def _run_default_evals_background(account_id: str) -> None:
+    try:
+        asyncio.run(_run_default_evals_async(account_id, generate=True, execute=False))
+    except Exception as exc:
+        log.warning("Background eval trigger failed for %s: %s", account_id, exc)
+
+
+def _safe_child_path(base_dir: str, filename: str) -> Path | None:
+    if not base_dir or not filename:
+        return None
+    base = Path(base_dir).resolve()
+    target = (base / Path(filename).name).resolve()
+    try:
+        target.relative_to(base)
+    except ValueError:
+        return None
+    return target
+
+
 # Realtime admin notifications.
 @router.get("/api/semantic-feedback/pending-count")
 async def semantic_feedback_pending_count_api(request: Request):
@@ -1031,6 +1080,94 @@ async def client_detail(request: Request, account_id: str):
     })
 
 
+@router.get("/clients/{account_id}/traces", response_class=HTMLResponse)
+async def client_traces(request: Request, account_id: str):
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    client = store.get_client(account_id)
+    if not client:
+        return RedirectResponse("/admin/clients", status_code=303)
+    traces = store.list_answer_traces(account_id, limit=100)
+    selected = None
+    trace_id = request.query_params.get("trace_id")
+    if trace_id:
+        try:
+            selected = store.get_answer_trace(int(trace_id))
+        except Exception:
+            selected = None
+    return _resp(request, "client_traces.html", {
+        "client": client,
+        "traces": traces,
+        "selected": selected,
+    })
+
+
+@router.get("/clients/{account_id}/evals", response_class=HTMLResponse)
+async def client_evals(request: Request, account_id: str):
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    client = store.get_client(account_id)
+    if not client:
+        return RedirectResponse("/admin/clients", status_code=303)
+    runs = store.list_eval_runs(account_id, limit=50)
+    selected = None
+    run_id = request.query_params.get("run_id")
+    if run_id:
+        try:
+            selected = store.get_eval_run(int(run_id))
+        except Exception:
+            selected = None
+    case_files = _eval_case_files(account_id)
+    return _resp(request, "client_evals.html", {
+        "client": client,
+        "runs": runs,
+        "selected": selected,
+        "case_files": [str(p) for p in case_files],
+        "latest": runs[0] if runs else None,
+    })
+
+
+@router.post("/clients/{account_id}/evals/run")
+async def client_evals_run(
+    request: Request,
+    account_id: str,
+    cases_path: str = Form(""),
+    schema_name: str = Form(""),
+    generate: str = Form(""),
+    execute: str = Form(""),
+):
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    client = store.get_client(account_id)
+    if not client:
+        return RedirectResponse("/admin/clients", status_code=303)
+    case_files = _eval_case_files(account_id)
+    allowed = {str(p) for p in case_files}
+    if not cases_path and case_files:
+        cases_path = str(case_files[0])
+    if not cases_path or cases_path not in allowed:
+        return RedirectResponse(
+            f"/admin/clients/{account_id}/evals?error={quote('No valid eval case file found')}",
+            status_code=303,
+        )
+    from evals.run import run_eval_suite
+    case_file = Path(cases_path)
+    schema = schema_name.strip() or case_file.parent.name or "default"
+    out_dir = Path("evals") / "reports" / account_id / schema / datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    _, run_id = await run_eval_suite(
+        account_id=account_id,
+        schema=schema,
+        cases_path=case_file,
+        generate=bool(generate),
+        execute=bool(execute),
+        out_dir=out_dir,
+    )
+    return RedirectResponse(
+        f"/admin/clients/{account_id}/evals?run_id={run_id}",
+        status_code=303,
+    )
+
+
 @router.post("/clients/{account_id}/update")
 async def client_update(
     request: Request,
@@ -1227,6 +1364,9 @@ async def semantic_feedback_review(
     except Exception as exc:
         log.warning("Portal semantic feedback notification failed: %s", exc)
 
+    if status == "approved":
+        asyncio.create_task(_run_default_evals_async(account_id, generate=True, execute=False))
+
     redirect = (
         f"/admin/clients/{account_id}/kb"
         f"?feedback={status}&feedback_status={status}"
@@ -1247,6 +1387,7 @@ async def semantic_feedback_review(
 async def kb_save(
     request: Request,
     account_id: str,
+    background_tasks: BackgroundTasks,
     filename:    str = Form(...),
     content:     str = Form(...),
     file_type:   str = Form("kb"),
@@ -1265,7 +1406,9 @@ async def kb_save(
         return RedirectResponse(f"/admin/clients/{account_id}/kb?saved=error",
                                 status_code=303)
 
-    filepath = Path(target_dir) / filename
+    filepath = _safe_child_path(target_dir, filename)
+    if filepath is None:
+        raise HTTPException(status_code=400, detail="Invalid filename")
     filepath.write_text(content, encoding="utf-8")
 
     # Re-embed only for KB files (schema MDs don't go into Qdrant)
@@ -1273,6 +1416,7 @@ async def kb_save(
         try:
             from core.knowledge import re_embed_file
             re_embed_file(target_dir, account_id, filename)
+            background_tasks.add_task(_run_default_evals_background, account_id)
         except Exception as e:
             log.warning("Re-embed failed for %s: %s", filename, e)
 
@@ -1288,8 +1432,8 @@ def _read_kb_file(kb_dir: str, schema_dir: str, filename: str) -> str:
         return ""
     for d in [kb_dir, schema_dir]:
         if d:
-            p = Path(d) / filename
-            if p.exists():
+            p = _safe_child_path(d, filename)
+            if p and p.exists():
                 return p.read_text(encoding="utf-8")
     return ""
 
@@ -3997,6 +4141,7 @@ async def admin_build_kb(
 
             log.info("Admin KB build complete: %d tables for %s", count, account_id)
             _kb_stop_events.pop(account_id, None)
+            asyncio.create_task(_run_default_evals_async(account_id, generate=True, execute=False))
             import threading as _threading
             _threading.Thread(target=_sync_all_log_exports_bg, daemon=True).start()
         except Exception as e:

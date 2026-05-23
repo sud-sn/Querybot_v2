@@ -48,6 +48,14 @@ from store.semantic_feedback import (
     list_recent_reviewed_semantic_feedback,
     semantic_feedback_maps, semantic_feedback_pending_summary,
 )
+from store.trace_store import (
+    create_answer_trace, update_answer_trace, log_answer_trace_step,
+    finish_answer_trace, kb_chunk_refs, get_answer_trace, list_answer_traces,
+)
+from store.eval_store import (
+    save_eval_run, save_eval_case_result, list_eval_runs,
+    get_eval_run, latest_eval_run,
+)
 
 __all__ = [
     "init_db","get_db","encrypt","decrypt","decrypt_json","mask",
@@ -88,4 +96,8 @@ __all__ = [
     "count_semantic_field_feedback","review_semantic_field_feedback",
     "list_recent_reviewed_semantic_feedback",
     "semantic_feedback_maps","semantic_feedback_pending_summary",
+    "create_answer_trace","update_answer_trace","log_answer_trace_step",
+    "finish_answer_trace","kb_chunk_refs","get_answer_trace","list_answer_traces",
+    "save_eval_run","save_eval_case_result","list_eval_runs",
+    "get_eval_run","latest_eval_run",
 ]

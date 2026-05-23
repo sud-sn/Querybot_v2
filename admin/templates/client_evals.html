@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block title %}Evaluations — {{ client.client_name or client.account_id[:16] }}{% endblock %}
+{% block head %}
+<style>
+.eval-grid{display:grid;grid-template-columns:360px 1fr;gap:1rem}
+.eval-list{max-height:720px;overflow:auto}
+.eval-item{display:block;padding:.75rem;border-bottom:1px solid var(--border);color:var(--text);text-decoration:none}
+.eval-item:hover{background:var(--row-hover);text-decoration:none}
+.eval-item.active{background:var(--blue-light)}
+.eval-meta{font-size:11px;color:var(--text-muted);margin-top:4px}
+.eval-table{width:100%;border-collapse:collapse;font-size:12px}
+.eval-table th{padding:.6rem;background:var(--surface-2);border-bottom:1px solid var(--border);text-align:left}
+.eval-table td{padding:.65rem;border-bottom:1px solid var(--border);vertical-align:top}
+.eval-sql{white-space:pre-wrap;word-break:break-word;max-width:420px;font-family:Consolas,monospace;font-size:11px}
+</style>
+{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Evaluation Runs</h1>
+  <p><a href="/admin/clients/{{ client.account_id }}">← {{ client.client_name or client.account_id[:16] }}</a></p>
+</div>
+
+<div class="card">
+  <div class="card-header"><h2>Run golden-question regression</h2></div>
+  <div class="card-body">
+    {% if case_files %}
+    <form method="post" action="/admin/clients/{{ client.account_id }}/evals/run" class="form-grid">
+      <div class="form-group">
+        <label>Case file</label>
+        <select name="cases_path">
+          {% for p in case_files %}<option value="{{ p }}">{{ p }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Schema label</label>
+        <input name="schema_name" placeholder="Defaults to case-file folder">
+      </div>
+      <div class="form-group">
+        <label><input type="checkbox" name="generate" value="1" checked style="width:auto"> Generate SQL with configured LLM</label>
+        <p class="form-note">Turn off only when cases include generated_sql for offline scoring.</p>
+      </div>
+      <div class="form-group">
+        <label><input type="checkbox" name="execute" value="1" style="width:auto"> Execute SQL against DB</label>
+        <p class="form-note">Use only when the eval DB is safe and deterministic.</p>
+      </div>
+      <div style="grid-column:1/-1"><button class="btn btn-primary btn-sm" type="submit">Run evaluation</button></div>
+    </form>
+    {% else %}
+    <p style="color:var(--text-muted)">No eval case files found. Add one under <code>evals/clients/{{ client.account_id }}/SCHEMA/golden_questions.yaml</code>.</p>
+    {% endif %}
+  </div>
+</div>
+
+<div class="eval-grid">
+  <div class="card eval-list">
+    <div class="card-header"><h2>Run history</h2></div>
+    {% if not runs %}<div class="card-body" style="color:var(--text-muted)">No evaluation runs yet.</div>{% endif %}
+    {% for r in runs %}
+    <a class="eval-item {% if selected and selected.id == r.id %}active{% endif %}"
+       href="/admin/clients/{{ client.account_id }}/evals?run_id={{ r.id }}">
+      <div><strong>{{ r.schema_name or "default" }}</strong> <span class="badge badge-{% if r.status == 'passed' %}green{% else %}red{% endif %}">{{ r.status }}</span></div>
+      <div class="eval-meta">{{ r.created_at }} | {{ r.passed_cases }}/{{ r.total_cases }} | avg {{ r.avg_score }}</div>
+    </a>
+    {% endfor %}
+  </div>
+
+  <div>
+    {% if selected %}
+    <div class="card">
+      <div class="card-header">
+        <h2>Run #{{ selected.id }} — {{ selected.schema_name }}</h2>
+        <span class="badge badge-{% if selected.status == 'passed' %}green{% else %}red{% endif %}">{{ selected.status }}</span>
+      </div>
+      <div class="card-body">
+        <p style="font-size:13px;color:var(--text-muted);margin-bottom:.75rem">
+          {{ selected.passed_cases }}/{{ selected.total_cases }} passed. Average score {{ selected.avg_score }}.
+          {% if selected.report_path %}<br>Report: <code>{{ selected.report_path }}</code>{% endif %}
+        </p>
+        <table class="eval-table">
+          <thead><tr><th>Status</th><th>Case</th><th>Question</th><th>Score</th><th>SQL</th><th>Failures</th></tr></thead>
+          <tbody>
+          {% for c in selected.cases %}
+          <tr>
+            <td><span class="badge badge-{% if c.passed %}green{% else %}red{% endif %}">{% if c.passed %}pass{% else %}fail{% endif %}</span></td>
+            <td><code>{{ c.case_id }}</code></td>
+            <td>{{ c.question }}</td>
+            <td>{{ c.score }}</td>
+            <td><div class="eval-sql">{{ c.generated_sql }}</div></td>
+            <td>{% for f in c.failures %}<div>{{ f }}</div>{% endfor %}</td>
+          </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% else %}
+    <div class="card"><div class="card-body" style="color:var(--text-muted)">Select a run to inspect case-level results.</div></div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

@@ -103,6 +103,80 @@ CREATE TABLE IF NOT EXISTS query_log (
     created_at         TEXT    DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS answer_trace (
+    id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id             TEXT    NOT NULL REFERENCES client(account_id) ON DELETE CASCADE,
+    portal_user_id          INTEGER REFERENCES portal_user(id) ON DELETE SET NULL,
+    platform_user_id        TEXT    DEFAULT '',
+    session_id              TEXT    DEFAULT '',
+    question_id             TEXT    DEFAULT '',
+    parent_question_id      TEXT    DEFAULT '',
+    question_text_sanitized TEXT    DEFAULT '',
+    request_source          TEXT    DEFAULT '',
+    route                   TEXT    DEFAULT '',
+    selected_schema         TEXT    DEFAULT '',
+    allowed_tables_snapshot TEXT    DEFAULT '[]',
+    retrieved_kb_chunk_ids  TEXT    DEFAULT '[]',
+    retrieved_kb_scores     TEXT    DEFAULT '[]',
+    llm_provider            TEXT    DEFAULT '',
+    llm_model               TEXT    DEFAULT '',
+    prompt_tokens           INTEGER DEFAULT 0,
+    completion_tokens       INTEGER DEFAULT 0,
+    generated_sql           TEXT    DEFAULT '',
+    sql_validation_status   TEXT    DEFAULT '',
+    sql_validation_error    TEXT    DEFAULT '',
+    db_type                 TEXT    DEFAULT '',
+    query_row_count         INTEGER DEFAULT 0,
+    query_duration_ms       INTEGER DEFAULT 0,
+    answer_type             TEXT    DEFAULT '',
+    final_answer_summary    TEXT    DEFAULT '',
+    error_message           TEXT    DEFAULT '',
+    status                  TEXT    DEFAULT 'started',
+    created_at              TEXT    DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS answer_trace_step (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    trace_id       INTEGER NOT NULL REFERENCES answer_trace(id) ON DELETE CASCADE,
+    step_order     INTEGER NOT NULL DEFAULT 0,
+    step_name      TEXT    NOT NULL,
+    input_summary  TEXT    DEFAULT '',
+    output_summary TEXT    DEFAULT '',
+    duration_ms    INTEGER DEFAULT 0,
+    status         TEXT    DEFAULT 'success',
+    metadata_json  TEXT    DEFAULT '{}',
+    created_at     TEXT    DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS eval_run (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id      TEXT    NOT NULL REFERENCES client(account_id) ON DELETE CASCADE,
+    schema_name     TEXT    DEFAULT '',
+    case_file       TEXT    DEFAULT '',
+    total_cases     INTEGER DEFAULT 0,
+    passed_cases    INTEGER DEFAULT 0,
+    avg_score       REAL    DEFAULT 0.0,
+    status          TEXT    DEFAULT 'completed',
+    report_path     TEXT    DEFAULT '',
+    created_at      TEXT    DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS eval_case_result (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    eval_run_id        INTEGER NOT NULL REFERENCES eval_run(id) ON DELETE CASCADE,
+    case_id            TEXT    NOT NULL,
+    question           TEXT    NOT NULL,
+    score              REAL    DEFAULT 0.0,
+    passed             INTEGER DEFAULT 0,
+    generated_sql      TEXT    DEFAULT '',
+    validation_status  TEXT    DEFAULT '',
+    validation_error   TEXT    DEFAULT '',
+    execution_status   TEXT    DEFAULT '',
+    row_count          INTEGER DEFAULT 0,
+    failures_json      TEXT    DEFAULT '[]',
+    created_at         TEXT    DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS llm_call_log (
     id                        INTEGER PRIMARY KEY AUTOINCREMENT,
     account_id                TEXT    NOT NULL REFERENCES client(account_id) ON DELETE CASCADE,
@@ -215,6 +289,11 @@ CREATE INDEX IF NOT EXISTS idx_pinned_user          ON pinned_chart(user_id);
 
 CREATE INDEX IF NOT EXISTS idx_query_log_account ON query_log(account_id);
 CREATE INDEX IF NOT EXISTS idx_query_log_created ON query_log(created_at);
+CREATE INDEX IF NOT EXISTS idx_answer_trace_account ON answer_trace(account_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_answer_trace_question ON answer_trace(question_id);
+CREATE INDEX IF NOT EXISTS idx_answer_trace_step_trace ON answer_trace_step(trace_id, step_order);
+CREATE INDEX IF NOT EXISTS idx_eval_run_account ON eval_run(account_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_eval_case_run ON eval_case_result(eval_run_id);
 CREATE INDEX IF NOT EXISTS idx_llm_call_log_account ON llm_call_log(account_id);
 CREATE INDEX IF NOT EXISTS idx_llm_call_log_request ON llm_call_log(request_id);
 CREATE INDEX IF NOT EXISTS idx_llm_call_log_created ON llm_call_log(created_at);
@@ -563,6 +642,8 @@ def _run_migrations() -> None:
     ]
     with get_db() as conn:
         _ensure_llm_call_log_table(conn)
+        _ensure_answer_trace_tables(conn)
+        _ensure_eval_tables(conn)
         _ensure_external_log_export_state_table(conn)
         _ensure_semantic_field_feedback_table(conn)
         for table, column, col_def in migrations:
@@ -615,6 +696,100 @@ def _ensure_llm_call_log_table(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_llm_call_log_question ON llm_call_log(question_id);
         CREATE INDEX IF NOT EXISTS idx_llm_call_log_request  ON llm_call_log(request_id);
         CREATE INDEX IF NOT EXISTS idx_llm_call_log_created  ON llm_call_log(created_at);
+        """
+    )
+
+
+def _ensure_answer_trace_tables(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS answer_trace (
+            id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_id             TEXT    NOT NULL REFERENCES client(account_id) ON DELETE CASCADE,
+            portal_user_id          INTEGER REFERENCES portal_user(id) ON DELETE SET NULL,
+            platform_user_id        TEXT    DEFAULT '',
+            session_id              TEXT    DEFAULT '',
+            question_id             TEXT    DEFAULT '',
+            parent_question_id      TEXT    DEFAULT '',
+            question_text_sanitized TEXT    DEFAULT '',
+            request_source          TEXT    DEFAULT '',
+            route                   TEXT    DEFAULT '',
+            selected_schema         TEXT    DEFAULT '',
+            allowed_tables_snapshot TEXT    DEFAULT '[]',
+            retrieved_kb_chunk_ids  TEXT    DEFAULT '[]',
+            retrieved_kb_scores     TEXT    DEFAULT '[]',
+            llm_provider            TEXT    DEFAULT '',
+            llm_model               TEXT    DEFAULT '',
+            prompt_tokens           INTEGER DEFAULT 0,
+            completion_tokens       INTEGER DEFAULT 0,
+            generated_sql           TEXT    DEFAULT '',
+            sql_validation_status   TEXT    DEFAULT '',
+            sql_validation_error    TEXT    DEFAULT '',
+            db_type                 TEXT    DEFAULT '',
+            query_row_count         INTEGER DEFAULT 0,
+            query_duration_ms       INTEGER DEFAULT 0,
+            answer_type             TEXT    DEFAULT '',
+            final_answer_summary    TEXT    DEFAULT '',
+            error_message           TEXT    DEFAULT '',
+            status                  TEXT    DEFAULT 'started',
+            created_at              TEXT    DEFAULT (datetime('now'))
+        );
+        CREATE TABLE IF NOT EXISTS answer_trace_step (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            trace_id       INTEGER NOT NULL REFERENCES answer_trace(id) ON DELETE CASCADE,
+            step_order     INTEGER NOT NULL DEFAULT 0,
+            step_name      TEXT    NOT NULL,
+            input_summary  TEXT    DEFAULT '',
+            output_summary TEXT    DEFAULT '',
+            duration_ms    INTEGER DEFAULT 0,
+            status         TEXT    DEFAULT 'success',
+            metadata_json  TEXT    DEFAULT '{}',
+            created_at     TEXT    DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_answer_trace_account
+            ON answer_trace(account_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_answer_trace_question
+            ON answer_trace(question_id);
+        CREATE INDEX IF NOT EXISTS idx_answer_trace_step_trace
+            ON answer_trace_step(trace_id, step_order);
+        """
+    )
+
+
+def _ensure_eval_tables(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS eval_run (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_id      TEXT    NOT NULL REFERENCES client(account_id) ON DELETE CASCADE,
+            schema_name     TEXT    DEFAULT '',
+            case_file       TEXT    DEFAULT '',
+            total_cases     INTEGER DEFAULT 0,
+            passed_cases    INTEGER DEFAULT 0,
+            avg_score       REAL    DEFAULT 0.0,
+            status          TEXT    DEFAULT 'completed',
+            report_path     TEXT    DEFAULT '',
+            created_at      TEXT    DEFAULT (datetime('now'))
+        );
+        CREATE TABLE IF NOT EXISTS eval_case_result (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            eval_run_id        INTEGER NOT NULL REFERENCES eval_run(id) ON DELETE CASCADE,
+            case_id            TEXT    NOT NULL,
+            question           TEXT    NOT NULL,
+            score              REAL    DEFAULT 0.0,
+            passed             INTEGER DEFAULT 0,
+            generated_sql      TEXT    DEFAULT '',
+            validation_status  TEXT    DEFAULT '',
+            validation_error   TEXT    DEFAULT '',
+            execution_status   TEXT    DEFAULT '',
+            row_count          INTEGER DEFAULT 0,
+            failures_json      TEXT    DEFAULT '[]',
+            created_at         TEXT    DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_eval_run_account
+            ON eval_run(account_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_eval_case_run
+            ON eval_case_result(eval_run_id);
         """
     )
 
