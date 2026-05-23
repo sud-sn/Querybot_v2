@@ -1555,6 +1555,102 @@ def _result_has_identifiers(schema: list[dict]) -> bool:
     )
 
 
+def _build_followup_sql_context(
+    original_sql: str,
+    original_question: str,
+    follow_up_question: str,
+    prev_rows: list[dict],
+    schema: list[dict],
+    has_identifiers: bool,
+) -> str:
+    """
+    Unified context block injected into the production-DB fallback prompt for
+    ALL result-chat follow-up questions.
+
+    The LLM now has full main-pipeline schema knowledge (entity graph, synonyms,
+    business terms, table coverage).  This block provides the ORIGINAL SQL as an
+    anchor so the LLM can:
+      - Wrap it in a subquery / CTE to filter or enrich the result
+      - Reuse its WHERE conditions for a new query on a different set of columns
+      - JOIN additional tables onto the result of the original query
+      - Rewrite it from scratch using the same filters but different SELECT columns
+
+    Two flavours:
+      has_identifiers=True  — result had text/ID columns; specific values are listed
+                              so the LLM can use WHERE col IN (...) as an alternative
+                              to wrapping the original SQL.
+      has_identifiers=False — result was a pure aggregate (COUNT/SUM/AVG); the LLM
+                              must rewrite the SELECT while keeping the same FROM/WHERE.
+    """
+    if not original_sql and not prev_rows:
+        return ""
+
+    lines = [
+        "FOLLOW-UP QUERY CONTEXT:",
+        "The user is asking a follow-up question about a previously returned result.",
+    ]
+    if original_question:
+        lines.append(f'The original question was: "{original_question}"')
+    if original_sql:
+        lines += [
+            "",
+            "The SQL that produced the previous result was:",
+            original_sql.strip(),
+            "",
+            "You can answer the follow-up using any of these approaches:",
+            "  • Subquery  — SELECT ... FROM (<original SQL>) sub WHERE sub.col = ...",
+            "  • CTE       — WITH base AS (<original SQL>) SELECT ... FROM base WHERE ...",
+            "  • Rewrite   — Keep the same FROM/WHERE conditions, change SELECT columns.",
+            "  • JOIN      — JOIN additional tables onto the result using the KB schema.",
+            "  The choice depends on what the follow-up question needs.",
+        ]
+
+    if not has_identifiers and original_sql:
+        lines += [
+            "",
+            "NOTE: The previous result was a summary aggregate (COUNT/SUM/AVG).",
+            "To list detail records, change SELECT from the aggregate function to the",
+            "specific columns requested, keeping FROM and WHERE from the original SQL.",
+            "If unsure which columns to use, SELECT TOP 20 * (or LIMIT 20) from the",
+            "same table — a broad result is far better than CANNOT_GENERATE.",
+        ]
+    elif has_identifiers and prev_rows and schema:
+        # Also include specific values so the LLM has an alternative to subquery
+        _TEXT_TYPES = {"TEXT", "VARCHAR", "STRING", "NVARCHAR", "CHAR", "CHARACTER VARYING", "NCHAR"}
+        value_groups: list[tuple[str, list[str]]] = []
+        for col_info in schema:
+            col   = col_info["name"]
+            dtype = col_info.get("type", "TEXT").upper().split("(")[0].strip()
+            if dtype not in _TEXT_TYPES:
+                continue
+            vals = list(dict.fromkeys(
+                str(r[col]) for r in prev_rows if r.get(col) is not None
+            ))[:15]
+            if vals:
+                value_groups.append((col, vals))
+            if len(value_groups) >= 3:
+                break
+        if value_groups:
+            lines += ["", "Alternatively, the result contained these specific values:"]
+            for col, vals in value_groups:
+                in_list = ", ".join(f"'{v}'" for v in vals)
+                lines.append(
+                    f"  • column '{col}': {in_list}"
+                )
+            lines.append(
+                "You may use these in WHERE col IN (...) instead of a subquery if simpler."
+            )
+
+    lines += [
+        "",
+        "CRITICAL: Use ONLY column and table names that appear in the Knowledge Base above.",
+        "Do NOT use SELECT-alias names from the previous result as real column names.",
+        "Only return CANNOT_GENERATE if the question requires data that is genuinely",
+        "unavailable in the database schema shown in the Knowledge Base.",
+    ]
+    return "\n".join(lines)
+
+
 def _build_aggregate_drilldown_context(
     original_sql: str,
     original_question: str,
@@ -2218,31 +2314,120 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                         # (no text/identifier columns) — there are no entity values
                         # to build a WHERE filter from, so the LLM will always
                         # return CANNOT_GENERATE, wasting a round-trip.
-                        _fb_rows = None
-                        _fb_sql  = None
-                        _fb_err  = None
-                        _fb_has_ids = _result_has_identifiers(_rc_schema)
+                        _fb_rows     = None
+                        _fb_sql      = None
+                        _fb_err      = None
+                        _fb_full_ctx = ""   # populated below; guard for missing db_cfg
+                        _fb_graph_ctx: dict = {}
+                        _fb_has_ids  = _result_has_identifiers(_rc_schema)
                         try:
                             _cached_result = getattr(adapter, "last_result", None) or {}
-                            _fb_rag_ctx    = _cached_result.get("rag_context", "")
                             _fb_db_cfg     = _cached_result.get("db_cfg") or _rc_db_cfg
+
                             if _fb_db_cfg:
-                                # Re-retrieve KB for the follow-up question so the LLM
-                                # has the right schema context (e.g. prescriber/patient tables)
-                                # rather than just the original question's KB context.
-                                # Merge: follow-up context first (most relevant) + original.
+                                # ── Full main-pipeline context assembly ────────────────
+                                # The fallback runs the same context-building steps as
+                                # handle_query() so the LLM has complete schema knowledge
+                                # — entity graph, business terms, synonyms, examples, table
+                                # coverage — not just the original question's RAG context.
+
+                                import re as _fb_re
+
+                                # 1. RAG retrieval — same n as main pipeline; detect grouping
+                                _fb_rag_ctx  = _cached_result.get("rag_context", "")
+                                _fb_grouping = bool(_fb_re.search(
+                                    r"\b(by|per|grouped by|breakdown|split by|each|for each)\s+\w",
+                                    rc_question.lower()
+                                ))
+                                _fb_n = 10 if _fb_grouping else 8
                                 try:
                                     _fb_retriever  = load_retriever(account_id)
-                                    _fb_fresh_docs = _fb_retriever.retrieve(rc_question, n=6)
+                                    _fb_fresh_docs = _fb_retriever.retrieve(rc_question, n=_fb_n)
+                                    _fb_pinned     = [d for d in _fb_fresh_docs if _fb_retriever._is_global(d)]
+                                    _fb_table_docs = [d for d in _fb_fresh_docs if not _fb_retriever._is_global(d)]
+                                    if _fb_grouping:
+                                        _fb_fact_pats = _fb_retriever.retrieve_fact_patterns(rc_question, n=2)
+                                        for _fp in _fb_fact_pats:
+                                            if _fp not in (_fb_pinned + _fb_table_docs):
+                                                _fb_table_docs.insert(0, _fp)
+                                    _fb_fresh_docs = (_fb_pinned + _fb_table_docs)[:7]
                                     _fb_fresh_ctx  = "\n\n---\n\n".join(_fb_fresh_docs)
+                                    # Merge: follow-up context first (highest relevance), then
+                                    # the original query's context for background schema.
                                     _fb_rag_ctx = (
                                         _fb_fresh_ctx + "\n\n---\n\n" + _fb_rag_ctx
                                         if _fb_rag_ctx else _fb_fresh_ctx
                                     )
                                 except Exception as _ret_exc:
-                                    log.debug("result_chat fallback KB re-retrieval failed: %s", _ret_exc)
+                                    log.debug("result_chat fallback KB retrieval failed: %s", _ret_exc)
 
-                            if _fb_db_cfg and _fb_rag_ctx:
+                                # 2. Few-shot validated examples
+                                try:
+                                    _fb_examples = retrieve_similar_examples(rc_question, account_id, n=3)
+                                    if _fb_examples:
+                                        _fb_rag_ctx = (
+                                            format_examples_for_prompt(_fb_examples)
+                                            + "\n\n---\n\n" + _fb_rag_ctx
+                                        )
+                                except Exception:
+                                    pass
+
+                                # 3. Business term injection (glossary)
+                                _fb_term_inj = store.build_term_injection(account_id, rc_question, None)
+
+                                # 4. KB synonym map (from ## Business Synonyms sections)
+                                _fb_synonym_inj = _extract_kb_synonym_injection(_fb_rag_ctx)
+
+                                # 5. Generic query hints (date anchoring, aggregation rules)
+                                _fb_generic_hints = build_generic_query_hints(rc_question)
+
+                                # 6. Entity graph — deterministic JOIN path resolution
+                                _fb_graph_ctx: dict = {}
+                                try:
+                                    _fb_full_graph = store.get_full_graph(account_id)
+                                    if _fb_full_graph.get("entities"):
+                                        _fb_graph_ctx = _graph_resolve(
+                                            question   = rc_question,
+                                            account_id = account_id,
+                                            db_type    = _fb_db_cfg.get("db_type", "azure_sql"),
+                                            graph      = _fb_full_graph,
+                                        )
+                                except Exception as _gex:
+                                    log.debug("result_chat fallback graph resolution skipped: %s", _gex)
+
+                                # 7. Table coverage guarantee — fill any JOIN gaps RAG missed
+                                if _fb_graph_ctx.get("enabled"):
+                                    try:
+                                        from core.table_coverage import (
+                                            build_required_fqns,
+                                            guarantee_table_coverage,
+                                        )
+                                        _fb_required = build_required_fqns(_fb_graph_ctx, _fb_full_graph)
+                                        if _fb_required:
+                                            _fb_gap_docs = guarantee_table_coverage(
+                                                account_id     = account_id,
+                                                required_fqns  = _fb_required,
+                                                retrieved_docs = _fb_fresh_docs,
+                                                rag_filter     = None,
+                                                max_fill       = 3,
+                                            )
+                                            if _fb_gap_docs:
+                                                _fb_rag_ctx += "\n\n---\n\n" + "\n\n---\n\n".join(_fb_gap_docs)
+                                    except Exception:
+                                        pass
+
+                                # 8. Assemble full context (same priority order as main pipeline)
+                                _fb_context_parts = [
+                                    p for p in (
+                                        _fb_term_inj,
+                                        _fb_synonym_inj,
+                                        _fb_generic_hints,
+                                        _fb_rag_ctx,
+                                    ) if p
+                                ]
+                                _fb_full_ctx = "\n\n".join(_fb_context_parts)
+
+                            if _fb_db_cfg and _fb_full_ctx:
                                 await websocket.send_json({
                                     "type": "result_chat_typing",
                                     "result_id": rc_result_id,
@@ -2252,28 +2437,39 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                 _fb_prov, _fb_model, _fb_key, _fb_az = resolve_provider(
                                     client, purpose="query"
                                 )
+                                # Full system prompt — same as main pipeline, with graph context
                                 _fb_system = build_sql_system_prompt(
                                     _fb_db_cfg.get("db_type", "azure_sql"),
-                                    _fb_rag_ctx,
+                                    _fb_full_ctx,
+                                    graph_context=_fb_graph_ctx or None,
                                 )
-                                # Inject drill-down context.
-                                # For aggregate results (no identifier columns): use the
-                                # original SQL so the LLM can rewrite it as a detail query.
-                                # For normal results (has identifier columns): inject the
-                                # specific values from the result rows as a WHERE IN hint.
+                                # Conversation history for this result card (last 5 turns)
+                                if _rc_history:
+                                    _fb_hist_lines = ["Session context (recent result-chat turns):"]
+                                    for _ht in _rc_history[-3:]:
+                                        _fb_hist_lines.append(
+                                            f"  Q: {_ht.get('question','')[:80]}"
+                                        )
+                                        if _ht.get("sql"):
+                                            _fb_hist_lines.append(
+                                                f"  SQL: {_ht['sql'][:120]}"
+                                            )
+                                    _fb_system = _fb_system + "\n\n" + "\n".join(_fb_hist_lines)
+
+                                # Original SQL anchor — unified for both aggregate and
+                                # identifier results. The LLM can use it as a subquery,
+                                # CTE, or just keep the same WHERE conditions.
                                 _prev_rows = _cached_result.get("rows") or []
-                                if not _fb_has_ids:
-                                    _drill_ctx = _build_aggregate_drilldown_context(
-                                        original_sql=_cached_result.get("sql", ""),
-                                        original_question=_cached_result.get("question", ""),
-                                        follow_up_question=rc_question,
-                                    )
-                                else:
-                                    _drill_ctx = _build_drilldown_context(
-                                        _cached_result.get("question", ""),
-                                        _prev_rows,
-                                        _rc_schema,
-                                    )
+                                _orig_sql  = _cached_result.get("sql", "")
+                                _orig_q    = _cached_result.get("question", "")
+                                _drill_ctx = _build_followup_sql_context(
+                                    original_sql      = _orig_sql,
+                                    original_question = _orig_q,
+                                    follow_up_question= rc_question,
+                                    prev_rows         = _prev_rows,
+                                    schema            = _rc_schema,
+                                    has_identifiers   = _fb_has_ids,
+                                )
                                 if _drill_ctx:
                                     _fb_system = _fb_system + "\n\n---\n\n" + _drill_ctx
                                 _fb_sql_raw, _, _ = await llm_complete(
