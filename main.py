@@ -480,7 +480,12 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
         await _send_live_stage(adapter, event, "retrieving_context", "Analysing results", "Running analytics on the previously returned data.")
         try:
             _duck_schema = result_cache.get_schema(_session_id)
-            _duck_sys_prompt = build_duckdb_system_prompt(_duck_schema, db_type=db_cfg.get("db_type", "azure_sql"))
+            _duck_stats  = result_cache.get_stats(_session_id)
+            _duck_sys_prompt = build_duckdb_system_prompt(
+                _duck_schema,
+                db_type    = db_cfg.get("db_type", "azure_sql"),
+                data_stats = _duck_stats,
+            )
             _duck_sql = await _generate_duckdb_sql(question, _duck_sys_prompt, client)
             if _duck_sql and _duck_sql.strip().upper() != "CANNOT_GENERATE":
                 await _send_live_stage(adapter, event, "executing_query", "Running query", "Querying in-memory result set.")
@@ -1657,6 +1662,11 @@ async def ws_chat(websocket: WebSocket, account_id: str):
     _ws_state = get_state(account_id)
     _ws_known_tables = load_known_tables(_ws_state.get("schema_dir", ""))
 
+    # Per-result-card conversation history for result_chat multi-turn memory.
+    # Keyed by result_id; each value is a list of {question, sql, row_count}.
+    # Cleared automatically when a new main query replaces the result card.
+    _result_chat_histories: dict[str, list[dict]] = {}
+
     # Send welcome message with user name
     await websocket.send_json({
         "type":    "system",
@@ -1710,10 +1720,10 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     "result_id": rc_result_id,
                     "active": True,
                 })
-                _rc_start_ms = int(time.time() * 1000)
-                _rc_question_id      = make_llm_audit_request_id()
-                _rc_parent_qid       = getattr(adapter, "last_question_id", "") or ""
-                _rc_pu_id            = portal_user.get("id") if portal_user else None
+                _rc_start_ms    = int(time.time() * 1000)
+                _rc_question_id = make_llm_audit_request_id()
+                _rc_parent_qid  = getattr(adapter, "last_question_id", "") or ""
+                _rc_pu_id       = portal_user.get("id") if portal_user else None
                 try:
                     _sid = getattr(adapter, "session_id", None)
                     if not _sid or not result_cache.has_result(_sid):
@@ -1723,30 +1733,140 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                             "content": "No cached result found. Please run a query first.",
                         })
                         continue
+
                     _rc_schema  = result_cache.get_schema(_sid)
+                    _rc_stats   = result_cache.get_stats(_sid)
                     _rc_db_cfg  = get_client_db(account_id) or {}
-                    _rc_sys     = build_duckdb_system_prompt(_rc_schema, db_type=_rc_db_cfg.get("db_type", "azure_sql"))
-                    _rc_sql    = await _generate_duckdb_sql(rc_question, _rc_sys, client)
+                    _rc_history = _result_chat_histories.get(rc_result_id, [])
+
+                    _rc_sys = build_duckdb_system_prompt(
+                        _rc_schema,
+                        db_type   = _rc_db_cfg.get("db_type", "azure_sql"),
+                        data_stats= _rc_stats,
+                        history   = _rc_history,
+                    )
+                    _rc_sql = await _generate_duckdb_sql(rc_question, _rc_sys, client)
+
+                    # ── DuckDB CANNOT_GENERATE → fallback to production DB ────
                     if not _rc_sql or _rc_sql.strip().upper() == "CANNOT_GENERATE":
-                        _log_q(account_id, rc_question, _rc_sql or "", 0, False,
-                               "CANNOT_GENERATE", "result_chat", "duckdb", 0, 0,
+                        log.info(
+                            "result_chat CANNOT_GENERATE for %r — attempting production DB fallback",
+                            rc_question[:60],
+                        )
+                        _log_q(account_id, rc_question, "", 0, False,
+                               "CANNOT_GENERATE→DB_FALLBACK", "result_chat", "duckdb", 0, 0,
                                int(time.time() * 1000) - _rc_start_ms,
                                portal_user_id=_rc_pu_id, zoom_user_id=zoom_user_id,
                                question_id=_rc_question_id,
                                parent_question_id=_rc_parent_qid)
-                        await websocket.send_json({
-                            "type": "result_chat_error",
-                            "result_id": rc_result_id,
-                            "content": "I couldn't answer that from the current result. Try rephrasing or ask a fresh question.",
-                        })
+
+                        # Try to answer from the production database using the
+                        # KB context stored with the last result card.
+                        _fb_rows = None
+                        _fb_sql  = None
+                        _fb_err  = None
+                        try:
+                            _cached_result = getattr(adapter, "last_result", None) or {}
+                            _fb_rag_ctx    = _cached_result.get("rag_context", "")
+                            _fb_db_cfg     = _cached_result.get("db_cfg") or _rc_db_cfg
+                            if _fb_db_cfg and _fb_rag_ctx:
+                                await websocket.send_json({
+                                    "type": "result_chat_typing",
+                                    "result_id": rc_result_id,
+                                    "active": True,
+                                    "message": "Querying your database for a complete answer…",
+                                })
+                                _fb_prov, _fb_model, _fb_key, _fb_az = resolve_provider(
+                                    client, purpose="query"
+                                )
+                                _fb_system = build_sql_system_prompt(
+                                    _fb_db_cfg.get("db_type", "azure_sql"),
+                                    _fb_rag_ctx,
+                                )
+                                _fb_sql_raw, _, _ = await llm_complete(
+                                    _fb_system, rc_question,
+                                    _fb_prov, _fb_model, _fb_key,
+                                    max_tokens=512, **_fb_az,
+                                )
+                                if _fb_sql_raw and _fb_sql_raw.startswith("```"):
+                                    _fb_sql_raw = "\n".join(
+                                        _fb_sql_raw.split("\n")[1:]
+                                    ).rsplit("```", 1)[0].strip()
+                                _fb_sql_raw = _inject_distinct_if_needed(
+                                    _fb_sql_raw or "", rc_question
+                                )
+                                if _fb_sql_raw and "CANNOT_GENERATE" not in _fb_sql_raw.upper():
+                                    _fb_ok, _, _ = validate_sql(
+                                        _fb_sql_raw, _ws_known_tables,
+                                        _fb_db_cfg.get("db_type", "azure_sql"),
+                                        None,
+                                    )
+                                    if _fb_ok:
+                                        _fb_rows = run_query(
+                                            _fb_db_cfg["credentials"],
+                                            _fb_db_cfg["db_type"],
+                                            _fb_sql_raw,
+                                        )
+                                        _fb_sql = _fb_sql_raw
+                        except Exception as _fb_exc:
+                            _fb_err = str(_fb_exc)
+                            log.warning("result_chat DB fallback failed: %s", _fb_exc)
+
+                        if _fb_rows is not None and _fb_sql:
+                            _fb_dur = int(time.time() * 1000) - _rc_start_ms
+                            _fb_rows = _sanitize_rows(_fb_rows)
+                            _log_q(account_id, rc_question, _fb_sql, len(_fb_rows), True, "",
+                                   "result_chat_db_fallback",
+                                   _rc_db_cfg.get("db_type", "unknown"),
+                                   0, 0, _fb_dur,
+                                   portal_user_id=_rc_pu_id, zoom_user_id=zoom_user_id,
+                                   question_id=_rc_question_id,
+                                   parent_question_id=_rc_parent_qid)
+                            await websocket.send_json({
+                                "type":      "result_chat_response",
+                                "result_id": rc_result_id,
+                                "question":  rc_question,
+                                "sql":       _fb_sql,
+                                "rows":      _fb_rows,
+                                "row_count": len(_fb_rows),
+                                "source":    "database",
+                                "source_note": "Answer required a full database query.",
+                            })
+                            log.info(
+                                "result_chat DB fallback succeeded: %r → %d rows",
+                                rc_question[:60], len(_fb_rows),
+                            )
+                        else:
+                            # Both DuckDB and DB fallback failed — surface a helpful message
+                            await websocket.send_json({
+                                "type":    "result_chat_error",
+                                "result_id": rc_result_id,
+                                "content": (
+                                    "I couldn't answer that from the current result "
+                                    "or from the database. Try asking a fresh question "
+                                    "in the main chat."
+                                ),
+                            })
                         continue
-                    _rc_rows = _sanitize_rows(result_cache.query(_sid, _rc_sql))
+
+                    # ── DuckDB answered — run query ───────────────────────────
+                    _rc_rows   = _sanitize_rows(result_cache.query(_sid, _rc_sql))
                     _rc_dur_ms = int(time.time() * 1000) - _rc_start_ms
+
                     _log_q(account_id, rc_question, _rc_sql, len(_rc_rows), True, "",
                            "result_chat", "duckdb", 0, 0, _rc_dur_ms,
                            portal_user_id=_rc_pu_id, zoom_user_id=zoom_user_id,
                            question_id=_rc_question_id,
                            parent_question_id=_rc_parent_qid)
+
+                    # Update multi-turn history for this result card
+                    _rc_history.append({
+                        "question":  rc_question,
+                        "sql":       _rc_sql,
+                        "row_count": len(_rc_rows),
+                    })
+                    _result_chat_histories[rc_result_id] = _rc_history[-5:]  # keep last 5
+
                     await websocket.send_json({
                         "type":      "result_chat_response",
                         "result_id": rc_result_id,
@@ -1754,9 +1874,13 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                         "sql":       _rc_sql,
                         "rows":      _rc_rows,
                         "row_count": len(_rc_rows),
+                        "source":    "cache",
                     })
-                    log.info("result_chat answered %r → %d rows via DuckDB (parent=%s)",
-                             rc_question[:60], len(_rc_rows), _rc_parent_qid[:16] or "none")
+                    log.info(
+                        "result_chat answered %r → %d rows via DuckDB (parent=%s)",
+                        rc_question[:60], len(_rc_rows), _rc_parent_qid[:16] or "none",
+                    )
+
                 except Exception as _rce:
                     log.warning("result_chat error: %s", _rce)
                     _log_q(account_id, rc_question, "", 0, False, str(_rce),

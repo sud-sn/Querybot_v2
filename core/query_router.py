@@ -128,7 +128,12 @@ def should_route_to_result_cache(
 
 # ── DuckDB system prompt ──────────────────────────────────────────────────────
 
-def build_duckdb_system_prompt(schema: list[dict], db_type: str = "azure_sql") -> str:
+def build_duckdb_system_prompt(
+    schema: list[dict],
+    db_type: str = "azure_sql",
+    data_stats: dict | None = None,
+    history: list[dict] | None = None,
+) -> str:
     """
     Build the SQL generation system prompt for in-memory DuckDB queries.
 
@@ -136,38 +141,90 @@ def build_duckdb_system_prompt(schema: list[dict], db_type: str = "azure_sql") -
     PERCENTILE_CONT, CORR, window functions) that production databases may
     not, so this prompt is intentionally more permissive than the main one.
 
-    `schema` is a list of {name, type} dicts from result_cache.get_schema().
+    Parameters
+    ----------
+    schema     : [{name, type}, ...] from result_cache.get_schema()
+    db_type    : source DB type (informational only — query runs in DuckDB)
+    data_stats : statistical summary from result_cache.get_stats() — injected
+                 so the LLM knows actual min/max/avg and categorical values
+    history    : previous result_chat turns [{question, sql, row_count}, ...]
+                 injected so the LLM can resolve follow-up references
     """
     col_lines = "\n".join(
         f"  - {s['name']}  ({s['type']})" for s in schema
     )
+
+    # ── Data snapshot block ───────────────────────────────────────────────────
+    stats_block = ""
+    if data_stats and data_stats.get("columns"):
+        lines = [
+            f"\nDATA SNAPSHOT ({data_stats['row_count']} rows in result — "
+            "use this to write correct SQL, avoid inventing values):"
+        ]
+        for c in data_stats["columns"]:
+            parts = [f"  {c['name']}  ({c['type']})"]
+            if "min" in c:
+                parts.append(
+                    f"min={c['min']:,}  max={c['max']:,}  avg={c['avg']:,}"
+                    f"  nulls={c['null_count']}"
+                )
+            else:
+                uniq = c["unique_count"]
+                samp = c.get("sample_values") or []
+                samp_str = ", ".join(f"'{v}'" for v in samp)
+                parts.append(
+                    f"{uniq} unique value{'s' if uniq != 1 else ''}"
+                    + (f": [{samp_str}]" if samp else "")
+                    + f"  nulls={c['null_count']}"
+                )
+            lines.append("  ".join(parts))
+        stats_block = "\n".join(lines)
+
+    # ── Conversation history block ────────────────────────────────────────────
+    history_block = ""
+    if history:
+        lines = [
+            "\nCONVERSATION HISTORY (previous questions on this result — use to "
+            "resolve 'those', 'them', 'the top 5', follow-up references):"
+        ]
+        for i, turn in enumerate(history[-5:], 1):   # last 5 turns max
+            lines.append(f"  Q{i}: {turn.get('question', '')[:120]}")
+            if turn.get("sql"):
+                lines.append(f"  SQL{i}: {turn['sql'][:300]}")
+            lines.append(f"  → {turn.get('row_count', 0)} rows returned")
+        history_block = "\n".join(lines)
+
     return (
         "You are a DuckDB SQL expert. Convert the user's plain-English question "
         "into a valid DuckDB SELECT query against the in-memory table called 'result'.\n\n"
         "The 'result' table has these columns:\n"
-        f"{col_lines}\n\n"
+        f"{col_lines}"
+        f"{stats_block}"
+        f"{history_block}\n\n"
         "RULES:\n"
-        "- Use ONLY these column names — never invent new ones\n"
+        "- Use ONLY the column names listed above — never invent new ones\n"
         "- Table name is always: result\n"
         "- DuckDB supports: MEDIAN(), STDDEV_POP(), STDDEV_SAMP(), PERCENTILE_CONT(x) "
         "WITHIN GROUP (ORDER BY col), CORR(col1, col2), AVG(), SUM(), window functions "
         "(ROW_NUMBER(), RANK(), NTILE(), LAG(), LEAD()), QUALIFY clause\n"
         "- GROUP BY RULE (CRITICAL): DuckDB enforces strict GROUP BY. Every column in "
-        "SELECT that is NOT inside an aggregate function (SUM/COUNT/AVG/MIN/MAX) MUST "
-        "appear in the GROUP BY clause. Violation causes a Binder Error at runtime.\n"
+        "SELECT that is NOT inside an aggregate function MUST appear in GROUP BY.\n"
         "  WRONG: SELECT name, SUM(revenue) FROM result GROUP BY revenue\n"
         "  RIGHT: SELECT name, SUM(revenue) FROM result GROUP BY name\n"
-        "- NO-AGGREGATE RULE: If you are not computing any aggregate (just filtering, "
-        "sorting, or top-N), do NOT add GROUP BY at all. Simply use ORDER BY + LIMIT.\n"
-        "  Example — top 5 by a metric column already in the result:\n"
-        "    SELECT col_a, col_b FROM result ORDER BY col_b DESC LIMIT 5\n"
-        "- For 'above/below average': use AVG() in a subquery or window: "
-        "WHERE col > (SELECT AVG(col) FROM result)\n"
-        "- For 'percentile rank': use PERCENT_RANK() OVER (ORDER BY col)\n"
+        "- NO-AGGREGATE RULE: For filter/sort/top-N without any aggregate function, "
+        "omit GROUP BY entirely — use ORDER BY + LIMIT only.\n"
+        "  Example:  SELECT col_a, col_b FROM result ORDER BY col_b DESC LIMIT 5\n"
+        "- FOLLOW-UP RULE: If the question references 'those', 'them', 'the top N', "
+        "'from previous results' — use the CONVERSATION HISTORY above to understand "
+        "what the user is referring to and build the SQL accordingly.\n"
+        "- For 'above/below average': WHERE col > (SELECT AVG(col) FROM result)\n"
+        "- For 'percentile rank': PERCENT_RANK() OVER (ORDER BY col)\n"
         "- For 'outliers': WHERE col > (SELECT AVG(col) + 2 * STDDEV_POP(col) FROM result)\n"
-        "- For 'ratio': SELECT col_a / NULLIF(col_b, 0) AS ratio\n"
         "- For 'running total': SELECT col, SUM(metric) OVER (ORDER BY col) AS running_total\n"
-        "- Row limit: default to no LIMIT unless the user specifies a number\n"
+        "- For 'ratio': SELECT col_a / NULLIF(col_b, 0) AS ratio\n"
+        "- Row limit: use no LIMIT unless the user specifies a number\n"
         "- Return ONLY the raw SQL. No markdown fences. No explanation.\n"
-        "- If the question cannot be answered from this table, return exactly: CANNOT_GENERATE\n"
+        "- If the question cannot be answered from this in-memory table "
+        "(e.g. it needs data not present in the result columns), "
+        "return exactly: CANNOT_GENERATE\n"
     )
