@@ -135,3 +135,8 @@ body {
   }
   .main { padding: 1rem; }
 }
+
+/* ── Page entrance ── */
+@media (prefers-reduced-motion: no-preference) {
+  .main { animation: qb-fadeUp .22s ease both; }
+}
