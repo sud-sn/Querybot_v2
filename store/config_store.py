@@ -797,13 +797,20 @@ def _ensure_metric_registry_schema(conn) -> None:
             conn.execute(f"ALTER TABLE metric_registry ADD COLUMN {column} {definition}")
 
 
-def save_metric(account_id: str, metric: dict) -> int:
+def save_metric(account_id: str, metric: dict, *, db_type: str = "azure_sql") -> int:
     """
     Save a metric definition to the metric_registry table.
-    metric dict keys: name, synonyms (comma-sep), sql_template, description
+
+    Runs backend validation before saving. Sets metric_status to 'validated'
+    when the formula passes all checks, or 'draft' when it fails.
+    Writes validation_errors and last_validated_at on every save.
+
     Returns the new metric id.
     """
+    import json as _json
     from store.db import get_db
+    from core.metric_validator import validate_metric, derive_metric_status, load_schema_columns
+
     formula_type = _metric_choice(
         metric.get("formula_type", "query"), {"query", "expression"}, "query"
     )
@@ -812,6 +819,11 @@ def save_metric(account_id: str, metric: dict) -> int:
         {"number", "currency", "percentage", "date", "text"},
         "number",
     )
+
+    schema_columns = load_schema_columns(account_id)
+    vr = validate_metric(metric, db_type=db_type, schema_columns=schema_columns)
+    metric_status = derive_metric_status(vr, formula_type)
+
     with get_db() as conn:
         _ensure_metric_registry_schema(conn)
         cur = conn.execute("""
@@ -819,8 +831,11 @@ def save_metric(account_id: str, metric: dict) -> int:
                 (account_id, name, synonyms, sql_template, description,
                  formula_type, result_format, required_columns,
                  allowed_dimensions, example_questions, grain,
-                 category, default_time_column)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 category, default_time_column,
+                 base_entity, base_table,
+                 formula_ast, metric_status, validation_errors,
+                 last_validated_at, version, owner)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), 1, ?)
         """, (
             account_id,
             metric["name"],
@@ -835,6 +850,12 @@ def save_metric(account_id: str, metric: dict) -> int:
             metric.get("grain", ""),
             metric.get("category", ""),
             metric.get("default_time_column", ""),
+            metric.get("base_entity", ""),
+            metric.get("base_table", ""),
+            _json.dumps(vr.formula_ast),
+            metric_status,
+            _json.dumps(vr.errors),
+            metric.get("owner", ""),
         ))
         return cur.lastrowid
 
@@ -866,9 +887,21 @@ def get_metric(metric_id: int) -> dict | None:
     return dict(row) if row else None
 
 
-def update_metric(metric_id: int, updates: dict) -> None:
+def update_metric(
+    metric_id: int,
+    updates: dict,
+    *,
+    account_id: str = "",
+    db_type: str = "azure_sql",
+) -> None:
+    """
+    Update a metric. Enforces account_id ownership and re-runs validation
+    whenever sql_template or formula_type changes.
+    """
+    import json as _json
     from store.db import get_db
-    fields, params = [], []
+    from core.metric_validator import validate_metric, derive_metric_status, load_schema_columns
+
     if "formula_type" in updates:
         updates["formula_type"] = _metric_choice(
             updates.get("formula_type", "query"), {"query", "expression"}, "query"
@@ -879,30 +912,85 @@ def update_metric(metric_id: int, updates: dict) -> None:
             {"number", "currency", "percentage", "date", "text"},
             "number",
         )
+
+    # Re-validate whenever the formula changes
+    formula_fields = {"sql_template", "formula_type", "required_columns",
+                      "base_table", "base_entity"}
+    needs_revalidation = bool(formula_fields & set(updates.keys()))
+    if needs_revalidation:
+        existing = get_metric(metric_id) or {}
+        merged   = {**existing, **updates}
+        schema_columns = load_schema_columns(account_id) if account_id else None
+        vr = validate_metric(merged, db_type=db_type, schema_columns=schema_columns)
+        updates["metric_status"]     = derive_metric_status(vr, merged.get("formula_type", "query"))
+        updates["formula_ast"]       = _json.dumps(vr.formula_ast)
+        updates["validation_errors"] = _json.dumps(vr.errors)
+        updates["last_validated_at"] = "datetime('now')"  # handled below as literal
+
+    fields, params = [], []
     for key in (
         "name", "synonyms", "sql_template", "description", "formula_type",
         "result_format", "required_columns", "allowed_dimensions",
         "example_questions", "grain", "category", "default_time_column",
-        "is_active",
+        "is_active", "base_entity", "base_table", "metric_status",
+        "formula_ast", "validation_errors", "owner",
     ):
         if key in updates:
             fields.append(f"{key}=?")
             params.append(updates[key])
+
+    # Increment version on every content-changing update
+    if needs_revalidation:
+        fields.append("version = COALESCE(version, 0) + 1")
+        fields.append("last_validated_at = datetime('now')")
+
     if not fields:
         return
-    fields.append("updated_at=datetime('now')")
-    params.append(metric_id)
+    fields.append("updated_at = datetime('now')")
+
+    # Enforce account_id ownership in WHERE clause when provided
+    if account_id:
+        params.extend([metric_id, account_id])
+        where = "id=? AND account_id=?"
+    else:
+        params.append(metric_id)
+        where = "id=?"
+
     with get_db() as conn:
         _ensure_metric_registry_schema(conn)
         conn.execute(
-            f"UPDATE metric_registry SET {','.join(fields)} WHERE id=?", params
+            f"UPDATE metric_registry SET {','.join(fields)} WHERE {where}", params
         )
 
 
-def delete_metric(metric_id: int) -> None:
+def deprecate_metric(metric_id: int, account_id: str) -> None:
+    """
+    Soft-delete a metric by setting status to 'deprecated' and is_active=0.
+    Preserves the row and all version history. Preferred over hard delete.
+    """
     from store.db import get_db
     with get_db() as conn:
-        conn.execute("DELETE FROM metric_registry WHERE id=?", (metric_id,))
+        conn.execute(
+            "UPDATE metric_registry SET metric_status='deprecated', is_active=0, "
+            "updated_at=datetime('now') WHERE id=? AND account_id=?",
+            (metric_id, account_id),
+        )
+
+
+def delete_metric(metric_id: int, account_id: str = "") -> None:
+    """
+    Hard-delete a metric. Prefer deprecate_metric() unless the metric was
+    created by mistake. Enforces account_id ownership when provided.
+    """
+    from store.db import get_db
+    with get_db() as conn:
+        if account_id:
+            conn.execute(
+                "DELETE FROM metric_registry WHERE id=? AND account_id=?",
+                (metric_id, account_id),
+            )
+        else:
+            conn.execute("DELETE FROM metric_registry WHERE id=?", (metric_id,))
 
 
 def _metric_phrases(metric: dict) -> list[str]:
