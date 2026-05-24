@@ -1,5 +1,12 @@
 {% extends "portal_base.html" %}
+{% from "macros.html" import breadcrumb %}
 {% block title %}Semantic Layer - QueryBot Portal{% endblock %}
+{% block breadcrumb %}
+{{ breadcrumb([
+    {"label": "Dashboard",      "href": "/portal"},
+    {"label": "Semantic Layer", "href": ""},
+]) }}
+{% endblock %}
 {% block head %}
 <style>
 .semantic-hero{display:flex;justify-content:space-between;gap:1rem;align-items:flex-start;margin-bottom:1.25rem}

@@ -1,5 +1,9 @@
 {% extends "base.html" %}
+{% from "macros.html" import breadcrumb, metric_card, status_badge %}
 {% block title %}Dashboard — QueryBot Admin{% endblock %}
+{% block breadcrumb %}
+{{ breadcrumb([{"label": "Dashboard", "href": ""}]) }}
+{% endblock %}
 {% block content %}
 <div class="page-header">
   <h1>Dashboard</h1>
@@ -18,32 +22,12 @@
 {% endif %}
 
 <div class="metrics">
-  <div class="metric">
-    <div class="metric-label">Connected clients</div>
-    <div class="metric-value">{{ clients|length }}</div>
-  </div>
-  <div class="metric">
-    <div class="metric-label">Ready</div>
-    <div class="metric-value" style="color:var(--green)">
-      {{ clients|selectattr("state","equalto","READY")|list|length }}
-    </div>
-  </div>
-  <div class="metric">
-    <div class="metric-label">Total queries</div>
-    <div class="metric-value">{{ stats.total or 0 }}</div>
-  </div>
-  <div class="metric">
-    <div class="metric-label">Total cost (USD)</div>
-    <div class="metric-value" style="font-size:18px">${{ "%.2f"|format(stats.total_cost_usd or 0) }}</div>
-  </div>
-  <div class="metric">
-    <div class="metric-label">Platforms</div>
-    <div class="metric-value">{{ platforms|length }}</div>
-  </div>
-  <div class="metric">
-    <div class="metric-label">Databases</div>
-    <div class="metric-value">{{ dbs|length }}</div>
-  </div>
+  {{ metric_card("Connected clients", clients|length) }}
+  {{ metric_card("Ready", clients|selectattr("state","equalto","READY")|list|length, "--green") }}
+  {{ metric_card("Total queries", stats.total or 0) }}
+  {{ metric_card("Total cost (USD)", "$" ~ "%.2f"|format(stats.total_cost_usd or 0)) }}
+  {{ metric_card("Platforms", platforms|length) }}
+  {{ metric_card("Databases", dbs|length) }}
 </div>
 
 <div class="card">
@@ -72,12 +56,7 @@
         <div style="font-size:11px;color:var(--gray-500);font-family:monospace">{{ c.account_id[:20] }}…</div>
       </td>
       <td><span class="badge badge-blue">{{ c.platform_type }}</span></td>
-      <td>
-        {% if c.state == "READY" %}<span class="badge badge-green">READY</span>
-        {% elif c.state == "KB_BUILDING" %}<span class="badge badge-amber">BUILDING KB</span>
-        {% elif c.state == "SCHEMA_READY" %}<span class="badge badge-blue">SCHEMA READY</span>
-        {% else %}<span class="badge badge-gray">{{ c.state }}</span>{% endif %}
-      </td>
+      <td>{{ status_badge(c.state) }}</td>
       <td style="color:var(--gray-500);font-size:12px">{{ c.db_name }}</td>
       <td style="color:var(--gray-500);font-size:12px">{{ c.updated_at[:16] }}</td>
       <td><a href="/admin/clients/{{ c.account_id }}" class="btn btn-secondary btn-sm">Details</a></td>

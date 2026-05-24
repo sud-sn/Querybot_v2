@@ -1,5 +1,13 @@
 {% extends "base.html" %}
+{% from "macros.html" import breadcrumb %}
 {% block title %}{{ client.client_name or client.account_id[:16] }} — QueryBot Admin{% endblock %}
+{% block breadcrumb %}
+{{ breadcrumb([
+    {"label": "Dashboard", "href": "/admin"},
+    {"label": "Clients",   "href": "/admin/clients"},
+    {"label": client.client_name or client.account_id[:16], "href": ""},
+]) }}
+{% endblock %}
 {% block head %}
 <style>
 .overview-grid{display:grid;grid-template-columns:1fr 1fr;gap:1.25rem;margin-bottom:1.25rem}

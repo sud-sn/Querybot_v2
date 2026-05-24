@@ -1,5 +1,14 @@
 {% extends "base.html" %}
+{% from "macros.html" import breadcrumb %}
 {% block title %}Users — {{ client.client_name }}{% endblock %}
+{% block breadcrumb %}
+{{ breadcrumb([
+    {"label": "Dashboard", "href": "/admin"},
+    {"label": "Clients",   "href": "/admin/clients"},
+    {"label": client.client_name or client.account_id[:16], "href": "/admin/clients/" ~ client.account_id},
+    {"label": "Users",     "href": ""},
+]) }}
+{% endblock %}
 {% block head %}
 <style>
 .temp-pw-box{background:var(--green-light);border:1px solid color-mix(in srgb,var(--green) 28%,transparent);border-radius:var(--radius);

@@ -1,5 +1,14 @@
 {% extends "base.html" %}
+{% from "macros.html" import breadcrumb %}
 {% block title %}Knowledge Base Editor — {{ client.client_name or client.account_id[:16] }}{% endblock %}
+{% block breadcrumb %}
+{{ breadcrumb([
+    {"label": "Dashboard", "href": "/admin"},
+    {"label": "Clients",   "href": "/admin/clients"},
+    {"label": client.client_name or client.account_id[:16], "href": "/admin/clients/" ~ client.account_id},
+    {"label": "Knowledge Base", "href": ""},
+]) }}
+{% endblock %}
 {% block head %}
 <style>
 .file-list{list-style:none;padding:0}

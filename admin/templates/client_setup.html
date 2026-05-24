@@ -75,15 +75,59 @@
 .kb-progress-text{font-size:12px;font-weight:800}
 .kb-progress-percent{font-size:12px;font-weight:850;min-width:44px;text-align:right;font-variant-numeric:tabular-nums}
 .kb-progress-step{font-size:12px;font-weight:650;color:inherit;opacity:.9}
+/* ── Setup wizard step indicator ─────────────────────────── */
+.wizard-steps{display:flex;align-items:center;margin-bottom:1.5rem;padding:.75rem 1rem;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow)}
+.wizard-step{display:flex;align-items:center;gap:.45rem;flex-shrink:0}
+.wizard-step-circle{width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;flex-shrink:0;border:2px solid var(--border);color:var(--text-muted);background:var(--surface-2);transition:background .2s,border-color .2s,color .2s}
+.wizard-step.done .wizard-step-circle{background:var(--green);border-color:var(--green);color:#fff}
+.wizard-step.active .wizard-step-circle{background:var(--blue);border-color:var(--blue);color:#fff}
+.wizard-step-label{font-size:12px;font-weight:700;color:var(--text-muted);white-space:nowrap}
+.wizard-step.done .wizard-step-label{color:var(--green)}
+.wizard-step.active .wizard-step-label{color:var(--blue)}
+.wizard-step-line{flex:1;height:2px;background:var(--border);margin:0 .65rem;border-radius:1px;min-width:16px;transition:background .2s}
+.wizard-step-line.done{background:var(--green)}
 </style>
+{% endblock %}
+{% block breadcrumb %}
+{% from "macros.html" import breadcrumb %}
+{{ breadcrumb([
+    {"label": "Dashboard", "href": "/admin"},
+    {"label": "Clients",   "href": "/admin/clients"},
+    {"label": client.client_name or client.account_id[:16], "href": "/admin/clients/" ~ client.account_id},
+    {"label": "Setup",     "href": ""},
+]) }}
 {% endblock %}
 {% block content %}
 
+{# ── Wizard step indicator ── #}
+{% set _w1 = db_cfg is not none %}
+{% set _w2 = kb_table_count is defined and kb_table_count | int > 0 %}
+{% set _w3 = schema_files is defined and schema_files | length > 0 %}
+{% set _w4 = state == 'READY' %}
+<div class="wizard-steps">
+  <div class="wizard-step {% if _w1 %}done{% else %}active{% endif %}">
+    <div class="wizard-step-circle">{% if _w1 %}✓{% else %}1{% endif %}</div>
+    <div class="wizard-step-label">DB Connection</div>
+  </div>
+  <div class="wizard-step-line {% if _w1 %}done{% endif %}"></div>
+  <div class="wizard-step {% if _w2 %}done{% elif _w1 %}active{% endif %}">
+    <div class="wizard-step-circle">{% if _w2 %}✓{% else %}2{% endif %}</div>
+    <div class="wizard-step-label">Tables Selected</div>
+  </div>
+  <div class="wizard-step-line {% if _w2 %}done{% endif %}"></div>
+  <div class="wizard-step {% if _w3 %}done{% elif _w2 %}active{% endif %}">
+    <div class="wizard-step-circle">{% if _w3 %}✓{% else %}3{% endif %}</div>
+    <div class="wizard-step-label">Schema Discovery</div>
+  </div>
+  <div class="wizard-step-line {% if _w3 %}done{% endif %}"></div>
+  <div class="wizard-step {% if _w4 %}done{% elif _w3 %}active{% endif %}">
+    <div class="wizard-step-circle">{% if _w4 %}✓{% else %}4{% endif %}</div>
+    <div class="wizard-step-label">KB Generated</div>
+  </div>
+</div>
+
 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.5rem;flex-wrap:wrap;gap:.75rem">
   <div>
-    <a href="/admin/clients/{{ client.account_id }}" style="color:var(--gray-500);font-size:13px">
-      ← {{ client.client_name or client.account_id[:16] }}
-    </a>
     <h1 style="font-size:20px;font-weight:700;margin-top:4px">Schema & Knowledge Base Setup</h1>
     <p style="font-size:13px;color:var(--gray-500)">
       Discover database tables and generate the Knowledge Base entirely from the admin panel.

@@ -1,5 +1,14 @@
 {% extends "base.html" %}
+{% from "macros.html" import breadcrumb %}
 {% block title %}Groups — {{ client.client_name }}{% endblock %}
+{% block breadcrumb %}
+{{ breadcrumb([
+    {"label": "Dashboard", "href": "/admin"},
+    {"label": "Clients",   "href": "/admin/clients"},
+    {"label": client.client_name or client.account_id[:16], "href": "/admin/clients/" ~ client.account_id},
+    {"label": "Groups",    "href": ""},
+]) }}
+{% endblock %}
 {% block head %}
 <style>
 .table-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px;margin-top:.75rem}

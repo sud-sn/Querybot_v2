@@ -1,5 +1,12 @@
 {% extends "base.html" %}
+{% from "macros.html" import breadcrumb %}
 {% block title %}Databases — QueryBot Admin{% endblock %}
+{% block breadcrumb %}
+{{ breadcrumb([
+    {"label": "Dashboard",  "href": "/admin"},
+    {"label": "Databases",  "href": ""},
+]) }}
+{% endblock %}
 {% block head %}
 <style>
 .scope-panel{margin-top:1rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface-2);overflow:hidden}
