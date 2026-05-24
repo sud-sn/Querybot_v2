@@ -140,6 +140,7 @@ html[data-theme='dark'] .sidebar-link.active::before { background: var(--primary
   justify-content: center;
   flex-shrink: 0;
   opacity: .72;
+  transition: opacity .15s;
 }
 .sidebar-link.active .sidebar-link-icon { opacity: 1; }
 
@@ -260,20 +261,29 @@ html[data-theme='dark'] .sidebar-foot .btn-secondary:hover {
   cursor: pointer;
   font-size: 16px;
   flex-shrink: 0;
+  transition: background .15s, border-color .15s, color .15s, transform .1s;
 }
+.mobile-menu-btn:hover {
+  background: var(--surface-2);
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+.mobile-menu-btn:active { transform: scale(.93); }
 @media (max-width: 860px) {
   .mobile-menu-btn { display: inline-flex; }
 }
 
 /* ── Sidebar overlay (mobile backdrop) ── */
 .sidebar-overlay {
-  display: none;
   position: fixed;
   inset: 0;
   background: rgba(0,0,0,.42);
   z-index: 199;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .22s;
 }
-.sidebar-overlay.show { display: block; }
+.sidebar-overlay.show { opacity: 1; pointer-events: auto; }
 
 /* ── Page area ── */
 .page {
@@ -354,7 +364,7 @@ html[data-theme='dark'] .sidebar-foot .btn-secondary:hover {
   margin-left: auto;
   box-shadow: 0 0 0 2px var(--amber-light);
 }
-.admin-live-badge.show { display: inline-flex; }
+.admin-live-badge.show { display: inline-flex; animation: qb-pop .3s ease; }
 
 /* ── Toast ── */
 .admin-live-toast {
@@ -390,4 +400,14 @@ html[data-theme='dark'] .sidebar-foot .btn-secondary:hover {
   }
   .sidebar.open { left: 0; }
   .page { padding: 1rem; }
+}
+
+/* ── Page entrance ── */
+@media (prefers-reduced-motion: no-preference) {
+  .page { animation: qb-fadeUp .22s ease both; }
+}
+
+/* ── Health score arc draw ── */
+#healthArc {
+  transition: stroke-dasharray .8s cubic-bezier(.22,.61,.36,1), stroke .3s;
 }

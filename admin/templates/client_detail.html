@@ -262,8 +262,7 @@
               stroke="{% if health_score.color == 'green' %}#10b981{% elif health_score.color == 'amber' %}#f59e0b{% else %}#ef4444{% endif %}"
               stroke-width="9"
               stroke-dasharray="{{ (health_score.pct * 276.46 / 100)|round(1) }} 276.46"
-              stroke-linecap="round"
-              style="transition:stroke-dasharray .5s ease,stroke .4s ease"/>
+              stroke-linecap="round"/>
           </svg>
           <div class="health-donut-center">
             <span class="health-donut-score" id="healthScore">{{ health_score.score }}</span>
@@ -957,6 +956,16 @@ function showTab(name, btn) {
   document.getElementById('tab-' + name).classList.add('active');
   btn.classList.add('active');
 }
+
+// Health score arc draw animation on page load
+document.addEventListener('DOMContentLoaded', function() {
+  var arc = document.getElementById('healthArc');
+  if (arc) {
+    var target = arc.getAttribute('stroke-dasharray');
+    arc.setAttribute('stroke-dasharray', '0 276.46');
+    setTimeout(function() { arc.setAttribute('stroke-dasharray', target); }, 120);
+  }
+});
 
 function copySql(btn) {
   const ta = btn.parentElement.querySelector('textarea.sql-hidden');
