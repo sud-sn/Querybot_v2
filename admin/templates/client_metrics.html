@@ -119,6 +119,26 @@
 .metrics-toolbar select{padding:5px 8px;border:1px solid var(--border);border-radius:5px;font-size:12px;
   background:var(--surface);color:var(--text);cursor:pointer}
 .metrics-count{font-size:11px;color:var(--text-muted);white-space:nowrap;margin-left:auto}
+/* ── Status badges ──────────────────────────────────────────────────── */
+.status-badge{display:inline-flex;align-items:center;font-size:10px;font-weight:800;padding:2px 8px;border-radius:999px;text-transform:uppercase;letter-spacing:.04em;border:1px solid transparent}
+.status-badge.draft{background:color-mix(in srgb,var(--amber,#d69e2e) 14%,var(--surface));color:color-mix(in srgb,var(--amber,#d69e2e) 80%,#222);border-color:color-mix(in srgb,var(--amber,#d69e2e) 25%,transparent)}
+.status-badge.validated{background:color-mix(in srgb,var(--blue,#3182ce) 12%,var(--surface));color:var(--blue,#3182ce);border-color:color-mix(in srgb,var(--blue,#3182ce) 25%,transparent)}
+.status-badge.published{background:color-mix(in srgb,var(--green,#38a169) 12%,var(--surface));color:var(--green,#38a169);border-color:color-mix(in srgb,var(--green,#38a169) 25%,transparent)}
+.status-badge.deprecated{background:var(--surface-2);color:var(--text-muted);border-color:var(--border)}
+/* ── Validation alerts on card ──────────────────────────────────────── */
+.val-alerts{margin-top:.5rem;display:flex;flex-direction:column;gap:3px}
+.val-alert{font-size:11px;padding:4px 8px;border-radius:4px;line-height:1.45}
+.val-alert.error{background:color-mix(in srgb,var(--red,#e53e3e) 10%,var(--surface));color:color-mix(in srgb,var(--red,#e53e3e) 80%,#222);border:1px solid color-mix(in srgb,var(--red,#e53e3e) 22%,transparent)}
+.val-alert.warn{background:color-mix(in srgb,var(--amber,#d69e2e) 10%,var(--surface));color:color-mix(in srgb,var(--amber,#d69e2e) 80%,#222);border:1px solid color-mix(in srgb,var(--amber,#d69e2e) 22%,transparent)}
+/* ── Time column select ─────────────────────────────────────────────── */
+.time-col-select{width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:5px;font-size:12px;background:var(--surface);color:var(--text);cursor:pointer}
+.time-col-select:focus{border-color:var(--primary);outline:none}
+/* ── Live validate panel ────────────────────────────────────────────── */
+.validate-result{margin-top:.5rem;padding:.55rem .75rem;border-radius:5px;font-size:11px;line-height:1.5;border:1px solid transparent;display:none}
+.validate-result.show{display:block}
+.validate-result.ok{background:color-mix(in srgb,var(--green,#38a169) 10%,var(--surface));border-color:color-mix(in srgb,var(--green,#38a169) 22%,transparent);color:color-mix(in srgb,var(--green,#38a169) 80%,#222)}
+.validate-result.fail{background:color-mix(in srgb,var(--red,#e53e3e) 10%,var(--surface));border-color:color-mix(in srgb,var(--red,#e53e3e) 22%,transparent);color:color-mix(in srgb,var(--red,#e53e3e) 80%,#222)}
+.validate-result.warn{background:color-mix(in srgb,var(--amber,#d69e2e) 8%,var(--surface));border-color:color-mix(in srgb,var(--amber,#d69e2e) 22%,transparent);color:color-mix(in srgb,var(--amber,#d69e2e) 80%,#222)}
 </style>
 <!-- Pass db_type to JS -->
 <script>window._qbDbType = "{{ db_type | default('azure_sql') }}";</script>
@@ -213,9 +233,23 @@
             </div>
             <div class="form-group">
               <label>Default time column</label>
-              <input type="text" name="default_time_column" class="time-col-input"
-                placeholder="e.g. ORDER_DATE, INVOICE_DATE">
-              <p class="form-note">Date/timestamp column the bot uses when grouping this metric by period.</p>
+              <select name="default_time_column" class="time-col-select add-time-col-select">
+                <option value="">— pick from schema or type below —</option>
+              </select>
+              <p class="form-note">Date/timestamp column used when grouping this metric by period.</p>
+            </div>
+          </div>
+          <div class="metric-meta-grid two">
+            <div class="form-group">
+              <label>Base table</label>
+              <input type="text" name="base_table" class="base-table-input"
+                placeholder="e.g. dbo.SalesOrders" autocomplete="off">
+              <p class="form-note">Primary table this metric reads from — used for column validation.</p>
+            </div>
+            <div class="form-group">
+              <label>Base entity</label>
+              <input type="text" name="base_entity" placeholder="e.g. Order, Customer">
+              <p class="form-note">Entity graph node this metric belongs to — enables dimension pickers.</p>
             </div>
           </div>
 
@@ -224,9 +258,11 @@
               <label class="formula-label">Approved formula *</label>
               <button type="button" class="fn-helper-btn" onclick="openFnHelper(this)">ƒ Functions</button>
               <button type="button" class="formula-test-btn" onclick="testFormula(this)">▶ Test</button>
+              <button type="button" class="formula-test-btn" style="background:var(--blue-light);border-color:color-mix(in srgb,var(--blue) 25%,transparent);color:var(--blue)" onclick="liveValidate(this)">✓ Validate</button>
             </div>
             <textarea name="sql_template" rows="4" required class="formula-editor"
               placeholder="SUM(NetProfit) * 100.0 / NULLIF(SUM(Revenue), 0)"></textarea>
+            <div class="validate-result"></div>
             <p class="form-note">
               For expressions, write only the aggregate formula. For full SQL, write a complete SELECT.
             </p>
@@ -309,6 +345,10 @@ SUM(GrossMargin) + SUM(Rebates) - SUM(AllocatedCosts)
     <button class="filter-chip"        data-filter="expression" onclick="setChip(this,'expression')">Formula</button>
     <button class="filter-chip"        data-filter="query"      onclick="setChip(this,'query')">Direct SQL</button>
     <button class="filter-chip"        data-filter="inactive"   onclick="setChip(this,'inactive')">Inactive</button>
+    <button class="filter-chip"        data-filter="draft"       onclick="setChip(this,'draft')">Draft</button>
+    <button class="filter-chip"        data-filter="validated"   onclick="setChip(this,'validated')">Validated</button>
+    <button class="filter-chip"        data-filter="published"   onclick="setChip(this,'published')">Published</button>
+    <button class="filter-chip"        data-filter="deprecated"  onclick="setChip(this,'deprecated')">Deprecated</button>
   </div>
   <select id="metricSort" onchange="applyFilters()" title="Sort metrics">
     <option value="name-asc">Name A–Z</option>
@@ -322,28 +362,35 @@ SUM(GrossMargin) + SUM(Rebates) - SUM(AllocatedCosts)
 <div id="metricsListWrap">
 {% for m in metrics %}
 {% set m_type = m.formula_type if m.formula_type is defined and m.formula_type else 'query' %}
+{% set m_status = m.metric_status if m.metric_status else ('published' if m.is_active else 'draft') %}
 <div class="metric-card"
      data-name="{{ m.name | lower }}"
      data-synonyms="{{ (m.synonyms or '') | lower }}"
      data-description="{{ (m.description or '') | lower }}"
      data-type="{{ m_type }}"
      data-active="{{ '1' if m.is_active else '0' }}"
+     data-status="{{ m_status }}"
      data-category="{{ (m.category or '') | lower }}">
   <div class="metric-card-header">
     <div class="metric-name-row">
       <strong style="font-family:Consolas,monospace;font-size:13px">{{ m.name }}</strong>
       <span class="metric-kind {{ m_type }}">{{ "Formula" if m_type == "expression" else "Direct SQL" }}</span>
+      <span class="status-badge {{ m_status }}">{{ m_status }}</span>
       {% if m.category %}<span class="cat-badge">{{ m.category }}</span>{% endif %}
-      {% if not m.is_active %}<span style="font-size:11px;color:var(--text-muted)">(inactive)</span>{% endif %}
     </div>
     <div style="display:flex;gap:.5rem;align-items:center">
       <button class="btn btn-xs btn-secondary"
         onclick="cloneMetric({{ m.id }})" title="Clone this metric into the Add form">Clone</button>
       <button class="btn btn-xs btn-secondary" onclick="toggleEdit('edit-{{ m.id }}')">Edit</button>
-      <form method="post" action="/admin/clients/{{ client.account_id }}/metrics/{{ m.id }}/delete"
-            onsubmit="return confirm('Delete this metric?')">
-        <button class="btn btn-xs btn-danger">Delete</button>
-      </form>
+      {% if m_status == 'deprecated' %}
+        <form method="post" action="/admin/clients/{{ client.account_id }}/metrics/{{ m.id }}/delete"
+              onsubmit="return confirm('Permanently delete deprecated metric \'{{ m.name }}\'? This cannot be undone.')">
+          <button class="btn btn-xs btn-danger">Delete</button>
+        </form>
+      {% else %}
+        <button class="btn btn-xs btn-warning"
+          onclick="deprecateMetric({{ m.id }}, '{{ m.name | e }}')">Deprecate</button>
+      {% endif %}
     </div>
   </div>
   <div class="metric-card-body">
@@ -360,7 +407,20 @@ SUM(GrossMargin) + SUM(Rebates) - SUM(AllocatedCosts)
       {% if m.grain %}<span class="meta-pill">grain: {{ m.grain }}</span>{% endif %}
       {% if m.result_format and m.result_format != 'number' %}<span class="meta-pill">{{ m.result_format }}</span>{% endif %}
       {% if m.default_time_column %}<span class="meta-pill" title="Default time column used for period grouping">🕐 {{ m.default_time_column }}</span>{% endif %}
+      {% if m.base_table %}<span class="meta-pill" title="Base table for column validation">📋 {{ m.base_table }}</span>{% endif %}
     </div>
+    {# Stored validation errors from last save #}
+    {% set _errs = m.validation_errors | from_json %}
+    {% if _errs or m_status == 'draft' %}
+    <div class="val-alerts">
+      {% if m_status == 'draft' and not _errs %}
+      <div class="val-alert warn">⚠ Draft — formula validation did not pass on last save. Edit and re-save to promote to Validated.</div>
+      {% endif %}
+      {% for err in _errs %}
+      <div class="val-alert error">✗ {{ err }}</div>
+      {% endfor %}
+    </div>
+    {% endif %}
 
     <!-- Edit form (hidden) -->
     <div id="edit-{{ m.id }}" style="display:none;margin-top:1rem;border-top:1px solid var(--border);padding-top:1rem">
@@ -401,8 +461,10 @@ SUM(GrossMargin) + SUM(Rebates) - SUM(AllocatedCosts)
             <label class="formula-label">Approved formula / SQL template *</label>
             <button type="button" class="fn-helper-btn" onclick="openFnHelper(this)">ƒ Functions</button>
             <button type="button" class="formula-test-btn" onclick="testFormula(this)">▶ Test</button>
+            <button type="button" class="formula-test-btn" style="background:var(--blue-light);border-color:color-mix(in srgb,var(--blue) 25%,transparent);color:var(--blue)" onclick="liveValidate(this)">✓ Validate</button>
           </div>
           <textarea name="sql_template" rows="3" required class="formula-editor">{{ m.sql_template }}</textarea>
+          <div class="validate-result"></div>
         </div>
         <div class="metric-meta-grid two" style="margin-bottom:.75rem">
           <div class="form-group">
@@ -422,8 +484,25 @@ SUM(GrossMargin) + SUM(Rebates) - SUM(AllocatedCosts)
           </div>
           <div class="form-group">
             <label>Default time column</label>
-            <input type="text" name="default_time_column" class="time-col-input"
-              value="{{ m.default_time_column or '' }}" placeholder="e.g. ORDER_DATE">
+            <select name="default_time_column" class="time-col-select edit-time-col-select"
+              data-current="{{ m.default_time_column or '' }}">
+              <option value="">— none —</option>
+              {% if m.default_time_column %}
+              <option value="{{ m.default_time_column }}" selected>{{ m.default_time_column }}</option>
+              {% endif %}
+            </select>
+          </div>
+        </div>
+        <div class="metric-meta-grid two" style="margin-bottom:.75rem">
+          <div class="form-group">
+            <label>Base table</label>
+            <input type="text" name="base_table" class="base-table-input"
+              value="{{ m.base_table or '' }}" placeholder="e.g. dbo.SalesOrders" autocomplete="off">
+          </div>
+          <div class="form-group">
+            <label>Base entity</label>
+            <input type="text" name="base_entity"
+              value="{{ m.base_entity or '' }}" placeholder="e.g. Order, Customer">
           </div>
         </div>
         <div class="form-group">
@@ -978,7 +1057,7 @@ function _insertTagValue(input, colName){
 }
 
 // ══════════════════════════════════════════════════════════════════════
-// FORMULA TEST RUNNER
+// FORMULA TEST RUNNER (runs against the database)
 // ══════════════════════════════════════════════════════════════════════
 async function testFormula(btn){
   var form   = btn.closest(".metric-form");
@@ -1010,6 +1089,78 @@ async function testFormula(btn){
     if(panel) setStatus(panel, "danger", "<div>✗ " + err.message + "</div>");
   } finally {
     btn.disabled = false; btn.textContent = origText;
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// LIVE BACKEND VALIDATOR — calls /metrics/validate and shows inline result
+// ══════════════════════════════════════════════════════════════════════
+async function liveValidate(btn){
+  var form        = btn.closest(".metric-form");
+  var editor      = form ? form.querySelector(".formula-editor") : null;
+  var resultPanel = form ? form.querySelector(".validate-result") : null;
+  if(!editor || !editor.value.trim()){
+    if(resultPanel){ resultPanel.className="validate-result show warn"; resultPanel.innerHTML="Write a formula first."; }
+    return;
+  }
+  var origText = btn.textContent;
+  btn.disabled = true; btn.textContent = "…";
+  if(resultPanel){ resultPanel.className="validate-result show"; resultPanel.innerHTML="Validating…"; }
+  try {
+    var clientMatch = location.pathname.match(/\/clients\/([^/]+)\//);
+    if(!clientMatch) throw new Error("Cannot determine account from URL");
+    var payload = {
+      sql_template:  editor.value.trim(),
+      formula_type:  (form.querySelector(".formula-type-select")||{}).value || "expression",
+      required_columns: (form.querySelector("[name='required_columns']")||{}).value || "",
+      base_table:    (form.querySelector("[name='base_table']")||{}).value || "",
+      base_entity:   (form.querySelector("[name='base_entity']")||{}).value || "",
+    };
+    var resp = await fetch("/admin/clients/"+clientMatch[1]+"/metrics/validate", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload)
+    });
+    if(!resp.ok) throw new Error("Server error "+resp.status);
+    var data = await resp.json();
+    var html = "";
+    if(data.errors && data.errors.length){
+      html += data.errors.map(function(e){ return "<div>✗ "+escHtml(e)+"</div>"; }).join("");
+    }
+    if(data.warnings && data.warnings.length){
+      html += data.warnings.map(function(w){ return "<div>⚠ "+escHtml(w)+"</div>"; }).join("");
+    }
+    if(data.valid && !data.warnings.length){
+      html = "<div>✓ Validation passed — metric is ready to save.</div>";
+    } else if(data.valid){
+      html = "<div>✓ Valid with warnings:</div>" + html;
+    }
+    var cls = data.valid ? (data.warnings && data.warnings.length ? "warn" : "ok") : "fail";
+    if(resultPanel){ resultPanel.className="validate-result show "+cls; resultPanel.innerHTML=html; }
+  } catch(err){
+    if(resultPanel){ resultPanel.className="validate-result show fail"; resultPanel.innerHTML="✗ "+escHtml(err.message); }
+  } finally {
+    btn.disabled = false; btn.textContent = origText;
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// DEPRECATE METRIC
+// ══════════════════════════════════════════════════════════════════════
+async function deprecateMetric(id, name){
+  if(!confirm("Deprecate metric '"+name+"'?\n\nThe metric will be marked as deprecated and hidden from the AI resolver. It will not be deleted and can be viewed by filtering for Deprecated.")) return;
+  try {
+    var clientMatch = location.pathname.match(/\/clients\/([^/]+)\//);
+    if(!clientMatch){ alert("Cannot determine account."); return; }
+    var resp = await fetch("/admin/clients/"+clientMatch[1]+"/metrics/"+id+"/deprecate", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"}
+    });
+    if(!resp.ok) throw new Error("Server error "+resp.status);
+    // Refresh page to reflect new status
+    window.location.reload();
+  } catch(err){
+    alert("Deprecate failed: "+err.message);
   }
 }
 
@@ -1067,12 +1218,74 @@ window.insertColumnFromBrowser = function(colName){
         _allColumns = data.columns;
         _buildDupSet();
         _buildColBrowser(_allColumns);
+        _populateTimeColSelects(_allColumns);
+        _populateBaseTableInputs(_allColumns);
       } else {
         _buildColBrowser([]);
       }
     })
     .catch(function(){ _buildColBrowser([]); });
 })();
+
+// Populate date-type columns into time-col-select dropdowns
+function _populateTimeColSelects(columns){
+  var DATE_TYPES = /date|time|timestamp|datetime/i;
+  // Include date-ish columns first, then all others as fallback
+  var dateCols = columns.filter(function(c){ return DATE_TYPES.test(c.type||""); });
+  var otherCols = columns.filter(function(c){ return !DATE_TYPES.test(c.type||""); });
+  var ordered = dateCols.concat(otherCols);
+
+  // Deduplicate by column name for add-form select (show unqualified names)
+  var seen = {}, opts = ['<option value="">— none —</option>'];
+  ordered.forEach(function(c){
+    var label = _dupCols.has(c.column) ? c.table+"."+c.column : c.column;
+    if(!seen[label]){
+      seen[label] = true;
+      var isDate = DATE_TYPES.test(c.type||"") ? ' data-date="1"' : "";
+      opts.push('<option value="'+escHtml(c.column)+'"'+isDate+'>'+escHtml(label)
+        +(c.type ? " ("+escHtml(c.type)+")" : "")+'</option>');
+    }
+  });
+  var optHtml = opts.join("");
+
+  // Populate add-form selects
+  document.querySelectorAll(".add-time-col-select").forEach(function(sel){
+    sel.innerHTML = optHtml;
+  });
+  // Populate edit-form selects, restoring current value
+  document.querySelectorAll(".edit-time-col-select").forEach(function(sel){
+    var current = sel.getAttribute("data-current") || "";
+    sel.innerHTML = optHtml;
+    if(current){
+      // Try to select the current value; if not in list, add it
+      if(!sel.querySelector('option[value="'+current+'"]')){
+        sel.insertAdjacentHTML("beforeend", '<option value="'+escHtml(current)+'">'+escHtml(current)+'</option>');
+      }
+      sel.value = current;
+    }
+  });
+}
+
+// Wire base-table text inputs to show table names from schema
+function _populateBaseTableInputs(columns){
+  var tables = [];
+  var seen = {};
+  columns.forEach(function(c){
+    if(c.table && !seen[c.table]){ seen[c.table]=true; tables.push(c.table); }
+  });
+  if(!tables.length) return;
+  // Build/update a shared datalist for base-table inputs
+  var dl = document.getElementById("base-table-options");
+  if(!dl){
+    dl = document.createElement("datalist");
+    dl.id = "base-table-options";
+    document.body.appendChild(dl);
+  }
+  dl.innerHTML = tables.map(function(t){ return '<option value="'+escHtml(t)+'">'; }).join("");
+  document.querySelectorAll(".base-table-input").forEach(function(inp){
+    inp.setAttribute("list","base-table-options");
+  });
+}
 
 // ══════════════════════════════════════════════════════════════════════
 // WIRE ALL INPUT EVENTS
@@ -1089,6 +1302,9 @@ document.addEventListener("input", function(e){
     _activeEditor = e.target;
     updateFormulaHints(e.target);
     _showSuggestions(e.target, _currentToken(e.target));
+    // Hide live-validate panel on formula change — result is stale
+    var vr = e.target.closest(".metric-form") && e.target.closest(".metric-form").querySelector(".validate-result");
+    if(vr){ vr.className="validate-result"; vr.innerHTML=""; }
   }
   if(e.target.name === "required_columns" || e.target.name === "allowed_dimensions"){
     var parts = e.target.value.split(",");
@@ -1144,11 +1360,17 @@ window.applyFilters = function(){
     // Text match
     var textOk = !lc || name.includes(lc) || syns.includes(lc) || desc.includes(lc) || cat.includes(lc);
 
+    var status = card.dataset.status || "published";
+
     // Filter chip match
     var filterOk = true;
     if(_activeFilter === "expression") filterOk = type === "expression";
     else if(_activeFilter === "query") filterOk = type === "query";
     else if(_activeFilter === "inactive") filterOk = active === "0";
+    else if(_activeFilter === "draft")       filterOk = status === "draft";
+    else if(_activeFilter === "validated")   filterOk = status === "validated";
+    else if(_activeFilter === "published")   filterOk = status === "published";
+    else if(_activeFilter === "deprecated")  filterOk = status === "deprecated";
     else if(_activeFilter !== "all"){
       // category chip
       filterOk = cat === _activeFilter;
@@ -1205,6 +1427,8 @@ window.cloneMetric = function(id){
   _set("example_questions",   m.example_questions || "");
   _set("category",            m.category || "");
   _set("default_time_column", m.default_time_column || "");
+  _set("base_table",          m.base_table || "");
+  _set("base_entity",         m.base_entity || "");
   _set("result_format",       m.result_format || "number");
   _set("formula_type",        m.formula_type || "expression");
 
@@ -1245,6 +1469,9 @@ window.exportMetricsJSON = function(){
       example_questions:   m.example_questions,
       category:            m.category,
       default_time_column: m.default_time_column,
+      base_table:          m.base_table,
+      base_entity:         m.base_entity,
+      metric_status:       m.metric_status,
       is_active:           m.is_active,
     };
   });
@@ -1258,48 +1485,8 @@ window.exportMetricsJSON = function(){
   setTimeout(function(){ URL.revokeObjectURL(url); a.remove(); }, 500);
 };
 
-// ══════════════════════════════════════════════════════════════════════
-// WIRE time-column inputs to column suggestion dropdown
-// ══════════════════════════════════════════════════════════════════════
-document.addEventListener("input", function(e){
-  if(e.target.matches(".time-col-input")){
-    var token = (e.target.value || "").split(",").pop().trim();
-    if(token.length >= 2){
-      // Reuse tag suggestion (appends to comma list) — but these fields
-      // hold a single column so we patch _insertSuggestion directly.
-      _suggestTarget = e.target;
-      _suggestIdx = -1;
-      var lc = token.toLowerCase();
-      // Filter to date/timestamp/datetime columns preferentially
-      var matches = _allColumns.filter(function(c){
-        return c.column.toLowerCase().startsWith(lc) || c.column.toLowerCase().includes(lc);
-      }).slice(0, 8);
-      if(!matches.length){ document.getElementById("col-suggest").style.display="none"; return; }
-      var el = document.getElementById("col-suggest");
-      el.innerHTML = matches.map(function(c, i){
-        return '<div class="col-suggest-item" data-col="'+c.column+'" data-table="'+c.table+'" data-dup="0" data-idx="'+i+'" data-time-input="1">'
-          +'<span class="col-suggest-col">'+c.column+'</span>'
-          +'<span class="col-suggest-table">'+c.table+'</span>'
-          +'<span class="col-suggest-type">'+c.type+'</span></div>';
-      }).join("");
-      var rect = e.target.getBoundingClientRect();
-      el.style.left=rect.left+"px"; el.style.top=(rect.bottom+2)+"px";
-      el.style.width=Math.max(240, rect.width)+"px"; el.style.display="block";
-    } else {
-      document.getElementById("col-suggest").style.display="none";
-    }
-  }
-});
-
-// Override click on col-suggest items when target is a time-col-input
-document.addEventListener("click", function(e){
-  var item = e.target.closest(".col-suggest-item[data-time-input]");
-  if(item && _suggestTarget && _suggestTarget.matches(".time-col-input")){
-    _suggestTarget.value = item.dataset.col;
-    _suggestTarget.focus();
-    document.getElementById("col-suggest").style.display="none";
-  }
-}, true); // capture phase so it fires before the generic handler
+// time-col-input free-text wiring removed — replaced by .time-col-select dropdowns
+// populated by _populateTimeColSelects() once schema columns are loaded.
 
 // Initialise count display on page load
 (function(){ if(document.getElementById("metricsListWrap")) applyFilters(); })();

@@ -83,6 +83,22 @@ templates = Jinja2Templates(
     directory=str(Path(__file__).parent / "templates")
 )
 
+# ── Custom Jinja2 filters ──────────────────────────────────────────────
+import json as _json_mod
+
+def _jinja_from_json(value, default=None):
+    """Parse a JSON string to a Python object. Returns default on error."""
+    if not value:
+        return default if default is not None else []
+    if isinstance(value, (list, dict)):
+        return value
+    try:
+        return _json_mod.loads(value)
+    except Exception:
+        return default if default is not None else []
+
+templates.env.filters["from_json"] = _jinja_from_json
+
 _COOKIE = "querybot_session"
 
 # ── LLM choices shown in dropdowns ───────────────────────────────────────────
@@ -2699,6 +2715,8 @@ async def metric_create(
     grain: str = Form(""),
     category: str = Form(""),
     default_time_column: str = Form(""),
+    base_table:   str = Form(""),
+    base_entity:  str = Form(""),
 ):
     if not _is_auth(request):
         return RedirectResponse("/admin/login", status_code=303)
@@ -2707,6 +2725,15 @@ async def metric_create(
         return RedirectResponse(
             f"/admin/clients/{account_id}/metrics?error={quote('Name and SQL are required')}",
             status_code=303)
+
+    # Resolve db_type so save_metric can run the validator correctly
+    db_type = "azure_sql"
+    client  = store.get_client(account_id)
+    if client and client.get("db_config_id"):
+        raw = store.get_db_config(client["db_config_id"])
+        if raw:
+            db_type = raw.get("db_type", "azure_sql")
+
     store.save_metric(account_id, {
         "name":                name.strip(),
         "synonyms":            synonyms.strip(),
@@ -2720,7 +2747,9 @@ async def metric_create(
         "grain":               grain.strip(),
         "category":            category.strip(),
         "default_time_column": default_time_column.strip(),
-    })
+        "base_table":          base_table.strip(),
+        "base_entity":         base_entity.strip(),
+    }, db_type=db_type)
     return RedirectResponse(f"/admin/clients/{account_id}/metrics?saved=1", status_code=303)
 
 
@@ -2741,6 +2770,8 @@ async def metric_update(
     grain: str = Form(""),
     category: str = Form(""),
     default_time_column: str = Form(""),
+    base_table:   str = Form(""),
+    base_entity:  str = Form(""),
     is_active:    str = Form("1"),
 ):
     if not _is_auth(request):
@@ -2767,6 +2798,8 @@ async def metric_update(
         "grain":               grain.strip(),
         "category":            category.strip(),
         "default_time_column": default_time_column.strip(),
+        "base_table":          base_table.strip(),
+        "base_entity":         base_entity.strip(),
         "is_active":           int(is_active),
     }, account_id=account_id, db_type=db_type)
     return RedirectResponse(f"/admin/clients/{account_id}/metrics?saved=1", status_code=303)
@@ -2774,10 +2807,18 @@ async def metric_update(
 
 @router.post("/clients/{account_id}/metrics/{metric_id}/deprecate")
 async def metric_deprecate(request: Request, account_id: str, metric_id: int):
-    """Soft-delete: marks metric as deprecated/inactive. Preserves history."""
+    """Soft-delete: marks metric as deprecated/inactive. Preserves history.
+    Accepts both JSON (fetch) and form POST (legacy fallback).
+    """
     if not _is_auth(request):
+        wants_json = "application/json" in request.headers.get("content-type", "")
+        if wants_json:
+            return JSONResponse({"status": "error", "detail": "Not authenticated"}, status_code=401)
         return RedirectResponse("/admin/login", status_code=303)
     store.deprecate_metric(metric_id, account_id)
+    wants_json = "application/json" in request.headers.get("content-type", "")
+    if wants_json:
+        return JSONResponse({"status": "ok", "metric_id": metric_id})
     return RedirectResponse(f"/admin/clients/{account_id}/metrics", status_code=303)
 
 
