@@ -2053,10 +2053,21 @@ async def graph_page(request: Request, account_id: str):
         return RedirectResponse("/admin/clients", status_code=303)
     entities      = store.list_entities(account_id, active_only=False)
     relationships = store.list_relationships(account_id, active_only=False)
+
+    # Run health check on page load so the badge is server-rendered
+    from core.graph_health import check_graph_health
+    try:
+        health = check_graph_health(account_id).to_dict()
+    except Exception:
+        health = {"score": None, "error_count": 0, "warning_count": 0,
+                  "issues": [], "unmapped_tables": [], "entity_severity": {},
+                  "has_schema": False}
+
     return _resp(request, "client_graph.html", {
         "client":        client,
         "entities":      entities,
         "relationships": relationships,
+        "health":        health,
         "saved":         request.query_params.get("saved"),
         "error":         request.query_params.get("error"),
     })
@@ -2347,6 +2358,36 @@ async def graph_api_columns(request: Request, account_id: str):
         for c in info.get("columns", [])
     ]
     return JSONResponse(cols)
+
+
+@router.get("/clients/{account_id}/graph/api/health")
+async def graph_health_api(request: Request, account_id: str):
+    """
+    Returns a full health report for the entity graph of an account.
+
+    Checks for schema drift, orphaned relationships, disconnected entities,
+    missing properties, and tables not yet mapped to any entity.
+
+    Response shape:
+      {score, entity_count, relationship_count, property_count, has_schema,
+       issues: [{severity, code, entity, message}],
+       unmapped_tables: [{fqn, table_name, schema_name}],
+       entity_severity: {entity_name: "error"|"warning"|"info"},
+       error_count, warning_count, info_count}
+    """
+    if not _is_auth(request):
+        raise HTTPException(status_code=401)
+    client = store.get_client(account_id)
+    if not client:
+        raise HTTPException(status_code=404)
+
+    from core.graph_health import check_graph_health
+    try:
+        report = check_graph_health(account_id)
+        return JSONResponse(report.to_dict())
+    except Exception as exc:
+        log.exception("graph health check failed for %s", account_id)
+        return JSONResponse({"error": str(exc)}, status_code=500)
 
 
 @router.post("/clients/{account_id}/graph/api/suggest")
