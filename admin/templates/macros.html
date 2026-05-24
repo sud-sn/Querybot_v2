@@ -1,0 +1,136 @@
+{# ============================================================
+   QueryBot Admin — Jinja2 macros  (Sprint 1)
+
+   Usage:
+     {% from "macros.html" import card, badge, btn, breadcrumb %}
+   ============================================================ #}
+
+
+{# ── card ──────────────────────────────────────────────────────
+   Wraps content in a .card with optional header.
+   caller() renders the body content.
+
+   {% call card("Section title") %}
+     <p>Body content</p>
+   {% endcall %}
+#}
+{% macro card(title='', id='', extra_class='') -%}
+<div class="card {{ extra_class }}"{% if id %} id="{{ id }}"{% endif %}>
+  {% if title %}
+  <div class="card-header"><h2>{{ title }}</h2></div>
+  {% endif %}
+  <div class="card-body">{{ caller() }}</div>
+</div>
+{%- endmacro %}
+
+
+{# ── badge ─────────────────────────────────────────────────────
+   color: blue | green | amber | red | gray
+#}
+{% macro badge(text, color='blue') -%}
+<span class="badge badge-{{ color }}">{{ text }}</span>
+{%- endmacro %}
+
+
+{# ── btn ───────────────────────────────────────────────────────
+   Renders an <a> when href is given, otherwise a <button>.
+   variant: primary | secondary | danger | success
+   size:    sm | xs | (empty = default)
+#}
+{% macro btn(text, href='', type='button', variant='primary', size='', icon='', extra_class='', onclick='') -%}
+{% if href -%}
+<a href="{{ href }}"
+   class="btn btn-{{ variant }}{% if size %} btn-{{ size }}{% endif %}{% if extra_class %} {{ extra_class }}{% endif %}">
+  {% if icon %}<span aria-hidden="true">{{ icon }}</span>{% endif %}{{ text }}
+</a>
+{%- else -%}
+<button type="{{ type }}"
+        class="btn btn-{{ variant }}{% if size %} btn-{{ size }}{% endif %}{% if extra_class %} {{ extra_class }}{% endif %}"
+        {% if onclick %}onclick="{{ onclick }}"{% endif %}>
+  {% if icon %}<span aria-hidden="true">{{ icon }}</span>{% endif %}{{ text }}
+</button>
+{%- endif %}
+{%- endmacro %}
+
+
+{# ── breadcrumb ────────────────────────────────────────────────
+   items: list of dicts with keys  label  and  href
+          The LAST item is treated as the current page.
+
+   Example:
+     {{ breadcrumb([
+         {"label": "Clients",  "href": "/admin/clients"},
+         {"label": "Acme Inc", "href": ""},
+     ]) }}
+#}
+{% macro breadcrumb(items) -%}
+{% if items %}
+<nav class="breadcrumb" aria-label="Breadcrumb">
+  {% for item in items %}
+    {% if not loop.last %}
+      <a href="{{ item.href }}">{{ item.label }}</a>
+      <span class="breadcrumb-sep" aria-hidden="true">›</span>
+    {% else %}
+      <span class="breadcrumb-current" aria-current="page">{{ item.label }}</span>
+    {% endif %}
+  {% endfor %}
+</nav>
+{% endif %}
+{%- endmacro %}
+
+
+{# ── form_group ────────────────────────────────────────────────
+   Simple labelled input field.
+#}
+{% macro form_group(label, name, type='text', value='', placeholder='', required=false, note='') -%}
+<div class="form-group">
+  <label for="{{ name }}">{{ label }}{% if required %} <span style="color:var(--danger)" aria-hidden="true">*</span>{% endif %}</label>
+  <input type="{{ type }}" id="{{ name }}" name="{{ name }}"
+         value="{{ value }}" placeholder="{{ placeholder }}"
+         {% if required %}required{% endif %}>
+  {% if note %}<div class="form-note">{{ note }}</div>{% endif %}
+</div>
+{%- endmacro %}
+
+
+{# ── empty_state ───────────────────────────────────────────────
+   Centred placeholder for empty tables / lists.
+#}
+{% macro empty_state(icon='📭', title='Nothing here yet', message='') -%}
+<div style="text-align:center;padding:3rem 1.5rem;color:var(--text-muted)">
+  <div style="font-size:2.5rem;margin-bottom:.75rem" aria-hidden="true">{{ icon }}</div>
+  <div style="font-size:14px;font-weight:700;color:var(--text-soft);margin-bottom:.35rem">{{ title }}</div>
+  {% if message %}<div style="font-size:13px">{{ message }}</div>{% endif %}
+</div>
+{%- endmacro %}
+
+
+{# ── metric_card ───────────────────────────────────────────────
+   Single metric tile (used inside .metrics grid).
+   color_var: CSS variable name for the value colour, e.g. "--green"
+#}
+{% macro metric_card(label, value, color_var='') -%}
+<div class="metric">
+  <div class="metric-label">{{ label }}</div>
+  <div class="metric-value"{% if color_var %} style="color:var({{ color_var }})"{% endif %}>{{ value }}</div>
+</div>
+{%- endmacro %}
+
+
+{# ── status_badge ──────────────────────────────────────────────
+   Maps a state string → badge colour automatically.
+   Known states: READY, ACTIVE → green | SETUP, PENDING → amber
+                 ERROR, FAILED → red | everything else → gray
+#}
+{% macro status_badge(state) -%}
+{%- set _s = state | upper -%}
+{%- if _s in ['READY', 'ACTIVE', 'APPROVED', 'SUCCESS'] -%}
+  {{ badge(state, 'green') }}
+{%- elif _s in ['SETUP', 'PENDING', 'WARNING', 'REVIEW'] -%}
+  {{ badge(state, 'amber') }}
+{%- elif _s in ['ERROR', 'FAILED', 'REJECTED', 'BLOCKED'] -%}
+  {{ badge(state, 'red') }}
+{%- else -%}
+  {{ badge(state, 'gray') }}
+{%- endif %}
+{%- endmacro %}

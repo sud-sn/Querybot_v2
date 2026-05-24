@@ -4,253 +4,262 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{% block title %}QueryBot Admin{% endblock %}</title>
-<style>
-*{box-sizing:border-box;margin:0;padding:0}
-:root{
-  --radius:8px;--radius-sm:6px;--radius-lg:10px;
-  --shadow:0 1px 2px rgba(15,23,42,.05),0 8px 22px rgba(15,23,42,.06);
-  --shadow-md:0 16px 34px rgba(15,23,42,.09),0 6px 14px rgba(15,23,42,.05);
-  --shadow-lg:0 24px 48px rgba(15,23,42,.12),0 10px 18px rgba(15,23,42,.06);
-  --navy:#111827;--blue:#2563EB;--blue-mid:#1D4ED8;--blue-light:#DBEAFE;--blue-soft:#3B82F6;
-  --green:#059669;--green-light:#D1FAE5;
-  --red:#DC2626;--red-light:#FEE2E2;
-  --amber:#B45309;--amber-light:#FEF3C7;
-  --violet:#6D28D9;--violet-light:#EDE9FE;
-  --bg:#F2F7FC;--bg-soft:#E8F0F8;--surface:#FFFFFF;--surface-2:#F8FBFF;--surface-3:#EEF6FF;
-  --border:#D7E3F1;--border-strong:#AFC1D6;
-  --gray-50:#F8FBFF;--gray-100:#EEF4FB;--gray-200:#D7E3F1;--gray-300:#AFC1D6;--gray-400:#8CA0B6;--gray-500:#64748B;--gray-600:#475569;--gray-700:#334155;--gray-800:#1E293B;--gray-900:#0F172A;
-  --text:#0F172A;--text-soft:#334155;--text-muted:#64748B;
-  --code-bg:#101827;--code-text:#E5EEF9;--row-hover:#F3F8FF;
-}
-html[data-theme='dark'],body[data-theme='dark']{
-  --bg:#07111F;--bg-soft:#0D1726;--surface:#101A2A;--surface-2:#0C1524;--surface-3:#14243A;
-  --border:#23344D;--border-strong:#40546E;
-  --gray-50:#0A1320;--gray-100:#101A2A;--gray-200:#1D2B40;--gray-300:#40546E;--gray-400:#71839A;--gray-500:#9AA8BA;--gray-600:#B9C5D4;--gray-700:#D2DBE8;--gray-800:#E5EEF9;--gray-900:#F8FAFC;
-  --text:#E8EEF7;--text-soft:#D2DBE8;--text-muted:#9AA8BA;
-  --blue:#60A5FA;--blue-mid:#3B82F6;--blue-light:rgba(96,165,250,.16);
-  --green:#34D399;--green-light:rgba(16,185,129,.14);
-  --red:#F87171;--red-light:rgba(248,113,113,.14);
-  --amber:#FBBF24;--amber-light:rgba(251,191,36,.14);
-  --violet:#A78BFA;--violet-light:rgba(167,139,250,.14);
-  --code-bg:#050A12;--code-text:#E5EEF9;--row-hover:#14243A;
-  --shadow:0 1px 3px rgba(0,0,0,.24),0 1px 2px rgba(0,0,0,.20);--shadow-md:0 12px 24px rgba(0,0,0,.30),0 6px 12px rgba(0,0,0,.20);--shadow-lg:0 24px 44px rgba(0,0,0,.36),0 12px 20px rgba(0,0,0,.24);
-}
-*{box-sizing:border-box}
-html,body{min-height:100%}
-body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:linear-gradient(180deg,color-mix(in srgb,var(--surface-3) 54%,var(--bg)) 0,color-mix(in srgb,var(--bg) 92%,var(--surface)) 260px,var(--bg) 100%);color:var(--text);font-size:14px;min-height:100vh;display:flex;flex-direction:column;transition:background .2s,color .2s}
-a{color:var(--blue);text-decoration:none}
-a:hover{text-decoration:underline}
-code{font-family:Consolas,monospace;font-size:12px;background:var(--surface-2);color:var(--text-soft);padding:1px 5px;border-radius:var(--radius-sm)}
-button,input,select,textarea{font:inherit}
-button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,a:focus-visible{outline:3px solid rgba(37,99,235,.18);outline-offset:2px}
-.nav{background:color-mix(in srgb, var(--surface) 88%, transparent);border-bottom:1px solid var(--border);box-shadow:var(--shadow);backdrop-filter:blur(16px);padding:.85rem 1.5rem;display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;position:sticky;top:0;z-index:100}
-.nav-brand{font-size:15px;font-weight:800;color:var(--text);margin-right:.75rem;letter-spacing:-.02em}
-.nav-brand span{color:var(--blue-soft)}
-.nav a{color:var(--text-muted);font-size:13px;font-weight:700;padding:8px 12px;border-radius:var(--radius);border:1px solid transparent;transition:background .15s,border-color .15s,color .15s,transform .15s}
-.nav a:hover{color:var(--text);text-decoration:none;background:var(--surface-2);border-color:var(--border)}
-.nav a.active{color:var(--blue);text-decoration:none;background:var(--blue-light);border-color:color-mix(in srgb,var(--blue) 26%,transparent)}
-.nav-right{margin-left:auto;display:flex;align-items:center;gap:.75rem}
-.theme-toggle{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:var(--radius);border:1px solid var(--border);background:var(--surface);color:var(--text-soft);cursor:pointer;box-shadow:var(--shadow);transition:background .15s,border-color .15s,color .15s,transform .15s}
-.theme-toggle:hover{background:var(--surface-2);border-color:var(--border-strong);color:var(--text);transform:translateY(-1px)}
-.page{flex:1;padding:1.5rem;max-width:1200px;margin:0 auto;width:100%}
-.page-header{margin-bottom:1.4rem}.page-header h1{font-size:22px;font-weight:800;letter-spacing:-.02em;margin-bottom:4px}.page-header p{color:var(--text-muted);font-size:13px}
-.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:1.25rem;box-shadow:var(--shadow);transition:border-color .15s,box-shadow .15s}
-.card:hover{border-color:var(--border-strong);box-shadow:var(--shadow-md)}
-.card-header{padding:.9rem 1.25rem;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;background:linear-gradient(180deg,var(--surface-2),color-mix(in srgb,var(--surface-2) 72%,var(--surface)))}
-.card-header h2{font-size:13px;font-weight:700;color:var(--text-soft)}
-.card-body{padding:1.25rem}
-.metrics{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin-bottom:1.25rem}
-.metric{background:linear-gradient(180deg,var(--surface),var(--surface-2));border:1px solid var(--border);border-radius:var(--radius);padding:1rem;box-shadow:var(--shadow)}
-.metric-label{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);margin-bottom:6px}
-.metric-value{font-size:24px;font-weight:800;letter-spacing:-.02em;color:var(--text)}
-.table{width:100%;border-collapse:collapse;font-size:13px}.table th{padding:.6rem 1rem;text-align:left;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);background:var(--surface-2);border-bottom:1px solid var(--border)}.table td{padding:.65rem 1rem;border-bottom:1px solid var(--border);vertical-align:middle}.table tr:last-child td{border-bottom:none}.table tr:hover td{background:var(--row-hover)}
-.badge{display:inline-block;font-size:10px;font-weight:800;padding:3px 8px;border-radius:999px}.badge-green{background:var(--green-light);color:var(--green)}.badge-blue{background:var(--blue-light);color:var(--blue)}.badge-amber{background:var(--amber-light);color:var(--amber)}.badge-red{background:var(--red-light);color:var(--red)}.badge-gray{background:var(--surface-2);color:var(--text-soft)}
-.form-group{margin-bottom:1rem}.form-group label{display:block;font-size:12px;font-weight:700;color:var(--text-soft);margin-bottom:4px}.form-group input,.form-group select,.form-group textarea{width:100%;padding:10px 12px;border:1.5px solid var(--border);border-radius:var(--radius);font-size:13px;color:var(--text);background:var(--surface);transition:border-color .15s,box-shadow .15s,background .15s}.form-group input:focus,.form-group select:focus,.form-group textarea:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px color-mix(in srgb,var(--blue) 18%,transparent)}.form-group textarea{resize:vertical;font-family:Consolas,monospace;font-size:12px;line-height:1.5}.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:.75rem}.form-note{font-size:11px;color:var(--text-muted);margin-top:3px}
-.btn{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:var(--radius);font-size:13px;font-weight:700;cursor:pointer;border:none;text-decoration:none;box-shadow:var(--shadow);transition:background .15s,border-color .15s,color .15s,transform .15s,box-shadow .15s}.btn:hover{text-decoration:none;transform:translateY(-1px);box-shadow:var(--shadow-md)}.btn:active{transform:translateY(0)}.btn-primary{background:var(--blue);color:#fff}.btn-primary:hover{background:var(--blue-mid);color:#fff}.btn-danger{background:var(--red);color:#fff}.btn-danger:hover{background:#B91C1C;color:#fff}.btn-secondary{background:var(--surface);border:1px solid var(--border);color:var(--text-soft)}.btn-secondary:hover{background:var(--surface-2);border-color:var(--border-strong);color:var(--text)}.btn-success{background:var(--green);color:#fff}.btn-sm{padding:5px 10px;font-size:12px}
-.alert{padding:.8rem 1rem;border-radius:10px;font-size:13px;margin-bottom:1rem;border:1px solid transparent}.alert-success{background:color-mix(in srgb, var(--green-light) 82%, transparent);color:var(--green);border-color:color-mix(in srgb, var(--green) 26%, transparent)}.alert-error{background:color-mix(in srgb, var(--red-light) 82%, transparent);color:var(--red);border-color:color-mix(in srgb, var(--red) 26%, transparent)}.alert-info{background:color-mix(in srgb, var(--blue-light) 82%, transparent);color:var(--blue);border-color:color-mix(in srgb, var(--blue) 26%, transparent)}
-.danger-zone{border:1px solid color-mix(in srgb, var(--red) 22%, var(--border));border-radius:var(--radius);overflow:hidden;margin-bottom:1.25rem;box-shadow:var(--shadow)}
-.danger-zone .card-header{background:color-mix(in srgb, var(--red-light) 72%, var(--surface))}
-details{border-radius:var(--radius)}
-html[data-theme='dark'] [style*="background:#fff"],html[data-theme='dark'] [style*="background: #fff"],html[data-theme='dark'] [style*="background:#FFFFFF"],html[data-theme='dark'] [style*="background: #FFFFFF"]{background:var(--surface)!important;color:var(--text)!important;border-color:var(--border)!important}
-html[data-theme='dark'] [style*="background:#FFFBEB"],html[data-theme='dark'] [style*="background:#FEF3C7"]{background:var(--amber-light)!important;border-color:color-mix(in srgb,var(--amber) 28%,transparent)!important}
-html[data-theme='dark'] [style*="background:#FEF2F2"],html[data-theme='dark'] [style*="background:#FFF5F5"]{background:var(--red-light)!important;border-color:color-mix(in srgb,var(--red) 28%,transparent)!important}
-html[data-theme='dark'] [style*="background:#EFF6FF"],html[data-theme='dark'] [style*="background:#DBEAFE"]{background:var(--blue-light)!important;border-color:color-mix(in srgb,var(--blue) 28%,transparent)!important}
-.admin-live-badge{display:none;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 6px;border-radius:999px;background:var(--amber);color:#fff;font-size:10px;font-weight:900;line-height:18px;margin-left:5px;box-shadow:0 0 0 3px var(--amber-light)}
-.admin-live-badge.show{display:inline-flex}
-.semantic-review-chip{display:inline-flex;align-items:center;gap:.45rem;margin-top:.65rem}
-.semantic-review-chip[hidden]{display:none}
-.semantic-review-chip a{display:inline-flex;align-items:center;gap:.45rem;padding:6px 10px;border-radius:999px;background:var(--amber-light);border:1px solid color-mix(in srgb,var(--amber) 28%,transparent);color:var(--amber);font-size:12px;font-weight:850;text-decoration:none}
-.semantic-review-chip a:hover{text-decoration:none;filter:brightness(.98)}
-.semantic-review-count{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:20px;border-radius:999px;background:var(--amber);color:#fff;font-size:11px;font-weight:900;padding:0 6px}
-.semantic-review-label{white-space:nowrap}
-.admin-live-toast{position:fixed;right:20px;bottom:20px;max-width:360px;background:var(--surface);border:1px solid var(--border-strong);border-left:4px solid var(--amber);border-radius:var(--radius);box-shadow:var(--shadow-lg);padding:.85rem 1rem;z-index:2500;opacity:0;transform:translateY(10px);pointer-events:none;transition:opacity .18s,transform .18s}
-.admin-live-toast.show{opacity:1;transform:translateY(0);pointer-events:auto}
-.admin-live-toast-title{font-size:13px;font-weight:850;color:var(--text);margin-bottom:3px}
-.admin-live-toast-body{font-size:12px;color:var(--text-muted);line-height:1.45}
-.admin-live-toast a{font-weight:800;color:var(--amber)}
-</style>
+<link rel="stylesheet" href="/static/css/tokens.css">
+<link rel="stylesheet" href="/static/css/base.css">
+<link rel="stylesheet" href="/static/css/admin.css">
+{# Prevent flash of unstyled content — runs before CSS paint #}
 <script>
 (function(){
-  const key='qb-admin-theme';
-  const saved=localStorage.getItem(key);
-  const preferred=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';
-  const theme=saved||preferred;
+  var key='qb-admin-theme';
+  var saved=localStorage.getItem(key);
+  var preferred=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';
+  var theme=saved||preferred;
   document.documentElement.setAttribute('data-theme',theme);
   document.documentElement.style.colorScheme=theme;
-  document.addEventListener('DOMContentLoaded',()=>{document.body.setAttribute('data-theme',theme);update(theme);});
-  window.__qbAdminSetTheme=function(next){document.documentElement.setAttribute('data-theme',next);document.body.setAttribute('data-theme',next);document.documentElement.style.colorScheme=next;localStorage.setItem(key,next);update(next);window.dispatchEvent(new CustomEvent('qb-theme-change',{detail:{theme:next}}));};
-  window.__qbAdminToggleTheme=function(){const current=document.documentElement.getAttribute('data-theme')||theme;window.__qbAdminSetTheme(current==='dark'?'light':'dark');};
-  function update(current){document.querySelectorAll('[data-theme-toggle]').forEach(node=>{const icon=node.querySelector('.theme-icon');const label=node.querySelector('.theme-label');if(icon) icon.textContent=current==='dark'?'☀️':'🌙';if(label) label.textContent=current==='dark'?'Light mode':'Dark mode';});}
+  document.addEventListener('DOMContentLoaded',function(){
+    document.body.setAttribute('data-theme',theme);
+    _updateThemeToggle(theme);
+  });
+  window.__qbAdminSetTheme=function(next){
+    document.documentElement.setAttribute('data-theme',next);
+    document.body.setAttribute('data-theme',next);
+    document.documentElement.style.colorScheme=next;
+    localStorage.setItem(key,next);
+    _updateThemeToggle(next);
+    window.dispatchEvent(new CustomEvent('qb-theme-change',{detail:{theme:next}}));
+  };
+  window.__qbAdminToggleTheme=function(){
+    var current=document.documentElement.getAttribute('data-theme')||theme;
+    window.__qbAdminSetTheme(current==='dark'?'light':'dark');
+  };
+  function _updateThemeToggle(current){
+    document.querySelectorAll('[data-theme-toggle]').forEach(function(node){
+      var icon=node.querySelector('.theme-icon');
+      var label=node.querySelector('.theme-label');
+      if(icon) icon.textContent=current==='dark'?'☀️':'🌙';
+      if(label) label.textContent=current==='dark'?'Light mode':'Dark mode';
+    });
+  }
 })();
 </script>
 {% block head %}{% endblock %}
 </head>
 <body data-admin-client-id="{% if client is defined %}{{ client.account_id|default('') }}{% endif %}">
-<nav class="nav">
-  <span class="nav-brand">Query<span>Bot</span> Admin</span>
-  <a href="/admin"           class="{% if request.url.path in ['/admin','/admin/'] %}active{% endif %}">Dashboard</a>
-  <a href="/admin/platforms" class="{% if 'platforms' in request.url.path %}active{% endif %}">Platforms</a>
-  <a href="/admin/databases" class="{% if 'databases' in request.url.path %}active{% endif %}">Databases</a>
-  <a href="/admin/clients"   class="{% if 'clients'   in request.url.path %}active{% endif %}">Clients <span class="admin-live-badge" id="semanticPendingBadge">0</span></a>
-  <a href="/admin/system"    class="{% if 'system'    in request.url.path %}active{% endif %}">System</a>
-  <div class="nav-right">
-    <button type="button" class="theme-toggle" data-theme-toggle onclick="window.__qbAdminToggleTheme()"><span class="theme-icon">🌙</span><span class="theme-label">Dark mode</span></button>
-    <a href="/admin/logout" class="btn btn-secondary btn-sm">Logout</a>
+
+{# ── Determine if this is a full-shell page or an auth page ── #}
+{% set _auth_page = request.url.path in ['/admin/login', '/admin/setup'] %}
+
+{% if _auth_page %}
+{# ── Auth pages: no sidebar, centred content ── #}
+<div class="auth-page">
+  {% block content %}{% endblock %}
+</div>
+
+{% else %}
+{# ── Full shell: sidebar + main ── #}
+
+{# Mobile overlay #}
+<div class="sidebar-overlay" id="sidebarOverlay" onclick="closeSidebar()"></div>
+
+<div class="shell">
+
+  {# ──────── Sidebar ──────── #}
+  <aside class="sidebar" id="sidebar" aria-label="Admin navigation">
+
+    <div class="sidebar-brand">
+      <div class="sidebar-brand-text">Query<span>Bot</span></div>
+      <div class="sidebar-brand-sub">Admin Panel</div>
+    </div>
+
+    <nav class="sidebar-section" role="navigation">
+      <div class="sidebar-section-label">Navigation</div>
+
+      <a href="/admin"
+         class="sidebar-link {% if request.url.path in ['/admin','/admin/'] %}active{% endif %}">
+        <span class="sidebar-link-icon">📊</span> Dashboard
+      </a>
+
+      <a href="/admin/platforms"
+         class="sidebar-link {% if 'platforms' in request.url.path %}active{% endif %}">
+        <span class="sidebar-link-icon">🔌</span> Platforms
+      </a>
+
+      <a href="/admin/databases"
+         class="sidebar-link {% if 'databases' in request.url.path %}active{% endif %}">
+        <span class="sidebar-link-icon">🗄️</span> Databases
+      </a>
+
+      <a href="/admin/clients"
+         class="sidebar-link {% if 'clients' in request.url.path %}active{% endif %}">
+        <span class="sidebar-link-icon">👥</span>
+        Clients
+        <span class="admin-live-badge" id="semanticPendingBadge" title="">0</span>
+      </a>
+
+      <a href="/admin/system"
+         class="sidebar-link {% if 'system' in request.url.path %}active{% endif %}">
+        <span class="sidebar-link-icon">⚙️</span> System
+      </a>
+    </nav>
+
+    <div class="sidebar-foot">
+      <button type="button" class="theme-toggle" data-theme-toggle onclick="window.__qbAdminToggleTheme()">
+        <span class="theme-icon">🌙</span>
+        <span class="theme-label">Dark mode</span>
+      </button>
+      <a href="/admin/logout" class="btn btn-secondary btn-sm">Logout</a>
+    </div>
+
+  </aside>
+  {# ── end sidebar ── #}
+
+  {# ──────── Main area ──────── #}
+  <div class="shell-main">
+
+    {# Mobile topbar (hamburger + brand) — hidden on desktop #}
+    <header class="admin-topbar">
+      <button type="button" class="mobile-menu-btn" aria-label="Open navigation" onclick="openSidebar()">☰</button>
+      <span class="admin-topbar-brand">Query<span>Bot</span> Admin</span>
+      <button type="button" class="theme-toggle btn-sm" data-theme-toggle onclick="window.__qbAdminToggleTheme()" style="padding:6px 10px;font-size:12px">
+        <span class="theme-icon">🌙</span>
+      </button>
+    </header>
+
+    <main class="page">
+      {% block breadcrumb %}{% endblock %}
+      {% block content %}{% endblock %}
+    </main>
+
   </div>
-</nav>
-<div class="page">{% block content %}{% endblock %}</div>
+  {# ── end shell-main ── #}
+
+</div>
+{# ── end shell ── #}
+
+{# ── Notification toast ── #}
 <div class="admin-live-toast" id="semanticPendingToast" role="status" aria-live="polite">
   <div class="admin-live-toast-title">New Semantic Layer request</div>
   <div class="admin-live-toast-body" id="semanticPendingToastBody"></div>
 </div>
+
+{# ── Mobile sidebar JS ── #}
+<script>
+function openSidebar(){
+  document.getElementById('sidebar').classList.add('open');
+  document.getElementById('sidebarOverlay').classList.add('show');
+}
+function closeSidebar(){
+  document.getElementById('sidebar').classList.remove('open');
+  document.getElementById('sidebarOverlay').classList.remove('show');
+}
+</script>
+
+{# ── Live notifications WebSocket ── #}
 <script>
 (function(){
-  let lastTotal = null;
-  let reconnectMs = 1000;
-  let socket = null;
-  let toastTimer = null;
+  var lastTotal=null,reconnectMs=1000,socket=null,toastTimer=null;
 
   function ready(fn){
-    if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fn);
-    else fn();
+    if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',fn); else fn();
   }
-
-  function pendingTotal(summary){
-    return Number(summary && summary.total ? summary.total : 0);
-  }
-
-  function clients(summary){
-    return Array.isArray(summary && summary.clients) ? summary.clients : [];
-  }
+  function pendingTotal(s){ return Number(s&&s.total?s.total:0); }
+  function clients(s){ return Array.isArray(s&&s.clients)?s.clients:[]; }
 
   function setBadge(total){
-    const badge = document.getElementById('semanticPendingBadge');
+    var badge=document.getElementById('semanticPendingBadge');
     if(!badge) return;
-    badge.textContent = total > 99 ? '99+' : String(total);
-    badge.classList.toggle('show', total > 0);
-    badge.title = total ? total + ' Semantic Layer request' + (total === 1 ? '' : 's') + ' pending review' : '';
+    badge.textContent=total>99?'99+':String(total);
+    badge.classList.toggle('show',total>0);
+    badge.title=total?total+' Semantic Layer request'+(total===1?'':'s')+' pending review':'';
   }
 
-  function clientPending(summary, accountId){
-    return clients(summary).find(function(row){ return row.account_id === accountId; });
+  function clientPending(s,accountId){
+    return clients(s).find(function(row){return row.account_id===accountId;});
   }
 
-  function updateClientInline(summary){
-    const target = document.getElementById('semanticPendingInline');
-    const accountId = document.body.dataset.adminClientId || '';
-    if(!target || !accountId) return;
-    const row = clientPending(summary, accountId);
-    const count = Number(row && row.pending ? row.pending : 0);
-    const link = target.querySelector('a');
-    const countEl = target.querySelector('.semantic-review-count');
-    const labelEl = target.querySelector('.semantic-review-label');
-    target.hidden = count <= 0;
-    if(link && countEl && labelEl){
-      countEl.textContent = count > 99 ? '99+' : String(count);
-      labelEl.textContent = 'pending Semantic Layer review' + (count === 1 ? '' : 's');
-      link.title = count + ' Semantic Layer review' + (count === 1 ? '' : 's') + ' pending';
-    } else if(link){
-      link.textContent = count + ' pending Semantic Layer review' + (count === 1 ? '' : 's');
+  function updateClientInline(s){
+    var target=document.getElementById('semanticPendingInline');
+    var accountId=document.body.dataset.adminClientId||'';
+    if(!target||!accountId) return;
+    var row=clientPending(s,accountId);
+    var count=Number(row&&row.pending?row.pending:0);
+    var link=target.querySelector('a');
+    var countEl=target.querySelector('.semantic-review-count');
+    var labelEl=target.querySelector('.semantic-review-label');
+    target.hidden=count<=0;
+    if(link&&countEl&&labelEl){
+      countEl.textContent=count>99?'99+':String(count);
+      labelEl.textContent='pending Semantic Layer review'+(count===1?'':'s');
+      link.title=count+' Semantic Layer review'+(count===1?'':'s')+' pending';
+    }else if(link){
+      link.textContent=count+' pending Semantic Layer review'+(count===1?'':'s');
     }
   }
 
-  function showToast(summary, meta){
-    const toast = document.getElementById('semanticPendingToast');
-    const body = document.getElementById('semanticPendingToastBody');
-    if(!toast || !body) return;
-
-    const row = clientPending(summary, meta && meta.account_id) || clients(summary)[0];
+  function showToast(s,meta){
+    var toast=document.getElementById('semanticPendingToast');
+    var body=document.getElementById('semanticPendingToastBody');
+    if(!toast||!body) return;
+    var row=clientPending(s,meta&&meta.account_id)||clients(s)[0];
     if(!row) return;
-
-    const accountId = row.account_id || (meta && meta.account_id) || '';
-    const clientName = row.client_name || (meta && meta.client_name) || accountId || 'Client';
-    const count = Number(row.pending || 1);
-    const link = document.createElement('a');
-    link.href = '/admin/clients/' + encodeURIComponent(accountId) + '/kb#semantic-feedback';
-    link.textContent = count + ' request' + (count === 1 ? '' : 's') + ' pending review';
-
-    body.textContent = clientName + ': ';
+    var accountId=row.account_id||(meta&&meta.account_id)||'';
+    var clientName=row.client_name||(meta&&meta.client_name)||accountId||'Client';
+    var count=Number(row.pending||1);
+    var link=document.createElement('a');
+    link.href='/admin/clients/'+encodeURIComponent(accountId)+'/kb#semantic-feedback';
+    link.textContent=count+' request'+(count===1?'':'s')+' pending review';
+    body.textContent=clientName+': ';
     body.appendChild(link);
     toast.classList.add('show');
     window.clearTimeout(toastTimer);
-    toastTimer = window.setTimeout(function(){ toast.classList.remove('show'); }, 7000);
+    toastTimer=window.setTimeout(function(){toast.classList.remove('show');},7000);
   }
 
-  function applySummary(summary, meta){
-    const total = pendingTotal(summary);
+  function applySummary(s,meta){
+    var total=pendingTotal(s);
     setBadge(total);
-    updateClientInline(summary);
-    if(lastTotal !== null && total > lastTotal){
-      showToast(summary, meta || {});
-    }
-    lastTotal = total;
+    updateClientInline(s);
+    if(lastTotal!==null&&total>lastTotal) showToast(s,meta||{});
+    lastTotal=total;
   }
 
   async function pollSummary(){
     try{
-      const resp = await fetch('/admin/api/semantic-feedback/pending-count', {credentials:'same-origin'});
-      if(resp.ok) applySummary(await resp.json(), {source:'poll'});
-    }catch(_err){}
+      var resp=await fetch('/admin/api/semantic-feedback/pending-count',{credentials:'same-origin'});
+      if(resp.ok) applySummary(await resp.json(),{source:'poll'});
+    }catch(_){}
   }
 
   function connectSocket(){
-    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    socket = new WebSocket(proto + '://' + location.host + '/admin/ws/notifications');
-    socket.onopen = function(){ reconnectMs = 1000; };
-    socket.onmessage = function(event){
+    var proto=location.protocol==='https:'?'wss':'ws';
+    socket=new WebSocket(proto+'://'+location.host+'/admin/ws/notifications');
+    socket.onopen=function(){reconnectMs=1000;};
+    socket.onmessage=function(event){
       try{
-        const msg = JSON.parse(event.data);
-        window.dispatchEvent(new CustomEvent('qb-admin-notification', {detail: msg}));
-        if(msg.type === 'semantic_feedback_pending'){
-          applySummary(msg.summary || {}, {
-            source:'ws',
-            action:msg.action,
-            account_id:msg.account_id,
-            client_name:msg.client_name
-          });
+        var msg=JSON.parse(event.data);
+        window.dispatchEvent(new CustomEvent('qb-admin-notification',{detail:msg}));
+        if(msg.type==='semantic_feedback_pending'){
+          applySummary(msg.summary||{},{source:'ws',action:msg.action,account_id:msg.account_id,client_name:msg.client_name});
         }
-      }catch(_err){}
+      }catch(_){}
     };
-    socket.onclose = function(){
-      window.setTimeout(connectSocket, reconnectMs);
-      reconnectMs = Math.min(Math.round(reconnectMs * 1.7), 15000);
-    };
-    socket.onerror = function(){ try{ socket.close(); }catch(_err){} };
+    socket.onclose=function(){window.setTimeout(connectSocket,reconnectMs);reconnectMs=Math.min(Math.round(reconnectMs*1.7),15000);};
+    socket.onerror=function(){try{socket.close();}catch(_){}};
   }
 
   ready(function(){
-    if(location.pathname === '/admin/login' || location.pathname === '/admin/setup') return;
+    if(location.pathname==='/admin/login'||location.pathname==='/admin/setup') return;
     if(!document.querySelector('a[href="/admin/logout"]')) return;
     pollSummary();
     connectSocket();
-    window.setInterval(pollSummary, 30000);
+    window.setInterval(pollSummary,30000);
     window.setInterval(function(){
-      if(socket && socket.readyState === WebSocket.OPEN){
-        try{ socket.send('ping'); }catch(_err){}
-      }
-    }, 25000);
+      if(socket&&socket.readyState===WebSocket.OPEN){try{socket.send('ping');}catch(_){}}
+    },25000);
   });
 })();
 </script>
+
+{% endif %}{# end _auth_page #}
 </body>
 </html>

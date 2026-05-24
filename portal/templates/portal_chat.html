@@ -48,7 +48,7 @@
 .msg-meta{display:flex;align-items:center;gap:.45rem;font-size:11px;color:var(--text-muted);padding:0 .15rem}.msg-user .msg-meta{justify-content:flex-end}
 .msg-name{font-weight:800;color:var(--text-soft)}
 .msg-bubble{padding:1rem 1.05rem;border-radius:var(--radius-lg);font-size:13px;line-height:1.72;word-break:break-word;border:1px solid transparent}
-.msg-user .msg-bubble{background:linear-gradient(135deg,var(--primary),var(--primary-hover));color:#fff;border-bottom-right-radius:6px;box-shadow:0 10px 18px rgba(37,99,235,.18)}
+.msg-user .msg-bubble{background:linear-gradient(135deg,var(--primary),var(--primary-hover));color:#fff;border-bottom-right-radius:6px;box-shadow:0 10px 18px rgba(13,115,119,.22)}
 .msg-bot .msg-bubble{background:var(--surface);color:var(--text);border-color:var(--border);border-bottom-left-radius:6px;box-shadow:var(--shadow)}
 .msg-bot .msg-bubble pre{background:var(--bg-soft);border:1px solid var(--border);border-radius:var(--radius);padding:.75rem .85rem;overflow-x:auto;font-family:'JetBrains Mono',monospace;font-size:11px;margin:.55rem 0;white-space:pre-wrap;color:var(--text)}
 .msg-bot .msg-bubble code{font-family:'JetBrains Mono',monospace;font-size:11px;background:var(--surface-2);padding:2px 6px;border-radius:6px}
@@ -61,7 +61,7 @@
 .processing-row{display:none;align-items:flex-end;gap:.7rem;padding:.2rem 0 .4rem .15rem}.processing-row.active{display:flex}
 /* Mascot wrap — small floating character */
 .mascot-wrap{position:relative;width:52px;height:52px;flex-shrink:0;cursor:default}
-.mascot-wrap svg{width:52px;height:52px;overflow:visible;filter:drop-shadow(0 2px 8px rgba(37,99,235,.18))}
+.mascot-wrap svg{width:52px;height:52px;overflow:visible;filter:drop-shadow(0 2px 8px rgba(13,115,119,.22))}
 .mascot-tooltip{position:absolute;bottom:calc(100% + 7px);left:50%;transform:translateX(-50%);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:5px 11px;font-size:11px;font-weight:700;color:var(--text-soft);white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .18s;z-index:10;box-shadow:var(--shadow-md)}
 .mascot-tooltip::after{content:'';position:absolute;top:100%;left:50%;transform:translateX(-50%);border:5px solid transparent;border-top-color:var(--border)}
 .mascot-wrap:hover .mascot-tooltip{opacity:1}
@@ -71,7 +71,7 @@
    Design principles: no face, no cartoon, light + form communicate state.
    States: idle · focus · typing · thinking · send · error
    ============================================================================ */
-.chat-composer{position:relative;--ai-core:#2563eb;--ai-halo:rgba(37,99,235,.18);--ai-ring:rgba(37,99,235,.35)}
+.chat-composer{position:relative;--ai-core:#0D7377;--ai-halo:rgba(13,115,119,.18);--ai-ring:rgba(13,115,119,.35)}
 .chat-input-wrap{position:relative;flex:1;display:flex;align-items:center}
 
 .ai-indicator{
@@ -378,7 +378,7 @@
 .suggestion-chip:hover,.composer-chip:hover{background:var(--surface-3);border-color:var(--primary);color:var(--primary);transform:translateY(-1px)}
 .chat-composer{margin-top:1rem;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:.95rem 1rem;box-shadow:var(--shadow-md)}
 .chat-input-bar{display:flex;align-items:flex-end;gap:.75rem}.chat-input{flex:1;background:transparent;border:none;outline:none;color:var(--text);font-size:14px;resize:none;max-height:140px;min-height:28px;line-height:1.55}.chat-input::placeholder{color:var(--text-muted)}
-.composer-side{display:flex;align-items:center;gap:.6rem;flex-shrink:0}.char-count{font-size:11px;color:var(--text-muted);min-width:34px;text-align:right}.send-btn{width:44px;height:44px;background:linear-gradient(135deg,var(--primary),var(--primary-hover));border:none;border-radius:var(--radius);cursor:pointer;display:flex;align-items:center;justify-content:center;color:#fff;font-size:17px;flex-shrink:0;transition:transform .15s,opacity .15s,filter .15s;box-shadow:0 10px 18px rgba(37,99,235,.22)}
+.composer-side{display:flex;align-items:center;gap:.6rem;flex-shrink:0}.char-count{font-size:11px;color:var(--text-muted);min-width:34px;text-align:right}.send-btn{width:44px;height:44px;background:linear-gradient(135deg,var(--primary),var(--primary-hover));border:none;border-radius:var(--radius);cursor:pointer;display:flex;align-items:center;justify-content:center;color:#fff;font-size:17px;flex-shrink:0;transition:transform .15s,opacity .15s,filter .15s;box-shadow:0 10px 18px rgba(13,115,119,.25)}
 .send-btn:hover{transform:translateY(-1px);filter:brightness(1.02)}.send-btn:disabled{opacity:.45;cursor:not-allowed;box-shadow:none;transform:none}
 .composer-footer{display:flex;justify-content:space-between;gap:1rem;align-items:center;margin-top:.65rem;flex-wrap:wrap}.composer-hint{font-size:11px;color:var(--text-muted)}
 .composer-actions{display:flex;gap:.45rem;flex-wrap:wrap}
@@ -392,6 +392,28 @@
 .clarification-option:disabled{opacity:.55;cursor:not-allowed}
 @media (max-width: 900px){.chat-hero{flex-direction:column}.chat-wrap{max-height:none}.msg-content{max-width:calc(100% - 52px)}.chart-canvas{height:280px}}
 @media (max-width: 640px){.chat-shell-header{flex-direction:column;align-items:flex-start}.chat-inner{padding:0 .75rem .75rem}.chat-composer{padding:.8rem}.composer-footer{align-items:flex-start}.msg-content{max-width:100%}.chart-header{flex-direction:column}}
+/* ── Query history side drawer ───────────────────────────────────────── */
+.chat-shell{position:relative;overflow:hidden}
+.history-panel{position:absolute;top:0;right:0;width:288px;height:100%;background:var(--surface);border-left:1px solid var(--border);z-index:60;transform:translateX(100%);transition:transform .25s cubic-bezier(.22,.61,.36,1);display:flex;flex-direction:column;box-shadow:-6px 0 20px rgba(0,0,0,.09)}
+.history-panel.open{transform:translateX(0)}
+.hp-header{display:flex;align-items:center;justify-content:space-between;padding:.8rem 1rem;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--surface)}
+.hp-title{font-size:13px;font-weight:800;color:var(--text)}
+.hp-close{background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:15px;padding:2px;line-height:1;border-radius:4px}
+.hp-close:hover{background:var(--surface-2);color:var(--text)}
+.hp-list{flex:1;overflow-y:auto;padding:.5rem}
+.hp-item{padding:.65rem .75rem;border-radius:var(--radius-sm);border:1px solid transparent;cursor:pointer;margin-bottom:.35rem;transition:background .12s,border-color .12s}
+.hp-item:hover{background:var(--surface-2);border-color:var(--border)}
+.hp-q{font-size:12px;font-weight:700;color:var(--text);line-height:1.45;margin-bottom:.3rem;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.hp-meta{display:flex;align-items:center;gap:.4rem;flex-wrap:wrap}
+.hp-badge{font-size:10px;font-weight:700;padding:2px 6px;border-radius:4px;background:var(--surface-2);border:1px solid var(--border);color:var(--text-muted)}
+.hp-badge.ok{background:var(--success-soft,#d1fae5);border-color:color-mix(in srgb,var(--success,#10b981) 25%,transparent);color:var(--success,#10b981)}
+.hp-empty{padding:2.5rem 1rem;text-align:center;font-size:12px;color:var(--text-muted);line-height:1.7}
+.history-btn{display:inline-flex;align-items:center;gap:.35rem;padding:6px 11px;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-soft);font-size:12px;font-weight:700;cursor:pointer;transition:all .15s;white-space:nowrap}
+.history-btn:hover{border-color:var(--primary);color:var(--primary)}
+.history-btn.active{background:var(--primary-soft);border-color:color-mix(in srgb,var(--primary) 30%,transparent);color:var(--primary)}
+/* ── Main data-table CSV export button ──────────────────────────────── */
+.dt-csv-btn{display:inline-flex;align-items:center;gap:.3rem;padding:3px 9px;border-radius:5px;border:1px solid var(--border);background:var(--surface);color:var(--text-soft);font-size:11px;font-weight:700;cursor:pointer;flex-shrink:0;transition:background .12s,color .12s,border-color .12s;white-space:nowrap;line-height:1.5}
+.dt-csv-btn:hover{background:color-mix(in srgb,var(--primary-soft) 22%,var(--surface));color:var(--primary);border-color:var(--primary)}
 </style>
 {% endblock %}
 
@@ -445,6 +467,24 @@
       <div class="status-wrap">
         <div class="status-badge" id="connBadge"><span class="status-led"></span><span id="connText">Connecting…</span></div>
         <div class="status-note" id="connNote">Waiting for live session</div>
+        <button type="button" class="history-btn" id="historyToggleBtn"
+                onclick="toggleHistoryPanel()" title="View recent query history" aria-expanded="false">
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <circle cx="8" cy="8" r="6.5"/><path d="M8 4.5v3.5l2 2"/>
+          </svg>
+          History
+        </button>
+      </div>
+    </div>
+
+    <!-- ── Query history side panel ── -->
+    <div class="history-panel" id="historyPanel" aria-label="Query history" role="complementary">
+      <div class="hp-header">
+        <span class="hp-title">Recent queries</span>
+        <button type="button" class="hp-close" onclick="toggleHistoryPanel()" aria-label="Close history panel">✕</button>
+      </div>
+      <div class="hp-list" id="historyList">
+        <div class="hp-empty" id="historyEmpty">Loading…</div>
       </div>
     </div>
 
@@ -1247,7 +1287,7 @@ function sendAnalysisAction(action, context, label){
 }
 // ── Tier-1 table: sortable columns, text filter, numeric footer, "Ask" shortcut ──
 let _dtIdCounter = 0;
-function renderDataTable(data, { question = '' } = {}) {
+function renderDataTable(data, { question = '', trace_id = '' } = {}) {
   if (!data || !Array.isArray(data.rows) || !data.rows.length) return '';
   const headers = Array.isArray(data.headers) ? data.headers : Object.keys(data.rows[0] || {});
   const dtId = `dt-${++_dtIdCounter}`;
@@ -1272,12 +1312,14 @@ function renderDataTable(data, { question = '' } = {}) {
     return vals.some(v => v !== null && v !== '' && !isNaN(Number(String(v).replace(/,/g, ''))));
   });
 
+  const csvIcon = `<svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v9M4 7l4 4 4-4"/><path d="M2 14h12"/></svg>`;
   const toolbarHtml = `<div class="data-table-toolbar">
     <input class="data-table-filter" type="text" placeholder="Filter rows…" aria-label="Filter table rows" data-dt="${dtId}">
     <span class="data-table-agg" id="${dtId}-agg"></span>
+    <button type="button" class="dt-csv-btn" data-dt="${dtId}" title="Download as CSV">${csvIcon} CSV</button>
   </div>`;
 
-  return `<div class="data-table-wrap" id="${dtId}-wrap">
+  return `<div class="data-table-wrap" id="${dtId}-wrap" data-trace-id="${escHtml(trace_id)}">
     ${toolbarHtml}
     <div class="data-table-scroll">
       <table class="data-table" id="${dtId}">
@@ -1384,6 +1426,39 @@ function _mountDataTableControls(wrapEl, question) {
   }
 
   updateAgg();
+
+  // ── CSV export button ────────────────────────────────────────────────────
+  const csvBtn = wrapEl.querySelector(`.dt-csv-btn[data-dt="${dtId}"]`);
+  if (csvBtn) {
+    const traceId = wrapEl.dataset.traceId || '';
+    csvBtn.addEventListener('click', () => {
+      if (traceId) {
+        // Full server-side export (includes truncated rows)
+        const a = document.createElement('a');
+        a.href = `/portal/api/export-csv?trace_id=${encodeURIComponent(traceId)}`;
+        a.download = '';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      } else {
+        // Client-side export from current DOM (all rows, including hidden-by-filter)
+        const hdrs = Array.from(table.querySelectorAll('thead th')).map(th => th.textContent.trim());
+        const rows = Array.from(tbody.querySelectorAll('tr')).map(tr =>
+          Array.from(tr.cells).map(td => td.textContent.trim())
+        );
+        const esc = v => `"${String(v).replace(/"/g, '""')}"`;
+        const lines = [hdrs.map(esc).join(','), ...rows.map(r => r.map(esc).join(','))];
+        const blob = new Blob([lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = 'querybot-results.csv';
+        document.body.appendChild(a); a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }
+      toast('CSV download started');
+    });
+  }
 }
 
 // ── Inline result card chat ───────────────────────────────────────────────────
@@ -1604,13 +1679,14 @@ function appendAssistantResponse(msg, opts = {}){
     ? `<div class="answer-chip">${escHtml(answer.short_value || '')}${answer.comparison ? ` • ${escHtml(answer.comparison)}` : ''}</div>`
     : '';
 
+  const msgTraceId = String(msg.trace_id || msg.trust?.trace_id || '');
   // Body: prefer chart when present, otherwise the data table, otherwise the question echo
   let bodyHtml = '';
   if (hasChart) {
     bodyHtml = `<div class="result-chart-wrap"><div id="${chartId}" class="chart-canvas compact"></div></div>`;
-    if (hasData) bodyHtml += renderDataTable(msg.data, { question: msg.question || '' });
+    if (hasData) bodyHtml += renderDataTable(msg.data, { question: msg.question || '', trace_id: msgTraceId });
   } else if (hasData) {
-    bodyHtml = renderDataTable(msg.data, { question: msg.question || '' });
+    bodyHtml = renderDataTable(msg.data, { question: msg.question || '', trace_id: msgTraceId });
   } else {
     bodyHtml = `<div class="msg-bubble">${formatBotText(msg.question || '')}</div>`;
   }
@@ -2431,6 +2507,7 @@ function connect(){
         setProcessing(false);
         appendAssistantResponse(msg);
         refreshQueryLimitStatus({toast:true});
+        window.dispatchEvent(new CustomEvent('qb-query-success'));
       }, 900);
       return; // prevent falling through to setProcessing(false) in 'typing' event
     } else if (msg.type === 'assistant_analysis') {
@@ -2468,6 +2545,66 @@ function connect(){
   };
   ws.onerror = () => setConnectionState('Connection issue', 'Trying to recover live session');
 }
+// ── Query history panel ───────────────────────────────────────────────────────
+let _historyLoaded = false;
+
+function toggleHistoryPanel() {
+  const panel = document.getElementById('historyPanel');
+  const btn   = document.getElementById('historyToggleBtn');
+  if (!panel) return;
+  const opening = !panel.classList.contains('open');
+  panel.classList.toggle('open', opening);
+  btn && btn.classList.toggle('active', opening);
+  btn && btn.setAttribute('aria-expanded', opening ? 'true' : 'false');
+  if (opening && !_historyLoaded) loadHistory();
+}
+
+async function loadHistory() {
+  const listEl  = document.getElementById('historyList');
+  const emptyEl = document.getElementById('historyEmpty');
+  if (!listEl) return;
+  try {
+    const resp = await fetch('/portal/api/history', { credentials: 'same-origin' });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const data = await resp.json();
+    const items = Array.isArray(data.history) ? data.history : (Array.isArray(data) ? data : []);
+    _historyLoaded = true;
+    if (!items.length) {
+      if (emptyEl) emptyEl.innerHTML = 'No queries yet.<br><span style="font-size:11px">Your recent queries will appear here.</span>';
+      return;
+    }
+    if (emptyEl) emptyEl.remove();
+    listEl.innerHTML = items.map(item => {
+      const ts   = (item.created_at || '').slice(5, 16);
+      const rows = item.row_count != null ? item.row_count.toLocaleString() + ' rows' : '';
+      const dur  = item.duration_ms ? Math.round(item.duration_ms) + ' ms' : '';
+      return `<div class="hp-item" onclick="sendHistoryQuestion(${JSON.stringify(escHtml(item.question || ''))})">
+        <div class="hp-q">${escHtml(item.question || '—')}</div>
+        <div class="hp-meta">
+          ${ts ? `<span class="hp-badge">${ts}</span>` : ''}
+          ${rows ? `<span class="hp-badge ok">${rows}</span>` : ''}
+          ${dur  ? `<span class="hp-badge">${dur}</span>` : ''}
+        </div>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    if (emptyEl) emptyEl.textContent = 'Could not load history.';
+    console.warn('History load failed:', e);
+  }
+}
+
+function sendHistoryQuestion(question) {
+  const decoded = question.replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"');
+  if (!decoded || !wsReady) { toast('Live session not ready'); return; }
+  toggleHistoryPanel();
+  const inp = document.getElementById('input');
+  if (inp) { inp.value = decoded; inp.dispatchEvent(new Event('input')); }
+  setTimeout(() => sendMessage(), 80);
+}
+
+// Reload history list after each successful query so it stays fresh
+window.addEventListener('qb-query-success', () => { _historyLoaded = false; });
+
 document.addEventListener('DOMContentLoaded', () => {
   _initComposerMascot();
   _updateMascotTheme();
