@@ -154,6 +154,47 @@
 .resolver-output{font-family:Consolas,monospace;font-size:11px;background:var(--surface-2);border:1px solid var(--border);border-radius:5px;padding:.6rem;white-space:pre-wrap;word-break:break-all;line-height:1.5;color:var(--text-soft);margin-top:.5rem;max-height:160px;overflow-y:auto}
 .sync-badge{font-size:9px;font-weight:800;padding:2px 6px;border-radius:999px;background:var(--green-light,#D1FAE5);color:var(--green,#059669)}
 
+/* ── Health badge + panel ──────────────────────────────────────────────────── */
+.health-badge{display:inline-flex;align-items:center;gap:5px;border:1px solid transparent;border-radius:6px;padding:4px 10px;font-size:11px;font-weight:800;cursor:pointer;line-height:1;transition:all .15s;user-select:none}
+.health-badge:hover{filter:brightness(.9)}
+.health-badge.green{background:color-mix(in srgb,var(--green,#059669) 12%,var(--surface));border-color:color-mix(in srgb,var(--green,#059669) 28%,transparent);color:var(--green,#059669)}
+.health-badge.amber{background:color-mix(in srgb,var(--amber,#d69e2e) 12%,var(--surface));border-color:color-mix(in srgb,var(--amber,#d69e2e) 28%,transparent);color:color-mix(in srgb,var(--amber,#d69e2e) 80%,#222)}
+.health-badge.red{background:color-mix(in srgb,var(--red,#DC2626) 12%,var(--surface));border-color:color-mix(in srgb,var(--red,#DC2626) 28%,transparent);color:var(--red,#DC2626)}
+.health-badge.none{background:var(--surface-2);border-color:var(--border);color:var(--text-muted)}
+.health-panel{display:none;position:absolute;top:100%;right:0;width:440px;max-height:70vh;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,.16);z-index:500;margin-top:4px}
+.health-panel.open{display:block}
+.health-panel-head{padding:.7rem .9rem;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;background:var(--surface-2);border-radius:8px 8px 0 0;position:sticky;top:0;z-index:1}
+.health-panel-head h3{font-size:13px;font-weight:800;margin:0}
+.health-panel-close{background:none;border:none;font-size:16px;cursor:pointer;color:var(--text-muted);padding:0 4px}
+.health-score-row{display:flex;align-items:center;gap:.75rem;padding:.75rem .9rem;border-bottom:1px solid var(--border)}
+.health-score-ring{width:52px;height:52px;flex-shrink:0}
+.health-stats{display:flex;gap:.75rem;flex-wrap:wrap}
+.h-stat{font-size:11px;color:var(--text-muted);display:flex;align-items:center;gap:3px}
+.h-stat-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.h-stat-dot.error{background:var(--red,#DC2626)}
+.h-stat-dot.warning{background:var(--amber,#d69e2e)}
+.h-stat-dot.info{background:var(--blue,#3182ce)}
+.health-section{padding:.45rem .9rem;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);background:var(--surface-2);border-bottom:1px solid var(--border)}
+.health-issue{padding:.5rem .9rem;border-bottom:1px solid var(--border);display:flex;gap:.5rem;align-items:flex-start;font-size:12px}
+.health-issue:last-child{border-bottom:none}
+.hi-icon{width:16px;height:16px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:900;color:#fff;margin-top:1px}
+.hi-icon.error{background:var(--red,#DC2626)}
+.hi-icon.warning{background:var(--amber,#d69e2e)}
+.hi-icon.info{background:var(--blue,#3182ce)}
+.hi-msg{flex:1;line-height:1.5;color:var(--text-soft)}
+.hi-entity{font-size:10px;font-weight:700;color:var(--primary);cursor:pointer;margin-top:2px;white-space:nowrap}
+.hi-entity:hover{text-decoration:underline}
+.health-unmapped{padding:.5rem .9rem;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:.5rem;font-size:12px}
+.health-unmapped:last-child{border-bottom:none}
+.hut-name{font-family:Consolas,monospace;font-size:11px;font-weight:700;color:var(--text);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hut-schema{font-size:10px;color:var(--text-muted);white-space:nowrap}
+.hut-add{background:var(--blue-light,#EBF8FF);border:1px solid color-mix(in srgb,var(--blue,#3182ce) 25%,transparent);color:var(--blue,#3182ce);border-radius:5px;padding:3px 8px;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap;transition:all .12s}
+.hut-add:hover{background:var(--blue,#3182ce);color:#fff}
+/* Sidebar entity health dot overlay */
+.gs-health-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;margin-left:2px}
+.gs-health-dot.error{background:var(--red,#DC2626)}
+.gs-health-dot.warning{background:var(--amber,#d69e2e)}
+
 /* ── Detail panel tabs ─────────────────────────────────────────────────────── */
 .gd-tab-bar{display:flex;border-bottom:2px solid var(--border);background:var(--surface);flex-shrink:0;overflow-x:auto}
 .gd-tab{padding:.55rem .9rem;font-size:11px;font-weight:700;color:var(--text-muted);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px;white-space:nowrap;transition:color .12s,border-color .12s;display:flex;align-items:center;gap:.3rem}
@@ -191,10 +232,12 @@
     <div class="gs-empty">No entities yet.<br>Click <strong>+ Add</strong> to define your first business object.</div>
     {% endif %}
     {% for e in entities %}
+    {% set _esev = health.entity_severity.get(e.entity_name, '') %}
     <div class="gs-entity-item" id="sib-{{ e.entity_name|replace(' ','_') }}"
          onclick="selectEntity('{{ e.entity_name }}')">
       <span class="entity-dot" style="background:{{ e.color or '#4F86C6' }}"></span>
       <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ e.display_name or e.entity_name }}</span>
+      {% if _esev %}<span class="gs-health-dot {{ _esev }}" title="{{ _esev|capitalize }} health issue"></span>{% endif %}
       <span class="entity-type-badge badge-{{ e.entity_type }}">{{ e.entity_type }}</span>
     </div>
     {% endfor %}
@@ -248,7 +291,26 @@
       <option value="">All schemas</option>
     </select>
     <span class="tb-hint" id="mode-hint">Click to select • Hover node → drag ◉ port to connect • ⇢ Link one-to-one • ⬗ Multi-link one fact → many dims • ✦ = LLM suggested</span>
+    <!-- Health badge -->
+    <div style="position:relative;margin-left:auto;flex-shrink:0">
+      <button id="health-btn" class="health-badge none" onclick="toggleHealthPanel()" title="Graph health report">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+        <span id="health-score-txt">—</span>
+      </button>
+      <!-- Health dropdown panel -->
+      <div id="health-panel" class="health-panel">
+        <div class="health-panel-head">
+          <h3>Graph health report</h3>
+          <button class="health-panel-close" onclick="toggleHealthPanel()">✕</button>
+        </div>
+        <div id="health-panel-body">
+          <div style="padding:1rem;text-align:center;color:var(--text-muted);font-size:12px">Loading…</div>
+        </div>
+      </div>
+    </div>
   </div>
+  <!-- Health issues bar (shown below toolbar when there are errors) -->
+  <div id="health-issues-bar" style="display:none;padding:.4rem .75rem;font-size:11px;background:color-mix(in srgb,var(--red,#DC2626) 8%,var(--surface));border-bottom:1px solid color-mix(in srgb,var(--red,#DC2626) 20%,transparent);align-items:center;gap:.6rem;flex-shrink:0"></div>
 
   <svg id="graph-svg" xmlns="http://www.w3.org/2000/svg">
     <defs>
@@ -602,6 +664,9 @@ let graph = {
   entities:      JSON.parse('{{ entities | tojson | safe }}'),
   relationships: JSON.parse('{{ relationships | tojson | safe }}'),
 };
+
+// Health report — server-rendered on page load, refreshed via API after mutations
+let _health = JSON.parse('{{ health | tojson | safe }}');
 
 // Selection state
 let selectedEntity  = null;   // entity_name string
@@ -2474,6 +2539,10 @@ async function api(method, url, body) {
   const opts = { method, headers: { 'Content-Type': 'application/json' } };
   if (body && method !== 'GET') opts.body = JSON.stringify(body);
   const r = await fetch(url, opts);
+  // Refresh health badge after any mutation
+  if (method !== 'GET' && r.ok) {
+    setTimeout(refreshHealth, 300);
+  }
   return r;
 }
 
@@ -3485,5 +3554,230 @@ updateSidebar();  // filters sidebar entity list to active schema
 updateRelList();  // filters rel list to active schema
 _applyTransform(); // sets dot-grid + zoom label on first paint
 if (graph.entities.length > 0) fitView();
+
+// ════════════════════════════════════════════════════════════════════════════
+// GRAPH HEALTH — badge, panel, refresh
+// ════════════════════════════════════════════════════════════════════════════
+
+function _healthColor(score) {
+  if (score === null || score === undefined) return "none";
+  if (score >= 80) return "green";
+  if (score >= 50) return "amber";
+  return "red";
+}
+
+function _renderHealthBadge(h) {
+  const btn = document.getElementById("health-btn");
+  const txt = document.getElementById("health-score-txt");
+  if (!btn || !txt) return;
+  const score = h && h.score != null ? h.score : null;
+  const color = _healthColor(score);
+  btn.className = "health-badge " + color;
+  if (score === null) {
+    txt.textContent = "—";
+    btn.title = "Health check not available — run schema discovery first.";
+  } else {
+    const ec = h.error_count || 0;
+    const wc = h.warning_count || 0;
+    txt.textContent = score + " / 100";
+    btn.title = `Graph health: ${score}/100  •  ${ec} error${ec!==1?"s":""}, ${wc} warning${wc!==1?"s":""}`;
+  }
+}
+
+function _renderHealthPanel(h) {
+  const body = document.getElementById("health-panel-body");
+  if (!body) return;
+
+  if (!h || (!h.has_schema && !h.entity_count)) {
+    body.innerHTML = '<div style="padding:1rem;text-align:center;color:var(--text-muted);font-size:12px">No schema discovered yet.<br>Run <strong>Schema Discovery</strong> from the Setup tab first.</div>';
+    return;
+  }
+
+  const score = h.score != null ? h.score : "—";
+  const color = _healthColor(h.score);
+  const ringColor = color === "green" ? "#059669" : color === "amber" ? "#d69e2e" : color === "red" ? "#DC2626" : "#94A3B8";
+  const pct = h.score != null ? h.score : 0;
+  // SVG ring: circumference of r=20 circle = ~125.7
+  const circ = 125.7;
+  const dash = (pct / 100 * circ).toFixed(1);
+
+  let html = `
+    <div class="health-score-row">
+      <svg class="health-score-ring" viewBox="0 0 52 52">
+        <circle cx="26" cy="26" r="20" fill="none" stroke="var(--border)" stroke-width="4"/>
+        <circle cx="26" cy="26" r="20" fill="none" stroke="${ringColor}" stroke-width="4"
+          stroke-dasharray="${dash} ${circ}" stroke-linecap="round"
+          transform="rotate(-90 26 26)" style="transition:stroke-dasharray .6s ease"/>
+        <text x="26" y="26" text-anchor="middle" dominant-baseline="central"
+          style="font-size:11px;font-weight:800;fill:${ringColor};font-family:system-ui">${score}</text>
+      </svg>
+      <div>
+        <div style="font-size:13px;font-weight:800;color:var(--text);margin-bottom:.35rem">${score !== "—" ? score + " / 100" : "No score"}</div>
+        <div class="health-stats">
+          <span class="h-stat"><span class="h-stat-dot error"></span>${h.entity_count || 0} entit${(h.entity_count||0)!==1?"ies":"y"}</span>
+          <span class="h-stat"><span class="h-stat-dot warning"></span>${h.relationship_count || 0} rel${(h.relationship_count||0)!==1?"s":""}</span>
+          <span class="h-stat"><span class="h-stat-dot info"></span>${h.property_count || 0} prop${(h.property_count||0)!==1?"s":""}</span>
+        </div>
+        <div class="health-stats" style="margin-top:.25rem">
+          ${(h.error_count||0) > 0 ? `<span class="h-stat" style="color:var(--red,#DC2626)"><span class="h-stat-dot error"></span>${h.error_count} error${h.error_count!==1?"s":""}</span>` : ""}
+          ${(h.warning_count||0) > 0 ? `<span class="h-stat" style="color:color-mix(in srgb,var(--amber,#d69e2e) 80%,#222)"><span class="h-stat-dot warning"></span>${h.warning_count} warning${h.warning_count!==1?"s":""}</span>` : ""}
+          ${(h.error_count||0) === 0 && (h.warning_count||0) === 0 ? '<span class="h-stat" style="color:var(--green,#059669)">✓ All checks passed</span>' : ""}
+        </div>
+      </div>
+    </div>`;
+
+  // Issues list
+  const issues = (h.issues || []).filter(i => i.severity !== "info");
+  if (issues.length) {
+    const ICON = { error: "✕", warning: "!", info: "i" };
+    html += '<div class="health-section">Issues</div>';
+    issues.forEach(issue => {
+      const entityLink = issue.entity
+        ? `<div class="hi-entity" onclick="selectEntity('${_esc(issue.entity)}')">${_esc(issue.entity)}</div>`
+        : "";
+      html += `<div class="health-issue">
+        <div class="hi-icon ${issue.severity}">${ICON[issue.severity]||"!"}</div>
+        <div><div class="hi-msg">${_esc(issue.message)}</div>${entityLink}</div>
+      </div>`;
+    });
+  }
+
+  // Unmapped tables
+  const unmapped = h.unmapped_tables || [];
+  if (unmapped.length) {
+    html += `<div class="health-section">Unmapped tables <span style="font-weight:400;text-transform:none;letter-spacing:0">(${unmapped.length} table${unmapped.length!==1?"s":""} in schema with no entity)</span></div>`;
+    unmapped.slice(0, 30).forEach(t => {
+      html += `<div class="health-unmapped">
+        <span class="hut-name" title="${_esc(t.fqn)}">${_esc(t.table_name)}</span>
+        <span class="hut-schema">${_esc(t.schema_name)}</span>
+        <button class="hut-add" onclick="quickAddEntity('${_esc(t.table_name)}','${_esc(t.schema_name)}','${_esc(t.fqn)}')" title="Pre-fill the Add Entity form with this table">＋ Add</button>
+      </div>`;
+    });
+    if (unmapped.length > 30) {
+      html += `<div style="padding:.5rem .9rem;font-size:11px;color:var(--text-muted)">…and ${unmapped.length - 30} more tables.</div>`;
+    }
+  }
+
+  if (!issues.length && !unmapped.length) {
+    html += '<div style="padding:1rem;text-align:center;color:var(--green,#059669);font-size:12px;font-weight:700">✓ Graph is healthy — no issues found.</div>';
+  }
+
+  body.innerHTML = html;
+}
+
+function _esc(s) {
+  return String(s || "")
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;").replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function _updateHealthBar(h) {
+  const bar = document.getElementById("health-issues-bar");
+  if (!bar) return;
+  const ec = h ? (h.error_count || 0) : 0;
+  if (ec > 0) {
+    bar.style.display = "flex";
+    bar.innerHTML = `<span style="color:var(--red,#DC2626);font-weight:700">✕ ${ec} graph error${ec!==1?"s":""}</span>`
+      + `<span style="color:var(--text-muted)">— click the health badge for details.</span>`;
+  } else {
+    bar.style.display = "none";
+  }
+}
+
+function _applySidebarHealthDots(h) {
+  // Update sidebar dots without full re-render
+  const sev = (h && h.entity_severity) || {};
+  document.querySelectorAll(".gs-entity-item").forEach(item => {
+    const id = item.id; // "sib-EntityName"
+    if (!id || !id.startsWith("sib-")) return;
+    const ename = id.slice(4).replace(/_/g, " ");
+    // Remove existing dot
+    const existing = item.querySelector(".gs-health-dot");
+    if (existing) existing.remove();
+    const s = sev[ename];
+    if (s) {
+      const dot = document.createElement("span");
+      dot.className = "gs-health-dot " + s;
+      dot.title = s.charAt(0).toUpperCase() + s.slice(1) + " health issue";
+      // Insert before type badge
+      const badge = item.querySelector(".entity-type-badge");
+      if (badge) item.insertBefore(dot, badge);
+      else item.appendChild(dot);
+    }
+  });
+}
+
+function applyHealthReport(h) {
+  _health = h;
+  _renderHealthBadge(h);
+  _renderHealthPanel(h);
+  _updateHealthBar(h);
+  _applySidebarHealthDots(h);
+}
+
+async function refreshHealth() {
+  try {
+    const resp = await fetch(`${API_BASE}/health`);
+    if (!resp.ok) return;
+    const h = await resp.json();
+    applyHealthReport(h);
+  } catch (_) { /* best-effort */ }
+}
+
+function toggleHealthPanel() {
+  const panel = document.getElementById("health-panel");
+  if (!panel) return;
+  const isOpen = panel.classList.toggle("open");
+  if (isOpen) {
+    // Re-render panel content with latest health data
+    _renderHealthPanel(_health);
+    // Close when clicking outside
+    setTimeout(() => {
+      document.addEventListener("click", _closeHealthOnOutside, { once: true });
+    }, 0);
+  }
+}
+
+function _closeHealthOnOutside(e) {
+  const panel = document.getElementById("health-panel");
+  const btn   = document.getElementById("health-btn");
+  if (!panel) return;
+  if (!panel.contains(e.target) && !btn.contains(e.target)) {
+    panel.classList.remove("open");
+  } else {
+    // Re-attach if click was inside panel
+    document.addEventListener("click", _closeHealthOnOutside, { once: true });
+  }
+}
+
+// Quick-add entity from unmapped table
+window.quickAddEntity = function(tableName, schemaName, fqn) {
+  // Pre-fill the entity modal with the table info and open it
+  openEntityModal(null);
+  // Give modal time to render then fill fields
+  setTimeout(() => {
+    const modal = document.getElementById("entity-modal");
+    if (!modal) return;
+    const nameIn = modal.querySelector("[name='entity_name']") || modal.querySelector("#em-name");
+    const tableIn = modal.querySelector("[name='table_name']") || modal.querySelector("#em-table");
+    const schemaIn = modal.querySelector("[name='schema_name']") || modal.querySelector("#em-schema");
+    // Build a clean entity name from table name (strip common prefixes)
+    const cleanName = tableName.replace(/^(DIM_|FACT_|STG_|TBL_|T_)/i, "")
+      .replace(/_/g, " ")
+      .replace(/\b\w/g, c => c.toUpperCase());
+    if (nameIn) nameIn.value = cleanName;
+    if (tableIn) tableIn.value = tableName;
+    if (schemaIn) schemaIn.value = schemaName;
+  }, 80);
+  // Close health panel
+  const panel = document.getElementById("health-panel");
+  if (panel) panel.classList.remove("open");
+};
+
+// Initial render from server-rendered data
+applyHealthReport(_health);
+
+// Health auto-refreshes via the api() wrapper above (triggers after every mutation).
 </script>
 {% endblock %}
