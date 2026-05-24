@@ -639,6 +639,48 @@ def _run_migrations() -> None:
         # v26: link drill-down result_chat queries to their parent main query
         ("query_log", "question_id",        "TEXT DEFAULT ''"),
         ("query_log", "parent_question_id", "TEXT DEFAULT ''"),
+        # v27: semantic layer — metric registry enrichment
+        # metric_status: draft | validated | published | deprecated
+        # Default 'published' so all existing metrics stay live without change.
+        ("metric_registry", "metric_status",      "TEXT NOT NULL DEFAULT 'published'"),
+        ("metric_registry", "base_entity",        "TEXT DEFAULT ''"),
+        ("metric_registry", "base_table",         "TEXT DEFAULT ''"),
+        ("metric_registry", "formula_ast",        "TEXT DEFAULT '{}'"),
+        ("metric_registry", "dependencies",       "TEXT DEFAULT '[]'"),
+        ("metric_registry", "last_validated_at",  "TEXT DEFAULT ''"),
+        ("metric_registry", "validation_errors",  "TEXT DEFAULT '[]'"),
+        ("metric_registry", "usage_count",        "INTEGER DEFAULT 0"),
+        ("metric_registry", "eval_coverage",      "INTEGER DEFAULT 0"),
+        ("metric_registry", "owner",              "TEXT DEFAULT ''"),
+        ("metric_registry", "version",            "INTEGER DEFAULT 1"),
+        # v28: entity graph / relationships / properties — suggestion audit trail
+        ("entity_graph",         "generated_by",       "TEXT DEFAULT 'manual'"),
+        ("entity_graph",         "model",               "TEXT DEFAULT ''"),
+        ("entity_graph",         "reason",              "TEXT DEFAULT ''"),
+        ("entity_graph",         "reviewed_by",         "TEXT DEFAULT ''"),
+        ("entity_graph",         "reviewed_at",         "TEXT DEFAULT ''"),
+        ("entity_graph",         "rejected_reason",     "TEXT DEFAULT ''"),
+        ("entity_relationships", "generated_by",        "TEXT DEFAULT 'manual'"),
+        ("entity_relationships", "model",               "TEXT DEFAULT ''"),
+        ("entity_relationships", "reason",              "TEXT DEFAULT ''"),
+        ("entity_relationships", "reviewed_by",         "TEXT DEFAULT ''"),
+        ("entity_relationships", "reviewed_at",         "TEXT DEFAULT ''"),
+        ("entity_relationships", "rejected_reason",     "TEXT DEFAULT ''"),
+        # v28b: relationship join validation results
+        ("entity_relationships", "validation_status",   "TEXT DEFAULT 'untested'"),
+        ("entity_relationships", "validated_at",        "TEXT DEFAULT ''"),
+        ("entity_relationships", "row_count_estimate",  "INTEGER DEFAULT -1"),
+        ("entity_relationships", "join_multiplicity",   "TEXT DEFAULT ''"),
+        ("entity_properties",    "generated_by",        "TEXT DEFAULT 'manual'"),
+        ("entity_properties",    "model",               "TEXT DEFAULT ''"),
+        ("entity_properties",    "reason",              "TEXT DEFAULT ''"),
+        ("entity_properties",    "reviewed_by",         "TEXT DEFAULT ''"),
+        ("entity_properties",    "reviewed_at",         "TEXT DEFAULT ''"),
+        # v29: answer_trace — metric + compiler traceability
+        ("answer_trace", "metric_id",                  "INTEGER DEFAULT NULL"),
+        ("answer_trace", "metric_version_at_query",    "INTEGER DEFAULT 0"),
+        ("answer_trace", "used_deterministic_compiler","INTEGER DEFAULT 0"),
+        ("answer_trace", "compiler_confidence",        "REAL DEFAULT 0.0"),
     ]
     with get_db() as conn:
         _ensure_llm_call_log_table(conn)
@@ -646,6 +688,8 @@ def _run_migrations() -> None:
         _ensure_eval_tables(conn)
         _ensure_external_log_export_state_table(conn)
         _ensure_semantic_field_feedback_table(conn)
+        _ensure_metric_version_table(conn)
+        _ensure_metric_test_table(conn)
         for table, column, col_def in migrations:
             try:
                 existing = [
@@ -659,6 +703,9 @@ def _run_migrations() -> None:
                     log.info("Migration: added %s.%s", table, column)
             except Exception as e:
                 log.debug("Migration skip %s.%s: %s", table, column, e)
+        # Post-migration indexes — created after column migrations so the
+        # referenced columns are guaranteed to exist.
+        _post_migration_indexes(conn)
         # Seed llm_pricing from hardcoded defaults — only inserts rows that
         # don't already exist so admin edits are never overwritten on restart.
         try:
@@ -843,5 +890,92 @@ def _ensure_external_log_export_state_table(conn: sqlite3.Connection) -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_external_log_export_status
             ON external_log_export_state(last_status);
+        """
+    )
+
+
+def _post_migration_indexes(conn: sqlite3.Connection) -> None:
+    """
+    Indexes that reference columns added by migrations (v27+).
+    Must run after the migration loop, not inside _SCHEMA.
+    """
+    idxs = [
+        "CREATE INDEX IF NOT EXISTS idx_metric_registry_status "
+        "ON metric_registry(account_id, metric_status)",
+        "CREATE INDEX IF NOT EXISTS idx_answer_trace_metric "
+        "ON answer_trace(metric_id)",
+        "CREATE INDEX IF NOT EXISTS idx_entity_rel_validation "
+        "ON entity_relationships(account_id, validation_status)",
+    ]
+    for ddl in idxs:
+        try:
+            conn.execute(ddl)
+        except Exception as e:
+            log.debug("Post-migration index skipped: %s", e)
+
+
+def _ensure_metric_version_table(conn: sqlite3.Connection) -> None:
+    """
+    Versioned snapshot of every metric save.
+    Each time a metric is updated, a new row is inserted here so the full
+    edit history is preserved. answer_trace.metric_version_at_query links
+    a query back to the exact metric definition that was active at the time.
+    """
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS metric_version (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            metric_id    INTEGER NOT NULL REFERENCES metric_registry(id) ON DELETE CASCADE,
+            account_id   TEXT    NOT NULL,
+            version      INTEGER NOT NULL DEFAULT 1,
+            name         TEXT    NOT NULL DEFAULT '',
+            synonyms     TEXT    DEFAULT '',
+            sql_template TEXT    NOT NULL DEFAULT '',
+            formula_type TEXT    DEFAULT 'query',
+            formula_ast  TEXT    DEFAULT '{}',
+            description  TEXT    DEFAULT '',
+            base_entity  TEXT    DEFAULT '',
+            base_table   TEXT    DEFAULT '',
+            metric_status TEXT   DEFAULT 'published',
+            changed_by   TEXT    DEFAULT '',
+            change_note  TEXT    DEFAULT '',
+            created_at   TEXT    DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_metric_version_metric
+            ON metric_version(metric_id, version DESC);
+        CREATE INDEX IF NOT EXISTS idx_metric_version_account
+            ON metric_version(account_id, created_at DESC);
+        """
+    )
+
+
+def _ensure_metric_test_table(conn: sqlite3.Connection) -> None:
+    """
+    Golden-question test cases bound to a specific metric.
+    Every published metric should have at least one test row.
+    Eval runs execute these and store pass/fail + error details.
+    """
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS metric_test (
+            id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+            metric_id             INTEGER NOT NULL REFERENCES metric_registry(id) ON DELETE CASCADE,
+            account_id            TEXT    NOT NULL,
+            question              TEXT    NOT NULL,
+            expected_sql_pattern  TEXT    DEFAULT '',
+            expected_result_shape TEXT    DEFAULT '{}',
+            required_tables       TEXT    DEFAULT '[]',
+            required_dimensions   TEXT    DEFAULT '[]',
+            forbidden_columns     TEXT    DEFAULT '[]',
+            last_run_status       TEXT    DEFAULT ''
+                                  CHECK(last_run_status IN ('','pass','fail')),
+            last_run_at           TEXT    DEFAULT '',
+            last_run_error        TEXT    DEFAULT '',
+            created_at            TEXT    DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_metric_test_metric
+            ON metric_test(metric_id);
+        CREATE INDEX IF NOT EXISTS idx_metric_test_account
+            ON metric_test(account_id);
         """
     )
