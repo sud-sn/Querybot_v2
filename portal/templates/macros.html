@@ -1,0 +1,81 @@
+{# ============================================================
+   QueryBot Portal — Jinja2 macros  (Sprint 1)
+   ============================================================ #}
+
+
+{# ── card ──────────────────────────────────────────────────────
+   {% call card("Title") %}…{% endcall %}
+#}
+{% macro card(title='', id='', extra_class='') -%}
+<div class="card {{ extra_class }}"{% if id %} id="{{ id }}"{% endif %}>
+  {% if title %}
+  <div class="card-header"><h2>{{ title }}</h2></div>
+  {% endif %}
+  <div class="card-body">{{ caller() }}</div>
+</div>
+{%- endmacro %}
+
+
+{# ── badge ─────────────────────────────────────────────────────
+   color: blue | green | amber | gray
+#}
+{% macro badge(text, color='blue') -%}
+<span class="badge badge-{{ color }}">{{ text }}</span>
+{%- endmacro %}
+
+
+{# ── btn ───────────────────────────────────────────────────────
+   variant: primary | secondary | danger | success
+#}
+{% macro btn(text, href='', type='button', variant='primary', size='', icon='', extra_class='') -%}
+{% if href -%}
+<a href="{{ href }}" class="btn btn-{{ variant }}{% if size %} btn-{{ size }}{% endif %}{% if extra_class %} {{ extra_class }}{% endif %}">
+  {% if icon %}<span aria-hidden="true">{{ icon }}</span>{% endif %}{{ text }}
+</a>
+{%- else -%}
+<button type="{{ type }}" class="btn btn-{{ variant }}{% if size %} btn-{{ size }}{% endif %}{% if extra_class %} {{ extra_class }}{% endif %}">
+  {% if icon %}<span aria-hidden="true">{{ icon }}</span>{% endif %}{{ text }}
+</button>
+{%- endif %}
+{%- endmacro %}
+
+
+{# ── breadcrumb ────────────────────────────────────────────────
+   items: list of {label, href} — last item is current page
+#}
+{% macro breadcrumb(items) -%}
+{% if items %}
+<nav class="breadcrumb" aria-label="Breadcrumb">
+  {% for item in items %}
+    {% if not loop.last %}
+      <a href="{{ item.href }}">{{ item.label }}</a>
+      <span class="breadcrumb-sep" aria-hidden="true">›</span>
+    {% else %}
+      <span class="breadcrumb-current" aria-current="page">{{ item.label }}</span>
+    {% endif %}
+  {% endfor %}
+</nav>
+{% endif %}
+{%- endmacro %}
+
+
+{# ── alert ─────────────────────────────────────────────────────
+   type: success | error | info | amber
+#}
+{% macro alert(message, type='info', icon='') -%}
+<div class="alert alert-{{ type }}" role="alert">
+  {% if icon %}<span aria-hidden="true">{{ icon }}</span>{% endif %}
+  {{ message }}
+</div>
+{%- endmacro %}
+
+
+{# ── empty_state ───────────────────────────────────────────────
+#}
+{% macro empty_state(icon='📭', title='Nothing here yet', message='') -%}
+<div style="text-align:center;padding:3rem 1.5rem;color:var(--text-muted)">
+  <div style="font-size:2.5rem;margin-bottom:.75rem" aria-hidden="true">{{ icon }}</div>
+  <div style="font-size:14px;font-weight:700;color:var(--text-soft);margin-bottom:.35rem">{{ title }}</div>
+  {% if message %}<div style="font-size:13px">{{ message }}</div>{% endif %}
+</div>
+{%- endmacro %}

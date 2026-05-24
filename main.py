@@ -17,6 +17,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
 import store
 from store.db import init_db
@@ -52,6 +53,7 @@ logging.basicConfig(
 log = logging.getLogger("querybot")
 
 app = FastAPI(title="QueryBot", version="2.0.0")
+app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
 app.include_router(admin_router)
 app.include_router(portal_router)
 

@@ -35,12 +35,14 @@
       <th>Account ID</th>
       <th>Platform</th>
       <th>State</th>
+      <th>Readiness</th>
       <th>Database</th>
       <th>Queries limit</th>
       <th>Connected</th>
       <th></th>
     </tr>
     {% for c in clients %}
+    {% set hs = c.health_score %}
     <tr>
       <td style="font-weight:600;min-width:140px">{{ c.client_name or "—" }}</td>
       <td style="font-family:monospace;font-size:11px;color:var(--gray-500)">{{ c.account_id[:24] }}…</td>
@@ -50,6 +52,22 @@
         {% elif c.state == "KB_BUILDING" %}<span class="badge badge-amber">BUILDING KB</span>
         {% elif c.state == "SCHEMA_READY" %}<span class="badge badge-blue">SCHEMA READY</span>
         {% else %}<span class="badge badge-gray">{{ c.state }}</span>{% endif %}
+      </td>
+      <td>
+        <div style="display:flex;align-items:center;gap:.5rem">
+          <div style="position:relative;width:34px;height:34px;flex-shrink:0">
+            <svg width="34" height="34" viewBox="0 0 34 34" style="transform:rotate(-90deg)" aria-hidden="true">
+              <circle cx="17" cy="17" r="13" fill="none" stroke="var(--border)" stroke-width="3.5"/>
+              <circle cx="17" cy="17" r="13" fill="none"
+                stroke="{% if hs.color == 'green' %}#10b981{% elif hs.color == 'amber' %}#f59e0b{% else %}#ef4444{% endif %}"
+                stroke-width="3.5"
+                stroke-dasharray="{{ (hs.pct * 81.68 / 100)|round(1) }} 81.68"
+                stroke-linecap="round"/>
+            </svg>
+            <span style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800;color:var(--text)">{{ hs.score }}</span>
+          </div>
+          <span style="font-size:11px;font-weight:800;color:{% if hs.color == 'green' %}#10b981{% elif hs.color == 'amber' %}#f59e0b{% else %}#ef4444{% endif %}">{{ hs.grade }}</span>
+        </div>
       </td>
       <td style="color:var(--gray-500);font-size:12px">{{ c.db_name }}</td>
       <td style="font-size:12px;color:var(--gray-500)">{{ c.query_limit_monthly }}/mo</td>

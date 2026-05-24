@@ -50,6 +50,24 @@
 .audit-model{font-size:11px;color:var(--gray-500);white-space:nowrap}
 .audit-chars{font-size:11px;color:var(--gray-500);text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 .call-count-badge{display:inline-flex;align-items:center;gap:3px;font-size:10px;font-weight:800;background:var(--blue-light);color:var(--blue);border:1px solid color-mix(in srgb,var(--blue) 22%,transparent);border-radius:999px;padding:2px 8px;white-space:nowrap}
+
+/* ── Client readiness / health score widget ─────────────────────── */
+.health-score-card{grid-column:1/-1}
+.health-score-layout{display:grid;grid-template-columns:auto 1fr;gap:1.75rem;align-items:start}
+.health-donut-wrap{position:relative;width:110px;height:110px;flex-shrink:0}
+.health-donut-wrap svg{width:110px;height:110px;transform:rotate(-90deg)}
+.health-donut-center{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:1px}
+.health-donut-score{font-size:28px;font-weight:900;line-height:1;letter-spacing:-.04em;color:var(--gray-800)}
+.health-donut-denom{font-size:10px;color:var(--gray-400);font-weight:600}
+.health-components{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:.5rem}
+.health-comp{display:flex;align-items:center;gap:.6rem;padding:.55rem .7rem;border:1px solid var(--border);border-radius:6px;background:var(--surface-2)}
+.health-comp-icon{font-size:14px;flex-shrink:0;line-height:1}
+.health-comp-body{flex:1;min-width:0}
+.health-comp-name{font-size:11px;font-weight:700;color:var(--gray-700);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.health-comp-pts{font-size:10px;color:var(--gray-500);margin-top:1px}
+.health-refresh-btn{font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:999px;background:var(--surface);cursor:pointer;color:var(--gray-600);margin-left:.35rem;transition:background .12s}
+.health-refresh-btn:hover{background:var(--gray-50);color:var(--gray-900)}
+@media(max-width:900px){.health-score-layout{grid-template-columns:1fr}.health-donut-wrap{margin:0 auto}}
 </style>
 {% endblock %}
 {% block content %}
@@ -209,6 +227,53 @@
       {% else %}
         <p style="font-size:12px;color:var(--green)">✅ No recent errors.</p>
       {% endif %}
+    </div>
+
+    <!-- ── Client readiness widget (full-width) ── -->
+    <div class="overview-card health-score-card">
+      <h3 style="display:flex;align-items:center;gap:.5rem">
+        Client readiness
+        {% if health_score.grade == 'A' or health_score.grade == 'B' %}
+          <span class="badge badge-green">{{ health_score.grade }}</span>
+        {% elif health_score.grade == 'C' %}
+          <span class="badge badge-amber">{{ health_score.grade }}</span>
+        {% else %}
+          <span class="badge badge-red">{{ health_score.grade }}</span>
+        {% endif %}
+        <span id="healthGradeBadge" style="display:none"></span>
+        <button type="button" class="health-refresh-btn" id="healthRefreshBtn"
+                onclick="refreshHealthScore()" title="Refresh health score">↻ Refresh</button>
+      </h3>
+      <div class="health-score-layout" id="healthScoreWidget">
+        <!-- Donut gauge -->
+        <div class="health-donut-wrap">
+          <svg viewBox="0 0 110 110" aria-hidden="true">
+            <circle cx="55" cy="55" r="44" fill="none" stroke="var(--gray-100)" stroke-width="9"/>
+            <circle cx="55" cy="55" r="44" fill="none" id="healthArc"
+              stroke="{% if health_score.color == 'green' %}#10b981{% elif health_score.color == 'amber' %}#f59e0b{% else %}#ef4444{% endif %}"
+              stroke-width="9"
+              stroke-dasharray="{{ (health_score.pct * 276.46 / 100)|round(1) }} 276.46"
+              stroke-linecap="round"
+              style="transition:stroke-dasharray .5s ease,stroke .4s ease"/>
+          </svg>
+          <div class="health-donut-center">
+            <span class="health-donut-score" id="healthScore">{{ health_score.score }}</span>
+            <span class="health-donut-denom">/ 100</span>
+          </div>
+        </div>
+        <!-- Component checklist -->
+        <div class="health-components" id="healthComponents">
+          {% for comp in health_score.components %}
+          <div class="health-comp">
+            <span class="health-comp-icon">{{ '✅' if comp.earned == comp.points else ('⚠️' if comp.earned > 0 else '❌') }}</span>
+            <div class="health-comp-body">
+              <div class="health-comp-name" title="{{ comp.label }}">{{ comp.label }}</div>
+              <div class="health-comp-pts">{{ comp.earned }} / {{ comp.points }} pts</div>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
     </div>
 
   </div>
@@ -914,5 +979,59 @@ function toggleSql(codeEl) {
   const pre = td && td.querySelector('pre.sql-full');
   if (pre) pre.classList.toggle('open');
 }
+
+// ── Client readiness live refresh ───────────────────────────────────────────
+(function(){
+  const COLOR_MAP = { green: '#10b981', amber: '#f59e0b', red: '#ef4444' };
+  const CIRC = 276.46; // 2π × 44
+
+  function _esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+  window.refreshHealthScore = async function(){
+    const btn = document.getElementById('healthRefreshBtn');
+    if (btn){ btn.textContent = '…'; btn.disabled = true; }
+    try {
+      const resp = await fetch('/admin/clients/{{ client.account_id | tojson }}/health-score',
+                               { credentials: 'same-origin' });
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      const d = await resp.json();
+
+      // Score & arc
+      const scoreEl = document.getElementById('healthScore');
+      const arcEl   = document.getElementById('healthArc');
+      if (scoreEl) scoreEl.textContent = d.score;
+      if (arcEl) {
+        arcEl.setAttribute('stroke-dasharray', `${(d.pct * CIRC / 100).toFixed(1)} ${CIRC}`);
+        arcEl.setAttribute('stroke', COLOR_MAP[d.color] || '#10b981');
+      }
+
+      // Grade badge (the existing static badges are hidden, we show the dynamic one)
+      const gradeBadge = document.getElementById('healthGradeBadge');
+      if (gradeBadge) {
+        const cls = d.color === 'green' ? 'badge-green' : d.color === 'amber' ? 'badge-amber' : 'badge-red';
+        gradeBadge.className = `badge ${cls}`;
+        gradeBadge.textContent = d.grade;
+        gradeBadge.style.display = 'inline-flex';
+      }
+
+      // Components
+      const compsEl = document.getElementById('healthComponents');
+      if (compsEl && Array.isArray(d.components)) {
+        compsEl.innerHTML = d.components.map(c => `
+          <div class="health-comp">
+            <span class="health-comp-icon" style="font-size:14px;line-height:1">${c.earned === c.points ? '✅' : c.earned > 0 ? '⚠️' : '❌'}</span>
+            <div class="health-comp-body">
+              <div class="health-comp-name" title="${_esc(c.label)}">${_esc(c.label)}</div>
+              <div class="health-comp-pts">${c.earned} / ${c.points} pts</div>
+            </div>
+          </div>`).join('');
+      }
+    } catch(e) {
+      console.warn('Health score refresh failed:', e);
+    } finally {
+      if (btn){ btn.textContent = '↻ Refresh'; btn.disabled = false; }
+    }
+  };
+})();
 </script>
 {% endblock %}

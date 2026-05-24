@@ -211,6 +211,142 @@ def _safe_child_path(base_dir: str, filename: str) -> Path | None:
     return target
 
 
+# ── Client Readiness / Health Score ──────────────────────────────────────────
+
+def _client_health_score(account_id: str, client: dict | None = None) -> dict:
+    """
+    Compute the 8-component readiness score (0-100 pts).
+
+    Components
+    ----------
+    1.  DB connected          10 pts
+    2.  Tables selected       10 pts
+    3.  Masking reviewed      10 pts  (optional; credit given once state_data contains the key)
+    4.  KB ready              20 pts  (10 partial while KB_BUILDING)
+    5.  Eval baseline passed  20 pts
+    6.  Users assigned        10 pts
+    7.  Feedback queue clear  10 pts
+    8.  Query success ≥80 %   10 pts
+
+    Returns
+    -------
+    dict with keys: score, max, pct, grade, color, components
+    """
+    if client is None:
+        client = store.get_client(account_id) or {}
+
+    state      = client.get("state", "NEW")
+    state_data = json.loads(client.get("state_data") or "{}")
+
+    components: list[dict] = []
+
+    # 1 — DB connected
+    db_id  = client.get("db_config_id")
+    db_ok  = bool(db_id and store.get_db_config(db_id))
+    components.append({
+        "key": "db", "label": "Database connected", "points": 10,
+        "earned": 10 if db_ok else 0, "ok": db_ok,
+        "hint": "Assign a database in the Settings tab." if not db_ok else "",
+    })
+
+    # 2 — Tables selected for KB
+    kb_tables  = state_data.get("kb_tables") or []
+    tables_ok  = len(kb_tables) > 0
+    components.append({
+        "key": "tables", "label": "Tables selected", "points": 10,
+        "earned": 10 if tables_ok else 0, "ok": tables_ok,
+        "hint": "Open Schema & KB Setup → Step 2 to select tables." if not tables_ok else "",
+    })
+
+    # 3 — Masking reviewed (optional; credit once the masking_config key exists in state_data)
+    masking_reviewed = "masking_config" in state_data
+    components.append({
+        "key": "masking", "label": "Masking reviewed", "points": 10,
+        "earned": 10 if masking_reviewed else 0, "ok": masking_reviewed,
+        "hint": "Open Schema & KB Setup → Field Masking to review PII fields." if not masking_reviewed else "",
+    })
+
+    # 4 — KB generated
+    if state == "READY":
+        kb_pts, kb_ok = 20, True
+    elif state == "KB_BUILDING":
+        kb_pts, kb_ok = 10, False   # partial
+    else:
+        kb_pts, kb_ok = 0, False
+    components.append({
+        "key": "kb", "label": "Knowledge Base ready", "points": 20,
+        "earned": kb_pts, "ok": kb_ok,
+        "partial": state == "KB_BUILDING",
+        "hint": "Run 'Generate Knowledge Base' in Schema & KB Setup." if not kb_ok else "",
+    })
+
+    # 5 — Eval baseline
+    eval_run  = store.latest_eval_run(account_id)
+    eval_ok   = bool(eval_run and (eval_run.get("pass_count") or 0) > 0)
+    components.append({
+        "key": "evals", "label": "Eval baseline passed", "points": 20,
+        "earned": 20 if eval_ok else 0, "ok": eval_ok,
+        "hint": "Run an eval suite from the Evals tab." if not eval_ok else "",
+    })
+
+    # 6 — Users assigned
+    users     = store.list_users(account_id)
+    users_ok  = len(users) > 0
+    components.append({
+        "key": "users", "label": "Users assigned", "points": 10,
+        "earned": 10 if users_ok else 0, "ok": users_ok,
+        "hint": "Add portal users in the Users tab." if not users_ok else "",
+    })
+
+    # 7 — Semantic feedback queue
+    pending      = store.count_semantic_field_feedback(account_id)
+    feedback_ok  = pending == 0
+    components.append({
+        "key": "feedback", "label": "Feedback queue clear", "points": 10,
+        "earned": 10 if feedback_ok else 0, "ok": feedback_ok,
+        "partial": not feedback_ok,
+        "hint": f"{pending} item{'s' if pending != 1 else ''} need review in the KB tab." if not feedback_ok else "",
+    })
+
+    # 8 — Query success rate ≥ 80 %
+    stats      = store.get_query_stats(account_id)
+    total_q    = stats.get("total") or 0
+    succeeded  = stats.get("succeeded") or 0
+    if total_q > 0:
+        rate       = succeeded / total_q
+        success_pts = 10 if rate >= 0.8 else (5 if rate >= 0.5 else 0)
+        success_ok  = rate >= 0.8
+        rate_label  = f"{rate:.0%}"
+    else:
+        success_pts, success_ok, rate_label = 0, False, "No data"
+    components.append({
+        "key": "success_rate", "label": "Query success ≥80 %", "points": 10,
+        "earned": success_pts, "ok": success_ok,
+        "hint": f"Current rate: {rate_label}. Review failed queries in the Query Log tab." if not success_ok else "",
+    })
+
+    score = sum(c["earned"] for c in components)
+    pct   = score  # max is 100
+
+    if pct >= 90:
+        grade, color = "A", "green"
+    elif pct >= 75:
+        grade, color = "B", "green"
+    elif pct >= 50:
+        grade, color = "C", "amber"
+    else:
+        grade, color = "D", "red"
+
+    return {
+        "score":      score,
+        "max":        100,
+        "pct":        pct,
+        "grade":      grade,
+        "color":      color,
+        "components": components,
+    }
+
+
 # Realtime admin notifications.
 @router.get("/api/semantic-feedback/pending-count")
 async def semantic_feedback_pending_count_api(request: Request):
@@ -925,7 +1061,8 @@ async def clients_page(request: Request):
     dbs     = store.list_db_configs()
     db_map  = {d["id"]: f"{d['name']} ({d['label']})" for d in dbs}
     for c in clients:
-        c["db_name"] = db_map.get(c["db_config_id"], "Not assigned")
+        c["db_name"]     = db_map.get(c["db_config_id"], "Not assigned")
+        c["health_score"] = _client_health_score(c["account_id"], c)
     return _resp(request, "clients.html", {
         "clients": clients, "search": search,
     })
@@ -1056,6 +1193,8 @@ async def client_detail(request: Request, account_id: str):
     # System model for display
     system_model = store.get_system("default_llm_model", "claude-sonnet-4-6")
 
+    health_score = _client_health_score(account_id, client)
+
     return _resp(request, "client_detail.html", {
         "client":          client,
         "queries":         queries,
@@ -1077,7 +1216,19 @@ async def client_detail(request: Request, account_id: str):
         "semantic_pending_count": semantic_pending_count,
         "db_name":         db_name,
         "system_model":    system_model,
+        "health_score":    health_score,
     })
+
+
+@router.get("/clients/{account_id}/health-score")
+async def client_health_score_api(request: Request, account_id: str):
+    """JSON health-score payload — used by the live widget on the detail page."""
+    if not _is_auth(request):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    client = store.get_client(account_id)
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+    return JSONResponse(_client_health_score(account_id, client))
 
 
 @router.get("/clients/{account_id}/traces", response_class=HTMLResponse)

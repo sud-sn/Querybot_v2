@@ -1038,6 +1038,84 @@ async def portal_query_limit_status(request: Request):
     return JSONResponse({"ok": True, "query_status": _query_limit_status(user["account_id"])})
 
 
+@router.get("/api/history")
+async def portal_query_history(request: Request):
+    """Return the last 40 successful query traces for the current user's account."""
+    user = _get_portal_user(request)
+    if not user:
+        return JSONResponse({"ok": False, "error": "Authentication required."}, status_code=401)
+    traces = store.list_answer_traces(user["account_id"], limit=40)
+    items = []
+    for t in traces:
+        items.append({
+            "id":         t.get("id"),
+            "question":   t.get("question") or "",
+            "sql":        t.get("sql") or "",
+            "row_count":  t.get("row_count") or 0,
+            "duration_ms":t.get("duration_ms") or 0,
+            "created_at": (t.get("created_at") or "")[:16].replace("T", " "),
+            "success":    bool(t.get("sql")),  # has SQL = answered
+        })
+    return JSONResponse({"ok": True, "items": items})
+
+
+@router.get("/api/export-csv")
+async def portal_export_csv(request: Request, trace_id: int | None = None):
+    """
+    Export the result of a specific trace (or most recent) as a CSV download.
+    Reads the stored row data from the trace record.
+    """
+    import csv, io as _io
+    user = _get_portal_user(request)
+    if not user:
+        return JSONResponse({"ok": False, "error": "Authentication required."}, status_code=401)
+
+    trace = None
+    if trace_id:
+        trace = store.get_answer_trace(trace_id)
+        # verify it belongs to this account
+        if trace and trace.get("account_id") != user["account_id"]:
+            trace = None
+    if not trace:
+        # fallback: most recent
+        traces = store.list_answer_traces(user["account_id"], limit=1)
+        trace  = traces[0] if traces else None
+
+    if not trace:
+        return JSONResponse({"ok": False, "error": "No query found to export."}, status_code=404)
+
+    # rows are stored as JSON in the trace
+    import json as _json
+    raw_rows = trace.get("result_rows") or trace.get("rows") or "[]"
+    if isinstance(raw_rows, str):
+        try:
+            rows = _json.loads(raw_rows)
+        except Exception:
+            rows = []
+    else:
+        rows = raw_rows
+
+    if not rows:
+        return JSONResponse({"ok": False, "error": "No rows in this query result."}, status_code=404)
+
+    buf = _io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=list(rows[0].keys()))
+    writer.writeheader()
+    writer.writerows(rows)
+    buf.seek(0)
+
+    question_slug = (trace.get("question") or "query")[:40].lower()
+    question_slug = "".join(c if c.isalnum() else "_" for c in question_slug).strip("_")
+    filename = f"querybot_{question_slug}.csv"
+
+    from fastapi.responses import StreamingResponse as _SR
+    return _SR(
+        iter([buf.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.post("/kb/feedback")
 async def portal_kb_feedback(
     request: Request,
