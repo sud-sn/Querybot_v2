@@ -2745,6 +2745,15 @@ async def metric_update(
 ):
     if not _is_auth(request):
         return RedirectResponse("/admin/login", status_code=303)
+
+    # Resolve db_type for re-validation
+    db_type = "azure_sql"
+    client  = store.get_client(account_id)
+    if client and client.get("db_config_id"):
+        raw = store.get_db_config(client["db_config_id"])
+        if raw:
+            db_type = raw.get("db_type", "azure_sql")
+
     store.update_metric(metric_id, {
         "name":                name.strip(),
         "synonyms":            synonyms.strip(),
@@ -2759,16 +2768,63 @@ async def metric_update(
         "category":            category.strip(),
         "default_time_column": default_time_column.strip(),
         "is_active":           int(is_active),
-    })
+    }, account_id=account_id, db_type=db_type)
     return RedirectResponse(f"/admin/clients/{account_id}/metrics?saved=1", status_code=303)
+
+
+@router.post("/clients/{account_id}/metrics/{metric_id}/deprecate")
+async def metric_deprecate(request: Request, account_id: str, metric_id: int):
+    """Soft-delete: marks metric as deprecated/inactive. Preserves history."""
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    store.deprecate_metric(metric_id, account_id)
+    return RedirectResponse(f"/admin/clients/{account_id}/metrics", status_code=303)
 
 
 @router.post("/clients/{account_id}/metrics/{metric_id}/delete")
 async def metric_delete(request: Request, account_id: str, metric_id: int):
+    """Hard-delete. Only use for metrics created by mistake. Enforces account ownership."""
     if not _is_auth(request):
         return RedirectResponse("/admin/login", status_code=303)
-    store.delete_metric(metric_id)
+    store.delete_metric(metric_id, account_id)
     return RedirectResponse(f"/admin/clients/{account_id}/metrics", status_code=303)
+
+
+@router.post("/clients/{account_id}/metrics/validate")
+async def metrics_validate(request: Request, account_id: str):
+    """
+    Live validation endpoint — returns structured errors/warnings for a metric
+    definition without saving anything. Called by the create/edit form UI.
+    """
+    if not _is_auth(request):
+        return JSONResponse({"status": "error", "detail": "Not authenticated"}, status_code=401)
+
+    body = await request.json()
+    if not body.get("sql_template", "").strip():
+        return JSONResponse({"status": "error", "detail": "Formula/SQL is required"})
+
+    client = store.get_client(account_id)
+    if not client:
+        return JSONResponse({"status": "error", "detail": "Account not found"}, status_code=404)
+
+    # Resolve db_type for function allowlist
+    db_type = "azure_sql"
+    db_cfg_id = client.get("db_config_id")
+    if db_cfg_id:
+        raw = store.get_db_config(db_cfg_id)
+        if raw:
+            db_type = raw.get("db_type", "azure_sql")
+
+    from core.metric_validator import validate_metric, load_schema_columns
+    schema_columns = load_schema_columns(account_id)
+    result = validate_metric(body, db_type=db_type, schema_columns=schema_columns)
+    return JSONResponse({
+        "status":      "ok",
+        "valid":       result.valid,
+        "errors":      result.errors,
+        "warnings":    result.warnings,
+        "formula_ast": result.formula_ast,
+    })
 
 
 @router.post("/clients/{account_id}/metrics/test-formula")
