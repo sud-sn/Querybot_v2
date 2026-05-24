@@ -90,6 +90,7 @@
 {% endblock %}
 {% block breadcrumb %}
 {% from "macros.html" import breadcrumb %}
+{% from "icons.html" import ic %}
 {{ breadcrumb([
     {"label": "Dashboard", "href": "/admin"},
     {"label": "Clients",   "href": "/admin/clients"},
@@ -373,7 +374,7 @@
     <form method="post" action="/admin/clients/{{ client.account_id }}/setup/discover">
       <button type="submit" class="btn btn-primary"
         {% if not db_cfg %}disabled title="Assign a database first"{% endif %}>
-        🔍 Discover schema
+        {{ ic("search", 14) }} Discover schema
       </button>
     </form>
     {% endif %}
@@ -546,13 +547,13 @@
       🕸 Entity Graph
     </a>
     <a href="/admin/clients/{{ client.account_id }}/groups" class="btn btn-secondary btn-sm">
-      👥 Set up User Groups
+      {{ ic("user-group", 14) }} Set up User Groups
     </a>
     <a href="/admin/clients/{{ client.account_id }}/kb" class="btn btn-secondary btn-sm">
       📝 Edit KB Files
     </a>
     <a href="/admin/clients/{{ client.account_id }}" class="btn btn-secondary btn-sm">
-      📊 View Dashboard
+      {{ ic("dashboard", 14) }} View Dashboard
     </a>
   </div>
 </div>
@@ -1440,7 +1441,7 @@
     summary.style.flexWrap = 'wrap';
     summary.innerHTML = `
       <span><strong>${dbs.length}</strong> db | <strong>${schemaCount}</strong> schemas | <strong style="color:var(--green)">${tableCount}</strong> tables | <strong style="color:var(--violet)">${viewCount}</strong> views</span>
-      <input id="scope-tree-search" type="text" placeholder="🔍  Filter tables by name…"
+      <input id="scope-tree-search" type="text" placeholder="Filter tables by name…"
         style="margin-left:auto;padding:5px 9px;border:1px solid var(--border);border-radius:5px;font-size:12px;outline:none;width:220px;background:var(--surface)"
         oninput="filterScopeTree(this.value)">
     `;

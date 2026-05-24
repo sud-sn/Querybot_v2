@@ -3,6 +3,11 @@
    (Sprint 1)
    ============================================================ */
 
+/* ── Theme-toggle icon swap ─────────────────────────────── */
+.theme-toggle .ti-sun  { display: none; }
+html[data-theme='dark']  .theme-toggle .ti-moon { display: none; }
+html[data-theme='dark']  .theme-toggle .ti-sun  { display: inline-block; }
+
 body {
   min-height: 100vh;
   display: flex;
