@@ -1,5 +1,9 @@
 {% extends "portal_base.html" %}
+{% from "macros.html" import breadcrumb %}
 {% block title %}Dashboard — QueryBot Portal{% endblock %}
+{% block breadcrumb %}
+{{ breadcrumb([{"label": "Dashboard", "href": ""}]) }}
+{% endblock %}
 {% block head %}
 <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
 <style>

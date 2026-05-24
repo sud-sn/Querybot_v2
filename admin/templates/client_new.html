@@ -1,9 +1,16 @@
 {% extends "base.html" %}
+{% from "macros.html" import breadcrumb %}
 {% block title %}Register Client — QueryBot Admin{% endblock %}
+{% block breadcrumb %}
+{{ breadcrumb([
+    {"label": "Dashboard",        "href": "/admin"},
+    {"label": "Clients",          "href": "/admin/clients"},
+    {"label": "Register Client",  "href": ""},
+]) }}
+{% endblock %}
 {% block content %}
 
 <div style="margin-bottom:1.25rem">
-  <a href="/admin/clients" style="color:var(--gray-500);font-size:13px">← Clients</a>
   <h1 style="font-size:20px;font-weight:700;margin-top:4px">Register a new client</h1>
   <p style="font-size:13px;color:var(--gray-500)">
     Create a new workspace entry. After saving, you'll be taken to the
