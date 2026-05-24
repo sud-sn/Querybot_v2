@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "macros.html" import breadcrumb %}
+{% from "icons.html" import ic %}
 {% block title %}{{ client.client_name or client.account_id[:16] }} — QueryBot Admin{% endblock %}
 {% block breadcrumb %}
 {{ breadcrumb([
@@ -100,8 +101,8 @@
         {% if client.chat_ui_enabled %}💬 Chat UI: ON{% else %}💬 Chat UI: OFF{% endif %}
       </button>
     </form>
-    <a href="/admin/clients/{{ client.account_id }}/groups" class="btn btn-secondary btn-sm">👥 Groups</a>
-    <a href="/admin/clients/{{ client.account_id }}/users" class="btn btn-secondary btn-sm">👤 Users</a>
+    <a href="/admin/clients/{{ client.account_id }}/groups" class="btn btn-secondary btn-sm">{{ ic("user-group", 14) }} Groups</a>
+    <a href="/admin/clients/{{ client.account_id }}/users" class="btn btn-secondary btn-sm">{{ ic("users", 14) }} Users</a>
     <a href="/admin/clients/{{ client.account_id }}/kb" class="btn btn-secondary btn-sm">📝 Edit KB</a>
     <a href="/admin/clients/{{ client.account_id }}/traces" class="btn btn-secondary btn-sm">Traces</a>
     <a href="/admin/clients/{{ client.account_id }}/evals" class="btn btn-secondary btn-sm">Evals</a>

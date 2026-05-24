@@ -1,3 +1,4 @@
+{% from "icons.html" import ic %}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -34,9 +35,7 @@
   };
   function _updateThemeToggle(current){
     document.querySelectorAll('[data-theme-toggle]').forEach(function(node){
-      var icon=node.querySelector('.theme-icon');
       var label=node.querySelector('.theme-label');
-      if(icon)  icon.textContent=current==='dark'?'☀️':'🌙';
       if(label) label.textContent=current==='dark'?'Light mode':'Dark mode';
       node.setAttribute('aria-label',current==='dark'?'Switch to light mode':'Switch to dark mode');
       node.setAttribute('title',current==='dark'?'Switch to light mode':'Switch to dark mode');
@@ -55,12 +54,13 @@
   <div class="topbar-nav">
     <a href="/portal/dashboard" class="{% if 'dashboard' in request.url.path %}active{% endif %}">Dashboard</a>
     <a href="/portal/kb"        class="{% if '/kb' in request.url.path %}active{% endif %}">Semantic Layer</a>
-    <a href="/portal/chat"      class="{% if '/chat' in request.url.path %}active{% endif %}">💬 Chat</a>
+    <a href="/portal/chat"      class="{% if '/chat' in request.url.path %}active{% endif %}">{{ ic("chat", 16) }} Chat</a>
   </div>
 
   <div class="topbar-right">
     <button type="button" class="theme-toggle" data-theme-toggle onclick="window.__qbToggleTheme()">
-      <span class="theme-icon">🌙</span>
+      <span class="ti-moon">{{ ic("moon", 16) }}</span>
+      <span class="ti-sun">{{ ic("sun", 16) }}</span>
       <span class="theme-label">Dark mode</span>
     </button>
 
@@ -72,7 +72,7 @@
       </div>
     </div>
 
-    <a href="/portal/change-password" class="btn btn-secondary btn-sm">⚙ Settings</a>
+    <a href="/portal/change-password" class="btn btn-secondary btn-sm">{{ ic("settings", 14) }} Settings</a>
     <a href="/portal/logout"          class="btn btn-secondary btn-sm">Logout</a>
   </div>
 </nav>

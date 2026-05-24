@@ -133,13 +133,20 @@ html[data-theme='dark'] .sidebar-link.active {
 html[data-theme='dark'] .sidebar-link.active::before { background: var(--primary); }
 
 .sidebar-link-icon {
-  font-size: 15px;
   width: 18px;
-  text-align: center;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
-  opacity: .75;
+  opacity: .72;
 }
 .sidebar-link.active .sidebar-link-icon { opacity: 1; }
+
+/* ── Theme-toggle icon swap (CSS-driven, no JS needed) ─── */
+.theme-toggle .ti-sun  { display: none; }
+html[data-theme='dark']  .theme-toggle .ti-moon { display: none; }
+html[data-theme='dark']  .theme-toggle .ti-sun  { display: inline-block; }
 
 /* Sidebar footer */
 .sidebar-foot {

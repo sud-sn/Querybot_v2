@@ -1,3 +1,4 @@
+{% from "icons.html" import ic %}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -34,9 +35,7 @@
   };
   function _updateThemeToggle(current){
     document.querySelectorAll('[data-theme-toggle]').forEach(function(node){
-      var icon=node.querySelector('.theme-icon');
       var label=node.querySelector('.theme-label');
-      if(icon) icon.textContent=current==='dark'?'☀️':'🌙';
       if(label) label.textContent=current==='dark'?'Light mode':'Dark mode';
     });
   }
@@ -76,35 +75,36 @@
 
       <a href="/admin"
          class="sidebar-link {% if request.url.path in ['/admin','/admin/'] %}active{% endif %}">
-        <span class="sidebar-link-icon">📊</span> Dashboard
+        <span class="sidebar-link-icon">{{ ic("dashboard") }}</span> Dashboard
       </a>
 
       <a href="/admin/platforms"
          class="sidebar-link {% if 'platforms' in request.url.path %}active{% endif %}">
-        <span class="sidebar-link-icon">🔌</span> Platforms
+        <span class="sidebar-link-icon">{{ ic("plug") }}</span> Platforms
       </a>
 
       <a href="/admin/databases"
          class="sidebar-link {% if 'databases' in request.url.path %}active{% endif %}">
-        <span class="sidebar-link-icon">🗄️</span> Databases
+        <span class="sidebar-link-icon">{{ ic("database") }}</span> Databases
       </a>
 
       <a href="/admin/clients"
          class="sidebar-link {% if 'clients' in request.url.path %}active{% endif %}">
-        <span class="sidebar-link-icon">👥</span>
+        <span class="sidebar-link-icon">{{ ic("users") }}</span>
         Clients
         <span class="admin-live-badge" id="semanticPendingBadge" title="">0</span>
       </a>
 
       <a href="/admin/system"
          class="sidebar-link {% if 'system' in request.url.path %}active{% endif %}">
-        <span class="sidebar-link-icon">⚙️</span> System
+        <span class="sidebar-link-icon">{{ ic("settings") }}</span> System
       </a>
     </nav>
 
     <div class="sidebar-foot">
       <button type="button" class="theme-toggle" data-theme-toggle onclick="window.__qbAdminToggleTheme()">
-        <span class="theme-icon">🌙</span>
+        <span class="ti-moon">{{ ic("moon", 16) }}</span>
+        <span class="ti-sun">{{ ic("sun", 16) }}</span>
         <span class="theme-label">Dark mode</span>
       </button>
       <a href="/admin/logout" class="btn btn-secondary btn-sm">Logout</a>
@@ -118,10 +118,11 @@
 
     {# Mobile topbar (hamburger + brand) — hidden on desktop #}
     <header class="admin-topbar">
-      <button type="button" class="mobile-menu-btn" aria-label="Open navigation" onclick="openSidebar()">☰</button>
+      <button type="button" class="mobile-menu-btn" aria-label="Open navigation" onclick="openSidebar()">{{ ic("menu", 20) }}</button>
       <span class="admin-topbar-brand">Query<span>Bot</span> Admin</span>
-      <button type="button" class="theme-toggle btn-sm" data-theme-toggle onclick="window.__qbAdminToggleTheme()" style="padding:6px 10px;font-size:12px">
-        <span class="theme-icon">🌙</span>
+      <button type="button" class="theme-toggle btn-sm" data-theme-toggle onclick="window.__qbAdminToggleTheme()" style="padding:6px 10px">
+        <span class="ti-moon">{{ ic("moon", 16) }}</span>
+        <span class="ti-sun">{{ ic("sun", 16) }}</span>
       </button>
     </header>
 
