@@ -31,11 +31,11 @@ from core.clarification import (
     was_recently_expired, acknowledge_recently_expired,
 )
 from core.webhook_dedup import is_duplicate_event, remember_event
-from core.schema import run_query, load_known_tables
+from core.schema import run_query, load_known_tables, load_schema_columns
 from core.knowledge import load_retriever
 from core.validator import validate_sql
 from core.chart import detect_chart_type, build_chart_payload
-from core.query_semantics import build_generic_query_hints
+from core.query_semantics import analyze_query_intent, build_generic_query_hints
 from core.response_builder import build_assistant_response
 from core.insight import generate_followup_suggestions
 from core.graph_resolver import resolve_for_question as _graph_resolve
@@ -289,6 +289,48 @@ async def _send_live_stage(adapter, event, stage: str, label: str, detail: str =
             log.debug("Live status send failed: %s", e)
 
 
+def _sql_preview(sql: str, limit: int = 1200) -> str:
+    sql = (sql or "").strip()
+    return sql[:limit] + "..." if len(sql) > limit else sql
+
+
+def _zero_row_rca_hints(question: str, graph_ctx: dict | None = None) -> str:
+    intent = analyze_query_intent(question)
+    hints: list[str] = []
+    if intent.get("wants_having_filter"):
+        hints.append("HAVING threshold may be too high.")
+    if intent.get("wants_missing_records") or (graph_ctx or {}).get("anti_join"):
+        hints.append("The anti-join may have found no missing records.")
+    if intent.get("wants_named_period") or intent.get("wants_time_series") or intent.get("wants_mom_qoq"):
+        hints.append("A date filter or date-key conversion may exclude all rows.")
+    if (graph_ctx or {}).get("enabled"):
+        hints.append("The graph join path may be too restrictive for the selected tables.")
+    if not hints:
+        hints.append("Try broadening the filter or checking category values used in the question.")
+    return "\n".join(f"- {h}" for h in hints)
+
+
+def _build_zero_row_message(
+    question: str,
+    sql: str,
+    graph_ctx: dict | None,
+    validation_code: str,
+    retry_count: int,
+) -> str:
+    entities = ", ".join((graph_ctx or {}).get("detected") or []) or "none"
+    return (
+        "The query ran successfully but returned *no rows*.\n\n"
+        "Diagnostics:\n"
+        f"- Row count: 0\n"
+        f"- Validation: {validation_code or 'ok'}\n"
+        f"- Retry count: {retry_count}\n"
+        f"- Detected graph entities: {entities}\n\n"
+        "Possible RCA:\n"
+        f"{_zero_row_rca_hints(question, graph_ctx)}\n\n"
+        f"SQL tried:\n{_sql_preview(sql)}"
+    )
+
+
 def _format_metric_formula_context(metrics: list[dict]) -> str:
     if not metrics:
         return ""
@@ -464,6 +506,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
     # effective      : intersection — what this user can actually see.
     allowed_tables = store.get_allowed_tables(portal_user) if portal_user else None
     all_known      = load_known_tables(state.get("schema_dir", ""))
+    all_columns    = load_schema_columns(state.get("schema_dir", ""))
 
     if allowed_tables is None:
         effective = all_known  # admin — unrestricted
@@ -707,6 +750,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
         allowed_tables=query_scope_tables,
     )
     generic_hints = build_generic_query_hints(question)
+    query_intent = analyze_query_intent(question)
     _matched_metrics = store.list_metric_formula_context(account_id, question, limit=6)
     metric_formula_context = _format_metric_formula_context(_matched_metrics)
     _metric_formula_tables = _extract_metric_formula_tables(_matched_metrics)
@@ -797,6 +841,8 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                 account_id=account_id,
                 db_type=db_cfg.get("db_type", "azure_sql"),
                 graph=_full_graph,
+                intent=query_intent,
+                metric_formula_tables=_metric_formula_tables,
             )
             if _graph_ctx.get("enabled"):
                 log.info(
@@ -998,7 +1044,8 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
     last_code   = ""
 
     await _send_live_stage(adapter, event, "validating_sql", "Checking query safety", "Verifying table access, structure, and execution safety.")
-    ok, reason, code = validate_sql(sql, all_known, db_cfg["db_type"], query_scope_tables)
+    retry_count = 0
+    ok, reason, code = validate_sql(sql, all_known, db_cfg["db_type"], query_scope_tables, all_columns)
     _trace_update(
         trace_id,
         generated_sql=sql,
@@ -1027,7 +1074,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
     else:
         last_reason, last_code = reason, code
 
-    retryable = (not ok and code in ("unknown_table", "parse")) or (exec_error is not None)
+    retryable = (not ok and code in ("unknown_table", "unknown_column", "date_key_format", "parse")) or (exec_error is not None)
 
     if retryable:
         if exec_error is not None:
@@ -1091,7 +1138,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
 
             if "CANNOT_GENERATE" not in sql_retry.upper() and len(sql_retry) > 10:
                 ok2, reason2, code2 = validate_sql(
-                    sql_retry, all_known, db_cfg["db_type"], query_scope_tables)
+                    sql_retry, all_known, db_cfg["db_type"], query_scope_tables, all_columns)
                 if ok2:
                     try:
                         await _send_live_stage(adapter, event, "executing_query", "Retrying query", "Running the corrected query against your data.")
@@ -1100,6 +1147,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                         sql         = sql_retry
                         exec_error  = None
                         ok, last_reason, last_code = True, "OK", "ok"
+                        retry_count += 1
                         log.info("Retry succeeded for %s", account_id)
                     except Exception as retry_exec_err:
                         exec_error = str(retry_exec_err)
@@ -1160,11 +1208,9 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
         if not (_zr_has_required or _zr_has_multi_metric):
             # No ambiguity signal — just tell the user there's no data.
             _trace_finish(trace_id, status="success", answer_type="empty", row_count=0, duration_ms=duration_ms, final_answer_summary="Query returned no rows")
-            await adapter.send_message(event,
-                "The query ran successfully but returned *no rows*.\n\n"
-                "Try broadening the filter (e.g. a wider date range) or "
-                "checking the category values used in the question."
-            )
+            await adapter.send_message(event, _build_zero_row_message(
+                question, sql, _graph_ctx, last_code or code or "ok", retry_count
+            ))
             return
 
         with llm_audit_scope(
@@ -2242,6 +2288,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
     # Load known tables once for drill-down validation in insight calls
     _ws_state = get_state(account_id)
     _ws_known_tables = load_known_tables(_ws_state.get("schema_dir", ""))
+    _ws_table_columns = load_schema_columns(_ws_state.get("schema_dir", ""))
 
     # Per-result-card conversation history for result_chat multi-turn memory.
     # Keyed by result_id; each value is a list of {question, sql, row_count}.
@@ -2581,10 +2628,11 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                         _fb_sql_raw, _ws_known_tables,
                                         _fb_db_cfg.get("db_type", "azure_sql"),
                                         None,
+                                        _ws_table_columns,
                                     )
                                     # One repair attempt when validation fails
                                     # (unknown_table or parse error — same as main pipeline)
-                                    if not _fb_ok and _fb_code in ("unknown_table", "parse"):
+                                    if not _fb_ok and _fb_code in ("unknown_table", "unknown_column", "date_key_format", "parse"):
                                         log.info(
                                             "result_chat fallback SQL failed validation (%s): %s — retrying",
                                             _fb_code, _fb_reason,
@@ -2612,6 +2660,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                                 _fb_retry_raw, _ws_known_tables,
                                                 _fb_db_cfg.get("db_type", "azure_sql"),
                                                 None,
+                                                _ws_table_columns,
                                             )
                                             if _fb_ok2:
                                                 _fb_sql_raw = _fb_retry_raw
@@ -2671,6 +2720,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                                     _exec_retry_raw, _ws_known_tables,
                                                     _fb_db_cfg.get("db_type", "azure_sql"),
                                                     None,
+                                                    _ws_table_columns,
                                                 )
                                                 if _exec_ok:
                                                     _fb_rows = run_query(

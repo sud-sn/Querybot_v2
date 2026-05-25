@@ -207,8 +207,10 @@ def build_sql_system_prompt(
         )
         _mom_pattern = (
             "WITH monthly AS (\n"
-            "  SELECT FORMAT(date_col,'yyyy-MM') AS PERIOD, <approved_formula> AS METRIC\n"
-            "  FROM [schema].[table] GROUP BY FORMAT(date_col,'yyyy-MM')\n"
+            "  SELECT FORMAT(TRY_CONVERT(date, CONVERT(varchar(8), int_yyyymmdd_key), 112),'yyyy-MM') AS PERIOD, <approved_formula> AS METRIC\n"
+            "  FROM [schema].[table]\n"
+            "  WHERE int_yyyymmdd_key > 0\n"
+            "  GROUP BY FORMAT(TRY_CONVERT(date, CONVERT(varchar(8), int_yyyymmdd_key), 112),'yyyy-MM')\n"
             ")\n"
             "SELECT PERIOD, METRIC,\n"
             "       LAG(METRIC) OVER (ORDER BY PERIOD) AS PREV_METRIC,\n"
@@ -405,6 +407,12 @@ def build_sql_system_prompt(
         "SELECT list and group by the requested dimension. For percentage/rate formulas, do "
         "not average row-level values unless the formula explicitly uses AVG(). "
         "Never substitute a 'similar-sounding' column from the KB for an approved formula.\n"
+        "- AZURE SQL DATE-KEY RULE: Columns ending in _DT_DMS_KEY or _DATE_DMS_KEY are usually "
+        "integer YYYYMMDD keys, not real date columns. Do NOT call FORMAT(), YEAR(), MONTH(), "
+        "DATEPART(), or LAG ordering directly on the integer key. First convert with "
+        "TRY_CONVERT(date, CONVERT(varchar(8), alias.DATE_KEY_COL), 112), and filter out "
+        "invalid zero keys with alias.DATE_KEY_COL > 0. For month buckets use "
+        "FORMAT(TRY_CONVERT(date, CONVERT(varchar(8), alias.DATE_KEY_COL), 112), 'yyyy-MM').\n"
         "- YEAR-OVER-YEAR / PERIOD COMPARISON RULE: When the user asks to compare a metric "
         "'last year vs year before', 'prior year', 'year over year', 'how did X change', "
         "'compared to last year', or 'vs previous year':\n"
@@ -479,6 +487,11 @@ def build_sql_system_prompt(
         f"{_antijoin_pattern}\n"
         "  The optional time filter on the JOIN (not in WHERE) ensures the anti-join is scoped "
         "to the correct period without excluding parent rows that have records in other periods.\n\n"
+        "- FACT-TO-FACT JOIN RULE: When a question combines measures from multiple fact tables "
+        "(for example on-hand inventory, purchase receipts, and replacement cost), aggregate each "
+        "fact table in its own CTE to the shared join grain first, then join those CTEs. Do NOT "
+        "join raw fact rows and then SUM measures unless the Knowledge Base proves the join is "
+        "one-to-one. This prevents duplicated totals from many-to-many joins.\n\n"
         "- CONDITIONAL AGGREGATION RULE: When the user asks to 'split by status', 'show count "
         "for each type side by side', 'pivot by category', or compares two groups in the same row "
         "(e.g. 'active vs inactive count', 'male vs female headcount'), use SUM(CASE WHEN) "
@@ -564,9 +577,17 @@ def build_sql_system_prompt(
             "valid statuses, etc.). Add any question-driven conditions using AND after "
             "the existing WHERE clause — do NOT write a second WHERE keyword."
             if has_where else
-            "Only write the SELECT clause, GROUP BY, ORDER BY, WHERE, and HAVING "
-            "on top of this skeleton."
+            "Use this skeleton as the FROM/JOIN block for the base query. If the answer "
+            "requires CTEs for YoY, MoM, running totals, percentage-of-total, or top-N per "
+            "group, put this exact skeleton inside the base CTE."
         )
+        anti_join_instruction = ""
+        if graph_context.get("anti_join"):
+            anti_join_instruction = (
+                "\nANTI-JOIN GRAPH MODE: the question asks for missing or unmatched records. "
+                "Keep the LEFT JOINs from the skeleton and add a WHERE right_side_key IS NULL "
+                "predicate for the missing target table. Do not convert these joins back to INNER JOIN."
+            )
         base = base + (
             "\n\n## Entity graph — pre-resolved JOIN structure\n"
             "The following FROM + JOIN structure has been resolved deterministically "
@@ -576,7 +597,7 @@ def build_sql_system_prompt(
             "business rules set by the admin.\n"
             "Detected entities: " + detected + "\n\n"
             "```sql\n" + skeleton + "\n```\n\n"
-            + where_instruction + " Do not add or remove JOINs."
+            + where_instruction + " Do not add or remove JOINs." + anti_join_instruction
         )
     return base
 

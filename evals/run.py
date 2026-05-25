@@ -22,7 +22,7 @@ import store
 from core.examples import format_examples_for_prompt, retrieve_similar_examples
 from core.knowledge import load_retriever
 from core.llm import build_sql_system_prompt, llm_complete, resolve_provider
-from core.schema import load_known_tables, run_query
+from core.schema import load_known_tables, load_schema_columns, run_query
 from core.validator import validate_sql
 
 
@@ -77,7 +77,14 @@ def _contains_none(sql_upper: str, forbidden: list[str], label: str, failures: l
     return clean
 
 
-def _score_sql(case: dict, sql: str, known_tables: set[str], db_type: str, execute_result: tuple[str, int, str] | None) -> EvalCaseResult:
+def _score_sql(
+    case: dict,
+    sql: str,
+    known_tables: set[str],
+    table_columns: dict[str, dict[str, str]],
+    db_type: str,
+    execute_result: tuple[str, int, str] | None,
+) -> EvalCaseResult:
     failures: list[str] = []
     sql = (sql or "").strip()
     sql_upper = sql.upper()
@@ -93,20 +100,21 @@ def _score_sql(case: dict, sql: str, known_tables: set[str], db_type: str, execu
         )
 
     allowed_tables = set(case.get("allowed_tables") or known_tables)
-    ok, reason, code = validate_sql(sql, known_tables, db_type, allowed_tables)
+    ok, reason, code = validate_sql(sql, known_tables, db_type, allowed_tables, table_columns)
     validation_points = 25 if ok else 0
     if not ok:
         failures.append(f"validator failed: {reason}")
 
     expected_tables = case.get("expected_tables") or []
     expected_columns = case.get("expected_columns") or []
-    expected_contains = case.get("expected_sql_contains") or []
+    expected_contains = (case.get("expected_sql_contains") or []) + (case.get("required_sql_patterns") or [])
     forbidden_contains = case.get("forbidden_sql_contains") or []
     forbidden_columns = case.get("forbidden_columns") or []
+    expected_join_types = case.get("expected_join_types") or []
 
     total_expectations = (
         len(expected_tables) + len(expected_columns) + len(expected_contains)
-        + len(forbidden_contains) + len(forbidden_columns)
+        + len(forbidden_contains) + len(forbidden_columns) + len(expected_join_types)
     )
     expectation_score = 40
     if total_expectations:
@@ -116,6 +124,7 @@ def _score_sql(case: dict, sql: str, known_tables: set[str], db_type: str, execu
         matched += _contains_all(sql_upper, expected_contains, "SQL pattern", failures)
         matched += _contains_none(sql_upper, forbidden_contains, "SQL pattern", failures)
         matched += _contains_none(sql_upper, forbidden_columns, "column", failures)
+        matched += _contains_all(sql_upper, expected_join_types, "join type", failures)
         expectation_score = 40 * (matched / total_expectations)
 
     execution_score = 0
@@ -126,6 +135,9 @@ def _score_sql(case: dict, sql: str, known_tables: set[str], db_type: str, execu
         execution_score = 25 if execution_status == "passed" else 0
         if exec_err:
             failures.append(f"execution failed: {exec_err}")
+        if row_count == 0 and not bool(case.get("allow_zero_rows", True)):
+            failures.append("execution returned zero rows")
+            execution_score = 0
 
     privacy_score = 10
     for sensitive in case.get("forbidden_sensitive_terms") or []:
@@ -249,6 +261,7 @@ async def run_eval_suite(
     db_cfg = _client_db_config(account_id)
     db_type = db_cfg.get("db_type", "azure_sql")
     known_tables = load_known_tables(state.get("schema_dir", ""))
+    table_columns = load_schema_columns(state.get("schema_dir", ""))
     cases = _load_cases(cases_path)
     results: list[EvalCaseResult] = []
 
@@ -266,7 +279,7 @@ async def run_eval_suite(
             except Exception as exc:
                 execute_result = ("failed", 0, str(exc)[:500])
 
-        results.append(_score_sql(case, sql, known_tables, db_type, execute_result))
+        results.append(_score_sql(case, sql, known_tables, table_columns, db_type, execute_result))
 
     if out_dir is None:
         stamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")

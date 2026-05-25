@@ -1,0 +1,104 @@
+cases:
+  - id: prof_yoy_pcla_item_description
+    question: "Compare total PCLA year over year by item description for the top 10 items."
+    schema: "PROFITABILITY"
+    expected_tables:
+      - FIFO_BI_SAL_MGP_EXT
+      - OOLINE
+    required_sql_patterns:
+      - WITH
+      - LEFT JOIN
+    forbidden_columns:
+      - YEA4
+    min_score: 0.85
+
+  - id: prof_antijoin_order_lines_missing_invoice
+    question: "Show sales order lines that exist in OOLINE but have no matching shipment/invoice record in OSBSTD or CUS_ORD_IVC_FCT."
+    schema: "PROFITABILITY"
+    expected_tables:
+      - OOLINE
+      - OSBSTD
+      - CUS_ORD_IVC_FCT
+    expected_join_types:
+      - LEFT JOIN
+    required_sql_patterns:
+      - IS NULL
+    min_score: 0.85
+
+  - id: prof_top_n_items_per_warehouse
+    question: "Show the top 3 items in each warehouse by gross profit."
+    schema: "PROFITABILITY"
+    expected_tables:
+      - CUS_ORD_IVC_FCT
+    required_sql_patterns:
+      - ROW_NUMBER()
+      - PARTITION BY
+    min_score: 0.85
+
+  - id: prof_share_by_division_item_group
+    question: "For each division, what percentage of total invoice line amount comes from each item group?"
+    schema: "PROFITABILITY"
+    expected_tables:
+      - CUS_ORD_IVC_FCT
+    required_sql_patterns:
+      - OVER
+      - NULLIF
+    forbidden_columns:
+      - ITMGRPDMS_KEY
+    min_score: 0.85
+
+  - id: prof_mom_invoice_by_warehouse
+    question: "Show monthly invoice amount and gross profit change by warehouse."
+    schema: "PROFITABILITY"
+    expected_tables:
+      - CUS_ORD_IVC_FCT
+    required_sql_patterns:
+      - LAG
+      - TRY_CONVERT
+      - yyyy-MM
+    forbidden_sql_contains:
+      - "FORMAT(cus.CUS_IVC_DT_DMS_KEY, 'yyyy-MM')"
+    min_score: 0.85
+
+  - id: prof_fifo_missing_margin_zero_pcla
+    question: "List order lines where FIFO margin data is missing, but show PCLA as 0."
+    schema: "PROFITABILITY"
+    expected_tables:
+      - OOLINE
+      - FIFO_BI_SAL_MGP_EXT
+    expected_join_types:
+      - LEFT JOIN
+    required_sql_patterns:
+      - COALESCE
+      - IS NULL
+    allow_zero_rows: true
+    min_score: 0.85
+
+  - id: inv_onhand_no_receipts_no_replacement_cost
+    question: "Show items that have current on-hand quantity but no purchase receipts and no replacement cost record."
+    schema: "PROFITABILITY"
+    expected_tables:
+      - ITM_BAL_PRD_FCT
+      - PCH_ORD_RCT_FCT
+      - RPL_CST_FCT
+    expected_join_types:
+      - LEFT JOIN
+    required_sql_patterns:
+      - IS NULL
+    forbidden_columns:
+      - NUMOFRCT
+    min_score: 0.85
+
+  - id: inv_fact_to_fact_preaggregation
+    question: "By item and profit center, show current on-hand quantity, purchase receipt quantity, and current replacement cost."
+    schema: "PROFITABILITY"
+    expected_tables:
+      - ITM_BAL_PRD_FCT
+      - PCH_ORD_RCT_FCT
+      - RPL_CST_FCT
+    required_sql_patterns:
+      - WITH
+      - GROUP BY
+    forbidden_columns:
+      - PCH_QTY
+    min_score: 0.85
