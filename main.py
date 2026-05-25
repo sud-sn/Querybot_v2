@@ -1045,7 +1045,10 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
 
     await _send_live_stage(adapter, event, "validating_sql", "Checking query safety", "Verifying table access, structure, and execution safety.")
     retry_count = 0
-    ok, reason, code = validate_sql(sql, all_known, db_cfg["db_type"], query_scope_tables, all_columns)
+    semantic_context = {"intent": query_intent, "question": question, "graph_context": _graph_ctx}
+    ok, reason, code = validate_sql(
+        sql, all_known, db_cfg["db_type"], query_scope_tables, all_columns, semantic_context
+    )
     _trace_update(
         trace_id,
         generated_sql=sql,
@@ -1074,7 +1077,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
     else:
         last_reason, last_code = reason, code
 
-    retryable = (not ok and code in ("unknown_table", "unknown_column", "date_key_format", "parse")) or (exec_error is not None)
+    retryable = (not ok and code in ("unknown_table", "unknown_column", "date_key_format", "anti_join_shape", "parse")) or (exec_error is not None)
 
     if retryable:
         if exec_error is not None:
@@ -1138,7 +1141,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
 
             if "CANNOT_GENERATE" not in sql_retry.upper() and len(sql_retry) > 10:
                 ok2, reason2, code2 = validate_sql(
-                    sql_retry, all_known, db_cfg["db_type"], query_scope_tables, all_columns)
+                    sql_retry, all_known, db_cfg["db_type"], query_scope_tables, all_columns, semantic_context)
                 if ok2:
                     try:
                         await _send_live_stage(adapter, event, "executing_query", "Retrying query", "Running the corrected query against your data.")
@@ -2624,15 +2627,21 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                     _fb_sql_raw or "", rc_question
                                 )
                                 if _fb_sql_raw and "CANNOT_GENERATE" not in _fb_sql_raw.upper():
+                                    _fb_semantic_context = {
+                                        "intent": analyze_query_intent(rc_question),
+                                        "question": rc_question,
+                                        "graph_context": _fb_graph_ctx,
+                                    }
                                     _fb_ok, _fb_reason, _fb_code = validate_sql(
                                         _fb_sql_raw, _ws_known_tables,
                                         _fb_db_cfg.get("db_type", "azure_sql"),
                                         None,
                                         _ws_table_columns,
+                                        _fb_semantic_context,
                                     )
                                     # One repair attempt when validation fails
                                     # (unknown_table or parse error — same as main pipeline)
-                                    if not _fb_ok and _fb_code in ("unknown_table", "unknown_column", "date_key_format", "parse"):
+                                    if not _fb_ok and _fb_code in ("unknown_table", "unknown_column", "date_key_format", "anti_join_shape", "parse"):
                                         log.info(
                                             "result_chat fallback SQL failed validation (%s): %s — retrying",
                                             _fb_code, _fb_reason,
@@ -2661,6 +2670,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                                 _fb_db_cfg.get("db_type", "azure_sql"),
                                                 None,
                                                 _ws_table_columns,
+                                                _fb_semantic_context,
                                             )
                                             if _fb_ok2:
                                                 _fb_sql_raw = _fb_retry_raw
@@ -2721,6 +2731,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                                     _fb_db_cfg.get("db_type", "azure_sql"),
                                                     None,
                                                     _ws_table_columns,
+                                                    _fb_semantic_context,
                                                 )
                                                 if _exec_ok:
                                                     _fb_rows = run_query(

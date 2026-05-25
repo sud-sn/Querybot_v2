@@ -22,6 +22,12 @@ KNOWN = {
     "CHATBOT_DB.PROFITABILITY.FIFO_BI_SAL_MGP_EXT",
     "PROFITABILITY.FIFO_BI_SAL_MGP_EXT",
     "FIFO_BI_SAL_MGP_EXT",
+    "CHATBOT_DB.PROFITABILITY.FIFOBISALMGPEXT",
+    "PROFITABILITY.FIFOBISALMGPEXT",
+    "FIFOBISALMGPEXT",
+    "CHATBOT_DB.PROFITABILITY.OOLINE",
+    "PROFITABILITY.OOLINE",
+    "OOLINE",
 }
 
 COLUMNS = {
@@ -54,6 +60,28 @@ COLUMNS = {
         "PCLA": "decimal",
         "FL_DT_TS": "datetime",
         "ORNO": "varchar",
+    },
+    "PROFITABILITY.FIFOBISALMGPEXT": {
+        "PCLA": "decimal",
+        "ORNO": "varchar",
+        "PONR": "int",
+        "POSX": "int",
+    },
+    "FIFOBISALMGPEXT": {
+        "PCLA": "decimal",
+        "ORNO": "varchar",
+        "PONR": "int",
+        "POSX": "int",
+    },
+    "PROFITABILITY.OOLINE": {
+        "ORNO": "varchar",
+        "PONR": "int",
+        "POSX": "int",
+    },
+    "OOLINE": {
+        "ORNO": "varchar",
+        "PONR": "int",
+        "POSX": "int",
     },
 }
 
@@ -105,6 +133,44 @@ class StrictColumnValidationTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertEqual(code, "date_key_format")
         self.assertIn("Convert YYYYMMDD", msg)
+
+    def test_rejects_missing_fifo_single_table_null_filter(self):
+        sql = (
+            "SELECT DISTINCT fif.ORNO AS OrderNumber, fif.POSX AS OrderLineNumber, 0 AS PCLA "
+            "FROM [PROFITABILITY].[FIFOBISALMGPEXT] fif "
+            "WHERE fif.PCLA IS NULL"
+        )
+        ok, msg, code = validate_sql(
+            sql,
+            KNOWN,
+            "azure_sql",
+            None,
+            COLUMNS,
+            {"intent": {"wants_missing_records": True}},
+        )
+        self.assertFalse(ok)
+        self.assertEqual(code, "anti_join_shape")
+        self.assertIn("source table", msg)
+
+    def test_accepts_missing_fifo_left_join_shape(self):
+        sql = (
+            "SELECT oo.ORNO AS OrderNumber, oo.PONR AS OrderLineNumber, "
+            "COALESCE(fif.PCLA, 0) AS PCLA "
+            "FROM [PROFITABILITY].[OOLINE] oo "
+            "LEFT JOIN [PROFITABILITY].[FIFOBISALMGPEXT] fif "
+            "ON oo.ORNO = fif.ORNO AND oo.PONR = fif.PONR AND oo.POSX = fif.POSX "
+            "WHERE fif.ORNO IS NULL"
+        )
+        ok, msg, code = validate_sql(
+            sql,
+            KNOWN,
+            "azure_sql",
+            None,
+            COLUMNS,
+            {"intent": {"wants_missing_records": True}},
+        )
+        self.assertTrue(ok, msg)
+        self.assertEqual(code, "ok")
 
 
 class IntentAndGraphReliabilityTests(unittest.TestCase):
