@@ -485,6 +485,8 @@ SUM(GrossMargin) + SUM(Rebates) - SUM(AllocatedCosts)
         </div>
         <textarea name="sql_template" rows="3" required class="formula-editor">{{ m.sql_template }}</textarea>
         <div class="validate-result"></div>
+        <!-- Compact inline syntax hint bar — unblocks updateFormulaHints for edit forms -->
+        <div class="formula-status syntax-panel" style="font-size:11px;margin-top:.35rem;padding:.35rem .6rem;min-height:0;display:none"></div>
       </div>
       <div class="metric-meta-grid two" style="margin-bottom:.75rem">
         <div class="form-group">
@@ -1127,6 +1129,12 @@ document.addEventListener("keydown", function(e){
 });
 
 document.addEventListener("click", function(e){
+  // Re-evaluate token when clicking into (or repositioning cursor in) formula editor
+  if(e.target.matches(".formula-editor")){
+    // Use setTimeout(0) so selectionStart reflects the new click position
+    setTimeout(function(){ _showSuggestions(e.target, _currentToken(e.target)); }, 0);
+    return;
+  }
   // ThoughtSpot formula dropdown click
   var fcsItem = e.target.closest(".fcs-item");
   if(fcsItem){ _insertSuggestion(fcsItem.dataset.col, fcsItem.dataset.table, fcsItem.dataset.dup === "1"); return; }
@@ -1408,6 +1416,9 @@ document.addEventListener("focusin", function(e){
   if(e.target.matches(".formula-editor")){
     _activeEditor = e.target;
     updateFormulaHints(e.target);
+    // Show autocomplete immediately for whatever token is at the cursor —
+    // critical for edit forms where value is pre-filled and input never fires
+    _showSuggestions(e.target, _currentToken(e.target));
   }
 });
 
