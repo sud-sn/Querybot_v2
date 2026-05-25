@@ -25,6 +25,14 @@ def analyze_query_intent(question: str) -> dict[str, bool]:
         "wants_names": bool(re.search(r"\b(name|names|full name|fullname)\b", q)),
         "wants_time_series": bool(re.search(r"\b(trend|over time|by month|by week|by year|monthly|weekly|daily)\b", q)),
         "wants_comparison": bool(re.search(r"\b(compare|comparison|versus|vs|difference|gap)\b", q)),
+        "wants_yoy": bool(re.search(
+            r"\b(last year.{0,20}(compared|vs|versus|against|than).{0,20}(year before|prior year|previous year)"
+            r"|year.{0,10}over.{0,10}year"
+            r"|yoy"
+            r"|(compared|vs|versus).{0,20}(last year|prior year|previous year|year before)"
+            r"|(last year|this year|prior year|previous year).{0,20}(compared|vs|versus|difference|change|growth))\b",
+            q,
+        )),
     }
 
 
@@ -84,6 +92,22 @@ def build_generic_query_hints(question: str) -> str:
     if intent["wants_names"] and intent["has_employee_scope"]:
         hints.append(
             "- If the user asks for employee names, return names after applying the requested filters; do not convert the request into an aggregate unless they explicitly ask for a count or ranking."
+        )
+
+    if intent["wants_yoy"]:
+        hints.append(
+            "- YEAR-OVER-YEAR COMPARISON DETECTED: The user wants to compare a metric across two "
+            "consecutive years. Follow the YEAR-OVER-YEAR / PERIOD COMPARISON RULE in the system "
+            "prompt exactly:\n"
+            "  • Use a CTE to compute per-year aggregates; CAST the year column to INT.\n"
+            "  • Derive the anchor year as MAX(CAST(year_col AS INT)) from the data — do NOT "
+            "use GETDATE()/CURRENT_DATE/SYSDATE as the anchor and do NOT write MAX(col)-1 in a "
+            "WHERE clause.\n"
+            "  • LEFT JOIN the CTE to itself on prev_year = curr_year - 1.\n"
+            "  • Always output: current year value, previous year value, absolute difference, "
+            "and percentage change rounded to 2 decimal places.\n"
+            "  • If approved metric formulas are present, use them inside the CTE aggregation — "
+            "never substitute KB column names for approved formulas in a YoY query."
         )
 
     summary = summarize_query_intent(question)
