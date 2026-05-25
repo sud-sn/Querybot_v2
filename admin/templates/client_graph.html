@@ -1852,6 +1852,8 @@ window.toggleRelEdit = async function(relId, entityName) {
         onclick="saveRelInline(${relId},'${esc(entityName)}')">Save join</button>
       <button style="padding:3px 10px;background:none;border:1px solid var(--border);border-radius:var(--radius-sm);cursor:pointer;font-size:11px;color:var(--text-muted)"
         onclick="toggleRelEdit(${relId},'${esc(entityName)}')">Cancel</button>
+      <button style="padding:3px 10px;background:color-mix(in srgb,var(--red,#e53e3e) 8%,var(--surface));border:1px solid color-mix(in srgb,var(--red,#e53e3e) 28%,transparent);border-radius:var(--radius-sm);cursor:pointer;font-size:11px;color:var(--red,#e53e3e);font-weight:700"
+        onclick="if(confirm('Delete this join?')) deleteRel(${relId})">🗑 Delete</button>
     </div>`;
 };
 
