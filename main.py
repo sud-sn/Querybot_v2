@@ -1110,10 +1110,35 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                 f"Return only the corrected SQL, no explanation."
             )
         else:
+            validation_repair_note = ""
+            if last_code == "unknown_column":
+                validation_repair_note = (
+                    "\nUNKNOWN COLUMN REPAIR RULE:\n"
+                    "- The SQL used a column on a table where that column does not exist.\n"
+                    "- If the validator lists 'Exact column exists on', switch the source table "
+                    "or add the required JOIN to that table.\n"
+                    "- Do not keep the same table alias and do not retry the same invalid column/table pair.\n"
+                    "- If no exact column exists anywhere in the KB context, use the closest exact "
+                    "business synonym/column from the KB or return CANNOT_GENERATE.\n"
+                )
+            elif last_code == "anti_join_shape":
+                validation_repair_note = (
+                    "\nANTI-JOIN REPAIR RULE:\n"
+                    "- The question asks for missing records/data, so use LEFT JOIN ... WHERE right_key IS NULL.\n"
+                    "- The FROM table must be the source/parent table containing the records to list.\n"
+                    "- Do not answer with a single-table WHERE measure IS NULL query.\n"
+                )
+            elif last_code == "date_key_format":
+                validation_repair_note = (
+                    "\nDATE-KEY REPAIR RULE:\n"
+                    "- Convert integer YYYYMMDD date keys before FORMAT/YEAR/MONTH/DATEPART.\n"
+                    "- For Azure SQL use TRY_CONVERT(date, CONVERT(varchar(8), alias.DATE_KEY_COL), 112).\n"
+                )
             retry_user = (
                 f"The following SQL failed validation with: {last_reason}\n"
                 f"SQL: {sql}\n\n"
                 f"The original question was: {question}\n\n"
+                f"{validation_repair_note}\n"
                 f"Rewrite the SQL using only tables and columns that appear in "
                 f"the provided knowledge base context. Return only the corrected "
                 f"SQL, no explanation."
@@ -2650,6 +2675,10 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                             f"The following SQL failed validation: {_fb_reason}\n"
                                             f"SQL: {_fb_sql_raw}\n\n"
                                             f"The original question was: {rc_question}\n\n"
+                                            "If the error says a column exists on another table, "
+                                            "switch the source table or add the required JOIN to that table. "
+                                            "Do not retry the same invalid column/table pair. "
+                                            "For missing-record questions, use LEFT JOIN ... WHERE right_key IS NULL. "
                                             "Rewrite the SQL using ONLY table and column names that "
                                             "appear verbatim in the Knowledge Base. "
                                             "If unsure of column names, use SELECT TOP 20 * from the "

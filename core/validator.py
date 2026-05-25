@@ -75,6 +75,24 @@ def _column_suggestions(column: str, candidates: set[str]) -> list[str]:
     return [norm_to_original[m] for m in matches]
 
 
+def _tables_with_column(column: str, table_columns: dict[str, dict[str, str]]) -> list[str]:
+    matches: list[str] = []
+    seen_bare: set[str] = set()
+    col_upper = (column or "").upper()
+    col_norm = _normalize_identifier(column)
+    for table_key, cols in table_columns.items():
+        if col_upper not in cols and not any(_normalize_identifier(c) == col_norm for c in cols):
+            continue
+        parts = table_key.upper().split(".")
+        bare = parts[-1]
+        # Prefer qualified entries when available; suppress duplicate bare variants.
+        if len(parts) == 1 and bare in seen_bare:
+            continue
+        seen_bare.add(bare)
+        matches.append(table_key)
+    return sorted(matches)[:8]
+
+
 def _expand_table_set(tables: set[str] | None) -> set[str] | None:
     if tables is None:
         return None
@@ -310,7 +328,7 @@ def validate_sql_detailed(
             )
 
         unique_base_keys = [k for k in dict.fromkeys(base_table_keys) if k in table_columns]
-        unknown_cols: list[dict] = []
+        unknown_cols_by_key: dict[tuple[str, str], dict] = {}
         for col_node in tree.find_all(sg_exp.Column):
             col_name = (col_node.name or "").upper()
             if not col_name or col_name == "*":
@@ -330,27 +348,38 @@ def validate_sql_detailed(
 
             cols = set(table_columns.get(table_key, {}))
             if cols and col_name not in cols:
-                unknown_cols.append({
+                key = (table_key, col_name)
+                if key in unknown_cols_by_key:
+                    continue
+                candidate_tables = _tables_with_column(col_name, table_columns)
+                unknown_cols_by_key[key] = {
                     "code": "unknown_column",
                     "message": f"Column {col_name} was not found on table {table_key}.",
                     "table": table_key,
                     "column": col_name,
                     "alias": table_ref,
                     "suggestions": _column_suggestions(col_name, cols),
-                })
+                    "candidate_tables": candidate_tables,
+                }
+
+        unknown_cols = list(unknown_cols_by_key.values())
 
         if unknown_cols:
             parts = []
             for err in unknown_cols[:5]:
                 suggestions = err.get("suggestions") or []
                 suffix = f" Suggestions: {', '.join(suggestions)}." if suggestions else ""
+                candidate_tables = err.get("candidate_tables") or []
+                if candidate_tables:
+                    suffix += f" Exact column exists on: {', '.join(candidate_tables)}."
                 parts.append(f"{err['column']} on {err['table']}.{suffix}")
             return SqlValidationResult(
                 False,
                 (
                     "Column(s) not found in the connected database schema: "
                     + " ".join(parts)
-                    + "\n\nUse exact column names from the Knowledge Base; do not remove underscores or invent aliases as source columns."
+                    + "\n\nUse exact column names from the Knowledge Base; do not remove underscores or invent aliases as source columns. "
+                    "If a requested column exists on another table, change the source table or join to that table instead of reusing the same invalid table alias."
                 ),
                 "unknown_column",
                 unknown_cols,
