@@ -28,6 +28,9 @@ KNOWN = {
     "CHATBOT_DB.PROFITABILITY.OOLINE",
     "PROFITABILITY.OOLINE",
     "OOLINE",
+    "CHATBOT_DB.PROFITABILITY.DIM_DIVISION",
+    "PROFITABILITY.DIM_DIVISION",
+    "DIM_DIVISION",
 }
 
 COLUMNS = {
@@ -83,6 +86,14 @@ COLUMNS = {
         "PONR": "int",
         "POSX": "int",
     },
+    "PROFITABILITY.DIM_DIVISION": {
+        "DIVI": "varchar",
+        "DIVISION_NAME": "varchar",
+    },
+    "DIM_DIVISION": {
+        "DIVI": "varchar",
+        "DIVISION_NAME": "varchar",
+    },
 }
 
 
@@ -110,6 +121,19 @@ class StrictColumnValidationTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertEqual(result.code, "unknown_column")
         self.assertIn("NUM_OF_RCT", result.errors[0]["suggestions"])
+
+    def test_wrong_table_column_points_to_candidate_table(self):
+        result = validate_sql_detailed(
+            "SELECT itm.DIVI, SUM(itm.NUM_OF_RCT) FROM [PROFITABILITY].[ITM_BAL_PRD_FCT] itm GROUP BY itm.DIVI",
+            KNOWN,
+            "azure_sql",
+            None,
+            COLUMNS,
+        )
+        self.assertFalse(result.ok)
+        self.assertEqual(result.code, "unknown_column")
+        self.assertIn("Exact column exists on", result.reason)
+        self.assertTrue(any("DIM_DIVISION" in t for t in result.errors[0]["candidate_tables"]))
 
     def test_rejects_yoy_hallucinated_year_column(self):
         ok, _, code = validate_sql(
