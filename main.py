@@ -927,6 +927,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
             question,
             all_columns,
             query_scope_tables,
+            selected_schema=schema_hint,
         )
         if _semantic_plan.get("enabled"):
             _trace_step(

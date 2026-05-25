@@ -82,6 +82,22 @@ def _table_bare(table: str) -> str:
     return (table or "").upper().split(".")[-1]
 
 
+def _table_schema(table: str) -> str:
+    parts = (table or "").upper().split(".")
+    return parts[-2] if len(parts) >= 2 else ""
+
+
+def _table_variants(table: str) -> set[str]:
+    table_u = (table or "").upper()
+    parts = table_u.split(".")
+    variants = {table_u}
+    if parts:
+        variants.add(parts[-1])
+    if len(parts) >= 2:
+        variants.add(".".join(parts[-2:]))
+    return {v for v in variants if v}
+
+
 def _column_words(column: str) -> list[str]:
     words: list[str] = []
     for token in re.split(r"[_\W]+", (column or "").upper()):
@@ -146,29 +162,50 @@ def _score_candidate(table: str, column: str, role: str, question: str, base_tab
     return score
 
 
+def _contains_alias(alias: str, question_norm: str, question_compact: str) -> bool:
+    alias_norm = _norm(alias)
+    if not alias_norm:
+        return False
+    if re.search(rf"(?<![a-z0-9]){re.escape(alias_norm)}(?![a-z0-9])", question_norm):
+        return True
+    alias_compact = _compact(alias_norm)
+    # Compact matching is only for long technical forms such as ITMGRPDMSKEY.
+    # Short terms must not match inside larger words, e.g. AGE in percentAGE.
+    return len(alias_compact) >= 6 and alias_compact in question_compact
+
+
 def _column_matches_question(column: str, aliases: set[str], question_norm: str, question_compact: str) -> tuple[bool, str]:
     if column == "ITM_DMS_KEY" and "item group" in question_norm:
         return False, ""
     for alias in sorted(aliases, key=len, reverse=True):
         if not alias:
             continue
-        if alias in question_norm or _compact(alias) in question_compact:
+        if _contains_alias(alias, question_norm, question_compact):
             return True, alias
     return False, ""
 
 
-def _find_candidates(question: str, table_columns: dict[str, dict[str, str]], allowed_tables: set[str] | None) -> list[dict]:
+def _find_candidates(
+    question: str,
+    table_columns: dict[str, dict[str, str]],
+    allowed_tables: set[str] | None,
+    selected_schema: str = "",
+) -> list[dict]:
     qn = _norm(question)
     qc = _compact(question)
-    allowed_expanded = {str(t).upper() for t in allowed_tables or set()}
+    selected_schema = (selected_schema or "").upper().strip()
+    allowed_expanded: set[str] = set()
+    for table in allowed_tables or set():
+        allowed_expanded.update(_table_variants(str(table)))
     candidates: list[dict] = []
     for table, cols in table_columns.items():
         table_u = str(table).upper()
+        if selected_schema:
+            schema_name = _table_schema(table_u)
+            if schema_name and schema_name != selected_schema:
+                continue
         if allowed_tables is not None:
-            variants = {table_u, _table_bare(table_u)}
-            parts = table_u.split(".")
-            if len(parts) >= 2:
-                variants.add(".".join(parts[-2:]))
+            variants = _table_variants(table_u)
             if not variants & allowed_expanded:
                 continue
         for col, col_type in (cols or {}).items():
@@ -283,13 +320,14 @@ def build_semantic_field_plan(
     question: str,
     table_columns: dict[str, dict[str, str]] | None,
     allowed_tables: set[str] | None = None,
+    selected_schema: str = "",
 ) -> dict:
     """Build a conservative field-source plan from exact known schema columns."""
     normalized_columns = {
         str(t).upper(): {str(c).upper(): str(v) for c, v in (cols or {}).items()}
         for t, cols in (table_columns or {}).items()
     }
-    candidates = _find_candidates(question, normalized_columns, allowed_tables)
+    candidates = _find_candidates(question, normalized_columns, allowed_tables, selected_schema)
     fields = _choose_fields(question, candidates)
     if not fields:
         return {"enabled": False, "fields": [], "joins": [], "reason": "no matching semantic fields"}
