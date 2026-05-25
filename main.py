@@ -296,9 +296,11 @@ def _format_metric_formula_context(metrics: list[dict]) -> str:
     blocks = [
         "APPROVED METRIC FORMULAS:",
         "Use these admin-approved metric definitions whenever the user asks for the metric name or a synonym.",
-        "For formula expressions, use the expression exactly in the SELECT list and combine it with the requested GROUP BY dimensions.",
+        "For formula expressions: the calculation has been pre-validated by an admin. Use it EXACTLY as specified in the SELECT list. "
+        "If the formula contains fully-qualified TABLE.COLUMN references, infer the FROM clause from those table names — "
+        "do NOT require the table to appear in the retrieved schema context, as the admin has already verified the column exists.",
         "For percentage/rate formulas, do not average row-level percentage columns unless the formula explicitly uses AVG().",
-        "If required columns are not present in the retrieved KB context, reply CANNOT_GENERATE instead of inventing columns.",
+        "For trusted SQL query/template metrics: if required columns are not present in the retrieved KB context, reply CANNOT_GENERATE.",
     ]
     for idx, metric in enumerate(metrics, start=1):
         formula_type = (metric.get("formula_type") or "query").lower()
@@ -324,6 +326,28 @@ def _format_metric_formula_context(metrics: list[dict]) -> str:
         lines.append(f"   Approved calculation: {metric.get('sql_template', '').strip()}")
         blocks.append("\n".join(lines))
     return "\n\n".join(blocks)
+
+
+def _extract_metric_formula_tables(metrics: list[dict]) -> set[str]:
+    """
+    Extract bare table names from formula expressions so the table-coverage
+    guarantee can fetch KB docs for them even when they are not in the graph.
+
+    Handles TABLE.COLUMN and SCHEMA.TABLE.COLUMN patterns.
+    """
+    import re
+    tables: set[str] = set()
+    for metric in metrics:
+        if (metric.get("formula_type") or "query").lower() != "expression":
+            continue
+        sql = metric.get("sql_template") or ""
+        # Match WORD.WORD patterns (TABLE.COLUMN or SCHEMA.TABLE)
+        for match in re.finditer(r'\b([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)\b', sql):
+            # The first part is the table (or schema). Collect both so the
+            # gap-fill can try each variant (bare table, schema.table).
+            tables.add(match.group(1).upper())
+            tables.add(f"{match.group(1).upper()}.{match.group(2).upper()}")
+    return tables
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Registration
@@ -683,9 +707,9 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
         allowed_tables=query_scope_tables,
     )
     generic_hints = build_generic_query_hints(question)
-    metric_formula_context = _format_metric_formula_context(
-        store.list_metric_formula_context(account_id, question, limit=6)
-    )
+    _matched_metrics = store.list_metric_formula_context(account_id, question, limit=6)
+    metric_formula_context = _format_metric_formula_context(_matched_metrics)
+    _metric_formula_tables = _extract_metric_formula_tables(_matched_metrics)
 
     # If the question came from a suggested-question click, inject the FQN hint
     # so the LLM uses the correct table name format for this DB type.
@@ -822,6 +846,33 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                     )
         except Exception as _cov_exc:
             log.debug("Table coverage guarantee skipped: %s", _cov_exc)
+
+    # ── Metric-formula table coverage ────────────────────────────────────────
+    # For formula-expression metrics (e.g. sum(FIFO_BI_SAL_MGP_EXT.PCLA)),
+    # the table is not in the entity graph so it never gets gap-filled above.
+    # Fetch KB docs for every table referenced in the matched metric formulas.
+    if _metric_formula_tables:
+        try:
+            from core.table_coverage import guarantee_table_coverage
+            _mf_gap_docs = guarantee_table_coverage(
+                account_id    = account_id,
+                required_fqns = _metric_formula_tables,
+                retrieved_docs = relevant_kbs,
+                rag_filter    = None,   # metric tables are admin-approved, skip ACL filter
+                max_fill      = 4,
+            )
+            if _mf_gap_docs:
+                context_with_terms = (
+                    context_with_terms
+                    + "\n\n---\n\n"
+                    + "\n\n---\n\n".join(_mf_gap_docs)
+                )
+                log.info(
+                    "Metric formula coverage: injected %d doc(s) for metric tables %s",
+                    len(_mf_gap_docs), sorted(_metric_formula_tables),
+                )
+        except Exception as _mf_exc:
+            log.debug("Metric formula table coverage skipped: %s", _mf_exc)
 
     system = build_sql_system_prompt(
         db_cfg["db_type"], context_with_terms,
