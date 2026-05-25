@@ -2740,6 +2740,50 @@ async def metrics_page(request: Request, account_id: str):
     })
 
 
+@router.get("/clients/{account_id}/metrics/check-collision")
+async def metric_check_collision(
+    request:    Request,
+    account_id: str,
+    phrases:    str = "",          # comma-separated metric name + synonyms being entered
+    skip_id:    int = 0,           # metric_id to exclude (for edit form, skip self)
+):
+    """
+    Check whether any of the supplied phrases (metric name + synonyms being
+    typed by the admin) collide with existing active business-term aliases.
+
+    Returns:
+      { "collisions": [ { "metric_phrase": "...", "term": "...", "term_aliases": "..." }, ... ] }
+
+    Called live from JavaScript in the metric add/edit form so the admin
+    gets an inline warning before saving.
+    """
+    if not _is_auth(request):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    incoming = {p.strip().lower() for p in phrases.split(",") if p.strip()}
+    if not incoming:
+        return JSONResponse({"collisions": []})
+
+    # Load active business terms for this account
+    terms = store.list_terms(account_id, active_only=True)
+    collisions = []
+    for t in terms:
+        term_forms = {(t.get("term") or "").strip().lower()}
+        for alias in (t.get("aliases") or "").split(","):
+            a = alias.strip().lower()
+            if a:
+                term_forms.add(a)
+        hits = incoming & term_forms
+        if hits:
+            collisions.append({
+                "metric_phrase": sorted(hits)[0],
+                "term":          t.get("term", ""),
+                "term_aliases":  t.get("aliases", ""),
+            })
+
+    return JSONResponse({"collisions": collisions})
+
+
 @router.post("/clients/{account_id}/metrics/create")
 async def metric_create(
     request:      Request,
