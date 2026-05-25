@@ -67,7 +67,54 @@ def _normalize(text: str) -> str:
     return re.sub(r"[^a-z0-9 ]+", " ", (text or "").lower()).strip()
 
 
-def detect_entities(question: str, graph: dict) -> list[str]:
+def _tokens(text: str) -> set[str]:
+    out: set[str] = set()
+    for tok in _normalize(text).split():
+        if len(tok) < 3:
+            continue
+        out.add(tok)
+        if tok.endswith("ies") and len(tok) > 4:
+            out.add(tok[:-3] + "y")
+        if tok.endswith("es") and len(tok) > 4:
+            out.add(tok[:-2])
+        if tok.endswith("s") and len(tok) > 3:
+            out.add(tok[:-1])
+    return out
+
+
+def _phrase_in_question(phrase: str, q_tokens: set[str], q_norm: str) -> bool:
+    phrase_norm = _normalize(phrase)
+    if not phrase_norm:
+        return False
+    words = [w for w in phrase_norm.split() if len(w) >= 3]
+    if not words:
+        return False
+    if len(words) == 1:
+        word = words[0]
+        return word in q_tokens or (word + "s") in q_tokens
+    return all((w in q_tokens or (w + "s") in q_tokens) for w in words) or phrase_norm in q_norm
+
+
+def _table_candidates_from_required(required_tables: list[str] | set[str] | None) -> set[str]:
+    candidates: set[str] = set()
+    for raw in required_tables or []:
+        text = str(raw).strip().strip("[]\"`")
+        if not text:
+            continue
+        parts = [p.strip("[]\"`").upper() for p in text.split(".") if p.strip("[]\"`")]
+        for part in parts:
+            candidates.add(part)
+        if len(parts) >= 2:
+            candidates.add(".".join(parts[-2:]))
+    return candidates
+
+
+def detect_entities(
+    question: str,
+    graph: dict,
+    required_tables: list[str] | set[str] | None = None,
+    required_entities: list[str] | set[str] | None = None,
+) -> list[str]:
     """
     Score each entity against the question and return those that match.
 
@@ -80,31 +127,54 @@ def detect_entities(question: str, graph: dict) -> list[str]:
     Returns entity names sorted by score descending, threshold ≥ 3.
     """
     q = _normalize(question)
+    q_tokens = _tokens(question)
     scores: dict[str, int] = {}
 
     entities   = graph.get("entities", [])
+    required_table_candidates = _table_candidates_from_required(required_tables)
+    required_entity_names = {str(e) for e in (required_entities or [])}
+
+    props_by_entity: dict[str, list[dict]] = {}
+    for prop in graph.get("properties", []) or []:
+        props_by_entity.setdefault(prop.get("entity_name", ""), []).append(prop)
 
     for ent in entities:
         name  = ent["entity_name"]
         score = 0
 
         # entity name — check each word of the name appears in question
+        if name in required_entity_names:
+            score += 100
+
         norm_name = _normalize(name)
         for word in norm_name.split():
-            if len(word) >= 3 and re.search(r"\b" + re.escape(word) + r"\b", q):
+            if len(word) >= 3 and _phrase_in_question(word, q_tokens, q):
                 score += 10
 
         # display name
         disp = _normalize(ent.get("display_name") or name)
-        for word in disp.split():
-            if len(word) >= 3 and re.search(r"\b" + re.escape(word) + r"\b", q):
-                score += 8
+        if _phrase_in_question(disp, q_tokens, q):
+            score += 8
 
         # table name substring
-        tbl = _normalize(ent.get("table_name", ""))
-        for word in tbl.split("_"):
-            if len(word) >= 4 and word in q:
+        table_name = (ent.get("table_name") or "").upper()
+        schema_name = (ent.get("schema_name") or "").upper()
+        if table_name in required_table_candidates or f"{schema_name}.{table_name}" in required_table_candidates:
+            score += 90
+        tbl = _normalize(table_name)
+        for word in tbl.split():
+            if len(word) >= 4 and _phrase_in_question(word, q_tokens, q):
                 score += 5
+
+        for prop in props_by_entity.get(name, []):
+            for field in ("column_name", "display_name", "synonyms", "description"):
+                raw = prop.get(field) or ""
+                phrases = [raw]
+                if field == "synonyms":
+                    phrases = [p.strip() for p in raw.split(",")]
+                for phrase in phrases:
+                    if _phrase_in_question(phrase, q_tokens, q):
+                        score += 3
 
         if score >= 3:
             scores[name] = score
@@ -133,7 +203,7 @@ def _build_adjacency(relationships: list[dict]) -> dict[str, list[dict]]:
     return adj
 
 
-def find_join_path(entity_names: list[str], graph: dict) -> list[dict]:
+def find_join_path(entity_names: list[str], graph: dict, prefer_fact_anchor: bool = True) -> list[dict]:
     """
     BFS from the anchor entity (fact table preferred) through relationship
     edges to reach all other entities. Returns an ordered list of JOIN steps:
@@ -150,12 +220,14 @@ def find_join_path(entity_names: list[str], graph: dict) -> list[dict]:
     rels = graph.get("relationships", [])
     adj  = _build_adjacency(rels)
 
-    # Prefer starting from a fact entity
+    # Prefer starting from a fact entity for normal analytics. Anti-join mode
+    # can disable this so the source/parent entity remains the anchor.
     anchor = entity_names[0]
-    for name in entity_names:
-        if entities_map.get(name, {}).get("entity_type") == "fact":
-            anchor = name
-            break
+    if prefer_fact_anchor:
+        for name in entity_names:
+            if entities_map.get(name, {}).get("entity_type") == "fact":
+                anchor = name
+                break
 
     targets = [n for n in entity_names if n != anchor]
     visited_edges: list[dict] = []
@@ -204,6 +276,7 @@ def build_join_skeleton(
     entities_map: dict[str, dict],
     anchor_entity: str,
     db_type: str,
+    anti_join: bool = False,
 ) -> str:
     """
     Convert an ordered list of JOIN steps into a SQL FROM + JOIN clause.
@@ -259,7 +332,7 @@ def build_join_skeleton(
         to_ent   = step["to_entity"]
         from_col = step["from_column"]
         to_col   = step["to_column"]
-        jtype    = step.get("join_type", "INNER").upper()
+        jtype    = "LEFT" if anti_join else step.get("join_type", "INNER").upper()
 
         # Determine which end is new
         new_ent  = to_ent if from_ent in seen_nodes else from_ent
@@ -375,6 +448,9 @@ def resolve_for_question(
     account_id: str,
     db_type: str,
     graph: Optional[dict] = None,
+    intent: Optional[dict] = None,
+    required_entities: Optional[list[str] | set[str]] = None,
+    metric_formula_tables: Optional[list[str] | set[str]] = None,
 ) -> dict:
     """
     Main entry point called from main.py before SQL generation.
@@ -408,7 +484,13 @@ def resolve_for_question(
     if not entities:
         return empty
 
-    detected = detect_entities(question, graph)
+    anti_join = bool((intent or {}).get("wants_missing_records"))
+    detected = detect_entities(
+        question,
+        graph,
+        required_tables=metric_formula_tables,
+        required_entities=required_entities,
+    )
     log.debug("Graph: question=%r detected=%s", question[:60], detected)
 
     if not detected:
@@ -439,16 +521,17 @@ def resolve_for_question(
         }
 
     entities_map = {e["entity_name"]: e for e in entities}
-    join_path    = find_join_path(detected, graph)
+    join_path    = find_join_path(detected, graph, prefer_fact_anchor=not anti_join)
 
     # Determine anchor (fact table if possible)
     anchor = detected[0]
-    for name in detected:
-        if entities_map.get(name, {}).get("entity_type") == "fact":
-            anchor = name
-            break
+    if not anti_join:
+        for name in detected:
+            if entities_map.get(name, {}).get("entity_type") == "fact":
+                anchor = name
+                break
 
-    skeleton = build_join_skeleton(join_path, entities_map, anchor, db_type)
+    skeleton = build_join_skeleton(join_path, entities_map, anchor, db_type, anti_join=anti_join)
 
     return {
         "enabled":       bool(skeleton),
@@ -456,4 +539,5 @@ def resolve_for_question(
         "join_skeleton": skeleton,
         "anchor":        anchor,
         "entity_count":  entity_count,
+        "anti_join":     anti_join,
     }

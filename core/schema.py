@@ -373,6 +373,54 @@ def load_known_tables(schema_dir: str) -> set[str]:
     return result
 
 
+def load_schema_columns(schema_dir: str) -> dict[str, dict[str, str]]:
+    """
+    Load table -> column metadata from _schema.json.
+
+    Keys are expanded the same way as load_known_tables(): full FQN,
+    schema.table, and bare table name. Values map UPPER column name to the
+    original column type string. If multiple schemas share a bare table name,
+    the bare entry is the union of those columns; qualified keys stay exact.
+    """
+    p = Path(schema_dir) / "_schema.json"
+    if not p.exists():
+        return {}
+
+    try:
+        master = json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+    result: dict[str, dict[str, str]] = {}
+    for key, info in master.items():
+        upper = str(key).upper()
+        parts = upper.split(".")
+        variants = [upper]
+        if len(parts) >= 2:
+            variants.extend([parts[-1], ".".join(parts[-2:])])
+
+        cols: dict[str, str] = {}
+        for col in (info or {}).get("columns", []) or []:
+            name = (
+                col.get("name")
+                or col.get("COLUMN_NAME")
+                or col.get("column_name")
+                or ""
+            )
+            if not name:
+                continue
+            cols[str(name).upper()] = str(
+                col.get("type")
+                or col.get("DATA_TYPE")
+                or col.get("data_type")
+                or ""
+            )
+
+        for variant in variants:
+            result.setdefault(variant, {}).update(cols)
+    return result
+
+
 def load_schema_json(schema_dir: str) -> dict:
     p = Path(schema_dir) / "_schema.json"
     return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
