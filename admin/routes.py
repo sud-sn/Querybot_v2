@@ -2248,10 +2248,14 @@ async def graph_api_rel_validate_all(request: Request, account_id: str):
     from core.relationship_validator import validate_relationship
 
     relationships = store.list_relationships(account_id, active_only=True)
+    if not relationships:
+        return JSONResponse({"status": "ok", "results": []})
+
     loop = asyncio.get_running_loop()
-    results = []
-    for rel in relationships:
-        result = await loop.run_in_executor(
+
+    # Fire all validations concurrently so a 20-rel graph doesn't take 400s.
+    futures = [
+        loop.run_in_executor(
             None,
             lambda rid=rel["id"]: validate_relationship(
                 account_id,
@@ -2260,6 +2264,17 @@ async def graph_api_rel_validate_all(request: Request, account_id: str):
                 timeout_seconds=timeout_seconds,
             ),
         )
+        for rel in relationships
+    ]
+    validation_results = await asyncio.gather(*futures, return_exceptions=True)
+
+    results = []
+    for rel, result in zip(relationships, validation_results):
+        if isinstance(result, Exception):
+            log.warning("validate-all error for rel %s: %s", rel["id"], result)
+            results.append({"relationship_id": int(rel["id"]), "status": "warning",
+                            "message": f"Validation error: {result}"})
+            continue
         store.update_relationship_validation(
             account_id,
             int(rel["id"]),

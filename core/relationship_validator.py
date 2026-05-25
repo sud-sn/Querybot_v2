@@ -70,12 +70,21 @@ def validate_relationship(
             "Relationship references an entity that no longer exists.",
         )
 
-    schema_check = _validate_against_schema(account_id, rel, from_ent, to_ent)
+    # Resolve db_type once here so both schema check and live probe use the
+    # correct dialect for table/column quoting and COUNT syntax.
+    client = store.get_client(account_id)
+    db_cfg_id = client.get("db_config_id") if client else None
+    raw_cfg = store.get_db_config(db_cfg_id) if db_cfg_id else None
+    db_type = (raw_cfg or {}).get("db_type", "azure_sql")
+
+    schema_check = _validate_against_schema(account_id, rel, from_ent, to_ent, db_type=db_type)
     if schema_check.status == STATUS_BROKEN or not execute:
         return schema_check
 
     try:
-        return _execute_probe(account_id, rel, from_ent, to_ent, timeout_seconds=timeout_seconds)
+        return _execute_probe(account_id, rel, from_ent, to_ent,
+                              db_type=db_type, raw_cfg=raw_cfg,
+                              timeout_seconds=timeout_seconds)
     except Exception as exc:
         log.warning("relationship live validation failed for %s/%s: %s", account_id, rel_id, exc)
         return RelationshipValidationResult(
@@ -92,6 +101,8 @@ def _validate_against_schema(
     rel: dict,
     from_ent: dict,
     to_ent: dict,
+    *,
+    db_type: str = "azure_sql",
 ) -> RelationshipValidationResult:
     from core.graph_health import _load_schema, _resolve_fqn
 
@@ -141,7 +152,7 @@ def _validate_against_schema(
             "Join column missing from discovered schema: " + ", ".join(missing),
         )
 
-    probe_sql = build_probe_sql("azure_sql", rel, from_ent, to_ent)
+    probe_sql = build_probe_sql(db_type, rel, from_ent, to_ent)
     return RelationshipValidationResult(
         rel_id,
         STATUS_VALID,
@@ -174,15 +185,13 @@ def _execute_probe(
     from_ent: dict,
     to_ent: dict,
     *,
-    timeout_seconds: int,
+    db_type: str = "azure_sql",
+    raw_cfg: dict | None = None,
+    timeout_seconds: int = 20,
 ) -> RelationshipValidationResult:
     import concurrent.futures
-    import store
     from core.schema import _az_connect, _ora_connect, _sf_connect
 
-    client = store.get_client(account_id)
-    db_cfg_id = client.get("db_config_id") if client else None
-    raw_cfg = store.get_db_config(db_cfg_id) if db_cfg_id else None
     if not raw_cfg:
         return RelationshipValidationResult(
             int(rel.get("id") or 0),
@@ -191,7 +200,6 @@ def _execute_probe(
             checked_by="schema",
         )
 
-    db_type = raw_cfg.get("db_type", "azure_sql")
     creds = raw_cfg.get("credentials", {})
     sql = build_probe_sql(db_type, rel, from_ent, to_ent)
 
