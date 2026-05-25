@@ -112,8 +112,10 @@
 .g-edge{pointer-events:stroke;cursor:pointer}
 .g-edge .edge-line{stroke:#94A3B8;stroke-width:2;fill:none}
 .g-edge.selected .edge-line{stroke:var(--amber,#F59E0B);stroke-width:2.5}
-.g-edge .edge-label{font-family:system-ui,sans-serif;font-size:10px;fill:var(--text-muted);text-anchor:middle;dominant-baseline:central}
-.g-edge .edge-label-bg{fill:var(--surface);rx:4;ry:4}
+.g-edge .edge-label{font-family:system-ui,sans-serif;font-size:10px;fill:var(--text-muted);text-anchor:middle;dominant-baseline:central;opacity:0;transition:opacity .15s}
+.g-edge .edge-label-bg{fill:var(--surface);rx:4;ry:4;opacity:0;transition:opacity .15s}
+.g-edge:hover .edge-label,.g-edge.selected .edge-label{opacity:1}
+.g-edge:hover .edge-label-bg,.g-edge.selected .edge-label-bg{opacity:1}
 .draw-line{stroke:var(--primary,#0D7377);stroke-width:2;stroke-dasharray:6,4;fill:none;pointer-events:none}
 .g-node.suggested .node-body{stroke-dasharray:7,4;stroke:#F59E0B;stroke-width:2;opacity:.75}
 .g-node.suggested .node-label{opacity:.7}
@@ -220,6 +222,59 @@
 .m-btn:hover{background:var(--surface-2)}
 .m-btn.primary{background:var(--primary);color:#fff;border-color:var(--primary)}
 .m-btn.primary:hover{opacity:.85}
+
+/* ── Sidebar tab bar ─────────────────────────────────────────────────────── */
+.gs-tab-bar{display:flex;align-items:stretch;border-bottom:2px solid var(--border);background:var(--surface);flex-shrink:0;padding:0 .35rem;gap:0}
+.gs-tab{background:none;border:none;border-bottom:2px solid transparent;margin-bottom:-2px;padding:.55rem .6rem;font-size:11px;font-weight:700;color:var(--text-muted);cursor:pointer;display:flex;align-items:center;gap:.3rem;white-space:nowrap;transition:color .12s,border-color .12s}
+.gs-tab:hover{color:var(--text)}
+.gs-tab.active{color:var(--primary);border-bottom-color:var(--primary)}
+.gs-tab-cnt{font-size:9px;font-weight:800;padding:0 4px;border-radius:999px;background:color-mix(in srgb,var(--primary) 12%,var(--surface-2));color:var(--primary);line-height:15px;min-width:15px;text-align:center}
+.gs-tab-cnt.issues-cnt{background:color-mix(in srgb,var(--red,#DC2626) 12%,var(--surface-2));color:var(--red,#DC2626)}
+.gs-tab-cnt.issues-cnt.warn{background:color-mix(in srgb,var(--amber,#d69e2e) 12%,var(--surface-2));color:color-mix(in srgb,var(--amber,#d69e2e) 80%,#222)}
+.gs-tab-cnt.issues-cnt.ok{background:color-mix(in srgb,var(--green,#059669) 12%,var(--surface-2));color:var(--green,#059669)}
+.gs-tab-pane{display:none;flex-direction:column;flex:1;overflow-y:auto;min-height:0}
+.gs-tab-pane.active{display:flex}
+
+/* ── Sidebar search + type filter ────────────────────────────────────────── */
+.gs-search-row{padding:.45rem .6rem;border-bottom:1px solid var(--border);flex-shrink:0}
+.gs-search-inp{width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:5px;font-size:12px;background:var(--surface-2);color:var(--text);outline:none;box-sizing:border-box}
+.gs-search-inp:focus{border-color:var(--primary);background:var(--surface)}
+.gs-type-chips{display:flex;gap:.3rem;padding:.35rem .6rem;border-bottom:1px solid var(--border);flex-wrap:wrap;flex-shrink:0}
+.gs-type-chip{background:var(--surface-2);border:1px solid var(--border);border-radius:999px;font-size:10px;font-weight:700;padding:2px 8px;cursor:pointer;transition:all .12s;color:var(--text-muted)}
+.gs-type-chip:hover{border-color:var(--primary);color:var(--primary)}
+.gs-type-chip.active{background:color-mix(in srgb,var(--primary) 12%,var(--surface));border-color:var(--primary);color:var(--primary)}
+
+/* ── Issues tab ─────────────────────────────────────────────────────────── */
+.gs-issue-item{padding:.5rem .7rem;border-bottom:1px solid var(--border);display:flex;gap:.45rem;align-items:flex-start;font-size:11px;line-height:1.5;cursor:pointer;transition:background .1s}
+.gs-issue-item:hover{background:var(--surface-2)}
+.gs-issue-icon{width:15px;height:15px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:900;color:#fff;margin-top:1px}
+.gs-issue-icon.error{background:var(--red,#DC2626)}
+.gs-issue-icon.warning{background:var(--amber,#d69e2e)}
+.gs-issue-body{flex:1;min-width:0}
+.gs-issue-msg{color:var(--text-soft);overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.gs-issue-ent{font-size:10px;font-weight:700;color:var(--primary);margin-top:2px}
+
+/* ── Test resolver collapsible ───────────────────────────────────────────── */
+.gs-resolver-wrap{flex-shrink:0;border-top:2px solid var(--border);background:var(--surface)}
+.gs-resolver-toggle{padding:.5rem .7rem;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);cursor:pointer;display:flex;align-items:center;justify-content:space-between;user-select:none;transition:background .12s}
+.gs-resolver-toggle:hover{background:var(--surface-2)}
+.gs-resolver-chevron{transition:transform .18s;font-size:9px}
+.gs-resolver-wrap.open .gs-resolver-chevron{transform:rotate(90deg)}
+.gs-resolver-body{display:none;padding:.6rem}
+.gs-resolver-wrap.open .gs-resolver-body{display:block}
+
+/* ── Toolbar dropdowns ───────────────────────────────────────────────────── */
+.tb-dropdown{position:relative}
+.tb-dropdown-menu{display:none;position:absolute;top:calc(100% + 4px);left:0;background:var(--surface);border:1px solid var(--border);border-radius:7px;box-shadow:0 6px 20px rgba(0,0,0,.13);min-width:170px;z-index:400;padding:3px 0;white-space:nowrap}
+.tb-dropdown-menu.open{display:block}
+.tb-dropdown-menu button{width:100%;text-align:left;background:none;border:none;padding:7px 12px;font-size:12px;font-weight:600;color:var(--text);cursor:pointer;display:flex;align-items:center;gap:.5rem;transition:background .1s}
+.tb-dropdown-menu button:hover{background:var(--surface-2)}
+.tb-dropdown-menu .tb-dd-sep{height:1px;background:var(--border);margin:3px 0}
+
+/* ── Compact schema label ────────────────────────────────────────────────── */
+.tb-schema-wrap{display:flex;align-items:center;gap:.3rem;background:var(--surface-2);border:1px solid var(--border);border-radius:5px;padding:3px 8px}
+.tb-schema-lbl{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);white-space:nowrap}
+.tb-schema-select{background:none;border:none;font-size:11px;font-weight:600;color:var(--text);outline:none;cursor:pointer;padding:0;max-width:110px}
 </style>
 {% endblock %}
 
@@ -228,82 +283,164 @@
 
 <!-- ══ LEFT SIDEBAR ══════════════════════════════════════════════════════════ -->
 <aside class="graph-sidebar">
-  <div class="gs-head">Entities
-    <button class="gs-add-btn" onclick="openEntityModal(null)">+ Add</button>
-  </div>
-  <div id="entity-list">
-    {% if not entities %}
-    <div class="gs-empty">No entities yet.<br>Click <strong>+ Add</strong> to define your first business object.</div>
-    {% endif %}
-    {% for e in entities %}
-    {% set _esev = health.entity_severity.get(e.entity_name, '') %}
-    <div class="gs-entity-item" id="sib-{{ e.entity_name|replace(' ','_') }}"
-         onclick="selectEntity('{{ e.entity_name }}')">
-      <span class="entity-dot" style="background:{{ e.color or '#4F86C6' }}"></span>
-      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ e.display_name or e.entity_name }}</span>
-      {% if _esev %}<span class="gs-health-dot {{ _esev }}" title="{{ _esev|capitalize }} health issue"></span>{% endif %}
-      <span class="entity-type-badge badge-{{ e.entity_type }}">{{ e.entity_type }}</span>
-    </div>
-    {% endfor %}
+
+  <!-- Tab bar -->
+  <div class="gs-tab-bar">
+    <button class="gs-tab active" id="gs-tab-entities"
+            onclick="switchSidebarTab('entities')">
+      Entities
+      <span class="gs-tab-cnt" id="gs-ent-cnt">{{ entities|length }}</span>
+    </button>
+    <button class="gs-tab" id="gs-tab-relationships"
+            onclick="switchSidebarTab('relationships')">
+      Rels
+      <span class="gs-tab-cnt" id="gs-rel-cnt">{{ relationships|length }}</span>
+    </button>
+    <button class="gs-tab" id="gs-tab-issues"
+            onclick="switchSidebarTab('issues')">
+      Issues
+      <span class="gs-tab-cnt issues-cnt" id="gs-issues-cnt">—</span>
+    </button>
+    <button class="gs-add-btn" onclick="openEntityModal(null)"
+            style="margin-left:auto;margin-right:.35rem;margin-top:.3rem;margin-bottom:.3rem">＋</button>
   </div>
 
-  <div class="gs-section">Relationships</div>
-  <div id="rel-list">
-    {% if not relationships %}
-    <div class="gs-empty" style="font-size:11px">No relationships yet.<br>Hover a node and drag from its port.</div>
-    {% endif %}
-    {% for r in relationships %}
-    <div class="gs-rel-item" id="sib-rel-{{ r.id }}" onclick="selectRel({{ r.id }})">
-      <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0">{{ r.from_entity }}</span>
-      <span style="color:var(--text-muted);flex-shrink:0">→</span>
-      <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0">{{ r.to_entity }}</span>
-      <span style="font-size:9px;font-weight:700;color:var(--text-muted);text-transform:uppercase;flex-shrink:0">{{ r.join_type }}</span>
-      <button class="gs-rel-del" title="Delete relationship"
-        onclick="event.stopPropagation();deleteRel({{ r.id }})">✕</button>
+  <!-- ── Entities tab ───────────────────────────────────────────────────── -->
+  <div class="gs-tab-pane active" id="gs-pane-entities">
+    <div class="gs-search-row">
+      <input type="text" id="gs-ent-search" class="gs-search-inp"
+             placeholder="Search entities…" oninput="filterSidebarEntities(this.value)">
     </div>
-    {% endfor %}
+    <div class="gs-type-chips" id="gs-type-chips">
+      <span class="gs-type-chip active" data-type="" onclick="filterSidebarByType(this, '')">All</span>
+      <span class="gs-type-chip" data-type="fact" onclick="filterSidebarByType(this, 'fact')">Fact</span>
+      <span class="gs-type-chip" data-type="dimension" onclick="filterSidebarByType(this, 'dimension')">Dim</span>
+      <span class="gs-type-chip" data-type="bridge" onclick="filterSidebarByType(this, 'bridge')">Bridge</span>
+    </div>
+    <div id="entity-list" style="flex:1;overflow-y:auto">
+      {% if not entities %}
+      <div class="gs-empty">No entities yet.<br>Click <strong>＋</strong> to define your first business object.</div>
+      {% endif %}
+      {% for e in entities %}
+      {% set _esev = health.entity_severity.get(e.entity_name, '') %}
+      <div class="gs-entity-item"
+           id="sib-{{ e.entity_name|replace(' ','_') }}"
+           data-etype="{{ e.entity_type }}"
+           data-ename="{{ (e.display_name or e.entity_name)|lower }}"
+           onclick="selectEntity('{{ e.entity_name }}')">
+        <span class="entity-dot" style="background:{{ e.color or '#4F86C6' }}"></span>
+        <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ e.display_name or e.entity_name }}</span>
+        {% if _esev %}<span class="gs-health-dot {{ _esev }}" title="{{ _esev|capitalize }} health issue"></span>{% endif %}
+        <span class="entity-type-badge badge-{{ e.entity_type }}">{{ e.entity_type }}</span>
+      </div>
+      {% endfor %}
+    </div>
   </div>
 
-  <!-- Resolver tester -->
-  <div class="gs-section" style="margin-top:auto">Test resolver</div>
-  <div style="padding:.65rem">
-    <input id="resolve-q" class="gd-input" placeholder="Type a question to test…"
-           oninput="scheduleResolve(this.value)" style="margin-bottom:.4rem">
-    <div id="resolve-output" class="resolver-output" style="display:none"></div>
+  <!-- ── Relationships tab ─────────────────────────────────────────────── -->
+  <div class="gs-tab-pane" id="gs-pane-relationships">
+    <div class="gs-search-row">
+      <input type="text" id="gs-rel-search" class="gs-search-inp"
+             placeholder="Search relationships…" oninput="filterSidebarRels(this.value)">
+    </div>
+    <div id="rel-list" style="flex:1;overflow-y:auto">
+      {% if not relationships %}
+      <div class="gs-empty" style="font-size:11px">No relationships yet.<br>Hover a node and drag from its port.</div>
+      {% endif %}
+      {% for r in relationships %}
+      <div class="gs-rel-item" id="sib-rel-{{ r.id }}" onclick="selectRel({{ r.id }})">
+        <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0">{{ r.from_entity }}</span>
+        <span style="color:var(--text-muted);flex-shrink:0">→</span>
+        <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0">{{ r.to_entity }}</span>
+        <span style="font-size:9px;font-weight:700;color:var(--text-muted);text-transform:uppercase;flex-shrink:0">{{ r.join_type }}</span>
+        <button class="gs-rel-del" title="Delete relationship"
+          onclick="event.stopPropagation();deleteRel({{ r.id }})">✕</button>
+      </div>
+      {% endfor %}
+    </div>
   </div>
+
+  <!-- ── Issues tab ────────────────────────────────────────────────────── -->
+  <div class="gs-tab-pane" id="gs-pane-issues">
+    <div id="gs-issues-list" style="flex:1;overflow-y:auto">
+      <div class="gs-empty" style="font-size:11px;padding:1.5rem .75rem">
+        Loading health data…
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Test resolver (collapsible, always at bottom) ─────────────────── -->
+  <div class="gs-resolver-wrap" id="gs-resolver-wrap">
+    <div class="gs-resolver-toggle" onclick="document.getElementById('gs-resolver-wrap').classList.toggle('open')">
+      <span>⚙ Test resolver</span>
+      <span class="gs-resolver-chevron">▶</span>
+    </div>
+    <div class="gs-resolver-body">
+      <input id="resolve-q" class="gd-input" placeholder="Type a question to test…"
+             oninput="scheduleResolve(this.value)" style="margin-bottom:.4rem;font-size:12px">
+      <div id="resolve-output" class="resolver-output" style="display:none"></div>
+    </div>
+  </div>
+
 </aside>
 
 <!-- ══ CANVAS ════════════════════════════════════════════════════════════════ -->
 <main class="graph-canvas-wrap">
   <div class="canvas-toolbar">
-    <button class="tb-btn primary" onclick="openEntityModal(null)">＋ Entity</button>
-    <button class="tb-btn" onclick="openBridgeModal()" title="Create a bridge/link table connecting multiple entities (Qlik-style)" style="color:#7C3AED;border-color:#C4B5FD">⬡ Bridge</button>
+    <!-- Primary actions -->
+    <button class="tb-btn primary" onclick="openEntityModal(null)" title="Add a new entity">＋ Entity</button>
+    <button class="tb-btn" onclick="openRelModal()" title="Add a relationship between two entities">⇢ Relationship</button>
+    <button class="tb-btn" id="suggest-btn" onclick="runSuggest()"
+            title="Use LLM to predict entities, field roles, and relationships from the discovered schema"
+            style="color:#7C3AED;border-color:#C4B5FD">✦ Suggest</button>
+
     <div class="tb-sep"></div>
-    <button class="tb-btn" onclick="autoLayout()" title="Auto-arrange nodes">⊞ Auto layout</button>
-    <button class="tb-btn" onclick="fitView()" title="Fit to screen">⤢ Fit</button>
-    <button class="tb-btn" id="del-btn" onclick="deleteSelected()" style="display:none" title="Delete selected (Del)">🗑 Delete</button>
+
+    <!-- Layout dropdown -->
+    <div class="tb-dropdown" id="tb-layout-dd">
+      <button class="tb-btn" onclick="toggleTbDropdown('tb-layout-dd')" title="Layout and view options">
+        ⊞ Layout ▾
+      </button>
+      <div class="tb-dropdown-menu" id="tb-layout-dd-menu">
+        <button onclick="autoLayout();closeTbDropdowns()">⊞ Auto arrange</button>
+        <button onclick="fitView();closeTbDropdowns()">⤢ Fit to screen</button>
+        <div class="tb-dd-sep"></div>
+        <button id="dedup-btn" onclick="deduplicateRelationships();closeTbDropdowns()"
+                title="Remove duplicate relationships">✕ Clean duplicates</button>
+      </div>
+    </div>
+
+    <!-- More dropdown -->
+    <div class="tb-dropdown" id="tb-more-dd">
+      <button class="tb-btn" onclick="toggleTbDropdown('tb-more-dd')" title="More actions">More ▾</button>
+      <div class="tb-dropdown-menu" id="tb-more-dd-menu">
+        <button onclick="openMultiLinkModal();closeTbDropdowns()"
+                title="Connect one fact to multiple dimensions at once">⬗ Multi-link</button>
+        <button onclick="openBridgeModal();closeTbDropdowns()"
+                title="Create a bridge/link table connecting multiple entities">⬡ Bridge table</button>
+      </div>
+    </div>
+
+    <!-- Contextual delete — shown only when a node/edge is selected -->
+    <button class="tb-btn danger" id="del-btn" onclick="deleteSelected()"
+            style="display:none" title="Delete selected (Del)">🗑 Delete</button>
+
     <div class="tb-sep"></div>
-    <button class="tb-btn" onclick="openRelModal()" title="Add a single relationship by form">⇢ Link</button>
-    <button class="tb-btn" onclick="openMultiLinkModal()" title="Connect one table to multiple dimensions at once" style="color:#0369A1;border-color:#BAE6FD">⬗ Multi-link</button>
-    <button class="tb-btn" id="dedup-btn" onclick="deduplicateRelationships()" title="Remove duplicate relationships — keeps the best one per table pair (confirmed > highest confidence > most recent)">
-      ✕ Clean duplicates
-    </button>
-    <button class="tb-btn" id="suggest-btn" onclick="runSuggest()" title="Use LLM to predict entities, field roles, and relationships from the discovered schema">
-      ✦ Suggest from schema
-    </button>
-    <div class="tb-sep"></div>
-    <label style="font-size:11px;color:var(--text-muted);white-space:nowrap">Schema:</label>
-    <select id="schema-filter" class="gd-select" style="width:130px;font-size:11px;padding:4px 6px" onchange="applySchemaFilter()" title="Filter canvas by database schema">
-      <option value="">All schemas</option>
-    </select>
-    <span class="tb-hint" id="mode-hint">Click to select • Hover node → drag ◉ port to connect • ⇢ Link one-to-one • ⬗ Multi-link one fact → many dims • ✦ = LLM suggested</span>
-    <!-- Health badge -->
+
+    <!-- Compact schema filter -->
+    <div class="tb-schema-wrap" title="Filter canvas by database schema">
+      <span class="tb-schema-lbl">Schema</span>
+      <select id="schema-filter" class="tb-schema-select" onchange="applySchemaFilter()">
+        <option value="">All</option>
+      </select>
+    </div>
+
+    <!-- Health badge (right side) -->
     <div style="position:relative;margin-left:auto;flex-shrink:0">
       <button id="health-btn" class="health-badge none" onclick="toggleHealthPanel()" title="Graph health report">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
         <span id="health-score-txt">—</span>
       </button>
-      <!-- Health dropdown panel -->
       <div id="health-panel" class="health-panel">
         <div class="health-panel-head">
           <h3>Graph health report</h3>
@@ -2601,6 +2738,8 @@ function updateSidebar() {
   }
   list.innerHTML = visibleEntities.map(e => `
     <div class="gs-entity-item" id="sib-${e.entity_name.replace(/ /g,'_')}"
+         data-etype="${esc(e.entity_type)}"
+         data-ename="${esc((e.display_name||e.entity_name).toLowerCase())}"
          onclick="selectEntity('${esc(e.entity_name)}')"
          ${selectedEntity === e.entity_name ? 'style="background:color-mix(in srgb,var(--primary) 10%,var(--surface));border-left:3px solid var(--primary)"' : ''}>
       <span class="entity-dot" style="background:${e.color||'#4F86C6'}"></span>
@@ -3814,5 +3953,184 @@ window.quickAddEntity = function(tableName, schemaName, fqn) {
 applyHealthReport(_health);
 
 // Health auto-refreshes via the api() wrapper above (triggers after every mutation).
+
+// ════════════════════════════════════════════════════════════════════════════
+// PHASE 1 — SIDEBAR TABS
+// ════════════════════════════════════════════════════════════════════════════
+
+const _SIDEBAR_TABS = ['entities', 'relationships', 'issues'];
+let _activeSidebarTab = 'entities';
+let _sidebarEntTypeFilter = '';   // active type chip value
+let _sidebarEntQuery = '';        // active entity search query
+let _sidebarRelQuery = '';        // active rel search query
+
+window.switchSidebarTab = function(tab) {
+  _activeSidebarTab = tab;
+  _SIDEBAR_TABS.forEach(t => {
+    const btn  = document.getElementById('gs-tab-' + t);
+    const pane = document.getElementById('gs-pane-' + t);
+    if (!btn || !pane) return;
+    const on = t === tab;
+    btn.classList.toggle('active', on);
+    pane.classList.toggle('active', on);
+  });
+};
+
+// ── Entity search ────────────────────────────────────────────────────────────
+window.filterSidebarEntities = function(query) {
+  _sidebarEntQuery = (query || '').toLowerCase().trim();
+  _applySidebarEntFilter();
+};
+
+window.filterSidebarByType = function(chipEl, type) {
+  _sidebarEntTypeFilter = type;
+  document.querySelectorAll('#gs-type-chips .gs-type-chip').forEach(c => {
+    c.classList.toggle('active', c.dataset.type === type);
+  });
+  _applySidebarEntFilter();
+};
+
+function _applySidebarEntFilter() {
+  let visible = 0;
+  document.querySelectorAll('#entity-list .gs-entity-item').forEach(item => {
+    const nameMatch = !_sidebarEntQuery || (item.dataset.ename || '').includes(_sidebarEntQuery);
+    const typeMatch = !_sidebarEntTypeFilter || (item.dataset.etype || '') === _sidebarEntTypeFilter;
+    const show = nameMatch && typeMatch;
+    item.style.display = show ? '' : 'none';
+    if (show) visible++;
+  });
+  // Show/hide empty state
+  const el = document.getElementById('entity-list');
+  let emptyEl = el.querySelector('.gs-filter-empty');
+  if (!visible && (_sidebarEntQuery || _sidebarEntTypeFilter)) {
+    if (!emptyEl) {
+      emptyEl = document.createElement('div');
+      emptyEl.className = 'gs-empty gs-filter-empty';
+      emptyEl.style.fontSize = '11px';
+      el.appendChild(emptyEl);
+    }
+    emptyEl.textContent = 'No entities match the current filter.';
+    emptyEl.style.display = '';
+  } else if (emptyEl) {
+    emptyEl.style.display = 'none';
+  }
+}
+
+// Re-apply entity filter after sidebar rebuild (called at end of updateSidebar)
+const _origUpdateSidebar = window.updateSidebar || function(){};
+window.updateSidebar = function() {
+  _origUpdateSidebar();
+  _applySidebarEntFilter();
+  // Update entity count badge
+  const cnt = document.querySelectorAll('#entity-list .gs-entity-item').length;
+  const cntEl = document.getElementById('gs-ent-cnt');
+  if (cntEl) cntEl.textContent = cnt;
+};
+
+// ── Relationship search ──────────────────────────────────────────────────────
+window.filterSidebarRels = function(query) {
+  _sidebarRelQuery = (query || '').toLowerCase().trim();
+  _applySidebarRelFilter();
+};
+
+function _applySidebarRelFilter() {
+  let visible = 0;
+  document.querySelectorAll('#rel-list .gs-rel-item').forEach(item => {
+    const text = item.textContent.toLowerCase();
+    const show = !_sidebarRelQuery || text.includes(_sidebarRelQuery);
+    item.style.display = show ? '' : 'none';
+    if (show) visible++;
+  });
+}
+
+// Re-apply rel filter after sidebar rebuild
+const _origUpdateRelList = window.updateRelList;
+window.updateRelList = function() {
+  _origUpdateRelList();
+  _applySidebarRelFilter();
+  // Update rel count badge
+  const cnt = document.querySelectorAll('#rel-list .gs-rel-item').length;
+  const cntEl = document.getElementById('gs-rel-cnt');
+  if (cntEl) cntEl.textContent = cnt;
+};
+
+// ── Issues tab ───────────────────────────────────────────────────────────────
+function _updateIssuesTab(h) {
+  const list = document.getElementById('gs-issues-list');
+  const cntEl = document.getElementById('gs-issues-cnt');
+  if (!list) return;
+
+  const issues = (h && h.issues || []).filter(i => i.severity !== 'info');
+  const ec = h ? (h.error_count || 0) : 0;
+  const wc = h ? (h.warning_count || 0) : 0;
+  const total = ec + wc;
+
+  // Update the tab badge
+  if (cntEl) {
+    cntEl.textContent = total > 0 ? total : (h ? '✓' : '—');
+    cntEl.className = 'gs-tab-cnt issues-cnt' + (ec > 0 ? '' : wc > 0 ? ' warn' : total === 0 && h ? ' ok' : '');
+  }
+
+  if (!h) {
+    list.innerHTML = '<div class="gs-empty" style="font-size:11px;padding:1.5rem .75rem">Run schema discovery to see health issues.</div>';
+    return;
+  }
+  if (!issues.length) {
+    list.innerHTML = '<div class="gs-empty" style="font-size:11px;padding:1.5rem .75rem;color:var(--green,#059669)">✓ No issues found — graph is healthy.</div>';
+    return;
+  }
+
+  const ICON = { error: '✕', warning: '!' };
+  list.innerHTML = issues.map(issue => {
+    const entLink = issue.entity
+      ? `<div class="gs-issue-ent" onclick="selectEntity('${_esc(issue.entity)}');switchSidebarTab('entities')">${_esc(issue.entity)}</div>`
+      : '';
+    return `<div class="gs-issue-item" onclick="${issue.entity ? "selectEntity('"+_esc(issue.entity)+"');switchSidebarTab('entities')" : ''}">
+      <div class="gs-issue-icon ${issue.severity}">${ICON[issue.severity] || '!'}</div>
+      <div class="gs-issue-body">
+        <div class="gs-issue-msg">${_esc(issue.message)}</div>
+        ${entLink}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// Hook into applyHealthReport to also update Issues tab
+const _origApplyHealthReport = window.applyHealthReport;
+window.applyHealthReport = function(h) {
+  _origApplyHealthReport(h);
+  _updateIssuesTab(h);
+};
+
+// Run Issues tab with initial server-rendered health data
+_updateIssuesTab(_health);
+
+// ════════════════════════════════════════════════════════════════════════════
+// PHASE 1 — TOOLBAR DROPDOWNS
+// ════════════════════════════════════════════════════════════════════════════
+
+window.toggleTbDropdown = function(id) {
+  const menu = document.getElementById(id + '-menu');
+  if (!menu) return;
+  const isOpen = menu.classList.contains('open');
+  closeTbDropdowns();
+  if (!isOpen) {
+    menu.classList.add('open');
+    setTimeout(() => document.addEventListener('click', _closeTbOnOutside, { once: true }), 0);
+  }
+};
+
+window.closeTbDropdowns = function() {
+  document.querySelectorAll('.tb-dropdown-menu.open').forEach(m => m.classList.remove('open'));
+};
+
+function _closeTbOnOutside(e) {
+  if (!e.target.closest('.tb-dropdown')) closeTbDropdowns();
+}
+
+// Close dropdowns on Escape
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeTbDropdowns();
+});
 </script>
 {% endblock %}
