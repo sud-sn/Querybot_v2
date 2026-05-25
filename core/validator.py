@@ -158,6 +158,7 @@ def validate_sql_detailed(
     db_type: str = "snowflake",
     allowed_tables: set[str] | None = None,
     table_columns: dict[str, dict[str, str]] | None = None,
+    semantic_context: dict | None = None,
 ) -> SqlValidationResult:
     """Return structured validation status and errors."""
     if sql.strip() == "CANNOT_GENERATE":
@@ -251,6 +252,40 @@ def validate_sql_detailed(
             ),
             "unknown_table",
         )
+
+    intent = (semantic_context or {}).get("intent") or {}
+    if intent.get("wants_missing_records"):
+        left_join_exists = any(
+            (join.args.get("side") or "").upper() == "LEFT"
+            for join in tree.find_all(sg_exp.Join)
+        )
+        null_test_exists = any(
+            isinstance(is_node.expression, sg_exp.Null)
+            for is_node in tree.find_all(sg_exp.Is)
+        )
+        if not left_join_exists or not null_test_exists:
+            error = {
+                "code": "anti_join_shape",
+                "message": (
+                    "Missing-record questions must use a source/parent table LEFT JOINed "
+                    "to the missing-side table, with a right-side key IS NULL predicate. "
+                    "A single-table NULL filter on the missing-side table is not enough."
+                ),
+                "requires_left_join": True,
+                "requires_is_null": True,
+            }
+            return SqlValidationResult(
+                False,
+                (
+                    "Anti-join shape is required for this missing-record question.\n\n"
+                    "Use the source table containing the records to list, LEFT JOIN the "
+                    "possibly-missing table, and filter with right_side_key IS NULL. "
+                    "Do not answer this by querying only the missing-side table or only "
+                    "checking a measure column for NULL."
+                ),
+                "anti_join_shape",
+                [error],
+            )
 
     select_aliases: set[str] = set()
     select_column_names: set[str] = set()
@@ -350,6 +385,7 @@ def validate_sql(
     db_type: str = "snowflake",
     allowed_tables: set[str] | None = None,
     table_columns: dict[str, dict[str, str]] | None = None,
+    semantic_context: dict | None = None,
 ) -> tuple[bool, str, str]:
     """
     Backward-compatible tuple API.
@@ -357,7 +393,7 @@ def validate_sql(
     Returns (is_valid, reason, code). For structured error details, call
     validate_sql_detailed().
     """
-    result = validate_sql_detailed(sql, known_tables, db_type, allowed_tables, table_columns)
+    result = validate_sql_detailed(sql, known_tables, db_type, allowed_tables, table_columns, semantic_context)
     return result.ok, result.reason, result.code
 
 

@@ -401,7 +401,10 @@ def build_generic_query_hints(question: str) -> str:
         hints.append(
             "- ANTI-JOIN / MISSING RECORDS DETECTED: The user wants records with no matching "
             "rows in another table. Apply the ANTI-JOIN RULE: use LEFT JOIN … WHERE right_key "
-            "IS NULL. Do NOT use NOT IN (fails with NULLs) or NOT EXISTS."
+            "IS NULL. The FROM table must be the source/parent table containing the records "
+            "to list; the missing-side table belongs on the RIGHT side of the LEFT JOIN. "
+            "Do NOT answer by querying only the missing-side table or only checking a measure "
+            "column for NULL. Do NOT use NOT IN (fails with NULLs) or NOT EXISTS."
         )
 
     if intent["wants_conditional_split"]:
