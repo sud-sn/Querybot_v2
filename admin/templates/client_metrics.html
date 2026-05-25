@@ -146,6 +146,18 @@
   color:color-mix(in srgb,var(--amber,#d69e2e) 80%,#222)}
 .collision-warn.show{display:block}
 .collision-warn strong{font-weight:800}
+/* ── Compact metric row ──────────────────────────────────────────────── */
+.metric-row{border:1px solid var(--border);border-radius:var(--radius);margin-bottom:.38rem;background:var(--surface);transition:box-shadow .12s}
+.metric-row:hover{box-shadow:0 2px 8px rgba(0,0,0,.07)}
+.metric-row-head{padding:.5rem .9rem;display:flex;align-items:center;gap:.45rem;min-height:44px;overflow:hidden}
+.mr-name{font-family:Consolas,monospace;font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;flex-shrink:0}
+.mr-sep{color:var(--border-strong,#CBD5E0);font-size:13px;flex-shrink:0}
+.mr-formula-preview{font-family:Consolas,monospace;font-size:11px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0;cursor:default}
+.mr-synonyms{font-size:10px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:140px;flex-shrink:0}
+.mr-actions{display:flex;gap:.3rem;align-items:center;margin-left:auto;flex-shrink:0;padding-left:.5rem}
+.metric-row-expand{border-top:1px solid var(--border);padding:1rem}
+.mr-del-btn{background:none;border:1px solid transparent;border-radius:5px;cursor:pointer;color:var(--text-muted);font-size:12px;padding:3px 7px;line-height:1;transition:all .12s;white-space:nowrap}
+.mr-del-btn:hover{background:var(--red-light,#FEE2E2);color:var(--red,#DC2626);border-color:color-mix(in srgb,var(--red,#DC2626) 30%,transparent)}
 /* ── Status badges ──────────────────────────────────────────────────── */
 .status-badge{display:inline-flex;align-items:center;font-size:10px;font-weight:800;padding:2px 8px;border-radius:999px;text-transform:uppercase;letter-spacing:.04em;border:1px solid transparent}
 .status-badge.draft{background:color-mix(in srgb,var(--amber,#d69e2e) 14%,var(--surface));color:color-mix(in srgb,var(--amber,#d69e2e) 80%,#222);border-color:color-mix(in srgb,var(--amber,#d69e2e) 25%,transparent)}
@@ -400,7 +412,8 @@ SUM(GrossMargin) + SUM(Rebates) - SUM(AllocatedCosts)
 {% for m in metrics %}
 {% set m_type = m.formula_type if m.formula_type is defined and m.formula_type else 'query' %}
 {% set m_status = m.metric_status if m.metric_status else ('published' if m.is_active else 'draft') %}
-<div class="metric-card"
+{% set _errs = m.validation_errors | from_json %}
+<div class="metric-row"
      data-name="{{ m.name | lower }}"
      data-synonyms="{{ (m.synonyms or '') | lower }}"
      data-description="{{ (m.description or '') | lower }}"
@@ -408,162 +421,148 @@ SUM(GrossMargin) + SUM(Rebates) - SUM(AllocatedCosts)
      data-active="{{ '1' if m.is_active else '0' }}"
      data-status="{{ m_status }}"
      data-category="{{ (m.category or '') | lower }}">
-  <div class="metric-card-header">
-    <div class="metric-name-row">
-      <strong style="font-family:Consolas,monospace;font-size:13px">{{ m.name }}</strong>
-      <span class="metric-kind {{ m_type }}">{{ "Formula" if m_type == "expression" else "Direct SQL" }}</span>
-      <span class="status-badge {{ m_status }}">{{ m_status }}</span>
-      {% if m.category %}<span class="cat-badge">{{ m.category }}</span>{% endif %}
-    </div>
-    <div style="display:flex;gap:.5rem;align-items:center">
-      <button class="btn btn-xs btn-secondary"
-        onclick="cloneMetric({{ m.id }})" title="Clone this metric into the Add form">Clone</button>
-      <button class="btn btn-xs btn-secondary" onclick="toggleEdit('edit-{{ m.id }}')">Edit</button>
-      {% if m_status == 'deprecated' %}
-        <form method="post" action="/admin/clients/{{ client.account_id }}/metrics/{{ m.id }}/delete"
-              onsubmit="return confirm('Permanently delete deprecated metric \'{{ m.name }}\'? This cannot be undone.')">
-          <button class="btn btn-xs btn-danger">Delete</button>
-        </form>
-      {% else %}
-        <button class="btn btn-xs btn-warning"
-          onclick="deprecateMetric({{ m.id }}, '{{ m.name | e }}')">Deprecate</button>
-      {% endif %}
-    </div>
-  </div>
-  <div class="metric-card-body">
-    {% if m.description %}<p style="font-size:12px;margin-bottom:.5rem;color:var(--text-soft)">{{ m.description }}</p>{% endif %}
-    {% if m.synonyms %}
-      {% for s in m.synonyms.split(',') %}
-      <span class="syn-pill">{{ s.strip() }}</span>
-      {% endfor %}
-    {% endif %}
-    <div class="sql-preview">{{ m.sql_template }}</div>
-    <div style="margin-top:.5rem;display:flex;flex-wrap:wrap;gap:.25rem">
-      {% if m.required_columns %}<span class="meta-pill">cols: {{ m.required_columns }}</span>{% endif %}
-      {% if m.allowed_dimensions %}<span class="meta-pill">dims: {{ m.allowed_dimensions }}</span>{% endif %}
-      {% if m.grain %}<span class="meta-pill">grain: {{ m.grain }}</span>{% endif %}
-      {% if m.result_format and m.result_format != 'number' %}<span class="meta-pill">{{ m.result_format }}</span>{% endif %}
-      {% if m.default_time_column %}<span class="meta-pill" title="Default time column used for period grouping">🕐 {{ m.default_time_column }}</span>{% endif %}
-      {% if m.base_table %}<span class="meta-pill" title="Base table for column validation">📋 {{ m.base_table }}</span>{% endif %}
-    </div>
-    {# Stored validation errors from last save #}
-    {% set _errs = m.validation_errors | from_json %}
-    {% if _errs or m_status == 'draft' %}
-    <div class="val-alerts">
-      {% if m_status == 'draft' and not _errs %}
-      <div class="val-alert warn">⚠ Draft — formula validation did not pass on last save. Edit and re-save to promote to Validated.</div>
-      {% endif %}
-      {% for err in _errs %}
-      <div class="val-alert error">✗ {{ err }}</div>
-      {% endfor %}
-    </div>
-    {% endif %}
 
-    <!-- Edit form (hidden) -->
-    <div id="edit-{{ m.id }}" style="display:none;margin-top:1rem;border-top:1px solid var(--border);padding-top:1rem">
-      <form method="post" action="/admin/clients/{{ client.account_id }}/metrics/{{ m.id }}/update" class="metric-form">
-        <input type="hidden" name="skip_id" value="{{ m.id }}">
-        <div class="metric-meta-grid two" style="margin-bottom:.75rem">
-          <div class="form-group">
-            <label>Metric name *</label>
-            <input type="text" name="name" value="{{ m.name }}" required
-              oninput="checkSynonymCollision(this.closest('.metric-form'))">
-          </div>
-          <div class="form-group">
-            <label>Synonyms</label>
-            <input type="text" name="synonyms" value="{{ m.synonyms }}"
-              oninput="checkSynonymCollision(this.closest('.metric-form'))">
-            <div class="collision-warn" id="edit-collision-warn-{{ m.id }}"></div>
-          </div>
-        </div>
-        <div class="metric-meta-grid" style="margin-bottom:.75rem">
-          <div class="form-group">
-            <label>Builder mode</label>
-            <select name="formula_type" class="formula-type-select">
-              <option value="expression" {% if m_type == "expression" %}selected{% endif %}>Formula expression</option>
-              <option value="query" {% if m_type == "query" %}selected{% endif %}>Full SQL query</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label>Result format</label>
-            <select name="result_format">
-              {% for fmt in ['number','currency','percentage','date','text'] %}
-              <option value="{{ fmt }}" {% if m.result_format == fmt %}selected{% endif %}>{{ fmt|capitalize }}</option>
-              {% endfor %}
-            </select>
-          </div>
-          <div class="form-group">
-            <label>Grain</label>
-            <input type="text" name="grain" value="{{ m.grain }}" placeholder="customer, month, order">
-          </div>
-        </div>
-        <div class="form-group">
-          <div class="formula-label-row">
-            <label class="formula-label">Approved formula / SQL template *</label>
-            <button type="button" class="fn-helper-btn" onclick="openFnHelper(this)">ƒ Functions</button>
-            <button type="button" class="formula-test-btn" onclick="testFormula(this)">▶ Test</button>
-            <button type="button" class="formula-test-btn" style="background:var(--blue-light);border-color:color-mix(in srgb,var(--blue) 25%,transparent);color:var(--blue)" onclick="liveValidate(this)">✓ Validate</button>
-          </div>
-          <textarea name="sql_template" rows="3" required class="formula-editor">{{ m.sql_template }}</textarea>
-          <div class="validate-result"></div>
-        </div>
-        <div class="metric-meta-grid two" style="margin-bottom:.75rem">
-          <div class="form-group">
-            <label>Required columns</label>
-            <input type="text" name="required_columns" value="{{ m.required_columns }}">
-          </div>
-          <div class="form-group">
-            <label>Allowed dimensions</label>
-            <input type="text" name="allowed_dimensions" value="{{ m.allowed_dimensions }}">
-          </div>
-        </div>
-        <div class="metric-meta-grid two" style="margin-bottom:.75rem">
-          <div class="form-group">
-            <label>Category / Domain</label>
-            <input type="text" name="category" list="category-options"
-              value="{{ m.category or '' }}" placeholder="e.g. Finance, Sales">
-          </div>
-          <div class="form-group">
-            <label>Default time column</label>
-            <select name="default_time_column" class="time-col-select edit-time-col-select"
-              data-current="{{ m.default_time_column or '' }}">
-              <option value="">— none —</option>
-              {% if m.default_time_column %}
-              <option value="{{ m.default_time_column }}" selected>{{ m.default_time_column }}</option>
-              {% endif %}
-            </select>
-          </div>
-        </div>
-        <div class="metric-meta-grid two" style="margin-bottom:.75rem">
-          <div class="form-group">
-            <label>Base table</label>
-            <input type="text" name="base_table" class="base-table-input"
-              value="{{ m.base_table or '' }}" placeholder="e.g. dbo.SalesOrders" autocomplete="off">
-          </div>
-          <div class="form-group">
-            <label>Base entity</label>
-            <input type="text" name="base_entity"
-              value="{{ m.base_entity or '' }}" placeholder="e.g. Order, Customer">
-          </div>
-        </div>
-        <div class="form-group">
-          <label>Description</label>
-          <input type="text" name="description" value="{{ m.description }}">
-        </div>
-        <div class="form-group">
-          <label>Example questions</label>
-          <textarea name="example_questions" rows="2">{{ m.example_questions }}</textarea>
-        </div>
-        <div style="display:flex;gap:.5rem;align-items:center">
-          <button type="submit" class="btn btn-primary btn-sm">Save changes</button>
-          <button type="button" class="btn btn-secondary btn-sm" onclick="toggleEdit('edit-{{ m.id }}')">Cancel</button>
-          <label style="font-size:12px;margin-left:auto;display:flex;align-items:center;gap:.4rem">
-            <input type="checkbox" name="is_active" value="1" {% if m.is_active %}checked{% endif %}> Active
-          </label>
-        </div>
-      </form>
+  <!-- ── Compact row (always visible) ── -->
+  <div class="metric-row-head">
+    <span class="mr-name">{{ m.name }}</span>
+    <span class="metric-kind {{ m_type }}">{{ "Formula" if m_type == "expression" else "Direct SQL" }}</span>
+    <span class="status-badge {{ m_status }}">{{ m_status }}</span>
+    {% if m.category %}<span class="cat-badge">{{ m.category }}</span>{% endif %}
+    {% if _errs %}<span style="font-size:10px;color:var(--red,#DC2626);flex-shrink:0" title="{{ _errs | join(', ') }}">⚠ {{ _errs | length }} error{{ 's' if _errs | length != 1 }}</span>{% elif m_status == 'draft' %}<span style="font-size:10px;color:var(--amber,#d69e2e);flex-shrink:0">⚠ draft</span>{% endif %}
+    <span class="mr-sep">·</span>
+    <span class="mr-formula-preview" title="{{ m.sql_template | e }}">{{ m.sql_template }}</span>
+    {% if m.synonyms %}<span class="mr-sep">·</span><span class="mr-synonyms" title="Synonyms: {{ m.synonyms | e }}">{{ m.synonyms }}</span>{% endif %}
+    <div class="mr-actions">
+      <button class="btn btn-xs btn-secondary" onclick="toggleMetricEdit({{ m.id }})">Edit</button>
+      <button class="mr-del-btn" title="Delete metric" onclick="deleteMetricFetch({{ m.id }}, '{{ m.name | e }}', this)">🗑</button>
     </div>
   </div>
+
+  <!-- ── Expand: full edit form (hidden by default) ── -->
+  <div id="edit-{{ m.id }}" class="metric-row-expand" style="display:none">
+    <form method="post" action="/admin/clients/{{ client.account_id }}/metrics/{{ m.id }}/update" class="metric-form">
+      <input type="hidden" name="skip_id" value="{{ m.id }}">
+      <div class="metric-meta-grid two" style="margin-bottom:.75rem">
+        <div class="form-group">
+          <label>Metric name *</label>
+          <input type="text" name="name" value="{{ m.name }}" required
+            oninput="checkSynonymCollision(this.closest('.metric-form'))">
+        </div>
+        <div class="form-group">
+          <label>Synonyms</label>
+          <input type="text" name="synonyms" value="{{ m.synonyms }}"
+            oninput="checkSynonymCollision(this.closest('.metric-form'))">
+          <div class="collision-warn" id="edit-collision-warn-{{ m.id }}"></div>
+        </div>
+      </div>
+      <div class="metric-meta-grid" style="margin-bottom:.75rem">
+        <div class="form-group">
+          <label>Builder mode</label>
+          <select name="formula_type" class="formula-type-select">
+            <option value="expression" {% if m_type == "expression" %}selected{% endif %}>Formula expression</option>
+            <option value="query" {% if m_type == "query" %}selected{% endif %}>Full SQL query</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Result format</label>
+          <select name="result_format">
+            {% for fmt in ['number','currency','percentage','date','text'] %}
+            <option value="{{ fmt }}" {% if m.result_format == fmt %}selected{% endif %}>{{ fmt|capitalize }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Grain</label>
+          <input type="text" name="grain" value="{{ m.grain }}" placeholder="customer, month, order">
+        </div>
+      </div>
+      <div class="form-group">
+        <div class="formula-label-row">
+          <label class="formula-label">Approved formula / SQL template *</label>
+          <button type="button" class="fn-helper-btn" onclick="openFnHelper(this)">ƒ Functions</button>
+          <button type="button" class="formula-test-btn" onclick="testFormula(this)">▶ Test</button>
+          <button type="button" class="formula-test-btn" style="background:var(--blue-light);border-color:color-mix(in srgb,var(--blue) 25%,transparent);color:var(--blue)" onclick="liveValidate(this)">✓ Validate</button>
+        </div>
+        <textarea name="sql_template" rows="3" required class="formula-editor">{{ m.sql_template }}</textarea>
+        <div class="validate-result"></div>
+      </div>
+      <div class="metric-meta-grid two" style="margin-bottom:.75rem">
+        <div class="form-group">
+          <label>Required columns</label>
+          <input type="text" name="required_columns" value="{{ m.required_columns }}">
+        </div>
+        <div class="form-group">
+          <label>Allowed dimensions</label>
+          <input type="text" name="allowed_dimensions" value="{{ m.allowed_dimensions }}">
+        </div>
+      </div>
+      <div class="metric-meta-grid two" style="margin-bottom:.75rem">
+        <div class="form-group">
+          <label>Category / Domain</label>
+          <input type="text" name="category" list="category-options"
+            value="{{ m.category or '' }}" placeholder="e.g. Finance, Sales">
+        </div>
+        <div class="form-group">
+          <label>Default time column</label>
+          <select name="default_time_column" class="time-col-select edit-time-col-select"
+            data-current="{{ m.default_time_column or '' }}">
+            <option value="">— none —</option>
+            {% if m.default_time_column %}
+            <option value="{{ m.default_time_column }}" selected>{{ m.default_time_column }}</option>
+            {% endif %}
+          </select>
+        </div>
+      </div>
+      <div class="metric-meta-grid two" style="margin-bottom:.75rem">
+        <div class="form-group">
+          <label>Base table</label>
+          <input type="text" name="base_table" class="base-table-input"
+            value="{{ m.base_table or '' }}" placeholder="e.g. dbo.SalesOrders" autocomplete="off">
+        </div>
+        <div class="form-group">
+          <label>Base entity</label>
+          <input type="text" name="base_entity"
+            value="{{ m.base_entity or '' }}" placeholder="e.g. Order, Customer">
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Description</label>
+        <input type="text" name="description" value="{{ m.description }}">
+      </div>
+      <div class="form-group">
+        <label>Example questions</label>
+        <textarea name="example_questions" rows="2">{{ m.example_questions }}</textarea>
+      </div>
+
+      {# Stored validation errors #}
+      {% if _errs or m_status == 'draft' %}
+      <div class="val-alerts" style="margin-bottom:.75rem">
+        {% if m_status == 'draft' and not _errs %}
+        <div class="val-alert warn">⚠ Draft — formula validation did not pass on last save.</div>
+        {% endif %}
+        {% for err in _errs %}
+        <div class="val-alert error">✗ {{ err }}</div>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      <div style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap">
+        <button type="submit" class="btn btn-primary btn-sm">Save changes</button>
+        <button type="button" class="btn btn-secondary btn-sm"
+          onclick="cloneMetric({{ m.id }})" title="Copy into Add form">Clone</button>
+        {% if m_status != 'deprecated' %}
+        <button type="button" class="btn btn-secondary btn-sm"
+          style="color:var(--amber,#d69e2e);border-color:color-mix(in srgb,var(--amber,#d69e2e) 30%,transparent)"
+          onclick="deprecateMetric({{ m.id }}, '{{ m.name | e }}')">Deprecate</button>
+        {% endif %}
+        <button type="button" class="btn btn-secondary btn-sm" onclick="toggleMetricEdit({{ m.id }})">Cancel</button>
+        <label style="font-size:12px;margin-left:auto;display:flex;align-items:center;gap:.4rem">
+          <input type="checkbox" name="is_active" value="1" {% if m.is_active %}checked{% endif %}> Active
+        </label>
+      </div>
+    </form>
+  </div>
+
 </div>
 {% endfor %}
 <div id="metricsEmpty" style="display:none;text-align:center;padding:2rem;color:var(--text-muted);font-size:13px;border:1px dashed var(--border);border-radius:var(--radius);margin-bottom:1rem">
@@ -1444,6 +1443,44 @@ window.toggleEdit = function(id){
   if(el) el.style.display = el.style.display === "none" ? "block" : "none";
 };
 
+// Toggle the edit expand inside a compact metric row
+window.toggleMetricEdit = function(id){
+  var el = document.getElementById("edit-" + id);
+  if(!el) return;
+  var opening = el.style.display === "none";
+  el.style.display = opening ? "block" : "none";
+  // Wire up autocomplete for the formula editor when first revealed
+  if(opening){
+    var editor = el.querySelector(".formula-editor");
+    if(editor && !editor._hinted){ updateFormulaHints(editor); editor._hinted = true; }
+  }
+};
+
+// Hard-delete via fetch — removes row from DOM without page reload
+window.deleteMetricFetch = async function(id, name, btn){
+  if(!confirm('Delete metric "' + name + '"?\n\nThis permanently removes it from all query matching and cannot be undone.')) return;
+  var m = location.pathname.match(/\/clients\/([^/]+)\//);
+  if(!m){ alert("Could not determine client ID from URL."); return; }
+  var url = "/admin/clients/" + m[1] + "/metrics/" + id + "/delete";
+  try{
+    // redirect:'manual' catches the 303 as an opaque redirect — status 0 = success
+    var resp = await fetch(url, {
+      method: "POST",
+      headers: { "X-Requested-With": "fetch" }
+    });
+    // 200 JSON {"ok":true} from routes.py fetch branch
+    if(resp.ok){
+      var row = btn.closest(".metric-row");
+      if(row){ row.style.transition = "opacity .18s,transform .18s"; row.style.opacity = "0"; row.style.transform = "translateX(6px)"; setTimeout(function(){ row.remove(); applyFilters(); }, 200); }
+      window._metricsData = (window._metricsData || []).filter(function(x){ return x.id !== id; });
+    } else {
+      alert("Delete failed (status " + resp.status + "). Please refresh and try again.");
+    }
+  } catch(err){
+    alert("Delete failed: " + err.message);
+  }
+};
+
 // ══════════════════════════════════════════════════════════════════════
 // METRICS SEARCH / FILTER / SORT
 // ══════════════════════════════════════════════════════════════════════
@@ -1461,7 +1498,7 @@ window.applyFilters = function(){
   var lc  = q.toLowerCase().trim();
   var sort = (document.getElementById("metricSort")||{}).value || "name-asc";
 
-  var cards = Array.from(document.querySelectorAll("#metricsListWrap .metric-card"));
+  var cards = Array.from(document.querySelectorAll("#metricsListWrap .metric-row"));
   var visible = 0;
 
   cards.forEach(function(card){
