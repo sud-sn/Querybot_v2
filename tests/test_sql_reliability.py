@@ -381,5 +381,26 @@ class IntentAndGraphReliabilityTests(unittest.TestCase):
         self.assertIn("Do not convert these joins back to INNER JOIN", prompt)
 
 
+class DiagnosticRenderingReliabilityTests(unittest.TestCase):
+    def test_zero_row_message_fences_sql_with_underscored_columns(self):
+        from main import _build_zero_row_message
+
+        sql = (
+            "SELECT c.CUS_ORD_NUM, c.CUS_ORD_LIN_NUM "
+            "FROM [profitability].[CUS_ORD_IVC_FCT] c "
+            "JOIN [profitability].[OOLINE] o ON c.CUS_ORD_NUM = o.ORNO"
+        )
+        message = _build_zero_row_message("test", sql, {}, "ok", 0)
+        self.assertIn("```sql", message)
+        self.assertIn("c.CUS_ORD_NUM", message)
+        self.assertIn("c.CUS_ORD_LIN_NUM", message)
+
+    def test_chat_formatter_preserves_sql_code_blocks_before_markdown(self):
+        template = (ROOT / "portal" / "templates" / "portal_chat.html").read_text(encoding="utf-8")
+        self.assertIn("const codeBlocks = [];", template)
+        self.assertIn("return `@@CODEBLOCK${idx}@@`;", template)
+        self.assertNotIn("h = h.replace(/_([^_\\n]+)_/g", template)
+
+
 if __name__ == "__main__":
     unittest.main()
