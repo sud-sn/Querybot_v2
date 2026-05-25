@@ -33,6 +33,71 @@ def analyze_query_intent(question: str) -> dict[str, bool]:
             r"|(last year|this year|prior year|previous year).{0,20}(compared|vs|versus|difference|change|growth))\b",
             q,
         )),
+        "wants_having_filter": bool(re.search(
+            r"\b(more than|greater than|at least|over|above|less than|fewer than|under|below|exceeds?|threshold)"
+            r".{0,30}\b(count|total|sum|average|avg|number of|amount)\b"
+            r"|\b(count|total|sum|average|avg|number of|amount).{0,30}"
+            r"(more than|greater than|at least|over|above|less than|fewer than|under|below)\b",
+            q,
+        )),
+        "wants_top_per_group": bool(re.search(
+            r"\b(top|best|highest|lowest|worst|bottom).{0,20}(per|in each|for each|by|within|across each)\b"
+            r"|\b(per|in each|for each|within each).{0,20}(top|best|highest|lowest|worst|bottom)\b",
+            q,
+        )),
+        "wants_share": bool(re.search(
+            r"\b(percent(age)?|proportion|share|contribution|breakdown|what.{0,10}(percent|share|part)"
+            r"|how much.{0,10}(contribut|make up|account))\b",
+            q,
+        )),
+        "wants_missing_records": bool(re.search(
+            r"\b(not in|no |never|without|missing|absent|never had|have no|lack|don.t have|do not have|zero)\b"
+            r".{0,30}\b(record|order|transaction|sale|attendance|entry|match|result|absenc)\b"
+            r"|\b(record|order|transaction|sale|attendance|entry|match|result|absenc).{0,30}"
+            r"\b(not in|never|without|missing|absent|never had|have no)\b"
+            r"|\b(employees?|customers?|products?|items?).{0,40}\b(no|never|without|not).{0,30}"
+            r"\b(absence|order|sale|record|transaction|visit|attendance)\b",
+            q,
+        )),
+        "wants_conditional_split": bool(re.search(
+            r"\b(active.{0,10}(vs|versus|and|compare).{0,10}(inactive|terminated|former)"
+            r"|male.{0,10}(vs|versus|and).{0,10}female"
+            r"|split by|side by side|pivot|breakdown by status|count (for each|per) (status|type|category|group))\b",
+            q,
+        )),
+        "wants_mom_qoq": bool(re.search(
+            r"\b(month.{0,10}over.{0,10}month"
+            r"|mom"
+            r"|quarter.{0,10}over.{0,10}quarter"
+            r"|qoq"
+            r"|monthly (change|growth|trend|comparison)"
+            r"|quarterly (change|growth|trend|comparison)"
+            r"|how.{0,20}changed.{0,20}(each month|monthly|each quarter|quarterly)"
+            r"|(each month|each quarter|by month|by quarter).{0,30}(change|growth|trend|compare))\b",
+            q,
+        )),
+        "wants_cumulative": bool(re.search(
+            r"\b(cumulative|running total|year.{0,5}to.{0,5}date|ytd|cumulative sum|total so far"
+            r"|running sum|accumulated|progressive total)\b",
+            q,
+        )),
+        "wants_rolling": bool(re.search(
+            r"\b(rolling (average|avg|mean)|moving (average|avg|mean)"
+            r"|trailing (average|avg)|smoothed|n.period average"
+            r"|\d+.?(day|week|month).?(rolling|moving|trailing))\b",
+            q,
+        )),
+        "wants_named_period": bool(re.search(
+            r"\b(q[1-4]|quarter [1-4]|first quarter|second quarter|third quarter|fourth quarter"
+            r"|h[12]|first half|second half|january|february|march|april|may|june|july|august"
+            r"|september|october|november|december|last \d+ (month|week|day)s?)\b",
+            q,
+        )),
+        "wants_ranking": bool(re.search(
+            r"\b(rank(ed|ing)?|leaderboard|top performer|score board|ordered by performance"
+            r"|best performing|worst performing|by performance|ranked list)\b",
+            q,
+        )),
     }
 
 
@@ -53,6 +118,28 @@ def summarize_query_intent(question: str) -> str:
         labels.append("time-series analysis")
     if intent["wants_comparison"]:
         labels.append("comparison framing")
+    if intent["wants_yoy"]:
+        labels.append("year-over-year comparison")
+    if intent["wants_having_filter"]:
+        labels.append("aggregate threshold filter (HAVING)")
+    if intent["wants_top_per_group"]:
+        labels.append("top-N per group (window function)")
+    if intent["wants_share"]:
+        labels.append("percentage / share of total")
+    if intent["wants_missing_records"]:
+        labels.append("anti-join / missing records")
+    if intent["wants_conditional_split"]:
+        labels.append("conditional aggregation / pivot")
+    if intent["wants_mom_qoq"]:
+        labels.append("month-over-month / quarter-over-quarter trend")
+    if intent["wants_cumulative"]:
+        labels.append("cumulative / running total")
+    if intent["wants_rolling"]:
+        labels.append("rolling / moving average")
+    if intent["wants_named_period"]:
+        labels.append("named period filter (Q/H/month)")
+    if intent["wants_ranking"]:
+        labels.append("ranking / leaderboard")
     return ", ".join(labels)
 
 
@@ -108,6 +195,84 @@ def build_generic_query_hints(question: str) -> str:
             "and percentage change rounded to 2 decimal places.\n"
             "  • If approved metric formulas are present, use them inside the CTE aggregation — "
             "never substitute KB column names for approved formulas in a YoY query."
+        )
+
+    if intent["wants_having_filter"]:
+        hints.append(
+            "- HAVING FILTER DETECTED: The user wants to filter groups by an aggregate threshold "
+            "(e.g. 'more than N', 'at least N'). Apply the HAVING RULE: filter on the aggregate "
+            "in HAVING, not in WHERE. Use COUNT(*)/SUM(col) etc. directly in HAVING — do not "
+            "reference an alias."
+        )
+
+    if intent["wants_top_per_group"]:
+        hints.append(
+            "- TOP-N PER GROUP DETECTED: The user wants the best/top/highest N records within "
+            "each group. Apply the TOP-N PER GROUP RULE: use ROW_NUMBER() OVER (PARTITION BY "
+            "group_col ORDER BY metric DESC) in a CTE, then filter WHERE rn <= N."
+        )
+
+    if intent["wants_share"]:
+        hints.append(
+            "- PERCENTAGE/SHARE DETECTED: The user wants to see proportions or contributions. "
+            "Apply the PERCENTAGE OF TOTAL RULE: use SUM(metric)*100.0/SUM(SUM(metric)) OVER () "
+            "in a single query with GROUP BY — do not use a separate subquery for the denominator."
+        )
+
+    if intent["wants_missing_records"]:
+        hints.append(
+            "- ANTI-JOIN / MISSING RECORDS DETECTED: The user wants records with no matching "
+            "rows in another table. Apply the ANTI-JOIN RULE: use LEFT JOIN … WHERE right_key "
+            "IS NULL. Do NOT use NOT IN (fails with NULLs) or NOT EXISTS."
+        )
+
+    if intent["wants_conditional_split"]:
+        hints.append(
+            "- CONDITIONAL SPLIT DETECTED: The user wants side-by-side counts for different "
+            "categories (e.g. active vs inactive, male vs female). Apply the CONDITIONAL "
+            "AGGREGATION RULE: use SUM(CASE WHEN status = 'X' THEN 1 ELSE 0 END) in a single "
+            "query — do not use multiple subqueries or UNION."
+        )
+
+    if intent["wants_mom_qoq"]:
+        hints.append(
+            "- MONTH-OVER-MONTH / QUARTER-OVER-QUARTER DETECTED: The user wants period-over-period "
+            "change. Apply the MoM/QoQ RULE: build a CTE with period buckets using DATE_TRUNC/"
+            "FORMAT/TRUNC (dialect-appropriate), then use LAG() OVER (ORDER BY PERIOD) to get "
+            "the prior period value. Always output: period, current value, prior value, "
+            "difference, and PCT_CHANGE rounded to 2 decimal places."
+        )
+
+    if intent["wants_cumulative"]:
+        hints.append(
+            "- CUMULATIVE / RUNNING TOTAL DETECTED: The user wants a running/cumulative sum. "
+            "Apply the RUNNING TOTAL RULE: use SUM(SUM(metric)) OVER (ORDER BY date_col ROWS "
+            "UNBOUNDED PRECEDING) — nested aggregate window. GROUP BY the period first, then "
+            "accumulate with the window function."
+        )
+
+    if intent["wants_rolling"]:
+        hints.append(
+            "- ROLLING / MOVING AVERAGE DETECTED: The user wants a smoothed average over a "
+            "sliding window. Apply the MOVING AVERAGE RULE: AVG(metric) OVER (ORDER BY date_col "
+            "ROWS BETWEEN N-1 PRECEDING AND CURRENT ROW). Default window = 3 periods if the "
+            "user didn't specify. Cast integer columns to FLOAT for Azure SQL."
+        )
+
+    if intent["wants_named_period"]:
+        hints.append(
+            "- NAMED PERIOD FILTER DETECTED: The user referred to a specific quarter (Q1-Q4), "
+            "half (H1/H2), month name, or 'last N months/weeks'. Apply the NAMED PERIOD FILTERS "
+            "from the SQL syntax rules — use DATEPART/EXTRACT/QUARTER/MONTH with the correct "
+            "integer mapping. Do NOT use GETDATE()/SYSDATE — anchor to MAX(date_col) in the data."
+        )
+
+    if intent["wants_ranking"]:
+        hints.append(
+            "- RANKING DETECTED: The user wants entities ordered/ranked by a metric. Apply the "
+            "RANKING RULE: include RANK() OVER (ORDER BY SUM(metric) DESC) AS RANK alongside the "
+            "aggregate in the SELECT list. Use DENSE_RANK() only if the user mentions 'no gaps'. "
+            "Always ORDER BY the rank column."
         )
 
     summary = summarize_query_intent(question)
