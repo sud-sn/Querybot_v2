@@ -9,6 +9,7 @@ if str(ROOT) not in sys.path:
 from core.graph_resolver import detect_entities, resolve_for_question
 from core.llm import build_sql_system_prompt
 from core.query_semantics import analyze_query_intent
+from core.semantic_planner import build_semantic_field_plan
 from core.validator import validate_sql, validate_sql_detailed
 
 
@@ -38,12 +39,18 @@ COLUMNS = {
         "ITM_GRP_DMS_KEY": "int",
         "CUS_IVC_DT_DMS_KEY": "int",
         "CUS_IVC_LIN_AMT": "decimal",
+        "CUS_ORD_NUM": "varchar",
+        "CUS_ORD_LIN_NUM": "int",
+        "CUS_ORD_LIN_SFX": "int",
         "WHS_DMS_KEY": "int",
     },
     "CUS_ORD_IVC_FCT": {
         "ITM_GRP_DMS_KEY": "int",
         "CUS_IVC_DT_DMS_KEY": "int",
         "CUS_IVC_LIN_AMT": "decimal",
+        "CUS_ORD_NUM": "varchar",
+        "CUS_ORD_LIN_NUM": "int",
+        "CUS_ORD_LIN_SFX": "int",
         "WHS_DMS_KEY": "int",
     },
     "PROFITABILITY.ITM_BAL_PRD_FCT": {
@@ -80,11 +87,13 @@ COLUMNS = {
         "ORNO": "varchar",
         "PONR": "int",
         "POSX": "int",
+        "DIVI": "varchar",
     },
     "OOLINE": {
         "ORNO": "varchar",
         "PONR": "int",
         "POSX": "int",
+        "DIVI": "varchar",
     },
     "PROFITABILITY.DIM_DIVISION": {
         "DIVI": "varchar",
@@ -195,6 +204,67 @@ class StrictColumnValidationTests(unittest.TestCase):
         )
         self.assertTrue(ok, msg)
         self.assertEqual(code, "ok")
+
+    def test_semantic_plan_maps_division_question_to_correct_tables(self):
+        plan = build_semantic_field_plan(
+            "For each division, what percentage of total invoice line amount comes from each item group?",
+            COLUMNS,
+        )
+        self.assertTrue(plan["enabled"])
+        fields = {(f["term"], f["column"], f["table"]) for f in plan["fields"]}
+        self.assertTrue(any(col == "DIVI" and table.endswith("OOLINE") for _, col, table in fields))
+        self.assertTrue(any(col == "ITM_GRP_DMS_KEY" and table.endswith("CUS_ORD_IVC_FCT") for _, col, table in fields))
+        self.assertTrue(any(col == "CUS_IVC_LIN_AMT" and table.endswith("CUS_ORD_IVC_FCT") for _, col, table in fields))
+        self.assertTrue(plan["joins"])
+
+    def test_semantic_plan_validator_rejects_ignored_field_source(self):
+        plan = build_semantic_field_plan(
+            "For each division, what percentage of total invoice line amount comes from each item group?",
+            COLUMNS,
+        )
+        sql = (
+            "SELECT o.DIVI, SUM(c.CUS_IVC_LIN_AMT) AS TotalInvoiceLineAmount "
+            "FROM [PROFITABILITY].[CUS_ORD_IVC_FCT] c "
+            "JOIN [PROFITABILITY].[OOLINE] o "
+            "ON c.CUS_ORD_NUM = o.ORNO AND c.CUS_ORD_LIN_NUM = o.PONR AND c.CUS_ORD_LIN_SFX = o.POSX "
+            "GROUP BY o.DIVI"
+        )
+        result = validate_sql_detailed(
+            sql,
+            KNOWN,
+            "azure_sql",
+            None,
+            COLUMNS,
+            {"semantic_plan": plan},
+        )
+        self.assertFalse(result.ok)
+        self.assertEqual(result.code, "field_plan_mismatch")
+        self.assertIn("ITM_GRP_DMS_KEY", result.reason)
+
+    def test_semantic_plan_validator_accepts_division_item_group_invoice_share_shape(self):
+        plan = build_semantic_field_plan(
+            "For each division, what percentage of total invoice line amount comes from each item group?",
+            COLUMNS,
+        )
+        sql = (
+            "SELECT o.DIVI AS Division, c.ITM_GRP_DMS_KEY AS ItemGroup, "
+            "SUM(c.CUS_IVC_LIN_AMT) AS TotalInvoiceLineAmount, "
+            "SUM(c.CUS_IVC_LIN_AMT) * 100.0 / NULLIF(SUM(SUM(c.CUS_IVC_LIN_AMT)) "
+            "OVER (PARTITION BY o.DIVI), 0) AS PercentageOfDivisionTotal "
+            "FROM [PROFITABILITY].[CUS_ORD_IVC_FCT] c "
+            "JOIN [PROFITABILITY].[OOLINE] o "
+            "ON c.CUS_ORD_NUM = o.ORNO AND c.CUS_ORD_LIN_NUM = o.PONR AND c.CUS_ORD_LIN_SFX = o.POSX "
+            "GROUP BY o.DIVI, c.ITM_GRP_DMS_KEY"
+        )
+        result = validate_sql_detailed(
+            sql,
+            KNOWN,
+            "azure_sql",
+            None,
+            COLUMNS,
+            {"semantic_plan": plan},
+        )
+        self.assertTrue(result.ok, result.reason)
 
 
 class IntentAndGraphReliabilityTests(unittest.TestCase):

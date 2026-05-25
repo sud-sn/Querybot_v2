@@ -131,6 +131,32 @@ def _pick_table_key(variants: list[str], table_columns: dict[str, dict[str, str]
     return variants[-1] if variants else ""
 
 
+def _table_matches(left: str, right: str) -> bool:
+    left_u = (left or "").upper()
+    right_u = (right or "").upper()
+    if left_u == right_u:
+        return True
+    left_parts = left_u.split(".")
+    right_parts = right_u.split(".")
+    if left_parts[-1:] == right_parts[-1:]:
+        return True
+    if len(left_parts) >= 2 and len(right_parts) >= 2:
+        return ".".join(left_parts[-2:]) == ".".join(right_parts[-2:])
+    return False
+
+
+def _find_table_with_column(table_columns: dict[str, dict[str, str]], table: str, column: str) -> str:
+    col_u = (column or "").upper()
+    for table_key, cols in table_columns.items():
+        if _table_matches(table_key, table) and col_u in cols:
+            return table_key
+    return (table or "").upper()
+
+
+def _format_plan_field(field: dict) -> str:
+    return f"{field.get('term') or field.get('column')}: {field.get('table')}.{field.get('column')}"
+
+
 def _is_numeric_date_key(col_name: str, col_type: str = "") -> bool:
     name = (col_name or "").upper()
     ctype = (col_type or "").upper()
@@ -384,6 +410,73 @@ def validate_sql_detailed(
                 "unknown_column",
                 unknown_cols,
             )
+
+        field_plan = (semantic_context or {}).get("semantic_plan") or {}
+        if field_plan.get("enabled") and field_plan.get("fields"):
+            used_columns: set[tuple[str, str]] = set()
+            for col_node in tree.find_all(sg_exp.Column):
+                col_name = (col_node.name or "").upper()
+                if not col_name or col_name == "*":
+                    continue
+                table_ref = (col_node.table or "").upper()
+                if table_ref in cte_aliases:
+                    continue
+                table_key = ""
+                if table_ref:
+                    table_key = alias_to_table.get(table_ref, "")
+                elif len(unique_base_keys) == 1:
+                    table_key = unique_base_keys[0]
+                if table_key:
+                    used_columns.add((table_key, col_name))
+
+            missing_plan_fields: list[dict] = []
+            for field in field_plan.get("fields") or []:
+                plan_col = (field.get("column") or "").upper()
+                plan_table = _find_table_with_column(table_columns, field.get("table") or "", plan_col)
+                if not plan_col or not plan_table:
+                    continue
+                if not any(_table_matches(used_table, plan_table) and used_col == plan_col for used_table, used_col in used_columns):
+                    missing_plan_fields.append({
+                        "code": "field_plan_mismatch",
+                        "message": f"SQL did not use required semantic field {_format_plan_field(field)}.",
+                        "table": plan_table,
+                        "column": plan_col,
+                        "term": field.get("term", ""),
+                    })
+
+            required_join_errors: list[dict] = []
+            sql_text = re.sub(r"\s+", " ", sql.upper())
+            for edge in field_plan.get("joins") or []:
+                for left_col, right_col in edge.get("conditions") or []:
+                    left_col_u = str(left_col).upper()
+                    right_col_u = str(right_col).upper()
+                    if left_col_u not in sql_text or right_col_u not in sql_text:
+                        required_join_errors.append({
+                            "code": "field_plan_join_missing",
+                            "message": (
+                                f"Required semantic join condition was not visible: "
+                                f"{edge.get('from')}.{left_col_u} = {edge.get('to')}.{right_col_u}."
+                            ),
+                            "left_table": edge.get("from", ""),
+                            "right_table": edge.get("to", ""),
+                            "left_column": left_col_u,
+                            "right_column": right_col_u,
+                        })
+                        break
+
+            if missing_plan_fields or required_join_errors:
+                errors = missing_plan_fields + required_join_errors
+                expected = "; ".join(e["message"] for e in errors[:5])
+                return SqlValidationResult(
+                    False,
+                    (
+                        "Generated SQL does not follow the semantic field-source plan. "
+                        + expected
+                        + "\n\nUse the exact table.column mappings and required joins from the semantic field-source plan."
+                    ),
+                    "field_plan_mismatch",
+                    errors,
+                )
 
     if select_aliases:
         bad_order: set[str] = set()
