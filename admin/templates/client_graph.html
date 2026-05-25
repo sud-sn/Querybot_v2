@@ -6,7 +6,7 @@
 .graph-shell{display:grid;grid-template-columns:220px 1fr;height:calc(100vh - 56px);overflow:hidden;gap:0;position:relative}
 .graph-sidebar{overflow-y:auto;border-right:1px solid var(--border);background:var(--surface);display:flex;flex-direction:column}
 /* ── Detail panel — slides in from right as overlay ──────────────────────── */
-.graph-detail{display:flex;flex-direction:column;overflow:hidden;background:var(--surface);border-left:1px solid var(--border);position:absolute;right:0;top:0;bottom:0;width:300px;z-index:50;transform:translateX(calc(100% + 1px));transition:transform .22s ease,box-shadow .22s ease;box-shadow:none}
+.graph-detail{display:flex;flex-direction:column;overflow:hidden;background:var(--surface);border-left:1px solid var(--border);position:absolute;right:0;top:0;bottom:0;width:min(420px,36vw);min-width:340px;z-index:50;transform:translateX(calc(100% + 1px));transition:transform .22s ease,box-shadow .22s ease;box-shadow:none}
 .graph-shell.panel-open .graph-detail{transform:translateX(0);box-shadow:-4px 0 20px rgba(0,0,0,.12)}
 .graph-canvas-wrap{display:flex;flex-direction:column;background:var(--surface-2);overflow:hidden;position:relative}
 
@@ -280,6 +280,35 @@
 .tb-schema-wrap{display:flex;align-items:center;gap:.3rem;background:var(--surface-2);border:1px solid var(--border);border-radius:5px;padding:3px 8px}
 .tb-schema-lbl{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);white-space:nowrap}
 .tb-schema-select{background:none;border:none;font-size:11px;font-weight:600;color:var(--text);outline:none;cursor:pointer;padding:0;max-width:110px}
+.mode-toggle{display:inline-flex;border:1px solid var(--border);border-radius:6px;overflow:hidden;background:var(--surface-2)}
+.mode-btn{border:0;background:transparent;color:var(--text-muted);font-size:11px;font-weight:800;padding:5px 10px;cursor:pointer}
+.mode-btn.active{background:var(--primary);color:#fff}
+.graph-shell.validate-mode .build-only{display:none!important}
+.graph-shell.validate-mode button[onclick^="openEntityModal"],
+.graph-shell.validate-mode button[onclick^="openRelModal"],
+.graph-shell.validate-mode #suggest-btn,
+.graph-shell.validate-mode #tb-layout-dd,
+.graph-shell.validate-mode #tb-more-dd,
+.graph-shell.validate-mode #del-btn{display:none!important}
+.validate-only{display:none!important}
+.graph-shell.validate-mode .validate-only{display:flex!important}
+.focus-pill{position:absolute;top:54px;left:.75rem;z-index:12;display:none;align-items:center;gap:.45rem;background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:5px 10px;font-size:11px;font-weight:700;color:var(--text-soft);box-shadow:0 2px 8px rgba(0,0,0,.08)}
+.focus-pill button{border:0;background:none;color:var(--primary);font-weight:800;cursor:pointer;padding:0}
+.focus-pill.visible{display:flex}
+.g-node.dimmed,.g-edge.dimmed{opacity:.22}
+.g-node.focused .node-card{filter:drop-shadow(0 0 0 rgba(0,0,0,0)) drop-shadow(0 0 12px rgba(13,115,119,.28))}
+.g-edge.focused .edge-line{stroke-width:3}
+.g-edge.status-valid .edge-line{stroke:#059669}
+.g-edge.status-warning .edge-line{stroke:#D97706;stroke-dasharray:8,4}
+.g-edge.status-broken .edge-line{stroke:#DC2626;stroke-dasharray:4,4}
+.g-edge.status-untested .edge-line{stroke:#94A3B8}
+.edge-status-dot{stroke:var(--surface);stroke-width:2}
+.rel-status-badge{font-size:9px;font-weight:800;text-transform:uppercase;padding:1px 5px;border-radius:999px;border:1px solid var(--border);white-space:nowrap}
+.rel-status-badge.valid{background:#D1FAE5;color:#065F46;border-color:#A7F3D0}
+.rel-status-badge.warning{background:#FEF3C7;color:#92400E;border-color:#FDE68A}
+.rel-status-badge.broken{background:#FEE2E2;color:#991B1B;border-color:#FECACA}
+.rel-status-badge.untested{background:#F1F5F9;color:#64748B;border-color:#CBD5E1}
+.gd-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 </style>
 {% endblock %}
 
@@ -393,11 +422,18 @@
 <main class="graph-canvas-wrap">
   <div class="canvas-toolbar">
     <!-- Primary actions -->
+    <div class="mode-toggle" title="Switch between graph editing and validation review">
+      <button class="mode-btn active" id="mode-build-btn" onclick="setGraphMode('build')">Build</button>
+      <button class="mode-btn" id="mode-validate-btn" onclick="setGraphMode('validate')">Validate</button>
+    </div>
     <button class="tb-btn primary" onclick="openEntityModal(null)" title="Add a new entity">＋ Entity</button>
     <button class="tb-btn" onclick="openRelModal()" title="Add a relationship between two entities">⇢ Relationship</button>
     <button class="tb-btn" id="suggest-btn" onclick="runSuggest()"
             title="Use LLM to predict entities, field roles, and relationships from the discovered schema"
             style="color:#7C3AED;border-color:#C4B5FD">✦ Suggest</button>
+
+    <button class="tb-btn primary validate-only" onclick="validateAllRelationships(false)"
+            title="Check every relationship against the discovered schema">Validate joins</button>
 
     <div class="tb-sep"></div>
 
@@ -459,6 +495,10 @@
   </div>
   <!-- Health issues bar (shown below toolbar when there are errors) -->
   <div id="health-issues-bar" style="display:none;padding:.4rem .75rem;font-size:11px;background:color-mix(in srgb,var(--red,#DC2626) 8%,var(--surface));border-bottom:1px solid color-mix(in srgb,var(--red,#DC2626) 20%,transparent);align-items:center;gap:.6rem;flex-shrink:0"></div>
+  <div id="focus-pill" class="focus-pill">
+    <span id="focus-pill-text">Focused neighbourhood</span>
+    <button onclick="clearGraphFocus()">Clear</button>
+  </div>
 
   <svg id="graph-svg" xmlns="http://www.w3.org/2000/svg">
     <defs>
@@ -526,7 +566,7 @@
 <!-- ══ DETAIL PANEL ══════════════════════════════════════════════════════════ -->
 <aside class="graph-detail">
   <div class="gd-head" id="detail-head">
-    <span>Properties</span>
+    <span class="gd-title" id="detail-title" title="Properties">Properties</span>
     <span style="display:flex;align-items:center;gap:.4rem">
       <span id="sync-badge" class="sync-badge" style="display:none">Synced to semantic layer</span>
       <button class="gd-close-btn" onclick="closeDetailPanel()" title="Close panel (Escape)">‹</button>
@@ -822,6 +862,9 @@ let _health = JSON.parse('{{ health | tojson | safe }}');
 // Selection state
 let selectedEntity  = null;   // entity_name string
 let selectedRelId   = null;   // relationship id int
+let graphMode       = 'build';
+let focusedEntity   = null;
+let focusDepth      = 0;
 
 // Canvas pan/zoom state
 let pan  = { x: 0, y: 0 };
@@ -861,10 +904,75 @@ const NODE_H  = 200;
 function renderGraph() {
   renderEdges();
   renderNodes();
+  updateFocusPill();
 }
 
 function entityPos(e) {
   return { x: e.pos_x || 120, y: e.pos_y || 120 };
+}
+
+function setGraphMode(mode) {
+  graphMode = mode === 'validate' ? 'validate' : 'build';
+  document.querySelector('.graph-shell')?.classList.toggle('validate-mode', graphMode === 'validate');
+  document.getElementById('mode-build-btn')?.classList.toggle('active', graphMode === 'build');
+  document.getElementById('mode-validate-btn')?.classList.toggle('active', graphMode === 'validate');
+  if (graphMode === 'validate') switchSidebarTab('issues');
+  renderGraph();
+}
+
+function setGraphFocus(entityName, depth = 1) {
+  focusedEntity = entityName || null;
+  focusDepth = focusedEntity ? Math.max(1, depth || 1) : 0;
+}
+
+function clearGraphFocus() {
+  focusedEntity = null;
+  focusDepth = 0;
+  renderGraph();
+}
+
+function updateFocusPill() {
+  const pill = document.getElementById('focus-pill');
+  const txt = document.getElementById('focus-pill-text');
+  if (!pill || !txt) return;
+  if (!focusedEntity) {
+    pill.classList.remove('visible');
+    return;
+  }
+  txt.textContent = focusDepth > 1 ? `${focusedEntity}: 2-hop neighbourhood` : `${focusedEntity}: direct neighbours`;
+  pill.classList.add('visible');
+}
+
+function _focusedNodeSet() {
+  if (!focusedEntity) return null;
+  const visible = new Set([focusedEntity]);
+  let frontier = new Set([focusedEntity]);
+  for (let depth = 0; depth < focusDepth; depth++) {
+    const next = new Set();
+    graph.relationships.forEach(rel => {
+      if (frontier.has(rel.from_entity)) next.add(rel.to_entity);
+      if (frontier.has(rel.to_entity)) next.add(rel.from_entity);
+    });
+    next.forEach(n => visible.add(n));
+    frontier = next;
+  }
+  return visible;
+}
+
+function _relationshipStatus(rel) {
+  return (rel.validation_status || 'untested').toLowerCase();
+}
+
+function _aggregateRelationshipStatus(rels) {
+  const order = { broken: 0, warning: 1, untested: 2, valid: 3 };
+  return (rels || []).map(_relationshipStatus).sort((a, b) => (order[a] ?? 2) - (order[b] ?? 2))[0] || 'untested';
+}
+
+function _statusColor(status) {
+  return status === 'valid' ? '#059669'
+       : status === 'warning' ? '#D97706'
+       : status === 'broken' ? '#DC2626'
+       : '#94A3B8';
 }
 
 function edgeMidpoint(rel) {
@@ -889,11 +997,13 @@ function renderNodes() {
     const isSelected = selectedEntity === e.entity_name;
     const isSuggested = (e.status === 'suggested');
     const conf = e.confidence_score ?? 100;
+    const focusSet = _focusedNodeSet();
+    const focusClass = focusSet ? (focusSet.has(e.entity_name) ? ' focused' : ' dimmed') : '';
     // Detect role-playing: same table_name used by multiple entities
     const isRolePlaying = graph.entities.filter(e2 => e2.table_name && e2.table_name === e.table_name).length > 1;
 
     const g = document.createElementNS(NS, 'g');
-    g.setAttribute('class', 'g-node' + (isSelected ? ' selected' : '') + (isSuggested ? ' suggested' : ''));
+    g.setAttribute('class', 'g-node' + (isSelected ? ' selected' : '') + (isSuggested ? ' suggested' : '') + focusClass);
     g.setAttribute('data-entity', e.entity_name);
     g.setAttribute('transform', `translate(${x},${y})`);
 
@@ -1064,6 +1174,14 @@ function renderNodes() {
       if (ev.target.classList.contains('node-port')) return;
       selectEntity(e.entity_name);
     });
+    g.addEventListener('dblclick', ev => {
+      if (ev.target.classList.contains('node-port')) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      setGraphFocus(e.entity_name, 2);
+      selectEntity(e.entity_name);
+      setStatus('Expanded neighbourhood focus');
+    });
     g.addEventListener('mouseenter', () => g.classList.add('hover'));
     g.addEventListener('mouseleave', () => g.classList.remove('hover'));
 
@@ -1110,8 +1228,12 @@ function _groupedEdges() {
   const seen = new Map();
   graph.relationships.forEach(rel => {
     const key = rel.from_entity + '||' + rel.to_entity;
-    if (!seen.has(key)) seen.set(key, { rel, count: 1 });
-    else seen.get(key).count++;
+    if (!seen.has(key)) seen.set(key, { rel, count: 1, rels: [rel] });
+    else {
+      const group = seen.get(key);
+      group.count++;
+      group.rels.push(rel);
+    }
   });
   return [...seen.values()];
 }
@@ -1136,17 +1258,22 @@ function _cardinalityMarkers(cardinality, isSelected) {
 function renderEdges() {
   const layer = document.getElementById('edges-layer');
   layer.innerHTML = '';
-  _groupedEdges().forEach(({ rel, count }) => {
+  const focusSet = _focusedNodeSet();
+  _groupedEdges().forEach(({ rel, count, rels }) => {
     const fe = graph.entities.find(e => e.entity_name === rel.from_entity);
     const te = graph.entities.find(e => e.entity_name === rel.to_entity);
     if (!fe || !te) return;
     const fp = entityPos(fe), tp = entityPos(te);
     const { x1, y1, x2, y2, cx1, cy1, cx2, cy2 } = _edgePoints(fp, tp);
     const isSelected = selectedRelId === rel.id;
+    const status = _aggregateRelationshipStatus(rels);
+    const focusClass = focusSet
+      ? (focusSet.has(rel.from_entity) && focusSet.has(rel.to_entity) ? ' focused' : ' dimmed')
+      : '';
 
     const g = document.createElementNS('http://www.w3.org/2000/svg','g');
     const relSuggested = (rel.status === 'suggested');
-    g.setAttribute('class','g-edge' + (isSelected ? ' selected' : '') + (relSuggested ? ' suggested' : ''));
+    g.setAttribute('class','g-edge status-' + status + (isSelected ? ' selected' : '') + (relSuggested ? ' suggested' : '') + focusClass);
     g.setAttribute('data-rel', rel.id);
 
     const path = document.createElementNS('http://www.w3.org/2000/svg','path');
@@ -1189,6 +1316,18 @@ function renderEdges() {
         const lt = document.createElementNS('http://www.w3.org/2000/svg','text');
         lt.setAttribute('class','edge-label'); lt.setAttribute('x', mid.x); lt.setAttribute('y', mid.y + 14);
         lt.textContent = rel.label; g.appendChild(lt);
+      }
+      if (graphMode === 'validate') {
+        const dot = document.createElementNS('http://www.w3.org/2000/svg','circle');
+        dot.setAttribute('class', 'edge-status-dot');
+        dot.setAttribute('cx', mid.x);
+        dot.setAttribute('cy', mid.y - 18);
+        dot.setAttribute('r', 6);
+        dot.setAttribute('fill', _statusColor(status));
+        const title = document.createElementNS('http://www.w3.org/2000/svg','title');
+        title.textContent = `Relationship status: ${status}`;
+        dot.appendChild(title);
+        g.appendChild(dot);
       }
     }
 
@@ -1411,6 +1550,7 @@ function autoLayout() {
 // ════════════════════════════════════════════════════════════════════════════
 window.selectEntity = function(name) {
   selectedEntity = name; selectedRelId = null;
+  setGraphFocus(name, focusDepth > 1 && focusedEntity === name ? 2 : 1);
   document.querySelectorAll('.gs-entity-item').forEach(el => el.classList.remove('selected'));
   const sib = document.getElementById('sib-' + name.replace(/ /g,'_'));
   if (sib) sib.classList.add('selected');
@@ -1422,6 +1562,8 @@ window.selectEntity = function(name) {
 
 window.selectRel = function(id) {
   selectedRelId = id; selectedEntity = null;
+  const rel = graph.relationships.find(r => r.id === id);
+  if (rel) setGraphFocus(rel.from_entity, 1);
   document.querySelectorAll('.gs-rel-item').forEach(el => el.classList.remove('selected'));
   const sib = document.getElementById('sib-rel-' + id);
   if (sib) sib.classList.add('selected');
@@ -1433,7 +1575,7 @@ window.selectRel = function(id) {
 
 function resetDetail() {
   document.querySelector('.graph-shell').classList.remove('panel-open');
-  document.getElementById('detail-head').firstChild.textContent = 'Properties';
+  setDetailTitle('Properties');
   document.getElementById('sync-badge').style.display = 'none';
   const tb = document.getElementById('detail-tab-bar');
   if (tb) { tb.style.display = 'none'; tb.innerHTML = ''; }
@@ -1446,6 +1588,7 @@ function resetDetail() {
 // on the same node re-opens without a full reload.
 function closeDetailPanel() {
   selectedEntity = null; selectedRelId = null;
+  focusedEntity = null; focusDepth = 0;
   document.querySelectorAll('.gs-entity-item,.gs-rel-item').forEach(el => el.classList.remove('selected'));
   document.getElementById('del-btn').style.display = 'none';
   renderGraph();
@@ -1491,16 +1634,16 @@ document.addEventListener('click', ev => {
 // DETAIL PANEL — ENTITY
 // ════════════════════════════════════════════════════════════════════════════
 // Track which detail tab is active per entity
-let _detailTab = 'joins';
+let _detailTab = 'info';
 
 function renderEntityDetail(name, forceTab) {
   const e = graph.entities.find(x => x.entity_name === name);
   if (!e) return;
-  document.getElementById('detail-head').firstChild.textContent = e.display_name || name;
+  setDetailTitle(e.display_name || name);
   document.getElementById('sync-badge').style.display = '';
 
   // Choose tab: forceTab → caller override, else _detailTab (sticky), default 'joins'
-  const activeTab = forceTab || _detailTab || 'joins';
+  const activeTab = forceTab || _detailTab || 'info';
 
   fetch(`${API_BASE}/properties/${name}`)
     .then(r => r.json())
@@ -1514,6 +1657,10 @@ function renderEntityDetail(name, forceTab) {
       const tabBar = document.getElementById('detail-tab-bar');
       tabBar.style.display = 'flex';
       tabBar.innerHTML = `
+        <div class="gd-tab ${activeTab==='info'?'active':''}"
+             onclick="switchEntityTab('info','${esc(name)}')">
+          Overview
+        </div>
         <div class="gd-tab ${activeTab==='joins'?'active':''}"
              onclick="switchEntityTab('joins','${esc(name)}')">
           Joins
@@ -1524,10 +1671,7 @@ function renderEntityDetail(name, forceTab) {
           Fields
           <span class="gd-tab-badge">${props.length}</span>
         </div>
-        <div class="gd-tab ${activeTab==='info'?'active':''}"
-             onclick="switchEntityTab('info','${esc(name)}')">
-          Info
-        </div>`;
+        `;
 
       // ── Tab panes ────────────────────────────────────────────────────────
       document.getElementById('detail-content').innerHTML = `
@@ -1636,7 +1780,7 @@ window.switchEntityTab = function(tab, entityName) {
   // Update tab bar active state
   document.querySelectorAll('#detail-tab-bar .gd-tab').forEach(el => el.classList.remove('active'));
   const tabEls = document.querySelectorAll('#detail-tab-bar .gd-tab');
-  const idx = ['joins', 'fields', 'info'].indexOf(tab);
+  const idx = ['info', 'joins', 'fields'].indexOf(tab);
   if (tabEls[idx]) tabEls[idx].classList.add('active');
 
   // Show/hide panes
@@ -2098,7 +2242,8 @@ window.saveRelInline = async function(relId, entityName) {
 
   // Update local state
   Object.assign(rel, { from_column: fromCol, to_column: toCol,
-    join_type: joinType, relationship_type: card, where_clause: whereClause });
+    join_type: joinType, relationship_type: card, where_clause: whereClause,
+    validation_status: 'untested', row_count_estimate: -1, join_multiplicity: '' });
 
   // Refresh panel + graph edge
   renderGraph(); updateRelList();
@@ -2205,11 +2350,22 @@ function renderRelDetail(id) {
   if (tb) { tb.style.display = 'none'; }
   let extraConditions = [];
   try { extraConditions = JSON.parse(rel.join_conditions || '[]'); } catch(e) {}
+  const relStatus = _relationshipStatus(rel);
+  const rowCountTxt = Number(rel.row_count_estimate ?? -1) >= 0 ? `${rel.row_count_estimate} rows` : 'No row probe yet';
+  setDetailTitle(`${rel.from_entity} -> ${rel.to_entity}`);
   document.getElementById('detail-head').firstChild.textContent =
     `${rel.from_entity} → ${rel.to_entity}`;
   document.getElementById('detail-content').innerHTML = `
     <div class="gd-section">Relationship settings</div>
     <div class="gd-body">
+      <div style="display:flex;align-items:center;gap:.5rem;justify-content:space-between;margin-bottom:.65rem">
+        <span class="rel-status-badge ${relStatus}">${relStatus}</span>
+        <span style="font-size:11px;color:var(--text-muted);flex:1;text-align:right">${esc(rowCountTxt)}</span>
+      </div>
+      <div class="gd-form-row" style="grid-template-columns:1fr 1fr;margin-bottom:.75rem">
+        <button class="tb-btn" style="justify-content:center" onclick="validateRelationship(${id}, false)">Validate schema</button>
+        <button class="tb-btn" style="justify-content:center" onclick="validateRelationship(${id}, true)">Live probe</button>
+      </div>
       <div class="gd-form-row">
         <div>
           <label class="gd-label">From entity</label>
@@ -2299,6 +2455,9 @@ window.saveRelDetail = async function(id) {
   rel.join_type         = document.getElementById('rd-join-type')?.value;
   rel.label             = document.getElementById('rd-label')?.value?.trim();
   rel.join_conditions   = JSON.stringify(_readJoinConditions());
+  rel.validation_status = 'untested';
+  rel.row_count_estimate = -1;
+  rel.join_multiplicity = '';
   const payload = Object.assign({}, rel, { join_conditions: _readJoinConditions() });
   await api('POST', `${API_BASE}/relationships`, payload);
   renderGraph();
@@ -2502,6 +2661,9 @@ window.saveRelFromModal = async function() {
   const body = await res.json();
   payload.id = body.id;
   payload.join_conditions = JSON.stringify(extraConditions);
+  payload.validation_status = 'untested';
+  payload.row_count_estimate = -1;
+  payload.join_multiplicity = '';
   graph.relationships.push(payload);
   closeRelModal(); renderGraph(); updateRelList();
   // Refresh the entity detail panel on the Joins tab if an entity is selected
@@ -2726,6 +2888,13 @@ function esc(s) {
   return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
+function setDetailTitle(text) {
+  const el = document.getElementById('detail-title');
+  if (!el) return;
+  el.textContent = text || 'Properties';
+  el.title = text || 'Properties';
+}
+
 async function api(method, url, body) {
   const opts = { method, headers: { 'Content-Type': 'application/json' } };
   if (body && method !== 'GET') opts.body = JSON.stringify(body);
@@ -2735,6 +2904,57 @@ async function api(method, url, body) {
     setTimeout(refreshHealth, 300);
   }
   return r;
+}
+
+async function validateRelationship(relId, executeLive = false) {
+  setStatus(executeLive ? 'Running live join probe...' : 'Checking join against schema...');
+  const r = await api('POST', `${API_BASE}/relationships/${relId}/validate`, {
+    execute: executeLive,
+    timeout_seconds: 20,
+  });
+  const data = await r.json();
+  if (!r.ok || data.status !== 'ok') {
+    setStatus(data.detail || data.error || 'Join validation failed');
+    return;
+  }
+  const result = data.result || {};
+  const rel = graph.relationships.find(x => x.id === relId);
+  if (rel) {
+    rel.validation_status = result.status || rel.validation_status || 'untested';
+    rel.row_count_estimate = result.row_count_estimate ?? -1;
+    rel.join_multiplicity = result.join_multiplicity || '';
+  }
+  renderGraph();
+  updateSidebar();
+  _updateIssuesTab(_health);
+  if (selectedRelId === relId) renderRelDetail(relId);
+  setStatus(result.message || `Join status: ${result.status}`);
+}
+
+async function validateAllRelationships(executeLive = false) {
+  setStatus(executeLive ? 'Running live probes for all joins...' : 'Checking all joins against schema...');
+  const r = await api('POST', `${API_BASE}/relationships/validate-all`, {
+    execute: executeLive,
+    timeout_seconds: 20,
+  });
+  const data = await r.json();
+  if (!r.ok || data.status !== 'ok') {
+    setStatus(data.detail || data.error || 'Join validation failed');
+    return;
+  }
+  const byId = new Map((data.results || []).map(x => [x.relationship_id, x]));
+  graph.relationships.forEach(rel => {
+    const result = byId.get(rel.id);
+    if (!result) return;
+    rel.validation_status = result.status || rel.validation_status || 'untested';
+    rel.row_count_estimate = result.row_count_estimate ?? -1;
+    rel.join_multiplicity = result.join_multiplicity || '';
+  });
+  renderGraph();
+  updateSidebar();
+  _updateIssuesTab(_health);
+  switchSidebarTab('issues');
+  setStatus(`Validated ${byId.size} relationship${byId.size === 1 ? '' : 's'}`);
 }
 
 function setStatus(msg) {
@@ -3584,6 +3804,7 @@ function updateRelList() {
     const card  = cardLabel[r.relationship_type] || '';
     const count = joins.length;
     const joinColor = r.join_type === 'INNER' ? '#059669' : '#6366F1';
+    const status = _aggregateRelationshipStatus(joins);
     const fromShort = r.from_entity.length > 16 ? r.from_entity.slice(0,14) + '…' : r.from_entity;
     const toShort   = r.to_entity.length   > 16 ? r.to_entity.slice(0,14)   + '…' : r.to_entity;
     // All rel IDs in this group (for bulk delete when count > 1)
@@ -3596,6 +3817,7 @@ function updateRelList() {
       </span>
       ${count > 1 ? `<span style="font-size:9px;font-weight:800;background:var(--surface-2);border:1px solid var(--border);border-radius:3px;padding:1px 4px;color:var(--text-muted);flex-shrink:0">${count}</span>` : ''}
       ${card ? `<span style="font-size:9px;font-weight:800;color:var(--text-muted);background:var(--surface-2);border:1px solid var(--border);border-radius:3px;padding:1px 4px;flex-shrink:0">${card}</span>` : ''}
+      <span class="rel-status-badge ${status}">${status}</span>
       <span style="flex-shrink:0;font-size:9px;font-weight:700;color:${joinColor}">${r.join_type}</span>
       <button class="gs-rel-del" title="Delete${count>1?' all '+count+' joins':''}  between these entities"
         onclick="event.stopPropagation();_sidebarDeleteRels(${JSON.stringify(allIds)})">✕</button>
@@ -4082,9 +4304,17 @@ function _updateIssuesTab(h) {
   const cntEl = document.getElementById('gs-issues-cnt');
   if (!list) return;
 
-  const issues = (h && h.issues || []).filter(i => i.severity !== 'info');
-  const ec = h ? (h.error_count || 0) : 0;
-  const wc = h ? (h.warning_count || 0) : 0;
+  const graphIssues = (h && h.issues || []).filter(i => i.severity !== 'info');
+  const relIssues = graph.relationships
+    .filter(r => ['broken', 'warning', 'untested'].includes(_relationshipStatus(r)))
+    .map(r => ({
+      severity: _relationshipStatus(r) === 'broken' ? 'error' : 'warning',
+      message: `Join ${r.from_entity} -> ${r.to_entity} is ${_relationshipStatus(r)}.`,
+      rel_id: r.id,
+    }));
+  const issues = graphIssues.concat(relIssues);
+  const ec = (h ? (h.error_count || 0) : 0) + relIssues.filter(i => i.severity === 'error').length;
+  const wc = (h ? (h.warning_count || 0) : 0) + relIssues.filter(i => i.severity === 'warning').length;
   const total = ec + wc;
 
   // Update the tab badge
@@ -4106,8 +4336,11 @@ function _updateIssuesTab(h) {
   list.innerHTML = issues.map(issue => {
     const entLink = issue.entity
       ? `<div class="gs-issue-ent" onclick="selectEntity('${_esc(issue.entity)}');switchSidebarTab('entities')">${_esc(issue.entity)}</div>`
+      : issue.rel_id
+        ? `<div class="gs-issue-ent" onclick="selectRel(${issue.rel_id});switchSidebarTab('relationships')">Open relationship</div>`
       : '';
-    return `<div class="gs-issue-item" onclick="${issue.entity ? "selectEntity('"+_esc(issue.entity)+"');switchSidebarTab('entities')" : ''}">
+    const click = issue.entity ? "selectEntity('"+_esc(issue.entity)+"');switchSidebarTab('entities')" : issue.rel_id ? `selectRel(${issue.rel_id});switchSidebarTab('relationships')` : '';
+    return `<div class="gs-issue-item" onclick="${click}">
       <div class="gs-issue-icon ${issue.severity}">${ICON[issue.severity] || '!'}</div>
       <div class="gs-issue-body">
         <div class="gs-issue-msg">${_esc(issue.message)}</div>

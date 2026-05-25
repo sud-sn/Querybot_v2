@@ -1562,7 +1562,11 @@ def save_relationship(
                 UPDATE entity_relationships SET
                     from_entity=?, to_entity=?, from_column=?, to_column=?,
                     relationship_type=?, join_type=?, label=?, join_conditions=?,
-                    where_clause=?
+                    where_clause=?,
+                    validation_status='untested',
+                    validated_at='',
+                    row_count_estimate=-1,
+                    join_multiplicity=''
                 WHERE id=? AND account_id=?
             """, (from_entity, to_entity, from_column, to_column,
                   relationship_type, join_type, label, jc_json,
@@ -1581,6 +1585,15 @@ def save_relationship(
     return row["id"] if row else -1
 
 
+def get_relationship(account_id: str, rel_id: int) -> Optional[dict]:
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM entity_relationships WHERE account_id=? AND id=?",
+            (account_id, rel_id),
+        ).fetchone()
+    return dict(row) if row else None
+
+
 def list_relationships(account_id: str, active_only: bool = True) -> list[dict]:
     where = "WHERE account_id = ?" + (" AND is_active = 1" if active_only else "")
     with get_db() as conn:
@@ -1589,6 +1602,33 @@ def list_relationships(account_id: str, active_only: bool = True) -> list[dict]:
             (account_id,)
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+def update_relationship_validation(
+    account_id: str,
+    rel_id: int,
+    validation_status: str,
+    *,
+    row_count_estimate: int = -1,
+    join_multiplicity: str = "",
+) -> None:
+    allowed = {"untested", "valid", "warning", "broken"}
+    status_value = validation_status if validation_status in allowed else "untested"
+    with get_db() as conn:
+        conn.execute("""
+            UPDATE entity_relationships
+               SET validation_status=?,
+                   validated_at=datetime('now'),
+                   row_count_estimate=?,
+                   join_multiplicity=?
+             WHERE account_id=? AND id=?
+        """, (
+            status_value,
+            int(row_count_estimate),
+            join_multiplicity or "",
+            account_id,
+            rel_id,
+        ))
 
 
 def delete_relationship(account_id: str, rel_id: int) -> None:

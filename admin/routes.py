@@ -2230,6 +2230,85 @@ async def graph_api_rel_upsert(request: Request, account_id: str):
     return JSONResponse({"status": "ok", "id": rid})
 
 
+@router.post("/clients/{account_id}/graph/api/relationships/validate-all")
+async def graph_api_rel_validate_all(request: Request, account_id: str):
+    if not _is_auth(request):
+        raise HTTPException(status_code=401)
+    client = store.get_client(account_id)
+    if not client:
+        raise HTTPException(status_code=404)
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    execute = bool(body.get("execute", False))
+    timeout_seconds = int(body.get("timeout_seconds") or 20)
+
+    from core.relationship_validator import validate_relationship
+
+    relationships = store.list_relationships(account_id, active_only=True)
+    loop = asyncio.get_running_loop()
+    results = []
+    for rel in relationships:
+        result = await loop.run_in_executor(
+            None,
+            lambda rid=rel["id"]: validate_relationship(
+                account_id,
+                int(rid),
+                execute=execute,
+                timeout_seconds=timeout_seconds,
+            ),
+        )
+        store.update_relationship_validation(
+            account_id,
+            int(rel["id"]),
+            result.status,
+            row_count_estimate=result.row_count_estimate,
+            join_multiplicity=result.join_multiplicity,
+        )
+        results.append(result.to_dict())
+
+    return JSONResponse({"status": "ok", "results": results})
+
+
+@router.post("/clients/{account_id}/graph/api/relationships/{rel_id}/validate")
+async def graph_api_rel_validate(request: Request, account_id: str, rel_id: int):
+    if not _is_auth(request):
+        raise HTTPException(status_code=401)
+    client = store.get_client(account_id)
+    if not client:
+        raise HTTPException(status_code=404)
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    execute = bool(body.get("execute", False))
+    timeout_seconds = int(body.get("timeout_seconds") or 20)
+
+    from core.relationship_validator import validate_relationship
+
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(
+        None,
+        lambda: validate_relationship(
+            account_id,
+            rel_id,
+            execute=execute,
+            timeout_seconds=timeout_seconds,
+        ),
+    )
+    store.update_relationship_validation(
+        account_id,
+        rel_id,
+        result.status,
+        row_count_estimate=result.row_count_estimate,
+        join_multiplicity=result.join_multiplicity,
+    )
+    return JSONResponse({"status": "ok", "result": result.to_dict()})
+
+
 @router.delete("/clients/{account_id}/graph/api/relationships/{rel_id}")
 async def graph_api_rel_delete(request: Request, account_id: str, rel_id: int):
     if not _is_auth(request):
