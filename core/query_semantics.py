@@ -18,84 +18,261 @@ def analyze_query_intent(question: str) -> dict[str, bool]:
     """
     q = (question or "").strip().lower()
     return {
-        "has_employee_scope": bool(re.search(r"\b(employee|employees|staff|workforce|headcount)\b", q)),
-        "wants_distinct_count": bool(re.search(r"\b(unique|distinct|deduplicated)\b", q)),
-        "wants_grouping": bool(re.search(r"\b(by|per|grouped by|breakdown|split by|each|for each|based on)\b", q)),
-        "wants_status_filter": bool(re.search(r"\b(status|marked as|who are|where|with)\b", q)),
-        "wants_names": bool(re.search(r"\b(name|names|full name|fullname)\b", q)),
-        "wants_time_series": bool(re.search(r"\b(trend|over time|by month|by week|by year|monthly|weekly|daily)\b", q)),
-        "wants_comparison": bool(re.search(r"\b(compare|comparison|versus|vs|difference|gap)\b", q)),
+        # ── People / employee scope ───────────────────────────────────────────
+        # Covers direct HR terms, role titles, and generic "people" language.
+        # Intentionally broad so downstream rules can narrow with conjunction.
+        "has_employee_scope": bool(re.search(
+            r"\b(employee|employees|staff|workforce|headcount"
+            r"|worker|workers|personnel|team\s+member|team\s+members"
+            r"|associate|associates|agent|agents|rep|reps"
+            r"|hire|hires|joiner|joiners|new\s+hire"
+            r"|hr\b|human\s+resource|human\s+resources"
+            r"|person|people|colleague|colleagues"
+            r"|contractor|contractors|consultant|consultants"
+            r"|earner|earners|performer|performers|hire|hires)\b",
+            q,
+        )),
+
+        # ── Distinct / deduplicated count ────────────────────────────────────
+        # Catches "unique employees", "how many different products", etc.
+        "wants_distinct_count": bool(re.search(
+            r"\b(unique|distinct|deduplicated|how\s+many\s+different"
+            r"|individual|separate|non.duplicate|no\s+duplicate|unduplicated)\b",
+            q,
+        )),
+
+        # ── Grouping / breakdown ─────────────────────────────────────────────
+        # Used only in conjunction with has_employee_scope so broad coverage
+        # is acceptable — a false positive here doesn't fire a hint on its own.
+        "wants_grouping": bool(re.search(
+            r"\b(grouped?\s+by|group\s+by|breakdown|broken\s+down\s+by"
+            r"|split\s+by|by\s+(department|team|region|category|type|location"
+            r"|division|grade|level|unit|branch|office|gender|status|role)"
+            r"|per\s+(department|team|region|category|type|location|division)"
+            r"|for\s+each|each\s+(department|team|region|category|group|type|unit)"
+            r"|based\s+on|segmented\s+by|segmented\s+into|categorised\s+by|categorized\s+by)\b",
+            q,
+        )),
+
+        # ── Categorical / status filter ──────────────────────────────────────
+        # Removed bare "where" and "with" — they are stop words and fire on
+        # almost every sentence.  Kept and extended meaningful status phrases.
+        "wants_status_filter": bool(re.search(
+            r"\b(status|marked\s+as|labelled\s+as|labeled\s+as|tagged\s+as"
+            r"|classified\s+as|categoris[e]?d\s+as|flagged\s+as"
+            r"|who\s+are|whose\s+status|filter\s+by\s+(status|type|category)"
+            r"|with\s+status|with\s+type|where\s+status|where\s+type"
+            r"|type\s+is|status\s+is|category\s+is|whose\s+type)\b",
+            q,
+        )),
+
+        # ── Name lookup ──────────────────────────────────────────────────────
+        # Added "who" phrases, split name terms, and "list" in entity context.
+        "wants_names": bool(re.search(
+            r"\b(name|names|full\s*name|fullname"
+            r"|first\s+name|last\s+name|surname|forename|given\s+name|family\s+name"
+            r"|who\s+(is|are|has|have|was|were|did|does)\b"
+            r"|list\s+(all|the|of)\s+\w+"
+            r"|show\s+(me\s+)?(all\s+)?(the\s+)?\w+\s+(names?|who))\b",
+            q,
+        )),
+
+        # ── Time series / trend ───────────────────────────────────────────────
+        # Added quarterly, annually, hourly, "each month/quarter", historical.
+        "wants_time_series": bool(re.search(
+            r"\b(trend|over\s+time|time\s+series|timeline"
+            r"|by\s+(month|week|year|quarter|day|date|hour)"
+            r"|monthly|weekly|daily|quarterly|annually|yearly|hourly"
+            r"|month\s+by\s+month|week\s+by\s+week|day\s+by\s+day|quarter\s+by\s+quarter"
+            r"|each\s+(month|week|quarter|year|day)"
+            r"|historical|history|progression"
+            r"|over\s+the\s+(months|weeks|quarters|years|period|last\s+\d+))\b",
+            q,
+        )),
+
+        # ── Comparison framing ───────────────────────────────────────────────
+        # Added delta, variance, contrast, relative to, benchmark, against.
+        "wants_comparison": bool(re.search(
+            r"\b(compare|comparison|versus|vs\.?|difference|gap"
+            r"|contrast|against|relative\s+to|in\s+relation\s+to"
+            r"|better\s+than|worse\s+than|higher\s+than|lower\s+than"
+            r"|delta|variance|benchmark)\b",
+            q,
+        )),
+
+        # ── Year-over-year ───────────────────────────────────────────────────
+        # Kept original (it was well-written). Added SPLY and annual variants.
         "wants_yoy": bool(re.search(
-            r"\b(last year.{0,20}(compared|vs|versus|against|than).{0,20}(year before|prior year|previous year)"
+            r"\b(last\s+year.{0,20}(compared|vs|versus|against|than).{0,20}"
+            r"(year\s+before|prior\s+year|previous\s+year)"
             r"|year.{0,10}over.{0,10}year"
             r"|yoy"
-            r"|(compared|vs|versus).{0,20}(last year|prior year|previous year|year before)"
-            r"|(last year|this year|prior year|previous year).{0,20}(compared|vs|versus|difference|change|growth))\b",
+            r"|annual\s+(growth|change|comparison)"
+            r"|same\s+(period|time)\s+last\s+year"
+            r"|sply"
+            r"|(compared|vs|versus).{0,20}(last\s+year|prior\s+year|previous\s+year|year\s+before)"
+            r"|(last\s+year|this\s+year|prior\s+year|previous\s+year)"
+            r".{0,20}(compared|vs|versus|difference|change|growth))\b",
             q,
         )),
+
+        # ── Aggregate threshold → HAVING clause ──────────────────────────────
+        # Added "having" itself, "minimum of", "no fewer than", "only show/include".
+        # Also catches "more than N <entity>" patterns like "more than 10 staff".
         "wants_having_filter": bool(re.search(
-            r"\b(more than|greater than|at least|over|above|less than|fewer than|under|below|exceeds?|threshold)"
-            r".{0,30}\b(count|total|sum|average|avg|number of|amount)\b"
-            r"|\b(count|total|sum|average|avg|number of|amount).{0,30}"
-            r"(more than|greater than|at least|over|above|less than|fewer than|under|below)\b",
+            r"\bhaving\b"
+            r"|\b(only\s+(show|include|display|return|list).{0,40}"
+            r"(more\s+than|less\s+than|at\s+least|at\s+most|greater\s+than|fewer\s+than))"
+            r"|\b(minimum\s+of|maximum\s+of|at\s+(minimum|maximum)"
+            r"|no\s+less\s+than|no\s+more\s+than|no\s+fewer\s+than"
+            r"|with\s+a\s+(count|total|sum|average|minimum|maximum)"
+            r"|with\s+(total|count|sum).{0,20}(over|above|exceeding|more\s+than|less\s+than))\b"
+            r"|\b(more\s+than|greater\s+than|at\s+least|exceeds?|threshold"
+            r"|less\s+than|fewer\s+than).{0,30}"
+            r"\b(count|total|sum|average|avg|number\s+of|amount|records?|entries"
+            r"|staff|employees?|people|workers?|orders?|products?|items?|customers?"
+            r"|transactions?|visits?|members?|users?|sales|purchases?)\b"
+            r"|\b(count|total|sum|average|avg|number\s+of|amount).{0,30}"
+            r"(more\s+than|greater\s+than|at\s+least|over|above"
+            r"|less\s+than|fewer\s+than|under|below)\b"
+            r"|\b(more\s+than|greater\s+than|at\s+least|fewer\s+than|less\s+than)"
+            r"\s+\d+\b",
             q,
         )),
+
+        # ── Top-N per group → window ROW_NUMBER ──────────────────────────────
+        # Tightened: removed bare "by" on the right side, added "in every / from each".
         "wants_top_per_group": bool(re.search(
-            r"\b(top|best|highest|lowest|worst|bottom).{0,20}(per|in each|for each|by|within|across each)\b"
-            r"|\b(per|in each|for each|within each).{0,20}(top|best|highest|lowest|worst|bottom)\b",
+            r"\b(top|best|highest|lowest|worst|bottom|leading|top.ranked)"
+            r".{0,25}(per\b|in\s+each|for\s+each|within\s+(each|every)"
+            r"|across\s+each|in\s+every|from\s+each)\b"
+            r"|\b(per\b|in\s+each|for\s+each|within\s+(each|every)|in\s+every|from\s+each)"
+            r".{0,25}(top|best|highest|lowest|worst|bottom)\b",
             q,
         )),
+
+        # ── Percentage / share of total ──────────────────────────────────────
+        # Added distribution, ratio, makeup, out of total, as a percentage of.
         "wants_share": bool(re.search(
-            r"\b(percent(age)?|proportion|share|contribution|breakdown|what.{0,10}(percent|share|part)"
-            r"|how much.{0,10}(contribut|make up|account))\b",
+            r"\b(percent(age)?|proportion|share|contribution|distribution"
+            r"|ratio|weighting?\b|makeup"
+            r"|what\s+.{0,15}(percent|share|part|fraction|portion)\b"
+            r"|how\s+much\s+.{0,15}(contribut|make\s+up|account|of\s+total)"
+            r"|out\s+of\s+(the\s+)?total"
+            r"|as\s+a\s+percent(age)?\s+of"
+            r"|relative\s+to\s+(the\s+)?total"
+            r"|breakdown\s+of)\b",
             q,
         )),
+
+        # ── Anti-join / missing records ───────────────────────────────────────
+        # Fixed: escaped dots, added contractions and "unmatched/orphaned" terms.
         "wants_missing_records": bool(re.search(
-            r"\b(not in|no |never|without|missing|absent|never had|have no|lack|don.t have|do not have|zero)\b"
-            r".{0,30}\b(record|order|transaction|sale|attendance|entry|match|result|absenc)\b"
-            r"|\b(record|order|transaction|sale|attendance|entry|match|result|absenc).{0,30}"
-            r"\b(not in|never|without|missing|absent|never had|have no)\b"
-            r"|\b(employees?|customers?|products?|items?).{0,40}\b(no|never|without|not).{0,30}"
-            r"\b(absence|order|sale|record|transaction|visit|attendance)\b",
+            r"\b(haven'?t|hasn'?t|didn'?t|don'?t|doesn'?t|weren'?t|wasn'?t"
+            r"|never|without|missing|absent|unmatched|unlinked|orphan(?:ed)?"
+            r"|no\s+activity|no\s+transaction|no\s+order|no\s+purchase"
+            r"|zero\s+(orders?|sales?|records?|transactions?|visits?)"
+            r"|not\s+placed|not\s+made|not\s+submitted|not\s+attended|skipped|missed)\b"
+            r"|\b(not\s+in|have\s+no|has\s+no|lacks?|lacking"
+            r"|do\s+not\s+have|does\s+not\s+have|never\s+had)\b"
+            r".{0,40}\b(record|order|transaction|sale|attendance|entry|match"
+            r"|result|absence|purchase|visit|activity)\b"
+            r"|\b(record|order|transaction|sale|attendance|entry|match"
+            r"|result|absence|purchase|visit|activity)\b"
+            r".{0,40}\b(not\s+in|never|without|missing|absent|never\s+had|have\s+no)\b"
+            r"|\b(employees?|customers?|products?|items?|users?|patients?)\b"
+            r".{0,50}\b(no|never|without|not)\b.{0,30}"
+            r"\b(absence|order|sale|record|transaction|visit|attendance|purchase)\b",
             q,
         )),
+
+        # ── Conditional aggregation / pivot ───────────────────────────────────
+        # Major expansion: added "count by status", "how many X and how many Y",
+        # "X count vs Y count", employment/contract type splits.
         "wants_conditional_split": bool(re.search(
-            r"\b(active.{0,10}(vs|versus|and|compare).{0,10}(inactive|terminated|former)"
-            r"|male.{0,10}(vs|versus|and).{0,10}female"
-            r"|split by|side by side|pivot|breakdown by status|count (for each|per) (status|type|category|group))\b",
+            r"\b(active\s*.{0,10}(vs\.?|versus|and|compare).{0,10}(inactive|terminated|former)"
+            r"|male\s*.{0,10}(vs\.?|versus|and).{0,10}female"
+            r"|split\s+by|side\s+by\s+side|pivot"
+            r"|count\s+(by|for\s+each|per)\s+(status|type|category|group|gender|department)"
+            r"|breakdown\s+by\s+(status|type|category|gender|contract|employment)"
+            r"|how\s+many\s+.{0,30}and\s+how\s+many"
+            r"|(count|number)\s+of\s+.{0,25}(vs\.?|versus|and)\s+.{0,25}(count|number)\s+of"
+            r"|by\s+(employment\s+type|contract\s+type|gender|marital\s+status"
+            r"|grade|band|pay\s+type))\b",
             q,
         )),
+
+        # ── Month-over-month / quarter-over-quarter ───────────────────────────
+        # Fixed: removed bare "mom" (too many false positives on unrelated text).
+        # Added "period over period", "month-on-month", "weekly change".
         "wants_mom_qoq": bool(re.search(
-            r"\b(month.{0,10}over.{0,10}month"
-            r"|mom"
-            r"|quarter.{0,10}over.{0,10}quarter"
-            r"|qoq"
-            r"|monthly (change|growth|trend|comparison)"
-            r"|quarterly (change|growth|trend|comparison)"
-            r"|how.{0,20}changed.{0,20}(each month|monthly|each quarter|quarterly)"
-            r"|(each month|each quarter|by month|by quarter).{0,30}(change|growth|trend|compare))\b",
+            r"\b(month.{0,5}over.{0,5}month|month.on.month"
+            r"|quarter.{0,5}over.{0,5}quarter|quarter.on.quarter"
+            r"|qoq\b|period.{0,5}over.{0,5}period|\bpop\b"
+            r"|monthly\s+(change|growth|trend|comparison|variation|progression)"
+            r"|quarterly\s+(change|growth|trend|comparison|variation|progression)"
+            r"|weekly\s+(change|growth|trend|comparison)"
+            r"|how\s+.{0,20}changed\s+.{0,20}(each\s+month|monthly|each\s+quarter|quarterly)"
+            r"|(each\s+month|each\s+quarter|by\s+month|by\s+quarter)"
+            r".{0,30}(change|growth|trend|compare|comparison))\b",
             q,
         )),
+
+        # ── Cumulative / running total ────────────────────────────────────────
+        # Added MTD, QTD, "to date", "so far this year/month".
         "wants_cumulative": bool(re.search(
-            r"\b(cumulative|running total|year.{0,5}to.{0,5}date|ytd|cumulative sum|total so far"
-            r"|running sum|accumulated|progressive total)\b",
+            r"\b(cumulative|running\s+total|cumulative\s+(sum|count|total)"
+            r"|year.{0,5}to.{0,5}date|\bytd\b|\bmtd\b|\bqtd\b"
+            r"|total\s+so\s+far|running\s+sum|accumulated|progressive\s+total"
+            r"|to\s+date\b|so\s+far\s+this\s+(year|month|quarter)"
+            r"|aggregate\s+total|rolling\s+total)\b",
             q,
         )),
+
+        # ── Rolling / moving average ─────────────────────────────────────────
+        # Added 7-day/30-day shorthand, sliding window, EMA.
         "wants_rolling": bool(re.search(
-            r"\b(rolling (average|avg|mean)|moving (average|avg|mean)"
-            r"|trailing (average|avg)|smoothed|n.period average"
-            r"|\d+.?(day|week|month).?(rolling|moving|trailing))\b",
+            r"\b(rolling\s+(average|avg|mean|total)"
+            r"|moving\s+(average|avg|mean)"
+            r"|trailing\s+(average|avg)"
+            r"|smooth(?:ed|ing)?\s*(trend|curve|line|out)?"
+            r"|sliding\s+window|window\s+(average|avg)"
+            r"|\d+.?(day|week|month|period).?(rolling|moving|trailing|average|avg)"
+            r"|7.day|30.day|90.day|\bema\b)\b",
             q,
         )),
+
+        # ── Named period filter (Q/H/month/fiscal) ───────────────────────────
+        # Added month abbreviations, fiscal year/quarter, this/last month|quarter,
+        # MTD, QTD, YTD (shared with cumulative — both hints are useful).
+        # "quarterly/annually" also signals a named period granularity.
         "wants_named_period": bool(re.search(
-            r"\b(q[1-4]|quarter [1-4]|first quarter|second quarter|third quarter|fourth quarter"
-            r"|h[12]|first half|second half|january|february|march|april|may|june|july|august"
-            r"|september|october|november|december|last \d+ (month|week|day)s?)\b",
+            r"\b(q[1-4]\b|quarter\s+[1-4]"
+            r"|first\s+quarter|second\s+quarter|third\s+quarter|fourth\s+quarter"
+            r"|quarterly|annually|yearly"
+            r"|h[12]\b|first\s+half|second\s+half"
+            r"|jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?"
+            r"|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?"
+            r"|\bfy\b|financial\s+year|fiscal\s+(year|quarter|half)"
+            r"|calendar\s+(year|quarter)"
+            r"|this\s+(month|quarter|week|year)\b"
+            r"|last\s+(month|quarter|week|year)\b"
+            r"|last\s+\d+\s+(month|week|day)s?"
+            r"|\bytd\b|\bmtd\b|\bqtd\b)\b",
             q,
         )),
+
+        # ── Ranking / leaderboard ─────────────────────────────────────────────
+        # Added "who has the most/highest", standings, "top N by", positions.
         "wants_ranking": bool(re.search(
-            r"\b(rank(ed|ing)?|leaderboard|top performer|score board|ordered by performance"
-            r"|best performing|worst performing|by performance|ranked list)\b",
+            r"\b(rank(?:ed|ing)?|leaderboard|top\s+performer|scoreboard|score\s+board"
+            r"|ordered\s+by\s+performance|best\s+performing|worst\s+performing"
+            r"|by\s+performance|ranked\s+list|standings?"
+            r"|league\s+table|position(?:s|ing)?"
+            r"|who\s+(is|are)\s+the\s+(best|top|highest|lowest|worst|leading)"
+            r"|who\s+has\s+the\s+(most|highest|lowest|best|worst|fewest)"
+            r"|most\s+productive|least\s+productive"
+            r"|top\s+\d+\s+(by|based\s+on|for|in)\b)\b",
             q,
         )),
     }
