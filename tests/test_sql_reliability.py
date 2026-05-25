@@ -32,6 +32,9 @@ KNOWN = {
     "CHATBOT_DB.PROFITABILITY.DIM_DIVISION",
     "PROFITABILITY.DIM_DIVISION",
     "DIM_DIVISION",
+    "CHATBOT_DB.PHARMACY.DIMPATIENT",
+    "PHARMACY.DIMPATIENT",
+    "DIMPATIENT",
 }
 
 COLUMNS = {
@@ -102,6 +105,14 @@ COLUMNS = {
     "DIM_DIVISION": {
         "DIVI": "varchar",
         "DIVISION_NAME": "varchar",
+    },
+    "CHATBOT_DB.PHARMACY.DIMPATIENT": {
+        "AGE": "int",
+        "PATIENT_ID": "varchar",
+    },
+    "PHARMACY.DIMPATIENT": {
+        "AGE": "int",
+        "PATIENT_ID": "varchar",
     },
 }
 
@@ -216,6 +227,31 @@ class StrictColumnValidationTests(unittest.TestCase):
         self.assertTrue(any(col == "ITM_GRP_DMS_KEY" and table.endswith("CUS_ORD_IVC_FCT") for _, col, table in fields))
         self.assertTrue(any(col == "CUS_IVC_LIN_AMT" and table.endswith("CUS_ORD_IVC_FCT") for _, col, table in fields))
         self.assertTrue(plan["joins"])
+        self.assertFalse(any(col == "AGE" for _, col, _ in fields))
+
+    def test_semantic_plan_respects_selected_schema(self):
+        plan = build_semantic_field_plan(
+            "For each division, what percentage of total invoice line amount comes from each item group?",
+            COLUMNS,
+            selected_schema="PROFITABILITY",
+        )
+        self.assertTrue(plan["enabled"])
+        self.assertTrue(all(".PHARMACY." not in f["table"] for f in plan["fields"]))
+        self.assertFalse(any(f["column"] == "AGE" for f in plan["fields"]))
+
+    def test_semantic_plan_expands_allowed_fqn_scope(self):
+        plan = build_semantic_field_plan(
+            "For each division, what percentage of total invoice line amount comes from each item group?",
+            COLUMNS,
+            allowed_tables={
+                "CHATBOT_DB.PROFITABILITY.CUS_ORD_IVC_FCT",
+                "CHATBOT_DB.PROFITABILITY.OOLINE",
+            },
+            selected_schema="PROFITABILITY",
+        )
+        self.assertTrue(plan["enabled"])
+        self.assertTrue(any(f["column"] == "DIVI" and f["table"].endswith("OOLINE") for f in plan["fields"]))
+        self.assertTrue(any(f["column"] == "CUS_IVC_LIN_AMT" and f["table"].endswith("CUS_ORD_IVC_FCT") for f in plan["fields"]))
 
     def test_semantic_plan_validator_rejects_ignored_field_source(self):
         plan = build_semantic_field_plan(
