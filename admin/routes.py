@@ -3422,14 +3422,17 @@ async def admin_schema_tree(request: Request, account_id: str, refresh: str = "0
 async def admin_columns_api(request: Request, account_id: str):
     """
     Return a flat, sorted list of all columns across the client's database.
-    Used by the formula editor for column name autocomplete suggestions.
-    Serves from the schema tree in-process cache — zero DB hit if tree
-    was already fetched by the schema browser.
+    Used by the formula editor for ThoughtSpot-style column autocomplete.
+
+    Source priority:
+      1. _schema.json on disk  — written by discover_and_write(), always has
+         full column+type data and survives server restarts.
+      2. No schema found        — returns no_schema so the UI shows a hint.
 
     Response shapes:
-      200 { "status": "ok",         "columns": [ {table, column, type, fqn}, ... ] }
-      200 { "status": "no_schema",  "columns": [] }   (tree not yet discovered)
-      400 { "status": "error",      "message": "..." }
+      200 { "status": "ok",        "columns": [ {table, column, type, fqn}, ... ] }
+      200 { "status": "no_schema", "columns": [] }
+      404 { "status": "error",     "message": "..." }
     """
     if not _is_auth(request):
         raise HTTPException(status_code=401, detail="Not authenticated")
@@ -3438,30 +3441,45 @@ async def admin_columns_api(request: Request, account_id: str):
     if not client:
         return JSONResponse({"status": "error", "message": "Client not found"}, status_code=404)
 
-    db_cfg_id = client.get("db_config_id")
-    if not db_cfg_id:
-        return JSONResponse({"status": "no_schema", "columns": []})
+    # ── Read from _schema.json (primary, disk-based, survives restarts) ──────
+    import json as _json
+    from pathlib import Path
 
-    from core.schema_discovery import get_cached_tree
-    tree = get_cached_tree(db_cfg_id)
-    if not tree:
-        return JSONResponse({"status": "no_schema", "columns": []})
-
-    # Flatten tree: { db: { schema: { tables: { name: { columns: [...] } } } } }
+    state      = store.get_client_state(account_id) or {}
+    schema_dir = state.get("schema_dir", "")
     columns: list[dict] = []
-    for _db, schemas in tree.items():
-        for _schema, objs in schemas.items():
-            for tbl_name, tbl_info in objs.get("tables", {}).items():
-                for col in tbl_info.get("columns", []):
-                    col_name = col.get("name") or col.get("column_name", "")
-                    col_type = col.get("type") or col.get("data_type", "")
-                    if col_name:
-                        columns.append({
-                            "table":  tbl_name,
-                            "column": col_name,
-                            "type":   col_type,
-                            "fqn":    f"{tbl_name}.{col_name}",
-                        })
+
+    if schema_dir:
+        schema_path = Path(schema_dir) / "_schema.json"
+        if schema_path.exists():
+            try:
+                master = _json.loads(schema_path.read_text(encoding="utf-8"))
+                for fqn_key, tbl_data in master.items():
+                    if not isinstance(tbl_data, dict):
+                        continue
+                    # Extract the bare table name from the FQN key
+                    # Keys are like "DB.SCHEMA.TABLE" or "SCHEMA.TABLE" or "TABLE"
+                    parts    = fqn_key.split(".")
+                    tbl_name = parts[-1]           # last segment = table name
+                    for col in (tbl_data.get("columns") or []):
+                        if isinstance(col, dict):
+                            col_name = col.get("name") or ""
+                            col_type = col.get("type") or ""
+                        else:
+                            col_name = str(col)
+                            col_type = ""
+                        if col_name:
+                            columns.append({
+                                "table":  tbl_name,
+                                "column": col_name,
+                                "type":   col_type,
+                                "fqn":    f"{tbl_name}.{col_name}",
+                            })
+            except Exception as exc:
+                log.warning("admin_columns_api: failed to read _schema.json for %s: %s", account_id, exc)
+
+    if not columns:
+        return JSONResponse({"status": "no_schema", "columns": []})
 
     columns.sort(key=lambda c: (c["table"].lower(), c["column"].lower()))
     return JSONResponse({"status": "ok", "columns": columns})
