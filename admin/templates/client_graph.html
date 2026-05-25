@@ -83,8 +83,12 @@
 .ej-dir{color:var(--text-muted);flex-shrink:0}
 .ej-cols{font-size:10px;color:var(--text-muted);font-family:Consolas,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0}
 .ej-where{font-size:9px;font-weight:700;color:#0369A1;background:#EFF6FF;border:1px solid #BAE6FD;border-radius:3px;padding:0 4px;flex-shrink:0}
-.ej-del{background:none;border:none;cursor:pointer;color:var(--text-muted);font-size:12px;padding:0 2px;flex-shrink:0;line-height:1}
-.ej-del:hover{color:var(--red)}
+.ej-del{background:none;border:1px solid transparent;border-radius:4px;cursor:pointer;color:var(--text-muted);font-size:11px;padding:2px 6px;flex-shrink:0;line-height:1;transition:all .12s;white-space:nowrap}
+.ej-del:hover{background:var(--red-light,#FEE2E2);color:var(--red,#DC2626);border-color:color-mix(in srgb,var(--red,#DC2626) 30%,transparent)}
+/* ── Sidebar rel-item delete ──────────────────────────────────────────── */
+.gs-rel-del{display:none;background:none;border:1px solid transparent;border-radius:4px;cursor:pointer;color:var(--text-muted);font-size:11px;padding:2px 5px;flex-shrink:0;line-height:1;margin-left:auto;transition:all .12s}
+.gs-rel-item:hover .gs-rel-del{display:flex;align-items:center}
+.gs-rel-del:hover{background:var(--red-light,#FEE2E2);color:var(--red,#DC2626);border-color:color-mix(in srgb,var(--red,#DC2626) 30%,transparent)}
 .ej-edit-panel{background:var(--surface-2);border-top:1px solid var(--border);padding:.45rem .5rem}
 .ej-wc-row{display:grid;grid-template-columns:1fr 100px 1fr 24px;gap:.3rem;align-items:center;margin-bottom:.25rem}
 .ej-wc-row select,.ej-wc-row input{font-size:11px;padding:3px 5px}
@@ -250,10 +254,12 @@
     {% endif %}
     {% for r in relationships %}
     <div class="gs-rel-item" id="sib-rel-{{ r.id }}" onclick="selectRel({{ r.id }})">
-      <span>{{ r.from_entity }}</span>
-      <span style="color:var(--text-muted)">→</span>
-      <span>{{ r.to_entity }}</span>
-      <span style="margin-left:auto;font-size:9px;font-weight:700;color:var(--text-muted);text-transform:uppercase">{{ r.join_type }}</span>
+      <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0">{{ r.from_entity }}</span>
+      <span style="color:var(--text-muted);flex-shrink:0">→</span>
+      <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0">{{ r.to_entity }}</span>
+      <span style="font-size:9px;font-weight:700;color:var(--text-muted);text-transform:uppercase;flex-shrink:0">{{ r.join_type }}</span>
+      <button class="gs-rel-del" title="Delete relationship"
+        onclick="event.stopPropagation();deleteRel({{ r.id }})">✕</button>
     </div>
     {% endfor %}
   </div>
@@ -2168,13 +2174,27 @@ window.deleteRel = async function(id) {
   selectedRelId = null;
   document.getElementById('del-btn').style.display = 'none';
   renderGraph(); updateRelList();
-  // If an entity is selected, refresh its Joins tab; otherwise reset
   if (selectedEntity) {
     renderEntityDetail(selectedEntity);
   } else {
     resetDetail();
   }
   setStatus('Relationship deleted');
+};
+
+// Delete all joins in a group from the sidebar (handles multi-join pairs)
+window._sidebarDeleteRels = async function(ids) {
+  if (!ids || !ids.length) return;
+  for (const id of ids) {
+    await api('DELETE', `${API_BASE}/relationships/${id}`);
+    graph.relationships = graph.relationships.filter(r => r.id !== id);
+  }
+  selectedRelId = null;
+  document.getElementById('del-btn').style.display = 'none';
+  renderGraph(); updateRelList();
+  if (selectedEntity) renderEntityDetail(selectedEntity);
+  else resetDetail();
+  setStatus(ids.length > 1 ? `${ids.length} relationships deleted` : 'Relationship deleted');
 };
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -2265,7 +2285,7 @@ function _readModalJoinConditions() {
   })).filter(c => c.from_col && c.to_col);
 }
 
-window.openRelModal = function() {
+window.openRelModal = function(prefillFrom) {
   populateEntitySelects();
   document.getElementById('rel-from-col').innerHTML = '<option value="">— select entity first —</option>';
   document.getElementById('rel-to-col').innerHTML   = '<option value="">— select entity first —</option>';
@@ -2274,6 +2294,16 @@ window.openRelModal = function() {
   document.getElementById('wc-header').style.display = 'none';
   document.getElementById('rel-label').value = '';
   document.getElementById('rel-modal').style.display = 'flex';
+
+  // Pre-fill "From entity" with the currently selected entity (or explicit argument)
+  const fromEnt = prefillFrom || selectedEntity;
+  if (fromEnt) {
+    const sel = document.getElementById('rel-from-entity');
+    if (sel && [...sel.options].some(o => o.value === fromEnt)) {
+      sel.value = fromEnt;
+      onRelEntityChange('from');   // load FK columns for that entity
+    }
+  }
 };
 
 window.closeRelModal = function() {
@@ -3391,18 +3421,21 @@ function updateRelList() {
     const card  = cardLabel[r.relationship_type] || '';
     const count = joins.length;
     const joinColor = r.join_type === 'INNER' ? '#059669' : '#6366F1';
-    // Short display names — just the last part after underscore if very long
-    const fromShort = r.from_entity.length > 18 ? r.from_entity.slice(0,16) + '…' : r.from_entity;
-    const toShort   = r.to_entity.length   > 18 ? r.to_entity.slice(0,16)   + '…' : r.to_entity;
+    const fromShort = r.from_entity.length > 16 ? r.from_entity.slice(0,14) + '…' : r.from_entity;
+    const toShort   = r.to_entity.length   > 16 ? r.to_entity.slice(0,14)   + '…' : r.to_entity;
+    // All rel IDs in this group (for bulk delete when count > 1)
+    const allIds = joins.map(j => j.id);
     return `
     <div class="gs-rel-item" id="sib-rel-${r.id}" onclick="selectRel(${r.id})"
          title="${esc(r.from_entity)} → ${esc(r.to_entity)}${count>1?' ('+count+' joins)':''}">
-      <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;font-size:11px">
+      <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;font-size:11px;min-width:0">
         ${esc(fromShort)} <span style="color:var(--text-muted)">→</span> ${esc(toShort)}
       </span>
       ${count > 1 ? `<span style="font-size:9px;font-weight:800;background:var(--surface-2);border:1px solid var(--border);border-radius:3px;padding:1px 4px;color:var(--text-muted);flex-shrink:0">${count}</span>` : ''}
       ${card ? `<span style="font-size:9px;font-weight:800;color:var(--text-muted);background:var(--surface-2);border:1px solid var(--border);border-radius:3px;padding:1px 4px;flex-shrink:0">${card}</span>` : ''}
       <span style="flex-shrink:0;font-size:9px;font-weight:700;color:${joinColor}">${r.join_type}</span>
+      <button class="gs-rel-del" title="Delete${count>1?' all '+count+' joins':''}  between these entities"
+        onclick="event.stopPropagation();_sidebarDeleteRels(${JSON.stringify(allIds)})">✕</button>
     </div>`;
   }).join('');
 }

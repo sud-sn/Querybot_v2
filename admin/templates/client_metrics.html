@@ -119,6 +119,26 @@
 .metrics-toolbar select{padding:5px 8px;border:1px solid var(--border);border-radius:5px;font-size:12px;
   background:var(--surface);color:var(--text);cursor:pointer}
 .metrics-count{font-size:11px;color:var(--text-muted);white-space:nowrap;margin-left:auto}
+/* ── Advanced section ───────────────────────────────────────────────── */
+.metric-advanced{margin:.75rem 0;border:1px solid var(--border);border-radius:var(--radius-sm,5px);background:var(--surface-2)}
+.metric-advanced-toggle{padding:.55rem .85rem;font-size:12px;font-weight:600;color:var(--text-soft);cursor:pointer;list-style:none;display:flex;align-items:center;gap:.35rem;user-select:none}
+.metric-advanced-toggle::before{content:'▶';font-size:9px;transition:transform .18s;display:inline-block}
+.metric-advanced[open] .metric-advanced-toggle::before{transform:rotate(90deg)}
+.metric-advanced-toggle:hover{color:var(--text)}
+.metric-advanced-body{padding:.75rem .85rem;border-top:1px solid var(--border)}
+/* ── Inline column suggestion (ThoughtSpot-style) ───────────────────── */
+#formula-col-suggest{position:fixed;background:var(--surface);border:1px solid var(--border);border-radius:7px;
+  box-shadow:0 6px 24px rgba(0,0,0,.14);max-height:260px;overflow-y:auto;z-index:9999;min-width:280px;
+  display:none;padding:3px 0}
+.fcs-item{padding:6px 12px;cursor:pointer;display:flex;align-items:center;gap:8px;border-radius:4px;margin:1px 3px;font-size:12px;transition:background .1s}
+.fcs-item:hover,.fcs-item.active{background:var(--blue-light)}
+.fcs-col{font-family:Consolas,monospace;font-weight:700;color:var(--text);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fcs-col mark{background:none;color:var(--blue,#3182ce);font-weight:800}
+.fcs-tbl{font-size:10px;color:var(--text-muted);white-space:nowrap;max-width:110px;overflow:hidden;text-overflow:ellipsis}
+.fcs-type{font-size:9px;padding:1px 5px;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-muted);white-space:nowrap;flex-shrink:0}
+.fcs-type.num{background:#EFF6FF;color:#1D4ED8;border-color:#BFDBFE}
+.fcs-type.date{background:#FFF7ED;color:#C2410C;border-color:#FED7AA}
+.fcs-type.text{background:#F0FFF4;color:#065F46;border-color:#A7F3D0}
 /* ── Status badges ──────────────────────────────────────────────────── */
 .status-badge{display:inline-flex;align-items:center;font-size:10px;font-weight:800;padding:2px 8px;border-radius:999px;text-transform:uppercase;letter-spacing:.04em;border:1px solid transparent}
 .status-badge.draft{background:color-mix(in srgb,var(--amber,#d69e2e) 14%,var(--surface));color:color-mix(in srgb,var(--amber,#d69e2e) 80%,#222);border-color:color-mix(in srgb,var(--amber,#d69e2e) 25%,transparent)}
@@ -234,22 +254,9 @@
             <div class="form-group">
               <label>Default time column</label>
               <select name="default_time_column" class="time-col-select add-time-col-select">
-                <option value="">— pick from schema or type below —</option>
+                <option value="">— none —</option>
               </select>
-              <p class="form-note">Date/timestamp column used when grouping this metric by period.</p>
-            </div>
-          </div>
-          <div class="metric-meta-grid two">
-            <div class="form-group">
-              <label>Base table</label>
-              <input type="text" name="base_table" class="base-table-input"
-                placeholder="e.g. dbo.SalesOrders" autocomplete="off">
-              <p class="form-note">Primary table this metric reads from — used for column validation.</p>
-            </div>
-            <div class="form-group">
-              <label>Base entity</label>
-              <input type="text" name="base_entity" placeholder="e.g. Order, Customer">
-              <p class="form-note">Entity graph node this metric belongs to — enables dimension pickers.</p>
+              <p class="form-note">Date column used when grouping by period.</p>
             </div>
           </div>
 
@@ -264,21 +271,8 @@
               placeholder="SUM(NetProfit) * 100.0 / NULLIF(SUM(Revenue), 0)"></textarea>
             <div class="validate-result"></div>
             <p class="form-note">
-              For expressions, write only the aggregate formula. For full SQL, write a complete SELECT.
+              Expression: write only the aggregate formula. Full SQL: write a complete SELECT.
             </p>
-          </div>
-
-          <div class="metric-meta-grid two">
-            <div class="form-group">
-              <label>Required columns</label>
-              <input type="text" name="required_columns" placeholder="Revenue, NetProfit, CustomerID">
-              <p class="form-note">Exact columns the formula depends on.</p>
-            </div>
-            <div class="form-group">
-              <label>Allowed dimensions</label>
-              <input type="text" name="allowed_dimensions" placeholder="Customer, Segment, Date, Profit Center">
-              <p class="form-note">Dimensions users can group this metric by.</p>
-            </div>
           </div>
 
           <div class="form-group">
@@ -289,6 +283,39 @@
             <label>Example questions</label>
             <textarea name="example_questions" rows="2" placeholder="What is profit percentage by customer?&#10;Show net profit by segment."></textarea>
           </div>
+
+          <!-- Advanced (collapsed by default) -->
+          <details class="metric-advanced">
+            <summary class="metric-advanced-toggle">Advanced options</summary>
+            <div class="metric-advanced-body">
+              <div class="metric-meta-grid two">
+                <div class="form-group">
+                  <label>Required columns</label>
+                  <input type="text" name="required_columns" placeholder="Revenue, NetProfit, CustomerID">
+                  <p class="form-note">Exact columns the formula depends on (used in validation).</p>
+                </div>
+                <div class="form-group">
+                  <label>Allowed dimensions</label>
+                  <input type="text" name="allowed_dimensions" placeholder="Customer, Segment, Date">
+                  <p class="form-note">Dimensions users can group this metric by.</p>
+                </div>
+              </div>
+              <div class="metric-meta-grid two">
+                <div class="form-group">
+                  <label>Base table</label>
+                  <input type="text" name="base_table" class="base-table-input"
+                    placeholder="e.g. dbo.SalesOrders" autocomplete="off">
+                  <p class="form-note">Primary table — enables column validation.</p>
+                </div>
+                <div class="form-group">
+                  <label>Base entity</label>
+                  <input type="text" name="base_entity" placeholder="e.g. Order, Customer">
+                  <p class="form-note">Entity graph node — enables dimension pickers.</p>
+                </div>
+              </div>
+            </div>
+          </details>
+
           <button type="submit" class="btn btn-primary">Add formula</button>
         </div>
 
@@ -550,8 +577,10 @@ SUM(GrossMargin) + SUM(Rebates) - SUM(AllocatedCosts)
 </div>
 <div id="fn-overlay" style="display:none;position:fixed;inset:0;z-index:7999" onclick="closeFnHelper()"></div>
 
-<!-- Column suggestion dropdown -->
+<!-- Column suggestion dropdown (tag inputs: required_columns / allowed_dimensions) -->
 <div id="col-suggest"></div>
+<!-- ThoughtSpot-style formula autocomplete -->
+<div id="formula-col-suggest"></div>
 
 <script>
 (function(){
@@ -941,44 +970,89 @@ function _currentToken(editor){
   return m ? m[0] : "";
 }
 
+// ── ThoughtSpot-style formula autocomplete ────────────────────────────
+// Uses #formula-col-suggest (styled with .fcs-* classes)
+// Triggers on 1+ chars, also inside function parens like SUM(cu
+// Highlights matching prefix, shows table name + type badge
+
+function _fcsTypeClass(type){
+  var t = (type||"").toLowerCase();
+  if(t === "number" || t === "integer" || t === "float" || t === "decimal" || t === "numeric" || t === "bigint") return "num";
+  if(t === "date" || t === "datetime" || t === "timestamp" || t === "time") return "date";
+  return "text";
+}
+function _fcsTypeIcon(cls){
+  return cls === "num" ? "🔢" : cls === "date" ? "📅" : "📝";
+}
+function _fcsHighlight(colName, token){
+  // Highlight the matched prefix in the column name
+  if(!token) return escHtml(colName);
+  var lc = token.toLowerCase(), cl = colName.toLowerCase();
+  if(cl.startsWith(lc)){
+    return '<mark>'+escHtml(colName.slice(0,token.length))+'</mark>'+escHtml(colName.slice(token.length));
+  }
+  return escHtml(colName);
+}
+function _fcsCurrentToken(editor){
+  var pos  = editor.selectionStart || 0;
+  var text = editor.value.slice(0, pos);
+  // Match TABLE.COLUMN or bare COLUMN (also after open-paren for SUM(cu…)
+  var m = text.match(/[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?$/);
+  return m ? m[0] : "";
+}
+
 function _showSuggestions(editor, token){
-  var el = document.getElementById("col-suggest");
-  if(!_allColumns.length || token.length < 2){ if(el) el.style.display="none"; return; }
+  var el = document.getElementById("formula-col-suggest");
+  if(!_allColumns.length || token.length < 1){ if(el) el.style.display="none"; return; }
   var lc = token.toLowerCase();
   var matches;
   if(lc.includes(".")){
-    // TABLE.COL pattern — filter columns belonging to that table prefix
     var dotParts = lc.split(".");
     var tblPfx = dotParts[0], colPfx = dotParts[1] || "";
     matches = _allColumns.filter(function(c){
       return c.table.toLowerCase() === tblPfx && c.column.toLowerCase().startsWith(colPfx);
-    }).slice(0, 8);
+    }).slice(0, 10);
   } else {
-    matches = _allColumns.filter(function(c){
-      return c.column.toLowerCase().startsWith(lc) || c.column.toLowerCase().includes(lc);
-    }).slice(0, 8);
+    // Starts-with first, then contains — keep starts-with at top
+    var sw = _allColumns.filter(function(c){ return c.column.toLowerCase().startsWith(lc); });
+    var ct = _allColumns.filter(function(c){ return !c.column.toLowerCase().startsWith(lc) && c.column.toLowerCase().includes(lc); });
+    matches = sw.concat(ct).slice(0, 10);
   }
   if(!matches.length){ if(el) el.style.display="none"; return; }
   _suggestTarget = editor;
   _suggestIdx = -1;
+  // Use bare column name for non-ambiguous, TABLE.COL for ambiguous
   el.innerHTML = matches.map(function(c, i){
-    var label = _displayLabel(c);
-    var isDup = _dupCols.has(c.column) ? "1" : "0";
-    return '<div class="col-suggest-item" data-col="'+c.column+'" data-table="'+c.table+'" data-dup="'+isDup+'" data-idx="'+i+'">'
-      +'<span class="col-suggest-col">'+label+'</span>'
-      +'<span class="col-suggest-table">'+(isDup==="1" ? "" : c.table)+'</span>'
-      +'<span class="col-suggest-type">'+c.type+'</span></div>';
+    var isDup  = _dupCols.has(c.column);
+    var dispToken = lc.includes(".") ? (lc.split(".")[1]||"") : lc;
+    var highlighted = _fcsHighlight(c.column, dispToken);
+    var cls    = _fcsTypeClass(c.type);
+    var icon   = _fcsTypeIcon(cls);
+    var label  = isDup ? escHtml(c.table)+'.'+highlighted : highlighted;
+    return '<div class="fcs-item" data-col="'+escHtml(c.column)+'" data-table="'+escHtml(c.table)+'" data-dup="'+(isDup?"1":"0")+'" data-idx="'+i+'">'
+      +'<span class="fcs-col">'+label+'</span>'
+      +'<span class="fcs-tbl">'+(isDup ? "" : escHtml(c.table))+'</span>'
+      +'<span class="fcs-type '+cls+'">'+icon+' '+escHtml(c.type)+'</span>'
+      +'</div>';
   }).join("");
+
+  // Position below the textarea, left-aligned with it
   var rect = editor.getBoundingClientRect();
-  el.style.left    = rect.left+"px";
-  el.style.top     = (rect.bottom+2)+"px";
-  el.style.width   = Math.max(280, rect.width*0.6)+"px";
+  // Try to place just below the textarea; shift left if would overflow viewport
+  var dropW = Math.max(300, Math.min(400, rect.width));
+  var leftPos = rect.left;
+  if(leftPos + dropW > window.innerWidth - 8) leftPos = window.innerWidth - dropW - 8;
+  el.style.left    = leftPos+"px";
+  el.style.top     = (rect.bottom+4)+"px";
+  el.style.width   = dropW+"px";
   el.style.display = "block";
 }
 
 function _hideSuggestions(){
-  var el = document.getElementById("col-suggest");
-  if(el) el.style.display = "none";
+  var el1 = document.getElementById("formula-col-suggest");
+  if(el1) el1.style.display = "none";
+  var el2 = document.getElementById("col-suggest");
+  if(el2) el2.style.display = "none";
   _suggestIdx = -1; _suggestTarget = null;
 }
 
@@ -998,36 +1072,63 @@ function _insertSuggestion(bareColName, tableName, isDup){
   _hideSuggestions();
 }
 
-// Keyboard navigation for dropdown
+// Keyboard navigation for formula-col-suggest dropdown
 document.addEventListener("keydown", function(e){
-  var el = document.getElementById("col-suggest");
-  if(!el || el.style.display === "none") return;
-  var items = el.querySelectorAll(".col-suggest-item");
-  if(e.key === "ArrowDown"){ e.preventDefault(); _suggestIdx = Math.min(_suggestIdx+1, items.length-1); }
-  else if(e.key === "ArrowUp"){ e.preventDefault(); _suggestIdx = Math.max(_suggestIdx-1, 0); }
-  else if(e.key === "Enter" || e.key === "Tab"){
-    if(_suggestIdx >= 0){
-      var sel = items[_suggestIdx];
-      e.preventDefault();
-      _insertSuggestion(sel.dataset.col, sel.dataset.table, sel.dataset.dup === "1");
-      return;
+  var fcs = document.getElementById("formula-col-suggest");
+  var cs  = document.getElementById("col-suggest");
+  // Handle formula dropdown (ThoughtSpot-style)
+  if(fcs && fcs.style.display !== "none"){
+    var items = fcs.querySelectorAll(".fcs-item");
+    if(e.key === "ArrowDown"){ e.preventDefault(); _suggestIdx = Math.min(_suggestIdx+1, items.length-1); }
+    else if(e.key === "ArrowUp"){ e.preventDefault(); _suggestIdx = Math.max(_suggestIdx-1, 0); }
+    else if(e.key === "Enter" || e.key === "Tab"){
+      if(_suggestIdx >= 0){
+        var sel = items[_suggestIdx];
+        e.preventDefault();
+        _insertSuggestion(sel.dataset.col, sel.dataset.table, sel.dataset.dup === "1");
+        return;
+      }
+      _hideSuggestions();
     }
-    _hideSuggestions();
+    else if(e.key === "Escape"){ _hideSuggestions(); return; }
+    items.forEach(function(item, i){ item.classList.toggle("active", i === _suggestIdx); });
+    return;
   }
-  else if(e.key === "Escape"){ _hideSuggestions(); return; }
-  items.forEach(function(item, i){ item.classList.toggle("active", i === _suggestIdx); });
+  // Handle tag input dropdown (col-suggest)
+  if(cs && cs.style.display !== "none"){
+    var items2 = cs.querySelectorAll(".col-suggest-item");
+    if(e.key === "ArrowDown"){ e.preventDefault(); _suggestIdx = Math.min(_suggestIdx+1, items2.length-1); }
+    else if(e.key === "ArrowUp"){ e.preventDefault(); _suggestIdx = Math.max(_suggestIdx-1, 0); }
+    else if(e.key === "Enter" || e.key === "Tab"){
+      if(_suggestIdx >= 0){
+        var sel2 = items2[_suggestIdx];
+        e.preventDefault();
+        _insertSuggestion(sel2.dataset.col, sel2.dataset.table, sel2.dataset.dup === "1");
+        return;
+      }
+      _hideSuggestions();
+    }
+    else if(e.key === "Escape"){ _hideSuggestions(); return; }
+    items2.forEach(function(item, i){ item.classList.toggle("active", i === _suggestIdx); });
+  }
 });
 
 document.addEventListener("click", function(e){
-  // Column suggestion dropdown click
+  // ThoughtSpot formula dropdown click
+  var fcsItem = e.target.closest(".fcs-item");
+  if(fcsItem){ _insertSuggestion(fcsItem.dataset.col, fcsItem.dataset.table, fcsItem.dataset.dup === "1"); return; }
+  if(e.target.closest("#formula-col-suggest")) return;  // clicking inside dropdown but not on item
+  // Tag input dropdown click
   var item = e.target.closest(".col-suggest-item");
-  if(item){ _insertSuggestion(item.dataset.col, item.dataset.table, item.dataset.dup === "1"); return; }
-  if(!e.target.closest("#col-suggest")) _hideSuggestions();
-  // Tag input suggestion click
-  var tagItem = e.target.closest(".col-suggest-item[data-tag]");
-  if(tagItem && _suggestTarget){
-    _insertTagValue(_suggestTarget, tagItem.dataset.col);
+  if(item){
+    if(item.dataset.tag && _suggestTarget){
+      _insertTagValue(_suggestTarget, item.dataset.col);
+    } else {
+      _insertSuggestion(item.dataset.col, item.dataset.table, item.dataset.dup === "1");
+    }
+    return;
   }
+  if(!e.target.closest("#col-suggest")) _hideSuggestions();
 });
 
 // Tag-style suggestions for required_columns / allowed_dimensions
