@@ -53,6 +53,18 @@
 .review-actions{grid-column:1/-1;display:flex;justify-content:space-between;gap:.8rem;align-items:center;flex-wrap:wrap}
 .review-note{font-size:11px;color:var(--text-muted)}
 @media(max-width:900px){.semantic-hero{flex-direction:column}.semantic-grid{grid-template-columns:1fr}.table-list{position:static}.review-panel{grid-template-columns:1fr}.field-table{display:block;overflow-x:auto}}
+/* ── Semantic layer search ── */
+.sl-search-wrap{position:relative;margin-bottom:1rem}
+.sl-search-wrap svg{position:absolute;left:11px;top:50%;transform:translateY(-50%);color:var(--text-muted);pointer-events:none;flex-shrink:0}
+.sl-search{width:100%;padding:.65rem .85rem .65rem 2.25rem;border:1.5px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--text);font-size:13px;font-weight:500;transition:border-color .15s,box-shadow .15s}
+.sl-search:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(13,115,119,.12);outline:none}
+.sl-search::placeholder{color:var(--text-muted)}
+.sl-search-meta{display:flex;align-items:center;gap:.7rem;margin-bottom:.75rem;min-height:20px}
+.sl-count{font-size:11px;font-weight:700;color:var(--text-muted)}
+.sl-count.has-results{color:var(--primary)}
+.sl-no-results{display:none;padding:3rem;text-align:center;color:var(--text-muted);font-size:13px}
+.sl-no-results.visible{display:block}
+.sl-match mark{background:rgba(13,115,119,.18);color:var(--text);border-radius:2px;padding:0 2px}
 </style>
 {% endblock %}
 {% block content %}
@@ -90,6 +102,15 @@
   {% endfor %}
 </nav>
 
+<div class="sl-search-wrap">
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+  <input type="search" id="slSearch" class="sl-search" placeholder="Search tables and fields…" autocomplete="off" spellcheck="false">
+</div>
+<div class="sl-search-meta">
+  <span class="sl-count" id="slCount"></span>
+</div>
+<div class="sl-no-results" id="slNoResults">No tables or fields match <strong id="slNoResultsQuery"></strong>. Try a shorter term or clear the search.</div>
+
 <div class="semantic-grid">
   <aside class="card table-list">
     <div class="card-header"><h2>Tables in {{ selected_schema }}</h2></div>
@@ -109,7 +130,7 @@
   <main>
     {% for table in visible_tables %}
     {% set table_loop = loop.index0 %}
-    <section class="card semantic-table-card" id="table-{{ loop.index }}">
+    <section class="card semantic-table-card" id="table-{{ loop.index }}" data-table-name="{{ table.table|lower }}" data-table-fqn="{{ table.fqn|lower }}" data-table-schema="{{ table.schema|lower }}">
       <div class="card-header table-head">
         <div>
           <h2>{{ table.schema }}.{{ table.table }}</h2>
@@ -198,6 +219,104 @@ function _setConfidenceClass(pill, value){
   pill.classList.add(value >= 85 ? 'high' : (value >= 65 ? 'med' : 'low'));
   pill.textContent = value + '%';
 }
+// ── Semantic layer search ─────────────────────────────────────────────────────
+(function(){
+  var input     = document.getElementById('slSearch');
+  var countEl   = document.getElementById('slCount');
+  var noResults = document.getElementById('slNoResults');
+  var noQuery   = document.getElementById('slNoResultsQuery');
+  if (!input) return;
+
+  // Cache field text content once so we don't re-query the DOM on every keystroke
+  var fieldCache = [];
+  document.querySelectorAll('.semantic-field-row').forEach(function(row){
+    var reviewToggle = row.querySelector('.review-toggle');
+    var reviewTarget = reviewToggle ? reviewToggle.dataset.reviewTarget : null;
+    fieldCache.push({
+      row: row,
+      reviewRowId: reviewTarget,
+      colName:  (row.dataset.columnName || '').toLowerCase(),
+      meaning:  (row.querySelector('.field-meaning')  ? row.querySelector('.field-meaning').textContent  : '').toLowerCase(),
+      useCase:  (row.querySelector('.field-use-case') ? row.querySelector('.field-use-case').textContent : '').toLowerCase(),
+      fieldType:(row.querySelector('.field-type')     ? row.querySelector('.field-type').textContent     : '').toLowerCase(),
+    });
+  });
+
+  function doSearch(){
+    var q = input.value.trim().toLowerCase();
+    var visibleCards = 0;
+    var totalFields  = 0;
+
+    document.querySelectorAll('.semantic-table-card').forEach(function(card){
+      var tName   = (card.dataset.tableName   || '');
+      var tFqn    = (card.dataset.tableFqn    || '');
+      var tSchema = (card.dataset.tableSchema || '');
+      var tableHits = !q || tName.includes(q) || tFqn.includes(q) || tSchema.includes(q);
+
+      var cardFieldCount = 0;
+
+      // Show/hide each field row
+      fieldCache.forEach(function(fc){
+        if (!card.contains(fc.row)) return;
+        var match = tableHits
+          || fc.colName.includes(q)
+          || fc.meaning.includes(q)
+          || fc.useCase.includes(q)
+          || fc.fieldType.includes(q);
+
+        fc.row.style.display = match ? '' : 'none';
+
+        // Keep the review row in sync (hide it when field is hidden so no orphan forms)
+        if (fc.reviewRowId){
+          var rr = document.getElementById(fc.reviewRowId);
+          if (rr) rr.style.display = match ? rr.classList.contains('open') ? '' : 'none' : 'none';
+        }
+        if (match) cardFieldCount++;
+      });
+
+      var cardVisible = !q || cardFieldCount > 0;
+      card.style.display = cardVisible ? '' : 'none';
+      if (cardVisible){ visibleCards++; totalFields += cardFieldCount; }
+    });
+
+    // Sync sidebar links
+    document.querySelectorAll('.table-link').forEach(function(link){
+      var targetId = (link.getAttribute('href') || '').replace('#','');
+      var card     = targetId ? document.getElementById(targetId) : null;
+      link.style.display = (!card || card.style.display === 'none') ? 'none' : '';
+    });
+
+    // Update count badge
+    if (!q){
+      countEl.textContent = '';
+      countEl.className = 'sl-count';
+      noResults.classList.remove('visible');
+    } else {
+      countEl.textContent = visibleCards + ' table' + (visibleCards !== 1 ? 's' : '') + ', ' + totalFields + ' field' + (totalFields !== 1 ? 's' : '') + ' matched';
+      countEl.className   = 'sl-count has-results';
+      noResults.classList.toggle('visible', visibleCards === 0);
+      if (noQuery) noQuery.textContent = '"' + input.value.trim() + '"';
+    }
+  }
+
+  input.addEventListener('input', doSearch);
+
+  // Clear on Escape
+  input.addEventListener('keydown', function(e){
+    if (e.key === 'Escape'){ input.value = ''; doSearch(); }
+  });
+
+  // Global shortcut: / focuses the search bar (like GitHub)
+  document.addEventListener('keydown', function(e){
+    if (e.key === '/' && document.activeElement !== input
+        && !['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName)){
+      e.preventDefault();
+      input.focus();
+      input.select();
+    }
+  });
+})();
+
 window.addEventListener('qb-semantic-feedback-reviewed', function(event){
   const msg = event.detail || {};
   document.querySelectorAll('.semantic-field-row').forEach(function(row){
