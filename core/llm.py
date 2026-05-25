@@ -570,7 +570,7 @@ def build_sql_system_prompt(
         base = base + (
             "\n\n## Entity graph — pre-resolved JOIN structure\n"
             "The following FROM + JOIN structure has been resolved deterministically "
-            "from the business entity graph. You MUST use it exactly as shown. "
+            "from the business entity graph. You MUST use this exact structure as shown. "
             "Do NOT change table names, aliases, JOIN/ON conditions, or any static "
             "filters already present in the ON or WHERE clauses — those are permanent "
             "business rules set by the admin.\n"
