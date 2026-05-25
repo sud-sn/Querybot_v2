@@ -2909,10 +2909,14 @@ async def metric_deprecate(request: Request, account_id: str, metric_id: int):
 
 @router.post("/clients/{account_id}/metrics/{metric_id}/delete")
 async def metric_delete(request: Request, account_id: str, metric_id: int):
-    """Hard-delete. Only use for metrics created by mistake. Enforces account ownership."""
+    """Hard-delete. Enforces account ownership. Returns JSON when called via fetch."""
     if not _is_auth(request):
         return RedirectResponse("/admin/login", status_code=303)
     store.delete_metric(metric_id, account_id)
+    # Fetch callers (X-Requested-With: fetch) expect JSON, not a redirect
+    if request.headers.get("X-Requested-With") == "fetch":
+        from fastapi.responses import JSONResponse as _JSON
+        return _JSON({"ok": True})
     return RedirectResponse(f"/admin/clients/{account_id}/metrics", status_code=303)
 
 

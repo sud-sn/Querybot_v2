@@ -3,9 +3,11 @@
 {% block head %}
 <style>
 /* ── Shell layout ──────────────────────────────────────────────────────────── */
-.graph-shell{display:grid;grid-template-columns:220px 1fr 300px;height:calc(100vh - 56px);overflow:hidden;gap:0}
-.graph-sidebar,.graph-detail{overflow-y:auto;border-right:1px solid var(--border);background:var(--surface);display:flex;flex-direction:column}
-.graph-detail{border-right:none;border-left:1px solid var(--border)}
+.graph-shell{display:grid;grid-template-columns:220px 1fr;height:calc(100vh - 56px);overflow:hidden;gap:0;position:relative}
+.graph-sidebar{overflow-y:auto;border-right:1px solid var(--border);background:var(--surface);display:flex;flex-direction:column}
+/* ── Detail panel — slides in from right as overlay ──────────────────────── */
+.graph-detail{display:flex;flex-direction:column;overflow:hidden;background:var(--surface);border-left:1px solid var(--border);position:absolute;right:0;top:0;bottom:0;width:300px;z-index:50;transform:translateX(calc(100% + 1px));transition:transform .22s ease,box-shadow .22s ease;box-shadow:none}
+.graph-shell.panel-open .graph-detail{transform:translateX(0);box-shadow:-4px 0 20px rgba(0,0,0,.12)}
 .graph-canvas-wrap{display:flex;flex-direction:column;background:var(--surface-2);overflow:hidden;position:relative}
 
 /* ── Sidebar ───────────────────────────────────────────────────────────────── */
@@ -146,6 +148,9 @@
 .gd-delete-btn{background:var(--red-light,#FEE2E2);color:var(--red,#DC2626);border:1px solid color-mix(in srgb,var(--red) 25%,transparent);border-radius:6px;padding:6px 14px;font-size:11px;font-weight:700;cursor:pointer;width:100%;margin-top:.4rem}
 .gd-delete-btn:hover{opacity:.8}
 .gd-placeholder{padding:2rem .75rem;color:var(--text-muted);font-size:12px;text-align:center;line-height:1.7}
+/* ── Detail panel close button ───────────────────────────────────────────── */
+.gd-close-btn{background:none;border:none;cursor:pointer;color:var(--text-muted);font-size:14px;padding:2px 5px;border-radius:4px;line-height:1;transition:all .12s;flex-shrink:0}
+.gd-close-btn:hover{background:var(--surface-2);color:var(--text)}
 .prop-row{display:flex;align-items:center;gap:.4rem;padding:.35rem 0;border-bottom:1px dashed var(--border);font-size:11px}
 .prop-row:last-child{border-bottom:none}
 .prop-col{font-family:Consolas,monospace;font-weight:700;color:var(--text);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
@@ -519,10 +524,13 @@
 </main>
 
 <!-- ══ DETAIL PANEL ══════════════════════════════════════════════════════════ -->
-<aside class="graph-detail" style="display:flex;flex-direction:column;overflow:hidden">
+<aside class="graph-detail">
   <div class="gd-head" id="detail-head">
     <span>Properties</span>
-    <span id="sync-badge" class="sync-badge" style="display:none">Synced to semantic layer</span>
+    <span style="display:flex;align-items:center;gap:.4rem">
+      <span id="sync-badge" class="sync-badge" style="display:none">Synced to semantic layer</span>
+      <button class="gd-close-btn" onclick="closeDetailPanel()" title="Close panel (Escape)">‹</button>
+    </span>
   </div>
   <div id="detail-tab-bar" class="gd-tab-bar" style="display:none"></div>
   <div id="detail-content" style="overflow-y:auto;flex:1">
@@ -1407,6 +1415,7 @@ window.selectEntity = function(name) {
   const sib = document.getElementById('sib-' + name.replace(/ /g,'_'));
   if (sib) sib.classList.add('selected');
   document.getElementById('del-btn').style.display = '';
+  document.querySelector('.graph-shell').classList.add('panel-open');
   renderGraph();
   renderEntityDetail(name);
 };
@@ -1417,17 +1426,30 @@ window.selectRel = function(id) {
   const sib = document.getElementById('sib-rel-' + id);
   if (sib) sib.classList.add('selected');
   document.getElementById('del-btn').style.display = '';
+  document.querySelector('.graph-shell').classList.add('panel-open');
   renderGraph();
   renderRelDetail(id);
 };
 
 function resetDetail() {
+  document.querySelector('.graph-shell').classList.remove('panel-open');
   document.getElementById('detail-head').firstChild.textContent = 'Properties';
   document.getElementById('sync-badge').style.display = 'none';
   const tb = document.getElementById('detail-tab-bar');
   if (tb) { tb.style.display = 'none'; tb.innerHTML = ''; }
   document.getElementById('detail-content').innerHTML =
     '<div class="gd-placeholder">Select an entity or relationship to edit its properties.</div>';
+}
+
+// Close panel without deselecting — used by the ‹ button.
+// Keeps selectedEntity/selectedRelId so a subsequent canvas click
+// on the same node re-opens without a full reload.
+function closeDetailPanel() {
+  selectedEntity = null; selectedRelId = null;
+  document.querySelectorAll('.gs-entity-item,.gs-rel-item').forEach(el => el.classList.remove('selected'));
+  document.getElementById('del-btn').style.display = 'none';
+  renderGraph();
+  resetDetail();
 }
 
 // ════════════════════════════════════════════════════════════════════════════
