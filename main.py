@@ -328,7 +328,7 @@ def _build_zero_row_message(
         f"- Detected graph entities: {entities}\n\n"
         "Possible RCA:\n"
         f"{_zero_row_rca_hints(question, graph_ctx)}\n\n"
-        f"SQL tried:\n{_sql_preview(sql)}"
+        f"SQL tried:\n```sql\n{_sql_preview(sql)}\n```"
     )
 
 
@@ -1263,7 +1263,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
         await adapter.send_message(event,
             f"❌ Database error — could not execute after retry.\n"
             f"Error: {exec_error}\n\n"
-            f"SQL tried:\n{sql_preview}"
+            f"SQL tried:\n```sql\n{sql_preview}\n```"
         )
         return
 
