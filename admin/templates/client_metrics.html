@@ -601,6 +601,14 @@ SUM(GrossMargin) + SUM(Rebates) - SUM(AllocatedCosts)
 (function(){
 "use strict";
 
+// ── Escape transformed ancestor (.page has translateY(0) from qb-fadeUp animation
+//    fill mode, which makes position:fixed relative to .page, not the viewport).
+//    Moving both dropdowns to <body> ensures position:fixed uses viewport coords. ──
+(function(){
+  var ids = ["formula-col-suggest","col-suggest"];
+  ids.forEach(function(id){ var el=document.getElementById(id); if(el) document.body.appendChild(el); });
+})();
+
 // ══════════════════════════════════════════════════════════════════════
 // DB-AWARE FUNCTION CATALOGUE
 // Each entry: { name, tpl(db), desc, bucket, dbs? }
