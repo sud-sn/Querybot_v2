@@ -242,6 +242,28 @@ def find_ambiguous_term(
 # Prompt injection — for SQL retry after clarification
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _metric_synonym_set(account_id: str) -> set[str]:
+    """
+    Return a lower-cased set of all name + synonym phrases from active metrics
+    for account_id.  Used by build_term_injection to suppress business-term
+    entries that collide with a registered metric, so the metric always wins.
+    """
+    try:
+        from store.config_store import list_metrics as _list_metrics
+    except ImportError:
+        return set()
+    phrases: set[str] = set()
+    for m in _list_metrics(account_id, active_only=True):
+        name = (m.get("name") or "").strip().lower()
+        if name:
+            phrases.add(name)
+        for s in (m.get("synonyms") or "").split(","):
+            s = s.strip().lower()
+            if s:
+                phrases.add(s)
+    return phrases
+
+
 def build_term_injection(
     terms_or_account_id,
     question: Optional[str] = None,
@@ -250,26 +272,38 @@ def build_term_injection(
 ) -> str:
     """
     Build a compact SQL-prompt block from resolved business terms.
-    
+
     Two call shapes are accepted:
-    
+
     1. build_term_injection(terms_list)
        Pass a pre-fetched list of term dicts (e.g. from match_terms_in_question).
-    
+
     2. build_term_injection(account_id, question, allowed_tables)
        Convenience form — does the matching internally.
-    
+
     This is appended to the SQL generation system prompt. It tells the
     LLM exactly what SQL fragment to use for each matched term, so the
     model doesn't have to guess.
+
+    Metric-formula priority guarantee
+    ──────────────────────────────────
+    Any business term whose canonical term name OR any alias exactly matches
+    a metric name or synonym is silently suppressed here.  The metric formula
+    context block (APPROVED METRIC FORMULAS) is always injected separately and
+    must take precedence — see list_metric_formula_context / _format_metric_formula_context.
+    This prevents the LLM from using a raw column synonym when the admin has
+    registered a computed formula for the same concept.
     """
+    account_id: Optional[str] = None
+
     # Disambiguate call shape
     if isinstance(terms_or_account_id, str):
         # Shape 2: (account_id, question, allowed_tables)
         if not question:
             return ""
+        account_id = terms_or_account_id
         terms = match_terms_in_question(
-            terms_or_account_id, question, allowed_tables,
+            account_id, question, allowed_tables,
         )
     else:
         # Shape 1: terms_list
@@ -277,11 +311,32 @@ def build_term_injection(
 
     if not terms:
         return ""
+
+    # ── Metric-collision guard ──────────────────────────────────────────────
+    # Build the metric synonym set once per call (only when we have account_id)
+    metric_phrases: set[str] = _metric_synonym_set(account_id) if account_id else set()
+
+    def _term_collides_with_metric(t: dict) -> bool:
+        """Return True if this business term overlaps with any metric synonym."""
+        if not metric_phrases:
+            return False
+        all_forms = [t.get("term", "")]
+        for alias in (t.get("aliases") or t.get("synonyms") or "").split(","):
+            alias = alias.strip()
+            if alias:
+                all_forms.append(alias)
+        return any(f.lower() in metric_phrases for f in all_forms if f)
+
+    filtered_terms = [t for t in terms if not _term_collides_with_metric(t)]
+    # ──────────────────────────────────────────────────────────────────────────
+
+    if not filtered_terms:
+        return ""
     lines = [
         "BUSINESS TERM DEFINITIONS (use these EXACT expressions when the "
         "user's question mentions these terms — do not substitute your own):"
     ]
-    for t in terms[:max_terms]:
+    for t in filtered_terms[:max_terms]:
         expr = (t.get("canonical_expression") or "").strip()
         if not expr:
             continue

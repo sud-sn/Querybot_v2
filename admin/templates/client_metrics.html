@@ -139,6 +139,13 @@
 .fcs-type.num{background:#EFF6FF;color:#1D4ED8;border-color:#BFDBFE}
 .fcs-type.date{background:#FFF7ED;color:#C2410C;border-color:#FED7AA}
 .fcs-type.text{background:#F0FFF4;color:#065F46;border-color:#A7F3D0}
+/* ── Synonym collision warning ──────────────────────────────────────── */
+.collision-warn{display:none;margin-top:.35rem;padding:5px 9px;border-radius:5px;font-size:11px;line-height:1.5;
+  background:color-mix(in srgb,var(--amber,#d69e2e) 10%,var(--surface));
+  border:1px solid color-mix(in srgb,var(--amber,#d69e2e) 28%,transparent);
+  color:color-mix(in srgb,var(--amber,#d69e2e) 80%,#222)}
+.collision-warn.show{display:block}
+.collision-warn strong{font-weight:800}
 /* ── Status badges ──────────────────────────────────────────────────── */
 .status-badge{display:inline-flex;align-items:center;font-size:10px;font-weight:800;padding:2px 8px;border-radius:999px;text-transform:uppercase;letter-spacing:.04em;border:1px solid transparent}
 .status-badge.draft{background:color-mix(in srgb,var(--amber,#d69e2e) 14%,var(--surface));color:color-mix(in srgb,var(--amber,#d69e2e) 80%,#222);border-color:color-mix(in srgb,var(--amber,#d69e2e) 25%,transparent)}
@@ -205,13 +212,16 @@
           <div class="form-grid">
             <div class="form-group">
               <label>Metric name *</label>
-              <input type="text" name="name" required placeholder="e.g. profit_percentage">
+              <input type="text" name="name" required placeholder="e.g. profit_percentage"
+                oninput="checkSynonymCollision(this.closest('.metric-form'))">
               <p class="form-note">Use a stable name the team will recognize.</p>
             </div>
             <div class="form-group">
               <label>Synonyms</label>
-              <input type="text" name="synonyms" placeholder="profit %, profit margin, margin percentage">
+              <input type="text" name="synonyms" placeholder="profit %, profit margin, margin percentage"
+                oninput="checkSynonymCollision(this.closest('.metric-form'))">
               <p class="form-note">Comma separated words users may type.</p>
+              <div class="collision-warn" id="add-collision-warn"></div>
             </div>
           </div>
 
@@ -452,14 +462,18 @@ SUM(GrossMargin) + SUM(Rebates) - SUM(AllocatedCosts)
     <!-- Edit form (hidden) -->
     <div id="edit-{{ m.id }}" style="display:none;margin-top:1rem;border-top:1px solid var(--border);padding-top:1rem">
       <form method="post" action="/admin/clients/{{ client.account_id }}/metrics/{{ m.id }}/update" class="metric-form">
+        <input type="hidden" name="skip_id" value="{{ m.id }}">
         <div class="metric-meta-grid two" style="margin-bottom:.75rem">
           <div class="form-group">
             <label>Metric name *</label>
-            <input type="text" name="name" value="{{ m.name }}" required>
+            <input type="text" name="name" value="{{ m.name }}" required
+              oninput="checkSynonymCollision(this.closest('.metric-form'))">
           </div>
           <div class="form-group">
             <label>Synonyms</label>
-            <input type="text" name="synonyms" value="{{ m.synonyms }}">
+            <input type="text" name="synonyms" value="{{ m.synonyms }}"
+              oninput="checkSynonymCollision(this.closest('.metric-form'))">
+            <div class="collision-warn" id="edit-collision-warn-{{ m.id }}"></div>
           </div>
         </div>
         <div class="metric-meta-grid" style="margin-bottom:.75rem">
@@ -1596,6 +1610,58 @@ window.exportMetricsJSON = function(){
 buildPopover();
 document.querySelectorAll(".formula-editor").forEach(updateFormulaHints);
 
+})();
+
+// ══════════════════════════════════════════════════════════════════════
+// SYNONYM COLLISION CHECKER
+// Runs on blur of name/synonyms fields. Calls /metrics/check-collision
+// and shows an inline amber warning if any phrase matches a business term.
+// ══════════════════════════════════════════════════════════════════════
+(function(){
+  var _collisionTimer = null;
+
+  window.checkSynonymCollision = function(form) {
+    if (!form) return;
+    clearTimeout(_collisionTimer);
+    _collisionTimer = setTimeout(function(){ _runCheck(form); }, 450);
+  };
+
+  function _runCheck(form) {
+    var nameEl   = form.querySelector('[name="name"]');
+    var synEl    = form.querySelector('[name="synonyms"]');
+    var skipEl   = form.querySelector('[name="skip_id"]');
+    var warnEl   = form.querySelector('.collision-warn');
+    if (!warnEl) return;
+
+    var name    = (nameEl  ? nameEl.value.trim()  : "");
+    var syns    = (synEl   ? synEl.value.trim()   : "");
+    var skipId  = (skipEl  ? skipEl.value.trim()  : "0");
+    var allPhrases = [name].concat(syns.split(",").map(function(s){ return s.trim(); }))
+                           .filter(Boolean).join(",");
+    if (!allPhrases) { warnEl.className="collision-warn"; warnEl.innerHTML=""; return; }
+
+    var m = location.pathname.match(/\/clients\/([^/]+)\//);
+    if (!m) return;
+    var url = "/admin/clients/"+m[1]+"/metrics/check-collision?phrases="+encodeURIComponent(allPhrases)
+              +(skipId && skipId!=="0" ? "&skip_id="+skipId : "");
+
+    fetch(url).then(function(r){ return r.json(); }).then(function(data){
+      if (!data.collisions || !data.collisions.length) {
+        warnEl.className = "collision-warn";
+        warnEl.innerHTML = "";
+        return;
+      }
+      var msgs = data.collisions.map(function(c){
+        return "<strong>\""+escHtml2(c.metric_phrase)+"\"</strong> matches business term <strong>\""+escHtml2(c.term)+"\"</strong>"
+             + (c.term_aliases ? " (aliases: "+escHtml2(c.term_aliases)+")" : "")
+             + ". The metric formula will take precedence in queries, but consider removing the term alias to avoid confusion.";
+      });
+      warnEl.className = "collision-warn show";
+      warnEl.innerHTML = "⚠️ Synonym collision detected:<br>" + msgs.join("<br>");
+    }).catch(function(){});
+  }
+
+  function escHtml2(s){ return (s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
 })();
 </script>
 {% endblock %}
