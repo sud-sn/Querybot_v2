@@ -187,6 +187,7 @@ def build_sql_system_prompt(
     table_context: str,
     conversation_history: list | None = None,
     graph_context: dict | None = None,
+    semantic_plan: dict | None = None,
 ) -> str:
     """System prompt for SQL generation — used on every user query.
 
@@ -606,6 +607,20 @@ def build_sql_system_prompt(
             "```sql\n" + skeleton + "\n```\n\n"
             + where_instruction + " Do not add or remove JOINs." + anti_join_instruction
         )
+    if semantic_plan and semantic_plan.get("enabled") and semantic_plan.get("fields"):
+        try:
+            from core.semantic_planner import format_semantic_field_plan
+            plan_text = format_semantic_field_plan(semantic_plan, db_type)
+        except Exception:
+            plan_text = ""
+        if plan_text:
+            base = base + (
+                "\n\n" + plan_text + "\n\n"
+                "FIELD PLAN RULE: the mapped fields above are deterministic schema-derived "
+                "bindings. Use the listed table.column pairs exactly. If the query requires "
+                "CTEs, place the listed joins and source fields in the base CTE. If you cannot "
+                "use the plan with the available schema, return CANNOT_GENERATE."
+            )
     return base
 
 

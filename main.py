@@ -43,6 +43,7 @@ from core.llm_audit import llm_audit_scope, make_llm_audit_request_id
 from core.result_cache import result_cache
 from core.query_router import should_route_to_result_cache, build_duckdb_system_prompt
 from core.duckdb_sql_validator import validate_duckdb_result_sql
+from core.semantic_planner import build_semantic_field_plan
 from admin import router as admin_router
 from portal import router as portal_router
 
@@ -920,10 +921,43 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
         except Exception as _mf_exc:
             log.debug("Metric formula table coverage skipped: %s", _mf_exc)
 
+    _semantic_plan = {}
+    try:
+        _semantic_plan = build_semantic_field_plan(
+            question,
+            all_columns,
+            query_scope_tables,
+        )
+        if _semantic_plan.get("enabled"):
+            _trace_step(
+                trace_id,
+                "semantic_field_plan",
+                output_summary={
+                    "fields": [
+                        f"{f.get('term')}={f.get('table')}.{f.get('column')}"
+                        for f in _semantic_plan.get("fields", [])
+                    ],
+                    "joins": len(_semantic_plan.get("joins") or []),
+                },
+            )
+            log.info(
+                "Semantic field plan for %s: fields=%s joins=%d",
+                account_id,
+                [
+                    f"{f.get('term')}={f.get('table')}.{f.get('column')}"
+                    for f in _semantic_plan.get("fields", [])
+                ],
+                len(_semantic_plan.get("joins") or []),
+            )
+    except Exception as _sp_exc:
+        _semantic_plan = {}
+        log.debug("Semantic field planning skipped: %s", _sp_exc)
+
     system = build_sql_system_prompt(
         db_cfg["db_type"], context_with_terms,
         conversation_history=_conv_history or None,
         graph_context=_graph_ctx or None,
+        semantic_plan=_semantic_plan or None,
     )
     try:
         await _send_live_stage(adapter, event, "generating_sql", "Generating query", "Translating the business question into SQL.")
@@ -1045,7 +1079,12 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
 
     await _send_live_stage(adapter, event, "validating_sql", "Checking query safety", "Verifying table access, structure, and execution safety.")
     retry_count = 0
-    semantic_context = {"intent": query_intent, "question": question, "graph_context": _graph_ctx}
+    semantic_context = {
+        "intent": query_intent,
+        "question": question,
+        "graph_context": _graph_ctx,
+        "semantic_plan": _semantic_plan,
+    }
     ok, reason, code = validate_sql(
         sql, all_known, db_cfg["db_type"], query_scope_tables, all_columns, semantic_context
     )
@@ -1077,7 +1116,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
     else:
         last_reason, last_code = reason, code
 
-    retryable = (not ok and code in ("unknown_table", "unknown_column", "date_key_format", "anti_join_shape", "parse")) or (exec_error is not None)
+    retryable = (not ok and code in ("unknown_table", "unknown_column", "date_key_format", "anti_join_shape", "field_plan_mismatch", "parse")) or (exec_error is not None)
 
     if retryable:
         if exec_error is not None:
@@ -1134,6 +1173,13 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                     "- Convert integer YYYYMMDD date keys before FORMAT/YEAR/MONTH/DATEPART.\n"
                     "- For Azure SQL use TRY_CONVERT(date, CONVERT(varchar(8), alias.DATE_KEY_COL), 112).\n"
                 )
+            elif last_code == "field_plan_mismatch":
+                validation_repair_note = (
+                    "\nSEMANTIC FIELD PLAN REPAIR RULE:\n"
+                    "- The SQL ignored one or more deterministic field-source mappings.\n"
+                    "- Use the exact table.column pairs and required joins from the Semantic field-source plan.\n"
+                    "- Do not move mapped fields to another table and do not remove underscores from column names.\n"
+                )
             retry_user = (
                 f"The following SQL failed validation with: {last_reason}\n"
                 f"SQL: {sql}\n\n"
@@ -1155,7 +1201,12 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                 component="sql_repair",
             ):
                 sql_retry, _, _ = await llm_complete(
-                    build_sql_system_prompt(db_cfg["db_type"], context_with_terms),
+                    build_sql_system_prompt(
+                        db_cfg["db_type"],
+                        context_with_terms,
+                        graph_context=_graph_ctx or None,
+                        semantic_plan=_semantic_plan or None,
+                    ),
                     retry_user, provider, model, api_key,
                     max_tokens=512, **az_kwargs,
                 )
