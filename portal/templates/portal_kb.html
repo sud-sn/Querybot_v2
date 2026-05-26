@@ -168,7 +168,7 @@
               <td>
                 <span class="confidence-pill field-confidence {% if field.confidence >= 85 %}high{% elif field.confidence >= 65 %}med{% else %}low{% endif %}">{{ field.confidence }}%</span>
               </td>
-              <td><button type="button" class="review-toggle" data-review-target="{{ row_id }}" onclick="toggleReview(this.dataset.reviewTarget)">Suggest edit</button></td>
+              <td><button type="button" class="review-toggle" data-review-target="{{ row_id }}" aria-expanded="false" onclick="toggleReview(this.dataset.reviewTarget, this)">Suggest edit</button></td>
             </tr>
             <tr class="review-row" id="{{ row_id }}">
               <td colspan="5">
@@ -205,10 +205,20 @@
 {% endif %}
 
 <script>
-function toggleReview(id){
+function _syncReviewRowDisplay(row){
+  if (!row) return;
+  row.style.display = row.classList.contains('open') ? 'table-row' : 'none';
+}
+function toggleReview(id, btn){
   const row = document.getElementById(id);
   if (!row) return;
   row.classList.toggle('open');
+  _syncReviewRowDisplay(row);
+  const isOpen = row.classList.contains('open');
+  if (btn){
+    btn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+    btn.textContent = isOpen ? 'Close edit' : 'Suggest edit';
+  }
 }
 function _semanticKey(value){
   return String(value || '').toUpperCase();
@@ -269,7 +279,13 @@ function _setConfidenceClass(pill, value){
         // Keep the review row in sync (hide it when field is hidden so no orphan forms)
         if (fc.reviewRowId){
           var rr = document.getElementById(fc.reviewRowId);
-          if (rr) rr.style.display = match ? rr.classList.contains('open') ? '' : 'none' : 'none';
+          if (rr) {
+            if (!match) {
+              rr.style.display = 'none';
+            } else {
+              _syncReviewRowDisplay(rr);
+            }
+          }
         }
         if (match) cardFieldCount++;
       });
