@@ -178,6 +178,18 @@
 .validate-result.ok{background:color-mix(in srgb,var(--green,#38a169) 10%,var(--surface));border-color:color-mix(in srgb,var(--green,#38a169) 22%,transparent);color:color-mix(in srgb,var(--green,#38a169) 80%,#222)}
 .validate-result.fail{background:color-mix(in srgb,var(--red,#e53e3e) 10%,var(--surface));border-color:color-mix(in srgb,var(--red,#e53e3e) 22%,transparent);color:color-mix(in srgb,var(--red,#e53e3e) 80%,#222)}
 .validate-result.warn{background:color-mix(in srgb,var(--amber,#d69e2e) 8%,var(--surface));border-color:color-mix(in srgb,var(--amber,#d69e2e) 22%,transparent);color:color-mix(in srgb,var(--amber,#d69e2e) 80%,#222)}
+.metric-builder{margin:.8rem 0;border:1px solid var(--border);border-radius:var(--radius-sm,5px);background:var(--surface-2);overflow:hidden}
+.metric-builder-head{padding:.55rem .75rem;display:flex;align-items:center;justify-content:space-between;gap:.75rem;border-bottom:1px solid var(--border)}
+.metric-builder-head label{display:flex;align-items:center;gap:.45rem;font-size:12px;font-weight:800;color:var(--text)}
+.metric-builder-body{display:none;padding:.75rem}
+.metric-builder.enabled .metric-builder-body{display:block}
+.metric-builder-grid{display:grid;grid-template-columns:130px minmax(160px,1fr);gap:.6rem;margin-bottom:.7rem}
+.metric-builder select,.metric-builder input{width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);font-size:12px}
+.metric-filter-row{display:grid;grid-template-columns:minmax(145px,1fr) 150px minmax(140px,1fr) 34px;gap:.45rem;margin:.4rem 0;align-items:center}
+.metric-filter-remove{height:31px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text-muted);cursor:pointer;font-weight:800}
+.metric-filter-remove:hover{color:var(--red,#DC2626);border-color:color-mix(in srgb,var(--red,#DC2626) 35%,var(--border))}
+.metric-builder-preview{font-family:Consolas,monospace;font-size:11px;background:var(--surface);border:1px dashed var(--border-strong);border-radius:5px;padding:.55rem;margin-top:.55rem;white-space:pre-wrap;color:var(--text-soft)}
+@media(max-width:700px){.metric-builder-grid,.metric-filter-row{grid-template-columns:1fr}.metric-filter-remove{width:100%}}
 </style>
 <!-- Pass db_type to JS -->
 <script>window._qbDbType = "{{ db_type | default('azure_sql') }}";</script>
@@ -279,6 +291,36 @@
                 <option value="">— none —</option>
               </select>
               <p class="form-note">Date column used when grouping by period.</p>
+            </div>
+          </div>
+
+          <input type="hidden" name="metric_builder_config" class="metric-builder-config" value="">
+          <div class="metric-builder">
+            <div class="metric-builder-head">
+              <label><input type="checkbox" class="metric-builder-enabled"> No-code measure builder</label>
+              <button type="button" class="btn btn-secondary btn-xs" onclick="addMetricFilterRow(this)">+ Filter</button>
+            </div>
+            <div class="metric-builder-body">
+              <div class="metric-builder-grid">
+                <div>
+                  <label>Aggregation</label>
+                  <select class="metric-builder-aggregation">
+                    <option value="SUM">SUM</option>
+                    <option value="AVG">AVG</option>
+                    <option value="COUNT">COUNT</option>
+                    <option value="MIN">MIN</option>
+                    <option value="MAX">MAX</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Measure field</label>
+                  <input type="text" class="metric-builder-measure" placeholder="SOP_CUS_IVC_LIN_AMT" autocomplete="off">
+                </div>
+              </div>
+              <label style="font-size:12px;font-weight:800;color:var(--text-soft)">Filters</label>
+              <div class="metric-filter-list"></div>
+              <p class="form-note">Multiple filters are joined with AND and compiled into a CASE expression.</p>
+              <div class="metric-builder-preview">Enable builder and choose a measure to preview the formula.</div>
             </div>
           </div>
 
@@ -474,6 +516,35 @@ SUM(GrossMargin) + SUM(Rebates) - SUM(AllocatedCosts)
         <div class="form-group">
           <label>Grain</label>
           <input type="text" name="grain" value="{{ m.grain }}" placeholder="customer, month, order">
+        </div>
+      </div>
+      <input type="hidden" name="metric_builder_config" class="metric-builder-config" value="{{ (m.metric_builder_config or '') | e }}">
+      <div class="metric-builder" data-config="{{ (m.metric_builder_config or '') | e }}">
+        <div class="metric-builder-head">
+          <label><input type="checkbox" class="metric-builder-enabled"> No-code measure builder</label>
+          <button type="button" class="btn btn-secondary btn-xs" onclick="addMetricFilterRow(this)">+ Filter</button>
+        </div>
+        <div class="metric-builder-body">
+          <div class="metric-builder-grid">
+            <div>
+              <label>Aggregation</label>
+              <select class="metric-builder-aggregation">
+                <option value="SUM">SUM</option>
+                <option value="AVG">AVG</option>
+                <option value="COUNT">COUNT</option>
+                <option value="MIN">MIN</option>
+                <option value="MAX">MAX</option>
+              </select>
+            </div>
+            <div>
+              <label>Measure field</label>
+              <input type="text" class="metric-builder-measure" placeholder="SOP_CUS_IVC_LIN_AMT" autocomplete="off">
+            </div>
+          </div>
+          <label style="font-size:12px;font-weight:800;color:var(--text-soft)">Filters</label>
+          <div class="metric-filter-list"></div>
+          <p class="form-note">Multiple filters are joined with AND and compiled into a CASE expression.</p>
+          <div class="metric-builder-preview">Enable builder and choose a measure to preview the formula.</div>
         </div>
       </div>
       <div class="form-group">
@@ -1189,6 +1260,173 @@ function _insertTagValue(input, colName){
 // ══════════════════════════════════════════════════════════════════════
 // FORMULA TEST RUNNER (runs against the database)
 // ══════════════════════════════════════════════════════════════════════
+function _metricFilterOperatorOptions(selected){
+  var ops = [["equals","equals"],["not_equals","not equals"],["in","in"],["not_in","not in"],["is_null","is null"],["is_not_null","is not null"],["greater_than",">"],["greater_or_equal",">="],["less_than","<"],["less_or_equal","<="],["between","between"],["contains","contains"]];
+  return ops.map(function(op){ return '<option value="'+op[0]+'"'+(op[0]===selected?' selected':'')+'>'+op[1]+'</option>'; }).join("");
+}
+
+function _metricFilterRowHtml(row){
+  row = row || {};
+  return '<div class="metric-filter-row">'
+    + '<input type="text" class="metric-builder-field" placeholder="Filter field" autocomplete="off" value="'+escHtml(row.field||'')+'">'
+    + '<select class="metric-builder-operator">'+_metricFilterOperatorOptions(row.operator || "equals")+'</select>'
+    + '<input type="text" class="metric-builder-value" placeholder="Value" value="'+escHtml(row.value||'')+'">'
+    + '<button type="button" class="metric-filter-remove" title="Remove filter" onclick="removeMetricFilterRow(this)">x</button>'
+    + '</div>';
+}
+
+window.addMetricFilterRow = function(btn, row){
+  var builder = btn.closest(".metric-builder");
+  if(!builder) return;
+  var list = builder.querySelector(".metric-filter-list");
+  if(list) list.insertAdjacentHTML("beforeend", _metricFilterRowHtml(row || {}));
+  _wireMetricBuilderColumnLists(builder);
+  _syncMetricBuilder(builder.closest(".metric-form"));
+};
+
+window.removeMetricFilterRow = function(btn){
+  var form = btn.closest(".metric-form");
+  var row = btn.closest(".metric-filter-row");
+  if(row) row.remove();
+  _syncMetricBuilder(form);
+};
+
+function _metricSqlLiteral(value){
+  var v = (value || "").trim();
+  if(/^-?\d+(\.\d+)?$/.test(v)) return v;
+  return "'" + v.replace(/'/g, "''") + "'";
+}
+
+function _metricSplitValues(value){
+  return (value || "").split(",").map(function(v){ return v.trim(); }).filter(Boolean);
+}
+
+function _metricCondition(row){
+  var f = (row.field || "").trim();
+  var op = (row.operator || "equals").trim();
+  var v = (row.value || "").trim();
+  if(!f) return "";
+  if(op === "equals") return f + " = " + _metricSqlLiteral(v);
+  if(op === "not_equals") return f + " <> " + _metricSqlLiteral(v);
+  if(op === "greater_than") return f + " > " + _metricSqlLiteral(v);
+  if(op === "greater_or_equal") return f + " >= " + _metricSqlLiteral(v);
+  if(op === "less_than") return f + " < " + _metricSqlLiteral(v);
+  if(op === "less_or_equal") return f + " <= " + _metricSqlLiteral(v);
+  if(op === "contains") return f + " LIKE '%' + " + _metricSqlLiteral(v) + " + '%'";
+  if(op === "is_null") return f + " IS NULL";
+  if(op === "is_not_null") return f + " IS NOT NULL";
+  if(op === "between"){
+    var b = _metricSplitValues(v);
+    if(b.length < 2) return "";
+    return f + " BETWEEN " + _metricSqlLiteral(b[0]) + " AND " + _metricSqlLiteral(b[1]);
+  }
+  if(op === "in" || op === "not_in"){
+    var vals = _metricSplitValues(v);
+    if(!vals.length) return "";
+    return f + (op === "in" ? " IN " : " NOT IN ") + "(" + vals.map(_metricSqlLiteral).join(", ") + ")";
+  }
+  return "";
+}
+
+function _collectMetricBuilderConfig(form){
+  var builder = form ? form.querySelector(".metric-builder") : null;
+  if(!builder) return { enabled:false };
+  var filters = Array.from(builder.querySelectorAll(".metric-filter-row")).map(function(row){
+    return {
+      field: (row.querySelector(".metric-builder-field")||{}).value || "",
+      operator: (row.querySelector(".metric-builder-operator")||{}).value || "equals",
+      value: (row.querySelector(".metric-builder-value")||{}).value || ""
+    };
+  }).filter(function(row){ return row.field.trim(); });
+  return {
+    enabled: !!(builder.querySelector(".metric-builder-enabled")||{}).checked,
+    aggregation: (builder.querySelector(".metric-builder-aggregation")||{}).value || "SUM",
+    measure: (builder.querySelector(".metric-builder-measure")||{}).value || "",
+    filters: filters
+  };
+}
+
+function _compileMetricBuilderFormula(config){
+  if(!config.enabled) return "";
+  var agg = (config.aggregation || "SUM").toUpperCase();
+  var measure = (config.measure || "").trim();
+  if(!measure) throw new Error("Choose a measure field for the metric builder.");
+  var conditions = (config.filters || []).map(_metricCondition).filter(Boolean);
+  if(!conditions.length) return agg + "(" + measure + ")";
+  var predicate = conditions.join(" AND ");
+  if(agg === "SUM") return "SUM(CASE WHEN " + predicate + " THEN " + measure + " ELSE 0 END)";
+  if(agg === "COUNT") return "COUNT(CASE WHEN " + predicate + " THEN 1 END)";
+  return agg + "(CASE WHEN " + predicate + " THEN " + measure + " END)";
+}
+
+function _syncMetricBuilder(form){
+  if(!form) return true;
+  var builder = form.querySelector(".metric-builder");
+  if(!builder) return true;
+  var enabled = !!(builder.querySelector(".metric-builder-enabled")||{}).checked;
+  builder.classList.toggle("enabled", enabled);
+  var hidden = form.querySelector(".metric-builder-config");
+  var preview = builder.querySelector(".metric-builder-preview");
+  var editor = form.querySelector(".formula-editor");
+  var required = form.querySelector("[name='required_columns']");
+  var config = _collectMetricBuilderConfig(form);
+  if(!enabled){
+    if(hidden) hidden.value = "";
+    if(preview) preview.textContent = "Enable builder and choose a measure to preview the formula.";
+    return true;
+  }
+  try{
+    var formula = _compileMetricBuilderFormula(config);
+    if(hidden) hidden.value = JSON.stringify(config);
+    if(preview) preview.textContent = formula;
+    if(editor){ editor.value = formula; updateFormulaHints(editor); }
+    if(required){
+      var cols = [config.measure].concat((config.filters||[]).map(function(f){ return f.field; }))
+        .map(function(c){ return (c || "").split(".").pop().trim(); }).filter(Boolean);
+      var existing = required.value.split(",").map(function(c){ return c.trim(); }).filter(Boolean);
+      cols.forEach(function(c){ if(existing.indexOf(c) === -1) existing.push(c); });
+      required.value = existing.join(", ");
+    }
+    return true;
+  } catch(err){
+    if(preview) preview.textContent = err.message;
+    return false;
+  }
+}
+
+function _wireMetricBuilderColumnLists(scope){
+  if(!_allColumns.length) return;
+  var dl = document.getElementById("metric-builder-column-options");
+  if(!dl){
+    dl = document.createElement("datalist");
+    dl.id = "metric-builder-column-options";
+    document.body.appendChild(dl);
+  }
+  dl.innerHTML = _allColumns.map(function(c){ return '<option value="'+escHtml(c.column)+'">'+escHtml(c.table)+'</option>'; }).join("");
+  (scope || document).querySelectorAll(".metric-builder-measure,.metric-builder-field").forEach(function(inp){
+    inp.setAttribute("list", "metric-builder-column-options");
+  });
+}
+
+function _initialiseMetricBuilder(builder){
+  var form = builder.closest(".metric-form");
+  var hidden = form ? form.querySelector(".metric-builder-config") : null;
+  var raw = (hidden && hidden.value) || builder.dataset.config || "";
+  if(!raw) return;
+  try{
+    var cfg = JSON.parse(raw);
+    if(!cfg || !cfg.enabled) return;
+    builder.querySelector(".metric-builder-enabled").checked = true;
+    builder.classList.add("enabled");
+    builder.querySelector(".metric-builder-aggregation").value = (cfg.aggregation || "SUM").toUpperCase();
+    builder.querySelector(".metric-builder-measure").value = cfg.measure || "";
+    var list = builder.querySelector(".metric-filter-list");
+    if(list) list.innerHTML = (cfg.filters || []).map(_metricFilterRowHtml).join("");
+    _wireMetricBuilderColumnLists(builder);
+    _syncMetricBuilder(form);
+  }catch(e){}
+}
+
 async function testFormula(btn){
   var form   = btn.closest(".metric-form");
   var editor = form ? form.querySelector(".formula-editor") : null;
@@ -1227,6 +1465,7 @@ async function testFormula(btn){
 // ══════════════════════════════════════════════════════════════════════
 async function liveValidate(btn){
   var form        = btn.closest(".metric-form");
+  _syncMetricBuilder(form);
   var editor      = form ? form.querySelector(".formula-editor") : null;
   var resultPanel = form ? form.querySelector(".validate-result") : null;
   if(!editor || !editor.value.trim()){
@@ -1350,6 +1589,8 @@ window.insertColumnFromBrowser = function(colName){
         _buildColBrowser(_allColumns);
         _populateTimeColSelects(_allColumns);
         _populateBaseTableInputs(_allColumns);
+        _wireMetricBuilderColumnLists(document);
+        document.querySelectorAll(".metric-builder").forEach(_initialiseMetricBuilder);
       } else {
         _buildColBrowser([]);
       }
@@ -1445,6 +1686,9 @@ document.addEventListener("input", function(e){
     if(last.length >= 2) _showTagSuggestions(e.target, last);
     else _hideSuggestions();
   }
+  if(e.target.matches(".metric-builder-measure,.metric-builder-field,.metric-builder-value")){
+    _syncMetricBuilder(e.target.closest(".metric-form"));
+  }
 });
 
 document.addEventListener("change", function(e){
@@ -1455,7 +1699,20 @@ document.addEventListener("change", function(e){
     if(label) label.textContent = e.target.value === "query" ? "Full SELECT query *" : "Approved formula *";
     if(editor) updateFormulaHints(editor);
   }
+  if(e.target.matches(".metric-builder-enabled,.metric-builder-aggregation,.metric-builder-operator")){
+    _syncMetricBuilder(e.target.closest(".metric-form"));
+  }
 });
+
+document.addEventListener("submit", function(e){
+  if(!e.target.matches(".metric-form")) return;
+  var builder = e.target.querySelector(".metric-builder");
+  var enabled = builder && (builder.querySelector(".metric-builder-enabled")||{}).checked;
+  if(enabled && !_syncMetricBuilder(e.target)){
+    e.preventDefault();
+    alert("Metric builder is incomplete. Choose a measure field and valid filter values.");
+  }
+}, true);
 
 window.toggleEdit = function(id){
   var el = document.getElementById(id);
@@ -1595,6 +1852,7 @@ window.cloneMetric = function(id){
   _set("grain",               m.grain || "");
   _set("required_columns",    m.required_columns || "");
   _set("allowed_dimensions",  m.allowed_dimensions || "");
+  _set("metric_builder_config", m.metric_builder_config || "");
   _set("example_questions",   m.example_questions || "");
   _set("category",            m.category || "");
   _set("default_time_column", m.default_time_column || "");
@@ -1608,6 +1866,15 @@ window.cloneMetric = function(id){
   if(typeSelect){
     typeSelect.value = m.formula_type || "expression";
     typeSelect.dispatchEvent(new Event("change"));
+  }
+
+  var builder = addForm.querySelector(".metric-builder");
+  if(builder){
+    builder.querySelector(".metric-builder-enabled").checked = false;
+    builder.classList.remove("enabled");
+    var list = builder.querySelector(".metric-filter-list");
+    if(list) list.innerHTML = "";
+    _initialiseMetricBuilder(builder);
   }
 
   // Trigger validator on formula editor
@@ -1637,6 +1904,7 @@ window.exportMetricsJSON = function(){
       grain:               m.grain,
       required_columns:    m.required_columns,
       allowed_dimensions:  m.allowed_dimensions,
+      metric_builder_config: m.metric_builder_config,
       example_questions:   m.example_questions,
       category:            m.category,
       default_time_column: m.default_time_column,

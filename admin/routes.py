@@ -2890,6 +2890,7 @@ async def metric_create(
     result_format: str = Form("number"),
     required_columns: str = Form(""),
     allowed_dimensions: str = Form(""),
+    metric_builder_config: str = Form(""),
     example_questions: str = Form(""),
     grain: str = Form(""),
     category: str = Form(""),
@@ -2903,6 +2904,21 @@ async def metric_create(
         from urllib.parse import quote
         return RedirectResponse(
             f"/admin/clients/{account_id}/metrics?error={quote('Name and SQL are required')}",
+            status_code=303)
+
+    try:
+        from core.metric_builder import compile_metric_builder_config, merge_required_columns
+        compiled = compile_metric_builder_config(metric_builder_config)
+        if compiled and (formula_type or "").strip().lower() == "expression":
+            sql_template = compiled.formula
+            required_columns = merge_required_columns(required_columns, compiled.required_columns)
+            metric_builder_config = compiled.config_json
+        elif (formula_type or "").strip().lower() != "expression":
+            metric_builder_config = ""
+    except Exception as exc:
+        from urllib.parse import quote
+        return RedirectResponse(
+            f"/admin/clients/{account_id}/metrics?error={quote('Metric builder filter is invalid: ' + str(exc))}",
             status_code=303)
 
     # Resolve db_type so save_metric can run the validator correctly
@@ -2922,6 +2938,7 @@ async def metric_create(
         "result_format":       result_format.strip(),
         "required_columns":    required_columns.strip(),
         "allowed_dimensions":  allowed_dimensions.strip(),
+        "metric_builder_config": metric_builder_config.strip(),
         "example_questions":   example_questions.strip(),
         "grain":               grain.strip(),
         "category":            category.strip(),
@@ -2945,6 +2962,7 @@ async def metric_update(
     result_format: str = Form("number"),
     required_columns: str = Form(""),
     allowed_dimensions: str = Form(""),
+    metric_builder_config: str = Form(""),
     example_questions: str = Form(""),
     grain: str = Form(""),
     category: str = Form(""),
@@ -2955,6 +2973,21 @@ async def metric_update(
 ):
     if not _is_auth(request):
         return RedirectResponse("/admin/login", status_code=303)
+
+    try:
+        from core.metric_builder import compile_metric_builder_config, merge_required_columns
+        compiled = compile_metric_builder_config(metric_builder_config)
+        if compiled and (formula_type or "").strip().lower() == "expression":
+            sql_template = compiled.formula
+            required_columns = merge_required_columns(required_columns, compiled.required_columns)
+            metric_builder_config = compiled.config_json
+        elif (formula_type or "").strip().lower() != "expression":
+            metric_builder_config = ""
+    except Exception as exc:
+        from urllib.parse import quote
+        return RedirectResponse(
+            f"/admin/clients/{account_id}/metrics?error={quote('Metric builder filter is invalid: ' + str(exc))}",
+            status_code=303)
 
     # Resolve db_type for re-validation
     db_type = "azure_sql"
@@ -2973,6 +3006,7 @@ async def metric_update(
         "result_format":       result_format.strip(),
         "required_columns":    required_columns.strip(),
         "allowed_dimensions":  allowed_dimensions.strip(),
+        "metric_builder_config": metric_builder_config.strip(),
         "example_questions":   example_questions.strip(),
         "grain":               grain.strip(),
         "category":            category.strip(),

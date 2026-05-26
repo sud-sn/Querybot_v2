@@ -770,6 +770,7 @@ def _ensure_metric_registry_schema(conn) -> None:
             result_format TEXT   NOT NULL DEFAULT 'number',
             required_columns TEXT DEFAULT '',
             allowed_dimensions TEXT DEFAULT '',
+            metric_builder_config TEXT DEFAULT '',
             example_questions TEXT DEFAULT '',
             grain        TEXT    DEFAULT '',
             category     TEXT    DEFAULT '',
@@ -787,6 +788,7 @@ def _ensure_metric_registry_schema(conn) -> None:
         "result_format": "TEXT NOT NULL DEFAULT 'number'",
         "required_columns": "TEXT DEFAULT ''",
         "allowed_dimensions": "TEXT DEFAULT ''",
+        "metric_builder_config": "TEXT DEFAULT ''",
         "example_questions": "TEXT DEFAULT ''",
         "grain": "TEXT DEFAULT ''",
         "category": "TEXT DEFAULT ''",
@@ -830,12 +832,12 @@ def save_metric(account_id: str, metric: dict, *, db_type: str = "azure_sql") ->
             INSERT INTO metric_registry
                 (account_id, name, synonyms, sql_template, description,
                  formula_type, result_format, required_columns,
-                 allowed_dimensions, example_questions, grain,
+                 allowed_dimensions, metric_builder_config, example_questions, grain,
                  category, default_time_column,
                  base_entity, base_table,
                  formula_ast, metric_status, validation_errors,
                  last_validated_at, version, owner)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), 1, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), 1, ?)
         """, (
             account_id,
             metric["name"],
@@ -846,6 +848,7 @@ def save_metric(account_id: str, metric: dict, *, db_type: str = "azure_sql") ->
             result_format,
             metric.get("required_columns", ""),
             metric.get("allowed_dimensions", ""),
+            metric.get("metric_builder_config", ""),
             metric.get("example_questions", ""),
             metric.get("grain", ""),
             metric.get("category", ""),
@@ -915,7 +918,7 @@ def update_metric(
 
     # Re-validate whenever the formula changes
     formula_fields = {"sql_template", "formula_type", "required_columns",
-                      "base_table", "base_entity"}
+                      "base_table", "base_entity", "metric_builder_config"}
     needs_revalidation = bool(formula_fields & set(updates.keys()))
     if needs_revalidation:
         existing = get_metric(metric_id) or {}
@@ -931,7 +934,7 @@ def update_metric(
     for key in (
         "name", "synonyms", "sql_template", "description", "formula_type",
         "result_format", "required_columns", "allowed_dimensions",
-        "example_questions", "grain", "category", "default_time_column",
+        "metric_builder_config", "example_questions", "grain", "category", "default_time_column",
         "is_active", "base_entity", "base_table", "metric_status",
         "formula_ast", "validation_errors", "owner",
     ):
