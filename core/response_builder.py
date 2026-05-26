@@ -792,7 +792,16 @@ async def generate_analysis_response(
         return build_analysis_response(action, ctx)
 
 
-def build_assistant_response(*, question: str, rows: list[dict], sql: str, duration_ms: int, chart: dict | None = None, data_source: str | None = None) -> dict:
+def build_assistant_response(
+    *,
+    question: str,
+    rows: list[dict],
+    sql: str,
+    duration_ms: int,
+    chart: dict | None = None,
+    data_source: str | None = None,
+    confidence: dict | None = None,
+) -> dict:
     from core.insight import compute_data_brief
     ctx = summarize_result_context(rows, question, sql=sql)
     answer = build_answer(rows, question, ctx.get("result_scope"))
@@ -845,7 +854,9 @@ def build_assistant_response(*, question: str, rows: list[dict], sql: str, durat
             "duration_label": f"{duration_ms}ms" if duration_ms < 1000 else f"{duration_ms/1000:.1f}s",
             "data_source": data_source or "",
             "scope_badge": ctx.get("result_scope", {}).get("badge", ""),
+            "confidence": confidence or {},
         },
+        "confidence": confidence or {},
     }
 
 

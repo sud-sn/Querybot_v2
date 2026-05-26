@@ -11,6 +11,8 @@ from core.llm import build_sql_system_prompt
 from core.query_semantics import analyze_query_intent
 from core.semantic_planner import build_semantic_field_plan
 from core.validator import validate_sql, validate_sql_detailed
+from core.answer_confidence import build_answer_confidence
+from core.answer_rca import build_business_rca, extract_sql_tables
 
 
 KNOWN = {
@@ -400,6 +402,55 @@ class DiagnosticRenderingReliabilityTests(unittest.TestCase):
         self.assertIn("const codeBlocks = [];", template)
         self.assertIn("return `@@CODEBLOCK${idx}@@`;", template)
         self.assertNotIn("h = h.replace(/_([^_\\n]+)_/g", template)
+
+
+class BusinessConfidenceRcaTests(unittest.TestCase):
+    def test_zero_row_empty_table_lowers_confidence(self):
+        confidence = build_answer_confidence(
+            validation_code="ok",
+            row_count=0,
+            retry_count=0,
+            has_semantic_plan=True,
+            has_graph_context=True,
+            tables_used=["PROFITABILITY.CUS_ORD_IVC_FCT", "PROFITABILITY.OOLINE"],
+            empty_tables=["PROFITABILITY.OOLINE"],
+        )
+        self.assertEqual(confidence["level"], "low")
+        self.assertTrue(any("no records" in w for w in confidence["warnings"]))
+
+    def test_zero_row_rca_names_empty_source_table(self):
+        rca = build_business_rca(
+            question="division share by item group",
+            row_count=0,
+            tables_used=["PROFITABILITY.CUS_ORD_IVC_FCT", "PROFITABILITY.OOLINE"],
+            empty_tables=["PROFITABILITY.OOLINE"],
+            validation_code="ok",
+            retry_count=0,
+        )
+        self.assertIn("no records", rca["most_likely_reason"])
+        self.assertIn("PROFITABILITY.OOLINE", rca["most_likely_reason"])
+
+    def test_successful_query_gets_high_confidence_summary(self):
+        confidence = build_answer_confidence(
+            validation_code="ok",
+            row_count=42,
+            retry_count=0,
+            has_semantic_plan=True,
+            has_graph_context=False,
+            tables_used=["PROFITABILITY.CUS_ORD_IVC_FCT"],
+        )
+        self.assertEqual(confidence["level"], "high")
+        self.assertGreaterEqual(confidence["score"], 80)
+
+    def test_extract_sql_tables_preserves_schema_names(self):
+        sql = (
+            "SELECT o.DIVI, c.ITM_GRP_DMS_KEY "
+            "FROM [profitability].[CUS_ORD_IVC_FCT] c "
+            "JOIN [profitability].[OOLINE] o ON c.CUS_ORD_NUM = o.ORNO"
+        )
+        tables = extract_sql_tables(sql, "azure_sql")
+        self.assertIn("PROFITABILITY.CUS_ORD_IVC_FCT", tables)
+        self.assertIn("PROFITABILITY.OOLINE", tables)
 
 
 if __name__ == "__main__":

@@ -44,6 +44,9 @@ from core.result_cache import result_cache
 from core.query_router import should_route_to_result_cache, build_duckdb_system_prompt
 from core.duckdb_sql_validator import validate_duckdb_result_sql
 from core.semantic_planner import build_semantic_field_plan
+from core.answer_confidence import build_answer_confidence
+from core.answer_formatter import format_success_confidence_text, format_zero_row_business_response
+from core.answer_rca import build_business_rca, extract_sql_tables
 from admin import router as admin_router
 from portal import router as portal_router
 
@@ -295,6 +298,38 @@ def _sql_preview(sql: str, limit: int = 1200) -> str:
     return sql[:limit] + "..." if len(sql) > limit else sql
 
 
+def _quote_table_for_count(table: str, db_type: str) -> str:
+    parts = [p.strip().strip("[]").strip('"').strip("`") for p in str(table or "").split(".") if p.strip()]
+    if not parts:
+        return ""
+    if db_type == "azure_sql":
+        return ".".join(f"[{p}]" for p in parts)
+    if db_type in {"snowflake", "oracle"}:
+        return ".".join(f'"{p}"' for p in parts)
+    return ".".join(parts)
+
+
+def _count_tables_for_zero_row(db_cfg: dict, tables: list[str]) -> dict[str, int | None]:
+    """Best-effort table row counts for business RCA after a zero-row answer."""
+    db_type = str((db_cfg or {}).get("db_type") or "azure_sql")
+    credentials = (db_cfg or {}).get("credentials") or {}
+    counts: dict[str, int | None] = {}
+    for table in tables[:6]:
+        quoted = _quote_table_for_count(table, db_type)
+        if not quoted or quoted in counts:
+            continue
+        count_expr = "COUNT_BIG(1)" if db_type == "azure_sql" else "COUNT(*)"
+        try:
+            rows = run_query(credentials, db_type, f"SELECT {count_expr} AS RowCount FROM {quoted}", max_rows=1)
+            first = rows[0] if rows else {}
+            value = next(iter(first.values())) if first else None
+            counts[table] = int(value) if value is not None else None
+        except Exception as exc:
+            log.debug("Zero-row table count skipped for %s: %s", table, exc)
+            counts[table] = None
+    return counts
+
+
 def _zero_row_rca_hints(question: str, graph_ctx: dict | None = None) -> str:
     intent = analyze_query_intent(question)
     hints: list[str] = []
@@ -317,18 +352,36 @@ def _build_zero_row_message(
     graph_ctx: dict | None,
     validation_code: str,
     retry_count: int,
+    tables_used: list[str] | None = None,
+    empty_tables: list[str] | None = None,
+    semantic_plan: dict | None = None,
 ) -> str:
-    entities = ", ".join((graph_ctx or {}).get("detected") or []) or "none"
-    return (
-        "The query ran successfully but returned *no rows*.\n\n"
-        "Diagnostics:\n"
-        f"- Row count: 0\n"
-        f"- Validation: {validation_code or 'ok'}\n"
-        f"- Retry count: {retry_count}\n"
-        f"- Detected graph entities: {entities}\n\n"
-        "Possible RCA:\n"
-        f"{_zero_row_rca_hints(question, graph_ctx)}\n\n"
-        f"SQL tried:\n```sql\n{_sql_preview(sql)}\n```"
+    tables = tables_used or extract_sql_tables(sql)
+    empty = empty_tables or []
+    confidence = build_answer_confidence(
+        validation_code=validation_code or "ok",
+        row_count=0,
+        retry_count=retry_count,
+        has_semantic_plan=bool((semantic_plan or {}).get("enabled")),
+        has_graph_context=bool((graph_ctx or {}).get("enabled") or (graph_ctx or {}).get("detected")),
+        tables_used=tables,
+        empty_tables=empty,
+    )
+    rca = build_business_rca(
+        question=question,
+        row_count=0,
+        tables_used=tables,
+        empty_tables=empty,
+        validation_code=validation_code or "ok",
+        retry_count=retry_count,
+        graph_context=graph_ctx,
+        semantic_plan=semantic_plan,
+    )
+    return format_zero_row_business_response(
+        confidence=confidence,
+        rca=rca,
+        sql=sql,
+        sql_preview_fn=_sql_preview,
     )
 
 
@@ -1286,10 +1339,20 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
         _zr_has_multi_metric = len([m for m in _zr_matches if m.get("kind") == "metric"]) >= 2
 
         if not (_zr_has_required or _zr_has_multi_metric):
-            # No ambiguity signal — just tell the user there's no data.
+            # No ambiguity signal: return business-readable RCA for the empty result.
+            _zr_tables = extract_sql_tables(sql, db_cfg.get("db_type", "azure_sql"))
+            _zr_counts = _count_tables_for_zero_row(db_cfg, _zr_tables)
+            _zr_empty_tables = [table for table, count in _zr_counts.items() if count == 0]
             _trace_finish(trace_id, status="success", answer_type="empty", row_count=0, duration_ms=duration_ms, final_answer_summary="Query returned no rows")
             await adapter.send_message(event, _build_zero_row_message(
-                question, sql, _graph_ctx, last_code or code or "ok", retry_count
+                question,
+                sql,
+                _graph_ctx,
+                last_code or code or "ok",
+                retry_count,
+                tables_used=_zr_tables,
+                empty_tables=_zr_empty_tables,
+                semantic_plan=_semantic_plan,
             ))
             return
 
@@ -1337,15 +1400,24 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
             columns=list(rows[0].keys()) if rows else [],
             row_count=len(rows),
         )
+    _confidence_context = {
+        "validation_code": last_code or code or "ok",
+        "retry_count": retry_count,
+        "has_semantic_plan": bool((_semantic_plan or {}).get("enabled")),
+        "has_graph_context": bool((_graph_ctx or {}).get("enabled") or (_graph_ctx or {}).get("detected")),
+        "tables_used": extract_sql_tables(sql, db_cfg.get("db_type", "azure_sql")),
+    }
     await _send_results(event, adapter, question, rows, sql, duration_ms,
                         portal_user, account_id, db_cfg,
-                        rag_context=context, question_id=audit_request_id)
+                        rag_context=context, question_id=audit_request_id,
+                        confidence_context=_confidence_context)
     _trace_finish(trace_id, status="success", answer_type="table", row_count=len(rows), duration_ms=duration_ms, final_answer_summary="Answered from database query")
 
 
 async def _send_results(event, adapter, question, rows, sql, duration_ms,
                         portal_user, account_id, db_cfg,
-                        rag_context: str = "", question_id: str | None = None):
+                        rag_context: str = "", question_id: str | None = None,
+                        confidence_context: dict | None = None):
     """Send formatted results to the chat platform. Shared by LLM and metric registry paths."""
     # Cache result on adapter for insight follow-ups (WebSocket sessions).
     # Pass question_id so drilldowns can link back to this original question.
@@ -1356,6 +1428,16 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
     table_text = _rows_to_table(rows)
     row_word   = "row" if len(rows) == 1 else "rows"
     dur_label  = f"{duration_ms}ms" if duration_ms < 1000 else f"{duration_ms/1000:.1f}s"
+    confidence_context = confidence_context or {}
+    confidence = build_answer_confidence(
+        validation_code=confidence_context.get("validation_code") or "ok",
+        row_count=len(rows),
+        retry_count=int(confidence_context.get("retry_count") or 0),
+        has_semantic_plan=bool(confidence_context.get("has_semantic_plan")),
+        has_graph_context=bool(confidence_context.get("has_graph_context")),
+        tables_used=confidence_context.get("tables_used") or extract_sql_tables(sql, db_cfg.get("db_type", "azure_sql")),
+        empty_tables=confidence_context.get("empty_tables") or [],
+    )
 
     chart_type = detect_chart_type(rows, question=question)
     pin_token = None
@@ -1389,6 +1471,7 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
             duration_ms=duration_ms,
             chart=chart_payload,
             data_source=str(db_cfg.get("db_type", "")),
+            confidence=confidence,
         )
         # ── Result-aware follow-up suggestions (web portal only) ──────────
         # Generate suggestions from the statistical brief already computed
@@ -1427,6 +1510,7 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
             f"  {col_name}\n"
             f"  *{value}*\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"{format_success_confidence_text(confidence)}\n\n"
             f"_{dur_label} · {col_name.replace('_', ' ')}_"
         )
     else:
@@ -1437,6 +1521,7 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
             f"{'─' * 40}\n"
             f"{table_text}\n"
             f"{'─' * 40}\n"
+            f"{format_success_confidence_text(confidence)}\n\n"
             f"_{dur_label}_"
         )
 
