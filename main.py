@@ -36,7 +36,7 @@ from core.knowledge import load_retriever
 from core.validator import validate_sql
 from core.chart import detect_chart_type, build_chart_payload
 from core.query_semantics import analyze_query_intent, build_generic_query_hints
-from core.response_builder import build_assistant_response, build_column_formats
+from core.response_builder import build_assistant_response, build_column_formats, detect_null_metric_issue
 from core.insight import generate_followup_suggestions
 from core.graph_resolver import resolve_for_question as _graph_resolve
 from core.llm_audit import llm_audit_scope, make_llm_audit_request_id
@@ -1142,6 +1142,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
         "question": question,
         "graph_context": _graph_ctx,
         "semantic_plan": _semantic_plan,
+        "metric_formulas": _matched_metrics,
     }
     ok, reason, code = validate_sql(
         sql, all_known, db_cfg["db_type"], query_scope_tables, all_columns, semantic_context
@@ -1174,7 +1175,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
     else:
         last_reason, last_code = reason, code
 
-    retryable = (not ok and code in ("unknown_table", "unknown_column", "date_key_format", "anti_join_shape", "field_plan_mismatch", "parse")) or (exec_error is not None)
+    retryable = (not ok and code in ("unknown_table", "unknown_column", "date_key_format", "anti_join_shape", "field_plan_mismatch", "metric_formula_mismatch", "null_aggregate_diagnostic", "parse")) or (exec_error is not None)
 
     if retryable:
         if exec_error is not None:
@@ -1237,6 +1238,23 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                     "- The SQL ignored one or more deterministic field-source mappings.\n"
                     "- Use the exact table.column pairs and required joins from the Semantic field-source plan.\n"
                     "- Do not move mapped fields to another table and do not remove underscores from column names.\n"
+                )
+            elif last_code == "metric_formula_mismatch":
+                validation_repair_note = (
+                    "\nAPPROVED METRIC FORMULA REPAIR RULE:\n"
+                    "- The user asked for an admin-approved metric, but the SQL used a nearby source column instead.\n"
+                    "- Use the approved metric formula exactly as shown in the APPROVED METRIC FORMULAS section.\n"
+                    "- If the metric is a filtered single-row aggregate, keep the null-aware diagnostics: matched row count, non-null metric count, and COALESCE/ISNULL around SUM().\n"
+                    "- Do not substitute invoice amount, cost amount, or any other similar field unless it is part of the approved formula.\n"
+                )
+            elif last_code == "null_aggregate_diagnostic":
+                validation_repair_note = (
+                    "\nNULL-AWARE AGGREGATE REPAIR RULE:\n"
+                    "- This is a filtered single-row aggregate such as revenue for one customer/key.\n"
+                    "- Include COUNT_BIG(*) AS [MatchedRows] for Azure SQL, or COUNT(*) AS MatchedRows for other DBs.\n"
+                    "- Include COUNT(metric_column) AS [NonNullMetricRows] for every SUM metric.\n"
+                    "- Wrap every SUM metric with COALESCE(SUM(metric_column), 0) so missing values render as 0.\n"
+                    "- Keep the user's filter value unchanged.\n"
                 )
             retry_user = (
                 f"The following SQL failed validation with: {last_reason}\n"
@@ -1452,6 +1470,7 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
     dur_label  = f"{duration_ms}ms" if duration_ms < 1000 else f"{duration_ms/1000:.1f}s"
     _has_confidence_context = bool(confidence_context)
     confidence_context = confidence_context or {}
+    null_metric_issue = detect_null_metric_issue(rows)
     confidence = build_answer_confidence(
         validation_code=confidence_context.get("validation_code") or "ok",
         row_count=len(rows),
@@ -1460,6 +1479,7 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
         has_graph_context=bool(confidence_context.get("has_graph_context")),
         tables_used=confidence_context.get("tables_used") or extract_sql_tables(sql, db_cfg.get("db_type", "azure_sql")),
         empty_tables=confidence_context.get("empty_tables") or [],
+        null_metric_issue=bool(null_metric_issue),
     )
 
     chart_type = detect_chart_type(rows, question=question)
