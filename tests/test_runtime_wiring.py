@@ -496,6 +496,17 @@ class RouteRegistrationTests(unittest.TestCase):
         self.assertIn('data-review-target="{{ row_id }}"', kb_html)
         self.assertNotIn("toggleReview('{{ row_id }}')", kb_html)
 
+    def test_portal_semantic_suggest_edit_toggle_syncs_inline_display(self):
+        """Suggest edit must still open after search code has touched row display."""
+        kb_html = _read("portal/templates/portal_kb.html")
+        self.assertIn('onclick="toggleReview(this.dataset.reviewTarget, this)"', kb_html)
+        self.assertIn('aria-expanded="false"', kb_html)
+        self.assertIn("function _syncReviewRowDisplay(row)", kb_html)
+        self.assertIn("row.style.display = row.classList.contains('open') ? 'table-row' : 'none';", kb_html)
+        self.assertIn("_syncReviewRowDisplay(row);", kb_html)
+        self.assertIn("_syncReviewRowDisplay(rr);", kb_html)
+        self.assertNotIn("rr.style.display = match ? rr.classList.contains('open') ? '' : 'none' : 'none'", kb_html)
+
     def test_user_portal_uses_semantic_layer_label(self):
         """User portal should not expose old Knowledge Base wording."""
         dashboard_html = _read("portal/templates/portal_dashboard.html")
