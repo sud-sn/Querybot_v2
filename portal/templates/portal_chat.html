@@ -1314,17 +1314,65 @@ function sendAnalysisAction(action, context, label){
 }
 // ── Tier-1 table: sortable columns, text filter, numeric footer, "Ask" shortcut ──
 let _dtIdCounter = 0;
+function _normaliseColumnKey(v) {
+  return String(v || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+function _columnFormatMap(data) {
+  const raw = data?.column_formats || {};
+  const map = new Map();
+  Object.entries(raw).forEach(([col, fmt]) => {
+    const f = String(fmt || 'number').toLowerCase();
+    if (['currency', 'percentage', 'date', 'text', 'number'].includes(f)) {
+      map.set(_normaliseColumnKey(col), f);
+    }
+  });
+  (data?.currency_columns || []).forEach(col => {
+    if (!map.has(_normaliseColumnKey(col))) map.set(_normaliseColumnKey(col), 'currency');
+  });
+  return map;
+}
+function _parseDisplayNumber(v) {
+  const cleaned = String(v ?? '').replace(/[$,%\s]/g, '').replace(/,/g, '');
+  if (!cleaned) return NaN;
+  return Number(cleaned);
+}
+function _formatDisplayValue(value, fmt) {
+  if (value === null || value === undefined || value === '') return '';
+  const raw = String(value);
+  if (fmt === 'currency') {
+    const n = _parseDisplayNumber(raw);
+    if (!isNaN(n)) return '$' + n.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+  }
+  if (fmt === 'percentage') {
+    const n = _parseDisplayNumber(raw);
+    if (!isNaN(n)) return n.toLocaleString('en-US', {maximumFractionDigits: 2}) + '%';
+  }
+  if (fmt === 'number') {
+    const n = _parseDisplayNumber(raw);
+    if (!isNaN(n)) return n.toLocaleString('en-US', {maximumFractionDigits: 4});
+  }
+  return raw;
+}
+function _formatAggregateValue(value, fmt) {
+  if (fmt === 'currency') return '$' + value.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+  if (fmt === 'percentage') return value.toLocaleString('en-US', {maximumFractionDigits: 2}) + '%';
+  return value.toLocaleString(undefined, {maximumFractionDigits: 2});
+}
 function renderDataTable(data, { question = '', trace_id = '' } = {}) {
   if (!data || !Array.isArray(data.rows) || !data.rows.length) return '';
   const headers = Array.isArray(data.headers) ? data.headers : Object.keys(data.rows[0] || {});
   const dtId = `dt-${++_dtIdCounter}`;
+  const colFormats = _columnFormatMap(data);
 
   const headHtml = headers.map((h, i) =>
     `<th data-col="${i}">${escHtml(h)}</th>`
   ).join('');
 
   const bodyHtml = data.rows.map(r =>
-    '<tr>' + headers.map(h => `<td>${escHtml(String(r[h] ?? ''))}</td>`).join('') + '</tr>'
+    '<tr>' + headers.map(h => {
+      const fmt = colFormats.get(_normaliseColumnKey(h));
+      return `<td>${escHtml(_formatDisplayValue(r[h], fmt))}</td>`;
+    }).join('') + '</tr>'
   ).join('');
 
   const total = data.total_rows ?? data.rows.length;
@@ -1336,7 +1384,7 @@ function renderDataTable(data, { question = '', trace_id = '' } = {}) {
   // Detect numeric columns for aggregate footer display
   const numCols = headers.filter(h => {
     const vals = data.rows.slice(0, 20).map(r => r[h]);
-    return vals.some(v => v !== null && v !== '' && !isNaN(Number(String(v).replace(/,/g, ''))));
+    return vals.some(v => v !== null && v !== '' && !isNaN(_parseDisplayNumber(v)));
   });
 
   const csvIcon = `<svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v9M4 7l4 4 4-4"/><path d="M2 14h12"/></svg>`;
@@ -1372,8 +1420,18 @@ function _mountDataTableControls(wrapEl, question) {
   const allRows = Array.from(tbody.querySelectorAll('tr'));
   const numColIndexes = headers.map((_, ci) => {
     const vals = allRows.slice(0, 20).map(r => r.cells[ci]?.textContent ?? '');
-    return vals.some(v => v !== '' && !isNaN(Number(v.replace(/,/g, ''))));
+    return vals.some(v => v !== '' && !isNaN(_parseDisplayNumber(v)));
   });
+  const dataFormats = (() => {
+    const map = new Map();
+    try {
+      const card = wrapEl.closest('.msg-content');
+      const payload = card?._querybotPayload || {};
+      return _columnFormatMap(payload.data || {});
+    } catch {
+      return map;
+    }
+  })();
 
   let sortCol = -1, sortDir = 1;
 
@@ -1388,11 +1446,12 @@ function _mountDataTableControls(wrapEl, question) {
     const ci = numColIndexes.findIndex(Boolean);
     if (ci < 0) { aggEl.textContent = ''; return; }
     const sum = vis.reduce((acc, r) => {
-      const v = parseFloat((r.cells[ci]?.textContent ?? '').replace(/,/g, ''));
+      const v = _parseDisplayNumber(r.cells[ci]?.textContent ?? '');
       return acc + (isNaN(v) ? 0 : v);
     }, 0);
     const colName = headers[ci]?.textContent ?? '';
-    aggEl.textContent = `Σ ${colName}: ${sum.toLocaleString(undefined, {maximumFractionDigits: 2})}`;
+    const fmt = dataFormats.get(_normaliseColumnKey(colName));
+    aggEl.textContent = `Σ ${colName}: ${_formatAggregateValue(sum, fmt)}`;
   }
 
   function applySort() {
@@ -1401,8 +1460,8 @@ function _mountDataTableControls(wrapEl, question) {
     rows.sort((a, b) => {
       const av = a.cells[sortCol]?.textContent ?? '';
       const bv = b.cells[sortCol]?.textContent ?? '';
-      const an = parseFloat(av.replace(/,/g, ''));
-      const bn = parseFloat(bv.replace(/,/g, ''));
+      const an = _parseDisplayNumber(av);
+      const bn = _parseDisplayNumber(bv);
       if (!isNaN(an) && !isNaN(bn)) return (an - bn) * sortDir;
       return av.localeCompare(bv) * sortDir;
     });
@@ -1559,18 +1618,17 @@ function _mountResultChat(cardEl, rcId) {
     thread.scrollTop = thread.scrollHeight;
   }
 
-  function _rcRenderTable(rows, currencyCols) {
+  function _rcRenderTable(rows, columnFormats, currencyCols) {
     if (!rows || !rows.length) return null;
-    const ccSet = new Set((currencyCols || []).map(c => c.toLowerCase()));
+    const fmtMap = _columnFormatMap({
+      column_formats: columnFormats || {},
+      currency_columns: currencyCols || []
+    });
     const headers = Object.keys(rows[0]);
 
     function _fmtCell(h, val) {
       if (val === null || val === undefined || val === '') return '';
-      if (ccSet.has(h.toLowerCase())) {
-        const n = parseFloat(String(val).replace(/,/g, ''));
-        if (!isNaN(n)) return '$' + n.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
-      }
-      return escHtml(String(val));
+      return escHtml(_formatDisplayValue(val, fmtMap.get(_normaliseColumnKey(h))));
     }
 
     const headHtml = headers.map(h => `<th>${escHtml(h)}</th>`).join('');
@@ -1628,6 +1686,7 @@ function _mountResultChat(cardEl, rcId) {
     onResponse(msg) {
       const rows = msg.rows || [];
       const currencyCols = msg.currency_columns || [];
+      const columnFormats = msg.column_formats || {};
 
       // Turn divider between Q&A pairs
       const divider = document.createElement('hr');
@@ -1656,7 +1715,7 @@ function _mountResultChat(cardEl, rcId) {
         return;
       }
 
-      const tableEl = _rcRenderTable(rows, currencyCols);
+      const tableEl = _rcRenderTable(rows, columnFormats, currencyCols);
       if (tableEl) {
         const bubble = document.createElement('div');
         bubble.className = 'rc-bubble bot';
@@ -1812,6 +1871,8 @@ function appendAssistantResponse(msg, opts = {}){
     </div>`;
 
   thread().appendChild(div);
+  const msgContentEl = div.querySelector('.msg-content');
+  if (msgContentEl) msgContentEl._querybotPayload = msg;
   const copyBtn = div.querySelector('[data-copy="result"]');
   copyBtn?.addEventListener('click', async (e) => {
     const copyPayload = [answer.headline || '', trust.sql ? ('SQL\n' + trust.sql) : ''].filter(Boolean).join('\n\n');

@@ -9,15 +9,47 @@ from typing import Any
 log = logging.getLogger("querybot.response_builder")
 
 _PREVIEW_ROW_CAP = 200
+_RESULT_FORMATS = {"number", "currency", "percentage", "date", "text"}
+
+_CURRENCY_NAME_RE = re.compile(
+    r"\b(revenue|amount|cost|price|total|sales|charge|fee|payment|spend|"
+    r"value|income|profit|loss|margin|earning|billing|invoice|budget|"
+    r"gross|net|balance|credit|debit|cash|dollar|usd|gbp|eur|salary|"
+    r"wage|commission|rebate|discount|tax|surcharge|reimbursement)\b",
+    re.IGNORECASE,
+)
+_PERCENT_NAME_RE = re.compile(r"\b(percent|percentage|pct|rate|ratio|share)\b", re.IGNORECASE)
+_DATE_NAME_RE = re.compile(r"\b(date|period|year|month|quarter|week|day)\b", re.IGNORECASE)
+_VALUE_TOKENS = {
+    "amount", "avg", "average", "balance", "charge", "cost", "count",
+    "earning", "fee", "gross", "income", "invoice", "loss", "margin",
+    "net", "payment", "pct", "percent", "percentage", "price", "profit",
+    "quantity", "rate", "ratio", "revenue", "sales", "share", "spend",
+    "sum", "tax", "total", "value",
+}
+_DIMENSION_TOKENS = {
+    "code", "date", "day", "description", "flag", "id", "identifier", "item",
+    "key", "month", "name", "num", "number", "period", "product", "rank",
+    "warehouse", "week", "year",
+}
+_FORMAT_STOP_TOKENS = {
+    "a", "an", "and", "as", "by", "for", "from", "in", "is", "my", "of",
+    "on", "per", "show", "the", "to", "total", "what", "with",
+}
 
 
-def _format_number(value: Any) -> str:
+def _format_number(value: Any, fmt: str | None = None) -> str:
     try:
         num = float(value)
     except (TypeError, ValueError):
         return str(value)
     if not math.isfinite(num):
         return str(value)
+    fmt = _normalise_result_format(fmt)
+    if fmt == "currency":
+        return f"${num:,.2f}"
+    if fmt == "percentage":
+        return f"{num:,.2f}%".replace(".00%", "%")
     if abs(num) >= 1000:
         return f"{num:,.0f}" if num.is_integer() else f"{num:,.2f}"
     return f"{num:.0f}" if num.is_integer() else f"{num:.2f}"
@@ -43,6 +75,153 @@ def _numeric_cols(rows: list[dict]) -> list[str]:
         if ok and seen:
             cols.append(h)
     return cols
+
+
+def _normalise_result_format(value: Any) -> str:
+    fmt = str(value or "number").strip().lower()
+    return fmt if fmt in _RESULT_FORMATS else "number"
+
+
+def _normalise_key(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").lower())
+
+
+def _term_tokens(value: Any) -> set[str]:
+    text = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", str(value or ""))
+    text = text.replace("_", " ").replace("-", " ")
+    return {
+        tok.lower()
+        for tok in re.findall(r"[A-Za-z0-9]+", text)
+        if tok and tok.lower() not in _FORMAT_STOP_TOKENS
+    }
+
+
+def _metric_tokens(metric: dict) -> set[str]:
+    raw = " ".join(
+        str(metric.get(k) or "")
+        for k in ("name", "synonyms", "description", "required_columns")
+    )
+    tokens = _term_tokens(raw)
+    return {t for t in tokens if t not in _FORMAT_STOP_TOKENS}
+
+
+def _is_dimension_like_column(column: str) -> bool:
+    tokens = _term_tokens(column)
+    if not tokens:
+        return False
+    if tokens & _VALUE_TOKENS:
+        return False
+    return bool(tokens & _DIMENSION_TOKENS)
+
+
+def _format_matches_column_name(fmt: str, column: str) -> bool:
+    if fmt == "currency":
+        return bool(_CURRENCY_NAME_RE.search(column))
+    if fmt == "percentage":
+        return bool(_PERCENT_NAME_RE.search(column))
+    if fmt == "date":
+        return bool(_DATE_NAME_RE.search(column))
+    return False
+
+
+def _columns_for_metric_format(
+    rows: list[dict],
+    metric: dict,
+    *,
+    strict: bool = False,
+) -> list[str]:
+    if not rows:
+        return []
+
+    fmt = _normalise_result_format(metric.get("result_format"))
+    if fmt == "number":
+        return []
+
+    headers = list(rows[0].keys())
+    numeric_cols = set(_numeric_cols(rows))
+    text_cols = {h for h in headers if h not in numeric_cols}
+    metric_terms = _metric_tokens(metric)
+
+    if fmt in {"currency", "percentage", "number"}:
+        candidates = [h for h in headers if h in numeric_cols]
+    elif fmt == "date":
+        candidates = [h for h in headers if h not in numeric_cols or _format_matches_column_name(fmt, h)]
+    else:
+        candidates = [h for h in headers if h in text_cols]
+
+    scored: list[tuple[int, str]] = []
+    for header in candidates:
+        header_terms = _term_tokens(header)
+        term_match = bool(metric_terms and (header_terms & metric_terms))
+        format_name_match = _format_matches_column_name(fmt, header)
+        value_name_match = bool(header_terms & _VALUE_TOKENS)
+        score = 0
+        if term_match:
+            score += 5
+        if format_name_match:
+            score += 4
+        if value_name_match and (strict or term_match or format_name_match):
+            score += 2
+        if _is_dimension_like_column(header) and not format_name_match:
+            score -= 4
+        if score > 0:
+            scored.append((score, header))
+
+    if scored:
+        scored.sort(key=lambda item: (-item[0], headers.index(item[1])))
+        return [h for _, h in scored]
+
+    value_candidates = [h for h in candidates if not _is_dimension_like_column(h)]
+    if strict and len(value_candidates) == 1:
+        return value_candidates
+    if strict and value_candidates:
+        return value_candidates
+    return []
+
+
+def build_column_formats(
+    rows: list[dict],
+    display_context: dict | None = None,
+    explicit_formats: dict | None = None,
+) -> dict[str, str]:
+    """
+    Build a header -> display-format map for the frontend.
+
+    Metric result_format should drive presentation only. SQL remains numeric/date
+    friendly so sorting, charting, CSV export, and result-chat calculations keep
+    working.
+    """
+    if not rows:
+        return {}
+
+    headers = list(rows[0].keys())
+    by_norm = {_normalise_key(h): h for h in headers}
+    formats: dict[str, str] = {}
+
+    for raw_col, raw_fmt in (explicit_formats or {}).items():
+        header = by_norm.get(_normalise_key(raw_col))
+        fmt = _normalise_result_format(raw_fmt)
+        if header and fmt != "number":
+            formats[header] = fmt
+
+    ctx = display_context or {}
+    metrics = ctx.get("metrics") if isinstance(ctx, dict) else []
+    if isinstance(metrics, dict):
+        metrics = [metrics]
+    if not isinstance(metrics, list):
+        metrics = []
+    strict = (ctx.get("format_scope") if isinstance(ctx, dict) else "") == "metric_registry"
+
+    for metric in metrics:
+        if not isinstance(metric, dict):
+            continue
+        fmt = _normalise_result_format(metric.get("result_format"))
+        if fmt == "number":
+            continue
+        for header in _columns_for_metric_format(rows, metric, strict=strict):
+            formats.setdefault(header, fmt)
+
+    return formats
 
 
 def _text_cols(rows: list[dict], numeric_cols: list[str]) -> list[str]:
@@ -184,8 +363,10 @@ def build_answer(
     rows: list[dict],
     question: str,
     result_scope: dict | None = None,
+    column_formats: dict | None = None,
 ) -> dict:
     scope = result_scope or infer_result_scope(rows, question)
+    column_formats = column_formats or {}
     if not rows:
         return {
             "headline": "No matching data was found for this question.",
@@ -201,9 +382,10 @@ def build_answer(
     if len(rows) == 1 and len(rows[0]) == 1:
         col = next(iter(rows[0].keys()))
         val = rows[0][col]
+        fmt = column_formats.get(col)
         return {
-            "headline": f"{col.replace('_', ' ').title()}: {_format_number(val)}",
-            "short_value": _format_number(val),
+            "headline": f"{col.replace('_', ' ').title()}: {_format_number(val, fmt)}",
+            "short_value": _format_number(val, fmt),
             "comparison": scope.get("badge") or "Single-value result",
             "scope_badge": scope.get("badge", ""),
             "scope_note": scope.get("note", ""),
@@ -212,6 +394,7 @@ def build_answer(
     if numeric_cols and text_cols:
         label_col = text_cols[0]
         value_col = numeric_cols[0]
+        value_fmt = column_formats.get(value_col)
         ordered = sorted(rows, key=lambda r: _to_float(r.get(value_col)) or 0.0, reverse=True)
         labels = [str(r.get(label_col, "")) for r in rows]
         if _looks_temporal(labels):
@@ -220,11 +403,11 @@ def build_answer(
             first_val = _to_float(first.get(value_col)) or 0.0
             last_val = _to_float(last.get(value_col)) or 0.0
             direction = "up" if last_val > first_val else "down" if last_val < first_val else "flat"
-            headline = f"{str(last.get(label_col, 'Latest period'))} closed at {_format_number(last_val)}."
-            comparison = scope.get("badge") or f"Trend is {direction} versus {_format_number(first_val)} at the start"
+            headline = f"{str(last.get(label_col, 'Latest period'))} closed at {_format_number(last_val, value_fmt)}."
+            comparison = scope.get("badge") or f"Trend is {direction} versus {_format_number(first_val, value_fmt)} at the start"
             return {
                 "headline": headline,
-                "short_value": _format_number(last_val),
+                "short_value": _format_number(last_val, value_fmt),
                 "comparison": comparison,
                 "scope_badge": scope.get("badge", ""),
                 "scope_note": scope.get("note", ""),
@@ -234,18 +417,18 @@ def build_answer(
         best_value = _to_float(best.get(value_col)) or 0.0
         comparison = scope.get("badge") or f"Across {len(rows)} results"
         if scope.get("is_top_n") and (scope.get("n") or 0) == 1:
-            headline = f"Top-ranked result: {best_label} at {_format_number(best_value)}."
+            headline = f"Top-ranked result: {best_label} at {_format_number(best_value, value_fmt)}."
             comparison = "This card shows only the leading row"
         else:
-            headline = f"{best_label} leads at {_format_number(best_value)}."
+            headline = f"{best_label} leads at {_format_number(best_value, value_fmt)}."
         if len(ordered) > 1 and not scope.get("is_top_n"):
             second = ordered[1]
             second_value = _to_float(second.get(value_col)) or 0.0
             delta = best_value - second_value
-            comparison = f"{_format_number(delta)} above the next result"
+            comparison = f"{_format_number(delta, value_fmt)} above the next result"
         return {
             "headline": headline,
-            "short_value": _format_number(best_value),
+            "short_value": _format_number(best_value, value_fmt),
             "comparison": comparison,
             "scope_badge": scope.get("badge", ""),
             "scope_note": scope.get("note", ""),
@@ -253,11 +436,12 @@ def build_answer(
 
     if numeric_cols:
         col = numeric_cols[0]
+        value_fmt = column_formats.get(col)
         values = [_to_float(r.get(col)) or 0.0 for r in rows]
         return {
             "headline": f"Returned {len(rows)} rows for {question.strip().rstrip('?') or 'this query'}.",
-            "short_value": _format_number(values[0]),
-            "comparison": scope.get("badge") or f"Range {_format_number(min(values))} to {_format_number(max(values))}",
+            "short_value": _format_number(values[0], value_fmt),
+            "comparison": scope.get("badge") or f"Range {_format_number(min(values), value_fmt)} to {_format_number(max(values), value_fmt)}",
             "scope_badge": scope.get("badge", ""),
             "scope_note": scope.get("note", ""),
         }
@@ -801,10 +985,22 @@ def build_assistant_response(
     chart: dict | None = None,
     data_source: str | None = None,
     confidence: dict | None = None,
+    display_context: dict | None = None,
+    column_formats: dict | None = None,
 ) -> dict:
     from core.insight import compute_data_brief
     ctx = summarize_result_context(rows, question, sql=sql)
-    answer = build_answer(rows, question, ctx.get("result_scope"))
+    resolved_column_formats = build_column_formats(
+        rows,
+        display_context=display_context,
+        explicit_formats=column_formats,
+    )
+    answer = build_answer(
+        rows,
+        question,
+        ctx.get("result_scope"),
+        column_formats=resolved_column_formats,
+    )
     brief = compute_data_brief(
         rows,
         question,
@@ -847,6 +1043,11 @@ def build_assistant_response(
             "rows": display_rows,
             "total_rows": len(rows),
             "truncated": len(rows) > _PREVIEW_ROW_CAP,
+            "column_formats": resolved_column_formats,
+            "currency_columns": [
+                col for col, fmt in resolved_column_formats.items()
+                if fmt == "currency"
+            ],
         },
         "trust": {
             "sql": sql,

@@ -36,7 +36,7 @@ from core.knowledge import load_retriever
 from core.validator import validate_sql
 from core.chart import detect_chart_type, build_chart_payload
 from core.query_semantics import analyze_query_intent, build_generic_query_hints
-from core.response_builder import build_assistant_response
+from core.response_builder import build_assistant_response, build_column_formats
 from core.insight import generate_followup_suggestions
 from core.graph_resolver import resolve_for_question as _graph_resolve
 from core.llm_audit import llm_audit_scope, make_llm_audit_request_id
@@ -733,7 +733,11 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                 )
             await _send_results(event, adapter, question, rows, sql_from_metric,
                                 duration_ms, portal_user, account_id, db_cfg,
-                                question_id=audit_request_id)
+                                question_id=audit_request_id,
+                                display_context={
+                                    "format_scope": "metric_registry",
+                                    "metrics": [matched_metric],
+                                })
             _trace_finish(trace_id, status="success", answer_type="table", row_count=len(rows), duration_ms=duration_ms, final_answer_summary="Answered by metric registry")
             return
         except Exception as e:
@@ -1418,20 +1422,30 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
     await _send_results(event, adapter, question, rows, sql, duration_ms,
                         portal_user, account_id, db_cfg,
                         rag_context=context, question_id=audit_request_id,
-                        confidence_context=_confidence_context)
+                        confidence_context=_confidence_context,
+                        display_context={
+                            "format_scope": "metric_context",
+                            "metrics": _matched_metrics,
+                        })
     _trace_finish(trace_id, status="success", answer_type="table", row_count=len(rows), duration_ms=duration_ms, final_answer_summary="Answered from database query")
 
 
 async def _send_results(event, adapter, question, rows, sql, duration_ms,
                         portal_user, account_id, db_cfg,
                         rag_context: str = "", question_id: str | None = None,
-                        confidence_context: dict | None = None):
+                        confidence_context: dict | None = None,
+                        display_context: dict | None = None):
     """Send formatted results to the chat platform. Shared by LLM and metric registry paths."""
+    column_formats = build_column_formats(rows, display_context=display_context)
     # Cache result on adapter for insight follow-ups (WebSocket sessions).
     # Pass question_id so drilldowns can link back to this original question.
     cache_fn = getattr(adapter, "cache_result", None)
     if callable(cache_fn):
-        cache_fn(rows, question, sql, db_cfg, rag_context, question_id=question_id)
+        cache_fn(
+            rows, question, sql, db_cfg, rag_context,
+            question_id=question_id,
+            column_formats=column_formats,
+        )
 
     table_text = _rows_to_table(rows)
     row_word   = "row" if len(rows) == 1 else "rows"
@@ -1481,6 +1495,8 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
             chart=chart_payload,
             data_source=str(db_cfg.get("db_type", "")),
             confidence=confidence,
+            display_context=display_context,
+            column_formats=column_formats,
         )
         # ── Result-aware follow-up suggestions (web portal only) ──────────
         # Generate suggestions from the statistical brief already computed
@@ -2557,6 +2573,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     _rc_schema      = result_cache.get_schema(_sid)
                     _rc_stats       = result_cache.get_stats(_sid)
                     _rc_currency    = result_cache.get_currency_columns(_sid)
+                    _rc_formats     = result_cache.get_column_formats(_sid)
                     _rc_db_cfg      = get_client_db(account_id) or {}
                     _rc_history     = _result_chat_histories.get(rc_result_id, [])
 
@@ -2953,6 +2970,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                 "source":           "database",
                                 "source_note":      "Answer required a full database query.",
                                 "currency_columns": _rc_currency,
+                                "column_formats":   _rc_formats,
                             })
                             _trace_update(
                                 _rc_trace_id,
@@ -3043,6 +3061,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                         "row_count":        len(_rc_rows),
                         "source":           "cache",
                         "currency_columns": _rc_currency,
+                        "column_formats":   _rc_formats,
                         "chart":            _rc_chart,
                         "narration":        _rc_narration or None,
                     })
