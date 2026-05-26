@@ -46,11 +46,35 @@ _CURRENCY_NAME_RE = re.compile(
     r"wage|commission|rebate|discount|tax|surcharge|reimbursement)\b",
     re.IGNORECASE,
 )
+_RESULT_FORMATS = {"number", "currency", "percentage", "date", "text"}
 
 log = logging.getLogger("querybot.result_cache")
 
 _MAX_SESSIONS  = 200
 _TTL_SECONDS   = 600      # 10 minutes
+
+
+def _normalise_result_format(value: Any) -> str:
+    fmt = str(value or "number").strip().lower()
+    return fmt if fmt in _RESULT_FORMATS else "number"
+
+
+def _normalise_key(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").lower())
+
+
+def _normalise_column_formats(rows: list[dict], column_formats: dict | None) -> dict[str, str]:
+    if not rows or not column_formats:
+        return {}
+    headers = list(rows[0].keys())
+    by_norm = {_normalise_key(h): h for h in headers}
+    cleaned: dict[str, str] = {}
+    for raw_col, raw_fmt in column_formats.items():
+        header = by_norm.get(_normalise_key(raw_col))
+        fmt = _normalise_result_format(raw_fmt)
+        if header and fmt != "number":
+            cleaned[header] = fmt
+    return cleaned
 
 
 # ── DuckDB type inference ─────────────────────────────────────────────────────
@@ -297,14 +321,21 @@ def _project_fallback_rows(rows: list[dict], sql: str) -> list[dict]:
 # ══════════════════════════════════════════════════════════════════════════════
 
 class _CacheEntry:
-    __slots__ = ("rows", "schema", "question", "sql", "stored_at")
+    __slots__ = ("rows", "schema", "question", "sql", "column_formats", "stored_at")
 
-    def __init__(self, rows: list[dict], question: str, sql: str):
-        self.rows      = rows
-        self.schema    = _schema_from_rows(rows)
-        self.question  = question
-        self.sql       = sql
-        self.stored_at = time.monotonic()
+    def __init__(
+        self,
+        rows: list[dict],
+        question: str,
+        sql: str,
+        column_formats: dict | None = None,
+    ):
+        self.rows           = rows
+        self.schema         = _schema_from_rows(rows)
+        self.question       = question
+        self.sql            = sql
+        self.column_formats = _normalise_column_formats(rows, column_formats)
+        self.stored_at      = time.monotonic()
 
     def is_expired(self) -> bool:
         return (time.monotonic() - self.stored_at) > _TTL_SECONDS
@@ -329,6 +360,7 @@ class ResultCache:
         rows: list[dict],
         question: str = "",
         sql: str = "",
+        column_formats: dict | None = None,
     ) -> None:
         """Cache `rows` under `session_id`.  Evicts oldest entry when full."""
         if not session_id or not rows:
@@ -338,7 +370,7 @@ class ResultCache:
             self._store.move_to_end(session_id)
         elif len(self._store) >= self._max:
             self._store.popitem(last=False)   # evict LRU
-        self._store[session_id] = _CacheEntry(rows, question, sql)
+        self._store[session_id] = _CacheEntry(rows, question, sql, column_formats)
         log.debug("Cached %d rows for session %s", len(rows), session_id[:12])
 
     # ── Query ─────────────────────────────────────────────────────────────────
@@ -476,9 +508,14 @@ class ResultCache:
                         break
                 stat["sample_values"] = list(seen.keys())
 
-            # Currency detection: name heuristic + numeric type
+            explicit_format = entry.column_formats.get(col)
+            if explicit_format:
+                stat["format"] = explicit_format
+
+            # Currency detection: explicit metric format or name heuristic + numeric type
             stat["is_currency"] = bool(
-                is_numeric and _CURRENCY_NAME_RE.search(col)
+                explicit_format == "currency"
+                or (is_numeric and _CURRENCY_NAME_RE.search(col))
             )
 
             col_stats.append(stat)
@@ -496,6 +533,21 @@ class ResultCache:
             c["name"] for c in stats.get("columns", [])
             if c.get("is_currency")
         ]
+
+    def get_column_formats(self, session_id: str) -> dict[str, str]:
+        """
+        Return display formats for cached result columns.
+
+        Explicit metric formats are preserved. Currency name heuristics are
+        added as a fallback for older cached results and non-metric queries.
+        """
+        entry = self._get(session_id)
+        if entry is None:
+            return {}
+        formats = dict(entry.column_formats)
+        for col in self.get_currency_columns(session_id):
+            formats.setdefault(col, "currency")
+        return formats
 
     def has_result(self, session_id: str) -> bool:
         entry = self._get(session_id)

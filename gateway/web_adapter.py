@@ -147,14 +147,16 @@ class WebAdapter(PlatformAdapter):
         db_cfg: dict | None = None,
         rag_context: str = "",
         question_id: str | None = None,
+        column_formats: dict | None = None,
     ) -> None:
         """Cache the last query result for insight follow-ups and Tier-2 DuckDB queries."""
         self.last_result = {
-            "rows":        rows,
-            "question":    question,
-            "sql":         sql,
-            "db_cfg":      db_cfg,
-            "rag_context": rag_context,
+            "rows":           rows,
+            "question":       question,
+            "sql":            sql,
+            "db_cfg":         db_cfg,
+            "rag_context":    rag_context,
+            "column_formats": column_formats or {},
         }
         # Persist the parent question_id so drilldowns can reference it.
         if question_id:
@@ -165,7 +167,13 @@ class WebAdapter(PlatformAdapter):
         # from the already-fetched rows without hitting the production DB.
         try:
             from core.result_cache import result_cache
-            result_cache.store(self.session_id, rows, question, sql)
+            result_cache.store(
+                self.session_id,
+                rows,
+                question,
+                sql,
+                column_formats=column_formats,
+            )
         except Exception as _ce:
             log.debug("Result cache store failed (non-critical): %s", _ce)
 
