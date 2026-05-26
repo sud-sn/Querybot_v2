@@ -13,6 +13,7 @@ from core.semantic_planner import build_semantic_field_plan
 from core.validator import validate_sql, validate_sql_detailed
 from core.answer_confidence import build_answer_confidence
 from core.answer_rca import build_business_rca, extract_sql_tables
+from core.query_router import should_route_to_result_cache, build_duckdb_system_prompt
 
 
 KNOWN = {
@@ -451,6 +452,24 @@ class BusinessConfidenceRcaTests(unittest.TestCase):
         tables = extract_sql_tables(sql, "azure_sql")
         self.assertIn("PROFITABILITY.CUS_ORD_IVC_FCT", tables)
         self.assertIn("PROFITABILITY.OOLINE", tables)
+
+
+class ResultTransformationRoutingTests(unittest.TestCase):
+    def test_main_chat_routes_flag_followup_to_cached_result(self):
+        self.assertTrue(
+            should_route_to_result_cache(
+                "for each unique warehouse id flag them Warehouse A and display the revenue",
+                True,
+                ["Warehouse", "TotalRevenue"],
+            )
+        )
+
+    def test_duckdb_prompt_prefers_chr_for_letter_flags(self):
+        prompt = build_duckdb_system_prompt(
+            [{"name": "Warehouse", "type": "BIGINT"}, {"name": "TotalRevenue", "type": "DOUBLE"}],
+        )
+        self.assertIn("chr(CAST(64 +", prompt)
+        self.assertIn("return the original useful columns PLUS the new computed column", prompt)
 
 
 if __name__ == "__main__":

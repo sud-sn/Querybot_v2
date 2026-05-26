@@ -60,7 +60,18 @@ _ANALYTIC_TOPN_RE = re.compile(
 
 # Weaker signals — only route if combined with a result-reference context word
 _ANALYTIC_RE = re.compile(
-    r"\b(average|mean|median|sum|total|minimum|maximum|percentile|rank|sort)\b",
+    r"\b(average|mean|median|sum|total|minimum|maximum|percentile|rank|sort|calculate|compute|derive)\b",
+    re.IGNORECASE,
+)
+
+_TRANSFORM_RE = re.compile(
+    r"\b("
+    r"flag|label|tag|classify|categorize|"
+    r"add\s+(a\s+)?(new\s+)?column|create\s+(a\s+)?(new\s+)?column|"
+    r"display\s+(it|them|these|this)\s+as|show\s+(it|them|these|this)\s+as|"
+    r"rename|format\s+(it|them|these|this)|"
+    r"profit\s*(percentage|percent|%)|margin\s*(percentage|percent|%)"
+    r")\b",
     re.IGNORECASE,
 )
 
@@ -107,6 +118,11 @@ def should_route_to_result_cache(
 
     # Medium match — "avg of top 5 formulas", "top 3 by revenue", etc.
     if _ANALYTIC_TOPN_RE.search(q):
+        return True
+
+    # Result transformations: "flag them Warehouse A/B", "add profit percentage",
+    # "label each row", etc. These should reshape the cached result table.
+    if _TRANSFORM_RE.search(q):
         return True
 
     # Weak match — route only when user also references "these / this result"
@@ -223,6 +239,13 @@ def build_duckdb_system_prompt(
         "- For 'outliers': WHERE col > (SELECT AVG(col) + 2 * STDDEV_POP(col) FROM result)\n"
         "- For 'running total': SELECT col, SUM(metric) OVER (ORDER BY col) AS running_total\n"
         "- For 'ratio': SELECT col_a / NULLIF(col_b, 0) AS ratio\n"
+        "- For row labels / flags like 'Warehouse A, Warehouse B', use a computed "
+        "column over result, e.g. SELECT Warehouse, 'Warehouse ' || chr(CAST(64 + "
+        "ROW_NUMBER() OVER (ORDER BY Warehouse) AS INTEGER)) AS Warehouse_Flag, "
+        "TotalRevenue FROM result. Prefer chr(...) over CHAR(...).\n"
+        "- For 'add a column', 'flag', 'label', 'calculate', or 'display as', return "
+        "the original useful columns PLUS the new computed column. Do not answer with "
+        "only narration.\n"
         "- Row limit: use no LIMIT unless the user specifies a number\n"
         "- CURRENCY RULE: Columns tagged [CURRENCY USD] in the DATA SNAPSHOT "
         "represent US dollar amounts. When referencing values from those columns "

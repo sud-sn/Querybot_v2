@@ -146,7 +146,150 @@ def _python_fallback_query(rows: list[dict], sql: str) -> list[dict]:
     if limit_m:
         result = result[:int(limit_m.group(1))]
 
-    return result
+    return _project_fallback_rows(result, sql)
+
+
+def _split_select_items(select_text: str) -> list[str]:
+    items: list[str] = []
+    buf: list[str] = []
+    depth = 0
+    quote = ""
+    for ch in select_text:
+        if quote:
+            buf.append(ch)
+            if ch == quote:
+                quote = ""
+            continue
+        if ch in ("'", '"', "`"):
+            quote = ch
+            buf.append(ch)
+            continue
+        if ch == "(":
+            depth += 1
+        elif ch == ")" and depth > 0:
+            depth -= 1
+        if ch == "," and depth == 0:
+            item = "".join(buf).strip()
+            if item:
+                items.append(item)
+            buf = []
+        else:
+            buf.append(ch)
+    item = "".join(buf).strip()
+    if item:
+        items.append(item)
+    return items
+
+
+def _split_concat(expr: str) -> list[str]:
+    parts: list[str] = []
+    buf: list[str] = []
+    depth = 0
+    quote = ""
+    i = 0
+    while i < len(expr):
+        ch = expr[i]
+        if quote:
+            buf.append(ch)
+            if ch == quote:
+                quote = ""
+            i += 1
+            continue
+        if ch in ("'", '"', "`"):
+            quote = ch
+            buf.append(ch)
+            i += 1
+            continue
+        if ch == "(":
+            depth += 1
+        elif ch == ")" and depth > 0:
+            depth -= 1
+        if depth == 0 and expr[i:i + 2] == "||":
+            parts.append("".join(buf).strip())
+            buf = []
+            i += 2
+            continue
+        buf.append(ch)
+        i += 1
+    tail = "".join(buf).strip()
+    if tail:
+        parts.append(tail)
+    return parts
+
+
+def _extract_alias(expr: str) -> tuple[str, str | None]:
+    m = re.match(r"(.+?)\s+AS\s+([A-Za-z_][A-Za-z0-9_]*)\s*$", expr, re.IGNORECASE | re.DOTALL)
+    if m:
+        return m.group(1).strip(), m.group(2).strip()
+    return expr.strip(), None
+
+
+def _fallback_row_numbers(rows: list[dict], order_col: str | None) -> dict[int, int]:
+    indexed = list(enumerate(rows))
+    if order_col:
+        indexed.sort(key=lambda pair: (
+            float(str(pair[1].get(order_col, 0)).replace(",", ""))
+            if _is_numeric_str(pair[1].get(order_col, "")) else str(pair[1].get(order_col, ""))
+        ))
+    return {idx: pos + 1 for pos, (idx, _) in enumerate(indexed)}
+
+
+def _eval_fallback_expr(expr: str, row: dict, row_number: int) -> Any:
+    expr = expr.strip()
+    if expr == "*":
+        return row
+    if "||" in expr:
+        return "".join(str(_eval_fallback_expr(part, row, row_number) or "") for part in _split_concat(expr))
+    if (expr.startswith("'") and expr.endswith("'")) or (expr.startswith('"') and expr.endswith('"')):
+        return expr[1:-1]
+    if re.search(r"\bROW_NUMBER\s*\(\s*\)\s*OVER\s*\(", expr, re.IGNORECASE):
+        offset = 0
+        off_m = re.search(r"(\d+)\s*\+\s*ROW_NUMBER", expr, re.IGNORECASE)
+        if off_m:
+            offset = int(off_m.group(1))
+        if re.search(r"\b(CHR|CHAR)\s*\(", expr, re.IGNORECASE):
+            try:
+                return chr(offset + row_number)
+            except (ValueError, TypeError):
+                return ""
+        return row_number
+    cast_m = re.match(r"CAST\s*\((.+?)\s+AS\s+[A-Za-z0-9_()]+\s*\)$", expr, re.IGNORECASE | re.DOTALL)
+    if cast_m:
+        return _eval_fallback_expr(cast_m.group(1), row, row_number)
+    col = expr.strip().strip('"').strip("`").strip("[]")
+    return row.get(col)
+
+
+def _project_fallback_rows(rows: list[dict], sql: str) -> list[dict]:
+    m = re.search(r"^\s*SELECT\s+(.+?)\s+FROM\s+result\b", sql, re.IGNORECASE | re.DOTALL)
+    if not m:
+        return rows
+    select_text = m.group(1).strip()
+    if select_text == "*":
+        return rows
+
+    rn_order = None
+    rn_m = re.search(r"ROW_NUMBER\s*\(\s*\)\s*OVER\s*\(\s*ORDER\s+BY\s+([A-Za-z_][A-Za-z0-9_]*)", select_text, re.IGNORECASE)
+    if rn_m:
+        rn_order = rn_m.group(1)
+    row_numbers = _fallback_row_numbers(rows, rn_order)
+
+    projected: list[dict] = []
+    for idx, row in enumerate(rows):
+        out: dict[str, Any] = {}
+        for raw_item in _split_select_items(select_text):
+            expr, alias = _extract_alias(raw_item)
+            if expr == "*":
+                out.update(row)
+                continue
+            value = _eval_fallback_expr(expr, row, row_numbers.get(idx, idx + 1))
+            if isinstance(value, dict):
+                out.update(value)
+                continue
+            col_name = alias or expr.strip().strip('"').strip("`").strip("[]")
+            out[col_name] = value
+        projected.append(out)
+    return projected
 
 
 # ══════════════════════════════════════════════════════════════════════════════
