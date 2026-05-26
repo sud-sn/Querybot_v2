@@ -368,9 +368,19 @@ def validate_sql_detailed(
                 if not table_key or table_key not in table_columns:
                     continue
             else:
-                if col_name in select_aliases or len(unique_base_keys) != 1:
+                if col_name in select_aliases:
                     continue
-                table_key = unique_base_keys[0]
+                if len(unique_base_keys) == 1:
+                    table_key = unique_base_keys[0]
+                else:
+                    # Unqualified column in a multi-table query: find the first base table
+                    # that actually contains this column so we can track it correctly.
+                    table_key = next(
+                        (k for k in unique_base_keys if col_name in {str(c).upper() for c in (table_columns.get(k) or {})}),
+                        "",
+                    )
+                if not table_key:
+                    continue
 
             cols = set(table_columns.get(table_key, {}))
             if cols and col_name not in cols:
@@ -444,13 +454,27 @@ def validate_sql_detailed(
                         "term": field.get("term", ""),
                     })
 
+            # Build a set of all (left_col, right_col) pairs that appear in any
+            # JOIN ... ON equality condition via AST — more precise than raw substring
+            # matching which would false-pass if a column name appears only in SELECT.
+            join_eq_pairs: set[tuple[str, str]] = set()
+            for join_node in tree.find_all(sg_exp.Join):
+                for eq_node in join_node.find_all(sg_exp.EQ):
+                    left_expr = eq_node.left
+                    right_expr = eq_node.right
+                    if isinstance(left_expr, sg_exp.Column) and isinstance(right_expr, sg_exp.Column):
+                        lc = (left_expr.name or "").upper()
+                        rc = (right_expr.name or "").upper()
+                        if lc and rc:
+                            join_eq_pairs.add((lc, rc))
+                            join_eq_pairs.add((rc, lc))  # symmetric
+
             required_join_errors: list[dict] = []
-            sql_text = re.sub(r"\s+", " ", sql.upper())
             for edge in field_plan.get("joins") or []:
                 for left_col, right_col in edge.get("conditions") or []:
                     left_col_u = str(left_col).upper()
                     right_col_u = str(right_col).upper()
-                    if left_col_u not in sql_text or right_col_u not in sql_text:
+                    if (left_col_u, right_col_u) not in join_eq_pairs:
                         required_join_errors.append({
                             "code": "field_plan_join_missing",
                             "message": (

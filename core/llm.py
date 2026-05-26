@@ -614,9 +614,20 @@ def build_sql_system_prompt(
         except Exception:
             plan_text = ""
         if plan_text:
+            # When the entity graph is also active, make priority explicit so the
+            # LLM doesn't treat the two instruction sets as contradictory.
+            graph_priority_note = ""
+            if graph_context and graph_context.get("detected"):
+                graph_priority_note = (
+                    "NOTE: When the entity graph join skeleton (above) and the semantic "
+                    "field plan conflict, the entity graph ON conditions take priority for "
+                    "table aliases and join predicates. Use the semantic plan for column "
+                    "selection only — do not introduce new joins or change aliases from the skeleton.\n\n"
+                )
             base = base + (
                 "\n\n" + plan_text + "\n\n"
-                "FIELD PLAN RULE: the mapped fields above are deterministic schema-derived "
+                + graph_priority_note
+                + "FIELD PLAN RULE: the mapped fields above are deterministic schema-derived "
                 "bindings. Use the listed table.column pairs exactly. If the query requires "
                 "CTEs, place the listed joins and source fields in the base CTE. If you cannot "
                 "use the plan with the available schema, return CANNOT_GENERATE."
