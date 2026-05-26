@@ -326,6 +326,7 @@ CREATE TABLE IF NOT EXISTS metric_registry (
     result_format TEXT   NOT NULL DEFAULT 'number',
     required_columns TEXT DEFAULT '',
     allowed_dimensions TEXT DEFAULT '',
+    metric_builder_config TEXT DEFAULT '',
     example_questions TEXT DEFAULT '',
     grain        TEXT    DEFAULT '',
     is_active    INTEGER NOT NULL DEFAULT 1,
@@ -602,6 +603,7 @@ def _run_migrations() -> None:
         ("metric_registry", "result_format", "TEXT NOT NULL DEFAULT 'number'"),
         ("metric_registry", "required_columns", "TEXT DEFAULT ''"),
         ("metric_registry", "allowed_dimensions", "TEXT DEFAULT ''"),
+        ("metric_registry", "metric_builder_config", "TEXT DEFAULT ''"),
         ("metric_registry", "example_questions", "TEXT DEFAULT ''"),
         ("metric_registry", "grain", "TEXT DEFAULT ''"),
         # v16: egress log watermark on external export state
