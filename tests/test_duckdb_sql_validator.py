@@ -44,6 +44,25 @@ class DuckDBSQLValidatorTests(unittest.TestCase):
         cache.store("s1", [{"name": "A", "amount": 10}, {"name": "B", "amount": 20}])
         self.assertEqual(cache.query("s1", "SELECT * FROM read_csv('secrets.csv')"), [])
 
+    def test_result_cache_fallback_projects_computed_flag_column(self):
+        cache = ResultCache()
+        cache.store(
+            "s1",
+            [
+                {"Warehouse": 1000068, "TotalRevenue": 20.0},
+                {"Warehouse": 1000043, "TotalRevenue": 10.0},
+            ],
+        )
+        rows = cache.query(
+            "s1",
+            "SELECT Warehouse, 'Warehouse ' || CHAR(64 + ROW_NUMBER() OVER (ORDER BY Warehouse)) "
+            "AS Warehouse_Flag, TotalRevenue FROM result",
+        )
+        self.assertEqual(list(rows[0].keys()), ["Warehouse", "Warehouse_Flag", "TotalRevenue"])
+        by_wh = {r["Warehouse"]: r["Warehouse_Flag"] for r in rows}
+        self.assertEqual(by_wh[1000043], "Warehouse A")
+        self.assertEqual(by_wh[1000068], "Warehouse B")
+
 
 if __name__ == "__main__":
     unittest.main()
