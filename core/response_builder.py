@@ -261,6 +261,76 @@ def _to_float(value: Any) -> float | None:
         return None
 
 
+def _display_label(column: str) -> str:
+    return re.sub(r"\s+", " ", str(column or "").replace("_", " ")).strip().title()
+
+
+def _find_header_by_norm(headers: list[str], norm: str) -> str:
+    if not norm:
+        return ""
+    for header in headers:
+        if _normalise_key(header) == norm:
+            return header
+    for header in headers:
+        h_norm = _normalise_key(header)
+        if h_norm.endswith(norm) or norm.endswith(h_norm):
+            return header
+    return ""
+
+
+def detect_null_metric_issue(rows: list[dict]) -> dict[str, Any] | None:
+    """
+    Detect diagnostic rows where records matched, but a requested metric was
+    NULL/missing for every matched record.
+    """
+    if len(rows) != 1 or not rows[0]:
+        return None
+    row = rows[0]
+    headers = list(row.keys())
+    matched_header = next(
+        (
+            h for h in headers
+            if _normalise_key(h) in {"matchedrows", "rowcount", "matchcount", "matchedrecords"}
+        ),
+        "",
+    )
+    matched_rows = _to_float(row.get(matched_header)) if matched_header else None
+    if matched_rows is None or matched_rows <= 0:
+        return None
+
+    issues: list[dict[str, Any]] = []
+    for header in headers:
+        norm = _normalise_key(header)
+        if not (norm.startswith("nonnull") and norm.endswith("rows")):
+            continue
+        non_null_rows = _to_float(row.get(header))
+        if non_null_rows is None or non_null_rows > 0:
+            continue
+        metric_norm = norm[len("nonnull"):-len("rows")]
+        metric_header = _find_header_by_norm(headers, metric_norm)
+        if not metric_header:
+            continue
+        metric_value = row.get(metric_header)
+        metric_num = _to_float(metric_value)
+        if metric_value not in (None, "") and metric_num not in (0, 0.0):
+            continue
+        issues.append({
+            "metric_column": metric_header,
+            "non_null_column": header,
+            "matched_rows": int(matched_rows),
+            "non_null_rows": int(non_null_rows),
+            "value": metric_value,
+        })
+
+    if not issues:
+        return None
+    return {
+        "matched_rows": int(matched_rows),
+        "matched_column": matched_header,
+        "issues": issues,
+    }
+
+
 def _best_label(question: str, label_col: str, value_col: str) -> str:
     q = question.strip().rstrip("?")
     if len(q.split()) >= 4:
@@ -374,6 +444,25 @@ def build_answer(
             "comparison": "Try adjusting the filters or time range.",
             "scope_badge": scope.get("badge", ""),
             "scope_note": scope.get("note", ""),
+        }
+
+    null_issue = detect_null_metric_issue(rows)
+    if null_issue:
+        issue = null_issue["issues"][0]
+        metric_col = issue["metric_column"]
+        fmt = column_formats.get(metric_col)
+        value = _format_number(_to_float(rows[0].get(metric_col)) or 0, fmt)
+        metric_label = _display_label(metric_col)
+        matched = null_issue["matched_rows"]
+        return {
+            "headline": f"{metric_label}: {value} because all matched values are missing.",
+            "short_value": value,
+            "comparison": f"{matched} matching records, 0 non-null {metric_label} values",
+            "scope_badge": "Missing metric values",
+            "scope_note": (
+                f"The filter matched {matched} records, but the requested metric column "
+                f"had no non-null values in those records."
+            ),
         }
 
     numeric_cols = _numeric_cols(rows)
@@ -619,6 +708,15 @@ def _build_insight_summary(rows: list[dict], ctx: dict, brief: dict) -> str:
     """
     mode = ctx.get("mode", "table")
     row_count = len(rows)
+
+    null_issue = detect_null_metric_issue(rows)
+    if null_issue:
+        issue = null_issue["issues"][0]
+        metric = _display_label(issue["metric_column"])
+        return (
+            f"{null_issue['matched_rows']} records matched, but {metric} is missing "
+            "for every matched row."
+        )
 
     if mode == "single_value":
         col = (brief.get("value_column") or "").replace("_", " ").title()

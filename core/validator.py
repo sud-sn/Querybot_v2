@@ -157,6 +157,147 @@ def _format_plan_field(field: dict) -> str:
     return f"{field.get('term') or field.get('column')}: {field.get('table')}.{field.get('column')}"
 
 
+_SQL_IDENTIFIER_STOPWORDS = {
+    "AS",
+    "AVG",
+    "CASE",
+    "CAST",
+    "COALESCE",
+    "CONVERT",
+    "COUNT",
+    "COUNT_BIG",
+    "DATE",
+    "DECIMAL",
+    "DISTINCT",
+    "ELSE",
+    "END",
+    "FLOAT",
+    "FROM",
+    "GROUP",
+    "ISNULL",
+    "MAX",
+    "MIN",
+    "NULL",
+    "NULLIF",
+    "NUMERIC",
+    "NVL",
+    "ROUND",
+    "SELECT",
+    "SUM",
+    "THEN",
+    "TRY_CONVERT",
+    "VARCHAR",
+    "WHEN",
+}
+
+
+def _strip_column_reference(identifier: str) -> str:
+    """Return the final column part from TABLE.COLUMN / [TABLE].[COLUMN]."""
+    value = (identifier or "").strip()
+    if not value:
+        return ""
+    parts = [p for p in re.split(r"\s*\.\s*", value) if p]
+    return _strip_identifier(parts[-1] if parts else value)
+
+
+def _split_required_columns(raw: str) -> list[str]:
+    columns: list[str] = []
+    for part in re.split(r"[,;\n]+", raw or ""):
+        col = _strip_column_reference(part)
+        if col and re.match(r"^[A-Z_][A-Z0-9_]*$", col):
+            columns.append(col)
+    return columns
+
+
+def _extract_formula_columns(metric: dict, known_columns: set[str]) -> set[str]:
+    """
+    Extract source columns required by an approved formula metric.
+
+    This is deliberately schema-backed: only identifiers that are known columns
+    are enforced, so metric names, aliases, and SQL functions do not become
+    false requirements.
+    """
+    columns: set[str] = set()
+    for col in _split_required_columns(metric.get("required_columns") or ""):
+        if not known_columns or col in known_columns:
+            columns.add(col)
+
+    formula = metric.get("sql_template") or ""
+    for match in re.finditer(r"\b(?:SUM|AVG|COUNT|MIN|MAX)\s*\((.*?)\)", formula, re.IGNORECASE | re.DOTALL):
+        inner = match.group(1)
+        for identifier in re.findall(r"(?:\[?[A-Za-z_][A-Za-z0-9_]*\]?\s*\.\s*)?\[?[A-Za-z_][A-Za-z0-9_]*\]?", inner):
+            col = _strip_column_reference(identifier)
+            if col and col not in _SQL_IDENTIFIER_STOPWORDS and (not known_columns or col in known_columns):
+                columns.add(col)
+
+    if not columns:
+        for identifier in re.findall(r"(?:\[?[A-Za-z_][A-Za-z0-9_]*\]?\s*\.\s*)?\[?[A-Za-z_][A-Za-z0-9_]*\]?", formula):
+            col = _strip_column_reference(identifier)
+            if col and col not in _SQL_IDENTIFIER_STOPWORDS and (not known_columns or col in known_columns):
+                columns.add(col)
+    return columns
+
+
+def _metric_phrases(metric: dict) -> set[str]:
+    phrases = {(metric.get("name") or "").strip().lower()}
+    for syn in (metric.get("synonyms") or "").split(","):
+        syn = syn.strip().lower()
+        if syn:
+            phrases.add(syn)
+    return {p for p in phrases if p}
+
+
+def _metric_mentioned(metric: dict, question: str) -> bool:
+    q = re.sub(r"[^a-z0-9]+", " ", (question or "").lower()).strip()
+    if not q:
+        return False
+    for phrase in _metric_phrases(metric):
+        phrase_norm = re.sub(r"[^a-z0-9]+", " ", phrase).strip()
+        if phrase_norm and re.search(rf"(?<![a-z0-9]){re.escape(phrase_norm)}(?![a-z0-9])", q):
+            return True
+    return False
+
+
+def _find_metric_formula_errors(sql: str, tree, semantic_context: dict | None, table_columns: dict[str, dict[str, str]]) -> list[dict]:
+    metrics = (semantic_context or {}).get("metric_formulas") or []
+    if not metrics:
+        return []
+
+    question = (semantic_context or {}).get("question") or ""
+    known_columns = {str(c).upper() for cols in table_columns.values() for c in (cols or {})}
+    used_columns = {
+        (col_node.name or "").upper()
+        for col_node in tree.find_all(sg_exp.Column)
+        if (col_node.name or "").upper() and (col_node.name or "").upper() != "*"
+    }
+
+    errors: list[dict] = []
+    for metric in metrics:
+        if (metric.get("formula_type") or "query").lower() != "expression":
+            continue
+        if not _metric_mentioned(metric, question):
+            continue
+        required = _extract_formula_columns(metric, known_columns)
+        if not required:
+            continue
+        missing = sorted(required - used_columns)
+        if not missing:
+            continue
+        errors.append({
+            "code": "metric_formula_mismatch",
+            "message": (
+                f"SQL did not use approved metric formula for {metric.get('name') or 'matched metric'}. "
+                f"Missing required formula column(s): {', '.join(missing)}."
+            ),
+            "metric": metric.get("name", ""),
+            "formula": (metric.get("sql_template") or "").strip(),
+            "required_columns": sorted(required),
+            "missing_columns": missing,
+            "used_columns": sorted(used_columns),
+        })
+    return errors
+
+
 def _is_numeric_date_key(col_name: str, col_type: str = "") -> bool:
     name = (col_name or "").upper()
     ctype = (col_type or "").upper()
@@ -193,6 +334,75 @@ def _find_date_key_format_errors(sql: str, table_columns: dict[str, dict[str, st
                     f"FORMAT(TRY_CONVERT(date, CONVERT(varchar(8), alias.{col}), 112), 'yyyy-MM')",
                 ],
             })
+    return errors
+
+
+def _find_null_aggregate_diagnostic_errors(sql: str, tree) -> list[dict]:
+    """
+    Guard filtered single-row SUM queries from returning a misleading NULL.
+
+    For questions like "revenue for customer X", SQL Server returns one row with
+    SUM(col)=NULL when rows match but every metric value is NULL.  Require the
+    query to carry enough diagnostics for the answer layer to explain that case.
+    """
+    if not sql or tree.find(sg_exp.Where) is None or tree.find(sg_exp.Group) is not None:
+        return []
+
+    select = tree.find(sg_exp.Select)
+    if select is None:
+        return []
+
+    sql_text = sql or ""
+    sum_pattern = re.compile(
+        r"\bSUM\s*\(\s*(?:(?P<alias>\[?[A-Za-z_][A-Za-z0-9_]*\]?)\s*\.\s*)?"
+        r"(?P<col>\[?[A-Za-z_][A-Za-z0-9_]*\]?)\s*\)",
+        re.IGNORECASE,
+    )
+    sum_cols: list[tuple[str, str, bool]] = []
+    for match in sum_pattern.finditer(sql_text):
+        col = _strip_identifier(match.group("col"))
+        prefix = sql_text[max(0, match.start() - 40):match.start()]
+        wrapped = bool(re.search(r"\b(COALESCE|ISNULL|NVL|IFNULL)\s*\(\s*$", prefix, re.IGNORECASE))
+        if col:
+            sum_cols.append((_strip_identifier(match.group("alias") or ""), col, wrapped))
+
+    if not sum_cols:
+        return []
+
+    has_matched_count = bool(
+        re.search(r"\bCOUNT(?:_BIG)?\s*\(\s*\*\s*\)", sql_text, re.IGNORECASE)
+    )
+
+    errors: list[dict] = []
+    for alias, col, wrapped in sum_cols:
+        qualified = (
+            rf"(?:{re.escape(alias)}\s*\.\s*)?" if alias else r"(?:\[?[A-Za-z_][A-Za-z0-9_]*\]?\s*\.\s*)?"
+        )
+        has_non_null_count = bool(
+            re.search(
+                rf"\bCOUNT(?:_BIG)?\s*\(\s*{qualified}\[?{re.escape(col)}\]?\s*\)",
+                sql_text,
+                re.IGNORECASE,
+            )
+        )
+        if has_matched_count and has_non_null_count and wrapped:
+            continue
+        errors.append({
+            "code": "null_aggregate_diagnostic",
+            "message": (
+                f"Filtered SUM on {col} must include matched-row count, non-null metric count, "
+                "and a null-safe SUM so the answer can distinguish zero from missing data."
+            ),
+            "column": col,
+            "requires_matched_count": not has_matched_count,
+            "requires_non_null_count": not has_non_null_count,
+            "requires_null_safe_sum": not wrapped,
+            "suggestions": [
+                "COUNT_BIG(*) AS [MatchedRows]",
+                f"COUNT({alias + '.' if alias else ''}{col}) AS [NonNull{col}Rows]",
+                f"COALESCE(SUM({alias + '.' if alias else ''}{col}), 0) AS [MetricValue]",
+            ],
+        })
     return errors
 
 
@@ -419,6 +629,32 @@ def validate_sql_detailed(
                 ),
                 "unknown_column",
                 unknown_cols,
+            )
+
+        metric_formula_errors = _find_metric_formula_errors(sql, tree, semantic_context, table_columns)
+        if metric_formula_errors:
+            return SqlValidationResult(
+                False,
+                (
+                    "Generated SQL ignored an approved metric formula. "
+                    + " ".join(e["message"] for e in metric_formula_errors[:3])
+                    + "\n\nUse the approved metric calculation exactly; do not replace it with a nearby semantic or knowledge-base column."
+                ),
+                "metric_formula_mismatch",
+                metric_formula_errors,
+            )
+
+        null_agg_errors = _find_null_aggregate_diagnostic_errors(sql, tree)
+        if null_agg_errors:
+            return SqlValidationResult(
+                False,
+                (
+                    "Filtered aggregate queries must be null-aware. Include matched-row "
+                    "count, non-null metric count, and COALESCE/ISNULL around SUM() so "
+                    "the answer can explain when records exist but metric values are missing."
+                ),
+                "null_aggregate_diagnostic",
+                null_agg_errors,
             )
 
         field_plan = (semantic_context or {}).get("semantic_plan") or {}

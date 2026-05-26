@@ -28,6 +28,7 @@ def build_answer_confidence(
     has_graph_context: bool = False,
     tables_used: list[str] | None = None,
     empty_tables: list[str] | None = None,
+    null_metric_issue: bool = False,
 ) -> dict[str, Any]:
     """
     Convert technical query signals into a compact business-facing confidence score.
@@ -74,6 +75,10 @@ def build_answer_confidence(
         warnings.append(f"One table used by the query has no records: {listed}{suffix}.")
     elif used_tables:
         reasons.append("The answer used known database tables.")
+
+    if null_metric_issue:
+        score -= 25
+        warnings.append("Records matched the filter, but the requested metric values were null or missing.")
 
     if has_semantic_plan:
         score += 5

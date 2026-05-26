@@ -14,6 +14,7 @@ from core.validator import validate_sql, validate_sql_detailed
 from core.answer_confidence import build_answer_confidence
 from core.answer_rca import build_business_rca, extract_sql_tables
 from core.query_router import should_route_to_result_cache, build_duckdb_system_prompt
+from core.response_builder import build_assistant_response, detect_null_metric_issue
 
 
 KNOWN = {
@@ -49,6 +50,9 @@ COLUMNS = {
         "CUS_ORD_LIN_NUM": "int",
         "CUS_ORD_LIN_SFX": "int",
         "WHS_DMS_KEY": "int",
+        "CUS_DMS_KEY": "int",
+        "SOP_CUS_IVC_LIN_AMT": "decimal",
+        "SOP_CUS_IVC_LIN_CST_AMT": "decimal",
     },
     "CUS_ORD_IVC_FCT": {
         "ITM_GRP_DMS_KEY": "int",
@@ -58,6 +62,9 @@ COLUMNS = {
         "CUS_ORD_LIN_NUM": "int",
         "CUS_ORD_LIN_SFX": "int",
         "WHS_DMS_KEY": "int",
+        "CUS_DMS_KEY": "int",
+        "SOP_CUS_IVC_LIN_AMT": "decimal",
+        "SOP_CUS_IVC_LIN_CST_AMT": "decimal",
     },
     "PROFITABILITY.ITM_BAL_PRD_FCT": {
         "NUM_OF_RCT": "int",
@@ -180,6 +187,82 @@ class StrictColumnValidationTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertEqual(code, "date_key_format")
         self.assertIn("Convert YYYYMMDD", msg)
+
+    def test_rejects_filtered_sum_without_null_diagnostics(self):
+        result = validate_sql_detailed(
+            "SELECT SUM(CUS_IVC_LIN_AMT) AS Revenue "
+            "FROM [PROFITABILITY].[CUS_ORD_IVC_FCT] "
+            "WHERE CUS_DMS_KEY = 1055930",
+            KNOWN,
+            "azure_sql",
+            None,
+            COLUMNS,
+        )
+        self.assertFalse(result.ok)
+        self.assertEqual(result.code, "null_aggregate_diagnostic")
+        self.assertTrue(result.errors[0]["requires_matched_count"])
+        self.assertTrue(result.errors[0]["requires_non_null_count"])
+        self.assertTrue(result.errors[0]["requires_null_safe_sum"])
+
+    def test_accepts_filtered_sum_with_null_diagnostics(self):
+        result = validate_sql_detailed(
+            "SELECT COUNT_BIG(*) AS [MatchedRows], "
+            "COUNT(CUS_IVC_LIN_AMT) AS [NonNullRevenueRows], "
+            "COALESCE(SUM(CUS_IVC_LIN_AMT), 0) AS [Revenue] "
+            "FROM [PROFITABILITY].[CUS_ORD_IVC_FCT] "
+            "WHERE CUS_DMS_KEY = 1055930",
+            KNOWN,
+            "azure_sql",
+            None,
+            COLUMNS,
+        )
+        self.assertTrue(result.ok, result.reason)
+
+    def test_rejects_revenue_query_that_ignores_approved_formula_metric(self):
+        metric = {
+            "name": "Revenue",
+            "synonyms": "total revenue,sales revenue",
+            "formula_type": "expression",
+            "sql_template": "SUM(SOP_CUS_IVC_LIN_AMT)",
+            "required_columns": "SOP_CUS_IVC_LIN_AMT",
+        }
+        result = validate_sql_detailed(
+            "SELECT COUNT_BIG(*) AS [MatchedRows], "
+            "COUNT(CUS_IVC_LIN_AMT) AS [NonNullRevenueRows], "
+            "COALESCE(SUM(CUS_IVC_LIN_AMT), 0) AS [Revenue] "
+            "FROM [PROFITABILITY].[CUS_ORD_IVC_FCT] "
+            "WHERE CUS_DMS_KEY = 1035573",
+            KNOWN,
+            "azure_sql",
+            None,
+            COLUMNS,
+            {"question": "what is the revenue for the customer 1035573", "metric_formulas": [metric]},
+        )
+        self.assertFalse(result.ok)
+        self.assertEqual(result.code, "metric_formula_mismatch")
+        self.assertIn("SOP_CUS_IVC_LIN_AMT", result.reason)
+
+    def test_accepts_revenue_query_that_uses_approved_formula_metric(self):
+        metric = {
+            "name": "Revenue",
+            "synonyms": "total revenue,sales revenue",
+            "formula_type": "expression",
+            "sql_template": "SUM(SOP_CUS_IVC_LIN_AMT)",
+            "required_columns": "SOP_CUS_IVC_LIN_AMT",
+        }
+        result = validate_sql_detailed(
+            "SELECT COUNT_BIG(*) AS [MatchedRows], "
+            "COUNT(SOP_CUS_IVC_LIN_AMT) AS [NonNullRevenueRows], "
+            "COALESCE(SUM(SOP_CUS_IVC_LIN_AMT), 0) AS [Revenue] "
+            "FROM [PROFITABILITY].[CUS_ORD_IVC_FCT] "
+            "WHERE CUS_DMS_KEY = 1035573",
+            KNOWN,
+            "azure_sql",
+            None,
+            COLUMNS,
+            {"question": "what is the revenue for the customer 1035573", "metric_formulas": [metric]},
+        )
+        self.assertTrue(result.ok, result.reason)
 
     def test_rejects_missing_fifo_single_table_null_filter(self):
         sql = (
@@ -442,6 +525,30 @@ class BusinessConfidenceRcaTests(unittest.TestCase):
         )
         self.assertEqual(confidence["level"], "high")
         self.assertGreaterEqual(confidence["score"], 80)
+
+    def test_null_metric_issue_lowers_confidence(self):
+        confidence = build_answer_confidence(
+            validation_code="ok",
+            row_count=1,
+            retry_count=0,
+            tables_used=["PROFITABILITY.CUS_ORD_IVC_FCT"],
+            null_metric_issue=True,
+        )
+        self.assertEqual(confidence["level"], "medium")
+        self.assertTrue(any("metric values were null" in w for w in confidence["warnings"]))
+
+    def test_null_metric_issue_gets_business_readable_answer(self):
+        rows = [{"MatchedRows": 64, "NonNullRevenueRows": 0, "Revenue": 0}]
+        self.assertIsNotNone(detect_null_metric_issue(rows))
+        payload = build_assistant_response(
+            question="what is the revenue for customer 1055930",
+            rows=rows,
+            sql="SELECT COUNT_BIG(*) AS [MatchedRows], COUNT(CUS_IVC_LIN_AMT) AS [NonNullRevenueRows], COALESCE(SUM(CUS_IVC_LIN_AMT), 0) AS [Revenue] FROM [PROFITABILITY].[CUS_ORD_IVC_FCT] WHERE CUS_DMS_KEY = 1055930",
+            duration_ms=20,
+        )
+        self.assertIn("all matched values are missing", payload["answer"]["headline"])
+        self.assertIn("64 matching records", payload["answer"]["comparison"])
+        self.assertIn("64 records matched", payload["insight_summary"])
 
     def test_extract_sql_tables_preserves_schema_names(self):
         sql = (
