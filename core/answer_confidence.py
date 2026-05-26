@@ -48,12 +48,10 @@ def build_answer_confidence(
     if validation in {"ok", "pass", "trusted_metric"}:
         score += 15
         reasons.append("SQL passed schema validation.")
-    elif validation:
+    else:
+        # validation is always a non-empty string here (normalised above)
         score -= 25
         warnings.append("SQL needed validation attention before it could be trusted.")
-    else:
-        score -= 15
-        warnings.append("SQL validation status was not available.")
 
     if retries:
         score -= min(20, 10 * retries)

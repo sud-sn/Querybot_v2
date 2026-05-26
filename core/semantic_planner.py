@@ -256,7 +256,9 @@ def _join_edges(table_columns: dict[str, dict[str, str]]) -> dict[str, list[dict
         for right in table_list[i + 1:]:
             conditions: list[tuple[str, str]] = []
             common = sorted(tables[left] & tables[right])
-            conditions.extend((c, c) for c in common if c.endswith("_DMS_KEY") or c in {"CONO", "DIVI", "ORNO", "PONR", "POSX", "DLIX"})
+            # DIVI is a grouping/filter dimension, not a relational key — exclude it
+            # from join conditions so it doesn't create false graph edges.
+            conditions.extend((c, c) for c in common if c.endswith("_DMS_KEY") or c in {"CONO", "ORNO", "PONR", "POSX", "DLIX"})
             for lcol, rcols in _JOIN_SYNONYMS.items():
                 if lcol in tables[left]:
                     conditions.extend((lcol, rc) for rc in rcols if rc in tables[right])
@@ -353,9 +355,11 @@ def format_semantic_field_plan(plan: dict, db_type: str = "azure_sql") -> str:
         "Resolved fields:",
     ]
     for field in plan.get("fields", []):
-        agg = "SUM" if field.get("role") == "measure" else ""
-        expr = f"{agg}({field['table']}.{field['column']})" if agg else f"{field['table']}.{field['column']}"
-        lines.append(f"- {field['term']}: {expr}")
+        expr = f"{field['table']}.{field['column']}"
+        # Show a non-binding hint for measures — the LLM should aggregate only when
+        # the query is aggregating (not for row-level queries like "show all invoices").
+        role_hint = " [measure — apply SUM/COUNT only if aggregating]" if field.get("role") == "measure" else ""
+        lines.append(f"- {field['term']}: {expr}{role_hint}")
     joins = plan.get("joins") or []
     if joins:
         lines.append("")

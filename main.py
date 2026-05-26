@@ -316,7 +316,7 @@ def _count_tables_for_zero_row(db_cfg: dict, tables: list[str]) -> dict[str, int
     counts: dict[str, int | None] = {}
     for table in tables[:6]:
         quoted = _quote_table_for_count(table, db_type)
-        if not quoted or quoted in counts:
+        if not quoted or table in counts:
             continue
         count_expr = "COUNT_BIG(1)" if db_type == "azure_sql" else "COUNT(*)"
         try:
@@ -1244,6 +1244,14 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                 f"SQL, no explanation."
             )
 
+        # When the initial failure was a semantic plan mismatch, drop the plan from
+        # the retry so the LLM gets a clean slate and the validator doesn't re-enforce
+        # the same plan — avoiding an unrecoverable loop on persistent mismatches.
+        _retry_plan = None if last_code == "field_plan_mismatch" else (_semantic_plan or None)
+        _retry_semantic_context = dict(semantic_context)
+        if last_code == "field_plan_mismatch":
+            _retry_semantic_context["semantic_plan"] = None
+
         try:
             await _send_live_stage(adapter, event, "repairing_query", "Repairing query", "Fixing a validation or execution issue before retrying.")
             with llm_audit_scope(
@@ -1259,7 +1267,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                         db_cfg["db_type"],
                         context_with_terms,
                         graph_context=_graph_ctx or None,
-                        semantic_plan=_semantic_plan or None,
+                        semantic_plan=_retry_plan,
                     ),
                     retry_user, provider, model, api_key,
                     max_tokens=512, **az_kwargs,
@@ -1271,7 +1279,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
 
             if "CANNOT_GENERATE" not in sql_retry.upper() and len(sql_retry) > 10:
                 ok2, reason2, code2 = validate_sql(
-                    sql_retry, all_known, db_cfg["db_type"], query_scope_tables, all_columns, semantic_context)
+                    sql_retry, all_known, db_cfg["db_type"], query_scope_tables, all_columns, _retry_semantic_context)
                 if ok2:
                     try:
                         await _send_live_stage(adapter, event, "executing_query", "Retrying query", "Running the corrected query against your data.")
@@ -1341,7 +1349,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
         if not (_zr_has_required or _zr_has_multi_metric):
             # No ambiguity signal: return business-readable RCA for the empty result.
             _zr_tables = extract_sql_tables(sql, db_cfg.get("db_type", "azure_sql"))
-            _zr_counts = _count_tables_for_zero_row(db_cfg, _zr_tables)
+            _zr_counts = await asyncio.to_thread(_count_tables_for_zero_row, db_cfg, _zr_tables)
             _zr_empty_tables = [table for table, count in _zr_counts.items() if count == 0]
             _trace_finish(trace_id, status="success", answer_type="empty", row_count=0, duration_ms=duration_ms, final_answer_summary="Query returned no rows")
             await adapter.send_message(event, _build_zero_row_message(
@@ -1428,6 +1436,7 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
     table_text = _rows_to_table(rows)
     row_word   = "row" if len(rows) == 1 else "rows"
     dur_label  = f"{duration_ms}ms" if duration_ms < 1000 else f"{duration_ms/1000:.1f}s"
+    _has_confidence_context = bool(confidence_context)
     confidence_context = confidence_context or {}
     confidence = build_answer_confidence(
         validation_code=confidence_context.get("validation_code") or "ok",
@@ -1500,6 +1509,11 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
         await rich_sender(event, response_payload)
         return
 
+    # Only show the confidence block when a full confidence context was provided
+    # (i.e. LLM-path queries). Metric registry and duck-db paths don't compute
+    # query-level confidence signals, so we omit the block rather than show
+    # misleading default values.
+    conf_text = format_success_confidence_text(confidence) + "\n\n" if _has_confidence_context else ""
     if len(rows) == 1 and len(rows[0]) == 1:
         col_name = list(rows[0].keys())[0]
         value    = _format_value(rows[0][col_name])
@@ -1510,7 +1524,7 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
             f"  {col_name}\n"
             f"  *{value}*\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"{format_success_confidence_text(confidence)}\n\n"
+            f"{conf_text}"
             f"_{dur_label} · {col_name.replace('_', ' ')}_"
         )
     else:
@@ -1521,7 +1535,7 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
             f"{'─' * 40}\n"
             f"{table_text}\n"
             f"{'─' * 40}\n"
-            f"{format_success_confidence_text(confidence)}\n\n"
+            f"{conf_text}"
             f"_{dur_label}_"
         )
 
