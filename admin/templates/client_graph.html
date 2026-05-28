@@ -18,7 +18,12 @@
 /* ── Detail panel — slides in from right as overlay ──────────────────────── */
 .graph-detail{display:flex;flex-direction:column;overflow:hidden;background:var(--surface);border-left:1px solid var(--border);position:absolute;right:0;top:0;bottom:0;width:min(460px,38vw);min-width:360px;z-index:50;transform:translateX(calc(100% + 1px));transition:transform .22s ease,box-shadow .22s ease;box-shadow:none}
 .graph-shell.panel-open .graph-detail{transform:translateX(0);box-shadow:-14px 0 34px rgba(0,0,0,.18)}
-.graph-canvas-wrap{display:flex;flex-direction:column;background:radial-gradient(circle at 50% 30%,color-mix(in srgb,var(--primary-soft) 18%,transparent),transparent 34%),var(--surface-2);overflow:hidden;position:relative}
+.graph-canvas-wrap{display:flex;flex-direction:column;
+  background:
+    radial-gradient(ellipse at 30% 20%, color-mix(in srgb,var(--primary) 5%,transparent), transparent 55%),
+    radial-gradient(ellipse at 72% 75%, color-mix(in srgb,#7C3AED 3%,transparent), transparent 50%),
+    var(--surface-2);
+  overflow:hidden;position:relative}
 
 /* ── Sidebar ───────────────────────────────────────────────────────────────── */
 .gs-head{padding:.75rem;border-bottom:1px solid var(--border);font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);display:flex;align-items:center;justify-content:space-between}
@@ -55,18 +60,23 @@
 #graph-svg.is-panning{cursor:grabbing !important}
 #graph-svg.is-space{cursor:grab !important}
 /* ── Zoom controls overlay ─────────────────────────────────────────────── */
-.zoom-controls{position:absolute;bottom:.75rem;right:.75rem;display:flex;align-items:center;gap:2px;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:3px 5px;z-index:11;box-shadow:0 2px 8px rgba(0,0,0,.08)}
-.zoom-controls button{background:none;border:none;cursor:pointer;font-size:15px;line-height:1;width:24px;height:24px;border-radius:4px;display:flex;align-items:center;justify-content:center;color:var(--text);flex-shrink:0}
-.zoom-controls button:hover{background:var(--surface-2)}
-#zoom-label{font-size:11px;font-weight:600;color:var(--text-muted);min-width:40px;text-align:center;font-family:Consolas,monospace}
+.zoom-controls{position:absolute;bottom:.875rem;right:.875rem;display:flex;align-items:center;gap:1px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:3px 4px;z-index:11;box-shadow:0 2px 12px rgba(0,0,0,.10)}
+.zoom-controls button{background:none;border:none;cursor:pointer;font-size:14px;line-height:1;width:26px;height:26px;border-radius:5px;display:flex;align-items:center;justify-content:center;color:var(--text-soft);flex-shrink:0;transition:background .12s,color .12s}
+.zoom-controls button:hover{background:var(--surface-2);color:var(--text)}
+.zoom-controls .zc-sep{width:1px;height:16px;background:var(--border);margin:0 3px}
+#zoom-label{font-size:11px;font-weight:700;color:var(--text-muted);min-width:38px;text-align:center;font-family:Consolas,monospace;cursor:pointer;border-radius:4px;padding:2px 0;transition:background .12s}
+#zoom-label:hover{background:var(--surface-2);color:var(--text)}
 .g-node{cursor:grab}
 .g-node:active{cursor:grabbing}
-.g-node.selected .node-body{stroke:var(--primary,#2563EB);stroke-width:2.5}
+/* Selection ring is drawn as an SVG rect in JS — no CSS border override needed */
 .g-node.hover .node-body{filter:brightness(0.92)}
 .node-body{rx:10;ry:10;filter:drop-shadow(0 2px 6px rgba(0,0,0,.10))}
-/* ── Node card (Batch 1) ─────────────────────────────────────────────────── */
-.node-card{filter:drop-shadow(0 3px 10px rgba(0,0,0,.12));transition:filter .15s}
-.g-node.hover .node-card{filter:drop-shadow(0 5px 16px rgba(0,0,0,.18))}
+/* ── Node card ─────────────────────────────────────────────────────────── */
+.node-card{filter:drop-shadow(0 2px 8px rgba(0,0,0,.09));transition:filter .15s}
+.g-node.hover .node-card{filter:drop-shadow(0 6px 18px rgba(0,0,0,.16))}
+.g-node.selected .node-card{filter:drop-shadow(0 0 0 3px rgba(37,99,235,.35)) drop-shadow(0 6px 18px rgba(0,0,0,.14))}
+/* Selection outer ring element */
+.g-node-ring{pointer-events:none;fill:none;stroke:var(--primary,#2563EB);stroke-width:2;opacity:.9;transition:opacity .15s}
 .node-label{font-family:system-ui,sans-serif;font-weight:800;font-size:13px;fill:#fff;text-anchor:start;dominant-baseline:central;pointer-events:none}
 .node-sublabel{font-family:Consolas,monospace;font-size:10px;fill:rgba(255,255,255,.78);text-anchor:start;dominant-baseline:central;pointer-events:none}
 .node-type-tag{font-family:system-ui,sans-serif;font-size:9px;font-weight:700;fill:rgba(255,255,255,.88);text-anchor:middle;dominant-baseline:central;pointer-events:none}
@@ -450,6 +460,9 @@
 
     <div class="tb-sep"></div>
 
+    <!-- Fit to screen — direct button, always visible -->
+    <button class="tb-btn" onclick="fitView()" title="Fit all nodes to screen (F)">⤢ Fit</button>
+
     <!-- Layout dropdown -->
     <div class="tb-dropdown" id="tb-layout-dd">
       <button class="tb-btn" onclick="toggleTbDropdown('tb-layout-dd')" title="Layout and view options">
@@ -555,9 +568,25 @@
         <line x1="13" y1="1" x2="13" y2="13" stroke="#F59E0B" stroke-width="2" stroke-linecap="round"/>
         <line x1="8"  y1="1" x2="8"  y2="13" stroke="#F59E0B" stroke-width="2" stroke-linecap="round"/>
       </marker>
-      <pattern id="dot-grid" x="0" y="0" width="28" height="28" patternUnits="userSpaceOnUse">
-        <circle cx="1" cy="1" r="1" fill="var(--border)" opacity="0.5"/>
+      <pattern id="dot-grid" x="0" y="0" width="20" height="20" patternUnits="userSpaceOnUse">
+        <circle cx="1" cy="1" r="1.5" fill="var(--border-strong,#94A3B8)" opacity="0.45"/>
       </pattern>
+      <!-- Node header depth gradient -->
+      <linearGradient id="hdr-gloss" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%"   stop-color="rgba(255,255,255,0.20)"/>
+        <stop offset="55%"  stop-color="rgba(255,255,255,0.04)"/>
+        <stop offset="100%" stop-color="rgba(0,0,0,0.10)"/>
+      </linearGradient>
+      <!-- Selected node outer glow filter -->
+      <filter id="node-selected-glow" x="-20%" y="-20%" width="140%" height="140%">
+        <feGaussianBlur stdDeviation="3" result="blur"/>
+        <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+      </filter>
+      <!-- Primary arrow marker (for edges on hover/select) -->
+      <marker id="arrow-pri" viewBox="0 0 10 10" refX="9" refY="5"
+              markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="#2563EB"/>
+      </marker>
     </defs>
     <rect width="100%" height="100%" fill="url(#dot-grid)" pointer-events="none"/>
     <g id="zoom-group" transform="translate(0,0) scale(1)">
@@ -570,9 +599,10 @@
   <div class="canvas-status" id="canvas-status">Ready</div>
   <div class="zoom-controls">
     <button onclick="zoomStep(-1)" title="Zoom out (−)">−</button>
-    <span id="zoom-label">100%</span>
+    <span id="zoom-label" onclick="resetZoom()" title="Click to reset zoom to 100%">100%</span>
     <button onclick="zoomStep(1)" title="Zoom in (+)">+</button>
-    <button onclick="fitView()" title="Fit to screen" style="font-size:13px">⤢</button>
+    <span class="zc-sep"></span>
+    <button onclick="fitView()" title="Fit all nodes to screen (F)" style="font-size:12px;width:28px">⤢</button>
   </div>
 </main>
 
@@ -914,6 +944,13 @@ function _applyTransform() {
 const NODE_W  = 240;
 const NODE_H  = 200;
 
+// Canonical type colours — used as default when no custom colour is set
+const TYPE_COLORS = {
+  fact:      '#2563EB',   // enterprise blue
+  dimension: '#7C3AED',   // violet
+  bridge:    '#D97706',   // amber
+};
+
 function renderGraph() {
   renderEdges();
   renderNodes();
@@ -1006,7 +1043,8 @@ function renderNodes() {
 
   graph.entities.forEach(e => {
     const { x, y } = entityPos(e);
-    const color = e.color || '#4F86C6';
+    // Use user-assigned colour → type-canonical colour → neutral default
+    const color = e.color || TYPE_COLORS[e.entity_type] || '#4F86C6';
     const isSelected = selectedEntity === e.entity_name;
     const isSuggested = (e.status === 'suggested');
     const conf = e.confidence_score ?? 100;
@@ -1020,14 +1058,24 @@ function renderNodes() {
     g.setAttribute('data-entity', e.entity_name);
     g.setAttribute('transform', `translate(${x},${y})`);
 
+    // ── Selection ring (drawn behind card so card clips over it) ────────
+    if (isSelected) {
+      const ring = document.createElementNS(NS, 'rect');
+      ring.setAttribute('class', 'g-node-ring');
+      ring.setAttribute('x', -4); ring.setAttribute('y', -4);
+      ring.setAttribute('width', NODE_W + 8); ring.setAttribute('height', NODE_H + 8);
+      ring.setAttribute('rx', 13); ring.setAttribute('ry', 13);
+      g.appendChild(ring);
+    }
+
     // ── White card background ────────────────────────────────────────────
     const card = document.createElementNS(NS, 'rect');
     card.setAttribute('class', 'node-card');
     card.setAttribute('width', NODE_W); card.setAttribute('height', NODE_H);
     card.setAttribute('rx', 10); card.setAttribute('ry', 10);
     card.setAttribute('fill', 'var(--surface, #fff)');
-    card.setAttribute('stroke', isSelected ? color : 'var(--border, #E2E8F0)');
-    card.setAttribute('stroke-width', isSelected ? '2.5' : '1.5');
+    card.setAttribute('stroke', 'var(--border, #E2E8F0)');
+    card.setAttribute('stroke-width', '1.5');
     g.appendChild(card);
 
     // ── Colored header band ──────────────────────────────────────────────
@@ -1043,6 +1091,21 @@ function renderNodes() {
     hdrFill.setAttribute('width', NODE_W); hdrFill.setAttribute('height', 10);
     hdrFill.setAttribute('fill', color);
     g.appendChild(hdrFill);
+
+    // ── Header gloss overlay (depth gradient) ───────────────────────────
+    const hdrGloss = document.createElementNS(NS, 'rect');
+    hdrGloss.setAttribute('x', 0); hdrGloss.setAttribute('y', 0);
+    hdrGloss.setAttribute('width', NODE_W); hdrGloss.setAttribute('height', 52);
+    hdrGloss.setAttribute('rx', 10); hdrGloss.setAttribute('ry', 10);
+    hdrGloss.setAttribute('fill', 'url(#hdr-gloss)');
+    hdrGloss.setAttribute('pointer-events', 'none');
+    g.appendChild(hdrGloss);
+    // keep the flat bottom half of the gloss from showing below hdr
+    const hdrGlossFill = document.createElementNS(NS, 'rect');
+    hdrGlossFill.setAttribute('x', 0); hdrGlossFill.setAttribute('y', 42);
+    hdrGlossFill.setAttribute('width', NODE_W); hdrGlossFill.setAttribute('height', 10);
+    hdrGlossFill.setAttribute('fill', color); hdrGlossFill.setAttribute('opacity', '0');
+    g.appendChild(hdrGlossFill);
 
     // ── Divider ──────────────────────────────────────────────────────────
     const divider = document.createElementNS(NS, 'line');
@@ -1117,6 +1180,32 @@ function renderNodes() {
       descT.setAttribute('fill', 'var(--text-muted, #94A3B8)'); descT.setAttribute('pointer-events', 'none');
       descT.textContent = e.description.slice(0, 30);
       g.appendChild(descT);
+    }
+
+    // ── Stats row: join count ────────────────────────────────────────────
+    const joinCount = graph.relationships.filter(
+      r => r.from_entity === e.entity_name || r.to_entity === e.entity_name
+    ).length;
+    const statsY = e.pk_column ? 94 : 74;
+    if (joinCount > 0 || !e.pk_column) {
+      // Separator line above stats
+      const statsSep = document.createElementNS(NS, 'line');
+      statsSep.setAttribute('x1', 10); statsSep.setAttribute('y1', statsY - 8);
+      statsSep.setAttribute('x2', NODE_W - 10); statsSep.setAttribute('y2', statsY - 8);
+      statsSep.setAttribute('stroke', 'var(--border,#E2E8F0)'); statsSep.setAttribute('stroke-width', '0.8');
+      statsSep.setAttribute('stroke-dasharray', '3,3'); statsSep.setAttribute('pointer-events', 'none');
+      g.appendChild(statsSep);
+
+      const statsT = document.createElementNS(NS, 'text');
+      statsT.setAttribute('x', 14); statsT.setAttribute('y', statsY + 4);
+      statsT.setAttribute('dominant-baseline', 'central');
+      statsT.setAttribute('font-family', 'system-ui,sans-serif');
+      statsT.setAttribute('font-size', '10'); statsT.setAttribute('font-weight', '600');
+      statsT.setAttribute('fill', color); statsT.setAttribute('opacity', '0.8');
+      statsT.setAttribute('pointer-events', 'none');
+      const jLabel = joinCount === 1 ? '1 join' : `${joinCount} joins`;
+      statsT.textContent = jLabel;
+      g.appendChild(statsT);
     }
 
     // ── Confidence badge (suggested entities) ────────────────────────────
@@ -1514,6 +1603,14 @@ document.getElementById('graph-svg').addEventListener('wheel', ev => {
   zoom = newZoom;
   _applyTransform();
 }, { passive: false });
+
+function resetZoom() {
+  zoom = 1;
+  const svg = document.getElementById('graph-svg');
+  pan.x = (svg.clientWidth  - NODE_W) / 2;
+  pan.y = (svg.clientHeight - NODE_H) / 2;
+  _applyTransform();
+}
 
 function fitView() {
   // Only fit to entities that are currently visible (respects schema filter)
@@ -3375,6 +3472,8 @@ document.addEventListener('keydown', ev => {
   // +/= zoom in, -/_ zoom out
   if ((ev.key === '+' || ev.key === '=') && !inField) { ev.preventDefault(); zoomStep(1); }
   if ((ev.key === '-' || ev.key === '_') && !inField) { ev.preventDefault(); zoomStep(-1); }
+  // F — fit all nodes to screen
+  if ((ev.key === 'f' || ev.key === 'F') && !inField) { ev.preventDefault(); fitView(); }
   // 0 — reset zoom to 100%
   if (ev.key === '0' && !inField) {
     ev.preventDefault();
