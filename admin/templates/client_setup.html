@@ -1,4 +1,6 @@
 {% extends "base.html" %}
+{% from "macros.html" import breadcrumb, client_workspace_nav %}
+{% from "icons.html" import ic %}
 {% block title %}Setup — {{ client.client_name or client.account_id[:16] }}{% endblock %}
 {% block head %}
 <style>
@@ -89,8 +91,6 @@
 </style>
 {% endblock %}
 {% block breadcrumb %}
-{% from "macros.html" import breadcrumb, client_workspace_nav %}
-{% from "icons.html" import ic %}
 {{ breadcrumb([
     {"label": "Dashboard", "href": "/admin"},
     {"label": "Clients",   "href": "/admin/clients"},
