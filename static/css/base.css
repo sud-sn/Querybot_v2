@@ -501,9 +501,7 @@ html[data-theme='dark'] [style*="background:#FFF5F5"] {
   border-color: color-mix(in srgb, var(--red) 28%, transparent) !important;
 }
 html[data-theme='dark'] [style*="background:#EFF6FF"],
-html[data-theme='dark'] [style*="background:#DBEAFE"],
-html[data-theme='dark'] [style*="background:#E8F8F5"],
-html[data-theme='dark'] [style*="background:#E0F5F3"] {
+html[data-theme='dark'] [style*="background:#DBEAFE"] {
   background: var(--primary-soft) !important;
   border-color: color-mix(in srgb, var(--primary) 28%, transparent) !important;
 }

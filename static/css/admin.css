@@ -110,7 +110,7 @@ html[data-theme='dark'] .sidebar-link:hover {
 }
 
 .sidebar-link.active {
-  background: color-mix(in srgb, var(--teal-400) 20%, transparent);
+  background: color-mix(in srgb, var(--teal-400) 18%, transparent);
   color: #fff;
   font-weight: 700;
 }
