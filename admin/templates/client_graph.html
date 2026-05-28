@@ -3,18 +3,18 @@
 {% block head %}
 <style>
 /* ── Shell layout ──────────────────────────────────────────────────────────── */
-.graph-shell{display:grid;grid-template-columns:220px 1fr;height:calc(100vh - 56px);overflow:hidden;gap:0;position:relative}
-.graph-sidebar{overflow-y:auto;border-right:1px solid var(--border);background:var(--surface);display:flex;flex-direction:column}
+.graph-shell{display:grid;grid-template-columns:248px 1fr;height:calc(100vh - 56px);overflow:hidden;gap:0;position:relative;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);box-shadow:var(--shadow-lg)}
+.graph-sidebar{overflow-y:auto;border-right:1px solid var(--border);background:linear-gradient(180deg,var(--surface),color-mix(in srgb,var(--surface-2) 82%,var(--surface)));display:flex;flex-direction:column}
 /* ── Detail panel — slides in from right as overlay ──────────────────────── */
-.graph-detail{display:flex;flex-direction:column;overflow:hidden;background:var(--surface);border-left:1px solid var(--border);position:absolute;right:0;top:0;bottom:0;width:min(420px,36vw);min-width:340px;z-index:50;transform:translateX(calc(100% + 1px));transition:transform .22s ease,box-shadow .22s ease;box-shadow:none}
-.graph-shell.panel-open .graph-detail{transform:translateX(0);box-shadow:-4px 0 20px rgba(0,0,0,.12)}
-.graph-canvas-wrap{display:flex;flex-direction:column;background:var(--surface-2);overflow:hidden;position:relative}
+.graph-detail{display:flex;flex-direction:column;overflow:hidden;background:var(--surface);border-left:1px solid var(--border);position:absolute;right:0;top:0;bottom:0;width:min(460px,38vw);min-width:360px;z-index:50;transform:translateX(calc(100% + 1px));transition:transform .22s ease,box-shadow .22s ease;box-shadow:none}
+.graph-shell.panel-open .graph-detail{transform:translateX(0);box-shadow:-14px 0 34px rgba(0,0,0,.18)}
+.graph-canvas-wrap{display:flex;flex-direction:column;background:radial-gradient(circle at 50% 30%,color-mix(in srgb,var(--primary-soft) 18%,transparent),transparent 34%),var(--surface-2);overflow:hidden;position:relative}
 
 /* ── Sidebar ───────────────────────────────────────────────────────────────── */
 .gs-head{padding:.75rem;border-bottom:1px solid var(--border);font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);display:flex;align-items:center;justify-content:space-between}
 .gs-add-btn{background:var(--primary);color:#fff;border:none;border-radius:5px;padding:4px 10px;font-size:11px;font-weight:700;cursor:pointer;line-height:1}
 .gs-add-btn:hover{opacity:.85}
-.gs-entity-item{padding:.55rem .75rem;cursor:pointer;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:.5rem;font-size:12px;transition:background .12s}
+.gs-entity-item{padding:.62rem .75rem;cursor:pointer;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:.55rem;font-size:12px;transition:background .12s,border-color .12s}
 .gs-entity-item:hover{background:var(--surface-2)}
 .gs-entity-item.selected{background:color-mix(in srgb,var(--primary) 10%,var(--surface));border-left:3px solid var(--primary)}
 .gs-entity-item.selected{padding-left:calc(.75rem - 3px)}
@@ -30,15 +30,15 @@
 .gs-rel-item.selected{background:color-mix(in srgb,var(--amber) 10%,var(--surface));border-left:3px solid var(--amber)}
 
 /* ── Canvas toolbar ────────────────────────────────────────────────────────── */
-.canvas-toolbar{padding:.5rem .75rem;border-bottom:1px solid var(--border);background:var(--surface);display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;flex-shrink:0}
-.tb-btn{background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:5px;padding:5px 10px;font-size:11px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:4px;transition:all .12s}
+.canvas-toolbar{padding:.6rem .75rem;border-bottom:1px solid var(--border);background:color-mix(in srgb,var(--surface) 94%,transparent);display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;flex-shrink:0;box-shadow:0 1px 0 color-mix(in srgb,var(--surface) 70%,transparent)}
+.tb-btn{background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 10px;font-size:11px;font-weight:750;cursor:pointer;display:flex;align-items:center;gap:4px;transition:all .12s;min-height:32px}
 .tb-btn:hover{background:var(--surface-3,var(--border));border-color:var(--border-strong)}
 .tb-btn.primary{background:var(--primary);color:#fff;border-color:var(--primary)}
 .tb-btn.primary:hover{opacity:.85}
 .tb-btn.danger{background:var(--red-light,#FEE2E2);color:var(--red,#DC2626);border-color:color-mix(in srgb,var(--red) 30%,transparent)}
 .tb-sep{width:1px;height:20px;background:var(--border);margin:0 .25rem}
 .tb-hint{font-size:11px;color:var(--text-muted);margin-left:auto}
-.canvas-status{position:absolute;bottom:.75rem;left:.75rem;font-size:11px;color:var(--text-muted);background:var(--surface);border:1px solid var(--border);border-radius:5px;padding:4px 10px;pointer-events:none;z-index:10;transition:opacity .3s}
+.canvas-status{position:absolute;bottom:.75rem;left:.75rem;font-size:11px;color:var(--text-muted);background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:5px 10px;pointer-events:none;z-index:10;transition:opacity .3s;box-shadow:var(--shadow)}
 
 /* ── SVG canvas ────────────────────────────────────────────────────────────── */
 #graph-svg{width:100%;flex:1;cursor:grab;user-select:none;overflow:hidden}
@@ -133,7 +133,7 @@
 @keyframes spin{to{transform:rotate(360deg)}}
 
 /* ── Detail panel ──────────────────────────────────────────────────────────── */
-.gd-head{padding:.75rem;border-bottom:1px solid var(--border);font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);display:flex;align-items:center;justify-content:space-between}
+.gd-head{padding:.8rem .85rem;border-bottom:1px solid var(--border);font-size:11px;font-weight:850;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);display:flex;align-items:center;justify-content:space-between;background:linear-gradient(180deg,var(--surface-2),var(--surface))}
 .gd-section{padding:.6rem .75rem;font-size:10px;font-weight:800;text-transform:uppercase;color:var(--text-muted);letter-spacing:.06em;background:var(--surface-2);border-bottom:1px solid var(--border)}
 .gd-body{padding:.75rem;flex:1}
 .gd-form-row{display:grid;grid-template-columns:1fr 1fr;gap:.5rem;margin-bottom:.6rem}
