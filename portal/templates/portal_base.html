@@ -83,6 +83,56 @@
   {% block content %}{% endblock %}
 </div>
 
+{# ── Confirm / alert dialog ── #}
+<div id="qbDialogBackdrop" class="qb-dialog-backdrop" style="display:none" role="dialog" aria-modal="true" aria-labelledby="qbDialogTitle">
+  <div class="qb-dialog">
+    <div class="qb-dialog-header">
+      <div class="qb-dialog-title" id="qbDialogTitle"></div>
+      <div class="qb-dialog-body"  id="qbDialogBody"></div>
+    </div>
+    <div class="qb-dialog-footer">
+      <button type="button" class="btn btn-secondary btn-sm" id="qbDialogCancel">Cancel</button>
+      <button type="button" class="btn btn-danger    btn-sm" id="qbDialogConfirm">Confirm</button>
+    </div>
+  </div>
+</div>
+<script>
+(function(){
+  var _onConfirm = null;
+  var backdrop   = document.getElementById('qbDialogBackdrop');
+  var titleEl    = document.getElementById('qbDialogTitle');
+  var bodyEl     = document.getElementById('qbDialogBody');
+  var cancelBtn  = document.getElementById('qbDialogCancel');
+  var confirmBtn = document.getElementById('qbDialogConfirm');
+
+  function close(){
+    backdrop.style.display = 'none';
+    _onConfirm = null;
+  }
+
+  cancelBtn.addEventListener('click', close);
+  backdrop.addEventListener('click', function(e){ if(e.target === backdrop) close(); });
+  document.addEventListener('keydown', function(e){ if(e.key === 'Escape') close(); });
+  confirmBtn.addEventListener('click', function(){
+    close();
+    if(_onConfirm) _onConfirm();
+  });
+
+  window.qbConfirm = function(opts){
+    opts = opts || {};
+    titleEl.textContent    = opts.title   || 'Are you sure?';
+    bodyEl.textContent     = opts.body    || '';
+    cancelBtn.textContent  = opts.cancel  || 'Cancel';
+    confirmBtn.textContent = opts.confirm || 'Confirm';
+    var variant = opts.variant || 'danger';
+    confirmBtn.className = 'btn btn-' + variant + ' btn-sm';
+    _onConfirm = opts.onConfirm || null;
+    backdrop.style.display = 'flex';
+    setTimeout(function(){ confirmBtn.focus(); }, 30);
+  };
+})();
+</script>
+
 {% if user %}
 <div class="portal-live-toast" id="portalLiveToast" role="status" aria-live="polite">
   <div class="portal-live-toast-title" id="portalLiveToastTitle">Semantic Layer updated</div>

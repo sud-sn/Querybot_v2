@@ -941,9 +941,9 @@
         <p style="font-weight:600;margin-bottom:4px">Reset this client</p>
         <p style="font-size:12px;color:var(--gray-500);max-width:480px">Permanently deletes all schema files, KB files, ChromaDB vector index, and the client row. You will need to re-register the client from the Clients page.</p>
       </div>
-      <form method="post" action="/admin/clients/{{ client.account_id }}/reset">
-        <button type="submit" class="btn btn-danger"
-          onclick="return confirm('Delete all KB and schema data for {{ client.client_name or client.account_id[:16] }}? Cannot be undone.')">Reset client</button>
+      <form method="post" action="/admin/clients/{{ client.account_id }}/reset" id="resetClientForm">
+        <button type="button" class="btn btn-danger"
+          onclick="qbConfirm({title:'Reset this client?',body:'Permanently deletes all schema files, KB files, vector index, and the client row. Cannot be undone.',confirm:'Reset client',onConfirm:()=>document.getElementById(\'resetClientForm\').submit()})">Reset client</button>
       </form>
     </div>
   </div>

@@ -137,6 +137,71 @@
 </div>
 {# ── end shell ── #}
 
+{# ── Confirm / alert dialog ── #}
+<div id="qbDialogBackdrop" class="qb-dialog-backdrop" style="display:none" role="dialog" aria-modal="true" aria-labelledby="qbDialogTitle">
+  <div class="qb-dialog">
+    <div class="qb-dialog-header">
+      <div class="qb-dialog-title" id="qbDialogTitle"></div>
+      <div class="qb-dialog-body"  id="qbDialogBody"></div>
+    </div>
+    <div class="qb-dialog-footer">
+      <button type="button" class="btn btn-secondary btn-sm" id="qbDialogCancel">Cancel</button>
+      <button type="button" class="btn btn-danger    btn-sm" id="qbDialogConfirm">Confirm</button>
+    </div>
+  </div>
+</div>
+<script>
+(function(){
+  var _onConfirm = null;
+  var backdrop   = document.getElementById('qbDialogBackdrop');
+  var titleEl    = document.getElementById('qbDialogTitle');
+  var bodyEl     = document.getElementById('qbDialogBody');
+  var cancelBtn  = document.getElementById('qbDialogCancel');
+  var confirmBtn = document.getElementById('qbDialogConfirm');
+
+  function close(){
+    backdrop.style.display = 'none';
+    _onConfirm = null;
+  }
+
+  cancelBtn.addEventListener('click', close);
+  backdrop.addEventListener('click', function(e){ if(e.target === backdrop) close(); });
+  document.addEventListener('keydown', function(e){ if(e.key === 'Escape') close(); });
+  confirmBtn.addEventListener('click', function(){
+    close();
+    if(_onConfirm) _onConfirm();
+  });
+
+  /*
+   * qbConfirm({ title, body, confirm, cancel, variant, onConfirm })
+   *
+   * variant: 'danger' (default) | 'primary' | 'warning'
+   *
+   * Replaces all native confirm() calls. Example:
+   *   qbConfirm({
+   *     title: 'Delete this metric?',
+   *     body:  'This cannot be undone.',
+   *     onConfirm: () => form.submit()
+   *   });
+   */
+  window.qbConfirm = function(opts){
+    opts = opts || {};
+    titleEl.textContent  = opts.title   || 'Are you sure?';
+    bodyEl.textContent   = opts.body    || '';
+    cancelBtn.textContent  = opts.cancel  || 'Cancel';
+    confirmBtn.textContent = opts.confirm || 'Confirm';
+
+    var variant = opts.variant || 'danger';
+    confirmBtn.className = 'btn btn-' + variant + ' btn-sm';
+
+    _onConfirm = opts.onConfirm || null;
+    backdrop.style.display = 'flex';
+    /* Focus confirm so keyboard users can press Enter immediately */
+    setTimeout(function(){ confirmBtn.focus(); }, 30);
+  };
+})();
+</script>
+
 {# ── Notification toast ── #}
 <div class="admin-live-toast" id="semanticPendingToast" role="status" aria-live="polite">
   <div class="admin-live-toast-title">New Semantic Layer request</div>

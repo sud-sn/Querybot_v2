@@ -218,9 +218,9 @@ details[open].edit-panel summary{background:var(--gray-100)}
         <div class="action-btns">
           <form method="post"
             action="/admin/clients/{{ client.account_id }}/glossary/{{ t.id }}/delete"
-            onsubmit="return confirm('Delete this term? This cannot be undone.')"
-            style="display:inline">
-            <button type="submit" class="btn btn-secondary btn-sm">Delete</button>
+            style="display:inline" id="del-gloss-{{ t.id }}">
+            <button type="button" class="btn btn-secondary btn-sm"
+              onclick="qbConfirm({title:'Delete term?',body:'This cannot be undone.',confirm:'Delete',onConfirm:()=>document.getElementById('del-gloss-{{ t.id }}').submit()})">Delete</button>
           </form>
         </div>
       </div>

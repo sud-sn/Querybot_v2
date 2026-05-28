@@ -126,9 +126,10 @@
         <button type="button" class="btn btn-xs btn-secondary"
           onclick="openChartModal(this.closest('.chart-card'))"
           title="Expand chart" style="font-size:12px;padding:4px 8px">⤢ Expand</button>
-        <form method="post" action="/portal/unpin" style="margin:0">
+        <form method="post" action="/portal/unpin" style="margin:0" id="unpin-{{ chart.id }}">
           <input type="hidden" name="chart_id" value="{{ chart.id }}">
-          <button type="submit" class="btn btn-xs btn-secondary" onclick="return confirm('Unpin this chart?')" style="color:var(--gray-500)">✕</button>
+          <button type="button" class="btn btn-xs btn-secondary" style="color:var(--text-muted)"
+            onclick="qbConfirm({title:'Unpin chart?',body:'Remove this chart from your dashboard.',confirm:'Unpin',variant:'primary',onConfirm:()=>document.getElementById('unpin-{{ chart.id }}').submit()})">✕ Unpin</button>
         </form>
       </div>
     </div>

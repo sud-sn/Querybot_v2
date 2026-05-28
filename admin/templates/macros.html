@@ -1,14 +1,37 @@
 {# ============================================================
-   QueryBot Admin — Jinja2 macros  (Sprint 1)
-
-   Usage:
-     {% from "macros.html" import card, badge, btn, breadcrumb %}
+   QueryBot Admin — Jinja2 macros  (Sprint A)
    ============================================================ #}
+{% from "icons.html" import ic %}
+
+
+{# ── page_header ───────────────────────────────────────────
+   Renders the standard page-header with optional action slot.
+
+   Usage (title + subtitle only):
+     {{ page_header("Dashboard", "Live status of all connected clients.") }}
+
+   Usage (title + subtitle + action button):
+     {% call(actions) page_header("Clients", "Manage connected workspaces.") %}
+       <a href="/admin/clients/new" class="btn btn-primary btn-sm">
+         {{ ic("plus", 14) }} New workspace
+       </a>
+     {% endcall %}
+#}
+{% macro page_header(title, subtitle='') -%}
+<div class="page-header">
+  <div class="page-header-body">
+    <h1>{{ title }}</h1>
+    {% if subtitle %}<p>{{ subtitle }}</p>{% endif %}
+  </div>
+  {% if caller is defined %}
+  <div class="page-header-actions">{{ caller() }}</div>
+  {% endif %}
+</div>
+{%- endmacro %}
 
 
 {# ── card ──────────────────────────────────────────────────────
    Wraps content in a .card with optional header.
-   caller() renders the body content.
 
    {% call card("Section title") %}
      <p>Body content</p>
@@ -55,13 +78,12 @@
 
 {# ── breadcrumb ────────────────────────────────────────────────
    items: list of dicts with keys  label  and  href
-          The LAST item is treated as the current page.
+          The LAST item is the current page (no link rendered).
 
-   Example:
-     {{ breadcrumb([
-         {"label": "Clients",  "href": "/admin/clients"},
-         {"label": "Acme Inc", "href": ""},
-     ]) }}
+   {{ breadcrumb([
+       {"label": "Clients",  "href": "/admin/clients"},
+       {"label": "Acme Inc", "href": ""},
+   ]) }}
 #}
 {% macro breadcrumb(items) -%}
 {% if items %}
@@ -79,6 +101,96 @@
 {%- endmacro %}
 
 
+{# ── alert ─────────────────────────────────────────────────────
+   Structured alert with icon, title, body, and optional action.
+   type:      success | error | info | amber
+   icon_name: icon key from icons.html (leave blank to suppress)
+   title:     bold lead line  (leave blank to use message as the whole content)
+   message:   body text
+   action_href / action_label: optional inline CTA link
+
+   Simple usage (backwards-compatible):
+     {{ alert("Settings saved.", "success") }}
+
+   Structured usage:
+     {{ alert(
+         message  = "No platform configured.",
+         type     = "error",
+         icon_name= "alert-triangle",
+         title    = "No platform configured",
+         action_href  = "/admin/platforms",
+         action_label = "Add platform"
+     ) }}
+#}
+{% macro alert(message='', type='info', icon_name='', title='', action_href='', action_label='') -%}
+<div class="alert alert-{{ type }}" role="alert">
+  {% if icon_name %}
+  <span class="alert-icon" aria-hidden="true">{{ ic(icon_name, 16) }}</span>
+  {% endif %}
+  <div class="alert-body">
+    {% if title %}<strong class="alert-title">{{ title }}</strong>{% endif %}
+    {% if message %}
+      {% if title %}<span class="alert-text">{{ message }}</span>
+      {% else %}{{ message }}{% endif %}
+    {% endif %}
+  </div>
+  {% if action_href and action_label %}
+  <a href="{{ action_href }}" class="btn btn-sm btn-{{ type if type != 'amber' else 'warning' }} alert-action">{{ action_label }}</a>
+  {% endif %}
+</div>
+{%- endmacro %}
+
+
+{# ── empty_state ───────────────────────────────────────────────
+   Centred placeholder for empty tables / lists.
+   icon_name:    icon key from icons.html  (e.g. "inbox", "database")
+   title:        short heading
+   body:         supporting sentence
+   action_href / action_label: primary CTA button (optional)
+   sec_href / sec_label:       secondary CTA link  (optional)
+#}
+{% macro empty_state(icon_name='inbox', title='Nothing here yet', body='', action_href='', action_label='', sec_href='', sec_label='') -%}
+<div class="empty-state">
+  <div class="empty-state-icon" aria-hidden="true">{{ ic(icon_name, 24) }}</div>
+  <h3 class="empty-state-title">{{ title }}</h3>
+  {% if body %}<p class="empty-state-body">{{ body }}</p>{% endif %}
+  {% if action_href or sec_href %}
+  <div class="empty-state-actions">
+    {% if action_href %}<a href="{{ action_href }}" class="btn btn-primary btn-sm">{{ action_label }}</a>{% endif %}
+    {% if sec_href %}<a href="{{ sec_href }}" class="btn btn-secondary btn-sm">{{ sec_label }}</a>{% endif %}
+  </div>
+  {% endif %}
+</div>
+{%- endmacro %}
+
+
+{# ── metric_card ───────────────────────────────────────────────
+   Single metric tile (used inside .metrics grid).
+   delta:         e.g. "+12% vs last month"
+   delta_dir:     up | down | flat
+   color_var:     CSS variable name for the value colour, e.g. "--green"
+   progress:      0-100 integer (renders a progress bar when set)
+   progress_cls:  success | warning | danger  (bar fill colour)
+#}
+{% macro metric_card(label, value, delta='', delta_dir='', color_var='', progress=none, progress_cls='') -%}
+<div class="metric">
+  <div class="metric-label">{{ label }}</div>
+  <div class="metric-value"{% if color_var %} style="color:var({{ color_var }})"{% endif %}>{{ value }}</div>
+  {% if delta %}
+  <div class="metric-delta {{ delta_dir }}">
+    {% if delta_dir == 'up' %}↑{% elif delta_dir == 'down' %}↓{% else %}—{% endif %}
+    {{ delta }}
+  </div>
+  {% endif %}
+  {% if progress is not none %}
+  <div class="metric-progress">
+    <div class="metric-progress-fill {{ progress_cls }}" style="width:{{ [progress, 100]|min }}%"></div>
+  </div>
+  {% endif %}
+</div>
+{%- endmacro %}
+
+
 {# ── form_group ────────────────────────────────────────────────
    Simple labelled input field.
 #}
@@ -93,34 +205,8 @@
 {%- endmacro %}
 
 
-{# ── empty_state ───────────────────────────────────────────────
-   Centred placeholder for empty tables / lists.
-#}
-{% macro empty_state(icon='📭', title='Nothing here yet', message='') -%}
-<div style="text-align:center;padding:3rem 1.5rem;color:var(--text-muted)">
-  <div style="font-size:2.5rem;margin-bottom:.75rem" aria-hidden="true">{{ icon }}</div>
-  <div style="font-size:14px;font-weight:700;color:var(--text-soft);margin-bottom:.35rem">{{ title }}</div>
-  {% if message %}<div style="font-size:13px">{{ message }}</div>{% endif %}
-</div>
-{%- endmacro %}
-
-
-{# ── metric_card ───────────────────────────────────────────────
-   Single metric tile (used inside .metrics grid).
-   color_var: CSS variable name for the value colour, e.g. "--green"
-#}
-{% macro metric_card(label, value, color_var='') -%}
-<div class="metric">
-  <div class="metric-label">{{ label }}</div>
-  <div class="metric-value"{% if color_var %} style="color:var({{ color_var }})"{% endif %}>{{ value }}</div>
-</div>
-{%- endmacro %}
-
-
 {# ── status_badge ──────────────────────────────────────────────
    Maps a state string → badge colour automatically.
-   Known states: READY, ACTIVE → green | SETUP, PENDING → amber
-                 ERROR, FAILED → red | everything else → gray
 #}
 {% macro status_badge(state) -%}
 {%- set _s = state | upper -%}

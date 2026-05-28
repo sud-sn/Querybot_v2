@@ -1645,21 +1645,27 @@ async function liveValidate(btn){
 // ══════════════════════════════════════════════════════════════════════
 // DEPRECATE METRIC
 // ══════════════════════════════════════════════════════════════════════
-async function deprecateMetric(id, name){
-  if(!confirm("Deprecate metric '"+name+"'?\n\nThe metric will be marked as deprecated and hidden from the AI resolver. It will not be deleted and can be viewed by filtering for Deprecated.")) return;
-  try {
-    var clientMatch = location.pathname.match(/\/clients\/([^/]+)\//);
-    if(!clientMatch){ alert("Cannot determine account."); return; }
-    var resp = await fetch("/admin/clients/"+clientMatch[1]+"/metrics/"+id+"/deprecate", {
-      method: "POST",
-      headers: {"Content-Type": "application/json"}
-    });
-    if(!resp.ok) throw new Error("Server error "+resp.status);
-    // Refresh page to reflect new status
-    window.location.reload();
-  } catch(err){
-    alert("Deprecate failed: "+err.message);
-  }
+function deprecateMetric(id, name){
+  qbConfirm({
+    title: "Deprecate metric?",
+    body: "\"" + name + "\" will be hidden from the AI resolver. It won't be deleted — filter for Deprecated to restore it.",
+    confirm: "Deprecate",
+    variant: "warning",
+    onConfirm: async function(){
+      try {
+        var clientMatch = location.pathname.match(/\/clients\/([^/]+)\//);
+        if(!clientMatch){ return; }
+        var resp = await fetch("/admin/clients/"+clientMatch[1]+"/metrics/"+id+"/deprecate", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"}
+        });
+        if(!resp.ok) throw new Error("Server error "+resp.status);
+        window.location.reload();
+      } catch(err){
+        alert("Deprecate failed: "+err.message);
+      }
+    }
+  });
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -1874,28 +1880,29 @@ window.toggleMetricEdit = function(id){
 };
 
 // Hard-delete via fetch — removes row from DOM without page reload
-window.deleteMetricFetch = async function(id, name, btn){
-  if(!confirm('Delete metric "' + name + '"?\n\nThis permanently removes it from all query matching and cannot be undone.')) return;
-  var m = location.pathname.match(/\/clients\/([^/]+)\//);
-  if(!m){ alert("Could not determine client ID from URL."); return; }
-  var url = "/admin/clients/" + m[1] + "/metrics/" + id + "/delete";
-  try{
-    // redirect:'manual' catches the 303 as an opaque redirect — status 0 = success
-    var resp = await fetch(url, {
-      method: "POST",
-      headers: { "X-Requested-With": "fetch" }
-    });
-    // 200 JSON {"ok":true} from routes.py fetch branch
-    if(resp.ok){
-      var row = btn.closest(".metric-row");
-      if(row){ row.style.transition = "opacity .18s,transform .18s"; row.style.opacity = "0"; row.style.transform = "translateX(6px)"; setTimeout(function(){ row.remove(); applyFilters(); }, 200); }
-      window._metricsData = (window._metricsData || []).filter(function(x){ return x.id !== id; });
-    } else {
-      alert("Delete failed (status " + resp.status + "). Please refresh and try again.");
+window.deleteMetricFetch = function(id, name, btn){
+  qbConfirm({
+    title: 'Delete metric?',
+    body: '"' + name + '" will be permanently removed from all query matching. This cannot be undone.',
+    confirm: 'Delete metric',
+    onConfirm: async function(){
+      var m = location.pathname.match(/\/clients\/([^/]+)\//);
+      if(!m){ return; }
+      var url = "/admin/clients/" + m[1] + "/metrics/" + id + "/delete";
+      try{
+        var resp = await fetch(url, { method: "POST", headers: { "X-Requested-With": "fetch" } });
+        if(resp.ok){
+          var row = btn.closest(".metric-row");
+          if(row){ row.style.transition = "opacity .18s,transform .18s"; row.style.opacity = "0"; row.style.transform = "translateX(6px)"; setTimeout(function(){ row.remove(); applyFilters(); }, 200); }
+          window._metricsData = (window._metricsData || []).filter(function(x){ return x.id !== id; });
+        } else {
+          alert("Delete failed (status " + resp.status + "). Please refresh and try again.");
+        }
+      } catch(err){
+        alert("Delete failed: " + err.message);
+      }
     }
-  } catch(err){
-    alert("Delete failed: " + err.message);
-  }
+  });
 };
 
 // ══════════════════════════════════════════════════════════════════════
