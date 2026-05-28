@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "macros.html" import breadcrumb %}
+{% from "macros.html" import breadcrumb, client_workspace_nav %}
 {% from "icons.html" import ic %}
 {% block title %}{{ client.client_name or client.account_id[:16] }} — QueryBot Admin{% endblock %}
 {% block breadcrumb %}
@@ -81,33 +81,15 @@
 {% endblock %}
 {% block content %}
 
-<div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:1rem;margin-bottom:1.25rem">
-  <div>
-    <div style="display:flex;align-items:center;gap:.75rem;flex-wrap:wrap">
-      <h1 style="font-size:20px;font-weight:700">{{ client.client_name or "Unnamed client" }}</h1>
-      {% if client.state == "READY" %}<span class="badge badge-green">READY</span>
-      {% elif client.state == "KB_BUILDING" %}<span class="badge badge-amber">BUILDING KB</span>
-      {% elif client.state == "SCHEMA_READY" %}<span class="badge badge-blue">SCHEMA READY</span>
-      {% else %}<span class="badge badge-gray">{{ client.state }}</span>{% endif %}
-    </div>
-    <p style="font-size:11px;font-family:monospace;color:var(--gray-500);margin-top:3px">{{ client.account_id }}</p>
-  </div>
-  <div style="display:flex;gap:.5rem;flex-wrap:wrap">
-    <a href="/admin/clients/{{ client.account_id }}/setup" class="btn btn-primary btn-sm">🔧 Schema & KB Setup</a>
-    <a href="/admin/clients/{{ client.account_id }}/metrics" class="btn btn-secondary btn-sm">📐 Metrics</a>
-    <a href="/admin/clients/{{ client.account_id }}/glossary" class="btn btn-secondary btn-sm">📖 Glossary</a>
+{{ client_workspace_nav(client, "overview") }}
+
+<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.75rem;margin-bottom:1.25rem">
+  <div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap">
     <form method="post" action="/admin/clients/{{ client.account_id }}/toggle-chat-ui" style="display:inline">
       <button type="submit" class="btn btn-sm {% if client.chat_ui_enabled %}btn-success{% else %}btn-secondary{% endif %}">
         {% if client.chat_ui_enabled %}💬 Chat UI: ON{% else %}💬 Chat UI: OFF{% endif %}
       </button>
     </form>
-    <a href="/admin/clients/{{ client.account_id }}/groups" class="btn btn-secondary btn-sm">{{ ic("user-group", 14) }} Groups</a>
-    <a href="/admin/clients/{{ client.account_id }}/users" class="btn btn-secondary btn-sm">{{ ic("users", 14) }} Users</a>
-    <a href="/admin/clients/{{ client.account_id }}/kb" class="btn btn-secondary btn-sm">📝 Edit KB</a>
-    <a href="/admin/clients/{{ client.account_id }}/traces" class="btn btn-secondary btn-sm">Traces</a>
-    <a href="/admin/clients/{{ client.account_id }}/evals" class="btn btn-secondary btn-sm">Evals</a>
-    <a href="/admin/clients/{{ client.account_id }}/graph" class="btn btn-secondary btn-sm">🕸 Entity Graph</a>
-    <a href="/admin/clients/{{ client.account_id }}/billing" class="btn btn-secondary btn-sm">💰 Billing</a>
   </div>
 </div>
 

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "macros.html" import breadcrumb %}
+{% from "macros.html" import breadcrumb, client_workspace_nav %}
 {% block title %}Business Glossary — {{ client.client_name }}{% endblock %}
 {% block breadcrumb %}
 {{ breadcrumb([
@@ -58,14 +58,12 @@ details[open].edit-panel summary{background:var(--gray-100)}
 {% endblock %}
 {% block content %}
 
+{{ client_workspace_nav(client, "glossary") }}
+
 <div style="display:flex;align-items:center;justify-content:space-between;
   margin-bottom:1.25rem;flex-wrap:wrap;gap:.75rem">
   <div>
-    <a href="/admin/clients/{{ client.account_id }}"
-      style="color:var(--gray-500);font-size:13px">
-      ← {{ client.client_name or client.account_id[:16] }}
-    </a>
-    <h1 style="font-size:20px;font-weight:700;margin-top:4px">Business Glossary</h1>
+    <h1 style="font-size:20px;font-weight:700">Business Glossary</h1>
     <p style="font-size:13px;color:var(--gray-500)">
       The semantic layer — business terms, synonyms, and metric definitions.
       Used by the clarification loop and the SQL generator to ground every

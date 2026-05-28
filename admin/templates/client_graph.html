@@ -1,9 +1,19 @@
 {% extends "base.html" %}
+{% from "macros.html" import breadcrumb, client_workspace_nav %}
 {% block title %}Entity Graph — {{ client.client_name }}{% endblock %}
+{% block breadcrumb %}
+{{ breadcrumb([
+    {"label": "Dashboard", "href": "/admin"},
+    {"label": "Clients",   "href": "/admin/clients"},
+    {"label": client.client_name or client.account_id[:16], "href": "/admin/clients/" ~ client.account_id},
+    {"label": "Entity Graph", "href": ""},
+]) }}
+{% endblock %}
 {% block head %}
 <style>
 /* ── Shell layout ──────────────────────────────────────────────────────────── */
-.graph-shell{display:grid;grid-template-columns:248px 1fr;height:calc(100vh - 56px);overflow:hidden;gap:0;position:relative;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);box-shadow:var(--shadow-lg)}
+/* Height reduced by ~110px to account for the workspace nav */
+.graph-shell{display:grid;grid-template-columns:248px 1fr;height:calc(100vh - 56px - 110px);overflow:hidden;gap:0;position:relative;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);box-shadow:var(--shadow-lg)}
 .graph-sidebar{overflow-y:auto;border-right:1px solid var(--border);background:linear-gradient(180deg,var(--surface),color-mix(in srgb,var(--surface-2) 82%,var(--surface)));display:flex;flex-direction:column}
 /* ── Detail panel — slides in from right as overlay ──────────────────────── */
 .graph-detail{display:flex;flex-direction:column;overflow:hidden;background:var(--surface);border-left:1px solid var(--border);position:absolute;right:0;top:0;bottom:0;width:min(460px,38vw);min-width:360px;z-index:50;transform:translateX(calc(100% + 1px));transition:transform .22s ease,box-shadow .22s ease;box-shadow:none}
@@ -313,6 +323,9 @@
 {% endblock %}
 
 {% block content %}
+
+{{ client_workspace_nav(client, "graph") }}
+
 <div class="graph-shell">
 
 <!-- ══ LEFT SIDEBAR ══════════════════════════════════════════════════════════ -->

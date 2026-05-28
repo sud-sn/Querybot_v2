@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "macros.html" import breadcrumb %}
+{% from "macros.html" import breadcrumb, client_workspace_nav %}
 {% block title %}Knowledge Base Editor — {{ client.client_name or client.account_id[:16] }}{% endblock %}
 {% block breadcrumb %}
 {{ breadcrumb([
@@ -40,11 +40,11 @@
 </style>
 {% endblock %}
 {% block content %}
+
+{{ client_workspace_nav(client, "kb") }}
+
 <div class="page-header">
   <h1>Knowledge Base Editor</h1>
-  <p>
-    <a href="/admin/clients/{{ client.account_id }}">← {{ client.client_name or client.account_id[:16] }}</a>
-  </p>
 </div>
 
 {% if saved %}<div class="alert alert-success">File saved and re-embedded into ChromaDB.</div>{% endif %}
