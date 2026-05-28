@@ -205,6 +205,43 @@
 {%- endmacro %}
 
 
+{# ── client_workspace_nav ──────────────────────────────────────
+   Sticky tab bar shown at the top of every client workspace page.
+   client:  the client object (must have .account_id and .client_name)
+   current: key of the active tab — one of:
+            overview | setup | kb | metrics | graph | glossary |
+            users | groups | billing
+
+   Usage:
+     {% from "macros.html" import client_workspace_nav %}
+     {{ client_workspace_nav(client, "metrics") }}
+#}
+{% macro client_workspace_nav(client, current='overview') -%}
+{%- set base = "/admin/clients/" ~ client.account_id -%}
+<div class="ws-nav">
+  <div class="ws-nav-head">
+    <span class="ws-nav-name">{{ client.client_name or "Unnamed client" }}</span>
+    {%- if client.state == "READY" %}<span class="badge badge-green">READY</span>
+    {%- elif client.state == "KB_BUILDING" %}<span class="badge badge-amber">BUILDING KB</span>
+    {%- elif client.state == "SCHEMA_READY" %}<span class="badge badge-blue">SCHEMA READY</span>
+    {%- else %}<span class="badge badge-gray">{{ client.state }}</span>{% endif %}
+    <span class="ws-nav-id">{{ client.account_id }}</span>
+  </div>
+  <nav class="ws-tab-bar" aria-label="Client workspace">
+    <a href="{{ base }}"               class="ws-tab{% if current=='overview'  %} active{% endif %}">Overview</a>
+    <a href="{{ base }}/setup"         class="ws-tab{% if current=='setup'     %} active{% endif %}">Setup</a>
+    <a href="{{ base }}/kb"            class="ws-tab{% if current=='kb'        %} active{% endif %}">KB Editor</a>
+    <a href="{{ base }}/metrics"       class="ws-tab{% if current=='metrics'   %} active{% endif %}">Metrics</a>
+    <a href="{{ base }}/graph"         class="ws-tab{% if current=='graph'     %} active{% endif %}">Entity Graph</a>
+    <a href="{{ base }}/glossary"      class="ws-tab{% if current=='glossary'  %} active{% endif %}">Glossary</a>
+    <a href="{{ base }}/users"         class="ws-tab{% if current=='users'     %} active{% endif %}">Users</a>
+    <a href="{{ base }}/groups"        class="ws-tab{% if current=='groups'    %} active{% endif %}">Groups</a>
+    <a href="{{ base }}/billing"       class="ws-tab{% if current=='billing'   %} active{% endif %}">Billing</a>
+  </nav>
+</div>
+{%- endmacro %}
+
+
 {# ── status_badge ──────────────────────────────────────────────
    Maps a state string → badge colour automatically.
 #}

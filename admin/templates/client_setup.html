@@ -89,7 +89,7 @@
 </style>
 {% endblock %}
 {% block breadcrumb %}
-{% from "macros.html" import breadcrumb %}
+{% from "macros.html" import breadcrumb, client_workspace_nav %}
 {% from "icons.html" import ic %}
 {{ breadcrumb([
     {"label": "Dashboard", "href": "/admin"},
@@ -99,6 +99,8 @@
 ]) }}
 {% endblock %}
 {% block content %}
+
+{{ client_workspace_nav(client, "setup") }}
 
 {# ── Wizard step indicator ── #}
 {% set _w1 = db_cfg is not none %}

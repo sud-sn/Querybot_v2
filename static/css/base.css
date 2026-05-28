@@ -787,6 +787,83 @@ html[data-theme='dark'] [style*="background:#DBEAFE"] {
 .w-max-lg { max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .w-full   { width: 100%; }
 
+/* ── Client workspace nav ── */
+.ws-nav {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 1.25rem;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.ws-nav-head {
+  padding: .875rem 1.25rem .625rem;
+  display: flex;
+  align-items: center;
+  gap: .65rem;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(180deg, var(--surface), var(--surface-2));
+}
+.ws-nav-name {
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--text);
+  letter-spacing: -.01em;
+}
+.ws-nav-id {
+  font-family: 'SFMono-Regular', Menlo, Consolas, monospace;
+  font-size: 10px;
+  color: var(--text-muted);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 1px 6px;
+}
+.ws-tab-bar {
+  display: flex;
+  gap: 0;
+  padding: 0 .75rem;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.ws-tab-bar::-webkit-scrollbar { display: none; }
+.ws-tab {
+  display: inline-flex;
+  align-items: center;
+  padding: .6rem .875rem;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-decoration: none;
+  border-bottom: 2px solid transparent;
+  white-space: nowrap;
+  transition: color .15s, border-color .15s;
+  position: relative;
+  top: 1px; /* sit on top of .ws-nav border-bottom */
+}
+.ws-tab:hover { color: var(--text); }
+.ws-tab.active {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+  font-weight: 700;
+}
+
+/* ── Sidebar section labels ── */
+.sidebar-group-label {
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--teal-400);
+  opacity: .6;
+  padding: 1.1rem 1rem .35rem;
+  display: block;
+  user-select: none;
+}
+.sidebar-group-label:first-child { padding-top: .5rem; }
+
 /* ── Visibility ── */
 .hidden { display: none !important; }
 .sr-only {

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "macros.html" import breadcrumb %}
+{% from "macros.html" import breadcrumb, client_workspace_nav %}
 {% block title %}Metric Registry — {{ client.client_name }}{% endblock %}
 {% block breadcrumb %}
 {{ breadcrumb([
@@ -216,12 +216,11 @@
 {% endblock %}
 {% block content %}
 
+{{ client_workspace_nav(client, "metrics") }}
+
 <div class="metrics-hero">
   <div>
-    <a href="/admin/clients/{{ client.account_id }}" style="color:var(--text-muted);font-size:13px">
-      Back to {{ client.client_name or client.account_id[:16] }}
-    </a>
-    <h1>Metric Registry and Formula Builder</h1>
+    <h1>Metric Registry &amp; Formula Builder</h1>
     <p>
       Define approved business calculations such as revenue, net profit, gross margin,
       and profit percentage. Full SQL metrics run directly; formula metrics are injected

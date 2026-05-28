@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "macros.html" import breadcrumb %}
+{% from "macros.html" import breadcrumb, client_workspace_nav %}
 {% block title %}Groups — {{ client.client_name }}{% endblock %}
 {% block breadcrumb %}
 {{ breadcrumb([
@@ -25,17 +25,11 @@
 {% endblock %}
 {% block content %}
 
-<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.25rem;flex-wrap:wrap;gap:.75rem">
-  <div>
-    <div style="display:flex;align-items:center;gap:.5rem">
-      <a href="/admin/clients/{{ client.account_id }}" style="color:var(--gray-500);font-size:13px">
-        ← {{ client.client_name or client.account_id[:16] }}
-      </a>
-    </div>
-    <h1 style="font-size:20px;font-weight:700;margin-top:4px">Groups &amp; Table Access</h1>
-    <p style="font-size:13px;color:var(--gray-500)">Create groups and assign which tables each group can query.</p>
-  </div>
-  <a href="/admin/clients/{{ client.account_id }}/users" class="btn btn-secondary btn-sm">Manage users →</a>
+{{ client_workspace_nav(client, "groups") }}
+
+<div style="margin-bottom:1.25rem">
+  <h1 style="font-size:20px;font-weight:700">Groups &amp; Table Access</h1>
+  <p style="font-size:13px;color:var(--gray-500)">Create groups and assign which tables each group can query.</p>
 </div>
 
 {% if saved %}<div class="alert alert-success">Saved successfully.</div>{% endif %}

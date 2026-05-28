@@ -71,13 +71,14 @@
     </div>
 
     <nav class="sidebar-section" role="navigation">
-      <div class="sidebar-section-label">Navigation</div>
 
+      <span class="sidebar-group-label">Overview</span>
       <a href="/admin"
          class="sidebar-link {% if request.url.path in ['/admin','/admin/'] %}active{% endif %}">
         <span class="sidebar-link-icon">{{ ic("dashboard") }}</span> Dashboard
       </a>
 
+      <span class="sidebar-group-label">Infrastructure</span>
       <a href="/admin/platforms"
          class="sidebar-link {% if 'platforms' in request.url.path %}active{% endif %}">
         <span class="sidebar-link-icon">{{ ic("plug") }}</span> Platforms
@@ -88,6 +89,7 @@
         <span class="sidebar-link-icon">{{ ic("database") }}</span> Databases
       </a>
 
+      <span class="sidebar-group-label">Workspaces</span>
       <a href="/admin/clients"
          class="sidebar-link {% if 'clients' in request.url.path %}active{% endif %}">
         <span class="sidebar-link-icon">{{ ic("users") }}</span>
@@ -95,10 +97,12 @@
         <span class="admin-live-badge semantic-review-chip" id="semanticPendingBadge" title="">0</span>
       </a>
 
+      <span class="sidebar-group-label">System</span>
       <a href="/admin/system"
          class="sidebar-link {% if 'system' in request.url.path %}active{% endif %}">
         <span class="sidebar-link-icon">{{ ic("settings") }}</span> System
       </a>
+
     </nav>
 
     <div class="sidebar-foot">
