@@ -843,7 +843,7 @@ function setProcessing(active){
   row.classList.toggle('active', !!active);
   // Hide composer mascot while processing — show again when done
   const cm = document.getElementById('composerMascot');
-  if (cm) cm.classList.toggle('cm-hidden', !!active);
+  if (cm) cm.classList.toggle('ai-hidden', !!active);
   if (active) {
     startDoodle();
   } else {
@@ -851,7 +851,7 @@ function setProcessing(active){
     _resetStageSteps();
     // Restore composer mascot (reset to idle unless in error state)
     if (cm && !window._mascotInErrorState) {
-      cm.classList.remove('cm-hidden');
+      cm.classList.remove('ai-hidden');
     }
   }
   scrollBottom();
@@ -2015,11 +2015,11 @@ function appendAssistantResponse(msg, opts = {}){
     });
   }
 
-  // Wire follow-up suggestion chips
+  // Wire follow-up suggestion chips — pass the element (not the string) so
+  // sendSuggestion() can read btn.textContent and btn.dataset.fqn correctly.
   div.querySelectorAll('.follow-up-chip').forEach(btn => {
     btn.addEventListener('click', () => {
-      const q = btn.dataset.followUp || '';
-      if (q && wsReady) sendSuggestion(q);
+      if (wsReady) sendSuggestion(btn);
     });
   });
   if (opts.persist !== false) pushChatCache({ kind:'assistant_response', payload: msg, timestamp });

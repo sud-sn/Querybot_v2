@@ -265,11 +265,18 @@ def _find_metric_formula_errors(sql: str, tree, semantic_context: dict | None, t
 
     question = (semantic_context or {}).get("question") or ""
     known_columns = {str(c).upper() for cols in table_columns.values() for c in (cols or {})}
-    used_columns = {
-        (col_node.name or "").upper()
-        for col_node in tree.find_all(sg_exp.Column)
-        if (col_node.name or "").upper() and (col_node.name or "").upper() != "*"
-    }
+
+    # Restrict column tracking to SELECT expressions only (not WHERE / GROUP BY /
+    # ORDER BY), so a column used only as a filter predicate does not satisfy the
+    # formula-enforcement check — the formula must appear in the projection.
+    used_columns: set[str] = set()
+    select_node = tree.find(sg_exp.Select)
+    if select_node:
+        for expr in select_node.expressions:
+            for col_node in expr.find_all(sg_exp.Column):
+                col_name = (col_node.name or "").upper()
+                if col_name and col_name != "*":
+                    used_columns.add(col_name)
 
     errors: list[dict] = []
     for metric in metrics:

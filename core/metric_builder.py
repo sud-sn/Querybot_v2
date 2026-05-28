@@ -70,7 +70,10 @@ def _compile_condition(field: str, operator: str, value: str) -> str:
     if op == "less_or_equal":
         return f"{field} <= {_literal(raw_value)}"
     if op == "contains":
-        return f"{field} LIKE '%' + {_literal(raw_value)} + '%'"
+        # Embed wildcards inside the literal so the pattern works across all
+        # dialects (Azure SQL, Snowflake, Oracle, DuckDB) without string concat.
+        escaped = raw_value.replace("'", "''")
+        return f"{field} LIKE '%{escaped}%'"
     if op == "in":
         values = _split_values(raw_value)
         if not values:
@@ -82,9 +85,12 @@ def _compile_condition(field: str, operator: str, value: str) -> str:
             raise ValueError("NOT IN filter requires at least one value.")
         return f"{field} NOT IN ({', '.join(_literal(v) for v in values)})"
     if op == "between":
-        values = _split_values(raw_value)
+        # Strip thousands-separator commas from numeric-looking tokens before
+        # splitting so "1,000, 5,000" yields ["1000", "5000"] not three tokens.
+        normalised = re.sub(r"(?<=\d),(?=\d{3}(?:[^,\d]|$))", "", raw_value)
+        values = _split_values(normalised)
         if len(values) != 2:
-            raise ValueError("BETWEEN filter requires two comma-separated values.")
+            raise ValueError("BETWEEN filter requires two comma-separated values (e.g. 100, 500).")
         return f"{field} BETWEEN {_literal(values[0])} AND {_literal(values[1])}"
     if op == "is_null":
         return f"{field} IS NULL"
@@ -143,7 +149,9 @@ def compile_metric_builder_config(raw_config: str | dict[str, Any]) -> CompiledM
     elif aggregation == "COUNT":
         formula = f"COUNT(CASE WHEN {predicate} THEN 1 END)"
     else:
-        formula = f"{aggregation}(CASE WHEN {predicate} THEN {measure} END)"
+        # COALESCE(..., 0) ensures AVG/MIN/MAX return 0 when no rows match the
+        # predicate, consistent with SUM which uses ELSE 0 for the same reason.
+        formula = f"COALESCE({aggregation}(CASE WHEN {predicate} THEN {measure} END), 0)"
 
     clean_config = {
         "enabled": True,
