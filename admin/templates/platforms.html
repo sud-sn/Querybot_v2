@@ -105,8 +105,8 @@
       <td>
         <form method="post" action="/admin/platforms/delete" style="display:inline">
           <input type="hidden" name="platform_id" value="{{ p.id }}">
-          <button type="submit" class="btn btn-danger btn-sm"
-            onclick="return confirm('Delete {{ p.name }}?')">Delete</button>
+          <button type="button" class="btn btn-danger btn-sm"
+            onclick="qbConfirm({title:'Delete platform?',body:'Delete {{ p.name }}?',confirm:'Delete',onConfirm:()=>this.closest('form').submit()})">Delete</button>
         </form>
       </td>
     </tr>

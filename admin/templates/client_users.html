@@ -192,8 +192,9 @@
           </form>
           <!-- Reset password -->
           <form method="post" action="/admin/clients/{{ client.account_id }}/users/{{ u.id }}/reset-password"
-            style="display:inline" onsubmit="return confirm('Reset password for {{ u.name }}?')">
-            <button type="submit" class="btn btn-secondary btn-xs">Reset pw</button>
+            style="display:inline" id="reset-pw-{{ u.id }}">
+            <button type="button" class="btn btn-secondary btn-xs"
+              onclick="qbConfirm({title:'Reset password?',body:'Send a new temporary password to {{ u.name }}.',confirm:'Reset',variant:'primary',onConfirm:()=>document.getElementById('reset-pw-{{ u.id }}').submit()})">Reset pw</button>
           </form>
           <!-- Toggle active -->
           <form method="post" action="/admin/clients/{{ client.account_id }}/users/{{ u.id }}/update"
@@ -206,8 +207,9 @@
           </form>
           <!-- Delete -->
           <form method="post" action="/admin/clients/{{ client.account_id }}/users/{{ u.id }}/delete"
-            style="display:inline" onsubmit="return confirm('Delete {{ u.name }}? This removes their portal access and pinned charts.')">
-            <button type="submit" class="btn btn-danger btn-xs">Delete</button>
+            style="display:inline" id="del-user-{{ u.id }}">
+            <button type="button" class="btn btn-danger btn-xs"
+              onclick="qbConfirm({title:'Delete user?',body:'Delete {{ u.name }}? This removes their portal access and pinned charts.',confirm:'Delete user',onConfirm:()=>document.getElementById('del-user-{{ u.id }}').submit()})">Delete</button>
           </form>
         </div>
       </td>
