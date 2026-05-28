@@ -282,18 +282,18 @@
 .cpt-swatch:hover{transform:scale(1.15)}
 .cpt-swatch.cpt-active{border-color:var(--primary);box-shadow:0 0 0 1px var(--primary)}
 .chart-footer{margin-top:.75rem;display:flex;justify-content:space-between;gap:1rem;color:var(--text-muted);font-size:11px;flex-wrap:wrap}
-.assistant-card{background:linear-gradient(180deg,color-mix(in srgb,var(--surface) 97%, var(--primary-soft) 3%),var(--surface));border:1px solid var(--border);border-radius:var(--radius);padding:1rem;box-shadow:var(--shadow)}
-.assistant-card{padding:1rem 1rem .95rem}
-.result-topline{display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap;margin-bottom:.8rem}.result-kicker{font-size:11px;font-weight:850;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted)}
-.result-layout{display:flex;flex-direction:column;gap:.9rem}.result-chart-wrap{background:color-mix(in srgb,var(--surface-2) 65%, transparent);border:1px solid var(--border);border-radius:var(--radius);padding:.65rem}.chart-canvas.compact{height:320px}
-.data-table-wrap{background:color-mix(in srgb,var(--surface-2) 55%, transparent);border:1px solid var(--border);border-radius:var(--radius);padding:0;overflow:hidden}
-.data-table-toolbar{display:flex;align-items:center;gap:.5rem;padding:6px 10px;background:color-mix(in srgb,var(--surface-2) 70%, transparent);border-bottom:1px solid var(--border);flex-wrap:wrap}
-.data-table-filter{flex:1;min-width:130px;max-width:260px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:12px;outline:none}
+.assistant-card{background:linear-gradient(180deg,color-mix(in srgb,var(--surface) 98%, var(--primary-soft) 2%),var(--surface));border:1px solid var(--border);border-radius:var(--radius);padding:1rem 1rem .95rem;box-shadow:var(--shadow);position:relative}
+.assistant-card::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:linear-gradient(180deg,var(--primary),color-mix(in srgb,var(--primary) 45%,transparent));border-radius:var(--radius) 0 0 var(--radius)}
+.result-topline{display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;flex-wrap:wrap;margin-bottom:.85rem;padding-left:.15rem}.result-kicker{font-size:11px;font-weight:850;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted)}
+.result-layout{display:flex;flex-direction:column;gap:.95rem}.result-chart-wrap{background:color-mix(in srgb,var(--surface-2) 65%, transparent);border:1px solid var(--border);border-radius:var(--radius);padding:.65rem}.chart-canvas.compact{height:320px}
+.data-table-wrap{background:color-mix(in srgb,var(--surface-2) 55%, transparent);border:1px solid var(--border);border-radius:var(--radius);padding:0;overflow:hidden;box-shadow:inset 0 1px 0 color-mix(in srgb,var(--surface) 70%,transparent)}
+.data-table-toolbar{display:flex;align-items:center;gap:.5rem;padding:8px 10px;background:color-mix(in srgb,var(--surface-2) 76%, transparent);border-bottom:1px solid var(--border);flex-wrap:wrap}
+.data-table-filter{flex:1;min-width:150px;max-width:320px;padding:6px 9px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:12px;outline:none}
 .data-table-filter:focus{border-color:var(--primary);box-shadow:0 0 0 2px color-mix(in srgb,var(--primary) 18%, transparent)}
 .data-table-agg{font-size:11px;color:var(--text-muted);margin-left:auto;white-space:nowrap}
 .data-table-scroll{max-height:340px;overflow:auto}
 .data-table{width:100%;border-collapse:collapse;font-size:12.5px;font-variant-numeric:tabular-nums}
-.data-table thead th{position:sticky;top:0;background:var(--surface-2);color:var(--text-soft);font-weight:800;text-align:left;padding:8px 12px;border-bottom:1px solid var(--border);font-size:11px;letter-spacing:.04em;text-transform:uppercase;white-space:nowrap;z-index:1;cursor:pointer;user-select:none}
+.data-table thead th{position:sticky;top:0;background:var(--surface-2);color:var(--text-soft);font-weight:850;text-align:left;padding:9px 12px;border-bottom:1px solid var(--border);font-size:11px;letter-spacing:.04em;text-transform:uppercase;white-space:nowrap;z-index:1;cursor:pointer;user-select:none}
 .data-table thead th:hover{background:color-mix(in srgb,var(--primary-soft) 20%, var(--surface-2))}
 .data-table thead th.sort-asc::after{content:' ↑';opacity:.7}
 .data-table thead th.sort-desc::after{content:' ↓';opacity:.7}
@@ -332,9 +332,11 @@
 .rc-send{padding:6px 14px;border-radius:7px;border:none;background:var(--primary);color:#fff;font-size:12.5px;font-weight:700;cursor:pointer;white-space:nowrap;transition:opacity .15s}
 .rc-send:hover{opacity:.88}
 .rc-send:disabled{opacity:.45;cursor:default}
-.rc-hint{padding:.4rem .9rem;font-size:11px;color:var(--text-muted);border-top:1px solid var(--border);background:color-mix(in srgb,var(--surface-2) 40%, transparent)}
+.rc-hint{padding:.55rem .9rem;font-size:11px;color:var(--text-muted);border-top:1px solid var(--border);background:color-mix(in srgb,var(--surface-2) 40%, transparent);line-height:1.55}
+.rc-scope-strip{display:flex;gap:.45rem;flex-wrap:wrap;padding:.6rem .9rem .15rem;background:color-mix(in srgb,var(--surface-2) 40%,transparent);border-top:1px solid var(--border)}
+.rc-scope-chip{display:inline-flex;align-items:center;gap:.35rem;padding:4px 8px;border-radius:999px;border:1px solid var(--border);background:var(--surface);font-size:10.5px;font-weight:800;color:var(--text-soft)}
 .action-row{display:flex;gap:.5rem;flex-wrap:wrap;margin-top:.2rem}.analysis-card{background:linear-gradient(180deg,color-mix(in srgb,var(--surface) 98%, var(--primary-soft) 2%),var(--surface));border:1px solid var(--border);border-radius:var(--radius);padding:1rem;box-shadow:var(--shadow)}.analysis-title{font-size:15px;font-weight:850;color:var(--text);margin-bottom:.4rem}.analysis-body{font-size:13px;line-height:1.7;color:var(--text)}.analysis-secondary{margin-top:.7rem;padding:.8rem .9rem;border-radius:var(--radius);background:var(--surface-2);border:1px solid var(--border);font-size:12px;line-height:1.65;color:var(--text-soft)}.analysis-list{margin:.8rem 0 0 1rem;color:var(--text);font-size:12px;line-height:1.7}.analysis-list li+li{margin-top:.35rem}.analysis-meta{margin-top:.45rem;font-size:11px;color:var(--text-muted)}
-.answer-headline{font-size:18px;font-weight:850;letter-spacing:-.02em;color:var(--text);line-height:1.35;margin-bottom:.45rem}
+.answer-headline{font-size:18px;font-weight:850;letter-spacing:0;color:var(--text);line-height:1.35;margin-bottom:.45rem}
 .answer-chip{display:inline-flex;align-items:center;gap:.4rem;padding:7px 10px;border-radius:999px;background:var(--surface-2);border:1px solid var(--border);font-size:11px;font-weight:800;color:var(--text-soft);margin-bottom:.8rem}
 .scope-badge{display:inline-flex;align-items:center;gap:.35rem;padding:6px 10px;border-radius:999px;background:color-mix(in srgb,var(--primary-soft) 24%, var(--surface));border:1px solid color-mix(in srgb,var(--primary) 18%, var(--border));font-size:11px;font-weight:800;color:var(--primary)}
 .scope-note{font-size:11.5px;color:var(--text-muted);line-height:1.55}
@@ -342,10 +344,12 @@
 .insight-panel{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius);padding:.95rem}
 .section-label{font-size:11px;font-weight:850;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted);margin-bottom:.45rem}
 .summary-copy{font-size:13px;line-height:1.7;color:var(--text)}
-.trust-box{margin-top:.9rem;border-top:1px solid var(--border);padding-top:.85rem}
-.trust-box summary{cursor:pointer;list-style:none;font-size:12px;font-weight:800;color:var(--text-soft)}
+.trust-box{margin-top:.95rem;border:1px solid var(--border);border-radius:var(--radius);background:color-mix(in srgb,var(--surface-2) 46%,transparent);overflow:hidden}
+.trust-box summary{cursor:pointer;list-style:none;font-size:12px;font-weight:850;color:var(--text-soft);padding:.75rem .85rem;display:flex;align-items:center;justify-content:space-between;gap:.75rem}
+.trust-box summary::after{content:'+';font-weight:900;color:var(--text-muted)}
+.trust-box[open] summary::after{content:'-'}
 .trust-box summary::-webkit-details-marker{display:none}
-.trust-grid{margin-top:.7rem;display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:.7rem}
+.trust-grid{padding:0 .85rem .85rem;display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:.7rem}
 .trust-item{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius);padding:.75rem}
 .trust-k{font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted);margin-bottom:.25rem}
 .trust-v{font-size:12px;color:var(--text);line-height:1.55;word-break:break-word}
@@ -357,7 +361,18 @@
 .confidence-badge.low{background:rgba(248,113,113,.14);color:#fca5a5;border-color:rgba(248,113,113,.4)}
 .confidence-score{font-size:12px;color:var(--text-muted);font-weight:750}
 .confidence-lines{font-size:12px;line-height:1.55;color:var(--text-soft)}
-.sql-box{margin-top:.7rem;background:var(--bg-soft);border:1px solid var(--border);border-radius:var(--radius);padding:.75rem .85rem;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text);white-space:pre-wrap;overflow:auto;max-height:180px}
+.sql-box{margin:.1rem .85rem .85rem;background:var(--code-bg);border:1px solid var(--border);border-radius:var(--radius);padding:.75rem .85rem;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--code-text);white-space:pre-wrap;overflow:auto;max-height:220px}
+.trust-sql-label{padding:0 .85rem .35rem;font-size:10px;font-weight:850;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted)}
+.diagnostic-card{background:linear-gradient(180deg,color-mix(in srgb,var(--surface) 96%,var(--warning-soft) 4%),var(--surface));border:1px solid var(--border);border-left:3px solid var(--warning);border-radius:var(--radius);box-shadow:var(--shadow);padding:1rem;line-height:1.65;color:var(--text)}
+.diagnostic-kicker{font-size:10px;font-weight:850;letter-spacing:.08em;text-transform:uppercase;color:var(--warning);margin-bottom:.35rem}
+.diagnostic-title{font-size:16px;font-weight:850;color:var(--text);line-height:1.35;margin-bottom:.7rem}
+.diagnostic-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:.65rem;margin:.75rem 0}
+.diagnostic-section{padding:.7rem .8rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface-2)}
+.diagnostic-label{font-size:10px;font-weight:850;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted);margin-bottom:.25rem}
+.diagnostic-copy{font-size:12.5px;color:var(--text-soft)}
+.diagnostic-list{margin:.35rem 0 0 1rem;color:var(--text-soft);font-size:12px}
+.diagnostic-list li+li{margin-top:.2rem}
+.diagnostic-card .sql-box{margin:.65rem 0 0;max-height:240px}
 .clarification-card{padding:1rem 1.05rem;border-radius:var(--radius-lg);background:var(--surface);color:var(--text);border:1px solid var(--border);border-bottom-left-radius:6px;box-shadow:var(--shadow);display:flex;flex-direction:column;gap:.8rem}
 .clarification-question{line-height:1.6;color:var(--text)}
 .clarification-options{display:flex;gap:.55rem;flex-wrap:wrap}
@@ -387,7 +402,11 @@
 .schema-tab.active{background:var(--primary);border-color:var(--primary);color:#fff}
 .schema-bar-label{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:var(--text-muted);margin-right:.25rem;flex-shrink:0}
 .schema-current{font-size:11px;font-weight:800;color:var(--text-soft);padding:5px 10px;border-radius:999px;background:var(--surface);border:1px solid var(--border);white-space:nowrap}
-@media(max-width:760px){.schema-control-row{align-items:flex-start;flex-direction:column}.schema-current{display:none}}
+.schema-mode-note{display:flex;align-items:center;gap:.45rem;padding:.55rem 1.1rem;border-bottom:1px solid var(--border);background:color-mix(in srgb,var(--surface) 82%,var(--surface-2));font-size:11px;color:var(--text-muted);line-height:1.45}
+.schema-mode-note strong{color:var(--text-soft);font-weight:850}
+.schema-mode-dot{width:7px;height:7px;border-radius:999px;background:var(--warning);box-shadow:0 0 0 4px color-mix(in srgb,var(--warning-soft) 42%,transparent);flex-shrink:0}
+.schema-mode-note.locked .schema-mode-dot{background:var(--success);box-shadow:0 0 0 4px color-mix(in srgb,var(--success-soft) 42%,transparent)}
+@media(max-width:760px){.schema-control-row{align-items:flex-start;flex-direction:column}.schema-current{display:none}.schema-mode-note{align-items:flex-start}}
 .suggestions{display:flex;flex-wrap:wrap;gap:.6rem}
 .suggestion-chip,.composer-chip{background:var(--surface);border:1px solid var(--border);color:var(--text-soft);font-size:12px;font-weight:700;padding:9px 13px;border-radius:999px;cursor:pointer;transition:all .15s;max-width:320px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;box-shadow:var(--shadow)}
 .suggestion-chip:hover,.composer-chip:hover{background:var(--surface-3);border-color:var(--primary);color:var(--primary);transform:translateY(-1px)}
@@ -519,6 +538,10 @@
         {% endfor %}
       </div>
       <span class="schema-current" id="activeSchemaLabel">All schemas</span>
+    </div>
+    <div class="schema-mode-note" id="schemaModeNote">
+      <span class="schema-mode-dot"></span>
+      <span id="schemaModeText"><strong>Multi-schema mode.</strong> QueryBot will search all schemas you can access and may ask for clarification if more than one schema matches.</span>
     </div>
     {% endif %}
 
@@ -715,7 +738,7 @@
         </div>
         <div class="composer-footer">
           <div style="display:flex;align-items:center;gap:.75rem;flex-wrap:wrap">
-            <div class="composer-hint">Press Enter to send · Shift + Enter for a new line</div>
+            <div class="composer-hint" id="schemaComposerHint">{% if available_schemas and available_schemas|length > 1 %}All schemas active. Select a schema when you want a stricter answer.{% else %}Press Enter to send · Shift + Enter for a new line{% endif %}</div>
             <div id="memoryBadge" style="display:none;align-items:center;gap:.35rem;font-size:11px;font-weight:700;padding:3px 9px;border-radius:999px;background:var(--surface-2);border:1px solid var(--border);color:var(--text-soft);cursor:default" title=""></div>
           </div>
           {% if suggestions %}
@@ -903,6 +926,53 @@ function formatBotText(text){
   h = h.replace(/\n/g, '<br>');
   return h;
 }
+function _extractDiagnosticSection(text, startLabel, stopLabels){
+  const start = text.indexOf(startLabel);
+  if (start < 0) return '';
+  const bodyStart = start + startLabel.length;
+  let end = text.length;
+  (stopLabels || []).forEach(label => {
+    const idx = text.indexOf(label, bodyStart);
+    if (idx >= 0 && idx < end) end = idx;
+  });
+  return text.slice(bodyStart, end).trim();
+}
+function _diagnosticBullets(block){
+  return (block || '').split(/\n+/)
+    .map(x => x.replace(/^[-•]\s*/, '').trim())
+    .filter(Boolean);
+}
+function renderDiagnosticCard(rawText){
+  const text = String(rawText || '').trim();
+  if (!/Most likely reason:/i.test(text) || !/SQL tried:/i.test(text)) return '';
+  const lines = text.split(/\n+/).map(x => x.trim()).filter(Boolean);
+  const headline = lines[0] || 'No matching data was found.';
+  const confidence = (_extractDiagnosticSection(text, 'Confidence:', ['Most likely reason:']) || '').replace(/\n/g, ' ').trim();
+  const reason = _extractDiagnosticSection(text, 'Most likely reason:', ['Suggested next step:', 'Why:', 'Technical details:', 'SQL tried:']);
+  const nextStep = _extractDiagnosticSection(text, 'Suggested next step:', ['Why:', 'Technical details:', 'SQL tried:']);
+  const why = _diagnosticBullets(_extractDiagnosticSection(text, 'Why:', ['Technical details:', 'SQL tried:']));
+  const technical = _diagnosticBullets(_extractDiagnosticSection(text, 'Technical details:', ['SQL tried:']));
+  const sqlMatch = text.match(/```(?:sql)?\s*([\s\S]*?)```/i);
+  const sql = sqlMatch ? sqlMatch[1].trim() : _extractDiagnosticSection(text, 'SQL tried:', []);
+  const whyHtml = why.length
+    ? `<div class="diagnostic-section"><div class="diagnostic-label">Why</div><ul class="diagnostic-list">${why.slice(0,4).map(x => `<li>${escHtml(x)}</li>`).join('')}</ul></div>`
+    : '';
+  const techHtml = technical.length
+    ? `<div class="diagnostic-section"><div class="diagnostic-label">Technical details</div><ul class="diagnostic-list">${technical.slice(0,5).map(x => `<li>${escHtml(x)}</li>`).join('')}</ul></div>`
+    : '';
+  return `<div class="diagnostic-card" data-raw="${encodeURIComponent(rawText)}">
+    <div class="diagnostic-kicker">No rows returned</div>
+    <div class="diagnostic-title">${escHtml(headline)}</div>
+    <div class="diagnostic-grid">
+      ${confidence ? `<div class="diagnostic-section"><div class="diagnostic-label">Confidence</div><div class="diagnostic-copy">${escHtml(confidence)}</div></div>` : ''}
+      ${reason ? `<div class="diagnostic-section"><div class="diagnostic-label">Most likely reason</div><div class="diagnostic-copy">${escHtml(reason)}</div></div>` : ''}
+      ${nextStep ? `<div class="diagnostic-section"><div class="diagnostic-label">Suggested next step</div><div class="diagnostic-copy">${escHtml(nextStep)}</div></div>` : ''}
+      ${whyHtml}
+      ${techHtml}
+    </div>
+    ${sql ? `<div class="diagnostic-label">SQL tried</div><div class="sql-box">${escHtml(sql)}</div>` : ''}
+  </div>`;
+}
 async function copyText(text){
   try {
     await navigator.clipboard.writeText(text);
@@ -938,11 +1008,16 @@ function appendBot(rawText, opts = {}){
   hideWelcome();
   lastAssistantText = rawText;
   const timestamp = timeLabel(opts.timestamp);
+  const diagnosticHtml = renderDiagnosticCard(rawText);
   const div = document.createElement('div');
   div.className = 'msg msg-bot';
   div.innerHTML = `<div class="msg-avatar">Q</div><div class="msg-content"><div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timestamp}</span></div><div class="msg-bubble" data-raw="${encodeURIComponent(rawText)}">${formatBotText(rawText)}</div><div class="msg-actions"><button class="msg-action" type="button">Copy answer</button></div></div>`;
+  if (diagnosticHtml) {
+    const bubbleNode = div.querySelector('.msg-bubble');
+    if (bubbleNode) bubbleNode.outerHTML = diagnosticHtml;
+  }
   div.querySelector('.msg-action').addEventListener('click', async (e) => {
-    const bubble = e.currentTarget.closest('.msg-content').querySelector('.msg-bubble');
+    const bubble = e.currentTarget.closest('.msg-content').querySelector('.msg-bubble,.diagnostic-card');
     const raw = decodeURIComponent(bubble.dataset.raw || '');
     const ok = await copyText(raw || bubble.innerText || '');
     if (ok) {
@@ -1825,7 +1900,8 @@ function appendAssistantResponse(msg, opts = {}){
       </div>`
     : '';
 
-  const trustHtml = `<details class="trust-box"><summary>View query details</summary><div class="trust-grid"><div class="trust-item"><div class="trust-k">Rows</div><div class="trust-v">${escHtml(String(trust.row_count ?? ''))}</div></div><div class="trust-item"><div class="trust-k">Runtime</div><div class="trust-v">${escHtml(trust.duration_label || '')}</div></div><div class="trust-item"><div class="trust-k">Data source</div><div class="trust-v">${escHtml((trust.data_source || '').toUpperCase())}</div></div><div class="trust-item"><div class="trust-k">Scope</div><div class="trust-v">${escHtml(trust.scope_badge || resultScope.badge || '')}</div></div></div><div class="sql-box">${escHtml(trust.sql || '')}</div></details>`;
+  const trustSchema = trust.schema || (_activeSchema ? `${_activeSchema} schema` : 'All allowed schemas');
+  const trustHtml = `<details class="trust-box"><summary>How this answer was produced</summary><div class="trust-grid"><div class="trust-item"><div class="trust-k">Rows</div><div class="trust-v">${escHtml(String(trust.row_count ?? ''))}</div></div><div class="trust-item"><div class="trust-k">Runtime</div><div class="trust-v">${escHtml(trust.duration_label || '')}</div></div><div class="trust-item"><div class="trust-k">Data source</div><div class="trust-v">${escHtml((trust.data_source || '').toUpperCase())}</div></div><div class="trust-item"><div class="trust-k">Schema mode</div><div class="trust-v">${escHtml(trustSchema)}</div></div><div class="trust-item"><div class="trust-k">Result scope</div><div class="trust-v">${escHtml(trust.scope_badge || resultScope.badge || '')}</div></div></div><div class="trust-sql-label">SQL used</div><div class="sql-box">${escHtml(trust.sql || '')}</div></details>`;
 
   // Each result card gets a unique ID for the inline chat
   const rcId = `rc-${chartCounter}`;
@@ -1873,6 +1949,12 @@ function appendAssistantResponse(msg, opts = {}){
   thread().appendChild(div);
   const msgContentEl = div.querySelector('.msg-content');
   if (msgContentEl) msgContentEl._querybotPayload = msg;
+  const rcPanelEl = div.querySelector(`#${rcId}`);
+  const rcHintEl = rcPanelEl ? rcPanelEl.querySelector('.rc-hint') : null;
+  if (rcPanelEl && rcHintEl) {
+    rcHintEl.insertAdjacentHTML('beforebegin', '<div class="rc-scope-strip"><span class="rc-scope-chip">Returned rows first</span><span class="rc-scope-chip">Database fallback if needed</span></div>');
+    rcHintEl.textContent = 'Ask about the result above. If your follow-up needs a metric or dimension missing from these rows, QueryBot can fall back to the database using the original answer context.';
+  }
   const copyBtn = div.querySelector('[data-copy="result"]');
   copyBtn?.addEventListener('click', async (e) => {
     const copyPayload = [answer.headline || '', trust.sql ? ('SQL\n' + trust.sql) : ''].filter(Boolean).join('\n\n');
@@ -2065,6 +2147,26 @@ function renderClarificationPrompt(data, opts = {}){
 let _activeSchema = "";   // "" = All schemas
 const SCHEMA_STORAGE_KEY = `querybot.activeSchema.${ACCOUNT_ID}`;
 
+function updateSchemaModeCopy(){
+  const notice = document.getElementById("schemaModeNote");
+  const text = document.getElementById("schemaModeText");
+  const label = document.getElementById("activeSchemaLabel");
+  const composerHint = document.getElementById("schemaComposerHint");
+  const input = document.getElementById("input");
+  if (label) label.textContent = _activeSchema ? `${_activeSchema} schema` : "All schemas";
+  if (_activeSchema) {
+    if (notice) notice.classList.add("locked");
+    if (text) text.innerHTML = `<strong>${escHtml(_activeSchema)} schema locked.</strong> QueryBot will retrieve context and generate SQL only from this selected schema.`;
+    if (composerHint) composerHint.textContent = `Using ${_activeSchema} schema. Press Enter to send, Shift + Enter for a new line.`;
+    if (input) input.placeholder = `Ask anything about ${_activeSchema} data...`;
+  } else {
+    if (notice) notice.classList.remove("locked");
+    if (text) text.innerHTML = "<strong>Multi-schema mode.</strong> QueryBot will search all schemas you can access and may ask for clarification if more than one schema matches.";
+    if (composerHint) composerHint.textContent = "All schemas active. Select a schema when you want a stricter answer.";
+    if (input) input.placeholder = "Ask anything about your data...";
+  }
+}
+
 function selectSchema(schemaName, btn, opts = {}) {
   _activeSchema = (schemaName || "").trim().toUpperCase();
 
@@ -2072,8 +2174,7 @@ function selectSchema(schemaName, btn, opts = {}) {
   document.querySelectorAll(".schema-tab").forEach(t => t.classList.remove("active"));
   if (btn) btn.classList.add("active");
 
-  const label = document.getElementById("activeSchemaLabel");
-  if (label) label.textContent = _activeSchema ? `${_activeSchema} schema` : "All schemas";
+  updateSchemaModeCopy();
   if (opts.persist !== false) {
     try { sessionStorage.setItem(SCHEMA_STORAGE_KEY, _activeSchema); } catch {}
   }

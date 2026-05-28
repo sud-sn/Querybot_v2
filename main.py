@@ -1519,6 +1519,11 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
             column_formats=column_formats,
         )
         # ── Result-aware follow-up suggestions (web portal only) ──────────
+        selected_schema = (getattr(event, "schema_hint", "") or "").strip().upper()
+        response_payload.setdefault("trust", {})["schema"] = (
+            f"{selected_schema} schema" if selected_schema else "All allowed schemas"
+        )
+        response_payload["trust"]["schema_mode"] = "selected" if selected_schema else "all"
         # Generate suggestions from the statistical brief already computed
         # inside build_assistant_response — no extra DB call or raw row exposure.
         # Uses a lightweight 160-token LLM call; failures are silent.

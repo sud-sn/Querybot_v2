@@ -25,7 +25,7 @@
 .syn-pill,.meta-pill{display:inline-flex;align-items:center;background:var(--blue-light);color:var(--blue);font-size:10px;font-weight:800;padding:3px 8px;border-radius:999px;margin:2px;font-family:Consolas,monospace}
 .meta-pill{background:var(--surface-2);color:var(--text-soft);border:1px solid var(--border)}
 .builder-shell{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(280px,.75fr);gap:1rem;align-items:start}
-.builder-panel{border:1px solid var(--border);border-radius:var(--radius);background:var(--surface-2);padding:.9rem}
+.builder-panel{border:1px solid var(--border);border-radius:var(--radius);background:linear-gradient(180deg,color-mix(in srgb,var(--surface-2) 86%,var(--surface)),var(--surface-2));padding:.9rem;position:sticky;top:1rem}
 .builder-panel h3{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:var(--text-soft);margin-bottom:.6rem}
 .syntax-panel{border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);padding:.75rem;font-size:12px;color:var(--text-soft);line-height:1.6}
 .syntax-panel.good{border-color:color-mix(in srgb,var(--green) 28%,var(--border));background:color-mix(in srgb,var(--green-light) 46%,var(--surface))}
@@ -107,7 +107,7 @@
 
 /* ── Metrics toolbar ────────────────────────────────────────────────── */
 .metrics-toolbar{display:flex;align-items:center;gap:.6rem;flex-wrap:wrap;margin-bottom:.85rem;
-  padding:.7rem .9rem;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius)}
+  padding:.75rem .9rem;background:linear-gradient(180deg,color-mix(in srgb,var(--surface-2) 88%,var(--surface)),var(--surface-2));border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow)}
 .metrics-toolbar input[type=text]{flex:1;min-width:180px;padding:6px 10px;border:1px solid var(--border);
   border-radius:5px;font-size:12px;outline:none;background:var(--surface)}
 .metrics-toolbar input[type=text]:focus{border-color:var(--primary)}
@@ -147,8 +147,8 @@
 .collision-warn.show{display:block}
 .collision-warn strong{font-weight:800}
 /* ── Compact metric row ──────────────────────────────────────────────── */
-.metric-row{border:1px solid var(--border);border-radius:var(--radius);margin-bottom:.38rem;background:var(--surface);transition:box-shadow .12s}
-.metric-row:hover{box-shadow:0 2px 8px rgba(0,0,0,.07)}
+.metric-row{border:1px solid var(--border);border-radius:var(--radius);margin-bottom:.45rem;background:var(--surface);transition:box-shadow .12s,border-color .12s,transform .12s}
+.metric-row:hover{box-shadow:var(--shadow-md);border-color:var(--border-strong);transform:translateY(-1px)}
 .metric-row-head{padding:.5rem .9rem;display:flex;align-items:center;gap:.45rem;min-height:44px;overflow:hidden}
 .mr-name{font-family:Consolas,monospace;font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;flex-shrink:0}
 .mr-sep{color:var(--border-strong,#CBD5E0);font-size:13px;flex-shrink:0}
@@ -178,18 +178,38 @@
 .validate-result.ok{background:color-mix(in srgb,var(--green,#38a169) 10%,var(--surface));border-color:color-mix(in srgb,var(--green,#38a169) 22%,transparent);color:color-mix(in srgb,var(--green,#38a169) 80%,#222)}
 .validate-result.fail{background:color-mix(in srgb,var(--red,#e53e3e) 10%,var(--surface));border-color:color-mix(in srgb,var(--red,#e53e3e) 22%,transparent);color:color-mix(in srgb,var(--red,#e53e3e) 80%,#222)}
 .validate-result.warn{background:color-mix(in srgb,var(--amber,#d69e2e) 8%,var(--surface));border-color:color-mix(in srgb,var(--amber,#d69e2e) 22%,transparent);color:color-mix(in srgb,var(--amber,#d69e2e) 80%,#222)}
-.metric-builder{margin:.8rem 0;border:1px solid var(--border);border-radius:var(--radius-sm,5px);background:var(--surface-2);overflow:hidden}
-.metric-builder-head{padding:.55rem .75rem;display:flex;align-items:center;justify-content:space-between;gap:.75rem;border-bottom:1px solid var(--border)}
+.metric-builder{margin:.8rem 0;border:1px solid var(--border);border-radius:var(--radius);background:linear-gradient(180deg,color-mix(in srgb,var(--primary-soft) 18%,var(--surface)),var(--surface-2));overflow:hidden;box-shadow:inset 0 1px 0 color-mix(in srgb,var(--surface) 70%,transparent)}
+.metric-builder-head{padding:.65rem .8rem;display:flex;align-items:center;justify-content:space-between;gap:.75rem;border-bottom:1px solid var(--border)}
 .metric-builder-head label{display:flex;align-items:center;gap:.45rem;font-size:12px;font-weight:800;color:var(--text)}
-.metric-builder-body{display:none;padding:.75rem}
+.metric-builder-body{display:none;padding:.85rem}
 .metric-builder.enabled .metric-builder-body{display:block}
 .metric-builder-grid{display:grid;grid-template-columns:130px minmax(160px,1fr);gap:.6rem;margin-bottom:.7rem}
-.metric-builder select,.metric-builder input{width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);font-size:12px}
-.metric-filter-row{display:grid;grid-template-columns:minmax(145px,1fr) 150px minmax(140px,1fr) 34px;gap:.45rem;margin:.4rem 0;align-items:center}
-.metric-filter-remove{height:31px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text-muted);cursor:pointer;font-weight:800}
+.metric-builder select,.metric-builder input{width:100%;padding:7px 9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:12px;min-height:33px}
+.metric-builder select:focus,.metric-builder input:focus{border-color:var(--primary);box-shadow:0 0 0 3px color-mix(in srgb,var(--primary) 14%,transparent);outline:none}
+.metric-filter-row{display:grid;grid-template-columns:minmax(145px,1fr) 150px minmax(140px,1fr) 34px;gap:.45rem;margin:.45rem 0;align-items:center}
+.metric-filter-remove{height:33px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text-muted);cursor:pointer;font-weight:800}
 .metric-filter-remove:hover{color:var(--red,#DC2626);border-color:color-mix(in srgb,var(--red,#DC2626) 35%,var(--border))}
-.metric-builder-preview{font-family:Consolas,monospace;font-size:11px;background:var(--surface);border:1px dashed var(--border-strong);border-radius:5px;padding:.55rem;margin-top:.55rem;white-space:pre-wrap;color:var(--text-soft)}
+.metric-builder-preview{font-family:Consolas,monospace;font-size:11px;background:var(--code-bg);border:1px solid var(--border);border-radius:6px;padding:.65rem;margin-top:.65rem;white-space:pre-wrap;color:var(--code-text);line-height:1.55}
+.metric-builder-steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.5rem;margin-bottom:.8rem}
+.metric-builder-step{border:1px solid var(--border);border-radius:7px;background:color-mix(in srgb,var(--surface) 82%,var(--primary-soft));padding:.55rem .65rem;min-height:58px}
+.metric-builder-step span{display:block;font-size:10px;font-weight:800;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:.25rem}
+.metric-builder-step strong{display:block;font-size:12px;color:var(--text);line-height:1.35}
+.metric-builder-human{display:none;margin:.65rem 0 0;border:1px solid color-mix(in srgb,var(--primary) 22%,var(--border));border-radius:7px;background:color-mix(in srgb,var(--primary-soft) 30%,var(--surface));padding:.65rem .75rem;color:var(--text-soft);font-size:12px;line-height:1.55}
+.metric-builder.enabled .metric-builder-human{display:block}
+.metric-preview-title{display:flex;align-items:center;justify-content:space-between;gap:.5rem;margin-top:.65rem}
+.metric-preview-title span{font-size:10px;font-weight:800;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em}
+.metric-live-preview{margin-top:.4rem;display:flex;align-items:center;justify-content:space-between;gap:.5rem;border:1px solid var(--border);border-radius:7px;background:var(--surface-2);padding:.45rem .55rem;font-size:11px;color:var(--text-muted)}
+.format-preview-pill{font-family:Consolas,monospace;font-size:12px;font-weight:800;color:var(--text);background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:.25rem .55rem;white-space:nowrap}
+.metric-lineage{margin:.75rem 0;border:1px solid var(--border);border-radius:var(--radius-sm,6px);background:var(--surface-2);padding:.75rem}
+.metric-lineage-title{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:var(--text-muted);margin-bottom:.55rem}
+.metric-lineage-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.5rem}
+.metric-lineage-item{border:1px solid var(--border);border-radius:6px;background:var(--surface);padding:.5rem .6rem;min-width:0}
+.metric-lineage-k{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);font-weight:800;margin-bottom:.22rem}
+.metric-lineage-v{font-family:Consolas,monospace;font-size:11px;color:var(--text-soft);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.metric-row-lineage{display:flex;gap:.35rem;flex-wrap:wrap;padding:0 .9rem .55rem .9rem;margin-top:-.15rem}
+.metric-row-lineage .meta-pill{max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @media(max-width:700px){.metric-builder-grid,.metric-filter-row{grid-template-columns:1fr}.metric-filter-remove{width:100%}}
+@media(max-width:900px){.metric-builder-steps,.metric-lineage-grid{grid-template-columns:1fr}}
 </style>
 <!-- Pass db_type to JS -->
 <script>window._qbDbType = "{{ db_type | default('azure_sql') }}";</script>
@@ -481,6 +501,14 @@ SUM(GrossMargin) + SUM(Rebates) - SUM(AllocatedCosts)
   </div>
 
   <!-- ── Expand: full edit form (hidden by default) ── -->
+  <div class="metric-row-lineage">
+    <span class="meta-pill">Format: {{ (m.result_format or 'number') | capitalize }}</span>
+    {% if m.base_table %}<span class="meta-pill" title="{{ m.base_table | e }}">Table: {{ m.base_table }}</span>{% endif %}
+    {% if m.required_columns %}<span class="meta-pill" title="{{ m.required_columns | e }}">Columns: {{ m.required_columns }}</span>{% endif %}
+    {% if m.allowed_dimensions %}<span class="meta-pill" title="{{ m.allowed_dimensions | e }}">Dims: {{ m.allowed_dimensions }}</span>{% endif %}
+    {% if m.default_time_column %}<span class="meta-pill">Time: {{ m.default_time_column }}</span>{% endif %}
+  </div>
+
   <div id="edit-{{ m.id }}" class="metric-row-expand" style="display:none">
     <form method="post" action="/admin/clients/{{ client.account_id }}/metrics/{{ m.id }}/update" class="metric-form">
       <input type="hidden" name="skip_id" value="{{ m.id }}">
@@ -1328,6 +1356,104 @@ function _metricCondition(row){
   return "";
 }
 
+function _metricFormatSample(fmt){
+  fmt = (fmt || "number").toLowerCase();
+  if(fmt === "currency") return "$52,536.00";
+  if(fmt === "percentage") return "42.5%";
+  if(fmt === "date") return "2026-05-28";
+  if(fmt === "text") return "Returned result";
+  return "52,536";
+}
+
+function _metricFilterText(row){
+  var f = (row.field || "").trim();
+  var op = (row.operator || "equals").replace(/_/g, " ");
+  var v = (row.value || "").trim();
+  if(!f) return "";
+  if(op === "is null" || op === "is not null") return f + " " + op;
+  return f + " " + op + " " + (v || "...");
+}
+
+function _metricBuilderHumanSummary(config){
+  if(!config || !config.enabled) return "Enable the builder to generate a validated aggregate formula.";
+  var measure = (config.measure || "").trim();
+  if(!measure) return "Choose the measure column that this metric should aggregate.";
+  var filters = (config.filters || []).map(_metricFilterText).filter(Boolean);
+  var line = "Metric will calculate " + (config.aggregation || "SUM") + " of " + measure + ".";
+  if(filters.length) line += " It only includes rows where " + filters.join(" and ") + ".";
+  else line += " No row-level filters are applied.";
+  return line;
+}
+
+function _listFromInput(form, name){
+  var el = form ? form.querySelector("[name='"+name+"']") : null;
+  return el && el.value ? el.value.trim() : "";
+}
+
+function _ensureMetricUxPanels(form){
+  if(!form) return;
+  var fmt = form.querySelector("[name='result_format']");
+  if(fmt && !fmt.parentElement.querySelector(".metric-live-preview")){
+    fmt.insertAdjacentHTML("afterend",
+      '<div class="metric-live-preview"><span>Result preview</span><strong class="format-preview-pill" data-format-preview></strong></div>');
+  }
+  var builder = form.querySelector(".metric-builder");
+  if(builder){
+    var body = builder.querySelector(".metric-builder-body");
+    if(body && !builder.querySelector(".metric-builder-steps")){
+      body.insertAdjacentHTML("afterbegin",
+        '<div class="metric-builder-steps">'
+        + '<div class="metric-builder-step"><span>1. Measure</span><strong>Select the field and aggregation.</strong></div>'
+        + '<div class="metric-builder-step"><span>2. Filters</span><strong>Add business rules without CASE syntax.</strong></div>'
+        + '<div class="metric-builder-step"><span>3. Publish</span><strong>Validate the generated formula.</strong></div>'
+        + '</div>');
+    }
+    var preview = builder.querySelector(".metric-builder-preview");
+    if(preview && !builder.querySelector(".metric-builder-human")){
+      preview.insertAdjacentHTML("beforebegin",
+        '<div class="metric-builder-human" data-builder-human></div>'
+        + '<div class="metric-preview-title"><span>Generated formula</span><span>Saved into approved formula</span></div>');
+    }
+    if(!form.querySelector(".metric-lineage")){
+      builder.insertAdjacentHTML("afterend",
+        '<div class="metric-lineage">'
+        + '<div class="metric-lineage-title">Metric lineage before publish</div>'
+        + '<div class="metric-lineage-grid">'
+        + '<div class="metric-lineage-item"><div class="metric-lineage-k">Source table</div><div class="metric-lineage-v" data-lineage="source"></div></div>'
+        + '<div class="metric-lineage-item"><div class="metric-lineage-k">Required columns</div><div class="metric-lineage-v" data-lineage="columns"></div></div>'
+        + '<div class="metric-lineage-item"><div class="metric-lineage-k">Allowed dimensions</div><div class="metric-lineage-v" data-lineage="dimensions"></div></div>'
+        + '<div class="metric-lineage-item"><div class="metric-lineage-k">Time column</div><div class="metric-lineage-v" data-lineage="time"></div></div>'
+        + '<div class="metric-lineage-item"><div class="metric-lineage-k">Result format</div><div class="metric-lineage-v" data-lineage="format"></div></div>'
+        + '<div class="metric-lineage-item"><div class="metric-lineage-k">Mode</div><div class="metric-lineage-v" data-lineage="mode"></div></div>'
+        + '</div></div>');
+    }
+  }
+  _updateMetricUxPanels(form);
+}
+
+function _updateMetricUxPanels(form){
+  if(!form) return;
+  var fmt = (form.querySelector("[name='result_format']") || {}).value || "number";
+  var sample = form.querySelector("[data-format-preview]");
+  if(sample) sample.textContent = _metricFormatSample(fmt);
+  var config = _collectMetricBuilderConfig(form);
+  var human = form.querySelector("[data-builder-human]");
+  if(human) human.textContent = _metricBuilderHumanSummary(config);
+  var source = _listFromInput(form, "base_table") || _listFromInput(form, "base_entity") || "Not selected";
+  var cols = _listFromInput(form, "required_columns");
+  if(!cols && config.enabled){
+    cols = [config.measure].concat((config.filters || []).map(function(f){ return f.field; })).filter(Boolean).join(", ");
+  }
+  var dims = _listFromInput(form, "allowed_dimensions") || "Any validated field";
+  var time = _listFromInput(form, "default_time_column") || "None";
+  var mode = ((form.querySelector("[name='formula_type']") || {}).value || "expression") === "query" ? "Full SQL query" : "Formula expression";
+  var pairs = { source: source, columns: cols || "Auto from formula", dimensions: dims, time: time, format: fmt + " (" + _metricFormatSample(fmt) + ")", mode: mode };
+  Object.keys(pairs).forEach(function(key){
+    var el = form.querySelector("[data-lineage='"+key+"']");
+    if(el) el.textContent = pairs[key];
+  });
+}
+
 function _collectMetricBuilderConfig(form){
   var builder = form ? form.querySelector(".metric-builder") : null;
   if(!builder) return { enabled:false };
@@ -1373,6 +1499,7 @@ function _syncMetricBuilder(form){
   if(!enabled){
     if(hidden) hidden.value = "";
     if(preview) preview.textContent = "Enable builder and choose a measure to preview the formula.";
+    _updateMetricUxPanels(form);
     return true;
   }
   try{
@@ -1387,9 +1514,11 @@ function _syncMetricBuilder(form){
       cols.forEach(function(c){ if(existing.indexOf(c) === -1) existing.push(c); });
       required.value = existing.join(", ");
     }
+    _updateMetricUxPanels(form);
     return true;
   } catch(err){
     if(preview) preview.textContent = err.message;
+    _updateMetricUxPanels(form);
     return false;
   }
 }
@@ -1578,6 +1707,7 @@ window.insertColumnFromBrowser = function(colName){
 
 // Load columns from API on page load
 (function loadColumns(){
+  document.querySelectorAll(".metric-form").forEach(_ensureMetricUxPanels);
   var m = window.location.pathname.match(/\/clients\/([^\/]+)/);
   if(!m) return;
   fetch("/admin/clients/"+m[1]+"/api/columns")
@@ -1591,6 +1721,7 @@ window.insertColumnFromBrowser = function(colName){
         _populateBaseTableInputs(_allColumns);
         _wireMetricBuilderColumnLists(document);
         document.querySelectorAll(".metric-builder").forEach(_initialiseMetricBuilder);
+        document.querySelectorAll(".metric-form").forEach(_ensureMetricUxPanels);
       } else {
         _buildColBrowser([]);
       }
@@ -1685,9 +1816,13 @@ document.addEventListener("input", function(e){
     var last  = parts[parts.length-1].trim();
     if(last.length >= 2) _showTagSuggestions(e.target, last);
     else _hideSuggestions();
+    _updateMetricUxPanels(e.target.closest(".metric-form"));
   }
   if(e.target.matches(".metric-builder-measure,.metric-builder-field,.metric-builder-value")){
     _syncMetricBuilder(e.target.closest(".metric-form"));
+  }
+  if(e.target.matches("[name='base_table'],[name='base_entity'],[name='grain']")){
+    _updateMetricUxPanels(e.target.closest(".metric-form"));
   }
 });
 
@@ -1698,9 +1833,13 @@ document.addEventListener("change", function(e){
     var label  = form ? form.querySelector(".formula-label") : null;
     if(label) label.textContent = e.target.value === "query" ? "Full SELECT query *" : "Approved formula *";
     if(editor) updateFormulaHints(editor);
+    _updateMetricUxPanels(form);
   }
   if(e.target.matches(".metric-builder-enabled,.metric-builder-aggregation,.metric-builder-operator")){
     _syncMetricBuilder(e.target.closest(".metric-form"));
+  }
+  if(e.target.matches("[name='result_format'],[name='default_time_column']")){
+    _updateMetricUxPanels(e.target.closest(".metric-form"));
   }
 });
 
@@ -1727,6 +1866,8 @@ window.toggleMetricEdit = function(id){
   el.style.display = opening ? "block" : "none";
   // Wire up autocomplete for the formula editor when first revealed
   if(opening){
+    var form = el.querySelector(".metric-form");
+    if(form) _ensureMetricUxPanels(form);
     var editor = el.querySelector(".formula-editor");
     if(editor && !editor._hinted){ updateFormulaHints(editor); editor._hinted = true; }
   }
@@ -1876,6 +2017,7 @@ window.cloneMetric = function(id){
     if(list) list.innerHTML = "";
     _initialiseMetricBuilder(builder);
   }
+  _ensureMetricUxPanels(addForm);
 
   // Trigger validator on formula editor
   var editor = addForm.querySelector(".formula-editor");
