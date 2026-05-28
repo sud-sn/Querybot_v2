@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 import time
 from collections import OrderedDict
 from typing import Any
@@ -72,7 +73,8 @@ def _normalise_column_formats(rows: list[dict], column_formats: dict | None) -> 
     for raw_col, raw_fmt in column_formats.items():
         header = by_norm.get(_normalise_key(raw_col))
         fmt = _normalise_result_format(raw_fmt)
-        if header and fmt != "number":
+        # Allow explicit "number" through — it lets admins override currency heuristics
+        if header:
             cleaned[header] = fmt
     return cleaned
 
@@ -91,13 +93,14 @@ def _infer_duckdb_type(values: list[Any]) -> str:
         return "BIGINT"
     if isinstance(sample, float):
         return "DOUBLE"
-    # Try numeric string
+    # Try numeric string — sample up to 50 rows to avoid truncating floats that
+    # appear later in the set, and handle negative numbers (.isdigit() is False for '-5').
     try:
         float(str(sample).replace(",", ""))
-        # Check all samples are numeric
-        if all(_is_numeric_str(v) for v in non_null[:10]):
-            # Integer or float?
-            if all(str(v).replace(",", "").isdigit() for v in non_null[:10]):
+        probe = non_null[:50]
+        if all(_is_numeric_str(v) for v in probe):
+            # Integer check: strip optional leading '-' before testing digits
+            if all(str(v).replace(",", "").lstrip("-").isdigit() for v in probe):
                 return "BIGINT"
             return "DOUBLE"
     except (ValueError, TypeError):
@@ -139,6 +142,11 @@ def _python_fallback_query(rows: list[dict], sql: str) -> list[dict]:
     where_m = _re.search(r"WHERE\s+(.+?)(?:ORDER|LIMIT|$)", sql, _re.IGNORECASE | _re.DOTALL)
     if where_m:
         cond = where_m.group(1).strip()
+        # Compound AND/OR predicates are not supported by this fallback parser.
+        # Return all rows un-filtered rather than silently returning wrong rows.
+        if _re.search(r"\b(?:AND|OR)\b", cond, _re.IGNORECASE):
+            log.debug("Python fallback: compound WHERE clause not supported — skipping filter")
+            return _project_fallback_rows(result, sql)
         # Support: col < val, col > val, col = val, col <= val, col >= val
         cm = _re.match(
             r"([A-Za-z_][A-Za-z0-9_]*)\s*(<=|>=|<>|!=|<|>|=)\s*(.+)$", cond
@@ -351,6 +359,8 @@ class ResultCache:
     def __init__(self, max_sessions: int = _MAX_SESSIONS):
         self._store: OrderedDict[str, _CacheEntry] = OrderedDict()
         self._max   = max_sessions
+        # RLock so the same thread can re-acquire (e.g. store→_evict_expired→_get)
+        self._lock  = threading.RLock()
 
     # ── Write ─────────────────────────────────────────────────────────────────
 
@@ -365,12 +375,13 @@ class ResultCache:
         """Cache `rows` under `session_id`.  Evicts oldest entry when full."""
         if not session_id or not rows:
             return
-        self._evict_expired()
-        if session_id in self._store:
-            self._store.move_to_end(session_id)
-        elif len(self._store) >= self._max:
-            self._store.popitem(last=False)   # evict LRU
-        self._store[session_id] = _CacheEntry(rows, question, sql, column_formats)
+        with self._lock:
+            self._evict_expired()
+            if session_id in self._store:
+                self._store.move_to_end(session_id)
+            elif len(self._store) >= self._max:
+                self._store.popitem(last=False)   # evict LRU
+            self._store[session_id] = _CacheEntry(rows, question, sql, column_formats)
         log.debug("Cached %d rows for session %s", len(rows), session_id[:12])
 
     # ── Query ─────────────────────────────────────────────────────────────────
@@ -384,7 +395,11 @@ class ResultCache:
 
         Returns [] if the session is unknown or expired.
         """
-        entry = self._get(session_id)
+        # Hold the lock only long enough to fetch the entry reference.
+        # The DuckDB query itself runs without the lock — entry.rows is
+        # immutable once stored, so no corruption risk during the query.
+        with self._lock:
+            entry = self._get(session_id)
         if entry is None:
             return []
 
@@ -434,8 +449,9 @@ class ResultCache:
                     f"INSERT INTO result ({cols_str}) VALUES ({placeholders})", batch
                 )
 
-            result = conn.execute(safe_sql).fetchall()
-            col_names_out = [desc[0] for desc in conn.description]
+            cursor = conn.execute(safe_sql)
+            result = cursor.fetchall()
+            col_names_out = [desc[0] for desc in cursor.description]
             return [dict(zip(col_names_out, row)) for row in result]
         finally:
             conn.close()
@@ -444,7 +460,8 @@ class ResultCache:
 
     def get_schema(self, session_id: str) -> list[dict]:
         """Return [{name, type}, ...] for the cached result, or []."""
-        entry = self._get(session_id)
+        with self._lock:
+            entry = self._get(session_id)
         return entry.schema if entry else []
 
     def get_stats(self, session_id: str) -> dict:
@@ -467,7 +484,8 @@ class ResultCache:
             }
         Returns {} when session is unknown or expired.
         """
-        entry = self._get(session_id)
+        with self._lock:
+            entry = self._get(session_id)
         if not entry or not entry.rows:
             return {}
 
@@ -541,7 +559,8 @@ class ResultCache:
         Explicit metric formats are preserved. Currency name heuristics are
         added as a fallback for older cached results and non-metric queries.
         """
-        entry = self._get(session_id)
+        with self._lock:
+            entry = self._get(session_id)
         if entry is None:
             return {}
         formats = dict(entry.column_formats)
@@ -550,13 +569,16 @@ class ResultCache:
         return formats
 
     def has_result(self, session_id: str) -> bool:
-        entry = self._get(session_id)
+        with self._lock:
+            entry = self._get(session_id)
         return entry is not None
 
     def clear(self, session_id: str) -> None:
-        self._store.pop(session_id, None)
+        with self._lock:
+            self._store.pop(session_id, None)
 
     def _get(self, session_id: str) -> "_CacheEntry | None":
+        """Must be called with self._lock held."""
         entry = self._store.get(session_id)
         if entry is None:
             return None
@@ -567,6 +589,7 @@ class ResultCache:
         return entry
 
     def _evict_expired(self) -> None:
+        """Must be called with self._lock held."""
         expired = [k for k, v in self._store.items() if v.is_expired()]
         for k in expired:
             del self._store[k]

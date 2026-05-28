@@ -201,7 +201,9 @@ def build_column_formats(
     for raw_col, raw_fmt in (explicit_formats or {}).items():
         header = by_norm.get(_normalise_key(raw_col))
         fmt = _normalise_result_format(raw_fmt)
-        if header and fmt != "number":
+        # Allow explicit "number" through — it lets callers override currency
+        # heuristics for columns that happen to have monetary-sounding names.
+        if header:
             formats[header] = fmt
 
     ctx = display_context or {}
@@ -259,6 +261,16 @@ def _to_float(value: Any) -> float | None:
         return float(str(value).replace(",", ""))
     except (TypeError, ValueError):
         return None
+
+
+def _to_float_z(value: Any) -> float:
+    """Like _to_float but returns 0.0 for None/unparseable.
+
+    Use this instead of ``_to_float(v) or 0.0`` because the ``or`` idiom
+    silently zeroes legitimate negative values (e.g. -500.0 is falsy).
+    """
+    v = _to_float(value)
+    return v if v is not None else 0.0
 
 
 def _display_label(column: str) -> str:
@@ -484,13 +496,13 @@ def build_answer(
         label_col = text_cols[0]
         value_col = numeric_cols[0]
         value_fmt = column_formats.get(value_col)
-        ordered = sorted(rows, key=lambda r: _to_float(r.get(value_col)) or 0.0, reverse=True)
+        ordered = sorted(rows, key=lambda r: _to_float_z(r.get(value_col)), reverse=True)
         labels = [str(r.get(label_col, "")) for r in rows]
         if _looks_temporal(labels):
             first = rows[0]
             last = rows[-1]
-            first_val = _to_float(first.get(value_col)) or 0.0
-            last_val = _to_float(last.get(value_col)) or 0.0
+            first_val = _to_float_z(first.get(value_col))
+            last_val = _to_float_z(last.get(value_col))
             direction = "up" if last_val > first_val else "down" if last_val < first_val else "flat"
             headline = f"{str(last.get(label_col, 'Latest period'))} closed at {_format_number(last_val, value_fmt)}."
             comparison = scope.get("badge") or f"Trend is {direction} versus {_format_number(first_val, value_fmt)} at the start"
@@ -503,7 +515,7 @@ def build_answer(
             }
         best = ordered[0]
         best_label = str(best.get(label_col, 'Top result'))
-        best_value = _to_float(best.get(value_col)) or 0.0
+        best_value = _to_float_z(best.get(value_col))
         comparison = scope.get("badge") or f"Across {len(rows)} results"
         if scope.get("is_top_n") and (scope.get("n") or 0) == 1:
             headline = f"Top-ranked result: {best_label} at {_format_number(best_value, value_fmt)}."
@@ -512,7 +524,7 @@ def build_answer(
             headline = f"{best_label} leads at {_format_number(best_value, value_fmt)}."
         if len(ordered) > 1 and not scope.get("is_top_n"):
             second = ordered[1]
-            second_value = _to_float(second.get(value_col)) or 0.0
+            second_value = _to_float_z(second.get(value_col))
             delta = best_value - second_value
             comparison = f"{_format_number(delta, value_fmt)} above the next result"
         return {
@@ -526,7 +538,7 @@ def build_answer(
     if numeric_cols:
         col = numeric_cols[0]
         value_fmt = column_formats.get(col)
-        values = [_to_float(r.get(col)) or 0.0 for r in rows]
+        values = [_to_float_z(r.get(col)) for r in rows]
         return {
             "headline": f"Returned {len(rows)} rows for {question.strip().rstrip('?') or 'this query'}.",
             "short_value": _format_number(values[0], value_fmt),
@@ -566,11 +578,24 @@ def summarize_result_context(rows: list[dict], question: str, sql: str = "") -> 
         ctx["result_scope"] = infer_result_scope(rows, question, sql, mode="empty")
         return ctx
 
+    # Single scalar result (one row, one column) — set mode so _build_insight_summary
+    # can produce a meaningful sentence instead of falling through to return "".
+    if len(rows) == 1 and len(rows[0]) == 1:
+        col = next(iter(rows[0].keys()))
+        ctx.update({
+            "mode": "single_value",
+            "value_column": col,
+            "value": rows[0][col],
+            "chartable": False,
+        })
+        ctx["result_scope"] = infer_result_scope(rows, question, sql, mode="single_value")
+        return ctx
+
     if numeric_cols and text_cols:
         label_col = text_cols[0]
         value_col = numeric_cols[0]
         labels = [str(r.get(label_col, "")) for r in rows]
-        values = [_to_float(r.get(value_col)) or 0.0 for r in rows]
+        values = [_to_float_z(r.get(value_col)) for r in rows]
         ctx.update({
             "label_col": label_col,
             "value_col": value_col,
@@ -582,9 +607,9 @@ def summarize_result_context(rows: list[dict], question: str, sql: str = "") -> 
             "median_value": median(values),
             "chartable": True,
         })
-        ordered = sorted(rows, key=lambda r: _to_float(r.get(value_col)) or 0.0, reverse=True)
+        ordered = sorted(rows, key=lambda r: _to_float_z(r.get(value_col)), reverse=True)
         ctx["top_items"] = [
-            {"label": str(r.get(label_col, "")), "value": _to_float(r.get(value_col)) or 0.0}
+            {"label": str(r.get(label_col, "")), "value": _to_float_z(r.get(value_col))}
             for r in ordered[:5]
         ]
         if _looks_temporal(labels):
@@ -641,7 +666,7 @@ def summarize_result_context(rows: list[dict], question: str, sql: str = "") -> 
 
     if numeric_cols:
         value_col = numeric_cols[0]
-        values = [_to_float(r.get(value_col)) or 0.0 for r in rows]
+        values = [_to_float_z(r.get(value_col)) for r in rows]
         ctx.update({
             "mode": "numeric_table",
             "value_col": value_col,
