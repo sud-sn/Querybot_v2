@@ -1,18 +1,20 @@
 {% extends "portal_base.html" %}
 {% from "macros.html" import breadcrumb %}
 {% block title %}Chat — QueryBot{% endblock %}
-{% block breadcrumb %}
-{{ breadcrumb([
-    {"label": "Dashboard", "href": "/portal"},
-    {"label": "Chat",      "href": ""},
-]) }}
-{% endblock %}
+{% block breadcrumb %}{% endblock %}
 {% block head %}
 <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap');
-.chat-page{max-width:1120px;margin:0 auto;display:flex;flex-direction:column;gap:1rem}
-.chat-hero{background:linear-gradient(135deg,color-mix(in srgb,var(--surface) 92%, var(--primary-soft) 8%),var(--surface-2));border:1px solid var(--border);border-radius:var(--radius);padding:1.1rem 1.2rem;display:flex;justify-content:space-between;gap:1rem;box-shadow:var(--shadow-md)}
+/* Full-viewport chat override — remove .main padding/max-width for this page only */
+body .main{max-width:none!important;padding:0!important;overflow:hidden;display:flex;flex-direction:column}
+.chat-page{flex:1;display:flex;flex-direction:column;overflow:hidden}
+.chat-hero{background:linear-gradient(135deg,color-mix(in srgb,var(--surface) 92%, var(--primary-soft) 8%),var(--surface-2));border-bottom:1px solid var(--border);padding:1.1rem 1.2rem;display:flex;justify-content:space-between;gap:1rem;flex-shrink:0;max-height:400px;overflow:hidden;transition:max-height .35s cubic-bezier(.4,0,.2,1),opacity .3s ease,padding .3s ease}
+.chat-hero.hero-collapsed{max-height:0;opacity:0;padding-top:0;padding-bottom:0;pointer-events:none;border-bottom:none}
+.hero-dismiss-btn{background:none;border:none;color:var(--text-muted);font-size:18px;cursor:pointer;padding:2px 6px;border-radius:4px;line-height:1;flex-shrink:0;align-self:flex-start;margin-top:-.1rem;transition:color .15s}
+.hero-dismiss-btn:hover{color:var(--text);background:var(--surface-2)}
+.hero-info-btn{background:none;border:none;color:var(--text-muted);font-size:12px;cursor:pointer;padding:4px 9px;border-radius:999px;border:1px solid var(--border);line-height:1;flex-shrink:0;transition:all .15s}
+.hero-info-btn:hover{color:var(--primary);border-color:var(--primary)}
 .chat-title{font-size:24px;font-weight:800;letter-spacing:-.03em;color:var(--text);margin-bottom:.35rem}
 .chat-subtitle{color:var(--text-muted);line-height:1.6;max-width:700px}
 .chat-pills,.hero-actions{display:flex;gap:.55rem;flex-wrap:wrap;margin-top:.9rem}
@@ -30,8 +32,8 @@
 .query-limit-notice.blocked{border-color:color-mix(in srgb,var(--danger) 30%,transparent);background:var(--danger-soft);color:var(--danger)}
 .hero-btn{cursor:pointer}
 .hero-btn:hover{text-decoration:none;border-color:var(--primary);color:var(--primary)}
-.chat-shell{background:color-mix(in srgb,var(--surface) 94%, transparent);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-lg);overflow:hidden}
-.chat-shell-header{padding:1rem 1.1rem;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:1rem;background:var(--surface)}
+.chat-shell{background:color-mix(in srgb,var(--surface) 94%, transparent);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-lg);overflow:hidden;flex:1;display:flex;flex-direction:column}
+.chat-shell-header{padding:1rem 1.1rem;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:1rem;background:var(--surface);flex-shrink:0}
 .chat-shell-title{display:flex;align-items:center;gap:.75rem}
 .chat-shell-badge{width:42px;height:42px;border-radius:var(--radius);background:linear-gradient(135deg,var(--primary),var(--blue-soft));display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;box-shadow:var(--shadow)}
 .chat-shell-title h2{font-size:15px;font-weight:800;color:var(--text);margin-bottom:3px}
@@ -41,9 +43,9 @@
 .status-led{width:8px;height:8px;border-radius:50%;background:var(--success)}
 .status-badge.offline .status-led{background:var(--danger)}
 .status-note{font-size:12px;color:var(--text-muted)}
-.chat-inner{padding:0 1rem 1rem}
-.chat-wrap{display:grid;grid-template-rows:minmax(420px,1fr) auto auto;min-height:68vh;max-height:calc(100vh - 60px - 6rem)}
-.chat-thread{overflow-y:auto;padding:1rem 0;display:flex;flex-direction:column;gap:1rem;scroll-behavior:smooth}
+.chat-inner{flex:1;display:flex;flex-direction:column;overflow:hidden;padding:0}
+.chat-wrap{flex:1;display:flex;flex-direction:column;overflow:hidden}
+.chat-thread{flex:1;overflow-y:auto;padding:1rem 1.25rem;display:flex;flex-direction:column;gap:1rem;scroll-behavior:smooth}
 .msg-system{align-self:center;max-width:80%;text-align:center;font-size:11px;color:var(--text-muted);padding:.45rem .7rem;border-radius:999px;background:var(--surface-2);border:1px solid var(--border)}
 .empty-state{padding:1.05rem 1.2rem;border:1px dashed var(--border);border-radius:var(--radius);background:var(--surface-2);color:var(--text-muted);line-height:1.7}
 .msg{display:flex;gap:.8rem;max-width:100%}
@@ -64,21 +66,20 @@
 .msg-actions{display:flex;gap:.45rem;flex-wrap:wrap;padding:0 .1rem}
 .msg-action{font-size:11px;font-weight:700;padding:6px 10px;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-soft);cursor:pointer;transition:all .15s}
 .msg-action:hover{background:var(--surface-3);border-color:var(--primary);color:var(--primary)}
-/* ── Processing row — just the floating mascot, no card ── */
-.processing-row{display:none;align-items:flex-end;gap:.7rem;padding:.2rem 0 .4rem .15rem}.processing-row.active{display:flex}
-/* Mascot wrap — small floating character */
-.mascot-wrap{position:relative;width:52px;height:52px;flex-shrink:0;cursor:default}
-.mascot-wrap svg{width:52px;height:52px;overflow:visible;filter:drop-shadow(0 2px 8px rgba(13,115,119,.22))}
-.mascot-tooltip{position:absolute;bottom:calc(100% + 7px);left:50%;transform:translateX(-50%);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:5px 11px;font-size:11px;font-weight:700;color:var(--text-soft);white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .18s;z-index:10;box-shadow:var(--shadow-md)}
-.mascot-tooltip::after{content:'';position:absolute;top:100%;left:50%;transform:translateX(-50%);border:5px solid transparent;border-top-color:var(--border)}
-.mascot-wrap:hover .mascot-tooltip{opacity:1}
+/* ── Processing row — compact stage indicator, no cartoon ── */
+.processing-row{display:none;align-items:center;gap:.65rem;padding:.45rem 1.25rem .5rem;flex-shrink:0}.processing-row.active{display:flex}
+.stage-status{display:flex;align-items:center;gap:.5rem}
+.stage-dots{display:flex;align-items:center;gap:4px}
+.stage-dot{width:5px;height:5px;border-radius:50%;background:var(--primary);opacity:.35;animation:dot-bounce 1.3s ease-in-out infinite}
+.stage-dot:nth-child(2){animation-delay:.18s}
+.stage-dot:nth-child(3){animation-delay:.36s}
+.stage-label{font-size:12px;font-weight:600;color:var(--text-muted)}
 /* ============================================================================
    Executive AI intelligence indicator — abstract orb that floats around the
    composer. Replaces the previous cartoon mascot.
    Design principles: no face, no cartoon, light + form communicate state.
    States: idle · focus · typing · thinking · send · error
    ============================================================================ */
-.chat-composer{position:relative;--ai-core:#2563EB;--ai-halo:rgba(37,99,235,.18);--ai-ring:rgba(37,99,235,.35)}
 .chat-input-wrap{position:relative;flex:1;display:flex;align-items:center}
 
 .ai-indicator{
@@ -242,24 +243,6 @@
 .composer-mascot-wrap{display:none} /* hide the old cartoon if still present in DOM */
 
 /* Animations */
-@keyframes mascot-float{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
-@keyframes mascot-bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}
-@keyframes mascot-scan{0%,100%{transform:rotate(-6deg)}50%{transform:rotate(6deg)}}
-@keyframes mascot-type{0%,100%{transform:translateY(0) scale(1)}50%{transform:translateY(-3px) scale(1.04)}}
-@keyframes mascot-check{0%,100%{transform:rotate(0deg)}20%{transform:rotate(-10deg)}60%{transform:rotate(10deg)}}
-@keyframes mascot-run{0%,100%{transform:translateY(0)}40%{transform:translateY(-6px)}}
-@keyframes mascot-celebrate{0%,100%{transform:translateY(0) rotate(0deg)}30%{transform:translateY(-9px) rotate(-12deg)}70%{transform:translateY(-9px) rotate(12deg)}}
-@keyframes mascot-blink{0%,88%,100%{scaleY:1}94%{transform:scaleY(.08)}}
-@keyframes mascot-spin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
-@keyframes mascot-pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.14)}}
-@keyframes mascot-wave-arm{0%,100%{transform:rotate(0deg)}50%{transform:rotate(30deg)}}
-@keyframes mascot-error{0%,100%{transform:rotate(0deg) translateY(0)}15%{transform:rotate(-12deg) translateY(-2px)}35%{transform:rotate(12deg) translateY(-2px)}55%{transform:rotate(-8deg) translateY(0)}75%{transform:rotate(6deg) translateY(0)}}
-@keyframes mascot-question{0%,100%{transform:translateY(0) rotate(0deg)}30%{transform:translateY(-5px) rotate(-5deg)}60%{transform:translateY(-5px) rotate(5deg)}}
-/* Thinking dots shown next to mascot */
-.mascot-thinking{display:flex;align-items:center;gap:4px;margin-left:2px;align-self:flex-end;margin-bottom:14px}
-.mascot-dot{width:5px;height:5px;border-radius:50%;background:var(--text-muted);opacity:.35;animation:dot-bounce 1.3s ease-in-out infinite}
-.mascot-dot:nth-child(2){animation-delay:.18s}
-.mascot-dot:nth-child(3){animation-delay:.36s}
 @keyframes dot-bounce{0%,80%,100%{opacity:.3;transform:translateY(0)}40%{opacity:.9;transform:translateY(-4px)}}
 @keyframes spin{to{transform:rotate(360deg)}}
 .chart-card{background:linear-gradient(180deg,color-mix(in srgb,var(--surface) 96%, var(--primary-soft) 4%),var(--surface));border:1px solid var(--border);border-radius:var(--radius);padding:1rem;box-shadow:var(--shadow)}
@@ -381,7 +364,7 @@
 .clarification-option:disabled{opacity:.55;cursor:not-allowed}
 @media (max-width: 900px){.answer-sections{grid-template-columns:1fr}}
 
-.suggestions-wrap{border-top:1px solid var(--border);padding-top:.9rem}
+.suggestions-wrap{border-top:1px solid var(--border);padding:.55rem 1.25rem .6rem;flex-shrink:0;display:flex;align-items:center;gap:.75rem;overflow:hidden}
 .follow-up-wrap{border-top:1px solid var(--border);padding-top:.75rem;margin-top:.75rem}
 .follow-up-chips{gap:.5rem}
 .follow-up-chip{border-color:color-mix(in srgb,var(--primary) 30%,var(--border));color:var(--primary);background:color-mix(in srgb,var(--primary) 5%,var(--surface))}
@@ -395,22 +378,23 @@
 .insight-callout.success{background:color-mix(in srgb,var(--success-soft,#d1fae5) 55%,var(--surface));border:1px solid color-mix(in srgb,var(--success,#10b981) 22%,transparent);color:var(--text)}
 .insight-callout.info{background:color-mix(in srgb,var(--primary-soft) 18%,var(--surface));border:1px solid color-mix(in srgb,var(--primary) 16%,transparent);color:var(--text)}
 /* Schema selector tab bar */
-.schema-control-row{display:flex;align-items:center;justify-content:space-between;gap:.8rem;padding:.75rem 1.1rem;border-bottom:1px solid var(--border);background:linear-gradient(135deg,var(--surface-2),color-mix(in srgb,var(--surface) 90%,var(--primary-soft) 10%))}
+.schema-control-row{display:flex;align-items:center;justify-content:space-between;gap:.8rem;padding:.75rem 1.1rem;border-bottom:1px solid var(--border);background:linear-gradient(135deg,var(--surface-2),color-mix(in srgb,var(--surface) 90%,var(--primary-soft) 10%));flex-shrink:0}
 .schema-bar{display:flex;align-items:center;gap:.4rem;flex-wrap:wrap}
 .schema-tab{border:1px solid var(--border);background:var(--surface);color:var(--text-soft);font-size:11px;font-weight:800;padding:5px 13px;border-radius:999px;cursor:pointer;transition:all .15s;white-space:nowrap}
 .schema-tab:hover{border-color:var(--primary);color:var(--primary)}
 .schema-tab.active{background:var(--primary);border-color:var(--primary);color:#fff}
 .schema-bar-label{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:var(--text-muted);margin-right:.25rem;flex-shrink:0}
 .schema-current{font-size:11px;font-weight:800;color:var(--text-soft);padding:5px 10px;border-radius:999px;background:var(--surface);border:1px solid var(--border);white-space:nowrap}
-.schema-mode-note{display:flex;align-items:center;gap:.45rem;padding:.55rem 1.1rem;border-bottom:1px solid var(--border);background:color-mix(in srgb,var(--surface) 82%,var(--surface-2));font-size:11px;color:var(--text-muted);line-height:1.45}
+.schema-mode-note{display:flex;align-items:center;gap:.45rem;padding:.55rem 1.1rem;border-bottom:1px solid var(--border);background:color-mix(in srgb,var(--surface) 82%,var(--surface-2));font-size:11px;color:var(--text-muted);line-height:1.45;flex-shrink:0}
 .schema-mode-note strong{color:var(--text-soft);font-weight:850}
 .schema-mode-dot{width:7px;height:7px;border-radius:999px;background:var(--warning);box-shadow:0 0 0 4px color-mix(in srgb,var(--warning-soft) 42%,transparent);flex-shrink:0}
 .schema-mode-note.locked .schema-mode-dot{background:var(--success);box-shadow:0 0 0 4px color-mix(in srgb,var(--success-soft) 42%,transparent)}
 @media(max-width:760px){.schema-control-row{align-items:flex-start;flex-direction:column}.schema-current{display:none}.schema-mode-note{align-items:flex-start}}
-.suggestions{display:flex;flex-wrap:wrap;gap:.6rem}
+.suggestions{display:flex;flex-wrap:nowrap;gap:.5rem;overflow-x:auto;scrollbar-width:thin;scrollbar-color:var(--border) transparent;flex:1;min-width:0}
+.suggestions::-webkit-scrollbar{height:3px}.suggestions::-webkit-scrollbar-track{background:transparent}.suggestions::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
 .suggestion-chip,.composer-chip{background:var(--surface);border:1px solid var(--border);color:var(--text-soft);font-size:12px;font-weight:700;padding:9px 13px;border-radius:999px;cursor:pointer;transition:all .15s;max-width:320px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;box-shadow:var(--shadow)}
 .suggestion-chip:hover,.composer-chip:hover{background:var(--surface-3);border-color:var(--primary);color:var(--primary);transform:translateY(-1px)}
-.chat-composer{margin-top:1rem;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:.95rem 1rem;box-shadow:var(--shadow-md)}
+.chat-composer{flex-shrink:0;background:var(--surface);border-top:1px solid var(--border);padding:.85rem 1.25rem;position:relative;--ai-core:#2563EB;--ai-halo:rgba(37,99,235,.18);--ai-ring:rgba(37,99,235,.35)}
 .chat-input-bar{display:flex;align-items:flex-end;gap:.75rem}.chat-input{flex:1;background:transparent;border:none;outline:none;color:var(--text);font-size:14px;resize:none;max-height:140px;min-height:28px;line-height:1.55}.chat-input::placeholder{color:var(--text-muted)}
 .composer-side{display:flex;align-items:center;gap:.6rem;flex-shrink:0}.char-count{font-size:11px;color:var(--text-muted);min-width:34px;text-align:right}.send-btn{width:44px;height:44px;background:linear-gradient(135deg,var(--primary),var(--primary-hover));border:none;border-radius:var(--radius);cursor:pointer;display:flex;align-items:center;justify-content:center;color:#fff;font-size:17px;flex-shrink:0;transition:transform .15s,opacity .15s,filter .15s;box-shadow:0 10px 18px rgba(13,115,119,.25)}
 .send-btn:hover{transform:translateY(-1px);filter:brightness(1.02)}.send-btn:disabled{opacity:.45;cursor:not-allowed;box-shadow:none;transform:none}
@@ -424,10 +408,10 @@
 .clarification-option{font-size:12px;font-weight:700;padding:9px 12px;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-soft);cursor:pointer;transition:all .15s}
 .clarification-option:hover{border-color:var(--primary);color:var(--primary)}
 .clarification-option:disabled{opacity:.55;cursor:not-allowed}
-@media (max-width: 900px){.chat-hero{flex-direction:column}.chat-wrap{max-height:none}.msg-content{max-width:calc(100% - 52px)}.chart-canvas{height:280px}}
-@media (max-width: 640px){.chat-shell-header{flex-direction:column;align-items:flex-start}.chat-inner{padding:0 .75rem .75rem}.chat-composer{padding:.8rem}.composer-footer{align-items:flex-start}.msg-content{max-width:100%}.chart-header{flex-direction:column}}
+@media (max-width: 900px){.chat-hero{flex-direction:column}.msg-content{max-width:calc(100% - 52px)}.chart-canvas{height:280px}}
+@media (max-width: 640px){.chat-shell-header{flex-direction:column;align-items:flex-start}.chat-thread{padding:.75rem}.chat-composer{padding:.7rem .75rem}.composer-footer{align-items:flex-start}.msg-content{max-width:100%}.chart-header{flex-direction:column}}
 /* ── Query history side drawer ───────────────────────────────────────── */
-.chat-shell{position:relative;overflow:hidden}
+.chat-shell{position:relative}
 .history-panel{position:absolute;top:0;right:0;width:288px;height:100%;background:var(--surface);border-left:1px solid var(--border);z-index:60;transform:translateX(100%);transition:transform .25s cubic-bezier(.22,.61,.36,1);display:flex;flex-direction:column;box-shadow:-6px 0 20px rgba(0,0,0,.09)}
 .history-panel.open{transform:translateX(0)}
 .hp-header{display:flex;align-items:center;justify-content:space-between;padding:.8rem 1rem;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--surface)}
@@ -461,8 +445,8 @@
 </div>
 {% else %}
 <div class="chat-page">
-  <section class="chat-hero">
-    <div>
+  <section class="chat-hero" id="chatHero">
+    <div style="flex:1;min-width:0">
       <div class="chat-title">Ask your data in plain English</div>
       <div class="chat-subtitle">Query live business data, get structured answers, and pin useful charts to your dashboard without leaving the conversation.</div>
       <div class="chat-pills">
@@ -478,7 +462,7 @@
               id="queryLimitKpi"
               title="{{ query_status.used_label }} / {{ query_status.limit_label }} queries used this month">
           <span class="kpi-dot"></span>
-          <span id="queryLimitText">Queries left Â· {{ query_status.remaining_label }}</span>
+          <span id="queryLimitText">Queries left · {{ query_status.remaining_label }}</span>
         </span>
       </div>
       <div id="queryLimitNotice"
@@ -486,7 +470,7 @@
         <span id="queryLimitNoticeText">{{ query_status.message }}</span>
       </div>
     </div>
-
+    <button class="hero-dismiss-btn" id="heroDismissBtn" title="Hide hero panel" aria-label="Dismiss hero panel" onclick="_collapseHero()">×</button>
   </section>
 
   <section class="chat-shell">
@@ -501,6 +485,7 @@
       <div class="status-wrap">
         <div class="status-badge" id="connBadge"><span class="status-led"></span><span id="connText">Connecting…</span></div>
         <div class="status-note" id="connNote">Waiting for live session</div>
+        <button type="button" class="hero-info-btn" id="heroInfoBtn" title="Show workspace info" aria-label="Show workspace info panel" onclick="_expandHero()" style="display:none">ℹ Info</button>
         <button type="button" class="history-btn" id="historyToggleBtn"
                 onclick="toggleHistoryPanel()" title="View recent query history" aria-expanded="false">
           <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
@@ -553,11 +538,23 @@
         </div>
 
         <div class="processing-row" id="processingRow" aria-live="polite">
-          <div class="msg-avatar">Q</div>
-          <!-- Floating mascot — no card, reacts to each pipeline stage -->
-          <div class="mascot-wrap" id="mascotWrap">
-            <div class="mascot-tooltip" id="mascotTooltip">Thinking…</div>
-            <svg id="mascotSvg" viewBox="0 0 64 80" xmlns="http://www.w3.org/2000/svg">
+          <div class="stage-status">
+            <div class="stage-dots">
+              <span class="stage-dot"></span><span class="stage-dot"></span><span class="stage-dot"></span>
+            </div>
+            <span class="stage-label" id="stageLabel">Thinking…</span>
+          </div>
+          <!-- Legacy mascot stub — invisible, JS element-guards no-op safely -->
+          <span id="mascotWrap" style="display:none">
+            <span id="mascotTooltip"></span>
+            <span id="mascotSvg"></span>
+            <span id="mascotBody"></span>
+            <span id="mSmile"></span><span id="mCore"></span><span id="mArmL"></span><span id="mArmR"></span>
+            <span id="mGlass"></span><span id="mWrench"></span><span id="mGear"></span><span id="mCheck"></span>
+          </span>
+          <!-- REMOVE_SVG_CONTENT_START -->
+          <div style="display:none">
+            <svg id="__unused_mascot_svg__" viewBox="0 0 64 80" xmlns="http://www.w3.org/2000/svg">
               <defs>
                 <radialGradient id="mg-head" cx="50%" cy="40%" r="55%">
                   <stop id="mg-head-1" offset="0%" stop-color="#e2e8f0"/>
@@ -675,36 +672,12 @@
               </g>
             </svg>
           </div>
-          <!-- Thinking dots next to mascot -->
-          <div class="mascot-thinking">
-            <span class="mascot-dot"></span>
-            <span class="mascot-dot"></span>
-            <span class="mascot-dot"></span>
-          </div>
+          <!-- REMOVE_SVG_CONTENT_END -->
         </div>
 
         {% if suggestions %}
-        {% if available_schemas and available_schemas|length > 1 %}
-        <!-- Schema selector — only shown when user has tables in multiple schemas -->
-        <div class="schema-bar legacy-schema-bar" hidden>
-          <span class="schema-bar-label">Schema</span>
-          <button class="schema-tab active" data-schema=""
-                  onclick="selectSchema('', this)">All</button>
-          {% for sch in available_schemas %}
-          <button class="schema-tab" data-schema="{{ sch.name }}"
-                  onclick="selectSchema('{{ sch.name }}', this)"
-                  title="{{ sch.table_count }} table{{ 's' if sch.table_count != 1 else '' }}">
-            {{ sch.name }}
-            <span style="opacity:.65;font-weight:600;margin-left:3px">{{ sch.table_count }}</span>
-          </button>
-          {% endfor %}
-        </div>
-        {% endif %}
         <div class="suggestions-wrap" id="suggestionsWrap">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.6rem">
-            <div class="suggestions-label" style="margin-bottom:0">Suggested questions based on your connected data</div>
-            <button type="button" onclick="shuffleSuggestions()" style="font-size:11px;font-weight:700;padding:4px 10px;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-muted);cursor:pointer" title="Show different suggestions">↻ Refresh</button>
-          </div>
+          <span class="suggestions-label" style="flex-shrink:0;margin-bottom:0">Try:</span>
           <div class="suggestions" id="suggestions">
             {% for s in suggestions %}
             <button class="suggestion-chip" type="button"
@@ -713,6 +686,7 @@
                     title="{{ s.question }}">{{ s.question }}</button>
             {% endfor %}
           </div>
+          <button type="button" onclick="shuffleSuggestions()" style="font-size:11px;font-weight:700;padding:4px 10px;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-muted);cursor:pointer;flex-shrink:0" title="Show different suggestions">↻</button>
         </div>
         {% endif %}
       </div>
@@ -2251,6 +2225,7 @@ function sendMessage(tableHint){
   // Reset composer mascot error state
   if (window._composerMascotReset) window._composerMascotReset();
   appendUser(text);
+  _collapseHero();   // auto-collapse hero on first message send
   const payload = { text };
   if (tableHint) payload.table_hint = tableHint;
   if (_activeSchema) payload.schema_hint = _activeSchema;
@@ -2411,6 +2386,8 @@ function _setMascotState(stageKey) {
 function startDoodle() {
   // Start mascot in idle state
   _setMascotState('_idle');
+  const sl = document.getElementById('stageLabel');
+  if (sl) sl.textContent = 'Thinking…';
 }
 
 function stopDoodle() {
@@ -2446,6 +2423,8 @@ let _currentStage = null;
 function _updateStageSteps(stage) {
   if (stage && MASCOT_STATES[stage]) _setMascotState(stage);
   if (stage) _currentStage = stage;
+  const sl = document.getElementById('stageLabel');
+  if (sl && stage && STATUS_FALLBACK[stage]) sl.textContent = STATUS_FALLBACK[stage][0] + '…';
 }
 
 function _resetStageSteps() {
@@ -2454,25 +2433,20 @@ function _resetStageSteps() {
 }
 
 function showMascotError() {
-  // Show error mascot — stays visible alongside the error bubble
-  // so the user can see the reaction. Hides when they start the next query.
   _setMascotState('_error');
   const row = document.getElementById('processingRow');
   if (row) row.classList.add('active');
-  // Shake once, then switch to a sad-idle float — stays visible
-  setTimeout(() => {
-    const body = document.getElementById('mascotBody');
-    if (body) body.style.animation = 'mascot-float 2.5s ease-in-out infinite';
-  }, 1200);
-  // Mark that we are in an error display state so sendMessage() can clean up
+  const sl = document.getElementById('stageLabel');
+  if (sl) sl.textContent = 'Something went wrong';
   window._mascotInErrorState = true;
 }
 
 function showMascotClarify() {
-  // Show clarification mascot — stays visible above the clarification card
   _setMascotState('_clarify');
   const row = document.getElementById('processingRow');
   if (row) row.classList.add('active');
+  const sl = document.getElementById('stageLabel');
+  if (sl) sl.textContent = 'Need clarification…';
   window._mascotInClarifyState = true;
 }
 
@@ -2636,6 +2610,29 @@ function _initComposerMascot() {
 
   // ── Kick off ──────────────────────────────────────────────────────────────
   _setState('idle', { force: true });
+}
+
+// ── Hero collapse / expand ────────────────────────────────────────────────────
+const _HERO_STORAGE_KEY = 'qb-chat-hero-seen';
+function _collapseHero() {
+  const hero = document.getElementById('chatHero');
+  if (!hero || hero.classList.contains('hero-collapsed')) return;
+  hero.classList.add('hero-collapsed');
+  try { localStorage.setItem(_HERO_STORAGE_KEY, '1'); } catch (_) {}
+  const infoBtn = document.getElementById('heroInfoBtn');
+  if (infoBtn) infoBtn.style.display = 'inline-flex';
+}
+function _expandHero() {
+  const hero = document.getElementById('chatHero');
+  if (!hero) return;
+  hero.classList.remove('hero-collapsed');
+  const infoBtn = document.getElementById('heroInfoBtn');
+  if (infoBtn) infoBtn.style.display = 'none';
+}
+function _initHeroCollapse() {
+  try {
+    if (localStorage.getItem(_HERO_STORAGE_KEY)) _collapseHero();
+  } catch (_) {}
 }
 
 function connect(){
@@ -2814,6 +2811,7 @@ window.addEventListener('qb-query-success', () => { _historyLoaded = false; });
 document.addEventListener('DOMContentLoaded', () => {
   _initComposerMascot();
   _updateMascotTheme();
+  _initHeroCollapse();
   // Restore conversation history badge on page load
   _localHistory = _loadStoredHistory();
   _updateMemoryBadge();
