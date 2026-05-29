@@ -27,7 +27,7 @@
 
 /* ── Sidebar ───────────────────────────────────────────────────────────────── */
 .gs-head{padding:.75rem;border-bottom:1px solid var(--border);font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);display:flex;align-items:center;justify-content:space-between}
-.gs-entity-item{padding:.62rem .75rem;cursor:pointer;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:.55rem;font-size:12px;transition:background .12s,border-color .12s}
+.gs-entity-item{padding:.55rem .75rem;cursor:pointer;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;gap:.5rem;font-size:12px;transition:background .12s,border-color .12s}
 .gs-entity-item:hover{background:var(--surface-2)}
 .gs-entity-item.selected{background:color-mix(in srgb,var(--primary) 10%,var(--surface));border-left:3px solid var(--primary)}
 .gs-entity-item.selected{padding-left:calc(.75rem - 3px)}
@@ -262,10 +262,36 @@
 .gs-search-row{padding:.45rem .6rem;border-bottom:1px solid var(--border);flex-shrink:0}
 .gs-search-inp{width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:5px;font-size:12px;background:var(--surface-2);color:var(--text);outline:none;box-sizing:border-box}
 .gs-search-inp:focus{border-color:var(--primary);background:var(--surface)}
-.gs-type-chips{display:flex;gap:.3rem;padding:.35rem .6rem;border-bottom:1px solid var(--border);flex-wrap:wrap;flex-shrink:0}
-.gs-type-chip{background:var(--surface-2);border:1px solid var(--border);border-radius:999px;font-size:10px;font-weight:700;padding:2px 8px;cursor:pointer;transition:all .12s;color:var(--text-muted)}
-.gs-type-chip:hover{border-color:var(--primary);color:var(--primary)}
-.gs-type-chip.active{background:color-mix(in srgb,var(--primary) 12%,var(--surface));border-color:var(--primary);color:var(--primary)}
+/* ── Type filter — compact tab bar ──────────────────────────────────────── */
+.gs-type-filter{display:flex;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--surface)}
+.gs-type-tab{flex:1;background:none;border:none;border-bottom:2px solid transparent;padding:.35rem .3rem;font-size:10px;font-weight:700;color:var(--text-muted);cursor:pointer;transition:color .12s,border-color .12s,background .12s;white-space:nowrap;margin-bottom:-1px;text-align:center}
+.gs-type-tab:hover{background:var(--surface-2);color:var(--text)}
+.gs-type-tab.active{color:var(--primary);border-bottom-color:var(--primary);background:color-mix(in srgb,var(--primary) 5%,var(--surface))}
+.gs-type-tab[data-type="fact"].active{color:#92400E;border-bottom-color:#D97706;background:color-mix(in srgb,#D97706 5%,var(--surface))}
+.gs-type-tab[data-type="dimension"].active{color:#1D4ED8;border-bottom-color:#2563EB;background:color-mix(in srgb,#2563EB 5%,var(--surface))}
+.gs-type-tab[data-type="bridge"].active{color:#6B21A8;border-bottom-color:#7C3AED;background:color-mix(in srgb,#7C3AED 5%,var(--surface))}
+/* ── Entity row two-line layout ─────────────────────────────────────────── */
+.gs-ent-main{flex:1;min-width:0;overflow:hidden}
+.gs-ent-name{font-weight:600;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.3}
+.gs-ent-meta{display:flex;align-items:center;gap:.3rem;margin-top:2px}
+.gs-ent-type-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+.gs-ent-type-label{font-size:10px;color:var(--text-muted);text-transform:capitalize}
+.gs-ent-joins{font-size:10px;color:var(--text-muted)}
+.gs-ent-joins::before{content:"·";margin-right:.2rem;opacity:.5}
+/* Canvas-hover highlight when hovering a sidebar entity row */
+.g-node.canvas-hover .node-card{filter:drop-shadow(0 0 0 2px rgba(37,99,235,.22)) drop-shadow(0 8px 24px rgba(0,0,0,.18))!important}
+/* ── Issues collapsible drawer ───────────────────────────────────────────── */
+.gs-issues-drawer{flex-shrink:0;border-top:2px solid var(--border);background:var(--surface)}
+.gs-issues-toggle{padding:.45rem .65rem;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);cursor:pointer;display:flex;align-items:center;gap:.35rem;user-select:none;transition:background .12s}
+.gs-issues-toggle:hover{background:var(--surface-2)}
+.gs-issues-toggle-label{flex:1}
+.gs-issues-badge{font-size:9px;font-weight:800;padding:0 5px;border-radius:999px;background:color-mix(in srgb,var(--red,#DC2626) 12%,var(--surface-2));color:var(--red,#DC2626);line-height:15px;min-width:15px;text-align:center}
+.gs-issues-badge.warn{background:color-mix(in srgb,var(--amber,#d69e2e) 12%,var(--surface-2));color:color-mix(in srgb,var(--amber,#d69e2e) 80%,#222)}
+.gs-issues-badge.ok{background:color-mix(in srgb,var(--green,#059669) 12%,var(--surface-2));color:var(--green,#059669)}
+.gs-issues-chevron{transition:transform .18s;font-size:9px;margin-left:auto;flex-shrink:0}
+.gs-issues-drawer.open .gs-issues-chevron{transform:rotate(90deg)}
+.gs-issues-body{display:none;max-height:240px;overflow-y:auto}
+.gs-issues-drawer.open .gs-issues-body{display:block}
 
 /* ── Issues tab ─────────────────────────────────────────────────────────── */
 .gs-issue-item{padding:.5rem .7rem;border-bottom:1px solid var(--border);display:flex;gap:.45rem;align-items:flex-start;font-size:11px;line-height:1.5;cursor:pointer;transition:background .1s}
@@ -344,7 +370,7 @@
 <!-- ══ LEFT SIDEBAR ══════════════════════════════════════════════════════════ -->
 <aside class="graph-sidebar">
 
-  <!-- Tab bar -->
+  <!-- Tab bar: Entities | Rels only — Issues is a collapsible drawer -->
   <div class="gs-tab-bar">
     <button class="gs-tab active" id="gs-tab-entities"
             onclick="switchSidebarTab('entities')">
@@ -356,11 +382,6 @@
       Rels
       <span class="gs-tab-cnt" id="gs-rel-cnt">{{ relationships|length }}</span>
     </button>
-    <button class="gs-tab" id="gs-tab-issues"
-            onclick="switchSidebarTab('issues')">
-      Issues
-      <span class="gs-tab-cnt issues-cnt" id="gs-issues-cnt">—</span>
-    </button>
   </div>
 
   <!-- ── Entities tab ───────────────────────────────────────────────────── -->
@@ -369,11 +390,12 @@
       <input type="text" id="gs-ent-search" class="gs-search-inp"
              placeholder="Search entities…" oninput="filterSidebarEntities(this.value)">
     </div>
-    <div class="gs-type-chips" id="gs-type-chips">
-      <span class="gs-type-chip active" data-type="" onclick="filterSidebarByType(this, '')">All</span>
-      <span class="gs-type-chip" data-type="fact" onclick="filterSidebarByType(this, 'fact')">Fact</span>
-      <span class="gs-type-chip" data-type="dimension" onclick="filterSidebarByType(this, 'dimension')">Dim</span>
-      <span class="gs-type-chip" data-type="bridge" onclick="filterSidebarByType(this, 'bridge')">Bridge</span>
+    <!-- Type filter: tab-style (replaces pill chips) -->
+    <div class="gs-type-filter" id="gs-type-filter">
+      <button class="gs-type-tab active" data-type="" onclick="filterSidebarByType(this, '')">All</button>
+      <button class="gs-type-tab" data-type="fact" onclick="filterSidebarByType(this, 'fact')">Fact</button>
+      <button class="gs-type-tab" data-type="dimension" onclick="filterSidebarByType(this, 'dimension')">Dim</button>
+      <button class="gs-type-tab" data-type="bridge" onclick="filterSidebarByType(this, 'bridge')">Bridge</button>
     </div>
     <div id="entity-list" style="flex:1;overflow-y:auto">
       {% if not entities %}
@@ -381,15 +403,25 @@
       {% endif %}
       {% for e in entities %}
       {% set _esev = health.entity_severity.get(e.entity_name, '') %}
+      {% set _tcol = {'fact': '#D97706', 'dimension': '#2563EB', 'bridge': '#7C3AED'}.get(e.entity_type, '#94A3B8') %}
+      {% set _jcnt = (relationships|selectattr('from_entity','equalto',e.entity_name)|list|length) + (relationships|selectattr('to_entity','equalto',e.entity_name)|list|length) %}
       <div class="gs-entity-item"
            id="sib-{{ e.entity_name|replace(' ','_') }}"
            data-etype="{{ e.entity_type }}"
            data-ename="{{ (e.display_name or e.entity_name)|lower }}"
-           onclick="selectEntity('{{ e.entity_name }}')">
-        <span class="entity-dot" style="background:{{ e.color or '#4F86C6' }}"></span>
-        <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ e.display_name or e.entity_name }}</span>
-        {% if _esev %}<span class="gs-health-dot {{ _esev }}" title="{{ _esev|capitalize }} health issue"></span>{% endif %}
-        <span class="entity-type-badge badge-{{ e.entity_type }}">{{ e.entity_type }}</span>
+           onclick="selectEntity('{{ e.entity_name }}')"
+           onmouseenter="hoverHighlightNode('{{ e.entity_name }}')"
+           onmouseleave="clearHoverHighlight()">
+        <span class="entity-dot" style="background:{{ e.color or '#4F86C6' }};flex-shrink:0;margin-top:4px"></span>
+        <div class="gs-ent-main">
+          <div class="gs-ent-name">{{ e.display_name or e.entity_name }}</div>
+          <div class="gs-ent-meta">
+            <span class="gs-ent-type-dot" style="background:{{ _tcol }}"></span>
+            <span class="gs-ent-type-label">{{ e.entity_type }}</span>
+            {% if _jcnt > 0 %}<span class="gs-ent-joins">{{ _jcnt }} join{{ 's' if _jcnt != 1 else '' }}</span>{% endif %}
+          </div>
+        </div>
+        {% if _esev %}<span class="gs-health-dot {{ _esev }}" title="{{ _esev|capitalize }} health issue" style="margin-top:5px"></span>{% endif %}
       </div>
       {% endfor %}
     </div>
@@ -418,10 +450,16 @@
     </div>
   </div>
 
-  <!-- ── Issues tab ────────────────────────────────────────────────────── -->
-  <div class="gs-tab-pane" id="gs-pane-issues">
-    <div id="gs-issues-list" style="flex:1;overflow-y:auto">
-      <div class="gs-empty" style="font-size:11px;padding:1.5rem .75rem">
+  <!-- ── Issues drawer (collapsible, inside Entities tab) ─────────────── -->
+  <div class="gs-issues-drawer" id="gs-issues-drawer">
+    <div class="gs-issues-toggle"
+         onclick="document.getElementById('gs-issues-drawer').classList.toggle('open')">
+      <span class="gs-issues-toggle-label">⚠ Issues</span>
+      <span class="gs-issues-badge" id="gs-issues-badge">—</span>
+      <span class="gs-issues-chevron">▶</span>
+    </div>
+    <div class="gs-issues-body" id="gs-issues-body">
+      <div class="gs-empty" style="font-size:11px;padding:1.25rem .75rem">
         Loading health data…
       </div>
     </div>
@@ -978,7 +1016,7 @@ function setGraphMode(mode) {
   document.querySelector('.graph-shell')?.classList.toggle('validate-mode', graphMode === 'validate');
   document.getElementById('mode-build-btn')?.classList.toggle('active', graphMode === 'build');
   document.getElementById('mode-validate-btn')?.classList.toggle('active', graphMode === 'validate');
-  if (graphMode === 'validate') switchSidebarTab('issues');
+  if (graphMode === 'validate') openIssuesDrawer();
   renderGraph();
 }
 
@@ -3083,7 +3121,7 @@ async function validateAllRelationships(executeLive = false) {
   renderGraph();
   updateSidebar();
   _updateIssuesTab(_health);
-  switchSidebarTab('issues');
+  openIssuesDrawer();
   setStatus(`Validated ${byId.size} relationship${byId.size === 1 ? '' : 's'}`);
 }
 
@@ -4334,7 +4372,7 @@ applyHealthReport(_health);
 // PHASE 1 — SIDEBAR TABS
 // ════════════════════════════════════════════════════════════════════════════
 
-const _SIDEBAR_TABS = ['entities', 'relationships', 'issues'];
+const _SIDEBAR_TABS = ['entities', 'relationships'];
 let _activeSidebarTab = 'entities';
 let _sidebarEntTypeFilter = '';   // active type chip value
 let _sidebarEntQuery = '';        // active entity search query
@@ -4358,12 +4396,29 @@ window.filterSidebarEntities = function(query) {
   _applySidebarEntFilter();
 };
 
-window.filterSidebarByType = function(chipEl, type) {
+window.filterSidebarByType = function(tabEl, type) {
   _sidebarEntTypeFilter = type;
-  document.querySelectorAll('#gs-type-chips .gs-type-chip').forEach(c => {
-    c.classList.toggle('active', c.dataset.type === type);
+  document.querySelectorAll('#gs-type-filter .gs-type-tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.type === type);
   });
   _applySidebarEntFilter();
+};
+
+// ── Hover-to-highlight: sidebar row ↔ canvas node ────────────────────────
+window.hoverHighlightNode = function(entityName) {
+  const g = document.querySelector(`.g-node[data-entity="${CSS.escape(entityName)}"]`);
+  if (g) g.classList.add('canvas-hover');
+};
+window.clearHoverHighlight = function() {
+  document.querySelectorAll('.g-node.canvas-hover').forEach(n => n.classList.remove('canvas-hover'));
+};
+
+// ── Issues drawer helpers ─────────────────────────────────────────────────
+window.openIssuesDrawer = function() {
+  const drawer = document.getElementById('gs-issues-drawer');
+  if (drawer) drawer.classList.add('open');
+  // Make sure we're on the entities tab so the drawer is visible
+  switchSidebarTab('entities');
 };
 
 function _applySidebarEntFilter() {
@@ -4430,10 +4485,10 @@ window.updateRelList = function() {
   if (cntEl) cntEl.textContent = cnt;
 };
 
-// ── Issues tab ───────────────────────────────────────────────────────────────
+// ── Issues drawer ────────────────────────────────────────────────────────────
 function _updateIssuesTab(h) {
-  const list = document.getElementById('gs-issues-list');
-  const cntEl = document.getElementById('gs-issues-cnt');
+  const list = document.getElementById('gs-issues-body');
+  const cntEl = document.getElementById('gs-issues-badge');
   if (!list) return;
 
   const graphIssues = (h && h.issues || []).filter(i => i.severity !== 'info');
@@ -4449,10 +4504,10 @@ function _updateIssuesTab(h) {
   const wc = (h ? (h.warning_count || 0) : 0) + relIssues.filter(i => i.severity === 'warning').length;
   const total = ec + wc;
 
-  // Update the tab badge
+  // Update the drawer badge
   if (cntEl) {
     cntEl.textContent = total > 0 ? total : (h ? '✓' : '—');
-    cntEl.className = 'gs-tab-cnt issues-cnt' + (ec > 0 ? '' : wc > 0 ? ' warn' : total === 0 && h ? ' ok' : '');
+    cntEl.className = 'gs-issues-badge' + (ec > 0 ? '' : wc > 0 ? ' warn' : total === 0 && h ? ' ok' : '');
   }
 
   if (!h) {
