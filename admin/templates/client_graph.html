@@ -130,12 +130,21 @@
 .ml-dim-row.ml-exists{opacity:.45}
 .ml-dim-row.ml-exists .ml-dim-label::after{content:"already linked";font-size:10px;color:var(--text-muted);margin-left:4px}
 .g-edge{pointer-events:stroke;cursor:pointer}
-.g-edge .edge-line{stroke:#94A3B8;stroke-width:2;fill:none}
+.g-edge .edge-line{stroke:#94A3B8;stroke-width:2;fill:none;transition:stroke-width .08s,filter .08s}
 .g-edge.selected .edge-line{stroke:var(--amber,#F59E0B);stroke-width:2.5}
+.g-edge:hover:not(.selected) .edge-line{stroke-width:3;filter:brightness(1.45) saturate(1.2)}
 .g-edge .edge-label{font-family:system-ui,sans-serif;font-size:10px;fill:var(--text-muted);text-anchor:middle;dominant-baseline:central;opacity:0;transition:opacity .15s}
 .g-edge .edge-label-bg{fill:var(--surface);rx:4;ry:4;opacity:0;transition:opacity .15s}
 .g-edge:hover .edge-label,.g-edge.selected .edge-label{opacity:1}
 .g-edge:hover .edge-label-bg,.g-edge.selected .edge-label-bg{opacity:1}
+/* ── Minimap ─────────────────────────────────────────────────────────────── */
+.minimap{position:absolute;bottom:3rem;left:.75rem;width:180px;background:var(--surface);border:1px solid var(--border);border-radius:7px;overflow:hidden;z-index:11;box-shadow:0 2px 14px rgba(0,0,0,.13);opacity:.88;transition:opacity .15s;cursor:crosshair;user-select:none}
+.minimap:hover{opacity:1}
+.minimap.mm-empty{display:none}
+.minimap-head{font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);padding:3px 8px;border-bottom:1px solid var(--border);background:var(--surface-2);display:flex;align-items:center;justify-content:space-between}
+.minimap-zoom{font-family:Consolas,monospace;font-size:9px;color:var(--text-muted)}
+.minimap-svg{display:block;width:180px;height:116px}
+.minimap-vp{position:absolute;border:1.5px solid var(--primary,#2563EB);background:rgba(37,99,235,.07);border-radius:2px;pointer-events:none}
 .draw-line{stroke:var(--primary,#2563EB);stroke-width:2;stroke-dasharray:6,4;fill:none;pointer-events:none}
 .g-node.suggested .node-body{stroke-dasharray:7,4;stroke:#F59E0B;stroke-width:2;opacity:.75}
 .g-node.suggested .node-label{opacity:.7}
@@ -652,6 +661,18 @@
     <line id="draw-line" class="draw-line" style="display:none"/>
   </svg>
   <div class="canvas-status" id="canvas-status">Ready</div>
+
+  <!-- ── Minimap ───────────────────────────────────────────────────────── -->
+  <div class="minimap mm-empty" id="minimap">
+    <div class="minimap-head">
+      <span>Map</span>
+      <span class="minimap-zoom" id="minimap-zoom">100%</span>
+    </div>
+    <svg id="minimap-svg" class="minimap-svg"
+         viewBox="0 0 180 116" xmlns="http://www.w3.org/2000/svg"></svg>
+    <div id="minimap-vp" class="minimap-vp" style="display:none"></div>
+  </div>
+
   <div class="zoom-controls">
     <button onclick="zoomStep(-1)" title="Zoom out (−)">−</button>
     <span id="zoom-label" onclick="resetZoom()" title="Click to reset zoom to 100%">100%</span>
@@ -992,8 +1013,12 @@ function _applyTransform() {
   const ty = ((pan.y % ds) + ds) % ds;
   document.getElementById('dot-grid').setAttribute('patternTransform',
     `translate(${tx},${ty}) scale(${zoom})`);
+  const pct = Math.round(zoom * 100) + '%';
   const lbl = document.getElementById('zoom-label');
-  if (lbl) lbl.textContent = Math.round(zoom * 100) + '%';
+  if (lbl) lbl.textContent = pct;
+  const mmz = document.getElementById('minimap-zoom');
+  if (mmz) mmz.textContent = pct;
+  _updateMinimapViewport();
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1013,6 +1038,7 @@ function renderGraph() {
   renderEdges();
   renderNodes();
   updateFocusPill();
+  updateMinimap();
 }
 
 function entityPos(e) {
@@ -4572,6 +4598,150 @@ window.applyHealthReport = function(h) {
 
 // Run Issues tab with initial server-rendered health data
 _updateIssuesTab(_health);
+
+// ════════════════════════════════════════════════════════════════════════════
+// MINIMAP
+// ════════════════════════════════════════════════════════════════════════════
+
+const _MM_VW = 180, _MM_VH = 116;   // SVG viewBox dimensions (matches HTML element)
+const _MM_HEAD = 20;                 // CSS pixels of header (.minimap-head)
+let _mmScale = null;                 // {sc, ox, oy, mnX, mnY} — set by updateMinimap
+
+const _MM_TYPE_COL = { fact: '#D97706', dimension: '#2563EB', bridge: '#7C3AED' };
+
+window.updateMinimap = function() {
+  const cont  = document.getElementById('minimap');
+  const svgEl = document.getElementById('minimap-svg');
+  if (!cont || !svgEl) return;
+
+  if (!graph.entities.length) {
+    cont.classList.add('mm-empty');
+    _mmScale = null;
+    return;
+  }
+  cont.classList.remove('mm-empty');
+
+  // ── 1. World bounding box ──────────────────────────────────────────────
+  const PAD = 40;
+  let mnX = Infinity, mnY = Infinity, mxX = -Infinity, mxY = -Infinity;
+  graph.entities.forEach(e => {
+    const x = e.pos_x || 120, y = e.pos_y || 120;
+    mnX = Math.min(mnX, x - PAD);    mnY = Math.min(mnY, y - PAD);
+    mxX = Math.max(mxX, x + NODE_W + PAD);
+    mxY = Math.max(mxY, y + NODE_H + PAD);
+  });
+  const ww = mxX - mnX, wh = mxY - mnY;
+  if (ww <= 0 || wh <= 0) return;
+
+  // ── 2. Scale to fit SVG viewBox ────────────────────────────────────────
+  const sc = Math.min(_MM_VW / ww, _MM_VH / wh);
+  const ox = (_MM_VW - ww * sc) / 2;
+  const oy = (_MM_VH - wh * sc) / 2;
+  _mmScale = { sc, ox, oy, mnX, mnY };
+
+  // ── 3. Build SVG content: edges then node rects ────────────────────────
+  let h = '';
+
+  // Edges
+  graph.relationships.forEach(r => {
+    const fe = graph.entities.find(e => e.entity_name === r.from_entity);
+    const te = graph.entities.find(e => e.entity_name === r.to_entity);
+    if (!fe || !te) return;
+    const x1 = (ox + ((fe.pos_x||120) + NODE_W/2 - mnX) * sc).toFixed(1);
+    const y1 = (oy + ((fe.pos_y||120) + NODE_H/2 - mnY) * sc).toFixed(1);
+    const x2 = (ox + ((te.pos_x||120) + NODE_W/2 - mnX) * sc).toFixed(1);
+    const y2 = (oy + ((te.pos_y||120) + NODE_H/2 - mnY) * sc).toFixed(1);
+    h += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="#CBD5E1" stroke-width="0.8" opacity="0.6"/>`;
+  });
+
+  // Node rects
+  graph.entities.forEach(e => {
+    const x  = (ox + ((e.pos_x||120) - mnX) * sc).toFixed(1);
+    const y  = (oy + ((e.pos_y||120) - mnY) * sc).toFixed(1);
+    const nw = Math.max(NODE_W * sc, 3).toFixed(1);
+    const nh = Math.max(NODE_H * sc, 2).toFixed(1);
+    const col = e.color || _MM_TYPE_COL[e.entity_type] || '#4F86C6';
+    const isSel = selectedEntity === e.entity_name;
+    h += `<rect x="${x}" y="${y}" width="${nw}" height="${nh}" rx="1.5" fill="${col}" opacity="${isSel ? 1 : .72}"/>`;
+    if (isSel) {
+      const sx = (parseFloat(x) - 1.5).toFixed(1);
+      const sy = (parseFloat(y) - 1.5).toFixed(1);
+      const sw = (parseFloat(nw) + 3).toFixed(1);
+      const sh = (parseFloat(nh) + 3).toFixed(1);
+      h += `<rect x="${sx}" y="${sy}" width="${sw}" height="${sh}" rx="2.5" fill="none" stroke="#2563EB" stroke-width="1.5" opacity="0.9"/>`;
+    }
+  });
+
+  svgEl.innerHTML = h;
+  _updateMinimapViewport();
+};
+
+window._updateMinimapViewport = function() {
+  const vpEl = document.getElementById('minimap-vp');
+  if (!vpEl || !_mmScale) { if (vpEl) vpEl.style.display = 'none'; return; }
+
+  const mainSvg = document.getElementById('graph-svg');
+  if (!mainSvg) return;
+  const mainRect = mainSvg.getBoundingClientRect();
+  if (!mainRect.width) return;
+
+  const { sc, ox, oy, mnX, mnY } = _mmScale;
+
+  // Viewport corners in world space
+  const vpX = -pan.x / zoom,  vpY = -pan.y / zoom;
+  const vpW = mainRect.width / zoom, vpH = mainRect.height / zoom;
+
+  // Convert to SVG viewBox coords
+  const vx = ox + (vpX - mnX) * sc;
+  const vy = oy + (vpY - mnY) * sc;
+  const vw = vpW * sc, vh = vpH * sc;
+
+  // SVG viewBox → CSS pixels inside the minimap element
+  const svgEl = document.getElementById('minimap-svg');
+  if (!svgEl) return;
+  const svgRect = svgEl.getBoundingClientRect();
+  if (!svgRect.width) return;
+  const px = svgRect.width  / _MM_VW;
+  const py = svgRect.height / _MM_VH;
+
+  const cont = document.getElementById('minimap');
+  vpEl.style.display = '';
+  vpEl.style.left   = Math.max(0, vx * px).toFixed(0) + 'px';
+  vpEl.style.top    = (_MM_HEAD + Math.max(0, vy * py)).toFixed(0) + 'px';
+  vpEl.style.width  = Math.min(vw * px, cont.offsetWidth).toFixed(0) + 'px';
+  vpEl.style.height = Math.min(vh * py, cont.offsetHeight - _MM_HEAD).toFixed(0) + 'px';
+};
+
+// Click-to-pan on minimap
+(function() {
+  const cont = document.getElementById('minimap');
+  if (!cont) return;
+  cont.addEventListener('mousedown', function(ev) {
+    if (!_mmScale) return;
+    const svgEl = document.getElementById('minimap-svg');
+    if (!svgEl) return;
+    const svgRect = svgEl.getBoundingClientRect();
+    if (ev.clientY < svgRect.top) return; // header click — ignore
+
+    const { sc, ox, oy, mnX, mnY } = _mmScale;
+    const px = svgRect.width  / _MM_VW;
+    const py = svgRect.height / _MM_VH;
+
+    const mx = (ev.clientX - svgRect.left) / px;  // SVG viewBox x
+    const my = (ev.clientY - svgRect.top)  / py;  // SVG viewBox y
+    const worldX = (mx - ox) / sc + mnX;
+    const worldY = (my - oy) / sc + mnY;
+
+    // Centre the main canvas viewport on this world point
+    const mainSvg = document.getElementById('graph-svg');
+    const mainRect = mainSvg.getBoundingClientRect();
+    pan.x = -worldX * zoom + mainRect.width  / 2;
+    pan.y = -worldY * zoom + mainRect.height / 2;
+    _applyTransform();
+    ev.stopPropagation();
+    ev.preventDefault();
+  });
+})();
 
 // ════════════════════════════════════════════════════════════════════════════
 // PHASE 1 — TOOLBAR DROPDOWNS
