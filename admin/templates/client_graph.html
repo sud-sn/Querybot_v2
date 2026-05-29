@@ -1268,7 +1268,11 @@ function renderNodes() {
   layer.innerHTML = '';
   const NS = 'http://www.w3.org/2000/svg';
 
-  graph.entities.forEach(e => {
+  const visibleEntities = activeSchemaFilter
+    ? graph.entities.filter(e => (e.schema_name || '') === activeSchemaFilter)
+    : graph.entities;
+
+  visibleEntities.forEach(e => {
     if (e.status === 'suggested') return; // hide auto-suggested table nodes
     const { x, y } = entityPos(e);
     // Use user-assigned colour → type-canonical colour → neutral default
@@ -1502,6 +1506,8 @@ function renderNodes() {
     });
     g.addEventListener('click', ev => {
       if (ev.target.classList.contains('node-port')) return;
+      ev.preventDefault();
+      ev.stopPropagation();
       selectEntity(e.entity_name);
     });
     g.addEventListener('dblclick', ev => {
@@ -1593,6 +1599,8 @@ function renderEdges() {
     const fe = graph.entities.find(e => e.entity_name === rel.from_entity);
     const te = graph.entities.find(e => e.entity_name === rel.to_entity);
     if (!fe || !te) return;
+    if (activeSchemaFilter &&
+        ((fe.schema_name || '') !== activeSchemaFilter || (te.schema_name || '') !== activeSchemaFilter)) return;
     // Skip edges involving auto-suggested (schema-auto-populated) entities
     if (fe.status === 'suggested' || te.status === 'suggested') return;
     const fp = entityPos(fe), tp = entityPos(te);
@@ -2109,6 +2117,13 @@ window.validateEntityRelationships = async function(entityName, executeLive = fa
 
 window.selectEntity = function(name, depth = 1) {
   selectedEntity = name; selectedRelId = null;
+  const selected = graph.entities.find(e => e.entity_name === name);
+  if (!activeSchemaFilter && selected?.schema_name) {
+    activeSchemaFilter = selected.schema_name;
+    localStorage.setItem(`qb_schema_filter_${ACCOUNT_ID}`, activeSchemaFilter);
+    const schemaSel = document.getElementById('schema-filter');
+    if (schemaSel) schemaSel.value = activeSchemaFilter;
+  }
   // Selecting an entity also focuses its neighbourhood and opens the relationship navigator.
   setGraphFocus(name, depth);
   document.querySelectorAll('.gs-entity-item').forEach(el => el.classList.remove('selected'));
@@ -2117,6 +2132,8 @@ window.selectEntity = function(name, depth = 1) {
   document.getElementById('del-btn').style.display = '';
   document.querySelector('.graph-shell').classList.add('panel-open');
   renderGraph();
+  updateSidebar();
+  updateRelList();
   renderEntityDetail(name);
   renderConnectionTray(name);
 };
@@ -2365,6 +2382,47 @@ function renderEntityDetail(name, forceTab) {
       `;
       // Pre-populate PK datalist for the current table selection (only if Info tab active)
       if (e.table_name && activeTab === 'info') onDetailTableChange();
+    })
+    .catch(err => {
+      if (selectedEntity !== name) return;
+      const relCount = graph.relationships.filter(
+        r => r.from_entity === name || r.to_entity === name
+      ).length;
+      const tabBar = document.getElementById('detail-tab-bar');
+      tabBar.style.display = 'flex';
+      tabBar.innerHTML = `
+        <div class="gd-tab ${activeTab==='info'?'active':''}" onclick="switchEntityTab('info','${esc(name)}')">Overview</div>
+        <div class="gd-tab ${activeTab==='joins'?'active':''}" onclick="switchEntityTab('joins','${esc(name)}')">Joins <span class="gd-tab-badge">${relCount}</span></div>
+        <div class="gd-tab ${activeTab==='fields'?'active':''}" onclick="switchEntityTab('fields','${esc(name)}')">Fields <span class="gd-tab-badge">?</span></div>
+      `;
+      document.getElementById('detail-content').innerHTML = `
+        ${_entitySummaryCards(e, relCount, 0)}
+        <div class="gd-tab-pane ${activeTab==='joins'?'active':''}" id="det-pane-joins">
+          ${_buildJoinsPaneContent(name)}
+        </div>
+        <div class="gd-tab-pane ${activeTab==='fields'?'active':''}" id="det-pane-fields">
+          <div class="gd-section">Field roles</div>
+          <div class="gd-body">
+            <div style="font-size:12px;color:var(--text-muted);line-height:1.5">
+              Field metadata could not be loaded, but relationship editing is still available.
+            </div>
+          </div>
+        </div>
+        <div class="gd-tab-pane ${activeTab==='info'?'active':''}" id="det-pane-info">
+          <div class="gd-section">Entity settings</div>
+          <div class="gd-body">
+            <div class="gd-form-row">
+              <div><label class="gd-label">Display name</label><input class="gd-input" id="de-display-name" value="${esc(e.display_name||'')}"></div>
+              <div><label class="gd-label">Type</label><input class="gd-input" value="${esc(e.entity_type||'')}" disabled></div>
+            </div>
+            <div class="gd-form-row">
+              <div><label class="gd-label">Schema</label><input class="gd-input" value="${esc(e.schema_name||'')}" disabled></div>
+              <div><label class="gd-label">Table</label><input class="gd-input" value="${esc(e.table_name||'')}" disabled></div>
+            </div>
+          </div>
+        </div>
+      `;
+      setStatus('Entity fields could not be loaded; showing joins fallback');
     });
 }
 
