@@ -416,6 +416,7 @@
       <div class="gs-empty">No entities yet.<br>Click <strong>＋</strong> to define your first business object.</div>
       {% endif %}
       {% for e in entities %}
+      {% if e.status != 'suggested' %}
       {% set _esev = health.entity_severity.get(e.entity_name, '') %}
       {% set _tcol = {'fact': '#D97706', 'dimension': '#2563EB', 'bridge': '#7C3AED'}.get(e.entity_type, '#94A3B8') %}
       {% set _jcnt = (relationships|selectattr('from_entity','equalto',e.entity_name)|list|length) + (relationships|selectattr('to_entity','equalto',e.entity_name)|list|length) %}
@@ -437,6 +438,7 @@
         </div>
         {% if _esev %}<span class="gs-health-dot {{ _esev }}" title="{{ _esev|capitalize }} health issue" style="margin-top:5px"></span>{% endif %}
       </div>
+      {% endif %}
       {% endfor %}
     </div>
   </div>
@@ -1126,11 +1128,12 @@ function renderNodes() {
   const NS = 'http://www.w3.org/2000/svg';
 
   graph.entities.forEach(e => {
+    if (e.status === 'suggested') return; // hide auto-suggested table nodes
     const { x, y } = entityPos(e);
     // Use user-assigned colour → type-canonical colour → neutral default
     const color = e.color || TYPE_COLORS[e.entity_type] || '#4F86C6';
     const isSelected = selectedEntity === e.entity_name;
-    const isSuggested = (e.status === 'suggested');
+    const isSuggested = false; // suggested entities are filtered above
     const conf = e.confidence_score ?? 100;
     const focusSet = _focusedNodeSet();
     const focusClass = focusSet ? (focusSet.has(e.entity_name) ? ' focused' : ' dimmed') : '';
@@ -1449,6 +1452,8 @@ function renderEdges() {
     const fe = graph.entities.find(e => e.entity_name === rel.from_entity);
     const te = graph.entities.find(e => e.entity_name === rel.to_entity);
     if (!fe || !te) return;
+    // Skip edges involving auto-suggested (schema-auto-populated) entities
+    if (fe.status === 'suggested' || te.status === 'suggested') return;
     const fp = entityPos(fe), tp = entityPos(te);
     const { x1, y1, x2, y2, cx1, cy1, cx2, cy2 } = _edgePoints(fp, tp);
     const isSelected = selectedRelId === rel.id;
@@ -1744,7 +1749,8 @@ function autoLayout() {
 // ════════════════════════════════════════════════════════════════════════════
 window.selectEntity = function(name) {
   selectedEntity = name; selectedRelId = null;
-  setGraphFocus(name, focusDepth > 1 && focusedEntity === name ? 2 : 1);
+  // Don't dim other nodes — selection ring is enough visual feedback
+  focusedEntity = null; focusDepth = 0;
   document.querySelectorAll('.gs-entity-item').forEach(el => el.classList.remove('selected'));
   const sib = document.getElementById('sib-' + name.replace(/ /g,'_'));
   if (sib) sib.classList.add('selected');
@@ -1829,8 +1835,8 @@ document.addEventListener('click', ev => {
 // ════════════════════════════════════════════════════════════════════════════
 // DETAIL PANEL — ENTITY
 // ════════════════════════════════════════════════════════════════════════════
-// Track which detail tab is active per entity
-let _detailTab = 'info';
+// Track which detail tab is active per entity — default to Joins so relationships show first
+let _detailTab = 'joins';
 
 function renderEntityDetail(name, forceTab) {
   const e = graph.entities.find(x => x.entity_name === name);
@@ -1855,7 +1861,7 @@ function renderEntityDetail(name, forceTab) {
   }
 
   // Choose tab: forceTab → caller override, else _detailTab (sticky), default 'joins'
-  const activeTab = forceTab || _detailTab || 'info';
+  const activeTab = forceTab || _detailTab || 'joins';
 
   fetch(`${API_BASE}/properties/${name}`)
     .then(r => r.json())
