@@ -209,7 +209,7 @@
    Sticky tab bar shown at the top of every client workspace page.
    client:  the client object (must have .account_id and .client_name)
    current: key of the active tab — one of:
-            overview | setup | kb | metrics | graph | glossary |
+            overview | setup | kb | metrics | graph |
             users | groups | billing
 
    Usage:
@@ -233,7 +233,6 @@
     <a href="{{ base }}/kb"            class="ws-tab{% if current=='kb'        %} active{% endif %}">KB Editor</a>
     <a href="{{ base }}/metrics"       class="ws-tab{% if current=='metrics'   %} active{% endif %}">Metrics</a>
     <a href="{{ base }}/graph"         class="ws-tab{% if current=='graph'     %} active{% endif %}">Entity Graph</a>
-    <a href="{{ base }}/glossary"      class="ws-tab{% if current=='glossary'  %} active{% endif %}">Glossary</a>
     <a href="{{ base }}/users"         class="ws-tab{% if current=='users'     %} active{% endif %}">Users</a>
     <a href="{{ base }}/groups"        class="ws-tab{% if current=='groups'    %} active{% endif %}">Groups</a>
     <a href="{{ base }}/billing"       class="ws-tab{% if current=='billing'   %} active{% endif %}">Billing</a>
