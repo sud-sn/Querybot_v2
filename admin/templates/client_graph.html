@@ -2131,11 +2131,25 @@ window.selectEntity = function(name, depth = 1) {
   if (sib) sib.classList.add('selected');
   document.getElementById('del-btn').style.display = '';
   document.querySelector('.graph-shell').classList.add('panel-open');
-  renderGraph();
-  updateSidebar();
-  updateRelList();
-  renderEntityDetail(name);
-  renderConnectionTray(name);
+  try {
+    renderEntityDetail(name);
+  } catch (err) {
+    console.error('Entity inspector render failed', err);
+    setStatus('Could not render entity inspector');
+  }
+  try {
+    renderConnectionTray(name);
+  } catch (err) {
+    console.error('Connected table tray render failed', err);
+  }
+  try {
+    renderGraph();
+    updateSidebar();
+    updateRelList();
+  } catch (err) {
+    console.error('Graph refresh after entity select failed', err);
+    setStatus('Entity selected; graph refresh had an issue');
+  }
 };
 
 window.selectRel = function(id) {
@@ -2148,8 +2162,17 @@ window.selectRel = function(id) {
   if (sib) sib.classList.add('selected');
   document.getElementById('del-btn').style.display = '';
   document.querySelector('.graph-shell').classList.add('panel-open');
-  renderGraph();
-  renderRelDetail(id);
+  try {
+    renderRelDetail(id);
+  } catch (err) {
+    console.error('Relationship inspector render failed', err);
+    setStatus('Could not render relationship inspector');
+  }
+  try {
+    renderGraph();
+  } catch (err) {
+    console.error('Graph refresh after relationship select failed', err);
+  }
 };
 
 function resetDetail() {
