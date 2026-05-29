@@ -21,9 +21,16 @@
     radial-gradient(ellipse at 72% 75%, color-mix(in srgb,#7C3AED 3%,transparent), transparent 50%),
     var(--surface-2);
   overflow:hidden;position:relative}
-/* ── Detail panel — slides in and SHIFTS the canvas (not an overlay) ─────── */
-.graph-detail{display:flex;flex-direction:column;overflow:hidden;background:var(--surface);flex-shrink:0;width:0;transition:width .24s cubic-bezier(.4,0,.2,1)}
-.graph-shell.panel-open .graph-detail{width:min(440px,36vw)}
+/* ── Bottom drawer — slides up from below the canvas ─────────────────────── */
+.graph-drawer{flex-shrink:0;height:0;overflow:hidden;background:var(--surface);border-top:1px solid var(--border);box-shadow:0 -8px 32px rgba(15,23,42,.10);transition:height .25s cubic-bezier(.4,0,.2,1);display:flex;flex-direction:column}
+.graph-shell.drawer-open .graph-drawer{height:300px}
+.graph-shell.drawer-expanded .graph-drawer{height:500px}
+.gd-drawer-head{display:flex;align-items:center;gap:.5rem;padding:.55rem .85rem;flex-shrink:0;border-bottom:1px solid var(--border);background:linear-gradient(180deg,var(--surface-2),var(--surface))}
+.gd-drawer-title{font-size:13px;font-weight:850;color:var(--text);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.gd-drawer-resize{height:4px;background:var(--border);cursor:row-resize;border-radius:2px;width:44px;flex-shrink:0;align-self:center;transition:background .12s}
+.gd-drawer-resize:hover{background:var(--primary)}
+.gd-expand-btn{background:var(--surface-2);border:1px solid var(--border);cursor:pointer;color:var(--text-muted);font-size:12px;padding:3px 7px;border-radius:5px;line-height:1;transition:all .12s;flex-shrink:0}
+.gd-expand-btn:hover{background:color-mix(in srgb,var(--primary) 8%,var(--surface));border-color:color-mix(in srgb,var(--primary) 30%,transparent);color:var(--primary)}
 
 /* ── Sidebar ───────────────────────────────────────────────────────────────── */
 .gs-head{padding:.75rem;border-bottom:1px solid var(--border);font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);display:flex;align-items:center;justify-content:space-between}
@@ -267,15 +274,19 @@
 
 @media (max-width:1280px){
   .graph-sidebar{flex-basis:224px}
-  .graph-shell.panel-open .graph-detail{width:min(400px,40vw)}
+  .graph-shell.drawer-open .graph-drawer{height:280px}
+  .graph-shell.drawer-expanded .graph-drawer{height:460px}
   .tb-hint{display:none}
 }
 @media (max-width:980px){
   .graph-shell{height:auto;min-height:720px;flex-direction:column}
   .graph-sidebar{flex:0 0 auto;max-height:240px;border-right:0;border-bottom:1px solid var(--border)}
   .graph-canvas-wrap{min-height:520px}
-  .graph-shell.panel-open .graph-detail{width:100%;max-height:420px;border-top:1px solid var(--border)}
+  .graph-shell.drawer-open .graph-drawer{height:260px}
+  .graph-shell.drawer-expanded .graph-drawer{height:420px}
   .gd-inspector-summary,.gd-diag-grid{grid-template-columns:1fr}
+  .ct-grid{grid-template-columns:minmax(140px,1fr) 68px minmax(180px,1.4fr) minmax(150px,.9fr)}
+  .ct-card{display:none}
 }
 
 /* ── Modals ────────────────────────────────────────────────────────────────── */
@@ -386,11 +397,12 @@
 /* Del button is hidden via JS (display:none inline), not mode — no need to duplicate */
 .validate-only{display:none!important}
 .graph-shell.validate-mode .validate-only{display:flex!important}
-.focus-pill{position:absolute;top:54px;left:.75rem;right:.75rem;z-index:12;display:none;align-items:center;gap:.5rem;background:var(--surface);border:1px solid var(--border);border-radius:9px;padding:6px 8px;font-size:11px;font-weight:700;color:var(--text-soft);box-shadow:0 4px 16px rgba(15,23,42,.10);max-width:min(720px,calc(100% - 1.5rem))}
-.focus-pill button{border:1px solid transparent;background:transparent;color:var(--text-muted);font-weight:800;cursor:pointer;padding:3px 7px;border-radius:6px;font-size:10px;white-space:nowrap}
-.focus-pill button:hover{border-color:var(--border);background:var(--surface-2);color:var(--text)}
-.focus-pill button.active{background:color-mix(in srgb,var(--primary) 11%,var(--surface));border-color:color-mix(in srgb,var(--primary) 30%,transparent);color:var(--primary)}
-.focus-pill.visible{display:flex}
+/* ── Context bar — inline flex row shown when entity is focused ───────────── */
+.canvas-context-bar{display:none;flex-shrink:0;align-items:center;gap:.5rem;padding:.35rem .75rem;font-size:11px;font-weight:700;color:var(--text-soft);background:color-mix(in srgb,var(--primary) 5%,var(--surface));border-bottom:1px solid color-mix(in srgb,var(--primary) 18%,var(--border))}
+.canvas-context-bar.visible{display:flex}
+.canvas-context-bar button{border:1px solid transparent;background:transparent;color:var(--text-muted);font-weight:800;cursor:pointer;padding:3px 7px;border-radius:6px;font-size:10px;white-space:nowrap}
+.canvas-context-bar button:hover{border-color:var(--border);background:var(--surface-2);color:var(--text)}
+.canvas-context-bar button.active{background:color-mix(in srgb,var(--primary) 11%,var(--surface));border-color:color-mix(in srgb,var(--primary) 30%,transparent);color:var(--primary)}
 .focus-crumb{display:flex;align-items:center;gap:.35rem;min-width:0;overflow:hidden;white-space:nowrap}
 .focus-root{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted)}
 .focus-sep{color:var(--text-muted);opacity:.65}
@@ -413,9 +425,20 @@
 .rel-status-badge.broken{background:#FEE2E2;color:#991B1B;border-color:#FECACA}
 .rel-status-badge.untested{background:#F1F5F9;color:#64748B;border-color:#CBD5E1}
 .gd-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-/* -- Connected tables tray -------------------------------------------------- */
-.connection-tray{display:none;flex-shrink:0;border-top:1px solid var(--border);background:var(--surface);box-shadow:0 -8px 24px rgba(15,23,42,.08);max-height:230px;overflow:hidden}
-.connection-tray.open{display:flex;flex-direction:column}
+/* ── Sidebar collapse ────────────────────────────────────────────────────── */
+.graph-sidebar{transition:flex-basis .22s cubic-bezier(.4,0,.2,1)}
+.graph-sidebar.collapsed{flex-basis:48px!important;overflow:hidden}
+.graph-sidebar.collapsed .gs-tab-bar,
+.graph-sidebar.collapsed .gs-search-row,
+.graph-sidebar.collapsed .gs-type-filter,
+.graph-sidebar.collapsed .gs-ent-main,
+.graph-sidebar.collapsed .gs-issues-drawer,
+.graph-sidebar.collapsed .gs-resolver-wrap{display:none!important}
+.graph-sidebar.collapsed .gs-entity-item{padding:.5rem;justify-content:center;border-bottom:1px solid var(--border)}
+.gs-collapse-btn{background:none;border:none;cursor:pointer;color:var(--text-muted);font-size:13px;padding:2px 6px;border-radius:4px;line-height:1;transition:color .12s,background .12s;flex-shrink:0}
+.gs-collapse-btn:hover{color:var(--text);background:var(--surface-2)}
+
+/* -- Connected tables grid (used inside drawer Joins tab) ------------------- */
 .ct-head{display:flex;align-items:center;gap:.7rem;padding:.55rem .75rem;border-bottom:1px solid var(--border);background:linear-gradient(180deg,var(--surface),var(--surface-2))}
 .ct-title{font-size:12px;font-weight:850;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .ct-meta{font-size:11px;color:var(--text-muted);white-space:nowrap}
@@ -465,7 +488,7 @@
 <!-- ══ LEFT SIDEBAR ══════════════════════════════════════════════════════════ -->
 <aside class="graph-sidebar">
 
-  <!-- Tab bar: Entities | Rels only — Issues is a collapsible drawer -->
+  <!-- Tab bar: Entities | Rels + collapse toggle -->
   <div class="gs-tab-bar">
     <button class="gs-tab active" id="gs-tab-entities"
             onclick="switchSidebarTab('entities')">
@@ -477,6 +500,8 @@
       Rels
       <span class="gs-tab-cnt" id="gs-rel-cnt">{{ relationships|length }}</span>
     </button>
+    <button class="gs-collapse-btn" id="gs-collapse-btn"
+            onclick="toggleSidebar()" title="Collapse sidebar" style="margin-left:auto">◀</button>
   </div>
 
   <!-- ── Entities tab ───────────────────────────────────────────────────── -->
@@ -668,13 +693,14 @@
   </div>
   <!-- Health issues bar (shown below toolbar when there are errors) -->
   <div id="health-issues-bar" style="display:none;padding:.4rem .75rem;font-size:11px;background:color-mix(in srgb,var(--red,#DC2626) 8%,var(--surface));border-bottom:1px solid color-mix(in srgb,var(--red,#DC2626) 20%,transparent);align-items:center;gap:.6rem;flex-shrink:0"></div>
-  <div id="focus-pill" class="focus-pill">
+  <!-- Context bar — inline, appears below toolbar when entity is focused -->
+  <div class="canvas-context-bar" id="canvas-context-bar">
     <div class="focus-crumb">
       <span class="focus-root">Graph</span>
       <span class="focus-sep">/</span>
-      <span class="focus-entity" id="focus-pill-entity">Selected entity</span>
+      <span class="focus-entity" id="ctx-entity">Selected entity</span>
       <span class="focus-sep">/</span>
-      <span class="focus-mode" id="focus-pill-mode">Direct neighbours</span>
+      <span class="focus-mode" id="ctx-mode">Direct neighbours</span>
     </div>
     <div class="focus-actions">
       <button id="focus-depth-1" onclick="setSelectedFocusDepth(1)" title="Show direct neighbours">1-hop</button>
@@ -754,17 +780,27 @@
     <!-- Draw-line preview -->
     <line id="draw-line" class="draw-line" style="display:none"/>
   </svg>
-  <section id="connection-tray" class="connection-tray" aria-live="polite">
-    <div class="ct-head">
-      <div class="ct-title" id="ct-title">Connected tables</div>
-      <div class="ct-meta" id="ct-meta"></div>
-      <div class="ct-actions">
-        <button class="ct-btn" onclick="openRelModal()" title="Add a relationship from the selected entity">+ Add join</button>
-        <button class="ct-btn" onclick="hideConnectionTray()" title="Hide connected tables">Hide</button>
+  <!-- ── Bottom drawer — replaces right panel and connection tray ───────────── -->
+  <div class="graph-drawer" id="graph-drawer" aria-live="polite">
+    <div class="gd-drawer-resize" id="gd-resize-handle" title="Drag to resize"></div>
+    <div class="gd-drawer-head">
+      <span class="gd-drawer-title" id="drawer-title">Properties</span>
+      <span id="drawer-health-dot" class="gd-health-dot" style="display:none" title=""></span>
+      <span id="drawer-sync-badge" class="sync-badge" style="display:none;margin-left:.35rem">Synced</span>
+      <div id="drawer-action-bar" class="gd-action-bar" style="border:none;padding:0;background:none;margin-left:.5rem;flex-wrap:nowrap"></div>
+      <button class="gd-expand-btn" id="gd-expand-btn"
+              onclick="toggleDrawerExpand()" title="Expand">⤢</button>
+      <button class="gd-close-btn" onclick="closeDetailPanel()" title="Close (Esc)">✕</button>
+    </div>
+    <div id="detail-tab-bar" class="gd-tab-bar" style="display:none"></div>
+    <div id="detail-content" style="overflow-y:auto;flex:1;min-height:0">
+      <div class="gd-placeholder">
+        Select an entity or relationship on the canvas to view its properties.
+        <br><br>
+        <strong>Tip:</strong> Hover a node and drag from the ◉ port to create a relationship.
       </div>
     </div>
-    <div class="ct-body" id="ct-body"></div>
-  </section>
+  </div>
   <div class="canvas-status" id="canvas-status">Ready</div>
 
   <!-- ── Minimap ───────────────────────────────────────────────────────── -->
@@ -787,28 +823,6 @@
   </div>
 </main>
 
-<!-- ══ DETAIL PANEL ══════════════════════════════════════════════════════════ -->
-<aside class="graph-detail">
-  <div class="gd-head" id="detail-head">
-    <span style="display:flex;align-items:center;gap:.45rem;min-width:0;flex:1">
-      <span class="gd-title" id="detail-title">Properties</span>
-      <span id="detail-health-dot" class="gd-health-dot" style="display:none" title=""></span>
-    </span>
-    <span style="display:flex;align-items:center;gap:.4rem;flex-shrink:0">
-      <span id="sync-badge" class="sync-badge" style="display:none">Synced</span>
-      <button class="gd-close-btn" onclick="closeDetailPanel()" title="Close (Esc)">✕</button>
-    </span>
-  </div>
-  <div id="detail-action-bar" class="gd-action-bar"></div>
-  <div id="detail-tab-bar" class="gd-tab-bar" style="display:none"></div>
-  <div id="detail-content" style="overflow-y:auto;flex:1">
-    <div class="gd-placeholder">
-      Select an entity or relationship on the canvas to view and edit its properties.
-      <br><br>
-      <strong>Tip:</strong> Hover a node and drag from the ◉ port to create a relationship.
-    </div>
-  </div>
-</aside>
 
 </div><!-- /graph-shell -->
 
@@ -1168,6 +1182,8 @@ function setGraphFocus(entityName, depth = 1) {
 function clearGraphFocus() {
   focusedEntity = null;
   focusDepth = 0;
+  const bar = document.getElementById('canvas-context-bar');
+  if (bar) bar.classList.remove('visible');
   renderGraph();
 }
 
@@ -1200,15 +1216,15 @@ function fitFocusedView() {
   _applyTransform();
 }
 
-function updateFocusPill() {
-  const pill = document.getElementById('focus-pill');
-  const entityEl = document.getElementById('focus-pill-entity');
-  const modeEl = document.getElementById('focus-pill-mode');
+function updateContextBar() {
+  const bar = document.getElementById('canvas-context-bar');
+  const entityEl = document.getElementById('ctx-entity');
+  const modeEl = document.getElementById('ctx-mode');
   const d1 = document.getElementById('focus-depth-1');
   const d2 = document.getElementById('focus-depth-2');
-  if (!pill || !entityEl || !modeEl) return;
+  if (!bar || !entityEl || !modeEl) return;
   if (!focusedEntity) {
-    pill.classList.remove('visible');
+    bar.classList.remove('visible');
     return;
   }
   const ent = graph.entities.find(e => e.entity_name === focusedEntity);
@@ -1217,8 +1233,10 @@ function updateFocusPill() {
   modeEl.textContent = focusDepth > 1 ? '2-hop neighbourhood' : 'direct neighbours';
   d1?.classList.toggle('active', focusDepth <= 1);
   d2?.classList.toggle('active', focusDepth > 1);
-  pill.classList.add('visible');
+  bar.classList.add('visible');
 }
+// Alias for backwards-compat with any callers using old name
+function updateFocusPill() { updateContextBar(); }
 
 function _focusedNodeSet() {
   if (!focusedEntity) return null;
@@ -1978,35 +1996,33 @@ window.validateConnectionGroup = async function(ids, executeLive = false) {
 };
 
 function renderConnectionTray(entityName) {
-  const tray = document.getElementById('connection-tray');
-  const title = document.getElementById('ct-title');
-  const meta = document.getElementById('ct-meta');
-  const body = document.getElementById('ct-body');
-  if (!tray || !title || !meta || !body) return;
+  // Joins content is now rendered inside the bottom drawer's Joins tab pane.
+  const pane = document.getElementById('det-pane-joins');
+  if (!pane) return;   // drawer not open / entity not selected yet
 
   const ent = graph.entities.find(e => e.entity_name === entityName);
-  if (!ent) { hideConnectionTray(); return; }
+  if (!ent) return;
 
   const rels = _directRelationships(entityName);
-  title.textContent = `${ent.display_name || entityName}: connected tables`;
+
+  if (!rels.length) {
+    pane.innerHTML = `
+      <div class="ct-empty">
+        No direct joins for this entity yet. Use <strong>+ Join</strong> or drag from a node port to connect it.
+      </div>`;
+    return;
+  }
+
   const groups = new Map();
   rels.forEach(r => {
     const partner = _connectionPartner(r, entityName);
     if (!groups.has(partner)) groups.set(partner, []);
     groups.get(partner).push(r);
   });
-  meta.textContent = `${groups.size} connected table${groups.size === 1 ? '' : 's'} / ${rels.length} join${rels.length === 1 ? '' : 's'}`;
 
-  if (!rels.length) {
-    body.innerHTML = `
-      <div class="ct-empty">
-        No direct joins for this entity yet. Use + Add join or drag from a node port to connect it.
-      </div>`;
-    tray.classList.add('open');
-    return;
-  }
+  const meta = `<div style="padding:.4rem .65rem;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);border-bottom:1px solid var(--border);background:var(--surface-2)">${groups.size} connected table${groups.size === 1 ? '' : 's'} · ${rels.length} join${rels.length === 1 ? '' : 's'}</div>`;
 
-  body.innerHTML = [...groups.entries()].map(([partner, groupRels], idx) => {
+  const rows = [...groups.entries()].map(([partner, groupRels], idx) => {
     const primary = groupRels[0];
     const ids = `[${groupRels.map(r => Number(r.id)).filter(Number.isFinite).join(',')}]`;
     const directions = [...new Set(groupRels.map(r => _connectionDirection(r, entityName)))].join('/');
@@ -2054,19 +2070,17 @@ function renderConnectionTray(entityName) {
         </div>
       </div>`;
   }).join('');
-  tray.classList.add('open');
+  pane.innerHTML = meta + `<div style="padding:.5rem .65rem">${rows}</div>`;
 }
 
 window.hideConnectionTray = function() {
-  const tray = document.getElementById('connection-tray');
-  if (tray) tray.classList.remove('open');
+  // connection-tray is now merged into the bottom drawer — no-op kept for compatibility
 };
 
 function setDetailActions(html) {
-  const bar = document.getElementById('detail-action-bar');
+  const bar = document.getElementById('drawer-action-bar');
   if (!bar) return;
   bar.innerHTML = html || '';
-  bar.classList.toggle('open', !!html);
 }
 
 function _entityHealthSummary(name) {
@@ -2130,7 +2144,7 @@ window.selectEntity = function(name, depth = 1) {
   const sib = document.getElementById('sib-' + name.replace(/ /g,'_'));
   if (sib) sib.classList.add('selected');
   document.getElementById('del-btn').style.display = '';
-  document.querySelector('.graph-shell').classList.add('panel-open');
+  document.querySelector('.graph-shell').classList.add('drawer-open');
   try {
     renderEntityDetail(name);
   } catch (err) {
@@ -2161,7 +2175,7 @@ window.selectRel = function(id) {
   const sib = document.getElementById('sib-rel-' + id);
   if (sib) sib.classList.add('selected');
   document.getElementById('del-btn').style.display = '';
-  document.querySelector('.graph-shell').classList.add('panel-open');
+  document.querySelector('.graph-shell').classList.add('drawer-open');
   try {
     renderRelDetail(id);
   } catch (err) {
@@ -2176,17 +2190,20 @@ window.selectRel = function(id) {
 };
 
 function resetDetail() {
-  document.querySelector('.graph-shell').classList.remove('panel-open');
-  hideConnectionTray();
+  const shell = document.querySelector('.graph-shell');
+  shell.classList.remove('drawer-open', 'drawer-expanded');
   setDetailActions('');
   setDetailTitle('Properties');
-  document.getElementById('sync-badge').style.display = 'none';
-  const hdot = document.getElementById('detail-health-dot');
+  const syncBadge = document.getElementById('drawer-sync-badge');
+  if (syncBadge) syncBadge.style.display = 'none';
+  const hdot = document.getElementById('drawer-health-dot');
   if (hdot) hdot.style.display = 'none';
+  const btn = document.getElementById('gd-expand-btn');
+  if (btn) { btn.title = 'Expand'; btn.textContent = '⤢'; }
   const tb = document.getElementById('detail-tab-bar');
   if (tb) { tb.style.display = 'none'; tb.innerHTML = ''; }
   document.getElementById('detail-content').innerHTML =
-    '<div class="gd-placeholder">Select an entity or relationship to edit its properties.</div>';
+    '<div class="gd-placeholder">Select an entity or relationship to view its properties.</div>';
 }
 
 // Close panel without deselecting — used by the ‹ button.
@@ -2195,7 +2212,6 @@ function resetDetail() {
 function closeDetailPanel() {
   selectedEntity = null; selectedRelId = null;
   focusedEntity = null; focusDepth = 0;
-  hideConnectionTray();
   setDetailActions('');
   document.querySelectorAll('.gs-entity-item,.gs-rel-item').forEach(el => el.classList.remove('selected'));
   document.getElementById('del-btn').style.display = 'none';
@@ -2255,9 +2271,9 @@ function renderEntityDetail(name, forceTab) {
     <button class="gd-action-btn" onclick="fitFocusedView()">Fit focus</button>
     <button class="gd-action-btn" onclick="switchEntityTab('fields','${esc(name)}')">Fields</button>
   `);
-  document.getElementById('sync-badge').style.display = '';
+  document.getElementById('drawer-sync-badge').style.display = '';
   // Health dot in panel header
-  const _hdot = document.getElementById('detail-health-dot');
+  const _hdot = document.getElementById('drawer-health-dot');
   if (_hdot) {
     const sev = (_health && _health.entity_severity && _health.entity_severity[name]) || '';
     if (sev) {
@@ -2544,7 +2560,7 @@ async function savePropDirect(entityName, col, role, displayName, synonyms) {
     role, display_name: displayName, synonyms,
   });
   setStatus('Field synced to semantic layer ✓');
-  document.getElementById('sync-badge').style.display = '';
+  document.getElementById('drawer-sync-badge').style.display = '';
 }
 
 window.saveProp = async function(entityName) {
@@ -3073,7 +3089,7 @@ function renderRelDetail(id) {
     <button class="gd-action-btn danger" onclick="deleteRel(${id})">Delete</button>
   `);
   setDetailTitle(`${rel.from_entity} → ${rel.to_entity}`);
-  const _rhdot = document.getElementById('detail-health-dot');
+  const _rhdot = document.getElementById('drawer-health-dot');
   if (_rhdot) _rhdot.style.display = 'none';
   document.getElementById('detail-content').innerHTML = `
     <div class="gd-section">Relationship settings</div>
@@ -3631,7 +3647,7 @@ function esc(s) {
 }
 
 function setDetailTitle(text) {
-  const el = document.getElementById('detail-title');
+  const el = document.getElementById('drawer-title');
   if (!el) return;
   el.textContent = text || 'Properties';
   el.title = text || 'Properties';
@@ -3808,7 +3824,7 @@ window.confirmProp = async function(entityName, colName) {
     entity_name: entityName, column_name: colName,
   });
   setStatus(`Field ${colName} confirmed → synced to semantic layer at 100% ✓`);
-  document.getElementById('sync-badge').style.display = '';
+  document.getElementById('drawer-sync-badge').style.display = '';
   renderEntityDetail(entityName);
 };
 
@@ -4708,12 +4724,64 @@ window.deduplicateRelationships = async function() {
   setStatus(`Removed ${deleted} duplicate relationship${deleted !== 1 ? 's' : ''} ✓`);
 };
 
+// ════════════════════════════════════════════════════════════════════════════
+// DRAWER — expand / resize
+// ════════════════════════════════════════════════════════════════════════════
+function toggleDrawerExpand() {
+  const shell = document.querySelector('.graph-shell');
+  const isExp = shell.classList.toggle('drawer-expanded');
+  const btn = document.getElementById('gd-expand-btn');
+  if (btn) { btn.title = isExp ? 'Collapse' : 'Expand'; btn.textContent = isExp ? '⤡' : '⤢'; }
+}
+
+// Drag-resize: drag the resize handle to set drawer height
+(function _initDrawerResize() {
+  const handle = document.getElementById('gd-resize-handle');
+  if (!handle) return;
+  let startY = 0, startH = 0;
+  const MIN_H = 180, MAX_H = 620;
+  handle.addEventListener('mousedown', function(e) {
+    e.preventDefault();
+    const drawer = document.getElementById('graph-drawer');
+    startY = e.clientY;
+    startH = drawer ? drawer.offsetHeight : 300;
+    function onMove(ev) {
+      if (!drawer) return;
+      const newH = Math.min(MAX_H, Math.max(MIN_H, startH - (ev.clientY - startY)));
+      drawer.style.height = newH + 'px';
+      // Remove class-driven heights while dragging so they don't override
+      document.querySelector('.graph-shell').classList.remove('drawer-expanded');
+    }
+    function onUp() {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    }
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+})();
+
+// ════════════════════════════════════════════════════════════════════════════
+// SIDEBAR — collapse toggle
+// ════════════════════════════════════════════════════════════════════════════
+function toggleSidebar() {
+  const sb = document.querySelector('.graph-sidebar');
+  const btn = document.getElementById('gs-collapse-btn');
+  const collapsed = sb.classList.toggle('collapsed');
+  if (btn) { btn.title = collapsed ? 'Expand sidebar' : 'Collapse sidebar'; btn.textContent = collapsed ? '▶' : '◀'; }
+  try { localStorage.setItem('qb_graph_sidebar_collapsed', collapsed ? '1' : '0'); } catch(_) {}
+}
+
 // Init
 loadSchemaTables();
 _rebuildSchemaFilterDropdown();
 if (activeSchemaFilter) {
   document.getElementById('schema-filter').value = activeSchemaFilter;
 }
+// Restore sidebar collapse state
+try {
+  if (localStorage.getItem('qb_graph_sidebar_collapsed') === '1') toggleSidebar();
+} catch(_) {}
 renderGraph();    // respects activeSchemaFilter (hides other schema nodes)
 updateSidebar();  // filters sidebar entity list to active schema
 updateRelList();  // filters rel list to active schema
