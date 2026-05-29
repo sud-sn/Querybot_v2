@@ -2252,6 +2252,45 @@ function renderEntityDetail(name, forceTab) {
 
   // Choose tab: forceTab → caller override, else _detailTab (sticky), default 'joins'
   const activeTab = forceTab || _detailTab || 'joins';
+  const initialRelCount = graph.relationships.filter(
+    r => r.from_entity === name || r.to_entity === name
+  ).length;
+  const initialTabBar = document.getElementById('detail-tab-bar');
+  initialTabBar.style.display = 'flex';
+  initialTabBar.innerHTML = `
+    <div class="gd-tab ${activeTab==='info'?'active':''}" onclick="switchEntityTab('info','${esc(name)}')">Overview</div>
+    <div class="gd-tab ${activeTab==='joins'?'active':''}" onclick="switchEntityTab('joins','${esc(name)}')">
+      Joins <span class="gd-tab-badge">${initialRelCount}</span>
+    </div>
+    <div class="gd-tab ${activeTab==='fields'?'active':''}" onclick="switchEntityTab('fields','${esc(name)}')">
+      Fields <span class="gd-tab-badge">...</span>
+    </div>
+  `;
+  document.getElementById('detail-content').innerHTML = `
+    ${_entitySummaryCards(e, initialRelCount, 0)}
+    <div class="gd-tab-pane ${activeTab==='joins'?'active':''}" id="det-pane-joins">
+      ${_buildJoinsPaneContent(name)}
+    </div>
+    <div class="gd-tab-pane ${activeTab==='fields'?'active':''}" id="det-pane-fields">
+      <div class="gd-section">Field roles</div>
+      <div class="gd-body">
+        <div style="font-size:12px;color:var(--text-muted);line-height:1.5">Loading fields...</div>
+      </div>
+    </div>
+    <div class="gd-tab-pane ${activeTab==='info'?'active':''}" id="det-pane-info">
+      <div class="gd-section">Entity settings</div>
+      <div class="gd-body">
+        <div class="gd-form-row">
+          <div><label class="gd-label">Display name</label><input class="gd-input" id="de-display-name" value="${esc(e.display_name||'')}"></div>
+          <div><label class="gd-label">Type</label><input class="gd-input" value="${esc(e.entity_type||'')}" disabled></div>
+        </div>
+        <div class="gd-form-row">
+          <div><label class="gd-label">Schema</label><input class="gd-input" value="${esc(e.schema_name||'')}" disabled></div>
+          <div><label class="gd-label">Table</label><input class="gd-input" value="${esc(e.table_name||'')}" disabled></div>
+        </div>
+      </div>
+    </div>
+  `;
 
   fetch(`${API_BASE}/properties/${name}`)
     .then(r => r.json())
