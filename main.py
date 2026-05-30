@@ -766,6 +766,17 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
         pinned    = [d for d in relevant_kbs if retriever._is_global(d)]
         table_kbs = [d for d in relevant_kbs if not retriever._is_global(d)]
 
+        # When the user has locked a specific schema, filter global docs (join maps /
+        # business vocab) to only those that reference the selected schema. This stops
+        # column names from other schemas bleeding into the prompt context.
+        if schema_hint and pinned:
+            _sh_upper = schema_hint.upper()
+            pinned = [
+                d for d in pinned
+                if _sh_upper in d.upper()           # doc mentions the selected schema
+                or "BUSINESS VOCABULARY" in d.upper()  # generic vocab — keep always
+            ]
+
         if _grouping:
             fact_patterns = retriever.retrieve_fact_patterns(
                 question, n=2, allowed_tables=rag_filter,
@@ -838,9 +849,17 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
     selected_schema_injection = ""
     if schema_hint:
         selected_schema_injection = (
-            f"ACTIVE SCHEMA: The user selected the {schema_hint} schema in the chat UI. "
-            "Use only tables from this schema. If a table is referenced, qualify it "
-            f"with the {schema_hint} schema in the generated SQL."
+            f"ACTIVE SCHEMA LOCK — {schema_hint}:\n"
+            f"The user has explicitly locked the query to the {schema_hint} schema.\n"
+            f"MANDATORY RULES:\n"
+            f"1. Use ONLY tables and columns that belong to the {schema_hint} schema.\n"
+            f"2. NEVER use column names from any other schema (e.g. if a column name appears "
+            f"in a different schema's documents it is FORBIDDEN here — do not copy it).\n"
+            f"3. Every column name you write MUST appear verbatim in the Knowledge Base "
+            f"documents provided in this prompt.\n"
+            f"4. If the user asks for a concept (e.g. 'revenue') and you cannot find its "
+            f"exact column name in the {schema_hint} KB documents, return CANNOT_GENERATE "
+            f"and explain which column is missing — NEVER borrow a name from another schema."
         )
 
     # Scan already-retrieved KB for Business Synonyms / Key Metrics → compact map.
@@ -1210,15 +1229,38 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
         else:
             validation_repair_note = ""
             if last_code == "unknown_column":
-                validation_repair_note = (
-                    "\nUNKNOWN COLUMN REPAIR RULE:\n"
-                    "- The SQL used a column on a table where that column does not exist.\n"
-                    "- If the validator lists 'Exact column exists on', switch the source table "
-                    "or add the required JOIN to that table.\n"
-                    "- Do not keep the same table alias and do not retry the same invalid column/table pair.\n"
-                    "- If no exact column exists anywhere in the KB context, use the closest exact "
-                    "business synonym/column from the KB or return CANNOT_GENERATE.\n"
+                # When a schema is locked, "switch to the table where the column exists" is
+                # wrong if that table lives in a different schema — detect this and override
+                # the repair instruction so the LLM stays in the selected schema.
+                _cross_schema = (
+                    schema_hint
+                    and "Exact column exists on" in last_reason
+                    and schema_hint.upper() not in last_reason.upper().split(
+                        "Exact column exists on"
+                    )[1][:120]   # check the first 120 chars of the "exists on" suffix
                 )
+                if _cross_schema:
+                    validation_repair_note = (
+                        f"\nSCHEMA-LOCKED COLUMN REPAIR RULE:\n"
+                        f"- The column you used does NOT exist in the {schema_hint} schema.\n"
+                        f"- The validator found it in a DIFFERENT schema — you are FORBIDDEN "
+                        f"from using that table or column.\n"
+                        f"- Search the {schema_hint} Knowledge Base documents in this prompt "
+                        f"for the correct column that represents the same concept.\n"
+                        f"- If no matching column exists in {schema_hint}, return CANNOT_GENERATE "
+                        f"and state exactly which column is missing from the {schema_hint} schema.\n"
+                        f"- Do NOT copy column names from other schemas under any circumstance.\n"
+                    )
+                else:
+                    validation_repair_note = (
+                        "\nUNKNOWN COLUMN REPAIR RULE:\n"
+                        "- The SQL used a column on a table where that column does not exist.\n"
+                        "- If the validator lists 'Exact column exists on', switch the source table "
+                        "or add the required JOIN to that table.\n"
+                        "- Do not keep the same table alias and do not retry the same invalid column/table pair.\n"
+                        "- If no exact column exists anywhere in the KB context, use the closest exact "
+                        "business synonym/column from the KB or return CANNOT_GENERATE.\n"
+                    )
             elif last_code == "anti_join_shape":
                 validation_repair_note = (
                     "\nANTI-JOIN REPAIR RULE:\n"
