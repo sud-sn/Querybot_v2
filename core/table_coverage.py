@@ -166,6 +166,17 @@ def build_required_fqns(graph_ctx: dict, full_graph: dict) -> set[str]:
     Returns an empty set when:
       - graph_ctx["enabled"] is False (no graph configured / no entities detected)
       - No entity has a table_name configured in the admin panel
+
+    Expansion rule — FACT table injection:
+      If the detected entities are ALL dimension-type (no fact entity was
+      matched by the question), the resolver won't include the fact table
+      in `detected` even though any aggregate query (revenue, count, sum)
+      needs it.  We therefore expand the required set by one level: for
+      every detected entity, also include entities that are directly
+      connected to it in the graph relationships where the *other* entity
+      has entity_type="fact".  This guarantees the fact table's KB doc
+      (with its revenue/metric columns) is always in the prompt context
+      for aggregate queries.
     """
     if not graph_ctx.get("enabled"):
         return set()
@@ -174,27 +185,69 @@ def build_required_fqns(graph_ctx: dict, full_graph: dict) -> set[str]:
         e["entity_name"]: e
         for e in (full_graph.get("entities") or [])
     }
+    relationships = full_graph.get("relationships") or []
 
-    required: set[str] = set()
-    for ent_name in graph_ctx.get("detected", []):
-        ent = entities_map.get(ent_name, {})
+    def _fqn_for(ent: dict) -> str | None:
         tbl = (ent.get("table_name") or "").strip().upper()
         sch = (ent.get("schema_name") or "").strip().upper()
         db  = (ent.get("database") or "").strip().upper()
-
         if not tbl:
+            return None
+        if db and sch:
+            return f"{db}.{sch}.{tbl}"
+        if sch:
+            return f"{sch}.{tbl}"
+        return tbl
+
+    detected = set(graph_ctx.get("detected", []))
+    required: set[str] = set()
+
+    for ent_name in detected:
+        ent = entities_map.get(ent_name, {})
+        fqn = _fqn_for(ent)
+        if not fqn:
             log.debug(
                 "build_required_fqns: entity %r has no table_name configured — skipped",
                 ent_name,
             )
             continue
+        required.add(fqn)
 
-        if db and sch:
-            required.add(f"{db}.{sch}.{tbl}")
-        elif sch:
-            required.add(f"{sch}.{tbl}")
-        else:
-            required.add(tbl)
+    # ── Expansion: add directly-connected FACT tables if none detected ────────
+    # Queries like "revenue by prescriber" hit DIM entities only; the fact
+    # table that holds the revenue column is connected via JOIN relationships
+    # but never shows up in `detected`.  Include it so the LLM sees its columns.
+    detected_types = {
+        entities_map.get(n, {}).get("entity_type", "dimension").lower()
+        for n in detected
+    }
+    all_facts_detected = all(t == "fact" for t in detected_types) if detected_types else True
+    if not all_facts_detected:          # at least one DIM detected, no fact
+        fact_names_added: set[str] = set()
+        for rel in relationships:
+            from_e = rel.get("from_entity", "")
+            to_e   = rel.get("to_entity", "")
+            # A relationship where one side is detected and the other is a fact
+            for candidate in (from_e, to_e):
+                partner = to_e if candidate == from_e else from_e
+                if partner in detected:
+                    candidate_ent = entities_map.get(candidate, {})
+                    if candidate_ent.get("entity_type", "").lower() == "fact":
+                        fqn = _fqn_for(candidate_ent)
+                        if fqn and candidate not in fact_names_added:
+                            required.add(fqn)
+                            fact_names_added.add(candidate)
+                            log.debug(
+                                "build_required_fqns: expanding to fact entity %r "
+                                "(%s) — connected to detected %r",
+                                candidate, fqn, partner,
+                            )
+        if fact_names_added:
+            log.info(
+                "build_required_fqns: injected %d fact table(s) via relationship "
+                "expansion: %s",
+                len(fact_names_added), sorted(fact_names_added),
+            )
 
     return required
 

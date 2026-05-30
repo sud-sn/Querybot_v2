@@ -766,17 +766,6 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
         pinned    = [d for d in relevant_kbs if retriever._is_global(d)]
         table_kbs = [d for d in relevant_kbs if not retriever._is_global(d)]
 
-        # When the user has locked a specific schema, filter global docs (join maps /
-        # business vocab) to only those that reference the selected schema. This stops
-        # column names from other schemas bleeding into the prompt context.
-        if schema_hint and pinned:
-            _sh_upper = schema_hint.upper()
-            pinned = [
-                d for d in pinned
-                if _sh_upper in d.upper()           # doc mentions the selected schema
-                or "BUSINESS VOCABULARY" in d.upper()  # generic vocab — keep always
-            ]
-
         if _grouping:
             fact_patterns = retriever.retrieve_fact_patterns(
                 question, n=2, allowed_tables=rag_filter,
