@@ -48,34 +48,59 @@
 <body>
 
 {% if user %}
-<nav class="topbar" role="navigation" aria-label="Portal navigation">
-  <span class="topbar-brand">Query<span>Bot</span></span>
+<div class="portal-app-shell">
+  <aside class="portal-sidebar" aria-label="Portal navigation">
+    <a href="/portal/dashboard" class="portal-brand" aria-label="QueryBot dashboard">
+      <span class="portal-brand-mark">Q</span>
+      <span>Query<span>Bot</span></span>
+    </a>
 
-  <div class="topbar-nav">
-    <a href="/portal/dashboard" class="{% if 'dashboard' in request.url.path %}active{% endif %}">Dashboard</a>
-    <a href="/portal/kb"        class="{% if '/kb' in request.url.path %}active{% endif %}">Semantic Layer</a>
-    <a href="/portal/chat"      class="{% if '/chat' in request.url.path %}active{% endif %}">{{ ic("chat", 16) }} Chat</a>
-  </div>
+    <nav class="portal-nav">
+      <a href="/portal/dashboard" class="{% if 'dashboard' in request.url.path %}active{% endif %}">
+        {{ ic("dashboard", 17) }} <span>Dashboard</span>
+      </a>
+      <a href="/portal/kb" class="{% if '/kb' in request.url.path %}active{% endif %}">
+        {{ ic("database", 17) }} <span>Semantic Layer</span>
+      </a>
+      <a href="/portal/chat" class="{% if '/chat' in request.url.path %}active{% endif %}">
+        {{ ic("chat", 17) }} <span>Chat</span>
+      </a>
+    </nav>
 
-  <div class="topbar-right">
-    <button type="button" class="theme-toggle" data-theme-toggle onclick="window.__qbToggleTheme()">
+    <div class="portal-sidebar-spacer"></div>
+
+    <button type="button" class="theme-toggle portal-theme-toggle" data-theme-toggle onclick="window.__qbToggleTheme()">
       <span class="ti-moon">{{ ic("moon", 16) }}</span>
       <span class="ti-sun">{{ ic("sun", 16) }}</span>
       <span class="theme-label">Dark mode</span>
     </button>
 
-    <div class="topbar-user">
+    <div class="portal-user-card">
       <div class="avatar" aria-hidden="true">{{ (user.name or 'U')[0].upper() }}</div>
-      <div>
+      <div class="portal-user-meta">
         <div class="topbar-user-name">{{ user.name }}</div>
-        <div class="topbar-user-role">{{ user.group_name or 'No group' }} · {{ user.role }}</div>
+        <div class="topbar-user-role">{{ user.group_name or 'No group' }} &middot; {{ user.role }}</div>
       </div>
     </div>
 
-    <a href="/portal/change-password" class="btn btn-secondary btn-sm">{{ ic("settings", 14) }} Settings</a>
-    <a href="/portal/logout"          class="btn btn-secondary btn-sm">Logout</a>
-  </div>
-</nav>
+    <div class="portal-side-actions">
+      <a href="/portal/change-password" class="btn btn-secondary btn-sm">{{ ic("settings", 14) }} Settings</a>
+      <a href="/portal/logout" class="btn btn-secondary btn-sm">Logout</a>
+    </div>
+  </aside>
+
+  <div class="portal-app-main">
+    <header class="portal-mobile-bar">
+      <a href="/portal/dashboard" class="portal-brand">
+        <span class="portal-brand-mark">Q</span>
+        <span>Query<span>Bot</span></span>
+      </a>
+      <div class="portal-mobile-nav">
+        <a href="/portal/dashboard" class="{% if 'dashboard' in request.url.path %}active{% endif %}">{{ ic("dashboard", 16) }}</a>
+        <a href="/portal/kb" class="{% if '/kb' in request.url.path %}active{% endif %}">{{ ic("database", 16) }}</a>
+        <a href="/portal/chat" class="{% if '/chat' in request.url.path %}active{% endif %}">{{ ic("chat", 16) }}</a>
+      </div>
+    </header>
 {% endif %}
 
 <div class="main">
@@ -84,6 +109,11 @@
 </div>
 
 {# ── Confirm / alert dialog ── #}
+{% if user %}
+  </div>
+</div>
+{% endif %}
+
 <div id="qbDialogBackdrop" class="qb-dialog-backdrop" style="display:none" role="dialog" aria-modal="true" aria-labelledby="qbDialogTitle">
   <div class="qb-dialog">
     <div class="qb-dialog-header">
