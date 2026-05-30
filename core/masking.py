@@ -52,6 +52,18 @@ _PII_PATTERNS: list[tuple[str, str]] = [
      r"fiscal[_\s]?id|passport", "ssn"),
     # Financial card numbers
     (r"credit[_\s]?card|card[_\s]?no|card[_\s]?num|pan\b", "credit_card"),
+    # Payment aliases (PCI) — tokens, bank account / routing identifiers
+    (r"payment[_\s]?token|payment[_\s]?method[_\s]?id|"
+     r"account[_\s]?number|acct[_\s]?no|iban|"
+     r"routing[_\s]?(?:number|num|no)", "credit_card"),
+    # Healthcare / provider identifiers (PHI) — treat as government-ID class
+    (r"\bmrn\b|medical[_\s]?record[_\s]?(?:number|num|no|id|#)?", "ssn"),
+    (r"\bnpi\b|national[_\s]?provider[_\s]?id|provider[_\s]?(?:number|num|id)", "ssn"),
+    (r"\bdea\b|dea[_\s]?(?:number|num|id)", "ssn"),
+    (r"(?:pharmacy|prescriber|provider|state)[_\s]?licen[sc]e|"
+     r"licen[sc]e[_\s]?(?:number|num|no)", "ssn"),
+    (r"policy[_\s]?(?:number|num|no|id)|member[_\s]?id|"
+     r"subscriber[_\s]?id|group[_\s]?(?:number|num|id)", "ssn"),
     # Contact
     (r"email|e[_\s]mail", "email"),
     (r"phone|mobile|cell\b|tel\b|fax", "phone"),
@@ -78,7 +90,9 @@ _PII_PATTERNS: list[tuple[str, str]] = [
     (r"\bnotes?\b|\bcomments?\b|\bremarks?\b|description|narrative|"
      r"\bmemo\b|\bmessage\b|address_line|reason_text|feedback|"
      r"\binstructions?\b|\bsummary\b|\btranscript\b|\bdetails?\b|"
-     r"\bbody\b|text_field|\bcontent\b|\bfreetext\b|free[_\s]?text",
+     r"\bbody\b|text_field|\bcontent\b|\bfreetext\b|free[_\s]?text|"
+     r"clinical[_\s]?notes?|chief[_\s]?complaint|diagnosis[_\s]?text|"
+     r"\bobservations?\b|\bassessment\b|note[_\s]?text|\breason\b",
      "free_text"),
 ]
 
@@ -133,6 +147,64 @@ _RE_PHONE_FMT = re.compile(r"^\+?[\d\s\-\(\)\.]{7,20}$")
 def _is_phone_like(v: str) -> bool:
     digit_count = sum(c.isdigit() for c in v)
     return 7 <= digit_count <= 15 and bool(_RE_PHONE_FMT.match(v))
+
+
+# ── Embedded-PII scrubbing (defense-in-depth for free-text values) ─────────────
+# Non-anchored (substring) patterns used to strip PII that is *embedded inside*
+# a larger free-text value (e.g. a clinical note that mentions a patient's name,
+# email, phone, SSN or date of birth). Applied as a final safety net to string
+# columns that were NOT otherwise masked, so narrative content that escapes
+# name/type heuristics cannot carry raw identifiers to the LLM.
+_RE_EMAIL_SUB = re.compile(r"[\w.+\-]+@[\w\-]+\.[\w.]{2,}")
+_RE_SSN_SUB   = re.compile(r"\b\d{3}-\d{2}-\d{4}\b")
+# Phone: require separators so we don't clobber plain numeric IDs.
+_RE_PHONE_SUB = re.compile(
+    r"(?<!\d)(?:\+\d{1,3}[\s\-]?)?(?:\(\d{3}\)\s?|\d{3}[\s\-.])\d{3}[\s\-.]\d{4}(?!\d)"
+)
+# ISO-style date (often a DOB when embedded in clinical narrative).
+_RE_DATE_SUB  = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
+
+
+def scrub_embedded_pii(text: str) -> str:
+    """
+    Redact PII tokens embedded inside a free-text string.
+
+    Replaces emails, SSNs, phone numbers and ISO dates with bracketed
+    placeholders. Order matters: email before phone (an email's domain can
+    contain digits), SSN before generic date.
+    """
+    if not text or not isinstance(text, str):
+        return text
+    t = _RE_EMAIL_SUB.sub("[EMAIL]", text)
+    t = _RE_SSN_SUB.sub("[SSN]", t)
+    t = _RE_PHONE_SUB.sub("[PHONE]", t)
+    t = _RE_DATE_SUB.sub("[DATE]", t)
+    return t
+
+
+def scrub_unmasked_free_text(
+    rows: list[dict],
+    columns: list[dict],
+    skip_fields: set[str],
+) -> list[dict]:
+    """
+    Final safety net: scrub embedded PII from narrative string values in
+    columns that were NOT already masked.
+
+    Only touches string values that look like free text (contain whitespace and
+    are reasonably long), so short codes / identifiers are left intact. Mutates
+    and returns the same row dicts (rows are short-lived discovery samples).
+    """
+    if not rows:
+        return rows
+    skip = {f for f in (skip_fields or set())}
+    for row in rows:
+        for field, val in row.items():
+            if field in skip:
+                continue
+            if isinstance(val, str) and len(val) > 12 and " " in val:
+                row[field] = scrub_embedded_pii(val)
+    return rows
 
 
 def _luhn_check(n: str) -> bool:

@@ -557,6 +557,17 @@ def build_action_contract(
     elif action == "predict":
         contract["task"] = "Project the next returned period from the observed series only."
         contract["time_series_stats"] = payload.get("time_series_stats", {})
+    elif action == "decide":
+        contract["task"] = (
+            "Frame an advisory decision brief from the returned result: the key "
+            "finding, why it matters, ONE recommended next step to investigate, and "
+            "what to verify before acting. Never claim causation or prescribe a "
+            "business decision."
+        )
+        contract["comparison_stats"]   = payload.get("comparison_stats", {})
+        contract["distribution_stats"] = payload.get("distribution_stats", {})
+        contract["time_series_stats"]  = payload.get("time_series_stats", {})
+        contract["safe_next_steps"]    = semantics.get("safe_next_steps", [])
 
     if follow_up:
         contract["follow_up"] = follow_up
@@ -703,6 +714,29 @@ def build_insight_prompt_from_contract(
             "leading status next period, with Late staying within a similar range. "
             "Confidence is moderate because day-to-day variation is still visible in the series.'\n"
             "Always frame as directional estimate, never a hard promise.\n"
+        )
+
+    elif action == "decide":
+        system = base_rules + (
+            "\nTASK — RECOMMEND NEXT STEP (advisory decision brief):\n"
+            "You are a decision-support analyst. You surface findings and suggested "
+            "checks. You NEVER tell the user what business decision to make, and you "
+            "NEVER claim a cause is proven.\n"
+            "Produce an advisory decision brief with this exact structure:\n\n"
+            "HEADLINE: The single decision-relevant finding, in one sentence.\n"
+            "BODY: 2-3 sentences — what the result implies for the business, framed as "
+            "observation not instruction (use hedged language: 'may indicate', "
+            "'worth checking'). End with the scope note verbatim.\n"
+            "DETAIL:\n"
+            "  - Finding: the strongest signal, taken only from the stats provided\n"
+            "  - Implication: what it could mean for a decision (hedged, not asserted)\n"
+            "  - Risk/caveat: the main reason NOT to over-read this result\n"
+            "NEXT: ONE concrete, safe step to verify or drill into BEFORE acting.\n\n"
+            "Example style: 'Revenue is concentrated in a handful of accounts, which "
+            "may expose the book to churn risk. Before reallocating effort, confirm "
+            "whether the concentration reflects a few large contracts or a reporting "
+            "artifact.'\n"
+            "Frame everything as a recommendation to investigate — never as a directive.\n"
         )
 
     else:
@@ -1050,6 +1084,7 @@ async def generate_insight(
         "compare": "Compare periods",
         "predict": "Predict next period",
         "why": "Why this pattern?",
+        "decide": "Recommended next step",
     }
 
     return {

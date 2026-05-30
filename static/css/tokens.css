@@ -101,6 +101,27 @@
   --code-bg:   #0F172A;
   --code-text: #E2E8F0;
   --row-hover: #EFF6FF;
+
+  /* ── Z-index scale (single source of truth for stacking) ── */
+  --z-base:     1;
+  --z-dropdown: 100;
+  --z-sticky:   200;
+  --z-overlay:  1000;
+  --z-modal:    8000;
+  --z-toast:    9000;
+
+  /* ── Motion ── */
+  --ease-out: cubic-bezier(.4, 0, .2, 1);
+  --t-fast:   .12s;
+  --t-med:    .22s;
+  --t-slow:   .35s;
+
+  /* ── Focus ring (single source of truth) ── */
+  --focus-ring: 0 0 0 3px color-mix(in srgb, var(--primary) 28%, transparent);
+
+  /* ── Skeleton shimmer surfaces ── */
+  --skeleton-base:  color-mix(in srgb, var(--bg-muted) 70%, var(--surface));
+  --skeleton-shine: color-mix(in srgb, var(--surface) 88%, var(--bg-muted));
 }
 
 /* ── Dark mode overrides ── */
