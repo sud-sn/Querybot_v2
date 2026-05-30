@@ -100,6 +100,7 @@ def _apply_masking(
     explicit_fields: set[str],
     table_name: str,
     seed_key: str = "",
+    allow_unmasked: bool = False,
 ) -> tuple[list[dict], set[str], dict[str, str], bool]:
     """
     Centralised masking helper shared by all three DB backends.
@@ -124,8 +125,19 @@ def _apply_masking(
     """
     from core.masking import (
         detect_sensitive_columns, mask_rows, get_strategy_map,
-        scan_values_for_pii,
+        scan_values_for_pii, scrub_unmasked_free_text,
     )
+
+    # ── Guard: real, unmasked egress must be an explicit, logged opt-in ───────
+    # An admin setting mode="none" would ship raw production rows to the LLM.
+    # Unless the client has explicitly allowed it, downgrade to "auto" so PII
+    # detection still runs. (B4)
+    if mode == "none" and not allow_unmasked:
+        log.warning(
+            "schema: mode='none' requested for %s without allow_unmasked_kb — "
+            "downgrading to 'auto' to prevent raw PII egress", table_name,
+        )
+        mode = "auto"
 
     # Determine which fields to mask based on mode
     if mode == "none":
@@ -147,7 +159,7 @@ def _apply_masking(
     if not rows:
         # Fallback: fully synthetic rows (DB unreachable or empty table)
         log.info("schema: synthetic fallback for %s (DB read returned 0 rows)", table_name)
-        return generate_synthetic_sample(col_defs), set(), {}, True
+        return generate_synthetic_sample(col_defs, seed=seed_key), set(), {}, True
 
     # ── Value-based PII detection (auto mode only) ────────────────────────────
     # Scans actual sample values for emails, SSNs, credit cards, etc. that
@@ -189,6 +201,10 @@ def _apply_masking(
             "schema: masked %d field(s) in %s (mode=%s, value_scan=%d)",
             len(masked_fields), table_name, mode, len(value_strategy_overrides),
         )
+
+    # Final safety net: scrub embedded PII from any narrative string column that
+    # was NOT explicitly masked above (defense-in-depth). (B2)
+    rows = scrub_unmasked_free_text(rows, col_defs, masked_fields)
 
     return rows, masked_fields, replacement_map, False
 
@@ -845,6 +861,7 @@ def _discover_snowflake(cfg: dict, out: Path, allowed: set[str] | None = None, m
                 explicit_fields=set(_tbl_cfg.get("masked_fields", [])),
                 table_name=name,
                 seed_key=seed_key,
+                allow_unmasked=bool(_tbl_cfg.get("allow_unmasked_kb", False)),
             )
 
             # Strip raw distinct values for any column that is being masked.
@@ -1075,6 +1092,7 @@ def _discover_oracle(cfg: dict, out: Path, allowed: set[str] | None = None, mc: 
                 explicit_fields=set(_tbl_cfg.get("masked_fields", [])),
                 table_name=name,
                 seed_key=seed_key,
+                allow_unmasked=bool(_tbl_cfg.get("allow_unmasked_kb", False)),
             )
 
             # Strip raw distinct values for masked columns
@@ -1335,6 +1353,7 @@ def _discover_azure_sql(cfg: dict, out: Path, allowed: set[str] | None = None, m
                     explicit_fields=set(_tbl_cfg.get("masked_fields", [])),
                     table_name=name,
                     seed_key=seed_key,
+                    allow_unmasked=bool(_tbl_cfg.get("allow_unmasked_kb", False)),
                 )
 
                 # Strip raw distinct values for masked columns

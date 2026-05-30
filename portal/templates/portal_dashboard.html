@@ -137,7 +137,7 @@
       {% if chart.error %}
       <div class="chart-error"><div style="font-size:20px;margin-bottom:.5rem">⚠️</div><div style="font-weight:600;margin-bottom:4px">Chart could not refresh</div><div style="font-size:11px">{{ chart.error }}</div></div>
       {% elif chart.chart_json %}
-      <div class="chart-canvas" id="dashboard-chart-{{ chart.id }}" data-chart='{{ chart.chart_json|safe }}'></div>
+      <div class="chart-canvas" id="dashboard-chart-{{ chart.id }}" data-chart='{{ chart.chart_json|safe }}'><div class="skeleton skeleton-chart" data-chart-skeleton></div></div>
       {% else %}
       <div class="chart-error">No data returned for this query.</div>
       {% endif %}
@@ -326,6 +326,8 @@ function initDashboardChart(node) {
   const payload = JSON.parse(node.dataset.chart || '{}');
   if (!payload.rows || !payload.rows.length) return;
   if (payload.chart_id) window._dashPayloads[payload.chart_id] = payload;
+  // Clear the loading skeleton before ECharts mounts its canvas.
+  node.querySelector('[data-chart-skeleton]')?.remove();
   const existing = echarts.getInstanceByDom(node);
   if (existing) existing.dispose();
   const themeKey = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : null;

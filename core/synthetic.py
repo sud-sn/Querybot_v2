@@ -283,23 +283,44 @@ def _generate_value(col_name: str, col_type: str, row_index: int) -> Any:
         return f"VAL_{row_index + 1}"
 
 
-def generate_synthetic_sample(columns: list[dict], n_rows: int = 5) -> list[dict]:
+def generate_synthetic_sample(
+    columns: list[dict],
+    n_rows: int = 5,
+    seed: str = "",
+) -> list[dict]:
     """
     Generate n_rows of synthetic data matching the given column definitions.
 
     Args:
         columns : list of dicts with at minimum 'name' and 'type' keys
         n_rows  : number of synthetic rows to generate (default 5)
+        seed    : optional per-account seed (typically account_id). When set,
+                  generation is deterministic *within* an account but differs
+                  *across* accounts — so the same fake patient names are never
+                  reused across clients (avoids cross-client inference). When
+                  empty, generation is fully random per call (legacy behaviour).
 
     Returns:
         list of dicts — same structure as real DB rows but entirely fake
     """
-    rows = []
-    for i in range(n_rows):
-        row = {}
-        for col in columns:
-            col_name = col.get("name") or col.get("COLUMN_NAME") or "col"
-            col_type = col.get("type") or col.get("DATA_TYPE") or "VARCHAR"
-            row[col_name] = _generate_value(col_name, col_type, i)
-        rows.append(row)
-    return rows
+    _saved_state = None
+    if seed:
+        # Derive a stable 32-bit seed from the account key; save/restore the
+        # global RNG state so we don't perturb randomness elsewhere.
+        import hashlib
+        _saved_state = random.getstate()
+        _derived = int(hashlib.sha256(str(seed).encode("utf-8")).hexdigest()[:8], 16)
+        random.seed(_derived)
+    try:
+        rows = []
+        for i in range(n_rows):
+            row = {}
+            for col in columns:
+                col_name = col.get("name") or col.get("COLUMN_NAME") or "col"
+                col_type = col.get("type") or col.get("DATA_TYPE") or "VARCHAR"
+                row[col_name] = _generate_value(col_name, col_type, i)
+            rows.append(row)
+        return rows
+    finally:
+        if _saved_state is not None:
+            random.setstate(_saved_state)

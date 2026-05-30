@@ -321,7 +321,7 @@ body .main{max-width:none!important;padding:0!important;overflow:hidden;display:
 .rc-hint{padding:.55rem .9rem;font-size:11px;color:var(--text-muted);border-top:1px solid var(--border);background:color-mix(in srgb,var(--surface-2) 40%, transparent);line-height:1.55}
 .rc-scope-strip{display:flex;gap:.45rem;flex-wrap:wrap;padding:.6rem .9rem .15rem;background:color-mix(in srgb,var(--surface-2) 40%,transparent);border-top:1px solid var(--border)}
 .rc-scope-chip{display:inline-flex;align-items:center;gap:.35rem;padding:4px 8px;border-radius:999px;border:1px solid var(--border);background:var(--surface);font-size:10.5px;font-weight:800;color:var(--text-soft)}
-.action-row{display:flex;gap:.5rem;flex-wrap:wrap;margin-top:.2rem}.analysis-card{background:linear-gradient(180deg,color-mix(in srgb,var(--surface) 98%, var(--primary-soft) 2%),var(--surface));border:1px solid var(--border);border-radius:var(--radius);padding:1rem;box-shadow:var(--shadow)}.analysis-title{font-size:15px;font-weight:850;color:var(--text);margin-bottom:.4rem}.analysis-body{font-size:13px;line-height:1.7;color:var(--text)}.analysis-secondary{margin-top:.7rem;padding:.8rem .9rem;border-radius:var(--radius);background:var(--surface-2);border:1px solid var(--border);font-size:12px;line-height:1.65;color:var(--text-soft)}.analysis-list{margin:.8rem 0 0 1rem;color:var(--text);font-size:12px;line-height:1.7}.analysis-list li+li{margin-top:.35rem}.analysis-meta{margin-top:.45rem;font-size:11px;color:var(--text-muted)}
+.action-row{display:flex;gap:.5rem;flex-wrap:wrap;margin-top:.2rem}.analysis-card{background:linear-gradient(180deg,color-mix(in srgb,var(--surface) 98%, var(--primary-soft) 2%),var(--surface));border:1px solid var(--border);border-radius:var(--radius);padding:1rem;box-shadow:var(--shadow)}.analysis-title{font-size:15px;font-weight:850;color:var(--text);margin-bottom:.4rem}.analysis-body{font-size:13px;line-height:1.7;color:var(--text)}.analysis-secondary{margin-top:.7rem;padding:.8rem .9rem;border-radius:var(--radius);background:var(--surface-2);border:1px solid var(--border);font-size:12px;line-height:1.65;color:var(--text-soft)}.analysis-list{margin:.8rem 0 0 1rem;color:var(--text);font-size:12px;line-height:1.7}.analysis-list li+li{margin-top:.35rem}.analysis-meta{margin-top:.45rem;font-size:11px;color:var(--text-muted)}.analysis-next{margin-top:.8rem;padding:.7rem .85rem;border-radius:var(--radius);background:color-mix(in srgb,var(--primary-soft) 14%,var(--surface));border-left:3px solid var(--primary);font-size:12.5px;line-height:1.6;color:var(--text)}.analysis-next-label{display:block;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:var(--primary);margin-bottom:.2rem}
 .answer-headline{font-size:18px;font-weight:850;letter-spacing:0;color:var(--text);line-height:1.35;margin-bottom:.45rem}
 .answer-chip{display:inline-flex;align-items:center;gap:.4rem;padding:7px 10px;border-radius:999px;background:var(--surface-2);border:1px solid var(--border);font-size:11px;font-weight:800;color:var(--text-soft);margin-bottom:.8rem}
 .scope-badge{display:inline-flex;align-items:center;gap:.35rem;padding:6px 10px;border-radius:999px;background:color-mix(in srgb,var(--primary-soft) 24%, var(--surface));border:1px solid color-mix(in srgb,var(--primary) 18%, var(--border));font-size:11px;font-weight:800;color:var(--primary)}
@@ -380,6 +380,12 @@ body .main{max-width:none!important;padding:0!important;overflow:hidden;display:
 .insight-callout.warning{background:color-mix(in srgb,var(--warning-soft,#fef3c7) 55%,var(--surface));border:1px solid color-mix(in srgb,var(--warning,#f59e0b) 22%,transparent);color:var(--text)}
 .insight-callout.success{background:color-mix(in srgb,var(--success-soft,#d1fae5) 55%,var(--surface));border:1px solid color-mix(in srgb,var(--success,#10b981) 22%,transparent);color:var(--text)}
 .insight-callout.info{background:color-mix(in srgb,var(--primary-soft) 18%,var(--surface));border:1px solid color-mix(in srgb,var(--primary) 16%,transparent);color:var(--text)}
+/* ── Decision signal — deterministic 'so-what' line ── */
+.decision-signal{display:flex;align-items:flex-start;gap:.5rem;font-size:13px;font-weight:700;line-height:1.55;margin:.1rem 0 .85rem;padding:.6rem .85rem;border-radius:var(--radius);border:1px solid transparent}
+.decision-signal .ds-icon{font-size:14px;line-height:1.2;flex-shrink:0}
+.decision-signal.watch{background:color-mix(in srgb,var(--warning-soft,#fef3c7) 55%,var(--surface));border-color:color-mix(in srgb,var(--warning,#f59e0b) 28%,transparent);color:var(--text)}
+.decision-signal.positive{background:color-mix(in srgb,var(--success-soft,#d1fae5) 55%,var(--surface));border-color:color-mix(in srgb,var(--success,#10b981) 28%,transparent);color:var(--text)}
+.decision-signal.neutral{background:var(--surface-2);border-color:var(--border);color:var(--text-soft)}
 /* Schema selector tab bar */
 .schema-control-row{display:flex;align-items:center;justify-content:space-between;gap:.8rem;padding:.75rem 1.1rem;border-bottom:1px solid var(--border);background:linear-gradient(135deg,var(--surface-2),color-mix(in srgb,var(--surface) 90%,var(--primary-soft) 10%));flex-shrink:0}
 .schema-bar{display:flex;align-items:center;gap:.4rem;flex-wrap:wrap}
@@ -814,6 +820,27 @@ function setConnectionState(state, note){
   document.getElementById('connText').textContent = state;
   document.getElementById('connNote').textContent = note;
 }
+function _showSkeletonBubble(){
+  if (document.getElementById('skeletonBubble')) return;
+  const t = thread();
+  if (!t) return;
+  const div = document.createElement('div');
+  div.className = 'msg msg-bot';
+  div.id = 'skeletonBubble';
+  div.innerHTML =
+    '<div class="msg-avatar skeleton skeleton-avatar"></div>'
+    + '<div class="msg-content" style="flex:1">'
+    + '<div class="msg-bubble" style="background:var(--surface);border:1px solid var(--border);max-width:min(82%,560px)">'
+    + '<span class="skeleton skeleton-text sk-60"></span>'
+    + '<span class="skeleton skeleton-text"></span>'
+    + '<span class="skeleton skeleton-text sk-40"></span>'
+    + '</div></div>';
+  t.appendChild(div);
+  scrollBottom();
+}
+function _removeSkeletonBubble(){
+  document.getElementById('skeletonBubble')?.remove();
+}
 function setProcessing(active){
   processingActive = active;
   const row = document.getElementById('processingRow');
@@ -822,8 +849,10 @@ function setProcessing(active){
   const cm = document.getElementById('composerMascot');
   if (cm) cm.classList.toggle('ai-hidden', !!active);
   if (active) {
+    _showSkeletonBubble();
     startDoodle();
   } else {
+    _removeSkeletonBubble();
     stopDoodle();
     _resetStageSteps();
     // Restore composer mascot (reset to idle unless in error state)
@@ -1861,6 +1890,23 @@ function appendAssistantResponse(msg, opts = {}){
       ).join('')}</div>`
     : '';
 
+  // ── Decision signal — deterministic 'so-what' line (zero LLM) ─────────────
+  const ds = msg.decision_signal || {};
+  const dsIcon = { watch: '⚠', positive: '↑', neutral: '•' }[ds.tone] || '•';
+  const decisionSignalHtml = ds.line
+    ? `<div class="decision-signal ${escHtml(ds.tone || 'neutral')}">`
+      + `<span class="ds-icon">${dsIcon}</span><span>${escHtml(ds.line)}</span></div>`
+    : '';
+
+  // ── Decision actions — incl. on-demand "Recommend next step" (LLM) ────────
+  const nextActions = Array.isArray(msg.next_actions) ? msg.next_actions : [];
+  const nextActionsHtml = nextActions.length
+    ? nextActions.map(a =>
+        `<button class="msg-action" type="button" data-analysis-action="${escHtml(a.id)}"`
+        + ` data-analysis-label="${escHtml(a.label)}">${escHtml(a.label)}</button>`
+      ).join('')
+    : '';
+
   const pinBtnHtml = (hasChart && msg.chart.pin_token)
     ? '<button class="msg-action" type="button" data-pin="chart">📌 Pin to dashboard</button>'
     : '';
@@ -1899,11 +1945,13 @@ function appendAssistantResponse(msg, opts = {}){
           <div style="display:flex;flex-direction:column;gap:.45rem;align-items:flex-end">${scopeBadgeHtml}${chipHtml}</div>
         </div>
         ${insightSummaryHtml}
+        ${decisionSignalHtml}
         ${confidenceHtml}
         <div class="result-layout">
           ${anomalyCalloutsHtml}
           ${bodyHtml}
           <div class="msg-actions">
+            ${nextActionsHtml}
             <button class="msg-action" type="button" data-copy="result">Copy result</button>
             ${pinBtnHtml}
             <button class="rc-toggle" type="button" data-rc-toggle="${rcId}">💬 Ask about this result</button>
@@ -1999,6 +2047,18 @@ function appendAssistantResponse(msg, opts = {}){
       if (wsReady) sendSuggestion(btn);
     });
   });
+
+  // Wire decision / analysis action buttons (Explain, Analyze, Recommend next step…)
+  // Server resolves the action against the cached result — no new DB query runs.
+  div.querySelectorAll('[data-analysis-action]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      sendAnalysisAction(
+        btn.dataset.analysisAction,
+        msg.analysis_contract || {},
+        btn.dataset.analysisLabel || 'Analysis',
+      );
+    });
+  });
   if (opts.persist !== false) pushChatCache({ kind:'assistant_response', payload: msg, timestamp });
   scrollBottom();
 }
@@ -2010,13 +2070,13 @@ function appendAnalysisResponse(msg, opts = {}){
   const bullets = Array.isArray(msg.bullets) ? msg.bullets : [];
   const resultScope = msg.result_scope || {};
   const metaHtml = resultScope.badge ? `<div class="analysis-meta">Based on: ${escHtml(resultScope.badge)}${resultScope.note ? ` â€¢ ${escHtml(resultScope.note)}` : ''}</div>` : '';
-  div.innerHTML = `<div class="msg-avatar">Q</div><div class="msg-content"><div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timestamp}</span></div><div class="analysis-card"><div class="section-label">${escHtml(msg.action || 'analysis')}</div><div class="analysis-title">${escHtml(msg.title || 'Analysis')}</div><div class="analysis-body">${escHtml(msg.body || '')}</div>${msg.secondary ? `<div class="analysis-secondary">${escHtml(msg.secondary)}</div>` : ''}${bullets.length ? `<ul class="analysis-list">${bullets.map(b => `<li>${escHtml(b)}</li>`).join('')}</ul>` : ''}<div class="msg-actions" style="margin-top:.85rem"><button class="msg-action" type="button" data-copy="analysis">Copy analysis</button></div></div></div>`;
+  div.innerHTML = `<div class="msg-avatar">Q</div><div class="msg-content"><div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timestamp}</span></div><div class="analysis-card"><div class="section-label">${escHtml(msg.action || 'analysis')}</div><div class="analysis-title">${escHtml(msg.title || 'Analysis')}</div><div class="analysis-body">${escHtml(msg.body || '')}</div>${msg.secondary ? `<div class="analysis-secondary">${escHtml(msg.secondary)}</div>` : ''}${bullets.length ? `<ul class="analysis-list">${bullets.map(b => `<li>${escHtml(b)}</li>`).join('')}</ul>` : ''}${msg.next_step ? `<div class="analysis-next"><span class="analysis-next-label">Next step</span>${escHtml(msg.next_step)}</div>` : ''}<div class="msg-actions" style="margin-top:.85rem"><button class="msg-action" type="button" data-copy="analysis">Copy analysis</button></div></div></div>`;
   thread().appendChild(div);
   if (metaHtml) {
     div.querySelector('.analysis-body')?.insertAdjacentHTML('afterend', metaHtml);
   }
   div.querySelector('[data-copy="analysis"]')?.addEventListener('click', async (e) => {
-    const payload = [msg.title || '', msg.body || '', msg.secondary || '', ...(msg.bullets || [])].filter(Boolean).join('\n');
+    const payload = [msg.title || '', msg.body || '', msg.secondary || '', ...(msg.bullets || []), msg.next_step ? ('Next step: ' + msg.next_step) : ''].filter(Boolean).join('\n');
     const ok = await copyText(payload);
     const prev = e.currentTarget.textContent;
     e.currentTarget.textContent = ok ? 'Copied!' : 'Copy failed';

@@ -11,7 +11,7 @@
   <div class="card">
     <div class="card-body" style="padding:1.75rem">
       {% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
-      <form method="post" action="/portal/login">
+      <form method="post" action="/portal/login" data-loading>
         <div class="form-group">
           <label>Account ID</label>
           <input type="text" name="account_id" autofocus required

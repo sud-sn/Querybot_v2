@@ -26,8 +26,9 @@ code {
 button, input, select, textarea { font: inherit; }
 button:focus-visible, input:focus-visible, select:focus-visible,
 textarea:focus-visible, a:focus-visible {
-  outline: 3px solid color-mix(in srgb, var(--primary) 28%, transparent);
-  outline-offset: 2px;
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--radius-sm);
 }
 
 /* ── Cards ── */
@@ -871,3 +872,87 @@ html[data-theme='dark'] [style*="background:#DBEAFE"] {
   padding: 0; margin: -1px; overflow: hidden;
   clip: rect(0,0,0,0); white-space: nowrap; border: 0;
 }
+
+/* ============================================================
+   Skeleton loaders — shown while content is loading
+   ============================================================ */
+@keyframes qb-shimmer {
+  0%   { background-position: -468px 0; }
+  100% { background-position:  468px 0; }
+}
+.skeleton {
+  background: var(--skeleton-base);
+  background-image: linear-gradient(
+    90deg,
+    var(--skeleton-base) 0,
+    var(--skeleton-shine) 40px,
+    var(--skeleton-base) 80px
+  );
+  background-size: 600px 100%;
+  border-radius: var(--radius-sm);
+  animation: qb-shimmer 1.3s linear infinite;
+  display: block;
+}
+.skeleton-text   { height: 12px; margin: 6px 0; width: 100%; }
+.skeleton-text.sk-60 { width: 60%; }
+.skeleton-text.sk-40 { width: 40%; }
+.skeleton-title  { height: 18px; width: 45%; margin-bottom: 14px; border-radius: var(--radius-sm); }
+.skeleton-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 1rem;
+  box-shadow: var(--shadow);
+}
+.skeleton-chart { height: 220px; width: 100%; border-radius: var(--radius); }
+.skeleton-row   { height: 44px; width: 100%; margin-bottom: 8px; border-radius: var(--radius-sm); }
+.skeleton-avatar{ width: 38px; height: 38px; border-radius: var(--radius); flex-shrink: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton { animation: none; }
+}
+
+/* ============================================================
+   qb-table — reusable data table (sticky header, zebra rows)
+   ============================================================ */
+.qb-table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.qb-table { width: 100%; border-collapse: collapse; font-size: var(--font-sm); }
+.qb-table thead th {
+  position: sticky; top: 0; z-index: var(--z-base);
+  background: var(--surface-2);
+  text-align: left; font-weight: 800; color: var(--text-soft);
+  padding: .6rem .85rem; border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.qb-table tbody td { padding: .55rem .85rem; border-bottom: 1px solid var(--border); color: var(--text); }
+.qb-table tbody tr:nth-child(even) { background: color-mix(in srgb, var(--surface-2) 50%, var(--surface)); }
+.qb-table tbody tr:hover { background: var(--row-hover); }
+.qb-table tbody tr:last-child td { border-bottom: none; }
+.qb-table-empty { padding: 2rem 1rem; text-align: center; color: var(--text-muted); font-size: var(--font-sm); }
+
+/* ── Pagination ── */
+.qb-pagination { display: flex; align-items: center; gap: .35rem; margin-top: .85rem; flex-wrap: wrap; }
+.qb-pagination a, .qb-pagination span {
+  min-width: 30px; height: 30px; padding: 0 .5rem;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  font-size: var(--font-sm); font-weight: 700; color: var(--text-soft);
+  background: var(--surface); text-decoration: none; transition: all var(--t-fast) var(--ease-out);
+}
+.qb-pagination a:hover { border-color: var(--primary); color: var(--primary); }
+.qb-pagination .qb-page-current { background: var(--primary); border-color: var(--primary); color: #fff; }
+.qb-pagination .qb-page-disabled { opacity: .45; pointer-events: none; }
+
+/* ============================================================
+   qb-tip — CSS-only accessible tooltip
+   ============================================================ */
+.qb-tip { position: relative; display: inline-flex; align-items: center; cursor: help; }
+.qb-tip::after {
+  content: attr(data-tip);
+  position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%) translateY(4px);
+  background: var(--gray-900); color: #fff; font-size: var(--font-xs); font-weight: 600;
+  padding: 5px 8px; border-radius: var(--radius-sm); white-space: nowrap;
+  opacity: 0; pointer-events: none; transition: opacity var(--t-fast) var(--ease-out), transform var(--t-fast) var(--ease-out);
+  z-index: var(--z-dropdown); box-shadow: var(--shadow-md);
+}
+.qb-tip:hover::after, .qb-tip:focus-visible::after { opacity: 1; transform: translateX(-50%) translateY(0); }

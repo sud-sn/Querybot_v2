@@ -133,6 +133,29 @@
 })();
 </script>
 
+<script>
+// Button loading states — any <form data-loading> shows a spinner on its
+// submit button while the request is in flight. Purely visual; the native
+// submit still proceeds.
+(function(){
+  document.addEventListener('submit', function(e){
+    var form = e.target;
+    if (!form || !form.matches || !form.matches('form[data-loading]')) return;
+    if (form.dataset._qbSubmitting === '1') return;
+    var btn = form.querySelector('button[type="submit"], button:not([type]), input[type="submit"]');
+    if (btn) {
+      btn.classList.add('loading');
+      btn.disabled = true;
+      form.dataset._qbSubmitting = '1';
+      // Safety net: re-enable if we're still on the page after 12s
+      setTimeout(function(){
+        btn.classList.remove('loading'); btn.disabled = false; form.dataset._qbSubmitting = '';
+      }, 12000);
+    }
+  }, true);
+})();
+</script>
+
 {% if user %}
 <div class="portal-live-toast" id="portalLiveToast" role="status" aria-live="polite">
   <div class="portal-live-toast-title" id="portalLiveToastTitle">Semantic Layer updated</div>

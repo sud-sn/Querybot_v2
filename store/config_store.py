@@ -1246,6 +1246,16 @@ def log_kb_egress(
                            e.g. {"EMAIL": "email", "FIRST_NAME": "first_name"}
     """
     import json as _json
+    # Compliance alert: real, unmasked production rows leaving for the LLM is a
+    # high-signal event — surface it loudly so the audit row is paired with an
+    # operational alert, not just a silent DB write. (B4)
+    if sample_mode == "real":
+        log.critical(
+            "EGRESS ALERT: real unmasked sample rows sent to LLM — "
+            "account=%s table=%s op=%s rows=%d cols=%d triggered_by=%s",
+            account_id, table_name, operation, row_count_sent,
+            column_count, triggered_by,
+        )
     try:
         with get_db() as conn:
             conn.execute("""

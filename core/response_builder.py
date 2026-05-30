@@ -719,6 +719,13 @@ def _dynamic_actions(ctx: dict) -> list[dict]:
         ]
     else:
         actions = [{"id": "explain", "label": "Explain result"}]
+
+    # Decision-support action — advisory next-step recommendation.
+    # Offered for every shape that carries enough structure to reason about.
+    if mode in ("time_series", "ranking", "numeric_table") or (
+        mode == "single_value" and ctx.get("comparison")
+    ):
+        actions.append({"id": "decide", "label": "Recommend next step"})
     return actions
 
 
@@ -878,6 +885,85 @@ def _build_anomaly_callouts(brief: dict) -> list[dict]:
     return callouts[:3]
 
 
+def _build_decision_signal(ctx: dict, brief: dict, anomaly_callouts: list[dict]) -> dict:
+    """
+    Deterministic 'so-what' line — zero LLM, zero latency.
+
+    Turns the existing statistical brief + anomaly callouts into one
+    decision-oriented sentence the user can act on, plus a tone for UI colour.
+
+    Returns:
+        {"line": str, "tone": "watch"|"positive"|"neutral", "basis": str}
+        or {} when there is nothing decision-relevant to say.
+    """
+    mode = brief.get("mode") or ctx.get("mode", "table")
+
+    if mode == "ranking":
+        cat = brief.get("category_breakdown") or {}
+        leader_share = cat.get("leader_share_pct")
+        # concentration from numeric summaries (top-3)
+        conc = None
+        for _c, stats in (brief.get("numeric_summaries") or {}).items():
+            if stats.get("top_3_concentration_pct") is not None:
+                conc = stats["top_3_concentration_pct"]
+                break
+        top5 = cat.get("top_5") or []
+        leader = top5[0]["label"] if top5 else ""
+        if conc is not None and conc >= 80:
+            return {
+                "line": f"Top entries drive {conc:.0f}% of the total — concentration risk if any one is lost.",
+                "tone": "watch", "basis": "concentration",
+            }
+        if leader_share is not None and leader_share >= 50:
+            return {
+                "line": f"{leader} alone holds {leader_share:.0f}% of the total — a single point of dependency.",
+                "tone": "watch", "basis": "dominance",
+            }
+        if leader_share is not None:
+            return {
+                "line": f"Volume is spread across the field — no single entry exceeds {max(leader_share,1):.0f}%; broadly diversified.",
+                "tone": "positive", "basis": "spread",
+            }
+
+    if mode == "time_series":
+        ts = brief.get("time_series") or {}
+        direction = ts.get("direction", "stable")
+        pct = ts.get("overall_pct_change")
+        streak = ts.get("longest_decline_streak", 0)
+        if direction == "decreasing" and (streak >= 3 or (pct is not None and pct <= -10)):
+            return {
+                "line": f"Sustained downward trend ({pct:+.0f}% overall) — worth investigating before it compounds." if pct is not None
+                        else "Sustained downward trend — worth investigating before it compounds.",
+                "tone": "watch", "basis": "decline",
+            }
+        if direction == "increasing" and pct is not None and pct >= 10:
+            return {
+                "line": f"Momentum is building (+{pct:.0f}% overall) — confirm it is sustainable, not a one-off spike.",
+                "tone": "positive", "basis": "growth",
+            }
+        if direction == "stable":
+            return {
+                "line": "Metric is holding steady over the period — no urgent action indicated.",
+                "tone": "neutral", "basis": "stable",
+            }
+
+    if mode == "numeric_table":
+        outliers = [c for c in anomaly_callouts if c.get("type") == "outlier"]
+        if outliers:
+            return {
+                "line": "One or more values sit well above normal — review for data quality or a genuine signal before acting.",
+                "tone": "watch", "basis": "outlier",
+            }
+
+    if mode == "single_value":
+        # Restate with directional framing only if a comparison exists.
+        comp = ctx.get("comparison") or brief.get("comparison")
+        if comp:
+            return {"line": f"{comp} — factor this into the decision.", "tone": "neutral", "basis": "single"}
+
+    return {}
+
+
 def _why_it_matters(ctx: dict) -> str:
     mode = ctx.get("mode")
     if mode == "time_series":
@@ -1016,9 +1102,29 @@ def build_analysis_response(action: str, contract: dict) -> dict:
         else:
             body = "Prediction is only available when the result contains a clear time series with at least three periods."
 
+    elif action == "decide":
+        title = "Recommended next step"
+        # Deterministic advisory fallback (no LLM). Reuse the decision-signal
+        # rules so the static path still gives a useful, safe recommendation.
+        signal = _build_decision_signal(contract, contract, [])
+        if signal.get("line"):
+            body = signal["line"]
+        else:
+            body = ("This result is a useful starting point. Before acting, "
+                    "confirm the figures against a second cut of the data.")
+        bullets = [
+            "Finding: based only on the returned result, not external context.",
+            "Caveat: this is an advisory observation, not a directive.",
+        ]
+        secondary = scope.get("note", "Based on the returned rows.")
+
     else:
         title = "Analysis"
         body = "This follow-up action is not supported for the current result."
+
+    next_step = ""
+    if action == "decide":
+        next_step = "Re-run with a narrower filter or a second time window to verify before acting."
 
     return {
         "type": "assistant_analysis",
@@ -1027,6 +1133,7 @@ def build_analysis_response(action: str, contract: dict) -> dict:
         "body": body,
         "secondary": secondary,
         "bullets": bullets,
+        "next_step": next_step,
         "source_question": contract.get("question", ""),
         "mode": mode,
         "result_scope": scope,
@@ -1136,6 +1243,7 @@ def build_assistant_response(
     # These are computed entirely from statistics — no LLM call, no extra latency.
     insight_summary  = _build_insight_summary(rows, ctx, brief)
     anomaly_callouts = _build_anomaly_callouts(brief)
+    decision_signal  = _build_decision_signal(ctx, brief, anomaly_callouts)
 
     # Include the actual row data (bounded) so the frontend can render a table.
     # Frontend is the ONLY consumer of raw rows — LLM insight path never sees these.
@@ -1156,6 +1264,7 @@ def build_assistant_response(
         "chart": chart,
         "insight_summary": insight_summary,
         "anomaly_callouts": anomaly_callouts,
+        "decision_signal": decision_signal,
         "summary": {"executive_summary": ""},
         "next_actions": _dynamic_actions(ctx),
         "analysis_contract": ctx,
