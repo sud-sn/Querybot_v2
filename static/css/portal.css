@@ -18,7 +18,10 @@ body {
     var(--bg) 100%
   );
 }
-body:has(.portal-app-shell) { overflow: hidden; }
+body:has(.portal-app-shell) {
+  overflow: hidden;
+  display: block;
+}
 
 .portal-app-shell {
   width: 100vw;
