@@ -269,9 +269,12 @@ def _find_metric_formula_errors(sql: str, tree, semantic_context: dict | None, t
     # Restrict column tracking to SELECT expressions only (not WHERE / GROUP BY /
     # ORDER BY), so a column used only as a filter predicate does not satisfy the
     # formula-enforcement check — the formula must appear in the projection.
+    #
+    # IMPORTANT: scan ALL Select nodes, not just the first one. CTE queries place
+    # the approved metric formula inside a CTE's inner SELECT; tree.find() would
+    # only return the outer SELECT which never contains the formula columns.
     used_columns: set[str] = set()
-    select_node = tree.find(sg_exp.Select)
-    if select_node:
+    for select_node in tree.find_all(sg_exp.Select):
         for expr in select_node.expressions:
             for col_node in expr.find_all(sg_exp.Column):
                 col_name = (col_node.name or "").upper()
