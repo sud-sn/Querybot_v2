@@ -996,6 +996,16 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
         _semantic_plan = {}
         log.debug("Semantic field planning skipped: %s", _sp_exc)
 
+    # Build entity→schema lookup from the (possibly schema-filtered) full graph.
+    # Metrics have a base_entity field; this map lets metric_source_schemas() use
+    # the entity graph's schema_name directly — more reliable than parsing bare
+    # base_table names or matching required_columns against _schema.json.
+    _entity_schema_map: dict[str, str] = {
+        e["entity_name"]: (e.get("schema_name") or "").upper().strip()
+        for e in (_full_graph.get("entities") or [])
+        if (e.get("schema_name") or "").strip()
+    }
+
     # Metric scoping happens after graph + semantic planning so "revenue by
     # prescriber" can choose the Pharmacy revenue metric, while "revenue by
     # warehouse" can choose the Profitability metric.  In All-schema mode, a
@@ -1008,6 +1018,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
         graph_context=_graph_ctx,
         graph=_full_graph,
         semantic_plan=_semantic_plan,
+        entity_schema_map=_entity_schema_map or None,
         limit=6,
     )
     if _metric_scope.ambiguous and not is_clarification:
