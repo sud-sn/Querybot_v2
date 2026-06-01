@@ -4111,16 +4111,21 @@ async def admin_delete_kb_only(request: Request, account_id: str):
     state_data = json.loads(client.get("state_data") or "{}")
     kb_dir     = state_data.get("kb_dir", "")
 
-    # 1. Delete KB markdown files
+    # Resolve to absolute path so deletion works regardless of working directory
+    kb_path = Path(kb_dir).resolve() if kb_dir else None
+
+    # 1. Delete KB markdown and JSON files from disk
     deleted_files = 0
-    if kb_dir and Path(kb_dir).exists():
-        for f in Path(kb_dir).iterdir():
+    if kb_path and kb_path.exists():
+        for f in kb_path.iterdir():
             if f.is_file():
                 try:
                     f.unlink()
                     deleted_files += 1
                 except Exception as _e:
                     log.warning("Could not delete KB file %s: %s", f, _e)
+    else:
+        log.warning("delete-kb: kb_dir not found on disk (%s) — skipping file deletion", kb_dir)
 
     # 2. Clear Qdrant vectors for this account
     try:
@@ -4137,11 +4142,30 @@ async def admin_delete_kb_only(request: Request, account_id: str):
     except Exception as _e:
         log.warning("Could not clear validated_examples for %s: %s", account_id, _e)
 
-    # 4. Roll state back to SCHEMA_READY so the KB step shows as pending
-    from main import save_state
-    next_state = dict(state_data)
-    next_state.pop("kb_progress", None)
-    save_state(account_id, "SCHEMA_READY", next_state)
+    # 4. Clear KB-extracted business terms so stale terms don't survive a rebuild
+    try:
+        with _get_db() as _conn:
+            _conn.execute(
+                "DELETE FROM business_term WHERE account_id=? AND source='kb_extracted'",
+                (account_id,),
+            )
+        log.info("KB-extracted business terms cleared for %s", account_id)
+    except Exception as _e:
+        log.warning("Could not clear business_term for %s: %s", account_id, _e)
+
+    # 5. Roll state back to SCHEMA_READY so the KB step shows as pending
+    try:
+        from main import save_state
+        next_state = dict(state_data)
+        next_state.pop("kb_progress", None)
+        save_state(account_id, "SCHEMA_READY", next_state)
+    except Exception as _e:
+        log.error("delete-kb: save_state failed for %s: %s", account_id, _e)
+        # State update failed — redirect with warning rather than crashing
+        return RedirectResponse(
+            f"/admin/clients/{account_id}/setup?error={_quote('KB files deleted but state update failed. Refresh the page.')}",
+            status_code=303,
+        )
 
     log.info("KB deleted for %s: %d files removed", account_id, deleted_files)
     return RedirectResponse(
