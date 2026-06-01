@@ -48,11 +48,6 @@ def _table_schema(table: str) -> str:
     return parts[-2] if len(parts) >= 2 else ""
 
 
-def _bare_table(table: str) -> str:
-    parts = re.split(r"[.\[\]\"]+", (table or "").upper())
-    parts = [p for p in parts if p]
-    return parts[-1] if parts else ""
-
 
 def _metric_phrases(metric: dict[str, Any]) -> list[str]:
     phrases: list[str] = []
@@ -214,8 +209,12 @@ def resolve_metric_scope(
         )
 
     # Keep only the best metric when it is clearly ahead or schema context exists.
+    # The window of 8 points (one token overlap = 10pts, exact-phrase bonus ≥100pts)
+    # is intentionally tight: it admits a close second candidate so the LLM can
+    # pick between them, but does NOT admit a clearly weaker metric.
     best_score = scored[0][0]
-    chosen = [m for score, m, _ in scored if score >= best_score - 8]
+    _TIE_WINDOW = 8
+    chosen = [m for score, m, _ in scored if score >= best_score - _TIE_WINDOW]
     return MetricScopeResult(
         metrics=chosen[: max(1, int(limit or 6))],
         context_schemas=context_schemas,

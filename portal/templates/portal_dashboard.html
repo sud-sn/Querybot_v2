@@ -46,6 +46,8 @@
 .metric-progress.warning span{background:linear-gradient(90deg,var(--warning),var(--primary))}
 .metric-progress.blocked span{background:var(--danger)}
 @media (max-width: 640px){.chart-grid{grid-template-columns:1fr}.welcome-banner{flex-direction:column;align-items:flex-start}.chart-canvas{height:280px}.chart-card{min-height:360px}}
+/* Drag-to-reorder is not supported on touch-only devices */
+@media (hover: none) { .chart-drag-handle { display: none; } }
 </style>
 {% endblock %}
 {% block content %}
@@ -122,7 +124,7 @@
 </div>
 <div class="chart-grid">
   {% for chart in charts %}
-  <div class="chart-card" data-chart-id="{{ chart.id }}" draggable="true">
+  <div class="chart-card" data-chart-id="{{ chart.id }}">
     <div class="chart-card-header">
       <div style="flex:1;min-width:0">
         <div class="chart-card-title"
@@ -132,7 +134,7 @@
         <div class="chart-card-sub">{{ chart.row_count }} rows · {{ chart.last_refreshed[:16] if chart.last_refreshed else 'Just now' }}</div>
       </div>
       <div style="display:flex;gap:.5rem;flex-shrink:0;align-items:center">
-        <button type="button" class="chart-drag-handle" title="Drag to reorder" aria-label="Drag chart to reorder">⋮⋮</button>
+        <button type="button" class="chart-drag-handle" draggable="true" title="Drag to reorder" aria-label="Drag chart to reorder">⋮⋮</button>
         <button type="button" class="btn btn-xs btn-secondary"
           onclick="openChartModal(this.closest('.chart-card'))"
           title="Expand chart" style="font-size:12px;padding:4px 8px">⤢ Expand</button>
@@ -594,17 +596,18 @@ function closeChartModal() {
   }
 
   restoreOrder();
+  // Drag originates from the handle button (draggable="true" is on the button,
+  // not the card) — this avoids conflicting with contenteditable titles and lets
+  // text selection work normally on the rest of the card.
   cards().forEach(card => {
-    card.addEventListener('dragstart', e => {
-      if (!e.target.closest('.chart-drag-handle')) {
-        e.preventDefault();
-        return;
-      }
+    const handle = card.querySelector('.chart-drag-handle');
+    if (!handle) return;
+    handle.addEventListener('dragstart', e => {
       card.classList.add('dragging');
       e.dataTransfer.effectAllowed = 'move';
       e.dataTransfer.setData('text/plain', String(card.dataset.chartId || ''));
     });
-    card.addEventListener('dragend', () => {
+    handle.addEventListener('dragend', () => {
       card.classList.remove('dragging');
       cards().forEach(c => c.classList.remove('drag-over'));
       saveOrder();

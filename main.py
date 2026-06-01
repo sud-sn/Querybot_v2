@@ -1061,7 +1061,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                 account_id    = account_id,
                 required_fqns = _metric_formula_tables,
                 retrieved_docs = relevant_kbs,
-                rag_filter    = rag_filter,
+                rag_filter    = None,   # metric tables are admin-approved; bypass per-user ACL
                 max_fill      = 4,
             )
             if _mf_gap_docs:
