@@ -121,6 +121,28 @@ ERP_COLUMN_DICT: dict[str, tuple[str, list[str]]] = {
     "APRV": ("Approved",                   ["approved", "approval status", "authorised"]),
     "ARCD": ("AR Code",                    ["ar code", "accounts receivable code"]),
     "IVCL": ("Invoice Class",              ["invoice class"]),
+    # ── Revenue / SOP invoice columns (CUS_ORD_IVC_FCT) ─────────────────
+    # IMPORTANT: SOP_CUS_IVC_LIN_AMT is the approved revenue measure.
+    # The approved Revenue formula is:
+    #   SUM(CASE WHEN DEL_IVC_REC_IND = 0 THEN SOP_CUS_IVC_LIN_AMT ELSE 0 END)
+    # Do NOT use CUS_IVC_LIN_AMT as a substitute for revenue.
+    "SOP_CUS_IVC_LIN_AMT": (
+        "SOP Invoice Line Amount (Revenue)",
+        ["revenue", "invoiced revenue", "sales revenue", "net revenue",
+         "total revenue", "invoice revenue", "sop revenue"],
+    ),
+    "DEL_IVC_REC_IND": (
+        "Deleted Invoice Record Indicator",
+        ["deleted invoice", "invoice deleted flag", "del ivc rec ind"],
+    ),
+    "DEL_ORD_REC_IND": (
+        "Deleted Order Record Indicator",
+        ["deleted order", "order deleted flag"],
+    ),
+    "DEL_SOP_REC_IND": (
+        "Deleted SOP Record Indicator",
+        ["deleted sop", "sop deleted flag"],
+    ),
     # ── Margin / pricing thresholds (CUS_ORD_IVC_FCT) ────────────────────
     "MRG_45_PCT": ("45% Margin Threshold Flag", ["45 percent margin", "margin 45", "below 45 margin"]),
     "MRG_70_PCT": ("70% Margin Threshold Flag", ["70 percent margin", "margin 70", "below 70 margin"]),

@@ -311,9 +311,9 @@ def _role_for_column(column: str, data_type: str = "", distinct_values: str = ""
         evidence.append("standard soft-delete/archive flag")
         default_filter = f"{col} = false"
         return "status_filter", evidence, warnings, default_filter
-    if col == "DEL_REC_IND":
-        evidence.append("standard deleted-record indicator")
-        default_filter = "DEL_REC_IND = 0"
+    if col == "DEL_REC_IND" or re.match(r"^DEL_[A-Z]+_REC_IND$", col):
+        evidence.append("standard deleted-record indicator — filter = 0 for active records")
+        default_filter = f"{col} = 0"
         return "status_filter", evidence, warnings, default_filter
     if col.endswith("_FCT_KEY") or col.endswith("_KEY") and col.startswith(col.rsplit("_", 1)[0]):
         if col.endswith("_FCT_KEY"):
