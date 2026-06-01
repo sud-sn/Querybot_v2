@@ -14,6 +14,7 @@ from collections import deque
 
 
 _ABBREVIATIONS = {
+    # ── Generic dimensional abbreviations ─────────────────────────────────
     "AMT": "amount",
     "BAL": "balance",
     "BUS": "business",
@@ -40,9 +41,50 @@ _ABBREVIATIONS = {
     "RPL": "replacement",
     "SFX": "suffix",
     "WHS": "warehouse",
+    # ── M3/ERP raw short codes ─────────────────────────────────────────────
+    "ACDT": "accounting date",
+    "ALQT": "allocated quantity",
+    "CONO": "company",
+    "CSCD": "country",
+    "CUAM": "customer amount",
+    "CUCD": "currency",
+    "CUNO": "customer",
+    "DCOS": "delivery cost",
+    "DIVI": "division",
+    "DLIX": "delivery",
+    "DLDT": "delivery date",
+    "DLQT": "delivered quantity",
+    "DWDT": "requested delivery date",
+    "FACI": "facility",
+    "ITDS": "item description",
+    "ITGR": "item group",
+    "ITNO": "item number",
+    "ITTY": "item type",
+    "IVDT": "invoice date",
+    "IVNO": "invoice number",
+    "IVQT": "invoiced quantity",
+    "MFAM": "manufacturing amount",
+    "ORDT": "order date",
+    "ORNO": "order number",
+    "ORQT": "ordered quantity",
+    "ORST": "order status",
+    "ORTP": "order type",
+    "PCLA": "profit class",
+    "PONR": "order line number",
+    "POSX": "order line suffix",
+    "SAAM": "sales amount",
+    "SAPR": "sales price",
+    "SDST": "sales district",
+    "SMCD": "salesman",
+    "SUNO": "supplier",
+    "TRQT": "transaction quantity",
+    "UCOS": "unit cost",
+    "WHLO": "warehouse",
+    "YEA4": "fiscal year",
 }
 
 _DIRECT_ALIASES = {
+    # ── Dimensional fact columns ───────────────────────────────────────────
     "DIVI": {"division"},
     "ITM_GRP_DMS_KEY": {"item group", "item group key", "product group"},
     "CUS_IVC_LIN_AMT": {
@@ -59,6 +101,24 @@ _DIRECT_ALIASES = {
     "CUR_ON_HND_QTY": {"current on hand quantity", "on hand quantity"},
     "RCT_BUM_QTY": {"purchase receipt quantity", "receipt quantity"},
     "CUR_RPL_CST_AMT": {"current replacement cost", "replacement cost"},
+    # ── M3/ERP raw column aliases ──────────────────────────────────────────
+    "TRQT": {"transaction quantity", "quantity", "volume", "units", "trqt"},
+    "PCLA": {"profit class", "fifo profit", "fifo margin", "margin tier", "fifo layer", "pcla"},
+    "SUNO": {"supplier", "vendor", "vendor number", "supplier number"},
+    "CUNO": {"customer", "customer number", "client"},
+    "SMCD": {"salesman", "salesperson", "sales rep", "rep"},
+    "CUAM": {"sales amount", "revenue", "billed amount", "customer amount"},
+    "SAAM": {"net sales", "total sales", "gross sales"},
+    "UCOS": {"unit cost", "cost per unit", "cogs per unit"},
+    "WHLO": {"warehouse", "warehouse location", "whs"},
+    "ORNO": {"order number", "sales order", "order no"},
+    "IVNO": {"invoice number", "invoice", "invoice no"},
+    "IVQT": {"invoiced quantity", "invoiced qty", "billed quantity"},
+    "ORQT": {"ordered quantity", "ordered qty", "order quantity"},
+    "DLQT": {"delivered quantity", "delivered qty", "shipped quantity"},
+    "SAPR": {"sales price", "list price", "price"},
+    "ITNO": {"item number", "item", "product", "sku", "part number"},
+    "ITGR": {"item group", "product group", "category"},
 }
 
 _JOIN_SYNONYMS = {
