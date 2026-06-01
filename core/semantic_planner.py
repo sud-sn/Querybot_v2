@@ -102,23 +102,26 @@ _DIRECT_ALIASES = {
     "RCT_BUM_QTY": {"purchase receipt quantity", "receipt quantity"},
     "CUR_RPL_CST_AMT": {"current replacement cost", "replacement cost"},
     # ── M3/ERP raw column aliases ──────────────────────────────────────────
-    "TRQT": {"transaction quantity", "quantity", "volume", "units", "trqt"},
+    # RULE: use only QUALIFIED multi-word phrases here — never bare generic words
+    # like "quantity", "item", "supplier", "amount" which match too broadly and
+    # pull the wrong table into the semantic plan.
+    "TRQT": {"transaction quantity", "transaction qty"},           # NOT "quantity"/"volume"/"units"
     "PCLA": {"profit class", "fifo profit", "fifo margin", "margin tier", "fifo layer", "pcla"},
-    "SUNO": {"supplier", "vendor", "vendor number", "supplier number"},
-    "CUNO": {"customer", "customer number", "client"},
-    "SMCD": {"salesman", "salesperson", "sales rep", "rep"},
-    "CUAM": {"sales amount", "revenue", "billed amount", "customer amount"},
-    "SAAM": {"net sales", "total sales", "gross sales"},
+    "SUNO": {"supplier number", "vendor number"},                  # NOT bare "supplier"/"vendor"
+    "CUNO": {"customer number"},                                   # NOT bare "customer"/"client"
+    "SMCD": {"salesman code", "salesperson code", "sales rep code", "smcd"},
+    "CUAM": {"customer amount", "billed amount"},                  # NOT "sales amount"/"revenue"
+    "SAAM": {"net sales amount", "gross sales amount"},            # NOT bare "sales"
     "UCOS": {"unit cost", "cost per unit", "cogs per unit"},
-    "WHLO": {"warehouse", "warehouse location", "whs"},
-    "ORNO": {"order number", "sales order", "order no"},
-    "IVNO": {"invoice number", "invoice", "invoice no"},
+    "WHLO": {"warehouse location", "whs"},                         # NOT bare "warehouse" (too broad)
+    "ORNO": {"order number", "sales order number"},
+    "IVNO": {"invoice number"},
     "IVQT": {"invoiced quantity", "invoiced qty", "billed quantity"},
     "ORQT": {"ordered quantity", "ordered qty", "order quantity"},
     "DLQT": {"delivered quantity", "delivered qty", "shipped quantity"},
-    "SAPR": {"sales price", "list price", "price"},
-    "ITNO": {"item number", "item", "product", "sku", "part number"},
-    "ITGR": {"item group", "product group", "category"},
+    "SAPR": {"sales price", "list price"},                         # NOT bare "price"
+    "ITNO": {"item number", "part number"},                        # NOT bare "item"/"product"/"sku"
+    "ITGR": {"item group", "product group"},                       # NOT bare "category"
 }
 
 _JOIN_SYNONYMS = {
