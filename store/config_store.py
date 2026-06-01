@@ -549,6 +549,101 @@ def get_query_stats(account_id: Optional[str] = None, month: Optional[str] = Non
     return dict(row) if row else {}
 
 
+def get_suggestions(account_id: str, q: str, limit: int = 8) -> list[dict]:
+    """Return autocomplete suggestions for a partial chat query string.
+
+    Sources (ranked highest → lowest):
+      1. Recent successful query_log questions  (score 120 prefix / 70 contains)
+      2. Metric names + synonyms + example_questions (score 100 prefix / 60 contains)
+      3. Entity display names                   (score 90 prefix / 50 contains)
+      4. Business terms + aliases               (score 80 prefix / 40 contains)
+
+    Returns a list of dicts: {text: str, kind: "history"|"metric"|"entity"|"term"}
+    """
+    import re as _re
+    q = (q or "").strip()
+    if len(q) < 2:
+        return []
+    q_lower = q.lower()
+    candidates: list[tuple[int, str, str]] = []  # (score, text, kind)
+
+    with get_db() as conn:
+        # 1 — Recent successful questions (most valuable: real questions that worked)
+        rows = conn.execute(
+            """SELECT DISTINCT question FROM query_log
+                WHERE account_id=? AND success=1 AND question IS NOT NULL
+                ORDER BY created_at DESC LIMIT 300""",
+            (account_id,),
+        ).fetchall()
+        for r in rows:
+            text = (r["question"] or "").strip()
+            if not text:
+                continue
+            tl = text.lower()
+            if q_lower in tl:
+                candidates.append((120 if tl.startswith(q_lower) else 70, text, "history"))
+
+        # 2 — Metric names, synonyms, example_questions
+        rows = conn.execute(
+            "SELECT name, synonyms, example_questions FROM metric_registry WHERE account_id=? AND is_active=1",
+            (account_id,),
+        ).fetchall()
+        for r in rows:
+            for field in (r["name"], r["synonyms"], r["example_questions"]):
+                if not field:
+                    continue
+                for part in _re.split(r"[,;\n]+", str(field)):
+                    text = part.strip()
+                    if len(text) < 3:
+                        continue
+                    tl = text.lower()
+                    if q_lower in tl:
+                        candidates.append((100 if tl.startswith(q_lower) else 60, text, "metric"))
+
+        # 3 — Entity names
+        rows = conn.execute(
+            "SELECT entity_name, display_name FROM entity_graph WHERE account_id=? AND is_active=1",
+            (account_id,),
+        ).fetchall()
+        for r in rows:
+            for field in (r["display_name"], r["entity_name"]):
+                text = (field or "").strip()
+                if len(text) < 2:
+                    continue
+                tl = text.lower()
+                if q_lower in tl:
+                    candidates.append((90 if tl.startswith(q_lower) else 50, text, "entity"))
+
+        # 4 — Business terms and aliases
+        rows = conn.execute(
+            "SELECT term, aliases FROM business_term WHERE account_id=? AND is_active=1",
+            (account_id,),
+        ).fetchall()
+        for r in rows:
+            for field in (r["term"], r["aliases"]):
+                if not field:
+                    continue
+                for part in _re.split(r"[,;\n]+", str(field)):
+                    text = part.strip()
+                    if len(text) < 2:
+                        continue
+                    tl = text.lower()
+                    if q_lower in tl:
+                        candidates.append((80 if tl.startswith(q_lower) else 40, text, "term"))
+
+    # Deduplicate (case-insensitive), rank, cap
+    seen: set[str] = set()
+    result: list[dict] = []
+    for score, text, kind in sorted(candidates, key=lambda x: -x[0]):
+        key = text.lower()
+        if key not in seen:
+            seen.add(key)
+            result.append({"text": text, "kind": kind})
+        if len(result) >= limit:
+            break
+    return result
+
+
 def get_recent_queries(account_id: str, limit: int = 50) -> list[dict]:
     with get_db() as conn:
         rows = conn.execute("""

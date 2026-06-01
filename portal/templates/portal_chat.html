@@ -711,7 +711,7 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
               <div class="ai-arc ai-arc-2"></div>
               <div class="ai-core"></div>
             </div>
-            <textarea id="input" class="chat-input" placeholder="Ask anything about your data…" rows="1" maxlength="500" style="padding-left:42px;padding-right:32px"></textarea>
+            <textarea id="input" class="chat-input" placeholder="Ask anything about your data…" rows="1" maxlength="500" spellcheck="true" autocomplete="off" style="padding-left:42px;padding-right:32px"></textarea>
           </div>
           <div class="composer-side">
             <span class="char-count" id="charCount">500</span>
@@ -1963,6 +1963,7 @@ function appendAssistantResponse(msg, opts = {}){
         <div class="rc-thread" id="${rcId}-thread"></div>
         <div class="rc-input-row">
           <textarea class="rc-input" id="${rcId}-input" rows="1"
+            spellcheck="true" autocomplete="off"
             placeholder="e.g. what is the avg? who is above average? show top 5…"></textarea>
           <button class="rc-send" type="button" id="${rcId}-send">Ask</button>
         </div>
@@ -2046,6 +2047,10 @@ function appendAssistantResponse(msg, opts = {}){
       if (wsReady) sendSuggestion(btn);
     });
   });
+
+  // Attach autocomplete to the "Ask about this result" input
+  const rcInputEl = div.querySelector(`#${rcId}-input`);
+  if (rcInputEl) new AutoSuggest(rcInputEl);
 
   // Wire decision / analysis action buttons (Explain, Analyze, Recommend next step…)
   // Server resolves the action against the cached result — no new DB query runs.
@@ -2870,6 +2875,148 @@ function sendHistoryQuestion(question) {
 // Reload history list after each successful query so it stays fresh
 window.addEventListener('qb-query-success', () => { _historyLoaded = false; });
 
+// ── AutoSuggest ───────────────────────────────────────────────────────────────
+// Shared autocomplete component for both the main chat input and every
+// "Ask about this result" textarea. Fetches from /portal/api/suggest and shows
+// a keyboard-navigable dropdown. Positioned with fixed coords so it escapes
+// any overflow:hidden ancestors.
+class AutoSuggest {
+  constructor(input, opts = {}) {
+    this._el   = input;
+    this._opts = opts;         // { onAccept }
+    this._items = [];
+    this._idx   = -1;
+    this._timer = null;
+    this._dd    = null;
+    this._bound = {
+      input: () => this._onInput(),
+      key:   (e) => this._onKey(e),
+      blur:  () => setTimeout(() => this._hide(), 160),
+      scroll: () => this._reposition(),
+      resize: () => this._reposition(),
+    };
+    this._el.addEventListener('input',  this._bound.input);
+    this._el.addEventListener('keydown', this._bound.key);
+    this._el.addEventListener('blur',    this._bound.blur);
+    window.addEventListener('scroll',   this._bound.scroll, { passive: true });
+    window.addEventListener('resize',   this._bound.resize, { passive: true });
+  }
+
+  _onInput() {
+    clearTimeout(this._timer);
+    const q = this._el.value.trim();
+    if (q.length < 2) { this._hide(); return; }
+    this._timer = setTimeout(() => this._fetch(q), 250);
+  }
+
+  async _fetch(q) {
+    try {
+      const r = await fetch(`/portal/api/suggest?q=${encodeURIComponent(q)}&limit=6`);
+      if (!r.ok) return;
+      const d = await r.json();
+      this._items = (d.suggestions || []);
+      this._idx   = -1;
+      if (this._items.length) this._render();
+      else this._hide();
+    } catch (_) {}
+  }
+
+  _render() {
+    if (!this._dd) {
+      this._dd = document.createElement('div');
+      this._dd.className = 'ac-dropdown';
+      this._dd.setAttribute('role', 'listbox');
+      document.body.appendChild(this._dd);
+    }
+    const KIND_ICON = { history: '🕐', metric: '📊', entity: '🔗', term: '📝' };
+    this._dd.innerHTML = this._items.map((item, i) => {
+      const icon = KIND_ICON[item.kind] || '';
+      const cls  = 'ac-item' + (i === this._idx ? ' ac-active' : '');
+      return `<div class="${cls}" data-idx="${i}" data-kind="${escHtml(item.kind)}" role="option">
+        <span class="ac-kind">${icon}</span>
+        <span class="ac-text">${escHtml(item.text)}</span>
+      </div>`;
+    }).join('');
+    this._dd.querySelectorAll('.ac-item').forEach(el => {
+      el.addEventListener('mousedown', e => {
+        e.preventDefault();
+        this._accept(parseInt(el.dataset.idx, 10));
+      });
+    });
+    this._dd.style.display = 'block';
+    this._reposition();
+  }
+
+  _reposition() {
+    if (!this._dd || this._dd.style.display === 'none') return;
+    const rect = this._el.getBoundingClientRect();
+    const ddH  = Math.min(this._items.length * 40 + 8, 260);
+    const below = window.innerHeight - rect.bottom > ddH + 12;
+    Object.assign(this._dd.style, {
+      left:  rect.left + 'px',
+      width: Math.max(rect.width, 280) + 'px',
+    });
+    if (below) {
+      this._dd.style.top    = (rect.bottom + 4) + 'px';
+      this._dd.style.bottom = '';
+    } else {
+      this._dd.style.bottom = (window.innerHeight - rect.top + 4) + 'px';
+      this._dd.style.top    = '';
+    }
+  }
+
+  _hide() {
+    if (this._dd) this._dd.style.display = 'none';
+    this._idx = -1;
+  }
+
+  _onKey(e) {
+    if (!this._dd || this._dd.style.display === 'none') return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      this._idx = Math.min(this._idx + 1, this._items.length - 1);
+      this._highlight();
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      this._idx = Math.max(this._idx - 1, -1);
+      this._highlight();
+    } else if ((e.key === 'Tab' || e.key === 'Enter') && this._idx >= 0) {
+      e.preventDefault();
+      this._accept(this._idx);
+    } else if (e.key === 'Escape') {
+      this._hide();
+    }
+  }
+
+  _highlight() {
+    if (!this._dd) return;
+    this._dd.querySelectorAll('.ac-item').forEach((el, i) => {
+      el.classList.toggle('ac-active', i === this._idx);
+    });
+  }
+
+  _accept(idx) {
+    const item = this._items[idx];
+    if (!item) return;
+    this._el.value = item.text;
+    this._el.dispatchEvent(new Event('input'));
+    this._hide();
+    this._el.focus();
+    if (this._opts.onAccept) this._opts.onAccept(item);
+  }
+
+  destroy() {
+    clearTimeout(this._timer);
+    this._el.removeEventListener('input',   this._bound.input);
+    this._el.removeEventListener('keydown', this._bound.key);
+    this._el.removeEventListener('blur',    this._bound.blur);
+    window.removeEventListener('scroll',    this._bound.scroll);
+    window.removeEventListener('resize',    this._bound.resize);
+    this._dd?.remove();
+    this._dd = null;
+  }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   _initComposerMascot();
   _updateMascotTheme();
@@ -2881,6 +3028,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const inp = document.getElementById('input');
   inp.addEventListener('input', () => { inp.style.height = 'auto'; inp.style.height = Math.min(inp.scrollHeight, 140) + 'px'; updateCharCount(); });
   inp.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
+  // Attach autocomplete to the main composer input
+  new AutoSuggest(inp);
   document.getElementById('sendBtn').disabled = true;
   document.querySelectorAll('a[href="/portal/logout"]').forEach((el) => {
     el.addEventListener('click', () => clearChatCache());

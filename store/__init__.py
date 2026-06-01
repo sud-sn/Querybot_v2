@@ -22,6 +22,7 @@ from store.config_store import (
     update_client_state, update_client_meta, get_monthly_query_count,
     get_monthly_token_usage, get_monthly_token_status,
     log_query, get_query_stats, get_recent_queries, get_monthly_breakdown,
+    get_suggestions,
     log_llm_call, get_recent_llm_calls, purge_old_llm_calls,
 )
 from store.user_store import (
@@ -76,6 +77,7 @@ __all__ = [
     "update_client_state","update_client_meta","get_monthly_query_count",
     "get_monthly_token_usage","get_monthly_token_status",
     "log_query","get_query_stats","get_recent_queries","get_monthly_breakdown",
+    "get_suggestions",
     "log_llm_call","get_recent_llm_calls","purge_old_llm_calls",
     "create_group","list_groups","get_group","update_group","delete_group",
     "set_group_tables","get_group_tables",
