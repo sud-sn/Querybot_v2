@@ -752,16 +752,36 @@ def build_kb_system_prompt(erp_hints: str = "") -> str:
     )
 
 
-def build_kb_query_prompt(table_name: str, kb_content: str, business_desc: str) -> str:
+def build_kb_query_prompt(
+    table_name: str,
+    kb_content: str,
+    business_desc: str,
+    related_tables: str = "",
+) -> str:
     """
     Stage 2 KB generation prompt.
     Takes the Stage 1 KB output and generates a question-to-SQL translation
     document from the actual data and real column values in the KB.
-    Generic — no domain assumptions.
+
+    related_tables: optional join-map slice for this table (from _join_map.md).
+    When provided the LLM is required to generate cross-table Q&A examples
+    using those exact join paths instead of guessing or generating single-table
+    queries for inherently multi-table concepts.
     """
+    related_block = ""
+    if related_tables:
+        related_block = (
+            f"## Related Tables and Join Paths\n"
+            f"The following join paths are EXACT and pre-verified. "
+            f"Use them when generating cross-table Q&A pairs. "
+            f"Do NOT invent join columns — only use the paths listed here.\n\n"
+            f"{related_tables}\n\n"
+        )
+
     return (
         f"You have been given the Knowledge Base document for table: {table_name}\n\n"
         f"Business context: {business_desc}\n\n"
+        f"{related_block}"
         f"Knowledge Base content:\n{kb_content}\n\n"
         "Your task: Generate a QUERY TRANSLATION document that maps natural-language "
         "business questions to exact SQL patterns for this table.\n\n"
@@ -782,7 +802,10 @@ def build_kb_query_prompt(table_name: str, kb_content: str, business_desc: str) 
         "These cross-table patterns are the most common business questions.\n"
         "4. For every time-relative question (last month, last week, recent), "
         "use MAX(date_column) as the date anchor, not GETDATE()/CURRENT_DATE/SYSDATE.\n"
-        "5. Write questions the way a non-technical business user would actually ask them.\n\n"
+        "5. Write questions the way a non-technical business user would actually ask them.\n"
+        "6. If Related Tables and Join Paths are provided above, generate at least "
+        "3 Q&A pairs that JOIN to those related tables using ONLY the exact join "
+        "columns shown — never guess or substitute other columns.\n\n"
         "FORMAT — use this exact structure for each pair:\n"
         "Q: [natural language question a business user would ask]\n"
         "SQL: [complete, runnable SQL using real column names]\n\n"
