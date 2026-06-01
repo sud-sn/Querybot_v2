@@ -681,7 +681,12 @@ def build_kb_system_prompt(erp_hints: str = "") -> str:
         "mark it: [NEEDS CONTEXT] — business rule unknown, do not use in filters.\n"
         "4. If sample data contains placeholder values (SAMPLE_, VAL_, etc.), "
         "ignore them. Use only Distinct Values from the schema.\n"
-        "5. No domain-specific assumptions. Write for any industry.\n\n"
+        "5. No domain-specific assumptions. Write for any industry.\n"
+        "6. If the user prompt includes a SCHEMA INTELLIGENCE block, treat it as "
+        "deterministic grounding evidence. Use its roles, expanded names, default "
+        "filter candidates, date-key warnings, and join aliases before guessing from "
+        "raw column names. Low-confidence fields must stay marked as candidates or "
+        "[NEEDS ADMIN CONTEXT].\n\n"
 
         "DOCUMENT FORMAT — produce all 7 sections for every table:\n\n"
 

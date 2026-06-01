@@ -117,6 +117,7 @@ async def build_kb(
     )
     from core.llm_audit import llm_audit_component
     from core.erp_column_dict import get_erp_hints
+    from core.schema_enrichment import format_schema_intelligence
 
     schema_path = Path(schema_dir)
     kb_path     = Path(kb_dir)
@@ -236,6 +237,7 @@ async def build_kb(
         system = build_kb_system_prompt(erp_hints=erp_hints)
         if erp_hints:
             log.info("ERP hints injected for %s (%d matched codes)", table_name, erp_hints.count("\n") + 1)
+        schema_intelligence = format_schema_intelligence(table_name, table_cols, schema_md=schema_md)
 
         # ── Stage 1: DataPilot-style KB document ──────────────────────────────
         join_slice = _slice_join_map(table_name)
@@ -258,6 +260,7 @@ async def build_kb(
             f"Table schema for: {table_name}\n"
             f"Exact column names in this table (ONLY use these): {col_list}\n\n"
             f"Full schema with distinct values:\n{schema_md}\n"
+            f"\n{schema_intelligence}\n"
             f"{join_block}\n"
             "Generate the complete Knowledge Base document for this table "
             "following all 7 sections in the format specified. "
@@ -265,6 +268,10 @@ async def build_kb(
             "Ground the Join Keys section in the auto-discovered FK list above — "
             "never invent join columns. If the list is empty, write "
             "'No foreign-key relationships detected.' in that section. "
+            "Use the deterministic schema intelligence block to explain cryptic ERP, "
+            "abbreviated, date-key, dimension-key, status/filter, and measure-candidate fields. "
+            "Do not promote candidate metrics to official metrics unless the evidence is strong "
+            "or the business description explicitly supports it. "
             "Mark any column whose business rule is unclear with [NEEDS CONTEXT]."
         )
         with llm_audit_component("kb_table_doc"):
