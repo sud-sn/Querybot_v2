@@ -338,10 +338,9 @@ def format_examples_for_prompt(examples: list[dict]) -> str:
     lines = [
         "VERIFIED EXAMPLES — These question→SQL pairs have been tested against "
         "this exact database. Use them as a guide for SQL syntax and patterns ONLY.\n"
-        "CRITICAL: Adapt the GROUP BY dimension, SELECT columns, and filters to match "
-        "the CURRENT question. Do NOT copy the dimension from the example (e.g. if the "
-        "example groups by Customer but the question asks by Branch or Province, you MUST "
-        "group by the correct dimension for the current question).\n"
+        "CRITICAL: Examples show SQL structure only. The GROUP BY dimension, SELECT columns, "
+        "aliases, and filters MUST be derived from the current question — never copied from "
+        "the example. Each question determines its own dimension and output columns.\n"
     ]
     for ex in examples:
         lines.append(f"Q: {ex['question']}")
