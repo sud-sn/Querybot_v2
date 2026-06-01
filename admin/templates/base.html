@@ -172,8 +172,9 @@
   backdrop.addEventListener('click', function(e){ if(e.target === backdrop) close(); });
   document.addEventListener('keydown', function(e){ if(e.key === 'Escape') close(); });
   confirmBtn.addEventListener('click', function(){
+    var cb = _onConfirm;   // save reference BEFORE close() nullifies it
     close();
-    if(_onConfirm) _onConfirm();
+    if(cb) cb();
   });
 
   /*
