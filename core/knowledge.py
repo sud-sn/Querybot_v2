@@ -36,6 +36,78 @@ _EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 _COLLECTION_NAME = "kb_store"
 
 
+def _inject_deterministic_synonyms(kb_text: str, table_cols: list[str]) -> str:
+    """
+    Post-process a Stage-1 KB document to guarantee every ERP column that has
+    a known entry in ERP_COLUMN_DICT appears in the ## Business Synonyms section.
+
+    The LLM may paraphrase, reorder, or omit synonyms.  This function patches
+    the generated markdown so downstream semantic matching always has the
+    canonical synonym rows regardless of LLM output quality.
+
+    Only adds rows that are genuinely missing — never duplicates existing ones.
+    """
+    from core.erp_column_dict import ERP_COLUMN_DICT
+
+    lines = kb_text.splitlines()
+
+    # ── Step 1: find which columns already have synonym rows ─────────────────
+    in_synonyms = False
+    covered_cols: set[str] = set()
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("## "):
+            if in_synonyms:
+                break
+            in_synonyms = stripped.lower().startswith("## business synonyms")
+            continue
+        if in_synonyms and stripped.startswith("|") and "---" not in stripped:
+            cells = [c.strip() for c in stripped.strip("|").split("|")]
+            if len(cells) >= 2:
+                col = cells[1].strip("` ").upper()
+                if col:
+                    covered_cols.add(col)
+
+    # ── Step 2: build missing rows ────────────────────────────────────────────
+    missing_rows: list[str] = []
+    for col in table_cols:
+        col_upper = col.upper()
+        if col_upper in covered_cols:
+            continue
+        entry = ERP_COLUMN_DICT.get(col_upper)
+        if not entry:
+            continue
+        label, synonyms = entry
+        for syn in synonyms[:4]:            # top 4 synonyms per column
+            missing_rows.append(f"| {syn} | `{col}` | ERP code — {label} |")
+
+    if not missing_rows:
+        return kb_text                      # nothing to add
+
+    # ── Step 3: insert rows just before the next ## section (or at EOF) ───────
+    result: list[str] = []
+    in_synonyms = False
+    inserted = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("## "):
+            if in_synonyms and not inserted:
+                result.extend(missing_rows)
+                inserted = True
+            in_synonyms = stripped.lower().startswith("## business synonyms")
+        result.append(line)
+
+    if not inserted:                        # Business Synonyms was the last section
+        result.extend(missing_rows)
+
+    log.debug(
+        "Injected %d deterministic synonym rows (%d columns)",
+        len(missing_rows),
+        len({r.split("|")[2].strip().strip("`").upper() for r in missing_rows}),
+    )
+    return "\n".join(result)
+
+
 def _parse_schema_descriptions(business_desc: str) -> tuple[str, dict[str, str]]:
     """
     Parse a business description that may contain per-schema sections.
@@ -279,13 +351,20 @@ async def build_kb(
                 system, stage1_user, provider, model, api_key,
                 max_tokens=4096, **kw
             )
+
+        # Fix 4: guarantee ERP synonym rows are present regardless of LLM output
+        kb_text = _inject_deterministic_synonyms(kb_text, table_cols)
+
         (kb_path / f"{table_name}_kb.md").write_text(kb_text, encoding="utf-8")
         log.info("Stage 1 KB written for %s (%d cols)", table_name, len(table_cols))
 
         # ── Stage 2: Question-SQL translation from actual KB content ──────────
-        # Pass the SQL-formatted table name (e.g. [SCHEMA].[TABLE] for Azure SQL)
-        # so the LLM generates examples with the correct table name format.
-        query_user = build_kb_query_prompt(sql_table_name, kb_text, table_biz_desc)
+        # Fix 3: pass the join-map slice so the LLM generates real cross-table
+        # Q&A examples using verified join paths instead of single-table queries.
+        query_user = build_kb_query_prompt(
+            sql_table_name, kb_text, table_biz_desc,
+            related_tables=join_slice,          # join_slice already computed above
+        )
         with llm_audit_component("kb_query_examples"):
             query_text, _, _ = await llm_complete(
                 system, query_user, provider, model, api_key,
