@@ -127,8 +127,35 @@ def metric_source_tables(metric: dict[str, Any], table_columns: dict[str, dict[s
     return tables
 
 
-def metric_source_schemas(metric: dict[str, Any], table_columns: dict[str, dict[str, str]] | None) -> set[str]:
-    return {schema for schema in (_table_schema(t) for t in metric_source_tables(metric, table_columns)) if schema}
+def metric_source_schemas(
+    metric: dict[str, Any],
+    table_columns: dict[str, dict[str, str]] | None,
+    entity_schema_map: dict[str, str] | None = None,
+) -> set[str]:
+    """Return the set of schema names this metric's source tables belong to.
+
+    Resolution order (first match wins):
+    1. base_entity → entity_schema_map lookup (most reliable: the entity graph
+       always has schema_name; metrics created through the UI have base_entity)
+    2. base_table / sql_template table parsing (works when the admin set an FQN
+       like PHARMACY.FACT_PRESCRIPTION_FILL in base_table)
+    3. required_columns matched against all_columns from _schema.json (fallback
+       when base_table is a bare name and entity_schema_map is not available)
+    """
+    # ── Path 1: base_entity → entity graph schema (preferred) ─────────────────
+    if entity_schema_map:
+        base_entity = str(metric.get("base_entity") or "").strip()
+        if base_entity:
+            schema = entity_schema_map.get(base_entity, "")
+            if schema:
+                return {schema.upper()}
+
+    # ── Path 2 & 3: infer from table references / column matching ─────────────
+    return {
+        schema
+        for schema in (_table_schema(t) for t in metric_source_tables(metric, table_columns))
+        if schema
+    }
 
 
 def _schemas_from_graph(graph_context: dict[str, Any] | None, graph: dict[str, Any] | None) -> set[str]:
@@ -170,9 +197,19 @@ def resolve_metric_scope(
     graph_context: dict[str, Any] | None = None,
     graph: dict[str, Any] | None = None,
     semantic_plan: dict[str, Any] | None = None,
+    entity_schema_map: dict[str, str] | None = None,
     limit: int = 6,
 ) -> MetricScopeResult:
-    """Return the metrics that should be visible/enforced for this question."""
+    """Return the metrics that should be visible/enforced for this question.
+
+    Parameters
+    ----------
+    entity_schema_map : Optional dict mapping entity_name → schema_name (UPPER).
+        Built from the full entity graph.  When provided, ``base_entity`` on each
+        metric is used as the primary schema lookup — bypassing fragile
+        ``base_table`` bare-name parsing and ``_schema.json`` column matching.
+        Pass ``{e["entity_name"]: e["schema_name"].upper() for e in graph entities}``.
+    """
     selected_schema = (selected_schema or "").upper().strip()
     context_schemas = {selected_schema} if selected_schema else set()
     context_schemas.update(_schemas_from_graph(graph_context, graph))
@@ -183,7 +220,7 @@ def resolve_metric_scope(
         score = _phrase_score(metric, question)
         if score <= 0:
             continue
-        schemas = metric_source_schemas(metric, table_columns)
+        schemas = metric_source_schemas(metric, table_columns, entity_schema_map)
         if context_schemas and schemas and not (schemas & context_schemas):
             continue
         if context_schemas and schemas:
