@@ -1340,12 +1340,28 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                     "- Do not move mapped fields to another table and do not remove underscores from column names.\n"
                 )
             elif last_code == "metric_formula_mismatch":
+                # Inject the EXACT approved formula(s) verbatim — do not rely on
+                # the LLM finding them in the KB context, which can be overridden.
+                _metric_formulas_inline = ""
+                for _mf in _matched_metrics:
+                    if ((_mf.get("formula_type") or "query").lower() == "expression"
+                            and _mf.get("sql_template")):
+                        _metric_formulas_inline += (
+                            f"\n  Metric name : {_mf.get('name', 'metric')}\n"
+                            f"  EXACT formula: {_mf['sql_template'].strip()}\n"
+                            f"  Required columns (must appear in SELECT): "
+                            f"{_mf.get('required_columns', 'see formula above')}\n"
+                        )
                 validation_repair_note = (
                     "\nAPPROVED METRIC FORMULA REPAIR RULE:\n"
-                    "- The user asked for an admin-approved metric, but the SQL used a nearby source column instead.\n"
-                    "- Use the approved metric formula exactly as shown in the APPROVED METRIC FORMULAS section.\n"
-                    "- If the metric is a filtered single-row aggregate, keep the null-aware diagnostics: matched row count, non-null metric count, and COALESCE/ISNULL around SUM().\n"
-                    "- Do not substitute invoice amount, cost amount, or any other similar field unless it is part of the approved formula.\n"
+                    "- Your SQL used a column that is NOT the approved metric formula.\n"
+                    "- You MUST replace your aggregate expression with the EXACT formula below:\n"
+                    f"{_metric_formulas_inline if _metric_formulas_inline else '  See the APPROVED METRIC FORMULAS section in the prompt.'}\n"
+                    "- The formula MUST appear in the SELECT clause — not just in a WHERE filter.\n"
+                    "- Do NOT use CUS_IVC_LIN_AMT or any other similar column as a substitute "
+                    "for the approved metric, even if the Knowledge Base suggests it.\n"
+                    "- Keep all other query structure (GROUP BY, JOINs, date filters) unchanged.\n"
+                    "- Only replace the aggregate expression itself.\n"
                 )
             elif last_code == "null_aggregate_diagnostic":
                 validation_repair_note = (
