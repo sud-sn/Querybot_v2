@@ -132,9 +132,61 @@ ABBREVIATIONS: dict[str, str] = {
     "XTR": "extra",
 }
 
-RAW_DATE_CODES = {"IVDT", "ORDT", "DLDT", "DWDT", "CODT", "ACDT", "DSDT", "PLDT", "RGDT", "LMDT", "DUDT", "RVDT"}
-RAW_IDENTIFIER_CODES = {"ORNO", "PONR", "POSX", "DLIX", "IVNO", "CUNO", "SUNO", "PYNO", "SMCD", "WHLO", "FACI", "DIVI", "CONO"}
-RAW_MEASURE_CODES = {"TRQT", "ORQT", "IVQT", "DLQT", "ALQT", "RNQT", "PLQT", "CUAM", "SAAM", "SGAM", "UCOS", "DCOS", "MFAM", "SAPR", "NEPR", "PCLA", "OFRA"}
+RAW_DATE_CODES = {
+    "IVDT", "ORDT", "DLDT", "DWDT", "CODT", "ACDT", "DSDT", "PLDT",
+    "RGDT", "LMDT", "DUDT", "RVDT", "LRDT", "BLDT", "ADAT",
+}
+RAW_IDENTIFIER_CODES = {
+    "ORNO", "PONR", "POSX", "DLIX", "IVNO", "CUNO", "SUNO", "PYNO",
+    "SMCD", "WHLO", "FACI", "DIVI", "CONO", "JRNO", "JSNO", "VONO",
+    "CINO", "AGNO", "PROJ", "ROUT", "BKID",
+}
+RAW_MEASURE_CODES = {
+    "TRQT", "ORQT", "IVQT", "DLQT", "ALQT", "RNQT", "PLQT",
+    # alternate-unit quantity variants (QA suffix = qty in alt unit)
+    "ORQA", "IVQA", "DLQA", "ALQA", "PLQA", "RNQA", "IVQS", "ORQS", "ORQB",
+    "CUAM", "SAAM", "SGAM", "UCOS", "DCOS", "MFAM", "SAPR", "NEPR",
+    "PCLA", "OFRA",
+    # weight / volume
+    "GRWE", "NEWE", "VOL3",
+    # AR/financial measures
+    "DCAM", "VTAM", "IIAM", "ACBL", "RMBL",
+}
+
+# ── Numbered-series patterns ────────────────────────────────────────────────
+# Maps a regex (matching the column name) to (human_label_template, role)
+# Use {} as placeholder for the digit suffix.
+_NUMBERED_SERIES: list[tuple[re.Pattern, str, str]] = [
+    (re.compile(r"^DIC(\d+)$"),  "discount code {}",                    "attribute"),
+    (re.compile(r"^DIP(\d+)$"),  "discount percent {}",                 "measure"),
+    (re.compile(r"^DIA(\d+)$"),  "discount amount {}",                  "measure"),
+    (re.compile(r"^CMP(\d+)$"),  "campaign component {}",               "attribute"),
+    (re.compile(r"^ATV(\d+|0)$"),"attribute value {}",                  "attribute"),
+    (re.compile(r"^AAV(\d+)$"),  "additional attribute value {}",        "attribute"),
+    (re.compile(r"^UCA(\d+|0)$"),"user defined character attribute {}", "attribute"),
+    (re.compile(r"^UDN(\d+)$"),  "user defined numeric {}",             "measure"),
+    (re.compile(r"^UID(\d+)$"),  "user defined id {}",                  "attribute"),
+    (re.compile(r"^UCT(\d+)$"),  "unit conversion type {}",             "attribute"),
+    (re.compile(r"^CFE(\d+)$"),  "customer free field {}",              "attribute"),
+    (re.compile(r"^CHL(\d+)$"),  "sales channel level {}",              "attribute"),
+    (re.compile(r"^SMC(\d+)$"),  "salesman commission code {}",         "attribute"),
+    (re.compile(r"^ONK(\d+)$"),  "order number key {}",                 "attribute"),
+    (re.compile(r"^DDF(\d+)$"),  "date field {}",                       "date_key"),
+    (re.compile(r"^RSC(\d+)$"),  "reason code {}",                      "attribute"),
+    (re.compile(r"^FRE(\d+)$"),  "free field {}",                       "attribute"),
+    (re.compile(r"^ODI(\d+)$"),  "other discount info {}",              "attribute"),
+    (re.compile(r"^MTX(\d+)$"),  "matrix {}",                           "attribute"),
+    (re.compile(r"^BOP(\d+)$"),  "back-order priority {}",              "attribute"),
+    (re.compile(r"^TEL(\d+)$"),  "terms of delivery {}",                "attribute"),
+    (re.compile(r"^LNA(\d+)$"),  "line name {}",                        "attribute"),
+    (re.compile(r"^DMA(\d+)$"),  "delivery method alternative {}",      "attribute"),
+    (re.compile(r"^DTP(\d+)$"),  "date type {}",                        "date_key"),
+    (re.compile(r"^VOL(\d+)$"),  "volume {}",                           "measure"),
+]
+
+# ── Infrastructure / platform field patterns ────────────────────────────────
+_INFRA_PREFIXES = ("AZ_",)
+_INFRA_CAMEL    = {"accountingEntity", "variationNumber", "timestamp", "deleted", "archived"}
 
 KNOWN_JOIN_EQUIVALENTS: dict[str, list[str]] = {
     "CUS_ORD_NUM": ["ORNO"],
@@ -179,10 +231,25 @@ def _human_join(parts: list[str]) -> str:
 
 def _expand_column(column: str) -> tuple[str, list[str]]:
     col = _clean_identifier(column).upper()
+    raw = _clean_identifier(column)  # preserve original case for camelCase check
+
+    # 1. ERP dictionary — highest confidence
     if col in ERP_COLUMN_DICT:
         label, _ = ERP_COLUMN_DICT[col]
         return label.lower(), ["erp dictionary"]
 
+    # 2. Infrastructure / platform fields
+    if any(col.startswith(p.upper()) for p in _INFRA_PREFIXES) or raw in _INFRA_CAMEL:
+        return f"data platform field: {raw}", ["infrastructure/platform field"]
+
+    # 3. Numbered series patterns (DIC1, ATV3, UCA7, …)
+    for pattern, label_tpl, _ in _NUMBERED_SERIES:
+        m = pattern.match(col)
+        if m:
+            label = label_tpl.format(m.group(1))
+            return label, ["numbered series pattern"]
+
+    # 4. Token-by-token abbreviation expansion
     parts: list[str] = []
     evidence: list[str] = []
     for token in _tokens(col):
@@ -234,6 +301,12 @@ def _role_for_column(column: str, data_type: str = "", distinct_values: str = ""
     warnings: list[str] = []
     default_filter = ""
 
+    raw = _clean_identifier(column)
+    # Infrastructure / platform fields — exclude from business queries
+    if any(col.startswith(p.upper()) for p in _INFRA_PREFIXES) or raw in _INFRA_CAMEL:
+        evidence.append("data platform / infrastructure field")
+        return "infrastructure", evidence, warnings, default_filter
+
     if col in {"DELETED", "ARCHIVED"}:
         evidence.append("standard soft-delete/archive flag")
         default_filter = f"{col} = false"
@@ -278,16 +351,24 @@ def _role_for_column(column: str, data_type: str = "", distinct_values: str = ""
 def _confidence(column: str, role: str, evidence: list[str], expanded_name: str) -> int:
     col = _clean_identifier(column).upper()
     score = 35
+
     if col in ERP_COLUMN_DICT:
         score = 95
+    elif "numbered series pattern" in evidence:
+        score = 72          # we know what it is structurally, not semantically
+    elif "infrastructure/platform field" in evidence or role == "infrastructure":
+        score = 80          # well-understood, just not a business column
     elif any(e.startswith("abbreviation") for e in evidence):
         score = 70
+
     if role in {"measure", "date_key", "dimension_key", "status_filter", "surrogate_key"}:
         score += 10
     if role == "measure_candidate":
         score = min(score, 65)
+    if role == "infrastructure":
+        score = min(score, 80)          # cap infra fields — not business queryable
     if expanded_name.replace(" ", "") == col.lower():
-        score = min(score, 45)
+        score = min(score, 45)          # no expansion found at all
     return max(10, min(score, 95))
 
 
