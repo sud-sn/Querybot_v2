@@ -40,9 +40,38 @@ _CATEGORICAL_TYPES = {
     "text", "string", "character varying",
 }
 
+# ERP/M3 raw short-code columns that are categorically meaningful regardless of
+# data type.  These use numeric or short-text codes whose possible values (e.g.
+# CRST=0 open / 4=credit hold / 9=closed) are critical for KB filter conditions.
+# They are scanned for distinct values unconditionally.
+_ERP_CATEGORICAL_CODES = {
+    # AR / financial status
+    "CRST", "TEPY", "PYTP", "PYCD", "TECD", "CLST", "RMST", "IIST",
+    "IVTP", "ARCD", "IVCL", "TRCD",
+    # Order / line status and type
+    "ORST", "ORTP", "LTYP",
+    # Item / product classification
+    "ITGR", "ITTY", "ITCL",
+    # Organisation / routing
+    "CUCL", "CUTP", "CSCD", "CUCD", "SDST",
+    "DIVI", "WHLO", "FACI", "CONO",
+    # Sales
+    "SMCD", "AGNT",
+    # Discount / pricing system
+    "DISY", "PRMO",
+}
+
 
 def _is_categorical(col_name: str, col_type: str) -> bool:
-    """Return True if this column is likely categorical."""
+    """Return True if this column is likely categorical.
+
+    Extended to also return True for known ERP/M3 raw short-code columns whose
+    distinct values are business-critical (status codes, type codes, etc.) but
+    whose names don't contain keywords like 'status' or 'type'.
+    """
+    # ERP categorical codes — scan regardless of data type
+    if col_name.upper() in _ERP_CATEGORICAL_CODES:
+        return True
     name_lower  = col_name.lower()
     type_lower  = (col_type or "").lower().split("(")[0].strip()
     name_match  = any(h in name_lower for h in _CATEGORICAL_NAME_HINTS)
@@ -456,9 +485,13 @@ def list_schema_files(schema_dir: str) -> list[str]:
 def _build_join_map(master: dict) -> str:
     """
     Analyse all discovered tables and auto-detect FK relationships by matching
-    column names across tables. Writes a human-readable join map the LLM can
-    use to construct multi-table JOINs without guessing.
+    column names across tables. Also injects ERP↔DMS alias joins where a
+    DMS fact column (e.g. CUS_ORD_NUM) is the semantic equivalent of an ERP raw
+    code column (e.g. ORNO) — these would never be detected by shared-name
+    matching alone.
     """
+    from core.schema_enrichment import KNOWN_JOIN_EQUIVALENTS
+
     lines = [
         "# Cross-Table Join Map",
         "",
@@ -476,10 +509,10 @@ def _build_join_map(master: dict) -> str:
             cname = col["name"].upper()
             col_to_tables.setdefault(cname, []).append(tbl_name)
 
-    # Find columns shared across 2+ tables — these are likely join keys
-    join_pairs_seen = set()
-    relationships = []
+    join_pairs_seen: set[str] = set()
+    relationships: list[dict] = []
 
+    # ── Pass 1: shared column name joins ──────────────────────────────────────
     for col_name, tables in col_to_tables.items():
         if len(tables) < 2:
             continue
@@ -491,42 +524,83 @@ def _build_join_map(master: dict) -> str:
         for i in range(len(tables)):
             for j in range(i + 1, len(tables)):
                 t1, t2 = sorted([tables[i], tables[j]])
-                key = f"{t1}|{t2}|{col_name}"
+                key = f"{t1}|{t2}|{col_name}={col_name}"
                 if key in join_pairs_seen:
                     continue
                 join_pairs_seen.add(key)
-
-                # Determine which is likely the fact and which the dimension
                 t1_cols = [c["name"] for c in master[t1].get("columns", [])]
                 t2_cols = [c["name"] for c in master[t2].get("columns", [])]
-
                 relationships.append({
-                    "left":  t1,
-                    "right": t2,
-                    "key":   col_name,
-                    "left_cols":  t1_cols,
-                    "right_cols": t2_cols,
+                    "left": t1, "right": t2,
+                    "left_col": col_name, "right_col": col_name,
+                    "alias": False,
+                    "left_cols": t1_cols, "right_cols": t2_cols,
                 })
 
-    if not relationships:
+    # ── Pass 2: ERP↔DMS alias joins (different column names, same concept) ────
+    # KNOWN_JOIN_EQUIVALENTS e.g. {"CUS_ORD_NUM": ["ORNO"], "DLV_NUM": ["DLIX"]}
+    # Finds tables that have the DMS column on one side and the ERP code on the other.
+    alias_lines: list[str] = []
+    for dms_col, erp_codes in KNOWN_JOIN_EQUIVALENTS.items():
+        dms_tables = col_to_tables.get(dms_col.upper(), [])
+        for erp_code in erp_codes:
+            erp_tables = col_to_tables.get(erp_code.upper(), [])
+            for dms_tbl in dms_tables:
+                for erp_tbl in erp_tables:
+                    if dms_tbl == erp_tbl:
+                        continue
+                    t1, t2 = sorted([dms_tbl, erp_tbl])
+                    key = f"{t1}|{t2}|{dms_col}={erp_code}"
+                    if key in join_pairs_seen:
+                        continue
+                    join_pairs_seen.add(key)
+                    alias_lines.append(
+                        f"### {dms_tbl} ↔ {erp_tbl}  *(ERP alias join)*"
+                    )
+                    alias_lines.append(
+                        f"**Join:** `{dms_tbl}.{dms_col}` = `{erp_tbl}.{erp_code}` "
+                        f"— these columns hold the same business key under different names."
+                    )
+                    alias_lines.append("```sql")
+                    alias_lines.append(
+                        f"JOIN [{erp_tbl}] ON [{dms_tbl}].{dms_col} = [{erp_tbl}].{erp_code}"
+                    )
+                    alias_lines.append("```")
+                    alias_lines.append("")
+
+    if not relationships and not alias_lines:
         lines.append("No shared key columns detected automatically.")
         lines.append("")
         lines.append("Tip: Join columns typically end in _ID, _NO, _CODE, or _NUM.")
         return "\n".join(lines)
 
     for rel in relationships:
-        left_extra  = [c for c in rel["right_cols"] if c not in rel["left_cols"]][:6]
+        left_extra = [c for c in rel["right_cols"] if c not in rel["left_cols"]][:6]
         lines.append(f"### {rel['left']} ↔ {rel['right']}")
-        lines.append(f"**Join column:** `{rel['key']}`")
-        lines.append(f"```sql")
-        lines.append(f"JOIN [{rel['right']}] ON [{rel['left']}].{rel['key']} = [{rel['right']}].{rel['key']}")
-        lines.append(f"```")
+        lines.append(f"**Join column:** `{rel['left_col']}`")
+        lines.append("```sql")
+        lines.append(
+            f"JOIN [{rel['right']}] ON [{rel['left']}].{rel['left_col']}"
+            f" = [{rel['right']}].{rel['right_col']}"
+        )
+        lines.append("```")
         if left_extra:
             lines.append(
                 f"Joining gets from **{rel['right']}**: "
                 + ", ".join(f"`{c}`" for c in left_extra)
             )
         lines.append("")
+
+    if alias_lines:
+        lines.append("## ERP ↔ DMS Alias Joins")
+        lines.append("")
+        lines.append(
+            "These joins connect ERP raw-code tables (OOLINE, OSBSTD, FIFO_BI_SAL_MGP_EXT) "
+            "to DMS fact tables (CUS_ORD_IVC_FCT etc.) via semantically equivalent "
+            "columns that have *different names* in each table."
+        )
+        lines.append("")
+        lines.extend(alias_lines)
 
     lines.append("## Usage guidance")
     lines.append("")
