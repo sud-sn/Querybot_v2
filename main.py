@@ -44,6 +44,7 @@ from core.result_cache import result_cache
 from core.query_router import should_route_to_result_cache, build_duckdb_system_prompt
 from core.duckdb_sql_validator import validate_duckdb_result_sql
 from core.semantic_planner import build_semantic_field_plan
+from core.metric_scope import metric_source_tables, resolve_metric_scope
 from core.answer_confidence import build_answer_confidence
 from core.answer_formatter import format_success_confidence_text, format_zero_row_business_response
 from core.answer_rca import build_business_rca, extract_sql_tables
@@ -809,9 +810,12 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
     )
     generic_hints = build_generic_query_hints(question)
     query_intent = analyze_query_intent(question)
-    _matched_metrics = store.list_metric_formula_context(account_id, question, limit=6)
-    metric_formula_context = _format_metric_formula_context(_matched_metrics)
-    _metric_formula_tables = _extract_metric_formula_tables(_matched_metrics)
+    # Candidate metrics are account-wide. We delay injecting/enforcing them
+    # until graph + semantic planning has inferred the question's schema/domain.
+    _metric_candidates = store.list_metric_formula_context(account_id, question, limit=10)
+    _matched_metrics: list[dict] = []
+    metric_formula_context = ""
+    _metric_formula_tables: set[str] = set()
 
     # If the question came from a suggested-question click, inject the FQN hint
     # so the LLM uses the correct table name format for this DB type.
@@ -864,7 +868,6 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
             kb_synonym_injection,
             schema_grounded_hint,
             generic_hints,
-            metric_formula_context,
             context,
         )
         if part
@@ -880,6 +883,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
     # Loads the client's entity graph once and resolves JOINs from the question
     # before the LLM is called so the LLM never guesses table relationships.
     _graph_ctx: dict = {}
+    _full_graph: dict = {}
     try:
         _full_graph = store.get_full_graph(account_id)
         # When the user selected a specific schema, restrict the graph to
@@ -908,7 +912,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                 db_type=db_cfg.get("db_type", "azure_sql"),
                 graph=_full_graph,
                 intent=query_intent,
-                metric_formula_tables=_metric_formula_tables,
+                metric_formula_tables=set(),
             )
             if _graph_ctx.get("enabled"):
                 log.info(
@@ -959,33 +963,6 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
         except Exception as _cov_exc:
             log.debug("Table coverage guarantee skipped: %s", _cov_exc)
 
-    # ── Metric-formula table coverage ────────────────────────────────────────
-    # For formula-expression metrics (e.g. sum(FIFO_BI_SAL_MGP_EXT.PCLA)),
-    # the table is not in the entity graph so it never gets gap-filled above.
-    # Fetch KB docs for every table referenced in the matched metric formulas.
-    if _metric_formula_tables:
-        try:
-            from core.table_coverage import guarantee_table_coverage
-            _mf_gap_docs = guarantee_table_coverage(
-                account_id    = account_id,
-                required_fqns = _metric_formula_tables,
-                retrieved_docs = relevant_kbs,
-                rag_filter    = None,   # metric tables are admin-approved, skip ACL filter
-                max_fill      = 4,
-            )
-            if _mf_gap_docs:
-                context_with_terms = (
-                    context_with_terms
-                    + "\n\n---\n\n"
-                    + "\n\n---\n\n".join(_mf_gap_docs)
-                )
-                log.info(
-                    "Metric formula coverage: injected %d doc(s) for metric tables %s",
-                    len(_mf_gap_docs), sorted(_metric_formula_tables),
-                )
-        except Exception as _mf_exc:
-            log.debug("Metric formula table coverage skipped: %s", _mf_exc)
-
     _semantic_plan = {}
     try:
         _semantic_plan = build_semantic_field_plan(
@@ -1018,6 +995,87 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
     except Exception as _sp_exc:
         _semantic_plan = {}
         log.debug("Semantic field planning skipped: %s", _sp_exc)
+
+    # Metric scoping happens after graph + semantic planning so "revenue by
+    # prescriber" can choose the Pharmacy revenue metric, while "revenue by
+    # warehouse" can choose the Profitability metric.  In All-schema mode, a
+    # bare "revenue" question remains ambiguous and should ask the user.
+    _metric_scope = resolve_metric_scope(
+        _metric_candidates,
+        question,
+        all_columns,
+        selected_schema=schema_hint,
+        graph_context=_graph_ctx,
+        graph=_full_graph,
+        semantic_plan=_semantic_plan,
+        limit=6,
+    )
+    if _metric_scope.ambiguous and not is_clarification:
+        options = _metric_scope.options or []
+        clarifying_q = (
+            "I found more than one revenue definition. Which one should I use?"
+        )
+        if event.user_id and options:
+            save_pending(
+                account_id,
+                event.user_id,
+                question,
+                context_with_terms,
+                clarification_meta={
+                    "term": "revenue",
+                    "options": [{"label": opt, "value": opt} for opt in options],
+                    "source": "metric_scope",
+                },
+            )
+        send_prompt = getattr(adapter, "send_clarification_prompt", None)
+        if callable(send_prompt) and options:
+            await send_prompt(
+                event,
+                clarifying_q,
+                [{"label": opt, "value": opt} for opt in options],
+            )
+        else:
+            option_lines = "\n".join(f"  • {opt}" for opt in options[:5])
+            await adapter.send_message(
+                event,
+                f"❓ {clarifying_q}\n\n{option_lines}\n\n"
+                "_Reply with one of the options above._",
+            )
+        return
+
+    _matched_metrics = _metric_scope.metrics
+    metric_formula_context = _format_metric_formula_context(_matched_metrics)
+    _metric_formula_tables = set()
+    for _metric in _matched_metrics:
+        _metric_formula_tables.update(metric_source_tables(_metric, all_columns))
+    if metric_formula_context:
+        context_with_terms = context_with_terms + "\n\n" + metric_formula_context
+
+    # Fetch KB docs for every table referenced by the selected metric formulas.
+    # This is deliberately after metric scoping; otherwise a generic metric from
+    # another schema can pollute an All-schema question.
+    if _metric_formula_tables:
+        try:
+            from core.table_coverage import guarantee_table_coverage
+            _mf_gap_docs = guarantee_table_coverage(
+                account_id    = account_id,
+                required_fqns = _metric_formula_tables,
+                retrieved_docs = relevant_kbs,
+                rag_filter    = rag_filter,
+                max_fill      = 4,
+            )
+            if _mf_gap_docs:
+                context_with_terms = (
+                    context_with_terms
+                    + "\n\n---\n\n"
+                    + "\n\n---\n\n".join(_mf_gap_docs)
+                )
+                log.info(
+                    "Metric formula coverage: injected %d doc(s) for scoped metric tables %s",
+                    len(_mf_gap_docs), sorted(_metric_formula_tables),
+                )
+        except Exception as _mf_exc:
+            log.debug("Scoped metric formula table coverage skipped: %s", _mf_exc)
 
     system = build_sql_system_prompt(
         db_cfg["db_type"], context_with_terms,
