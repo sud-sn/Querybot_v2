@@ -643,13 +643,29 @@ def build_sql_system_prompt(
     return base
 
 
-def build_kb_system_prompt() -> str:
+def build_kb_system_prompt(erp_hints: str = "") -> str:
     """
     Stage 1 KB generation system prompt.
     DataPilot-style format. Generic — works for any database domain.
     Requires distinct values to be used. Flags ambiguous columns.
+
+    erp_hints: optional pre-formatted hint block from core.erp_column_dict.
+    When provided it is prepended so the LLM writes correct meanings and
+    Business Synonyms for cryptic ERP short-code columns instead of
+    marking them [NEEDS CONTEXT].
     """
+    erp_block = ""
+    if erp_hints:
+        erp_block = (
+            "ERP COLUMN REFERENCE — MANDATORY:\n"
+            "The following column names are ERP short codes with known business meanings.\n"
+            "You MUST use these translations in the ## Columns and ## Business Synonyms sections.\n"
+            "Do NOT write [NEEDS CONTEXT] for any column listed here.\n\n"
+            f"{erp_hints}\n\n"
+        )
+
     return (
+        f"{erp_block}"
         "You are a senior data analyst writing a Knowledge Base document for an AI SQL generator. "
         "The document will be used at query time to produce accurate SQL — "
         "write it for the SQL generator, not for a human reader.\n\n"

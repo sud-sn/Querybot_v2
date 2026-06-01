@@ -116,6 +116,7 @@ async def build_kb(
         build_kb_query_prompt, build_biz_vocab_prompt,
     )
     from core.llm_audit import llm_audit_component
+    from core.erp_column_dict import get_erp_hints
 
     schema_path = Path(schema_dir)
     kb_path     = Path(kb_dir)
@@ -131,7 +132,8 @@ async def build_kb(
             "Run schema discovery first."
         )
 
-    system = build_kb_system_prompt()
+    # Base system prompt used for business vocab (no per-table ERP hints needed there)
+    system_base = build_kb_system_prompt()
 
     async def _progress(**payload):
         if not progress_callback:
@@ -182,7 +184,7 @@ async def build_kb(
     biz_user = build_biz_vocab_prompt(table_names, column_reference, business_desc)
     with llm_audit_component("kb_business_vocab"):
         biz_text, _, _ = await llm_complete(
-            system, biz_user, provider, model, api_key, max_tokens=3000, **kw
+            system_base, biz_user, provider, model, api_key, max_tokens=3000, **kw
         )
     (kb_path / "_business_kb.md").write_text(biz_text, encoding="utf-8")
     log.info("Business vocab KB written (%d tables grounded)", len(table_names))
@@ -227,6 +229,13 @@ async def build_kb(
                 if m:
                     table_cols.append(m.group(1))
         col_list = ", ".join(table_cols)
+
+        # Build a table-specific system prompt that includes ERP short-code hints
+        # when the table contains cryptic M3/JDE column names.
+        erp_hints = get_erp_hints(table_cols)
+        system = build_kb_system_prompt(erp_hints=erp_hints)
+        if erp_hints:
+            log.info("ERP hints injected for %s (%d matched codes)", table_name, erp_hints.count("\n") + 1)
 
         # ── Stage 1: DataPilot-style KB document ──────────────────────────────
         join_slice = _slice_join_map(table_name)
