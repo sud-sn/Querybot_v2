@@ -1030,6 +1030,22 @@ async def portal_semantic_feedback_updates(request: Request):
     return JSONResponse({"ok": True, "items": rows})
 
 
+@router.get("/api/suggest")
+async def portal_suggest(request: Request, q: str = "", limit: int = 6):
+    """Return autocomplete suggestions for the chat input.
+
+    Query params:
+      q     — partial query string (min 2 chars)
+      limit — max results (default 6, capped at 12)
+    """
+    user = _get_portal_user(request)
+    if not user:
+        return JSONResponse({"ok": False, "suggestions": []}, status_code=401)
+    limit = max(1, min(int(limit or 6), 12))
+    suggestions = store.get_suggestions(user["account_id"], q, limit=limit)
+    return JSONResponse({"ok": True, "suggestions": suggestions})
+
+
 @router.get("/api/query-limit-status")
 async def portal_query_limit_status(request: Request):
     user = _get_portal_user(request)
