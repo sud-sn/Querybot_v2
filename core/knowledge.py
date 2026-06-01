@@ -161,6 +161,63 @@ def _build_table_business_desc(business_desc: str, schema_name: str) -> str:
 # KB generation — public entry point
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _format_approved_metrics_for_kb(account_id: str, table_name: str) -> str:
+    """
+    Return a formatted block of approved metric formulas from the metric registry
+    that reference this table. Injected into the KB generation prompt so the LLM
+    writes the CORRECT formula into ## Key Metrics — preventing the KB from
+    documenting a nearby column that contradicts the approved formula.
+
+    Returns empty string when no metrics match or metric_registry is unavailable.
+    """
+    try:
+        from store.config_store import list_metrics
+        metrics = list_metrics(account_id)
+    except Exception:
+        return ""
+    if not metrics:
+        return ""
+
+    table_upper = table_name.upper()
+    relevant: list[str] = []
+    for m in metrics:
+        formula_type = (m.get("formula_type") or "query").lower()
+        if formula_type != "expression":
+            continue
+        sql = (m.get("sql_template") or "").strip()
+        if not sql:
+            continue
+        # Match if the metric's base_table or required_columns reference this table
+        base = (m.get("base_table") or "").upper()
+        req  = (m.get("required_columns") or "").upper()
+        # Include if table is explicitly set, or no table restriction (apply to all)
+        if base and table_upper not in base and table_upper.split(".")[-1] not in base:
+            continue
+        name     = m.get("name", "metric")
+        synonyms = m.get("synonyms", "")
+        relevant.append(
+            f"- **{name}** (synonyms: {synonyms})\n"
+            f"  APPROVED FORMULA: `{sql}`\n"
+            f"  CRITICAL: Use EXACTLY this formula in ## Key Metrics and ## Common Query Patterns.\n"
+            f"  Do NOT document a nearby column (e.g. CUS_IVC_LIN_AMT) as the {name} measure.\n"
+            f"  Required columns that MUST appear in the SELECT: "
+            f"{m.get('required_columns', 'see formula above')}"
+        )
+
+    if not relevant:
+        return ""
+
+    lines = [
+        "ADMIN-APPROVED METRIC FORMULAS FOR THIS TABLE:",
+        "The following metrics have been pre-approved by the administrator.",
+        "You MUST use these exact formulas in the ## Key Metrics section.",
+        "If the schema contains a similar but different column, still use the approved formula — not the similar column.",
+        "",
+    ]
+    lines.extend(relevant)
+    return "\n".join(lines)
+
+
 async def build_kb(
     schema_dir: str,
     kb_dir: str,
@@ -172,6 +229,7 @@ async def build_kb(
     extra_kwargs: dict | None = None,
     progress_callback=None,
     stop_event=None,
+    account_id: str = "",
 ) -> int:
     """
     Two-stage KB generation for every table discovered in schema_dir.
@@ -327,13 +385,20 @@ async def build_kb(
             _schema_part = _sql_parts[-2]
         table_biz_desc = _build_table_business_desc(business_desc, _schema_part)
 
+        # Inject approved metric formulas from the metric registry so the KB
+        # documents the EXACT approved formula — not a nearby similar column.
+        approved_metrics_block = _format_approved_metrics_for_kb(
+            account_id or chroma_dir, table_name
+        )
+
         stage1_user = (
             f"Business description:\n{table_biz_desc}\n\n"
             f"Table schema for: {table_name}\n"
             f"Exact column names in this table (ONLY use these): {col_list}\n\n"
             f"Full schema with distinct values:\n{schema_md}\n"
             f"\n{schema_intelligence}\n"
-            f"{join_block}\n"
+            + (f"\n{approved_metrics_block}\n" if approved_metrics_block else "")
+            + f"{join_block}\n"
             "Generate the complete Knowledge Base document for this table "
             "following all 7 sections in the format specified. "
             "Use the distinct values from the schema for every filter example. "
@@ -342,6 +407,8 @@ async def build_kb(
             "'No foreign-key relationships detected.' in that section. "
             "Use the deterministic schema intelligence block to explain cryptic ERP, "
             "abbreviated, date-key, dimension-key, status/filter, and measure-candidate fields. "
+            "If ADMIN-APPROVED METRIC FORMULAS are listed above, use those EXACT formulas "
+            "in ## Key Metrics — do not substitute nearby columns. "
             "Do not promote candidate metrics to official metrics unless the evidence is strong "
             "or the business description explicitly supports it. "
             "Mark any column whose business rule is unclear with [NEEDS CONTEXT]."

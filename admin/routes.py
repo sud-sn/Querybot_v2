@@ -4504,6 +4504,7 @@ async def admin_build_kb(
                     api_key=api_key, extra_kwargs=az_kw,
                     progress_callback=_on_kb_progress,
                     stop_event=_stop_ev,
+                    account_id=account_id,
                 )
 
             # If user requested a stop, roll back to SCHEMA_READY and exit
