@@ -489,9 +489,9 @@
           Schema discovery files are <strong>kept</strong> — you can rebuild the KB immediately.
         </div>
       </div>
-      <form method="post" action="/admin/clients/{{ client.account_id }}/setup/delete-kb" id="deleteKbForm">
-        <button type="button" class="btn btn-secondary btn-sm" style="color:var(--red);border-color:var(--red);white-space:nowrap"
-          onclick="qbConfirm({title:'Delete Knowledge Base?',body:'This will permanently delete all KB markdown files, vector embeddings, and cached query examples.\n\nSchema discovery files will be kept — you can rebuild immediately.',confirm:'Delete KB',onConfirm:()=>document.getElementById(\'deleteKbForm\').submit()})">
+      <form method="post" action="/admin/clients/{{ client.account_id }}/setup/delete-kb"
+            onsubmit="return confirm('Delete the Knowledge Base?\n\nThis permanently removes all KB files, vector embeddings and cached queries.\nSchema discovery files are kept — you can rebuild immediately.')">
+        <button type="submit" class="btn btn-secondary btn-sm" style="color:var(--red);border-color:var(--red);white-space:nowrap">
           Delete KB
         </button>
       </form>
