@@ -391,13 +391,14 @@ def _format_metric_formula_context(metrics: list[dict]) -> str:
         return ""
 
     blocks = [
-        "APPROVED METRIC FORMULAS:",
-        "Use these admin-approved metric definitions whenever the user asks for the metric name or a synonym.",
-        "For formula expressions: the calculation has been pre-validated by an admin. Use it EXACTLY as specified in the SELECT list. "
-        "If the formula contains fully-qualified TABLE.COLUMN references, infer the FROM clause from those table names — "
-        "do NOT require the table to appear in the retrieved schema context, as the admin has already verified the column exists.",
-        "For percentage/rate formulas, do not average row-level percentage columns unless the formula explicitly uses AVG().",
-        "For trusted SQL query/template metrics: if required columns are not present in the retrieved KB context, reply CANNOT_GENERATE.",
+        "=" * 60,
+        "APPROVED METRIC FORMULAS — READ THIS FIRST",
+        "=" * 60,
+        "These metric formulas are ADMIN-APPROVED and take ABSOLUTE PRECEDENCE.",
+        "They OVERRIDE any column or formula documented in the Knowledge Base below.",
+        "For formula expressions: use the EXACT sql_template in EVERY SELECT expression",
+        "(including inside CTEs). The formula columns MUST appear in the SELECT clause.",
+        "NEVER substitute a similar-sounding column from the KB for an approved formula.",
     ]
     for idx, metric in enumerate(metrics, start=1):
         formula_type = (metric.get("formula_type") or "query").lower()
@@ -410,8 +411,9 @@ def _format_metric_formula_context(metrics: list[dict]) -> str:
         ]
         if metric.get("description"):
             lines.append(f"   Business meaning: {metric.get('description')}")
-        if metric.get("required_columns"):
-            lines.append(f"   Required columns: {metric.get('required_columns')}")
+        req_cols = (metric.get("required_columns") or "").strip()
+        if req_cols:
+            lines.append(f"   Required columns (MUST appear in SELECT): {req_cols}")
         if metric.get("allowed_dimensions"):
             lines.append(f"   Safe dimensions: {metric.get('allowed_dimensions')}")
         if metric.get("grain"):
@@ -420,8 +422,15 @@ def _format_metric_formula_context(metrics: list[dict]) -> str:
             lines.append(f"   Example questions: {metric.get('example_questions')}")
         if metric.get("default_time_column"):
             lines.append(f"   Default time column: {metric.get('default_time_column')} — use this column when grouping by date/period")
-        lines.append(f"   Approved calculation: {metric.get('sql_template', '').strip()}")
+        sql_tpl = (metric.get("sql_template") or "").strip()
+        lines.append(f"   EXACT formula to use in SELECT: {sql_tpl}")
+        if formula_type == "expression" and req_cols:
+            lines.append(
+                f"   *** WARNING: The Knowledge Base may document similar columns. "
+                f"You MUST use the formula above — not any other column. ***"
+            )
         blocks.append("\n".join(lines))
+    blocks.append("=" * 60)
     return "\n\n".join(blocks)
 
 
@@ -1060,7 +1069,10 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
     for _metric in _matched_metrics:
         _metric_formula_tables.update(metric_source_tables(_metric, all_columns))
     if metric_formula_context:
-        context_with_terms = context_with_terms + "\n\n" + metric_formula_context
+        # Prepend metric formulas BEFORE the KB context so the LLM reads them
+        # first and they take precedence over any similar-column documentation
+        # in the 10,000+ chars of KB content that follows.
+        context_with_terms = metric_formula_context + "\n\n" + context_with_terms
 
     # Fetch KB docs for every table referenced by the selected metric formulas.
     # This is deliberately after metric scoping; otherwise a generic metric from
