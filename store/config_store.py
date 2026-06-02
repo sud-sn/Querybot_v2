@@ -1646,6 +1646,84 @@ def delete_entity(account_id: str, entity_name: str) -> None:
         )
 
 
+def _split_table_ref(ref: str, fallback_schema: str = "") -> tuple[str, str]:
+    parts = [
+        p.strip().strip('"`[]').upper()
+        for p in str(ref or "").split(".")
+        if p.strip().strip('"`[]')
+    ]
+    table = parts[-1] if parts else ""
+    schema = (
+        str(fallback_schema or "").strip().strip('"`[]').upper()
+        or (parts[-2] if len(parts) >= 2 else "")
+    )
+    return schema, table
+
+
+def prune_entity_graph_to_tables(account_id: str, table_refs: list[str] | set[str] | tuple[str, ...]) -> dict:
+    """
+    Remove graph entities that no longer belong to the current discovered schema.
+
+    KB/schema rebuilds are full replacements, but the entity graph is persisted
+    separately because admins can edit it. This keeps admin edits for tables
+    still present in the latest _schema.json while deleting stale entities,
+    relationships, and properties for tables dropped from the KB scope.
+    """
+    allowed_refs = [str(t or "").strip() for t in (table_refs or []) if str(t or "").strip()]
+    if not allowed_refs:
+        return {"entities_removed": 0, "relationships_removed": 0, "properties_removed": 0}
+
+    allowed_exact = {_split_table_ref(ref) for ref in allowed_refs}
+    allowed_bare = {table for _schema, table in allowed_exact if table}
+    allowed_exact = {pair for pair in allowed_exact if pair[1]}
+
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT entity_name, table_name, schema_name FROM entity_graph WHERE account_id=?",
+            (account_id,),
+        ).fetchall()
+        stale_names: list[str] = []
+        for row in rows:
+            ent = dict(row)
+            schema, table = _split_table_ref(ent.get("table_name", ""), ent.get("schema_name", ""))
+            if not table:
+                continue
+            if schema:
+                keep = (schema, table) in allowed_exact
+            else:
+                # Legacy/manual graph rows may have only a bare table name.
+                keep = table in allowed_bare
+            if not keep:
+                stale_names.append(ent["entity_name"])
+
+        if not stale_names:
+            return {"entities_removed": 0, "relationships_removed": 0, "properties_removed": 0}
+
+        placeholders = ",".join("?" for _ in stale_names)
+        rel_removed = conn.execute(
+            f"""
+            DELETE FROM entity_relationships
+             WHERE account_id=?
+               AND (from_entity IN ({placeholders}) OR to_entity IN ({placeholders}))
+            """,
+            (account_id, *stale_names, *stale_names),
+        ).rowcount
+        prop_removed = conn.execute(
+            f"DELETE FROM entity_properties WHERE account_id=? AND entity_name IN ({placeholders})",
+            (account_id, *stale_names),
+        ).rowcount
+        ent_removed = conn.execute(
+            f"DELETE FROM entity_graph WHERE account_id=? AND entity_name IN ({placeholders})",
+            (account_id, *stale_names),
+        ).rowcount
+
+    return {
+        "entities_removed": max(ent_removed, 0),
+        "relationships_removed": max(rel_removed, 0),
+        "properties_removed": max(prop_removed, 0),
+    }
+
+
 def save_relationship(
     account_id: str,
     from_entity: str,

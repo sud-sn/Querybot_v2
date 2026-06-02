@@ -4421,6 +4421,19 @@ async def admin_discover_schema(
                             account_id, _elog_exc)
             # ── Entity graph auto-populate ─────────────────────────────────
             try:
+                _schema_path = Path(schema_dir) / "_schema.json"
+                _schema_scope = []
+                if _schema_path.exists():
+                    try:
+                        _schema_scope = list(json.loads(_schema_path.read_text(encoding="utf-8")).keys())
+                    except Exception as _scope_ex:
+                        log.warning("Entity graph scope read failed for %s: %s", account_id, _scope_ex)
+                _pruned = store.prune_entity_graph_to_tables(account_id, _schema_scope)
+                if any(_pruned.values()):
+                    log.info(
+                        "Entity graph pruned for %s to current schema scope: %s",
+                        account_id, _pruned,
+                    )
                 _ent, _rel = _auto_populate_entity_graph(account_id, schema_dir)
                 log.info(
                     "Entity graph auto-populated for %s: %d entities, %d relationships (suggested)",
