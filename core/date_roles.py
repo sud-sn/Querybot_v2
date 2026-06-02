@@ -25,14 +25,20 @@ class DateRole:
 DATE_ROLES: tuple[DateRole, ...] = (
     DateRole("invoice_date", "Invoice Date", ("invoice date", "invoiced date", "billing date", "billed date", "invoice month", "invoice year"), 95),
     DateRole("order_date", "Order Date", ("order date", "ordered date", "sales order date", "order month", "order year"), 92),
+    DateRole("cancelled_order_date", "Cancelled Order Date", ("cancelled order date", "canceled order date", "order cancellation date", "cancelled order month"), 90),
     DateRole("requested_delivery_date", "Requested Delivery Date", ("requested delivery date", "requested ship date", "requested delivery month", "due delivery date"), 88),
     DateRole("confirmed_delivery_date", "Confirmed Delivery Date", ("confirmed delivery date", "confirmed ship date", "confirmed delivery month"), 87),
     DateRole("planned_delivery_date", "Planned Delivery Date", ("planned delivery date", "planned ship date", "planned delivery month"), 86),
+    DateRole("valid_delivery_date", "Valid Delivery Date", ("valid delivery date", "validated delivery date", "valid ship date", "valid delivery month"), 84),
     DateRole("delivery_date", "Delivery Date", ("delivery date", "ship date", "shipped date", "fulfillment date", "delivery month", "delivery year"), 82),
     DateRole("due_date", "Due Date", ("due date", "payment due date", "invoice due date", "due month"), 78),
     DateRole("payment_date", "Payment Date", ("payment date", "paid date", "collection date", "cash date", "payment month"), 76),
     DateRole("receipt_date", "Receipt Date", ("receipt date", "received date", "purchase receipt date", "receipt month"), 75),
     DateRole("accounting_date", "Accounting Date", ("accounting date", "posting date", "gl date", "ledger date", "accounting month"), 74),
+    DateRole("current_cost_date", "Current Cost Date", ("current cost date", "current replacement cost date", "current cost month"), 73),
+    DateRole("previous_cost_date", "Previous Cost Date", ("previous cost date", "previous replacement cost date", "prior cost date", "previous cost month"), 72),
+    DateRole("order_line_creation_date", "Order Line Creation Date", ("order line creation date", "purchase order line creation date", "line creation date", "line created date"), 70),
+    DateRole("creation_date", "Creation Date", ("creation date", "created date", "line creation date", "created month"), 68),
     DateRole("registration_date", "Registration Date", ("registration date", "created date", "entry date", "created month"), 65),
     DateRole("modified_date", "Last Modified Date", ("last modified date", "updated date", "last updated date"), 55),
 )
@@ -41,15 +47,21 @@ _ROLE_BY_KEY = {role.key: role for role in DATE_ROLES}
 
 _COLUMN_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"(?:^|_)CUS_IVC_DT(?:_|$)|(?:^|_)SLR_IVC_DT(?:_|$)|(?:^|_)IVC_DT(?:_|$)|^IVDT$"), "invoice_date"),
+    (re.compile(r"(?:^|_)CCL_.*ORD_DT(?:_|$)|(?:^|_)CANCEL(?:LED|ED)?_.*ORD_DT(?:_|$)"), "cancelled_order_date"),
     (re.compile(r"(?:^|_)CUS_ORD_DT(?:_|$)|(?:^|_)PCH_ORD_DT(?:_|$)|(?:^|_)ORD_DT(?:_|$)|^ORDT$"), "order_date"),
     (re.compile(r"(?:^|_)RQD_.*DLV_DT(?:_|$)|(?:^|_)REQ(?:UESTED)?_.*DLV_DT(?:_|$)|^DWDT$"), "requested_delivery_date"),
     (re.compile(r"(?:^|_)CFM_.*DLV_DT(?:_|$)|(?:^|_)CONF(?:IRMED)?_.*DLV_DT(?:_|$)|^CODT$"), "confirmed_delivery_date"),
     (re.compile(r"(?:^|_)PLD_.*DLV_DT(?:_|$)|(?:^|_)PLANN?ED_.*DLV_DT(?:_|$)|^PLDT$"), "planned_delivery_date"),
+    (re.compile(r"(?:^|_)VLD_.*DLV_DT(?:_|$)|(?:^|_)VALID_.*DLV_DT(?:_|$)"), "valid_delivery_date"),
     (re.compile(r"(?:^|_)DLV_DT(?:_|$)|(?:^|_)SHIP_DT(?:_|$)|^DLDT$|^DSDT$"), "delivery_date"),
     (re.compile(r"(?:^|_)DUE_DT(?:_|$)|^DUDT$"), "due_date"),
     (re.compile(r"(?:^|_)PAY(?:MENT)?_DT(?:_|$)|(?:^|_)PYM?T_DT(?:_|$)"), "payment_date"),
     (re.compile(r"(?:^|_)RCT_DT(?:_|$)|(?:^|_)RECEIPT_DT(?:_|$)|(?:^|_)RCV_DT(?:_|$)|^RVDT$"), "receipt_date"),
     (re.compile(r"(?:^|_)ACCT?_DT(?:_|$)|(?:^|_)ACCOUNTING_DT(?:_|$)|^ACDT$"), "accounting_date"),
+    (re.compile(r"(?:^|_)CUR_.*CST_DT(?:_|$)|(?:^|_)CURRENT_.*COST_DT(?:_|$)"), "current_cost_date"),
+    (re.compile(r"(?:^|_)PRE_.*CST_DT(?:_|$)|(?:^|_)PREV(?:IOUS)?_.*COST_DT(?:_|$)|(?:^|_)PRIOR_.*COST_DT(?:_|$)"), "previous_cost_date"),
+    (re.compile(r"(?:^|_)PCH_ORD_LIN_CRN_DT(?:_|$)|(?:^|_)ORD_LIN_CRN_DT(?:_|$)|(?:^|_)LINE_CRN_DT(?:_|$)|(?:^|_)LINE_CREATED?_DT(?:_|$)"), "order_line_creation_date"),
+    (re.compile(r"(?:^|_)CRN_DT(?:_|$)|(?:^|_)CREATION_DT(?:_|$)|(?:^|_)CREATED_DT(?:_|$)"), "creation_date"),
     (re.compile(r"(?:^|_)RGDT(?:_|$)|(?:^|_)REG(?:ISTRATION)?_DT(?:_|$)|(?:^|_)CRN_DT(?:_|$)|^RGDT$"), "registration_date"),
     (re.compile(r"(?:^|_)LMDT(?:_|$)|(?:^|_)LST_UPD(?:_|$)|(?:^|_)UPDATED?_DT(?:_|$)|^LMDT$"), "modified_date"),
 )
@@ -160,7 +172,9 @@ def _label_from_column(column: str) -> str:
     mini = {
         "ORD": "Order", "IVC": "Invoice", "DLV": "Delivery", "RQD": "Requested",
         "CFM": "Confirmed", "PLD": "Planned", "RCT": "Receipt", "DUE": "Due",
-        "ACD": "Accounting", "CRN": "Created",
+        "ACD": "Accounting", "CRN": "Created", "CUR": "Current", "CST": "Cost",
+        "PRE": "Previous", "CCL": "Cancelled", "VLD": "Valid", "LIN": "Line",
+        "PCH": "Purchase",
     }
     for part in parts:
         expanded.append(mini.get(part, part.capitalize()))

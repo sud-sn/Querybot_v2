@@ -18,6 +18,11 @@ class DateRoleDetectionTests(unittest.TestCase):
             "CFM_CUS_DLV_DT_DMS_KEY": "Confirmed Delivery Date",
             "PLD_CUS_DLV_DT_DMS_KEY": "Planned Delivery Date",
             "PCH_RCT_DT_DMS_KEY": "Receipt Date",
+            "CCL_CUS_ORD_DT_DMS_KEY": "Cancelled Order Date",
+            "PCH_VLD_DLV_DT_DMS_KEY": "Valid Delivery Date",
+            "CUR_CST_DT_DMS_KEY": "Current Cost Date",
+            "PRE_CST_DT_DMS_KEY": "Previous Cost Date",
+            "PCH_ORD_LIN_CRN_DT_DMS_KEY": "Order Line Creation Date",
         }
         for column, label in cases.items():
             with self.subTest(column=column):
