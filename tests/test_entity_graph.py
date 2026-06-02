@@ -571,6 +571,12 @@ class TestAdminRoutes(unittest.TestCase):
         self.assertIn("startDrag", src)
         self.assertIn("mousedown", src)
 
+    def test_template_renders_suggested_graph_rows(self):
+        src = GRAPH_TMPL.read_text()
+        self.assertNotIn("if (e.status === 'suggested') return", src)
+        self.assertNotIn("fe.status === 'suggested' || te.status === 'suggested'", src)
+        self.assertIn("const isSuggested = (e.status === 'suggested')", src)
+
     def test_setup_page_has_graph_nav(self):
         tmpl = (ROOT / "admin" / "templates" / "client_setup.html").read_text()
         self.assertIn("/graph", tmpl)

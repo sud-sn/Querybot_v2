@@ -1384,12 +1384,11 @@ function renderNodes() {
     : graph.entities;
 
   visibleEntities.forEach(e => {
-    if (e.status === 'suggested') return; // hide auto-suggested table nodes
     const { x, y } = entityPos(e);
     // Use user-assigned colour → type-canonical colour → neutral default
     const color = e.color || TYPE_COLORS[e.entity_type] || '#4F86C6';
     const isSelected = selectedEntity === e.entity_name;
-    const isSuggested = false; // suggested entities are filtered above
+    const isSuggested = (e.status === 'suggested');
     const conf = e.confidence_score ?? 100;
     const focusSet = _focusedNodeSet();
     const focusClass = focusSet ? (focusSet.has(e.entity_name) ? ' focused' : ' dimmed') : '';
@@ -1712,8 +1711,6 @@ function renderEdges() {
     if (!fe || !te) return;
     if (activeSchemaFilter &&
         ((fe.schema_name || '') !== activeSchemaFilter || (te.schema_name || '') !== activeSchemaFilter)) return;
-    // Skip edges involving auto-suggested (schema-auto-populated) entities
-    if (fe.status === 'suggested' || te.status === 'suggested') return;
     const fp = entityPos(fe), tp = entityPos(te);
     const { x1, y1, x2, y2, cx1, cy1, cx2, cy2 } = _edgePoints(fp, tp);
     const isSelected = selectedRelId === rel.id;
