@@ -541,14 +541,14 @@
       <div class="gs-empty">No entities yet.<br>Click <strong>＋</strong> to define your first business object.</div>
       {% endif %}
       {% for e in entities %}
-      {% if e.status != 'suggested' %}
       {% set _esev = health.entity_severity.get(e.entity_name, '') %}
       {% set _tcol = {'fact': '#D97706', 'dimension': '#2563EB', 'bridge': '#7C3AED'}.get(e.entity_type, '#94A3B8') %}
       {% set _jcnt = (relationships|selectattr('from_entity','equalto',e.entity_name)|list|length) + (relationships|selectattr('to_entity','equalto',e.entity_name)|list|length) %}
-      <div class="gs-entity-item"
+      <div class="gs-entity-item{% if e.status == 'suggested' %} suggested{% endif %}"
            id="sib-{{ e.entity_name|replace(' ','_') }}"
            data-etype="{{ e.entity_type }}"
            data-ename="{{ (e.display_name or e.entity_name)|lower }}"
+           data-status="{{ e.status or '' }}"
            onclick="selectEntity('{{ e.entity_name }}')"
            onmouseenter="hoverHighlightNode('{{ e.entity_name }}')"
            onmouseleave="clearHoverHighlight()">
@@ -563,7 +563,6 @@
         </div>
         {% if _esev %}<span class="gs-health-dot {{ _esev }}" title="{{ _esev|capitalize }} health issue" style="margin-top:5px"></span>{% endif %}
       </div>
-      {% endif %}
       {% endfor %}
     </div>
   </div>
@@ -1379,8 +1378,9 @@ function renderNodes() {
   layer.innerHTML = '';
   const NS = 'http://www.w3.org/2000/svg';
 
-  const visibleEntities = activeSchemaFilter
-    ? graph.entities.filter(e => (e.schema_name || '') === activeSchemaFilter)
+  const schemaUC = (activeSchemaFilter || '').toUpperCase();
+  const visibleEntities = schemaUC
+    ? graph.entities.filter(e => (e.schema_name || '').toUpperCase() === schemaUC)
     : graph.entities;
 
   visibleEntities.forEach(e => {
@@ -4097,16 +4097,32 @@ function updateSidebar() {
     list.innerHTML = `<div class="gs-empty">No entities in schema <strong>${esc(activeSchemaFilter)}</strong> yet.</div>`;
     return;
   }
-  list.innerHTML = visibleEntities.map(e => `
-    <div class="gs-entity-item" id="sib-${e.entity_name.replace(/ /g,'_')}"
+  list.innerHTML = visibleEntities.map(e => {
+    const relCount = graph.relationships.filter(r => r.from_entity === e.entity_name || r.to_entity === e.entity_name).length;
+    const typeColor = TYPE_COLORS[e.entity_type] || '#94A3B8';
+    const selectedStyle = selectedEntity === e.entity_name
+      ? 'style="background:color-mix(in srgb,var(--primary) 10%,var(--surface));border-left:3px solid var(--primary)"'
+      : '';
+    return `
+    <div class="gs-entity-item${e.status === 'suggested' ? ' suggested' : ''}" id="sib-${e.entity_name.replace(/ /g,'_')}"
          data-etype="${esc(e.entity_type)}"
          data-ename="${esc((e.display_name||e.entity_name).toLowerCase())}"
+         data-status="${esc(e.status || '')}"
          onclick="selectEntity('${esc(e.entity_name)}')"
-         ${selectedEntity === e.entity_name ? 'style="background:color-mix(in srgb,var(--primary) 10%,var(--surface));border-left:3px solid var(--primary)"' : ''}>
-      <span class="entity-dot" style="background:${e.color||'#4F86C6'}"></span>
-      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(e.display_name||e.entity_name)}</span>
-      <span class="entity-type-badge badge-${e.entity_type}">${e.entity_type}</span>
-    </div>`).join('');
+         onmouseenter="hoverHighlightNode('${esc(e.entity_name)}')"
+         onmouseleave="clearHoverHighlight()"
+         ${selectedStyle}>
+      <span class="entity-dot" style="background:${e.color||typeColor};flex-shrink:0;margin-top:4px"></span>
+      <div class="gs-ent-main">
+        <div class="gs-ent-name">${esc(e.display_name||e.entity_name)}</div>
+        <div class="gs-ent-meta">
+          <span class="gs-ent-type-dot" style="background:${typeColor}"></span>
+          <span class="gs-ent-type-label">${esc(e.entity_type || '')}</span>
+          ${relCount > 0 ? `<span class="gs-ent-joins">${relCount} join${relCount === 1 ? '' : 's'}</span>` : ''}
+        </div>
+      </div>
+    </div>`;
+  }).join('');
 }
 
 function updateRelList() {
@@ -4503,11 +4519,14 @@ function _rebuildSchemaFilterDropdown() {
   const schemas = [...new Set(graph.entities.map(e => e.schema_name || '').filter(Boolean))].sort();
   const sel = document.getElementById('schema-filter');
   const prev = sel.value;
+  const fallback = !schemas.length && activeSchemaFilter ? [activeSchemaFilter] : schemas;
+  const selected = fallback.includes(prev) ? prev : (fallback.length === 1 ? fallback[0] : '');
   sel.innerHTML = '<option value="">All schemas</option>' +
-    schemas.map(s => `<option value="${esc(s)}" ${s === prev ? 'selected' : ''}>${esc(s)}</option>`).join('');
-  // Hide the schema filter if there's only one (or zero) distinct schema
-  sel.parentElement.style.display = schemas.length < 2 ? 'none' : '';
-  sel.previousElementSibling.style.display = schemas.length < 2 ? 'none' : ''; // the label
+    fallback.map(s => `<option value="${esc(s)}" ${s === selected ? 'selected' : ''}>${esc(s)}</option>`).join('');
+  sel.value = selected;
+  activeSchemaFilter = selected;
+  sel.parentElement.style.display = '';
+  if (sel.previousElementSibling) sel.previousElementSibling.style.display = '';
 }
 
 window.applySchemaFilter = function() {
@@ -4695,7 +4714,6 @@ function _populateSchemaFilterDropdown(selectId, currentSchema) {
   const sel = document.getElementById(selectId);
   if (!sel) return;
   const schemas = [...new Set(_schemaTables.map(t => t.schema_name || ''))].filter(Boolean).sort();
-  if (schemas.length <= 1) { sel.style.display = 'none'; return; }  // hide if only 1 schema
   sel.style.display = '';
   let html = '<option value="">All schemas</option>';
   schemas.forEach(s => {

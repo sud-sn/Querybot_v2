@@ -576,6 +576,23 @@ class TestAdminRoutes(unittest.TestCase):
         self.assertNotIn("if (e.status === 'suggested') return", src)
         self.assertNotIn("fe.status === 'suggested' || te.status === 'suggested'", src)
         self.assertIn("const isSuggested = (e.status === 'suggested')", src)
+        self.assertNotIn("{% if e.status != 'suggested' %}", src)
+        self.assertIn("gs-entity-item{% if e.status == 'suggested' %} suggested{% endif %}", src)
+        self.assertIn("data-status=", src)
+
+    def test_template_keeps_schema_selector_visible_for_one_schema(self):
+        src = GRAPH_TMPL.read_text()
+        self.assertIn('id="schema-filter"', src)
+        self.assertNotIn("schemas.length < 2 ? 'none'", src)
+        self.assertNotIn("schemas.length <= 1) { sel.style.display = 'none'", src)
+        self.assertIn("fallback.length === 1 ? fallback[0]", src)
+
+    def test_template_keeps_entity_type_tabs_filterable_after_rebuild(self):
+        src = GRAPH_TMPL.read_text()
+        self.assertIn("window.filterSidebarByType", src)
+        self.assertIn('data-etype="${esc(e.entity_type)}"', src)
+        self.assertIn("_applySidebarEntFilter", src)
+        self.assertIn("gs-ent-type-label", src)
 
     def test_setup_page_has_graph_nav(self):
         tmpl = (ROOT / "admin" / "templates" / "client_setup.html").read_text()
