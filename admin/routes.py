@@ -2332,6 +2332,44 @@ async def graph_api_rel_delete(request: Request, account_id: str, rel_id: int):
     return JSONResponse({"status": "ok"})
 
 
+@router.post("/clients/{account_id}/graph/api/relationships/bulk")
+async def graph_api_rel_bulk(request: Request, account_id: str):
+    """Bulk update and/or delete relationships in one round-trip.
+
+    Body JSON:
+      updates: [{id, from_entity, to_entity, from_column, to_column,
+                 join_type, relationship_type, label, where_clause}, …]
+      deletes: [id, …]
+    """
+    if not _is_auth(request):
+        raise HTTPException(status_code=401)
+    data    = await request.json()
+    updates = data.get("updates", [])
+    deletes = data.get("deletes", [])
+
+    for rel_id in deletes:
+        try:
+            store.delete_relationship(account_id, int(rel_id))
+        except Exception:
+            pass
+
+    for u in updates:
+        store.save_relationship(
+            account_id        = account_id,
+            from_entity       = str(u.get("from_entity", "")).strip(),
+            to_entity         = str(u.get("to_entity", "")).strip(),
+            from_column       = str(u.get("from_column", "")).strip(),
+            to_column         = str(u.get("to_column", "")).strip(),
+            relationship_type = str(u.get("relationship_type", "many_to_one")),
+            join_type         = str(u.get("join_type", "LEFT")),
+            label             = str(u.get("label", "")).strip(),
+            where_clause      = str(u.get("where_clause", "")).strip(),
+            rel_id            = int(u.get("id") or 0),
+        )
+
+    return JSONResponse({"status": "ok", "updated": len(updates), "deleted": len(deletes)})
+
+
 @router.post("/clients/{account_id}/graph/api/properties")
 async def graph_api_prop_save(request: Request, account_id: str):
     if not _is_auth(request):

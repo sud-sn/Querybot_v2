@@ -297,6 +297,25 @@
 .modal-close{background:none;border:none;font-size:18px;cursor:pointer;color:var(--text-muted);padding:0 4px}
 .modal-body{padding:1rem 1.1rem}
 .modal-footer{padding:.75rem 1.1rem;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:.5rem}
+
+/* ── Bulk Relationship Manager ─────────────────────────────────────────────── */
+#bulk-rel-modal .modal-box{width:960px;max-width:97vw;max-height:92vh;display:flex;flex-direction:column;overflow:hidden}
+.brm-toolbar{padding:.5rem .85rem;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;background:var(--surface-2)}
+.brm-toolbar input.gd-input{width:180px;padding:4px 8px;font-size:12px}
+.brm-toolbar select.gd-input{width:110px;padding:4px 6px;font-size:12px}
+.brm-scroll{overflow-y:auto;flex:1;min-height:0}
+.brm-table{width:100%;border-collapse:collapse;font-size:12px;table-layout:fixed}
+.brm-table thead th{position:sticky;top:0;background:var(--surface-2);padding:6px 8px;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);border-bottom:2px solid var(--border);text-align:left;white-space:nowrap;z-index:2}
+.brm-table thead th:first-child{width:32px;text-align:center}
+.brm-table tbody tr{border-bottom:1px solid var(--border);transition:background .12s}
+.brm-table tbody tr:hover{background:color-mix(in srgb,var(--primary) 4%,var(--surface))}
+.brm-table tbody tr.brm-deleted{opacity:.35;pointer-events:none;background:#fee2e2}
+.brm-table td{vertical-align:middle}
+.brm-bulk-btn{font-size:11px;padding:4px 10px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm,4px);cursor:pointer;color:var(--text-soft);font-weight:600;white-space:nowrap}
+.brm-bulk-btn:hover{border-color:var(--primary);color:var(--primary)}
+.brm-bulk-btn.danger:hover{border-color:var(--red,#DC2626);color:var(--red,#DC2626)}
+.brm-del-btn{background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:15px;padding:2px 6px;border-radius:3px;line-height:1}
+.brm-del-btn:hover{color:var(--red,#DC2626);background:color-mix(in srgb,var(--red,#DC2626) 10%,transparent)}
 .m-btn{border:1px solid var(--border);border-radius:6px;padding:7px 16px;font-size:12px;font-weight:700;cursor:pointer;background:var(--surface)}
 .m-btn:hover{background:var(--surface-2)}
 .m-btn.primary{background:var(--primary);color:#fff;border-color:var(--primary)}
@@ -1082,6 +1101,80 @@
       <button class="m-btn" onclick="closeMultiLinkModal()">Cancel</button>
       <button class="m-btn primary" id="ml-save-btn" onclick="saveMultiLinks()" style="background:#0369A1;border-color:#0369A1">⬗ Create Links</button>
     </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     BULK RELATIONSHIP MANAGER MODAL
+     ═══════════════════════════════════════════════════════════════════════ -->
+<div id="bulk-rel-modal" class="modal-overlay" style="display:none" onclick="if(event.target===this)closeBulkRelManager()">
+  <div class="modal-box">
+
+    <!-- Header -->
+    <div class="modal-head">
+      <div style="display:flex;align-items:center;gap:.6rem">
+        <span style="font-size:18px">⊞</span>
+        <div>
+          <h3 id="brm-title" style="margin:0;font-size:14px">Manage Joins</h3>
+          <span id="brm-entity-count" style="font-size:11px;color:var(--text-muted);font-weight:400"></span>
+        </div>
+      </div>
+      <button class="modal-close" onclick="closeBulkRelManager()" title="Close">✕</button>
+    </div>
+
+    <!-- Toolbar -->
+    <div class="brm-toolbar">
+      <!-- Search -->
+      <input class="gd-input" id="brm-filter" placeholder="🔍 Filter entity / column / label…"
+             oninput="_renderBrmTable()" style="width:220px">
+      <!-- Join type filter -->
+      <select class="gd-input" id="brm-type-filter" onchange="_renderBrmTable()">
+        <option value="all">All join types</option>
+        <option value="LEFT">LEFT only</option>
+        <option value="INNER">INNER only</option>
+      </select>
+
+      <div style="flex:1"></div>
+
+      <!-- Bulk action buttons -->
+      <button class="brm-bulk-btn" onclick="brmSelectAll(true)" title="Select all visible rows">Select all</button>
+      <button class="brm-bulk-btn" onclick="brmSelectAll(false)">Deselect</button>
+      <button class="brm-bulk-btn" onclick="brmSetJoinType('LEFT')">Set LEFT</button>
+      <button class="brm-bulk-btn" onclick="brmSetJoinType('INNER')">Set INNER</button>
+      <button class="brm-bulk-btn" onclick="brmAutoLabel()" title="Auto-fill label from entity name for date dimensions">⚡ Auto-label</button>
+      <button class="brm-bulk-btn danger" onclick="brmDeleteSelected()" title="Mark selected rows for deletion">🗑 Delete selected</button>
+    </div>
+
+    <!-- Table -->
+    <div class="brm-scroll">
+      <table class="brm-table">
+        <thead>
+          <tr>
+            <th><input type="checkbox" id="brm-check-all" onchange="brmSelectAll(this.checked)" title="Select all"></th>
+            <th style="width:160px">Connected entity</th>
+            <th style="width:150px">FK column (from fact)</th>
+            <th style="width:140px">Ref column (to dim)</th>
+            <th style="width:80px">Join type</th>
+            <th style="width:65px">Card</th>
+            <th>Label <span style="font-weight:400;text-transform:none;letter-spacing:0;font-size:9px;color:var(--text-muted)">— used for date-role matching</span></th>
+            <th style="width:36px"></th>
+          </tr>
+        </thead>
+        <tbody id="brm-tbody">
+          <tr><td colspan="8" style="text-align:center;padding:2rem;color:var(--text-muted);font-size:12px">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Footer -->
+    <div class="modal-footer" style="justify-content:space-between">
+      <span id="brm-status" style="font-size:12px;font-weight:600;align-self:center"></span>
+      <div style="display:flex;gap:.5rem">
+        <button class="m-btn" onclick="closeBulkRelManager()">Cancel</button>
+        <button class="m-btn primary" id="brm-save-btn" onclick="bulkRelSaveAll()">Save all changes</button>
+      </div>
+    </div>
+
   </div>
 </div>
 
@@ -2682,9 +2775,14 @@ function _buildJoinsPaneContent(entityName) {
   const joinHeader = rels.length > 0 ? `
     <div style="display:flex;align-items:center;justify-content:space-between;padding:.45rem .75rem .35rem;border-bottom:1px solid var(--border)">
       <span style="font-size:10px;font-weight:800;text-transform:uppercase;color:var(--text-muted);letter-spacing:.06em">${rels.length} join${rels.length!==1?'s':''}</span>
-      <button style="font-size:11px;padding:2px 9px;background:color-mix(in srgb,var(--primary) 10%,var(--surface));border:1px solid color-mix(in srgb,var(--primary) 30%,transparent);border-radius:var(--radius-sm,4px);cursor:pointer;color:var(--primary);font-weight:700" onclick="openRelModal()">
-        + Add join
-      </button>
+      <div style="display:flex;gap:.4rem;align-items:center">
+        ${rels.length >= 5 ? `<button style="font-size:11px;padding:2px 9px;background:color-mix(in srgb,var(--amber,#d69e2e) 10%,var(--surface));border:1px solid color-mix(in srgb,var(--amber,#d69e2e) 30%,transparent);border-radius:var(--radius-sm,4px);cursor:pointer;color:color-mix(in srgb,var(--amber,#d69e2e) 80%,#111827);font-weight:700" onclick="openBulkRelManager('${esc(entityName)}')">
+          ⊞ Manage all
+        </button>` : ''}
+        <button style="font-size:11px;padding:2px 9px;background:color-mix(in srgb,var(--primary) 10%,var(--surface));border:1px solid color-mix(in srgb,var(--primary) 30%,transparent);border-radius:var(--radius-sm,4px);cursor:pointer;color:var(--primary);font-weight:700" onclick="openRelModal()">
+          + Add join
+        </button>
+      </div>
     </div>` : '';
 
   return filterBlock + joinHeader + `<div style="padding:.35rem .5rem">${joinRows}</div>`;
@@ -3616,6 +3714,259 @@ window.saveMultiLinks = async function() {
     errEl.style.display = '';
   } finally {
     btn.disabled = false; btn.textContent = '⬗ Create Links';
+  }
+};
+
+// ════════════════════════════════════════════════════════════════════════════
+// BULK RELATIONSHIP MANAGER
+// ════════════════════════════════════════════════════════════════════════════
+
+let _brmEntityName  = null;   // entity currently being managed
+let _brmRels        = [];     // snapshot of rels for this entity (shallow-cloned)
+let _brmDeletedIds  = new Set();
+
+window.openBulkRelManager = function(entityName) {
+  _brmEntityName = entityName;
+  _brmDeletedIds = new Set();
+
+  // Snapshot all relationships involving this entity from local graph state
+  _brmRels = graph.relationships
+    .filter(r => r.from_entity === entityName || r.to_entity === entityName)
+    .map(r => ({ ...r }));
+
+  document.getElementById('brm-title').textContent        = `Manage Joins — ${entityName}`;
+  document.getElementById('brm-entity-count').textContent = `${_brmRels.length} relationship${_brmRels.length !== 1 ? 's' : ''}`;
+  document.getElementById('brm-filter').value             = '';
+  document.getElementById('brm-type-filter').value        = 'all';
+  document.getElementById('brm-status').textContent       = '';
+  document.getElementById('brm-check-all').checked        = false;
+  document.getElementById('bulk-rel-modal').style.display = 'flex';
+  _renderBrmTable();
+};
+
+window.closeBulkRelManager = function() {
+  document.getElementById('bulk-rel-modal').style.display = 'none';
+};
+
+window._renderBrmTable = function() {
+  const ft         = (document.getElementById('brm-filter')?.value  || '').toLowerCase();
+  const typeFilter = document.getElementById('brm-type-filter')?.value || 'all';
+  const tbody      = document.getElementById('brm-tbody');
+  if (!tbody) return;
+
+  const visible = _brmRels.filter(r => {
+    if (_brmDeletedIds.has(r.id)) return false;
+    const partner = r.from_entity === _brmEntityName ? r.to_entity : r.from_entity;
+    if (ft && !partner.toLowerCase().includes(ft) &&
+        !(r.from_column || '').toLowerCase().includes(ft) &&
+        !(r.to_column   || '').toLowerCase().includes(ft) &&
+        !(r.label       || '').toLowerCase().includes(ft)) return false;
+    if (typeFilter !== 'all' && r.join_type !== typeFilter) return false;
+    return true;
+  });
+
+  // Update header count
+  const total = _brmRels.filter(r => !_brmDeletedIds.has(r.id)).length;
+  document.getElementById('brm-entity-count').textContent =
+    `${total} relationship${total !== 1 ? 's' : ''}${visible.length < total ? ` (${visible.length} shown)` : ''}`;
+
+  if (visible.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;padding:2rem;color:var(--text-muted);font-size:12px">No joins match the filter</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = visible.map(r => {
+    const isFrom    = r.from_entity === _brmEntityName;
+    const partner   = isFrom ? r.to_entity : r.from_entity;
+    const dir       = isFrom ? '→' : '←';
+    const joinColor = r.join_type === 'INNER' ? 'var(--green,#059669)' : r.join_type === 'LEFT' ? '#6366F1' : 'var(--text-soft)';
+    // Highlight rows that already have a label
+    const hasLabel  = (r.label || '').trim().length > 0;
+    return `
+      <tr id="brm-row-${r.id}">
+        <td style="text-align:center;padding:5px 4px">
+          <input type="checkbox" class="brm-check" data-id="${r.id}">
+        </td>
+        <td style="padding:5px 8px">
+          <span style="font-size:12px;font-weight:600;display:block;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(partner)}">${esc(partner)}</span>
+          <span style="font-size:10px;color:var(--text-muted)">${dir}</span>
+        </td>
+        <td style="padding:5px 6px">
+          <input class="gd-input brm-fk" style="font-size:11px;padding:3px 6px" data-id="${r.id}"
+                 value="${esc(r.from_column || '')}" placeholder="FK column">
+        </td>
+        <td style="padding:5px 6px">
+          <input class="gd-input brm-ref" style="font-size:11px;padding:3px 6px" data-id="${r.id}"
+                 value="${esc(r.to_column || '')}" placeholder="PK column">
+        </td>
+        <td style="padding:5px 6px">
+          <select class="gd-input brm-join" data-id="${r.id}"
+                  style="font-size:11px;padding:3px 5px;font-weight:700;color:${joinColor}">
+            <option value="LEFT"  ${r.join_type === 'LEFT'  ? 'selected' : ''}>LEFT</option>
+            <option value="INNER" ${r.join_type === 'INNER' ? 'selected' : ''}>INNER</option>
+            <option value="RIGHT" ${r.join_type === 'RIGHT' ? 'selected' : ''}>RIGHT</option>
+            <option value="FULL"  ${r.join_type === 'FULL'  ? 'selected' : ''}>FULL</option>
+          </select>
+        </td>
+        <td style="padding:5px 6px">
+          <select class="gd-input brm-card" data-id="${r.id}"
+                  style="font-size:11px;padding:3px 5px">
+            <option value="many_to_one" ${r.relationship_type === 'many_to_one' ? 'selected' : ''}>N:1</option>
+            <option value="one_to_one"  ${r.relationship_type === 'one_to_one'  ? 'selected' : ''}>1:1</option>
+            <option value="one_to_many" ${r.relationship_type === 'one_to_many' ? 'selected' : ''}>1:N</option>
+          </select>
+        </td>
+        <td style="padding:5px 6px">
+          <input class="gd-input brm-label" data-id="${r.id}"
+                 style="font-size:11px;padding:3px 6px;${hasLabel ? 'border-color:color-mix(in srgb,#7C3AED 40%,var(--border))' : ''}"
+                 value="${esc(r.label || '')}"
+                 placeholder="Invoice Date, Order Date…">
+        </td>
+        <td style="padding:5px 4px;text-align:center">
+          <button class="brm-del-btn" onclick="brmMarkDelete(${r.id})" title="Remove this join">✕</button>
+        </td>
+      </tr>`;
+  }).join('');
+};
+
+window.brmMarkDelete = function(id) {
+  _brmDeletedIds.add(id);
+  const row = document.getElementById(`brm-row-${id}`);
+  if (row) {
+    row.classList.add('brm-deleted');
+    setTimeout(() => _renderBrmTable(), 260);
+  }
+  _brmUpdateStatus();
+};
+
+window.brmSelectAll = function(checked) {
+  document.querySelectorAll('#brm-tbody .brm-check').forEach(cb => cb.checked = checked);
+  const master = document.getElementById('brm-check-all');
+  if (master) master.checked = checked;
+};
+
+window.brmDeleteSelected = function() {
+  let count = 0;
+  document.querySelectorAll('#brm-tbody .brm-check:checked').forEach(cb => {
+    _brmDeletedIds.add(parseInt(cb.dataset.id));
+    count++;
+  });
+  if (count === 0) return;
+  _renderBrmTable();
+  _brmUpdateStatus();
+};
+
+window.brmSetJoinType = function(type) {
+  let count = 0;
+  document.querySelectorAll('#brm-tbody .brm-check:checked').forEach(cb => {
+    const sel = document.querySelector(`#brm-tbody .brm-join[data-id="${cb.dataset.id}"]`);
+    if (sel) { sel.value = type; count++; }
+  });
+  if (count === 0) { alert('Select rows first using the checkboxes'); return; }
+};
+
+window.brmAutoLabel = function() {
+  // For rows with no label: if the connected entity name contains a date-related word,
+  // pre-fill the label with the entity name (mirrors detect_date_role in date_roles.py)
+  const DATE_HINTS = /date|invoice|order|delivery|receipt|ship|plan|confirm|dispatch|due|post|period/i;
+  let filled = 0;
+  _brmRels.filter(r => !_brmDeletedIds.has(r.id)).forEach(r => {
+    const labelEl = document.querySelector(`#brm-tbody .brm-label[data-id="${r.id}"]`);
+    if (!labelEl || labelEl.value.trim()) return;  // already labelled — skip
+    const partner = r.from_entity === _brmEntityName ? r.to_entity : r.from_entity;
+    if (DATE_HINTS.test(partner) || DATE_HINTS.test(r.from_column || '')) {
+      labelEl.value = partner;
+      labelEl.style.borderColor = 'color-mix(in srgb,#7C3AED 40%,var(--border))';
+      filled++;
+    }
+  });
+  if (filled === 0) {
+    document.getElementById('brm-status').textContent = 'No unlabelled date-role joins found.';
+    document.getElementById('brm-status').style.color = 'var(--text-muted)';
+  } else {
+    document.getElementById('brm-status').textContent = `⚡ Auto-labelled ${filled} join${filled !== 1 ? 's' : ''} — review and Save.`;
+    document.getElementById('brm-status').style.color = '#7C3AED';
+  }
+};
+
+function _brmUpdateStatus() {
+  const s = document.getElementById('brm-status');
+  if (!s) return;
+  const n = _brmDeletedIds.size;
+  s.textContent = n > 0 ? `${n} join${n !== 1 ? 's' : ''} marked for deletion` : '';
+  s.style.color = n > 0 ? 'var(--red,#DC2626)' : '';
+}
+
+// Collect current form values for a row (falls back to original rel if row is filtered-out/not visible)
+function _brmRowValues(r) {
+  const fkEl    = document.querySelector(`#brm-tbody .brm-fk[data-id="${r.id}"]`);
+  const refEl   = document.querySelector(`#brm-tbody .brm-ref[data-id="${r.id}"]`);
+  const joinEl  = document.querySelector(`#brm-tbody .brm-join[data-id="${r.id}"]`);
+  const cardEl  = document.querySelector(`#brm-tbody .brm-card[data-id="${r.id}"]`);
+  const lblEl   = document.querySelector(`#brm-tbody .brm-label[data-id="${r.id}"]`);
+  return {
+    id:                r.id,
+    from_entity:       r.from_entity,
+    to_entity:         r.to_entity,
+    from_column:       fkEl   ? fkEl.value.trim()   : (r.from_column  || ''),
+    to_column:         refEl  ? refEl.value.trim()  : (r.to_column    || ''),
+    join_type:         joinEl ? joinEl.value         : (r.join_type    || 'LEFT'),
+    relationship_type: cardEl ? cardEl.value         : (r.relationship_type || 'many_to_one'),
+    label:             lblEl  ? lblEl.value.trim()  : (r.label        || ''),
+    where_clause:      r.where_clause || '',
+  };
+}
+
+window.bulkRelSaveAll = async function() {
+  const saveBtn = document.getElementById('brm-save-btn');
+  const statusEl = document.getElementById('brm-status');
+
+  // Collect updates for every non-deleted rel (uses DOM values where visible)
+  const updates = _brmRels
+    .filter(r => !_brmDeletedIds.has(r.id))
+    .map(_brmRowValues);
+
+  const deletes = [..._brmDeletedIds];
+
+  saveBtn.textContent = 'Saving…';
+  saveBtn.disabled    = true;
+  statusEl.textContent = '';
+
+  try {
+    const res  = await fetch(`${API_BASE}/relationships/bulk`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ updates, deletes }),
+    });
+    const data = await res.json();
+    if (data.status !== 'ok') throw new Error(data.message || 'Server error');
+
+    // ── Sync local graph state ──────────────────────────────────────────────
+    // Remove deleted rows
+    graph.relationships = graph.relationships.filter(r => !_brmDeletedIds.has(r.id));
+    // Apply updates
+    updates.forEach(u => {
+      const existing = graph.relationships.find(r => r.id === u.id);
+      if (existing) Object.assign(existing, u);
+    });
+
+    closeBulkRelManager();
+
+    // Refresh canvas + open panels
+    renderGraph();
+    if (selectedEntity === _brmEntityName) {
+      renderEntityDetail(_brmEntityName);
+    }
+
+    setStatus(`Bulk save: ${data.updated} join${data.updated !== 1 ? 's' : ''} updated${data.deleted > 0 ? `, ${data.deleted} deleted` : ''} ✓`);
+
+  } catch (e) {
+    console.error('[BulkRel]', e);
+    statusEl.textContent = '⚠ Save failed: ' + e.message;
+    statusEl.style.color = 'var(--red,#DC2626)';
+  } finally {
+    saveBtn.textContent = 'Save all changes';
+    saveBtn.disabled    = false;
   }
 };
 
