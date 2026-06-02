@@ -577,5 +577,57 @@ class TestAdminRoutes(unittest.TestCase):
         self.assertIn("Entity Graph", tmpl)
 
 
+class TestEntityGraphScopePruning(unittest.TestCase):
+
+    ACC = "test_graph_prune_013"
+
+    def test_prune_removes_entities_outside_current_schema_scope(self):
+        store.save_entity(self.ACC, "Invoice", "CUS_ORD_IVC_FCT",
+                          schema_name="PROFITABILITY", entity_type="fact")
+        store.save_entity(self.ACC, "Invoice Date", "DT_DMS",
+                          schema_name="PROFITABILITY", entity_type="dimension")
+        store.save_entity(self.ACC, "Patient", "DIM_PATIENT",
+                          schema_name="PHARMACY", entity_type="dimension")
+        store.save_entity_property(self.ACC, "Invoice", "CUS_IVC_LIN_AMT",
+                                   role="metric", display_name="Revenue")
+        store.save_entity_property(self.ACC, "Patient", "AGE",
+                                   role="dimension", display_name="Age")
+        store.save_relationship(
+            self.ACC,
+            from_entity="Invoice",
+            to_entity="Invoice Date",
+            from_column="CUS_IVC_DT_DMS_KEY",
+            to_column="DT_DMS_KEY",
+            join_type="LEFT",
+        )
+        store.save_relationship(
+            self.ACC,
+            from_entity="Invoice",
+            to_entity="Patient",
+            from_column="PATIENT_ID",
+            to_column="PATIENT_ID",
+            join_type="LEFT",
+        )
+
+        removed = store.prune_entity_graph_to_tables(
+            self.ACC,
+            {
+                "CHATBOTDB.PROFITABILITY.CUS_ORD_IVC_FCT",
+                "CHATBOTDB.PROFITABILITY.DT_DMS",
+            },
+        )
+
+        self.assertEqual(removed["entities_removed"], 1)
+        self.assertIsNone(store.get_entity(self.ACC, "Patient"))
+        self.assertIsNotNone(store.get_entity(self.ACC, "Invoice"))
+        self.assertIsNotNone(store.get_entity(self.ACC, "Invoice Date"))
+        rels = store.list_relationships(self.ACC)
+        self.assertTrue(any(r["to_entity"] == "Invoice Date" for r in rels))
+        self.assertFalse(any(r["to_entity"] == "Patient" or r["from_entity"] == "Patient"
+                             for r in rels))
+        self.assertTrue(store.list_entity_properties(self.ACC, "Invoice"))
+        self.assertFalse(store.list_entity_properties(self.ACC, "Patient"))
+
+
 if __name__ == "__main__":
     unittest.main()
