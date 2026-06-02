@@ -29,6 +29,8 @@ import logging
 from collections import deque
 from typing import Optional
 
+from core.date_roles import relationship_matches_date_role
+
 log = logging.getLogger("querybot.graph_resolver")
 
 
@@ -138,9 +140,25 @@ def detect_entities(
     for prop in graph.get("properties", []) or []:
         props_by_entity.setdefault(prop.get("entity_name", ""), []).append(prop)
 
+    relationship_role_scores: dict[str, int] = {}
+    for rel in graph.get("relationships", []) or []:
+        label = rel.get("label") or ""
+        if not label:
+            continue
+        if _phrase_in_question(label, q_tokens, q) or relationship_matches_date_role(question, label):
+            # Relationship labels represent the business role of the edge. For
+            # role-playing dates, the to_entity is the specific date role
+            # ("Invoice Date", "Delivery Date"), while from_entity is the fact.
+            relationship_role_scores[rel.get("to_entity", "")] = (
+                relationship_role_scores.get(rel.get("to_entity", ""), 0) + 35
+            )
+            relationship_role_scores[rel.get("from_entity", "")] = (
+                relationship_role_scores.get(rel.get("from_entity", ""), 0) + 8
+            )
+
     for ent in entities:
         name  = ent["entity_name"]
-        score = 0
+        score = relationship_role_scores.get(name, 0)
 
         # entity name — check each word of the name appears in question
         if name in required_entity_names:
