@@ -2033,7 +2033,7 @@ def _auto_populate_entity_graph(account_id: str, schema_dir: str) -> tuple[int, 
             to_column         = rel["to_column"],
             relationship_type = rel.get("relationship_type", "many_to_one"),
             join_type         = rel.get("join_type", "INNER"),
-            label             = "",
+            label             = rel.get("label", ""),
             confidence_score  = rel.get("confidence_score", 70),
             status            = rel.get("status", "suggested"),
         )
@@ -2525,8 +2525,21 @@ async def graph_suggest(request: Request, account_id: str):
     # both ending in the same suffix that matches a dimension table name.
     role_playing: dict[str, list[dict]] = {}  # target_table -> [{"fk_col", "fact_table", "suggested_name"}]
 
-    fact_tables = [t for t in schema if t.upper().startswith("FACT_") or "_FACT" in t.upper()]
-    dim_tables  = {t.upper(): t for t in schema if not t.upper().startswith("FACT_")}
+    fact_tables = [
+        t for t in schema
+        if t.upper().startswith(("FACT_", "FCT_")) or "_FACT" in t.upper() or "_FCT" in t.upper()
+    ]
+    dim_tables  = {
+        t.upper(): t for t in schema
+        if not (t.upper().startswith(("FACT_", "FCT_")) or "_FACT" in t.upper() or "_FCT" in t.upper())
+    }
+
+    from core.date_roles import detect_date_role, find_date_dimension_key, is_date_dimension_table
+
+    date_dim_names = [
+        t for t, info in schema.items()
+        if is_date_dimension_table(t, info.get("columns", []))
+    ]
 
     for fact in fact_tables:
         fact_info = schema[fact]
@@ -2557,6 +2570,22 @@ async def graph_suggest(request: Request, account_id: str):
                         "fact_table": fact,
                         "suggested_entity_name": prefix,
                     })
+
+        # Date-role dimensions: multiple *_DT_DMS_KEY columns in the fact table
+        # can point to the same physical date dimension but mean different
+        # business dates (Invoice Date, Order Date, Delivery Date, etc.).
+        if date_dim_names:
+            date_dim = date_dim_names[0]
+            for col in col_names:
+                role = detect_date_role(col)
+                if not role:
+                    continue
+                role_playing.setdefault(date_dim, []).append({
+                    "fk_col": col,
+                    "fact_table": fact,
+                    "suggested_entity_name": role.label,
+                    "relationship_label": role.label,
+                })
 
     # ── LLM schema analysis ─────────────────────────────────────────────────
     db_cfg_id = client.get("db_config_id")
@@ -2689,7 +2718,11 @@ async def graph_suggest(request: Request, account_id: str):
         dim_info  = schema.get(dim_name, {})
         dim_schema = dim_info.get("schema", "")
         dim_cols   = [c["name"] for c in dim_info.get("columns", [])]
-        pk_hint    = next((c for c in dim_cols if c.upper().endswith("ID")), dim_cols[0] if dim_cols else "")
+        pk_hint    = (
+            find_date_dimension_key(dim_info.get("columns", []))
+            if is_date_dimension_table(dim_name, dim_info.get("columns", []))
+            else next((c for c in dim_cols if c.upper().endswith("ID")), dim_cols[0] if dim_cols else "")
+        )
         n_total    = len(roles)
         for ri, role_info in enumerate(roles):
             rp_name = role_info["suggested_entity_name"]
@@ -2731,7 +2764,7 @@ async def graph_suggest(request: Request, account_id: str):
                 to_column         = pk_hint,
                 relationship_type = "many_to_one",
                 join_type         = "LEFT",
-                label             = disp.lower(),
+                label             = role_info.get("relationship_label") or disp,
                 confidence_score  = 92,
                 status            = "suggested",
             )

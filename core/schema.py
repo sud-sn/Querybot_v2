@@ -490,6 +490,7 @@ def _build_join_map(master: dict) -> str:
     code column (e.g. ORNO) — these would never be detected by shared-name
     matching alone.
     """
+    from core.date_roles import detect_date_role, find_date_dimension_key, is_date_dimension_table
     from core.schema_enrichment import KNOWN_JOIN_EQUIVALENTS
 
     lines = [
@@ -568,7 +569,54 @@ def _build_join_map(master: dict) -> str:
                     alias_lines.append("```")
                     alias_lines.append("")
 
-    if not relationships and not alias_lines:
+    # ── Pass 3: role-playing date dimension joins ───────────────────────────
+    # A fact can have many date keys pointing to the same physical date table.
+    # Each key has a different business role: order date, invoice date, receipt
+    # date, delivery date, etc.  Shared-name detection cannot find these because
+    # fact keys are named CUS_IVC_DT_DMS_KEY while the date dimension key is
+    # usually DATE_DMS_KEY.
+    date_role_lines: list[str] = []
+    date_dims: list[tuple[str, str]] = []
+    for tbl_name, tbl_info in master.items():
+        cols = tbl_info.get("columns", [])
+        if is_date_dimension_table(tbl_name, cols):
+            pk = find_date_dimension_key(cols)
+            if pk:
+                date_dims.append((tbl_name, pk))
+
+    if date_dims:
+        for fact_tbl, tbl_info in master.items():
+            fact_cols = [c.get("name", "") for c in tbl_info.get("columns", [])]
+            for fact_col in fact_cols:
+                role = detect_date_role(fact_col)
+                if not role:
+                    continue
+                for date_tbl, date_pk in date_dims:
+                    if fact_tbl == date_tbl:
+                        continue
+                    key = f"{fact_tbl}|{date_tbl}|{fact_col}={date_pk}|{role.key}"
+                    if key in join_pairs_seen:
+                        continue
+                    join_pairs_seen.add(key)
+                    date_role_lines.append(
+                        f"### {fact_tbl} → {date_tbl}  *(date role: {role.label})*"
+                    )
+                    date_role_lines.append(
+                        f"**Join:** `{fact_tbl}.{fact_col}` = `{date_tbl}.{date_pk}` "
+                        f"— use this for business questions about **{role.label.lower()}**."
+                    )
+                    if role.synonyms:
+                        date_role_lines.append(
+                            "**Business terms:** " + ", ".join(f"`{s}`" for s in role.synonyms[:6])
+                        )
+                    date_role_lines.append("```sql")
+                    date_role_lines.append(
+                        f"JOIN [{date_tbl}] AS [{role.key}] ON [{fact_tbl}].{fact_col} = [{role.key}].{date_pk}"
+                    )
+                    date_role_lines.append("```")
+                    date_role_lines.append("")
+
+    if not relationships and not alias_lines and not date_role_lines:
         lines.append("No shared key columns detected automatically.")
         lines.append("")
         lines.append("Tip: Join columns typically end in _ID, _NO, _CODE, or _NUM.")
@@ -601,6 +649,18 @@ def _build_join_map(master: dict) -> str:
         )
         lines.append("")
         lines.extend(alias_lines)
+
+    if date_role_lines:
+        lines.append("## Role-Playing Date Dimension Joins")
+        lines.append("")
+        lines.append(
+            "These joins map multiple fact-table date keys to the same physical date "
+            "dimension. Choose the join whose business role matches the user's wording. "
+            "If the user asks only for a generic month/date and multiple roles are valid, "
+            "use the approved metric default time role if configured; otherwise ask for clarification."
+        )
+        lines.append("")
+        lines.extend(date_role_lines)
 
     lines.append("## Usage guidance")
     lines.append("")
@@ -705,6 +765,7 @@ def build_entity_graph_from_schema(schema_dir: str) -> dict:
     master: dict = json.loads(schema_json.read_text(encoding="utf-8"))
     if not master:
         return {"entities": [], "relationships": []}
+    from core.date_roles import detect_date_role, find_date_dimension_key, is_date_dimension_table
 
     # ── Build entity list ────────────────────────────────────────────────────
     entities: list[dict] = []
@@ -744,6 +805,68 @@ def build_entity_graph_from_schema(schema_dir: str) -> dict:
             "status":           "suggested",
         })
 
+    # ── Add role-playing date entities ──────────────────────────────────────
+    # Example: one physical DIM_DATE table is represented as "Order Date",
+    # "Invoice Date", "Delivery Date", etc. so the resolver can choose the
+    # correct FK when the user asks for a specific business date.
+    date_dims: list[tuple[str, str, str, str]] = []  # fqn, table, schema, pk
+    for fqn, tbl_info in master.items():
+        cols = tbl_info.get("columns", [])
+        if not is_date_dimension_table(fqn, cols):
+            continue
+        parts = fqn.split(".")
+        date_table = parts[-1]
+        date_schema = parts[-2] if len(parts) >= 2 else ""
+        date_pk = find_date_dimension_key(cols)
+        if date_pk:
+            date_dims.append((fqn, date_table, date_schema, date_pk))
+
+    role_entity_names: set[str] = {e["entity_name"] for e in entities}
+    role_date_relationships: list[dict] = []
+    if date_dims:
+        for fqn, tbl_info in master.items():
+            fact_entity = fqn_to_entity.get(fqn, fqn.split(".")[-1])
+            if _infer_entity_type(fact_entity) != "fact":
+                continue
+            for col in tbl_info.get("columns", []):
+                fact_col = col.get("name", "")
+                role = detect_date_role(fact_col)
+                if not role:
+                    continue
+                date_fqn, date_table, date_schema, date_pk = date_dims[0]
+                entity_name = role.label
+                if entity_name not in role_entity_names:
+                    pos_idx = len(role_entity_names)
+                    entities.append({
+                        "entity_name":      entity_name,
+                        "table_name":       date_table,
+                        "schema_name":      date_schema,
+                        "pk_column":        date_pk,
+                        "display_name":     role.label,
+                        "description":      (
+                            f"Role-playing date dimension: {date_table} used as "
+                            f"{role.label}."
+                        ),
+                        "entity_type":      "dimension",
+                        "color":            "#7C3AED",
+                        "pos_x":            120 + (pos_idx % 5) * 220,
+                        "pos_y":            520 + (pos_idx // 5) * 160,
+                        "confidence_score": 88,
+                        "status":           "suggested",
+                    })
+                    role_entity_names.add(entity_name)
+                role_date_relationships.append({
+                    "from_entity":       fact_entity,
+                    "to_entity":         entity_name,
+                    "from_column":       fact_col,
+                    "to_column":         date_pk,
+                    "relationship_type": "many_to_one",
+                    "join_type":         "LEFT",
+                    "label":             role.label,
+                    "confidence_score":  88,
+                    "status":            "suggested",
+                })
+
     # ── Build relationship list (reuse shared-column logic from _build_join_map) ─
     col_to_fqns: dict[str, list[str]] = {}
     for fqn, tbl_info in master.items():
@@ -753,6 +876,7 @@ def build_entity_graph_from_schema(schema_dir: str) -> dict:
 
     seen_pairs: set[str] = set()
     relationships: list[dict] = []
+    relationships.extend(role_date_relationships)
 
     entity_names_set = {e["entity_name"] for e in entities}
 

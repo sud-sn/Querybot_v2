@@ -13,6 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import re
 
+from core.date_roles import date_role_terms, detect_date_role
 from core.erp_column_dict import ERP_COLUMN_DICT
 
 
@@ -214,6 +215,7 @@ class EnrichedColumn:
     data_type: str = ""
     nullable: str = ""
     join_equivalents: list[str] = field(default_factory=list)
+    date_role: str = ""
 
 
 def _clean_identifier(name: str) -> str:
@@ -265,6 +267,9 @@ def _expand_column(column: str) -> tuple[str, list[str]]:
 def _metric_candidates(column: str, expanded: str, role: str) -> list[str]:
     col = _clean_identifier(column).upper()
     candidates: list[str] = []
+    date_role = detect_date_role(col)
+    if date_role:
+        candidates.extend(date_role_terms(date_role))
     if col in ERP_COLUMN_DICT:
         label, synonyms = ERP_COLUMN_DICT[col]
         candidates.extend([label.lower(), *[s.lower() for s in synonyms[:4]]])
@@ -319,8 +324,10 @@ def _role_for_column(column: str, data_type: str = "", distinct_values: str = ""
         if col.endswith("_FCT_KEY"):
             evidence.append("fact surrogate key suffix")
             return "surrogate_key", evidence, warnings, default_filter
-    if col.endswith("_DT_DMS_KEY") or col.endswith("_DATE_DMS_KEY") or col in RAW_DATE_CODES:
+    date_role = detect_date_role(col)
+    if date_role:
         evidence.append("date key naming pattern")
+        evidence.append(f"date role={date_role.label}")
         if col.endswith("_DT_DMS_KEY"):
             warnings.append("Treat as YYYYMMDD integer date key unless metadata proves otherwise.")
         return "date_key", evidence, warnings, default_filter
@@ -416,6 +423,7 @@ def enrich_columns(
         evidence = [*expansion_evidence, *role_evidence]
         confidence = _confidence(column, role, evidence, expanded)
         join_equivalents = KNOWN_JOIN_EQUIVALENTS.get(column.upper(), [])
+        date_role = detect_date_role(column)
         candidates = _metric_candidates(column, expanded, role)
         enriched.append(
             EnrichedColumn(
@@ -431,6 +439,7 @@ def enrich_columns(
                 data_type=data_type,
                 nullable=meta.get("nullable", ""),
                 join_equivalents=join_equivalents,
+                date_role=date_role.label if date_role else "",
             )
         )
     return enriched
@@ -464,6 +473,8 @@ def format_schema_intelligence(table_name: str, columns: list[str], schema_md: s
             parts.append(f"default filter candidate={item.default_filter}")
         if item.join_equivalents:
             parts.append(f"known join equivalents={', '.join(item.join_equivalents)}")
+        if item.date_role:
+            parts.append(f"date role={item.date_role}")
         if item.warnings:
             parts.append("warnings=" + "; ".join(item.warnings))
         lines.append("; ".join(parts))
@@ -478,6 +489,13 @@ def format_schema_intelligence(table_name: str, columns: list[str], schema_md: s
         lines.append("Known cross-table join aliases:")
         for left, right in joins:
             lines.append(f"- {left} may join to ERP/raw-code column {right} when that column exists in another table.")
+
+    date_roles = [c for c in enriched if c.date_role]
+    if date_roles:
+        lines.append("")
+        lines.append("Date role map:")
+        for item in date_roles:
+            lines.append(f"- {item.date_role}: use `{item.column}` for questions about {item.date_role.lower()}.")
 
     lines.append("")
     lines.append("Value-format rule: when users type IDs with or without thousands separators, SQL filters must use the raw database value format, not the UI display format.")
