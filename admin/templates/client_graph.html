@@ -2863,6 +2863,15 @@ window.toggleRelEdit = async function(relId, entityName) {
         </select>
       </div>
     </div>
+    <div class="gd-form-row full" style="margin-bottom:.35rem">
+      <label class="gd-label" style="font-size:10px">
+        Relationship label
+        <span style="font-weight:400;color:var(--text-muted)"> — business name used for date-role matching (e.g. "Invoice Date", "Order Date")</span>
+      </label>
+      <input class="gd-input" id="ej-lbl-${relId}" style="font-size:12px"
+             value="${esc(rel.label || '')}"
+             placeholder="Invoice Date, Order Date, Delivery Date…">
+    </div>
 
     <!-- WHERE conditions -->
     <div style="display:flex;align-items:center;justify-content:space-between;margin:.35rem 0 .25rem">
@@ -2949,6 +2958,7 @@ window.saveRelInline = async function(relId, entityName) {
   const toCol      = document.getElementById(`ej-tc-${relId}`)?.value;
   const joinType   = document.getElementById(`ej-jt-${relId}`)?.value || rel.join_type;
   const card       = document.getElementById(`ej-card-${relId}`)?.value || rel.relationship_type;
+  const label      = document.getElementById(`ej-lbl-${relId}`)?.value.trim() ?? rel.label ?? '';
   const whereClause = _buildInlineWhereClause(relId);
 
   if (!fromCol || !toCol) { alert('Select FK columns for both sides'); return; }
@@ -2960,7 +2970,7 @@ window.saveRelInline = async function(relId, entityName) {
     to_column:         toCol,
     relationship_type: card,
     join_type:         joinType,
-    label:             rel.label || '',
+    label:             label,
     join_conditions:   [],
     where_clause:      whereClause,
     rel_id:            relId,
@@ -2971,7 +2981,8 @@ window.saveRelInline = async function(relId, entityName) {
 
   // Update local state
   Object.assign(rel, { from_column: fromCol, to_column: toCol,
-    join_type: joinType, relationship_type: card, where_clause: whereClause,
+    join_type: joinType, relationship_type: card, label: label,
+    where_clause: whereClause,
     validation_status: 'untested', row_count_estimate: -1, join_multiplicity: '' });
 
   // Refresh panel + graph edge
