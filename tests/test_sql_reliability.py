@@ -474,6 +474,50 @@ class StrictColumnValidationTests(unittest.TestCase):
         )
         self.assertTrue(result.ok, result.reason)
 
+    def test_display_dimension_join_uses_only_source_key_not_all_shared_dms_keys(self):
+        # Regression: when the dimension table (WHS_DMS) also holds OTHER _DMS_KEY
+        # columns shared with the fact table (e.g. FCY_DMS_KEY), _join_edges used to
+        # include all of them as join conditions.  The validator then required every
+        # condition to appear in the SQL — the LLM only wrote WHS_DMS_KEY = WHS_DMS_KEY
+        # and failed.  The plan must pin to exactly one condition: source_key_column.
+        columns_with_extra_fk = dict(COLUMNS)
+        columns_with_extra_fk["PROFITABILITY.WHS_DMS"] = {
+            "WHS_DMS_KEY": "int",
+            "WHS_CD": "varchar",
+            "WHS_DSC": "varchar",
+            "FCY_DMS_KEY": "int",   # WHS_DMS also stores a factory FK — this shared
+                                    # column must NOT appear as an extra join condition.
+        }
+        plan = build_semantic_field_plan(
+            "Which warehouses have high invoice revenue but low gross profit percentage?",
+            columns_with_extra_fk,
+        )
+        self.assertTrue(plan["enabled"])
+        # There must be exactly one join and it must use only WHS_DMS_KEY.
+        whs_joins = [e for e in plan["joins"] if "WHS_DMS" in e.get("to", "").upper()]
+        self.assertEqual(len(whs_joins), 1)
+        conditions = whs_joins[0]["conditions"]
+        self.assertEqual(conditions, [("WHS_DMS_KEY", "WHS_DMS_KEY")],
+                         f"Expected only WHS_DMS_KEY condition, got: {conditions}")
+        # The SQL with only WHS_DMS_KEY join must pass validation.
+        sql = (
+            "SELECT w.WHS_DSC AS Warehouse, "
+            "SUM(c.SOP_CUS_IVC_LIN_AMT) AS TotalRevenue, "
+            "SUM(c.SOP_CUS_LIN_GRS_PFT_AMT) AS GrossProfit "
+            "FROM [PROFITABILITY].[CUS_ORD_IVC_FCT] c "
+            "JOIN [PROFITABILITY].[WHS_DMS] w ON c.WHS_DMS_KEY = w.WHS_DMS_KEY "
+            "GROUP BY w.WHS_DSC"
+        )
+        result = validate_sql_detailed(
+            sql,
+            KNOWN,
+            "azure_sql",
+            None,
+            columns_with_extra_fk,
+            {"semantic_plan": plan},
+        )
+        self.assertTrue(result.ok, result.reason)
+
 
 class IntentAndGraphReliabilityTests(unittest.TestCase):
     def test_missing_record_phrases_are_detected(self):
