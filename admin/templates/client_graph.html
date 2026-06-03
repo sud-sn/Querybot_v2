@@ -4183,7 +4183,8 @@ window.purgeAuditJoins = async function() {
     graph.relationships = gd.relationships || [];
     graph.entities      = gd.entities      || [];
     renderGraph();
-    renderSidebarRelList();
+    updateSidebar();
+    updateRelList();
     if (selectedEntity) renderEntityDetail(selectedEntity);
 
     alert(
@@ -4619,10 +4620,12 @@ const _origRenderGraph = renderGraph;
 renderGraph = function() {
   _origRenderGraph();
   if (!activeSchemaFilter) return;
+  // Case-insensitive comparison — matches the renderNodes() filter introduced in 21b0590
+  const schemaUC = activeSchemaFilter.toUpperCase();
   document.querySelectorAll('.g-node').forEach(g => {
     const ename = g.getAttribute('data-entity');
     const ent   = graph.entities.find(e => e.entity_name === ename);
-    const hide  = ent && (ent.schema_name || '') !== activeSchemaFilter;
+    const hide  = ent && (ent.schema_name || '').toUpperCase() !== schemaUC;
     g.style.display       = hide ? 'none' : '';
     g.style.pointerEvents = hide ? 'none' : '';
   });
@@ -4632,8 +4635,8 @@ renderGraph = function() {
     if (!rel) return;
     const fe = graph.entities.find(e => e.entity_name === rel.from_entity);
     const te = graph.entities.find(e => e.entity_name === rel.to_entity);
-    const hide = (fe && (fe.schema_name || '') !== activeSchemaFilter) ||
-                 (te && (te.schema_name || '') !== activeSchemaFilter);
+    const hide = (fe && (fe.schema_name || '').toUpperCase() !== schemaUC) ||
+                 (te && (te.schema_name || '').toUpperCase() !== schemaUC);
     g.style.display       = hide ? 'none' : '';
     g.style.pointerEvents = hide ? 'none' : '';
   });
