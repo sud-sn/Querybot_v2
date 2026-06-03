@@ -6,13 +6,18 @@
 {% endblock %}
 {% block head %}
 <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gridstack@10.3.1/dist/gridstack.min.css">
+<script src="https://cdn.jsdelivr.net/npm/gridstack@10.3.1/dist/gridstack-all.js"></script>
 <style>
 .dashboard-page{min-height:100%;display:flex;flex-direction:column;gap:1rem}
 .dashboard-page .page-header{margin-bottom:.25rem}
 .dashboard-page .metrics{grid-template-columns:repeat(auto-fit,minmax(180px,1fr));margin-bottom:.5rem}
 .chart-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(420px,100%),1fr));grid-auto-flow:dense;gap:1rem;margin-bottom:1.5rem;align-items:stretch}
-.chart-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-md);overflow:hidden;transition:box-shadow .2s,transform .2s,border-color .2s;min-height:420px;display:flex;flex-direction:column}
-.chart-card:hover{box-shadow:var(--shadow-lg);transform:translateY(-1px)}
+.chart-grid.is-gridstack{display:block;min-height:460px}
+.chart-card{min-height:420px}
+.chart-grid.is-gridstack .chart-card{min-height:0}
+.chart-card-content{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-md);overflow:hidden;transition:box-shadow .2s,transform .2s,border-color .2s;display:flex;flex-direction:column;height:100%}
+.chart-card:hover .chart-card-content{box-shadow:var(--shadow-lg);transform:translateY(-1px)}
 .chart-card.dragging{opacity:.58;transform:scale(.985);border-color:var(--primary)}
 .chart-card.drag-over{border-color:var(--primary);box-shadow:0 0 0 3px color-mix(in srgb,var(--primary) 18%,transparent)}
 .chart-card-header{padding:.95rem 1rem;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;background:linear-gradient(180deg,color-mix(in srgb,var(--surface-2) 84%, var(--primary-soft) 16%),var(--surface))}
@@ -23,8 +28,11 @@
 .chart-drag-handle{border:1px solid var(--border);background:var(--surface-2);color:var(--text-muted);border-radius:7px;width:28px;height:28px;display:inline-flex;align-items:center;justify-content:center;cursor:grab;font-weight:900;line-height:1}
 .chart-drag-handle:active{cursor:grabbing}
 .chart-canvas{height:clamp(280px,34vh,460px);width:100%;border-radius:var(--radius);background:linear-gradient(180deg,color-mix(in srgb,var(--surface-2) 92%, transparent),transparent);flex:1;min-height:280px}
+.chart-grid.is-gridstack .chart-canvas{height:100%;min-height:180px}
 .chart-meta{font-size:11px;color:var(--gray-500);margin-top:.6rem;display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap;align-items:center}
 .chart-error{padding:2rem;text-align:center;color:var(--text-muted);font-size:12px;background:var(--surface-2);border-radius:var(--radius);border:1px dashed var(--border)}
+.chart-warnings{display:flex;flex-direction:column;gap:.35rem;margin-top:.55rem}
+.chart-warning{font-size:11px;color:var(--warning);background:color-mix(in srgb,var(--warning) 10%,transparent);border:1px solid color-mix(in srgb,var(--warning) 28%,transparent);border-radius:7px;padding:.45rem .55rem;line-height:1.35}
 /* ── Dashboard chart controls ───────────────────────────────────────────── */
 .dash-ctrl-row{display:flex;gap:.3rem;flex-wrap:wrap;margin-top:.55rem;padding-top:.45rem;border-top:1px solid color-mix(in srgb,var(--border) 50%,transparent);align-items:center}
 .dash-ctrl-sep{width:1px;height:14px;background:var(--border);margin:0 .2rem;flex-shrink:0}
@@ -45,7 +53,7 @@
 .metric-progress span{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,var(--success),var(--primary))}
 .metric-progress.warning span{background:linear-gradient(90deg,var(--warning),var(--primary))}
 .metric-progress.blocked span{background:var(--danger)}
-@media (max-width: 640px){.chart-grid{grid-template-columns:1fr}.welcome-banner{flex-direction:column;align-items:flex-start}.chart-canvas{height:280px}.chart-card{min-height:360px}}
+@media (max-width: 640px){.chart-grid{grid-template-columns:1fr}.welcome-banner{flex-direction:column;align-items:flex-start}.chart-canvas{height:280px}.chart-card{min-height:360px}.chart-grid.is-gridstack .chart-canvas{min-height:220px}}
 /* Drag-to-reorder is not supported on touch-only devices */
 @media (hover: none) { .chart-drag-handle { display: none; } }
 </style>
@@ -124,7 +132,12 @@
 </div>
 <div class="chart-grid">
   {% for chart in charts %}
-  <div class="chart-card" data-chart-id="{{ chart.id }}">
+  {% set grid_x = chart.grid_x if chart.grid_x is defined and chart.grid_x is not none else (loop.index0 % 2) * 6 %}
+  {% set grid_y = chart.grid_y if chart.grid_y is defined and chart.grid_y is not none else (loop.index0 // 2) * 5 %}
+  {% set grid_w = chart.grid_w if chart.grid_w is defined and chart.grid_w is not none else 6 %}
+  {% set grid_h = chart.grid_h if chart.grid_h is defined and chart.grid_h is not none else 5 %}
+  <div class="chart-card grid-stack-item" data-chart-id="{{ chart.id }}" gs-id="{{ chart.id }}" gs-x="{{ grid_x }}" gs-y="{{ grid_y }}" gs-w="{{ grid_w }}" gs-h="{{ grid_h }}">
+    <div class="chart-card-content grid-stack-item-content">
     <div class="chart-card-header">
       <div style="flex:1;min-width:0">
         <div class="chart-card-title"
@@ -134,7 +147,7 @@
         <div class="chart-card-sub">{{ chart.row_count }} rows · {{ chart.last_refreshed[:16] if chart.last_refreshed else 'Just now' }}</div>
       </div>
       <div style="display:flex;gap:.5rem;flex-shrink:0;align-items:center">
-        <button type="button" class="chart-drag-handle" draggable="true" title="Drag to reorder" aria-label="Drag chart to reorder">⋮⋮</button>
+        <button type="button" class="chart-drag-handle" draggable="false" title="Drag to reorder or resize from the card corner" aria-label="Drag chart to reorder">⋮⋮</button>
         <button type="button" class="btn btn-xs btn-secondary"
           onclick="openChartModal(this.closest('.chart-card'))"
           title="Expand chart" style="font-size:12px;padding:4px 8px">⤢ Expand</button>
@@ -162,6 +175,7 @@
         <!-- type toggles and palette swatches injected by JS -->
       </div>
       {% endif %}
+    </div>
     </div>
   </div>
   {% endfor %}
@@ -207,6 +221,34 @@ function _fmtNum(v){
   if(a>=1e3) return (n/1e3).toFixed(1).replace(/\.0$/,'')+'K';
   return n.toLocaleString(undefined,{maximumFractionDigits:2});
 }
+function _chartNormKey(v){ return String(v || '').toLowerCase().replace(/[^a-z0-9]+/g, ''); }
+function _chartFormatFor(payload, col){
+  const key = _chartNormKey(col);
+  const explicit = payload?.column_formats || {};
+  for (const [raw, fmt] of Object.entries(explicit)) {
+    if (_chartNormKey(raw) === key) return String(fmt || 'number').toLowerCase();
+  }
+  const roles = payload?.column_roles || payload?.chart_spec?.column_roles || {};
+  for (const [raw, meta] of Object.entries(roles)) {
+    if (_chartNormKey(raw) === key && meta?.format) return String(meta.format).toLowerCase();
+  }
+  if (/percent|percentage|pct|rate|ratio|share/i.test(String(col))) return 'percentage';
+  if (/revenue|sales|amount|amt|charge|cost|cogs|price|margin|profit|usd|value|balance|total/i.test(String(col))) return 'currency';
+  return 'number';
+}
+function _fmtChartValue(v, fmt, compact=false){
+  const n = Number(v);
+  if (isNaN(n)) return String(v ?? '');
+  if (fmt === 'currency') return compact ? ('$' + _fmtNum(n)) : ('$' + n.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}));
+  if (fmt === 'percentage') return n.toLocaleString('en-US', {maximumFractionDigits:2}) + '%';
+  return compact ? _fmtNum(n) : n.toLocaleString(undefined, {maximumFractionDigits:4});
+}
+function renderChartWarnings(payload){
+  const warnings = Array.isArray(payload?.chart_warnings) ? payload.chart_warnings : [];
+  if (!warnings.length) return '';
+  return `<div class="chart-warnings">${warnings.slice(0, 2).map(w =>
+    `<div class="chart-warning">${String(w ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]))}</div>`).join('')}</div>`;
+}
 
 function chartThemeTokens(){
   const dark = document.documentElement.getAttribute('data-theme') === 'dark';
@@ -235,6 +277,8 @@ function buildDashboardOption(payload){
   const gradPair = _PAL_GRAD[palName]  || _PAL_GRAD.default;
   const theme    = chartThemeTokens();
   const reqType  = (payload.chart_type || 'bar').toLowerCase();
+  const formatFor = col => _chartFormatFor(payload, col);
+  const valueFmt  = (value, col, compact=false) => _fmtChartValue(value, formatFor(col), compact);
 
   const ttBase = {
     backgroundColor: theme.tooltipBg, borderColor: theme.axisLine,
@@ -247,9 +291,9 @@ function buildDashboardOption(payload){
   if (reqType === 'scatter' && yKeys.length >= 2) {
     return {
       color: colors,
-      tooltip: { ...ttBase, trigger:'item', formatter: p => `<strong>${String(p.value?.[2]??'')}</strong><br/>${yKeys[0]}: <strong>${_fmtNum(p.value?.[0])}</strong><br/>${yKeys[1]}: <strong>${_fmtNum(p.value?.[1])}</strong>` },
-      xAxis: { type:'value', name:yKeys[0], axisLine:{lineStyle:{color:theme.axisLine}}, axisLabel:{color:theme.axis,formatter:_fmtNum}, splitLine:{lineStyle:{color:theme.split}} },
-      yAxis: { type:'value', name:yKeys[1], axisLine:{lineStyle:{color:theme.axisLine}}, axisLabel:{color:theme.axis,formatter:_fmtNum}, splitLine:{lineStyle:{color:theme.split}} },
+      tooltip: { ...ttBase, trigger:'item', formatter: p => `<strong>${String(p.value?.[2]??'')}</strong><br/>${yKeys[0]}: <strong>${valueFmt(p.value?.[0], yKeys[0])}</strong><br/>${yKeys[1]}: <strong>${valueFmt(p.value?.[1], yKeys[1])}</strong>` },
+      xAxis: { type:'value', name:yKeys[0], axisLine:{lineStyle:{color:theme.axisLine}}, axisLabel:{color:theme.axis,formatter:v=>valueFmt(v,yKeys[0],true)}, splitLine:{lineStyle:{color:theme.split}} },
+      yAxis: { type:'value', name:yKeys[1], axisLine:{lineStyle:{color:theme.axisLine}}, axisLabel:{color:theme.axis,formatter:v=>valueFmt(v,yKeys[1],true)}, splitLine:{lineStyle:{color:theme.split}} },
       series: [{ type:'scatter', symbolSize:12, itemStyle:{color:colors[0],opacity:.85}, data:rows.map(r=>[r[yKeys[0]],r[yKeys[1]],r[xKey]]) }],
     };
   }
@@ -260,7 +304,7 @@ function buildDashboardOption(payload){
     const innerR  = reqType === 'donut' ? '40%' : '0%';
     return {
       color: colors,
-      tooltip: { ...ttBase, trigger:'item', formatter: p => `<strong>${p.name}</strong><br/>${yKey||'Value'}: <strong>${_fmtNum(p.value)}</strong><br/><span style="opacity:.7">${p.percent?.toFixed(1)}%</span>` },
+      tooltip: { ...ttBase, trigger:'item', formatter: p => `<strong>${p.name}</strong><br/>${yKey||'Value'}: <strong>${valueFmt(p.value, yKey)}</strong><br/><span style="opacity:.7">${p.percent?.toFixed(1)}%</span>` },
       legend: { orient:'vertical', right:8, top:'middle', textStyle:{color:theme.axis,fontSize:11}, formatter:n=>n.length>18?n.slice(0,17)+'…':n },
       series: [{ type:'pie', radius:[innerR,'68%'], center:['40%','50%'], data:pieData,
         label:{show:pieData.length<=8,formatter:'{d}%',color:theme.axis,fontSize:11},
@@ -294,7 +338,12 @@ function buildDashboardOption(payload){
     const arr = Array.isArray(params)?params:[params];
     const lbl = arr[0]?.axisValueLabel||arr[0]?.name||'';
     return `<div style="font-weight:700;margin-bottom:4px">${lbl}</div>`
-      + arr.map(p=>`<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${p.color};margin-right:5px"></span>${p.seriesName||'Value'}: <strong>${_fmtNum(p.value)}</strong>`).join('<br>');
+      + arr.map(p=>`<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${p.color};margin-right:5px"></span>${p.seriesName||'Value'}: <strong>${valueFmt(p.value, p.seriesName)}</strong>`).join('<br>');
+  };
+  const singleTT = (params) => {
+    const p = Array.isArray(params) ? params[0] : params;
+    const lbl = p?.axisValueLabel || p?.name || '';
+    return `<div style="font-weight:700;margin-bottom:4px">${lbl}</div>${yKey||'Value'}: <strong>${valueFmt(p?.value, yKey)}</strong>`;
   };
 
   return {
@@ -302,13 +351,13 @@ function buildDashboardOption(payload){
     grid: horizontal
       ? {left:56,right:18,top:24,bottom:12,containLabel:true}
       : {left:48,right:18,top:yKeys.length>1?44:24,bottom:rotation?72:42,containLabel:true},
-    tooltip: { ...ttBase, trigger:isLine?'axis':'item', formatter: yKeys.length>1?multiTT:undefined },
+    tooltip: { ...ttBase, trigger:isLine?'axis':'item', formatter: yKeys.length>1?multiTT:singleTT },
     xAxis: horizontal
-      ? {type:'value',axisLine:{show:false},splitLine:{lineStyle:{color:theme.split}},axisLabel:{color:theme.axis,formatter:_fmtNum}}
+      ? {type:'value',axisLine:{show:false},splitLine:{lineStyle:{color:theme.split}},axisLabel:{color:theme.axis,formatter:v=>valueFmt(v,yKey,true)}}
       : {type:'category',data:shortLbl,axisTick:{show:false},axisLine:{lineStyle:{color:theme.axisLine}},axisLabel:{color:theme.axis,interval,rotate:rotation,formatter:(v,i)=>shortLbl[i]}},
     yAxis: horizontal
       ? {type:'category',data:shortLbl,axisTick:{show:false},axisLine:{show:false},axisLabel:{color:theme.axis}}
-      : {type:'value',splitLine:{lineStyle:{color:theme.split}},axisLabel:{color:theme.axis,formatter:_fmtNum}},
+      : {type:'value',splitLine:{lineStyle:{color:theme.split}},axisLabel:{color:theme.axis,formatter:v=>valueFmt(v,yKey,true)}},
     legend: yKeys.length>1?{top:4,textStyle:{color:theme.axis,fontSize:11},data:yKeys,icon:'roundRect'}:undefined,
     series: yKeys.length>1
       ? yKeys.map((k,i)=>({
@@ -340,6 +389,9 @@ function initDashboardChart(node) {
   const payload = JSON.parse(node.dataset.chart || '{}');
   if (!payload.rows || !payload.rows.length) return;
   if (payload.chart_id) window._dashPayloads[payload.chart_id] = payload;
+  node.parentElement?.querySelector('.chart-warnings')?.remove();
+  const warningHtml = renderChartWarnings(payload);
+  if (warningHtml) node.insertAdjacentHTML('afterend', warningHtml);
   // Clear the loading skeleton before ECharts mounts its canvas.
   node.querySelector('[data-chart-skeleton]')?.remove();
   const existing = echarts.getInstanceByDom(node);
@@ -358,16 +410,83 @@ function renderDashboardCharts() {
   requestAnimationFrame(() => {
     document.querySelectorAll('[data-chart]').forEach(initDashboardChart);
     document.querySelectorAll('.dash-ctrl-row[data-chart-id]').forEach(mountDashChartControls);
+    resizeDashboardCharts();
   });
 }
+let dashboardGrid = null;
+let layoutSaveTimer = null;
+
+function resizeDashboardCharts() {
+  document.querySelectorAll('[data-chart]').forEach(n => {
+    try { echarts.getInstanceByDom(n)?.resize(); } catch {}
+  });
+}
+
+function collectDashboardLayout() {
+  if (!dashboardGrid) return [];
+  return dashboardGrid.engine.nodes
+    .filter(node => node?.el?.dataset?.chartId)
+    .sort((a, b) => (a.y - b.y) || (a.x - b.x))
+    .map((node, idx) => ({
+      chart_id: Number(node.el.dataset.chartId),
+      x: node.x || 0,
+      y: node.y || 0,
+      w: node.w || 6,
+      h: node.h || 5,
+      position: idx + 1,
+    }));
+}
+
+function saveDashboardLayoutSoon() {
+  if (!dashboardGrid) return;
+  clearTimeout(layoutSaveTimer);
+  layoutSaveTimer = setTimeout(async () => {
+    const layouts = collectDashboardLayout();
+    if (!layouts.length) return;
+    try {
+      await fetch('/portal/api/update-chart-layout', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ layouts }),
+      });
+    } catch (_) {}
+  }, 450);
+}
+
+function initDashboardGrid() {
+  const gridEl = document.querySelector('.chart-grid');
+  if (!gridEl || !gridEl.querySelector('.chart-card[data-chart-id]')) return;
+  if (!window.GridStack) {
+    initFallbackDashboardDrag(gridEl);
+    return;
+  }
+  gridEl.classList.add('grid-stack', 'is-gridstack');
+  try {
+    dashboardGrid = GridStack.init({
+      column: 12,
+      cellHeight: 92,
+      margin: 12,
+      float: false,
+      handle: '.chart-drag-handle',
+      disableOneColumnMode: false,
+      draggable: { handle: '.chart-drag-handle' },
+      resizable: { handles: 'se,e,s' },
+    }, gridEl);
+    dashboardGrid.on('change', saveDashboardLayoutSoon);
+    dashboardGrid.on('dragstop resizestop', () => setTimeout(resizeDashboardCharts, 80));
+    setTimeout(resizeDashboardCharts, 120);
+  } catch (_) {
+    gridEl.classList.remove('grid-stack', 'is-gridstack');
+    dashboardGrid = null;
+    initFallbackDashboardDrag(gridEl);
+  }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
+  initDashboardGrid();
   renderDashboardCharts();
   if (!window.ResizeObserver) {
-    window.addEventListener('resize', () => {
-      document.querySelectorAll('[data-chart]').forEach(n => {
-        try { echarts.getInstanceByDom(n)?.resize(); } catch {}
-      });
-    });
+    window.addEventListener('resize', resizeDashboardCharts);
   }
 });
 window.addEventListener('qb-theme-change', () => setTimeout(renderDashboardCharts, 50));
@@ -382,8 +501,12 @@ function mountDashChartControls(ctrlRow) {
   if (!payload) return;
   const ct  = payload.chart_type || 'bar';
   const pal = payload.color_palette || 'default';
+  const allowed = Array.isArray(payload.renderable_types) && payload.renderable_types.length
+    ? payload.renderable_types
+    : (Array.isArray(payload.allowed_types) ? payload.allowed_types : DASH_TYPES);
+  const visibleTypes = DASH_TYPES.filter(t => allowed.includes(t));
 
-  const typeHtml = DASH_TYPES.map(t =>
+  const typeHtml = visibleTypes.map(t =>
     `<button class="dctt-btn${ct===t?' dctt-active':''}" data-type="${t}">${t.charAt(0).toUpperCase()+t.slice(1)}</button>`
   ).join('');
   const palHtml = Object.entries(_PALETTES).map(([n,c]) =>
@@ -495,7 +618,11 @@ function openChartModal(cardEl) {
   const ctrlEl = document.getElementById('chart-modal-ctrl');
   const ct  = payload.chart_type  || 'bar';
   const pal = payload.color_palette || 'default';
-  ctrlEl.innerHTML = DASH_TYPES.map(t =>
+  const modalAllowed = Array.isArray(payload.renderable_types) && payload.renderable_types.length
+    ? payload.renderable_types
+    : (Array.isArray(payload.allowed_types) ? payload.allowed_types : DASH_TYPES);
+  const modalTypes = DASH_TYPES.filter(t => modalAllowed.includes(t));
+  ctrlEl.innerHTML = modalTypes.map(t =>
     `<button class="dctt-btn${ct===t?' dctt-active':''}" data-type="${t}">${t.charAt(0).toUpperCase()+t.slice(1)}</button>`
   ).join('')
   + `<span class="dash-ctrl-sep"></span>`
@@ -561,11 +688,9 @@ function closeChartModal() {
   modal.style.display = 'none';
 }
 
-// Drag-to-reorder dashboard charts. This is intentionally client-side for the
-// first UX pass: users can immediately arrange their working view without a DB
-// migration. The order is restored per portal user/browser.
-(function(){
-  const grid = document.querySelector('.chart-grid');
+// Fallback drag-to-reorder dashboard charts for browsers where Gridstack did
+// not load. Persisted Gridstack layout is preferred whenever available.
+function initFallbackDashboardDrag(grid) {
   if (!grid) return;
   const page = document.querySelector('.dashboard-page');
   const key = 'qb-dashboard-chart-order:' + (page?.dataset.dashboardUser || 'default');
@@ -602,6 +727,7 @@ function closeChartModal() {
   cards().forEach(card => {
     const handle = card.querySelector('.chart-drag-handle');
     if (!handle) return;
+    handle.draggable = true;
     handle.addEventListener('dragstart', e => {
       card.classList.add('dragging');
       e.dataTransfer.effectAllowed = 'move';
@@ -625,6 +751,6 @@ function closeChartModal() {
     if (after == null) grid.appendChild(dragging);
     else grid.insertBefore(dragging, after);
   });
-})();
+}
 </script>
 {% endblock %}

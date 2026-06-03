@@ -734,7 +734,12 @@ def _refresh_chart(chart: dict, db_cfg: dict | None) -> dict:
         result["row_count"] = len(rows)
         if rows:
             chart_type = chart.get("chart_type") or detect_chart_type(rows, question=chart.get("question", ""))
-            payload = build_chart_payload(rows, chart_type, title=chart["title"]) if chart_type else None
+            payload = build_chart_payload(
+                rows,
+                chart_type,
+                title=chart["title"],
+                question=chart.get("question", ""),
+            ) if chart_type else None
             if payload:
                 payload["color_palette"] = chart.get("color_palette") or "default"
                 payload["chart_id"] = chart["id"]   # lets dashboard JS call update-chart
@@ -960,6 +965,23 @@ async def update_chart_api(request: Request):
         chart_type=str(payload["chart_type"]).strip() if "chart_type" in payload else None,
         color_palette=str(payload["color_palette"]).strip() if "color_palette" in payload else None,
     )
+    return JSONResponse({"ok": True})
+
+
+@router.post("/api/update-chart-layout")
+async def update_chart_layout_api(request: Request):
+    """Persist pinned chart dashboard positions and sizes for the current user."""
+    user = _get_portal_user(request)
+    if not user:
+        return JSONResponse({"ok": False, "error": "Authentication required."}, status_code=401)
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    layouts = payload.get("layouts") if isinstance(payload, dict) else None
+    if not isinstance(layouts, list):
+        return JSONResponse({"ok": False, "error": "layouts array required."}, status_code=400)
+    store.update_pinned_chart_layouts(user["id"], layouts)
     return JSONResponse({"ok": True})
 
 

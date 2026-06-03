@@ -255,6 +255,8 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .chart-btn{border:1px solid var(--border);background:var(--surface-2);color:var(--text-soft);padding:7px 10px;border-radius:999px;font-size:11px;font-weight:700;cursor:pointer}
 .chart-btn:hover{border-color:var(--primary);color:var(--primary);background:var(--surface-3)}
 .chart-canvas{height:340px;width:100%;border-radius:var(--radius);background:linear-gradient(180deg,color-mix(in srgb,var(--surface-2) 92%, transparent),transparent)}
+.chart-warnings{display:flex;flex-direction:column;gap:.35rem;margin-top:.55rem}
+.chart-warning{font-size:11px;color:var(--warning);background:color-mix(in srgb,var(--warning) 10%,transparent);border:1px solid color-mix(in srgb,var(--warning) 28%,transparent);border-radius:7px;padding:.45rem .55rem;line-height:1.35}
 /* ── Chart type toggle ───────────────────────────────────────────────── */
 .chart-type-toggle{display:flex;gap:.3rem;margin-top:.5rem;padding-top:.4rem;border-top:1px solid color-mix(in srgb,var(--border) 50%,transparent);flex-wrap:wrap}
 .ctt-btn{padding:4px 11px;font-size:10.5px;font-weight:700;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-muted);cursor:pointer;transition:all .15s;white-space:nowrap}
@@ -1102,6 +1104,36 @@ function _fmtNum(v) {
   if (abs >= 1e3)  return (n/1e3).toFixed(1).replace(/\.0$/,'') + 'K';
   return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
+function _chartNormKey(v) {
+  return String(v || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+function _chartFormatFor(payload, col) {
+  const key = _chartNormKey(col);
+  const explicit = payload?.column_formats || {};
+  for (const [raw, fmt] of Object.entries(explicit)) {
+    if (_chartNormKey(raw) === key) return String(fmt || 'number').toLowerCase();
+  }
+  const roles = payload?.column_roles || payload?.chart_spec?.column_roles || {};
+  for (const [raw, meta] of Object.entries(roles)) {
+    if (_chartNormKey(raw) === key && meta?.format) return String(meta.format).toLowerCase();
+  }
+  if (/percent|percentage|pct|rate|ratio|share/i.test(String(col))) return 'percentage';
+  if (/revenue|sales|amount|amt|charge|cost|cogs|price|margin|profit|usd|value|balance|total/i.test(String(col))) return 'currency';
+  return 'number';
+}
+function _fmtChartValue(v, fmt, compact = false) {
+  const n = Number(v);
+  if (isNaN(n)) return String(v ?? '');
+  if (fmt === 'currency') return compact ? ('$' + _fmtNum(n)) : ('$' + n.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}));
+  if (fmt === 'percentage') return n.toLocaleString('en-US', {maximumFractionDigits:2}) + '%';
+  return compact ? _fmtNum(n) : n.toLocaleString(undefined, {maximumFractionDigits:4});
+}
+function renderChartWarnings(payload) {
+  const warnings = Array.isArray(payload?.chart_warnings) ? payload.chart_warnings : [];
+  if (!warnings.length) return '';
+  return `<div class="chart-warnings">${warnings.slice(0, 2).map(w =>
+    `<div class="chart-warning">${escHtml(String(w))}</div>`).join('')}</div>`;
+}
 
 function buildChartOption(payload) {
   const rows        = Array.isArray(payload?.rows) ? payload.rows : [];
@@ -1112,6 +1144,8 @@ function buildChartOption(payload) {
   const colors      = _PALETTES[palName] || _PALETTES.default;
   const gradPair    = _PAL_GRAD[palName]  || _PAL_GRAD.default;
   const labels      = rows.map(r => String((xKey && r?.[xKey]) ?? ''));
+  const formatFor   = col => _chartFormatFor(payload, col);
+  const valueFmt    = (value, col, compact=false) => _fmtChartValue(value, formatFor(col), compact);
   const dark        = document.documentElement.getAttribute('data-theme') === 'dark';
   const axisColor   = dark ? '#94a3b8' : '#64748b';
   const gridColor   = dark ? 'rgba(148,163,184,.14)' : 'rgba(100,116,139,.14)';
@@ -1150,7 +1184,7 @@ function buildChartOption(payload) {
     const lbl = arr[0]?.axisValueLabel || arr[0]?.name || '';
     return `<div style="font-weight:700;margin-bottom:4px">${escHtml(String(lbl))}</div>`
       + arr.map(p => `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${p.color};margin-right:5px"></span>`
-        + `${escHtml(String(p.seriesName||''))}: <strong>${_fmtNum(p.value)}</strong>`).join('<br/>');
+        + `${escHtml(String(p.seriesName||''))}: <strong>${valueFmt(p.value, p.seriesName)}</strong>`).join('<br/>');
   };
 
   // ── Pie / Donut ───────────────────────────────────────────────────────────
@@ -1170,7 +1204,7 @@ function buildChartOption(payload) {
         ...tooltipStyle,
         trigger: 'item',
         formatter: p => `<strong>${escHtml(String(p.name??''))}</strong><br/>`
-          + `${escHtml(String(yKey||'Value'))}: <strong>${_fmtNum(p.value)}</strong><br/>`
+          + `${escHtml(String(yKey||'Value'))}: <strong>${valueFmt(p.value, yKey)}</strong><br/>`
           + `<span style="opacity:.7">${p.percent?.toFixed(1)}%</span>`,
       },
       legend: {
@@ -1205,7 +1239,7 @@ function buildChartOption(payload) {
       trigger: (type === 'scatter') ? 'item' : 'axis',
     },
     xAxis: horizontal ? {
-      type: 'value', axisLabel: { color: axisColor, formatter: _fmtNum },
+      type: 'value', axisLabel: { color: axisColor, formatter: v => valueFmt(v, yKey, true) },
       splitLine: { show: true, lineStyle: { color: gridColor } },
       axisTick: { show: false }, axisLine: { show: false },
     } : {
@@ -1219,7 +1253,7 @@ function buildChartOption(payload) {
       axisLine: { show: false }, axisTick: { show: false },
     } : {
       type: 'value',
-      axisLabel: { color: axisColor, formatter: _fmtNum, fontSize: 11 },
+      axisLabel: { color: axisColor, formatter: v => valueFmt(v, yKey, true), fontSize: 11 },
       splitLine: { show: true, lineStyle: { color: gridColor } },
       axisTick: { show: false }, axisLine: { show: false },
     },
@@ -1229,10 +1263,10 @@ function buildChartOption(payload) {
   // ── Scatter ───────────────────────────────────────────────────────────────
   if (type === 'scatter') {
     const y2 = yKeys[1];
-    option.xAxis = { type:'value', name: yKey, nameTextStyle:{color:axisColor}, axisLabel:{color:axisColor,formatter:_fmtNum}, splitLine:{show:true,lineStyle:{color:gridColor}}, axisTick:{show:false}, axisLine:{show:false} };
-    option.yAxis = { type:'value', name: y2,  nameTextStyle:{color:axisColor}, axisLabel:{color:axisColor,formatter:_fmtNum}, splitLine:{show:true,lineStyle:{color:gridColor}}, axisTick:{show:false}, axisLine:{show:false} };
+    option.xAxis = { type:'value', name: yKey, nameTextStyle:{color:axisColor}, axisLabel:{color:axisColor,formatter:v=>valueFmt(v,yKey,true)}, splitLine:{show:true,lineStyle:{color:gridColor}}, axisTick:{show:false}, axisLine:{show:false} };
+    option.yAxis = { type:'value', name: y2,  nameTextStyle:{color:axisColor}, axisLabel:{color:axisColor,formatter:v=>valueFmt(v,y2,true)}, splitLine:{show:true,lineStyle:{color:gridColor}}, axisTick:{show:false}, axisLine:{show:false} };
     option.series = [{ type:'scatter', symbolSize:12, data: rows.map(r=>[Number(r?.[yKey]??0),Number(r?.[y2]??0),String(xKey ? (r?.[xKey]??'') : '')]), itemStyle:{color:colors[0], opacity:.8} }];
-    option.tooltip.formatter = p => `<strong>${escHtml(String(p.value?.[2]??''))}</strong><br/>${escHtml(String(yKey||'X'))}: <strong>${_fmtNum(p.value?.[0])}</strong><br/>${escHtml(String(y2||'Y'))}: <strong>${_fmtNum(p.value?.[1])}</strong>`;
+    option.tooltip.formatter = p => `<strong>${escHtml(String(p.value?.[2]??''))}</strong><br/>${escHtml(String(yKey||'X'))}: <strong>${valueFmt(p.value?.[0], yKey)}</strong><br/>${escHtml(String(y2||'Y'))}: <strong>${valueFmt(p.value?.[1], y2)}</strong>`;
     return option;
   }
 
@@ -1243,7 +1277,13 @@ function buildChartOption(payload) {
       ? { top: 4, textStyle: { color: axisColor, fontSize: 11 }, data: yKeys, icon: 'roundRect' }
       : undefined;
     option.tooltip.trigger = 'axis';
-    option.tooltip.formatter = yKeys.length > 1 ? multiTooltipFmt : undefined;
+    option.tooltip.formatter = yKeys.length > 1
+      ? multiTooltipFmt
+      : params => {
+          const p = Array.isArray(params) ? params[0] : params;
+          const lbl = p?.axisValueLabel || p?.name || '';
+          return `<div style="font-weight:700;margin-bottom:4px">${escHtml(String(lbl))}</div>${escHtml(String(yKey||'Value'))}: <strong>${valueFmt(p?.value, yKey)}</strong>`;
+        };
     option.series = yKeys.map((k, i) => ({
       name: k, type: 'line', smooth: true,
       data: rows.map(r => Number(r?.[k] ?? 0)),
@@ -1269,7 +1309,7 @@ function buildChartOption(payload) {
   else {
     option.tooltip.formatter = p => {
       const lbl = horizontal ? (p.name||'') : (p.name||p.axisValueLabel||'');
-      return `<strong>${escHtml(String(lbl))}</strong><br/>${escHtml(String(yKey||'Value'))}: <strong>${_fmtNum(p.value)}</strong>`;
+      return `<strong>${escHtml(String(lbl))}</strong><br/>${escHtml(String(yKey||'Value'))}: <strong>${valueFmt(p.value, yKey)}</strong>`;
     };
   }
   option.series = yKeys.map((k, i) => {
@@ -1344,7 +1384,11 @@ function _mountChartControls(wrapEl, chartId, onUpdate) {
     { k:'donut',   label:'Donut' },
     { k:'scatter', label:'Scatter' },
   ];
-  const typeHtml = TYPES.map(t =>
+  const allowed = Array.isArray(stored().renderable_types) && stored().renderable_types.length
+    ? stored().renderable_types
+    : (Array.isArray(stored().allowed_types) ? stored().allowed_types : TYPES.map(t => t.k));
+  const visibleTypes = TYPES.filter(t => allowed.includes(t.k));
+  const typeHtml = visibleTypes.map(t =>
     `<button type="button" class="ctt-btn${ct===t.k?' ctt-active':''}" data-type="${t.k}">${t.label}</button>`
   ).join('');
 
@@ -1865,7 +1909,7 @@ function appendAssistantResponse(msg, opts = {}){
   // Body: prefer chart when present, otherwise the data table, otherwise the question echo
   let bodyHtml = '';
   if (hasChart) {
-    bodyHtml = `<div class="result-chart-wrap"><div id="${chartId}" class="chart-canvas compact"></div></div>`;
+    bodyHtml = `<div class="result-chart-wrap"><div id="${chartId}" class="chart-canvas compact"></div>${renderChartWarnings(msg.chart)}</div>`;
     if (hasData) bodyHtml += renderDataTable(msg.data, { question: msg.question || '', trace_id: msgTraceId });
   } else if (hasData) {
     bodyHtml = renderDataTable(msg.data, { question: msg.question || '', trace_id: msgTraceId });
@@ -2098,7 +2142,7 @@ function appendChart(payload, opts = {}){
   const rows = payload.rows || [];
   const div = document.createElement('div');
   div.className = 'msg msg-bot';
-  div.innerHTML = `<div class="msg-avatar">Q</div><div class="msg-content"><div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timestamp}</span></div><div class="chart-card"><div class="chart-header"><div><div class="chart-title">${escHtml(payload.title || payload.question || 'Chart result')}</div><div class="chart-subtitle">${rows.length} rows · ${escHtml(payload.duration_label || '')}</div></div><div class="chart-toolbar"><button type="button" class="chart-btn" data-action="pin">📌 Pin to dashboard</button><button type="button" class="chart-btn" data-action="copy">Copy summary</button></div></div><div id="${chartId}" class="chart-canvas"></div><div class="chart-footer"><span>${escHtml(payload.question || '')}</span><span>${escHtml((payload.chart_type || 'chart').toUpperCase())}</span></div></div></div>`;
+  div.innerHTML = `<div class="msg-avatar">Q</div><div class="msg-content"><div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timestamp}</span></div><div class="chart-card"><div class="chart-header"><div><div class="chart-title">${escHtml(payload.title || payload.question || 'Chart result')}</div><div class="chart-subtitle">${rows.length} rows · ${escHtml(payload.duration_label || '')}</div></div><div class="chart-toolbar"><button type="button" class="chart-btn" data-action="pin">📌 Pin to dashboard</button><button type="button" class="chart-btn" data-action="copy">Copy summary</button></div></div><div id="${chartId}" class="chart-canvas"></div>${renderChartWarnings(payload)}<div class="chart-footer"><span>${escHtml(payload.question || '')}</span><span>${escHtml((payload.chart_type || 'chart').toUpperCase())}</span></div></div></div>`;
   thread().appendChild(div);
   const [pinBtn, copyBtn] = div.querySelectorAll('.chart-btn');
   if (!payload.pin_token) {

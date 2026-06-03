@@ -277,6 +277,10 @@ CREATE TABLE IF NOT EXISTS pinned_chart (
     chart_type   TEXT    NOT NULL DEFAULT 'bar',
     db_config_id INTEGER REFERENCES db_config(id) ON DELETE SET NULL,
     position     INTEGER NOT NULL DEFAULT 0,
+    grid_x       INTEGER NOT NULL DEFAULT 0,
+    grid_y       INTEGER NOT NULL DEFAULT 0,
+    grid_w       INTEGER NOT NULL DEFAULT 6,
+    grid_h       INTEGER NOT NULL DEFAULT 5,
     created_at   TEXT    DEFAULT (datetime('now')),
     last_refreshed TEXT  DEFAULT (datetime('now'))
 );
@@ -638,6 +642,11 @@ def _run_migrations() -> None:
         ("entity_graph", "entity_filter", "TEXT NOT NULL DEFAULT ''"),
         # v25: user-chosen colour palette for each pinned chart
         ("pinned_chart", "color_palette", "TEXT NOT NULL DEFAULT 'default'"),
+        # v25b: persisted dashboard layout for draggable/resizable chart cards
+        ("pinned_chart", "grid_x", "INTEGER NOT NULL DEFAULT 0"),
+        ("pinned_chart", "grid_y", "INTEGER NOT NULL DEFAULT 0"),
+        ("pinned_chart", "grid_w", "INTEGER NOT NULL DEFAULT 6"),
+        ("pinned_chart", "grid_h", "INTEGER NOT NULL DEFAULT 5"),
         # v26: link drill-down result_chat queries to their parent main query
         ("query_log", "question_id",        "TEXT DEFAULT ''"),
         ("query_log", "parent_question_id", "TEXT DEFAULT ''"),

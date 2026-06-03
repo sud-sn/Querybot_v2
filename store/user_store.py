@@ -373,13 +373,17 @@ def pin_chart(
             (user_id,)
         ).fetchone()
         pos = row["next"] if row else 1
+        grid_w = 6
+        grid_h = 5
+        grid_x = ((pos - 1) % 2) * grid_w
+        grid_y = ((pos - 1) // 2) * grid_h
         cur = conn.execute("""
             INSERT INTO pinned_chart
                 (user_id, account_id, title, question, sql_query, chart_type,
-                 db_config_id, position, color_palette)
-            VALUES (?,?,?,?,?,?,?,?,?)
+                 db_config_id, position, color_palette, grid_x, grid_y, grid_w, grid_h)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, (user_id, account_id, title, question, sql_query, chart_type,
-               db_config_id, pos, color_palette))
+               db_config_id, pos, color_palette, grid_x, grid_y, grid_w, grid_h))
         cid = cur.lastrowid
     log.info("Pinned chart %d for user %d", cid, user_id)
     return cid
@@ -434,6 +438,41 @@ def update_pinned_chart(
             f"UPDATE pinned_chart SET {', '.join(fields)} WHERE id=? AND user_id=?",
             values,
         )
+
+
+def update_pinned_chart_layouts(user_id: int, layouts: list[dict]) -> None:
+    """Persist dashboard card positions/sizes for a portal user."""
+    if not layouts:
+        return
+
+    rows: list[tuple[int, int, int, int, int, int]] = []
+    for idx, item in enumerate(layouts):
+        try:
+            chart_id = int(item.get("chart_id") or item.get("id") or 0)
+            if not chart_id:
+                continue
+            x = max(0, min(11, int(item.get("x") or 0)))
+            y = max(0, int(item.get("y") or 0))
+            w = max(2, min(12, int(item.get("w") or 6)))
+            h = max(3, min(12, int(item.get("h") or 5)))
+            position = max(1, int(item.get("position") or idx + 1))
+        except Exception:
+            continue
+        rows.append((x, y, w, h, position, chart_id))
+
+    if not rows:
+        return
+
+    with get_db() as conn:
+        for x, y, w, h, position, chart_id in rows:
+            conn.execute(
+                """
+                UPDATE pinned_chart
+                   SET grid_x=?, grid_y=?, grid_w=?, grid_h=?, position=?
+                 WHERE id=? AND user_id=?
+                """,
+                (x, y, w, h, position, chart_id, user_id),
+            )
 
 
 def update_chart_refreshed(chart_id: int) -> None:
