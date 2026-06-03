@@ -1394,13 +1394,11 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                 f"SQL, no explanation."
             )
 
-        # When the initial failure was a semantic plan mismatch, drop the plan from
-        # the retry so the LLM gets a clean slate and the validator doesn't re-enforce
-        # the same plan — avoiding an unrecoverable loop on persistent mismatches.
-        _retry_plan = None if last_code == "field_plan_mismatch" else (_semantic_plan or None)
+        # Keep semantic-plan guardrails during repair. Otherwise the retry can
+        # pass validation while still using a raw dimension key as a business
+        # label instead of the planned display field.
+        _retry_plan = _semantic_plan or None
         _retry_semantic_context = dict(semantic_context)
-        if last_code == "field_plan_mismatch":
-            _retry_semantic_context["semantic_plan"] = None
 
         try:
             await _send_live_stage(adapter, event, "repairing_query", "Repairing query", "Fixing a validation or execution issue before retrying.")
