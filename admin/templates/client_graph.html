@@ -1233,7 +1233,8 @@ function _applyTransform() {
   if (lbl) lbl.textContent = pct;
   const mmz = document.getElementById('minimap-zoom');
   if (mmz) mmz.textContent = pct;
-  _updateMinimapViewport();
+  // _updateMinimapViewport is a window.X assignment defined later in the file — guard for init-time call
+  if (typeof _updateMinimapViewport === 'function') _updateMinimapViewport();
 }
 
 // ════════════════════════════════════════════════════════════════════════════
