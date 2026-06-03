@@ -1253,7 +1253,9 @@ function renderGraph() {
   renderEdges();
   renderNodes();
   updateFocusPill();
-  updateMinimap();
+  // updateMinimap is defined later in the file as window.updateMinimap = function().
+  // Guard against calling it before that assignment executes (init-time renderGraph call).
+  if (typeof updateMinimap === 'function') updateMinimap();
 }
 
 function entityPos(e) {
