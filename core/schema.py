@@ -693,7 +693,65 @@ _GENERIC_COLS = {
     "ID", "NAME", "STATUS", "TYPE", "CODE", "DATE",
     "CREATED_AT", "UPDATED_AT", "DESCRIPTION", "NOTES",
     "CREATED_BY", "UPDATED_BY", "IS_ACTIVE", "ACTIVE",
+    # Common ERP / DW audit columns (exact names)
+    "ROW_ID", "ROW_NUM", "SEQ_NUM", "SORT_ORDER",
+    "INSERT_DATE", "UPDATE_DATE", "INSERT_TS", "UPDATE_TS",
+    "INSERT_BY", "UPDATE_BY", "LOAD_DATE", "LOAD_TS",
+    "ETL_BATCH_ID", "BATCH_ID", "JOB_ID", "PROCESS_ID",
+    "RECORD_SOURCE", "SOURCE_SYSTEM", "DATA_SOURCE",
+    "IS_DELETED", "IS_CURRENT", "IS_VALID", "IS_PROCESSED",
+    "EFF_DATE", "EXP_DATE", "START_DATE", "END_DATE",
+    "VALID_FROM", "VALID_TO", "EFFECTIVE_DATE", "EXPIRY_DATE",
 }
+
+# Prefix-based audit / ETL column patterns (uppercase, checked with startswith)
+# These are injected by pipeline tools (ADF, Informatica, Talend, dbt, etc.)
+# and appear in nearly every table — joining on them is always wrong.
+_AUDIT_COL_PREFIXES = (
+    "AZ_",        # Azure Data Factory audit columns (AZ_LST_UPD_TS, AZ_EXT_ID, …)
+    "ETL_",       # ETL tool metadata columns
+    "DW_",        # Data warehouse housekeeping columns
+    "STG_",       # Staging metadata
+    "META_",      # Generic metadata prefix
+    "SYS_",       # System-generated columns
+    "CDC_",       # Change data capture columns
+    "DBT_",       # dbt model metadata
+    "FIVETRAN_",  # Fivetran connector columns
+    "STITCH_",    # Stitch data columns
+)
+
+# Suffix-based audit column patterns
+_AUDIT_COL_SUFFIXES = (
+    "_UPD_TS", "_UPD_DT", "_UPD_DTM",   # update timestamps
+    "_INS_TS", "_INS_DT", "_INS_DTM",   # insert timestamps
+    "_CRT_TS", "_CRT_DT", "_CRT_DTM",   # create timestamps
+    "_LOAD_TS", "_LOAD_DT",              # load timestamps
+    "_HASH",                             # row hash / checksum
+    "_CHECKSUM",
+    "_ROW_VERSION",
+    "_BATCH_KEY",
+)
+
+# High-prevalence threshold: if a column appears in more than this fraction of
+# all tables it is almost certainly an audit/housekeeping column, not a FK.
+_AUDIT_PREVALENCE_THRESHOLD = 0.35
+
+
+def _is_audit_column(col_upper: str, total_tables: int, col_table_count: int) -> bool:
+    """Return True if col_upper looks like an audit/ETL column that should not be
+    used as a join key in the auto-generated entity graph."""
+    if col_upper in _GENERIC_COLS:
+        return True
+    for prefix in _AUDIT_COL_PREFIXES:
+        if col_upper.startswith(prefix):
+            return True
+    for suffix in _AUDIT_COL_SUFFIXES:
+        if col_upper.endswith(suffix):
+            return True
+    # High-prevalence heuristic: column in >35% of all tables → audit column
+    if total_tables > 0 and col_table_count / total_tables > _AUDIT_PREVALENCE_THRESHOLD:
+        return True
+    return False
 
 
 def _infer_entity_type(table_name: str) -> str:
@@ -880,8 +938,9 @@ def build_entity_graph_from_schema(schema_dir: str) -> dict:
 
     entity_names_set = {e["entity_name"] for e in entities}
 
+    total_tables = len(master)
     for col_name, fqns in col_to_fqns.items():
-        if len(fqns) < 2 or col_name in _GENERIC_COLS:
+        if len(fqns) < 2 or _is_audit_column(col_name, total_tables, len(fqns)):
             continue
         for i in range(len(fqns)):
             for j in range(i + 1, len(fqns)):

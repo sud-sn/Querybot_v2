@@ -2370,6 +2370,87 @@ async def graph_api_rel_bulk(request: Request, account_id: str):
     return JSONResponse({"status": "ok", "updated": len(updates), "deleted": len(deletes)})
 
 
+@router.post("/clients/{account_id}/graph/api/relationships/bulk")
+async def graph_api_rel_bulk(request: Request, account_id: str):
+    """Bulk update + delete relationships in one round-trip (used by Bulk Relationship Manager)."""
+    if not _is_auth(request):
+        raise HTTPException(status_code=401)
+    data    = await request.json()
+    updates = data.get("updates", [])
+    deletes = data.get("deletes", [])
+
+    for rel_id in deletes:
+        store.delete_relationship(account_id, int(rel_id))
+
+    for u in updates:
+        store.save_relationship(
+            account_id        = account_id,
+            from_entity       = str(u.get("from_entity", "")).strip(),
+            to_entity         = str(u.get("to_entity", "")).strip(),
+            from_column       = str(u.get("from_column", "")).strip(),
+            to_column         = str(u.get("to_column", "")).strip(),
+            relationship_type = str(u.get("relationship_type", "many_to_one")),
+            join_type         = str(u.get("join_type", "LEFT")),
+            label             = str(u.get("label", "")).strip(),
+            where_clause      = str(u.get("where_clause", "")).strip(),
+            rel_id            = int(u.get("id") or 0),
+        )
+
+    return JSONResponse({"status": "ok", "updated": len(updates), "deleted": len(deletes)})
+
+
+@router.post("/clients/{account_id}/graph/api/relationships/purge-audit")
+async def graph_api_purge_audit_joins(request: Request, account_id: str):
+    """
+    Delete all unconfirmed relationships whose FK column looks like an audit /
+    ETL housekeeping column (AZ_ prefix, _UPD_TS suffix, high prevalence, etc.).
+
+    Only removes rows with status != 'confirmed' so admin-approved joins are safe.
+    Returns {deleted: N, kept: M, audit_cols: [list of column names removed]}.
+    """
+    if not _is_auth(request):
+        raise HTTPException(status_code=401)
+
+    from core.schema import _is_audit_column
+
+    rels = store.list_relationships(account_id, active_only=False)
+
+    # Build prevalence map: how many relationships use each from_column name?
+    col_counts: dict[str, int] = {}
+    for r in rels:
+        c = (r.get("from_column") or "").upper()
+        col_counts[c] = col_counts.get(c, 0) + 1
+
+    total_rels = max(len(rels), 1)
+
+    deleted      = 0
+    kept         = 0
+    audit_cols   = set()
+
+    for r in rels:
+        # Never touch confirmed / admin-approved relationships
+        if r.get("status") == "confirmed":
+            kept += 1
+            continue
+
+        col_upper = (r.get("from_column") or "").upper()
+        prevalence_count = col_counts.get(col_upper, 0)
+
+        if _is_audit_column(col_upper, total_rels, prevalence_count):
+            store.delete_relationship(account_id, int(r["id"]))
+            audit_cols.add(col_upper)
+            deleted += 1
+        else:
+            kept += 1
+
+    return JSONResponse({
+        "status":     "ok",
+        "deleted":    deleted,
+        "kept":       kept,
+        "audit_cols": sorted(audit_cols),
+    })
+
+
 @router.post("/clients/{account_id}/graph/api/properties")
 async def graph_api_prop_save(request: Request, account_id: str):
     if not _is_auth(request):

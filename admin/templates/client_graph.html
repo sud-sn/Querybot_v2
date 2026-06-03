@@ -670,6 +670,9 @@
                   title="Connect one fact to multiple dimensions at once">⬗ Multi-link</button>
           <button onclick="openBridgeModal();closeTbDropdowns()"
                   title="Create a bridge/link table connecting multiple entities">⬡ Bridge table</button>
+          <button onclick="purgeAuditJoins();closeTbDropdowns()"
+                  title="Remove auto-generated joins on audit/ETL columns (AZ_, _UPD_TS, etc.) that were mistakenly created as relationship keys"
+                  style="color:var(--amber,#d69e2e)">🧹 Clean audit joins</button>
         </div>
       </div>
     </div>
@@ -4139,6 +4142,60 @@ function updateRelList() {
       <span style="margin-left:auto;font-size:9px;font-weight:700;color:var(--text-muted);text-transform:uppercase">${r.join_type}</span>
     </div>`).join('');
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// PURGE AUDIT JOINS
+// Removes auto-generated relationships whose FK column is an audit/ETL column
+// (AZ_ prefix, _UPD_TS suffix, high-prevalence columns, etc.).
+// Only unconfirmed joins are affected — confirmed admin edits are never touched.
+// ════════════════════════════════════════════════════════════════════════════
+window.purgeAuditJoins = async function() {
+  // Count unconfirmed relationships so the user knows what's at stake
+  const unconfirmed = graph.relationships.filter(r => r.status !== 'confirmed').length;
+  if (unconfirmed === 0) {
+    alert('No unconfirmed joins to clean up.');
+    return;
+  }
+
+  const ok = confirm(
+    `🧹 Clean audit joins\n\n` +
+    `This will scan all ${unconfirmed} unconfirmed join(s) and delete any that ` +
+    `use audit/ETL columns as FK keys (AZ_ prefix, _UPD_TS suffix, ` +
+    `columns present in >35% of tables, etc.).\n\n` +
+    `Confirmed joins are never touched.\n\nProceed?`
+  );
+  if (!ok) return;
+
+  try {
+    const res  = await api('POST', `${API_BASE}/relationships/purge-audit`);
+    const data = await res.json();
+    if (data.status !== 'ok') { alert('Purge failed: ' + (data.message || 'Unknown error')); return; }
+
+    const { deleted, kept, audit_cols } = data;
+    if (deleted === 0) {
+      alert('✓ No audit joins found — graph looks clean already.');
+      return;
+    }
+
+    // Reload full graph from server so canvas is in sync
+    const gr   = await api('GET', `${API_BASE}/graph.json`);
+    const gd   = await gr.json();
+    graph.relationships = gd.relationships || [];
+    graph.entities      = gd.entities      || [];
+    renderGraph();
+    renderSidebarRelList();
+    if (selectedEntity) renderEntityDetail(selectedEntity);
+
+    alert(
+      `✓ Removed ${deleted} audit join${deleted !== 1 ? 's' : ''}` +
+      ` (kept ${kept} real join${kept !== 1 ? 's' : ''}).\n\n` +
+      `Columns removed:\n${audit_cols.map(c => `  • ${c}`).join('\n')}`
+    );
+  } catch (e) {
+    console.error(e);
+    alert('Purge error: ' + e.message);
+  }
+};
 
 // ════════════════════════════════════════════════════════════════════════════
 // SUGGEST FROM SCHEMA
