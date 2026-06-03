@@ -35,6 +35,7 @@ from store.user_store import (
     create_registration_token, consume_registration_token,
     pin_chart, list_pinned_charts, delete_pinned_chart,
     update_pinned_chart_title, update_pinned_chart, update_chart_refreshed,
+    update_pinned_chart_layouts,
     generate_temp_password,
 )
 from store.semantic_store import (
@@ -88,6 +89,7 @@ __all__ = [
     "create_registration_token","consume_registration_token",
     "pin_chart","list_pinned_charts","delete_pinned_chart",
     "update_pinned_chart_title","update_pinned_chart","update_chart_refreshed",
+    "update_pinned_chart_layouts",
     "generate_temp_password",
     # Business semantic layer
     "save_term","get_term","list_terms","delete_term","set_term_active",

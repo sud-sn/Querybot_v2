@@ -1621,7 +1621,13 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
             db_config_id=db_cfg["id"],
         )
     if chart_type:
-        chart_payload = build_chart_payload(rows, chart_type, title=question)
+        chart_payload = build_chart_payload(
+            rows,
+            chart_type,
+            title=question,
+            question=question,
+            column_formats=column_formats,
+        )
         if chart_payload:
             if pin_token:
                 chart_payload["pin_token"] = pin_token
@@ -3193,7 +3199,11 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                         _rc_chart_type = detect_chart_type(_rc_rows, question=rc_question)
                         if _rc_chart_type:
                             _rc_chart = build_chart_payload(
-                                _rc_rows, _rc_chart_type, title=rc_question
+                                _rc_rows,
+                                _rc_chart_type,
+                                title=rc_question,
+                                question=rc_question,
+                                column_formats=_rc_formats,
                             )
                     except Exception:
                         pass
