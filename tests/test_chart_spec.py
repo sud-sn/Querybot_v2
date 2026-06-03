@@ -95,6 +95,52 @@ class ChartSpecTests(unittest.TestCase):
         self.assertEqual(payload["column_formats"], {"TotalRevenue": "currency"})
         self.assertEqual(payload["column_roles"]["TotalRevenue"]["format"], "currency")
 
+    def test_inventory_buildup_uses_warehouse_x_and_derived_measure_y(self):
+        rows = [
+            {
+                "Warehouse": "EMCO 822 BURNABY",
+                "Total_Purchase_Quantity": 179995.8,
+                "Total_Sales_Quantity": 151776.4,
+                "Inventory_Buildup": 28219.4,
+            },
+            {
+                "Warehouse": "NOBLE 980 PORT KELLS DC",
+                "Total_Purchase_Quantity": 22614.0,
+                "Total_Sales_Quantity": 15374.0,
+                "Inventory_Buildup": 7240.0,
+            },
+        ]
+        question = "Which warehouses have strong purchase quantity but weak sales quantity, indicating possible inventory buildup?"
+        spec = infer_chart_spec(rows, question)
+        self.assertEqual(spec["recommended_type"], "bar")
+        self.assertEqual(spec["x"]["column"], "Warehouse")
+        self.assertEqual(spec["y"][0]["column"], "Inventory_Buildup")
+        self.assertNotIn("area", spec["renderable_types"])
+
+        payload = build_chart_payload(rows, "area", title="Inventory buildup", question=question)
+        self.assertEqual(payload["chart_type"], "bar")
+        self.assertEqual(payload["x_key"], "Warehouse")
+        self.assertEqual(payload["y_keys"][0], "Inventory_Buildup")
+        self.assertEqual(payload["rows"][0]["Warehouse"], "EMCO 822 BURNABY")
+
+    def test_leakage_question_prioritizes_leakage_measure(self):
+        rows = [
+            {"Warehouse": "A", "Total_Revenue": 1000, "Gross_Profit": 100, "Profit_Leakage": 900},
+            {"Warehouse": "B", "Total_Revenue": 800, "Gross_Profit": 300, "Profit_Leakage": 500},
+        ]
+        spec = infer_chart_spec(rows, "which warehouses have the highest profit leakage")
+        self.assertEqual(spec["x"]["column"], "Warehouse")
+        self.assertEqual(spec["y"][0]["column"], "Profit_Leakage")
+
+    def test_non_trend_question_with_date_column_still_uses_business_dimension(self):
+        rows = [
+            {"Invoice_Date": "2026-01-01", "Warehouse": "A", "Revenue": 1000},
+            {"Invoice_Date": "2026-01-02", "Warehouse": "B", "Revenue": 800},
+        ]
+        spec = infer_chart_spec(rows, "which warehouse has the highest revenue")
+        self.assertEqual(spec["recommended_type"], "bar")
+        self.assertEqual(spec["x"]["column"], "Warehouse")
+
 
 class ChartRendererTemplateTests(unittest.TestCase):
     ROOT = Path(__file__).resolve().parents[1]

@@ -45,6 +45,12 @@ _RANKING_RE = re.compile(
     r"\b(top|bottom|highest|lowest|rank|ranking|largest|smallest|best|worst|leader)\b",
     re.IGNORECASE,
 )
+_DERIVED_METRIC_RE = re.compile(
+    r"\b(buildup|build\s*up|gap|difference|diff|delta|variance|var|"
+    r"leakage|impact|shortfall|surplus|deficit|excess|change|growth|"
+    r"margin|percentage|percent|pct|rate|ratio|score)\b",
+    re.IGNORECASE,
+)
 
 
 def _norm(s: str) -> str:
@@ -118,6 +124,66 @@ def _looks_identifier(rows: list[dict], col: str) -> bool:
 def _display_name(col: str) -> str:
     spaced = re.sub(r"[_\s]+", " ", str(col or "")).strip()
     return " ".join(part.capitalize() if not part.isupper() else part for part in spaced.split())
+
+
+def _terms(text: str) -> list[str]:
+    return [t for t in re.split(r"[^a-z0-9]+", str(text or "").lower()) if t]
+
+
+def _measure_score(col: str, question: str) -> tuple[int, int]:
+    """
+    Rank measures by how directly they answer the user's question.
+
+    SQL often returns component measures before the derived business answer:
+    purchase quantity, sales quantity, inventory buildup. The chart should
+    still treat inventory buildup as the primary measure when the question
+    asks about buildup/gap/leakage/variance style analysis.
+    """
+    q_norm = _norm(question)
+    q_terms = set(_terms(question))
+    c_norm = _norm(col)
+    c_terms = _terms(col)
+    c_term_set = set(c_terms)
+
+    score = 0
+    if c_norm and c_norm in q_norm:
+        score += 120
+
+    meaningful_terms = [t for t in c_terms if t not in {"total", "sum", "avg", "average"}]
+    if meaningful_terms and all(t in q_terms for t in meaningful_terms):
+        score += 70
+
+    score += len(c_term_set & q_terms) * 18
+
+    if _DERIVED_METRIC_RE.search(col or "") and _DERIVED_METRIC_RE.search(question or ""):
+        score += 45
+
+    if any(t in c_term_set for t in {
+        "buildup", "gap", "difference", "delta", "variance", "leakage",
+        "shortfall", "surplus", "deficit", "excess",
+    }):
+        score += 18
+
+    if c_terms and c_terms[0] in {"total", "sum"}:
+        score -= 5
+
+    return score, -len(c_terms)
+
+
+def _rank_measures_for_question(measures: list[str], question: str) -> list[str]:
+    indexed = list(enumerate(measures))
+    indexed.sort(key=lambda item: (_measure_score(item[1], question), -item[0]), reverse=True)
+    return [col for _, col in indexed]
+
+
+def _primary_dimension(dimensions: list[str], roles: dict[str, dict]) -> str | None:
+    if not dimensions:
+        return None
+    for col in dimensions:
+        meta = roles.get(col, {})
+        if meta.get("role") == "dimension" and not meta.get("is_technical_id"):
+            return col
+    return dimensions[0]
 
 
 def _format_for_column(col: str, explicit_formats: dict[str, str]) -> str:
@@ -195,6 +261,7 @@ def infer_chart_spec(
 
     roles = _column_roles(rows, column_formats)
     measures = [c for c in headers if roles[c]["role"] == "measure"]
+    measures = _rank_measures_for_question(measures, question or title)
     temporals = [c for c in headers if roles[c]["role"] == "temporal"]
     dimensions = [c for c in headers if roles[c]["role"] in {"dimension", "identifier"}]
 
@@ -224,9 +291,9 @@ def infer_chart_spec(
         intent = "correlation"
         recommended = "scatter"
         allowed = ["scatter", "table"]
-        x_col = _first(dimensions)
+        x_col = _primary_dimension(dimensions, roles)
         y_cols = measures[:2]
-    elif temporals and measures and (trend_q or _first(temporals)):
+    elif temporals and measures and trend_q:
         intent = "trend"
         recommended = "area" if len(rows) <= 36 else "line"
         allowed = ["line", "area", "bar", "table"]
@@ -238,7 +305,7 @@ def infer_chart_spec(
         intent = "composition"
         recommended = "donut"
         allowed = ["donut", "bar", "table"]
-        x_col = _first(dimensions)
+        x_col = _primary_dimension(dimensions, roles)
         y_cols = measures[:1]
     elif dimensions and measures:
         intent = "ranking" if ranking_q or len(rows) <= 50 else "breakdown"
@@ -248,7 +315,7 @@ def infer_chart_spec(
             allowed.insert(1, "donut")
         if len(measures) >= 2:
             allowed.append("scatter")
-        x_col = _first(dimensions)
+        x_col = _primary_dimension(dimensions, roles)
         y_cols = measures[:4]
     elif len(measures) >= 2:
         intent = "correlation" if scatter_q else "measure_comparison"
