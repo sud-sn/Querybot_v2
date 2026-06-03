@@ -521,6 +521,18 @@ def _build_required_joins(fields: list[dict], table_columns: dict[str, dict[str,
         return []
     graph = _join_edges(table_columns)
     anchor = next((f["table"] for f in fields if f["role"] == "measure"), tables[0])
+
+    # For display_dimension fields we already know the exact join key (source_key_column).
+    # _join_edges uses a shared-column heuristic and can pick up OTHER _DMS_KEY columns
+    # that the dimension table itself holds as FKs (e.g. WHS_DMS also has FCY_DMS_KEY),
+    # creating multi-condition join plans the LLM won't reproduce.  Pin the condition to
+    # just the authoritative key so the validator gets exactly one equality to enforce.
+    display_key_map: dict[str, str] = {
+        f["table"].upper(): f["source_key_column"].upper()
+        for f in fields
+        if f.get("display_required") and f.get("source_key_column")
+    }
+
     joins: list[dict] = []
     seen_edges: set[tuple[str, str]] = set()
     for table in tables:
@@ -531,6 +543,12 @@ def _build_required_joins(fields: list[dict], table_columns: dict[str, dict[str,
             if key in seen_edges:
                 continue
             seen_edges.add(key)
+            target_u = edge["to"].upper()
+            if target_u in display_key_map:
+                # Override: use only the single authoritative FK, not all shared keys.
+                edge = dict(edge)
+                key_col = display_key_map[target_u]
+                edge["conditions"] = [(key_col, key_col)]
             joins.append(edge)
     return joins
 
