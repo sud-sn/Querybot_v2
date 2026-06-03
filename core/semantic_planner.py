@@ -229,8 +229,20 @@ def _contains_alias(alias: str, question_norm: str, question_compact: str) -> bo
     alias_norm = _norm(alias)
     if not alias_norm:
         return False
-    if re.search(rf"(?<![a-z0-9]){re.escape(alias_norm)}(?![a-z0-9])", question_norm):
-        return True
+    alias_forms = {alias_norm}
+    if not alias_norm.endswith("s"):
+        alias_forms.add(alias_norm + "s")
+        if alias_norm.endswith("y"):
+            alias_forms.add(alias_norm[:-1] + "ies")
+        if alias_norm.endswith(("x", "z", "ch", "sh")):
+            alias_forms.add(alias_norm + "es")
+    if alias_norm.endswith("se"):
+        alias_forms.add(alias_norm[:-1] + "es")
+    if alias_norm == "warehouse":
+        alias_forms.add("warehouses")
+    for form in alias_forms:
+        if re.search(rf"(?<![a-z0-9]){re.escape(form)}(?![a-z0-9])", question_norm):
+            return True
     alias_compact = _compact(alias_norm)
     # Compact matching is only for long technical forms such as ITMGRPDMSKEY.
     # Short terms must not match inside larger words, e.g. AGE in percentAGE.
@@ -309,6 +321,148 @@ def _choose_fields(question: str, candidates: list[dict]) -> list[dict]:
     for f in fields:
         f.pop("_score", None)
     return fields[:8]
+
+
+def _question_asks_for_key(term: str, question: str) -> bool:
+    q = _norm(question)
+    term_norm = _norm(term)
+    if not term_norm:
+        return False
+    key_words = ("key", "id", "identifier", "number")
+    return any(
+        re.search(rf"(?<![a-z0-9]){re.escape(term_norm)}\s+{word}(?![a-z0-9])", q)
+        or re.search(rf"(?<![a-z0-9]){word}\s+{re.escape(term_norm)}(?![a-z0-9])", q)
+        for word in key_words
+    )
+
+
+def _question_asks_for_code(term: str, question: str) -> bool:
+    q = _norm(question)
+    term_norm = _norm(term)
+    if not term_norm:
+        return False
+    return bool(
+        re.search(rf"(?<![a-z0-9]){re.escape(term_norm)}\s+code(?![a-z0-9])", q)
+        or re.search(rf"(?<![a-z0-9])code\s+{re.escape(term_norm)}(?![a-z0-9])", q)
+    )
+
+
+def _key_prefix(column: str) -> str:
+    col = (column or "").upper()
+    if col.endswith("_DMS_KEY"):
+        return col[:-8]
+    if col.endswith("_KEY"):
+        return col[:-4]
+    return ""
+
+
+def _table_allowed_for_display(table: str, allowed_tables: set[str] | None, selected_schema: str = "") -> bool:
+    table_u = (table or "").upper()
+    if selected_schema:
+        schema_name = _table_schema(table_u)
+        if schema_name and schema_name != selected_schema.upper():
+            return False
+    if allowed_tables is None:
+        return True
+    allowed_expanded: set[str] = set()
+    for allowed in allowed_tables:
+        allowed_expanded.update(_table_variants(str(allowed)))
+    return bool(_table_variants(table_u) & allowed_expanded)
+
+
+def _display_table_score(table: str, key_prefix: str) -> int:
+    bare = _table_bare(table)
+    score = 0
+    if bare == f"{key_prefix}_DMS":
+        score += 12
+    if bare.startswith("DIM_"):
+        score += 8
+    if "FCT" not in bare and "FACT" not in bare:
+        score += 4
+    if key_prefix and key_prefix in bare:
+        score += 3
+    return score
+
+
+def _find_display_field_for_key(
+    key_column: str,
+    term: str,
+    question: str,
+    table_columns: dict[str, dict[str, str]],
+    allowed_tables: set[str] | None,
+    selected_schema: str = "",
+) -> dict | None:
+    key_col = (key_column or "").upper()
+    prefix = _key_prefix(key_col)
+    if not prefix or not key_col.endswith("_KEY"):
+        return None
+    if _question_asks_for_key(term, question):
+        return None
+
+    wants_code = _question_asks_for_code(term, question)
+    display_candidates = [f"{prefix}_DSC", f"{prefix}_DESC", f"{prefix}_DESCRIPTION", f"{prefix}_NAME", f"{prefix}_NM"]
+    code_candidates = [f"{prefix}_CD", f"{prefix}_CODE"]
+    preferred = code_candidates + display_candidates if wants_code else display_candidates + code_candidates
+
+    matches: list[dict] = []
+    for table, cols in table_columns.items():
+        cols_u = {str(c).upper() for c in (cols or {})}
+        if key_col not in cols_u:
+            continue
+        if not _table_allowed_for_display(table, allowed_tables, selected_schema):
+            continue
+        for idx, display_col in enumerate(preferred):
+            if display_col not in cols_u:
+                continue
+            matches.append({
+                "table": table,
+                "column": display_col,
+                "source_key_column": key_col,
+                "_score": _display_table_score(table, prefix) + (100 - idx),
+            })
+            break
+
+    if not matches:
+        return None
+    matches.sort(key=lambda m: m["_score"], reverse=True)
+    winner = dict(matches[0])
+    winner.pop("_score", None)
+    return winner
+
+
+def _apply_display_dimension_fields(
+    fields: list[dict],
+    question: str,
+    table_columns: dict[str, dict[str, str]],
+    allowed_tables: set[str] | None,
+    selected_schema: str = "",
+) -> list[dict]:
+    out: list[dict] = []
+    for field in fields:
+        col = (field.get("column") or "").upper()
+        if field.get("role") == "dimension" and col.endswith("_DMS_KEY"):
+            display = _find_display_field_for_key(
+                col,
+                field.get("term") or "",
+                question,
+                table_columns,
+                allowed_tables,
+                selected_schema,
+            )
+            if display:
+                upgraded = dict(field)
+                upgraded.update({
+                    "table": display["table"],
+                    "column": display["column"],
+                    "role": "display_dimension",
+                    "source_key_column": display["source_key_column"],
+                    "source_key_table": field.get("table", ""),
+                    "display_required": True,
+                })
+                out.append(upgraded)
+                continue
+        out.append(field)
+    return out
 
 
 def _join_edges(table_columns: dict[str, dict[str, str]]) -> dict[str, list[dict]]:
@@ -394,6 +548,7 @@ def build_semantic_field_plan(
     }
     candidates = _find_candidates(question, normalized_columns, allowed_tables, selected_schema)
     fields = _choose_fields(question, candidates)
+    fields = _apply_display_dimension_fields(fields, question, normalized_columns, allowed_tables, selected_schema)
     if not fields:
         return {"enabled": False, "fields": [], "joins": [], "reason": "no matching semantic fields"}
     joins = _build_required_joins(fields, normalized_columns)
@@ -422,6 +577,11 @@ def format_semantic_field_plan(plan: dict, db_type: str = "azure_sql") -> str:
         # Show a non-binding hint for measures — the LLM should aggregate only when
         # the query is aggregating (not for row-level queries like "show all invoices").
         role_hint = " [measure — apply SUM/COUNT only if aggregating]" if field.get("role") == "measure" else ""
+        if field.get("display_required"):
+            role_hint = (
+                " [business display field - use this in SELECT and GROUP BY; "
+                f"use {field.get('source_key_column')} only for JOINs unless the user asks for key/id]"
+            )
         lines.append(f"- {field['term']}: {expr}{role_hint}")
     joins = plan.get("joins") or []
     if joins:

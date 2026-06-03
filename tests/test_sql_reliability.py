@@ -36,6 +36,9 @@ KNOWN = {
     "CHATBOT_DB.PROFITABILITY.DIM_DIVISION",
     "PROFITABILITY.DIM_DIVISION",
     "DIM_DIVISION",
+    "CHATBOT_DB.PROFITABILITY.WHS_DMS",
+    "PROFITABILITY.WHS_DMS",
+    "WHS_DMS",
     "CHATBOT_DB.PHARMACY.DIMPATIENT",
     "PHARMACY.DIMPATIENT",
     "DIMPATIENT",
@@ -53,6 +56,7 @@ COLUMNS = {
         "CUS_DMS_KEY": "int",
         "SOP_CUS_IVC_LIN_AMT": "decimal",
         "SOP_CUS_IVC_LIN_CST_AMT": "decimal",
+        "SOP_CUS_LIN_GRS_PFT_AMT": "decimal",
     },
     "CUS_ORD_IVC_FCT": {
         "ITM_GRP_DMS_KEY": "int",
@@ -65,6 +69,17 @@ COLUMNS = {
         "CUS_DMS_KEY": "int",
         "SOP_CUS_IVC_LIN_AMT": "decimal",
         "SOP_CUS_IVC_LIN_CST_AMT": "decimal",
+        "SOP_CUS_LIN_GRS_PFT_AMT": "decimal",
+    },
+    "PROFITABILITY.WHS_DMS": {
+        "WHS_DMS_KEY": "int",
+        "WHS_CD": "varchar",
+        "WHS_DSC": "varchar",
+    },
+    "WHS_DMS": {
+        "WHS_DMS_KEY": "int",
+        "WHS_CD": "varchar",
+        "WHS_DSC": "varchar",
     },
     "PROFITABILITY.ITM_BAL_PRD_FCT": {
         "NUM_OF_RCT": "int",
@@ -377,6 +392,77 @@ class StrictColumnValidationTests(unittest.TestCase):
             "JOIN [PROFITABILITY].[OOLINE] o "
             "ON c.CUS_ORD_NUM = o.ORNO AND c.CUS_ORD_LIN_NUM = o.PONR AND c.CUS_ORD_LIN_SFX = o.POSX "
             "GROUP BY o.DIVI, c.ITM_GRP_DMS_KEY"
+        )
+        result = validate_sql_detailed(
+            sql,
+            KNOWN,
+            "azure_sql",
+            None,
+            COLUMNS,
+            {"semantic_plan": plan},
+        )
+        self.assertTrue(result.ok, result.reason)
+
+    def test_semantic_plan_prefers_warehouse_description_over_key(self):
+        plan = build_semantic_field_plan(
+            "Which warehouses have high invoice revenue but low gross profit percentage?",
+            COLUMNS,
+        )
+        self.assertTrue(plan["enabled"])
+        fields = {(f["term"], f["column"], f["table"], f.get("role")) for f in plan["fields"]}
+        self.assertTrue(any(col == "WHS_DSC" and table.endswith("WHS_DMS") and role == "display_dimension"
+                            for _, col, table, role in fields))
+        self.assertFalse(any(col == "WHS_DMS_KEY" and role == "dimension" for _, col, _, role in fields))
+        self.assertTrue(any(
+            any(left == "WHS_DMS_KEY" and right == "WHS_DMS_KEY" for left, right in edge.get("conditions", []))
+            for edge in plan["joins"]
+        ))
+
+    def test_semantic_plan_allows_warehouse_key_when_user_asks_for_key(self):
+        plan = build_semantic_field_plan(
+            "Show invoice revenue by warehouse key",
+            COLUMNS,
+        )
+        self.assertTrue(plan["enabled"])
+        self.assertTrue(any(f["column"] == "WHS_DMS_KEY" for f in plan["fields"]))
+        self.assertFalse(any(f["column"] == "WHS_DSC" for f in plan["fields"]))
+
+    def test_semantic_plan_validator_rejects_warehouse_key_as_display_label(self):
+        plan = build_semantic_field_plan(
+            "Which warehouses have high invoice revenue but low gross profit percentage?",
+            COLUMNS,
+        )
+        sql = (
+            "SELECT c.WHS_DMS_KEY AS Warehouse, "
+            "SUM(c.SOP_CUS_IVC_LIN_AMT) AS TotalRevenue, "
+            "SUM(c.SOP_CUS_LIN_GRS_PFT_AMT) AS GrossProfit "
+            "FROM [PROFITABILITY].[CUS_ORD_IVC_FCT] c "
+            "GROUP BY c.WHS_DMS_KEY"
+        )
+        result = validate_sql_detailed(
+            sql,
+            KNOWN,
+            "azure_sql",
+            None,
+            COLUMNS,
+            {"semantic_plan": plan},
+        )
+        self.assertFalse(result.ok)
+        self.assertEqual(result.code, "field_plan_mismatch")
+        self.assertIn("WHS_DSC", result.reason)
+
+    def test_semantic_plan_validator_accepts_warehouse_description_shape(self):
+        plan = build_semantic_field_plan(
+            "Which warehouses have high invoice revenue but low gross profit percentage?",
+            COLUMNS,
+        )
+        sql = (
+            "SELECT w.WHS_DSC AS Warehouse, "
+            "SUM(c.SOP_CUS_IVC_LIN_AMT) AS TotalRevenue, "
+            "SUM(c.SOP_CUS_LIN_GRS_PFT_AMT) AS GrossProfit "
+            "FROM [PROFITABILITY].[CUS_ORD_IVC_FCT] c "
+            "JOIN [PROFITABILITY].[WHS_DMS] w ON c.WHS_DMS_KEY = w.WHS_DMS_KEY "
+            "GROUP BY w.WHS_DSC"
         )
         result = validate_sql_detailed(
             sql,
