@@ -2108,16 +2108,47 @@ async def graph_rel_create(request: Request, account_id: str):
     if not _is_auth(request):
         return RedirectResponse("/admin/login", status_code=303)
     form = await request.form()
+    _from_entity = (form.get("from_entity") or "").strip()
+    _to_entity   = (form.get("to_entity") or "").strip()
+    _from_col    = (form.get("from_column") or "").strip()
+    _to_col      = (form.get("to_column") or "").strip()
+    _join_type   = (form.get("join_type") or "INNER").strip()
+    _label       = (form.get("label") or "").strip()
     store.save_relationship(
         account_id        = account_id,
-        from_entity       = (form.get("from_entity") or "").strip(),
-        to_entity         = (form.get("to_entity") or "").strip(),
-        from_column       = (form.get("from_column") or "").strip(),
-        to_column         = (form.get("to_column") or "").strip(),
+        from_entity       = _from_entity,
+        to_entity         = _to_entity,
+        from_column       = _from_col,
+        to_column         = _to_col,
         relationship_type = (form.get("relationship_type") or "many_to_one").strip(),
-        join_type         = (form.get("join_type") or "INNER").strip(),
-        label             = (form.get("label") or "").strip(),
+        join_type         = _join_type,
+        label             = _label,
     )
+    # Sync confirmed relationship into the structured semantic model (S2-2).
+    try:
+        from core.semantic_model import patch_relationship
+        _sm_state  = store.get_client_state(account_id)
+        _sm_kb_dir = (_sm_state or {}).get("kb_dir") or ""
+        if _sm_kb_dir and _from_entity and _to_entity:
+            _fe = store.get_entity(account_id, _from_entity)
+            _te = store.get_entity(account_id, _to_entity)
+            if _fe and _te:
+                def _qtable(e: dict) -> str:
+                    sn = (e.get("schema_name") or "").strip()
+                    tn = (e.get("table_name") or "").strip()
+                    return f"{sn}.{tn}" if sn else tn
+                patch_relationship(
+                    kb_dir=_sm_kb_dir,
+                    from_table=_qtable(_fe),
+                    to_table=_qtable(_te),
+                    from_column=_from_col,
+                    to_column=_to_col,
+                    join_type=_join_type,
+                    display_column=_label,
+                    status="approved",
+                )
+    except Exception as _sm_exc:
+        log.warning("patch_relationship (rel_create) skipped: %s", _sm_exc)
     return RedirectResponse(f"/admin/clients/{account_id}/graph?saved=1", status_code=303)
 
 
@@ -2214,19 +2245,53 @@ async def graph_api_rel_upsert(request: Request, account_id: str):
         for c in raw_jc if isinstance(c, dict)
         if str(c.get("from_col","")).strip() and str(c.get("to_col","")).strip()
     ]
+    _api_from_entity = data.get("from_entity", "").strip()
+    _api_to_entity   = data.get("to_entity", "").strip()
+    _api_from_col    = data.get("from_column", "").strip()
+    _api_to_col      = data.get("to_column", "").strip()
+    _api_join_type   = data.get("join_type", "LEFT")
+    _api_label       = data.get("label", "").strip()
     rid = store.save_relationship(
         account_id        = account_id,
-        from_entity       = data.get("from_entity", "").strip(),
-        to_entity         = data.get("to_entity", "").strip(),
-        from_column       = data.get("from_column", "").strip(),
-        to_column         = data.get("to_column", "").strip(),
+        from_entity       = _api_from_entity,
+        to_entity         = _api_to_entity,
+        from_column       = _api_from_col,
+        to_column         = _api_to_col,
         relationship_type = data.get("relationship_type", "many_to_one"),
-        join_type         = data.get("join_type", "LEFT"),
-        label             = data.get("label", "").strip(),
+        join_type         = _api_join_type,
+        label             = _api_label,
         join_conditions   = join_conditions,
         where_clause      = data.get("where_clause", "").strip(),
         rel_id            = int(data.get("rel_id") or 0),
     )
+    # Sync confirmed relationship into the structured semantic model (S2-2).
+    try:
+        from core.semantic_model import patch_relationship
+        _sm_state  = store.get_client_state(account_id)
+        _sm_kb_dir = (_sm_state or {}).get("kb_dir") or ""
+        if _sm_kb_dir and _api_from_entity and _api_to_entity:
+            _fe = store.get_entity(account_id, _api_from_entity)
+            _te = store.get_entity(account_id, _api_to_entity)
+            if _fe and _te:
+                def _qtable(e: dict) -> str:
+                    sn = (e.get("schema_name") or "").strip()
+                    tn = (e.get("table_name") or "").strip()
+                    return f"{sn}.{tn}" if sn else tn
+                # Use first join_condition pair if available, else top-level columns.
+                _jc_from = join_conditions[0]["from_col"] if join_conditions else _api_from_col
+                _jc_to   = join_conditions[0]["to_col"]   if join_conditions else _api_to_col
+                patch_relationship(
+                    kb_dir=_sm_kb_dir,
+                    from_table=_qtable(_fe),
+                    to_table=_qtable(_te),
+                    from_column=_jc_from,
+                    to_column=_jc_to,
+                    join_type=_api_join_type,
+                    display_column=_api_label,
+                    status="approved",
+                )
+    except Exception as _sm_exc:
+        log.warning("patch_relationship (api_upsert) skipped: %s", _sm_exc)
     return JSONResponse({"status": "ok", "id": rid})
 
 
@@ -3098,6 +3163,27 @@ async def metric_create(
         "base_table":          base_table.strip(),
         "base_entity":         base_entity.strip(),
     }, db_type=db_type)
+
+    # Sync approved metric formula into the structured semantic model (S2-1).
+    try:
+        from core.semantic_model import patch_metric_approval
+        _sm_state = store.get_client_state(account_id)
+        _sm_kb_dir = (_sm_state or {}).get("kb_dir") or ""
+        if _sm_kb_dir:
+            _req_cols = [c.strip() for c in required_columns.split(",") if c.strip()]
+            _base_parts = base_table.strip().split(".")
+            patch_metric_approval(
+                kb_dir=_sm_kb_dir,
+                table_name=_base_parts[-1],
+                schema_name=_base_parts[-2] if len(_base_parts) >= 2 else "",
+                metric_name=name.strip(),
+                column_name=_req_cols[0] if _req_cols else "",
+                sql_template=sql_template.strip(),
+                is_active=True,
+            )
+    except Exception as _sm_exc:
+        log.warning("patch_metric_approval (create) skipped for %s: %s", name, _sm_exc)
+
     return RedirectResponse(f"/admin/clients/{account_id}/metrics?saved=1", status_code=303)
 
 
@@ -3167,6 +3253,27 @@ async def metric_update(
         "base_entity":         base_entity.strip(),
         "is_active":           int(is_active),
     }, account_id=account_id, db_type=db_type)
+
+    # Sync updated metric formula (or deprecation) into the structured semantic model (S2-1 / S2-3).
+    try:
+        from core.semantic_model import patch_metric_approval
+        _sm_state = store.get_client_state(account_id)
+        _sm_kb_dir = (_sm_state or {}).get("kb_dir") or ""
+        if _sm_kb_dir:
+            _req_cols = [c.strip() for c in required_columns.split(",") if c.strip()]
+            _base_parts = base_table.strip().split(".")
+            patch_metric_approval(
+                kb_dir=_sm_kb_dir,
+                table_name=_base_parts[-1],
+                schema_name=_base_parts[-2] if len(_base_parts) >= 2 else "",
+                metric_name=name.strip(),
+                column_name=_req_cols[0] if _req_cols else "",
+                sql_template=sql_template.strip(),
+                is_active=bool(int(is_active)),
+            )
+    except Exception as _sm_exc:
+        log.warning("patch_metric_approval (update) skipped for %s: %s", name, _sm_exc)
+
     return RedirectResponse(f"/admin/clients/{account_id}/metrics?saved=1", status_code=303)
 
 

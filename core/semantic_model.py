@@ -1030,6 +1030,191 @@ def build_runtime_semantic_plan(
     }
 
 
+def patch_metric_approval(
+    *,
+    kb_dir: str,
+    table_name: str,
+    schema_name: str = "",
+    metric_name: str,
+    column_name: str = "",
+    sql_template: str,
+    is_active: bool = True,
+) -> bool:
+    """Patch an approved metric formula into the structured semantic model.
+
+    Called whenever an admin saves or updates a metric via the Metric Registry
+    admin UI.  Finds the matching measure (by *column_name*, falling back to
+    *metric_name* match) and updates its ``expression``, ``status``, and
+    ``confidence`` to reflect the admin-approved formula.
+
+    When *is_active* is ``False`` the measure status is set to ``"deprecated"``
+    rather than ``"approved"``, implementing S2-3 (inactive metrics become
+    deprecated in the model).
+
+    If no matching measure is found but *table_name* and *column_name* are both
+    supplied, a new measure entry is inserted so the model stays in sync even
+    for metrics that reference columns not auto-detected as measure candidates.
+
+    Returns ``True`` if the model was changed and written.
+    """
+    model = load_semantic_model(kb_dir)
+    if not model:
+        return False
+
+    table_u = (table_name or "").upper()
+    schema_u = (schema_name or "").upper()
+    column_u = (column_name or "").upper()
+    metric_name_u = (metric_name or "").upper()
+    new_status = "approved" if is_active else "deprecated"
+    changed = False
+
+    for table in model.get("tables", []) or []:
+        t_name_u = str(table.get("table") or "").upper()
+        t_schema_u = str(table.get("schema") or "").upper()
+        if table_u and t_name_u != table_u:
+            continue
+        if schema_u and t_schema_u and t_schema_u != schema_u:
+            continue
+
+        for measure in table.get("measures", []) or []:
+            m_col_u = str(measure.get("column") or "").upper()
+            m_name_u = str(measure.get("name") or "").upper()
+            m_syns_u = [str(s).upper() for s in (measure.get("synonyms") or [])]
+
+            if column_u and m_col_u == column_u:
+                hits = True
+            elif not column_u and metric_name_u and (
+                m_name_u == metric_name_u or metric_name_u in m_syns_u
+            ):
+                hits = True
+            else:
+                hits = False
+
+            if not hits:
+                continue
+
+            measure["expression"] = sql_template.strip() if sql_template else measure.get("expression", "")
+            measure["status"] = new_status
+            measure["confidence"] = 100
+            changed = True
+
+    # If no measure found and we have enough info, insert a new entry.
+    if not changed and table_u and column_u and sql_template and is_active:
+        for table in model.get("tables", []) or []:
+            t_name_u = str(table.get("table") or "").upper()
+            t_schema_u = str(table.get("schema") or "").upper()
+            if t_name_u != table_u:
+                continue
+            if schema_u and t_schema_u and t_schema_u != schema_u:
+                continue
+            table.setdefault("measures", []).append({
+                "name": metric_name.strip() if metric_name else column_name,
+                "column": column_name,
+                "expression": sql_template.strip(),
+                "aggregation": "custom",
+                "format": "number",
+                "synonyms": [metric_name.strip()] if metric_name else [],
+                "status": "approved",
+                "confidence": 100,
+            })
+            changed = True
+            break
+
+    if not changed:
+        return False
+
+    kb_path = Path(kb_dir)
+    (kb_path / MODEL_JSON).write_text(json.dumps(model, indent=2, sort_keys=True), encoding="utf-8")
+    (kb_path / MODEL_YAML).write_text(_to_yaml(model) + "\n", encoding="utf-8")
+    return True
+
+
+def patch_relationship(
+    *,
+    kb_dir: str,
+    from_table: str,
+    to_table: str,
+    from_column: str,
+    to_column: str,
+    join_type: str = "LEFT",
+    display_column: str = "",
+    status: str = "approved",
+) -> bool:
+    """Patch or insert an approved relationship into the structured semantic model.
+
+    Called when an admin confirms or edits a relationship in the Entity Graph UI.
+    Finds the matching relationship by *from_table + to_table + from_column +
+    to_column* and updates its ``join_type``, ``display_column``, ``status``,
+    and ``confidence`` to reflect admin intent.
+
+    If no matching relationship is found, a new entry is inserted so the model
+    tracks relationships the admin has explicitly confirmed even when the
+    auto-generated heuristic did not detect them.
+
+    Returns ``True`` if the model was changed and written.
+    """
+    model = load_semantic_model(kb_dir)
+    if not model:
+        return False
+
+    from_table_u = (from_table or "").upper()
+    to_table_u = (to_table or "").upper()
+    from_col_u = (from_column or "").upper()
+    to_col_u = (to_column or "").upper()
+
+    if not from_table_u or not to_table_u:
+        return False
+
+    changed = False
+    for rel in model.get("relationships", []) or []:
+        if str(rel.get("from_table") or "").upper() != from_table_u:
+            continue
+        if str(rel.get("to_table") or "").upper() != to_table_u:
+            continue
+        # If caller supplied both column names, require the conditions to match.
+        if from_col_u and to_col_u:
+            cond_pairs = {
+                (str(c.get("from_column") or "").upper(), str(c.get("to_column") or "").upper())
+                for c in (rel.get("conditions") or [])
+            }
+            if (from_col_u, to_col_u) not in cond_pairs:
+                continue
+
+        rel["join_type"] = join_type or rel.get("join_type", "LEFT")
+        if display_column:
+            rel["display_column"] = display_column
+            if display_column not in (rel.get("use_when") or []):
+                rel.setdefault("use_when", []).append(display_column)
+        rel["status"] = status
+        rel["confidence"] = 100 if status == "approved" else rel.get("confidence", 80)
+        changed = True
+
+    if not changed:
+        # Insert a new relationship entry.
+        role = _business_role_from_column(from_column) if from_column else "custom"
+        rel_id = _relationship_id(from_table, to_table, role, from_column, to_column)
+        model.setdefault("relationships", []).append({
+            "id": rel_id,
+            "from_table": from_table,
+            "to_table": to_table,
+            "business_role": role,
+            "relationship_type": "many_to_one",
+            "join_type": join_type or "LEFT",
+            "conditions": [{"from_column": from_column, "to_column": to_column}],
+            "display_column": display_column,
+            "code_column": "",
+            "use_when": [w for w in [role.replace("_", " "), display_column] if w],
+            "status": status,
+            "confidence": 100 if status == "approved" else 80,
+        })
+        changed = True
+
+    kb_path = Path(kb_dir)
+    (kb_path / MODEL_JSON).write_text(json.dumps(model, indent=2, sort_keys=True), encoding="utf-8")
+    (kb_path / MODEL_YAML).write_text(_to_yaml(model) + "\n", encoding="utf-8")
+    return True
+
+
 def patch_field_approval(
     *,
     kb_dir: str,
