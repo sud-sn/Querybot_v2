@@ -3448,6 +3448,36 @@ async def metrics_test_formula(request: Request, account_id: str):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# Model Health — semantic model health dashboard (S4-1 / S4-2)
+# ══════════════════════════════════════════════════════════════════════════════
+
+@router.get("/clients/{account_id}/model-health", response_class=HTMLResponse)
+async def model_health_page(request: Request, account_id: str):
+    """Render the semantic model health dashboard."""
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    client = store.get_client(account_id)
+    if not client:
+        raise HTTPException(status_code=404)
+
+    state  = store.get_client_state(account_id)
+    kb_dir = (state or {}).get("kb_dir") or ""
+
+    health: dict = {"has_model": False}
+    if kb_dir:
+        try:
+            from core.semantic_model import get_model_health
+            health = get_model_health(kb_dir)
+        except Exception as exc:
+            log.warning("model_health_page: failed for %s: %s", account_id, exc)
+
+    return _resp(request, "client_model_health.html", {
+        "client": client,
+        "health": health,
+    })
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Date Roles — semantic model date dimension admin (S3-1)
 # ══════════════════════════════════════════════════════════════════════════════
 
