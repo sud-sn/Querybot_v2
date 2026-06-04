@@ -1,0 +1,313 @@
+{% extends "base.html" %}
+{% from "macros.html" import breadcrumb, client_workspace_nav, alert, empty_state %}
+{% block title %}Model Health — {{ client.client_name }}{% endblock %}
+{% block breadcrumb %}
+{{ breadcrumb([
+    {"label": "Dashboard",     "href": "/admin"},
+    {"label": "Clients",       "href": "/admin/clients"},
+    {"label": client.client_name or client.account_id[:16], "href": "/admin/clients/" ~ client.account_id},
+    {"label": "Model Health",  "href": ""},
+]) }}
+{% endblock %}
+{% block head %}
+<style>
+/* ── layout ─────────────────────────────────────────────── */
+.mh-shell{display:flex;flex-direction:column;gap:1.1rem}
+.mh-hero{padding:1rem;border:1px solid var(--border);border-radius:var(--radius);
+  background:linear-gradient(180deg,color-mix(in srgb,var(--primary-soft) 42%,var(--surface)),var(--surface));
+  box-shadow:var(--shadow);display:flex;align-items:flex-start;gap:1.5rem;flex-wrap:wrap}
+.mh-hero-body{flex:1}
+.mh-hero h1{font-size:20px;font-weight:900;margin:0}
+.mh-hero p{font-size:13px;color:var(--text-muted);line-height:1.6;margin:.4rem 0 0;max-width:740px}
+/* ── score circle ───────────────────────────────────────── */
+.mh-score-wrap{flex-shrink:0;text-align:center}
+.mh-score-circle{width:88px;height:88px;border-radius:50%;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;border:4px solid;margin:0 auto}
+.mh-score-circle.high{border-color:var(--green);background:color-mix(in srgb,var(--green) 8%,var(--surface))}
+.mh-score-circle.mid {border-color:var(--amber);background:color-mix(in srgb,var(--amber) 8%,var(--surface))}
+.mh-score-circle.low {border-color:var(--red);  background:color-mix(in srgb,var(--red)   8%,var(--surface))}
+.mh-score-num{font-size:26px;font-weight:900;line-height:1}
+.mh-score-num.high{color:var(--green)}
+.mh-score-num.mid {color:var(--amber)}
+.mh-score-num.low {color:var(--red)}
+.mh-score-label{font-size:10px;font-weight:700;text-transform:uppercase;
+  letter-spacing:.06em;color:var(--text-muted);margin-top:3px}
+/* ── stat grid ──────────────────────────────────────────── */
+.mh-stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:.75rem}
+.mh-stat{border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);
+  padding:.8rem .9rem;box-shadow:var(--shadow-sm)}
+.mh-stat-label{font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:.08em;
+  color:var(--text-muted);margin-bottom:.25rem}
+.mh-stat-value{font-size:22px;font-weight:900;color:var(--text);line-height:1}
+.mh-stat-sub{font-size:11px;color:var(--text-muted);margin-top:3px}
+/* ── coverage card ──────────────────────────────────────── */
+.mh-card{border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);
+  box-shadow:var(--shadow);overflow:hidden}
+.mh-card-header{padding:.7rem 1rem;background:var(--surface-2);border-bottom:1px solid var(--border);
+  display:flex;align-items:center;justify-content:space-between}
+.mh-card-header h2{font-size:14px;font-weight:900;margin:0}
+.mh-card-body{padding:1rem}
+.cov-row{display:flex;align-items:center;gap:.75rem;margin-bottom:.65rem}
+.cov-row:last-child{margin-bottom:0}
+.cov-label{font-size:12px;font-weight:600;color:var(--text);width:130px;flex-shrink:0}
+.cov-bar-wrap{flex:1;background:var(--surface-2);border:1px solid var(--border);
+  border-radius:999px;height:12px;overflow:hidden}
+.cov-fill{height:100%;border-radius:999px;transition:width .3s}
+.cov-fill.high{background:linear-gradient(90deg,var(--green),color-mix(in srgb,var(--green) 70%,var(--blue)))}
+.cov-fill.mid {background:linear-gradient(90deg,var(--amber),color-mix(in srgb,var(--amber) 60%,var(--green)))}
+.cov-fill.low {background:linear-gradient(90deg,var(--red),var(--amber))}
+.cov-pct{font-size:12px;font-weight:700;width:46px;text-align:right;flex-shrink:0;color:var(--text-soft)}
+.cov-counts{font-size:11px;color:var(--text-muted);width:72px;text-align:right;flex-shrink:0}
+/* ── drift section ──────────────────────────────────────── */
+.drift-clean{padding:.65rem .9rem;border:1px solid color-mix(in srgb,var(--green) 28%,var(--border));
+  background:color-mix(in srgb,var(--green-light) 35%,var(--surface));border-radius:var(--radius-sm);
+  font-size:12px;color:var(--text-soft);display:flex;align-items:center;gap:.5rem}
+.drift-alert{padding:.65rem .9rem;border:1px solid color-mix(in srgb,var(--red) 28%,var(--border));
+  background:color-mix(in srgb,var(--red-light,#ffe4e4) 35%,var(--surface));
+  border-radius:var(--radius-sm);margin-bottom:.5rem}
+.drift-alert-title{font-size:12px;font-weight:800;color:var(--red,#c0392b);margin-bottom:.4rem}
+.drift-list{margin:0;padding-left:1.25rem;font-size:12px;color:var(--text-soft)}
+.drift-list li{margin:.2rem 0}
+.drift-list code{font-family:Consolas,monospace;font-size:11px;
+  background:var(--surface-2);border:1px solid var(--border);border-radius:3px;padding:1px 5px}
+.drift-timestamp{font-size:11px;color:var(--text-muted)}
+/* ── per-table breakdown ─────────────────────────────────── */
+table.mh-tbl{width:100%;border-collapse:collapse;font-size:13px}
+table.mh-tbl th{padding:.5rem .75rem;text-align:left;font-size:10px;font-weight:800;
+  text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);
+  background:var(--surface-2);border-bottom:1px solid var(--border)}
+table.mh-tbl td{padding:.55rem .75rem;border-bottom:1px solid var(--border);vertical-align:middle}
+table.mh-tbl tr:last-child td{border-bottom:none}
+table.mh-tbl tr:hover td{background:color-mix(in srgb,var(--primary) 4%,var(--surface))}
+.type-pill{display:inline-block;padding:2px 7px;border-radius:999px;font-size:10px;font-weight:800;
+  text-transform:uppercase;letter-spacing:.03em}
+.type-fact{background:var(--blue-light);color:var(--blue)}
+.type-dimension{background:var(--violet-light,#ede9fe);color:var(--violet,#7c3aed)}
+.mini-bar{display:inline-flex;align-items:center;gap:4px;vertical-align:middle}
+.mini-bar-wrap{width:56px;height:7px;background:var(--border);border-radius:999px;overflow:hidden}
+.mini-bar-fill{height:100%;border-radius:999px}
+.mini-bar-fill.full{background:var(--green)}
+.mini-bar-fill.some{background:var(--amber)}
+.mini-bar-fill.none{background:var(--red)}
+.mini-bar-num{font-size:11px;color:var(--text-muted);font-variant-numeric:tabular-nums}
+.mono{font-family:Consolas,monospace;font-size:11px;
+  background:var(--surface-2);border:1px solid var(--border);border-radius:4px;padding:1px 5px}
+</style>
+{% endblock %}
+{% block content %}
+
+{{ client_workspace_nav(client, "model_health") }}
+
+{% if not health.has_model %}
+<div class="mh-shell">
+{{ alert(
+    message="No semantic model found. Build the Knowledge Base first — the structured semantic model is generated automatically during KB build.",
+    type="amber",
+    icon_name="alert-triangle",
+    title="Semantic model not built yet",
+    action_href="/admin/clients/" ~ client.account_id ~ "/kb",
+    action_label="Go to KB Editor"
+) }}
+</div>
+{% else %}
+
+{# ── compute helpers ── #}
+{% set pct = health.approval_coverage.pct %}
+{% set score_cls = "high" if pct >= 70 else ("mid" if pct >= 35 else "low") %}
+
+<div class="mh-shell">
+
+  <!-- ── Hero + score ── -->
+  <div class="mh-hero">
+    <div class="mh-hero-body">
+      <h1>Model Health</h1>
+      <p>
+        Approval coverage across all semantic model entries — fields, measures,
+        dimensions, date roles, and relationships.  Higher coverage means
+        QueryBot has more confirmed domain knowledge to ground SQL generation
+        and enforce correct query shapes.
+      </p>
+      {% if health.drift.recorded_at %}
+      <div class="drift-timestamp" style="margin-top:.5rem">
+        Last schema drift check: <strong>{{ health.drift.recorded_at }} UTC</strong>
+      </div>
+      {% endif %}
+    </div>
+    <div class="mh-score-wrap">
+      <div class="mh-score-circle {{ score_cls }}">
+        <span class="mh-score-num {{ score_cls }}">{{ health.approval_coverage.pct }}%</span>
+      </div>
+      <div class="mh-score-label">Approved</div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:4px;text-align:center">
+        {{ health.approval_coverage.approved }}&nbsp;/&nbsp;{{ health.approval_coverage.total }}
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Summary stats ── -->
+  <div class="mh-stat-grid">
+    <div class="mh-stat">
+      <div class="mh-stat-label">Tables</div>
+      <div class="mh-stat-value">{{ health.tables.total }}</div>
+      <div class="mh-stat-sub">{{ health.tables.fact }} fact · {{ health.tables.dimension }} dim</div>
+    </div>
+    <div class="mh-stat">
+      <div class="mh-stat-label">Fields</div>
+      <div class="mh-stat-value">{{ health.fields.total }}</div>
+      <div class="mh-stat-sub">{{ health.fields.approved }} approved</div>
+    </div>
+    <div class="mh-stat">
+      <div class="mh-stat-label">Measures</div>
+      <div class="mh-stat-value">{{ health.measures.total }}</div>
+      <div class="mh-stat-sub">{{ health.measures.approved }} approved · {{ health.measures.deprecated }} deprecated</div>
+    </div>
+    <div class="mh-stat">
+      <div class="mh-stat-label">Date Roles</div>
+      <div class="mh-stat-value">{{ health.date_roles.total }}</div>
+      <div class="mh-stat-sub">{{ health.date_roles.approved }} approved</div>
+    </div>
+    <div class="mh-stat">
+      <div class="mh-stat-label">Relationships</div>
+      <div class="mh-stat-value">{{ health.relationships.total }}</div>
+      <div class="mh-stat-sub">{{ health.relationships.approved }} approved</div>
+    </div>
+    <div class="mh-stat">
+      <div class="mh-stat-label">Dimensions</div>
+      <div class="mh-stat-value">{{ health.dimensions.total }}</div>
+      <div class="mh-stat-sub">{{ health.dimensions.approved }} approved</div>
+    </div>
+  </div>
+
+  <!-- ── Coverage breakdown ── -->
+  <div class="mh-card">
+    <div class="mh-card-header">
+      <h2>Approval Coverage by Category</h2>
+    </div>
+    <div class="mh-card-body">
+      {% set cats = [
+        ("Fields",        health.fields.approval_pct,        health.fields.approved,        health.fields.total),
+        ("Measures",      health.measures.approval_pct,      health.measures.approved,      health.measures.total),
+        ("Dimensions",    health.dimensions.approval_pct,    health.dimensions.approved,    health.dimensions.total),
+        ("Date Roles",    health.date_roles.approval_pct,    health.date_roles.approved,    health.date_roles.total),
+        ("Relationships", health.relationships.approval_pct, health.relationships.approved, health.relationships.total),
+      ] %}
+      {% for name, pct_val, appr, tot in cats %}
+      {% set bar_cls = "high" if pct_val >= 70 else ("mid" if pct_val >= 35 else "low") %}
+      <div class="cov-row">
+        <div class="cov-label">{{ name }}</div>
+        <div class="cov-bar-wrap">
+          <div class="cov-fill {{ bar_cls }}" style="width:{{ pct_val }}%"></div>
+        </div>
+        <div class="cov-pct">{{ pct_val }}%</div>
+        <div class="cov-counts">{{ appr }} / {{ tot }}</div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <!-- ── Schema drift ── -->
+  <div class="mh-card">
+    <div class="mh-card-header">
+      <h2>Schema Drift</h2>
+      {% if health.drift.recorded_at %}
+      <span class="drift-timestamp">Checked {{ health.drift.recorded_at }} UTC</span>
+      {% endif %}
+    </div>
+    <div class="mh-card-body">
+      {% if not health.drift %}
+      <p style="font-size:13px;color:var(--text-muted)">
+        No drift data yet. Rebuild the Knowledge Base to run schema drift detection.
+      </p>
+      {% elif health.drift.clean %}
+      <div class="drift-clean">
+        ✓ &nbsp;No schema drift detected on last KB rebuild. All approved fields and tables are still present in the schema.
+      </div>
+      {% else %}
+        {% if health.drift.removed_tables %}
+        <div class="drift-alert">
+          <div class="drift-alert-title">⚠ {{ health.drift.removed_tables | length }} table(s) removed from schema</div>
+          <ul class="drift-list">
+            {% for t in health.drift.removed_tables %}
+            <li><code>{{ t }}</code></li>
+            {% endfor %}
+          </ul>
+        </div>
+        {% endif %}
+        {% if health.drift.removed_approved_fields %}
+        <div class="drift-alert">
+          <div class="drift-alert-title">⚠ {{ health.drift.removed_approved_fields | length }} approved column(s) dropped from schema</div>
+          <ul class="drift-list">
+            {% for f in health.drift.removed_approved_fields %}
+            <li>
+              <code>{{ f.table }}.{{ f.column }}</code>
+              {% if f.approved_meaning %} — {{ f.approved_meaning }}{% endif %}
+            </li>
+            {% endfor %}
+          </ul>
+        </div>
+        {% endif %}
+        {% if health.drift.type_changed_fields %}
+        <div class="drift-alert">
+          <div class="drift-alert-title">⚠ {{ health.drift.type_changed_fields | length }} field(s) changed data type</div>
+          <ul class="drift-list">
+            {% for c in health.drift.type_changed_fields %}
+            <li>
+              <code>{{ c.table }}.{{ c.column }}</code>
+              <code>{{ c.old_type }}</code> → <code>{{ c.new_type }}</code>
+            </li>
+            {% endfor %}
+          </ul>
+        </div>
+        {% endif %}
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- ── Per-table breakdown ── -->
+  {% if health.table_summaries %}
+  <div class="mh-card">
+    <div class="mh-card-header">
+      <h2>Per-Table Breakdown</h2>
+      <span style="font-size:12px;color:var(--text-muted)">{{ health.table_summaries | length }} table{{ "s" if health.table_summaries | length != 1 }}</span>
+    </div>
+    <table class="mh-tbl">
+      <thead>
+        <tr>
+          <th>Table</th>
+          <th>Schema</th>
+          <th>Type</th>
+          <th>Fields</th>
+          <th>Measures</th>
+          <th>Dimensions</th>
+          <th>Date Roles</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for t in health.table_summaries %}
+        {% macro mini(appr, tot) %}
+          {% set p = (appr / tot * 100) | round | int if tot > 0 else 0 %}
+          {% set cls = "full" if p >= 100 else ("some" if p > 0 else "none") %}
+          <span class="mini-bar">
+            <span class="mini-bar-wrap"><span class="mini-bar-fill {{ cls }}" style="width:{{ p }}%"></span></span>
+            <span class="mini-bar-num">{{ appr }}/{{ tot }}</span>
+          </span>
+        {% endmacro %}
+        <tr>
+          <td><span class="mono">{{ t.table }}</span></td>
+          <td style="font-size:12px;color:var(--text-muted)">{{ t.schema }}</td>
+          <td><span class="type-pill type-{{ t.type }}">{{ t.type }}</span></td>
+          <td>{{ mini(t.fields.approved, t.fields.total) }}</td>
+          <td>{{ mini(t.measures.approved, t.measures.total) }}</td>
+          <td>{{ mini(t.dimensions.approved, t.dimensions.total) }}</td>
+          <td>{{ mini(t.date_roles.approved, t.date_roles.total) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+</div>
+{% endif %}
+
+{% endblock %}

@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from datetime import datetime, timezone as _tz
 from pathlib import Path
 from typing import Any
 
@@ -510,10 +511,30 @@ def write_semantic_model(
     # overwriting with the freshly generated one.  This ensures a KB rebuild
     # never silently discards field approvals, dimension approvals, or approved
     # metric expressions an admin has saved via the Semantic Layer UI.
+    drift: dict[str, Any] = {
+        "removed_tables": [],
+        "removed_approved_fields": [],
+        "type_changed_fields": [],
+    }
     old_model = load_semantic_model(kb_dir)
     if old_model:
         model, drift = preserve_approvals(old_model, model)
         _log_drift(drift)
+
+    # Persist drift report for the Model Health dashboard (S4-2).
+    # Always written so the dashboard shows the last-checked timestamp even
+    # when there is no drift to report.
+    model["_last_drift"] = {
+        "removed_tables":          drift.get("removed_tables") or [],
+        "removed_approved_fields": drift.get("removed_approved_fields") or [],
+        "type_changed_fields":     drift.get("type_changed_fields") or [],
+        "recorded_at":             datetime.now(_tz.utc).isoformat(timespec="seconds"),
+        "clean": not any([
+            drift.get("removed_tables"),
+            drift.get("removed_approved_fields"),
+            drift.get("type_changed_fields"),
+        ]),
+    }
 
     (kb_path / MODEL_JSON).write_text(json.dumps(model, indent=2, sort_keys=True), encoding="utf-8")
     (kb_path / MODEL_YAML).write_text(_to_yaml(model) + "\n", encoding="utf-8")
@@ -1080,6 +1101,169 @@ def build_runtime_semantic_plan(
         "joins": joins,
         "required_tables": required_tables,
         "reason": "structured semantic model",
+    }
+
+
+def get_model_health(kb_dir: str) -> dict[str, Any]:
+    """Return a health summary of the structured semantic model.
+
+    Aggregates approval counts, coverage percentages, and the most recent
+    drift report for every tracked category: fields, measures, dimensions,
+    date roles, and relationships.
+
+    Returns a dict with:
+
+    * ``has_model``         – False when no model file exists
+    * ``tables``            – total / fact / dimension counts
+    * ``fields``            – total / approved / needs_review / generated + approval_pct
+    * ``measures``          – total / approved / suggested / deprecated + approval_pct
+    * ``dimensions``        – total / approved / needs_review / generated + approval_pct
+    * ``date_roles``        – total / approved / generated + approval_pct
+    * ``relationships``     – total / approved / needs_review / generated + approval_pct
+    * ``approval_coverage`` – overall pct / approved count / total count
+    * ``table_summaries``   – per-table list (fact tables first)
+    * ``drift``             – last recorded drift report (from write_semantic_model)
+    """
+    model = load_semantic_model(kb_dir)
+    if not model:
+        return {"has_model": False}
+
+    tables_total = tables_fact = tables_dimension = 0
+    fields_total = fields_approved = fields_review = fields_gen = 0
+    meas_total = meas_approved = meas_suggested = meas_depr = 0
+    dims_total = dims_approved = dims_review = dims_gen = 0
+    dr_table_total = dr_table_approved = 0
+    table_summaries: list[dict[str, Any]] = []
+
+    for table in model.get("tables", []) or []:
+        tables_total += 1
+        t_type = str(table.get("type") or "")
+        if t_type == "fact":
+            tables_fact += 1
+        else:
+            tables_dimension += 1
+
+        # Fields
+        t_fields = table.get("fields") or []
+        t_f_appr = sum(1 for f in t_fields if f.get("status") == "approved")
+        t_f_rev  = sum(1 for f in t_fields if f.get("status") == "needs_review")
+        t_f_gen  = len(t_fields) - t_f_appr - t_f_rev
+        fields_total   += len(t_fields)
+        fields_approved += t_f_appr
+        fields_review   += t_f_rev
+        fields_gen      += t_f_gen
+
+        # Measures
+        t_meas = table.get("measures") or []
+        t_m_appr = sum(1 for m in t_meas if m.get("status") == "approved")
+        t_m_depr = sum(1 for m in t_meas if m.get("status") == "deprecated")
+        t_m_sugg = len(t_meas) - t_m_appr - t_m_depr
+        meas_total    += len(t_meas)
+        meas_approved += t_m_appr
+        meas_suggested += t_m_sugg
+        meas_depr     += t_m_depr
+
+        # Dimensions
+        t_dims = table.get("dimensions") or []
+        t_d_appr = sum(1 for d in t_dims if d.get("status") == "approved")
+        t_d_rev  = sum(1 for d in t_dims if d.get("status") == "needs_review")
+        t_d_gen  = len(t_dims) - t_d_appr - t_d_rev
+        dims_total    += len(t_dims)
+        dims_approved += t_d_appr
+        dims_review   += t_d_rev
+        dims_gen      += t_d_gen
+
+        # Per-table date_roles (use for table summary; top-level used for overall)
+        t_dr = table.get("date_roles") or []
+        t_dr_appr = sum(1 for r in t_dr if r.get("status") == "approved")
+        dr_table_total    += len(t_dr)
+        dr_table_approved += t_dr_appr
+
+        table_summaries.append({
+            "table":          table.get("table", ""),
+            "qualified_name": table.get("qualified_name", ""),
+            "schema":         table.get("schema", ""),
+            "type":           t_type,
+            "fields":      {"total": len(t_fields), "approved": t_f_appr},
+            "measures":    {"total": len(t_meas),   "approved": t_m_appr},
+            "dimensions":  {"total": len(t_dims),   "approved": t_d_appr},
+            "date_roles":  {"total": len(t_dr),     "approved": t_dr_appr},
+        })
+
+    # Top-level date_roles (canonical, deduped)
+    dr_top = model.get("date_roles") or []
+    dr_top_appr = sum(1 for r in dr_top if r.get("status") == "approved")
+
+    # Relationships
+    rels = model.get("relationships") or []
+    rels_appr = sum(1 for r in rels if r.get("status") == "approved")
+    rels_rev  = sum(1 for r in rels if r.get("status") == "needs_review")
+    rels_gen  = len(rels) - rels_appr - rels_rev
+
+    # Overall approval coverage across all approachable items
+    total_approachable = fields_total + meas_total + dims_total + len(dr_top) + len(rels)
+    total_approved_all = fields_approved + meas_approved + dims_approved + dr_top_appr + rels_appr
+    overall_pct = (
+        round(100.0 * total_approved_all / total_approachable, 1)
+        if total_approachable > 0 else 0.0
+    )
+
+    def _pct(num: int, den: int) -> float:
+        return round(100.0 * num / den, 1) if den > 0 else 0.0
+
+    # Sort: fact tables first, then alphabetical
+    table_summaries.sort(key=lambda t: (t["type"] != "fact", t["table"].upper()))
+
+    return {
+        "has_model":   True,
+        "version":     model.get("version", 1),
+        "account_id":  model.get("account_id", ""),
+        "tables": {
+            "total":     tables_total,
+            "fact":      tables_fact,
+            "dimension": tables_dimension,
+        },
+        "fields": {
+            "total":        fields_total,
+            "approved":     fields_approved,
+            "needs_review": fields_review,
+            "generated":    fields_gen,
+            "approval_pct": _pct(fields_approved, fields_total),
+        },
+        "measures": {
+            "total":        meas_total,
+            "approved":     meas_approved,
+            "suggested":    meas_suggested,
+            "deprecated":   meas_depr,
+            "approval_pct": _pct(meas_approved, meas_total),
+        },
+        "dimensions": {
+            "total":        dims_total,
+            "approved":     dims_approved,
+            "needs_review": dims_review,
+            "generated":    dims_gen,
+            "approval_pct": _pct(dims_approved, dims_total),
+        },
+        "date_roles": {
+            "total":        len(dr_top),
+            "approved":     dr_top_appr,
+            "generated":    len(dr_top) - dr_top_appr,
+            "approval_pct": _pct(dr_top_appr, len(dr_top)),
+        },
+        "relationships": {
+            "total":        len(rels),
+            "approved":     rels_appr,
+            "needs_review": rels_rev,
+            "generated":    rels_gen,
+            "approval_pct": _pct(rels_appr, len(rels)),
+        },
+        "approval_coverage": {
+            "pct":      overall_pct,
+            "approved": total_approved_all,
+            "total":    total_approachable,
+        },
+        "table_summaries": table_summaries,
+        "drift": model.get("_last_drift") or {},
     }
 
 

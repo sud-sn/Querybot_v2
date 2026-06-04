@@ -9,6 +9,7 @@ from core.semantic_model import (
     build_semantic_model,
     build_runtime_semantic_context,
     build_runtime_semantic_plan,
+    get_model_health,
     load_semantic_model,
     patch_date_role,
     patch_field_approval,
@@ -352,6 +353,81 @@ class SemanticModelTests(unittest.TestCase):
             measure = next(m for m in fact["measures"] if m["column"] == "SOP_CUS_IVC_LIN_AMT")
             self.assertEqual(measure["status"], "deprecated",
                              "Inactive metric must be marked deprecated in the semantic model")
+
+    # ── S4-1: get_model_health ───────────────────────────────────────────────
+
+    def test_get_model_health_returns_correct_counts(self):
+        """get_model_health reports correct table/field/measure totals and approval coverage."""
+        with _tmp_dir() as tmp:
+            root = Path(tmp)
+            schema_dir = root / "schema"
+            kb_dir = root / "kb"
+            schema_dir.mkdir()
+            _write_schema(schema_dir)
+            write_semantic_model(schema_dir=str(schema_dir), kb_dir=str(kb_dir))
+
+            health = get_model_health(str(kb_dir))
+
+            self.assertTrue(health.get("has_model"), "has_model must be True")
+            self.assertEqual(health["tables"]["total"], 3,
+                             "3 tables in the test schema")
+            self.assertGreater(health["fields"]["total"], 0, "fields.total must be >0")
+            self.assertGreater(health["relationships"]["total"], 0,
+                               "relationships.total must be >0")
+            # Freshly generated model → nothing approved yet
+            self.assertEqual(health["fields"]["approved"], 0,
+                             "No fields should be approved on a fresh model")
+            self.assertIsInstance(health["approval_coverage"]["pct"], float)
+            self.assertIn("table_summaries", health)
+            self.assertEqual(len(health["table_summaries"]), 3)
+
+    def test_drift_persisted_in_model_after_rebuild(self):
+        """write_semantic_model stores _last_drift so get_model_health can surface it."""
+        with _tmp_dir() as tmp:
+            root = Path(tmp)
+            schema_dir = root / "schema"
+            kb_dir = root / "kb"
+            schema_dir.mkdir()
+            _write_schema(schema_dir)
+
+            # First build — no old model, drift is clean
+            write_semantic_model(schema_dir=str(schema_dir), kb_dir=str(kb_dir))
+            h1 = get_model_health(str(kb_dir))
+            self.assertIn("drift", h1)
+            self.assertIn("recorded_at", h1["drift"])
+            self.assertTrue(h1["drift"].get("clean"), "First build drift must be clean")
+
+            # Approve a field, then drop it from the schema, then rebuild
+            patch_field_approval(
+                kb_dir=str(kb_dir),
+                table_name="WHS_DMS",
+                schema_name="PROFITABILITY",
+                column_name="WHS_DSC",
+                approved_meaning="Warehouse display name",
+            )
+            import json as _json
+            schema = _json.loads((schema_dir / "_schema.json").read_text(encoding="utf-8"))
+            schema["CHATBOTDB.PROFITABILITY.WHS_DMS"]["columns"] = [
+                c for c in schema["CHATBOTDB.PROFITABILITY.WHS_DMS"]["columns"]
+                if c["name"] != "WHS_DSC"
+            ]
+            (schema_dir / "_schema.json").write_text(_json.dumps(schema), encoding="utf-8")
+            write_semantic_model(schema_dir=str(schema_dir), kb_dir=str(kb_dir))
+
+            h2 = get_model_health(str(kb_dir))
+            self.assertFalse(h2["drift"].get("clean"),
+                             "Drift after dropping approved column must not be clean")
+            self.assertTrue(
+                any(f["column"] == "WHS_DSC" for f in h2["drift"]["removed_approved_fields"]),
+                "WHS_DSC must appear in drift.removed_approved_fields",
+            )
+
+    # ── S4-missing-model edge case ────────────────────────────────────────────
+
+    def test_get_model_health_missing_model_returns_has_model_false(self):
+        with _tmp_dir() as tmp:
+            health = get_model_health(str(Path(tmp) / "nonexistent_kb"))
+            self.assertFalse(health.get("has_model"))
 
     # ── S3-1: patch_date_role ────────────────────────────────────────────────
 
