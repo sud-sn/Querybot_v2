@@ -44,7 +44,7 @@ from core.result_cache import result_cache
 from core.query_router import should_route_to_result_cache, build_duckdb_system_prompt
 from core.duckdb_sql_validator import validate_duckdb_result_sql
 from core.semantic_planner import build_semantic_field_plan
-from core.semantic_model import build_runtime_semantic_context, build_runtime_semantic_plan
+from core.semantic_model import build_runtime_semantic_context, build_runtime_semantic_plan, build_field_plan_repair_note
 from core.metric_scope import metric_source_tables, resolve_metric_scope
 from core.answer_confidence import build_answer_confidence
 from core.answer_formatter import format_success_confidence_text, format_zero_row_business_response
@@ -1425,12 +1425,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                     "- For Azure SQL use TRY_CONVERT(date, CONVERT(varchar(8), alias.DATE_KEY_COL), 112).\n"
                 )
             elif last_code == "field_plan_mismatch":
-                validation_repair_note = (
-                    "\nSEMANTIC FIELD PLAN REPAIR RULE:\n"
-                    "- The SQL ignored one or more deterministic field-source mappings.\n"
-                    "- Use the exact table.column pairs and required joins from the Semantic field-source plan.\n"
-                    "- Do not move mapped fields to another table and do not remove underscores from column names.\n"
-                )
+                validation_repair_note = build_field_plan_repair_note(_semantic_plan or {})
             elif last_code == "metric_formula_mismatch":
                 # Inject the EXACT approved formula(s) verbatim — do not rely on
                 # the LLM finding them in the KB context, which can be overridden.
