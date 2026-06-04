@@ -247,7 +247,10 @@ async def build_kb(
     )
     from core.llm_audit import llm_audit_component
     from core.erp_column_dict import get_erp_hints
-    from core.schema_enrichment import format_schema_intelligence
+    from core.schema_enrichment import (
+        format_column_reference_for_vocab,
+        format_schema_intelligence,
+    )
 
     schema_path = Path(schema_dir)
     kb_path     = Path(kb_dir)
@@ -307,7 +310,13 @@ async def build_kb(
                 if m:
                     cols.append(m.group(1))
         if cols:
-            column_ref_lines.append(f"  {md_file.stem}: {', '.join(cols)}")
+            column_ref_lines.append(
+                format_column_reference_for_vocab(
+                    md_file.stem,
+                    cols,
+                    schema_md=schema_md,
+                )
+            )
 
     column_reference = "\n".join(column_ref_lines)
 
