@@ -3448,6 +3448,107 @@ async def metrics_test_formula(request: Request, account_id: str):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# Date Roles — semantic model date dimension admin (S3-1)
+# ══════════════════════════════════════════════════════════════════════════════
+
+@router.get("/clients/{account_id}/date-roles", response_class=HTMLResponse)
+async def date_roles_page(request: Request, account_id: str):
+    """List all date roles detected in the structured semantic model."""
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    client = store.get_client(account_id)
+    if not client:
+        raise HTTPException(status_code=404)
+
+    state = store.get_client_state(account_id)
+    kb_dir = (state or {}).get("kb_dir") or ""
+
+    date_roles: list[dict] = []
+    has_model = False
+
+    if kb_dir:
+        try:
+            from core.semantic_model import load_semantic_model
+            model = load_semantic_model(kb_dir)
+            if model:
+                has_model = True
+                # Use top-level date_roles for the canonical list — it aggregates
+                # across all fact tables and deduplicates by fact_table+fact_column.
+                date_roles = [dict(dr) for dr in (model.get("date_roles") or [])]
+                # Sort: unapproved first (need attention), then by fact_table + name
+                date_roles.sort(key=lambda r: (
+                    0 if r.get("status") != "approved" else 1,
+                    str(r.get("fact_table") or ""),
+                    str(r.get("name") or ""),
+                ))
+        except Exception as exc:
+            log.warning("date_roles_page: failed to load semantic model for %s: %s", account_id, exc)
+
+    return _resp(request, "client_date_roles.html", {
+        "client":     client,
+        "date_roles": date_roles,
+        "has_model":  has_model,
+        "saved":      request.query_params.get("saved"),
+        "error":      request.query_params.get("error"),
+    })
+
+
+@router.post("/clients/{account_id}/date-roles/approve")
+async def date_role_approve(
+    request:         Request,
+    account_id:      str,
+    fact_table:      str = Form(...),
+    fact_column:     str = Form(...),
+    dimension_table: str = Form(""),
+    dimension_key:   str = Form(""),
+    business_role:   str = Form(""),
+):
+    """Approve (and optionally edit) a date role entry in the semantic model."""
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+
+    client = store.get_client(account_id)
+    if not client:
+        raise HTTPException(status_code=404)
+
+    state = store.get_client_state(account_id)
+    kb_dir = (state or {}).get("kb_dir") or ""
+    if not kb_dir:
+        from urllib.parse import quote
+        return RedirectResponse(
+            f"/admin/clients/{account_id}/date-roles?error={quote('KB directory not configured')}",
+            status_code=303,
+        )
+
+    try:
+        from core.semantic_model import patch_date_role
+        changed = patch_date_role(
+            kb_dir=kb_dir,
+            fact_table=fact_table.strip(),
+            fact_column=fact_column.strip(),
+            dimension_table=dimension_table.strip(),
+            dimension_key=dimension_key.strip(),
+            business_role=business_role.strip(),
+            status="approved",
+        )
+        if not changed:
+            from urllib.parse import quote
+            return RedirectResponse(
+                f"/admin/clients/{account_id}/date-roles?error={quote('Date role not found in semantic model')}",
+                status_code=303,
+            )
+    except Exception as exc:
+        log.exception("date_role_approve: unexpected error for %s: %s", account_id, exc)
+        from urllib.parse import quote
+        return RedirectResponse(
+            f"/admin/clients/{account_id}/date-roles?error={quote(str(exc))}",
+            status_code=303,
+        )
+
+    return RedirectResponse(f"/admin/clients/{account_id}/date-roles?saved=1", status_code=303)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Business glossary (semantic layer) — CRUD + auto-populate
 # ══════════════════════════════════════════════════════════════════════════════
 

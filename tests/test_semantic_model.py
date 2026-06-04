@@ -10,6 +10,7 @@ from core.semantic_model import (
     build_runtime_semantic_context,
     build_runtime_semantic_plan,
     load_semantic_model,
+    patch_date_role,
     patch_field_approval,
     patch_metric_approval,
     patch_relationship,
@@ -351,6 +352,82 @@ class SemanticModelTests(unittest.TestCase):
             measure = next(m for m in fact["measures"] if m["column"] == "SOP_CUS_IVC_LIN_AMT")
             self.assertEqual(measure["status"], "deprecated",
                              "Inactive metric must be marked deprecated in the semantic model")
+
+    # ── S3-1: patch_date_role ────────────────────────────────────────────────
+
+    def test_date_role_approval_patches_model(self):
+        """patch_date_role sets status=approved on both top-level and per-table date_roles."""
+        with _tmp_dir() as tmp:
+            root = Path(tmp)
+            schema_dir = root / "schema"
+            kb_dir = root / "kb"
+            schema_dir.mkdir()
+            _write_schema(schema_dir)
+            write_semantic_model(schema_dir=str(schema_dir), kb_dir=str(kb_dir))
+
+            changed = patch_date_role(
+                kb_dir=str(kb_dir),
+                fact_table="PROFITABILITY.CUS_ORD_IVC_FCT",
+                fact_column="CUS_IVC_DT_DMS_KEY",
+                dimension_table="PROFITABILITY.DT_DMS",
+                dimension_key="DT_DMS_KEY",
+                business_role="invoice_date",
+                status="approved",
+            )
+            self.assertTrue(changed, "patch_date_role returned False")
+
+            model = load_semantic_model(str(kb_dir))
+            # Check top-level date_roles
+            top_dr = next(
+                (r for r in model.get("date_roles", [])
+                 if r.get("fact_column") == "CUS_IVC_DT_DMS_KEY"),
+                None,
+            )
+            self.assertIsNotNone(top_dr, "Date role not found in top-level date_roles")
+            self.assertEqual(top_dr["status"], "approved")
+            self.assertEqual(top_dr["confidence"], 100)
+            # Check per-table date_roles
+            fact = next(t for t in model["tables"] if t["table"] == "CUS_ORD_IVC_FCT")
+            table_dr = next(
+                (r for r in fact.get("date_roles", [])
+                 if r.get("fact_column") == "CUS_IVC_DT_DMS_KEY"),
+                None,
+            )
+            self.assertIsNotNone(table_dr, "Date role not found in per-table date_roles")
+            self.assertEqual(table_dr["status"], "approved")
+
+    # ── S3-2: date role SQL enforcement ──────────────────────────────────────
+
+    def test_date_plan_includes_date_join_for_date_question(self):
+        """build_runtime_semantic_plan includes date dimension join when question asks about dates."""
+        with _tmp_dir() as tmp:
+            root = Path(tmp)
+            schema_dir = root / "schema"
+            kb_dir = root / "kb"
+            schema_dir.mkdir()
+            _write_schema(schema_dir)
+            write_semantic_model(schema_dir=str(schema_dir), kb_dir=str(kb_dir))
+
+            plan = build_runtime_semantic_plan(
+                str(kb_dir),
+                question="show revenue by invoice month",
+                selected_schema="PROFITABILITY",
+            )
+
+            self.assertTrue(plan["enabled"],
+                            "Plan must be enabled for a date question")
+            has_date_join = any(
+                "DT_DMS" in str(j.get("to", "")).upper()
+                for j in plan.get("joins", [])
+            )
+            self.assertTrue(has_date_join,
+                            "Plan must include a join to DT_DMS for a date question")
+            has_date_field = any(
+                f.get("role") == "date_dimension"
+                for f in plan.get("fields", [])
+            )
+            self.assertTrue(has_date_field,
+                            "Plan must include a date_dimension field entry")
 
     # ── S2-2: patch_relationship ──────────────────────────────────────────────
 
