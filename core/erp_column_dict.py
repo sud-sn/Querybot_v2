@@ -210,6 +210,20 @@ ERP_COLUMN_DICT: dict[str, tuple[str, list[str]]] = {
     "INNO": ("Internal Invoice Number",    ["internal invoice", "internal invoice number"]),
     "GRWE": ("Gross Weight",               ["gross weight", "weight"]),
     "NEWE": ("Net Weight",                 ["net weight"]),
+    # Common dimension display fields. These are not always raw ERP short codes,
+    # but they keep KB generation from showing warehouse/customer/item keys when
+    # a business-readable code or description field exists.
+    "WHS_DMS_KEY": ("Warehouse Dimension Key", ["warehouse key", "warehouse id", "warehouse dimension key"]),
+    "WHS_CD": ("Warehouse Code", ["warehouse code", "warehouse number"]),
+    "WHS_DSC": ("Warehouse Description", ["warehouse", "warehouse name", "warehouse description", "warehouse location"]),
+    "DT_DMS_KEY": ("Date Dimension Key", ["date key", "calendar date key"]),
+    "ITM_DMS_KEY": ("Item Dimension Key", ["item key", "product key", "sku key"]),
+    "ITM_CD": ("Item Code", ["item code", "product code", "sku"]),
+    "ITM_DSC": ("Item Description", ["item", "product", "item name", "product name", "item description"]),
+    "ITM_GRP_DMS_KEY": ("Item Group Dimension Key", ["item group key", "product group key"]),
+    "CUS_DMS_KEY": ("Customer Dimension Key", ["customer key", "customer id", "customer dimension key"]),
+    "CUS_CD": ("Customer Code", ["customer code", "customer number"]),
+    "CUS_NM": ("Customer Name", ["customer", "customer name", "client name"]),
 }
 
 

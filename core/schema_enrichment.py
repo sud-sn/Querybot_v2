@@ -19,23 +19,37 @@ from core.erp_column_dict import ERP_COLUMN_DICT
 
 ABBREVIATIONS: dict[str, str] = {
     "ABC": "abc",
+    "ACC": "account",
+    "ACCT": "account",
+    "ACT": "active",
     "AGM": "agreement",
     "ALC": "allocated",
+    "ALT": "alternate",
     "AMT": "amount",
     "ANN": "annual",
+    "AP": "accounts payable",
+    "AR": "accounts receivable",
     "APV": "approved",
     "ARA": "area",
+    "AVG": "average",
     "BAL": "balance",
     "BCK": "back",
+    "BIL": "billing",
+    "BILL": "billing",
     "BUM": "base unit of measure",
     "BUS": "business",
     "BYR": "buyer",
     "CAD": "cad",
+    "CAT": "category",
     "CCL": "cancelled",
     "CCY": "currency",
+    "CD": "code",
     "CFM": "confirmed",
+    "CHG": "change",
     "CLS": "class",
     "CLU": "cluster",
+    "CO": "company",
+    "CNT": "count",
     "CRN": "creation",
     "CST": "cost",
     "CTC": "contact",
@@ -48,11 +62,15 @@ ABBREVIATIONS: dict[str, str] = {
     "DMD": "demand",
     "DMS": "dimension",
     "DRC": "direct",
+    "DSC": "description",
+    "DESC": "description",
     "DT": "date",
     "DVN": "division",
     "EMCO": "company",
+    "EQP": "equipment",
     "FCY": "facility",
     "FCT": "fact",
+    "FIFO": "first in first out",
     "FRT": "freight",
     "GL": "general ledger",
     "GRP": "group",
@@ -68,14 +86,18 @@ ABBREVIATIONS: dict[str, str] = {
     "LWS": "lowest",
     "MDA": "media",
     "MDL": "model",
+    "MFG": "manufacturing",
+    "MGP": "margin profit",
     "MNL": "manual",
     "MSR": "measure",
     "NED": "needed",
     "NGV": "negative",
+    "NM": "name",
     "NUM": "number",
     "ON": "on",
     "ORD": "order",
     "ORI": "origin",
+    "PAY": "payment",
     "PCE": "price",
     "PC": "profit center",
     "PCH": "purchase",
@@ -91,6 +113,7 @@ ABBREVIATIONS: dict[str, str] = {
     "PRS": "person",
     "PRU": "product",
     "PSV": "positive",
+    "PT": "point",
     "PTY": "party",
     "PYE": "payee",
     "PYR": "payer",
@@ -119,12 +142,15 @@ ABBREVIATIONS: dict[str, str] = {
     "STK": "stock",
     "STL": "standard",
     "STS": "status",
+    "TOT": "total",
     "TFR": "transfer",
     "TM": "time",
     "TS": "timestamp",
     "TYP": "type",
     "UNT": "unit",
+    "UOM": "unit of measure",
     "USR": "user",
+    "USD": "usd",
     "VLD": "valid",
     "VOL": "volume",
     "WHS": "warehouse",
@@ -500,3 +526,39 @@ def format_schema_intelligence(table_name: str, columns: list[str], schema_md: s
     lines.append("")
     lines.append("Value-format rule: when users type IDs with or without thousands separators, SQL filters must use the raw database value format, not the UI display format.")
     return "\n".join(lines)
+
+
+def format_column_reference_for_vocab(
+    table_name: str,
+    columns: list[str],
+    schema_md: str = "",
+    *,
+    max_terms_per_column: int = 3,
+) -> str:
+    """
+    Build a compact table line for the cross-table Business Vocabulary prompt.
+
+    The important bit is preserving exact column names while adding deterministic
+    meanings/roles in parentheses. This helps the LLM map terms like "warehouse
+    description" or "order line" without treating the expanded words as real SQL
+    columns.
+    """
+    enriched = enrich_columns(columns, schema_md=schema_md)
+    if not enriched:
+        return f"  {table_name}:"
+
+    parts: list[str] = []
+    for item in enriched:
+        hint_bits = [f"role={item.role}", f"meaning={item.expanded_name}"]
+        if item.business_candidates:
+            terms = ", ".join(item.business_candidates[:max_terms_per_column])
+            hint_bits.append(f"terms={terms}")
+        if item.default_filter:
+            hint_bits.append(f"default_filter={item.default_filter}")
+        if item.join_equivalents:
+            hint_bits.append(f"joins_like={', '.join(item.join_equivalents)}")
+        if item.confidence < 70:
+            hint_bits.append("needs_admin_context")
+        parts.append(f"{item.column} ({'; '.join(hint_bits)})")
+
+    return f"  {table_name}: " + "; ".join(parts)
