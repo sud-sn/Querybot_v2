@@ -127,8 +127,26 @@ def apply_approved_feedback(
             f"File reverted. Try again or rebuild the full KB."
         )
 
+    semantic_model_changed = False
+    try:
+        from core.semantic_model import patch_field_approval
+        semantic_model_changed = patch_field_approval(
+            kb_dir=str(kb_path),
+            table_fqn=table_fqn,
+            table_name=table_name,
+            schema_name=schema_name,
+            column_name=column_name,
+            approved_meaning=approved_meaning,
+            approved_use_case=approved_use_case,
+        )
+        if semantic_model_changed:
+            log.info("Structured semantic model patched for %s.%s", table_name, column_name)
+    except Exception as e:
+        log.warning("Structured semantic model patch skipped for %s.%s: %s", table_name, column_name, e)
+
     synonym_note = f" + {len(new_synonyms)} synonym(s) added" if new_synonyms else ""
-    return True, f"Approved and KB re-embedded ({kb_file.name}{synonym_note})"
+    model_note = " + semantic model updated" if semantic_model_changed else ""
+    return True, f"Approved and KB re-embedded ({kb_file.name}{synonym_note}{model_note})"
 
 
 # ── KB file discovery ─────────────────────────────────────────────────────────

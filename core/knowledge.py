@@ -252,6 +252,7 @@ async def build_kb(
         format_column_reference_for_vocab,
         format_schema_intelligence,
     )
+    from core.semantic_model import write_semantic_model
 
     schema_path = Path(schema_dir)
     kb_path     = Path(kb_dir)
@@ -273,6 +274,21 @@ async def build_kb(
             f"No schema MD files found in {schema_dir}. "
             "Run schema discovery first."
         )
+
+    try:
+        semantic_model = write_semantic_model(
+            schema_dir=schema_dir,
+            kb_dir=kb_dir,
+            business_desc=business_desc,
+            account_id=account_id or chroma_dir,
+        )
+        log.info(
+            "Structured semantic model written (%d tables, %d relationships)",
+            len(semantic_model.get("tables") or []),
+            len(semantic_model.get("relationships") or []),
+        )
+    except Exception as exc:
+        log.warning("Structured semantic model generation failed: %s", exc)
 
     # Base system prompt used for business vocab (no per-table ERP hints needed there)
     system_base = build_kb_system_prompt()
