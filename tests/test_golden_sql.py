@@ -330,5 +330,54 @@ class GoldenSqlTests(unittest.TestCase):
         )
 
 
+    # ── G8: Date role join enforced when plan is active ───────────────────────
+    def test_g8_date_join_enforced_when_date_plan_active(self):
+        """SQL that queries by date but omits the DT_DMS JOIN fails field_plan_mismatch."""
+        with _tmp_dir() as tmp:
+            _, kb_dir = _setup(Path(tmp))
+            plan = build_runtime_semantic_plan(
+                str(kb_dir),
+                question="show revenue by invoice month",
+                selected_schema="PROFITABILITY",
+            )
+
+            # Plan must be enabled and include the date dimension join
+            self.assertTrue(plan["enabled"],
+                            "Plan must be enabled for date question")
+            self.assertTrue(
+                any("DT_DMS" in str(j.get("to", "")).upper() for j in plan.get("joins", [])),
+                "Plan must require DT_DMS join",
+            )
+
+            # SQL that uses the raw integer key instead of joining the date dim
+            sql_bad = (
+                "SELECT FORMAT(TRY_CONVERT(date, CONVERT(varchar(8), f.CUS_IVC_DT_DMS_KEY), 112), 'yyyy-MM') AS Month, "
+                "SUM(f.SOP_CUS_IVC_LIN_AMT) AS Revenue "
+                "FROM [PROFITABILITY].[CUS_ORD_IVC_FCT] f "
+                "GROUP BY FORMAT(TRY_CONVERT(date, CONVERT(varchar(8), f.CUS_IVC_DT_DMS_KEY), 112), 'yyyy-MM')"
+            )
+            result_bad = validate_sql_detailed(
+                sql_bad, KNOWN_TABLES, "azure_sql", None,
+                TABLE_COLUMNS, {"semantic_plan": plan},
+            )
+            self.assertFalse(result_bad.ok,
+                             "SQL missing date dim JOIN must fail validation")
+
+            # SQL that correctly joins the date dimension passes
+            sql_good = (
+                "SELECT d.MONTH AS Month, SUM(f.SOP_CUS_IVC_LIN_AMT) AS Revenue "
+                "FROM [PROFITABILITY].[CUS_ORD_IVC_FCT] f "
+                "LEFT JOIN [PROFITABILITY].[DT_DMS] d ON f.CUS_IVC_DT_DMS_KEY = d.DT_DMS_KEY "
+                "GROUP BY d.MONTH "
+                "ORDER BY d.MONTH"
+            )
+            result_good = validate_sql_detailed(
+                sql_good, KNOWN_TABLES, "azure_sql", None,
+                TABLE_COLUMNS, {"semantic_plan": plan},
+            )
+            self.assertTrue(result_good.ok,
+                            f"SQL with correct date dim JOIN must pass: {result_good.reason}")
+
+
 if __name__ == "__main__":
     unittest.main()

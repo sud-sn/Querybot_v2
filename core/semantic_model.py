@@ -1017,6 +1017,59 @@ def build_runtime_semantic_plan(
         if len(fields) >= max_fields:
             break
 
+    # ── Date role joins ──────────────────────────────────────────────────────
+    # Score each date role against the question.  A matching date role adds:
+    #   • a field entry (display_required=False) whose column is the dimension
+    #     key — this ensures the JOIN condition is visible in used_columns.
+    #   • a join entry enforced by the validator's required_join_errors check.
+    for table in tables:
+        source_table = str(table.get("qualified_name") or table.get("table") or "")
+        for date_role in table.get("date_roles", []) or []:
+            fact_col = str(date_role.get("fact_column") or "")
+            dim_table = str(date_role.get("dimension_table") or "")
+            dim_key = str(date_role.get("dimension_key") or "")
+            if not fact_col or not dim_table or not dim_key:
+                continue
+            name_dr = str(date_role.get("name") or "")
+            biz_role_dr = str(date_role.get("business_role") or "").replace("_", " ")
+            synonyms_dr = [str(s) for s in date_role.get("synonyms", []) or []]
+            score = _runtime_match_score(q_terms, [name_dr, biz_role_dr, *synonyms_dr])
+            if score <= 0:
+                continue
+
+            # Field: the dimension key must appear in the SQL (satisfied by JOIN ON clause)
+            fk = (dim_table.upper(), dim_key.upper())
+            if fk not in seen_fields:
+                seen_fields.add(fk)
+                fields.append({
+                    "term": name_dr,
+                    "table": dim_table,
+                    "column": dim_key,
+                    "role": "date_dimension",
+                    "display_required": False,
+                    "source_table": source_table,
+                    "source_key_column": fact_col,
+                    "confidence": date_role.get("confidence", 90),
+                    "source": "semantic_model_date_role",
+                })
+
+            # Join
+            cond_key = ((fact_col.upper(), dim_key.upper()),)
+            jk = (source_table.upper(), dim_table.upper(), cond_key)
+            if jk not in seen_joins:
+                seen_joins.add(jk)
+                joins.append({
+                    "from": source_table,
+                    "to": dim_table,
+                    "conditions": [(fact_col, dim_key)],
+                    "source": "semantic_model_date_role",
+                })
+
+            if len(fields) >= max_fields:
+                break
+        if len(fields) >= max_fields:
+            break
+
     if not fields:
         return {"enabled": False, "fields": [], "joins": [], "required_tables": [], "reason": "no matching semantic model fields"}
 
@@ -1028,6 +1081,78 @@ def build_runtime_semantic_plan(
         "required_tables": required_tables,
         "reason": "structured semantic model",
     }
+
+
+def patch_date_role(
+    *,
+    kb_dir: str,
+    fact_table: str,
+    fact_column: str,
+    dimension_table: str = "",
+    dimension_key: str = "",
+    business_role: str = "",
+    status: str = "approved",
+) -> bool:
+    """Patch an approved date role entry in the structured semantic model.
+
+    Called when an admin confirms a date role mapping via the Date Roles admin
+    UI.  Finds the entry by *fact_table* + *fact_column* and updates its
+    ``dimension_table``, ``dimension_key``, ``business_role``, ``status``, and
+    ``confidence``.
+
+    Updates both the top-level ``model.date_roles`` list **and** the per-table
+    entry so both ``build_runtime_semantic_context`` and
+    ``build_runtime_semantic_plan`` see the approved mapping.
+
+    Returns ``True`` if the model was changed and written.
+    """
+    model = load_semantic_model(kb_dir)
+    if not model:
+        return False
+
+    fact_table_u = (fact_table or "").upper()
+    fact_col_u = (fact_column or "").upper()
+    if not fact_table_u or not fact_col_u:
+        return False
+
+    new_conf = 100 if status == "approved" else 80
+    changed = False
+
+    def _patch_dr(dr: dict[str, Any]) -> None:
+        nonlocal changed
+        if dimension_table:
+            dr["dimension_table"] = dimension_table
+        if dimension_key:
+            dr["dimension_key"] = dimension_key
+        if business_role:
+            dr["business_role"] = business_role
+        dr["status"] = status
+        dr["confidence"] = new_conf
+        changed = True
+
+    # Patch top-level date_roles
+    for dr in model.get("date_roles", []) or []:
+        if str(dr.get("fact_table") or "").upper() == fact_table_u and \
+                str(dr.get("fact_column") or "").upper() == fact_col_u:
+            _patch_dr(dr)
+
+    # Patch per-table date_roles
+    for table in model.get("tables", []) or []:
+        t_qname_u = str(table.get("qualified_name") or table.get("table") or "").upper()
+        t_bare_u = str(table.get("table") or "").upper()
+        if fact_table_u not in {t_qname_u, t_bare_u}:
+            continue
+        for dr in table.get("date_roles", []) or []:
+            if str(dr.get("fact_column") or "").upper() == fact_col_u:
+                _patch_dr(dr)
+
+    if not changed:
+        return False
+
+    kb_path = Path(kb_dir)
+    (kb_path / MODEL_JSON).write_text(json.dumps(model, indent=2, sort_keys=True), encoding="utf-8")
+    (kb_path / MODEL_YAML).write_text(_to_yaml(model) + "\n", encoding="utf-8")
+    return True
 
 
 def patch_metric_approval(
