@@ -44,6 +44,7 @@ from core.result_cache import result_cache
 from core.query_router import should_route_to_result_cache, build_duckdb_system_prompt
 from core.duckdb_sql_validator import validate_duckdb_result_sql
 from core.semantic_planner import build_semantic_field_plan
+from core.semantic_model import build_runtime_semantic_context, build_runtime_semantic_plan
 from core.metric_scope import metric_source_tables, resolve_metric_scope
 from core.answer_confidence import build_answer_confidence
 from core.answer_formatter import format_success_confidence_text, format_zero_row_business_response
@@ -136,6 +137,44 @@ def get_client_db(account_id: str) -> dict | None:
         return None
 
     return store.get_db_config(db_config_id)
+
+
+def _merge_semantic_plans(*plans: dict | None) -> dict:
+    fields: list[dict] = []
+    joins: list[dict] = []
+    seen_fields: set[tuple[str, str]] = set()
+    seen_joins: set[tuple[str, str, tuple[tuple[str, str], ...]]] = set()
+    reasons: list[str] = []
+    for plan in plans:
+        if not plan or not plan.get("enabled"):
+            continue
+        if plan.get("reason"):
+            reasons.append(str(plan.get("reason")))
+        for field in plan.get("fields") or []:
+            key = ((field.get("table") or "").upper(), (field.get("column") or "").upper())
+            if not key[0] or not key[1] or key in seen_fields:
+                continue
+            seen_fields.add(key)
+            fields.append(field)
+        for join in plan.get("joins") or []:
+            conds = tuple(
+                (str(left).upper(), str(right).upper())
+                for left, right in (join.get("conditions") or [])
+            )
+            key = ((join.get("from") or "").upper(), (join.get("to") or "").upper(), conds)
+            if not key[0] or not key[1] or key in seen_joins:
+                continue
+            seen_joins.add(key)
+            joins.append(join)
+    if not fields:
+        return {"enabled": False, "fields": [], "joins": [], "required_tables": [], "reason": "no semantic fields"}
+    return {
+        "enabled": True,
+        "fields": fields,
+        "joins": joins,
+        "required_tables": sorted({f.get("table") for f in fields if f.get("table")}),
+        "reason": " + ".join(dict.fromkeys(reasons)) or "merged semantic plan",
+    }
 
 
 def check_query_limit(account_id: str) -> tuple[bool, int, int]:
@@ -882,6 +921,22 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
         if part
     ]
     context_with_terms = "\n\n".join(context_parts)
+    try:
+        _semantic_model_context = build_runtime_semantic_context(
+            state.get("kb_dir", ""),
+            question=question,
+            selected_schema=schema_hint,
+        )
+        if _semantic_model_context:
+            context_with_terms = _semantic_model_context + "\n\n" + context_with_terms
+            _trace_step(
+                trace_id,
+                "semantic_model_context",
+                output_summary={"enabled": True, "schema": schema_hint or "ALL"},
+            )
+    except Exception as _sm_exc:
+        log.debug("Structured semantic model context skipped: %s", _sm_exc)
+
     # Multi-turn memory: inject conversation history for web portal sessions
     _conv_history = []
     _history_fn = getattr(adapter, "get_history", None)
@@ -1004,6 +1059,31 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
     except Exception as _sp_exc:
         _semantic_plan = {}
         log.debug("Semantic field planning skipped: %s", _sp_exc)
+
+    _semantic_model_plan = {}
+    try:
+        _semantic_model_plan = build_runtime_semantic_plan(
+            state.get("kb_dir", ""),
+            question=question,
+            selected_schema=schema_hint,
+        )
+        if _semantic_model_plan.get("enabled"):
+            _trace_step(
+                trace_id,
+                "semantic_model_plan",
+                output_summary={
+                    "fields": [
+                        f"{f.get('term')}={f.get('table')}.{f.get('column')}"
+                        for f in _semantic_model_plan.get("fields", [])
+                    ],
+                    "joins": len(_semantic_model_plan.get("joins") or []),
+                },
+            )
+    except Exception as _smp_exc:
+        _semantic_model_plan = {}
+        log.debug("Structured semantic model planning skipped: %s", _smp_exc)
+
+    _semantic_plan = _merge_semantic_plans(_semantic_plan, _semantic_model_plan)
 
     # Build entity→schema lookup from the (possibly schema-filtered) full graph.
     # Metrics have a base_entity field; this map lets metric_source_schemas() use
