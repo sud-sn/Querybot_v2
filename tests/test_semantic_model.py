@@ -11,6 +11,8 @@ from core.semantic_model import (
     build_runtime_semantic_plan,
     load_semantic_model,
     patch_field_approval,
+    patch_metric_approval,
+    patch_relationship,
     write_semantic_model,
 )
 from core.validator import validate_sql_detailed
@@ -282,6 +284,112 @@ class SemanticModelTests(unittest.TestCase):
             )
 
             self.assertFalse(plan["enabled"])
+
+    # ── S2-1: patch_metric_approval ───────────────────────────────────────────
+
+    def test_metric_approval_patches_model_measures(self):
+        """patch_metric_approval sets status=approved and expression on matching measure."""
+        with _tmp_dir() as tmp:
+            root = Path(tmp)
+            schema_dir = root / "schema"
+            kb_dir = root / "kb"
+            schema_dir.mkdir()
+            _write_schema(schema_dir)
+            write_semantic_model(schema_dir=str(schema_dir), kb_dir=str(kb_dir))
+
+            changed = patch_metric_approval(
+                kb_dir=str(kb_dir),
+                table_name="CUS_ORD_IVC_FCT",
+                schema_name="PROFITABILITY",
+                metric_name="Total Invoice Revenue",
+                column_name="SOP_CUS_IVC_LIN_AMT",
+                sql_template="SUM(SOP_CUS_IVC_LIN_AMT)",
+                is_active=True,
+            )
+            self.assertTrue(changed, "patch_metric_approval returned False")
+
+            model = load_semantic_model(str(kb_dir))
+            fact = next(t for t in model["tables"] if t["table"] == "CUS_ORD_IVC_FCT")
+            measure = next(m for m in fact["measures"] if m["column"] == "SOP_CUS_IVC_LIN_AMT")
+            self.assertEqual(measure["status"], "approved")
+            self.assertEqual(measure["confidence"], 100)
+            self.assertEqual(measure["expression"], "SUM(SOP_CUS_IVC_LIN_AMT)")
+
+    def test_metric_deprecation_sets_deprecated_status(self):
+        """is_active=False marks the measure as deprecated (S2-3 coverage)."""
+        with _tmp_dir() as tmp:
+            root = Path(tmp)
+            schema_dir = root / "schema"
+            kb_dir = root / "kb"
+            schema_dir.mkdir()
+            _write_schema(schema_dir)
+            write_semantic_model(schema_dir=str(schema_dir), kb_dir=str(kb_dir))
+
+            # Approve first
+            patch_metric_approval(
+                kb_dir=str(kb_dir),
+                table_name="CUS_ORD_IVC_FCT",
+                schema_name="PROFITABILITY",
+                metric_name="Revenue",
+                column_name="SOP_CUS_IVC_LIN_AMT",
+                sql_template="SUM(SOP_CUS_IVC_LIN_AMT)",
+                is_active=True,
+            )
+            # Deprecate via is_active=False
+            changed = patch_metric_approval(
+                kb_dir=str(kb_dir),
+                table_name="CUS_ORD_IVC_FCT",
+                schema_name="PROFITABILITY",
+                metric_name="Revenue",
+                column_name="SOP_CUS_IVC_LIN_AMT",
+                sql_template="SUM(SOP_CUS_IVC_LIN_AMT)",
+                is_active=False,
+            )
+            self.assertTrue(changed)
+            model = load_semantic_model(str(kb_dir))
+            fact = next(t for t in model["tables"] if t["table"] == "CUS_ORD_IVC_FCT")
+            measure = next(m for m in fact["measures"] if m["column"] == "SOP_CUS_IVC_LIN_AMT")
+            self.assertEqual(measure["status"], "deprecated",
+                             "Inactive metric must be marked deprecated in the semantic model")
+
+    # ── S2-2: patch_relationship ──────────────────────────────────────────────
+
+    def test_relationship_patch_updates_join_type_and_display_column(self):
+        """patch_relationship updates join_type, display_column, and status to approved."""
+        with _tmp_dir() as tmp:
+            root = Path(tmp)
+            schema_dir = root / "schema"
+            kb_dir = root / "kb"
+            schema_dir.mkdir()
+            _write_schema(schema_dir)
+            write_semantic_model(schema_dir=str(schema_dir), kb_dir=str(kb_dir))
+
+            # The auto-generated relationship for WHS_DMS should be LEFT.
+            # Admin confirms it as INNER and sets the display column.
+            changed = patch_relationship(
+                kb_dir=str(kb_dir),
+                from_table="PROFITABILITY.CUS_ORD_IVC_FCT",
+                to_table="PROFITABILITY.WHS_DMS",
+                from_column="WHS_DMS_KEY",
+                to_column="WHS_DMS_KEY",
+                join_type="INNER",
+                display_column="WHS_DSC",
+                status="approved",
+            )
+            self.assertTrue(changed, "patch_relationship returned False")
+
+            model = load_semantic_model(str(kb_dir))
+            rel = next(
+                r for r in model["relationships"]
+                if r.get("from_table") == "PROFITABILITY.CUS_ORD_IVC_FCT"
+                and r.get("to_table") == "PROFITABILITY.WHS_DMS"
+            )
+            self.assertEqual(rel["join_type"], "INNER",
+                             "join_type not updated by patch_relationship")
+            self.assertEqual(rel["status"], "approved")
+            self.assertEqual(rel["confidence"], 100)
+            self.assertEqual(rel["display_column"], "WHS_DSC",
+                             "display_column not updated by patch_relationship")
 
 
 if __name__ == "__main__":
