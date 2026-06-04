@@ -9,6 +9,7 @@ fields, display preferences, date roles, filters, and relationship roles.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,17 @@ from typing import Any
 from core.date_roles import detect_date_role, find_date_dimension_key, is_date_dimension_table
 from core.naming_convention import match_column_suffix, match_entity_prefix, match_table_suffix
 from core.schema_enrichment import EnrichedColumn, enrich_columns
+
+log = logging.getLogger(__name__)
+
+# Keys copied from an approved field/dimension/measure/date-role onto the freshly
+# generated entry during a KB rebuild so admin approvals are never lost.
+_APPROVED_FIELD_KEYS = frozenset(
+    {"approved_meaning", "approved_use_case", "status", "confidence"}
+)
+_APPROVED_DIMENSION_KEYS = frozenset({"status", "confidence", "approved_meaning"})
+_APPROVED_MEASURE_KEYS = frozenset({"status", "confidence", "expression"})
+_APPROVED_DATE_ROLE_KEYS = frozenset({"status", "confidence"})
 
 
 MODEL_JSON = "_semantic_model.json"
@@ -493,9 +505,42 @@ def write_semantic_model(
     model = build_semantic_model(schema_dir, business_desc=business_desc, account_id=account_id)
     kb_path = Path(kb_dir)
     kb_path.mkdir(parents=True, exist_ok=True)
+
+    # Preserve admin-approved entries that exist in the current model before
+    # overwriting with the freshly generated one.  This ensures a KB rebuild
+    # never silently discards field approvals, dimension approvals, or approved
+    # metric expressions an admin has saved via the Semantic Layer UI.
+    old_model = load_semantic_model(kb_dir)
+    if old_model:
+        model, drift = preserve_approvals(old_model, model)
+        _log_drift(drift)
+
     (kb_path / MODEL_JSON).write_text(json.dumps(model, indent=2, sort_keys=True), encoding="utf-8")
     (kb_path / MODEL_YAML).write_text(_to_yaml(model) + "\n", encoding="utf-8")
     return model
+
+
+def _log_drift(drift: dict[str, Any]) -> None:
+    removed_tables = drift.get("removed_tables") or []
+    removed_fields = drift.get("removed_approved_fields") or []
+    changed_types  = drift.get("type_changed_fields") or []
+    if removed_tables:
+        log.warning(
+            "Schema drift: %d table(s) removed from semantic model: %s",
+            len(removed_tables), removed_tables,
+        )
+    if removed_fields:
+        log.warning(
+            "Schema drift: %d approved field(s) no longer in schema (column dropped): %s",
+            len(removed_fields),
+            [f"{r['table']}.{r['column']}" for r in removed_fields],
+        )
+    if changed_types:
+        log.warning(
+            "Schema drift: %d field(s) changed data type: %s",
+            len(changed_types),
+            [f"{c['table']}.{c['column']} {c['old_type']}->{c['new_type']}" for c in changed_types],
+        )
 
 
 def load_semantic_model(kb_dir: str) -> dict[str, Any]:
@@ -503,6 +548,196 @@ def load_semantic_model(kb_dir: str) -> dict[str, Any]:
     if not path.exists():
         return {}
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def preserve_approvals(
+    old_model: dict[str, Any],
+    new_model: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Overlay admin-approved entries from *old_model* into *new_model*.
+
+    Called by ``write_semantic_model`` before persisting, so a KB rebuild never
+    silently discards approvals an admin has made.
+
+    Returns ``(merged_model, drift_report)`` where *drift_report* contains:
+
+    * ``removed_tables``         – tables present in old but absent in new schema
+    * ``removed_approved_fields``– approved fields whose column was dropped from the schema
+    * ``type_changed_fields``    – fields where the SQL data-type changed
+    """
+    drift: dict[str, Any] = {
+        "removed_tables": [],
+        "removed_approved_fields": [],
+        "type_changed_fields": [],
+    }
+
+    # Build a fast lookup for new tables keyed by qualified_name / fqn / bare table
+    new_lookup: dict[str, dict[str, Any]] = {}
+    for t in new_model.get("tables") or []:
+        for key in (
+            str(t.get("qualified_name") or "").upper(),
+            str(t.get("fqn") or "").upper(),
+            str(t.get("table") or "").upper(),
+        ):
+            if key:
+                new_lookup[key] = t
+
+    # ── Detect removed tables ────────────────────────────────────────────────
+    for old_t in old_model.get("tables") or []:
+        qname = str(old_t.get("qualified_name") or old_t.get("table") or "").upper()
+        if qname and qname not in new_lookup:
+            drift["removed_tables"].append(
+                old_t.get("qualified_name") or old_t.get("table") or old_t.get("fqn", "")
+            )
+
+    # ── Overlay approvals table by table ────────────────────────────────────
+    for old_t in old_model.get("tables") or []:
+        qname = str(old_t.get("qualified_name") or old_t.get("table") or "").upper()
+        new_t = new_lookup.get(qname)
+        if not new_t:
+            continue  # table removed — already recorded in drift
+
+        # Fields
+        old_by_col: dict[str, dict[str, Any]] = {
+            str(f.get("column") or "").upper(): f
+            for f in (old_t.get("fields") or [])
+        }
+        new_cols: set[str] = set()
+        for new_f in new_t.get("fields") or []:
+            col_u = str(new_f.get("column") or "").upper()
+            new_cols.add(col_u)
+            old_f = old_by_col.get(col_u)
+            if not old_f or old_f.get("status") != "approved":
+                continue
+            # Track data-type changes on approved fields
+            if (
+                new_f.get("data_type")
+                and old_f.get("data_type")
+                and new_f["data_type"] != old_f["data_type"]
+            ):
+                drift["type_changed_fields"].append({
+                    "table": new_t.get("qualified_name"),
+                    "column": new_f["column"],
+                    "old_type": old_f["data_type"],
+                    "new_type": new_f["data_type"],
+                })
+            for k in _APPROVED_FIELD_KEYS:
+                if k in old_f:
+                    new_f[k] = old_f[k]
+
+        # Detect approved columns that no longer exist in the new schema
+        for col_u, old_f in old_by_col.items():
+            if old_f.get("status") == "approved" and col_u not in new_cols:
+                drift["removed_approved_fields"].append({
+                    "table": old_t.get("qualified_name"),
+                    "column": old_f.get("column"),
+                    "approved_meaning": old_f.get("approved_meaning", ""),
+                })
+
+        # Dimensions  (keyed by source_key + display_column pair)
+        old_dims: dict[str, dict[str, Any]] = {
+            str(d.get("source_key") or "").upper()
+            + "|"
+            + str(d.get("display_column") or "").upper(): d
+            for d in (old_t.get("dimensions") or [])
+        }
+        for new_d in new_t.get("dimensions") or []:
+            key = (
+                str(new_d.get("source_key") or "").upper()
+                + "|"
+                + str(new_d.get("display_column") or "").upper()
+            )
+            old_d = old_dims.get(key)
+            if not old_d or old_d.get("status") != "approved":
+                continue
+            for k in _APPROVED_DIMENSION_KEYS:
+                if k in old_d:
+                    new_d[k] = old_d[k]
+
+        # Measures  (keyed by column name)
+        old_measures: dict[str, dict[str, Any]] = {
+            str(m.get("column") or "").upper(): m
+            for m in (old_t.get("measures") or [])
+        }
+        for new_m in new_t.get("measures") or []:
+            col_u = str(new_m.get("column") or "").upper()
+            old_m = old_measures.get(col_u)
+            if not old_m or old_m.get("status") != "approved":
+                continue
+            for k in _APPROVED_MEASURE_KEYS:
+                if k in old_m:
+                    new_m[k] = old_m[k]
+
+        # Date roles  (keyed by fact_column)
+        old_date_roles: dict[str, dict[str, Any]] = {
+            str(r.get("fact_column") or "").upper(): r
+            for r in (old_t.get("date_roles") or [])
+        }
+        for new_r in new_t.get("date_roles") or []:
+            col_u = str(new_r.get("fact_column") or "").upper()
+            old_r = old_date_roles.get(col_u)
+            if not old_r or old_r.get("status") != "approved":
+                continue
+            for k in _APPROVED_DATE_ROLE_KEYS:
+                if k in old_r:
+                    new_r[k] = old_r[k]
+
+    # ── Top-level relationships  (keyed by relationship id) ─────────────────
+    old_rels: dict[str, dict[str, Any]] = {
+        str(r.get("id") or "").upper(): r
+        for r in (old_model.get("relationships") or [])
+    }
+    for new_r in new_model.get("relationships") or []:
+        rel_id = str(new_r.get("id") or "").upper()
+        old_r = old_rels.get(rel_id)
+        if not old_r or old_r.get("status") != "approved":
+            continue
+        for k in ("status", "confidence", "join_type", "display_column", "code_column"):
+            if k in old_r:
+                new_r[k] = old_r[k]
+
+    return new_model, drift
+
+
+def build_field_plan_repair_note(semantic_plan: dict[str, Any]) -> str:
+    """Return a specific LLM repair instruction for a ``field_plan_mismatch`` error.
+
+    Unlike the generic "use the semantic plan" message, this injects the exact
+    display field name, dimension table, and join key so the LLM knows precisely
+    what to change without having to search the prompt context.
+    """
+    required = [
+        f for f in (semantic_plan.get("fields") or [])
+        if f.get("display_required") and f.get("table") and f.get("column")
+    ]
+    if not required:
+        return (
+            "\nSEMANTIC FIELD PLAN REPAIR RULE:\n"
+            "- The SQL ignored one or more deterministic field-source mappings.\n"
+            "- Use the exact table.column pairs and required joins from the Semantic field-source plan.\n"
+            "- Do not move mapped fields to another table and do not remove underscores from column names.\n"
+        )
+
+    field_lines = "\n".join(
+        "  - '{term}': SELECT {dim_table}.{display_col}"
+        "  —  requires LEFT JOIN {dim_table} ON {src_table}.{join_key} = {dim_table}.{join_key}".format(
+            term=f.get("term") or f.get("column", ""),
+            dim_table=f.get("table", ""),
+            display_col=f.get("column", ""),
+            src_table=f.get("source_table", ""),
+            join_key=f.get("source_key_column", ""),
+        )
+        for f in required
+    )
+
+    return (
+        "\nSEMANTIC DISPLAY FIELD REPAIR RULE:\n"
+        "- The SQL returned a raw _DMS_KEY column as a business label instead of the required display field.\n"
+        "- Fix ALL of the following — the _DMS_KEY must ONLY appear in the JOIN ON clause:\n"
+        f"{field_lines}\n"
+        "- Never use a _DMS_KEY in SELECT or GROUP BY as a label. Always JOIN to the dimension table and SELECT its display column.\n"
+        "- Keep all other query structure (date filters, WHERE clauses, metrics) unchanged.\n"
+    )
 
 
 def _terms_for_text(text: str) -> set[str]:
