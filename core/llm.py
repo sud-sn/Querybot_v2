@@ -643,16 +643,17 @@ def build_sql_system_prompt(
     return base
 
 
-def build_kb_system_prompt(erp_hints: str = "") -> str:
+def build_kb_system_prompt(erp_hints: str = "", naming_hints: str = "") -> str:
     """
     Stage 1 KB generation system prompt.
     DataPilot-style format. Generic — works for any database domain.
     Requires distinct values to be used. Flags ambiguous columns.
 
-    erp_hints: optional pre-formatted hint block from core.erp_column_dict.
-    When provided it is prepended so the LLM writes correct meanings and
-    Business Synonyms for cryptic ERP short-code columns instead of
-    marking them [NEEDS CONTEXT].
+    erp_hints:    optional pre-formatted hint block from core.erp_column_dict.
+                  Handles specific cryptic ERP short-code column names (ORNO, DIVI…).
+    naming_hints: optional pre-formatted hint block from core.naming_convention.
+                  Handles structural suffix/prefix patterns (_DMS_KEY, _AMT, _PCT,
+                  AZ_ audit columns, table type). Complements erp_hints.
     """
     erp_block = ""
     if erp_hints:
@@ -664,8 +665,26 @@ def build_kb_system_prompt(erp_hints: str = "") -> str:
             f"{erp_hints}\n\n"
         )
 
+    naming_block = ""
+    if naming_hints:
+        naming_block = (
+            "NAMING CONVENTION REFERENCE — MANDATORY:\n"
+            "The following rules describe the structural role of columns in this table based on\n"
+            "their suffix/prefix patterns. Apply these rules in EVERY section of the KB:\n"
+            "  - ## Columns: document the role, aggregation rule, and SQL guidance for each column.\n"
+            "  - ## Key Metrics: only list _AMT/_QTY/_CST/_PFT/_REV columns as additive measures.\n"
+            "    Never list _PCT/_RATE/_RATIO columns as directly-summable metrics.\n"
+            "  - ## Business Synonyms: map _DSC/_NM columns as the display label.\n"
+            "    Map _DMS_KEY columns as 'surrogate key — always JOIN, never display'.\n"
+            "  - ## Always Exclude: list AZ_/ETL_/DW_ columns as 'never use in business queries'.\n"
+            "  - ## Common Query Patterns: show the JOIN pattern for every _DMS_KEY column;\n"
+            "    show recalculation (not SUM) for every _PCT/_RATE column.\n\n"
+            f"{naming_hints}\n\n"
+        )
+
     return (
         f"{erp_block}"
+        f"{naming_block}"
         "You are a senior data analyst writing a Knowledge Base document for an AI SQL generator. "
         "The document will be used at query time to produce accurate SQL — "
         "write it for the SQL generator, not for a human reader.\n\n"
