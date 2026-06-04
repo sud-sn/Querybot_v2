@@ -247,6 +247,7 @@ async def build_kb(
     )
     from core.llm_audit import llm_audit_component
     from core.erp_column_dict import get_erp_hints
+    from core.naming_convention import get_naming_hints, build_naming_convention_doc
     from core.schema_enrichment import (
         format_column_reference_for_vocab,
         format_schema_intelligence,
@@ -255,6 +256,13 @@ async def build_kb(
     schema_path = Path(schema_dir)
     kb_path     = Path(kb_dir)
     kb_path.mkdir(parents=True, exist_ok=True)
+
+    # Write the naming convention reference as a global KB doc so it is
+    # retrieved at query time for any question — structural grammar rules
+    # apply across all tables.
+    naming_conv_doc = build_naming_convention_doc()
+    (kb_path / "_naming_convention.md").write_text(naming_conv_doc, encoding="utf-8")
+    log.info("Naming convention KB doc written (%d chars)", len(naming_conv_doc))
 
     kw       = extra_kwargs or {}
     md_files = sorted(f for f in schema_path.glob("*.md")
@@ -373,9 +381,14 @@ async def build_kb(
         # Build a table-specific system prompt that includes ERP short-code hints
         # when the table contains cryptic M3/JDE column names.
         erp_hints = get_erp_hints(table_cols)
-        system = build_kb_system_prompt(erp_hints=erp_hints)
+        # Naming convention hints cover structural patterns (_DMS_KEY, _AMT, _PCT,
+        # AZ_ audit prefixes, table type from suffix) — complementary to ERP hints.
+        naming_hints = get_naming_hints(table_cols, table_name)
+        system = build_kb_system_prompt(erp_hints=erp_hints, naming_hints=naming_hints)
         if erp_hints:
             log.info("ERP hints injected for %s (%d matched codes)", table_name, erp_hints.count("\n") + 1)
+        if naming_hints:
+            log.info("Naming convention hints injected for %s", table_name)
         schema_intelligence = format_schema_intelligence(table_name, table_cols, schema_md=schema_md)
 
         # ── Stage 1: DataPilot-style KB document ──────────────────────────────
