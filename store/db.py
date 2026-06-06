@@ -1033,6 +1033,35 @@ def _post_migration_indexes(conn: sqlite3.Connection) -> None:
         except Exception as e:
             log.debug("Post-migration index skipped: %s", e)
 
+    # v31: learning_candidate idempotency — one row per (account, question).
+    # First deduplicate any existing rows (keep most recent per group), then
+    # create the partial unique index.  Both steps are wrapped individually so
+    # a transient error on one does not block the other.
+    try:
+        conn.execute(
+            """
+            DELETE FROM learning_candidate
+            WHERE origin_question_id != ''
+            AND id NOT IN (
+                SELECT MAX(id)
+                FROM   learning_candidate
+                WHERE  origin_question_id != ''
+                GROUP  BY account_id, origin_question_id
+            )
+            """
+        )
+    except Exception as e:
+        log.debug("learning_candidate dedup skipped: %s", e)
+
+    try:
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_learning_candidate_origin_unique "
+            "ON learning_candidate(account_id, origin_question_id) "
+            "WHERE origin_question_id != ''"
+        )
+    except Exception as e:
+        log.debug("learning_candidate unique index skipped: %s", e)
+
 
 def _ensure_metric_version_table(conn: sqlite3.Connection) -> None:
     """

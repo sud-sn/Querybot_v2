@@ -282,9 +282,13 @@ class TestGetCandidate(_LearningStoreBase):
 
 class TestListCandidates(_LearningStoreBase):
 
+    _seq = 0  # class-level counter for unique origin_question_id per call
+
     def _make(self, score, status_override=None):
         from store.learning_store import create_candidate, update_candidate_status
-        c = create_candidate("q", "test_acct", "Q", "SQL", score, {})
+        TestListCandidates._seq += 1
+        qid = f"q_{TestListCandidates._seq}"
+        c = create_candidate(qid, "test_acct", "Q", "SQL", score, {})
         if status_override:
             update_candidate_status(c["candidate_id"], status_override)
         return c

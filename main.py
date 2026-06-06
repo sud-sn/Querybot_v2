@@ -835,7 +835,9 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
         # ── Step 2: Retrieve validated SQL examples — few-shot grounding ─────
         # Examples now live in Qdrant alongside KB docs — no chroma_dir needed
         examples = retrieve_similar_examples(
-            question, account_id, n=3, allowed_tables=rag_filter,
+            question, account_id, n=3,
+            allowed_tables=rag_filter,
+            schema_scope=schema_hint,
         )
         if examples:
             context = format_examples_for_prompt(examples) + "\n\n---\n\n" + context
