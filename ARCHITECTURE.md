@@ -3,6 +3,8 @@
 **Last updated:** 2026-06-07  
 **Coverage:** All layers from gateway to persistence, including every edge case and the full learning loop sprint.
 
+> **Visual version:** Open **[ARCHITECTURE_VISUAL.html](ARCHITECTURE_VISUAL.html)** in any browser for interactive Mermaid flow diagrams of every section below.
+>
 > **How to use this doc:**  
 > Each section names the exact file(s) responsible. When a bug is reported, find the matching section, read the edge-cases table, then open only the files listed. No codebase scan needed.
 

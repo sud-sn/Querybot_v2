@@ -11,7 +11,8 @@
 
 | I want to... | Go to |
 |---|---|
-| Understand the full technical flow | [ARCHITECTURE.md](ARCHITECTURE.md) |
+| **See the interactive architecture diagrams** | **[ARCHITECTURE_VISUAL.html](ARCHITECTURE_VISUAL.html)** — open in any browser |
+| Understand the full technical flow (text) | [ARCHITECTURE.md](ARCHITECTURE.md) |
 | Onboard a new tenant | [Tenant Setup](#tenant-setup) |
 | Enable the learning loop | [Self-Learning Loop](#self-learning-loop) |
 | Configure a metric formula | [Metric Registry](#metric-registry) |
