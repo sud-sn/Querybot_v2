@@ -148,6 +148,8 @@ class WebAdapter(PlatformAdapter):
         rag_context: str = "",
         question_id: str | None = None,
         column_formats: dict | None = None,
+        data_brief: dict | None = None,
+        semantic_plan: dict | None = None,
     ) -> None:
         """Cache the last query result for insight follow-ups and Tier-2 DuckDB queries."""
         self.last_result = {
@@ -157,6 +159,10 @@ class WebAdapter(PlatformAdapter):
             "db_cfg":         db_cfg,
             "rag_context":    rag_context,
             "column_formats": column_formats or {},
+            # Stored so compare_prior and other chip actions can read them
+            # without recomputing on the follow-up round-trip.
+            "data_brief":     data_brief or {},
+            "semantic_plan":  semantic_plan or {},
         }
         # Persist the parent question_id so drilldowns can reference it.
         if question_id:
