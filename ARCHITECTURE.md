@@ -1,9 +1,11 @@
 # QueryBot v2 — System Architecture
 
 **Last updated:** 2026-06-07  
-**Coverage:** All layers from gateway to persistence, including every edge case and the full learning loop sprint.
+**Coverage:** All layers from gateway to persistence, including every edge case and the full learning loop sprint (Days 1-10).
 
 > **Visual version:** Open **[ARCHITECTURE_VISUAL.html](ARCHITECTURE_VISUAL.html)** in any browser for interactive Mermaid flow diagrams of every section below.
+>
+> **Staged rollout:** See **[ROLLOUT.md](ROLLOUT.md)** for the step-by-step procedure to enable each feature flag, verification checklists, monitoring metrics, and rollback instructions.
 >
 > **How to use this doc:**  
 > Each section names the exact file(s) responsible. When a bug is reported, find the matching section, read the edge-cases table, then open only the files listed. No codebase scan needed.
@@ -670,6 +672,8 @@ When an unknown Zoom user messages the bot, a registration token is created and 
 ## 14. Feature Flags (per-client toggles)
 
 All flags live on the `client` table. Set in Admin → Client → Edit.
+
+> **Rollout guide:** See **[ROLLOUT.md](ROLLOUT.md)** for the recommended order to enable these flags, verification steps, monitoring metrics, and rollback instructions.
 
 | Flag | Column | Effect when = 1 |
 |---|---|---|
