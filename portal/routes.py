@@ -1154,6 +1154,78 @@ async def portal_export_csv(request: Request, trace_id: int | None = None):
     )
 
 
+# =============================================================================
+# Answer feedback — learning loop
+# =============================================================================
+
+@router.post("/api/answers/{question_id}/feedback")
+async def portal_answer_feedback(request: Request, question_id: str):
+    """
+    Save a thumbs-up / thumbs-down on a specific answer.
+
+    Body (JSON):
+      rating       : 1 (up) or -1 (down)  [required]
+      reason_code  : one of the VALID_REASON_CODES constants [optional]
+      comment      : free text             [optional]
+      question_text: echo of the question  [optional, stored for admin queue]
+      sql_text     : echo of the SQL       [optional, stored for admin queue]
+
+    Only active when enable_feedback_collection = 1 for the tenant.
+    """
+    user = _get_portal_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    client = store.get_client(user["account_id"]) or {}
+    if not client.get("enable_feedback_collection"):
+        raise HTTPException(
+            status_code=403,
+            detail="Feedback collection is not enabled for this workspace.",
+        )
+
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    rating = body.get("rating")
+    if rating not in (1, -1):
+        raise HTTPException(status_code=422, detail="rating must be 1 or -1")
+
+    reason_code   = str(body.get("reason_code") or "other")
+    comment       = str(body.get("comment") or "")[:1000]
+    question_text = str(body.get("question_text") or "")[:500]
+    sql_text      = str(body.get("sql_text") or "")[:4000]
+
+    from store.learning_store import save_feedback, VALID_REASON_CODES
+    if reason_code not in VALID_REASON_CODES:
+        reason_code = "other"
+
+    try:
+        save_feedback(
+            question_id   = question_id,
+            user_id       = int(user["id"]),
+            account_id    = user["account_id"],
+            rating        = rating,
+            reason_code   = reason_code,
+            comment       = comment,
+            question_text = question_text,
+            sql_text      = sql_text,
+            schema_scope  = user.get("schema_scope") or "",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except Exception as exc:
+        log.error("portal_answer_feedback: %s", exc)
+        raise HTTPException(status_code=500, detail="Could not save feedback")
+
+    message = (
+        "Thanks — glad that was helpful!" if rating == 1
+        else "Thanks for the correction — we'll use it to improve."
+    )
+    return JSONResponse({"ok": True, "message": message, "rating": rating})
+
+
 @router.post("/kb/feedback")
 async def portal_kb_feedback(
     request: Request,
