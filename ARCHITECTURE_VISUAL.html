@@ -1,0 +1,1055 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>QueryBot v2 — Architecture</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    /* ── Reset & Base ───────────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --navy:      #1e3a5f;
+      --blue:      #2563eb;
+      --blue-lt:   #dbeafe;
+      --green:     #059669;
+      --green-lt:  #d1fae5;
+      --amber:     #d97706;
+      --amber-lt:  #fef3c7;
+      --red:       #dc2626;
+      --red-lt:    #fee2e2;
+      --purple:    #7c3aed;
+      --purple-lt: #ede9fe;
+      --teal:      #0891b2;
+      --teal-lt:   #cffafe;
+      --bg:        #f1f5f9;
+      --surface:   #ffffff;
+      --border:    #e2e8f0;
+      --text:      #1e293b;
+      --text-muted:#64748b;
+      --sidebar-w: 260px;
+      --header-h:  64px;
+    }
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      min-height: 100vh;
+    }
+
+    /* ── Header ─────────────────────────────────────────────────────────────── */
+    header {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+      height: var(--header-h);
+      background: var(--navy);
+      display: flex; align-items: center; padding: 0 2rem;
+      box-shadow: 0 2px 8px rgba(0,0,0,.3);
+    }
+    .header-logo {
+      font-size: 1.25rem; font-weight: 700; color: #fff;
+      display: flex; align-items: center; gap: .6rem;
+    }
+    .header-logo .dot { width: 10px; height: 10px; border-radius: 50%; background: #38bdf8; display: inline-block; }
+    .header-badge {
+      margin-left: auto; background: rgba(255,255,255,.12);
+      color: #94a3b8; font-size: .72rem; padding: .2rem .7rem;
+      border-radius: 20px; font-weight: 500; letter-spacing: .03em;
+    }
+    .header-updated {
+      color: #64748b; font-size: .72rem; margin-left: 1rem;
+    }
+
+    /* ── Sidebar ─────────────────────────────────────────────────────────────── */
+    nav {
+      position: fixed; top: var(--header-h); left: 0; bottom: 0;
+      width: var(--sidebar-w); overflow-y: auto;
+      background: var(--surface); border-right: 1px solid var(--border);
+      padding: 1.5rem 0;
+      z-index: 90;
+    }
+    nav .nav-section { padding: .3rem 1.25rem; font-size: .7rem; font-weight: 700;
+      text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted);
+      margin-top: 1rem; }
+    nav a {
+      display: block; padding: .45rem 1.5rem;
+      font-size: .82rem; color: var(--text-muted);
+      text-decoration: none; border-left: 3px solid transparent;
+      transition: all .15s;
+    }
+    nav a:hover, nav a.active {
+      color: var(--blue); border-left-color: var(--blue);
+      background: var(--blue-lt);
+    }
+
+    /* ── Main ────────────────────────────────────────────────────────────────── */
+    main {
+      margin-left: var(--sidebar-w);
+      margin-top: var(--header-h);
+      padding: 2.5rem 3rem;
+      flex: 1; max-width: calc(100vw - var(--sidebar-w));
+    }
+
+    /* ── Section heading ─────────────────────────────────────────────────────── */
+    .section-head {
+      display: flex; align-items: center; gap: .75rem;
+      margin: 3rem 0 1.5rem;
+      padding-bottom: .75rem;
+      border-bottom: 2px solid var(--border);
+    }
+    .section-head:first-child { margin-top: 0; }
+    .section-icon {
+      width: 36px; height: 36px; border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1.1rem; flex-shrink: 0;
+    }
+    .section-head h2 { font-size: 1.35rem; font-weight: 700; color: var(--navy); }
+    .section-head p { font-size: .85rem; color: var(--text-muted); margin-top: .15rem; }
+
+    /* ── Card ─────────────────────────────────────────────────────────────────��� */
+    .card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 12px; padding: 1.5rem 2rem; margin-bottom: 1.5rem;
+      box-shadow: 0 1px 3px rgba(0,0,0,.06);
+    }
+    .card h3 { font-size: 1rem; font-weight: 600; margin-bottom: 1rem; color: var(--navy); }
+    .card-row { display: grid; gap: 1.25rem; margin-bottom: 1.5rem; }
+    .card-row.col2 { grid-template-columns: 1fr 1fr; }
+    .card-row.col3 { grid-template-columns: 1fr 1fr 1fr; }
+    .card-row.col4 { grid-template-columns: repeat(4, 1fr); }
+
+    /* ── Mini cards (layer blocks) ───────────────────────────────────────────── */
+    .layer {
+      border-radius: 10px; padding: 1rem 1.25rem;
+      border: 1px solid transparent;
+    }
+    .layer .layer-title { font-size: .8rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; margin-bottom: .35rem; }
+    .layer .layer-file  { font-family: 'JetBrains Mono', monospace; font-size: .72rem; color: var(--text-muted); margin-bottom: .5rem; }
+    .layer .layer-desc  { font-size: .8rem; color: var(--text-muted); line-height: 1.5; }
+
+    .layer.blue   { background: var(--blue-lt);   border-color: #93c5fd; }
+    .layer.green  { background: var(--green-lt);  border-color: #6ee7b7; }
+    .layer.amber  { background: var(--amber-lt);  border-color: #fcd34d; }
+    .layer.red    { background: var(--red-lt);    border-color: #fca5a5; }
+    .layer.purple { background: var(--purple-lt); border-color: #c4b5fd; }
+    .layer.teal   { background: var(--teal-lt);   border-color: #67e8f9; }
+    .layer.navy   { background: #e0e7ff;           border-color: #a5b4fc; }
+
+    /* ── Mermaid container ───────────────────────────────────────────────────── */
+    .mermaid-wrap {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 12px; padding: 1.5rem;
+      margin-bottom: 1.5rem;
+      box-shadow: 0 1px 3px rgba(0,0,0,.06);
+      overflow-x: auto;
+    }
+    .mermaid-wrap .diagram-title {
+      font-size: .8rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .06em; color: var(--text-muted); margin-bottom: 1rem;
+    }
+    .mermaid { display: flex; justify-content: center; }
+
+    /* ── Tables ──────────────────────────────────────────────────────────────── */
+    .data-table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+    .data-table th {
+      background: var(--navy); color: #fff;
+      text-align: left; padding: .6rem 1rem;
+      font-size: .75rem; font-weight: 600; letter-spacing: .04em;
+    }
+    .data-table th:first-child { border-radius: 8px 0 0 0; }
+    .data-table th:last-child  { border-radius: 0 8px 0 0; }
+    .data-table td { padding: .55rem 1rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+    .data-table tr:hover td { background: #f8fafc; }
+    .data-table code {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: .75rem; background: #f1f5f9;
+      padding: .1em .4em; border-radius: 4px;
+    }
+
+    /* ── Pills ───────────────────────────────────────────────────────────────── */
+    .pill {
+      display: inline-block; font-size: .68rem; font-weight: 600;
+      padding: .15rem .6rem; border-radius: 20px;
+      text-transform: uppercase; letter-spacing: .04em;
+    }
+    .pill.green  { background: var(--green-lt);  color: var(--green); }
+    .pill.blue   { background: var(--blue-lt);   color: var(--blue); }
+    .pill.amber  { background: var(--amber-lt);  color: var(--amber); }
+    .pill.red    { background: var(--red-lt);    color: var(--red); }
+    .pill.purple { background: var(--purple-lt); color: var(--purple); }
+
+    /* ── Stack row (tech stack) ──────────────────────────────────────────────── */
+    .stack-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 1rem; }
+    .stack-item {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 10px; padding: 1rem 1.25rem;
+      display: flex; flex-direction: column; gap: .3rem;
+    }
+    .stack-item .si-label { font-size: .7rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--text-muted); }
+    .stack-item .si-value { font-size: .9rem; font-weight: 600; color: var(--navy); }
+    .stack-item .si-note  { font-size: .73rem; color: var(--text-muted); }
+
+    /* ── Edge case list ──────────────────────────────────────────────────────── */
+    .ec-list { list-style: none; }
+    .ec-list li {
+      display: flex; align-items: flex-start; gap: .6rem;
+      padding: .45rem 0; border-bottom: 1px solid var(--border);
+      font-size: .82rem;
+    }
+    .ec-list li:last-child { border-bottom: none; }
+    .ec-list li .ec-problem { font-weight: 600; color: var(--red); min-width: 200px; }
+    .ec-list li .ec-fix     { color: var(--text-muted); flex: 1; }
+
+    /* ── Score formula ───────────────────────────────────────────────────────── */
+    .formula-box {
+      background: #0f172a; color: #e2e8f0;
+      border-radius: 10px; padding: 1.25rem 1.5rem;
+      font-family: 'JetBrains Mono', monospace; font-size: .82rem;
+      line-height: 1.7; overflow-x: auto;
+    }
+    .formula-box .kw { color: #38bdf8; }
+    .formula-box .num { color: #a3e635; }
+    .formula-box .comment { color: #475569; font-style: italic; }
+
+    /* ── Pipeline step list ──────────────────────────────────────────────────── */
+    .pipeline-steps { display: flex; flex-direction: column; gap: .5rem; }
+    .step {
+      display: flex; align-items: flex-start; gap: 1rem;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 8px; padding: .75rem 1rem;
+    }
+    .step-num {
+      width: 28px; height: 28px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: .75rem; font-weight: 700; flex-shrink: 0;
+      color: #fff;
+    }
+    .step-body { flex: 1; }
+    .step-title { font-size: .85rem; font-weight: 600; color: var(--navy); }
+    .step-detail { font-size: .78rem; color: var(--text-muted); margin-top: .2rem; }
+    .step-file { font-family: 'JetBrains Mono', monospace; font-size: .7rem; color: var(--blue); }
+
+    /* ── Responsive ──────────────────────────────────────────────────────────── */
+    @media (max-width: 900px) {
+      nav { display: none; }
+      main { margin-left: 0; padding: 1.5rem; }
+      .card-row.col3, .card-row.col4 { grid-template-columns: 1fr 1fr; }
+    }
+
+    /* ── Scrollbar ───────────────────────────────────────────────────────────── */
+    nav::-webkit-scrollbar { width: 4px; }
+    nav::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+    /* ── Mermaid theme overrides ─────────────────────────────────────────────── */
+    .mermaid svg { max-width: 100%; }
+  </style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════ HEADER ═══ -->
+<header>
+  <div class="header-logo">
+    <span class="dot"></span>
+    QueryBot v2
+  </div>
+  <span class="header-badge">Architecture</span>
+  <span class="header-updated">Last updated: 2026-06-07</span>
+</header>
+
+<!-- ═══════════════════════════════════════════════ SIDEBAR ══ -->
+<nav id="sidebar">
+  <div class="nav-section">Overview</div>
+  <a href="#overview">System Overview</a>
+  <a href="#stack">Technology Stack</a>
+  <a href="#entry">Entry Points</a>
+
+  <div class="nav-section">Core Pipeline</div>
+  <a href="#pipeline">Query Pipeline</a>
+  <a href="#pipeline-steps">Pipeline Steps</a>
+  <a href="#kb-build">KB Build Pipeline</a>
+
+  <div class="nav-section">Intelligence</div>
+  <a href="#entity-graph">Entity Graph</a>
+  <a href="#date-roles">Date Role Disambiguation</a>
+  <a href="#semantic">Semantic Layer</a>
+  <a href="#examples">Few-Shot Examples</a>
+
+  <div class="nav-section">Learning Loop</div>
+  <a href="#learning">Self-Learning Loop</a>
+  <a href="#scoring">Quality Scoring</a>
+  <a href="#genie">Genie Suggestion Engine</a>
+
+  <div class="nav-section">Platform</div>
+  <a href="#acl">Access Control</a>
+  <a href="#persistence">Database Schema</a>
+  <a href="#flags">Feature Flags</a>
+  <a href="#edge-cases">All Edge Cases</a>
+</nav>
+
+<!-- ═══════════════════════════════════════════════ MAIN ═════ -->
+<main>
+
+  <!-- ▸▸ SECTION: Overview ─────────────────────────────────── -->
+  <div id="overview" class="section-head">
+    <div class="section-icon" style="background:#e0e7ff">🏗️</div>
+    <div>
+      <h2>System Overview</h2>
+      <p>Multi-tenant NL-to-SQL analytics bot. Supports Zoom, Teams, Slack, and Web portal. Three DB backends: Snowflake, Oracle, Azure SQL.</p>
+    </div>
+  </div>
+
+  <div class="card-row col3">
+    <div class="layer blue">
+      <div class="layer-title">Gateways</div>
+      <div class="layer-file">gateway/</div>
+      <div class="layer-desc">Normalise Zoom / Teams / Slack / WebSocket events into a common <code>PlatformEvent</code></div>
+    </div>
+    <div class="layer purple">
+      <div class="layer-title">Admin UI</div>
+      <div class="layer-file">admin/routes.py</div>
+      <div class="layer-desc">Multi-tenant config, KB build, entity graph, metrics, billing, learning queue</div>
+    </div>
+    <div class="layer teal">
+      <div class="layer-title">Portal UI</div>
+      <div class="layer-file">portal/routes.py</div>
+      <div class="layer-desc">End-user login, dashboard, chat, KB view, feedback, pinned charts</div>
+    </div>
+    <div class="layer green">
+      <div class="layer-title">Orchestration</div>
+      <div class="layer-file">main.py</div>
+      <div class="layer-desc">handle_query() — wires all 19 pipeline steps end-to-end. 3 944 lines.</div>
+    </div>
+    <div class="layer amber">
+      <div class="layer-title">Core Modules</div>
+      <div class="layer-file">core/*.py (50 files)</div>
+      <div class="layer-desc">KB, LLM, schema, graph, validator, semantic layer, charts, learning, genie</div>
+    </div>
+    <div class="layer navy">
+      <div class="layer-title">Persistence</div>
+      <div class="layer-file">store/ + data/querybot.db</div>
+      <div class="layer-desc">SQLite (27 tables) + Qdrant (2 collections) + filesystem KB files</div>
+    </div>
+  </div>
+
+  <!-- ▸▸ SECTION: Tech Stack ───────────────────────────────── -->
+  <div id="stack" class="section-head">
+    <div class="section-icon" style="background:#fef3c7">⚙️</div>
+    <div><h2>Technology Stack</h2></div>
+  </div>
+
+  <div class="stack-grid">
+    <div class="stack-item">
+      <div class="si-label">Framework</div>
+      <div class="si-value">FastAPI</div>
+      <div class="si-note">ASGI, async, WebSocket</div>
+    </div>
+    <div class="stack-item">
+      <div class="si-label">LLM (default)</div>
+      <div class="si-value">Anthropic Claude</div>
+      <div class="si-note">Per-client override: OpenAI GPT-4</div>
+    </div>
+    <div class="stack-item">
+      <div class="si-label">Vector DB</div>
+      <div class="si-value">Qdrant</div>
+      <div class="si-note">querybot_kb + querybot_governed</div>
+    </div>
+    <div class="stack-item">
+      <div class="si-label">Embeddings</div>
+      <div class="si-value">all-MiniLM-L6-v2</div>
+      <div class="si-note">384-dim, sentence-transformers</div>
+    </div>
+    <div class="stack-item">
+      <div class="si-label">Database</div>
+      <div class="si-value">SQLite (WAL)</div>
+      <div class="si-note">27 tables, 0 ORM, direct SQL</div>
+    </div>
+    <div class="stack-item">
+      <div class="si-label">Analytics DB</div>
+      <div class="si-value">DuckDB</div>
+      <div class="si-note">In-process re-query cache</div>
+    </div>
+    <div class="stack-item">
+      <div class="si-label">Data Sources</div>
+      <div class="si-value">Snowflake · Oracle · Azure SQL</div>
+      <div class="si-note">Per-tenant DB connection</div>
+    </div>
+    <div class="stack-item">
+      <div class="si-label">Encryption</div>
+      <div class="si-value">AES-256</div>
+      <div class="si-note">store/crypto.py — all credentials at rest</div>
+    </div>
+    <div class="stack-item">
+      <div class="si-label">Python</div>
+      <div class="si-value">3.14</div>
+      <div class="si-note">pytest · asyncio</div>
+    </div>
+  </div>
+
+  <!-- ▸▸ SECTION: Entry Points ─────────────────────────────── -->
+  <div id="entry" class="section-head">
+    <div class="section-icon" style="background:#cffafe">🔌</div>
+    <div><h2>Entry Points</h2></div>
+  </div>
+
+  <div class="card">
+    <table class="data-table">
+      <thead>
+        <tr><th>Route</th><th>Platform</th><th>Auth</th><th>Handler</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>POST /webhook/zoom</code></td><td>Zoom chat</td><td>HMAC + accountId</td><td><code>main.py:2698</code></td></tr>
+        <tr><td><code>POST /webhook/teams</code></td><td>MS Teams</td><td>HMAC signature</td><td><code>main.py:2726</code></td></tr>
+        <tr><td><code>POST /webhook/slack</code></td><td>Slack</td><td>HMAC + dedup</td><td><code>main.py:2744</code></td></tr>
+        <tr><td><code>WS /ws/chat/{account_id}</code></td><td>Web portal</td><td>Signed cookie</td><td><code>main.py:2769</code></td></tr>
+        <tr><td><code>GET/POST /portal/*</code></td><td>Web portal</td><td>Signed cookie</td><td><code>portal/routes.py</code></td></tr>
+        <tr><td><code>GET/POST /admin/*</code></td><td>Admin UI</td><td>Signed cookie</td><td><code>admin/routes.py</code></td></tr>
+        <tr><td><code>GET /health</code></td><td>Load balancer</td><td>None</td><td><code>main.py:3934</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ▸▸ SECTION: Query Pipeline Diagram ──────────────────── -->
+  <div id="pipeline" class="section-head">
+    <div class="section-icon" style="background:#d1fae5">🔄</div>
+    <div>
+      <h2>Query Pipeline</h2>
+      <p>19 steps from user message to answer. Every step degrades gracefully — no unhandled exceptions reach the user.</p>
+    </div>
+  </div>
+
+  <div class="mermaid-wrap">
+    <div class="diagram-title">End-to-End Query Flow</div>
+    <div class="mermaid">
+flowchart TD
+    A([User message\nZoom / Teams / Slack / Portal]) --> B[Gateway adapter\nnormalise → PlatformEvent]
+    B --> C{Webhook\ndedup?}
+    C -- duplicate --> SKIP([Discard])
+    C -- new --> D[Rate & token limit check]
+    D -- over limit --> ERR1([❌ Limit message sent])
+    D -- ok --> E{DDL\ndetected?}
+    E -- yes --> ERR2([❌ DDL blocked])
+    E -- no --> F{Clarification\nneeded?}
+    F -- ambiguous --> CLR([Return options\nto user])
+    F -- clear --> G[Schema scoping\nschema_hint narrows tables]
+    G --> H[RAG — KB retrieval\ncore/knowledge.py\nqdrant querybot_kb]
+    H --> I[Entity graph BFS\ncore/graph_resolver.py\nJOIN skeleton]
+    I --> J[Semantic plan\ncore/semantic_planner.py\nmetric formula injection]
+    J --> K[Few-shot examples\ncore/examples.py\nGoverned first → legacy fill]
+    K --> L[LLM SQL generation\ncore/llm.py\nClaude / OpenAI]
+    L --> M{SQL\nvalidation}
+    M -- metric mismatch --> RPR[Repair retry ×1\nexact formula injected]
+    RPR --> M
+    M -- ACL fail --> ERR3([❌ Access denied])
+    M -- pass --> N{Cache hit?\nresult_cache.py}
+    N -- hit --> O[DuckDB re-query\nno DB round-trip]
+    N -- miss --> P[Execute on real DB\nSnowflake / Oracle / Azure SQL]
+    O --> Q[Response builder\nconfidence + anomaly + chips]
+    P --> Q
+    Q --> R[Chart detection\ncore/chart.py]
+    R --> S[Send answer\nplatform adapter or WebSocket]
+    S --> T[Log: query_log +\nanswer_trace]
+    T --> U[Learning candidate\ncreated in background]
+
+    classDef entry fill:#dbeafe,stroke:#93c5fd,color:#1e3a5f
+    classDef process fill:#f8fafc,stroke:#e2e8f0,color:#1e293b
+    classDef decision fill:#fef3c7,stroke:#fcd34d,color:#92400e
+    classDef error fill:#fee2e2,stroke:#fca5a5,color:#991b1b
+    classDef output fill:#d1fae5,stroke:#6ee7b7,color:#065f46
+    classDef learning fill:#ede9fe,stroke:#c4b5fd,color:#5b21b6
+
+    class A entry
+    class B,G,H,I,J,K,L,O,P,Q,R,T process
+    class C,E,F,M,N decision
+    class ERR1,ERR2,ERR3 error
+    class S,SKIP output
+    class CLR,RPR,U learning
+    </div>
+  </div>
+
+  <!-- ▸▸ SECTION: Pipeline Steps ──────────────────────────── -->
+  <div id="pipeline-steps" class="section-head">
+    <div class="section-icon" style="background:#ede9fe">📋</div>
+    <div><h2>Pipeline Steps Detail</h2></div>
+  </div>
+
+  <div class="pipeline-steps">
+    <div class="step"><div class="step-num" style="background:#2563eb">1</div><div class="step-body"><div class="step-title">Rate &amp; Token Limit</div><div class="step-detail">Hard block at limit. Warning at 80%. Token limit = 0 means uncapped.</div><div class="step-file">main.py:180</div></div></div>
+    <div class="step"><div class="step-num" style="background:#7c3aed">2</div><div class="step-body"><div class="step-title">Webhook Dedup</div><div class="step-detail">Bloom filter, 5-min TTL. Prevents Slack/Teams re-delivery double-responses.</div><div class="step-file">core/webhook_dedup.py</div></div></div>
+    <div class="step"><div class="step-num" style="background:#059669">3</div><div class="step-body"><div class="step-title">Clarification Check</div><div class="step-detail">Glossary ambiguity scan. If term has multiple interpretations → numbered options sent to user. State saved per-user with TTL.</div><div class="step-file">core/clarification.py</div></div></div>
+    <div class="step"><div class="step-num" style="background:#dc2626">4</div><div class="step-body"><div class="step-title">DDL Guard</div><div class="step-detail">Rejects CREATE / DROP / ALTER / TRUNCATE / INSERT / UPDATE / DELETE. Never reaches LLM.</div><div class="step-file">core/llm.py:is_ddl_attempt</div></div></div>
+    <div class="step"><div class="step-num" style="background:#0891b2">5</div><div class="step-body"><div class="step-title">Schema Scoping</div><div class="step-detail">Portal schema tab selection narrows effective table set. Scopes RAG, SQL generation, and validation.</div><div class="step-file">main.py:624</div></div></div>
+    <div class="step"><div class="step-num" style="background:#2563eb">6</div><div class="step-body"><div class="step-title">RAG — KB Retrieval</div><div class="step-detail">Cosine search over querybot_kb. Returns top-k table/column description chunks filtered by user's allowed tables. Synonym injection from KB "Business Synonyms" sections.</div><div class="step-file">core/knowledge.py + core/vector_store.py</div></div></div>
+    <div class="step"><div class="step-num" style="background:#7c3aed">7</div><div class="step-body"><div class="step-title">Entity Graph Resolution</div><div class="step-detail">BFS over entity graph → minimal JOIN skeleton. Date role scoring (+35) disambiguates multi-FK date tables. Cycle detection prevents infinite loops.</div><div class="step-file">core/graph_resolver.py</div></div></div>
+    <div class="step"><div class="step-num" style="background:#d97706">8</div><div class="step-body"><div class="step-title">Semantic Plan</div><div class="step-detail">Matches question terms to metric registry. Injects approved formula + required tables. Up to 3 plans merged (metric + field-level + runtime), deduplicated.</div><div class="step-file">core/semantic_planner.py + core/semantic_model.py</div></div></div>
+    <div class="step"><div class="step-num" style="background:#059669">9</div><div class="step-body"><div class="step-title">Few-Shot Examples</div><div class="step-detail">Dual retrieval: querybot_governed (admin-approved) first, querybot_kb fill. Deduped by question text. Governed examples have highest trust.</div><div class="step-file">core/examples.py:356</div></div></div>
+    <div class="step"><div class="step-num" style="background:#0891b2">10</div><div class="step-body"><div class="step-title">LLM SQL Generation</div><div class="step-detail">Assembles system prompt: schema + JOIN skeleton + metric formulas + few-shot + glossary + clarification context. Calls Claude (default) or OpenAI.</div><div class="step-file">core/llm.py</div></div></div>
+    <div class="step"><div class="step-num" style="background:#dc2626">11</div><div class="step-body"><div class="step-title">SQL Validation</div><div class="step-detail">Structural: FQN format, DDL guard, ACL enforcement. Metric formula: AST scan including CTEs. One repair retry on mismatch.</div><div class="step-file">core/validator.py + core/metric_validator.py</div></div></div>
+    <div class="step"><div class="step-num" style="background:#7c3aed">12</div><div class="step-body"><div class="step-title">Cache / DuckDB Router</div><div class="step-detail">Same tables + aggregation pattern as previous result → DuckDB re-query. Avoids Snowflake round-trip for follow-up drill questions.</div><div class="step-file">core/result_cache.py + core/query_router.py</div></div></div>
+    <div class="step"><div class="step-num" style="background:#2563eb">13</div><div class="step-body"><div class="step-title">Execute on Real DB</div><div class="step-detail">Snowflake / Oracle / Azure SQL. Per-query connection. Timeout enforced at connector level.</div><div class="step-file">core/schema.py:run_query</div></div></div>
+    <div class="step"><div class="step-num" style="background:#059669">14</div><div class="step-body"><div class="step-title">Zero-Row RCA</div><div class="step-detail">Probes table row counts to distinguish "table empty" vs "filter too narrow". Returns business-language hint, not SQL error.</div><div class="step-file">main.py:_build_zero_row_message</div></div></div>
+    <div class="step"><div class="step-num" style="background:#d97706">15</div><div class="step-body"><div class="step-title">Response Builder</div><div class="step-detail">Confidence score + anomaly callouts + decision signal. LLM-generated narrative summary (1-2 sentences).</div><div class="step-file">core/response_builder.py + core/answer_formatter.py</div></div></div>
+    <div class="step"><div class="step-num" style="background:#0891b2">16</div><div class="step-body"><div class="step-title">Follow-Up Chip Eligibility</div><div class="step-detail">Computes which chips to show based on result shape: time series, ranking, aggregation, trend direction.</div><div class="step-file">core/chip_eligibility.py</div></div></div>
+    <div class="step"><div class="step-num" style="background:#059669">17</div><div class="step-body"><div class="step-title">Send Answer</div><div class="step-detail">Platform adapter (Zoom/Teams/Slack) or WebSocket JSON stream (portal).</div><div class="step-file">gateway adapters + portal WebSocket</div></div></div>
+    <div class="step"><div class="step-num" style="background:#64748b">18</div><div class="step-body"><div class="step-title">Log Query</div><div class="step-detail">query_log (billing) + answer_trace + answer_trace_step (audit trail).</div><div class="step-file">main.py:_log_q + _trace_create</div></div></div>
+    <div class="step"><div class="step-num" style="background:#7c3aed">19</div><div class="step-body"><div class="step-title">Create Learning Candidate</div><div class="step-detail">Background, non-blocking. Only when enable_feedback_collection=1. Scores trace → creates learning_candidate row.</div><div class="step-file">main.py:_create_learning_candidate</div></div></div>
+  </div>
+
+  <!-- ▸▸ SECTION: KB Build ─────────────────────────────────── -->
+  <div id="kb-build" class="section-head">
+    <div class="section-icon" style="background:#fef3c7">📚</div>
+    <div><h2>Knowledge Base Build Pipeline</h2><p>Admin-triggered. Must complete before client state = READY.</p></div>
+  </div>
+
+  <div class="mermaid-wrap">
+    <div class="diagram-title">KB Build Flow</div>
+    <div class="mermaid">
+flowchart LR
+    A([Admin\nSetup → Build KB]) --> B[Stage 1\nSchema Discovery\ncore/schema.py]
+    B --> C[Write per-table\n_schema.json +\n_kb.md]
+    C --> D[ERP expansion\ncore/schema_enrichment.py]
+    D --> E[Build _join_map.md\nPass 3: date-role joins]
+    E --> F[Log to\nkb_data_egress_log]
+    F --> G{Sensitive\ncolumns?}
+    G -- yes --> H[Masking\ncore/masking.py\nfake_name/redact/etc.]
+    G -- no --> I
+    H --> I[Stage 2\nQuery Pattern Gen\nLLM → _queries.md]
+    I --> J[Validate against\nreal DB\nsingle connection]
+    J --> K[Store in\nvalidated_examples\nSQLite]
+    K --> L[Embed into\nqdrant querybot_kb]
+    L --> M([Client state\n= READY])
+
+    classDef trigger fill:#dbeafe,stroke:#93c5fd
+    classDef process fill:#f8fafc,stroke:#e2e8f0
+    classDef security fill:#fee2e2,stroke:#fca5a5
+    classDef storage fill:#d1fae5,stroke:#6ee7b7
+    classDef done fill:#ede9fe,stroke:#c4b5fd
+    class A trigger
+    class B,C,D,E,F,I,J process
+    class G,H security
+    class K,L storage
+    class M done
+    </div>
+  </div>
+
+  <!-- ▸▸ SECTION: Entity Graph ─────────────────────────────── -->
+  <div id="entity-graph" class="section-head">
+    <div class="section-icon" style="background:#ede9fe">🕸️</div>
+    <div>
+      <h2>Entity Graph &amp; JOIN Resolution</h2>
+      <p>BFS over an admin-defined business object model gives the LLM a deterministic JOIN skeleton.</p>
+    </div>
+  </div>
+
+  <div class="mermaid-wrap">
+    <div class="diagram-title">Entity Graph Resolution</div>
+    <div class="mermaid">
+flowchart TD
+    Q([User question]) --> DE[detect_entities\ngraph_resolver.py]
+    DE --> SC[Score each entity label\nvs question text]
+    SC --> DR{Date role\nkeywords?}
+    DR -- yes → +35 boost --> DRE[Prefer date-role entity\ne.g. Invoice Date FK]
+    DR -- no --> GEN[Use generic entity\nby label score]
+    DRE --> BFS[BFS traverse\nentity_relationships]
+    GEN --> BFS
+    BFS --> JS[JOIN skeleton\nFROM fact_table\nJOIN dim1 ON ...\nJOIN dim2 ON ...]
+    JS --> LP[Inject into\nLLM system prompt]
+
+    classDef input fill:#dbeafe,stroke:#93c5fd
+    classDef process fill:#f8fafc,stroke:#e2e8f0
+    classDef special fill:#fef3c7,stroke:#fcd34d
+    classDef output fill:#d1fae5,stroke:#6ee7b7
+    class Q input
+    class DE,SC,BFS process
+    class DR,DRE special
+    class GEN,JS,LP output
+    </div>
+  </div>
+
+  <!-- ▸▸ SECTION: Date Roles ───────────────────────────────── -->
+  <div id="date-roles" class="section-head">
+    <div class="section-icon" style="background:#fef3c7">��</div>
+    <div>
+      <h2>Date Role Disambiguation</h2>
+      <p>Enterprise fact tables have many date FKs all pointing to the same physical DIM_DATE. Without role awareness the LLM picks the wrong FK.</p>
+    </div>
+  </div>
+
+  <div class="card-row col2">
+    <div class="card">
+      <h3>12 Built-in Date Roles</h3>
+      <table class="data-table">
+        <thead><tr><th>Role</th><th>Key synonyms</th></tr></thead>
+        <tbody>
+          <tr><td>Invoice</td><td>billing, invoiced</td></tr>
+          <tr><td>Order</td><td>placed, sales order</td></tr>
+          <tr><td>Delivery</td><td>delivered, received</td></tr>
+          <tr><td>Ship</td><td>dispatch, shipped, sent</td></tr>
+          <tr><td>Request</td><td>requested, required by</td></tr>
+          <tr><td>Due</td><td>due date, deadline</td></tr>
+          <tr><td>Creation</td><td>created, entered</td></tr>
+          <tr><td>Posting</td><td>posted, booked, GL date</td></tr>
+          <tr><td>Effective</td><td>effective from, valid from</td></tr>
+          <tr><td>Expiry</td><td>expires, expiration, ends</td></tr>
+          <tr><td>Approval</td><td>approved, authorized</td></tr>
+          <tr><td>Payment</td><td>paid, remittance</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="card">
+      <h3>Resolution Pipeline</h3>
+      <div class="pipeline-steps">
+        <div class="step" style="margin-bottom:.3rem"><div class="step-num" style="background:#d97706">1</div><div class="step-body"><div class="step-title">Schema discovery writes Pass-3 join map</div><div class="step-detail">Each fact FK → DIM_DATE gets its own entry with role synonyms</div></div></div>
+        <div class="step" style="margin-bottom:.3rem"><div class="step-num" style="background:#d97706">2</div><div class="step-body"><div class="step-title">Virtual entities auto-created</div><div class="step-detail">"Invoice Date", "Order Date" → same DIM_DATE table, different FK column</div></div></div>
+        <div class="step" style="margin-bottom:.3rem"><div class="step-num" style="background:#d97706">3</div><div class="step-body"><div class="step-title">BFS scoring: +35 for date role match</div><div class="step-detail">"invoice month" → Invoice Date entity wins over generic date entity</div></div></div>
+        <div class="step"><div class="step-num" style="background:#d97706">4</div><div class="step-body"><div class="step-title">Only winning FK in JOIN skeleton</div><div class="step-detail">LLM cannot guess wrong FK — only the correct one is in the prompt</div></div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ▸▸ SECTION: Semantic Layer ───────────────────────────── -->
+  <div id="semantic" class="section-head">
+    <div class="section-icon" style="background:#cffafe">📐</div>
+    <div>
+      <h2>Semantic Layer &amp; Metric Registry</h2>
+      <p>Approved metric formulas injected at prompt time and enforced at validation time. LLM cannot free-form an approved metric.</p>
+    </div>
+  </div>
+
+  <div class="mermaid-wrap">
+    <div class="diagram-title">Metric Formula Enforcement</div>
+    <div class="mermaid">
+flowchart LR
+    Q([Question\n"what is revenue?"]) --> MP[semantic_planner.py\nmatch against metric_registry]
+    MP --> FND{Match\nfound?}
+    FND -- yes --> INJ[Inject formula into\nLLM system prompt\n+ required tables]
+    FND -- no --> NOOP[No injection\nLLM uses KB context]
+    INJ --> GEN[LLM generates SQL]
+    GEN --> VAL[metric_validator.py\nAST scan all SELECT nodes]
+    VAL --> CHK{Formula\nmatches?}
+    CHK -- yes --> RUN[Execute query]
+    CHK -- no --> RPR[Repair retry ×1\nexact formula injected]
+    RPR --> GEN2[LLM regenerates]
+    GEN2 --> VAL2{Matches\nnow?}
+    VAL2 -- yes --> RUN
+    VAL2 -- no --> WARN([Partial answer\nwith warning])
+
+    classDef input fill:#dbeafe,stroke:#93c5fd
+    classDef process fill:#f8fafc,stroke:#e2e8f0
+    classDef decision fill:#fef3c7,stroke:#fcd34d
+    classDef ok fill:#d1fae5,stroke:#6ee7b7
+    classDef warn fill:#fee2e2,stroke:#fca5a5
+    class Q input
+    class MP,INJ,GEN,VAL,RPR,GEN2,VAL2 process
+    class FND,CHK decision
+    class RUN,NOOP ok
+    class WARN warn
+    </div>
+  </div>
+
+  <!-- ▸▸ SECTION: Few-Shot Examples ───────────────────────── -->
+  <div id="examples" class="section-head">
+    <div class="section-icon" style="background:#d1fae5">🎯</div>
+    <div>
+      <h2>Few-Shot Example Retrieval</h2>
+      <p>Dual-collection retrieval puts admin-approved examples first, legacy auto-harvested examples fill remaining slots.</p>
+    </div>
+  </div>
+
+  <div class="mermaid-wrap">
+    <div class="diagram-title">Dual Retrieval — Governed First</div>
+    <div class="mermaid">
+flowchart TD
+    Q([Question]) --> GR[querybot_governed\nQdrant — admin-approved]
+    Q --> LR[querybot_kb\nQdrant — auto-harvested]
+    GR -- top-n --> GM[Governed results]
+    LR -- top-n --> LM[Legacy results]
+    GM --> MERGE[Merge — governed first\ndedup by question text]
+    LM --> MERGE
+    MERGE --> TRIM[Trim to n=3]
+    TRIM --> PROMPT[Inject into\nLLM system prompt]
+
+    classDef governed fill:#d1fae5,stroke:#6ee7b7,color:#065f46
+    classDef legacy fill:#dbeafe,stroke:#93c5fd,color:#1e3a5f
+    classDef process fill:#f8fafc,stroke:#e2e8f0
+    class GR,GM governed
+    class LR,LM legacy
+    class MERGE,TRIM,PROMPT process
+    class Q process
+    </div>
+  </div>
+
+  <!-- ▸▸ SECTION: Learning Loop ────────────────────────────── -->
+  <div id="learning" class="section-head">
+    <div class="section-icon" style="background:#ede9fe">🧠</div>
+    <div>
+      <h2>Self-Learning Loop</h2>
+      <p>Days 1-7 sprint. Complete. Every answered query becomes a potential future few-shot example.</p>
+    </div>
+  </div>
+
+  <div class="mermaid-wrap">
+    <div class="diagram-title">Full Learning Loop</div>
+    <div class="mermaid">
+flowchart TD
+    A([Answer sent\nto user]) -->|background| B[score_trace\ncore/quality_scorer.py\n0-100 deterministic score]
+    B --> C[create_candidate\nstore/learning_store.py\nstatus=pending_review]
+    C --> D{User\nfeedback?}
+    D -- thumbs up/down --> E[recompute_candidate_score\nadjust final_score]
+    D -- no feedback --> F
+    E --> F[Admin reviews\nAdmin → Learning Queue]
+    F --> G{Admin\naction}
+    G -- Correct SQL --> CS[set_candidate_corrected_sql\nscore=85, source=admin_correction]
+    CS --> APP
+    G -- Approve --> APP[_fire_governed_upsert\nEmbeds into querybot_governed\nQdrant]
+    G -- Reject --> REJ([status=rejected\nno Qdrant write])
+    G -- Known Failure --> KF([status=known_failure\nexcluded from suggestions])
+    G -- Revoke --> REV[_fire_governed_delete\nRemove from Qdrant]
+    APP --> QB[(querybot_governed\nQdrant collection)]
+    QB --> FEW[Retrieved as few-shot\nexample for similar questions]
+    FEW --> BETTER([Better SQL\nfor future queries])
+
+    classDef input fill:#dbeafe,stroke:#93c5fd
+    classDef process fill:#f8fafc,stroke:#e2e8f0
+    classDef decision fill:#fef3c7,stroke:#fcd34d
+    classDef approve fill:#d1fae5,stroke:#6ee7b7
+    classDef reject fill:#fee2e2,stroke:#fca5a5
+    classDef storage fill:#ede9fe,stroke:#c4b5fd
+    classDef output fill:#d1fae5,stroke:#6ee7b7
+    class A,CS input
+    class B,C,E,F,APP,REV process
+    class D,G decision
+    class QB storage
+    class FEW,BETTER,APP approve
+    class REJ,KF reject
+    </div>
+  </div>
+
+  <!-- ▸▸ SECTION: Quality Scoring ─────────────────────────── -->
+  <div id="scoring" class="section-head">
+    <div class="section-icon" style="background:#fef3c7">🎰</div>
+    <div><h2>Quality Scoring</h2><p>Deterministic 0-100. No LLM. Pure signal-based. File: <code>core/quality_scorer.py</code></p></div>
+  </div>
+
+  <div class="card-row col2">
+    <div class="card">
+      <h3>Score Breakdown</h3>
+      <table class="data-table">
+        <thead><tr><th>Signal</th><th>Max pts</th><th>Condition</th></tr></thead>
+        <tbody>
+          <tr><td>SQL validation passed</td><td>10</td><td>Structural + ACL check OK</td></tr>
+          <tr><td>Execution success</td><td>20</td><td>DB returned result without error</td></tr>
+          <tr><td>Non-empty result</td><td>15</td><td>row_count &gt; 0</td></tr>
+          <tr><td>No repair needed</td><td>15</td><td>First-pass SQL used</td></tr>
+          <tr><td>Repair succeeded</td><td>10</td><td>One retry fixed it</td></tr>
+          <tr><td>Repair failed</td><td>0</td><td>Could not fix</td></tr>
+          <tr><td>Metric compliance</td><td>0–20</td><td>% formulas using approved template</td></tr>
+          <tr><td>Entity graph compliance</td><td>0–10</td><td>JOIN matched entity graph path</td></tr>
+          <tr><td>Schema ACL compliance</td><td>10</td><td>No out-of-scope tables accessed</td></tr>
+          <tr><td><strong>Total</strong></td><td><strong>100</strong></td><td></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="card">
+      <h3>Score Classification</h3>
+      <div style="display:flex;flex-direction:column;gap:.6rem;margin-bottom:1rem">
+        <div style="display:flex;align-items:center;gap:.75rem">
+          <span class="pill green">Positive ≥ 85</span>
+          <span style="font-size:.82rem;color:var(--text-muted)">Eligible for approve without correction</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:.75rem">
+          <span class="pill amber">Review 60–84</span>
+          <span style="font-size:.82rem;color:var(--text-muted)">Worth reviewing — may need SQL correction</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:.75rem">
+          <span class="pill red">Negative &lt; 60</span>
+          <span style="font-size:.82rem;color:var(--text-muted)">Likely bad SQL — reject or known_failure</span>
+        </div>
+      </div>
+      <h3>Feedback Override</h3>
+      <p style="font-size:.82rem;color:var(--text-muted)">Net negative user feedback (thumbs-down &gt; thumbs-up) forces <code>candidate_type = "negative"</code> regardless of technical score. Admin can still approve — explicit human override.</p>
+      <br/>
+      <h3>Admin SQL Correction</h3>
+      <p style="font-size:.82rem;color:var(--text-muted)">Admin submits corrected SQL → <code>score = 85</code>, <code>source = admin_correction</code>, <code>source_boost = +0.10</code> in Genie engine. Corrected SQL is what gets embedded into Qdrant on approve.</p>
+    </div>
+  </div>
+
+  <!-- ▸▸ SECTION: Genie Engine ─────────────────────────────── -->
+  <div id="genie" class="section-head">
+    <div class="section-icon" style="background:#cffafe">✨</div>
+    <div>
+      <h2>Genie Suggestion Engine</h2>
+      <p>Days 8-9 sprint. Ranks portal suggestion chips by behavioral signals. File: <code>core/genie_ranker.py</code></p>
+    </div>
+  </div>
+
+  <div class="mermaid-wrap">
+    <div class="diagram-title">Genie Scoring Flow</div>
+    <div class="mermaid">
+flowchart LR
+    PL([Portal chat\npage load]) --> BS[_build_chat_suggestions\nget_suggestions + fallback]
+    BS --> FLG{enable_genie\n_suggestions?}
+    FLG -- no --> RET([Return unranked])
+    FLG -- yes --> RS[rank_suggestions\ncore/genie_ranker.py]
+    RS --> GS[get_suggestion_stats\nper suggestion]
+    GS --> SC{Cold start?\nlt 10 impressions}
+    SC -- yes --> SB[score = source_boost\ngoverned=0.10\nlearned=0.05\nstatic=0.00]
+    SC -- no --> BH[behavioral score\n0.30×CTR\n0.40×exec_rate\n0.25×success_rate\n-0.05×dismiss_rate]
+    BH --> CF[confidence blend\nmin impressions/100 1.0]
+    CF --> FS[final score =\nconfidence×behavioral\n+residual×source_boost]
+    SB --> SORT[Sort descending]
+    FS --> SORT
+    SORT --> DISP[Render ranked chips]
+    DISP --> REC[_record_suggestions_displayed\nfire-and-forget impression events]
+
+    classDef input fill:#cffafe,stroke:#67e8f9
+    classDef process fill:#f8fafc,stroke:#e2e8f0
+    classDef decision fill:#fef3c7,stroke:#fcd34d
+    classDef score fill:#ede9fe,stroke:#c4b5fd
+    classDef output fill:#d1fae5,stroke:#6ee7b7
+    class PL,BS input
+    class RS,GS,SB,BH,CF,FS,SORT process
+    class FLG,SC decision
+    class DISP,REC output
+    class RET output
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Scoring Formula (exact)</h3>
+    <div class="formula-box">
+<span class="comment"># Cold-start guard: &lt; 10 impressions → source quality only</span>
+<span class="kw">if</span> impressions &lt; <span class="num">10</span>:
+    score = source_boost   <span class="comment"># governed=0.10 | learned=0.05 | static=0.00</span>
+
+<span class="comment"># Warm-start: behavioral signals + confidence blending</span>
+<span class="kw">else</span>:
+    ctr          = clicked    / impressions
+    exec_rate    = executed   / impressions
+    success_rate = successful / impressions
+    dismiss_rate = dismissed  / impressions
+
+    behavioral = (<span class="num">0.30</span> × ctr
+               + <span class="num">0.40</span> × exec_rate
+               + <span class="num">0.25</span> × success_rate
+               - <span class="num">0.05</span> × dismiss_rate)
+
+    confidence = <span class="kw">min</span>(impressions / <span class="num">100</span>, <span class="num">1.0</span>)
+    score      = confidence × behavioral + (<span class="num">1</span> − confidence) × source_boost
+    </div>
+  </div>
+
+  <!-- ▸▸ SECTION: ACL ──────────────────────────────────────── -->
+  <div id="acl" class="section-head">
+    <div class="section-icon" style="background:#fee2e2">🔒</div>
+    <div><h2>User Access Control</h2><p>Row-level table security enforced at every layer.</p></div>
+  </div>
+
+  <div class="mermaid-wrap">
+    <div class="diagram-title">ACL Model</div>
+    <div class="mermaid">
+graph TD
+    T[client / tenant] --> G[user_group\ne.g. Sales Team]
+    G --> GT[group_table_access\nAllowed table list]
+    G --> U[portal_user]
+    U --> UT[user_table_access\nIndividual overrides\nadditive on top of group]
+    U --> R{role}
+    R -- admin --> ALL[allowed_tables = None\neffective = all_known\nfull access]
+    R -- analyst --> CALC[effective = group tables\n+ individual overrides\n∩ all_known]
+
+    classDef tenant fill:#dbeafe,stroke:#93c5fd
+    classDef group fill:#fef3c7,stroke:#fcd34d
+    classDef user fill:#d1fae5,stroke:#6ee7b7
+    classDef access fill:#ede9fe,stroke:#c4b5fd
+    class T tenant
+    class G,GT group
+    class U,UT user
+    class R,ALL,CALC access
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>ACL Enforcement Points</h3>
+    <table class="data-table">
+      <thead><tr><th>Layer</th><th>File</th><th>What is enforced</th></tr></thead>
+      <tbody>
+        <tr><td>RAG retrieval</td><td><code>core/knowledge.py</code></td><td>Only KB chunks for allowed tables returned to LLM</td></tr>
+        <tr><td>SQL validation</td><td><code>core/validator.py</code></td><td>Tables in generated SQL must be in effective set — hard rejection</td></tr>
+        <tr><td>Result export</td><td><code>portal/routes.py:1148</code></td><td>CSV export refused if table not in user's allowed set</td></tr>
+        <tr><td>Suggestions</td><td><code>core/suggestions.py</code></td><td>Question suggestions filtered by allowed_tables</td></tr>
+        <tr><td>Governed examples</td><td><code>core/governed_store.py</code></td><td>Retrieved by account_id only (admin approved each explicitly)</td></tr>
+        <tr><td>Schema selector</td><td><code>main.py:624</code></td><td>Schema tab further narrows effective to selected schema only</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ▸▸ SECTION: Persistence ──────────────────────────────── -->
+  <div id="persistence" class="section-head">
+    <div class="section-icon" style="background:#d1fae5">🗄️</div>
+    <div><h2>Database Schema (SQLite — 27 tables)</h2><p>File: <code>store/db.py</code> — no ORM, direct SQL, WAL mode.</p></div>
+  </div>
+
+  <div class="card">
+    <table class="data-table">
+      <thead><tr><th>Table</th><th>Category</th><th>Purpose</th></tr></thead>
+      <tbody>
+        <tr><td><code>system_config</code></td><td><span class="pill blue">System</span></td><td>Global API keys, LLM config, admin password (AES encrypted)</td></tr>
+        <tr><td><code>platform_config</code></td><td><span class="pill blue">System</span></td><td>Chat platform credentials (Zoom/Teams/Slack)</td></tr>
+        <tr><td><code>db_config</code></td><td><span class="pill blue">System</span></td><td>Database connection credentials (Snowflake/Oracle/Azure SQL)</td></tr>
+        <tr><td><code>client</code></td><td><span class="pill blue">System</span></td><td>One row per tenant. Feature flags, state, LLM overrides.</td></tr>
+        <tr><td><code>query_log</code></td><td><span class="pill amber">Usage</span></td><td>Every query: question, SQL, tokens, cost, duration</td></tr>
+        <tr><td><code>answer_trace</code></td><td><span class="pill amber">Usage</span></td><td>Full per-request audit trace</td></tr>
+        <tr><td><code>answer_trace_step</code></td><td><span class="pill amber">Usage</span></td><td>Per-step timings within a trace</td></tr>
+        <tr><td><code>llm_call_log</code></td><td><span class="pill amber">Usage</span></td><td>LLM audit log (30-day rolling). Payload hash, token counts.</td></tr>
+        <tr><td><code>kb_data_egress_log</code></td><td><span class="pill amber">Usage</span></td><td>Data governance: tables/columns sent to LLM, mask mode per build</td></tr>
+        <tr><td><code>eval_run</code></td><td><span class="pill purple">Quality</span></td><td>Golden SQL eval runs</td></tr>
+        <tr><td><code>eval_case_result</code></td><td><span class="pill purple">Quality</span></td><td>Per-case result in an eval run</td></tr>
+        <tr><td><code>portal_user</code></td><td><span class="pill green">Users</span></td><td>User accounts: email, bcrypt hash, role, Zoom user ID</td></tr>
+        <tr><td><code>user_group</code></td><td><span class="pill green">Users</span></td><td>Row-level security groups per tenant</td></tr>
+        <tr><td><code>group_table_access</code></td><td><span class="pill green">Users</span></td><td>Tables accessible to a group</td></tr>
+        <tr><td><code>user_table_access</code></td><td><span class="pill green">Users</span></td><td>Individual user table overrides (additive)</td></tr>
+        <tr><td><code>registration_token</code></td><td><span class="pill green">Users</span></td><td>One-time portal registration links (24h TTL)</td></tr>
+        <tr><td><code>pinned_chart</code></td><td><span class="pill teal">Portal</span></td><td>User dashboard charts with grid position</td></tr>
+        <tr><td><code>pin_token</code></td><td><span class="pill teal">Portal</span></td><td>Short-lived tokens for pinning charts from chat</td></tr>
+        <tr><td><code>pending_clarification</code></td><td><span class="pill teal">Portal</span></td><td>Active per-user clarification state with TTL</td></tr>
+        <tr><td><code>metric_registry</code></td><td><span class="pill purple">Semantic</span></td><td>Admin-defined metric formulas, synonyms, grain, dimensions</td></tr>
+        <tr><td><code>validated_examples</code></td><td><span class="pill purple">Semantic</span></td><td>Proven question→SQL pairs from Stage 2 validation</td></tr>
+        <tr><td><code>business_term</code></td><td><span class="pill purple">Semantic</span></td><td>Glossary: dimensions, metrics, filters, entities</td></tr>
+        <tr><td><code>semantic_field_feedback</code></td><td><span class="pill purple">Semantic</span></td><td>User corrections to column meaning pending admin review</td></tr>
+        <tr><td><code>entity_graph</code></td><td><span class="pill amber">Graph</span></td><td>Business entity definitions (concept → DB table)</td></tr>
+        <tr><td><code>entity_relationships</code></td><td><span class="pill amber">Graph</span></td><td>JOIN edges between entities (FK→PK)</td></tr>
+        <tr><td><code>entity_properties</code></td><td><span class="pill amber">Graph</span></td><td>Column roles per entity: metric/dimension/filter/date</td></tr>
+        <tr><td><code>llm_pricing</code></td><td><span class="pill blue">System</span></td><td>Editable cost rates per model (USD/1M tokens)</td></tr>
+        <tr><td><code>answer_feedback</code></td><td><span class="pill green">Learning</span></td><td>Thumbs up/down per answer with reason code</td></tr>
+        <tr><td><code>learning_candidate</code></td><td><span class="pill green">Learning</span></td><td>Scored answer candidates for admin review</td></tr>
+        <tr><td><code>recommendation_event</code></td><td><span class="pill green">Learning</span></td><td>Suggestion display/click/execute/dismiss events for Genie</td></tr>
+        <tr><td><code>external_log_export_state</code></td><td><span class="pill blue">System</span></td><td>State for scheduled external log export to tenant DB</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ▸▸ SECTION: Feature Flags ────────────────────────────── -->
+  <div id="flags" class="section-head">
+    <div class="section-icon" style="background:#fef3c7">🚩</div>
+    <div><h2>Feature Flags</h2><p>Per-client toggles on the <code>client</code> table. Set in Admin → Client → Edit.</p></div>
+  </div>
+
+  <div class="card">
+    <table class="data-table">
+      <thead><tr><th>Flag</th><th>Column</th><th>Default</th><th>Enables</th></tr></thead>
+      <tbody>
+        <tr><td>Chat UI</td><td><code>chat_ui_enabled</code></td><td>0</td><td>Portal chat page visible and functional</td></tr>
+        <tr><td>LLM Audit</td><td><code>enable_llm_audit</code></td><td>0</td><td>Every LLM call logged to llm_call_log (30-day rolling)</td></tr>
+        <tr><td>Feedback Collection</td><td><code>enable_feedback_collection</code></td><td>0</td><td>Learning loop: scoring, candidate creation, thumbs UI, admin queue</td></tr>
+        <tr><td>Genie Suggestions</td><td><code>enable_genie_suggestions</code></td><td>0</td><td>Behavioral ranking of suggestion chips + impression recording</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ▸▸ SECTION: All Edge Cases ───────────────────────────── -->
+  <div id="edge-cases" class="section-head">
+    <div class="section-icon" style="background:#fee2e2">⚠️</div>
+    <div><h2>All Solved Edge Cases</h2><p>Every guard added deliberately. Find by symptom.</p></div>
+  </div>
+
+  <div class="card">
+    <h3>Query Pipeline</h3>
+    <ul class="ec-list">
+      <li><span class="ec-problem">Slack re-delivers events</span><span class="ec-fix">Bloom-filter dedup with 5-min TTL in <code>core/webhook_dedup.py</code></span></li>
+      <li><span class="ec-problem">Clarification reply treated as new question</span><span class="ec-fix"><code>_looks_like_new_query()</code> word-overlap comparison against original Q — main.py:202</span></li>
+      <li><span class="ec-problem">Stale clarification context reused</span><span class="ec-fix"><code>was_recently_expired()</code> guard; clarification clears on timeout or new question</span></li>
+      <li><span class="ec-problem">Metric formula mismatch in CTE</span><span class="ec-fix">Validator scans all SELECT nodes including CTE bodies, not just outermost SELECT</span></li>
+      <li><span class="ec-problem">LLM rewrites approved formula to equivalent SQL</span><span class="ec-fix">One auto-repair retry: exact formula verbatim injected into repair prompt</span></li>
+      <li><span class="ec-problem">Multiple semantic plans with duplicate joins</span><span class="ec-fix"><code>_merge_semantic_plans()</code> deduplicates by (table, column) key — main.py:142</span></li>
+      <li><span class="ec-problem">Zero rows returned — ambiguous cause</span><span class="ec-fix">Table count probe: distinguishes "table empty" vs "filter too narrow" — main.py:352</span></li>
+      <li><span class="ec-problem">User selects schema tab — wrong schema queried</span><span class="ec-fix">schema_hint narrows effective table set at step 5, scoping all downstream layers</span></li>
+      <li><span class="ec-problem">110 Snowflake connections for 11-table validation</span><span class="ec-fix">Single connection reused for all validation queries — core/examples.py:validate_and_store_examples</span></li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>Entity Graph &amp; Date Roles</h3>
+    <ul class="ec-list">
+      <li><span class="ec-problem">Circular JOIN path in graph</span><span class="ec-fix">BFS visited set prevents infinite loops — core/graph_resolver.py</span></li>
+      <li><span class="ec-problem">Audit columns (created_by → USER) in auto-suggest</span><span class="ec-fix">purge-audit endpoint removes spurious audit-column relationships — admin/routes.py:2467</span></li>
+      <li><span class="ec-problem">Multiple FKs → same date dimension table</span><span class="ec-fix">Date role virtual entities with +35 BFS scoring ensures question-appropriate FK is chosen</span></li>
+      <li><span class="ec-problem">FCT_ prefix tables not detected as facts</span><span class="ec-fix">Auto-suggest detects both FACT_ and FCT_ prefixes — admin/routes.py:2671</span></li>
+      <li><span class="ec-problem">Schema filter breaks entity graph editor JS</span><span class="ec-fix">Entity graph sidebar JS fixed for schema-filter interaction — commit 82b4afa</span></li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>Self-Learning Loop</h3>
+    <ul class="ec-list">
+      <li><span class="ec-problem">Qdrant down during admin approve</span><span class="ec-fix"><code>_fire_governed_upsert</code> is best-effort; DB commit never rolled back. <code>backfill_approved_candidates()</code> recovers later.</span></li>
+      <li><span class="ec-problem">Re-approve after SQL correction embeds old SQL</span><span class="ec-fix">Deterministic point ID (MD5 hash) → upsert overwrites old embedding with corrected SQL</span></li>
+      <li><span class="ec-problem">Revoke then re-approve creates orphaned points</span><span class="ec-fix">Delete on revoke; upsert on re-approve — same deterministic point ID — no orphans</span></li>
+      <li><span class="ec-problem">Empty SQL at approve time</span><span class="ec-fix"><code>upsert_governed_example</code> returns "" without writing; logs warning; candidate still marked approved</span></li>
+      <li><span class="ec-problem">Net-negative feedback overrides good technical score</span><span class="ec-fix"><code>classify_score()</code> forces candidate_type=negative when thumbs-down &gt; thumbs-up, regardless of technical score</span></li>
+      <li><span class="ec-problem">Legacy chroma_dir path string passed as account_id</span><span class="ec-fix">Path parts extraction: <code>Path(s).parts[1]</code> = account_id — examples.py:384</span></li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>Genie Suggestion Engine</h3>
+    <ul class="ec-list">
+      <li><span class="ec-problem">Behavioral scoring on < 10 impressions (noisy)</span><span class="ec-fix">Cold-start guard: source quality boost only until ≥ 10 impressions</span></li>
+      <li><span class="ec-problem">Division by zero when impressions = 0</span><span class="ec-fix">Cold-start path exits before computing rates — never divides by impressions</span></li>
+      <li><span class="ec-problem">Client-side inflation of displayed events</span><span class="ec-fix">Browser event endpoint blocks "displayed" type — only server-side page-load recording accepted</span></li>
+      <li><span class="ec-problem">Ranker exception breaks suggestion panel</span><span class="ec-fix"><code>try/except</code> in <code>_build_chat_suggestions</code> — falls back to unranked list</span></li>
+      <li><span class="ec-problem">DB failure stops page render</span><span class="ec-fix">All event recording is fire-and-forget — recording failure always returns 200</span></li>
+      <li><span class="ec-problem">Input dict mutated by rank_suggestions</span><span class="ec-fix">Each suggestion is shallow-copied before <code>_score</code> key is injected — caller's dict unchanged</span></li>
+    </ul>
+  </div>
+
+</main>
+
+<!-- ── Footer ─────────────────────────────────────────────────────────────── -->
+<div style="margin-left:var(--sidebar-w);padding:2rem 3rem 3rem;color:var(--text-muted);font-size:.78rem;border-top:1px solid var(--border);margin-top:2rem">
+  <strong>Keeping this file current:</strong> When a new feature, module, or edge-case guard is added, update the matching section above — add a row to the relevant card table, add a Mermaid node, or add an edge-case row. Also update <code>README.md</code> feature list and <code>ARCHITECTURE.md</code> text reference. All three files should stay in sync.
+  <br/><br/>
+  Last updated: <strong>2026-06-07</strong> &nbsp;·&nbsp; See also: <a href="README.md" style="color:var(--blue)">README.md</a> &nbsp;·&nbsp; <a href="ARCHITECTURE.md" style="color:var(--blue)">ARCHITECTURE.md</a>
+</div>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'base',
+    themeVariables: {
+      primaryColor: '#dbeafe',
+      primaryTextColor: '#1e3a5f',
+      primaryBorderColor: '#93c5fd',
+      lineColor: '#64748b',
+      secondaryColor: '#f8fafc',
+      tertiaryColor: '#fef3c7',
+      background: '#ffffff',
+      mainBkg: '#dbeafe',
+      nodeBorder: '#93c5fd',
+      clusterBkg: '#f8fafc',
+      titleColor: '#1e3a5f',
+      edgeLabelBackground: '#ffffff',
+      fontFamily: 'Inter, sans-serif',
+      fontSize: '13px'
+    },
+    flowchart: { curve: 'basis', padding: 20 },
+    securityLevel: 'loose'
+  });
+
+  /* Active nav highlight on scroll */
+  const sections = document.querySelectorAll('[id]');
+  const navLinks = document.querySelectorAll('nav a');
+  const obs = new IntersectionObserver((entries) => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        navLinks.forEach(a => {
+          a.classList.toggle('active', a.getAttribute('href') === '#' + e.target.id);
+        });
+      }
+    });
+  }, { rootMargin: '-20% 0px -70% 0px' });
+  sections.forEach(s => obs.observe(s));
+</script>
+</body>
+</html>
