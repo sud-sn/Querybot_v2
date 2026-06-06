@@ -252,12 +252,20 @@ class ChipEligibilityOrdering(unittest.TestCase):
         self.assertTrue(chips, "Expected at least one chip")
         self.assertEqual(chips[0]["id"], "explain")
 
-    def test_decide_is_last_chip(self):
-        """decide advisory chip should always be last."""
+    def test_decide_before_export_chips(self):
+        """decide must appear before download_csv and set_alert (Sprint E chips)."""
         ctx = _ts_ctx(row_count=6, pct_change=14.0)
         brief = _ts_brief(direction="increasing", period_count=6, overall_pct=14.0)
         chips = compute_chip_eligibility(ctx, brief=brief)
-        self.assertEqual(chips[-1]["id"], "decide")
+        ids = [c["id"] for c in chips]
+        self.assertIn("decide", ids)
+        decide_pos = ids.index("decide")
+        for late_chip in ("download_csv", "set_alert"):
+            if late_chip in ids:
+                self.assertGreater(
+                    ids.index(late_chip), decide_pos,
+                    f"{late_chip!r} must appear after 'decide'",
+                )
 
 
 class ChipEligibilityPreContext(unittest.TestCase):

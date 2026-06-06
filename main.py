@@ -3624,6 +3624,119 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                             await websocket.send_json({"type": "typing", "active": False})
                         continue
 
+                    # ── download_csv: generate CSV from cached rows ──────────
+                    # Pure Python — no LLM, no DB call.
+                    if action == "download_csv" and cached and cached.get("rows"):
+                        try:
+                            from core.export import rows_to_csv, build_csv_filename
+                            _csv_rows     = cached["rows"]
+                            _csv_col_fmts = cached.get("column_formats") or {}
+                            _csv_content  = rows_to_csv(
+                                _csv_rows, column_formats=_csv_col_fmts
+                            )
+                            _csv_filename = build_csv_filename(
+                                cached.get("question", "")
+                            )
+                            await websocket.send_json({
+                                "type":      "assistant_export",
+                                "action":    "download_csv",
+                                "format":    "csv",
+                                "filename":  _csv_filename,
+                                "content":   _csv_content,
+                                "row_count": len(_csv_rows),
+                            })
+                        except Exception as _csv_err:
+                            log.warning("download_csv failed: %s", _csv_err)
+                            await websocket.send_json({
+                                "type":    "assistant_error",
+                                "action":  "download_csv",
+                                "content": "Could not generate CSV from this result.",
+                            })
+                        finally:
+                            await websocket.send_json({"type": "typing", "active": False})
+                        continue
+
+                    # ── set_alert: define a change-monitoring alert ──────────
+                    # Creates a persisted alert definition; no DB read at
+                    # creation time — baseline_value comes from the cached rows.
+                    if action == "set_alert" and cached and cached.get("rows"):
+                        try:
+                            from core.alert_engine import create_alert
+                            _al_rows = cached["rows"]
+                            _al_ctx  = cached.get("analysis_context") or {}
+                            # Prefer the value_col the response_builder identified;
+                            # fall back to the first numeric key in the first row.
+                            _al_mcol = _al_ctx.get("value_col") or (
+                                next(
+                                    (k for k, v in (_al_rows[0] if _al_rows else {}).items()
+                                     if isinstance(v, (int, float))),
+                                    "",
+                                )
+                            )
+                            _al_raw = (
+                                _al_rows[0].get(_al_mcol)
+                                if _al_rows and _al_mcol else None
+                            )
+                            if _al_raw is None or not _al_mcol:
+                                await websocket.send_json({
+                                    "type":    "assistant_error",
+                                    "action":  "set_alert",
+                                    "content": (
+                                        "Could not identify a numeric metric to monitor. "
+                                        "Ask for a specific KPI result first."
+                                    ),
+                                })
+                            else:
+                                try:
+                                    _al_baseline = float(str(_al_raw).replace(",", ""))
+                                except (TypeError, ValueError):
+                                    _al_baseline = 0.0
+                                _al_def = create_alert(
+                                    question  = cached.get("question", ""),
+                                    sql       = cached.get("sql", ""),
+                                    metric_col= _al_mcol,
+                                    baseline_value = _al_baseline,
+                                    condition  = "change_pct",
+                                    threshold  = 10.0,
+                                    db_cfg     = cached.get("db_cfg") or {},
+                                )
+                                await websocket.send_json({
+                                    "type":      "assistant_analysis",
+                                    "action":    "set_alert",
+                                    "title":     "Alert created",
+                                    "body": (
+                                        f"I'll monitor **{_al_mcol}** (baseline: {_al_raw}) "
+                                        f"and flag it when the value changes by more than 10%."
+                                    ),
+                                    "secondary": (
+                                        f"Alert ID: {_al_def['id']} — "
+                                        "use this ID to check the current value against "
+                                        "the baseline at any time."
+                                    ),
+                                    "bullets": [
+                                        f"Metric: {_al_mcol}",
+                                        f"Baseline: {_al_raw}",
+                                        "Trigger: change > 10%",
+                                        "Condition: change_pct",
+                                    ],
+                                    "next_step": (
+                                        "Ask \"Check alert " + _al_def["id"] + "\" "
+                                        "to compare the current value to this baseline."
+                                    ),
+                                    "alert_id": _al_def["id"],
+                                    "alert":    _al_def,
+                                })
+                        except Exception as _al_err:
+                            log.warning("set_alert failed: %s", _al_err)
+                            await websocket.send_json({
+                                "type":    "assistant_error",
+                                "action":  "set_alert",
+                                "content": "Could not create the alert.",
+                            })
+                        finally:
+                            await websocket.send_json({"type": "typing", "active": False})
+                        continue
+
                     # ── standard action buttons (explain, analyze, compare …) ─
                     if cached and cached.get("rows") is not None:
                         try:
