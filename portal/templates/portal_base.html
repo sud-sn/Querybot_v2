@@ -144,8 +144,9 @@
   backdrop.addEventListener('click', function(e){ if(e.target === backdrop) close(); });
   document.addEventListener('keydown', function(e){ if(e.key === 'Escape') close(); });
   confirmBtn.addEventListener('click', function(){
+    var callback = _onConfirm;
     close();
-    if(_onConfirm) _onConfirm();
+    if(callback) callback();
   });
 
   window.qbConfirm = function(opts){
