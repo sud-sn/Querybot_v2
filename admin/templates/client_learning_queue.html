@@ -1,0 +1,260 @@
+{% extends "base.html" %}
+{% from "macros.html" import breadcrumb, client_workspace_nav %}
+{% block title %}Learning Queue — {{ client.client_name or client.account_id[:16] }}{% endblock %}
+{% block breadcrumb %}
+{{ breadcrumb([
+    {"label": "Dashboard", "href": "/admin"},
+    {"label": "Clients",   "href": "/admin/clients"},
+    {"label": client.client_name or client.account_id[:16], "href": "/admin/clients/" ~ client.account_id},
+    {"label": "Learning Queue", "href": ""},
+]) }}
+{% endblock %}
+{% block head %}
+<style>
+.lq-filters{display:flex;gap:.4rem;flex-wrap:wrap;margin-bottom:1.1rem}
+.lq-filter{border:1px solid var(--border);border-radius:999px;padding:4px 10px;font-size:11px;font-weight:800;color:var(--text-muted);background:var(--surface);text-decoration:none}
+.lq-filter.active{background:var(--blue-light,color-mix(in srgb,var(--blue) 12%,var(--surface)));border-color:color-mix(in srgb,var(--blue) 28%,transparent);color:var(--blue)}
+.lq-table{width:100%;border-collapse:collapse;font-size:12px}
+.lq-table th{padding:.55rem .75rem;background:var(--surface-2);border-bottom:1px solid var(--border);text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);font-weight:800;white-space:nowrap}
+.lq-table td{padding:.75rem;border-bottom:1px solid var(--border);vertical-align:top;color:var(--text-soft)}
+.lq-table tr:last-child td{border-bottom:none}
+.lq-table tr:hover td{background:var(--row-hover)}
+.score-pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:800;white-space:nowrap}
+.score-positive{background:rgba(16,185,129,.14);color:#10b981;border:1px solid rgba(16,185,129,.32)}
+.score-review{background:rgba(245,158,11,.14);color:#d97706;border:1px solid rgba(245,158,11,.32)}
+.score-negative{background:rgba(239,68,68,.14);color:#dc2626;border:1px solid rgba(239,68,68,.32)}
+.type-positive{color:#10b981;font-weight:800}
+.type-review{color:#d97706;font-weight:800}
+.type-negative{color:#dc2626;font-weight:800}
+.source-pill{display:inline-block;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:700;background:var(--surface-2);border:1px solid var(--border);color:var(--text-muted)}
+.votes-up{color:#10b981;font-weight:700}
+.votes-down{color:#dc2626;font-weight:700}
+.question-cell{max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text);font-weight:600}
+.sql-preview{max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:monospace;font-size:11px;color:var(--text-muted);cursor:pointer}
+.sql-preview:hover{color:var(--text)}
+.candidate-actions{display:flex;gap:.35rem;flex-wrap:wrap}
+.lq-btn{display:inline-block;padding:4px 10px;border-radius:var(--radius-sm);border:1px solid var(--border);font-size:11px;font-weight:800;cursor:pointer;background:var(--surface);color:var(--text-muted);transition:background .12s,color .12s,border-color .12s}
+.lq-btn:hover{background:var(--surface-3);color:var(--text)}
+.lq-btn-approve{border-color:rgba(16,185,129,.4);color:#10b981}
+.lq-btn-approve:hover{background:rgba(16,185,129,.1)}
+.lq-btn-reject{border-color:rgba(239,68,68,.4);color:#dc2626}
+.lq-btn-reject:hover{background:rgba(239,68,68,.1)}
+.lq-btn-failure{border-color:rgba(245,158,11,.4);color:#d97706}
+.lq-btn-failure:hover{background:rgba(245,158,11,.1)}
+.expand-detail{display:none}
+.expand-detail.open{display:table-row}
+.detail-panel{background:var(--surface-2);padding:.85rem 1rem;border-radius:var(--radius-sm);border:1px solid var(--border)}
+.detail-sql{font-family:monospace;font-size:11px;white-space:pre-wrap;word-break:break-word;color:var(--code-text,var(--text-soft));background:var(--code-bg,var(--surface));border:1px solid var(--border);border-radius:var(--radius-sm);padding:.65rem .75rem;max-height:200px;overflow-y:auto;margin:.5rem 0}
+.detail-evidence{font-size:11px;color:var(--text-muted);margin-top:.5rem;display:flex;flex-wrap:wrap;gap:.5rem}
+.evidence-item{background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:2px 7px}
+.correct-sql-form{margin-top:.75rem}
+.correct-sql-label{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);margin-bottom:.35rem}
+.correct-sql-input{width:100%;min-height:80px;font-family:monospace;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);padding:.5rem .65rem;background:var(--surface);color:var(--text);resize:vertical}
+.correct-sql-input:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px rgba(13,115,119,.1)}
+.reviewer-note-input{width:100%;font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);padding:.4rem .65rem;background:var(--surface);color:var(--text)}
+.lq-empty{text-align:center;padding:3rem;color:var(--text-muted);font-size:14px}
+.lq-stats{display:flex;gap:.75rem;flex-wrap:wrap;margin-bottom:1.25rem}
+.lq-stat-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:.75rem 1rem;min-width:100px;text-align:center}
+.lq-stat-n{font-size:22px;font-weight:900;color:var(--text)}
+.lq-stat-l{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);margin-top:.15rem}
+.feedback-votes{display:flex;gap:.25rem;align-items:center}
+.flag-off-notice{padding:.85rem 1rem;background:color-mix(in srgb,var(--warning,#f59e0b) 10%,var(--surface));border:1px solid color-mix(in srgb,var(--warning,#f59e0b) 30%,transparent);border-radius:var(--radius);font-size:13px;color:var(--text-soft);margin-bottom:1.25rem}
+</style>
+{% endblock %}
+{% block content %}
+{{ client_workspace_nav(client, "learning_queue") }}
+
+{% if not flag_enabled %}
+<div class="flag-off-notice">
+  <strong>Feature flag off.</strong>
+  <code>enable_feedback_collection</code> is currently <strong>0</strong> for this workspace.
+  Candidates shown below are from existing migration or manual creation.
+  Enabling the flag activates live candidate creation and the portal feedback thumbs.
+</div>
+{% endif %}
+
+<!-- Stats row -->
+<div class="lq-stats">
+  <div class="lq-stat-card">
+    <div class="lq-stat-n">{{ stats.pending }}</div>
+    <div class="lq-stat-l">Pending</div>
+  </div>
+  <div class="lq-stat-card">
+    <div class="lq-stat-n">{{ stats.positive }}</div>
+    <div class="lq-stat-l">Approved</div>
+  </div>
+  <div class="lq-stat-card">
+    <div class="lq-stat-n">{{ stats.rejected + stats.known_failure }}</div>
+    <div class="lq-stat-l">Rejected</div>
+  </div>
+  <div class="lq-stat-card">
+    <div class="lq-stat-n">{{ stats.total }}</div>
+    <div class="lq-stat-l">Total</div>
+  </div>
+</div>
+
+<!-- Status filters -->
+<div class="lq-filters">
+  {% set statuses = [("pending_review","Pending review"),("approved","Approved"),("rejected","Rejected"),("known_failure","Known failures"),("revoked","Revoked")] %}
+  <a href="?status=all"     class="lq-filter{% if status_filter=='all'    %} active{% endif %}">All ({{ stats.total }})</a>
+  {% for val, label in statuses %}
+  <a href="?status={{ val }}" class="lq-filter{% if status_filter==val %} active{% endif %}">{{ label }}</a>
+  {% endfor %}
+</div>
+
+{% if saved %}
+<div class="alert alert-success" style="margin-bottom:.85rem">{{ saved }}</div>
+{% endif %}
+
+{% if not candidates %}
+<div class="lq-empty">
+  {% if status_filter == 'pending_review' %}
+  No candidates pending review — the queue is clear.
+  {% else %}
+  No candidates matching this filter.
+  {% endif %}
+</div>
+{% else %}
+<div style="overflow-x:auto">
+<table class="lq-table" id="lqTable">
+  <thead>
+    <tr>
+      <th style="width:28px"></th>
+      <th>Question</th>
+      <th>Type</th>
+      <th>Score</th>
+      <th>Votes</th>
+      <th>Source</th>
+      <th>Status</th>
+      <th>Created</th>
+      <th>Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for c in candidates %}
+  {% set cid = c.candidate_id %}
+  <tr class="lq-row" data-cid="{{ cid }}">
+    <td>
+      <button type="button" class="lq-btn" style="padding:2px 6px;font-size:10px"
+        onclick="toggleDetail('{{ cid }}')">+</button>
+    </td>
+    <td>
+      <div class="question-cell" title="{{ c.question_text }}">{{ c.question_text[:80] }}</div>
+    </td>
+    <td>
+      <span class="type-{{ c.candidate_type }}">{{ c.candidate_type }}</span>
+    </td>
+    <td>
+      {% set score = c.final_score %}
+      {% if score >= 85 %}
+        <span class="score-pill score-positive">{{ score }}</span>
+      {% elif score >= 60 %}
+        <span class="score-pill score-review">{{ score }}</span>
+      {% else %}
+        <span class="score-pill score-negative">{{ score }}</span>
+      {% endif %}
+    </td>
+    <td>
+      <div class="feedback-votes">
+        <span class="votes-up" title="Positive votes">👍 {{ c.positive_vote_count or 0 }}</span>
+        <span class="votes-down" title="Negative votes">👎 {{ c.negative_vote_count or 0 }}</span>
+      </div>
+    </td>
+    <td><span class="source-pill">{{ c.source }}</span></td>
+    <td>
+      <span class="badge
+        {%- if c.status == 'approved'        %} badge-green
+        {%- elif c.status == 'rejected'      %} badge-red
+        {%- elif c.status == 'known_failure' %} badge-amber
+        {%- elif c.status == 'revoked'       %} badge-gray
+        {%- else %} badge-blue{% endif %}">
+        {{ c.status.replace('_',' ') }}
+      </span>
+    </td>
+    <td class="lq-ts">{{ c.created_at[:10] if c.created_at else '' }}</td>
+    <td>
+      {% if c.status == 'pending_review' %}
+      <div class="candidate-actions">
+        <form method="post" action="/admin/clients/{{ client.account_id }}/learning-queue/{{ cid }}/review" style="display:inline">
+          <input type="hidden" name="action" value="approve">
+          <button type="submit" class="lq-btn lq-btn-approve">Approve</button>
+        </form>
+        <form method="post" action="/admin/clients/{{ client.account_id }}/learning-queue/{{ cid }}/review" style="display:inline">
+          <input type="hidden" name="action" value="reject">
+          <button type="submit" class="lq-btn lq-btn-reject">Reject</button>
+        </form>
+        <form method="post" action="/admin/clients/{{ client.account_id }}/learning-queue/{{ cid }}/review" style="display:inline">
+          <input type="hidden" name="action" value="known_failure">
+          <button type="submit" class="lq-btn lq-btn-failure">Known failure</button>
+        </form>
+      </div>
+      {% elif c.status == 'approved' %}
+        <span style="font-size:11px;color:var(--text-muted)">Approved {{ c.promoted_at[:10] if c.promoted_at else '' }}</span>
+      {% else %}
+        <span style="font-size:11px;color:var(--text-muted)">{{ c.reviewed_at[:10] if c.reviewed_at else '—' }}</span>
+      {% endif %}
+    </td>
+  </tr>
+  <!-- Detail expansion row -->
+  <tr class="expand-detail" id="detail-{{ cid }}">
+    <td colspan="9">
+      <div class="detail-panel">
+        <div class="correct-sql-label">SQL generated</div>
+        <div class="detail-sql">{{ c.sql_text }}</div>
+
+        <!-- Evidence breakdown -->
+        {% if c.evidence %}
+        {% set ev = c.evidence | tojson | fromjson %}
+        <div class="detail-evidence">
+          {% for k, v in ev.items() %}
+            {% if v is not none and v != '' %}
+            <span class="evidence-item"><strong>{{ k }}:</strong> {{ v }}</span>
+            {% endif %}
+          {% endfor %}
+        </div>
+        {% endif %}
+
+        {% if c.reviewer_note %}
+        <div style="margin-top:.5rem;font-size:12px;color:var(--text-muted)">
+          <strong>Reviewer note:</strong> {{ c.reviewer_note }}
+        </div>
+        {% endif %}
+
+        <!-- Corrected SQL entry (always shown so admin can improve any candidate) -->
+        <div class="correct-sql-form">
+          <div class="correct-sql-label" style="margin-top:.75rem">
+            Enter corrected SQL
+            <span style="font-weight:400;font-size:10px;color:var(--text-muted)">
+              — sets score to 85 and marks source as admin_correction
+            </span>
+          </div>
+          <form method="post" action="/admin/clients/{{ client.account_id }}/learning-queue/{{ cid }}/correct-sql">
+            <textarea class="correct-sql-input" name="corrected_sql"
+              placeholder="SELECT ... (leave blank to skip)">{% if c.corrected_sql %}{{ c.corrected_sql }}{% endif %}</textarea>
+            <div style="display:flex;gap:.5rem;margin-top:.45rem;align-items:center">
+              <input class="reviewer-note-input" style="flex:1" type="text"
+                name="reviewer_note" placeholder="Reviewer note (optional)"
+                value="{{ c.reviewer_note or '' }}">
+              <button type="submit" class="lq-btn" style="white-space:nowrap">Save corrected SQL</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endif %}
+
+<script>
+function toggleDetail(cid) {
+  const row = document.getElementById('detail-' + cid);
+  const btn = document.querySelector(`[data-cid="${cid}"] button`);
+  if (!row) return;
+  const open = row.classList.toggle('open');
+  if (btn) btn.textContent = open ? '−' : '+';
+}
+</script>
+{% endblock %}

@@ -210,7 +210,7 @@
    client:  the client object (must have .account_id and .client_name)
    current: key of the active tab — one of:
             overview | setup | kb | metrics | graph |
-            users | groups | billing
+            users | groups | billing | learning_queue
 
    Usage:
      {% from "macros.html" import client_workspace_nav %}
@@ -237,7 +237,8 @@
     <a href="{{ base }}/graph"         class="ws-tab{% if current=='graph'         %} active{% endif %}">Entity Graph</a>
     <a href="{{ base }}/users"         class="ws-tab{% if current=='users'     %} active{% endif %}">Users</a>
     <a href="{{ base }}/groups"        class="ws-tab{% if current=='groups'    %} active{% endif %}">Groups</a>
-    <a href="{{ base }}/billing"       class="ws-tab{% if current=='billing'   %} active{% endif %}">Billing</a>
+    <a href="{{ base }}/billing"         class="ws-tab{% if current=='billing'        %} active{% endif %}">Billing</a>
+    <a href="{{ base }}/learning-queue"  class="ws-tab{% if current=='learning_queue' %} active{% endif %}">Learning Queue</a>
   </nav>
 </div>
 {%- endmacro %}

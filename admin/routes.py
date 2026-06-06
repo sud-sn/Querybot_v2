@@ -5082,3 +5082,188 @@ async def admin_build_kb(
     return RedirectResponse(
         f"/admin/clients/{account_id}/setup?saved={quote('KB generation started - live progress will update on this page.')}",
         status_code=303)
+
+
+# =============================================================================
+# Learning Queue  (Day 3-4 — governed self-learning admin UI)
+# =============================================================================
+
+@router.get("/clients/{account_id}/learning-queue")
+async def admin_learning_queue(request: Request, account_id: str):
+    """Display the admin Learning Queue for a workspace."""
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+
+    client = store.get_client(account_id)
+    if not client:
+        return RedirectResponse("/admin/clients", status_code=303)
+
+    from store.learning_store import list_candidates
+
+    # Status filter from query string; default to pending_review
+    status_filter = request.query_params.get("status", "pending_review")
+    saved = request.query_params.get("saved", "")
+
+    # Map filter → list_candidates status arg
+    lc_status = None if status_filter == "all" else status_filter
+
+    candidates = list_candidates(account_id, status=lc_status, limit=100)
+
+    # Build stats for counter chips
+    def _count(s):
+        return len(list_candidates(account_id, status=s, limit=9999))
+
+    stats = {
+        "pending":      _count("pending_review"),
+        "positive":     _count("approved"),
+        "rejected":     _count("rejected"),
+        "known_failure": _count("known_failure"),
+        "revoked":      _count("revoked"),
+        "total":        len(list_candidates(account_id, status=None, limit=9999)),
+    }
+
+    # Parse evidence JSON for each candidate so the template can iterate it
+    import json as _json
+    for c in candidates:
+        raw_ev = c.get("evidence")
+        if isinstance(raw_ev, str):
+            try:
+                c["evidence"] = _json.loads(raw_ev)
+            except Exception:
+                c["evidence"] = {}
+        elif not isinstance(raw_ev, dict):
+            c["evidence"] = {}
+
+    return _resp(request, "client_learning_queue.html", {
+        "client":        client,
+        "candidates":    candidates,
+        "status_filter": status_filter,
+        "stats":         stats,
+        "saved":         saved,
+        "flag_enabled":  bool(client.get("enable_feedback_collection")),
+    })
+
+
+@router.post("/clients/{account_id}/learning-queue/{candidate_id}/review")
+async def admin_learning_queue_review(
+    request: Request,
+    account_id: str,
+    candidate_id: str,
+):
+    """Approve, reject, or mark known_failure on a learning candidate."""
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+
+    client = store.get_client(account_id)
+    if not client:
+        return RedirectResponse("/admin/clients", status_code=303)
+
+    form = await request.form()
+    action = str(form.get("action", "")).strip()
+    reviewer_note = str(form.get("reviewer_note", "")).strip()[:500]
+
+    VALID_ACTIONS = {"approve", "reject", "known_failure"}
+    if action not in VALID_ACTIONS:
+        return RedirectResponse(
+            f"/admin/clients/{account_id}/learning-queue?saved={quote('Unknown action — no change made.')}",
+            status_code=303,
+        )
+
+    # Map UI action → DB status
+    status_map = {
+        "approve":       "approved",
+        "reject":        "rejected",
+        "known_failure": "known_failure",
+    }
+    new_status = status_map[action]
+
+    try:
+        from store.learning_store import update_candidate_status
+        # Use the admin's session user id if available
+        reviewer_id = str(request.session.get("admin_id", "admin")) if hasattr(request, "session") else "admin"
+        update_candidate_status(
+            candidate_id=candidate_id,
+            status=new_status,
+            reviewer_id=reviewer_id,
+            reviewer_note=reviewer_note,
+        )
+        label_map = {"approved": "approved", "rejected": "rejected", "known_failure": "marked as known failure"}
+        msg = f"Candidate {candidate_id[:8]}... {label_map[new_status]}."
+    except Exception as exc:
+        log.error("admin_learning_queue_review error: %s", exc)
+        msg = f"Error: {exc}"
+
+    return RedirectResponse(
+        f"/admin/clients/{account_id}/learning-queue?saved={quote(msg)}",
+        status_code=303,
+    )
+
+
+@router.post("/clients/{account_id}/learning-queue/{candidate_id}/correct-sql")
+async def admin_learning_queue_correct_sql(
+    request: Request,
+    account_id: str,
+    candidate_id: str,
+):
+    """Save admin-corrected SQL for a learning candidate (sets score to 85, source='admin_correction')."""
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+
+    client = store.get_client(account_id)
+    if not client:
+        return RedirectResponse("/admin/clients", status_code=303)
+
+    form = await request.form()
+    corrected_sql = str(form.get("corrected_sql", "")).strip()
+    reviewer_note = str(form.get("reviewer_note", "")).strip()[:500]
+
+    if not corrected_sql:
+        return RedirectResponse(
+            f"/admin/clients/{account_id}/learning-queue?saved={quote('No SQL provided — nothing saved.')}",
+            status_code=303,
+        )
+
+    try:
+        from store.learning_store import set_candidate_corrected_sql, update_candidate_status
+        reviewer_id = str(request.session.get("admin_id", "admin")) if hasattr(request, "session") else "admin"
+        set_candidate_corrected_sql(
+            candidate_id=candidate_id,
+            corrected_sql=corrected_sql,
+            reviewer_id=reviewer_id,
+        )
+        # Also record reviewer note if provided
+        if reviewer_note:
+            update_candidate_status(
+                candidate_id=candidate_id,
+                status="pending_review",   # keep pending so admin can still approve after correction
+                reviewer_id=reviewer_id,
+                reviewer_note=reviewer_note,
+            )
+        msg = f"Corrected SQL saved for {candidate_id[:8]}... (score set to 85, source=admin_correction)."
+    except Exception as exc:
+        log.error("admin_learning_queue_correct_sql error: %s", exc)
+        msg = f"Error saving corrected SQL: {exc}"
+
+    return RedirectResponse(
+        f"/admin/clients/{account_id}/learning-queue?saved={quote(msg)}",
+        status_code=303,
+    )
+
+
+@router.get("/api/clients/{account_id}/learning-queue/count")
+async def admin_learning_queue_count(request: Request, account_id: str):
+    """Return JSON count of pending_review candidates — used for dashboard badges."""
+    if not _is_auth(request):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    client = store.get_client(account_id)
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+
+    try:
+        from store.learning_store import list_candidates
+        pending = list_candidates(account_id, status="pending_review", limit=9999)
+        return JSONResponse({"pending_review": len(pending), "account_id": account_id})
+    except Exception as exc:
+        log.error("admin_learning_queue_count error: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
