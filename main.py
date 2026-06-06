@@ -3529,6 +3529,101 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                             await websocket.send_json({"type": "typing", "active": False})
                         continue
 
+                    # ── contribution: append % share column to cached rows ────
+                    # Pure Python transform — no LLM, no DB call.
+                    if action == "contribution" and cached and cached.get("rows"):
+                        try:
+                            from core.result_transforms import (
+                                add_contribution_pct, describe_contribution_sql,
+                            )
+                            from core.response_builder import build_assistant_response
+                            _ct_rows  = cached["rows"]
+                            _ct_ctx   = cached.get("analysis_context") or {}
+                            _ct_mcol  = _ct_ctx.get("value_col") or (
+                                # fallback: first numeric col in the first row
+                                next((k for k, v in (_ct_rows[0] if _ct_rows else {}).items()
+                                      if isinstance(v, (int, float))), "")
+                            )
+                            _ct_result, _ct_stats = add_contribution_pct(_ct_rows, _ct_mcol)
+                            if not _ct_stats.get("ok"):
+                                await websocket.send_json({
+                                    "type": "assistant_error",
+                                    "action": "contribution",
+                                    "content": "Could not compute contribution share.",
+                                    "detail": _ct_stats.get("reason", ""),
+                                })
+                            else:
+                                _ct_sql = describe_contribution_sql(
+                                    _ct_mcol, _ct_stats["total"]
+                                )
+                                _ct_resp = build_assistant_response(
+                                    question=f"{cached.get('question', '')} (% contribution)",
+                                    rows=_ct_result,
+                                    sql=_ct_sql,
+                                    duration_ms=0,
+                                    data_source=str((cached.get("db_cfg") or {}).get("db_type", "")),
+                                    semantic_plan=cached.get("semantic_plan"),
+                                )
+                                _ct_resp["contribution_stats"] = _ct_stats
+                                await websocket.send_json(_ct_resp)
+                        except Exception as _ct_err:
+                            log.warning("contribution transform failed: %s", _ct_err)
+                            await websocket.send_json({
+                                "type": "assistant_error",
+                                "action": "contribution",
+                                "content": "Could not compute the % share breakdown.",
+                            })
+                        finally:
+                            await websocket.send_json({"type": "typing", "active": False})
+                        continue
+
+                    # ── outliers: filter cached rows to exceptional values ─────
+                    # Pure Python transform — no LLM, no DB call.
+                    if action == "outliers" and cached and cached.get("rows"):
+                        try:
+                            from core.result_transforms import (
+                                filter_outliers, describe_outlier_sql,
+                            )
+                            from core.response_builder import build_assistant_response
+                            _ol_rows = cached["rows"]
+                            _ol_ctx  = cached.get("analysis_context") or {}
+                            _ol_mcol = _ol_ctx.get("value_col") or (
+                                next((k for k, v in (_ol_rows[0] if _ol_rows else {}).items()
+                                      if isinstance(v, (int, float))), "")
+                            )
+                            _ol_result, _ol_stats = filter_outliers(_ol_rows, _ol_mcol)
+                            if not _ol_stats.get("ok"):
+                                await websocket.send_json({
+                                    "type": "assistant_error",
+                                    "action": "outliers",
+                                    "content": (
+                                        _ol_stats.get("detail")
+                                        or "No outliers found in this result."
+                                    ),
+                                })
+                            else:
+                                _ol_sql = describe_outlier_sql(_ol_mcol, _ol_stats)
+                                _ol_resp = build_assistant_response(
+                                    question=f"{cached.get('question', '')} (exceptions only)",
+                                    rows=_ol_result,
+                                    sql=_ol_sql,
+                                    duration_ms=0,
+                                    data_source=str((cached.get("db_cfg") or {}).get("db_type", "")),
+                                    semantic_plan=cached.get("semantic_plan"),
+                                )
+                                _ol_resp["outlier_stats"] = _ol_stats
+                                await websocket.send_json(_ol_resp)
+                        except Exception as _ol_err:
+                            log.warning("outlier filter failed: %s", _ol_err)
+                            await websocket.send_json({
+                                "type": "assistant_error",
+                                "action": "outliers",
+                                "content": "Could not filter outliers from this result.",
+                            })
+                        finally:
+                            await websocket.send_json({"type": "typing", "active": False})
+                        continue
+
                     # ── standard action buttons (explain, analyze, compare …) ─
                     if cached and cached.get("rows") is not None:
                         try:
