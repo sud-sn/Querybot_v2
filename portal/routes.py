@@ -477,6 +477,10 @@ def _build_chat_suggestions(user: dict) -> list[dict]:
     Return up to 6 structured suggestion dicts: {"question": str, "fqn": str}.
     The fqn travels with the suggestion so the chat UI can pass it as a schema
     hint when the user clicks — fixing schema-unaware SQL generation.
+
+    When enable_genie_suggestions=1 the list is re-ordered by the behavioral
+    signal ranker (core.genie_ranker) so high-engagement suggestions surface
+    first.  Falls back to the unranked list on any ranker error.
     """
     try:
         import store
@@ -509,10 +513,54 @@ def _build_chat_suggestions(user: dict) -> list[dict]:
                 if len(suggestions) >= 6:
                     break
 
+        # ── Genie signal engine: re-rank by behavioral signals ────────────────
+        if client.get("enable_genie_suggestions"):
+            try:
+                from core.genie_ranker import rank_suggestions
+                suggestions = rank_suggestions(account_id, suggestions)
+            except Exception as exc:
+                log.debug(
+                    "_build_chat_suggestions: genie ranking skipped (non-fatal): %s", exc
+                )
+
         return suggestions[:6]
 
     except Exception:
         return []
+
+
+def _record_suggestions_displayed(user: dict, suggestions: list[dict]) -> None:
+    """
+    Fire-and-forget: record one 'displayed' event per suggestion shown to the user.
+
+    Called from portal_chat when enable_genie_suggestions=1 so that impression
+    counts accumulate for the behavioral signal ranker.  Any DB error is logged
+    at DEBUG level and never propagated — page render must never be blocked by
+    event recording.
+    """
+    try:
+        import uuid as _uuid
+        from store.learning_store import record_event
+
+        # A synthetic page-load ID ties together one display batch.
+        # We don't expose the real session cookie value for security.
+        page_session_id = str(_uuid.uuid4())
+
+        for sug in suggestions:
+            question = (sug.get("question") or "").strip()
+            if not question:
+                continue
+            source = sug.get("source", "static")
+            record_event(
+                session_id=page_session_id,
+                account_id=user["account_id"],
+                event_type="displayed",
+                suggestion_text=question,
+                user_id=user.get("id"),
+                suggestion_source=source,
+            )
+    except Exception as exc:
+        log.debug("_record_suggestions_displayed failed (non-fatal): %s", exc)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1307,6 +1355,12 @@ async def portal_chat(request: Request):
 
     suggestions = _build_chat_suggestions(user)
 
+    # Record impression events for Genie signal engine (fire-and-forget).
+    # Intentionally placed after _build_chat_suggestions so the display call
+    # uses the already-resolved (ranked) suggestion list.
+    if client.get("enable_genie_suggestions") and suggestions:
+        _record_suggestions_displayed(user, suggestions)
+
     # Build the list of schemas the user has access to — used for the schema
     # selector tab bar in the chat UI.
     available_schemas = _get_available_schemas(user)
@@ -1325,3 +1379,78 @@ async def portal_chat(request: Request):
         "query_status":       query_status,
         "token_usage":        token_usage,
     })
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Genie suggestion event API (browser → server)
+# ══════════════════════════════════════════════════════════════════════════════
+
+@router.post("/api/suggestions/event")
+async def portal_suggestions_event(request: Request):
+    """
+    Record a suggestion interaction event sent from the browser.
+
+    Called via fetch() after the user clicks, executes, dismisses, or
+    successfully receives an answer from a suggestion.  The 'displayed' event
+    is recorded server-side on page load — do not send it from the browser.
+
+    Request body (JSON)
+    -------------------
+    {
+        "event_type":      "clicked" | "executed" | "successful" | "dismissed",
+        "suggestion_text": "<question text>",
+        "session_id":      "<page-load UUID supplied by the front-end>"
+    }
+
+    Response
+    --------
+    200  {"ok": true}   — always, even when the DB write fails.
+    400  {"detail": "…"} — malformed input.
+    401  not authenticated.
+
+    Design note
+    -----------
+    This endpoint is intentionally fire-and-forget: a recording failure must
+    never break the chat experience.  The 200 response is returned before (or
+    regardless of) whether record_event() succeeds.
+    """
+    user = _get_portal_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    event_type      = (body.get("event_type")      or "").strip()
+    suggestion_text = (body.get("suggestion_text") or "").strip()
+    session_id      = str(body.get("session_id")   or "")[:64]
+
+    # Only interaction events are accepted from the browser.
+    # 'displayed' is recorded server-side to prevent client-side inflation.
+    _ALLOWED_BROWSER_EVENTS = {"clicked", "executed", "successful", "dismissed"}
+    if event_type not in _ALLOWED_BROWSER_EVENTS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid event_type {event_type!r}. "
+                   f"Allowed: {sorted(_ALLOWED_BROWSER_EVENTS)}",
+        )
+
+    if not suggestion_text:
+        raise HTTPException(status_code=400, detail="suggestion_text is required")
+
+    # Fire-and-forget — never let a recording failure surface to the user
+    try:
+        from store.learning_store import record_event
+        record_event(
+            session_id=session_id or "browser",
+            account_id=user["account_id"],
+            event_type=event_type,
+            suggestion_text=suggestion_text,
+            user_id=user.get("id"),
+        )
+    except Exception as exc:
+        log.debug("portal_suggestions_event: record_event failed (non-fatal): %s", exc)
+
+    return JSONResponse({"ok": True})
