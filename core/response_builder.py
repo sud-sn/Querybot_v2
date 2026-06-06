@@ -1379,6 +1379,7 @@ def build_assistant_response(
     display_context: dict | None = None,
     column_formats: dict | None = None,
     semantic_plan: dict | None = None,
+    question_id: str = "",
 ) -> dict:
     from core.insight import compute_data_brief
     ctx = summarize_result_context(rows, question, sql=sql)
@@ -1450,6 +1451,7 @@ def build_assistant_response(
             "data_source": data_source or "",
             "scope_badge": ctx.get("result_scope", {}).get("badge", ""),
             "confidence": confidence or {},
+            "question_id": question_id,   # public key for feedback API (B3)
         },
         "confidence": confidence or {},
     }

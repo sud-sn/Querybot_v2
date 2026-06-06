@@ -520,7 +520,7 @@ CREATE TABLE IF NOT EXISTS entity_relationships (
 CREATE INDEX IF NOT EXISTS idx_entity_rel_account
     ON entity_relationships(account_id, is_active);
 
--- ── Entity properties (column roles) ──────────────────────────────────────────
+-- ── Entity properties (column roles) ────────────────��─────────────────────────
 -- Classifies each column of an entity as metric, dimension, filter, date, etc.
 -- Drives smarter SELECT-clause generation and synonym resolution.
 CREATE TABLE IF NOT EXISTS entity_properties (
@@ -533,6 +533,103 @@ CREATE TABLE IF NOT EXISTS entity_properties (
     synonyms     TEXT    NOT NULL DEFAULT '',          -- comma-separated alternative names
     UNIQUE(account_id, entity_name, column_name)
 );
+
+-- =============================================================================
+-- Learning loop tables (v30)
+-- =============================================================================
+
+-- ── Answer feedback — thumbs-up / down on every completed answer ──────────────
+-- question_id  : = audit_request_id (public key, exposed in trust block)
+-- rating       : 1 = up, -1 = down
+-- reason_code  : wrong_metric | wrong_dimension | wrong_filter | wrong_join |
+--                wrong_data | incomplete | confusing | expected_data_missing | other
+-- question_text / sql_text: denormalized from trace for fast admin queue display
+CREATE TABLE IF NOT EXISTS answer_feedback (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    question_id   TEXT    NOT NULL,
+    user_id       INTEGER NOT NULL REFERENCES portal_user(id) ON DELETE CASCADE,
+    account_id    TEXT    NOT NULL REFERENCES client(account_id) ON DELETE CASCADE,
+    schema_scope  TEXT    NOT NULL DEFAULT '',
+    rating        INTEGER NOT NULL CHECK(rating IN (-1, 1)),
+    reason_code   TEXT    NOT NULL DEFAULT '',
+    comment       TEXT    NOT NULL DEFAULT '',
+    question_text TEXT    NOT NULL DEFAULT '',
+    sql_text      TEXT    NOT NULL DEFAULT '',
+    created_at    TEXT    DEFAULT (datetime('now')),
+    updated_at    TEXT    DEFAULT (datetime('now')),
+    UNIQUE(question_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_answer_feedback_question
+    ON answer_feedback(question_id);
+CREATE INDEX IF NOT EXISTS idx_answer_feedback_account_status
+    ON answer_feedback(account_id, rating, created_at DESC);
+
+-- ── Learning candidate — one row per answer considered for memory ─────────────
+-- candidate_type  : positive | review | negative | regression
+-- status          : pending_review | approved | rejected | known_failure | revoked
+-- source          : auto | admin_correction | pre_governed
+-- technical_score : sum of dimension scores (0–100, no feedback)
+-- feedback_delta  : net feedback adjustment (+10 or -30)
+-- final_score     : technical_score + feedback_delta (clamped to 0+)
+-- evidence        : JSON breakdown of how each dimension scored
+CREATE TABLE IF NOT EXISTS learning_candidate (
+    id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+    candidate_id           TEXT    NOT NULL UNIQUE,
+    origin_question_id     TEXT    NOT NULL DEFAULT '',
+    account_id             TEXT    NOT NULL REFERENCES client(account_id) ON DELETE CASCADE,
+    schema_scope           TEXT    NOT NULL DEFAULT '',
+    candidate_type         TEXT    NOT NULL DEFAULT 'review'
+                           CHECK(candidate_type IN ('positive','review','negative','regression')),
+    question_text          TEXT    NOT NULL DEFAULT '',
+    sql_text               TEXT    NOT NULL DEFAULT '',
+    corrected_sql          TEXT    NOT NULL DEFAULT '',
+    technical_score        INTEGER NOT NULL DEFAULT 0,
+    feedback_delta         INTEGER NOT NULL DEFAULT 0,
+    final_score            INTEGER NOT NULL DEFAULT 0,
+    evidence               TEXT    NOT NULL DEFAULT '{}',
+    positive_vote_count    INTEGER NOT NULL DEFAULT 0,
+    negative_vote_count    INTEGER NOT NULL DEFAULT 0,
+    status                 TEXT    NOT NULL DEFAULT 'pending_review'
+                           CHECK(status IN ('pending_review','approved','rejected','known_failure','revoked')),
+    source                 TEXT    NOT NULL DEFAULT 'auto'
+                           CHECK(source IN ('auto','admin_correction','pre_governed')),
+    semantic_model_version TEXT    NOT NULL DEFAULT '',
+    metric_version         TEXT    NOT NULL DEFAULT '',
+    schema_version         TEXT    NOT NULL DEFAULT '',
+    qdrant_id              TEXT    NOT NULL DEFAULT '',
+    reviewer_id            TEXT    NOT NULL DEFAULT '',
+    reviewer_note          TEXT    NOT NULL DEFAULT '',
+    reviewed_at            TEXT    DEFAULT NULL,
+    promoted_at            TEXT    DEFAULT NULL,
+    created_at             TEXT    DEFAULT (datetime('now')),
+    updated_at             TEXT    DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_learning_candidate_account_status
+    ON learning_candidate(account_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_learning_candidate_question
+    ON learning_candidate(origin_question_id);
+CREATE INDEX IF NOT EXISTS idx_learning_candidate_type
+    ON learning_candidate(account_id, candidate_type, status);
+
+-- ── Recommendation event — tracks suggestion impressions and outcomes ──────────
+-- event_type : displayed | clicked | executed | successful | dismissed
+-- suggestion_source : genie | learned | static
+CREATE TABLE IF NOT EXISTS recommendation_event (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id         TEXT    NOT NULL DEFAULT '',
+    user_id            INTEGER REFERENCES portal_user(id) ON DELETE SET NULL,
+    account_id         TEXT    NOT NULL REFERENCES client(account_id) ON DELETE CASCADE,
+    event_type         TEXT    NOT NULL
+                       CHECK(event_type IN ('displayed','clicked','executed','successful','dismissed')),
+    suggestion_text    TEXT    NOT NULL DEFAULT '',
+    suggestion_source  TEXT    NOT NULL DEFAULT '',
+    result_question_id TEXT    NOT NULL DEFAULT '',
+    created_at         TEXT    DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_recommendation_event_account
+    ON recommendation_event(account_id, event_type, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_recommendation_event_session
+    ON recommendation_event(session_id);
 """
 
 
@@ -582,6 +679,7 @@ def init_db() -> None:
             "ON llm_call_log(account_id, created_at DESC)"
         )
     _run_migrations()
+    _migrate_legacy_examples_to_candidates()
     log.info("Database initialised at %s", DB_PATH)
 
 
@@ -692,6 +790,16 @@ def _run_migrations() -> None:
         ("answer_trace", "metric_version_at_query",    "INTEGER DEFAULT 0"),
         ("answer_trace", "used_deterministic_compiler","INTEGER DEFAULT 0"),
         ("answer_trace", "compiler_confidence",        "REAL DEFAULT 0.0"),
+        # v30: self-learning loop — feature flags on client
+        ("client", "enable_feedback_collection", "INTEGER NOT NULL DEFAULT 0"),
+        ("client", "enable_learned_retrieval",   "INTEGER NOT NULL DEFAULT 0"),
+        ("client", "enable_genie_suggestions",   "INTEGER NOT NULL DEFAULT 0"),
+        # v30: validated_examples governance columns
+        ("validated_examples", "approval_status",          "TEXT NOT NULL DEFAULT 'legacy'"),
+        ("validated_examples", "candidate_id",             "TEXT NOT NULL DEFAULT ''"),
+        ("validated_examples", "quality_score",            "INTEGER NOT NULL DEFAULT 0"),
+        ("validated_examples", "schema_scope",             "TEXT NOT NULL DEFAULT ''"),
+        ("validated_examples", "semantic_model_version",   "TEXT NOT NULL DEFAULT ''"),
     ]
     with get_db() as conn:
         _ensure_llm_call_log_table(conn)
@@ -701,6 +809,7 @@ def _run_migrations() -> None:
         _ensure_semantic_field_feedback_table(conn)
         _ensure_metric_version_table(conn)
         _ensure_metric_test_table(conn)
+        _ensure_learning_loop_tables(conn)
         for table, column, col_def in migrations:
             try:
                 existing = [
@@ -960,6 +1069,92 @@ def _ensure_metric_version_table(conn: sqlite3.Connection) -> None:
     )
 
 
+def _ensure_learning_loop_tables(conn: sqlite3.Connection) -> None:
+    """
+    Create the self-learning loop tables if they don't exist.
+    Safe to call on every startup — uses CREATE TABLE IF NOT EXISTS.
+    """
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS answer_feedback (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            question_id   TEXT    NOT NULL,
+            user_id       INTEGER NOT NULL REFERENCES portal_user(id) ON DELETE CASCADE,
+            account_id    TEXT    NOT NULL REFERENCES client(account_id) ON DELETE CASCADE,
+            schema_scope  TEXT    NOT NULL DEFAULT '',
+            rating        INTEGER NOT NULL CHECK(rating IN (-1, 1)),
+            reason_code   TEXT    NOT NULL DEFAULT '',
+            comment       TEXT    NOT NULL DEFAULT '',
+            question_text TEXT    NOT NULL DEFAULT '',
+            sql_text      TEXT    NOT NULL DEFAULT '',
+            created_at    TEXT    DEFAULT (datetime('now')),
+            updated_at    TEXT    DEFAULT (datetime('now')),
+            UNIQUE(question_id, user_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_answer_feedback_question
+            ON answer_feedback(question_id);
+        CREATE INDEX IF NOT EXISTS idx_answer_feedback_account_status
+            ON answer_feedback(account_id, rating, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS learning_candidate (
+            id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+            candidate_id           TEXT    NOT NULL UNIQUE,
+            origin_question_id     TEXT    NOT NULL DEFAULT '',
+            account_id             TEXT    NOT NULL REFERENCES client(account_id) ON DELETE CASCADE,
+            schema_scope           TEXT    NOT NULL DEFAULT '',
+            candidate_type         TEXT    NOT NULL DEFAULT 'review'
+                                   CHECK(candidate_type IN ('positive','review','negative','regression')),
+            question_text          TEXT    NOT NULL DEFAULT '',
+            sql_text               TEXT    NOT NULL DEFAULT '',
+            corrected_sql          TEXT    NOT NULL DEFAULT '',
+            technical_score        INTEGER NOT NULL DEFAULT 0,
+            feedback_delta         INTEGER NOT NULL DEFAULT 0,
+            final_score            INTEGER NOT NULL DEFAULT 0,
+            evidence               TEXT    NOT NULL DEFAULT '{}',
+            positive_vote_count    INTEGER NOT NULL DEFAULT 0,
+            negative_vote_count    INTEGER NOT NULL DEFAULT 0,
+            status                 TEXT    NOT NULL DEFAULT 'pending_review'
+                                   CHECK(status IN ('pending_review','approved','rejected','known_failure','revoked')),
+            source                 TEXT    NOT NULL DEFAULT 'auto'
+                                   CHECK(source IN ('auto','admin_correction','pre_governed')),
+            semantic_model_version TEXT    NOT NULL DEFAULT '',
+            metric_version         TEXT    NOT NULL DEFAULT '',
+            schema_version         TEXT    NOT NULL DEFAULT '',
+            qdrant_id              TEXT    NOT NULL DEFAULT '',
+            reviewer_id            TEXT    NOT NULL DEFAULT '',
+            reviewer_note          TEXT    NOT NULL DEFAULT '',
+            reviewed_at            TEXT    DEFAULT NULL,
+            promoted_at            TEXT    DEFAULT NULL,
+            created_at             TEXT    DEFAULT (datetime('now')),
+            updated_at             TEXT    DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_learning_candidate_account_status
+            ON learning_candidate(account_id, status, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_learning_candidate_question
+            ON learning_candidate(origin_question_id);
+        CREATE INDEX IF NOT EXISTS idx_learning_candidate_type
+            ON learning_candidate(account_id, candidate_type, status);
+
+        CREATE TABLE IF NOT EXISTS recommendation_event (
+            id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id         TEXT    NOT NULL DEFAULT '',
+            user_id            INTEGER REFERENCES portal_user(id) ON DELETE SET NULL,
+            account_id         TEXT    NOT NULL REFERENCES client(account_id) ON DELETE CASCADE,
+            event_type         TEXT    NOT NULL
+                               CHECK(event_type IN ('displayed','clicked','executed','successful','dismissed')),
+            suggestion_text    TEXT    NOT NULL DEFAULT '',
+            suggestion_source  TEXT    NOT NULL DEFAULT '',
+            result_question_id TEXT    NOT NULL DEFAULT '',
+            created_at         TEXT    DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_recommendation_event_account
+            ON recommendation_event(account_id, event_type, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_recommendation_event_session
+            ON recommendation_event(session_id);
+        """
+    )
+
+
 def _ensure_metric_test_table(conn: sqlite3.Connection) -> None:
     """
     Golden-question test cases bound to a specific metric.
@@ -990,3 +1185,63 @@ def _ensure_metric_test_table(conn: sqlite3.Connection) -> None:
             ON metric_test(account_id);
         """
     )
+
+
+def _migrate_legacy_examples_to_candidates() -> None:
+    """
+    One-time migration: convert all existing validated_examples that still carry
+    approval_status='legacy' into learning_candidate rows with:
+      status='pending_review', source='pre_governed', technical_score=85.
+
+    Idempotent — already-migrated rows are skipped.
+
+    IMPORTANT (B7 = dual-collection): the legacy Qdrant collection is left
+    completely untouched.  Legacy examples continue to be served from it until
+    admins approve them through the new governed collection.  Existing retrieval
+    quality is preserved during the transition.
+    """
+    import uuid as _uuid
+    migrated = 0
+    try:
+        with get_db() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, account_id, question, sql_query, source, created_at
+                FROM   validated_examples
+                WHERE  approval_status = 'legacy'
+                  AND  candidate_id    = ''
+                """
+            ).fetchall()
+
+            for row in rows:
+                cid = _uuid.uuid4().hex[:12]
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO learning_candidate (
+                        candidate_id, origin_question_id, account_id,
+                        candidate_type, question_text, sql_text,
+                        technical_score, final_score,
+                        evidence, status, source, created_at
+                    ) VALUES (?, '', ?, 'positive', ?, ?, 85, 85,
+                              '{"note":"migrated_from_validated_examples"}',
+                              'pending_review', 'pre_governed', ?)
+                    """,
+                    (cid, row["account_id"], row["question"],
+                     row["sql_query"], row["created_at"]),
+                )
+                conn.execute(
+                    "UPDATE validated_examples SET candidate_id=? WHERE id=?",
+                    (cid, row["id"]),
+                )
+                migrated += 1
+
+    except Exception as exc:
+        log.warning("Legacy-examples migration skipped: %s", exc)
+        return
+
+    if migrated:
+        log.info(
+            "Learning loop: migrated %d validated_examples → learning_candidate "
+            "(pending_review, pre_governed).  Legacy Qdrant collection untouched.",
+            migrated,
+        )
