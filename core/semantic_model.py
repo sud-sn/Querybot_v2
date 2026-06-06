@@ -1095,12 +1095,48 @@ def build_runtime_semantic_plan(
         return {"enabled": False, "fields": [], "joins": [], "required_tables": [], "reason": "no matching semantic model fields"}
 
     required_tables = sorted({f["table"] for f in fields} | {j["from"] for j in joins} | {j["to"] for j in joins})
+
+    # ── All available dimensions (for drill-by-dimension chip, Sprint C) ────────
+    # Collect every complete dimension entry from every scoped table regardless
+    # of question score.  compute_chip_eligibility filters this against the
+    # actual result columns to decide which "Break down by X" chips to show.
+    available_dims: list[dict[str, Any]] = []
+    _seen_avail: set[tuple[str, str]] = set()
+    for table in tables:
+        src_t = str(table.get("qualified_name") or table.get("table") or "")
+        for dim in table.get("dimensions", []) or []:
+            dc  = str(dim.get("display_column") or "")
+            dt  = str(dim.get("display_table") or "")
+            sk  = str(dim.get("source_key") or "")
+            dk  = str(dim.get("display_key") or sk)
+            if not dc or not dt or not sk:
+                continue
+            key = (dt.upper(), dc.upper())
+            if key in _seen_avail:
+                continue
+            _seen_avail.add(key)
+            role_label = _business_role_from_column(sk).replace("_", " ") if sk else ""
+            name = role_label.title() if role_label else str(dim.get("name") or dc)
+            available_dims.append({
+                "name":              name,
+                "display_table":     dt,
+                "display_column":    dc,
+                "source_table":      src_t,
+                "source_key_column": sk,
+                "display_key":       dk,
+                "status":            dim.get("status", "generated"),
+                "confidence":        dim.get("confidence", 50),
+            })
+        if len(available_dims) >= 20:   # cap — UI shows at most 3
+            break
+
     return {
         "enabled": True,
         "fields": fields,
         "joins": joins,
         "required_tables": required_tables,
         "reason": "structured semantic model",
+        "available_dimensions": available_dims,
     }
 
 
