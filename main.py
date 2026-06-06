@@ -3419,6 +3419,61 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 try:
                     cached = adapter.last_result
 
+                    # ── drill_dim: add a dimension to the result ─────────────
+                    # action format: "drill_dim:{DimensionName}"
+                    if action.startswith("drill_dim:") and cached and cached.get("rows"):
+                        _dim_name = action[len("drill_dim:"):]
+                        try:
+                            from core.drill_dimension import generate_drill_by_dimension
+                            provider, model, api_key, az_kwargs = resolve_provider(client, purpose="query")
+                            _dd_plan = cached.get("semantic_plan") or {}
+                            with llm_audit_scope(
+                                account_id=account_id,
+                                question=f"drill_dim:{_dim_name}: {cached.get('question', '')}".strip(),
+                                enabled=bool(client.get("enable_llm_audit")),
+                                request_id=make_llm_audit_request_id(),
+                                question_id=getattr(adapter, "last_question_id", None) or "",
+                                component="drill_dim",
+                            ):
+                                _dd_result = await generate_drill_by_dimension(
+                                    dim_name=_dim_name,
+                                    rows=cached["rows"],
+                                    question=cached.get("question", ""),
+                                    original_sql=cached.get("sql", ""),
+                                    semantic_plan=_dd_plan,
+                                    db_cfg=cached.get("db_cfg") or {},
+                                    known_tables=_ws_known_tables,
+                                    provider=provider,
+                                    model=model,
+                                    api_key=api_key,
+                                    **az_kwargs,
+                                )
+                            await websocket.send_json(_dd_result)
+                            # Cache the drill result so subsequent actions apply to it
+                            if _dd_result.get("type") == "assistant_response":
+                                _dd_cache_fn = getattr(adapter, "cache_result", None)
+                                if callable(_dd_cache_fn):
+                                    _dd_cache_fn(
+                                        _dd_result.get("data", {}).get("rows") or [],
+                                        _dd_result.get("question", ""),
+                                        (_dd_result.get("trust") or {}).get("sql", ""),
+                                        cached.get("db_cfg"),
+                                        cached.get("rag_context", ""),
+                                        semantic_plan=_dd_plan,
+                                        data_brief=_dd_result.get("data_brief") or {},
+                                    )
+                        except Exception as _dd_err:
+                            log.warning("drill_dim failed: %s", _dd_err)
+                            await websocket.send_json({
+                                "type": "assistant_error",
+                                "action": "drill_dim",
+                                "content": "Could not complete the drill-down.",
+                                "suggestion": f"Try asking: \"Break down by {_dim_name}\" directly.",
+                            })
+                        finally:
+                            await websocket.send_json({"type": "typing", "active": False})
+                        continue
+
                     # ── compare_prior: fetch prior period from DB ─────────────
                     # This is the only action that requires a live DB call —
                     # all other actions work purely from the cached result rows.

@@ -810,18 +810,52 @@ def compute_chip_eligibility(
         if dist.get("std_dev") is not None:
             _add("analyze", "Analyze spread", 75)
 
+    # ── drill_dim — "Break down by X" chips ─────────────────────────────────
+    # Show at most 3 dimensions that are available in the semantic model but
+    # not already present in the current result.  Each chip gets its own id
+    # encoded as "drill_dim:{DimensionName}" so the backend knows which one
+    # was clicked without requiring the frontend to pass extra context.
+    if semantic_plan and semantic_plan.get("enabled") and row_count >= 1:
+        result_cols_upper = {
+            c.upper()
+            for c in (ctx.get("numeric_cols") or []) + (ctx.get("text_cols") or [])
+        }
+        drill_count = 0
+        for dim in (semantic_plan.get("available_dimensions") or []):
+            if drill_count >= 3:
+                break
+            dc = (dim.get("display_column") or "").upper()
+            name = (dim.get("name") or "").strip()
+            if not dc or not name:
+                continue
+            if dc in result_cols_upper:
+                continue  # already in the result — skip
+            conf = 75 if dim.get("status") == "approved" else 68
+            _add(
+                f"drill_dim:{name}",
+                f"Break down by {name}",
+                conf,
+                f"Add {name} dimension to this result",
+            )
+            drill_count += 1
+
     # ── decide (advisory next-step) — only when structure is sufficient ──────
     if mode in ("time_series", "ranking") and row_count >= 3:
         _add("decide", "Recommend next step", 75)
     elif mode == "numeric_table" and row_count >= 3 and dist.get("std_dev") is not None:
         _add("decide", "Recommend next step", 72)
 
-    # Enforce fixed display order so buttons appear consistently
-    _order = [
-        "explain", "analyze", "compare", "compare_prior",
-        "contribution", "outliers", "predict", "decide",
-    ]
-    chips.sort(key=lambda c: _order.index(c["id"]) if c["id"] in _order else 99)
+    # Fixed display order. drill_dim chips (dynamic ids) slot between
+    # outliers (priority 5) and predict (priority 90).
+    _fixed = {
+        "explain": 0, "analyze": 1, "compare": 2, "compare_prior": 3,
+        "contribution": 4, "outliers": 5,
+        "predict": 90, "decide": 91,
+    }
+    chips.sort(key=lambda c: (
+        _fixed.get(c["id"], 50 if c["id"].startswith("drill_dim:") else 99),
+        c["id"],   # alphabetical tiebreak for multiple drill chips
+    ))
     return chips
 
 
