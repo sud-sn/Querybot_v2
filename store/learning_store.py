@@ -321,6 +321,58 @@ def update_candidate_score(
         )
 
 
+def _fire_governed_upsert(candidate_id: str) -> None:
+    """
+    Best-effort: embed an approved candidate into querybot_governed.
+
+    Called after update_candidate_status sets status='approved'.
+    Never raises -- any failure is logged as a warning.
+    Also writes the Qdrant point ID back to qdrant_id for observability.
+    """
+    try:
+        candidate = get_candidate(candidate_id)
+        if not candidate:
+            return
+        # Prefer admin-corrected SQL over the original SQL
+        sql = candidate.get("corrected_sql") or candidate.get("sql_text", "")
+        if not sql:
+            return
+        from core.governed_store import upsert_governed_example
+        point_id = upsert_governed_example(
+            candidate_id=candidate_id,
+            account_id=candidate["account_id"],
+            question=candidate.get("question_text", ""),
+            sql=sql,
+            source=candidate.get("source", "auto"),
+            final_score=int(candidate.get("final_score") or 0),
+        )
+        # Write the Qdrant point ID back for observability (best-effort)
+        if point_id:
+            with get_db() as conn:
+                conn.execute(
+                    "UPDATE learning_candidate SET qdrant_id=? WHERE candidate_id=?",
+                    (point_id, candidate_id),
+                )
+    except Exception as exc:
+        log.warning("_fire_governed_upsert failed (non-fatal): %s", exc)
+
+
+def _fire_governed_delete(candidate_id: str) -> None:
+    """
+    Best-effort: remove a revoked candidate from querybot_governed.
+
+    Called after update_candidate_status sets status='revoked'.
+    Never raises -- any failure is logged as a warning.
+    """
+    try:
+        candidate = get_candidate(candidate_id)
+        account_id = candidate["account_id"] if candidate else ""
+        from core.governed_store import delete_governed_example
+        delete_governed_example(candidate_id, account_id)
+    except Exception as exc:
+        log.warning("_fire_governed_delete failed (non-fatal): %s", exc)
+
+
 def update_candidate_status(
     candidate_id: str,
     status: str,
@@ -332,6 +384,10 @@ def update_candidate_status(
 
     Valid statuses: pending_review | approved | rejected | known_failure | revoked
     Updates reviewed_at and promoted_at (on approval) automatically.
+
+    Governed collection side-effects (best-effort, never raise):
+      approved  -> _fire_governed_upsert: embeds question into querybot_governed
+      revoked   -> _fire_governed_delete: removes point from querybot_governed
     """
     valid = {"pending_review", "approved", "rejected", "known_failure", "revoked"}
     if status not in valid:
@@ -361,9 +417,23 @@ def update_candidate_status(
             params,
         )
     log.info(
-        "learning_store: candidate %s status → %s (reviewer=%s)",
+        "learning_store: candidate %s status -> %s (reviewer=%s)",
         candidate_id, status, reviewer_id or "system",
     )
+
+    # Governed collection hooks -- best-effort, always after the DB write.
+    # Wrapped in try/except so a defect in the hook never rolls back the status
+    # change that was already committed above.
+    if status == "approved":
+        try:
+            _fire_governed_upsert(candidate_id)
+        except Exception as exc:
+            log.warning("update_candidate_status: governed upsert hook failed (non-fatal): %s", exc)
+    elif status == "revoked":
+        try:
+            _fire_governed_delete(candidate_id)
+        except Exception as exc:
+            log.warning("update_candidate_status: governed delete hook failed (non-fatal): %s", exc)
 
 
 def set_candidate_corrected_sql(
