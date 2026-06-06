@@ -331,6 +331,19 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .insight-panel{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius);padding:.95rem}
 .section-label{font-size:11px;font-weight:850;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted);margin-bottom:.45rem}
 .summary-copy{font-size:13px;line-height:1.7;color:var(--text)}
+.feedback-row{display:flex;align-items:center;gap:.5rem;margin-top:.75rem;padding-top:.65rem;border-top:1px solid var(--border)}
+.feedback-label{font-size:11px;color:var(--text-muted);font-weight:700;margin-right:.1rem}
+.feedback-btn{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:50%;border:1px solid var(--border);background:var(--surface);cursor:pointer;font-size:14px;line-height:1;transition:background .15s,border-color .15s;padding:0}
+.feedback-btn:hover{background:var(--surface-3);border-color:var(--text-muted)}
+.feedback-btn.up.active{background:color-mix(in srgb,#22c55e 18%,var(--surface));border-color:#22c55e}
+.feedback-btn.down.active{background:color-mix(in srgb,#ef4444 18%,var(--surface));border-color:#ef4444}
+.feedback-done{font-size:11px;color:var(--text-soft);font-style:italic;margin-left:.25rem}
+.feedback-panel{margin-top:.5rem;display:none;flex-direction:column;gap:.45rem;padding:.6rem .7rem;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius)}
+.feedback-panel.open{display:flex}
+.feedback-reason{font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);width:100%}
+.feedback-comment{font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);width:100%;resize:vertical;min-height:50px;font-family:inherit}
+.feedback-submit{align-self:flex-end;font-size:12px;padding:4px 14px;border-radius:6px;border:1px solid var(--primary);background:var(--primary);color:#fff;cursor:pointer;font-weight:700}
+.feedback-submit:hover{opacity:.85}
 .trust-box{margin-top:.95rem;border:1px solid var(--border);border-radius:var(--radius);background:color-mix(in srgb,var(--surface-2) 46%,transparent);overflow:hidden}
 .trust-box summary{cursor:pointer;list-style:none;font-size:12px;font-weight:850;color:var(--text-soft);padding:.75rem .85rem;display:flex;align-items:center;justify-content:space-between;gap:.75rem}
 .trust-box summary::after{content:'+';font-weight:900;color:var(--text-muted)}
@@ -755,6 +768,8 @@ const HISTORY_MAX_TURNS = 3;
 let _localHistory = [];
 let queryLimitLevel = {{ (query_status.level or 'normal')|tojson }};
 let queryLimitToastShown = false;
+// Learning-loop answer feedback — controlled by admin feature flag
+const FEEDBACK_ENABLED = {{ (client.enable_feedback_collection or 0)|int|tojson }};
 const STATUS_FALLBACK = {
   authorization: ['Checking access', 'Verifying workspace access and available data.'],
   metric_registry: ['Using known metric', 'Found a trusted metric definition for this question.'],
@@ -1966,6 +1981,32 @@ function appendAssistantResponse(msg, opts = {}){
       </div>`
     : '';
 
+  // ── Answer feedback thumbs (learning loop) ────────────────────────────────
+  const _qid = trust.question_id || '';
+  const feedbackHtml = (FEEDBACK_ENABLED && _qid)
+    ? `<div class="feedback-row">
+        <span class="feedback-label">Was this helpful?</span>
+        <button class="feedback-btn up" type="button" title="Yes, correct answer">👍</button>
+        <button class="feedback-btn down" type="button" title="No, something was wrong">👎</button>
+        <span class="feedback-done" style="display:none"></span>
+       </div>
+       <div class="feedback-panel">
+         <select class="feedback-reason">
+           <option value="other">Why was this wrong? (optional)</option>
+           <option value="wrong_metric">Wrong metric</option>
+           <option value="wrong_dimension">Wrong dimension / grouping</option>
+           <option value="wrong_filter">Wrong filter / date range</option>
+           <option value="wrong_join">Wrong join / relationship</option>
+           <option value="wrong_data">Wrong data / values</option>
+           <option value="incomplete">Incomplete answer</option>
+           <option value="confusing">Confusing or unclear</option>
+           <option value="expected_data_missing">Expected data missing</option>
+         </select>
+         <textarea class="feedback-comment" placeholder="Additional comments (optional)"></textarea>
+         <button class="feedback-submit" type="button">Submit feedback</button>
+       </div>`
+    : '';
+
   const trustSchema = trust.schema || (_activeSchema ? `${_activeSchema} schema` : 'All allowed schemas');
   const trustHtml = `<details class="trust-box"><summary>How this answer was produced</summary><div class="trust-grid"><div class="trust-item"><div class="trust-k">Rows</div><div class="trust-v">${escHtml(String(trust.row_count ?? ''))}</div></div><div class="trust-item"><div class="trust-k">Runtime</div><div class="trust-v">${escHtml(trust.duration_label || '')}</div></div><div class="trust-item"><div class="trust-k">Data source</div><div class="trust-v">${escHtml((trust.data_source || '').toUpperCase())}</div></div><div class="trust-item"><div class="trust-k">Schema mode</div><div class="trust-v">${escHtml(trustSchema)}</div></div><div class="trust-item"><div class="trust-k">Result scope</div><div class="trust-v">${escHtml(trust.scope_badge || resultScope.badge || '')}</div></div></div><div class="trust-sql-label">SQL used</div><div class="sql-box">${escHtml(trust.sql || '')}</div></details>`;
 
@@ -2013,6 +2054,7 @@ function appendAssistantResponse(msg, opts = {}){
         </div>
       </div>
       ${followUpHtml}
+      ${feedbackHtml}
     </div>`;
 
   thread().appendChild(div);
@@ -2107,6 +2149,57 @@ function appendAssistantResponse(msg, opts = {}){
       );
     });
   });
+  // ── Answer feedback thumbs wiring (only when FEEDBACK_ENABLED and qid present) ─
+  if (FEEDBACK_ENABLED && _qid) {
+    const fbUp     = div.querySelector('.feedback-btn.up');
+    const fbDown   = div.querySelector('.feedback-btn.down');
+    const fbPanel  = div.querySelector('.feedback-panel');
+    const fbSubmit = div.querySelector('.feedback-submit');
+    const fbDone   = div.querySelector('.feedback-done');
+    const fbReason = div.querySelector('.feedback-reason');
+    const fbComment= div.querySelector('.feedback-comment');
+    let   _pendingRating = -1;  // default direction for panel submit
+
+    const _postFeedback = async (rating) => {
+      const payload = {
+        rating,
+        reason_code:   fbReason?.value  || 'other',
+        comment:       (fbComment?.value || '').trim(),
+        question_text: msg.question || '',
+        sql_text:      trust.sql    || '',
+      };
+      try {
+        const res = await fetch(`/portal/api/answers/${encodeURIComponent(_qid)}/feedback`, {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (data.ok) {
+          fbUp?.classList.toggle('active', rating === 1);
+          fbDown?.classList.toggle('active', rating === -1);
+          if (fbPanel) fbPanel.classList.remove('open');
+          if (fbDone) { fbDone.textContent = data.message || 'Thanks!'; fbDone.style.display = ''; }
+          toast(data.message || 'Feedback saved');
+        } else {
+          toast(data.detail || 'Could not save feedback');
+        }
+      } catch { toast('Could not save feedback'); }
+    };
+
+    // Thumbs-up: immediate submit, no panel
+    fbUp?.addEventListener('click', () => _postFeedback(1));
+
+    // Thumbs-down: open reason panel first
+    fbDown?.addEventListener('click', () => {
+      _pendingRating = -1;
+      if (fbPanel) fbPanel.classList.toggle('open');
+    });
+
+    // Panel submit button
+    fbSubmit?.addEventListener('click', () => _postFeedback(_pendingRating));
+  }
+
   if (opts.persist !== false) pushChatCache({ kind:'assistant_response', payload: msg, timestamp });
   scrollBottom();
 }
