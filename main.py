@@ -1650,6 +1650,22 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                         })
     _trace_finish(trace_id, status="success", answer_type="table", row_count=len(rows), duration_ms=duration_ms, final_answer_summary="Answered from database query")
 
+    # ── Learning loop: persist quality candidate ──────────────────────────────
+    # Runs AFTER the response is already on the wire — zero user-facing latency.
+    # Gated by enable_feedback_collection so it's a no-op until the pilot is on.
+    if client.get("enable_feedback_collection"):
+        _create_learning_candidate(
+            account_id        = account_id,
+            question_id       = audit_request_id,
+            question          = question,
+            sql               = sql,
+            validation_passed = ok,
+            had_repair        = retry_count > 0,
+            repair_succeeded  = retry_count > 0,   # if we're here after retries, repair worked
+            row_count         = len(rows),
+            confidence_ctx    = _confidence_context,
+        )
+
 
 async def _send_results(event, adapter, question, rows, sql, duration_ms,
                         portal_user, account_id, db_cfg,
@@ -1729,6 +1745,7 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
             display_context=display_context,
             column_formats=column_formats,
             semantic_plan=_semantic_plan or None,
+            question_id=audit_request_id,   # exposed in trust block for feedback API
         )
         # ── Result-aware follow-up suggestions (web portal only) ──────────
         selected_schema = (getattr(event, "schema_hint", "") or "").strip().upper()
@@ -1885,6 +1902,61 @@ def _trace_finish(trace_id: int | None, **kwargs) -> None:
         store.finish_answer_trace(trace_id, **kwargs)
     except Exception as exc:
         log.debug("answer trace finish failed: %s", exc)
+
+
+def _create_learning_candidate(
+    account_id: str,
+    question_id: str,
+    question: str,
+    sql: str,
+    validation_passed: bool,
+    had_repair: bool,
+    repair_succeeded: bool,
+    row_count: int,
+    confidence_ctx: dict,
+) -> None:
+    """
+    Score this trace and create a learning_candidate row.
+
+    Called only when client.enable_feedback_collection = 1.
+    Invoked directly after the response is sent — latency impact is invisible.
+    Never raises — all errors are logged and swallowed so a failure here
+    never affects the user-facing response.
+    """
+    try:
+        from core.quality_scorer import score_trace
+        from store.learning_store import create_candidate
+
+        # If we reached this point the DB execution succeeded (rows were sent).
+        execution_success = True
+
+        # Compliance signals from the confidence context (best-effort, default 1.0)
+        metric_compliance  = float(confidence_ctx.get("semantic_score", 100)) / 100.0
+        schema_compliance  = 1.0   # ACL was enforced upstream; if we got here, it passed
+        eg_compliance      = float(confidence_ctx.get("graph_score", 100)) / 100.0
+
+        score, evidence = score_trace(
+            validation_passed        = validation_passed,
+            execution_success        = execution_success,
+            had_repair               = had_repair,
+            repair_succeeded         = repair_succeeded,
+            metric_compliance        = min(1.0, max(0.0, metric_compliance)),
+            schema_acl_compliance    = schema_compliance,
+            entity_graph_compliance  = min(1.0, max(0.0, eg_compliance)),
+            row_count                = row_count,
+            feedback_delta           = 0,   # no feedback yet at creation time
+        )
+
+        create_candidate(
+            origin_question_id = question_id,
+            account_id         = account_id,
+            question_text      = question,
+            sql_text           = sql,
+            technical_score    = score,
+            evidence           = evidence,
+        )
+    except Exception as exc:
+        log.debug("_create_learning_candidate failed (non-fatal): %s", exc)
 
 
 def _format_value(val) -> str:
@@ -2426,7 +2498,20 @@ async def _run_example_validation(
 
 
 async def _run_log_harvest(account_id: str, chroma_dir: str) -> None:
-    """Step 4 — Harvest successful query log entries into validated examples."""
+    """Step 4 — Harvest successful query log entries into validated examples.
+
+    Disabled when enable_feedback_collection = 1: the governed learning loop
+    handles example creation via quality scoring + admin review, so legacy
+    auto-harvesting would bypass that governance gate.
+    """
+    _cli = store.get_client(account_id) or {}
+    if _cli.get("enable_feedback_collection"):
+        log.info(
+            "_run_log_harvest skipped for %s — governed learning loop is active "
+            "(enable_feedback_collection=1). Use the admin Learning Queue instead.",
+            account_id,
+        )
+        return
     try:
         from core.examples import harvest_and_embed
         added = harvest_and_embed(account_id, chroma_dir)
