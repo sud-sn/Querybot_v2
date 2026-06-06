@@ -845,12 +845,33 @@ def compute_chip_eligibility(
     elif mode == "numeric_table" and row_count >= 3 and dist.get("std_dev") is not None:
         _add("decide", "Recommend next step", 72)
 
+    # ── download_csv — available for any non-empty result ────────────────────
+    if row_count >= 1 and mode != "empty":
+        _add(
+            "download_csv", "Download CSV", 85,
+            f"{row_count} row{'s' if row_count != 1 else ''} ready to export",
+        )
+
+    # ── set_alert — monitor a KPI or trend for significant changes ───────────
+    if mode == "single_value":
+        _add(
+            "set_alert", "Alert me on changes", 72,
+            "Notify when this value changes significantly",
+        )
+    elif mode == "time_series" and row_count >= 4:
+        _ts_direction = ts.get("direction") or "stable"
+        _add(
+            "set_alert", "Alert me on changes", 70,
+            f"Watch for direction changes (currently {_ts_direction})",
+        )
+
     # Fixed display order. drill_dim chips (dynamic ids) slot between
     # outliers (priority 5) and predict (priority 90).
     _fixed = {
         "explain": 0, "analyze": 1, "compare": 2, "compare_prior": 3,
         "contribution": 4, "outliers": 5,
         "predict": 90, "decide": 91,
+        "download_csv": 92, "set_alert": 93,
     }
     chips.sort(key=lambda c: (
         _fixed.get(c["id"], 50 if c["id"].startswith("drill_dim:") else 99),
