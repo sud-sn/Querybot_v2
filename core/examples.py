@@ -363,6 +363,19 @@ def retrieve_similar_examples(
     Return the top-n most semantically similar validated examples to the question.
     Each result: {"question": str, "sql": str, "table": str}
 
+    Dual-collection retrieval (Day 5-7 -- governed learning loop):
+      1. querybot_governed (admin-approved candidates) -- interleaved first
+      2. querybot_kb (legacy auto-harvested examples)  -- fill remaining slots
+
+    Governed examples are prioritised because they have been explicitly ratified
+    by a human reviewer.  Results are deduplicated by question text (case-insensitive)
+    so the same Q/SQL pair is never injected into the prompt twice.
+
+    Graceful degradation:
+      - If querybot_governed is empty or unreachable, returns only legacy examples.
+      - If querybot_kb is empty or unreachable, returns only governed examples.
+      - Both empty -> [].
+
     The second parameter was previously chroma_dir (a filesystem path).
     It is now account_id. Legacy filesystem paths are handled gracefully.
     """
@@ -374,7 +387,40 @@ def retrieve_similar_examples(
         if len(parts) >= 2:
             account_id = parts[1]
 
-    return _qs_retrieve(account_id, question, n=n, allowed_tables=allowed_tables)
+    # 1. Legacy examples (querybot_kb, doc_type="example")
+    legacy: list[dict] = []
+    try:
+        legacy = _qs_retrieve(account_id, question, n=n, allowed_tables=allowed_tables)
+    except Exception as exc:
+        log.debug("legacy example retrieval skipped (non-fatal): %s", exc)
+
+    # 2. Governed examples (querybot_governed) -- best-effort
+    governed: list[dict] = []
+    try:
+        from core.governed_store import retrieve_governed_examples
+        governed = retrieve_governed_examples(
+            account_id, question, n=n, allowed_tables=allowed_tables,
+        )
+    except Exception as exc:
+        log.debug("governed example retrieval skipped (non-fatal): %s", exc)
+
+    if not governed:
+        return legacy[:n]
+    if not legacy:
+        return governed[:n]
+
+    # Interleave: governed first (human-approved), then legacy, deduplicate by question
+    seen: set[str] = set()
+    merged: list[dict] = []
+    for ex in governed + legacy:
+        q_key = (ex.get("question") or "").strip().lower()
+        if q_key and q_key not in seen:
+            seen.add(q_key)
+            merged.append(ex)
+        if len(merged) >= n:
+            break
+
+    return merged
 
 
 # ══════════════════════════════════════════════════════════════════════════════
