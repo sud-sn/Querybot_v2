@@ -688,45 +688,151 @@ def summarize_result_context(rows: list[dict], question: str, sql: str = "") -> 
     return ctx
 
 
-def _dynamic_actions(ctx: dict) -> list[dict]:
-    """
-    Action buttons for the result card.
+_CHIP_THRESHOLD = 68  # minimum confidence to surface a chip
 
-    "Why this pattern?" has been removed — the Insight Layer (inline
-    summary sentence + anomaly callouts + follow-up suggestions) surfaces
-    this analysis automatically without requiring a button click.
+
+def compute_chip_eligibility(
+    ctx: dict,
+    brief: dict | None = None,
+    semantic_plan: dict | None = None,
+) -> list[dict]:
     """
-    mode = ctx.get("mode")
-    actions: list[dict] = []
+    Signal-based chip eligibility.  Replaces the old mode-only ``_dynamic_actions``.
+
+    Every chip is scored against actual data-brief signals — not just the result
+    *mode*.  Chips that score below ``_CHIP_THRESHOLD`` are silently omitted so
+    the user only sees actions the data can actually support.
+
+    Returns a list of ``{id, label, confidence, pre_context}`` dicts ordered by
+    a fixed display priority (explain → analyze → compare → … → decide).
+    The ``pre_context`` string is a one-liner explaining *why* the chip is
+    relevant (shown as a hover tooltip / subtitle on the button).
+    """
+    brief = brief or {}
+    mode       = ctx.get("mode", "table")
+    row_count  = ctx.get("row_count", 0)
+    ts         = brief.get("time_series") or {}
+    cat        = brief.get("category_breakdown") or {}
+    dist       = ctx.get("distribution_stats") or {}
+    cmp_stats  = ctx.get("comparison_stats") or {}
+
+    chips: list[dict] = []
+
+    def _add(id_: str, label: str, confidence: int, pre_context: str = "") -> None:
+        if confidence >= _CHIP_THRESHOLD:
+            chips.append({
+                "id": id_,
+                "label": label,
+                "confidence": confidence,
+                "pre_context": pre_context,
+            })
+
+    # ── explain — always eligible when rows exist ────────────────────────────
+    if row_count >= 1 and mode != "empty":
+        _add("explain", "Explain result", 100)
+
+    # ── time_series chips ────────────────────────────────────────────────────
     if mode == "time_series":
-        actions = [
-            {"id": "explain", "label": "Explain result"},
-            {"id": "analyze", "label": "Analyze trend"},
-            {"id": "compare", "label": "Compare periods"},
-        ]
-        if ctx.get("row_count", 0) >= 3:
-            actions.append({"id": "predict", "label": "Predict next period"})
-    elif mode == "ranking":
-        actions = [
-            {"id": "explain", "label": "Explain result"},
-            {"id": "analyze", "label": "Analyze ranking"},
-            {"id": "compare", "label": "Compare top results"},
-        ]
-    elif mode == "numeric_table":
-        actions = [
-            {"id": "explain", "label": "Explain result"},
-            {"id": "analyze", "label": "Analyze spread"},
-        ]
-    else:
-        actions = [{"id": "explain", "label": "Explain result"}]
+        direction    = ts.get("direction") or "stable"
+        period_count = ts.get("period_count") or row_count
+        pct_change   = ts.get("overall_pct_change")
+        if pct_change is None:
+            pct_change = ctx.get("pct_change") or 0.0
 
-    # Decision-support action — advisory next-step recommendation.
-    # Offered for every shape that carries enough structure to reason about.
-    if mode in ("time_series", "ranking", "numeric_table") or (
-        mode == "single_value" and ctx.get("comparison")
-    ):
-        actions.append({"id": "decide", "label": "Recommend next step"})
-    return actions
+        # analyze_trend: need ≥4 periods to identify a meaningful pattern
+        if period_count >= 4:
+            _add(
+                "analyze", "Analyze trend", 80,
+                f"{period_count} periods — {direction} trend",
+            )
+
+        # compare_period: only meaningful when overall change is non-trivial
+        if period_count >= 2 and pct_change is not None and abs(pct_change) >= 3.0:
+            sign = "+" if pct_change > 0 else ""
+            _add(
+                "compare", "Compare periods",
+                82 if abs(pct_change) >= 10 else 73,
+                f"{sign}{pct_change:.1f}% overall change",
+            )
+
+        # predict: not useful on stable or very short series
+        if period_count >= 4 and direction in ("increasing", "decreasing"):
+            _add(
+                "predict", "Predict next period",
+                80 if period_count >= 6 else 72,
+                f"{direction.capitalize()} over {period_count} periods",
+            )
+
+        # compare_prior: available when the semantic model knows the date role
+        if semantic_plan and semantic_plan.get("enabled"):
+            has_date_role = any(
+                f.get("role") == "date_dimension"
+                for f in (semantic_plan.get("fields") or [])
+            )
+            if has_date_role:
+                _add(
+                    "compare_prior", "vs prior period", 70,
+                    "Fetch the same metric for the previous cycle",
+                )
+
+    # ── ranking chips ────────────────────────────────────────────────────────
+    elif mode == "ranking":
+        if row_count >= 3:
+            _add("analyze", "Analyze ranking", 80)
+
+        gap    = cmp_stats.get("gap") or 0
+        leader = cmp_stats.get("leader") or "top item"
+        if row_count >= 3 and gap > 0:
+            _add(
+                "compare", "Compare top results", 78,
+                f"{leader} leads by {gap:,.0f}",
+            )
+
+        # outliers: top-3 owning ≥60 % signals high concentration worth calling out
+        top3_share = dist.get("top_3_share_pct")
+        if top3_share is not None and top3_share >= 60:
+            _add(
+                "outliers", "Show outliers",
+                75 if top3_share >= 75 else 70,
+                f"Top 3 account for {top3_share:.0f}% of total",
+            )
+
+        # contribution: % share breakdown always useful for ranking results
+        leader_share = cmp_stats.get("leader_share_pct")
+        if leader_share is not None and row_count >= 2:
+            _add(
+                "contribution", "Show % contribution", 78,
+                f"{leader} holds {leader_share:.0f}% of total",
+            )
+
+    # ── numeric_table chips ──────────────────────────────────────────────────
+    elif mode == "numeric_table":
+        if dist.get("std_dev") is not None:
+            _add("analyze", "Analyze spread", 75)
+
+    # ── decide (advisory next-step) — only when structure is sufficient ──────
+    if mode in ("time_series", "ranking") and row_count >= 3:
+        _add("decide", "Recommend next step", 75)
+    elif mode == "numeric_table" and row_count >= 3 and dist.get("std_dev") is not None:
+        _add("decide", "Recommend next step", 72)
+
+    # Enforce fixed display order so buttons appear consistently
+    _order = [
+        "explain", "analyze", "compare", "compare_prior",
+        "contribution", "outliers", "predict", "decide",
+    ]
+    chips.sort(key=lambda c: _order.index(c["id"]) if c["id"] in _order else 99)
+    return chips
+
+
+def _dynamic_actions(ctx: dict) -> list[dict]:
+    """Deprecated — delegates to ``compute_chip_eligibility``.
+
+    Kept for backward compatibility with any call sites that haven't been
+    updated.  No ``brief`` or ``semantic_plan`` context is available here so
+    only mode-level signals are used.
+    """
+    return compute_chip_eligibility(ctx)
 
 
 # ── Insight Layer helpers — pure statistics, no LLM call ─────────────────────
@@ -1217,6 +1323,7 @@ def build_assistant_response(
     confidence: dict | None = None,
     display_context: dict | None = None,
     column_formats: dict | None = None,
+    semantic_plan: dict | None = None,
 ) -> dict:
     from core.insight import compute_data_brief
     ctx = summarize_result_context(rows, question, sql=sql)
@@ -1266,7 +1373,7 @@ def build_assistant_response(
         "anomaly_callouts": anomaly_callouts,
         "decision_signal": decision_signal,
         "summary": {"executive_summary": ""},
-        "next_actions": _dynamic_actions(ctx),
+        "next_actions": compute_chip_eligibility(ctx, brief=brief, semantic_plan=semantic_plan),
         "analysis_contract": ctx,
         "data_brief": brief,
         "result_scope": ctx.get("result_scope", {}),

@@ -1637,6 +1637,8 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
         "has_semantic_plan": bool((_semantic_plan or {}).get("enabled")),
         "has_graph_context": bool((_graph_ctx or {}).get("enabled") or (_graph_ctx or {}).get("detected")),
         "tables_used": extract_sql_tables(sql, db_cfg.get("db_type", "azure_sql")),
+        # Carried through to cache_result so compare_prior can read them.
+        "semantic_plan": _semantic_plan or {},
     }
     await _send_results(event, adapter, question, rows, sql, duration_ms,
                         portal_user, account_id, db_cfg,
@@ -1664,6 +1666,8 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
             rows, question, sql, db_cfg, rag_context,
             question_id=question_id,
             column_formats=column_formats,
+            data_brief=confidence_context.get("data_brief") if confidence_context else None,
+            semantic_plan=confidence_context.get("semantic_plan") if confidence_context else None,
         )
 
     table_text = _rows_to_table(rows)
@@ -1724,6 +1728,7 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
             confidence=confidence,
             display_context=display_context,
             column_formats=column_formats,
+            semantic_plan=_semantic_plan or None,
         )
         # ── Result-aware follow-up suggestions (web portal only) ──────────
         selected_schema = (getattr(event, "schema_hint", "") or "").strip().upper()
@@ -3412,8 +3417,64 @@ async def ws_chat(websocket: WebSocket, account_id: str):
 
             if action:
                 try:
-                    # Prefer async LLM-powered insight if we have cached result
                     cached = adapter.last_result
+
+                    # ── compare_prior: fetch prior period from DB ─────────────
+                    # This is the only action that requires a live DB call —
+                    # all other actions work purely from the cached result rows.
+                    if action == "compare_prior" and cached and cached.get("rows"):
+                        try:
+                            from core.period_comparison import generate_period_comparison
+                            provider, model, api_key, az_kwargs = resolve_provider(client, purpose="query")
+                            _cp_brief = cached.get("data_brief") or {}
+                            if not _cp_brief:
+                                # brief not cached on older results — recompute
+                                from core.insight import compute_data_brief
+                                _cp_brief = compute_data_brief(
+                                    cached["rows"], cached.get("question", "")
+                                )
+                            with llm_audit_scope(
+                                account_id=account_id,
+                                question=f"compare_prior: {cached.get('question', '')}".strip(),
+                                enabled=bool(client.get("enable_llm_audit")),
+                                request_id=make_llm_audit_request_id(),
+                                question_id=getattr(adapter, "last_question_id", None) or "",
+                                component="compare_prior",
+                            ):
+                                _cp_result = await generate_period_comparison(
+                                    rows=cached["rows"],
+                                    question=cached.get("question", ""),
+                                    original_sql=cached.get("sql", ""),
+                                    data_brief=_cp_brief,
+                                    db_cfg=cached.get("db_cfg") or {},
+                                    known_tables=_ws_known_tables,
+                                    provider=provider,
+                                    model=model,
+                                    api_key=api_key,
+                                    business_context=cached.get("rag_context", ""),
+                                    semantic_plan=cached.get("semantic_plan"),
+                                    **az_kwargs,
+                                )
+                            await websocket.send_json(_cp_result)
+                        except Exception as _cp_err:
+                            log.warning("compare_prior failed: %s", _cp_err)
+                            await websocket.send_json({
+                                "type": "assistant_analysis",
+                                "action": "compare_prior",
+                                "title": "Prior period comparison",
+                                "headline": "Could not complete the prior period comparison.",
+                                "body": (
+                                    "An unexpected error occurred while preparing the prior period. "
+                                    "Try asking the comparison directly in your question."
+                                ),
+                                "bullets": [],
+                                "next_step": "Ask: \"Show [metric] for [period A] vs [period B]\"",
+                            })
+                        finally:
+                            await websocket.send_json({"type": "typing", "active": False})
+                        continue
+
+                    # ── standard action buttons (explain, analyze, compare …) ─
                     if cached and cached.get("rows") is not None:
                         try:
                             provider, model, api_key, az_kwargs = resolve_provider(client, purpose="query")
