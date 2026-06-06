@@ -770,6 +770,49 @@ let queryLimitLevel = {{ (query_status.level or 'normal')|tojson }};
 let queryLimitToastShown = false;
 // Learning-loop answer feedback — controlled by admin feature flag
 const FEEDBACK_ENABLED = {{ (client.enable_feedback_collection or 0)|int|tojson }};
+// Genie behavioral signal engine — controlled by admin feature flag
+const GENIE_ENABLED = {{ (client.enable_genie_suggestions or 0)|int|tojson }};
+// Unique session ID that ties browser chip-events to the server-side display batch.
+// Generated once per page load; matches the page_session_id used in _record_suggestions_displayed.
+const PAGE_GENIE_SESSION_ID = (
+  typeof crypto !== 'undefined' && crypto.randomUUID
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`
+);
+
+// Which suggestion text was last clicked (set by sendSuggestion, cleared after response).
+// null means the current outbound message was typed manually, not via a chip.
+let _pendingSuggestion = null;
+
+/**
+ * Fire-and-forget: POST one behavioral event to the genie signal endpoint.
+ * Any error is silently swallowed — never blocks the UI.
+ */
+function _genieEvent(eventType, suggestionText) {
+  if (!GENIE_ENABLED || !suggestionText) return;
+  try {
+    fetch('/portal/api/suggestions/event', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        event_type:      eventType,
+        suggestion_text: suggestionText,
+        session_id:      PAGE_GENIE_SESSION_ID,
+      }),
+    }).catch(() => {});
+  } catch (_) {}
+}
+
+/**
+ * Return the text of all currently visible main-bar suggestion chips.
+ * Used to know which chips should be marked dismissed when the user
+ * either clicks one (dismisses the others) or sends a manual message.
+ */
+function _visibleSuggestionTexts() {
+  return Array.from(
+    document.querySelectorAll('#suggestionsWrap .suggestion-chip')
+  ).map(c => c.textContent.trim()).filter(Boolean);
+}
 const STATUS_FALLBACK = {
   authorization: ['Checking access', 'Verifying workspace access and available data.'],
   metric_registry: ['Using known metric', 'Found a trusted metric definition for this question.'],
@@ -2413,6 +2456,10 @@ function sendMessage(tableHint){
   const inp = document.getElementById('input');
   const text = inp.value.trim();
   if (!text || !wsReady) return;
+  // ── Genie: if user typed manually (no pending chip), dismiss visible chips ─
+  if (!_pendingSuggestion) {
+    _visibleSuggestionTexts().forEach(t => _genieEvent('dismissed', t));
+  }
   // Clear any lingering error/clarify state before starting fresh
   if (window._mascotInErrorState || window._mascotInClarifyState) {
     window._mascotInErrorState = false;
@@ -2443,6 +2490,11 @@ function sendMessage(tableHint){
 function sendSuggestion(btn){
   const q   = btn.textContent.trim();
   const fqn = btn.dataset.fqn || '';
+  // ── Genie: record click + dismiss others ──────────────────────────────
+  _pendingSuggestion = q;
+  _genieEvent('clicked', q);
+  _visibleSuggestionTexts().forEach(t => { if (t !== q) _genieEvent('dismissed', t); });
+  // ─────────────────────────────────────────────────────────────────────
   prefillComposer(q);
   sendMessage(fqn || undefined);
 }
@@ -2898,6 +2950,13 @@ function connect(){
       } else {
         // Success text result — small delay so mascot celebration is seen
         _setMascotState('chart_ready');
+        // ── Genie: text answers count as executed (and successful) ──────────
+        if (_pendingSuggestion) {
+          _genieEvent('executed',    _pendingSuggestion);
+          _genieEvent('successful',  _pendingSuggestion);
+          _pendingSuggestion = null;
+        }
+        // ────────────────────────────────────────────────────────────────────
         setTimeout(() => {
           setProcessing(false);
           appendBot(msgContent);
@@ -2910,6 +2969,14 @@ function connect(){
       _setMascotState('chart_ready');
       const row = document.getElementById('processingRow');
       if (row) row.classList.add('active');
+      // ── Genie: record executed + successful for the chip that triggered this ──
+      if (_pendingSuggestion) {
+        _genieEvent('executed', _pendingSuggestion);
+        const rowCount = (msg.trust && msg.trust.row_count != null) ? msg.trust.row_count : -1;
+        if (rowCount > 0) _genieEvent('successful', _pendingSuggestion);
+        _pendingSuggestion = null;
+      }
+      // ─────────────────────────────────────────────────────────────────────────
       setTimeout(() => {
         setProcessing(false);
         appendAssistantResponse(msg);
@@ -2922,6 +2989,7 @@ function connect(){
     } else if (msg.type === 'chart') {
       appendChart(msg.chart || {});
     } else if (msg.type === 'error') {
+      _pendingSuggestion = null;  // clear stale pending chip on WS-level error
       showMascotError();
       if (window._composerMascotError) window._composerMascotError('⚠️ Something went wrong — please retry');
       appendSystem('⚠️ ' + msg.content);

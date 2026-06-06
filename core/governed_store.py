@@ -137,6 +137,7 @@ def upsert_governed_example(
     sql: str,
     source: str = "auto",
     final_score: int = 0,
+    schema_scope: str = "",
 ) -> str:
     """
     Embed and upsert a governed example into querybot_governed.
@@ -144,6 +145,11 @@ def upsert_governed_example(
     Idempotent -- the point ID is deterministic from candidate_id so
     calling this twice (e.g. after a corrected SQL update + re-approve)
     safely overwrites the previous embedding without leaving orphaned points.
+
+    schema_scope is stored in the payload so retrieve_governed_examples can
+    filter by schema — preventing cross-schema example leakage.  An empty
+    string means "unscoped / valid for all schemas" (used for pre-governed
+    examples loaded before schema isolation was introduced).
 
     Returns the Qdrant point ID string so the caller can store it in the
     learning_candidate.qdrant_id column for observability.
@@ -176,14 +182,15 @@ def upsert_governed_example(
                 "sql":          sql,
                 "source":       source,
                 "final_score":  final_score,
+                "schema_scope": schema_scope,
                 "doc_type":     "governed_example",
                 "ts":           int(time.time()),
             },
         )],
     )
     log.info(
-        "governed_store: upserted candidate %s for account %s (source=%s score=%d)",
-        candidate_id[:12], account_id, source, final_score,
+        "governed_store: upserted candidate %s for account %s (source=%s score=%d schema=%s)",
+        candidate_id[:12], account_id, source, final_score, schema_scope or "all",
     )
     return point_id
 
@@ -225,6 +232,7 @@ def retrieve_governed_examples(
     question: str,
     n: int = 3,
     allowed_tables: set[str] | None = None,   # reserved -- see ACL note in module docstring
+    schema_scope: str = "",
 ) -> list[dict]:
     """
     Semantic search over querybot_governed for the given tenant.
@@ -239,8 +247,14 @@ def retrieve_governed_examples(
       - The collection doesn't exist yet (fresh install)
       - No governed examples exist for this account
       - Qdrant is unavailable (graceful degradation -- caller gets legacy only)
+
+    schema_scope: when non-empty, only examples whose schema_scope matches OR
+    is unscoped (empty / absent) are returned.  This prevents an approved
+    example from schema A from being injected into a query scoped to schema B.
+    When empty (default), no schema filtering is applied — all examples for
+    the account are considered.
     """
-    from qdrant_client.models import Filter, FieldCondition, MatchValue
+    from qdrant_client.models import Filter, FieldCondition, MatchValue, IsNullCondition, PayloadField
 
     # Guard: check collection exists before querying so we never emit noisy
     # "collection not found" errors on fresh deployments.
@@ -254,10 +268,28 @@ def retrieve_governed_examples(
     if _GOVERNED_COLLECTION not in existing:
         return []
 
-    _filter = Filter(must=[
+    # Base filter: always scope to account + doc_type.
+    # When a schema_scope is requested, add a should clause that matches:
+    #   (a) examples explicitly tagged with this schema
+    #   (b) examples tagged as unscoped ("")   — valid across all schemas
+    #   (c) legacy examples with no schema_scope field in payload
+    # This prevents cross-schema leakage while preserving backward compat.
+    must_conditions: list = [
         FieldCondition(key="account_id", match=MatchValue(value=account_id)),
         FieldCondition(key="doc_type",   match=MatchValue(value="governed_example")),
-    ])
+    ]
+    should_conditions: list = []
+    if schema_scope:
+        should_conditions = [
+            FieldCondition(key="schema_scope", match=MatchValue(value=schema_scope)),
+            FieldCondition(key="schema_scope", match=MatchValue(value="")),
+            IsNullCondition(is_null=PayloadField(key="schema_scope")),
+        ]
+
+    _filter = Filter(
+        must=must_conditions,
+        should=should_conditions if should_conditions else None,
+    )
 
     count = client.count(
         collection_name=_GOVERNED_COLLECTION,
@@ -356,6 +388,7 @@ def backfill_approved_candidates(account_id: str) -> int:
                 sql=sql,
                 source=c.get("source", "auto"),
                 final_score=int(c.get("final_score") or 0),
+                schema_scope=c.get("schema_scope", ""),
             )
             count += 1
         except Exception as exc:

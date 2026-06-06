@@ -756,5 +756,293 @@ class TestStagedRolloutVerification(unittest.TestCase):
         self.assertGreater(governed_score, static_score)
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# TestHardeningFixes  (Day 10+)
+# Three targeted tests for the learning-loop hardening sprint:
+#   #1 — Schema isolation in governed retrieval
+#   #2 — Idempotent candidate creation
+#   #3 — Frontend Genie wiring verified via backend (event API contract)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestHardeningFixes(unittest.TestCase):
+    """
+    Targeted regression tests for the three hardening fixes.
+    """
+
+    # ── Fix #1 — Schema isolation ─────────────────────────────────────────────
+
+    def test_schema_scope_written_to_qdrant_payload(self):
+        """
+        upsert_governed_example must write schema_scope into the Qdrant payload
+        so retrieve_governed_examples can filter on it.
+        """
+        captured_payloads = []
+
+        mock_client = MagicMock()
+        mock_client.get_collections.return_value.collections = []
+
+        def _capture_upsert(collection_name, points):
+            for p in points:
+                captured_payloads.append(p.payload)
+
+        mock_client.upsert.side_effect = _capture_upsert
+
+        with (
+            patch("core.governed_store._qdrant", return_value=mock_client),
+            patch("core.governed_store._embed", return_value=[[0.1] * 384]),
+        ):
+            from core.governed_store import upsert_governed_example
+            upsert_governed_example(
+                candidate_id="cand_xyz",
+                account_id="acct_a",
+                question="What is revenue?",
+                sql="SELECT SUM(amount) FROM sales",
+                source="auto",
+                final_score=85,
+                schema_scope="HR",
+            )
+
+        self.assertEqual(len(captured_payloads), 1)
+        self.assertEqual(captured_payloads[0].get("schema_scope"), "HR")
+        self.assertEqual(captured_payloads[0].get("account_id"), "acct_a")
+
+    def test_retrieve_governed_adds_schema_filter_when_scope_set(self):
+        """
+        When schema_scope is non-empty, retrieve_governed_examples must add
+        a 'should' clause to the Qdrant filter containing the scope value,
+        an empty-string fallback, and an is_null fallback (for legacy points).
+        """
+        captured_queries = []
+
+        mock_client = MagicMock()
+        existing = MagicMock()
+        existing.name = "querybot_governed"
+        mock_client.get_collections.return_value.collections = [existing]
+        count_res = MagicMock()
+        count_res.count = 3
+        mock_client.count.return_value = count_res
+
+        h = MagicMock()
+        h.payload = {"question": "Q", "sql": "S", "source": "auto"}
+        mock_client.query_points.return_value.points = [h]
+
+        def _capture_query(**kwargs):
+            captured_queries.append(kwargs.get("query_filter"))
+            res = MagicMock()
+            res.points = [h]
+            return res
+
+        mock_client.query_points.side_effect = _capture_query
+
+        with (
+            patch("core.governed_store._qdrant", return_value=mock_client),
+            patch("core.governed_store._embed", return_value=[[0.0] * 384]),
+        ):
+            from core.governed_store import retrieve_governed_examples
+            retrieve_governed_examples("acct_a", "revenue?", n=3, schema_scope="HR")
+
+        self.assertEqual(len(captured_queries), 1)
+        filt = captured_queries[0]
+        # The filter should have must conditions AND should conditions
+        self.assertTrue(len(filt.must) >= 2)
+        self.assertTrue(filt.should is not None and len(filt.should) >= 2)
+        # One of the should conditions must match schema_scope = "HR"
+        scope_values = [
+            c.match.value for c in filt.should
+            if hasattr(c, "match") and hasattr(c.match, "value")
+        ]
+        self.assertIn("HR", scope_values)
+        self.assertIn("", scope_values)  # empty fallback for unscoped examples
+
+    def test_retrieve_governed_no_schema_filter_when_scope_empty(self):
+        """
+        When schema_scope is empty (default), NO should clause is added —
+        all examples for the account are considered.
+        """
+        captured_filters = []
+
+        mock_client = MagicMock()
+        existing = MagicMock()
+        existing.name = "querybot_governed"
+        mock_client.get_collections.return_value.collections = [existing]
+        count_res = MagicMock()
+        count_res.count = 2
+        mock_client.count.return_value = count_res
+
+        def _capture_count(**kwargs):
+            captured_filters.append(kwargs.get("count_filter"))
+            return count_res
+
+        mock_client.count.side_effect = _capture_count
+        mock_client.query_points.return_value.points = []
+
+        with (
+            patch("core.governed_store._qdrant", return_value=mock_client),
+            patch("core.governed_store._embed", return_value=[[0.0] * 384]),
+        ):
+            from core.governed_store import retrieve_governed_examples
+            retrieve_governed_examples("acct_a", "revenue?", n=3)  # no schema_scope
+
+        self.assertTrue(len(captured_filters) > 0)
+        filt = captured_filters[0]
+        # should clause must be absent or empty when no schema_scope is set
+        self.assertTrue(filt.should is None or len(filt.should) == 0)
+
+    # ── Fix #2 — Idempotent candidate creation ────────────────────────────────
+
+    def test_duplicate_candidate_returns_existing_row(self):
+        """
+        create_candidate with a duplicate (account_id, origin_question_id)
+        must return the existing row instead of raising or creating a second row.
+        """
+        with _temp_db():
+            _setup_tenant("acct_a")
+            from store.learning_store import create_candidate, list_candidates
+
+            first  = create_candidate("q_dup", "acct_a", "Q first",  "SELECT 1", 80, {})
+            second = create_candidate("q_dup", "acct_a", "Q second", "SELECT 2", 90, {})
+
+            all_rows = list_candidates("acct_a")
+
+        # Only one row in the table — second call returned the existing row
+        self.assertEqual(len(all_rows), 1)
+        # Both calls should return the same candidate_id
+        self.assertEqual(first["candidate_id"], second["candidate_id"])
+
+    def test_different_questions_both_created(self):
+        """
+        Two create_candidate calls with DIFFERENT origin_question_ids must
+        each produce an independent row.
+        """
+        with _temp_db():
+            _setup_tenant("acct_a")
+            from store.learning_store import create_candidate, list_candidates
+            create_candidate("q_alpha", "acct_a", "Q1", "SELECT 1", 80, {})
+            create_candidate("q_beta",  "acct_a", "Q2", "SELECT 2", 80, {})
+            all_rows = list_candidates("acct_a")
+
+        self.assertEqual(len(all_rows), 2)
+
+    def test_empty_origin_id_not_constrained(self):
+        """
+        origin_question_id='' (sentinel / manually-created rows) must never
+        be subject to the uniqueness constraint — multiple empty-id rows allowed.
+        """
+        with _temp_db():
+            _setup_tenant("acct_a")
+            from store.learning_store import create_candidate, list_candidates
+            # Two rows with empty origin_question_id — both must survive
+            create_candidate("", "acct_a", "Pre-governed Q1", "SELECT 1", 90, {})
+            create_candidate("", "acct_a", "Pre-governed Q2", "SELECT 2", 90, {})
+            all_rows = list_candidates("acct_a")
+
+        self.assertEqual(len(all_rows), 2)
+
+    # ── Fix #3 — Genie event API (backend contract that frontend calls) ───────
+
+    def test_event_api_accepts_clicked(self):
+        """Browser POST of event_type=clicked must return 200 {ok: true}."""
+        import asyncio
+
+        req = MagicMock()
+
+        async def _json():
+            return {
+                "event_type":      "clicked",
+                "suggestion_text": "What is revenue?",
+                "session_id":      "page-sess-abc123",
+            }
+        req.json = _json
+
+        user = {"id": 1, "account_id": "t1"}
+
+        with (
+            patch("portal.routes._get_portal_user", return_value=user),
+            patch("store.learning_store.record_event") as mock_rec,
+        ):
+            from portal.routes import portal_suggestions_event
+            resp = asyncio.run(portal_suggestions_event(req))
+
+        self.assertEqual(resp.status_code, 200)
+        mock_rec.assert_called_once()
+        _, kwargs = mock_rec.call_args
+        self.assertEqual(kwargs.get("event_type") or mock_rec.call_args[0][2], "clicked")
+
+    def test_event_api_accepts_executed(self):
+        """Browser POST of event_type=executed must reach record_event."""
+        import asyncio
+
+        req = MagicMock()
+
+        async def _json():
+            return {"event_type": "executed", "suggestion_text": "Show revenue"}
+        req.json = _json
+
+        with (
+            patch("portal.routes._get_portal_user", return_value={"id": 1, "account_id": "t1"}),
+            patch("store.learning_store.record_event") as mock_rec,
+        ):
+            from portal.routes import portal_suggestions_event
+            asyncio.run(portal_suggestions_event(req))
+
+        mock_rec.assert_called_once()
+
+    def test_event_api_accepts_successful(self):
+        """Browser POST of event_type=successful must reach record_event."""
+        import asyncio
+
+        req = MagicMock()
+
+        async def _json():
+            return {"event_type": "successful", "suggestion_text": "Show revenue"}
+        req.json = _json
+
+        with (
+            patch("portal.routes._get_portal_user", return_value={"id": 1, "account_id": "t1"}),
+            patch("store.learning_store.record_event") as mock_rec,
+        ):
+            from portal.routes import portal_suggestions_event
+            asyncio.run(portal_suggestions_event(req))
+
+        mock_rec.assert_called_once()
+
+    def test_event_api_accepts_dismissed(self):
+        """Browser POST of event_type=dismissed must reach record_event."""
+        import asyncio
+
+        req = MagicMock()
+
+        async def _json():
+            return {"event_type": "dismissed", "suggestion_text": "Show revenue"}
+        req.json = _json
+
+        with (
+            patch("portal.routes._get_portal_user", return_value={"id": 1, "account_id": "t1"}),
+            patch("store.learning_store.record_event") as mock_rec,
+        ):
+            from portal.routes import portal_suggestions_event
+            asyncio.run(portal_suggestions_event(req))
+
+        mock_rec.assert_called_once()
+
+    def test_event_api_rejects_displayed(self):
+        """Browser POST of event_type=displayed must return 400 (server-only)."""
+        import asyncio
+        from fastapi import HTTPException
+
+        req = MagicMock()
+
+        async def _json():
+            return {"event_type": "displayed", "suggestion_text": "Show revenue"}
+        req.json = _json
+
+        with patch("portal.routes._get_portal_user", return_value={"id": 1, "account_id": "t1"}):
+            from portal.routes import portal_suggestions_event
+            with self.assertRaises(HTTPException) as ctx:
+                asyncio.run(portal_suggestions_event(req))
+
+        self.assertEqual(ctx.exception.status_code, 400)
+
+
 if __name__ == "__main__":
     unittest.main()

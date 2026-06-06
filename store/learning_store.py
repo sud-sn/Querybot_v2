@@ -177,37 +177,56 @@ def create_candidate(
     now  = time.strftime("%Y-%m-%dT%H:%M:%S")
     ctype = classify_score(technical_score) if candidate_type == "review" else candidate_type
 
-    with get_db() as conn:
-        conn.execute(
-            """
-            INSERT INTO learning_candidate (
-                candidate_id, origin_question_id, account_id, schema_scope,
-                candidate_type, question_text, sql_text,
-                technical_score, feedback_delta, final_score,
-                evidence, status, source,
-                semantic_model_version, metric_version, schema_version,
-                created_at, updated_at
-            ) VALUES (
-                ?, ?, ?, ?,
-                ?, ?, ?,
-                ?, 0, ?,
-                ?, 'pending_review', ?,
-                ?, ?, ?,
-                ?, ?
+    import sqlite3 as _sqlite3
+    try:
+        with get_db() as conn:
+            conn.execute(
+                """
+                INSERT INTO learning_candidate (
+                    candidate_id, origin_question_id, account_id, schema_scope,
+                    candidate_type, question_text, sql_text,
+                    technical_score, feedback_delta, final_score,
+                    evidence, status, source,
+                    semantic_model_version, metric_version, schema_version,
+                    created_at, updated_at
+                ) VALUES (
+                    ?, ?, ?, ?,
+                    ?, ?, ?,
+                    ?, 0, ?,
+                    ?, 'pending_review', ?,
+                    ?, ?, ?,
+                    ?, ?
+                )
+                """,
+                (
+                    cid, origin_question_id, account_id, schema_scope,
+                    ctype, question_text, sql_text,
+                    technical_score, technical_score,
+                    json.dumps(evidence, default=str), source,
+                    semantic_model_version, metric_version, schema_version,
+                    now, now,
+                ),
             )
-            """,
-            (
-                cid, origin_question_id, account_id, schema_scope,
-                ctype, question_text, sql_text,
-                technical_score, technical_score,
-                json.dumps(evidence, default=str), source,
-                semantic_model_version, metric_version, schema_version,
-                now, now,
-            ),
-        )
-        row = conn.execute(
-            "SELECT * FROM learning_candidate WHERE candidate_id=?", (cid,)
-        ).fetchone()
+            row = conn.execute(
+                "SELECT * FROM learning_candidate WHERE candidate_id=?", (cid,)
+            ).fetchone()
+    except _sqlite3.IntegrityError:
+        # Duplicate (account_id, origin_question_id) — return the existing row
+        # rather than creating a second candidate for the same answer.
+        with get_db() as conn:
+            row = conn.execute(
+                "SELECT * FROM learning_candidate "
+                "WHERE origin_question_id=? AND account_id=? "
+                "ORDER BY id DESC LIMIT 1",
+                (origin_question_id, account_id),
+            ).fetchone()
+        if row:
+            log.info(
+                "learning_store: candidate already exists for %s/%s -- returning existing %s",
+                account_id, origin_question_id[:16], dict(row).get("candidate_id", "?"),
+            )
+            return dict(row)
+        return {}
 
     log.info(
         "learning_store: created candidate %s (type=%s score=%d) for question %s",
@@ -345,6 +364,7 @@ def _fire_governed_upsert(candidate_id: str) -> None:
             sql=sql,
             source=candidate.get("source", "auto"),
             final_score=int(candidate.get("final_score") or 0),
+            schema_scope=candidate.get("schema_scope", ""),
         )
         # Write the Qdrant point ID back for observability (best-effort)
         if point_id:

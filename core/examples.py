@@ -358,6 +358,7 @@ def retrieve_similar_examples(
     account_id_or_chroma_dir: str,
     n: int = 3,
     allowed_tables: set[str] | None = None,
+    schema_scope: str = "",
 ) -> list[dict]:
     """
     Return the top-n most semantically similar validated examples to the question.
@@ -399,7 +400,9 @@ def retrieve_similar_examples(
     try:
         from core.governed_store import retrieve_governed_examples
         governed = retrieve_governed_examples(
-            account_id, question, n=n, allowed_tables=allowed_tables,
+            account_id, question, n=n,
+            allowed_tables=allowed_tables,
+            schema_scope=schema_scope,
         )
     except Exception as exc:
         log.debug("governed example retrieval skipped (non-fatal): %s", exc)
