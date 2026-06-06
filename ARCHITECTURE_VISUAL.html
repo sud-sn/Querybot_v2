@@ -933,7 +933,7 @@ graph TD
   <!-- ▸▸ SECTION: Feature Flags ────────────────────────────── -->
   <div id="flags" class="section-head">
     <div class="section-icon" style="background:#fef3c7">🚩</div>
-    <div><h2>Feature Flags</h2><p>Per-client toggles on the <code>client</code> table. Set in Admin → Client → Edit.</p></div>
+    <div><h2>Feature Flags</h2><p>Per-client toggles on the <code>client</code> table. Set in Admin → Client → Edit. &mdash; <strong><a href="ROLLOUT.md" style="color:#1d4ed8">Staged rollout guide &rarr; ROLLOUT.md</a></strong></p></div>
   </div>
 
   <div class="card">
@@ -946,6 +946,7 @@ graph TD
         <tr><td>Genie Suggestions</td><td><code>enable_genie_suggestions</code></td><td>0</td><td>Behavioral ranking of suggestion chips + impression recording</td></tr>
       </tbody>
     </table>
+    <p style="margin-top:12px;font-size:0.9rem;color:#64748b">Enable order: <strong>Step 1</strong> feedback collection → accumulate data → <strong>Step 2</strong> genie suggestions. See <a href="ROLLOUT.md">ROLLOUT.md</a> for full verification checklists and rollback procedure.</p>
   </div>
 
   <!-- ▸▸ SECTION: All Edge Cases ───────────────────────────── -->
@@ -1008,9 +1009,9 @@ graph TD
 
 <!-- ── Footer ─────────────────────────────────────────────────────────────── -->
 <div style="margin-left:var(--sidebar-w);padding:2rem 3rem 3rem;color:var(--text-muted);font-size:.78rem;border-top:1px solid var(--border);margin-top:2rem">
-  <strong>Keeping this file current:</strong> When a new feature, module, or edge-case guard is added, update the matching section above — add a row to the relevant card table, add a Mermaid node, or add an edge-case row. Also update <code>README.md</code> feature list and <code>ARCHITECTURE.md</code> text reference. All three files should stay in sync.
+  <strong>Keeping this file current:</strong> When a new feature, module, or edge-case guard is added, update the matching section above — add a row to the relevant card table, add a Mermaid node, or add an edge-case row. Also update <code>README.md</code> feature list, <code>ARCHITECTURE.md</code> text reference, and <code>ROLLOUT.md</code> if a new feature flag is introduced. All four files should stay in sync.
   <br/><br/>
-  Last updated: <strong>2026-06-07</strong> &nbsp;·&nbsp; See also: <a href="README.md" style="color:var(--blue)">README.md</a> &nbsp;·&nbsp; <a href="ARCHITECTURE.md" style="color:var(--blue)">ARCHITECTURE.md</a>
+  Last updated: <strong>2026-06-07</strong> &nbsp;·&nbsp; See also: <a href="README.md" style="color:var(--blue)">README.md</a> &nbsp;·&nbsp; <a href="ARCHITECTURE.md" style="color:var(--blue)">ARCHITECTURE.md</a> &nbsp;·&nbsp; <a href="ROLLOUT.md" style="color:var(--blue)">ROLLOUT.md</a>
 </div>
 
 <script>

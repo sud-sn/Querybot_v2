@@ -3,7 +3,7 @@
 **Natural-language analytics bot for enterprise ERP and data warehouse.** Users ask questions in plain English — QueryBot generates SQL, executes it, and returns a narrative answer with charts.
 
 **Last updated:** 2026-06-07  
-**Status:** Production-ready. Learning loop sprint complete (Days 1-9). Day 10 (integration tests + rollout docs) pending.
+**Status:** Production-ready. Learning loop sprint complete (Days 1-10). Integration tests, staged rollout guide, and living docs all updated.
 
 ---
 
@@ -13,6 +13,7 @@
 |---|---|
 | **See the interactive architecture diagrams** | **[ARCHITECTURE_VISUAL.html](ARCHITECTURE_VISUAL.html)** — open in any browser |
 | Understand the full technical flow (text) | [ARCHITECTURE.md](ARCHITECTURE.md) |
+| Enable the learning loop step-by-step | [ROLLOUT.md](ROLLOUT.md) — staged rollout guide |
 | Onboard a new tenant | [Tenant Setup](#tenant-setup) |
 | Enable the learning loop | [Self-Learning Loop](#self-learning-loop) |
 | Configure a metric formula | [Metric Registry](#metric-registry) |
@@ -253,6 +254,8 @@ Enable feature flags: Chat UI, Feedback collection, Genie suggestions. See [Feat
 ---
 
 ## Self-Learning Loop
+
+> **Staged rollout guide:** See **[ROLLOUT.md](ROLLOUT.md)** for the step-by-step procedure, verification checklists, monitoring metrics, and rollback instructions.
 
 The loop turns every answered query into a potential improvement without requiring manual SQL writing.
 
