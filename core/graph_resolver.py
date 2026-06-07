@@ -29,7 +29,7 @@ import logging
 from collections import deque
 from typing import Optional
 
-from core.date_roles import relationship_matches_date_role
+from core.date_roles import question_has_temporal_intent, relationship_matches_date_role
 
 log = logging.getLogger("querybot.graph_resolver")
 
@@ -130,6 +130,7 @@ def detect_entities(
     """
     q = _normalize(question)
     q_tokens = _tokens(question)
+    has_temporal_intent = question_has_temporal_intent(question)
     scores: dict[str, int] = {}
 
     entities   = graph.get("entities", [])
@@ -165,13 +166,20 @@ def detect_entities(
             score += 100
 
         norm_name = _normalize(name)
+        display_name = _normalize(ent.get("display_name") or name)
+        is_date_role_entity = (
+            "date" in norm_name.split()
+            or "date" in display_name.split()
+        )
+        if is_date_role_entity and not has_temporal_intent and name not in required_entity_names:
+            continue
+
         for word in norm_name.split():
             if len(word) >= 3 and _phrase_in_question(word, q_tokens, q):
                 score += 10
 
         # display name
-        disp = _normalize(ent.get("display_name") or name)
-        if _phrase_in_question(disp, q_tokens, q):
+        if _phrase_in_question(display_name, q_tokens, q):
             score += 8
 
         # table name substring

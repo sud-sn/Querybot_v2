@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections import deque
 from pathlib import Path
 
 import store
@@ -58,9 +59,60 @@ def get_client_db(account_id: str) -> dict | None:
 
 # ── Semantic plan merge ────────────────────────────────────────────────────────
 
+def _semantic_table_identity(table: str) -> str:
+    cleaned = str(table or "").upper()
+    for char in "[]\"`":
+        cleaned = cleaned.replace(char, "")
+    parts = [part for part in cleaned.split(".") if part]
+    return ".".join(parts[-2:]) if len(parts) >= 2 else cleaned
+
+
+def _select_relevant_semantic_joins(joins: list[dict], relevant_tables: set[str]) -> list[dict]:
+    candidates = [
+        join for join in joins
+        if join.get("enforcement") != "advisory"
+    ]
+    targets = {table for table in relevant_tables if table}
+    if len(targets) < 2 or not candidates:
+        return []
+
+    adjacency: dict[str, list[tuple[str, int]]] = {}
+    for index, join in enumerate(candidates):
+        left = _semantic_table_identity(join.get("from") or "")
+        right = _semantic_table_identity(join.get("to") or "")
+        if not left or not right:
+            continue
+        adjacency.setdefault(left, []).append((right, index))
+        adjacency.setdefault(right, []).append((left, index))
+
+    selected_indexes: set[int] = set()
+    ordered_targets = sorted(targets)
+    for start_index, start in enumerate(ordered_targets):
+        for target in ordered_targets[start_index + 1:]:
+            queue = deque([(start, [])])
+            visited = {start}
+            while queue:
+                node, path = queue.popleft()
+                if node == target:
+                    selected_indexes.update(path)
+                    break
+                for neighbour, edge_index in adjacency.get(node, []):
+                    if neighbour in visited:
+                        continue
+                    visited.add(neighbour)
+                    queue.append((neighbour, path + [edge_index]))
+
+    return [
+        join for index, join in enumerate(candidates)
+        if index in selected_indexes
+    ]
+
+
 def _merge_semantic_plans(*plans: dict | None) -> dict:
     fields: list[dict] = []
     joins: list[dict] = []
+    advisory_fields: list[dict] = []
+    available_dimensions: list[dict] = []
     seen_fields: set[tuple[str, str]] = set()
     seen_joins: set[tuple[str, str, tuple[tuple[str, str], ...]]] = set()
     reasons: list[str] = []
@@ -69,18 +121,38 @@ def _merge_semantic_plans(*plans: dict | None) -> dict:
             continue
         if plan.get("reason"):
             reasons.append(str(plan.get("reason")))
+        relevant_tables: set[str] = set()
         for field in plan.get("fields") or []:
-            key = ((field.get("table") or "").upper(), (field.get("column") or "").upper())
+            if field.get("enforcement") == "advisory":
+                advisory_fields.append(field)
+                continue
+            key = (
+                _semantic_table_identity(field.get("table") or ""),
+                (field.get("column") or "").upper(),
+            )
             if not key[0] or not key[1] or key in seen_fields:
                 continue
             seen_fields.add(key)
             fields.append(field)
-        for join in plan.get("joins") or []:
+            relevant_tables.add(key[0])
+            source_table = _semantic_table_identity(
+                field.get("source_table") or field.get("source_key_table") or ""
+            )
+            if source_table:
+                relevant_tables.add(source_table)
+        available_dimensions.extend(plan.get("available_dimensions") or [])
+        relevant_joins = _select_relevant_semantic_joins(
+            plan.get("joins") or [],
+            relevant_tables,
+        )
+        for join in relevant_joins:
+            from_table = _semantic_table_identity(join.get("from") or "")
+            to_table = _semantic_table_identity(join.get("to") or "")
             conds = tuple(
                 (str(left).upper(), str(right).upper())
                 for left, right in (join.get("conditions") or [])
             )
-            key = ((join.get("from") or "").upper(), (join.get("to") or "").upper(), conds)
+            key = (from_table, to_table, conds)
             if not key[0] or not key[1] or key in seen_joins:
                 continue
             seen_joins.add(key)
@@ -91,8 +163,14 @@ def _merge_semantic_plans(*plans: dict | None) -> dict:
         "enabled": True,
         "fields": fields,
         "joins": joins,
-        "required_tables": sorted({f.get("table") for f in fields if f.get("table")}),
+        "required_tables": sorted(
+            {f.get("table") for f in fields if f.get("table")}
+            | {j.get("from") for j in joins if j.get("from")}
+            | {j.get("to") for j in joins if j.get("to")}
+        ),
         "reason": " + ".join(dict.fromkeys(reasons)) or "merged semantic plan",
+        "advisory_fields": advisory_fields,
+        "available_dimensions": available_dimensions,
     }
 
 

@@ -213,17 +213,16 @@ def build_required_fqns(graph_ctx: dict, full_graph: dict) -> set[str]:
             continue
         required.add(fqn)
 
-    # ── Expansion: add directly-connected FACT tables if none detected ────────
+    # ── Expansion: add a uniquely implied connected FACT table ────────────────
     # Queries like "revenue by prescriber" hit DIM entities only; the fact
     # table that holds the revenue column is connected via JOIN relationships
     # but never shows up in `detected`.  Include it so the LLM sees its columns.
-    detected_types = {
-        entities_map.get(n, {}).get("entity_type", "dimension").lower()
+    has_detected_fact = any(
+        entities_map.get(n, {}).get("entity_type", "dimension").lower() == "fact"
         for n in detected
-    }
-    all_facts_detected = all(t == "fact" for t in detected_types) if detected_types else True
-    if not all_facts_detected:          # at least one DIM detected, no fact
-        fact_names_added: set[str] = set()
+    )
+    if detected and not has_detected_fact:
+        fact_connection_counts: dict[str, int] = {}
         for rel in relationships:
             from_e = rel.get("from_entity", "")
             to_e   = rel.get("to_entity", "")
@@ -233,20 +232,35 @@ def build_required_fqns(graph_ctx: dict, full_graph: dict) -> set[str]:
                 if partner in detected:
                     candidate_ent = entities_map.get(candidate, {})
                     if candidate_ent.get("entity_type", "").lower() == "fact":
-                        fqn = _fqn_for(candidate_ent)
-                        if fqn and candidate not in fact_names_added:
-                            required.add(fqn)
-                            fact_names_added.add(candidate)
-                            log.debug(
-                                "build_required_fqns: expanding to fact entity %r "
-                                "(%s) — connected to detected %r",
-                                candidate, fqn, partner,
-                            )
-        if fact_names_added:
+                        fact_connection_counts[candidate] = (
+                            fact_connection_counts.get(candidate, 0) + 1
+                        )
+
+        if fact_connection_counts:
+            best_count = max(fact_connection_counts.values())
+            best_facts = sorted(
+                name for name, count in fact_connection_counts.items()
+                if count == best_count
+            )
+        else:
+            best_facts = []
+
+        if len(best_facts) == 1:
+            fact_name = best_facts[0]
+            fqn = _fqn_for(entities_map.get(fact_name, {}))
+            if fqn:
+                required.add(fqn)
+                log.info(
+                    "build_required_fqns: injected uniquely implied fact table %r (%s)",
+                    fact_name,
+                    fqn,
+                )
+        elif len(best_facts) > 1:
             log.info(
-                "build_required_fqns: injected %d fact table(s) via relationship "
-                "expansion: %s",
-                len(fact_names_added), sorted(fact_names_added),
+                "build_required_fqns: skipped ambiguous fact expansion for %s; "
+                "equally connected candidates=%s",
+                sorted(detected),
+                best_facts,
             )
 
     return required

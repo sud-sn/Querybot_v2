@@ -81,6 +81,41 @@ def normalize_date_role_text(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", (text or "").lower()).strip()
 
 
+def question_has_temporal_intent(question: str) -> bool:
+    """Return True when a question explicitly asks for a time/date concept."""
+    q = normalize_date_role_text(question)
+    if not q:
+        return False
+
+    temporal_terms = {
+        "date", "dates", "day", "days", "daily", "week", "weeks", "weekly",
+        "month", "months", "monthly", "quarter", "quarters", "quarterly",
+        "year", "years", "yearly", "period", "periods", "time", "timeline",
+        "trend", "trends", "when", "latest", "earliest", "recent", "previous",
+        "prior", "current", "yesterday", "today", "tomorrow", "ytd", "mtd",
+        "qtd", "yoy", "mom", "wow",
+    }
+    q_terms = set(q.split())
+    if q_terms & temporal_terms:
+        return True
+
+    temporal_phrases = (
+        "as of",
+        "over time",
+        "year over year",
+        "month over month",
+        "week over week",
+        "period over period",
+        "last year",
+        "last month",
+        "last week",
+        "this year",
+        "this month",
+        "this week",
+    )
+    return any(phrase in q for phrase in temporal_phrases)
+
+
 def detect_date_role(column_name: str) -> DateRole | None:
     col = (column_name or "").strip().strip('"`[]').upper()
     if not col:
