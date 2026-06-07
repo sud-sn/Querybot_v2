@@ -10,6 +10,7 @@ anthropic>=0.28.0
 openai>=1.30.0
 
 # ── Database connectors ────────────────────────────────────────────────────────
+psycopg2-binary>=2.9.0                # QueryBot internal store (PostgreSQL backend)
 snowflake-connector-python>=3.10.0   # DB_TYPE=snowflake — pure Python, no OS deps
 oracledb>=2.0.0                       # DB_TYPE=oracle    — Thin mode, no Oracle client needed
 pyodbc>=5.0.0                         # DB_TYPE=azure_sql — Python binding only; see note below

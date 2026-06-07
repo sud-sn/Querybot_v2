@@ -54,7 +54,9 @@ def _temp_db():
     tmp.close()
     db_path = Path(tmp.name)
 
-    import store.db as _db_mod
+    # Patch store.database.DB_PATH — that is where _get_sqlite_connection()
+    # actually reads the path from since the adapter layer was introduced.
+    import store.database as _db_mod
     original_path = _db_mod.DB_PATH
     _db_mod.DB_PATH = db_path
 
