@@ -5200,8 +5200,8 @@ async def admin_learning_queue_review(
 
     try:
         from store.learning_store import update_candidate_status
-        # Use the admin's session user id if available
-        reviewer_id = str(request.session.get("admin_id", "admin")) if hasattr(request, "session") else "admin"
+        # Admin auth uses cookie-based HMAC (not SessionMiddleware), so no session user id
+        reviewer_id = "admin"
         update_candidate_status(
             candidate_id=candidate_id,
             status=new_status,
@@ -5246,7 +5246,7 @@ async def admin_learning_queue_correct_sql(
 
     try:
         from store.learning_store import set_candidate_corrected_sql, update_candidate_status
-        reviewer_id = str(request.session.get("admin_id", "admin")) if hasattr(request, "session") else "admin"
+        reviewer_id = "admin"
         set_candidate_corrected_sql(
             candidate_id=candidate_id,
             corrected_sql=corrected_sql,
