@@ -28,10 +28,11 @@ import store
 
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
-LLM_PY  = ROOT / "core" / "llm.py"
-MAIN_PY = ROOT / "main.py"
-ROUTES  = ROOT / "admin" / "routes.py"
-GRAPH_TMPL = ROOT / "admin" / "templates" / "client_graph.html"
+LLM_PY           = ROOT / "core" / "llm.py"
+MAIN_PY          = ROOT / "main.py"
+QUERY_PIPELINE   = ROOT / "core" / "query_pipeline.py"
+ROUTES           = ROOT / "admin" / "routes.py"
+GRAPH_TMPL       = ROOT / "admin" / "templates" / "client_graph.html"
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -484,24 +485,29 @@ class TestSQLPromptGraphInjection(unittest.TestCase):
 class TestMainWiring(unittest.TestCase):
 
     def test_graph_resolver_imported(self):
-        src = MAIN_PY.read_text()
+        # Import lives in core/query_pipeline.py after the main.py split
+        src = QUERY_PIPELINE.read_text(encoding="utf-8")
         self.assertIn("graph_resolver", src)
 
     def test_resolve_for_question_called(self):
-        src = MAIN_PY.read_text()
+        # Call site lives in core/query_pipeline.py after the main.py split
+        src = QUERY_PIPELINE.read_text(encoding="utf-8")
         self.assertIn("_graph_resolve", src)
 
     def test_graph_ctx_passed_to_prompt(self):
-        src = MAIN_PY.read_text()
+        # Logic lives in core/query_pipeline.py after the main.py split
+        src = QUERY_PIPELINE.read_text(encoding="utf-8")
         self.assertIn("graph_context=_graph_ctx", src)
 
     def test_graph_load_uses_store(self):
-        src = MAIN_PY.read_text()
+        # Logic lives in core/query_pipeline.py after the main.py split
+        src = QUERY_PIPELINE.read_text(encoding="utf-8")
         self.assertIn("store.get_full_graph", src)
 
     def test_graph_failure_is_non_fatal(self):
         """Graph errors must be caught and fall back gracefully."""
-        src = MAIN_PY.read_text()
+        # Logic lives in core/query_pipeline.py after the main.py split
+        src = QUERY_PIPELINE.read_text(encoding="utf-8")
         # The exception block for graph resolution
         self.assertIn("except Exception as _gex", src)
         self.assertIn("Graph resolution skipped", src)
@@ -513,66 +519,66 @@ class TestMainWiring(unittest.TestCase):
 class TestAdminRoutes(unittest.TestCase):
 
     def test_graph_page_route_exists(self):
-        src = ROUTES.read_text()
+        src = ROUTES.read_text(encoding="utf-8")
         self.assertIn('"/clients/{account_id}/graph"', src)
 
     def test_entity_create_route(self):
-        src = ROUTES.read_text()
+        src = ROUTES.read_text(encoding="utf-8")
         self.assertIn("graph/entities/create", src)
 
     def test_entity_delete_route(self):
-        src = ROUTES.read_text()
+        src = ROUTES.read_text(encoding="utf-8")
         self.assertIn("graph/entities/{entity_name}/delete", src)
 
     def test_relationship_create_route(self):
-        src = ROUTES.read_text()
+        src = ROUTES.read_text(encoding="utf-8")
         self.assertIn("graph/relationships/create", src)
 
     def test_relationship_delete_route(self):
-        src = ROUTES.read_text()
+        src = ROUTES.read_text(encoding="utf-8")
         self.assertIn("graph/relationships/{rel_id}/delete", src)
 
     def test_json_api_route(self):
-        src = ROUTES.read_text()
+        src = ROUTES.read_text(encoding="utf-8")
         self.assertIn("graph/api/graph.json", src)
 
     def test_resolve_api_route(self):
-        src = ROUTES.read_text()
+        src = ROUTES.read_text(encoding="utf-8")
         self.assertIn("graph/api/resolve", src)
 
     def test_template_exists(self):
         self.assertTrue(GRAPH_TMPL.exists())
 
     def test_template_has_svg_canvas(self):
-        src = GRAPH_TMPL.read_text()
+        src = GRAPH_TMPL.read_text(encoding="utf-8")
         self.assertIn("graph-svg", src)
         self.assertIn("<svg", src)
 
     def test_template_has_entity_form(self):
-        src = GRAPH_TMPL.read_text()
+        src = GRAPH_TMPL.read_text(encoding="utf-8")
         # new UI uses modal-based form
         self.assertIn("entity-modal", src)
         self.assertIn("m-entity-name", src)
 
     def test_template_has_relationship_form(self):
-        src = GRAPH_TMPL.read_text()
+        src = GRAPH_TMPL.read_text(encoding="utf-8")
         self.assertIn("from_entity", src)
         self.assertIn("to_entity", src)
         self.assertIn("from_column", src)
 
     def test_template_has_resolver_test(self):
-        src = GRAPH_TMPL.read_text()
+        src = GRAPH_TMPL.read_text(encoding="utf-8")
         self.assertIn("resolve-q", src)
         self.assertIn("resolve-output", src)
 
     def test_template_has_drag_support(self):
-        src = GRAPH_TMPL.read_text()
+        src = GRAPH_TMPL.read_text(encoding="utf-8")
         # new UI uses startDrag + addEventListener pattern
         self.assertIn("startDrag", src)
         self.assertIn("mousedown", src)
 
     def test_template_renders_suggested_graph_rows(self):
-        src = GRAPH_TMPL.read_text()
+        src = GRAPH_TMPL.read_text(encoding="utf-8")
         self.assertNotIn("if (e.status === 'suggested') return", src)
         self.assertNotIn("fe.status === 'suggested' || te.status === 'suggested'", src)
         self.assertIn("const isSuggested = (e.status === 'suggested')", src)
@@ -581,28 +587,28 @@ class TestAdminRoutes(unittest.TestCase):
         self.assertIn("data-status=", src)
 
     def test_template_keeps_schema_selector_visible_for_one_schema(self):
-        src = GRAPH_TMPL.read_text()
+        src = GRAPH_TMPL.read_text(encoding="utf-8")
         self.assertIn('id="schema-filter"', src)
         self.assertNotIn("schemas.length < 2 ? 'none'", src)
         self.assertNotIn("schemas.length <= 1) { sel.style.display = 'none'", src)
         self.assertIn("fallback.length === 1 ? fallback[0]", src)
 
     def test_template_keeps_entity_type_tabs_filterable_after_rebuild(self):
-        src = GRAPH_TMPL.read_text()
+        src = GRAPH_TMPL.read_text(encoding="utf-8")
         self.assertIn("window.filterSidebarByType", src)
         self.assertIn('data-etype="${esc(e.entity_type)}"', src)
         self.assertIn("_applySidebarEntFilter", src)
         self.assertIn("gs-ent-type-label", src)
 
     def test_template_uses_persistent_three_pane_model_workbench(self):
-        src = GRAPH_TMPL.read_text()
+        src = GRAPH_TMPL.read_text(encoding="utf-8")
         self.assertIn("grid-template-columns:minmax(420px,1fr) var(--graph-inspector-width)", src)
         self.assertIn("Persistent model inspector", src)
         self.assertIn('id="graph-drawer"', src)
         self.assertNotIn(".graph-shell.drawer-open .graph-drawer{height:", src)
 
     def test_template_has_business_physical_and_query_path_lenses(self):
-        src = GRAPH_TMPL.read_text()
+        src = GRAPH_TMPL.read_text(encoding="utf-8")
         self.assertIn("setGraphView('business')", src)
         self.assertIn("setGraphView('physical')", src)
         self.assertIn("setGraphView('query')", src)
@@ -610,14 +616,14 @@ class TestAdminRoutes(unittest.TestCase):
         self.assertIn("_fitEntitySet(queryPathEntities)", src)
 
     def test_template_keeps_inspector_actions_visible_when_selected(self):
-        src = GRAPH_TMPL.read_text()
+        src = GRAPH_TMPL.read_text(encoding="utf-8")
         self.assertIn("bar.classList.toggle('open'", src)
         self.assertIn('id="drawer-action-bar" class="gd-action-bar"', src)
         self.assertIn("Validate joins", src)
         self.assertIn("Live probe", src)
 
     def test_setup_page_has_graph_nav(self):
-        tmpl = (ROOT / "admin" / "templates" / "client_setup.html").read_text()
+        tmpl = (ROOT / "admin" / "templates" / "client_setup.html").read_text(encoding="utf-8")
         self.assertIn("/graph", tmpl)
         self.assertIn("Entity Graph", tmpl)
 
