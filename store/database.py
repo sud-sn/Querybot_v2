@@ -180,36 +180,59 @@ class _PgConnection:
 
     def executescript(self, sql: str) -> None:
         """
-        Replicate sqlite3.executescript() for PostgreSQL.
+        Replicate sqlite3.executescript() for PostgreSQL with multi-pass execution.
 
-        Steps:
-          1. Adapt all DDL idioms (AUTOINCREMENT, datetime defaults, PRAGMA)
-          2. Split on semicolons
-          3. Skip blank / PRAGMA-only statements
-          4. For INSERT (was INSERT OR IGNORE) — append ON CONFLICT DO NOTHING
-          5. Execute each statement individually; log and continue on DDL errors
-             (e.g., duplicate table/index is safe to ignore)
+        SQLite allows forward FK references (it checks FKs at DML time, not DDL time).
+        PostgreSQL enforces FK references at CREATE TABLE time, so a table that
+        references portal_user must be created AFTER portal_user exists.
+
+        Strategy: multi-pass retry.
+          Pass 1 — try every statement; commit each success immediately so its
+                   table/index is visible to later statements in the same script.
+          Pass 2+ — retry only the statements that failed in the previous pass.
+          Stop when all statements succeed OR no progress is made (permanent error).
+
+        Committing after each success (rather than at the end) is safe for DDL:
+        IF the overall init_db() transaction rolls back later, PostgreSQL will
+        roll back the DDL too (DDL is transactional in PG).
         """
         adapted_sql = _adapt_ddl_for_postgres(sql)
-        raw_cur = self._conn.cursor()
+
+        # Build list of statements to execute
+        pending: list[str] = []
         for stmt in adapted_sql.split(";"):
             stmt = stmt.strip()
             if not stmt:
                 continue
-            upper = stmt.upper().lstrip()
-            if upper.startswith("PRAGMA"):
+            if stmt.upper().lstrip().startswith("PRAGMA"):
                 continue
-            # Re-apply INSERT → ON CONFLICT DO NOTHING for seed statements
-            had_ioi_in_orig = "INSERT" in upper and "ON CONFLICT" not in upper
+            # INSERT OR IGNORE → INSERT … ON CONFLICT DO NOTHING
             if _RE_INSERT_OR_IGNORE.search(stmt):
                 stmt = _RE_INSERT_OR_IGNORE.sub("INSERT", stmt)
-                stmt = stmt + " ON CONFLICT DO NOTHING"
-            try:
-                raw_cur.execute(stmt)
-            except Exception as exc:
-                # DDL errors (duplicate object, etc.) are safe to swallow here
-                log.debug("executescript stmt skipped: %.80s — %s", stmt, exc)
-                self._conn.rollback()
+                stmt = stmt.rstrip(";").rstrip() + " ON CONFLICT DO NOTHING"
+            pending.append(stmt)
+
+        # Multi-pass: up to 5 passes to resolve FK forward-reference ordering
+        for pass_num in range(5):
+            if not pending:
+                break
+            still_failing: list[str] = []
+            for stmt in pending:
+                try:
+                    raw_cur = self._conn.cursor()
+                    raw_cur.execute(stmt)
+                    self._conn.commit()   # commit immediately so FK refs resolve in next stmt
+                except Exception as exc:
+                    self._conn.rollback()
+                    still_failing.append(stmt)
+                    log.debug("executescript pass %d deferred: %.80s — %s",
+                              pass_num + 1, stmt[:80], exc)
+            if len(still_failing) == len(pending):
+                # No progress — remaining statements are permanently broken
+                for stmt in still_failing:
+                    log.warning("executescript: permanently skipped: %.80s", stmt[:80])
+                break
+            pending = still_failing
 
     def commit(self) -> None:
         self._conn.commit()
