@@ -204,7 +204,7 @@
 
         <!-- Evidence breakdown -->
         {% if c.evidence %}
-        {% set ev = c.evidence | tojson | fromjson %}
+        {% set ev = c.evidence %}
         <div class="detail-evidence">
           {% for k, v in ev.items() %}
             {% if v is not none and v != '' %}
