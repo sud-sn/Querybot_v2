@@ -925,7 +925,7 @@
       </div>
       <form method="post" action="/admin/clients/{{ client.account_id }}/reset" id="resetClientForm">
         <button type="button" class="btn btn-danger"
-          onclick="qbConfirm({title:'Reset this client?',body:'Permanently deletes all schema files, KB files, vector index, and the client row. Cannot be undone.',confirm:'Reset client',onConfirm:()=>document.getElementById(\'resetClientForm\').submit()})">Reset client</button>
+          onclick="qbConfirm({title:'Reset this client?',body:'Permanently deletes all schema files, KB files, vector index, and the client row. Cannot be undone.',confirm:'Reset client',onConfirm:()=>document.getElementById('resetClientForm').submit()})">Reset client</button>
       </form>
     </div>
   </div>

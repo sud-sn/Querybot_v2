@@ -1,4 +1,5 @@
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from admin.routes import client_reset
@@ -38,3 +39,13 @@ class ClientResetTests(unittest.IsolatedAsyncioTestCase):
 
         delete_client.assert_called_once_with("Demo")
         self.assertEqual(response.status_code, 303)
+
+
+class ClientResetTemplateTests(unittest.TestCase):
+    def test_reset_button_uses_valid_confirm_submit_handler(self):
+        template = Path("admin/templates/client_detail.html").read_text(encoding="utf-8")
+
+        self.assertIn("id=\"resetClientForm\"", template)
+        self.assertIn("qbConfirm({title:'Reset this client?'", template)
+        self.assertIn("document.getElementById('resetClientForm').submit()", template)
+        self.assertNotIn("document.getElementById(\\'resetClientForm\\')", template)
