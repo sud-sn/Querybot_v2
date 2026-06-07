@@ -13,21 +13,20 @@
 <style>
 /* ── Shell layout ──────────────────────────────────────────────────────────── */
 /* Height reduced by ~110px to account for the workspace nav */
-.graph-shell{display:flex;flex-direction:row;height:calc(100vh - 56px - 110px);overflow:hidden;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);box-shadow:var(--shadow-lg)}
-.graph-sidebar{flex:0 0 248px;overflow-y:auto;border-right:1px solid var(--border);background:linear-gradient(180deg,var(--surface),color-mix(in srgb,var(--surface-2) 82%,var(--surface)));display:flex;flex-direction:column}
-.graph-canvas-wrap{flex:1;min-width:0;display:flex;flex-direction:column;
+.graph-shell{display:flex;flex-direction:row;height:calc(100vh - 56px - 110px);min-height:680px;overflow:hidden;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);box-shadow:var(--shadow-lg)}
+.graph-sidebar{flex:0 0 264px;overflow-y:auto;border-right:1px solid var(--border);background:linear-gradient(180deg,var(--surface),color-mix(in srgb,var(--surface-2) 82%,var(--surface)));display:flex;flex-direction:column}
+.graph-canvas-wrap{--graph-inspector-width:392px;flex:1;min-width:0;display:grid;grid-template-columns:minmax(420px,1fr) var(--graph-inspector-width);grid-template-rows:auto auto auto minmax(0,1fr);
   background:
     radial-gradient(ellipse at 30% 20%, color-mix(in srgb,var(--primary) 5%,transparent), transparent 55%),
     radial-gradient(ellipse at 72% 75%, color-mix(in srgb,#7C3AED 3%,transparent), transparent 50%),
     var(--surface-2);
   overflow:hidden;position:relative}
-/* ── Bottom drawer — slides up from below the canvas ─────────────────────── */
-.graph-drawer{flex-shrink:0;height:0;overflow:hidden;background:var(--surface);border-top:1px solid var(--border);box-shadow:0 -8px 32px rgba(15,23,42,.10);transition:height .25s cubic-bezier(.4,0,.2,1);display:flex;flex-direction:column}
-.graph-shell.drawer-open .graph-drawer{height:300px}
-.graph-shell.drawer-expanded .graph-drawer{height:500px}
-.gd-drawer-head{display:flex;align-items:center;gap:.5rem;padding:.55rem .85rem;flex-shrink:0;border-bottom:1px solid var(--border);background:linear-gradient(180deg,var(--surface-2),var(--surface))}
+/* Persistent model inspector. Selection changes its content, never the canvas size. */
+.graph-drawer{grid-column:2;grid-row:2 / 5;min-width:320px;width:auto;height:auto!important;overflow:hidden;background:var(--surface);border-left:1px solid var(--border);box-shadow:-8px 0 24px rgba(15,23,42,.04);display:flex;flex-direction:column;position:relative}
+.graph-shell.drawer-expanded .graph-canvas-wrap{--graph-inspector-width:520px}
+.gd-drawer-head{display:flex;align-items:center;gap:.5rem;padding:.65rem .85rem;min-height:46px;flex-shrink:0;border-bottom:1px solid var(--border);background:linear-gradient(180deg,var(--surface-2),var(--surface))}
 .gd-drawer-title{font-size:13px;font-weight:850;color:var(--text);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
-.gd-drawer-resize{height:4px;background:var(--border);cursor:row-resize;border-radius:2px;width:44px;flex-shrink:0;align-self:center;transition:background .12s}
+.gd-drawer-resize{position:absolute;inset:0 auto 0 -3px;width:6px;height:auto;background:transparent;cursor:col-resize;z-index:8;transition:background .12s}
 .gd-drawer-resize:hover{background:var(--primary)}
 .gd-expand-btn{background:var(--surface-2);border:1px solid var(--border);cursor:pointer;color:var(--text-muted);font-size:12px;padding:3px 7px;border-radius:5px;line-height:1;transition:all .12s;flex-shrink:0}
 .gd-expand-btn:hover{background:color-mix(in srgb,var(--primary) 8%,var(--surface));border-color:color-mix(in srgb,var(--primary) 30%,transparent);color:var(--primary)}
@@ -48,9 +47,18 @@
 .gs-rel-item{padding:.45rem .75rem;font-size:11px;color:var(--text-soft);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:.4rem;cursor:pointer}
 .gs-rel-item:hover{background:var(--surface-2)}
 .gs-rel-item.selected{background:color-mix(in srgb,var(--amber) 10%,var(--surface));border-left:3px solid var(--amber)}
+.gs-rel-main{min-width:0;flex:1}
+.gs-rel-name{display:flex;align-items:center;gap:.3rem;font-weight:750;color:var(--text);min-width:0}
+.gs-rel-name span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.gs-rel-meta{display:flex;align-items:center;gap:.35rem;margin-top:.18rem;font-size:9px;color:var(--text-muted)}
+.gs-rel-status{width:7px;height:7px;border-radius:50%;background:#94A3B8;flex-shrink:0}
+.gs-rel-status.valid{background:#059669}
+.gs-rel-status.warning{background:#D97706}
+.gs-rel-status.broken{background:#DC2626}
+.gs-rel-role{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 /* ── Canvas toolbar ────────────────────────────────────────────────────────── */
-.canvas-toolbar{padding:.6rem .75rem;border-bottom:1px solid var(--border);background:color-mix(in srgb,var(--surface) 94%,transparent);display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;flex-shrink:0;box-shadow:0 1px 0 color-mix(in srgb,var(--surface) 70%,transparent)}
+.canvas-toolbar{grid-column:1 / -1;grid-row:1;padding:.6rem .75rem;border-bottom:1px solid var(--border);background:color-mix(in srgb,var(--surface) 96%,transparent);display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;flex-shrink:0;box-shadow:0 1px 0 color-mix(in srgb,var(--surface) 70%,transparent);z-index:20}
 .tb-btn{background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 10px;font-size:11px;font-weight:750;cursor:pointer;display:flex;align-items:center;gap:4px;transition:all .12s;min-height:32px}
 .tb-btn:hover{background:var(--surface-3,var(--border));border-color:var(--border-strong)}
 .tb-btn.primary{background:var(--primary);color:#fff;border-color:var(--primary)}
@@ -60,12 +68,22 @@
 .tb-hint{font-size:11px;color:var(--text-muted);margin-left:auto}
 .canvas-status{position:absolute;bottom:.75rem;left:.75rem;font-size:11px;color:var(--text-muted);background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:5px 10px;pointer-events:none;z-index:10;transition:opacity .3s;box-shadow:var(--shadow)}
 
+.graph-lens{display:flex;align-items:center;border:1px solid var(--border);border-radius:7px;background:var(--surface-2);padding:2px}
+.graph-lens button{border:0;background:transparent;color:var(--text-muted);font-size:10px;font-weight:800;padding:5px 8px;border-radius:5px;cursor:pointer;white-space:nowrap}
+.graph-lens button:hover{color:var(--text);background:var(--surface)}
+.graph-lens button.active{color:var(--primary);background:var(--surface);box-shadow:0 1px 3px rgba(15,23,42,.09)}
+.model-state{display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:800;color:var(--text-muted);white-space:nowrap}
+.model-state::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--amber,#D97706)}
+.model-state.published::before{background:var(--green,#059669)}
+
 /* ── SVG canvas ────────────────────────────────────────────────────────────── */
-#graph-svg{width:100%;flex:1;cursor:grab;user-select:none;overflow:hidden}
+#health-issues-bar{grid-column:1;grid-row:2}
+.canvas-context-bar{grid-column:1;grid-row:3}
+#graph-svg{grid-column:1;grid-row:4;width:100%;height:100%;min-height:0;cursor:grab;user-select:none;overflow:hidden}
 #graph-svg.is-panning{cursor:grabbing !important}
 #graph-svg.is-space{cursor:grab !important}
 /* ── Zoom controls overlay ─────────────────────────────────────────────── */
-.zoom-controls{position:absolute;bottom:.875rem;right:.875rem;display:flex;align-items:center;gap:1px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:3px 4px;z-index:11;box-shadow:0 2px 12px rgba(0,0,0,.10)}
+.zoom-controls{position:absolute;bottom:.875rem;right:calc(var(--graph-inspector-width) + 12px);display:flex;align-items:center;gap:1px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:3px 4px;z-index:11;box-shadow:0 2px 12px rgba(0,0,0,.10)}
 .zoom-controls button{background:none;border:none;cursor:pointer;font-size:14px;line-height:1;width:26px;height:26px;border-radius:5px;display:flex;align-items:center;justify-content:center;color:var(--text-soft);flex-shrink:0;transition:background .12s,color .12s}
 .zoom-controls button:hover{background:var(--surface-2);color:var(--text)}
 .zoom-controls .zc-sep{width:1px;height:16px;background:var(--border);margin:0 3px}
@@ -144,6 +162,14 @@
 .g-edge .edge-label-bg{fill:var(--surface);rx:4;ry:4;opacity:0;transition:opacity .15s}
 .g-edge:hover .edge-label,.g-edge.selected .edge-label{opacity:1}
 .g-edge:hover .edge-label-bg,.g-edge.selected .edge-label-bg{opacity:1}
+.graph-shell:not(.validate-mode) .g-edge.status-valid .edge-line{stroke:#94A3B8}
+.graph-shell.validate-mode .g-edge.status-valid .edge-line{stroke:#059669}
+.graph-shell.validate-mode .g-edge.status-warning .edge-line{stroke:#D97706;stroke-dasharray:8,4}
+.graph-shell.validate-mode .g-edge.status-broken .edge-line{stroke:#DC2626;stroke-dasharray:4,4}
+.graph-shell.validate-mode .g-edge.status-untested .edge-line{stroke:#94A3B8;stroke-dasharray:6,5}
+.graph-shell.view-business .node-sublabel{opacity:.25}
+.graph-shell.view-physical .node-label{opacity:.78}
+.graph-shell.view-query .gs-resolver-wrap{border-top-color:var(--primary)}
 /* ── Minimap ─────────────────────────────────────────────────────────────── */
 .minimap{position:absolute;bottom:3rem;left:.75rem;width:180px;background:var(--surface);border:1px solid var(--border);border-radius:7px;overflow:hidden;z-index:11;box-shadow:0 2px 14px rgba(0,0,0,.13);opacity:.88;transition:opacity .15s;cursor:crosshair;user-select:none}
 .minimap:hover{opacity:1}
@@ -274,16 +300,18 @@
 
 @media (max-width:1280px){
   .graph-sidebar{flex-basis:224px}
-  .graph-shell.drawer-open .graph-drawer{height:280px}
-  .graph-shell.drawer-expanded .graph-drawer{height:460px}
+  .graph-canvas-wrap{--graph-inspector-width:340px;grid-template-columns:minmax(380px,1fr) var(--graph-inspector-width)}
+  .graph-shell.drawer-expanded .graph-canvas-wrap{--graph-inspector-width:440px}
   .tb-hint{display:none}
 }
 @media (max-width:980px){
   .graph-shell{height:auto;min-height:720px;flex-direction:column}
   .graph-sidebar{flex:0 0 auto;max-height:240px;border-right:0;border-bottom:1px solid var(--border)}
-  .graph-canvas-wrap{min-height:520px}
-  .graph-shell.drawer-open .graph-drawer{height:260px}
-  .graph-shell.drawer-expanded .graph-drawer{height:420px}
+  .graph-canvas-wrap{--graph-inspector-width:0px;min-height:760px;display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:auto auto auto minmax(420px,1fr) 360px}
+  .graph-shell.drawer-expanded .graph-canvas-wrap{grid-template-columns:minmax(0,1fr)}
+  .graph-drawer{grid-column:1;grid-row:5;min-width:0;width:auto;height:360px!important;border-left:0;border-top:1px solid var(--border);box-shadow:0 -8px 24px rgba(15,23,42,.04)}
+  .gd-drawer-resize{inset:-3px 0 auto 0;width:auto;height:6px;cursor:row-resize}
+  .zoom-controls{right:.875rem;bottom:372px}
   .gd-inspector-summary,.gd-diag-grid{grid-template-columns:1fr}
   .ct-grid{grid-template-columns:minmax(140px,1fr) 68px minmax(180px,1.4fr) minmax(150px,.9fr)}
   .ct-card{display:none}
@@ -429,10 +457,13 @@
 .focus-mode{font-size:10px;color:var(--text-muted);white-space:nowrap}
 .focus-actions{margin-left:auto;display:flex;align-items:center;gap:.25rem;flex-shrink:0}
 .g-node.dimmed,.g-edge.dimmed{opacity:.22}
-.g-node.focused .node-card{filter:drop-shadow(0 0 0 rgba(0,0,0,0)) drop-shadow(0 0 12px rgba(13,115,119,.28))}
+.g-node.focused .node-card{filter:drop-shadow(0 0 0 rgba(0,0,0,0)) drop-shadow(0 0 12px rgba(37,99,235,.24))}
 .g-edge.focused .edge-line{stroke-width:3}
 .g-edge.focused .edge-label{opacity:1}
 .g-edge.focused .edge-label-bg{opacity:1}
+.g-node.query-path .node-card{stroke:var(--primary);stroke-width:2.5;filter:drop-shadow(0 0 12px rgba(37,99,235,.24))}
+.g-edge.query-path .edge-line{stroke:var(--primary)!important;stroke-width:3}
+.g-edge.query-path .edge-label,.g-edge.query-path .edge-label-bg{opacity:1}
 .g-edge.status-valid .edge-line{stroke:#059669}
 .g-edge.status-warning .edge-line{stroke:#D97706;stroke-dasharray:8,4}
 .g-edge.status-broken .edge-line{stroke:#DC2626;stroke-dasharray:4,4}
@@ -535,6 +566,7 @@
       <button class="gs-type-tab" data-type="fact" onclick="filterSidebarByType(this, 'fact')">Fact</button>
       <button class="gs-type-tab" data-type="dimension" onclick="filterSidebarByType(this, 'dimension')">Dim</button>
       <button class="gs-type-tab" data-type="bridge" onclick="filterSidebarByType(this, 'bridge')">Bridge</button>
+      <button class="gs-type-tab" data-type="unused" onclick="filterSidebarByType(this, 'unused')">Unused</button>
     </div>
     <div id="entity-list" style="flex:1;overflow-y:auto">
       {% if not entities %}
@@ -548,6 +580,7 @@
            id="sib-{{ e.entity_name|replace(' ','_') }}"
            data-etype="{{ e.entity_type }}"
            data-ename="{{ (e.display_name or e.entity_name)|lower }}"
+           data-rel-count="{{ _jcnt }}"
            data-status="{{ e.status or '' }}"
            onclick="selectEntity('{{ e.entity_name }}')"
            onmouseenter="hoverHighlightNode('{{ e.entity_name }}')"
@@ -625,9 +658,17 @@
   <div class="canvas-toolbar">
 
     <!-- ── Group 1: Mode ──────────────────────────────────────────────── -->
-    <div class="mode-toggle" title="Build: create/edit entities and joins  ·  Validate: test every join against the live schema">
-      <button class="mode-btn active" id="mode-build-btn" onclick="setGraphMode('build')">Build</button>
+    <div class="mode-toggle" title="Model: create and edit semantic relationships. Validate: test joins and review modeling risks.">
+      <button class="mode-btn active" id="mode-build-btn" onclick="setGraphMode('build')">Model</button>
       <button class="mode-btn" id="mode-validate-btn" onclick="setGraphMode('validate')">Validate</button>
+    </div>
+
+    <span class="tb-sep"></span>
+
+    <div class="graph-lens" id="graph-lens" title="Choose how the semantic model is presented">
+      <button class="active" data-view="business" onclick="setGraphView('business')">Business</button>
+      <button data-view="physical" onclick="setGraphView('physical')">Physical</button>
+      <button data-view="query" onclick="setGraphView('query')">Query path</button>
     </div>
 
     <span class="tb-sep"></span>
@@ -686,6 +727,7 @@
         <option value="">All</option>
       </select>
     </div>
+    <span class="model-state" id="model-state" title="Changes affect the current draft semantic model">Draft model</span>
 
     <!-- ── Spacer: pushes contextual + health to the right ───────────── -->
     <div class="tb-spacer"></div>
@@ -803,22 +845,23 @@
   </svg>
   <!-- ── Bottom drawer — replaces right panel and connection tray ───────────── -->
   <div class="graph-drawer" id="graph-drawer" aria-live="polite">
-    <div class="gd-drawer-resize" id="gd-resize-handle" title="Drag to resize"></div>
+    <div class="gd-drawer-resize" id="gd-resize-handle" title="Drag to resize the inspector"></div>
     <div class="gd-drawer-head">
-      <span class="gd-drawer-title" id="drawer-title">Properties</span>
+      <span class="gd-drawer-title" id="drawer-title">Model inspector</span>
       <span id="drawer-health-dot" class="gd-health-dot" style="display:none" title=""></span>
       <span id="drawer-sync-badge" class="sync-badge" style="display:none;margin-left:.35rem">Synced</span>
-      <div id="drawer-action-bar" class="gd-action-bar" style="border:none;padding:0;background:none;margin-left:.5rem;flex-wrap:nowrap"></div>
       <button class="gd-expand-btn" id="gd-expand-btn"
               onclick="toggleDrawerExpand()" title="Expand">⤢</button>
       <button class="gd-close-btn" onclick="closeDetailPanel()" title="Close (Esc)">✕</button>
     </div>
+    <div id="drawer-action-bar" class="gd-action-bar"></div>
     <div id="detail-tab-bar" class="gd-tab-bar" style="display:none"></div>
     <div id="detail-content" style="overflow-y:auto;flex:1;min-height:0">
       <div class="gd-placeholder">
-        Select an entity or relationship on the canvas to view its properties.
+        <strong>Inspect the semantic model</strong><br>
+        Select an entity or relationship to review its business definition, joins, fields, and validation state.
         <br><br>
-        <strong>Tip:</strong> Hover a node and drag from the ◉ port to create a relationship.
+        Hover a node and drag from its port to create a relationship.
       </div>
     </div>
   </div>
@@ -1200,6 +1243,8 @@ let _health = JSON.parse('{{ health | tojson | safe }}');
 let selectedEntity  = null;   // entity_name string
 let selectedRelId   = null;   // relationship id int
 let graphMode       = 'build';
+let graphView       = 'business';
+let queryPathEntities = new Set();
 let focusedEntity   = null;
 let focusDepth      = 0;
 
@@ -1240,14 +1285,14 @@ function _applyTransform() {
 // ════════════════════════════════════════════════════════════════════════════
 // SVG CANVAS RENDERING
 // ════════════════════════════════════════════════════════════════════════════
-const NODE_W  = 240;
-const NODE_H  = 200;
+const NODE_W  = 228;
+const NODE_H  = 160;
 
 // Canonical type colours — used as default when no custom colour is set
 const TYPE_COLORS = {
-  fact:      '#2563EB',   // enterprise blue
-  dimension: '#7C3AED',   // violet
-  bridge:    '#D97706',   // amber
+  fact:      '#D97706',   // analytical event / fact
+  dimension: '#2563EB',   // reusable business dimension
+  bridge:    '#7C3AED',   // relationship bridge
 };
 
 function renderGraph() {
@@ -1269,6 +1314,35 @@ function setGraphMode(mode) {
   document.getElementById('mode-build-btn')?.classList.toggle('active', graphMode === 'build');
   document.getElementById('mode-validate-btn')?.classList.toggle('active', graphMode === 'validate');
   if (graphMode === 'validate') openIssuesDrawer();
+  renderGraph();
+}
+
+function setGraphView(view) {
+  graphView = ['business', 'physical', 'query'].includes(view) ? view : 'business';
+  const shell = document.querySelector('.graph-shell');
+  if (shell) {
+    shell.classList.remove('view-business', 'view-physical', 'view-query');
+    shell.classList.add(`view-${graphView}`);
+  }
+  document.querySelectorAll('#graph-lens button').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.view === graphView);
+  });
+  try { localStorage.setItem(`qb_graph_view_${ACCOUNT_ID}`, graphView); } catch (_) {}
+
+  if (graphView === 'query') {
+    switchSidebarTab('entities');
+    const resolver = document.getElementById('gs-resolver-wrap');
+    if (resolver) resolver.classList.add('open');
+    const input = document.getElementById('resolve-q');
+    if (input) {
+      setTimeout(() => input.focus(), 0);
+      setStatus('Enter a question to inspect its resolved model path');
+    }
+  } else if (graphView === 'business') {
+    setStatus('Business view: concepts and approved relationships');
+  } else {
+    setStatus('Physical view: source tables, keys, and join structure');
+  }
   renderGraph();
 }
 
@@ -1296,8 +1370,12 @@ function setSelectedFocusDepth(depth) {
 function fitFocusedView() {
   const focusSet = _focusedNodeSet();
   if (!focusSet || !focusSet.size) { fitView(); return; }
+  _fitEntitySet(focusSet);
+}
+
+function _fitEntitySet(entityNames) {
   const visible = graph.entities.filter(e =>
-    focusSet.has(e.entity_name) &&
+    entityNames.has(e.entity_name) &&
     (!activeSchemaFilter || (e.schema_name || '') === activeSchemaFilter)
   );
   if (!visible.length) { fitView(); return; }
@@ -1397,7 +1475,10 @@ function renderNodes() {
     const isSuggested = (e.status === 'suggested');
     const conf = e.confidence_score ?? 100;
     const focusSet = _focusedNodeSet();
-    const focusClass = focusSet ? (focusSet.has(e.entity_name) ? ' focused' : ' dimmed') : '';
+    const queryClass = graphView === 'query' && queryPathEntities.size
+      ? (queryPathEntities.has(e.entity_name) ? ' query-path' : ' dimmed')
+      : '';
+    const focusClass = queryClass || (focusSet ? (focusSet.has(e.entity_name) ? ' focused' : ' dimmed') : '');
     // Detect role-playing: same table_name used by multiple entities
     const isRolePlaying = graph.entities.filter(e2 => e2.table_name && e2.table_name === e.table_name).length > 1;
 
@@ -1721,9 +1802,12 @@ function renderEdges() {
     const { x1, y1, x2, y2, cx1, cy1, cx2, cy2 } = _edgePoints(fp, tp);
     const isSelected = selectedRelId === rel.id;
     const status = _aggregateRelationshipStatus(rels);
-    const focusClass = focusSet
-      ? (focusSet.has(rel.from_entity) && focusSet.has(rel.to_entity) ? ' focused' : ' dimmed')
+    const queryClass = graphView === 'query' && queryPathEntities.size
+      ? (queryPathEntities.has(rel.from_entity) && queryPathEntities.has(rel.to_entity) ? ' query-path' : ' dimmed')
       : '';
+    const focusClass = queryClass || (focusSet
+      ? (focusSet.has(rel.from_entity) && focusSet.has(rel.to_entity) ? ' focused' : ' dimmed')
+      : '');
 
     const g = document.createElementNS('http://www.w3.org/2000/svg','g');
     const relSuggested = (rel.status === 'suggested');
@@ -2177,6 +2261,7 @@ function setDetailActions(html) {
   const bar = document.getElementById('drawer-action-bar');
   if (!bar) return;
   bar.innerHTML = html || '';
+  bar.classList.toggle('open', Boolean(html && html.trim()));
 }
 
 function _entityHealthSummary(name) {
@@ -2289,7 +2374,7 @@ function resetDetail() {
   const shell = document.querySelector('.graph-shell');
   shell.classList.remove('drawer-open', 'drawer-expanded');
   setDetailActions('');
-  setDetailTitle('Properties');
+  setDetailTitle('Model inspector');
   const syncBadge = document.getElementById('drawer-sync-badge');
   if (syncBadge) syncBadge.style.display = 'none';
   const hdot = document.getElementById('drawer-health-dot');
@@ -2299,7 +2384,7 @@ function resetDetail() {
   const tb = document.getElementById('detail-tab-bar');
   if (tb) { tb.style.display = 'none'; tb.innerHTML = ''; }
   document.getElementById('detail-content').innerHTML =
-    '<div class="gd-placeholder">Select an entity or relationship to view its properties.</div>';
+    '<div class="gd-placeholder"><strong>Inspect the semantic model</strong><br>Select an entity or relationship to review its business definition, joins, fields, and validation state.</div>';
 }
 
 // Close panel without deselecting — used by the ‹ button.
@@ -2365,7 +2450,6 @@ function renderEntityDetail(name, forceTab) {
     <button class="gd-action-btn" onclick="validateEntityRelationships('${esc(name)}', false)">Validate joins</button>
     <button class="gd-action-btn" onclick="validateEntityRelationships('${esc(name)}', true)">Live probe</button>
     <button class="gd-action-btn" onclick="fitFocusedView()">Fit focus</button>
-    <button class="gd-action-btn" onclick="switchEntityTab('fields','${esc(name)}')">Fields</button>
   `);
   document.getElementById('drawer-sync-badge').style.display = '';
   // Health dot in panel header
@@ -3979,19 +4063,31 @@ window.bulkRelSaveAll = async function() {
 let resolveTimer = null;
 window.scheduleResolve = function(q) {
   clearTimeout(resolveTimer);
-  if (q.trim().length < 4) { document.getElementById('resolve-output').style.display='none'; return; }
+  if (q.trim().length < 4) {
+    document.getElementById('resolve-output').style.display='none';
+    queryPathEntities.clear();
+    if (graphView === 'query') renderGraph();
+    return;
+  }
   resolveTimer = setTimeout(async () => {
     const res = await fetch(`${API_BASE}/resolve?q=${encodeURIComponent(q)}`);
     const data = await res.json();
     const el = document.getElementById('resolve-output');
     if (data.enabled) {
+      queryPathEntities = new Set(data.detected || []);
       el.style.display = '';
-      el.textContent = `✓ Detected: ${data.detected.join(', ')}\n\n${data.join_skeleton}`;
+      el.textContent = `✓ Detected: ${(data.detected || []).join(', ')}\n\n${data.join_skeleton || ''}`;
       el.style.color = 'var(--green, #059669)';
+      if (graphView === 'query') {
+        renderGraph();
+        requestAnimationFrame(() => _fitEntitySet(queryPathEntities));
+      }
     } else {
+      queryPathEntities.clear();
       el.style.display = '';
       el.textContent = `⚬ No entities detected (${data.entity_count} in graph)`;
       el.style.color = 'var(--text-muted)';
+      if (graphView === 'query') renderGraph();
     }
   }, 400);
 };
@@ -4113,6 +4209,7 @@ function updateSidebar() {
     <div class="gs-entity-item${e.status === 'suggested' ? ' suggested' : ''}" id="sib-${e.entity_name.replace(/ /g,'_')}"
          data-etype="${esc(e.entity_type)}"
          data-ename="${esc((e.display_name||e.entity_name).toLowerCase())}"
+         data-rel-count="${relCount}"
          data-status="${esc(e.status || '')}"
          onclick="selectEntity('${esc(e.entity_name)}')"
          onmouseenter="hoverHighlightNode('${esc(e.entity_name)}')"
@@ -4133,17 +4230,31 @@ function updateSidebar() {
 
 function updateRelList() {
   const list = document.getElementById('rel-list');
-  if (!graph.relationships.length) {
+  const visibleRelationships = graph.relationships.filter(_relationshipVisibleInSchema);
+  if (!visibleRelationships.length) {
     list.innerHTML = '<div class="gs-empty" style="font-size:11px">No relationships yet.<br>Hover a node and drag from its port.</div>';
     return;
   }
-  list.innerHTML = graph.relationships.map(r => `
+  list.innerHTML = visibleRelationships.map(r => {
+    const status = _relationshipStatus(r);
+    const role = r.label || `${r.from_column || 'column'} → ${r.to_column || 'column'}`;
+    return `
     <div class="gs-rel-item" id="sib-rel-${r.id}" onclick="selectRel(${r.id})">
-      <span>${esc(r.from_entity)}</span>
-      <span style="color:var(--text-muted)">→</span>
-      <span>${esc(r.to_entity)}</span>
-      <span style="margin-left:auto;font-size:9px;font-weight:700;color:var(--text-muted);text-transform:uppercase">${r.join_type}</span>
-    </div>`).join('');
+      <span class="gs-rel-status ${status}" title="${esc(status)}"></span>
+      <div class="gs-rel-main">
+        <div class="gs-rel-name">
+          <span>${esc(r.from_entity)}</span>
+          <span style="color:var(--text-muted);flex:0 0 auto">→</span>
+          <span>${esc(r.to_entity)}</span>
+        </div>
+        <div class="gs-rel-meta">
+          <span>${esc(r.join_type || 'LEFT')}</span>
+          <span>${esc(_relationshipCardinalityLabel(r.relationship_type) || '')}</span>
+          <span class="gs-rel-role" title="${esc(role)}">${esc(role)}</span>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -5169,27 +5280,47 @@ window.deduplicateRelationships = async function() {
 // ════════════════════════════════════════════════════════════════════════════
 function toggleDrawerExpand() {
   const shell = document.querySelector('.graph-shell');
+  const wrap = document.querySelector('.graph-canvas-wrap');
   const isExp = shell.classList.toggle('drawer-expanded');
+  if (wrap && !window.matchMedia('(max-width: 980px)').matches) {
+    if (isExp) {
+      wrap.dataset.previousInspectorWidth =
+        getComputedStyle(wrap).getPropertyValue('--graph-inspector-width').trim() || '392px';
+      wrap.style.setProperty('--graph-inspector-width', '520px');
+    } else {
+      wrap.style.setProperty(
+        '--graph-inspector-width',
+        wrap.dataset.previousInspectorWidth || '392px'
+      );
+    }
+  }
   const btn = document.getElementById('gd-expand-btn');
   if (btn) { btn.title = isExp ? 'Collapse' : 'Expand'; btn.textContent = isExp ? '⤡' : '⤢'; }
 }
 
-// Drag-resize: drag the resize handle to set drawer height
+// Drag-resize: width on desktop, height when the inspector stacks on small screens.
 (function _initDrawerResize() {
   const handle = document.getElementById('gd-resize-handle');
   if (!handle) return;
-  let startY = 0, startH = 0;
-  const MIN_H = 180, MAX_H = 620;
   handle.addEventListener('mousedown', function(e) {
     e.preventDefault();
     const drawer = document.getElementById('graph-drawer');
-    startY = e.clientY;
-    startH = drawer ? drawer.offsetHeight : 300;
+    const wrap = document.querySelector('.graph-canvas-wrap');
+    const stacked = window.matchMedia('(max-width: 980px)').matches;
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const startW = drawer ? drawer.offsetWidth : 392;
+    const startH = drawer ? drawer.offsetHeight : 360;
     function onMove(ev) {
-      if (!drawer) return;
-      const newH = Math.min(MAX_H, Math.max(MIN_H, startH - (ev.clientY - startY)));
-      drawer.style.height = newH + 'px';
-      // Remove class-driven heights while dragging so they don't override
+      if (!drawer || !wrap) return;
+      if (stacked) {
+        const newH = Math.min(620, Math.max(240, startH - (ev.clientY - startY)));
+        drawer.style.height = newH + 'px';
+      } else {
+        const newW = Math.min(560, Math.max(320, startW - (ev.clientX - startX)));
+        wrap.style.setProperty('--graph-inspector-width', `${newW}px`);
+        try { localStorage.setItem(`qb_graph_inspector_width_${ACCOUNT_ID}`, String(newW)); } catch (_) {}
+      }
       document.querySelector('.graph-shell').classList.remove('drawer-expanded');
     }
     function onUp() {
@@ -5222,6 +5353,20 @@ if (activeSchemaFilter) {
 try {
   if (localStorage.getItem('qb_graph_sidebar_collapsed') === '1') toggleSidebar();
 } catch(_) {}
+try {
+  const savedView = localStorage.getItem(`qb_graph_view_${ACCOUNT_ID}`) || 'business';
+  const savedInspectorWidth = Number(localStorage.getItem(`qb_graph_inspector_width_${ACCOUNT_ID}`) || 0);
+  if (savedInspectorWidth >= 320 && savedInspectorWidth <= 560 &&
+      !window.matchMedia('(max-width: 980px)').matches) {
+    document.querySelector('.graph-canvas-wrap')?.style.setProperty(
+      '--graph-inspector-width',
+      `${savedInspectorWidth}px`
+    );
+  }
+  setGraphView(savedView);
+} catch(_) {
+  setGraphView('business');
+}
 renderGraph();    // respects activeSchemaFilter (hides other schema nodes)
 updateSidebar();  // filters sidebar entity list to active schema
 updateRelList();  // filters rel list to active schema
@@ -5510,7 +5655,10 @@ function _applySidebarEntFilter() {
   let visible = 0;
   document.querySelectorAll('#entity-list .gs-entity-item').forEach(item => {
     const nameMatch = !_sidebarEntQuery || (item.dataset.ename || '').includes(_sidebarEntQuery);
-    const typeMatch = !_sidebarEntTypeFilter || (item.dataset.etype || '') === _sidebarEntTypeFilter;
+    const typeMatch = !_sidebarEntTypeFilter ||
+      (_sidebarEntTypeFilter === 'unused'
+        ? Number(item.dataset.relCount || 0) === 0
+        : (item.dataset.etype || '') === _sidebarEntTypeFilter);
     const show = nameMatch && typeMatch;
     item.style.display = show ? '' : 'none';
     if (show) visible++;
