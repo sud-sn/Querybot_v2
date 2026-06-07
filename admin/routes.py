@@ -1372,7 +1372,15 @@ async def client_reset(request: Request, account_id: str):
     if not _is_auth(request):
         return RedirectResponse("/admin/login", status_code=303)
     import shutil
+    # Delete local schema/KB files
     shutil.rmtree(Path("clients") / account_id, ignore_errors=True)
+    # Delete Qdrant vector index for this client
+    try:
+        from core.vector_store import delete_kb_for_client
+        delete_kb_for_client(account_id)
+    except Exception as _e:
+        log.warning("client_reset: could not clear Qdrant vectors for %s: %s", account_id, _e)
+    # Delete the DB row (cascades to query_log, portal_user, etc.)
     store.delete_client(account_id)
     log.info("Admin reset client %s", account_id)
     return RedirectResponse("/admin/clients", status_code=303)
@@ -4824,7 +4832,8 @@ async def admin_build_kb(
 
     async def _do_build():
         try:
-            from core.pipeline_context import save_state, _run_example_validation, _run_log_harvest
+            from core.pipeline_context import save_state
+            from core.dispatcher import _run_example_validation, _run_log_harvest
             from core.knowledge import build_kb
             from core.llm import resolve_provider
 
