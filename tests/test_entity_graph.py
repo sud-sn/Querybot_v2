@@ -594,6 +594,28 @@ class TestAdminRoutes(unittest.TestCase):
         self.assertIn("_applySidebarEntFilter", src)
         self.assertIn("gs-ent-type-label", src)
 
+    def test_template_uses_persistent_three_pane_model_workbench(self):
+        src = GRAPH_TMPL.read_text()
+        self.assertIn("grid-template-columns:minmax(420px,1fr) var(--graph-inspector-width)", src)
+        self.assertIn("Persistent model inspector", src)
+        self.assertIn('id="graph-drawer"', src)
+        self.assertNotIn(".graph-shell.drawer-open .graph-drawer{height:", src)
+
+    def test_template_has_business_physical_and_query_path_lenses(self):
+        src = GRAPH_TMPL.read_text()
+        self.assertIn("setGraphView('business')", src)
+        self.assertIn("setGraphView('physical')", src)
+        self.assertIn("setGraphView('query')", src)
+        self.assertIn("queryPathEntities", src)
+        self.assertIn("_fitEntitySet(queryPathEntities)", src)
+
+    def test_template_keeps_inspector_actions_visible_when_selected(self):
+        src = GRAPH_TMPL.read_text()
+        self.assertIn("bar.classList.toggle('open'", src)
+        self.assertIn('id="drawer-action-bar" class="gd-action-bar"', src)
+        self.assertIn("Validate joins", src)
+        self.assertIn("Live probe", src)
+
     def test_setup_page_has_graph_nav(self):
         tmpl = (ROOT / "admin" / "templates" / "client_setup.html").read_text()
         self.assertIn("/graph", tmpl)
