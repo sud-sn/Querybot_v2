@@ -15,7 +15,12 @@ from datetime import datetime, timezone as _tz
 from pathlib import Path
 from typing import Any
 
-from core.date_roles import detect_date_role, find_date_dimension_key, is_date_dimension_table
+from core.date_roles import (
+    detect_date_role,
+    find_date_dimension_key,
+    is_date_dimension_table,
+    question_has_temporal_intent,
+)
 from core.naming_convention import match_column_suffix, match_entity_prefix, match_table_suffix
 from core.schema_enrichment import EnrichedColumn, enrich_columns
 
@@ -765,29 +770,60 @@ def _terms_for_text(text: str) -> set[str]:
     terms = {t for t in re.split(r"[^a-z0-9]+", (text or "").lower()) if len(t) >= 3}
     expanded = set(terms)
     for term in terms:
+        if term.endswith("s") and len(term) > 3:
+            expanded.add(term[:-1])
         if term.endswith("ies") and len(term) > 4:
             expanded.add(term[:-3] + "y")
         elif term.endswith("es") and len(term) > 4:
             expanded.add(term[:-2])
-        elif term.endswith("s") and len(term) > 3:
-            expanded.add(term[:-1])
     return expanded
+
+
+_RUNTIME_MATCH_STOPWORDS = {
+    "about", "analysis", "business", "column", "data", "description",
+    "dimension", "each", "field", "generate", "generated", "highest",
+    "key", "label", "lowest", "name", "percentage", "result", "show",
+    "table", "their", "total", "used", "using", "value", "values", "what",
+    "when", "where", "which", "with",
+}
+
+
+def _runtime_match_terms(text: str) -> set[str]:
+    return {
+        term for term in _terms_for_text(text)
+        if term not in _RUNTIME_MATCH_STOPWORDS
+    }
 
 
 def _runtime_match_score(question_terms: set[str], values: list[str]) -> int:
     if not question_terms:
-        return 1
-    score = 0
+        return 0
+    meaningful_question_terms = {
+        term for term in question_terms
+        if term not in _RUNTIME_MATCH_STOPWORDS
+    }
+    best_score = 0
     for value in values:
-        value_terms = _terms_for_text(value)
+        value_terms = _runtime_match_terms(value)
         if not value_terms:
             continue
-        score += len(question_terms & value_terms)
-        joined = " ".join(value_terms)
-        for term in question_terms:
-            if term in joined:
-                score += 1
-    return score
+        overlap = meaningful_question_terms & value_terms
+        if not overlap:
+            continue
+
+        # A one-word business role such as "warehouse" is a valid explicit
+        # match. Multi-word roles such as "profit center" or "invoice date"
+        # must match as a complete concept; sharing only "profit" or "invoice"
+        # is not enough to make their fields and joins mandatory.
+        if len(value_terms) == 1:
+            best_score = max(best_score, 4)
+            continue
+        if value_terms <= meaningful_question_terms:
+            best_score = max(best_score, 6 + len(value_terms))
+            continue
+        if len(overlap) >= 2 and len(overlap) / len(value_terms) >= 0.75:
+            best_score = max(best_score, 4 + len(overlap))
+    return best_score
 
 
 def _question_asks_for_key(question: str, dimension_name: str = "") -> bool:
@@ -843,6 +879,7 @@ def build_runtime_semantic_context(
         return ""
 
     q_terms = _terms_for_text(question)
+    has_temporal_intent = question_has_temporal_intent(question)
     scored_lines: list[tuple[int, str]] = []
 
     for table in tables:
@@ -892,6 +929,8 @@ def build_runtime_semantic_context(
             scored_lines.append((score + 6, f"- Approved field: use {qname}.{column} for {meaning or use_case}"))
 
         for date_role in table.get("date_roles", []) or []:
+            if not has_temporal_intent:
+                continue
             name = str(date_role.get("name") or "")
             fact_column = str(date_role.get("fact_column") or "")
             dim_table = str(date_role.get("dimension_table") or "")
@@ -977,6 +1016,7 @@ def build_runtime_semantic_plan(
         return {"enabled": False, "fields": [], "joins": [], "required_tables": [], "reason": "no tables in selected schema"}
 
     q_terms = _terms_for_text(question)
+    has_temporal_intent = question_has_temporal_intent(question)
     fields: list[dict[str, Any]] = []
     joins: list[dict[str, Any]] = []
     seen_fields: set[tuple[str, str]] = set()
@@ -1021,6 +1061,7 @@ def build_runtime_semantic_plan(
                     "source_key_column": source_key,
                     "confidence": dimension.get("confidence", 80),
                     "source": "semantic_model",
+                    "enforcement": "required",
                 })
             if source_key and display_key and source_table.upper() != display_table.upper():
                 conditions = ((source_key.upper(), display_key.upper()),)
@@ -1032,6 +1073,7 @@ def build_runtime_semantic_plan(
                         "to": display_table,
                         "conditions": [(source_key, display_key)],
                         "source": "semantic_model",
+                        "enforcement": "required",
                     })
             if len(fields) >= max_fields:
                 break
@@ -1044,6 +1086,8 @@ def build_runtime_semantic_plan(
     #     key — this ensures the JOIN condition is visible in used_columns.
     #   • a join entry enforced by the validator's required_join_errors check.
     for table in tables:
+        if not has_temporal_intent:
+            break
         source_table = str(table.get("qualified_name") or table.get("table") or "")
         for date_role in table.get("date_roles", []) or []:
             fact_col = str(date_role.get("fact_column") or "")
@@ -1072,6 +1116,7 @@ def build_runtime_semantic_plan(
                     "source_key_column": fact_col,
                     "confidence": date_role.get("confidence", 90),
                     "source": "semantic_model_date_role",
+                    "enforcement": "required",
                 })
 
             # Join
@@ -1084,6 +1129,7 @@ def build_runtime_semantic_plan(
                     "to": dim_table,
                     "conditions": [(fact_col, dim_key)],
                     "source": "semantic_model_date_role",
+                    "enforcement": "required",
                 })
 
             if len(fields) >= max_fields:
