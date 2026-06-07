@@ -33,6 +33,7 @@ from store.database import (  # noqa: F401
     get_table_columns,
     is_postgres,
     DB_PATH,
+    DATABASE_URL,
 )
 
 log = logging.getLogger("querybot.db")
@@ -670,7 +671,10 @@ def init_db() -> None:
         )
     _run_migrations()
     _migrate_legacy_examples_to_candidates()
-    log.info("Database initialised at %s", DB_PATH)
+    if is_postgres():
+        log.info("Database initialised (PostgreSQL: %s)", DATABASE_URL.split("@")[-1])
+    else:
+        log.info("Database initialised (SQLite: %s)", DB_PATH)
 
 
 def _run_migrations() -> None:
