@@ -152,6 +152,76 @@ def _adapt_ddl_for_postgres(sql: str) -> str:
     return sql
 
 
+def _split_sql_statements(sql: str) -> list[str]:
+    """
+    Split a SQL script into individual statements.
+
+    Correctly handles semicolons that appear inside:
+      • Line comments   (-- comment; still in comment)
+      • Block comments  (/* comment; still in comment */)
+      • String literals ('it''s fine; still in string')
+
+    A naive sql.split(";") breaks on schemas like:
+      -- calculate_cost() reads this table first; falls back to defaults
+      CREATE TABLE IF NOT EXISTS llm_pricing ( ... );
+    because the semicolon in the comment is treated as a statement boundary.
+    """
+    statements: list[str] = []
+    buf: list[str] = []
+    i, n = 0, len(sql)
+
+    while i < n:
+        ch = sql[i]
+
+        # ── Line comment: -- through end of line ──────────────────────────
+        if ch == "-" and i + 1 < n and sql[i + 1] == "-":
+            j = i
+            while j < n and sql[j] != "\n":
+                j += 1
+            buf.append(sql[i : j + 1])
+            i = j + 1
+            continue
+
+        # ── Block comment: /* ... */ ───────────────────────────────────────
+        if ch == "/" and i + 1 < n and sql[i + 1] == "*":
+            j = sql.find("*/", i + 2)
+            end = (j + 2) if j != -1 else n
+            buf.append(sql[i:end])
+            i = end
+            continue
+
+        # ── Single-quoted string: '...' with '' escaping ──────────────────
+        if ch == "'":
+            j = i + 1
+            while j < n:
+                if sql[j] == "'" and (j + 1 >= n or sql[j + 1] != "'"):
+                    break   # end of string
+                j += 2 if sql[j] == "'" else j + 1 - j  # advance 2 for '', 1 otherwise
+            buf.append(sql[i : j + 1])
+            i = j + 1
+            continue
+
+        # ── Statement boundary ────────────────────────────────────────────
+        if ch == ";":
+            buf.append(ch)
+            stmt = "".join(buf).strip()
+            if stmt and stmt != ";":
+                statements.append(stmt)
+            buf = []
+            i += 1
+            continue
+
+        buf.append(ch)
+        i += 1
+
+    # Trailing statement without a final semicolon
+    remaining = "".join(buf).strip()
+    if remaining and remaining != ";":
+        statements.append(remaining)
+
+    return statements
+
+
 class _PgConnection:
     """
     Wraps a psycopg2 connection to expose the same interface as sqlite3.Connection.
@@ -198,9 +268,10 @@ class _PgConnection:
         """
         adapted_sql = _adapt_ddl_for_postgres(sql)
 
-        # Build list of statements to execute
+        # Build list of statements to execute — use comment-aware splitter
+        # so semicolons inside  -- comments  don't split the wrong way.
         pending: list[str] = []
-        for stmt in adapted_sql.split(";"):
+        for stmt in _split_sql_statements(adapted_sql):
             stmt = stmt.strip()
             if not stmt:
                 continue

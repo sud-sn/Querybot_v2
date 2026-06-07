@@ -802,13 +802,23 @@ def _run_migrations() -> None:
         _ensure_learning_loop_tables(conn)
         for table, column, col_def in migrations:
             try:
+                # SAVEPOINT per migration: in PostgreSQL a failed statement
+                # aborts the whole transaction.  Rolling back to a savepoint
+                # recovers cleanly so subsequent migrations still run.
+                # SQLite supports SAVEPOINTs too, so this is safe for both.
+                conn.execute("SAVEPOINT sp_migration")
                 existing = get_table_columns(conn, table)
                 if column not in existing:
                     conn.execute(
                         f"ALTER TABLE {table} ADD COLUMN {column} {col_def}"
                     )
                     log.info("Migration: added %s.%s", table, column)
+                conn.execute("RELEASE SAVEPOINT sp_migration")
             except Exception as e:
+                try:
+                    conn.execute("ROLLBACK TO SAVEPOINT sp_migration")
+                except Exception:
+                    pass
                 log.debug("Migration skip %s.%s: %s", table, column, e)
         # Post-migration indexes — created after column migrations so the
         # referenced columns are guaranteed to exist.
