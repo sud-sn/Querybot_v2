@@ -4545,7 +4545,7 @@ async def admin_delete_kb_only(request: Request, account_id: str):
 
     # 5. Roll state back to SCHEMA_READY so the KB step shows as pending
     try:
-        from main import save_state
+        from core.pipeline_context import save_state
         next_state = dict(state_data)
         next_state.pop("kb_progress", None)
         save_state(account_id, "SCHEMA_READY", next_state)
@@ -4585,7 +4585,7 @@ async def admin_stop_kb_build(request: Request, account_id: str):
     if client:
         state_data = json.loads(client.get("state_data") or "{}")
         if client.get("state") == "KB_BUILDING":
-            from main import save_state
+            from core.pipeline_context import save_state
             fallback_state = dict(state_data)
             fallback_state.pop("kb_progress", None)
             save_state(account_id, "SCHEMA_READY", fallback_state)
@@ -4637,7 +4637,7 @@ async def admin_discover_schema(
     async def _do_discover():
         try:
             from core.schema import discover_and_write
-            from main import save_state
+            from core.pipeline_context import save_state
             # ── Snapshot old schema for drift detection ───────────────────────
             _old_schema: dict = {}
             _old_schema_path = Path(schema_dir) / "_schema.json"
@@ -4824,7 +4824,7 @@ async def admin_build_kb(
 
     async def _do_build():
         try:
-            from main import save_state, _run_example_validation, _run_log_harvest
+            from core.pipeline_context import save_state, _run_example_validation, _run_log_harvest
             from core.knowledge import build_kb
             from core.llm import resolve_provider
 

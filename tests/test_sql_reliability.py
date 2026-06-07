@@ -599,7 +599,7 @@ class IntentAndGraphReliabilityTests(unittest.TestCase):
 
 class DiagnosticRenderingReliabilityTests(unittest.TestCase):
     def test_zero_row_message_fences_sql_with_underscored_columns(self):
-        from main import _build_zero_row_message
+        from core.pipeline_helpers import _build_zero_row_message
 
         sql = (
             "SELECT c.CUS_ORD_NUM, c.CUS_ORD_LIN_NUM "

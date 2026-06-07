@@ -410,7 +410,14 @@ Set on the `client` row in Admin → Client → Edit.
 
 | File | Responsibility |
 |---|---|
-| `main.py` | App entry point, query pipeline, webhook handlers |
+| `main.py` | App shell — FastAPI setup, startup/shutdown, `/health`, router mounts |
+| `core/query_pipeline.py` | Full query pipeline: `handle_query()` + DuckDB cache helper |
+| `core/dispatcher.py` | Message routing: `dispatch()`, registration, background tasks |
+| `core/pipeline_context.py` | State, DB config, query/token limits, `_merge_semantic_plans` |
+| `core/pipeline_helpers.py` | SQL utilities, zero-row RCA, metric formula helpers |
+| `core/pipeline_trace.py` | Trace lifecycle, `_log_q`, `_create_learning_candidate`, pin tokens |
+| `core/result_renderer.py` | Result formatting, narration, `_send_results` |
+| `gateway/webhooks.py` | Zoom/Teams/Slack webhooks + WebSocket portal chat (`ws_chat`) |
 | `admin/routes.py` | All admin UI routes |
 | `portal/routes.py` | All portal UI and API routes |
 | `core/llm.py` | LLM provider resolution, prompt construction, SQL generation |

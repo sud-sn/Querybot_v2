@@ -40,9 +40,11 @@ QueryBot v2 is a multi-tenant natural-language-to-SQL analytics bot. Users ask q
 ```
 User (chat or portal)
   ↓
-Gateway adapters  — normalise platform events
+Gateway adapters  — normalise platform events  (gateway/)
   ↓
-handle_query()    — main.py:553, the full pipeline
+dispatch()        — core/dispatcher.py, message routing
+  ↓
+handle_query()    — core/query_pipeline.py, the full pipeline
   ↓
 Answer + Chart    — sent back via adapter or WebSocket
 ```
@@ -55,13 +57,13 @@ Answer + Chart    — sent back via adapter or WebSocket
 
 | Route | File | Purpose |
 |---|---|---|
-| `POST /webhook/zoom` | `main.py:2698` | Zoom chat webhook |
-| `POST /webhook/teams` | `main.py:2726` | Teams webhook |
-| `POST /webhook/slack` | `main.py:2744` | Slack webhook |
-| `GET/WS /ws/chat/{account_id}` | `main.py:2769` | Portal WebSocket chat |
+| `POST /webhook/zoom` | `gateway/webhooks.py` | Zoom chat webhook |
+| `POST /webhook/teams` | `gateway/webhooks.py` | Teams webhook |
+| `POST /webhook/slack` | `gateway/webhooks.py` | Slack webhook |
+| `GET/WS /ws/chat/{account_id}` | `gateway/webhooks.py` | Portal WebSocket chat |
 | `GET /portal/*` | `portal/routes.py` | End-user portal (login, dashboard, chat, KB view) |
 | `GET /admin/*` | `admin/routes.py` | Admin UI (multi-tenant setup, KB, metrics, graph) |
-| `GET /health` | `main.py:3934` | Health check (used by load balancer) |
+| `GET /health` | `main.py` | Health check (used by load balancer) |
 
 ### Gateway adapters (`gateway/`)
 
@@ -115,7 +117,7 @@ User question
   ├─ 16. Follow-up chip eligibility (chip_eligibility, response_builder.py)
   ├─ 17. Send answer (adapter or WebSocket)
   ├─ 18. Log query (query_log + answer_trace)
-  └─ 19. Create learning candidate (main.py:_create_learning_candidate, background)
+  └─ 19. Create learning candidate (core/pipeline_trace.py:_create_learning_candidate, background)
 ```
 
 ---
@@ -123,7 +125,7 @@ User question
 ## 4. Step-by-Step Pipeline Detail
 
 ### 4.1 Rate & Token Limits
-**File:** `main.py:180-194`
+**File:** `core/pipeline_context.py` (`check_query_limit`, `check_token_limit`), called from `core/query_pipeline.py`
 
 | Check | Field | Behaviour |
 |---|---|---|
@@ -143,7 +145,7 @@ Checks glossary ambiguity before generating SQL. If a key term maps to multiple 
 
 | Edge case | Handling |
 |---|---|
-| User replies to a clarification with a new unrelated question | `_looks_like_new_query()` detects it via word-overlap (main.py:202); treats as fresh query |
+| User replies to a clarification with a new unrelated question | `_looks_like_new_query()` detects it via word-overlap (`core/pipeline_helpers.py`); treats as fresh query |
 | Clarification expires without response | `was_recently_expired()` guard prevents stale context from being reused |
 | Multi-term ambiguity | Only the highest-priority ambiguous term triggers; others resolved in context |
 
@@ -153,7 +155,7 @@ Checks glossary ambiguity before generating SQL. If a key term maps to multiple 
 Rejects any message containing DDL keywords (`CREATE`, `DROP`, `ALTER`, `TRUNCATE`, `INSERT`, `UPDATE`, `DELETE`). Returns a fixed user message. **Never reaches LLM.**
 
 ### 4.5 Schema Scoping
-**File:** `main.py:624`
+**File:** `core/query_pipeline.py` (`handle_query` — schema_hint block)
 
 When user selects a schema tab in the portal (e.g. "HR"), `schema_hint` is set. All tables not in that schema are removed from `effective` (the allowed table set used for RAG, SQL generation, and validation). This prevents cross-schema confusion for users who work in one schema only.
 
@@ -163,7 +165,7 @@ When user selects a schema tab in the portal (e.g. "HR"), `schema_hint` is set. 
 - Embeds the question and does cosine search over `querybot_kb` Qdrant collection.
 - Returns top-k KB chunks (table descriptions, column definitions, join hints).
 - Filtered by `effective` (user's allowed tables) so no out-of-scope table docs appear.
-- Synonym injection: `_extract_kb_synonym_injection()` reads "Business Synonyms" sections from KB chunks and prepends them as hints (main.py:252).
+- Synonym injection: `_extract_kb_synonym_injection()` reads "Business Synonyms" sections from KB chunks and prepends them as hints (`core/pipeline_helpers.py`).
 
 ### 4.7 Entity Graph Resolution
 **File:** `core/graph_resolver.py`
@@ -183,7 +185,7 @@ BFS over the entity graph (SQLite `entity_graph` + `entity_relationships` tables
 
 Looks up metric registry for any metric terms in the question. If found, injects the approved formula and required tables into the system prompt so the LLM uses the canonical formula instead of guessing.
 
-`_merge_semantic_plans()` (main.py:142) merges up to 3 independent semantic plans (metric, field-level, runtime) removing duplicates.
+`_merge_semantic_plans()` (`core/pipeline_context.py`) merges up to 3 independent semantic plans (metric, field-level, runtime) removing duplicates.
 
 ### 4.9 Few-Shot Examples
 **File:** `core/examples.py` (active implementation at line 356)
@@ -240,7 +242,7 @@ If the previous answer for this session has the same tables and aggregation patt
 Supports Snowflake, Oracle, Azure SQL. Connection is per-query (not pooled). Query timeout enforced at DB connector level.
 
 ### 4.14 Zero-Row Handling
-**File:** `main.py:_build_zero_row_message`, `_zero_row_rca_hints`
+**File:** `core/pipeline_helpers.py` (`_build_zero_row_message`, `_zero_row_rca_hints`, `_count_tables_for_zero_row`)
 
 When zero rows are returned:
 1. Counts rows in each referenced table (`_count_tables_for_zero_row`) to distinguish "table empty" from "filter too narrow".
@@ -275,7 +277,7 @@ Chips are action buttons attached to the answer. Eligibility is computed from th
 | Alert me | Any result (triggers alert engine) |
 
 ### 4.17 Learning Candidate Creation
-**File:** `main.py:_create_learning_candidate` (line 1907)
+**File:** `core/pipeline_trace.py:_create_learning_candidate`
 
 Called **after the response is sent** (fire-and-forget). Only runs when `client.enable_feedback_collection = 1`.
 
@@ -435,7 +437,7 @@ Detects role-playing date dimensions from the schema and shows which columns map
 ```
 Answer sent
   ↓
-_create_learning_candidate()        ← main.py:1907 (background, non-blocking)
+_create_learning_candidate()        ← core/pipeline_trace.py (background, non-blocking)
   ↓
 score_trace()                       ← core/quality_scorer.py
   ↓
@@ -602,7 +604,7 @@ Multiple schema tabs are built from `_get_available_schemas()`. Selecting a tab 
 
 ## 12. User Access Control
 
-**Files:** `store/user_store.py`, `admin/routes.py` (groups + users), `main.py:610`
+**Files:** `store/user_store.py`, `admin/routes.py` (groups + users), `core/query_pipeline.py` (ACL enforcement in `handle_query`)
 
 ### ACL model
 
