@@ -1,9 +1,14 @@
 """
 store/db.py
 
-SQLite schema and connection management.
+Database schema, migrations, and connection management for QueryBot v2.
 
-Location: ./data/querybot.db  (override with DB_PATH env var)
+Connection is provided by store.database (SQLite by default, PostgreSQL when
+DATABASE_URL env var is set). All caller code uses the same import:
+
+    from store.db import get_db
+    with get_db() as conn:
+        conn.execute(...)
 
 Tables:
   system_config   — global settings (API keys, models, admin password)
@@ -20,9 +25,17 @@ from pathlib import Path
 from contextlib import contextmanager
 from typing import Generator
 
-log = logging.getLogger("querybot.db")
+# Re-export the unified adapter so all callers (from store.db import get_db)
+# continue to work without any changes.
+from store.database import (  # noqa: F401
+    get_connection,
+    get_db,
+    get_table_columns,
+    is_postgres,
+    DB_PATH,
+)
 
-DB_PATH = Path(os.getenv("DB_PATH", "data/querybot.db"))
+log = logging.getLogger("querybot.db")
 
 _SCHEMA = """
 PRAGMA journal_mode = WAL;
@@ -633,29 +646,6 @@ CREATE INDEX IF NOT EXISTS idx_recommendation_event_session
 """
 
 
-def get_connection() -> sqlite3.Connection:
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    return conn
-
-
-@contextmanager
-def get_db() -> Generator[sqlite3.Connection, None, None]:
-    """Context manager: yields connection, commits on clean exit, rolls back on error."""
-    conn = get_connection()
-    try:
-        yield conn
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
-
-
 def init_db() -> None:
     """
     Create all tables if they don't exist. Safe to call on every startup.
@@ -812,10 +802,7 @@ def _run_migrations() -> None:
         _ensure_learning_loop_tables(conn)
         for table, column, col_def in migrations:
             try:
-                existing = [
-                    row[1] for row in
-                    conn.execute(f"PRAGMA table_info({table})").fetchall()
-                ]
+                existing = get_table_columns(conn, table)
                 if column not in existing:
                     conn.execute(
                         f"ALTER TABLE {table} ADD COLUMN {column} {col_def}"

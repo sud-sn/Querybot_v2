@@ -10,7 +10,7 @@ import logging
 from typing import Optional
 from datetime import datetime, timezone
 
-from store.db import get_db
+from store.db import get_db, get_table_columns
 from store.crypto import encrypt, decrypt, decrypt_json
 
 log = logging.getLogger("querybot.store")
@@ -415,13 +415,14 @@ def delete_client(account_id: str) -> None:
 
 def get_monthly_query_count(account_id: str) -> int:
     """Queries run this calendar month for this client."""
+    current_month = datetime.now(timezone.utc).strftime("%Y-%m")
     with get_db() as conn:
         row = conn.execute("""
             SELECT COUNT(*) AS cnt FROM query_log
             WHERE account_id = ?
               AND success = 1
-              AND strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now')
-        """, (account_id,)).fetchone()
+              AND SUBSTRING(created_at, 1, 7) = ?
+        """, (account_id, current_month)).fetchone()
     return row["cnt"] if row else 0
 
 
@@ -439,11 +440,12 @@ def get_monthly_token_usage(
     This keeps the user chat KPI personal while still reusing the same query_log
     fields that power admin billing.
     """
+    current_month = datetime.now(timezone.utc).strftime("%Y-%m")
     where = [
         "account_id = ?",
-        "strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now')",
+        "SUBSTRING(created_at, 1, 7) = ?",
     ]
-    params: list = [account_id]
+    params: list = [account_id, current_month]
     if portal_user_id is not None:
         where.append("portal_user_id = ?")
         params.append(portal_user_id)
@@ -533,7 +535,7 @@ def get_query_stats(account_id: Optional[str] = None, month: Optional[str] = Non
     if account_id:
         where_clauses.append("account_id = ?"); params.append(account_id)
     if month:
-        where_clauses.append("strftime('%Y-%m', created_at) = ?"); params.append(month)
+        where_clauses.append("SUBSTRING(created_at, 1, 7) = ?"); params.append(month)
     where = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
     with get_db() as conn:
         row = conn.execute(f"""
@@ -795,20 +797,25 @@ def purge_old_llm_calls(retention_days: int = 30) -> int:
     """
     if retention_days <= 0:
         return 0
+    from datetime import timedelta
+    cutoff = (
+        datetime.now(timezone.utc) - timedelta(days=int(retention_days))
+    ).strftime("%Y-%m-%dT%H:%M:%S")
     with get_db() as conn:
         cur = conn.execute(
-            "DELETE FROM llm_call_log WHERE created_at < datetime('now', ?)",
-            (f"-{int(retention_days)} days",),
+            "DELETE FROM llm_call_log WHERE created_at < ?",
+            (cutoff,),
         )
         return cur.rowcount or 0
 
 
 def get_monthly_breakdown(account_id: str) -> list[dict]:
     """Daily query counts + cost for the current month — for billing export."""
+    current_month = datetime.now(timezone.utc).strftime("%Y-%m")
     with get_db() as conn:
         rows = conn.execute("""
             SELECT
-                strftime('%Y-%m-%d', created_at) AS date,
+                SUBSTRING(created_at, 1, 10)      AS date,
                 COUNT(*)                          AS total_queries,
                 SUM(CASE WHEN success=1 THEN 1 END) AS successful,
                 SUM(tokens_in)                    AS tokens_in,
@@ -816,9 +823,9 @@ def get_monthly_breakdown(account_id: str) -> list[dict]:
                 SUM(cost_usd)                     AS cost_usd
             FROM query_log
             WHERE account_id = ?
-              AND strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now')
+              AND SUBSTRING(created_at, 1, 7) = ?
             GROUP BY date ORDER BY date
-        """, (account_id,)).fetchall()
+        """, (account_id, current_month)).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -875,9 +882,7 @@ def _ensure_metric_registry_schema(conn) -> None:
             updated_at   TEXT    DEFAULT (datetime('now'))
         )
     """)
-    existing = {
-        row[1] for row in conn.execute("PRAGMA table_info(metric_registry)").fetchall()
-    }
+    existing = set(get_table_columns(conn, "metric_registry"))
     columns = {
         "formula_type": "TEXT NOT NULL DEFAULT 'query'",
         "result_format": "TEXT NOT NULL DEFAULT 'number'",
