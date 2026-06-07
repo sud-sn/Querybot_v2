@@ -377,6 +377,7 @@ def update_client_meta(
     chat_ui_enabled: Optional[int] = None,
     enable_llm_audit: Optional[int] = None,
     portal_only: Optional[int] = None,
+    enable_feedback_collection: Optional[int] = None,
 ) -> None:
     """Update one or more metadata fields on a client row."""
     fields, params = [], []
@@ -400,6 +401,8 @@ def update_client_meta(
         fields.append("enable_llm_audit = ?"); params.append(enable_llm_audit)
     if portal_only is not None:
         fields.append("portal_only = ?"); params.append(portal_only)
+    if enable_feedback_collection is not None:
+        fields.append("enable_feedback_collection = ?"); params.append(enable_feedback_collection)
     if not fields:
         return
     fields.append("updated_at = datetime('now')")

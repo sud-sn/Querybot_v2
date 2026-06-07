@@ -5153,6 +5153,18 @@ async def admin_learning_queue(request: Request, account_id: str):
     })
 
 
+@router.post("/clients/{account_id}/learning-queue/toggle-flag")
+async def admin_learning_queue_toggle_flag(request: Request, account_id: str):
+    """Toggle enable_feedback_collection on/off for a client."""
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    client = store.get_client(account_id) or {}
+    current = int(client.get("enable_feedback_collection") or 0)
+    store.update_client_meta(account_id, enable_feedback_collection=0 if current else 1)
+    log.info("Admin toggled enable_feedback_collection → %d for %s", 0 if current else 1, account_id)
+    return RedirectResponse(f"/admin/clients/{account_id}/learning-queue", status_code=303)
+
+
 @router.post("/clients/{account_id}/learning-queue/{candidate_id}/review")
 async def admin_learning_queue_review(
     request: Request,

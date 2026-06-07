@@ -65,11 +65,24 @@
 {{ client_workspace_nav(client, "learning_queue") }}
 
 {% if not flag_enabled %}
-<div class="flag-off-notice">
-  <strong>Feature flag off.</strong>
-  <code>enable_feedback_collection</code> is currently <strong>0</strong> for this workspace.
-  Candidates shown below are from existing migration or manual creation.
-  Enabling the flag activates live candidate creation and the portal feedback thumbs.
+<div class="flag-off-notice" style="display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap">
+  <div>
+    <strong>Feature flag off.</strong>
+    <code>enable_feedback_collection</code> is currently <strong>0</strong> for this workspace.
+    Candidates shown below are from existing migration or manual creation.
+    Enabling the flag activates live candidate creation and the portal feedback thumbs.
+  </div>
+  <form method="post" action="/admin/clients/{{ client.account_id }}/learning-queue/toggle-flag" style="flex-shrink:0">
+    <button type="submit" class="btn btn-primary btn-sm">Enable learning queue</button>
+  </form>
+</div>
+{% else %}
+<div style="display:flex;justify-content:flex-end;margin-bottom:.75rem">
+  <form method="post" action="/admin/clients/{{ client.account_id }}/learning-queue/toggle-flag">
+    <button type="submit" class="btn btn-secondary btn-sm" style="font-size:12px">
+      ✓ Learning queue active — click to disable
+    </button>
+  </form>
 </div>
 {% endif %}
 
