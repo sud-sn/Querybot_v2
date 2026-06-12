@@ -2021,6 +2021,8 @@ def _auto_populate_entity_graph(account_id: str, schema_dir: str) -> tuple[int, 
             pos_y            = ent.get("pos_y", 120),
             confidence_score = ent.get("confidence_score", 75),
             status           = ent.get("status", "suggested"),
+            generated_by     = ent.get("generated_by", "heuristic"),
+            reason           = ent.get("reason", ""),
         )
         ent_added += 1
 
@@ -2044,6 +2046,8 @@ def _auto_populate_entity_graph(account_id: str, schema_dir: str) -> tuple[int, 
             label             = rel.get("label", ""),
             confidence_score  = rel.get("confidence_score", 70),
             status            = rel.get("status", "suggested"),
+            generated_by      = rel.get("generated_by", "heuristic"),
+            reason            = rel.get("reason", ""),
         )
         existing_rel_keys.add(key)
         rel_added += 1
@@ -2079,6 +2083,19 @@ async def graph_page(request: Request, account_id: str):
         "saved":         request.query_params.get("saved"),
         "error":         request.query_params.get("error"),
     })
+
+
+@router.post("/clients/{account_id}/graph/toggle-suggested")
+async def graph_toggle_suggested(request: Request, account_id: str):
+    """Toggle whether unreviewed (suggested) graph rows may feed SQL generation."""
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    client = store.get_client(account_id) or {}
+    current = client.get("graph_use_suggested")
+    current = 1 if current is None else int(current)
+    store.update_client_meta(account_id, graph_use_suggested=0 if current else 1)
+    log.info("Admin toggled graph_use_suggested → %d for %s", 0 if current else 1, account_id)
+    return RedirectResponse(f"/admin/clients/{account_id}/graph", status_code=303)
 
 
 @router.post("/clients/{account_id}/graph/entities/create")
@@ -2889,6 +2906,8 @@ async def graph_suggest(request: Request, account_id: str):
             color            = "#F59E0B" if ent.get("entity_type") == "fact" else "#4F86C6",
             confidence_score = int(ent.get("confidence_score", 70)),
             status           = "suggested",
+            generated_by     = "llm",
+            reason           = f"LLM schema analysis classified {ent.get('table_name','')} as {ent.get('entity_type','dimension')}",
         )
         saved_entities += 1
 
@@ -2940,6 +2959,8 @@ async def graph_suggest(request: Request, account_id: str):
                 color            = "#7C3AED",  # purple = role-playing
                 confidence_score = 92,         # high — deterministic detection
                 status           = "suggested",
+                generated_by     = "heuristic",
+                reason           = f"Role-playing dimension: {role_info['fk_col']} in {role_info['fact_table']} points to {dim_name}",
             )
 
             # Save relationship from fact to this role-playing entity
@@ -2959,6 +2980,8 @@ async def graph_suggest(request: Request, account_id: str):
                 label             = role_info.get("relationship_label") or disp,
                 confidence_score  = 92,
                 status            = "suggested",
+                generated_by      = "heuristic",
+                reason            = f"Role-playing join: {role_info['fk_col']} → {dim_name}.{pk_hint}",
             )
             saved_entities += 1
 
@@ -2975,6 +2998,8 @@ async def graph_suggest(request: Request, account_id: str):
             label             = rel.get("label",""),
             confidence_score  = int(rel.get("confidence_score",70)),
             status            = "suggested",
+            generated_by      = "llm",
+            reason            = f"LLM suggested join on {rel.get('from_column','')}",
         )
         saved_rels += 1
 

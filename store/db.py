@@ -788,6 +788,10 @@ def _run_migrations() -> None:
         ("client", "enable_feedback_collection", "INTEGER NOT NULL DEFAULT 0"),
         ("client", "enable_learned_retrieval",   "INTEGER NOT NULL DEFAULT 0"),
         ("client", "enable_genie_suggestions",   "INTEGER NOT NULL DEFAULT 0"),
+        # v31: entity graph — allow unreviewed (status='suggested') entities and
+        # joins to feed SQL generation. Default 1 preserves existing behaviour;
+        # set 0 to enforce admin review before the graph affects queries.
+        ("client", "graph_use_suggested",        "INTEGER NOT NULL DEFAULT 1"),
         # v30: validated_examples governance columns
         ("validated_examples", "approval_status",          "TEXT NOT NULL DEFAULT 'legacy'"),
         ("validated_examples", "candidate_id",             "TEXT NOT NULL DEFAULT ''"),
