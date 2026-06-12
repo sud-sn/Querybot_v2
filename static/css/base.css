@@ -944,6 +944,71 @@ html[data-theme='dark'] [style*="background:#DBEAFE"] {
 .qb-pagination .qb-page-disabled { opacity: .45; pointer-events: none; }
 
 /* ============================================================
+   qb-switch — professional toggle switch (form-submitting)
+   Usage:
+     <form method="post" action="...">
+       <button type="submit" class="qb-switch {on|off}" role="switch"
+               aria-checked="true|false">
+         <span class="qb-switch-track"><span class="qb-switch-thumb"></span></span>
+         <span class="qb-switch-label">Label text</span>
+       </button>
+     </form>
+   ============================================================ */
+.qb-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px 6px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  cursor: pointer;
+  transition: border-color var(--t-fast) var(--ease-out), background var(--t-fast) var(--ease-out);
+}
+.qb-switch:hover { border-color: var(--border-strong); background: var(--surface-2); }
+.qb-switch-track {
+  position: relative;
+  width: 36px;
+  height: 20px;
+  border-radius: 999px;
+  background: var(--gray-300);
+  flex-shrink: 0;
+  transition: background var(--t-med) var(--ease-out);
+}
+.qb-switch-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(15,23,42,.3);
+  transition: transform var(--t-med) var(--ease-out);
+}
+.qb-switch.on .qb-switch-track { background: var(--success); }
+.qb-switch.on .qb-switch-thumb { transform: translateX(16px); }
+.qb-switch-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-soft);
+  white-space: nowrap;
+}
+.qb-switch.on .qb-switch-label { color: var(--text); }
+
+/* ── Vote indicators (replaces emoji thumbs in tables) ── */
+.vote-stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 700;
+}
+.vote-stat svg { flex-shrink: 0; }
+.vote-stat.up   { color: var(--success); }
+.vote-stat.down { color: var(--danger); }
+
+/* ============================================================
    qb-tip — CSS-only accessible tooltip
    ============================================================ */
 .qb-tip { position: relative; display: inline-flex; align-items: center; cursor: help; }

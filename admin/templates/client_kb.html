@@ -50,7 +50,7 @@
 {% if saved %}<div class="alert alert-success">File saved and re-embedded into ChromaDB.</div>{% endif %}
 {% if feedback_saved == "approved" %}<div class="alert alert-success">Semantic Layer correction approved and KB re-embedded. The patched KB file is opened below. {% if feedback_msg %}<br><span style="font-size:12px">{{ feedback_msg }}</span>{% endif %}</div>{% endif %}
 {% if feedback_saved == "rejected" %}<div class="alert alert-info">Semantic Layer correction rejected. No KB changes made.</div>{% endif %}
-{% if feedback_saved == "error" %}<div class="alert alert-danger">⚠ Approval failed: {{ feedback_msg or "KB file could not be updated." }} The item remains pending.</div>{% endif %}
+{% if feedback_saved == "error" %}<div class="alert alert-danger">Approval failed: {{ feedback_msg or "KB file could not be updated." }} The item remains pending.</div>{% endif %}
 
 <div class="card" id="semantic-feedback" style="margin-bottom:1.25rem">
   <div class="card-header">

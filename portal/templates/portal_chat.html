@@ -145,7 +145,7 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 
 /* ── Typing — attentive. Core brightens, ring rotates with a data stroke ── */
 .ai-indicator.ai-typing .ai-core{
-  background:radial-gradient(circle at 35% 30%, #ffffff 0%, #60a5fa 55%, var(--ai-core) 100%);
+  background:radial-gradient(circle at 35% 30%, #ffffff 0%, #818CF8 55%, var(--ai-core) 100%);
   box-shadow:0 0 14px rgba(96,165,250,.55);
   animation:ai-pulse 1.2s ease-in-out infinite;
 }
@@ -333,10 +333,12 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .summary-copy{font-size:13px;line-height:1.7;color:var(--text)}
 .feedback-row{display:flex;align-items:center;gap:.5rem;margin-top:.75rem;padding-top:.65rem;border-top:1px solid var(--border)}
 .feedback-label{font-size:11px;color:var(--text-muted);font-weight:700;margin-right:.1rem}
-.feedback-btn{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:50%;border:1px solid var(--border);background:var(--surface);cursor:pointer;font-size:14px;line-height:1;transition:background .15s,border-color .15s;padding:0}
-.feedback-btn:hover{background:var(--surface-3);border-color:var(--text-muted)}
-.feedback-btn.up.active{background:color-mix(in srgb,#22c55e 18%,var(--surface));border-color:#22c55e}
-.feedback-btn.down.active{background:color-mix(in srgb,#ef4444 18%,var(--surface));border-color:#ef4444}
+.feedback-btn{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--surface);color:var(--text-muted);cursor:pointer;line-height:1;transition:background .15s,border-color .15s,color .15s,transform .1s;padding:0}
+.feedback-btn:hover{background:var(--surface-2);border-color:var(--border-strong);color:var(--text);transform:translateY(-1px)}
+.feedback-btn.up:hover{color:var(--success);border-color:color-mix(in srgb,var(--success) 45%,transparent)}
+.feedback-btn.down:hover{color:var(--danger);border-color:color-mix(in srgb,var(--danger) 45%,transparent)}
+.feedback-btn.up.active{background:color-mix(in srgb,var(--success) 14%,var(--surface));border-color:var(--success);color:var(--success)}
+.feedback-btn.down.active{background:color-mix(in srgb,var(--danger) 14%,var(--surface));border-color:var(--danger);color:var(--danger)}
 .feedback-done{font-size:11px;color:var(--text-soft);font-style:italic;margin-left:.25rem}
 .feedback-panel{margin-top:.5rem;display:none;flex-direction:column;gap:.45rem;padding:.6rem .7rem;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius)}
 .feedback-panel.open{display:flex}
@@ -417,7 +419,7 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .suggestions::-webkit-scrollbar{height:3px}.suggestions::-webkit-scrollbar-track{background:transparent}.suggestions::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
 .suggestion-chip,.composer-chip{background:var(--surface);border:1px solid var(--border);color:var(--text-soft);font-size:12px;font-weight:700;padding:9px 13px;border-radius:999px;cursor:pointer;transition:all .15s;max-width:320px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;box-shadow:var(--shadow)}
 .suggestion-chip:hover,.composer-chip:hover{background:var(--surface-3);border-color:var(--primary);color:var(--primary);transform:translateY(-1px)}
-.chat-composer{flex-shrink:0;background:var(--surface);border-top:1px solid var(--border);padding:.85rem 1.25rem;position:relative;--ai-core:#2563EB;--ai-halo:rgba(37,99,235,.18);--ai-ring:rgba(37,99,235,.35)}
+.chat-composer{flex-shrink:0;background:var(--surface);border-top:1px solid var(--border);padding:.85rem 1.25rem;position:relative;--ai-core:#4F46E5;--ai-halo:rgba(79,70,229,.18);--ai-ring:rgba(79,70,229,.35)}
 .chat-input-bar{display:flex;align-items:flex-end;gap:.75rem}.chat-input{flex:1;background:transparent;border:none;outline:none;color:var(--text);font-size:14px;resize:none;max-height:140px;min-height:28px;line-height:1.55}.chat-input::placeholder{color:var(--text-muted)}
 .composer-side{display:flex;align-items:center;gap:.6rem;flex-shrink:0}.char-count{font-size:11px;color:var(--text-muted);min-width:34px;text-align:right}.send-btn{width:44px;height:44px;background:linear-gradient(135deg,var(--primary),var(--primary-hover));border:none;border-radius:var(--radius);cursor:pointer;display:flex;align-items:center;justify-content:center;color:#fff;font-size:17px;flex-shrink:0;transition:transform .15s,opacity .15s,filter .15s;box-shadow:0 10px 18px rgba(13,115,119,.25)}
 .send-btn:hover{transform:translateY(-1px);filter:brightness(1.02)}.send-btn:disabled{opacity:.45;cursor:not-allowed;box-shadow:none;transform:none}
@@ -461,7 +463,7 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 {% block content %}
 {% if not enabled %}
 <div style="max-width:500px;margin:4rem auto;text-align:center">
-  <div style="font-size:48px;margin-bottom:1.5rem">🔒</div>
+  <div style="margin-bottom:1.5rem"><svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z"/></svg></div>
   <h2 style="font-size:20px;font-weight:700;margin-bottom:.75rem">Internal Chat not enabled</h2>
   <p style="color:var(--text-muted);line-height:1.7">Your administrator has not enabled the Internal Chat UI for your account.</p>
   <a href="/portal/dashboard" class="btn btn-secondary" style="margin-top:1.5rem;display:inline-flex">← Back to dashboard</a>
@@ -1122,7 +1124,7 @@ function _updateMemoryBadge() {
   if (!badge) return;
   const n = _localHistory.length;
   if (n > 0) {
-    badge.textContent = `💬 ${n} turn${n === 1 ? '' : 's'} of context`;
+    badge.textContent = `${n} turn${n === 1 ? '' : 's'} of context`;
     badge.style.display = 'inline-flex';
     badge.title = _localHistory.map((t, i) => `${i + 1}. ${t.question}`).join('\n');
   } else {
@@ -1742,7 +1744,7 @@ function _mountResultChat(cardEl, rcId) {
   toggleBtn.addEventListener('click', () => {
     const isOpen = panel.classList.toggle('open');
     toggleBtn.classList.toggle('open', isOpen);
-    toggleBtn.textContent = isOpen ? '✕ Close' : '💬 Ask about this result';
+    toggleBtn.textContent = isOpen ? 'Close' : 'Ask about this result';
     if (isOpen) {
       input.focus();
       panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -2009,7 +2011,7 @@ function appendAssistantResponse(msg, opts = {}){
     : '';
 
   const pinBtnHtml = (hasChart && msg.chart.pin_token)
-    ? '<button class="msg-action" type="button" data-pin="chart">📌 Pin to dashboard</button>'
+    ? '<button class="msg-action" type="button" data-pin="chart"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px"><path d="M3 3v18h18M7 14l4-4 3 3 5-6"/></svg>Pin to dashboard</button>'
     : '';
 
   // Follow-up suggestions — result-aware chips generated from the data brief
@@ -2029,8 +2031,8 @@ function appendAssistantResponse(msg, opts = {}){
   const feedbackHtml = (FEEDBACK_ENABLED && _qid)
     ? `<div class="feedback-row">
         <span class="feedback-label">Was this helpful?</span>
-        <button class="feedback-btn up" type="button" title="Yes, correct answer">👍</button>
-        <button class="feedback-btn down" type="button" title="No, something was wrong">👎</button>
+        <button class="feedback-btn up" type="button" title="Yes, correct answer" aria-label="Helpful"><svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6.633 10.25c.806 0 1.533-.446 2.031-1.08a9.041 9.041 0 012.861-2.4c.723-.384 1.35-.956 1.653-1.715a4.498 4.498 0 00.322-1.672V3a.75.75 0 01.75-.75 2.25 2.25 0 012.25 2.25c0 1.152-.26 2.243-.723 3.218-.266.558.107 1.282.725 1.282h3.126c1.026 0 1.945.694 2.054 1.715.045.422.068.85.068 1.285a11.95 11.95 0 01-2.649 7.521c-.388.482-.987.729-1.605.729H13.48c-.483 0-.964-.078-1.423-.23l-3.114-1.04a4.501 4.501 0 00-1.423-.23H5.904M6.633 10.25H3.75a1.5 1.5 0 00-1.5 1.5v7.5a1.5 1.5 0 001.5 1.5h2.154"/></svg></button>
+        <button class="feedback-btn down" type="button" title="No, something was wrong" aria-label="Not helpful"><svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17.367 13.75c-.806 0-1.533.446-2.031 1.08a9.041 9.041 0 01-2.861 2.4c-.723.384-1.35.956-1.653 1.715a4.498 4.498 0 00-.322 1.672V21a.75.75 0 01-.75.75 2.25 2.25 0 01-2.25-2.25c0-1.152.26-2.243.723-3.218.266-.558-.107-1.282-.725-1.282H4.372c-1.026 0-1.945-.694-2.054-1.715A11.95 11.95 0 014.967 4.236c.388-.482.987-.729 1.605-.729h4.948c.483 0 .964.078 1.423.23l3.114 1.04c.459.152.94.23 1.423.23h2.616M17.367 13.75h2.883a1.5 1.5 0 001.5-1.5v-7.5a1.5 1.5 0 00-1.5-1.5h-2.154"/></svg></button>
         <span class="feedback-done" style="display:none"></span>
        </div>
        <div class="feedback-panel">
@@ -2081,7 +2083,7 @@ function appendAssistantResponse(msg, opts = {}){
             ${nextActionsHtml}
             <button class="msg-action" type="button" data-copy="result">Copy result</button>
             ${pinBtnHtml}
-            <button class="rc-toggle" type="button" data-rc-toggle="${rcId}">💬 Ask about this result</button>
+            <button class="rc-toggle" type="button" data-rc-toggle="${rcId}">Ask about this result</button>
           </div>
           ${trustHtml}
         </div>
@@ -2135,7 +2137,7 @@ function appendAssistantResponse(msg, opts = {}){
         }),
       });
       const data = await res.json();
-      pinBtn.textContent = data.ok ? '✓ Pinned!' : 'Pin failed';
+      pinBtn.textContent = data.ok ? 'Pinned to dashboard' : 'Pin failed';
       toast(data.ok ? 'Chart added to dashboard' : (data.error || 'Unable to pin chart'));
     } catch {
       pinBtn.textContent = 'Pin failed';
@@ -2253,7 +2255,7 @@ function appendAnalysisResponse(msg, opts = {}){
   div.className = 'msg msg-bot';
   const bullets = Array.isArray(msg.bullets) ? msg.bullets : [];
   const resultScope = msg.result_scope || {};
-  const metaHtml = resultScope.badge ? `<div class="analysis-meta">Based on: ${escHtml(resultScope.badge)}${resultScope.note ? ` â€¢ ${escHtml(resultScope.note)}` : ''}</div>` : '';
+  const metaHtml = resultScope.badge ? `<div class="analysis-meta">Based on: ${escHtml(resultScope.badge)}${resultScope.note ? ` • ${escHtml(resultScope.note)}` : ''}</div>` : '';
   div.innerHTML = `<div class="msg-avatar">Q</div><div class="msg-content"><div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timestamp}</span></div><div class="analysis-card"><div class="section-label">${escHtml(msg.action || 'analysis')}</div><div class="analysis-title">${escHtml(msg.title || 'Analysis')}</div><div class="analysis-body">${escHtml(msg.body || '')}</div>${msg.secondary ? `<div class="analysis-secondary">${escHtml(msg.secondary)}</div>` : ''}${bullets.length ? `<ul class="analysis-list">${bullets.map(b => `<li>${escHtml(b)}</li>`).join('')}</ul>` : ''}${msg.next_step ? `<div class="analysis-next"><span class="analysis-next-label">Next step</span>${escHtml(msg.next_step)}</div>` : ''}<div class="msg-actions" style="margin-top:.85rem"><button class="msg-action" type="button" data-copy="analysis">Copy analysis</button></div></div></div>`;
   thread().appendChild(div);
   if (metaHtml) {
@@ -2299,7 +2301,7 @@ function appendChart(payload, opts = {}){
           }),
         });
         const data = await res.json();
-        pinBtn.textContent = data.ok ? '✓ Pinned!' : 'Pin failed';
+        pinBtn.textContent = data.ok ? 'Pinned to dashboard' : 'Pin failed';
         toast(data.ok ? 'Chart added to dashboard' : (data.error || 'Unable to pin chart'));
       } catch {
         pinBtn.textContent = 'Pin failed';
@@ -2525,41 +2527,41 @@ function updateCharCount(){ const inp = document.getElementById('input'); docume
 const MASCOT_STATES = {
   authorization: {
     body: 'mascot-float 1.8s ease-in-out infinite',
-    overlay: null, tooltip: '🔑 Checking your access…',
+    overlay: null, tooltip: 'Checking your access…',
     antenna: '#60a5fa', armL: '', armR: '',
   },
   metric_registry: {
     body: 'mascot-bob .55s ease-in-out infinite',
-    overlay: null, tooltip: '⚡ Found a fast answer!',
+    overlay: null, tooltip: 'Found a fast answer',
     antenna: '#fbbf24', armL: '', armR: '',
   },
   retrieving_context: {
     body: 'mascot-scan .85s ease-in-out infinite',
-    overlay: null, tooltip: '📚 Reading your data schema…',
+    overlay: null, tooltip: 'Reading your data schema…',
     antenna: '#38bdf8', armL: '', armR: '',
   },
   generating_sql: {
     body: 'mascot-type .4s ease-in-out infinite',
-    overlay: null, tooltip: '✏️ Translating to SQL…',
+    overlay: null, tooltip: 'Translating to SQL…',
     antenna: '#a78bfa',
     armL: 'mascot-wave-arm .35s ease-in-out infinite',
     armR: 'mascot-wave-arm .35s ease-in-out infinite reverse',
   },
   validating_sql: {
     body: 'mascot-check .65s ease-in-out 4',
-    overlay: 'mGlass', tooltip: '🔍 Checking the query…',
+    overlay: 'mGlass', tooltip: 'Checking the query…',
     antenna: '#38bdf8', armL: '', armR: '',
   },
   repairing_query: {
     body: 'mascot-float 1s ease-in-out infinite',
-    overlay: 'mWrench', tooltip: '🔧 Fixing an issue…',
+    overlay: 'mWrench', tooltip: 'Fixing an issue…',
     antenna: '#fbbf24', armL: '',
     armR: 'mascot-wave-arm .5s ease-in-out infinite',
     overlayAnim: 'mascot-spin 1.1s linear infinite',
   },
   executing_query: {
     body: 'mascot-run .5s ease-in-out infinite',
-    overlay: 'mGear', tooltip: '🗄️ Querying your database…',
+    overlay: 'mGear', tooltip: 'Querying your database…',
     antenna: '#34d399',
     armL: 'mascot-wave-arm .5s ease-in-out infinite reverse',
     armR: 'mascot-wave-arm .5s ease-in-out infinite',
@@ -2567,12 +2569,12 @@ const MASCOT_STATES = {
   },
   formatting_results: {
     body: 'mascot-bob .65s ease-in-out infinite',
-    overlay: null, tooltip: '📊 Preparing your answer…',
+    overlay: null, tooltip: 'Preparing your answer…',
     antenna: '#34d399', armL: '', armR: '',
   },
   chart_ready: {
     body: 'mascot-celebrate .5s ease-in-out infinite',
-    overlay: 'mCheck', tooltip: '📈 Done — your answer is ready!',
+    overlay: 'mCheck', tooltip: 'Done — your answer is ready',
     antenna: '#34d399',
     armL: 'mascot-wave-arm .45s ease-in-out infinite',
     armR: 'mascot-wave-arm .45s ease-in-out infinite reverse',
@@ -2585,13 +2587,13 @@ const MASCOT_STATES = {
   },
   _error: {
     body: 'mascot-error .6s ease-in-out 2',
-    overlay: null, tooltip: '❌ Something went wrong',
+    overlay: null, tooltip: 'Something went wrong',
     antenna: '#f87171', armL: '', armR: '',
     eyeColor: '#f87171',
   },
   _clarify: {
     body: 'mascot-question .7s ease-in-out infinite',
-    overlay: null, tooltip: '❓ I need a bit more context',
+    overlay: null, tooltip: 'I need a bit more context',
     antenna: '#fbbf24', armL: '', armR: '',
     eyeColor: '#fbbf24',
   },
@@ -2668,11 +2670,6 @@ const STAGE_ORDER = [
   'generating_sql', 'validating_sql', 'repairing_query',
   'executing_query', 'formatting_results', 'chart_ready'
 ];
-const STAGE_ICONS = {
-  authorization: '🔑', metric_registry: '⚡', retrieving_context: '📚',
-  generating_sql: '✏️', validating_sql: '🔍', repairing_query: '🔧',
-  executing_query: '🗄️', formatting_results: '📊', chart_ready: '📈'
-};
 let _completedStages = [];
 let _currentStage = null;
 
@@ -2936,10 +2933,10 @@ function connect(){
           const isDbPause = msgContent.includes('40613') || msgContent.includes('not currently available');
           const isConn    = msgContent.includes('connection') || msgContent.includes('timeout');
           const errMsg    = isDbPause
-            ? '🔄 DB is waking up — please try again in a moment'
+            ? 'Database is waking up — please try again in a moment'
             : isConn
-              ? '📡 Connection issue — try again'
-              : '⚠️ Got an error — try rephrasing or retry';
+              ? 'Connection issue — please try again'
+              : 'Something went wrong — try rephrasing or retry';
           if (window._composerMascotError) window._composerMascotError(errMsg);
         }
         // Keep mascot visible, render error after brief reaction
@@ -2991,8 +2988,8 @@ function connect(){
     } else if (msg.type === 'error') {
       _pendingSuggestion = null;  // clear stale pending chip on WS-level error
       showMascotError();
-      if (window._composerMascotError) window._composerMascotError('⚠️ Something went wrong — please retry');
-      appendSystem('⚠️ ' + msg.content);
+      if (window._composerMascotError) window._composerMascotError('Something went wrong — please retry');
+      appendSystem(msg.content);
     } else if (msg.type === 'result_chat_typing') {
       _rcPanels[msg.result_id]?.onTyping(!!msg.active);
     } else if (msg.type === 'result_chat_response') {
@@ -3133,7 +3130,13 @@ class AutoSuggest {
       this._dd.setAttribute('role', 'listbox');
       document.body.appendChild(this._dd);
     }
-    const KIND_ICON = { history: '🕐', metric: '📊', entity: '🔗', term: '📝' };
+    const _acSvg = (d) => `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><path d="${d}"/></svg>`;
+    const KIND_ICON = {
+      history: _acSvg('M12 6v6l4 2M21 12a9 9 0 11-18 0 9 9 0 0118 0z'),
+      metric:  _acSvg('M3 3v18h18M7 14l4-4 3 3 5-6'),
+      entity:  _acSvg('M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m13.35-.622l1.757-1.757a4.5 4.5 0 00-6.364-6.364l-4.5 4.5a4.5 4.5 0 001.242 7.244'),
+      term:    _acSvg('M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25'),
+    };
     this._dd.innerHTML = this._items.map((item, i) => {
       const icon = KIND_ICON[item.kind] || '';
       const cls  = 'ac-item' + (i === this._idx ? ' ac-active' : '');

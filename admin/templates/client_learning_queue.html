@@ -67,20 +67,23 @@
 {% if not flag_enabled %}
 <div class="flag-off-notice" style="display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap">
   <div>
-    <strong>Feature flag off.</strong>
-    <code>enable_feedback_collection</code> is currently <strong>0</strong> for this workspace.
+    <strong>Feedback collection is off.</strong>
     Candidates shown below are from existing migration or manual creation.
-    Enabling the flag activates live candidate creation and the portal feedback thumbs.
+    Turning it on activates live candidate creation and the portal feedback controls.
   </div>
-  <form method="post" action="/admin/clients/{{ client.account_id }}/learning-queue/toggle-flag" style="flex-shrink:0">
-    <button type="submit" class="btn btn-primary btn-sm">Enable learning queue</button>
+  <form method="post" action="/admin/clients/{{ client.account_id }}/learning-queue/toggle-flag" style="flex-shrink:0;margin:0">
+    <button type="submit" class="qb-switch off" role="switch" aria-checked="false">
+      <span class="qb-switch-track"><span class="qb-switch-thumb"></span></span>
+      <span class="qb-switch-label">Learning queue off</span>
+    </button>
   </form>
 </div>
 {% else %}
 <div style="display:flex;justify-content:flex-end;margin-bottom:.75rem">
-  <form method="post" action="/admin/clients/{{ client.account_id }}/learning-queue/toggle-flag">
-    <button type="submit" class="btn btn-secondary btn-sm" style="font-size:12px">
-      ✓ Learning queue active — click to disable
+  <form method="post" action="/admin/clients/{{ client.account_id }}/learning-queue/toggle-flag" style="margin:0">
+    <button type="submit" class="qb-switch on" role="switch" aria-checked="true" title="Click to disable feedback collection">
+      <span class="qb-switch-track"><span class="qb-switch-thumb"></span></span>
+      <span class="qb-switch-label">Learning queue active</span>
     </button>
   </form>
 </div>
@@ -169,8 +172,8 @@
     </td>
     <td>
       <div class="feedback-votes">
-        <span class="votes-up" title="Positive votes">👍 {{ c.positive_vote_count or 0 }}</span>
-        <span class="votes-down" title="Negative votes">👎 {{ c.negative_vote_count or 0 }}</span>
+        <span class="vote-stat up" title="Positive votes"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>{{ c.positive_vote_count or 0 }}</span>
+        <span class="vote-stat down" title="Negative votes"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M19 12l-7 7-7-7"/></svg>{{ c.negative_vote_count or 0 }}</span>
       </div>
     </td>
     <td><span class="source-pill">{{ c.source }}</span></td>
