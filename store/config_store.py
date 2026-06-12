@@ -1859,17 +1859,22 @@ def save_entity_property(
     synonyms: str = "",
     confidence_score: int = 100,
     status: str = "confirmed",
+    generated_by: str = "manual",
+    reason: str = "",
 ) -> None:
     """Save a column role mapping.
     status: 'suggested' = LLM prediction, 'confirmed' = admin-approved.
     Confirmed fields are synced to the semantic layer business_term table.
+    generated_by/reason: provenance ('manual' | 'llm' | 'kb_harvest'), written
+    on INSERT only — updates never overwrite the original provenance.
     """
     with get_db() as conn:
         conn.execute("""
             INSERT INTO entity_properties
                 (account_id, entity_name, column_name, role,
-                 display_name, synonyms, confidence_score, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                 display_name, synonyms, confidence_score, status,
+                 generated_by, reason)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(account_id, entity_name, column_name) DO UPDATE SET
                 role             = excluded.role,
                 display_name     = excluded.display_name,
@@ -1877,7 +1882,8 @@ def save_entity_property(
                 confidence_score = excluded.confidence_score,
                 status           = excluded.status
         """, (account_id, entity_name, column_name, role,
-              display_name, synonyms, confidence_score, status))
+              display_name, synonyms, confidence_score, status,
+              generated_by, reason))
 
 
 
