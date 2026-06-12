@@ -988,6 +988,13 @@ html[data-theme='dark'] [style*="background:#DBEAFE"] {
 }
 .qb-switch.on .qb-switch-track { background: var(--success); }
 .qb-switch.on .qb-switch-thumb { transform: translateX(16px); }
+
+/* Compact variant for dense toolbars */
+.qb-switch.qb-switch-sm { padding: 3px 8px 3px 4px; }
+.qb-switch.qb-switch-sm .qb-switch-track { width: 28px; height: 16px; }
+.qb-switch.qb-switch-sm .qb-switch-thumb { width: 12px; height: 12px; }
+.qb-switch.qb-switch-sm.on .qb-switch-thumb { transform: translateX(12px); }
+.qb-switch.qb-switch-sm .qb-switch-label { font-size: 11px; }
 .qb-switch-label {
   font-size: 12px;
   font-weight: 700;

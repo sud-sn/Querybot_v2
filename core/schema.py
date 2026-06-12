@@ -861,6 +861,8 @@ def build_entity_graph_from_schema(schema_dir: str) -> dict:
             "pos_y":            pos_y,
             "confidence_score": 75,
             "status":           "suggested",
+            "generated_by":     "heuristic",
+            "reason":           f"Table name pattern classified {bare_table} as {entity_type}",
         })
 
     # ── Add role-playing date entities ──────────────────────────────────────
@@ -911,6 +913,8 @@ def build_entity_graph_from_schema(schema_dir: str) -> dict:
                         "pos_y":            520 + (pos_idx // 5) * 160,
                         "confidence_score": 88,
                         "status":           "suggested",
+                        "generated_by":     "heuristic",
+                        "reason":           f"Date role '{role.label}' detected from column {fact_col}",
                     })
                     role_entity_names.add(entity_name)
                 role_date_relationships.append({
@@ -923,6 +927,8 @@ def build_entity_graph_from_schema(schema_dir: str) -> dict:
                     "label":             role.label,
                     "confidence_score":  88,
                     "status":            "suggested",
+                    "generated_by":      "heuristic",
+                    "reason":            f"Date role: {fact_col} → {date_table}.{date_pk}",
                 })
 
     # ── Build relationship list (reuse shared-column logic from _build_join_map) ─
@@ -978,6 +984,8 @@ def build_entity_graph_from_schema(schema_dir: str) -> dict:
                     "join_type":        "INNER",
                     "confidence_score": 70,
                     "status":           "suggested",
+                    "generated_by":     "heuristic",
+                    "reason":           f"Shared column {actual_col} in both tables",
                 })
 
     return {"entities": entities, "relationships": relationships}

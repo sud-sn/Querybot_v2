@@ -469,43 +469,58 @@ def build_join_skeleton(
 # Public entry point
 # ══════════════════════════════════════════════════════════════════════════════
 
-def resolve_for_question(
-    question: str,
-    account_id: str,
-    db_type: str,
-    graph: Optional[dict] = None,
-    intent: Optional[dict] = None,
-    required_entities: Optional[list[str] | set[str]] = None,
-    metric_formula_tables: Optional[list[str] | set[str]] = None,
-) -> dict:
-    """
-    Main entry point called from main.py before SQL generation.
+def _is_confirmed_row(row: dict) -> bool:
+    """Legacy rows have status='' or no status column — treat those as confirmed.
+    Only explicit status='suggested' marks an unreviewed auto-generated row."""
+    return (row.get("status") or "confirmed") != "suggested"
 
-    Returns:
-      {
-        "enabled":        bool   — False if graph is empty or no entities detected
-        "detected":       list   — entity names detected in the question
-        "join_skeleton":  str    — SQL FROM + JOIN clause ready for injection
-        "anchor":         str    — the root entity (usually the fact table)
-        "entity_count":   int    — number of entities in the graph
-      }
-    """
+
+def _confirmed_subgraph(graph: dict) -> dict:
+    """Filter a full graph down to admin-confirmed entities and relationships.
+    Relationships survive only when both endpoints are confirmed entities."""
+    ents  = [e for e in graph.get("entities", []) if _is_confirmed_row(e)]
+    names = {e["entity_name"] for e in ents}
+    rels  = [
+        r for r in graph.get("relationships", [])
+        if _is_confirmed_row(r)
+        and r.get("from_entity") in names
+        and r.get("to_entity") in names
+    ]
+    props = [
+        p for p in graph.get("properties", []) or []
+        if p.get("entity_name") in names
+    ]
+    return {"entities": ents, "relationships": rels, "properties": props}
+
+
+def _client_allows_suggested(account_id: str) -> bool:
+    """Per-client toggle: may unreviewed (suggested) graph rows feed SQL generation?
+    Defaults to True (existing behaviour) when the client row is unavailable."""
+    try:
+        import store
+        client = store.get_client(account_id) or {}
+        val = client.get("graph_use_suggested")
+        return True if val is None else bool(int(val))
+    except Exception:
+        return True
+
+
+def _resolve_on_graph(
+    question: str,
+    db_type: str,
+    graph: dict,
+    intent: Optional[dict],
+    required_entities,
+    metric_formula_tables,
+) -> dict:
+    """Run detection + pathfinding + skeleton build against one graph snapshot."""
+    entities     = graph.get("entities", [])
+    rels         = graph.get("relationships", [])
+    entity_count = len(entities)
     empty = {
         "enabled": False, "detected": [], "join_skeleton": "",
-        "anchor": "", "entity_count": 0,
+        "anchor": "", "entity_count": entity_count,
     }
-
-    if graph is None:
-        try:
-            import store
-            graph = store.get_full_graph(account_id)
-        except Exception as exc:
-            log.debug("Graph load failed: %s", exc)
-            return empty
-
-    entities   = graph.get("entities", [])
-    rels       = graph.get("relationships", [])
-    entity_count = len(entities)
 
     if not entities:
         return empty
@@ -520,7 +535,7 @@ def resolve_for_question(
     log.debug("Graph: question=%r detected=%s", question[:60], detected)
 
     if not detected:
-        return {**empty, "entity_count": entity_count}
+        return empty
 
     if len(detected) < 2 or not rels:
         # Single entity — still useful: tells the LLM which table to anchor on
@@ -532,7 +547,7 @@ def resolve_for_question(
                 "graph injection disabled. Fix the entity's table_name in the Entity Graph admin.",
                 detected[0],
             )
-            return {**empty, "entity_count": entity_count}
+            return empty
         anchor_tbl = _quote_table(
             _single_tbl_name,
             ent.get("schema_name", ""),
@@ -567,3 +582,109 @@ def resolve_for_question(
         "entity_count":  entity_count,
         "anti_join":     anti_join,
     }
+
+
+def resolve_for_question(
+    question: str,
+    account_id: str,
+    db_type: str,
+    graph: Optional[dict] = None,
+    intent: Optional[dict] = None,
+    required_entities: Optional[list[str] | set[str]] = None,
+    metric_formula_tables: Optional[list[str] | set[str]] = None,
+    use_suggested: Optional[bool] = None,
+) -> dict:
+    """
+    Main entry point called before SQL generation.
+
+    Resolution order:
+      1. Admin-confirmed entities/relationships only (status != 'suggested').
+      2. If that yields nothing useful AND the client allows it
+         (client.graph_use_suggested, default on), fall back to the full
+         graph including unreviewed suggestions — logged when it happens.
+
+    use_suggested: override the per-client toggle (None = read client row).
+
+    Returns:
+      {
+        "enabled":        bool   — False if graph is empty or no entities detected
+        "detected":       list   — entity names detected in the question
+        "join_skeleton":  str    — SQL FROM + JOIN clause ready for injection
+        "anchor":         str    — the root entity (usually the fact table)
+        "entity_count":   int    — number of entities in the graph
+        "graph_scope":    str    — 'confirmed' | 'suggested_fallback' (when enabled)
+      }
+    """
+    empty = {
+        "enabled": False, "detected": [], "join_skeleton": "",
+        "anchor": "", "entity_count": 0,
+    }
+
+    if graph is None:
+        try:
+            import store
+            graph = store.get_full_graph(account_id)
+        except Exception as exc:
+            log.debug("Graph load failed: %s", exc)
+            return empty
+
+    entities     = graph.get("entities", [])
+    entity_count = len(entities)
+    if not entities:
+        return empty
+
+    confirmed = _confirmed_subgraph(graph)
+    has_suggested = (
+        len(confirmed["entities"]) < entity_count
+        or len(confirmed["relationships"]) < len(graph.get("relationships", []))
+    )
+
+    confirmed_result: dict = {}
+    if confirmed["entities"]:
+        confirmed_result = _resolve_on_graph(
+            question, db_type, confirmed, intent,
+            required_entities, metric_formula_tables,
+        )
+        # A confirmed multi-entity join — or a graph with nothing suggested —
+        # is final. A single-entity anchor may just be the weak fact fallback,
+        # so give suggested content a chance to produce a real join below.
+        if confirmed_result.get("enabled") and (
+            len(confirmed_result.get("detected", [])) >= 2 or not has_suggested
+        ):
+            confirmed_result["entity_count"] = entity_count
+            confirmed_result["graph_scope"] = "confirmed"
+            return confirmed_result
+
+    if has_suggested:
+        allow = use_suggested if use_suggested is not None else _client_allows_suggested(account_id)
+        if allow:
+            full_result = _resolve_on_graph(
+                question, db_type, graph, intent,
+                required_entities, metric_formula_tables,
+            )
+            # Prefer the suggested-inclusive result only when it adds value
+            # (a join the confirmed graph could not produce).
+            if full_result.get("enabled") and (
+                not confirmed_result.get("enabled")
+                or len(full_result.get("detected", [])) > len(confirmed_result.get("detected", []))
+            ):
+                log.info(
+                    "Graph resolver: using unreviewed suggestions for %r "
+                    "(confirmed graph had no full join path — review the Entity Graph "
+                    "or set client.graph_use_suggested=0 to disable this fallback)",
+                    question[:60],
+                )
+                full_result["graph_scope"] = "suggested_fallback"
+                return full_result
+        else:
+            log.info(
+                "Graph resolver: suggested-only graph content skipped for %r "
+                "(client.graph_use_suggested=0)", question[:60],
+            )
+
+    if confirmed_result.get("enabled"):
+        confirmed_result["entity_count"] = entity_count
+        confirmed_result["graph_scope"] = "confirmed"
+        return confirmed_result
+
+    return {**empty, "entity_count": entity_count}

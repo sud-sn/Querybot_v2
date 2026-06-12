@@ -378,6 +378,7 @@ def update_client_meta(
     enable_llm_audit: Optional[int] = None,
     portal_only: Optional[int] = None,
     enable_feedback_collection: Optional[int] = None,
+    graph_use_suggested: Optional[int] = None,
 ) -> None:
     """Update one or more metadata fields on a client row."""
     fields, params = [], []
@@ -403,6 +404,8 @@ def update_client_meta(
         fields.append("portal_only = ?"); params.append(portal_only)
     if enable_feedback_collection is not None:
         fields.append("enable_feedback_collection = ?"); params.append(enable_feedback_collection)
+    if graph_use_suggested is not None:
+        fields.append("graph_use_suggested = ?"); params.append(graph_use_suggested)
     if not fields:
         return
     fields.append("updated_at = datetime('now')")
@@ -1582,19 +1585,25 @@ def save_entity(
     confidence_score: int = 100,
     status: str = "confirmed",
     entity_filter: str = "",
+    generated_by: str = "manual",
+    reason: str = "",
 ) -> int:
     """Upsert an entity. Returns its id.
     status: 'suggested' = LLM prediction awaiting admin review
             'confirmed' = admin-approved, feeds into SQL generation
     entity_filter: static SQL WHERE conditions always applied when this table is joined
+    generated_by/reason: provenance evidence ('manual' | 'heuristic' | 'llm') and a
+        human-readable explanation of why this entity was suggested. Written on
+        INSERT only — updates never overwrite the original provenance.
     """
     with get_db() as conn:
         conn.execute("""
             INSERT INTO entity_graph
                 (account_id, entity_name, table_name, schema_name, pk_column,
                  display_name, description, entity_type, is_active,
-                 pos_x, pos_y, color, confidence_score, status, entity_filter)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 pos_x, pos_y, color, confidence_score, status, entity_filter,
+                 generated_by, reason)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(account_id, entity_name) DO UPDATE SET
                 table_name       = excluded.table_name,
                 schema_name      = excluded.schema_name,
@@ -1611,7 +1620,8 @@ def save_entity(
                 entity_filter    = excluded.entity_filter
         """, (account_id, entity_name, table_name, schema_name, pk_column,
               display_name, description, entity_type, is_active,
-              pos_x, pos_y, color, confidence_score, status, entity_filter))
+              pos_x, pos_y, color, confidence_score, status, entity_filter,
+              generated_by, reason))
         row = conn.execute(
             "SELECT id FROM entity_graph WHERE account_id=? AND entity_name=?",
             (account_id, entity_name)
@@ -1746,8 +1756,14 @@ def save_relationship(
     rel_id: int = 0,
     join_conditions: list | None = None,
     where_clause: str = "",
+    generated_by: str = "manual",
+    reason: str = "",
 ) -> int:
-    """Insert or update a relationship edge. Returns its id."""
+    """Insert or update a relationship edge. Returns its id.
+    generated_by/reason: provenance evidence ('manual' | 'heuristic' | 'llm') and a
+    human-readable explanation (e.g. "Shared column CUSTOMER_ID"). Written on
+    INSERT only — edits never overwrite the original provenance.
+    """
     import json as _json
     jc_json = _json.dumps(join_conditions or [])
     with get_db() as conn:
@@ -1770,11 +1786,12 @@ def save_relationship(
             INSERT INTO entity_relationships
                 (account_id, from_entity, to_entity, from_column, to_column,
                  relationship_type, join_type, label, is_active,
-                 confidence_score, status, join_conditions, where_clause)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
+                 confidence_score, status, join_conditions, where_clause,
+                 generated_by, reason)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)
         """, (account_id, from_entity, to_entity, from_column, to_column,
               relationship_type, join_type, label, confidence_score, status,
-              jc_json, where_clause))
+              jc_json, where_clause, generated_by, reason))
         row = conn.execute("SELECT last_insert_rowid() AS id").fetchone()
     return row["id"] if row else -1
 
@@ -1951,9 +1968,20 @@ def list_entity_properties(account_id: str, entity_name: str) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def list_all_entity_properties(account_id: str) -> list[dict]:
+    """All column-role properties for an account (every entity), for the resolver."""
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM entity_properties WHERE account_id=? ORDER BY entity_name, column_name",
+            (account_id,)
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def get_full_graph(account_id: str) -> dict:
     """Return the complete graph as {entities, relationships, properties} for the resolver."""
     return {
         "entities":      list_entities(account_id, active_only=True),
         "relationships": list_relationships(account_id, active_only=True),
+        "properties":    list_all_entity_properties(account_id),
     }

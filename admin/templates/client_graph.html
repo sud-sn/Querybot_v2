@@ -729,6 +729,17 @@
     </div>
     <span class="model-state" id="model-state" title="Changes affect the current draft semantic model">Draft model</span>
 
+    {% set _use_sugg = client.graph_use_suggested if client.graph_use_suggested is not none else 1 %}
+    <form method="post" action="/admin/clients/{{ client.account_id }}/graph/toggle-suggested"
+          style="margin:0;flex-shrink:0"
+          title="{% if _use_sugg %}Unreviewed suggestions currently feed SQL generation when no confirmed join path exists. Click to require admin confirmation.{% else %}Only admin-confirmed entities and joins feed SQL generation. Click to also allow unreviewed suggestions.{% endif %}">
+      <button type="submit" class="qb-switch qb-switch-sm {% if _use_sugg %}on{% else %}off{% endif %}"
+              role="switch" aria-checked="{{ 'true' if _use_sugg else 'false' }}">
+        <span class="qb-switch-track"><span class="qb-switch-thumb"></span></span>
+        <span class="qb-switch-label">Use unreviewed suggestions</span>
+      </button>
+    </form>
+
     <!-- ── Spacer: pushes contextual + health to the right ───────────── -->
     <div class="tb-spacer"></div>
 
