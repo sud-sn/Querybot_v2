@@ -209,7 +209,7 @@
 
 {# ── Notification toast ── #}
 <div class="admin-live-toast" id="semanticPendingToast" role="status" aria-live="polite">
-  <div class="admin-live-toast-title">New Semantic Layer request</div>
+  <div class="admin-live-toast-title" id="semanticPendingToastTitle">New Semantic Layer request</div>
   <div class="admin-live-toast-body" id="semanticPendingToastBody"></div>
 </div>
 
@@ -269,6 +269,7 @@ function closeSidebar(){
 
   function showToast(s,meta){
     var toast=document.getElementById('semanticPendingToast');
+    var title=document.getElementById('semanticPendingToastTitle');
     var body=document.getElementById('semanticPendingToastBody');
     if(!toast||!body) return;
     var row=clientPending(s,meta&&meta.account_id)||clients(s)[0];
@@ -276,6 +277,7 @@ function closeSidebar(){
     var accountId=row.account_id||(meta&&meta.account_id)||'';
     var clientName=row.client_name||(meta&&meta.client_name)||accountId||'Client';
     var count=Number(row.pending||1);
+    if(title) title.textContent='New Semantic Layer request';
     var link=document.createElement('a');
     link.href='/admin/clients/'+encodeURIComponent(accountId)+'/kb#semantic-feedback';
     link.textContent=count+' request'+(count===1?'':'s')+' pending review';
@@ -284,6 +286,26 @@ function closeSidebar(){
     toast.classList.add('show');
     window.clearTimeout(toastTimer);
     toastTimer=window.setTimeout(function(){toast.classList.remove('show');},7000);
+  }
+
+  function showGraphReadyToast(msg){
+    var toast=document.getElementById('semanticPendingToast');
+    var title=document.getElementById('semanticPendingToastTitle');
+    var body=document.getElementById('semanticPendingToastBody');
+    if(!toast||!body) return;
+    var s=msg.summary||{};
+    var pending=Number(s.pending_review||0);
+    var ents=Number(s.entities_total||0);
+    var rels=Number(s.relationships_total||0);
+    if(title) title.textContent='Semantic model ready for review';
+    var link=document.createElement('a');
+    link.href='/admin/clients/'+encodeURIComponent(msg.account_id||'')+'/graph';
+    link.textContent=pending>0?(pending+' suggestion'+(pending===1?'':'s')+' to review'):'Open the entity graph';
+    body.textContent=(msg.client_name||'Client')+': '+ents+' entities, '+rels+' joins. ';
+    body.appendChild(link);
+    toast.classList.add('show');
+    window.clearTimeout(toastTimer);
+    toastTimer=window.setTimeout(function(){toast.classList.remove('show');},9000);
   }
 
   function applySummary(s,meta){
@@ -311,6 +333,8 @@ function closeSidebar(){
         window.dispatchEvent(new CustomEvent('qb-admin-notification',{detail:msg}));
         if(msg.type==='semantic_feedback_pending'){
           applySummary(msg.summary||{},{source:'ws',action:msg.action,account_id:msg.account_id,client_name:msg.client_name});
+        }else if(msg.type==='graph_ready'){
+          showGraphReadyToast(msg);
         }
       }catch(_){}
     };

@@ -91,3 +91,19 @@ async def notify_kb_build_changed(
         "status": status,
         "progress": progress or {},
     })
+
+
+async def notify_graph_ready(
+    *,
+    account_id: str,
+    summary: dict[str, Any] | None = None,
+) -> None:
+    """Broadcast after the post-KB-build entity graph sync so the admin sees
+    a 'semantic model ready for review' toast with suggestion counts."""
+    client = store.get_client(account_id) or {}
+    await admin_notification_hub.broadcast({
+        "type": "graph_ready",
+        "account_id": account_id,
+        "client_name": client.get("client_name") or account_id,
+        "summary": summary or {},
+    })

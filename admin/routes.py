@@ -1985,74 +1985,12 @@ def _compute_schema_drift(old: dict, new: dict) -> dict:
 
 def _auto_populate_entity_graph(account_id: str, schema_dir: str) -> tuple[int, int]:
     """
-    Parse _schema.json and insert auto-detected entities/relationships with
-    status='suggested'. Only inserts rows that don't already exist — never
-    overwrites confirmed admin edits.
-
-    Returns (entities_added, relationships_added).
+    Insert auto-detected entities/relationships with status='suggested'.
+    Implementation lives in core.graph_autopopulate (shared with the
+    post-KB-build sync); this wrapper keeps the discovery call site stable.
     """
-    from core.schema import build_entity_graph_from_schema
-
-    graph_data = build_entity_graph_from_schema(schema_dir)
-    if not graph_data["entities"]:
-        return 0, 0
-
-    existing_entities = {e["entity_name"] for e in store.list_entities(account_id, active_only=False)}
-    existing_rels     = store.list_relationships(account_id, active_only=False)
-    existing_rel_keys = {
-        (r["from_entity"], r["to_entity"], r["from_column"].upper())
-        for r in existing_rels
-    }
-
-    ent_added = 0
-    for ent in graph_data["entities"]:
-        if ent["entity_name"] in existing_entities:
-            continue
-        store.save_entity(
-            account_id       = account_id,
-            entity_name      = ent["entity_name"],
-            table_name       = ent["table_name"],
-            schema_name      = ent.get("schema_name", ""),
-            pk_column        = ent.get("pk_column", ""),
-            display_name     = ent.get("display_name", ""),
-            entity_type      = ent.get("entity_type", "dimension"),
-            color            = ent.get("color", "#4F86C6"),
-            pos_x            = ent.get("pos_x", 120),
-            pos_y            = ent.get("pos_y", 120),
-            confidence_score = ent.get("confidence_score", 75),
-            status           = ent.get("status", "suggested"),
-            generated_by     = ent.get("generated_by", "heuristic"),
-            reason           = ent.get("reason", ""),
-        )
-        ent_added += 1
-
-    rel_added = 0
-    for rel in graph_data["relationships"]:
-        key = (rel["from_entity"], rel["to_entity"], rel["from_column"].upper())
-        if key in existing_rel_keys:
-            continue
-        # Both entities must be present (auto-added or pre-existing)
-        all_entities = {e["entity_name"] for e in store.list_entities(account_id, active_only=False)}
-        if rel["from_entity"] not in all_entities or rel["to_entity"] not in all_entities:
-            continue
-        store.save_relationship(
-            account_id        = account_id,
-            from_entity       = rel["from_entity"],
-            to_entity         = rel["to_entity"],
-            from_column       = rel["from_column"],
-            to_column         = rel["to_column"],
-            relationship_type = rel.get("relationship_type", "many_to_one"),
-            join_type         = rel.get("join_type", "INNER"),
-            label             = rel.get("label", ""),
-            confidence_score  = rel.get("confidence_score", 70),
-            status            = rel.get("status", "suggested"),
-            generated_by      = rel.get("generated_by", "heuristic"),
-            reason            = rel.get("reason", ""),
-        )
-        existing_rel_keys.add(key)
-        rel_added += 1
-
-    return ent_added, rel_added
+    from core.graph_autopopulate import auto_populate_from_schema
+    return auto_populate_from_schema(account_id, schema_dir)
 
 
 @router.get("/clients/{account_id}/graph", response_class=HTMLResponse)
@@ -2801,12 +2739,24 @@ async def graph_suggest(request: Request, account_id: str):
     db_cfg = store.get_db_config(db_cfg_id) if db_cfg_id else {}
     db_type = (db_cfg or {}).get("db_type", "azure_sql")
 
-    # Build a compact schema summary for the LLM (not full rows — schema only)
-    schema_summary_lines = []
-    for tbl_name, tbl_info in list(schema.items())[:20]:  # cap at 20 tables
-        cols = [f"{c['name']}:{c['type']}" for c in tbl_info.get("columns", [])[:15]]
-        schema_summary_lines.append(f"{tbl_name}: {', '.join(cols)}")
-    schema_summary = "\n".join(schema_summary_lines)
+    # Chunk the schema so large databases are fully analysed (20 tables per
+    # LLM call). A hard ceiling of 100 tables guards cost — and is REPORTED
+    # in the response instead of silently truncating.
+    _CHUNK = 20
+    _MAX_TABLES = 100
+    _all_tables = list(schema.items())
+    truncated_tables = max(len(_all_tables) - _MAX_TABLES, 0)
+    _chunks = [
+        _all_tables[i:i + _CHUNK]
+        for i in range(0, min(len(_all_tables), _MAX_TABLES), _CHUNK)
+    ]
+
+    def _chunk_summary(chunk: list) -> str:
+        lines = []
+        for tbl_name, tbl_info in chunk:
+            cols = [f"{c['name']}:{c['type']}" for c in tbl_info.get("columns", [])[:15]]
+            lines.append(f"{tbl_name}: {', '.join(cols)}")
+        return "\n".join(lines)
 
     system_msg = (
         "You are a senior data warehouse architect. Given a database schema, "
@@ -2825,10 +2775,7 @@ async def graph_suggest(request: Request, account_id: str):
         "Return ONLY valid JSON. No markdown. No explanation. No preamble."
     )
 
-    user_msg = (
-        f"Database type: {db_type}\n\n"
-        f"Schema (table: columns):\n{schema_summary}\n\n"
-        f"Join relationships detected:\n{join_map[:1500] if join_map else 'None detected'}\n\n"
+    _json_format_block = (
         "Output JSON with this exact structure:\n"
         '{"entities": [{"entity_name": "Customer", "table_name": "DIM_CUSTOMER", '
         '"schema_name": "dbo", "entity_type": "dimension", "pk_column": "CustomerID", '
@@ -2841,6 +2788,8 @@ async def graph_suggest(request: Request, account_id: str):
         '"label": "placed by", "confidence_score": 88}]}'
     )
 
+    suggestions: dict = {"entities": [], "relationships": []}
+    chunk_errors: list[str] = []
     try:
         from core.llm import llm_complete, resolve_provider
         from core.llm_audit import llm_audit_scope, make_llm_audit_request_id
@@ -2856,17 +2805,31 @@ async def graph_suggest(request: Request, account_id: str):
             question_id=request_id,
             component="graph_suggestion",
         ):
-            raw, _, _ = await llm_complete(
-                system_msg, user_msg, provider, model, api_key,
-                max_tokens=3000, temperature=0.2, **az_kw,
-            )
+            for _ci, _chunk in enumerate(_chunks):
+                user_msg = (
+                    f"Database type: {db_type}\n\n"
+                    f"Schema (table: columns):\n{_chunk_summary(_chunk)}\n\n"
+                    f"Join relationships detected:\n{join_map[:1500] if join_map else 'None detected'}\n\n"
+                    + _json_format_block
+                )
+                try:
+                    raw, _, _ = await llm_complete(
+                        system_msg, user_msg, provider, model, api_key,
+                        max_tokens=3000, temperature=0.2, **az_kw,
+                    )
+                    clean = raw.strip()
+                    if clean.startswith("```"):
+                        clean = clean.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+                    parsed = _json.loads(clean)
+                    suggestions["entities"].extend(parsed.get("entities", []))
+                    suggestions["relationships"].extend(parsed.get("relationships", []))
+                except Exception as _cexc:
+                    chunk_errors.append(f"chunk {_ci + 1}/{len(_chunks)}: {_cexc}")
+                    log.warning("Graph suggestion chunk %d/%d failed for %s: %s",
+                                _ci + 1, len(_chunks), account_id, _cexc)
 
-        # Strip markdown fences
-        clean = raw.strip()
-        if clean.startswith("```"):
-            clean = clean.split("\n", 1)[1].rsplit("```", 1)[0].strip()
-
-        suggestions = _json.loads(clean)
+        if not suggestions["entities"] and chunk_errors:
+            return JSONResponse({"status": "error", "message": "; ".join(chunk_errors)})
 
     except Exception as exc:
         log.error("Graph suggestion LLM call failed for %s: %s", account_id, exc)
@@ -2874,7 +2837,14 @@ async def graph_suggest(request: Request, account_id: str):
 
     # ── Save entities and fields ─────────────────────────────────────────────
     import math as _math
-    entities = suggestions.get("entities", [])
+    _seen_ent_names: set[str] = set()
+    entities = []
+    for _e in suggestions.get("entities", []):
+        _nm = (_e.get("entity_name") or "").strip()
+        if not _nm or _nm in _seen_ent_names:
+            continue
+        _seen_ent_names.add(_nm)
+        entities.append(_e)
     rels     = suggestions.get("relationships", [])
     saved_entities = 0
     saved_fields   = 0
@@ -3009,6 +2979,10 @@ async def graph_suggest(request: Request, account_id: str):
         "saved_fields":   saved_fields,
         "saved_rels":     saved_rels,
         "role_playing_detected": {k: len(v) for k, v in role_playing.items()},
+        "tables_analysed": min(len(_all_tables), _MAX_TABLES),
+        "chunks": len(_chunks),
+        "tables_skipped": truncated_tables,
+        "chunk_errors": chunk_errors,
     })
 
 
@@ -5062,6 +5036,27 @@ async def admin_build_kb(
             )
             await _run_log_harvest(account_id, chroma_dir)
 
+            # ── Entity graph auto-populate + KB enrichment ────────────────────
+            # The KB build just paid for LLM-written business descriptions and
+            # synonyms — harvest them into the entity graph so the semantic
+            # model is pre-built and laid out, ready for admin review.
+            _graph_summary: dict = {}
+            try:
+                from core.graph_autopopulate import sync_graph_after_kb_build
+                _graph_summary = sync_graph_after_kb_build(account_id, schema_dir, kb_dir)
+                log.info(
+                    "Entity graph synced after KB build for %s: +%d entities, "
+                    "+%d joins, %d descriptions, %d properties enriched",
+                    account_id,
+                    _graph_summary.get("entities_added", 0),
+                    _graph_summary.get("relationships_added", 0),
+                    _graph_summary.get("descriptions_enriched", 0),
+                    _graph_summary.get("properties_enriched", 0),
+                )
+            except Exception as _gex:
+                log.warning("Entity graph sync after KB build failed for %s: %s",
+                            account_id, _gex)
+
             complete_progress = {
                 "status": "ready",
                 "phase": "complete",
@@ -5085,6 +5080,12 @@ async def admin_build_kb(
                 status="ready",
                 progress=complete_progress,
             )
+            if _graph_summary:
+                try:
+                    from core.admin_notifications import notify_graph_ready
+                    await notify_graph_ready(account_id=account_id, summary=_graph_summary)
+                except Exception as _ngex:
+                    log.debug("Graph-ready notification failed for %s: %s", account_id, _ngex)
 
             log.info("Admin KB build complete: %d tables for %s", count, account_id)
             _kb_stop_events.pop(account_id, None)
