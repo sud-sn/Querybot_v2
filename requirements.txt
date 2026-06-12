@@ -1,79 +1,56 @@
-# ── Web framework ──────────────────────────────────────────────────────────────
+# Web framework
 fastapi>=0.111.0
 uvicorn[standard]>=0.29.0
 httpx>=0.27.0
 python-multipart>=0.0.9
 jinja2>=3.1.0
 
-# ── LLM providers ─────────────────────────────────────────────────────────────
+# LLM providers
 anthropic>=0.28.0
 openai>=1.30.0
 
-# ── Database connectors ────────────────────────────────────────────────────────
-psycopg2-binary>=2.9.0                # QueryBot internal store (PostgreSQL backend)
-snowflake-connector-python>=3.10.0   # DB_TYPE=snowflake — pure Python, no OS deps
-oracledb>=2.0.0                       # DB_TYPE=oracle    — Thin mode, no Oracle client needed
-pyodbc>=5.0.0                         # DB_TYPE=azure_sql — Python binding only; see note below
-#
-# ⚠️  Azure SQL — OS-level driver REQUIRED in addition to pyodbc
-# ---------------------------------------------------------------
-# pyodbc is just the Python binding. The actual ODBC driver is an OS package
-# and must be installed separately. Our code hard-codes
-#   DRIVER={ODBC Driver 18 for SQL Server}
-# in core/schema.py and core/examples.py, so version 18 specifically is needed.
-#
-#   Ubuntu / Debian:
-#     bash install_linux_odbc18.sh
-#
-#   Or install it manually:
-#     curl https://packages.microsoft.com/keys/microsoft.asc | sudo apt-key add -
-#     curl https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/prod.list \
-#       | sudo tee /etc/apt/sources.list.d/mssql-release.list
-#     sudo apt-get update
-#     sudo ACCEPT_EULA=Y apt-get install -y msodbcsql18
-#
-#   macOS:
-#     brew tap microsoft/mssql-release https://github.com/Microsoft/homebrew-mssql-release
-#     brew update
-#     HOMEBREW_ACCEPT_EULA=Y brew install msodbcsql18
-#
-#   Azure VM deploy.sh already installs msodbcsql18 automatically.
+# Database connectors
+psycopg2-binary>=2.9.0
+snowflake-connector-python>=3.10.0
+oracledb>=2.0.0
+pyodbc>=5.0.0
 
-# ── Vector store + embeddings ──────────────────────────────────────────────────
+# Azure SQL requires the native Microsoft ODBC Driver 18 for SQL Server.
+# pyodbc is only the Python binding and does not install the native driver.
+#
+# Windows:
+#   Install Microsoft ODBC Driver 18 for SQL Server (x64).
+#
+# Ubuntu/Debian:
+#   bash install_linux_odbc18.sh
+#
+# macOS:
+#   brew tap microsoft/mssql-release https://github.com/Microsoft/homebrew-mssql-release
+#   brew update
+#   HOMEBREW_ACCEPT_EULA=Y brew install msodbcsql18
+
+# Vector store and embeddings
 qdrant-client>=1.9.0
 sentence-transformers>=3.0.0
 
-# ── SQL validation ─────────────────────────────────────────────────────────────
+# SQL validation
 sqlglot>=23.0.0
 
-# ── Hybrid RAG — BM25 keyword retriever ────────────────────────────────────────
+# Hybrid RAG keyword retrieval
 rank-bm25>=0.2.2
-# Used by core/vector_store.py for BM25 keyword search in the hybrid retrieval
-# pipeline (BM25 + dense HNSW → RRF fusion → cross-encoder re-rank).
-# If not installed the pipeline gracefully falls back to dense-only retrieval.
-# The cross-encoder model (ms-marco-MiniLM-L6-v2) is loaded via the already-
-# required sentence-transformers package — no extra install needed.
 
-# ── In-memory analytics (Tier-2 result cache) ──────────────────────────────────
+# In-memory analytics for result follow-up queries
 duckdb>=1.0.0
-# Used by core/result_cache.py to execute analytical follow-up questions
-# ("who is below average?", "rank these", "show outliers") against the
-# already-fetched result rows entirely in-process — no round-trip to the
-# production database. Supports MEDIAN(), STDDEV_POP(), PERCENTILE_CONT(),
-# CORR(), window functions (RANK, NTILE, LAG, LEAD), QUALIFY clause.
-# Falls back to a pure-Python mini-executor if not installed, but that
-# fallback only handles simple SELECT/WHERE/ORDER BY/LIMIT.
 
-# ── Charts ─────────────────────────────────────────────────────────────────────
+# Charts
 matplotlib>=3.9.0
 
-# ── Security + storage ─────────────────────────────────────────────────────────
+# Security and environment configuration
 cryptography>=42.0.0
 python-dotenv>=1.0.0
 
-# ── Data masking ───────────────────────────────────────────────────────────────
-faker>=25.0.0                             # core/masking.py — realistic fake PII values
-# Falls back to stdlib-only masking if not installed, so this is optional but recommended.
+# Data masking
+faker>=25.0.0
 
 # Golden-question evaluation files
 pyyaml>=6.0

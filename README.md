@@ -366,13 +366,19 @@ Set on the `client` row in Admin → Client → Edit.
 
 | Variable | Default | Purpose |
 |---|---|---|
+| `DATABASE_URL` | unset | PostgreSQL application-store URL; when unset QueryBot uses SQLite |
 | `DB_PATH` | `data/querybot.db` | SQLite database path |
+| `QDRANT_URL` | `http://localhost:6333` | Qdrant REST endpoint |
+| `QDRANT_API_KEY` | unset | Qdrant Cloud/API authentication key |
 | `SESSION_SECRET` | insecure | Admin session signing key |
 | `PORTAL_SESSION_SECRET` | insecure | Portal session signing key |
 | `ADMIN_SESSION_SECRET` | insecure | Admin session signing key (overrides SESSION_SECRET) |
-| `ENCRYPTION_KEY` | — | AES key for credential encryption (required in production) |
+| `QUERYBOT_KEY_FILE` | `~/.querybot_key` | Credential-encryption key file; back it up securely |
 | `LLM_AUDIT_RETENTION_DAYS` | `30` | How long to keep LLM call logs |
 | `PORTAL_BASE_URL` | `http://localhost:8000` | Used for generating registration links in chat |
+
+Azure Windows VM deployment instructions are in
+[`deploy/windows/README.md`](deploy/windows/README.md).
 
 ---
 

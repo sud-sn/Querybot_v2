@@ -1,0 +1,8 @@
+-r requirements.txt
+
+# QueryBot's Python dependencies are already cross-platform.
+# Windows also requires these native components, which are not pip packages:
+# - Microsoft ODBC Driver 18 for SQL Server
+# - PostgreSQL server/client tools when PostgreSQL is hosted on this VM
+#
+# Install them before running deploy/windows/install-querybot.ps1.
