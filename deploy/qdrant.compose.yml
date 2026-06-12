@@ -1,0 +1,14 @@
+services:
+  qdrant:
+    image: ${QDRANT_IMAGE:-qdrant/qdrant:latest}
+    container_name: querybot-qdrant
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6333:6333"
+      - "127.0.0.1:6334:6334"
+    volumes:
+      - querybot_qdrant_storage:/qdrant/storage
+
+volumes:
+  querybot_qdrant_storage:
+    name: querybot_qdrant_storage
