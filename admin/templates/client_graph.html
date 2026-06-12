@@ -713,7 +713,7 @@
                   title="Create a bridge/link table connecting multiple entities">⬡ Bridge table</button>
           <button onclick="purgeAuditJoins();closeTbDropdowns()"
                   title="Remove auto-generated joins on audit/ETL columns (AZ_, _UPD_TS, etc.) that were mistakenly created as relationship keys"
-                  style="color:var(--amber,#d69e2e)">🧹 Clean audit joins</button>
+                  style="color:var(--amber,#d69e2e)">Clean audit joins</button>
         </div>
       </div>
     </div>
@@ -734,7 +734,7 @@
 
     <!-- ── Contextual: delete (shown only when a node/edge is selected) ─ -->
     <button class="tb-btn danger" id="del-btn" onclick="deleteSelected()"
-            style="display:none" title="Delete selected element (Del)">🗑 Delete</button>
+            style="display:none" title="Delete selected element (Del)"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px"><path d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L5.772 5.79m13.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"/></svg>Delete</button>
 
     <!-- ── Health badge (always far-right) ───────────────────────────── -->
     <div style="position:relative;flex-shrink:0">
@@ -1170,7 +1170,7 @@
     <!-- Toolbar -->
     <div class="brm-toolbar">
       <!-- Search -->
-      <input class="gd-input" id="brm-filter" placeholder="🔍 Filter entity / column / label…"
+      <input class="gd-input" id="brm-filter" placeholder="Filter entity / column / label…"
              oninput="_renderBrmTable()" style="width:220px">
       <!-- Join type filter -->
       <select class="gd-input" id="brm-type-filter" onchange="_renderBrmTable()">
@@ -2801,7 +2801,7 @@ function _buildJoinsPaneContent(entityName) {
     <div style="border-bottom:2px solid var(--border);background:color-mix(in srgb,#0369A1 5%,var(--surface));padding:.5rem .75rem">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.35rem">
         <span style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#0369A1">
-          🔒 Entity filter
+          Entity filter
         </span>
         <span style="font-size:10px;color:var(--text-muted)">Always applied when this table is joined</span>
       </div>
@@ -4272,7 +4272,7 @@ window.purgeAuditJoins = async function() {
   }
 
   const ok = confirm(
-    `🧹 Clean audit joins\n\n` +
+    `Clean audit joins\n\n` +
     `This will scan all ${unconfirmed} unconfirmed join(s) and delete any that ` +
     `use audit/ETL columns as FK keys (AZ_ prefix, _UPD_TS suffix, ` +
     `columns present in >35% of tables, etc.).\n\n` +

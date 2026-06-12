@@ -65,7 +65,7 @@
 {% if welcome %}
 <div class="welcome-banner">
   <div>
-    <div style="font-size:20px;font-weight:800;margin-bottom:4px">Welcome to QueryBot, {{ user.name.split()[0] }}! 🎉</div>
+    <div style="font-size:20px;font-weight:800;margin-bottom:4px">Welcome to QueryBot, {{ user.name.split()[0] }}</div>
     <div style="opacity:.9;font-size:13px">Your account is ready. Pin charts from chat and they will refresh with live data every time you log in.</div>
   </div>
   <a href="/portal/chat" class="btn btn-secondary btn-sm" style="flex-shrink:0">Open chat →</a>
@@ -122,7 +122,7 @@
   </div>
 </div>
 {% elif allowed_tables is not none and allowed_tables|length == 0 %}
-<div class="alert alert-amber">⚠️ You haven't been assigned to a group yet. Contact your administrator to get table access.</div>
+<div class="alert alert-amber">You haven't been assigned to a group yet. Contact your administrator to get table access.</div>
 {% endif %}
 
 {% if charts %}
@@ -150,17 +150,17 @@
         <button type="button" class="chart-drag-handle" draggable="false" title="Drag to reorder or resize from the card corner" aria-label="Drag chart to reorder">⋮⋮</button>
         <button type="button" class="btn btn-xs btn-secondary"
           onclick="openChartModal(this.closest('.chart-card'))"
-          title="Expand chart" style="font-size:12px;padding:4px 8px">⤢ Expand</button>
+          title="Expand chart" style="font-size:12px;padding:4px 8px"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:3px"><path d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15"/></svg>Expand</button>
         <form method="post" action="/portal/unpin" style="margin:0" id="unpin-{{ chart.id }}">
           <input type="hidden" name="chart_id" value="{{ chart.id }}">
           <button type="button" class="btn btn-xs btn-secondary" style="color:var(--text-muted)"
-            onclick="qbConfirm({title:'Unpin chart?',body:'Remove this chart from your dashboard.',confirm:'Unpin',variant:'primary',onConfirm:()=>document.getElementById('unpin-{{ chart.id }}').submit()})">✕ Unpin</button>
+            onclick="qbConfirm({title:'Unpin chart?',body:'Remove this chart from your dashboard.',confirm:'Unpin',variant:'primary',onConfirm:()=>document.getElementById('unpin-{{ chart.id }}').submit()})"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:3px"><path d="M6 18L18 6M6 6l12 12"/></svg>Unpin</button>
         </form>
       </div>
     </div>
     <div class="chart-card-body">
       {% if chart.error %}
-      <div class="chart-error"><div style="font-size:20px;margin-bottom:.5rem">⚠️</div><div style="font-weight:600;margin-bottom:4px">Chart could not refresh</div><div style="font-size:11px">{{ chart.error }}</div></div>
+      <div class="chart-error"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--warning)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom:.5rem"><path d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/></svg><div style="font-weight:600;margin-bottom:4px">Chart could not refresh</div><div style="font-size:11px">{{ chart.error }}</div></div>
       {% elif chart.chart_json %}
       <div class="chart-canvas" id="dashboard-chart-{{ chart.id }}" data-chart='{{ chart.chart_json|safe }}'><div class="skeleton skeleton-chart" data-chart-skeleton></div></div>
       {% else %}
@@ -182,12 +182,12 @@
 </div>
 {% else %}
 <div class="empty-state">
-  <div class="icon">📊</div>
-  <h3>No pinned charts yet</h3>
-  <p style="max-width:420px;margin:0 auto;line-height:1.6">When chat returns a chart, use <strong>📌 Pin to dashboard</strong> to save it here as a live interactive chart.</p>
-  <div style="margin-top:1.5rem">
-    <a href="/portal/kb" class="btn btn-secondary">Browse Semantic Layer →</a>
-    <a href="/portal/chat" class="btn btn-primary" style="margin-left:.5rem">💬 Open Chat</a>
+  <div class="empty-state-icon"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18M7 14l4-4 3 3 5-6"/></svg></div>
+  <h3 class="empty-state-title">No pinned charts yet</h3>
+  <p class="empty-state-body">When chat returns a chart, use <strong>Pin to dashboard</strong> to save it here as a live interactive chart.</p>
+  <div class="empty-state-actions">
+    <a href="/portal/kb" class="btn btn-secondary">Browse Semantic Layer</a>
+    <a href="/portal/chat" class="btn btn-primary">Open Chat</a>
   </div>
 </div>
 {% endif %}

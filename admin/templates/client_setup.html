@@ -279,7 +279,7 @@
       <div id="mask-table-list"></div>
       <div style="margin-top:1rem;display:flex;align-items:center;gap:.75rem;flex-wrap:wrap;padding-top:.75rem;border-top:1px solid var(--border)">
         <button type="button" class="btn btn-primary btn-sm" id="mask-create-btn" onclick="createMasking()">
-          🔒 Create Masking &amp; Discover Schema
+          Create Masking &amp; Discover Schema
         </button>
         <button type="button" class="btn btn-secondary btn-sm" onclick="skipMasking()">
           Skip masking →
@@ -342,7 +342,7 @@
 
     {% if schema_drift and schema_drift.has_changes %}
     <div style="margin-top:.875rem;padding:.75rem 1rem;background:var(--amber-light);border:1px solid color-mix(in srgb,var(--amber) 30%,transparent);border-radius:var(--radius);font-size:12px;color:var(--amber)">
-      <strong>🔄 Schema drift detected</strong> compared to the previous discovery:
+      <strong>Schema drift detected</strong> compared to the previous discovery:
       {% if schema_drift.added_tables %}
       <br>• <strong>{{ schema_drift.added_tables|length }} new table(s):</strong>
         {{ schema_drift.added_tables[:6]|join(', ') }}{% if schema_drift.added_tables|length > 6 %}… (+{{ schema_drift.added_tables|length - 6 }} more){% endif %}
@@ -365,7 +365,7 @@
       <form method="post" action="/admin/clients/{{ client.account_id }}/setup/discover">
         <button type="submit" class="btn btn-secondary btn-sm"
           {% if not db_cfg %}disabled{% endif %}>
-          🔄 Re-discover (for schema changes or new table selection)
+          Re-discover (for schema changes or new table selection)
         </button>
       </form>
     </div>
@@ -453,7 +453,7 @@
           {% if not schema_files or state == 'KB_BUILDING' %}
           disabled title="{% if not schema_files %}Run schema discovery first{% else %}KB generation already running{% endif %}"
           {% endif %}>
-          🧠 {% if kb_files %}Rebuild Knowledge Base{% else %}Generate Knowledge Base{% endif %}
+          {% if kb_files %}Rebuild Knowledge Base{% else %}Generate Knowledge Base{% endif %}
         </button>
         {% if state == 'KB_BUILDING' %}
         <button type="button" class="btn btn-secondary btn-sm" style="color:var(--amber);border-color:var(--amber)"
@@ -528,7 +528,7 @@
     {% if state == 'READY' %}
     <div style="margin-top:1rem;padding:.75rem 1rem;background:var(--green-light);
       border:1px solid color-mix(in srgb,var(--green) 28%,transparent);border-radius:var(--radius);font-size:12px;color:var(--green)">
-      <strong>✅ Knowledge Base is active.</strong>
+      <strong>Knowledge Base is active.</strong>
       Users can now ask data questions in Zoom, Teams, Slack, or the Internal Chat UI.
       Use the Rebuild button above whenever the database schema changes or you want
       to improve the KB quality.
@@ -543,16 +543,16 @@
   <div class="card-header"><h2>Next steps</h2></div>
   <div class="card-body" style="display:flex;flex-wrap:wrap;gap:.75rem">
     <a href="/admin/clients/{{ client.account_id }}/metrics" class="btn btn-secondary btn-sm">
-      📐 Define Metric Registry
+      Define Metric Registry
     </a>
     <a href="/admin/clients/{{ client.account_id }}/graph" class="btn btn-secondary btn-sm">
-      🕸 Entity Graph
+      Entity Graph
     </a>
     <a href="/admin/clients/{{ client.account_id }}/groups" class="btn btn-secondary btn-sm">
       {{ ic("user-group", 14) }} Set up User Groups
     </a>
     <a href="/admin/clients/{{ client.account_id }}/kb" class="btn btn-secondary btn-sm">
-      📝 Edit KB Files
+      Edit KB Files
     </a>
     <a href="/admin/clients/{{ client.account_id }}" class="btn btn-secondary btn-sm">
       {{ ic("dashboard", 14) }} View Dashboard
@@ -612,7 +612,7 @@
     if (kbBuildButton) {
       kbBuildButton.disabled = state === 'KB_BUILDING';
       if (state === 'READY') {
-        kbBuildButton.textContent = '🧠 Rebuild Knowledge Base';
+        kbBuildButton.textContent = 'Rebuild Knowledge Base';
         kbBuildButton.removeAttribute('title');
       }
     }
@@ -1023,7 +1023,7 @@
     } catch(e) {
       statusEl.style.color = 'var(--red)';
       statusEl.textContent = 'Error: ' + e.message;
-      btn.disabled = false; btn.textContent = '🔒 Create Masking';
+      btn.disabled = false; btn.textContent = 'Create Masking';
       if (skipBtn) skipBtn.disabled = false;
       if (progressEl) progressEl.style.display = 'none';
     }
@@ -1083,7 +1083,7 @@
       `<div style="margin-top:.85rem;padding:.85rem 1rem;background:var(--green-light);` +
       `border:1px solid color-mix(in srgb,var(--green) 30%,transparent);border-radius:var(--radius);font-size:12px">` +
       `<div style="font-weight:700;color:var(--green);margin-bottom:.6rem">` +
-        `✅ ${selected.size} table${selected.size!==1?'s are':' is'} ready for KB generation` +
+        `${selected.size} table${selected.size!==1?'s are':' is'} ready for KB generation` +
       `</div>`;
 
     [...selected].sort().forEach(fqn => {

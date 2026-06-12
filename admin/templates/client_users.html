@@ -41,13 +41,13 @@
 {% if saved and new_user and temp_pw %}
 <div class="temp-pw-box">
   {% if is_temp == "0" %}
-  <h3>✅ User created — {{ new_user }}</h3>
+  <h3>User created — {{ new_user }}</h3>
   <p style="font-size:12px;color:var(--green);margin-bottom:.375rem">
     Password was set by you. The user can log in immediately with the credentials below
     and will land directly on the chat page — no password change required.
   </p>
   {% else %}
-  <h3>✅ User created — {{ new_user }}</h3>
+  <h3>User created — {{ new_user }}</h3>
   <p style="font-size:12px;color:var(--green);margin-bottom:.375rem">
     This is a <strong>temporary password</strong>. Share it with the user — they will be
     prompted to set their own password on first login. <strong>It will not be shown again.</strong>

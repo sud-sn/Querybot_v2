@@ -1,6 +1,6 @@
 /* ============================================================
    QueryBot — Design Tokens
-   Primary palette: enterprise blue  (#2563EB family)
+   Primary palette: enterprise indigo  (#4F46E5 family)
    ============================================================ */
 
 :root {
@@ -35,28 +35,28 @@
   --shadow-md: 0 16px 34px rgba(15,23,42,.09), 0 6px 14px rgba(15,23,42,.05);
   --shadow-lg: 0 24px 48px rgba(15,23,42,.12), 0 10px 18px rgba(15,23,42,.06);
 
-  /* ── Blue scale (replaces teal scale) ── */
-  --teal-900: #1E293B;   /* sidebar bg — deep slate        */
-  --teal-800: #243244;   /* sidebar border                 */
-  --teal-700: #1D4ED8;   /* primary hover / deep blue      */
-  --teal-600: #2563EB;   /* primary brand blue             */
-  --teal-500: #3B82F6;   /* mid blue                       */
-  --teal-400: #60A5FA;   /* light blue — sidebar active bg */
-  --teal-300: #93C5FD;   /* sidebar active indicator       */
-  --teal-200: #BFDBFE;
-  --teal-100: #DBEAFE;
-  --teal-50:  #EFF6FF;
+  /* ── Indigo scale (brand) ── */
+  --teal-900: #171E2E;   /* sidebar bg — deep ink          */
+  --teal-800: #232B3E;   /* sidebar border                 */
+  --teal-700: #4338CA;   /* primary hover / deep indigo    */
+  --teal-600: #4F46E5;   /* primary brand indigo           */
+  --teal-500: #6366F1;   /* mid indigo                     */
+  --teal-400: #818CF8;   /* light indigo — sidebar active  */
+  --teal-300: #A5B4FC;   /* sidebar active indicator       */
+  --teal-200: #C7D2FE;
+  --teal-100: #E0E7FF;
+  --teal-50:  #EEF2FF;
 
-  /* ── Primary (blue aliases — used everywhere) ── */
-  --blue:       #2563EB;   /* sidebar active, links          */
-  --blue-mid:   #1D4ED8;   /* hover deepening                */
-  --blue-soft:  #3B82F6;   /* accent / avatar gradient       */
-  --blue-light: #EFF6FF;   /* chip backgrounds               */
+  /* ── Primary (brand aliases — used everywhere) ── */
+  --blue:       #4F46E5;   /* sidebar active, links          */
+  --blue-mid:   #4338CA;   /* hover deepening                */
+  --blue-soft:  #6366F1;   /* accent / avatar gradient       */
+  --blue-light: #EEF2FF;   /* chip backgrounds               */
 
   /* Portal aliases */
-  --primary:       #2563EB;
-  --primary-hover: #1D4ED8;
-  --primary-soft:  #EFF6FF;
+  --primary:       #4F46E5;
+  --primary-hover: #4338CA;
+  --primary-soft:  #EEF2FF;
 
   /* ── Semantic colours (role badges, status) ── */
   --green:        #059669;  --green-light:  #D1FAE5;
@@ -74,7 +74,7 @@
   --bg-muted:  #E2E8F0;
   --surface:   #FFFFFF;
   --surface-2: #F8FAFC;
-  --surface-3: #EFF6FF;
+  --surface-3: #EEF2FF;
 
   /* ── Borders ── */
   --border:        #D8E0EA;
@@ -151,14 +151,14 @@ body[data-theme='dark'] {
   --text-soft:  #CBD5E1;
   --text-muted: #94A3B8;
 
-  /* lighter blue in dark */
-  --blue:       #60A5FA;
-  --blue-mid:   #3B82F6;
-  --blue-soft:  #60A5FA;
-  --blue-light: rgba(96,165,250,.16);
-  --primary:       #60A5FA;
-  --primary-hover: #3B82F6;
-  --primary-soft:  rgba(96,165,250,.16);
+  /* lighter indigo in dark */
+  --blue:       #818CF8;
+  --blue-mid:   #6366F1;
+  --blue-soft:  #818CF8;
+  --blue-light: rgba(129,140,248,.16);
+  --primary:       #818CF8;
+  --primary-hover: #6366F1;
+  --primary-soft:  rgba(129,140,248,.16);
 
   --green:   #34D399;  --green-light:  rgba(16,185,129,.14);
   --red:     #F87171;  --red-light:    rgba(248,113,113,.14);

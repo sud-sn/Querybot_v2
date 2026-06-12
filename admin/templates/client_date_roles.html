@@ -172,7 +172,7 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
           </td>
           <td>
             {% if dr.status == "approved" %}
-            <span class="btn-approve approved">✓ Approved</span>
+            <span class="btn-approve approved"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px"><path d="M4.5 12.75l6 6 9-13.5"/></svg>Approved</span>
             <details class="dr-edit">
               <summary>Edit</summary>
               <form method="post" action="/admin/clients/{{ client.account_id }}/date-roles/approve"
