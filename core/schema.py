@@ -1614,6 +1614,7 @@ def _discover_azure_sql(cfg: dict, out: Path, allowed: set[str] | None = None, m
                     and c["COLUMN_NAME"] not in _pre_masked_fields
                 ]
                 stats_map: dict[str, dict] = {}
+                row_count: int | None = None
                 if stat_cols:
                     try:
                         select_parts = ["COUNT(*) AS _total"]
@@ -1630,6 +1631,7 @@ def _discover_azure_sql(cfg: dict, out: Path, allowed: set[str] | None = None, m
                         )
                         srow = cur.fetchone()
                         if srow:
+                            row_count = srow[0]
                             _total = srow[0] or 1
                             _idx = 1
                             for sc in stat_cols:
@@ -1648,6 +1650,14 @@ def _discover_azure_sql(cfg: dict, out: Path, allowed: set[str] | None = None, m
                     except Exception as _se:
                         log.debug("AzSQL: stats query failed for %s.%s: %s",
                                   schema, name, _se)
+                else:
+                    try:
+                        cur.execute(f"SELECT COUNT(*) FROM [{schema}].[{name}]")
+                        _rc = cur.fetchone()
+                        if _rc:
+                            row_count = _rc[0]
+                    except Exception:
+                        pass
 
                 def _az_fetch():
                     try:
@@ -1677,14 +1687,14 @@ def _discover_azure_sql(cfg: dict, out: Path, allowed: set[str] | None = None, m
                 (out / f"{_safe_table_file_stem(file_stem)}.md").write_text(
                     _az_md(name, tbl_meta, columns, sample, schema,
                            distinct_map, database=db_upper,
-                           stats_map=stats_map),
+                           stats_map=stats_map, row_count=row_count),
                     encoding="utf-8",
                 )
                 master[table_key] = {
                     "columns": [{"name": c["COLUMN_NAME"], "type": c["DATA_TYPE"],
                                  "nullable": c["IS_NULLABLE"] == "YES", "comment": ""}
                                 for c in columns],
-                    "row_count":           None,
+                    "row_count":           row_count,
                     "comment":             "",
                     "schema":              schema,
                     "database":            db_upper,
@@ -1763,7 +1773,8 @@ def _run_azure_sql(cfg: dict, sql: str, max_rows: int = 200) -> list[dict]:
 
 
 def _az_md(name, meta, columns, sample, schema, distinct_map: dict,
-           database: str = "", stats_map: dict | None = None) -> str:
+           database: str = "", stats_map: dict | None = None,
+           row_count: int | None = None) -> str:
     # Header uses full 3-part FQN for identification purposes (KB keys, Qdrant)
     # but the SQL table name anchor uses 2-part [SCHEMA].[TABLE] because
     # Azure SQL Database (cloud) does not support 3-part names in DML queries.
@@ -1785,6 +1796,19 @@ def _az_md(name, meta, columns, sample, schema, distinct_map: dict,
         lines.append(
             f"\n**SQL table name:** `[{schema}].[{name}]`  "
             f"— always use this exact two-part name in generated SQL."
+        )
+    if row_count is not None:
+        if row_count >= 1_000_000:
+            _rc_display = f"{row_count / 1_000_000:.1f}M"
+            _scale_label = "Large"
+        elif row_count >= 100_000:
+            _rc_display = f"{row_count:,}"
+            _scale_label = "Medium"
+        else:
+            _rc_display = f"{row_count:,}"
+            _scale_label = "Small"
+        lines.append(
+            f"\n**Row count:** {_rc_display}  **Scale:** {_scale_label}"
         )
     lines.append("\n## Columns\n")
     lines.append("| Column | Type | Nullable | Distinct Values |")

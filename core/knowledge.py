@@ -218,6 +218,65 @@ def _format_approved_metrics_for_kb(account_id: str, table_name: str) -> str:
     return "\n".join(lines)
 
 
+def _parse_schema_stats(schema_md: str) -> dict:
+    """Parse row count, high-null columns, and date coverage from a schema MD string."""
+    from datetime import date as _date
+    result: dict = {"row_count": None, "date_coverage": [], "high_null_cols": []}
+
+    # Row count: **Row count:** 4.2M  or  **Row count:** 12,345
+    _m = re.search(r"\*\*Row count:\*\*\s*([\d.,]+)M", schema_md)
+    if _m:
+        try:
+            result["row_count"] = int(float(_m.group(1).replace(",", "")) * 1_000_000)
+        except ValueError:
+            pass
+    else:
+        _m2 = re.search(r"\*\*Row count:\*\*\s*([\d,]+)", schema_md)
+        if _m2:
+            try:
+                result["row_count"] = int(_m2.group(1).replace(",", ""))
+            except ValueError:
+                pass
+
+    # Column Statistics table rows
+    in_stats = False
+    for line in schema_md.splitlines():
+        stripped = line.strip()
+        if stripped == "## Column Statistics":
+            in_stats = True
+            continue
+        if in_stats and stripped.startswith("## "):
+            break
+        if in_stats and stripped.startswith("|") and "---" not in stripped and "Column" not in stripped:
+            cells = [c.strip() for c in stripped.strip("|").split("|")]
+            if len(cells) < 4:
+                continue
+            col_m = re.match(r"`([^`]+)`", cells[0])
+            if not col_m:
+                continue
+            col = col_m.group(1)
+            try:
+                null_pct = float(cells[1].replace("%", "").strip() or "0")
+            except ValueError:
+                null_pct = 0.0
+            if null_pct > 15:
+                result["high_null_cols"].append({"col": col, "null_pct": null_pct})
+            min_val = cells[2].strip()
+            max_val = cells[3].strip()
+            if min_val and re.match(r"\d{4}-\d{2}-\d{2}", min_val):
+                try:
+                    min_d = _date.fromisoformat(min_val[:10])
+                    max_d = _date.fromisoformat(max_val[:10]) if max_val and re.match(r"\d{4}-\d{2}-\d{2}", max_val) else min_d
+                    range_yrs = round((max_d - min_d).days / 365.25, 1)
+                    result["date_coverage"].append({
+                        "col": col, "min": min_val[:10],
+                        "max": max_val[:10], "range_years": range_yrs,
+                    })
+                except Exception:
+                    pass
+    return result
+
+
 async def build_kb(
     schema_dir: str,
     kb_dir: str,
@@ -525,6 +584,53 @@ async def build_kb(
             account_id or chroma_dir, table_name
         )
 
+        # ── Deterministic grounding blocks from schema stats ──────────────────
+        _sst = _parse_schema_stats(schema_md)
+
+        data_quality_block = ""
+        if _sst["high_null_cols"]:
+            _dq = ["DATA QUALITY HINTS — incorporate into ## Always Exclude:"]
+            for _hc in _sst["high_null_cols"]:
+                _dq.append(
+                    f"- `{_hc['col']}` has {_hc['null_pct']}% NULL rows"
+                    f" — add: WHERE [{_hc['col']}] IS NOT NULL"
+                )
+            data_quality_block = "\n".join(_dq) + "\n"
+
+        temporal_block = ""
+        if _sst["date_coverage"]:
+            from datetime import date as _today_d
+            _cur_yr = _today_d.today().year
+            _tb = ["DATA COVERAGE — reference in ## Overview and time-based examples:"]
+            for _dc in _sst["date_coverage"]:
+                _max_yr = int(_dc["max"][:4]) if _dc["max"] else 0
+                _fresh = "LIVE" if _cur_yr - _max_yr <= 1 else f"ARCHIVE (ends {_dc['max']})"
+                _tb.append(
+                    f"- `{_dc['col']}`: {_dc['min']} → {_dc['max']}"
+                    f" ({_dc['range_years']} yrs) — {_fresh}"
+                )
+            temporal_block = "\n".join(_tb) + "\n"
+
+        scale_block = ""
+        if _sst["row_count"] is not None:
+            _rc = _sst["row_count"]
+            if _rc >= 1_000_000:
+                scale_block = (
+                    f"ROW COUNT / SCALE: {_rc / 1_000_000:.1f}M rows — LARGE TABLE\n"
+                    "Every SELECT in ## Common Query Patterns MUST include TOP N (T-SQL) "
+                    "or LIMIT N. Default to TOP 20 unless the question implies a full set."
+                ) + "\n"
+            elif _rc >= 100_000:
+                scale_block = (
+                    f"ROW COUNT / SCALE: {_rc:,} rows — MEDIUM TABLE\n"
+                    "Include TOP N in ranking and aggregation queries. Filter before joining."
+                ) + "\n"
+            else:
+                scale_block = (
+                    f"ROW COUNT / SCALE: {_rc:,} rows — SMALL/LOOKUP TABLE\n"
+                    "No row limit required. Document this as a reference or lookup table."
+                ) + "\n"
+
         stage1_user = (
             f"Business description:\n{table_biz_desc}\n\n"
             f"Table schema for: {table_name}\n"
@@ -533,15 +639,24 @@ async def build_kb(
             f"\n{schema_intelligence}\n"
             + (f"\n{approved_metrics_block}\n" if approved_metrics_block else "")
             + (context_hints_block if context_hints_block else "")
+            + (f"\n{data_quality_block}" if data_quality_block else "")
+            + (f"\n{temporal_block}" if temporal_block else "")
+            + (f"\n{scale_block}" if scale_block else "")
             + f"{join_block}\n"
             "Generate the complete Knowledge Base document for this table "
-            "following all 7 sections in the format specified. "
+            "following all 8 sections in the format specified. "
             "Use the distinct values from the schema for every filter example. "
             "Ground the Join Keys section in the auto-discovered FK list above — "
             "never invent join columns. If the list is empty, write "
             "'No foreign-key relationships detected.' in that section. "
             "Use the deterministic schema intelligence block to explain cryptic ERP, "
             "abbreviated, date-key, dimension-key, status/filter, and measure-candidate fields. "
+            "If DATA QUALITY HINTS are listed above, add every flagged column as an "
+            "IS NOT NULL condition in ## Always Exclude. "
+            "If DATA COVERAGE is listed above, include the date range and freshness in ## Overview "
+            "and use it to calibrate time-based query examples. "
+            "If ROW COUNT / SCALE is listed above and the table is LARGE or MEDIUM, "
+            "every SELECT in ## Common Query Patterns must include TOP N (T-SQL) or LIMIT N. "
             "If ADMIN-APPROVED METRIC FORMULAS are listed above, use those EXACT formulas "
             "in ## Key Metrics — do not substitute nearby columns. "
             "If ADMIN-PROVIDED COLUMN CONTEXT is listed above, use those exact definitions "
