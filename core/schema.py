@@ -1603,6 +1603,52 @@ def _discover_azure_sql(cfg: dict, out: Path, allowed: set[str] | None = None, m
                                 log.info("AzSQL distinct values for %s.%s: %s",
                                          name, cname, vals)
 
+                # ── Per-column stats: null%, min, max (numeric/date cols) ───────
+                _STAT_NUMERIC = {"int", "bigint", "smallint", "tinyint", "decimal",
+                                 "numeric", "float", "real", "money", "smallmoney"}
+                _STAT_DATE    = {"date", "datetime", "datetime2", "smalldatetime",
+                                 "datetimeoffset"}
+                stat_cols = [
+                    c for c in columns
+                    if c["DATA_TYPE"].lower() in (_STAT_NUMERIC | _STAT_DATE)
+                    and c["COLUMN_NAME"] not in _pre_masked_fields
+                ]
+                stats_map: dict[str, dict] = {}
+                if stat_cols:
+                    try:
+                        select_parts = ["COUNT(*) AS _total"]
+                        for sc in stat_cols:
+                            cn = sc["COLUMN_NAME"]
+                            select_parts.append(
+                                f"SUM(CASE WHEN [{cn}] IS NULL THEN 1 ELSE 0 END)"
+                            )
+                            select_parts.append(f"MIN([{cn}])")
+                            select_parts.append(f"MAX([{cn}])")
+                        cur.execute(
+                            f"SELECT {', '.join(select_parts)} "
+                            f"FROM [{schema}].[{name}]"
+                        )
+                        srow = cur.fetchone()
+                        if srow:
+                            _total = srow[0] or 1
+                            _idx = 1
+                            for sc in stat_cols:
+                                cn = sc["COLUMN_NAME"]
+                                _null_count = srow[_idx]
+                                _mn = srow[_idx + 1]
+                                _mx = srow[_idx + 2]
+                                _idx += 3
+                                stats_map[cn] = {
+                                    "null_pct": round(
+                                        (_null_count or 0) / _total * 100, 1
+                                    ),
+                                    "min": str(_mn) if _mn is not None else None,
+                                    "max": str(_mx) if _mx is not None else None,
+                                }
+                    except Exception as _se:
+                        log.debug("AzSQL: stats query failed for %s.%s: %s",
+                                  schema, name, _se)
+
                 def _az_fetch():
                     try:
                         cur.execute(f"SELECT TOP 5 * FROM [{schema}].[{name}]")
@@ -1630,7 +1676,8 @@ def _discover_azure_sql(cfg: dict, out: Path, allowed: set[str] | None = None, m
                             "TABLE_TYPE": "BASE TABLE", "TABLE_CATALOG": db_upper}
                 (out / f"{_safe_table_file_stem(file_stem)}.md").write_text(
                     _az_md(name, tbl_meta, columns, sample, schema,
-                           distinct_map, database=db_upper),
+                           distinct_map, database=db_upper,
+                           stats_map=stats_map),
                     encoding="utf-8",
                 )
                 master[table_key] = {
@@ -1716,7 +1763,7 @@ def _run_azure_sql(cfg: dict, sql: str, max_rows: int = 200) -> list[dict]:
 
 
 def _az_md(name, meta, columns, sample, schema, distinct_map: dict,
-           database: str = "") -> str:
+           database: str = "", stats_map: dict | None = None) -> str:
     # Header uses full 3-part FQN for identification purposes (KB keys, Qdrant)
     # but the SQL table name anchor uses 2-part [SCHEMA].[TABLE] because
     # Azure SQL Database (cloud) does not support 3-part names in DML queries.
@@ -1752,6 +1799,18 @@ def _az_md(name, meta, columns, sample, schema, distinct_map: dict,
         cname = c["COLUMN_NAME"]
         dist  = ", ".join(f"'{v}'" for v in distinct_map.get(cname, []))
         lines.append(f"| `{cname}` | {col_type} | {nullable} | {dist} |")
+
+    # ── Column Statistics section (numeric/date columns only) ─────────────────
+    if stats_map:
+        lines.append("\n## Column Statistics\n")
+        lines.append("| Column | Null % | Min | Max |")
+        lines.append("|--------|-------:|-----|-----|")
+        for cname, st in stats_map.items():
+            null_pct = f"{st['null_pct']}%" if st.get("null_pct") is not None else ""
+            mn = st.get("min") or ""
+            mx = st.get("max") or ""
+            lines.append(f"| `{cname}` | {null_pct} | {mn} | {mx} |")
+
     _append_sample(lines, sample)
     return "\n".join(lines)
 

@@ -4902,7 +4902,7 @@ async def admin_build_kb(
             kp = Path(kb_dir)
             if kp.exists():
                 for f in kp.iterdir():
-                    if f.is_file():
+                    if f.is_file() and f.name != "_kb_hashes.json":
                         try:
                             f.unlink()
                         except Exception:
@@ -4977,6 +4977,7 @@ async def admin_build_kb(
                     progress_callback=_on_kb_progress,
                     stop_event=_stop_ev,
                     account_id=account_id,
+                    db_type=db_type,
                 )
 
             # If user requested a stop, roll back to SCHEMA_READY and exit

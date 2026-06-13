@@ -230,6 +230,7 @@ async def build_kb(
     progress_callback=None,
     stop_event=None,
     account_id: str = "",
+    db_type: str = "azure_sql",
 ) -> int:
     """
     Two-stage KB generation for every table discovered in schema_dir.
@@ -254,9 +255,21 @@ async def build_kb(
     )
     from core.semantic_model import write_semantic_model
 
+    import hashlib as _hashlib
+    import json as _json
+
     schema_path = Path(schema_dir)
     kb_path     = Path(kb_dir)
     kb_path.mkdir(parents=True, exist_ok=True)
+
+    # Load persisted schema hashes for partial-rebuild skipping
+    _hash_file = kb_path / "_kb_hashes.json"
+    _schema_hashes: dict[str, str] = {}
+    if _hash_file.exists():
+        try:
+            _schema_hashes = _json.loads(_hash_file.read_text(encoding="utf-8"))
+        except Exception:
+            _schema_hashes = {}
 
     # Write the naming convention reference as a global KB doc so it is
     # retrieved at query time for any question — structural grammar rules
@@ -371,6 +384,27 @@ async def build_kb(
         schema_md = md_file.read_text(encoding="utf-8")
         table_name = md_file.stem
 
+        # ── Hash-based partial rebuild: skip if schema unchanged ─────────────
+        _schema_hash = _hashlib.sha256(schema_md.encode()).hexdigest()
+        _kb_file  = kb_path / f"{table_name}_kb.md"
+        _qry_file = kb_path / f"{table_name}_queries.md"
+        if (
+            _schema_hashes.get(table_name) == _schema_hash
+            and _kb_file.exists()
+            and _qry_file.exists()
+        ):
+            log.info("KB partial rebuild: skipping %s — schema unchanged", table_name)
+            processed += 1
+            await _progress(
+                phase="building",
+                step=f"Skipped {table_name} (unchanged)",
+                current=processed,
+                total=len(md_files),
+                percent=round(processed / len(md_files) * 100),
+                current_table=table_name,
+            )
+            continue
+
         # Extract the SQL table name from the schema file header.
         # _az_md writes: **SQL table name:** `[SCHEMA].[TABLE]`
         # This is the exact 2-part name the LLM should use in generated SQL.
@@ -468,7 +502,8 @@ async def build_kb(
         # Q&A examples using verified join paths instead of single-table queries.
         query_user = build_kb_query_prompt(
             sql_table_name, kb_text, table_biz_desc,
-            related_tables=join_slice,          # join_slice already computed above
+            related_tables=join_slice,
+            db_type=db_type,
         )
         with llm_audit_component("kb_query_examples"):
             query_text, _, _ = await llm_complete(
@@ -477,6 +512,9 @@ async def build_kb(
             )
         (kb_path / f"{table_name}_queries.md").write_text(query_text, encoding="utf-8")
         log.info("Stage 2 query patterns written for %s", table_name)
+
+        # Record hash after successful generation
+        _schema_hashes[table_name] = _schema_hash
 
         processed += 1
         await _progress(
@@ -487,6 +525,12 @@ async def build_kb(
             percent=round(processed / len(md_files) * 100),
             current_table=table_name,
         )
+
+    # ── Persist schema hashes for next partial-rebuild check ──────────────────
+    try:
+        _hash_file.write_text(_json.dumps(_schema_hashes, indent=2), encoding="utf-8")
+    except Exception as _he:
+        log.warning("KB: could not write hash file: %s", _he)
 
     # ── Copy join map from schema discovery ───────────────────────────────────
     import shutil as _shutil

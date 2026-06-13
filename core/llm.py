@@ -771,11 +771,52 @@ def build_kb_system_prompt(erp_hints: str = "", naming_hints: str = "") -> str:
     )
 
 
+_KB_DIALECT_RULES: dict[str, str] = {
+    "azure_sql": (
+        "SQL DIALECT: Azure SQL / T-SQL\n"
+        "• Use TOP N (not LIMIT): SELECT TOP 10 ...\n"
+        "• Date casting: CONVERT(date, column) or CAST(column AS date)\n"
+        "• Date arithmetic: DATEDIFF(day|month|year, start, end)\n"
+        "• Number formatting: FORMAT(value, 'N2')\n"
+        "• Current date anchor: prefer MAX(date_col) over GETDATE()\n"
+        "• DO NOT use DATE_TRUNC, TO_CHAR, LIMIT, DATE_ADD, or PostgreSQL syntax"
+    ),
+    "postgres": (
+        "SQL DIALECT: PostgreSQL\n"
+        "• Use LIMIT N (not TOP N)\n"
+        "• Date truncation: DATE_TRUNC('month', column)\n"
+        "• Number formatting: TO_CHAR(value, '999,999.99')\n"
+        "• Date arithmetic: column - INTERVAL '1 month'\n"
+        "• Current date anchor: prefer MAX(date_col) over CURRENT_DATE\n"
+        "• DO NOT use TOP, CONVERT(date,...), DATEDIFF, FORMAT, or T-SQL syntax"
+    ),
+    "snowflake": (
+        "SQL DIALECT: Snowflake\n"
+        "• Use LIMIT N (not TOP N)\n"
+        "• Date truncation: DATE_TRUNC('month', column)\n"
+        "• Date arithmetic: DATEDIFF(day, start, end)\n"
+        "• Number formatting: TO_CHAR(value)\n"
+        "• Current date anchor: prefer MAX(date_col) over CURRENT_DATE\n"
+        "• DO NOT use TOP, GETDATE(), or T-SQL specific syntax"
+    ),
+    "oracle": (
+        "SQL DIALECT: Oracle\n"
+        "• Use FETCH FIRST N ROWS ONLY for row limiting\n"
+        "• Date truncation: TRUNC(column, 'MM')\n"
+        "• Date arithmetic: ADD_MONTHS, MONTHS_BETWEEN\n"
+        "• Number formatting: TO_CHAR(value, '999,999.99')\n"
+        "• Current date anchor: prefer MAX(date_col) over SYSDATE\n"
+        "• DO NOT use TOP, LIMIT, GETDATE(), or T-SQL syntax"
+    ),
+}
+
+
 def build_kb_query_prompt(
     table_name: str,
     kb_content: str,
     business_desc: str,
     related_tables: str = "",
+    db_type: str = "azure_sql",
 ) -> str:
     """
     Stage 2 KB generation prompt.
@@ -797,18 +838,24 @@ def build_kb_query_prompt(
             f"{related_tables}\n\n"
         )
 
+    dialect_rules = _KB_DIALECT_RULES.get(db_type, _KB_DIALECT_RULES["azure_sql"])
+
     return (
         f"You have been given the Knowledge Base document for table: {table_name}\n\n"
         f"Business context: {business_desc}\n\n"
         f"{related_block}"
         f"Knowledge Base content:\n{kb_content}\n\n"
+        f"## SQL Syntax Requirements\n"
+        f"{dialect_rules}\n\n"
         "Your task: Generate a QUERY TRANSLATION document that maps natural-language "
         "business questions to exact SQL patterns for this table.\n\n"
         "RULES:\n"
         "1. Generate at least 10 question-SQL pairs.\n"
         "2. Use ONLY column names and values that appear in the Knowledge Base above. "
         "Never invent column names or values.\n"
-        "3. Cover these question types:\n"
+        "3. Apply the SQL dialect rules above — every SQL statement must use the correct "
+        "syntax for this database type.\n"
+        "4. Cover these question types:\n"
         "   - Counting/aggregation (how many, total, sum)\n"
         "   - Ranking (top N, highest, lowest, most, least)\n"
         "   - Filtering by status/category using actual distinct values from the KB\n"
@@ -819,10 +866,10 @@ def build_kb_query_prompt(
         "using JOIN to dimension tables — e.g. revenue by customer name, orders by region, "
         "transactions by product category, sales by employee. "
         "These cross-table patterns are the most common business questions.\n"
-        "4. For every time-relative question (last month, last week, recent), "
+        "5. For every time-relative question (last month, last week, recent), "
         "use MAX(date_column) as the date anchor, not GETDATE()/CURRENT_DATE/SYSDATE.\n"
-        "5. Write questions the way a non-technical business user would actually ask them.\n"
-        "6. If Related Tables and Join Paths are provided above, generate at least "
+        "6. Write questions the way a non-technical business user would actually ask them.\n"
+        "7. If Related Tables and Join Paths are provided above, generate at least "
         "3 Q&A pairs that JOIN to those related tables using ONLY the exact join "
         "columns shown — never guess or substitute other columns.\n\n"
         "FORMAT — use this exact structure for each pair:\n"
