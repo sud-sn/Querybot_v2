@@ -1422,6 +1422,34 @@ async def kb_list(request: Request, account_id: str):
         except Exception as exc:
             log.debug("Could not resolve Semantic Layer patch filenames: %s", exc)
 
+    # ── Parse [NEEDS CONTEXT] columns from existing KB files ──────────────
+    needs_context: list[dict] = []
+    if kb_dir and Path(kb_dir).exists():
+        ctx_file = Path("clients") / account_id / "column_context.json"
+        existing_hints: dict = {}
+        if ctx_file.exists():
+            try:
+                existing_hints = json.loads(ctx_file.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        for kb_file in sorted(Path(kb_dir).glob("*_kb.md")):
+            tbl = kb_file.stem.replace("_kb", "")
+            tbl_hints = existing_hints.get(tbl, {})
+            try:
+                kb_content = kb_file.read_text(encoding="utf-8")
+                for line in kb_content.splitlines():
+                    if "[NEEDS CONTEXT]" in line:
+                        m = re.search(r"`([A-Za-z0-9_]+)`", line)
+                        if m:
+                            col = m.group(1)
+                            needs_context.append({
+                                "table": tbl,
+                                "column": col,
+                                "existing_hint": tbl_hints.get(col, ""),
+                            })
+            except Exception:
+                pass
+
     return _resp(request, "client_kb.html", {
         "client":       client,
         "kb_files":     [f.name for f in kb_files],
@@ -1436,6 +1464,7 @@ async def kb_list(request: Request, account_id: str):
         "semantic_feedback_status": feedback_status,
         "feedback_saved": request.query_params.get("feedback"),
         "feedback_msg":   request.query_params.get("feedback_msg", ""),
+        "needs_context":  needs_context,
     })
 
 
@@ -1599,6 +1628,41 @@ async def kb_save(
     return RedirectResponse(
         f"/admin/clients/{account_id}/kb?saved=1&file={filename}",
         status_code=303
+    )
+
+
+@router.post("/clients/{account_id}/kb/context-hints")
+async def kb_save_context_hints(request: Request, account_id: str):
+    """Save admin-supplied column context hints (resolves [NEEDS CONTEXT] flags)."""
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    form = await request.form()
+    # Form fields are named  hint__{table}__{column}
+    merged: dict[str, dict[str, str]] = {}
+    for key, value in form.items():
+        if key.startswith("hint__") and value.strip():
+            parts = key.split("__", 2)
+            if len(parts) == 3:
+                _, tbl, col = parts
+                merged.setdefault(tbl, {})[col] = value.strip()
+
+    ctx_dir = Path("clients") / account_id
+    ctx_dir.mkdir(parents=True, exist_ok=True)
+    ctx_file = ctx_dir / "column_context.json"
+    # Merge with any existing hints so saving one table doesn't wipe others
+    existing: dict = {}
+    if ctx_file.exists():
+        try:
+            existing = json.loads(ctx_file.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    for tbl, hints in merged.items():
+        existing.setdefault(tbl, {}).update(hints)
+    ctx_file.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+    log.info("Column context hints saved for %s (%d tables)", account_id, len(merged))
+    return RedirectResponse(
+        f"/admin/clients/{account_id}/kb?saved=context",
+        status_code=303,
     )
 
 

@@ -22,6 +22,14 @@
   font-size:12px;line-height:1.6;border:1px solid var(--gray-300);border-radius:6px;
   resize:vertical;color:var(--gray-900)}
 .editor-area:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px rgba(13,115,119,.1)}
+.nc-table{width:100%;border-collapse:collapse;font-size:12px}
+.nc-table th{padding:.55rem .75rem;background:var(--surface-2);border-bottom:1px solid var(--border);
+  text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted)}
+.nc-table td{padding:.6rem .75rem;border-bottom:1px solid var(--border);vertical-align:top}
+.nc-table tr:last-child td{border-bottom:none}
+.nc-col{font-family:Consolas,monospace;font-weight:800;color:var(--text)}
+.nc-hint{width:100%;min-height:52px;padding:.4rem .55rem;font-size:12px;border:1px solid var(--border);
+  border-radius:var(--radius-sm);background:var(--surface);color:var(--text);resize:vertical}
 .feedback-filters{display:flex;gap:.4rem;flex-wrap:wrap}
 .feedback-filter{border:1px solid var(--border);border-radius:999px;padding:4px 9px;font-size:11px;font-weight:800;color:var(--text-muted);background:var(--surface);text-decoration:none}
 .feedback-filter.active{background:var(--blue-light);border-color:color-mix(in srgb,var(--blue) 28%,transparent);color:var(--blue)}
@@ -47,7 +55,9 @@
   <h1>Knowledge Base Editor</h1>
 </div>
 
-{% if saved %}<div class="alert alert-success">File saved and re-embedded into ChromaDB.</div>{% endif %}
+{% if saved == "1" %}<div class="alert alert-success">File saved and re-embedded into ChromaDB.</div>
+{% elif saved == "context" %}<div class="alert alert-success">Column context hints saved. They will be injected into the next KB rebuild.</div>
+{% elif saved == "error" %}<div class="alert alert-danger">Save failed.</div>{% endif %}
 {% if feedback_saved == "approved" %}<div class="alert alert-success">Semantic Layer correction approved and KB re-embedded. The patched KB file is opened below. {% if feedback_msg %}<br><span style="font-size:12px">{{ feedback_msg }}</span>{% endif %}</div>{% endif %}
 {% if feedback_saved == "rejected" %}<div class="alert alert-info">Semantic Layer correction rejected. No KB changes made.</div>{% endif %}
 {% if feedback_saved == "error" %}<div class="alert alert-danger">Approval failed: {{ feedback_msg or "KB file could not be updated." }} The item remains pending.</div>{% endif %}
@@ -150,6 +160,49 @@
   </div>
   {% endif %}
 </div>
+
+{% if needs_context %}
+<div class="card" style="margin-bottom:1.25rem">
+  <div class="card-header">
+    <div>
+      <h2>Column context needed</h2>
+      <p style="font-size:12px;color:var(--gray-500);margin-top:3px">These columns were flagged <code>[NEEDS CONTEXT]</code> during the last KB build. Provide the business meaning so the next rebuild generates correct SQL instead of skipping them.</p>
+    </div>
+    <span class="badge badge-amber">{{ needs_context|length }} column{{ 's' if needs_context|length != 1 }}</span>
+  </div>
+  <form method="post" action="/admin/clients/{{ client.account_id }}/kb/context-hints">
+    <div style="overflow:auto">
+      <table class="nc-table">
+        <thead>
+          <tr>
+            <th style="width:160px">Table</th>
+            <th style="width:160px">Column</th>
+            <th>Business meaning (what this column represents, how it is used in queries)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in needs_context %}
+          <tr>
+            <td><span class="nc-col">{{ item.table }}</span></td>
+            <td><span class="nc-col">{{ item.column }}</span></td>
+            <td>
+              <textarea name="hint__{{ item.table }}__{{ item.column }}"
+                        class="nc-hint"
+                        placeholder="e.g. Order status code: 0=open, 4=credit hold, 9=closed"
+              >{{ item.existing_hint }}</textarea>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div style="padding:.75rem 1rem;border-top:1px solid var(--border);display:flex;gap:.5rem;align-items:center">
+      <button type="submit" class="btn btn-primary btn-sm">Save hints</button>
+      <span style="font-size:11px;color:var(--text-muted)">Only filled-in rows are saved. Hints are injected into the next KB rebuild automatically.</span>
+    </div>
+  </form>
+</div>
+{% endif %}
 
 <div style="display:grid;grid-template-columns:260px 1fr;gap:1.25rem">
 

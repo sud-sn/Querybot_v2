@@ -817,16 +817,18 @@ def build_kb_query_prompt(
     business_desc: str,
     related_tables: str = "",
     db_type: str = "azure_sql",
+    entity_type: str = "unknown",
+    confirmed_joins: str = "",
 ) -> str:
     """
     Stage 2 KB generation prompt.
     Takes the Stage 1 KB output and generates a question-to-SQL translation
     document from the actual data and real column values in the KB.
 
-    related_tables: optional join-map slice for this table (from _join_map.md).
-    When provided the LLM is required to generate cross-table Q&A examples
-    using those exact join paths instead of guessing or generating single-table
-    queries for inherently multi-table concepts.
+    entity_type: 'fact', 'dimension', 'date_role', 'bridge', or 'unknown'.
+                 Fact tables get more Q&A pairs and more cross-table join patterns.
+    confirmed_joins: newline-separated admin-confirmed join paths (FROM_TABLE.col = TO_TABLE.col).
+                     These take priority over auto-discovered paths.
     """
     related_block = ""
     if related_tables:
@@ -838,19 +840,39 @@ def build_kb_query_prompt(
             f"{related_tables}\n\n"
         )
 
+    confirmed_block = ""
+    if confirmed_joins:
+        confirmed_block = (
+            "## Admin-Confirmed Join Paths (AUTHORITATIVE — highest priority)\n"
+            "These join paths have been reviewed and confirmed by the database administrator. "
+            "ALWAYS prefer these exact column names over the auto-discovered paths above "
+            "when generating JOIN queries for these table pairs.\n\n"
+            f"{confirmed_joins}\n\n"
+        )
+
     dialect_rules = _KB_DIALECT_RULES.get(db_type, _KB_DIALECT_RULES["azure_sql"])
+
+    is_fact = entity_type == "fact"
+    min_pairs = 20 if is_fact else 10
+    cross_min = 5 if is_fact else 3
+    fact_note = (
+        f" This is a FACT table — generate at least {min_pairs} pairs with "
+        f"at least {cross_min} cross-dimension JOIN patterns."
+        if is_fact else ""
+    )
 
     return (
         f"You have been given the Knowledge Base document for table: {table_name}\n\n"
         f"Business context: {business_desc}\n\n"
         f"{related_block}"
+        f"{confirmed_block}"
         f"Knowledge Base content:\n{kb_content}\n\n"
         f"## SQL Syntax Requirements\n"
         f"{dialect_rules}\n\n"
-        "Your task: Generate a QUERY TRANSLATION document that maps natural-language "
-        "business questions to exact SQL patterns for this table.\n\n"
+        f"Your task: Generate a QUERY TRANSLATION document that maps natural-language "
+        f"business questions to exact SQL patterns for this table.{fact_note}\n\n"
         "RULES:\n"
-        "1. Generate at least 10 question-SQL pairs.\n"
+        f"1. Generate at least {min_pairs} question-SQL pairs.\n"
         "2. Use ONLY column names and values that appear in the Knowledge Base above. "
         "Never invent column names or values.\n"
         "3. Apply the SQL dialect rules above — every SQL statement must use the correct "
@@ -862,15 +884,17 @@ def build_kb_query_prompt(
         "   - Time-based filtering using MAX(date_column) as the reference, not system date\n"
         "   - Cross-dimension analysis (by department, by category, by type)\n"
         "   - Trend questions (this period vs last period)\n"
-        "   - IMPORTANT: For FACT tables, always write at least 3 cross-table patterns "
-        "using JOIN to dimension tables — e.g. revenue by customer name, orders by region, "
-        "transactions by product category, sales by employee. "
-        "These cross-table patterns are the most common business questions.\n"
+        f"   - IMPORTANT: Write at least {cross_min} cross-table patterns using JOIN to related "
+        "tables — e.g. revenue by customer name, orders by region, transactions by product "
+        "category, sales by employee. These cross-table patterns are the most common "
+        "business questions.\n"
         "5. For every time-relative question (last month, last week, recent), "
         "use MAX(date_column) as the date anchor, not GETDATE()/CURRENT_DATE/SYSDATE.\n"
         "6. Write questions the way a non-technical business user would actually ask them.\n"
-        "7. If Related Tables and Join Paths are provided above, generate at least "
-        "3 Q&A pairs that JOIN to those related tables using ONLY the exact join "
+        "7. If Admin-Confirmed Join Paths are provided above, use those exact column names "
+        "for JOIN conditions — never substitute other columns for those table pairs.\n"
+        "8. If Related Tables and Join Paths are provided, generate at least "
+        f"{cross_min} Q&A pairs that JOIN to those related tables using ONLY the exact join "
         "columns shown — never guess or substitute other columns.\n\n"
         "FORMAT — use this exact structure for each pair:\n"
         "Q: [natural language question a business user would ask]\n"

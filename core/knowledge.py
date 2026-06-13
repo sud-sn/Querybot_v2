@@ -271,6 +271,38 @@ async def build_kb(
         except Exception:
             _schema_hashes = {}
 
+    # Pre-load confirmed entity graph relationships (admin-approved join paths)
+    # These are fed into Stage 2 so generated Q&A examples use the exact same
+    # join columns the resolver will produce at query time.
+    _confirmed_rel_map: dict[str, list[str]] = {}  # entity_name_upper -> join snippets
+    if account_id:
+        try:
+            from store.config_store import list_relationships
+            for rel in list_relationships(account_id, active_only=True):
+                if rel.get("status") != "confirmed":
+                    continue
+                fe = rel.get("from_entity", "")
+                te = rel.get("to_entity", "")
+                fc = rel.get("from_column", "")
+                tc = rel.get("to_column", "")
+                if not (fe and te and fc and tc):
+                    continue
+                snippet = f"{fe}.{fc} = {te}.{tc}"
+                _confirmed_rel_map.setdefault(fe.upper(), []).append(snippet)
+                _confirmed_rel_map.setdefault(te.upper(), []).append(snippet)
+        except Exception as _ce:
+            log.debug("KB: could not load confirmed relationships: %s", _ce)
+
+    # Load admin-supplied column context hints (resolves [NEEDS CONTEXT] flags)
+    _col_context: dict[str, dict[str, str]] = {}
+    if account_id:
+        _ctx_file = Path("clients") / account_id / "column_context.json"
+        if _ctx_file.exists():
+            try:
+                _col_context = _json.loads(_ctx_file.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+
     # Write the naming convention reference as a global KB doc so it is
     # retrieved at query time for any question — structural grammar rules
     # apply across all tables.
@@ -457,6 +489,36 @@ async def build_kb(
             _schema_part = _sql_parts[-2]
         table_biz_desc = _build_table_business_desc(business_desc, _schema_part)
 
+        # ── Entity type detection for scale-aware Stage 2 ─────────────────────
+        entity_type = "unknown"
+        if account_id:
+            try:
+                from store.config_store import get_entity
+                _ent = get_entity(account_id, table_name)
+                if _ent:
+                    entity_type = _ent.get("entity_type", "unknown") or "unknown"
+            except Exception:
+                pass
+        if entity_type in ("unknown", ""):
+            _tname_lower = table_name.lower()
+            if any(h in _tname_lower for h in ("fact", "trans", "ledger", "event", "invoice", "sale")):
+                entity_type = "fact"
+            elif any(h in _tname_lower for h in ("dim", "dimension", "master", "lookup")):
+                entity_type = "dimension"
+
+        # ── Admin column context hints (resolves [NEEDS CONTEXT] flags) ──────
+        _tbl_hints = _col_context.get(table_name, {})
+        context_hints_block = ""
+        if _tbl_hints:
+            _hint_lines = [f"- `{col}`: {hint}" for col, hint in _tbl_hints.items()]
+            context_hints_block = (
+                "\n## Admin-Provided Column Context\n"
+                "The following columns were previously flagged as [NEEDS CONTEXT]. "
+                "The admin has now supplied the correct business meaning. "
+                "Use EXACTLY these definitions — do NOT mark them [NEEDS CONTEXT]:\n"
+                + "\n".join(_hint_lines) + "\n"
+            )
+
         # Inject approved metric formulas from the metric registry so the KB
         # documents the EXACT approved formula — not a nearby similar column.
         approved_metrics_block = _format_approved_metrics_for_kb(
@@ -470,6 +532,7 @@ async def build_kb(
             f"Full schema with distinct values:\n{schema_md}\n"
             f"\n{schema_intelligence}\n"
             + (f"\n{approved_metrics_block}\n" if approved_metrics_block else "")
+            + (context_hints_block if context_hints_block else "")
             + f"{join_block}\n"
             "Generate the complete Knowledge Base document for this table "
             "following all 7 sections in the format specified. "
@@ -481,6 +544,8 @@ async def build_kb(
             "abbreviated, date-key, dimension-key, status/filter, and measure-candidate fields. "
             "If ADMIN-APPROVED METRIC FORMULAS are listed above, use those EXACT formulas "
             "in ## Key Metrics — do not substitute nearby columns. "
+            "If ADMIN-PROVIDED COLUMN CONTEXT is listed above, use those exact definitions "
+            "and do NOT mark those columns with [NEEDS CONTEXT]. "
             "Do not promote candidate metrics to official metrics unless the evidence is strong "
             "or the business description explicitly supports it. "
             "Mark any column whose business rule is unclear with [NEEDS CONTEXT]."
@@ -500,10 +565,13 @@ async def build_kb(
         # ── Stage 2: Question-SQL translation from actual KB content ──────────
         # Fix 3: pass the join-map slice so the LLM generates real cross-table
         # Q&A examples using verified join paths instead of single-table queries.
+        _confirmed_snippets = "\n".join(_confirmed_rel_map.get(table_name.upper(), []))
         query_user = build_kb_query_prompt(
             sql_table_name, kb_text, table_biz_desc,
             related_tables=join_slice,
             db_type=db_type,
+            entity_type=entity_type,
+            confirmed_joins=_confirmed_snippets,
         )
         with llm_audit_component("kb_query_examples"):
             query_text, _, _ = await llm_complete(
