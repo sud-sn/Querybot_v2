@@ -707,10 +707,12 @@ def build_kb_system_prompt(erp_hints: str = "", naming_hints: str = "") -> str:
         "raw column names. Low-confidence fields must stay marked as candidates or "
         "[NEEDS ADMIN CONTEXT].\n\n"
 
-        "DOCUMENT FORMAT — produce all 7 sections for every table:\n\n"
+        "DOCUMENT FORMAT — produce all 8 sections for every table:\n\n"
 
         "## Overview\n"
-        "One sentence: what this table represents and what it is used for.\n\n"
+        "Two sentences: (1) what this table represents and what it is used for; "
+        "(2) if a DATA COVERAGE block is provided in the user prompt, include the "
+        "date range and whether the data is live or archived.\n\n"
 
         "## Key Metrics\n"
         "List every measurable business concept this table answers. "
@@ -726,8 +728,11 @@ def build_kb_system_prompt(erp_hints: str = "", naming_hints: str = "") -> str:
         "generator so it uses the correct column for the tenant's actual domain.\n\n"
 
         "## Always Exclude\n"
-        "Standard WHERE conditions that should always be applied "
-        "(e.g. active records only, non-null date). "
+        "Standard WHERE conditions that should ALWAYS be applied in every query.\n"
+        "MANDATORY: If the user prompt contains a DATA QUALITY HINTS block, "
+        "every column listed there MUST appear as an IS NOT NULL condition in this section — "
+        "the null rates were measured from actual data.\n"
+        "Also include: active-record flags, non-null date anchors, soft-delete columns.\n"
         "If none apply, write: None identified.\n\n"
 
         "## Columns\n"
@@ -737,9 +742,30 @@ def build_kb_system_prompt(erp_hints: str = "", naming_hints: str = "") -> str:
         "If ambiguous, write [NEEDS CONTEXT].\n"
         "SPLIT NAME RULE: If the table has separate first/last name columns (FIRST_NAME/LAST_NAME, FNAME/LNAME, GIVEN_NAME/SURNAME or similar) but no combined full name column, document both columns and add the note: [SPLIT NAME - always concatenate for full name queries].\n\n"
 
+        "## Aggregation Rules\n"
+        "Tag EVERY numeric column with its aggregation type. "
+        "The SQL generator reads this section literally — a wrong tag causes incorrect SQL.\n"
+        "Types:\n"
+        "- ADDITIVE: safe to SUM() across any dimension and any time period "
+        "(e.g. invoice amounts, order quantities, transaction counts, costs, revenues).\n"
+        "- NON-ADDITIVE: NEVER SUM() — always compute from component columns "
+        "(e.g. rates, ratios, percentages, averages, unit prices — re-derive as "
+        "SUM(numerator)/SUM(denominator)).\n"
+        "- SEMI-ADDITIVE: SUM() valid within a single snapshot date only — "
+        "do NOT sum across different dates "
+        "(e.g. account balances, inventory on hand, headcount).\n"
+        "Format: - `COLUMN_NAME`: ADDITIVE | NON-ADDITIVE | SEMI-ADDITIVE — [one-line rule]\n"
+        "Example: - `INVOICE_AMT`: ADDITIVE — sum across customers, products, and periods\n"
+        "         - `MARGIN_PCT`: NON-ADDITIVE — compute as SUM(margin)/SUM(revenue)\n"
+        "         - `STOCK_QTY`: SEMI-ADDITIVE — sum within a date, not across dates\n"
+        "If the table has no numeric columns, write: No numeric measures in this table.\n\n"
+
         "## Common Query Patterns\n"
         "Write 6-10 specific business questions and the EXACT SQL pattern for each. "
         "Use real column names and real distinct values from the schema.\n"
+        "SCALE RULE: If the user prompt contains a ROW COUNT / SCALE block showing "
+        ">100K rows, EVERY SELECT must include TOP N (T-SQL) or LIMIT N. "
+        "Default to TOP 20 unless the question implies a full result set.\n"
         "SPLIT NAME PATTERNS: If the table has separate first/last name columns, "
         "every name-related query must show the concatenation: "
         "FIRST_NAME || ' ' || LAST_NAME AS FULL_NAME (or dialect equivalent).\n"
@@ -767,7 +793,7 @@ def build_kb_system_prompt(erp_hints: str = "", naming_hints: str = "") -> str:
         "Use the table name and column names to infer the domain — even if sample data "
         "contains placeholder values (SAMPLE_), reason from the column names alone.\n\n"
 
-        "Return only the Markdown document. All 7 sections are mandatory."
+        "Return only the Markdown document. All 8 sections are mandatory."
     )
 
 
