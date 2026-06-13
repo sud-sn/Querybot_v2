@@ -2013,11 +2013,17 @@ async def graph_page(request: Request, account_id: str):
                   "issues": [], "unmapped_tables": [], "entity_severity": {},
                   "has_schema": False}
 
+    pending_count = (
+        sum(1 for e in entities if e.get("status") == "suggested" and e.get("is_active", 1))
+        + sum(1 for r in relationships if r.get("status") == "suggested" and r.get("is_active", 1))
+    )
+
     return _resp(request, "client_graph.html", {
         "client":        client,
         "entities":      entities,
         "relationships": relationships,
         "health":        health,
+        "pending_count": pending_count,
         "saved":         request.query_params.get("saved"),
         "error":         request.query_params.get("error"),
     })
@@ -3026,6 +3032,61 @@ async def graph_confirm_rel(request: Request, account_id: str, rel_id: int):
             (rel_id, account_id)
         )
     return JSONResponse({"status": "ok"})
+
+@router.post("/clients/{account_id}/graph/api/reject/entity/{entity_name:path}")
+async def graph_reject_entity(request: Request, account_id: str, entity_name: str):
+    """Reject a suggested entity — marks it rejected and deactivates it."""
+    if not _is_auth(request):
+        raise HTTPException(status_code=401)
+    with __import__("store.db", fromlist=["get_db"]).get_db() as conn:
+        conn.execute(
+            "UPDATE entity_graph SET status='rejected', is_active=0 "
+            "WHERE account_id=? AND entity_name=?",
+            (account_id, entity_name),
+        )
+    return JSONResponse({"status": "ok"})
+
+
+@router.post("/clients/{account_id}/graph/api/reject/relationship/{rel_id}")
+async def graph_reject_rel(request: Request, account_id: str, rel_id: int):
+    """Reject a suggested relationship."""
+    if not _is_auth(request):
+        raise HTTPException(status_code=401)
+    with __import__("store.db", fromlist=["get_db"]).get_db() as conn:
+        conn.execute(
+            "UPDATE entity_relationships SET status='rejected', is_active=0 "
+            "WHERE id=? AND account_id=?",
+            (rel_id, account_id),
+        )
+    return JSONResponse({"status": "ok"})
+
+
+@router.post("/clients/{account_id}/graph/api/bulk-accept")
+async def graph_bulk_accept(request: Request, account_id: str):
+    """Accept all suggested entities and relationships at or above min_confidence."""
+    if not _is_auth(request):
+        raise HTTPException(status_code=401)
+    data = await request.json()
+    min_conf = int(data.get("min_confidence", 85))
+    with __import__("store.db", fromlist=["get_db"]).get_db() as conn:
+        e_rows = conn.execute(
+            "UPDATE entity_graph SET status='confirmed', confidence_score=100 "
+            "WHERE account_id=? AND status='suggested' AND COALESCE(confidence_score,0) >= ? "
+            "RETURNING entity_name",
+            (account_id, min_conf),
+        ).fetchall()
+        r_rows = conn.execute(
+            "UPDATE entity_relationships SET status='confirmed', confidence_score=100 "
+            "WHERE account_id=? AND status='suggested' AND COALESCE(confidence_score,0) >= ? "
+            "RETURNING id",
+            (account_id, min_conf),
+        ).fetchall()
+    return JSONResponse({
+        "status":           "ok",
+        "entities_accepted":      len(e_rows),
+        "relationships_accepted": len(r_rows),
+    })
+
 
 @router.get("/clients/{account_id}/graph/api/properties/{entity_name}")
 async def graph_api_props_get(request: Request, account_id: str, entity_name: str):
