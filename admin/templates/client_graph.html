@@ -15,14 +15,14 @@
 /* Height reduced by ~110px to account for the workspace nav */
 .graph-shell{display:flex;flex-direction:row;height:calc(100vh - 56px - 110px);min-height:680px;overflow:hidden;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);box-shadow:var(--shadow-lg)}
 .graph-sidebar{flex:0 0 264px;overflow-y:auto;border-right:1px solid var(--border);background:linear-gradient(180deg,var(--surface),color-mix(in srgb,var(--surface-2) 82%,var(--surface)));display:flex;flex-direction:column}
-.graph-canvas-wrap{--graph-inspector-width:392px;flex:1;min-width:0;display:grid;grid-template-columns:minmax(420px,1fr) var(--graph-inspector-width);grid-template-rows:auto auto auto minmax(0,1fr);
+.graph-canvas-wrap{--graph-inspector-width:392px;flex:1;min-width:0;display:grid;grid-template-columns:minmax(420px,1fr) var(--graph-inspector-width);grid-template-rows:auto auto auto auto minmax(0,1fr);
   background:
     radial-gradient(ellipse at 30% 20%, color-mix(in srgb,var(--primary) 5%,transparent), transparent 55%),
     radial-gradient(ellipse at 72% 75%, color-mix(in srgb,#7C3AED 3%,transparent), transparent 50%),
     var(--surface-2);
   overflow:hidden;position:relative}
 /* Persistent model inspector. Selection changes its content, never the canvas size. */
-.graph-drawer{grid-column:2;grid-row:2 / 5;min-width:320px;width:auto;height:auto!important;overflow:hidden;background:var(--surface);border-left:1px solid var(--border);box-shadow:-8px 0 24px rgba(15,23,42,.04);display:flex;flex-direction:column;position:relative}
+.graph-drawer{grid-column:2;grid-row:2 / 6;min-width:320px;width:auto;height:auto!important;overflow:hidden;background:var(--surface);border-left:1px solid var(--border);box-shadow:-8px 0 24px rgba(15,23,42,.04);display:flex;flex-direction:column;position:relative}
 .graph-shell.drawer-expanded .graph-canvas-wrap{--graph-inspector-width:520px}
 .gd-drawer-head{display:flex;align-items:center;gap:.5rem;padding:.65rem .85rem;min-height:46px;flex-shrink:0;border-bottom:1px solid var(--border);background:linear-gradient(180deg,var(--surface-2),var(--surface))}
 .gd-drawer-title{font-size:13px;font-weight:850;color:var(--text);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
@@ -77,9 +77,11 @@
 .model-state.published::before{background:var(--green,#059669)}
 
 /* ── SVG canvas ────────────────────────────────────────────────────────────── */
-#health-issues-bar{grid-column:1;grid-row:2}
-.canvas-context-bar{grid-column:1;grid-row:3}
-#graph-svg{grid-column:1;grid-row:4;width:100%;height:100%;min-height:0;cursor:grab;user-select:none;overflow:hidden}
+#pending-review-bar{grid-column:1;grid-row:2;display:none;align-items:center;gap:.6rem;padding:.35rem .85rem;font-size:11px;background:color-mix(in srgb,var(--amber,#D97706) 8%,var(--surface));border-bottom:1px solid color-mix(in srgb,var(--amber,#D97706) 22%,transparent);flex-shrink:0}
+#pending-review-bar.visible{display:flex}
+#health-issues-bar{grid-column:1;grid-row:3}
+.canvas-context-bar{grid-column:1;grid-row:4}
+#graph-svg{grid-column:1;grid-row:5;width:100%;height:100%;min-height:0;cursor:grab;user-select:none;overflow:hidden}
 #graph-svg.is-panning{cursor:grabbing !important}
 #graph-svg.is-space{cursor:grab !important}
 /* ── Zoom controls overlay ─────────────────────────────────────────────── */
@@ -307,9 +309,9 @@
 @media (max-width:980px){
   .graph-shell{height:auto;min-height:720px;flex-direction:column}
   .graph-sidebar{flex:0 0 auto;max-height:240px;border-right:0;border-bottom:1px solid var(--border)}
-  .graph-canvas-wrap{--graph-inspector-width:0px;min-height:760px;display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:auto auto auto minmax(420px,1fr) 360px}
+  .graph-canvas-wrap{--graph-inspector-width:0px;min-height:760px;display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:auto auto auto auto minmax(420px,1fr) 360px}
   .graph-shell.drawer-expanded .graph-canvas-wrap{grid-template-columns:minmax(0,1fr)}
-  .graph-drawer{grid-column:1;grid-row:5;min-width:0;width:auto;height:360px!important;border-left:0;border-top:1px solid var(--border);box-shadow:0 -8px 24px rgba(15,23,42,.04)}
+  .graph-drawer{grid-column:1;grid-row:6;min-width:0;width:auto;height:360px!important;border-left:0;border-top:1px solid var(--border);box-shadow:0 -8px 24px rgba(15,23,42,.04)}
   .gd-drawer-resize{inset:-3px 0 auto 0;width:auto;height:6px;cursor:row-resize}
   .zoom-controls{right:.875rem;bottom:372px}
   .gd-inspector-summary,.gd-diag-grid{grid-template-columns:1fr}
@@ -526,6 +528,55 @@
   .ct-card{display:none}
   .ct-subrow{grid-template-columns:1fr}
 }
+
+/* ── Pending-review toolbar bar ────────────────────────────────────────────── */
+.prb-text{font-weight:700;color:var(--text-soft)}
+.prb-count{font-weight:800;color:color-mix(in srgb,var(--amber,#D97706) 85%,#111)}
+.prb-open-btn{font-size:11px;font-weight:700;color:var(--primary);cursor:pointer;background:none;border:none;padding:0;text-decoration:underline;text-underline-offset:2px}
+.prb-open-btn:hover{opacity:.75}
+.prb-accept-btn{background:var(--surface);border:1px solid color-mix(in srgb,var(--amber,#D97706) 40%,transparent);color:color-mix(in srgb,var(--amber,#D97706) 85%,#111);border-radius:5px;padding:3px 10px;font-size:11px;font-weight:700;cursor:pointer;transition:all .12s;white-space:nowrap}
+.prb-accept-btn:hover{background:color-mix(in srgb,var(--amber,#D97706) 12%,var(--surface))}
+.prb-spacer{flex:1}
+.prb-dismiss{background:none;border:none;cursor:pointer;color:var(--text-muted);font-size:15px;padding:0 3px;line-height:1;flex-shrink:0}
+.prb-dismiss:hover{color:var(--text)}
+
+/* ── Review queue tab pane ─────────────────────────────────────────────────── */
+.rq-header{display:flex;align-items:center;padding:.5rem .65rem;border-bottom:1px solid var(--border);flex-shrink:0;gap:.4rem;background:var(--surface)}
+.rq-header-count{font-size:11px;font-weight:700;color:var(--text-muted);flex:1}
+.rq-accept-all-btn{background:var(--surface-2);border:1px solid var(--border);border-radius:5px;padding:4px 10px;font-size:11px;font-weight:700;cursor:pointer;color:var(--text-soft);transition:all .12s;white-space:nowrap}
+.rq-accept-all-btn:hover{background:color-mix(in srgb,var(--green,#059669) 9%,var(--surface));border-color:color-mix(in srgb,var(--green,#059669) 30%,transparent);color:var(--green,#059669)}
+.rq-list{flex:1;overflow-y:auto}
+.rq-item{padding:.55rem .65rem;border-bottom:1px solid var(--border);font-size:12px}
+.rq-item-head{display:flex;align-items:center;gap:.3rem;margin-bottom:.25rem;cursor:pointer}
+.rq-item-head:hover .rq-item-name{text-decoration:underline;text-underline-offset:2px}
+.rq-item-name{font-weight:700;color:var(--text);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rq-type-chip{font-size:9px;font-weight:800;padding:2px 5px;border-radius:3px;text-transform:uppercase;flex-shrink:0}
+.rq-type-entity{background:#EFF6FF;color:#1D4ED8}
+.rq-type-fact{background:#FEF3C7;color:#92400E}
+.rq-type-bridge{background:#F3E8FF;color:#6B21A8}
+.rq-type-rel{background:#F0FDF4;color:#166534}
+.rq-gen-chip{font-size:9px;font-weight:700;padding:2px 5px;border-radius:3px;flex-shrink:0}
+.rq-gen-heuristic{background:#F3E8FF;color:#6B21A8}
+.rq-gen-llm{background:#EFF6FF;color:#1E40AF}
+.rq-gen-kb_harvest{background:#FEF3C7;color:#92400E}
+.rq-gen-manual{background:#F1F5F9;color:#64748B}
+.rq-conf{font-size:9px;font-weight:800;padding:1px 5px;border-radius:999px;font-family:Consolas,monospace;flex-shrink:0}
+.rq-conf-high{background:#D1FAE5;color:#065F46}
+.rq-conf-mid{background:#FEF3C7;color:#92400E}
+.rq-conf-low{background:#FEE2E2;color:#991B1B}
+.rq-reason{font-size:10px;color:var(--text-muted);margin-bottom:.4rem;line-height:1.4;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.rq-actions{display:flex;gap:.3rem}
+.rq-accept{background:color-mix(in srgb,var(--green,#059669) 10%,var(--surface));border:1px solid color-mix(in srgb,var(--green,#059669) 30%,transparent);color:var(--green,#059669);border-radius:5px;padding:3px 10px;font-size:11px;font-weight:700;cursor:pointer;transition:all .12s;flex:1}
+.rq-accept:hover{background:var(--green,#059669);color:#fff;border-color:var(--green,#059669)}
+.rq-reject{background:var(--surface-2);border:1px solid var(--border);color:var(--text-muted);border-radius:5px;padding:3px 10px;font-size:11px;font-weight:700;cursor:pointer;transition:all .12s;flex:1}
+.rq-reject:hover{background:#FEE2E2;color:var(--red,#DC2626);border-color:color-mix(in srgb,var(--red,#DC2626) 30%,transparent)}
+.rq-empty{padding:2.5rem .75rem;text-align:center;color:var(--text-muted);font-size:12px;line-height:1.7}
+.rq-empty-icon{font-size:28px;margin-bottom:.4rem;opacity:.5}
+.rq-section-head{padding:.35rem .65rem;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);background:var(--surface-2);border-bottom:1px solid var(--border);flex-shrink:0}
+
+/* ── Issues drawer hidden when review / test tabs active ─────────────────── */
+.graph-sidebar[data-active-tab="review"] .gs-issues-drawer,
+.graph-sidebar[data-active-tab="test"] .gs-issues-drawer{display:none!important}
 </style>
 {% endblock %}
 
@@ -536,9 +587,9 @@
 <div class="graph-shell">
 
 <!-- ══ LEFT SIDEBAR ══════════════════════════════════════════════════════════ -->
-<aside class="graph-sidebar">
+<aside class="graph-sidebar" id="graph-sidebar" data-active-tab="entities">
 
-  <!-- Tab bar: Entities | Rels + collapse toggle -->
+  <!-- Tab bar: Entities | Rels | Review | Test -->
   <div class="gs-tab-bar">
     <button class="gs-tab active" id="gs-tab-entities"
             onclick="switchSidebarTab('entities')">
@@ -549,6 +600,19 @@
             onclick="switchSidebarTab('relationships')">
       Rels
       <span class="gs-tab-cnt" id="gs-rel-cnt">{{ relationships|length }}</span>
+    </button>
+    {% set _pending = pending_count|default(0) %}
+    <button class="gs-tab" id="gs-tab-review"
+            onclick="switchSidebarTab('review')"
+            title="Suggestions awaiting your review">
+      Review
+      <span class="gs-tab-cnt" id="gs-review-cnt"
+            style="{% if _pending > 0 %}background:color-mix(in srgb,var(--amber,#D97706) 15%,var(--surface-2));color:color-mix(in srgb,var(--amber,#D97706) 85%,#111){% endif %}">{{ _pending }}</span>
+    </button>
+    <button class="gs-tab" id="gs-tab-test"
+            onclick="switchSidebarTab('test')"
+            title="Test the resolver against a question">
+      Test
     </button>
     <button class="gs-collapse-btn" id="gs-collapse-btn"
             onclick="toggleSidebar()" title="Collapse sidebar" style="margin-left:auto">◀</button>
@@ -623,11 +687,36 @@
     </div>
   </div>
 
-  <!-- ── Issues drawer (collapsible, inside Entities tab) ─────────────── -->
+  <!-- ── Review tab pane ───────────────────────────────────────────────── -->
+  <div class="gs-tab-pane" id="gs-pane-review" style="flex-direction:column">
+    <div class="rq-header">
+      <span class="rq-header-count" id="rq-header-count">Loading…</span>
+      <button class="rq-accept-all-btn" onclick="bulkAcceptSuggestions(85)"
+              title="Confirm all suggestions with confidence ≥ 85%">✓ Accept ≥85%</button>
+    </div>
+    <div class="rq-list" id="rq-list">
+      <div class="rq-empty">
+        <div class="rq-empty-icon">✦</div>
+        Loading suggestions…
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Test tab pane ─────────────────────────────────────────────────── -->
+  <div class="gs-tab-pane" id="gs-pane-test" style="flex-direction:column;padding:.65rem">
+    <div style="font-size:11px;font-weight:700;color:var(--text-muted);margin-bottom:.5rem;text-transform:uppercase;letter-spacing:.06em">Try a question</div>
+    <input id="resolve-q" class="gd-input" placeholder="e.g. total revenue by store last quarter…"
+           oninput="scheduleResolve(this.value)" style="margin-bottom:.4rem;font-size:12px">
+    <div style="font-size:10px;color:var(--text-muted);margin-bottom:.3rem">Generated JOIN path</div>
+    <div id="resolve-output" class="resolver-output" style="display:none"></div>
+    <div id="resolve-scope-hint" style="display:none;margin-top:.35rem;font-size:10px;color:var(--amber,#D97706);font-weight:600"></div>
+  </div>
+
+  <!-- ── Issues drawer (collapsible, visible on Entities/Rels tabs) ─────── -->
   <div class="gs-issues-drawer" id="gs-issues-drawer">
     <div class="gs-issues-toggle"
          onclick="document.getElementById('gs-issues-drawer').classList.toggle('open')">
-      <span class="gs-issues-toggle-label">⚠ Issues</span>
+      <span class="gs-issues-toggle-label">�� Issues</span>
       <span class="gs-issues-badge" id="gs-issues-badge">—</span>
       <span class="gs-issues-chevron">▶</span>
     </div>
@@ -635,19 +724,6 @@
       <div class="gs-empty" style="font-size:11px;padding:1.25rem .75rem">
         Loading health data…
       </div>
-    </div>
-  </div>
-
-  <!-- ── Test resolver (collapsible, always at bottom) ─────────────────── -->
-  <div class="gs-resolver-wrap" id="gs-resolver-wrap">
-    <div class="gs-resolver-toggle" onclick="document.getElementById('gs-resolver-wrap').classList.toggle('open')">
-      <span>⚙ Test resolver</span>
-      <span class="gs-resolver-chevron">▶</span>
-    </div>
-    <div class="gs-resolver-body">
-      <input id="resolve-q" class="gd-input" placeholder="Type a question to test…"
-             oninput="scheduleResolve(this.value)" style="margin-bottom:.4rem;font-size:12px">
-      <div id="resolve-output" class="resolver-output" style="display:none"></div>
     </div>
   </div>
 
@@ -765,7 +841,18 @@
     </div>
 
   </div>
-  <!-- Health issues bar (shown below toolbar when there are errors) -->
+
+  <!-- Pending-review bar (grid-row:2, shown when suggestions await review) -->
+  <div id="pending-review-bar">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="color:color-mix(in srgb,var(--amber,#D97706) 85%,#111);flex-shrink:0"><path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
+    <span class="prb-text"><span class="prb-count" id="prb-count">0</span> suggestions pending review —</span>
+    <button class="prb-open-btn" onclick="switchSidebarTab('review')">open Review tab</button>
+    <span class="prb-spacer"></span>
+    <button class="prb-accept-btn" onclick="bulkAcceptSuggestions(85)">✓ Accept all ≥85%</button>
+    <button class="prb-dismiss" onclick="document.getElementById('pending-review-bar').classList.remove('visible')" title="Dismiss">✕</button>
+  </div>
+
+  <!-- Health issues bar (grid-row:3, shown when there are errors) -->
   <div id="health-issues-bar" style="display:none;padding:.4rem .75rem;font-size:11px;background:color-mix(in srgb,var(--red,#DC2626) 8%,var(--surface));border-bottom:1px solid color-mix(in srgb,var(--red,#DC2626) 20%,transparent);align-items:center;gap:.6rem;flex-shrink:0"></div>
   <!-- Context bar — inline, appears below toolbar when entity is focused -->
   <div class="canvas-context-bar" id="canvas-context-bar">
@@ -4074,8 +4161,11 @@ window.bulkRelSaveAll = async function() {
 let resolveTimer = null;
 window.scheduleResolve = function(q) {
   clearTimeout(resolveTimer);
+  const outEl   = document.getElementById('resolve-output');
+  const hintEl  = document.getElementById('resolve-scope-hint');
   if (q.trim().length < 4) {
-    document.getElementById('resolve-output').style.display='none';
+    if (outEl)  outEl.style.display  = 'none';
+    if (hintEl) hintEl.style.display = 'none';
     queryPathEntities.clear();
     if (graphView === 'query') renderGraph();
     return;
@@ -4083,21 +4173,33 @@ window.scheduleResolve = function(q) {
   resolveTimer = setTimeout(async () => {
     const res = await fetch(`${API_BASE}/resolve?q=${encodeURIComponent(q)}`);
     const data = await res.json();
-    const el = document.getElementById('resolve-output');
     if (data.enabled) {
       queryPathEntities = new Set(data.detected || []);
-      el.style.display = '';
-      el.textContent = `✓ Detected: ${(data.detected || []).join(', ')}\n\n${data.join_skeleton || ''}`;
-      el.style.color = 'var(--green, #059669)';
+      if (outEl) {
+        outEl.style.display = '';
+        outEl.textContent = `✓ Detected: ${(data.detected || []).join(', ')}\n\n${data.join_skeleton || ''}`;
+        outEl.style.color = 'var(--green, #059669)';
+      }
+      if (hintEl) {
+        if (data.graph_scope === 'suggested_fallback') {
+          hintEl.style.display = '';
+          hintEl.textContent = '⚠ Using unreviewed suggestions — confirm entities in the Review tab for deterministic joins.';
+        } else {
+          hintEl.style.display = 'none';
+        }
+      }
       if (graphView === 'query') {
         renderGraph();
         requestAnimationFrame(() => _fitEntitySet(queryPathEntities));
       }
     } else {
       queryPathEntities.clear();
-      el.style.display = '';
-      el.textContent = `⚬ No entities detected (${data.entity_count} in graph)`;
-      el.style.color = 'var(--text-muted)';
+      if (outEl) {
+        outEl.style.display = '';
+        outEl.textContent = `⚬ No entities detected (${data.entity_count} in graph)`;
+        outEl.style.color = 'var(--text-muted)';
+      }
+      if (hintEl) hintEl.style.display = 'none';
       if (graphView === 'query') renderGraph();
     }
   }, 400);
@@ -5383,6 +5485,7 @@ updateSidebar();  // filters sidebar entity list to active schema
 updateRelList();  // filters rel list to active schema
 _applyTransform(); // sets dot-grid + zoom label on first paint
 if (graph.entities.length > 0) fitView();
+updatePendingBar();  // show/hide pending review banner on load
 
 // ════════════════════════════════════════════════════════════════════════════
 // GRAPH HEALTH — badge, panel, refresh
@@ -5613,7 +5716,7 @@ applyHealthReport(_health);
 // PHASE 1 — SIDEBAR TABS
 // ════════════════════════════════════════════════════════════════════════════
 
-const _SIDEBAR_TABS = ['entities', 'relationships'];
+const _SIDEBAR_TABS = ['entities', 'relationships', 'review', 'test'];
 let _activeSidebarTab = 'entities';
 let _sidebarEntTypeFilter = '';   // active type chip value
 let _sidebarEntQuery = '';        // active entity search query
@@ -5629,6 +5732,9 @@ window.switchSidebarTab = function(tab) {
     btn.classList.toggle('active', on);
     pane.classList.toggle('active', on);
   });
+  const sb = document.getElementById('graph-sidebar');
+  if (sb) sb.dataset.activeTab = tab;
+  if (tab === 'review') buildReviewQueue();
 };
 
 // ── Entity search ────────────────────────────────────────────────────────────
@@ -5700,6 +5806,9 @@ window.updateSidebar = function() {
   const cnt = document.querySelectorAll('#entity-list .gs-entity-item').length;
   const cntEl = document.getElementById('gs-ent-cnt');
   if (cntEl) cntEl.textContent = cnt;
+  // Keep review queue + pending bar in sync after any graph mutation
+  updatePendingBar();
+  if (_activeSidebarTab === 'review') buildReviewQueue();
 };
 
 // ── Relationship search ──────────────────────────────────────────────────────
@@ -5727,6 +5836,190 @@ window.updateRelList = function() {
   const cnt = document.querySelectorAll('#rel-list .gs-rel-item').length;
   const cntEl = document.getElementById('gs-rel-cnt');
   if (cntEl) cntEl.textContent = cnt;
+};
+
+// ════════════════════════════════════════════════════════════════════════════
+// REVIEW QUEUE — Phase 3
+// ════════════════════════════════════════════════════════════════════════════
+
+function _rqGenLabel(g) {
+  const map = { heuristic: 'heuristic', llm: 'AI suggest', kb_harvest: 'KB harvest', manual: 'manual' };
+  return map[g] || (g || 'auto');
+}
+
+function _rqConfClass(score) {
+  const n = Number(score || 0);
+  if (n >= 85) return 'rq-conf-high';
+  if (n >= 60) return 'rq-conf-mid';
+  return 'rq-conf-low';
+}
+
+function _rqEntityTypeChip(type) {
+  const cls = type === 'fact' ? 'rq-type-fact' : type === 'bridge' ? 'rq-type-bridge' : 'rq-type-entity';
+  return `<span class="rq-type-chip ${cls}">${type || 'entity'}</span>`;
+}
+
+window.updatePendingBar = function() {
+  const pending = graph.entities.filter(e => e.status === 'suggested' && e.is_active !== 0).length
+    + graph.relationships.filter(r => r.status === 'suggested' && r.is_active !== 0).length;
+  const bar = document.getElementById('pending-review-bar');
+  const cnt = document.getElementById('prb-count');
+  const badge = document.getElementById('gs-review-cnt');
+  if (bar)   bar.classList.toggle('visible', pending > 0);
+  if (cnt)   cnt.textContent = pending;
+  if (badge) {
+    badge.textContent = pending;
+    badge.style.background = pending > 0
+      ? 'color-mix(in srgb,var(--amber,#D97706) 15%,var(--surface-2))' : '';
+    badge.style.color = pending > 0
+      ? 'color-mix(in srgb,var(--amber,#D97706) 85%,#111)' : '';
+  }
+};
+
+window.buildReviewQueue = function() {
+  const list = document.getElementById('rq-list');
+  const countEl = document.getElementById('rq-header-count');
+  if (!list) return;
+
+  const suggestedEntities = graph.entities.filter(e => e.status === 'suggested' && e.is_active !== 0)
+    .sort((a, b) => (b.confidence_score || 0) - (a.confidence_score || 0));
+  const suggestedRels = graph.relationships.filter(r => r.status === 'suggested' && r.is_active !== 0)
+    .sort((a, b) => (b.confidence_score || 0) - (a.confidence_score || 0));
+
+  const total = suggestedEntities.length + suggestedRels.length;
+  if (countEl) countEl.textContent = total > 0 ? `${total} suggestion${total === 1 ? '' : 's'} pending` : 'All reviewed';
+
+  if (total === 0) {
+    list.innerHTML = `<div class="rq-empty"><div class="rq-empty-icon">✓</div>Nothing to review.<br>All suggestions have been accepted or rejected.</div>`;
+    return;
+  }
+
+  let html = '';
+
+  if (suggestedEntities.length) {
+    html += `<div class="rq-section-head">Entities (${suggestedEntities.length})</div>`;
+    html += suggestedEntities.map(e => {
+      const conf = Number(e.confidence_score || 0);
+      const name = esc(e.display_name || e.entity_name);
+      return `<div class="rq-item" id="rq-ent-${esc(e.entity_name)}">
+        <div class="rq-item-head" onclick="selectEntity('${esc(e.entity_name)}');switchSidebarTab('entities')">
+          ${_rqEntityTypeChip(e.entity_type)}
+          <span class="rq-item-name">${name}</span>
+          <span class="rq-gen-chip rq-gen-${esc(e.generated_by||'manual')}">${_rqGenLabel(e.generated_by)}</span>
+          <span class="rq-conf ${_rqConfClass(conf)}">${conf}%</span>
+        </div>
+        ${e.reason ? `<div class="rq-reason">${esc(e.reason)}</div>` : ''}
+        <div class="rq-actions">
+          <button class="rq-accept" onclick="acceptSuggestion('entity','${esc(e.entity_name)}')">✓ Accept</button>
+          <button class="rq-reject" onclick="rejectSuggestion('entity','${esc(e.entity_name)}')">✕ Reject</button>
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  if (suggestedRels.length) {
+    html += `<div class="rq-section-head">Joins (${suggestedRels.length})</div>`;
+    html += suggestedRels.map(r => {
+      const conf = Number(r.confidence_score || 0);
+      const relName = `${esc(r.from_entity)} → ${esc(r.to_entity)}`;
+      return `<div class="rq-item" id="rq-rel-${r.id}">
+        <div class="rq-item-head" onclick="selectRel(${r.id});switchSidebarTab('relationships')">
+          <span class="rq-type-chip rq-type-rel">join</span>
+          <span class="rq-item-name">${relName}</span>
+          <span class="rq-gen-chip rq-gen-${esc(r.generated_by||'manual')}">${_rqGenLabel(r.generated_by)}</span>
+          <span class="rq-conf ${_rqConfClass(conf)}">${conf}%</span>
+        </div>
+        ${r.reason ? `<div class="rq-reason">${esc(r.reason)}</div>` : ''}
+        <div class="rq-actions">
+          <button class="rq-accept" onclick="acceptSuggestion('rel',${r.id})">✓ Accept</button>
+          <button class="rq-reject" onclick="rejectSuggestion('rel',${r.id})">✕ Reject</button>
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  list.innerHTML = html;
+};
+
+window.acceptSuggestion = async function(type, id) {
+  try {
+    const url = type === 'entity'
+      ? `${API_BASE}/confirm/entity/${encodeURIComponent(id)}`
+      : `${API_BASE}/confirm/relationship/${id}`;
+    await api('POST', url);
+
+    if (type === 'entity') {
+      const e = graph.entities.find(x => x.entity_name === id);
+      if (e) e.status = 'confirmed';
+    } else {
+      const r = graph.relationships.find(x => x.id === id);
+      if (r) r.status = 'confirmed';
+    }
+
+    // Remove item from queue with fade
+    const el = document.getElementById(type === 'entity' ? `rq-ent-${id}` : `rq-rel-${id}`);
+    if (el) { el.style.transition = 'opacity .2s'; el.style.opacity = '0'; setTimeout(() => el.remove(), 200); }
+
+    renderGraph();
+    updateSidebar();
+    updatePendingBar();
+    setTimeout(buildReviewQueue, 220);
+  } catch (e) { alert('Accept failed: ' + e.message); }
+};
+
+window.rejectSuggestion = async function(type, id) {
+  try {
+    const url = type === 'entity'
+      ? `${API_BASE}/reject/entity/${encodeURIComponent(id)}`
+      : `${API_BASE}/reject/relationship/${id}`;
+    await api('POST', url);
+
+    if (type === 'entity') {
+      const e = graph.entities.find(x => x.entity_name === id);
+      if (e) { e.status = 'rejected'; e.is_active = 0; }
+    } else {
+      const r = graph.relationships.find(x => x.id === id);
+      if (r) { r.status = 'rejected'; r.is_active = 0; }
+    }
+
+    const el = document.getElementById(type === 'entity' ? `rq-ent-${id}` : `rq-rel-${id}`);
+    if (el) { el.style.transition = 'opacity .2s'; el.style.opacity = '0'; setTimeout(() => el.remove(), 200); }
+
+    renderGraph();
+    updateSidebar();
+    updatePendingBar();
+    setTimeout(buildReviewQueue, 220);
+  } catch (e) { alert('Reject failed: ' + e.message); }
+};
+
+window.bulkAcceptSuggestions = async function(minConf) {
+  const pending = graph.entities.filter(e => e.status === 'suggested' && (e.confidence_score||0) >= minConf).length
+    + graph.relationships.filter(r => r.status === 'suggested' && (r.confidence_score||0) >= minConf).length;
+  if (pending === 0) { alert(`No suggestions with confidence ≥ ${minConf}% found.`); return; }
+
+  try {
+    const res = await api('POST', `${API_BASE}/bulk-accept`, { min_confidence: minConf });
+    const data = await res.json();
+
+    // Refresh full graph from server so canvas is in sync
+    const gr = await api('GET', `${API_BASE}/graph.json`);
+    const gd = await gr.json();
+    graph.entities      = gd.entities      || [];
+    graph.relationships = gd.relationships || [];
+
+    renderGraph();
+    updateSidebar();
+    updateRelList();
+    updatePendingBar();
+    buildReviewQueue();
+    if (selectedEntity) renderEntityDetail(selectedEntity);
+
+    const ea = data.entities_accepted || 0;
+    const ra = data.relationships_accepted || 0;
+    if (ea + ra > 0) {
+      alert(`✓ Accepted ${ea} entit${ea === 1 ? 'y' : 'ies'} and ${ra} join${ra === 1 ? '' : 's'} with confidence ≥ ${minConf}%.`);
+    }
+  } catch (e) { alert('Bulk accept failed: ' + e.message); }
 };
 
 // ── Issues drawer ────────────────────────────────────────────────────────────
