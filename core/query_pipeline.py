@@ -266,7 +266,10 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                         )
                     await _send_results(event, adapter, question, _duck_rows, _duck_sql,
                                         duration_ms, portal_user, account_id, db_cfg,
-                                        question_id=audit_request_id)
+                                        question_id=audit_request_id,
+                                        explicit_column_formats=(
+                                            result_cache.get_column_formats(_session_id)
+                                        ))
                     _trace_finish(
                         trace_id,
                         status="success",

@@ -728,7 +728,11 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     # Auto-chart detection
                     _rc_chart = None
                     try:
-                        _rc_chart_type = detect_chart_type(_rc_rows, question=rc_question)
+                        _rc_chart_type = detect_chart_type(
+                            _rc_rows,
+                            question=rc_question,
+                            column_formats=_rc_formats,
+                        )
                         if _rc_chart_type:
                             _rc_chart = build_chart_payload(
                                 _rc_rows,

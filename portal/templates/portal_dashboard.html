@@ -233,15 +233,21 @@ function _chartFormatFor(payload, col){
     if (_chartNormKey(raw) === key && meta?.format) return String(meta.format).toLowerCase();
   }
   if (/percent|percentage|pct|rate|ratio|share/i.test(String(col))) return 'percentage';
-  if (/revenue|sales|amount|amt|charge|cost|cogs|price|margin|profit|usd|value|balance|total/i.test(String(col))) return 'currency';
+  if (/revenue|sales|amount|amt|charge|cost|cogs|price|profit|salary|usd|balance/i.test(String(col))) return 'currency';
   return 'number';
 }
 function _fmtChartValue(v, fmt, compact=false){
+  if (v === null || v === undefined || v === '') return '—';
   const n = Number(v);
   if (isNaN(n)) return String(v ?? '');
   if (fmt === 'currency') return compact ? ('$' + _fmtNum(n)) : ('$' + n.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}));
   if (fmt === 'percentage') return n.toLocaleString('en-US', {maximumFractionDigits:2}) + '%';
   return compact ? _fmtNum(n) : n.toLocaleString(undefined, {maximumFractionDigits:4});
+}
+function _chartNumber(v){
+  if (v === null || v === undefined || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
 }
 function renderChartWarnings(payload){
   const warnings = Array.isArray(payload?.chart_warnings) ? payload.chart_warnings : [];
@@ -300,7 +306,7 @@ function buildDashboardOption(payload){
 
   // ── Pie / Donut ────────────────────────────────────────────────────────────
   if (reqType === 'pie' || reqType === 'donut') {
-    const pieData = rows.map(r => ({ name:String(r[xKey]??''), value:Number(r[yKey]??0) }));
+    const pieData = rows.map(r => ({ name:String(r[xKey]??''), value:_chartNumber(r[yKey]) }));
     const innerR  = reqType === 'donut' ? '40%' : '0%';
     return {
       color: colors,
@@ -316,7 +322,7 @@ function buildDashboardOption(payload){
 
   // ── Cartesian (bar / line / area) ──────────────────────────────────────────
   const labels    = rows.map(r => String(r[xKey]??''));
-  const values    = rows.map(r => Number(r[yKey]??0));
+  const values    = rows.map(r => _chartNumber(r[yKey]));
   const maxLLen   = labels.reduce((m,s)=>Math.max(m,s.length),0);
   const temporal  = labels.some(isTemporalLabel);
   const horizontal= reqType==='bar' && (maxLLen>=14 || (labels.length>7 && !temporal));
@@ -362,7 +368,7 @@ function buildDashboardOption(payload){
     series: yKeys.length>1
       ? yKeys.map((k,i)=>({
           name:k, type:isLine?'line':'bar', smooth:isLine,
-          data:rows.map(r=>Number(r[k]??0)),
+          data:rows.map(r=>_chartNumber(r[k])),
           showSymbol:isLine&&rows.length<=20,
           lineStyle:{width:2.5,color:colors[i%colors.length]},
           itemStyle:{color:colors[i%colors.length],borderRadius:isLine?0:(horizontal?[0,6,6,0]:[6,6,0,0])},
@@ -388,6 +394,10 @@ window._dashPayloads = window._dashPayloads || {};
 function initDashboardChart(node) {
   const payload = JSON.parse(node.dataset.chart || '{}');
   if (!payload.rows || !payload.rows.length) return;
+  if (!window.echarts) {
+    node.innerHTML = '<div class="msg-system" style="margin:0">Chart library failed to load. Refresh the page and try again.</div>';
+    return;
+  }
   if (payload.chart_id) window._dashPayloads[payload.chart_id] = payload;
   node.parentElement?.querySelector('.chart-warnings')?.remove();
   const warningHtml = renderChartWarnings(payload);

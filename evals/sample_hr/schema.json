@@ -1,0 +1,36 @@
+{
+  "DEMO.HR.EMPLOYEES": {
+    "database": "DEMO",
+    "schema": "HR",
+    "table": "EMPLOYEES",
+    "columns": [
+      {"name": "EMPLOYEE_ID", "type": "integer"},
+      {"name": "EMPLOYEE_NAME", "type": "varchar"},
+      {"name": "DEPARTMENT_ID", "type": "integer"},
+      {"name": "HIRE_DATE", "type": "date"},
+      {"name": "STATUS", "type": "varchar"},
+      {"name": "SALARY", "type": "decimal"},
+      {"name": "CITY", "type": "varchar"}
+    ]
+  },
+  "DEMO.HR.DEPARTMENTS": {
+    "database": "DEMO",
+    "schema": "HR",
+    "table": "DEPARTMENTS",
+    "columns": [
+      {"name": "DEPARTMENT_ID", "type": "integer"},
+      {"name": "DEPARTMENT_NAME", "type": "varchar"}
+    ]
+  },
+  "DEMO.HR.ATTENDANCE": {
+    "database": "DEMO",
+    "schema": "HR",
+    "table": "ATTENDANCE",
+    "columns": [
+      {"name": "EMPLOYEE_ID", "type": "integer"},
+      {"name": "WORK_DATE", "type": "date"},
+      {"name": "ATTENDANCE_STATUS", "type": "varchar"},
+      {"name": "HOURS_WORKED", "type": "decimal"}
+    ]
+  }
+}

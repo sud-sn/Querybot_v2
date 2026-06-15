@@ -58,11 +58,18 @@ _PCT_KEYWORDS = {
 # Keywords that indicate a column holds a currency / money value.
 _CURRENCY_KEYWORDS = {
     "amount", "amt", "cost", "price", "revenue", "salary", "wage",
-    "budget", "spend", "fee", "charge", "total", "value", "val",
+    "budget", "spend", "fee", "charge", "rev",
     "payment", "pay", "income", "profit", "loss", "expense", "expenditure",
-    "sales", "billing", "billed", "invoice", "invoiced", "gross", "net",
+    "sales", "billing", "billed", "invoice", "invoiced",
     "earnings", "commission", "bonus", "rebate", "credit", "debit",
     "balance", "liability", "asset", "tax", "vat", "gst",
+}
+
+_FORMAT_ALIASES = {
+    "currency": "currency",
+    "number": "number",
+    "percent": "percentage",
+    "percentage": "percentage",
 }
 
 
@@ -76,20 +83,20 @@ def _detect_column_format(col_name: str) -> str:
     token against keyword sets.  Percentage wins over currency when both
     match (e.g. MARGIN_PCT → percent, not currency).
     """
-    import re
-    # Split camelCase and underscores into lower-case tokens
-    raw = col_name.lower()
-    tokens = set(re.split(r"[_\s]+", raw))
-    # Also add the full name without separators (e.g. "totalamt" → check "amt")
-    tokens.add(raw.replace("_", "").replace(" ", ""))
+    separated = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", str(col_name or ""))
+    raw = separated.replace("-", " ").replace("_", " ").lower()
+    tokens = {token for token in re.split(r"\s+", raw) if token}
+    compact = re.sub(r"[^a-z0-9]+", "", raw)
 
     # Percentage check first (takes priority)
     if tokens & _PCT_KEYWORDS:
         return "percent"
     # Suffix-based fast checks common in ERP column codes
-    if raw.endswith(("pct", "pc", "_pct", "_rate", "_ratio", "_percent")):
+    if compact.endswith(("pct", "pc", "rate", "ratio", "percent", "percentage")):
         return "percent"
-    if raw.endswith(("amt", "amount", "cost", "price", "rev", "sal")):
+    if compact.endswith(
+        ("amt", "amount", "cost", "price", "revenue", "rev", "salary", "sal")
+    ):
         return "currency"
     # Token-based currency check
     if tokens & _CURRENCY_KEYWORDS:
@@ -97,7 +104,7 @@ def _detect_column_format(col_name: str) -> str:
     return "number"
 
 
-def _format_value(val, col_name: str = "") -> str:
+def _format_value(val, col_name: str = "", format_hint: str = "") -> str:
     """
     Format a single cell value for clean display.
 
@@ -112,22 +119,27 @@ def _format_value(val, col_name: str = "") -> str:
     if val is None:
         return "—"
 
-    fmt = _detect_column_format(col_name) if col_name else "number"
+    explicit_format = _FORMAT_ALIASES.get(str(format_hint or "").strip().lower())
+    fmt = explicit_format or (
+        _FORMAT_ALIASES[_detect_column_format(col_name)]
+        if col_name
+        else "number"
+    )
 
-    if isinstance(val, (int, float)):
+    if isinstance(val, (int, float, _decimal.Decimal)) and not isinstance(val, bool):
         num = float(val)
 
         if fmt == "currency":
             return f"${num:,.2f}"
 
-        if fmt == "percent":
+        if fmt == "percentage":
             return f"{num:.2f}%"
 
         # Plain number — keep existing smart behaviour
-        if isinstance(val, float):
-            if val == int(val):
-                return f"{int(val):,}"
-            rounded = round(val, 4)
+        if isinstance(val, (float, _decimal.Decimal)):
+            if num == int(num):
+                return f"{int(num):,}"
+            rounded = round(num, 4)
             parts = f"{rounded:,.4f}".split(".")
             decimal = parts[1].rstrip("0")
             return f"{parts[0]}.{decimal}" if decimal else parts[0]
@@ -137,12 +149,19 @@ def _format_value(val, col_name: str = "") -> str:
     return str(val)
 
 
-def _rows_to_table(rows) -> str:
+def _rows_to_table(rows, column_formats: dict[str, str] | None = None) -> str:
     """Format query results as a clean text table with smart value formatting."""
     if not rows:
         return "(no results)"
     headers = list(rows[0].keys())
-    formatted = [{h: _format_value(r.get(h), h) for h in headers} for r in rows]
+    column_formats = column_formats or {}
+    formatted = [
+        {
+            h: _format_value(r.get(h), h, column_formats.get(h, ""))
+            for h in headers
+        }
+        for r in rows
+    ]
     widths = {
         h: max(len(str(h)), max(len(f[h]) for f in formatted))
         for h in headers
@@ -575,9 +594,32 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
                         portal_user, account_id, db_cfg,
                         rag_context: str = "", question_id: str | None = None,
                         confidence_context: dict | None = None,
-                        display_context: dict | None = None):
+                        display_context: dict | None = None,
+                        explicit_column_formats: dict | None = None):
     """Send formatted results to the chat platform. Shared by LLM and metric registry paths."""
-    column_formats = build_column_formats(rows, display_context=display_context)
+    column_formats = build_column_formats(
+        rows,
+        display_context=display_context,
+        explicit_formats=explicit_column_formats,
+    )
+    if rows:
+        for header in rows[0]:
+            if header in column_formats:
+                continue
+            values = [
+                row.get(header)
+                for row in rows
+                if row.get(header) is not None
+            ]
+            if not values or not all(
+                isinstance(value, (int, float, _decimal.Decimal))
+                and not isinstance(value, bool)
+                for value in values
+            ):
+                continue
+            inferred = _detect_column_format(header)
+            if inferred != "number":
+                column_formats[header] = _FORMAT_ALIASES[inferred]
     # Cache result on adapter for insight follow-ups (WebSocket sessions).
     # Pass question_id so drilldowns can link back to this original question.
     cache_fn = getattr(adapter, "cache_result", None)
@@ -590,7 +632,7 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
             semantic_plan=confidence_context.get("semantic_plan") if confidence_context else None,
         )
 
-    table_text = _rows_to_table(rows)
+    table_text = _rows_to_table(rows, column_formats)
     row_word   = "row" if len(rows) == 1 else "rows"
     dur_label  = f"{duration_ms}ms" if duration_ms < 1000 else f"{duration_ms/1000:.1f}s"
     _has_confidence_context = bool(confidence_context)
@@ -607,7 +649,11 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
         null_metric_issue=bool(null_metric_issue),
     )
 
-    chart_type = detect_chart_type(rows, question=question)
+    chart_type = detect_chart_type(
+        rows,
+        question=question,
+        column_formats=column_formats,
+    )
     pin_token = None
     chart_payload = None
     if chart_type and portal_user:
@@ -688,7 +734,11 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
     conf_text = format_success_confidence_text(confidence) + "\n\n" if _has_confidence_context else ""
     if len(rows) == 1 and len(rows[0]) == 1:
         col_name = list(rows[0].keys())[0]
-        value    = _format_value(rows[0][col_name], col_name)
+        value = _format_value(
+            rows[0][col_name],
+            col_name,
+            column_formats.get(col_name, ""),
+        )
         greeting = f"*{portal_user['name']}* — " if portal_user else ""
         reply = (
             f"{greeting}*{question}*\n\n"

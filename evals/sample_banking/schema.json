@@ -1,0 +1,57 @@
+{
+  "DEMO.BANKING.CUSTOMERS": {
+    "database": "DEMO",
+    "schema": "BANKING",
+    "table": "CUSTOMERS",
+    "columns": [
+      {"name": "CUSTOMER_ID", "type": "integer"},
+      {"name": "CUSTOMER_NAME", "type": "varchar"},
+      {"name": "SEGMENT", "type": "varchar"},
+      {"name": "JOIN_DATE", "type": "date"},
+      {"name": "CUSTOMER_STATUS", "type": "varchar"},
+      {"name": "CHURN_DATE", "type": "date"},
+      {"name": "RISK_RATING", "type": "varchar"}
+    ]
+  },
+  "DEMO.BANKING.ACCOUNTS": {
+    "database": "DEMO",
+    "schema": "BANKING",
+    "table": "ACCOUNTS",
+    "columns": [
+      {"name": "ACCOUNT_ID", "type": "integer"},
+      {"name": "CUSTOMER_ID", "type": "integer"},
+      {"name": "ACCOUNT_TYPE", "type": "varchar"},
+      {"name": "OPEN_DATE", "type": "date"},
+      {"name": "ACCOUNT_STATUS", "type": "varchar"},
+      {"name": "BALANCE", "type": "decimal"}
+    ]
+  },
+  "DEMO.BANKING.LOANS": {
+    "database": "DEMO",
+    "schema": "BANKING",
+    "table": "LOANS",
+    "columns": [
+      {"name": "LOAN_ID", "type": "integer"},
+      {"name": "CUSTOMER_ID", "type": "integer"},
+      {"name": "LOAN_TYPE", "type": "varchar"},
+      {"name": "PRINCIPAL", "type": "decimal"},
+      {"name": "OUTSTANDING_BALANCE", "type": "decimal"},
+      {"name": "INTEREST_RATE", "type": "decimal"},
+      {"name": "LOAN_STATUS", "type": "varchar"},
+      {"name": "DAYS_PAST_DUE", "type": "integer"}
+    ]
+  },
+  "DEMO.BANKING.CUSTOMER_PROFIT": {
+    "database": "DEMO",
+    "schema": "BANKING",
+    "table": "CUSTOMER_PROFIT",
+    "columns": [
+      {"name": "CUSTOMER_ID", "type": "integer"},
+      {"name": "PERIOD", "type": "varchar"},
+      {"name": "INTEREST_INCOME", "type": "decimal"},
+      {"name": "FEE_INCOME", "type": "decimal"},
+      {"name": "SERVICE_COST", "type": "decimal"},
+      {"name": "CREDIT_LOSS", "type": "decimal"}
+    ]
+  }
+}

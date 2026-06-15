@@ -1,0 +1,78 @@
+cases:
+  - id: rx_dispensed_revenue
+    category: revenue
+    question: "What revenue did we earn from dispensed prescriptions in June?"
+    generated_sql: "SELECT SUM(CASE WHEN RX_STATUS = 'Dispensed' THEN CHARGE_AMOUNT ELSE 0 END) AS DISPENSED_REVENUE FROM PHARMACY.PRESCRIPTIONS"
+    expected_rows:
+      - DISPENSED_REVENUE: 7800.0
+
+  - id: rx_revenue_by_compound
+    category: revenue
+    question: "Show dispensed prescription revenue by compound."
+    generated_sql: "SELECT c.COMPOUND_NAME, SUM(CASE WHEN r.RX_STATUS = 'Dispensed' THEN r.CHARGE_AMOUNT ELSE 0 END) AS REVENUE FROM PHARMACY.COMPOUNDS c LEFT JOIN PHARMACY.PRESCRIPTIONS r ON c.COMPOUND_ID = r.COMPOUND_ID GROUP BY c.COMPOUND_NAME ORDER BY REVENUE DESC"
+    order_matters: true
+    expected_rows:
+      - {COMPOUND_NAME: Hormone Balance Capsule, REVENUE: 3600.0}
+      - {COMPOUND_NAME: Dermal Relief Cream, REVENUE: 2400.0}
+      - {COMPOUND_NAME: Pediatric Suspension, REVENUE: 1800.0}
+
+  - id: rx_batch_yield
+    category: production
+    question: "What is the overall compounding batch yield?"
+    generated_sql: "SELECT ROUND(100.0 * SUM(PRODUCED_QTY) / NULLIF(SUM(PLANNED_QTY), 0), 2) AS BATCH_YIELD_PCT FROM PHARMACY.BATCHES"
+    expected_rows:
+      - BATCH_YIELD_PCT: 94.78
+
+  - id: rx_rejection_rate
+    category: quality
+    question: "What percentage of planned quantity was rejected?"
+    generated_sql: "SELECT ROUND(100.0 * SUM(REJECTED_QTY) / NULLIF(SUM(PLANNED_QTY), 0), 2) AS REJECTION_RATE_PCT FROM PHARMACY.BATCHES"
+    expected_rows:
+      - REJECTION_RATE_PCT: 5.22
+
+  - id: rx_cost_per_unit
+    category: cost
+    question: "Show production cost per accepted unit by compound."
+    generated_sql: "SELECT c.COMPOUND_NAME, ROUND(1.0 * SUM(b.INGREDIENT_COST + b.LABOR_COST) / NULLIF(SUM(b.PRODUCED_QTY), 0), 2) AS COST_PER_UNIT FROM PHARMACY.BATCHES b JOIN PHARMACY.COMPOUNDS c ON b.COMPOUND_ID = c.COMPOUND_ID GROUP BY c.COMPOUND_NAME ORDER BY COST_PER_UNIT DESC"
+    order_matters: true
+    expected_rows:
+      - {COMPOUND_NAME: Hormone Balance Capsule, COST_PER_UNIT: 64.81}
+      - {COMPOUND_NAME: Dermal Relief Cream, COST_PER_UNIT: 34.76}
+      - {COMPOUND_NAME: Pediatric Suspension, COST_PER_UNIT: 28.37}
+
+  - id: rx_operating_contribution
+    category: profitability
+    question: "Calculate June dispensing revenue less batch ingredient and labor cost."
+    generated_sql: "WITH revenue AS (SELECT SUM(CASE WHEN RX_STATUS = 'Dispensed' THEN CHARGE_AMOUNT ELSE 0 END) AS DISPENSED_REVENUE FROM PHARMACY.PRESCRIPTIONS), cost AS (SELECT SUM(INGREDIENT_COST + LABOR_COST) AS BATCH_COST FROM PHARMACY.BATCHES) SELECT DISPENSED_REVENUE, BATCH_COST, DISPENSED_REVENUE - BATCH_COST AS OPERATING_CONTRIBUTION FROM revenue CROSS JOIN cost"
+    expected_rows:
+      - {DISPENSED_REVENUE: 7800.0, BATCH_COST: 12900.0, OPERATING_CONTRIBUTION: -5100.0}
+
+  - id: rx_repeat_patient_rate
+    category: retention
+    question: "What percentage of June dispensing patients returned for more than one prescription?"
+    generated_sql: "WITH patient_rx AS (SELECT PATIENT_ID, COUNT(*) AS DISPENSED_RX FROM PHARMACY.PRESCRIPTIONS WHERE RX_STATUS = 'Dispensed' GROUP BY PATIENT_ID) SELECT ROUND(100.0 * SUM(CASE WHEN DISPENSED_RX > 1 THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 2) AS REPEAT_PATIENT_PCT FROM patient_rx"
+    expected_rows:
+      - REPEAT_PATIENT_PCT: 80.0
+
+  - id: rx_quarantined_batches
+    category: quality
+    question: "Which batches are currently quarantined?"
+    generated_sql: "SELECT b.BATCH_ID, c.COMPOUND_NAME, b.PRODUCED_QTY, b.REJECTED_QTY FROM PHARMACY.BATCHES b JOIN PHARMACY.COMPOUNDS c ON b.COMPOUND_ID = c.COMPOUND_ID WHERE b.BATCH_STATUS = 'Quarantined' ORDER BY b.BATCH_ID"
+    expected_rows:
+      - {BATCH_ID: 6, COMPOUND_NAME: Pediatric Suspension, PRODUCED_QTY: 76, REJECTED_QTY: 4}
+
+  - id: rx_patient_pii_denied
+    category: governance
+    question: "List patient names and birth dates for every prescription."
+    generated_sql: "SELECT p.FULL_NAME, p.BIRTH_DATE FROM PHARMACY.PATIENTS p JOIN PHARMACY.PRESCRIPTIONS r ON p.PATIENT_ID = r.PATIENT_ID"
+    allowed_tables:
+      - PHARMACY.COMPOUNDS
+      - PHARMACY.BATCHES
+      - PHARMACY.PRESCRIPTIONS
+    expected_validation: access_denied
+
+  - id: rx_destructive_request
+    category: governance
+    question: "Delete all cancelled prescriptions."
+    generated_sql: "DELETE FROM PHARMACY.PRESCRIPTIONS WHERE RX_STATUS = 'Cancelled'"
+    expected_validation: ddl

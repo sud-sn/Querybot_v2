@@ -1,0 +1,73 @@
+ATTACH DATABASE ':memory:' AS BANKING;
+
+CREATE TABLE BANKING.CUSTOMERS (
+    CUSTOMER_ID INTEGER PRIMARY KEY,
+    CUSTOMER_NAME VARCHAR NOT NULL,
+    SEGMENT VARCHAR NOT NULL,
+    JOIN_DATE DATE NOT NULL,
+    CUSTOMER_STATUS VARCHAR NOT NULL,
+    CHURN_DATE DATE,
+    RISK_RATING VARCHAR NOT NULL
+);
+
+CREATE TABLE BANKING.ACCOUNTS (
+    ACCOUNT_ID INTEGER PRIMARY KEY,
+    CUSTOMER_ID INTEGER NOT NULL,
+    ACCOUNT_TYPE VARCHAR NOT NULL,
+    OPEN_DATE DATE NOT NULL,
+    ACCOUNT_STATUS VARCHAR NOT NULL,
+    BALANCE DECIMAL(14, 2) NOT NULL
+);
+
+CREATE TABLE BANKING.LOANS (
+    LOAN_ID INTEGER PRIMARY KEY,
+    CUSTOMER_ID INTEGER NOT NULL,
+    LOAN_TYPE VARCHAR NOT NULL,
+    PRINCIPAL DECIMAL(14, 2) NOT NULL,
+    OUTSTANDING_BALANCE DECIMAL(14, 2) NOT NULL,
+    INTEREST_RATE DECIMAL(8, 4) NOT NULL,
+    LOAN_STATUS VARCHAR NOT NULL,
+    DAYS_PAST_DUE INTEGER NOT NULL
+);
+
+CREATE TABLE BANKING.CUSTOMER_PROFIT (
+    CUSTOMER_ID INTEGER NOT NULL,
+    PERIOD VARCHAR NOT NULL,
+    INTEREST_INCOME DECIMAL(14, 2) NOT NULL,
+    FEE_INCOME DECIMAL(14, 2) NOT NULL,
+    SERVICE_COST DECIMAL(14, 2) NOT NULL,
+    CREDIT_LOSS DECIMAL(14, 2) NOT NULL
+);
+
+INSERT INTO BANKING.CUSTOMERS VALUES
+    (1, 'Alice Jones', 'Retail', '2023-02-10', 'Active', NULL, 'Low'),
+    (2, 'Bob Smith', 'Retail', '2024-04-15', 'Churned', '2026-03-15', 'High'),
+    (3, 'Carla Foods Ltd', 'SME', '2022-06-01', 'Active', NULL, 'Medium'),
+    (4, 'Deepak Rao', 'Premium', '2025-01-20', 'Active', NULL, 'Low'),
+    (5, 'Elena Green', 'Retail', '2025-08-12', 'Churned', '2026-05-01', 'High'),
+    (6, 'Farah Textiles', 'SME', '2026-02-01', 'Active', NULL, 'Medium');
+
+INSERT INTO BANKING.ACCOUNTS VALUES
+    (101, 1, 'Checking', '2023-02-10', 'Active', 10000),
+    (102, 1, 'Savings', '2023-03-01', 'Active', 20000),
+    (201, 2, 'Checking', '2024-04-15', 'Closed', 0),
+    (301, 3, 'Business', '2022-06-01', 'Active', 50000),
+    (401, 4, 'Savings', '2025-01-20', 'Active', 80000),
+    (501, 5, 'Checking', '2025-08-12', 'Closed', 0),
+    (601, 6, 'Business', '2026-02-01', 'Active', 30000);
+
+INSERT INTO BANKING.LOANS VALUES
+    (1, 1, 'Home', 200000, 150000, 4.0, 'Current', 0),
+    (2, 2, 'Personal', 15000, 10000, 12.0, 'Delinquent', 45),
+    (3, 3, 'Business', 120000, 100000, 7.0, 'Current', 0),
+    (4, 4, 'Home', 350000, 300000, 3.5, 'Current', 0),
+    (5, 5, 'Personal', 8000, 5000, 14.0, 'Default', 120),
+    (6, 6, 'Business', 100000, 80000, 8.0, 'Current', 0);
+
+INSERT INTO BANKING.CUSTOMER_PROFIT VALUES
+    (1, '2026-H1', 5000, 500, 1000, 0),
+    (2, '2026-H1', 800, 200, 500, 2000),
+    (3, '2026-H1', 6000, 1000, 1500, 0),
+    (4, '2026-H1', 9000, 800, 1800, 0),
+    (5, '2026-H1', 400, 100, 400, 3000),
+    (6, '2026-H1', 3000, 600, 900, 0);

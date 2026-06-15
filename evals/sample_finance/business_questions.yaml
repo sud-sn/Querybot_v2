@@ -1,0 +1,93 @@
+cases:
+  - id: fin_total_revenue
+    category: revenue
+    question: "What was total revenue for January and February?"
+    generated_sql: "SELECT SUM(CASE WHEN ACCOUNT_TYPE = 'Revenue' THEN AMOUNT ELSE 0 END) AS TOTAL_REVENUE FROM FINANCE.LEDGER"
+    expected_rows:
+      - TOTAL_REVENUE: 295000.0
+
+  - id: fin_revenue_mix
+    category: revenue
+    question: "Show revenue by category."
+    generated_sql: "SELECT CATEGORY, SUM(CASE WHEN ACCOUNT_TYPE = 'Revenue' THEN AMOUNT ELSE 0 END) AS REVENUE FROM FINANCE.LEDGER GROUP BY CATEGORY HAVING SUM(CASE WHEN ACCOUNT_TYPE = 'Revenue' THEN AMOUNT ELSE 0 END) > 0 ORDER BY REVENUE DESC"
+    order_matters: true
+    expected_rows:
+      - {CATEGORY: Product Sales, REVENUE: 210000.0}
+      - {CATEGORY: Services, REVENUE: 85000.0}
+
+  - id: fin_total_expense
+    category: expense
+    question: "What were total expenses?"
+    generated_sql: "SELECT SUM(CASE WHEN ACCOUNT_TYPE = 'Expense' THEN AMOUNT ELSE 0 END) AS TOTAL_EXPENSE FROM FINANCE.LEDGER"
+    expected_rows:
+      - TOTAL_EXPENSE: 227000.0
+
+  - id: fin_net_profit
+    category: profitability
+    question: "Calculate net profit for the period."
+    generated_sql: "SELECT SUM(CASE WHEN ACCOUNT_TYPE = 'Revenue' THEN AMOUNT ELSE 0 END) - SUM(CASE WHEN ACCOUNT_TYPE = 'Expense' THEN AMOUNT ELSE 0 END) AS NET_PROFIT FROM FINANCE.LEDGER"
+    expected_rows:
+      - NET_PROFIT: 68000.0
+
+  - id: fin_monthly_pnl
+    category: profitability
+    question: "Show the monthly profit and loss statement."
+    generated_sql: "SELECT PERIOD, SUM(CASE WHEN ACCOUNT_TYPE = 'Revenue' THEN AMOUNT ELSE 0 END) AS REVENUE, SUM(CASE WHEN ACCOUNT_TYPE = 'Expense' THEN AMOUNT ELSE 0 END) AS EXPENSE, SUM(CASE WHEN ACCOUNT_TYPE = 'Revenue' THEN AMOUNT ELSE -AMOUNT END) AS NET_PROFIT FROM FINANCE.LEDGER GROUP BY PERIOD ORDER BY PERIOD"
+    order_matters: true
+    expected_rows:
+      - {PERIOD: "2026-01", REVENUE: 140000.0, EXPENSE: 108000.0, NET_PROFIT: 32000.0}
+      - {PERIOD: "2026-02", REVENUE: 155000.0, EXPENSE: 119000.0, NET_PROFIT: 36000.0}
+
+  - id: fin_net_margin
+    category: profitability
+    question: "What is the net profit margin?"
+    generated_sql: "WITH totals AS (SELECT SUM(CASE WHEN ACCOUNT_TYPE = 'Revenue' THEN AMOUNT ELSE 0 END) AS REVENUE, SUM(CASE WHEN ACCOUNT_TYPE = 'Expense' THEN AMOUNT ELSE 0 END) AS EXPENSE FROM FINANCE.LEDGER) SELECT ROUND(100.0 * (REVENUE - EXPENSE) / NULLIF(REVENUE, 0), 2) AS NET_MARGIN_PCT FROM totals"
+    expected_rows:
+      - NET_MARGIN_PCT: 23.05
+
+  - id: fin_budget_variance
+    category: budget
+    question: "Show expense budget variance by category."
+    generated_sql: "WITH actual AS (SELECT CATEGORY, SUM(CASE WHEN ACCOUNT_TYPE = 'Expense' THEN AMOUNT ELSE 0 END) AS ACTUAL_EXPENSE FROM FINANCE.LEDGER GROUP BY CATEGORY), planned AS (SELECT CATEGORY, SUM(BUDGET_AMOUNT) AS BUDGET_EXPENSE FROM FINANCE.BUDGET GROUP BY CATEGORY) SELECT p.CATEGORY, a.ACTUAL_EXPENSE, p.BUDGET_EXPENSE, a.ACTUAL_EXPENSE - p.BUDGET_EXPENSE AS VARIANCE FROM planned p JOIN actual a ON p.CATEGORY = a.CATEGORY ORDER BY VARIANCE DESC, p.CATEGORY"
+    order_matters: true
+    expected_rows:
+      - {CATEGORY: COGS, ACTUAL_EXPENSE: 125000.0, BUDGET_EXPENSE: 120000.0, VARIANCE: 5000.0}
+      - {CATEGORY: Marketing, ACTUAL_EXPENSE: 20000.0, BUDGET_EXPENSE: 20000.0, VARIANCE: 0.0}
+      - {CATEGORY: Rent, ACTUAL_EXPENSE: 20000.0, BUDGET_EXPENSE: 20000.0, VARIANCE: 0.0}
+      - {CATEGORY: Payroll, ACTUAL_EXPENSE: 62000.0, BUDGET_EXPENSE: 63000.0, VARIANCE: -1000.0}
+
+  - id: fin_outstanding_ar
+    category: receivables
+    question: "How much accounts receivable is still unpaid?"
+    generated_sql: "SELECT SUM(CASE WHEN PAID_DATE IS NULL THEN AMOUNT ELSE 0 END) AS OUTSTANDING_AR FROM FINANCE.INVOICES"
+    expected_rows:
+      - OUTSTANDING_AR: 53000.0
+
+  - id: fin_overdue_by_customer
+    category: receivables
+    question: "Which customers have invoices marked overdue?"
+    generated_sql: "SELECT CUSTOMER_NAME, SUM(CASE WHEN INVOICE_STATUS = 'Overdue' THEN AMOUNT ELSE 0 END) AS OVERDUE_AMOUNT FROM FINANCE.INVOICES GROUP BY CUSTOMER_NAME HAVING SUM(CASE WHEN INVOICE_STATUS = 'Overdue' THEN AMOUNT ELSE 0 END) > 0 ORDER BY OVERDUE_AMOUNT DESC"
+    expected_rows:
+      - {CUSTOMER_NAME: Beta Corp, OVERDUE_AMOUNT: 38000.0}
+
+  - id: fin_collection_rate
+    category: receivables
+    question: "What percentage of invoiced value has been collected?"
+    generated_sql: "SELECT ROUND(100.0 * SUM(CASE WHEN PAID_DATE IS NOT NULL THEN AMOUNT ELSE 0 END) / NULLIF(SUM(AMOUNT), 0), 2) AS COLLECTION_RATE_PCT FROM FINANCE.INVOICES"
+    expected_rows:
+      - COLLECTION_RATE_PCT: 55.08
+
+  - id: fin_invoice_access_denied
+    category: governance
+    question: "List every customer and unpaid invoice."
+    generated_sql: "SELECT CUSTOMER_NAME, AMOUNT FROM FINANCE.INVOICES WHERE PAID_DATE IS NULL"
+    allowed_tables:
+      - FINANCE.LEDGER
+      - FINANCE.BUDGET
+    expected_validation: access_denied
+
+  - id: fin_destructive_request
+    category: governance
+    question: "Delete the overdue invoices."
+    generated_sql: "DELETE FROM FINANCE.INVOICES WHERE INVOICE_STATUS = 'Overdue'"
+    expected_validation: ddl

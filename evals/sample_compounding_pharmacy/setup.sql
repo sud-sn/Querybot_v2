@@ -1,0 +1,71 @@
+ATTACH DATABASE ':memory:' AS PHARMACY;
+
+CREATE TABLE PHARMACY.COMPOUNDS (
+    COMPOUND_ID INTEGER PRIMARY KEY,
+    COMPOUND_NAME VARCHAR NOT NULL,
+    DOSAGE_FORM VARCHAR NOT NULL,
+    LIST_PRICE DECIMAL(12, 2) NOT NULL
+);
+
+CREATE TABLE PHARMACY.BATCHES (
+    BATCH_ID INTEGER PRIMARY KEY,
+    COMPOUND_ID INTEGER NOT NULL,
+    BATCH_DATE DATE NOT NULL,
+    PLANNED_QTY INTEGER NOT NULL,
+    PRODUCED_QTY INTEGER NOT NULL,
+    REJECTED_QTY INTEGER NOT NULL,
+    INGREDIENT_COST DECIMAL(12, 2) NOT NULL,
+    LABOR_COST DECIMAL(12, 2) NOT NULL,
+    BATCH_STATUS VARCHAR NOT NULL
+);
+
+CREATE TABLE PHARMACY.PRESCRIPTIONS (
+    RX_ID INTEGER PRIMARY KEY,
+    PATIENT_ID INTEGER NOT NULL,
+    COMPOUND_ID INTEGER NOT NULL,
+    ORDERED_DATE DATE NOT NULL,
+    DISPENSED_DATE DATE,
+    RX_STATUS VARCHAR NOT NULL,
+    CHARGE_AMOUNT DECIMAL(12, 2) NOT NULL
+);
+
+CREATE TABLE PHARMACY.PATIENTS (
+    PATIENT_ID INTEGER PRIMARY KEY,
+    FULL_NAME VARCHAR NOT NULL,
+    BIRTH_DATE DATE NOT NULL,
+    CITY VARCHAR NOT NULL
+);
+
+INSERT INTO PHARMACY.COMPOUNDS VALUES
+    (1, 'Dermal Relief Cream', 'Cream', 800),
+    (2, 'Hormone Balance Capsule', 'Capsule', 1200),
+    (3, 'Pediatric Suspension', 'Suspension', 600);
+
+INSERT INTO PHARMACY.BATCHES VALUES
+    (1, 1, '2026-06-01', 50, 48, 2, 1200, 500, 'Released'),
+    (2, 1, '2026-06-15', 60, 57, 3, 1400, 550, 'Released'),
+    (3, 2, '2026-06-03', 40, 38, 2, 1800, 700, 'Released'),
+    (4, 2, '2026-06-17', 45, 43, 2, 2000, 750, 'Released'),
+    (5, 3, '2026-06-05', 70, 65, 5, 1300, 600, 'Released'),
+    (6, 3, '2026-06-19', 80, 76, 4, 1450, 650, 'Quarantined');
+
+INSERT INTO PHARMACY.PATIENTS VALUES
+    (1, 'Patient One', '1980-01-01', 'London'),
+    (2, 'Patient Two', '1992-05-12', 'Leeds'),
+    (3, 'Patient Three', '1975-09-20', 'London'),
+    (4, 'Patient Four', '2015-03-03', 'Manchester'),
+    (5, 'Patient Five', '1988-07-15', 'Bristol'),
+    (6, 'Patient Six', '1969-11-10', 'Birmingham');
+
+INSERT INTO PHARMACY.PRESCRIPTIONS VALUES
+    (1, 1, 1, '2026-06-01', '2026-06-03', 'Dispensed', 800),
+    (2, 2, 1, '2026-06-02', '2026-06-04', 'Dispensed', 800),
+    (3, 1, 2, '2026-06-03', '2026-06-06', 'Dispensed', 1200),
+    (4, 3, 2, '2026-06-04', '2026-06-05', 'Dispensed', 1200),
+    (5, 4, 3, '2026-06-05', '2026-06-07', 'Dispensed', 600),
+    (6, 2, 3, '2026-06-06', '2026-06-10', 'Dispensed', 600),
+    (7, 5, 3, '2026-06-07', '2026-06-09', 'Dispensed', 600),
+    (8, 6, 1, '2026-06-08', NULL, 'Cancelled', 800),
+    (9, 3, 1, '2026-06-08', '2026-06-09', 'Dispensed', 800),
+    (10, 4, 2, '2026-06-09', '2026-06-12', 'Dispensed', 1200),
+    (11, 6, 2, '2026-06-10', NULL, 'Pending', 1200);

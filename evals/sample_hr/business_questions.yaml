@@ -1,0 +1,173 @@
+cases:
+  - id: active_employee_count
+    category: workforce
+    question: "How many employees are currently active?"
+    generated_sql: "SELECT COUNT(*) AS ACTIVE_EMPLOYEES FROM HR.EMPLOYEES WHERE STATUS = 'Active'"
+    expected_rows:
+      - ACTIVE_EMPLOYEES: 11
+
+  - id: active_count_by_department
+    category: workforce
+    question: "Show active employee count by department."
+    generated_sql: "SELECT d.DEPARTMENT_NAME, COUNT(*) AS EMPLOYEE_COUNT FROM HR.EMPLOYEES e JOIN HR.DEPARTMENTS d ON e.DEPARTMENT_ID = d.DEPARTMENT_ID WHERE e.STATUS = 'Active' GROUP BY d.DEPARTMENT_NAME ORDER BY EMPLOYEE_COUNT DESC, d.DEPARTMENT_NAME"
+    order_matters: true
+    expected_rows:
+      - {DEPARTMENT_NAME: Engineering, EMPLOYEE_COUNT: 4}
+      - {DEPARTMENT_NAME: Sales, EMPLOYEE_COUNT: 3}
+      - {DEPARTMENT_NAME: Finance, EMPLOYEE_COUNT: 2}
+      - {DEPARTMENT_NAME: HR, EMPLOYEE_COUNT: 1}
+
+  - id: average_salary_department
+    category: compensation
+    question: "What is the average active salary in each department?"
+    generated_sql: "SELECT d.DEPARTMENT_NAME, ROUND(AVG(e.SALARY), 2) AS AVG_SALARY FROM HR.EMPLOYEES e JOIN HR.DEPARTMENTS d ON e.DEPARTMENT_ID = d.DEPARTMENT_ID WHERE e.STATUS = 'Active' GROUP BY d.DEPARTMENT_NAME ORDER BY AVG_SALARY DESC"
+    order_matters: true
+    expected_rows:
+      - {DEPARTMENT_NAME: Engineering, AVG_SALARY: 91750.0}
+      - {DEPARTMENT_NAME: Finance, AVG_SALARY: 91000.0}
+      - {DEPARTMENT_NAME: Sales, AVG_SALARY: 68000.0}
+      - {DEPARTMENT_NAME: HR, AVG_SALARY: 65000.0}
+
+  - id: active_payroll_total
+    category: compensation
+    question: "What is our total annual payroll for active employees?"
+    generated_sql: "SELECT COUNT(*) AS MATCHED_COUNT, COUNT(SALARY) AS NON_NULL_COUNT, COALESCE(SUM(SALARY), 0) AS ACTIVE_PAYROLL FROM HR.EMPLOYEES WHERE STATUS = 'Active'"
+    expected_rows:
+      - {MATCHED_COUNT: 11, NON_NULL_COUNT: 10, ACTIVE_PAYROLL: 787000.0}
+
+  - id: top_paid_employees
+    category: compensation
+    question: "Who are the three highest paid active employees?"
+    generated_sql: "SELECT EMPLOYEE_NAME, SALARY FROM HR.EMPLOYEES WHERE STATUS = 'Active' AND SALARY IS NOT NULL ORDER BY SALARY DESC FETCH FIRST 3 ROWS ONLY"
+    order_matters: true
+    expected_rows:
+      - {EMPLOYEE_NAME: Lily, SALARY: 102000.0}
+      - {EMPLOYEE_NAME: Carla, SALARY: 95000.0}
+      - {EMPLOYEE_NAME: Elena, SALARY: 91000.0}
+
+  - id: active_london_count
+    category: workforce
+    question: "How many active employees are based in London?"
+    generated_sql: "SELECT COUNT(*) AS EMPLOYEE_COUNT FROM HR.EMPLOYEES WHERE STATUS = 'Active' AND CITY = 'London'"
+    expected_rows:
+      - EMPLOYEE_COUNT: 5
+
+  - id: hires_by_year
+    category: trend
+    question: "Show the hiring trend by year."
+    generated_sql: "SELECT YEAR(HIRE_DATE) AS HIRE_YEAR, COUNT(*) AS HIRES FROM HR.EMPLOYEES GROUP BY YEAR(HIRE_DATE) ORDER BY HIRE_YEAR"
+    order_matters: true
+    expected_rows:
+      - {HIRE_YEAR: 2018, HIRES: 1}
+      - {HIRE_YEAR: 2019, HIRES: 1}
+      - {HIRE_YEAR: 2020, HIRES: 1}
+      - {HIRE_YEAR: 2021, HIRES: 2}
+      - {HIRE_YEAR: 2022, HIRES: 2}
+      - {HIRE_YEAR: 2023, HIRES: 1}
+      - {HIRE_YEAR: 2024, HIRES: 1}
+      - {HIRE_YEAR: 2025, HIRES: 2}
+      - {HIRE_YEAR: 2026, HIRES: 1}
+
+  - id: departments_without_active_staff
+    category: workforce
+    question: "Which departments currently have no active employees?"
+    generated_sql: "SELECT d.DEPARTMENT_NAME FROM HR.DEPARTMENTS d LEFT JOIN HR.EMPLOYEES e ON d.DEPARTMENT_ID = e.DEPARTMENT_ID AND e.STATUS = 'Active' WHERE e.EMPLOYEE_ID IS NULL ORDER BY d.DEPARTMENT_NAME"
+    expected_rows:
+      - DEPARTMENT_NAME: Marketing
+
+  - id: missing_salary
+    category: data_quality
+    question: "Which active employees are missing salary information?"
+    generated_sql: "SELECT EMPLOYEE_NAME FROM HR.EMPLOYEES WHERE STATUS = 'Active' AND SALARY IS NULL ORDER BY EMPLOYEE_NAME"
+    expected_rows:
+      - EMPLOYEE_NAME: Ivan
+
+  - id: missing_department
+    category: data_quality
+    question: "Which active employees are not assigned to a department?"
+    generated_sql: "SELECT EMPLOYEE_NAME FROM HR.EMPLOYEES WHERE STATUS = 'Active' AND DEPARTMENT_ID IS NULL ORDER BY EMPLOYEE_NAME"
+    expected_rows:
+      - EMPLOYEE_NAME: Karim
+
+  - id: no_result_city
+    category: filters
+    question: "List active employees based in Tokyo."
+    generated_sql: "SELECT EMPLOYEE_NAME FROM HR.EMPLOYEES WHERE STATUS = 'Active' AND CITY = 'Tokyo' ORDER BY EMPLOYEE_NAME"
+    expected_rows: []
+
+  - id: absent_employee_count
+    category: attendance
+    question: "How many employees were absent at least once this month?"
+    generated_sql: "SELECT COUNT(DISTINCT EMPLOYEE_ID) AS ABSENT_EMPLOYEES FROM HR.ATTENDANCE WHERE ATTENDANCE_STATUS = 'Absent' AND WORK_DATE >= DATE '2026-06-01' AND WORK_DATE < DATE '2026-07-01'"
+    expected_rows:
+      - ABSENT_EMPLOYEES: 3
+
+  - id: absences_by_department
+    category: attendance
+    question: "Show June absences by department."
+    generated_sql: "SELECT d.DEPARTMENT_NAME, COUNT(*) AS ABSENCE_DAYS FROM HR.ATTENDANCE a JOIN HR.EMPLOYEES e ON a.EMPLOYEE_ID = e.EMPLOYEE_ID JOIN HR.DEPARTMENTS d ON e.DEPARTMENT_ID = d.DEPARTMENT_ID WHERE a.ATTENDANCE_STATUS = 'Absent' AND a.WORK_DATE >= DATE '2026-06-01' AND a.WORK_DATE < DATE '2026-07-01' GROUP BY d.DEPARTMENT_NAME ORDER BY ABSENCE_DAYS DESC, d.DEPARTMENT_NAME"
+    order_matters: true
+    expected_rows:
+      - {DEPARTMENT_NAME: Finance, ABSENCE_DAYS: 2}
+      - {DEPARTMENT_NAME: Engineering, ABSENCE_DAYS: 1}
+      - {DEPARTMENT_NAME: Sales, ABSENCE_DAYS: 1}
+
+  - id: highest_hours
+    category: attendance
+    question: "Who logged the most hours in June?"
+    generated_sql: "SELECT e.EMPLOYEE_NAME, SUM(a.HOURS_WORKED) AS TOTAL_HOURS FROM HR.EMPLOYEES e JOIN HR.ATTENDANCE a ON e.EMPLOYEE_ID = a.EMPLOYEE_ID WHERE a.WORK_DATE >= DATE '2026-06-01' AND a.WORK_DATE < DATE '2026-07-01' GROUP BY e.EMPLOYEE_NAME ORDER BY TOTAL_HOURS DESC, e.EMPLOYEE_NAME FETCH FIRST 3 ROWS ONLY"
+    order_matters: true
+    expected_rows:
+      - {EMPLOYEE_NAME: Lily, TOTAL_HOURS: 20.0}
+      - {EMPLOYEE_NAME: Carla, TOTAL_HOURS: 18.0}
+      - {EMPLOYEE_NAME: Alice, TOTAL_HOURS: 16.0}
+
+  - id: attendance_status_mix
+    category: attendance
+    question: "What is the attendance status breakdown for June?"
+    generated_sql: "SELECT ATTENDANCE_STATUS, COUNT(*) AS RECORD_COUNT FROM HR.ATTENDANCE WHERE WORK_DATE >= DATE '2026-06-01' AND WORK_DATE < DATE '2026-07-01' GROUP BY ATTENDANCE_STATUS ORDER BY RECORD_COUNT DESC, ATTENDANCE_STATUS"
+    order_matters: true
+    expected_rows:
+      - {ATTENDANCE_STATUS: Present, RECORD_COUNT: 17}
+      - {ATTENDANCE_STATUS: Absent, RECORD_COUNT: 4}
+      - {ATTENDANCE_STATUS: Leave, RECORD_COUNT: 1}
+
+  - id: salary_access_denied
+    category: governance
+    question: "What is the average salary for the company?"
+    generated_sql: "SELECT AVG(SALARY) AS AVG_SALARY FROM HR.EMPLOYEES"
+    allowed_tables:
+      - HR.DEPARTMENTS
+      - HR.ATTENDANCE
+    expected_validation: access_denied
+
+  - id: destructive_request
+    category: governance
+    question: "Delete all inactive employees."
+    generated_sql: "DELETE FROM HR.EMPLOYEES WHERE STATUS = 'Inactive'"
+    expected_validation: ddl
+
+  - id: unknown_table
+    category: governance
+    question: "Show contractor count."
+    generated_sql: "SELECT COUNT(*) AS CONTRACTOR_COUNT FROM HR.CONTRACTORS"
+    expected_validation: unknown_table
+
+  - id: status_breakdown
+    category: workforce
+    question: "Give me the employee status breakdown."
+    generated_sql: "SELECT STATUS, COUNT(*) AS EMPLOYEE_COUNT FROM HR.EMPLOYEES GROUP BY STATUS ORDER BY EMPLOYEE_COUNT DESC"
+    order_matters: true
+    expected_rows:
+      - {STATUS: Active, EMPLOYEE_COUNT: 11}
+      - {STATUS: Inactive, EMPLOYEE_COUNT: 1}
+
+  - id: recent_hires
+    category: filters
+    question: "Who joined from January 2025 onward?"
+    generated_sql: "SELECT EMPLOYEE_NAME, HIRE_DATE FROM HR.EMPLOYEES WHERE HIRE_DATE >= DATE '2025-01-01' ORDER BY HIRE_DATE, EMPLOYEE_NAME"
+    order_matters: true
+    expected_rows:
+      - {EMPLOYEE_NAME: Hana, HIRE_DATE: "2025-01-12"}
+      - {EMPLOYEE_NAME: Julia, HIRE_DATE: "2025-04-01"}
+      - {EMPLOYEE_NAME: Karim, HIRE_DATE: "2026-05-18"}
