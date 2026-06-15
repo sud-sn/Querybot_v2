@@ -1,0 +1,38 @@
+{
+  "DEMO.FINANCE.LEDGER": {
+    "database": "DEMO",
+    "schema": "FINANCE",
+    "table": "LEDGER",
+    "columns": [
+      {"name": "ENTRY_ID", "type": "integer"},
+      {"name": "PERIOD", "type": "varchar"},
+      {"name": "ACCOUNT_TYPE", "type": "varchar"},
+      {"name": "CATEGORY", "type": "varchar"},
+      {"name": "AMOUNT", "type": "decimal"}
+    ]
+  },
+  "DEMO.FINANCE.BUDGET": {
+    "database": "DEMO",
+    "schema": "FINANCE",
+    "table": "BUDGET",
+    "columns": [
+      {"name": "PERIOD", "type": "varchar"},
+      {"name": "CATEGORY", "type": "varchar"},
+      {"name": "BUDGET_AMOUNT", "type": "decimal"}
+    ]
+  },
+  "DEMO.FINANCE.INVOICES": {
+    "database": "DEMO",
+    "schema": "FINANCE",
+    "table": "INVOICES",
+    "columns": [
+      {"name": "INVOICE_ID", "type": "integer"},
+      {"name": "CUSTOMER_NAME", "type": "varchar"},
+      {"name": "ISSUE_DATE", "type": "date"},
+      {"name": "DUE_DATE", "type": "date"},
+      {"name": "PAID_DATE", "type": "date"},
+      {"name": "AMOUNT", "type": "decimal"},
+      {"name": "INVOICE_STATUS", "type": "varchar"}
+    ]
+  }
+}

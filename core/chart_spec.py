@@ -206,12 +206,14 @@ def _column_roles(rows: list[dict], column_formats: dict | None = None) -> dict[
     for col in rows[0].keys():
         vals = _values(rows, col)
         numeric = _is_numeric_col(rows, col)
+        explicit_format = explicit_formats.get(_norm(col))
+        explicit_measure = explicit_format in {"currency", "percentage", "number"}
         temporal = (
-            _format_for_column(col, explicit_formats) == "date"
+            explicit_format == "date"
             or _TEMPORAL_NAME_RE.search(col or "") is not None
             or _looks_temporal_values(vals)
         )
-        identifier = _looks_identifier(rows, col) and not temporal
+        identifier = _looks_identifier(rows, col) and not temporal and not (numeric and explicit_measure)
         if temporal:
             role = "temporal"
             dtype = "temporal"

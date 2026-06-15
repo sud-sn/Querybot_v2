@@ -1178,15 +1178,21 @@ function _chartFormatFor(payload, col) {
     if (_chartNormKey(raw) === key && meta?.format) return String(meta.format).toLowerCase();
   }
   if (/percent|percentage|pct|rate|ratio|share/i.test(String(col))) return 'percentage';
-  if (/revenue|sales|amount|amt|charge|cost|cogs|price|margin|profit|usd|value|balance|total/i.test(String(col))) return 'currency';
+  if (/revenue|sales|amount|amt|charge|cost|cogs|price|profit|salary|usd|balance/i.test(String(col))) return 'currency';
   return 'number';
 }
 function _fmtChartValue(v, fmt, compact = false) {
+  if (v === null || v === undefined || v === '') return '—';
   const n = Number(v);
   if (isNaN(n)) return String(v ?? '');
   if (fmt === 'currency') return compact ? ('$' + _fmtNum(n)) : ('$' + n.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}));
   if (fmt === 'percentage') return n.toLocaleString('en-US', {maximumFractionDigits:2}) + '%';
   return compact ? _fmtNum(n) : n.toLocaleString(undefined, {maximumFractionDigits:4});
+}
+function _chartNumber(v) {
+  if (v === null || v === undefined || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
 }
 function renderChartWarnings(payload) {
   const warnings = Array.isArray(payload?.chart_warnings) ? payload.chart_warnings : [];
@@ -1251,7 +1257,7 @@ function buildChartOption(payload) {
   if (type === 'pie' || type === 'donut') {
     const pieData = rows.map(r => ({
       name:  String((xKey && r?.[xKey]) ?? ''),
-      value: Number((yKey && r?.[yKey]) ?? 0),
+      value: _chartNumber(yKey ? r?.[yKey] : null),
     }));
     const innerR = type === 'donut' ? '42%' : '0%';
     const outerR = '70%';
@@ -1325,7 +1331,7 @@ function buildChartOption(payload) {
     const y2 = yKeys[1];
     option.xAxis = { type:'value', name: yKey, nameTextStyle:{color:axisColor}, axisLabel:{color:axisColor,formatter:v=>valueFmt(v,yKey,true)}, splitLine:{show:true,lineStyle:{color:gridColor}}, axisTick:{show:false}, axisLine:{show:false} };
     option.yAxis = { type:'value', name: y2,  nameTextStyle:{color:axisColor}, axisLabel:{color:axisColor,formatter:v=>valueFmt(v,y2,true)}, splitLine:{show:true,lineStyle:{color:gridColor}}, axisTick:{show:false}, axisLine:{show:false} };
-    option.series = [{ type:'scatter', symbolSize:12, data: rows.map(r=>[Number(r?.[yKey]??0),Number(r?.[y2]??0),String(xKey ? (r?.[xKey]??'') : '')]), itemStyle:{color:colors[0], opacity:.8} }];
+    option.series = [{ type:'scatter', symbolSize:12, data: rows.map(r=>[_chartNumber(r?.[yKey]),_chartNumber(r?.[y2]),String(xKey ? (r?.[xKey]??'') : '')]), itemStyle:{color:colors[0], opacity:.8} }];
     option.tooltip.formatter = p => `<strong>${escHtml(String(p.value?.[2]??''))}</strong><br/>${escHtml(String(yKey||'X'))}: <strong>${valueFmt(p.value?.[0], yKey)}</strong><br/>${escHtml(String(y2||'Y'))}: <strong>${valueFmt(p.value?.[1], y2)}</strong>`;
     return option;
   }
@@ -1346,7 +1352,7 @@ function buildChartOption(payload) {
         };
     option.series = yKeys.map((k, i) => ({
       name: k, type: 'line', smooth: true,
-      data: rows.map(r => Number(r?.[k] ?? 0)),
+      data: rows.map(r => _chartNumber(r?.[k])),
       symbolSize: rows.length <= 20 ? 6 : 0,
       lineStyle: { width: 2.5, color: colors[i % colors.length] },
       itemStyle: { color: colors[i % colors.length] },
@@ -1380,7 +1386,7 @@ function buildChartOption(payload) {
       : c;
     return {
       name: k, type: 'bar',
-      data: rows.map(r => Number(r?.[k] ?? 0)),
+      data: rows.map(r => _chartNumber(r?.[k])),
       barMaxWidth: horizontal ? 20 : (isMulti ? 28 : 50),
       itemStyle: {
         borderRadius: horizontal ? [0, 8, 8, 0] : [8, 8, 0, 0],
@@ -1393,7 +1399,11 @@ function buildChartOption(payload) {
 }
 
 function renderChartInto(chartEl, payload){
-  if (!chartEl || !payload || !window.echarts) return;
+  if (!chartEl || !payload) return;
+  if (!window.echarts) {
+    chartEl.innerHTML = `<div class="msg-system" style="margin:0">Chart library failed to load. Refresh the page and try again.</div>`;
+    return;
+  }
   try {
     const existing = echarts.getInstanceByDom(chartEl);
     if (existing) existing.dispose();

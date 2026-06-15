@@ -1,0 +1,40 @@
+{
+  "DEMO.MFG.PRODUCTS": {
+    "database": "DEMO",
+    "schema": "MFG",
+    "table": "PRODUCTS",
+    "columns": [
+      {"name": "PRODUCT_ID", "type": "integer"},
+      {"name": "PRODUCT_NAME", "type": "varchar"},
+      {"name": "UNIT_PRICE", "type": "decimal"}
+    ]
+  },
+  "DEMO.MFG.PRODUCTION_RUNS": {
+    "database": "DEMO",
+    "schema": "MFG",
+    "table": "PRODUCTION_RUNS",
+    "columns": [
+      {"name": "RUN_ID", "type": "integer"},
+      {"name": "PRODUCT_ID", "type": "integer"},
+      {"name": "RUN_DATE", "type": "date"},
+      {"name": "PLANNED_UNITS", "type": "integer"},
+      {"name": "GOOD_UNITS", "type": "integer"},
+      {"name": "SCRAP_UNITS", "type": "integer"},
+      {"name": "DIRECT_MATERIAL_COST", "type": "decimal"},
+      {"name": "LABOR_COST", "type": "decimal"},
+      {"name": "DOWNTIME_MINUTES", "type": "integer"}
+    ]
+  },
+  "DEMO.MFG.SALES": {
+    "database": "DEMO",
+    "schema": "MFG",
+    "table": "SALES",
+    "columns": [
+      {"name": "ORDER_ID", "type": "integer"},
+      {"name": "PRODUCT_ID", "type": "integer"},
+      {"name": "SALE_DATE", "type": "date"},
+      {"name": "QUANTITY", "type": "integer"},
+      {"name": "REVENUE", "type": "decimal"}
+    ]
+  }
+}

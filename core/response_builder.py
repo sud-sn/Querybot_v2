@@ -134,7 +134,7 @@ def _columns_for_metric_format(
         return []
 
     fmt = _normalise_result_format(metric.get("result_format"))
-    if fmt == "number":
+    if fmt == "number" and not strict:
         return []
 
     headers = list(rows[0].keys())
@@ -218,7 +218,7 @@ def build_column_formats(
         if not isinstance(metric, dict):
             continue
         fmt = _normalise_result_format(metric.get("result_format"))
-        if fmt == "number":
+        if fmt == "number" and not strict:
             continue
         for header in _columns_for_metric_format(rows, metric, strict=strict):
             formats.setdefault(header, fmt)

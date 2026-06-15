@@ -1,0 +1,106 @@
+cases:
+  - id: bank_active_customers
+    category: customers
+    question: "How many customers are currently active?"
+    generated_sql: "SELECT COUNT(*) AS ACTIVE_CUSTOMERS FROM BANKING.CUSTOMERS WHERE CUSTOMER_STATUS = 'Active'"
+    expected_rows:
+      - ACTIVE_CUSTOMERS: 4
+
+  - id: bank_retention_rate
+    category: retention
+    question: "What was customer retention for the opening customer base through June 2026?"
+    generated_sql: "SELECT ROUND(100.0 * SUM(CASE WHEN JOIN_DATE < DATE '2026-01-01' AND (CHURN_DATE IS NULL OR CHURN_DATE > DATE '2026-06-30') THEN 1 ELSE 0 END) / NULLIF(SUM(CASE WHEN JOIN_DATE < DATE '2026-01-01' THEN 1 ELSE 0 END), 0), 2) AS RETENTION_RATE_PCT FROM BANKING.CUSTOMERS"
+    expected_rows:
+      - RETENTION_RATE_PCT: 60.0
+
+  - id: bank_attrition_rate
+    category: attrition
+    question: "What was customer attrition in the first half of 2026?"
+    generated_sql: "SELECT ROUND(100.0 * SUM(CASE WHEN JOIN_DATE < DATE '2026-01-01' AND CHURN_DATE >= DATE '2026-01-01' AND CHURN_DATE <= DATE '2026-06-30' THEN 1 ELSE 0 END) / NULLIF(SUM(CASE WHEN JOIN_DATE < DATE '2026-01-01' THEN 1 ELSE 0 END), 0), 2) AS ATTRITION_RATE_PCT FROM BANKING.CUSTOMERS"
+    expected_rows:
+      - ATTRITION_RATE_PCT: 40.0
+
+  - id: bank_new_customers
+    category: acquisition
+    question: "How many new customers joined in the first half of 2026?"
+    generated_sql: "SELECT COUNT(*) AS NEW_CUSTOMERS FROM BANKING.CUSTOMERS WHERE JOIN_DATE >= DATE '2026-01-01' AND JOIN_DATE <= DATE '2026-06-30'"
+    expected_rows:
+      - NEW_CUSTOMERS: 1
+
+  - id: bank_active_deposits
+    category: deposits
+    question: "What is the total balance in active deposit accounts?"
+    generated_sql: "SELECT SUM(CASE WHEN ACCOUNT_STATUS = 'Active' THEN BALANCE ELSE 0 END) AS ACTIVE_DEPOSITS FROM BANKING.ACCOUNTS"
+    expected_rows:
+      - ACTIVE_DEPOSITS: 190000.0
+
+  - id: bank_deposits_by_type
+    category: deposits
+    question: "Show active balances by account type."
+    generated_sql: "SELECT ACCOUNT_TYPE, SUM(CASE WHEN ACCOUNT_STATUS = 'Active' THEN BALANCE ELSE 0 END) AS BALANCE FROM BANKING.ACCOUNTS GROUP BY ACCOUNT_TYPE HAVING SUM(CASE WHEN ACCOUNT_STATUS = 'Active' THEN BALANCE ELSE 0 END) > 0 ORDER BY BALANCE DESC"
+    order_matters: true
+    expected_rows:
+      - {ACCOUNT_TYPE: Savings, BALANCE: 100000.0}
+      - {ACCOUNT_TYPE: Business, BALANCE: 80000.0}
+      - {ACCOUNT_TYPE: Checking, BALANCE: 10000.0}
+
+  - id: bank_loan_exposure
+    category: lending
+    question: "Show outstanding loan exposure by loan type."
+    generated_sql: "SELECT LOAN_TYPE, SUM(OUTSTANDING_BALANCE) AS OUTSTANDING_BALANCE FROM BANKING.LOANS GROUP BY LOAN_TYPE ORDER BY OUTSTANDING_BALANCE DESC"
+    order_matters: true
+    expected_rows:
+      - {LOAN_TYPE: Home, OUTSTANDING_BALANCE: 450000.0}
+      - {LOAN_TYPE: Business, OUTSTANDING_BALANCE: 180000.0}
+      - {LOAN_TYPE: Personal, OUTSTANDING_BALANCE: 15000.0}
+
+  - id: bank_nonperforming_ratio
+    category: risk
+    question: "What percentage of outstanding loans is delinquent or in default?"
+    generated_sql: "SELECT ROUND(100.0 * SUM(CASE WHEN LOAN_STATUS IN ('Delinquent', 'Default') THEN OUTSTANDING_BALANCE ELSE 0 END) / NULLIF(SUM(OUTSTANDING_BALANCE), 0), 2) AS NONPERFORMING_BALANCE_PCT FROM BANKING.LOANS"
+    expected_rows:
+      - NONPERFORMING_BALANCE_PCT: 2.33
+
+  - id: bank_at_risk_customers
+    category: risk
+    question: "Which customers have loans more than 30 days past due?"
+    generated_sql: "SELECT c.CUSTOMER_NAME, l.LOAN_TYPE, l.OUTSTANDING_BALANCE, l.DAYS_PAST_DUE FROM BANKING.LOANS l JOIN BANKING.CUSTOMERS c ON l.CUSTOMER_ID = c.CUSTOMER_ID WHERE l.DAYS_PAST_DUE > 30 ORDER BY l.DAYS_PAST_DUE DESC"
+    order_matters: true
+    expected_rows:
+      - {CUSTOMER_NAME: Elena Green, LOAN_TYPE: Personal, OUTSTANDING_BALANCE: 5000.0, DAYS_PAST_DUE: 120}
+      - {CUSTOMER_NAME: Bob Smith, LOAN_TYPE: Personal, OUTSTANDING_BALANCE: 10000.0, DAYS_PAST_DUE: 45}
+
+  - id: bank_profit_by_segment
+    category: profitability
+    question: "Show customer profitability by segment."
+    generated_sql: "SELECT c.SEGMENT, SUM(p.INTEREST_INCOME + p.FEE_INCOME - p.SERVICE_COST - p.CREDIT_LOSS) AS NET_PROFIT FROM BANKING.CUSTOMER_PROFIT p JOIN BANKING.CUSTOMERS c ON p.CUSTOMER_ID = c.CUSTOMER_ID GROUP BY c.SEGMENT ORDER BY NET_PROFIT DESC"
+    order_matters: true
+    expected_rows:
+      - {SEGMENT: SME, NET_PROFIT: 8200.0}
+      - {SEGMENT: Premium, NET_PROFIT: 8000.0}
+      - {SEGMENT: Retail, NET_PROFIT: 100.0}
+
+  - id: bank_loss_customers
+    category: profitability
+    question: "Which customers generated a loss in the first half?"
+    generated_sql: "SELECT c.CUSTOMER_NAME, p.INTEREST_INCOME + p.FEE_INCOME - p.SERVICE_COST - p.CREDIT_LOSS AS NET_PROFIT FROM BANKING.CUSTOMER_PROFIT p JOIN BANKING.CUSTOMERS c ON p.CUSTOMER_ID = c.CUSTOMER_ID WHERE p.INTEREST_INCOME + p.FEE_INCOME - p.SERVICE_COST - p.CREDIT_LOSS < 0 ORDER BY NET_PROFIT"
+    order_matters: true
+    expected_rows:
+      - {CUSTOMER_NAME: Elena Green, NET_PROFIT: -2900.0}
+      - {CUSTOMER_NAME: Bob Smith, NET_PROFIT: -1500.0}
+
+  - id: bank_customer_pii_denied
+    category: governance
+    question: "Give me all customer names and risk ratings."
+    generated_sql: "SELECT CUSTOMER_NAME, RISK_RATING FROM BANKING.CUSTOMERS"
+    allowed_tables:
+      - BANKING.ACCOUNTS
+      - BANKING.LOANS
+      - BANKING.CUSTOMER_PROFIT
+    expected_validation: access_denied
+
+  - id: bank_destructive_request
+    category: governance
+    question: "Close every delinquent customer's accounts."
+    generated_sql: "UPDATE BANKING.ACCOUNTS SET ACCOUNT_STATUS = 'Closed' WHERE CUSTOMER_ID IN (SELECT CUSTOMER_ID FROM BANKING.LOANS WHERE LOAN_STATUS = 'Delinquent')"
+    expected_validation: ddl

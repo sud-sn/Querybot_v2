@@ -1,0 +1,54 @@
+{
+  "DEMO.PHARMACY.COMPOUNDS": {
+    "database": "DEMO",
+    "schema": "PHARMACY",
+    "table": "COMPOUNDS",
+    "columns": [
+      {"name": "COMPOUND_ID", "type": "integer"},
+      {"name": "COMPOUND_NAME", "type": "varchar"},
+      {"name": "DOSAGE_FORM", "type": "varchar"},
+      {"name": "LIST_PRICE", "type": "decimal"}
+    ]
+  },
+  "DEMO.PHARMACY.BATCHES": {
+    "database": "DEMO",
+    "schema": "PHARMACY",
+    "table": "BATCHES",
+    "columns": [
+      {"name": "BATCH_ID", "type": "integer"},
+      {"name": "COMPOUND_ID", "type": "integer"},
+      {"name": "BATCH_DATE", "type": "date"},
+      {"name": "PLANNED_QTY", "type": "integer"},
+      {"name": "PRODUCED_QTY", "type": "integer"},
+      {"name": "REJECTED_QTY", "type": "integer"},
+      {"name": "INGREDIENT_COST", "type": "decimal"},
+      {"name": "LABOR_COST", "type": "decimal"},
+      {"name": "BATCH_STATUS", "type": "varchar"}
+    ]
+  },
+  "DEMO.PHARMACY.PRESCRIPTIONS": {
+    "database": "DEMO",
+    "schema": "PHARMACY",
+    "table": "PRESCRIPTIONS",
+    "columns": [
+      {"name": "RX_ID", "type": "integer"},
+      {"name": "PATIENT_ID", "type": "integer"},
+      {"name": "COMPOUND_ID", "type": "integer"},
+      {"name": "ORDERED_DATE", "type": "date"},
+      {"name": "DISPENSED_DATE", "type": "date"},
+      {"name": "RX_STATUS", "type": "varchar"},
+      {"name": "CHARGE_AMOUNT", "type": "decimal"}
+    ]
+  },
+  "DEMO.PHARMACY.PATIENTS": {
+    "database": "DEMO",
+    "schema": "PHARMACY",
+    "table": "PATIENTS",
+    "columns": [
+      {"name": "PATIENT_ID", "type": "integer"},
+      {"name": "FULL_NAME", "type": "varchar"},
+      {"name": "BIRTH_DATE", "type": "date"},
+      {"name": "CITY", "type": "varchar"}
+    ]
+  }
+}

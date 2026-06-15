@@ -95,6 +95,39 @@ class ChartSpecTests(unittest.TestCase):
         self.assertEqual(payload["column_formats"], {"TotalRevenue": "currency"})
         self.assertEqual(payload["column_roles"]["TotalRevenue"]["format"], "currency")
 
+    def test_explicit_metric_format_prevents_numeric_result_alias_becoming_identifier(self):
+        rows = [
+            {"BusinessUnit": "North", "Result": 1001},
+            {"BusinessUnit": "South", "Result": 1002},
+        ]
+        formats = {"Result": "currency"}
+        spec = infer_chart_spec(rows, "result by business unit", column_formats=formats)
+        self.assertEqual(spec["column_roles"]["Result"]["role"], "measure")
+        self.assertEqual(detect_chart_type(rows, "result by business unit", formats), "bar")
+
+        payload = build_chart_payload(
+            rows,
+            None,
+            title="Result by business unit",
+            column_formats=formats,
+        )
+        self.assertEqual(payload["x_key"], "BusinessUnit")
+        self.assertEqual(payload["y_keys"], ["Result"])
+
+    def test_payload_preserves_missing_measure_values(self):
+        rows = [
+            {"InvoiceMonth": "2026-01", "Revenue": 100},
+            {"InvoiceMonth": "2026-02", "Revenue": None},
+            {"InvoiceMonth": "2026-03", "Revenue": 150},
+        ]
+        payload = build_chart_payload(
+            rows,
+            "line",
+            title="Monthly revenue trend",
+            question="monthly revenue trend",
+        )
+        self.assertIsNone(payload["rows"][1]["Revenue"])
+
     def test_inventory_buildup_uses_warehouse_x_and_derived_measure_y(self):
         rows = [
             {
@@ -179,6 +212,14 @@ class ChartRendererTemplateTests(unittest.TestCase):
             self.assertIn("function renderChartWarnings", src)
             self.assertIn("chart_warnings", src)
             self.assertIn("chart-warning", src)
+
+    def test_chart_renderers_preserve_missing_values_and_report_library_failure(self):
+        for path in [self.CHAT, self.DASH]:
+            src = self._read(path)
+            self.assertIn("function _chartNumber", src)
+            self.assertIn("return Number.isFinite(n) ? n : null", src)
+            self.assertIn("Chart library failed to load", src)
+            self.assertNotIn("Number(r?.[k] ?? 0)", src)
 
 
 if __name__ == "__main__":

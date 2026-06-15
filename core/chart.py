@@ -79,13 +79,17 @@ def _classify_columns(rows: list[dict]) -> tuple[list[str], list[str]]:
     return numeric_cols, text_cols
 
 
-def detect_chart_type(rows: list[dict], question: str = "") -> Optional[str]:
+def detect_chart_type(
+    rows: list[dict],
+    question: str = "",
+    column_formats: dict | None = None,
+) -> Optional[str]:
     """
     Inspect result rows and choose the safest chart type.
 
     Returns one of: bar, line, area, scatter, pie, donut, or None.
     """
-    spec = infer_chart_spec(rows, question=question)
+    spec = infer_chart_spec(rows, question=question, column_formats=column_formats)
     if not spec:
         return None
     recommended = spec.get("recommended_type")
@@ -217,7 +221,15 @@ def build_chart_payload(
     if not spec:
         return None
 
-    numeric_cols, text_cols = _classify_columns(rows)
+    roles = spec.get("column_roles") or {}
+    numeric_cols = [
+        col for col in headers
+        if roles.get(col, {}).get("role") == "measure"
+    ]
+    text_cols = [
+        col for col in headers
+        if roles.get(col, {}).get("role") in {"dimension", "identifier", "temporal"}
+    ]
     if not numeric_cols:
         return None
 
@@ -243,7 +255,7 @@ def build_chart_payload(
         for key in [x_key, *y_keys]:
             val = r.get(key)
             if key in y_keys:
-                item[key] = _to_float(val) or 0.0
+                item[key] = _to_float(val)
             else:
                 item[key] = "" if val is None else str(val)
         clean_rows.append(item)
