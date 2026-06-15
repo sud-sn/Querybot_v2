@@ -353,7 +353,7 @@ class RouteRegistrationTests(unittest.TestCase):
 
     def test_schema_scope_reaches_backend_pipeline(self):
         """Selected schema should constrain backend retrieval/validation scope."""
-        src = _read("main.py")
+        src = _read("core/query_pipeline.py")
         self.assertIn("query_scope_tables", src)
         self.assertIn("rag_filter = query_scope_tables", src)
         self.assertIn("ACTIVE SCHEMA", src)
@@ -553,7 +553,7 @@ class RouteRegistrationTests(unittest.TestCase):
         routes_src = _read("admin/routes.py")
         store_src = _read("store/config_store.py")
         db_src = _read("store/db.py")
-        main_src = _read("main.py")
+        main_src = _read("core/query_pipeline.py")
         llm_src = _read("core/llm.py")
         init_src = _read("store/__init__.py")
 

@@ -604,7 +604,6 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
                     result_scope=result_scope,
                     db_cfg=db_cfg,
                     account_id=account_id,
-                    rows=rows,           # statistical signal computation — no raw values sent to LLM
                     audit_enabled=True,
                     audit_request_id=str(audit_rid),
                 )

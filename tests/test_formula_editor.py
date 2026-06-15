@@ -29,11 +29,11 @@ TMPL_PATH  = os.path.join(os.path.dirname(__file__), "..", "admin", "templates",
 ROUTES_PATH = os.path.join(os.path.dirname(__file__), "..", "admin", "routes.py")
 
 def _tmpl():
-    with open(TMPL_PATH) as f:
+    with open(TMPL_PATH, encoding="utf-8") as f:
         return f.read()
 
 def _routes():
-    with open(ROUTES_PATH) as f:
+    with open(ROUTES_PATH, encoding="utf-8") as f:
         return f.read()
 
 

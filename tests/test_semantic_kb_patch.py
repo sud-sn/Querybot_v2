@@ -371,7 +371,7 @@ class ApplyApprovedFeedbackTests(unittest.TestCase):
                     user_comment="",
                 )
             self.assertTrue(ok, msg)
-            patched = (p / "Attendance_kb.md").read_text()
+            patched = (p / "Attendance_kb.md").read_text(encoding="utf-8")
             self.assertIn("Employee punch-in status.", patched)
 
     def test_synonym_from_use_case_added_to_kb(self):
@@ -401,7 +401,7 @@ class ApplyApprovedFeedbackTests(unittest.TestCase):
                     user_comment="",
                 )
             self.assertTrue(ok, msg)
-            content = (p / "Employee_kb.md").read_text()
+            content = (p / "Employee_kb.md").read_text(encoding="utf-8")
             # 'country' MUST appear in Business Synonyms
             in_synonyms = False
             found_country = False
@@ -436,7 +436,7 @@ class ApplyApprovedFeedbackTests(unittest.TestCase):
                     user_comment="also called home country",
                 )
             self.assertTrue(ok)
-            content = (p / "Employee_kb.md").read_text()
+            content = (p / "Employee_kb.md").read_text(encoding="utf-8")
             self.assertIn("home country", content.lower())
 
     def test_existing_kb_content_outside_field_preserved(self):
@@ -451,7 +451,7 @@ class ApplyApprovedFeedbackTests(unittest.TestCase):
                     approved_meaning="New meaning.", approved_use_case="",
                     user_comment="",
                 )
-            content = (p / "Attendance_kb.md").read_text()
+            content = (p / "Attendance_kb.md").read_text(encoding="utf-8")
             self.assertIn("Tracks daily employee attendance records", content)
             self.assertIn("late arrivals", content)
             self.assertIn("InStatus is unique to this table", content)
@@ -500,7 +500,7 @@ class ApplyApprovedFeedbackTests(unittest.TestCase):
     def test_re_embed_failure_reverts_kb_file(self):
         with tempfile.TemporaryDirectory() as d:
             p = self._make_kb_dir(d)
-            original = (p / "Attendance_kb.md").read_text()
+            original = (p / "Attendance_kb.md").read_text(encoding="utf-8")
 
             with patch("core.knowledge.re_embed_file",
                        side_effect=RuntimeError("Qdrant connection refused")):
@@ -515,14 +515,14 @@ class ApplyApprovedFeedbackTests(unittest.TestCase):
 
             self.assertFalse(ok)
             self.assertIn("reverted", msg.lower())
-            self.assertEqual(original, (p / "Attendance_kb.md").read_text())
+            self.assertEqual(original, (p / "Attendance_kb.md").read_text(encoding="utf-8"))
 
     def test_rejection_does_not_alter_kb(self):
         with tempfile.TemporaryDirectory() as d:
             p = self._make_kb_dir(d)
-            original = (p / "Attendance_kb.md").read_text()
+            original = (p / "Attendance_kb.md").read_text(encoding="utf-8")
             # Rejection doesn't call apply_approved_feedback
-            after = (p / "Attendance_kb.md").read_text()
+            after = (p / "Attendance_kb.md").read_text(encoding="utf-8")
             self.assertEqual(original, after)
 
     def test_success_message_includes_synonym_count(self):

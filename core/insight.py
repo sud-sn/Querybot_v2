@@ -1224,17 +1224,13 @@ async def generate_followup_suggestions(
     result_scope: dict,
     db_cfg: dict,
     account_id: str,
-    rows: list[dict] | None = None,
     audit_enabled: bool = False,
     audit_request_id: str = "",
 ) -> list[str]:
     """
-    Generate 3 result-aware follow-up questions.
-
-    Method 4 (templates, zero LLM) runs first — instant, statistically grounded.
-    Method 3 (constrained LLM) fills any remaining slots using only signal
-    labels + column names — raw rows never reach the LLM.
-
+    Generate 3 result-aware follow-up questions from brief metadata.
+    Reads category_breakdown and numeric_summaries from brief — raw rows never
+    reach this function (PII boundary).
     Returns [] on any failure — follow-ups are a UX enhancement, not critical.
     """
     if not brief:
@@ -1248,21 +1244,25 @@ async def generate_followup_suggestions(
     col_names = list(columns.keys()) if isinstance(columns, dict) else [str(c) for c in columns]
     col_types = columns if isinstance(columns, dict) else {}
 
+    # Build top-values context from category_breakdown — no raw row values sent to LLM
+    cat       = brief.get("category_breakdown") or {}
+    label_col = cat.get("label_column", "")
+    top_vals_ctx = ""
+    if label_col and not _is_sensitive_field(label_col):
+        top_5 = cat.get("top_5") or []
+        safe_labels = [
+            item["label"] for item in top_5
+            if item.get("label") and item["label"] != "redacted segment"
+        ]
+        if safe_labels:
+            top_vals_ctx = f"Top {label_col} values: {', '.join(str(l) for l in safe_labels[:5])}\n"
+
     # ── Tier 1: Statistical signals → instant template suggestions ───────────
     suggestions: list[str] = []
     signals: list[dict]    = []
 
-    if rows and len(rows) >= 2:
-        try:
-            from core.stat_signals import compute_signals, template_suggestions, format_signals_for_llm
-            signals     = compute_signals(rows)
-            suggestions = template_suggestions(signals, col_names)
-            log.debug("Template suggestions (%d signals): %s", len(signals), suggestions)
-        except Exception as _te:
-            log.debug("Template suggestion error (non-critical): %s", _te)
-
     if len(suggestions) >= 3:
-        return suggestions[:3]   # templates covered all 3 — no LLM needed
+        return [s for s in suggestions if s][:3]
 
     # ── Tier 2: LLM gap-fill with signal context only (no raw rows) ──────────
     needed = 3 - len(suggestions)
@@ -1272,7 +1272,7 @@ async def generate_followup_suggestions(
         from core.stat_signals import format_signals_for_llm
         signal_ctx = format_signals_for_llm(signals, col_names)
     else:
-        # No rows available — fall back to brief stats (min/max only)
+        # No statistical signals — fall back to brief stats + category labels
         num_lines = []
         for cn, stats in (brief.get("numeric_summaries") or {}).items():
             if stats.get("min") is not None:
@@ -1280,6 +1280,7 @@ async def generate_followup_suggestions(
         _unknown = "?"
         signal_ctx = (
             f"Columns: {', '.join(f'{c} ({col_types.get(c, _unknown)})' for c in col_names[:8])}\n"
+            + top_vals_ctx
             + ("\n".join(num_lines) if num_lines else "")
         )
 
@@ -1355,7 +1356,7 @@ async def generate_followup_suggestions(
                 break
 
         # Normalise: strings only, stripped, max 80 chars, max 3
-        result = suggestions[:3]
+        result = [s for s in suggestions if s][:3]
         log.debug("Follow-up suggestions (template+LLM): %s", result)
         return result
 

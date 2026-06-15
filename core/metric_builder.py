@@ -149,9 +149,7 @@ def compile_metric_builder_config(raw_config: str | dict[str, Any]) -> CompiledM
     elif aggregation == "COUNT":
         formula = f"COUNT(CASE WHEN {predicate} THEN 1 END)"
     else:
-        # COALESCE(..., 0) ensures AVG/MIN/MAX return 0 when no rows match the
-        # predicate, consistent with SUM which uses ELSE 0 for the same reason.
-        formula = f"COALESCE({aggregation}(CASE WHEN {predicate} THEN {measure} END), 0)"
+        formula = f"{aggregation}(CASE WHEN {predicate} THEN {measure} END)"
 
     clean_config = {
         "enabled": True,

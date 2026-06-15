@@ -73,24 +73,26 @@ _db.init_db()
 import store
 
 # ── Source file paths ─────────────────────────────────────────────────────────
-ROOT       = Path(__file__).resolve().parents[1]
-SYNTHETIC  = ROOT / "core"    / "synthetic.py"
-INSIGHT    = ROOT / "core"    / "insight.py"
-LLM_PY     = ROOT / "core"    / "llm.py"
-LOG_EXPORT = ROOT / "core"    / "log_export.py"
-ADAPTER    = ROOT / "gateway" / "web_adapter.py"
-MAIN_PY    = ROOT / "main.py"
-DB_PY      = ROOT / "store"   / "db.py"
-CS_PY      = ROOT / "store"   / "config_store.py"
-STORE_INIT = ROOT / "store"   / "__init__.py"
-ROUTES     = ROOT / "admin"   / "routes.py"
-SETUP_TMPL = ROOT / "admin"   / "templates" / "client_setup.html"
-CHAT_TMPL  = ROOT / "portal"  / "templates" / "portal_chat.html"
-DASH_TMPL  = ROOT / "portal"  / "templates" / "portal_dashboard.html"
+ROOT           = Path(__file__).resolve().parents[1]
+SYNTHETIC      = ROOT / "core"    / "synthetic.py"
+INSIGHT        = ROOT / "core"    / "insight.py"
+LLM_PY         = ROOT / "core"    / "llm.py"
+LOG_EXPORT     = ROOT / "core"    / "log_export.py"
+QUERY_PIPELINE = ROOT / "core"    / "query_pipeline.py"
+RESULT_RENDERER = ROOT / "core"   / "result_renderer.py"
+ADAPTER        = ROOT / "gateway" / "web_adapter.py"
+MAIN_PY        = ROOT / "main.py"
+DB_PY          = ROOT / "store"   / "db.py"
+CS_PY          = ROOT / "store"   / "config_store.py"
+STORE_INIT     = ROOT / "store"   / "__init__.py"
+ROUTES         = ROOT / "admin"   / "routes.py"
+SETUP_TMPL     = ROOT / "admin"   / "templates" / "client_setup.html"
+CHAT_TMPL      = ROOT / "portal"  / "templates" / "portal_chat.html"
+DASH_TMPL      = ROOT / "portal"  / "templates" / "portal_dashboard.html"
 
 
 def _src(path: Path) -> str:
-    return path.read_text()
+    return path.read_text(encoding="utf-8")
 
 
 def _make_adapter():
@@ -629,11 +631,11 @@ class TestSQLPromptHistoryInjection(unittest.TestCase):
 
     def test_no_history_no_block(self):
         p = self._build()
-        self.assertNotIn("Session context", p)
+        self.assertNotIn("## Session context", p)
 
     def test_empty_history_no_block(self):
         p = self._build(history=[])
-        self.assertNotIn("Session context", p)
+        self.assertNotIn("## Session context", p)
 
     def test_with_history_adds_block(self):
         hist = [{"question":"show revenue","sql":"SELECT SUM(Revenue) FROM T",
@@ -665,23 +667,23 @@ class TestSQLPromptHistoryInjection(unittest.TestCase):
 
 
 class TestMainWiringHistory(unittest.TestCase):
-    """D5 — main.py is wired correctly for history."""
+    """D5 — pipeline is wired correctly for history."""
 
     def test_get_history_called(self):
-        self.assertIn("get_history", _src(MAIN_PY))
+        self.assertIn("get_history", _src(QUERY_PIPELINE))
 
     def test_conversation_history_passed_to_prompt(self):
-        self.assertIn("conversation_history=_conv_history", _src(MAIN_PY))
+        self.assertIn("conversation_history=_conv_history", _src(QUERY_PIPELINE))
 
     def test_add_to_history_called_after_results(self):
-        src = _src(MAIN_PY)
-        idx_send    = src.find("await _send_results(")
+        src = _src(QUERY_PIPELINE)
+        idx_send    = src.find("_send_results(")
         idx_history = src.rfind("add_to_history", 0, idx_send)
         # add_to_history must appear before _send_results in the success path
         self.assertGreater(idx_send, idx_history)
 
     def test_clear_history_on_ws_connect(self):
-        self.assertIn("clear_history", _src(MAIN_PY))
+        self.assertIn("clear_history", _src(ADAPTER))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -709,16 +711,16 @@ class TestFollowupSuggestionsTemplate(unittest.TestCase):
         self.assertIn(".follow-up-wrap", _src(CHAT_TMPL))
 
     def test_generate_followup_imported_in_main(self):
-        self.assertIn("generate_followup_suggestions", _src(MAIN_PY))
+        self.assertIn("generate_followup_suggestions", _src(RESULT_RENDERER))
 
     def test_follow_up_added_to_payload(self):
-        src = _src(MAIN_PY)
+        src = _src(RESULT_RENDERER)
         self.assertIn('"follow_up_suggestions"', src)
 
     def test_only_for_portal_user(self):
-        src = _src(MAIN_PY)
+        src = _src(RESULT_RENDERER)
         idx_follow = src.find('"follow_up_suggestions"')
-        # portal_user guard is ~800 chars before the assignment — use wide window
+        # portal_user guard is before the assignment — use wide window
         region = src[max(0, idx_follow-1200):idx_follow]
         self.assertIn("portal_user", region)
 
@@ -735,32 +737,32 @@ class TestFormulaEditorPopover(unittest.TestCase):
             ROOT/"admin"/"templates"/"client_metrics.html"))
 
     def test_old_pill_toolbar_absent(self):
-        tmpl = (ROOT/"admin"/"templates"/"client_metrics.html").read_text()
+        tmpl = (ROOT/"admin"/"templates"/"client_metrics.html").read_text(encoding="utf-8")
         self.assertNotIn("formula-snippet", tmpl)
 
     def test_six_buckets_in_catalogue(self):
-        tmpl = (ROOT/"admin"/"templates"/"client_metrics.html").read_text()
+        tmpl = (ROOT/"admin"/"templates"/"client_metrics.html").read_text(encoding="utf-8")
         for bucket in ("Aggregation","Ratio & Division","Conditional",
                        "Null Handling","Type Conversion","String"):
             self.assertIn(bucket, tmpl)
 
     def test_median_azure_uses_percentile_cont(self):
-        tmpl = (ROOT/"admin"/"templates"/"client_metrics.html").read_text()
+        tmpl = (ROOT/"admin"/"templates"/"client_metrics.html").read_text(encoding="utf-8")
         self.assertIn("PERCENTILE_CONT", tmpl)
 
     def test_isnull_azure_only(self):
-        tmpl = (ROOT/"admin"/"templates"/"client_metrics.html").read_text()
+        tmpl = (ROOT/"admin"/"templates"/"client_metrics.html").read_text(encoding="utf-8")
         self.assertIn('dbs:["azure_sql"]', tmpl)
 
     def test_nvl_oracle_only(self):
-        tmpl = (ROOT/"admin"/"templates"/"client_metrics.html").read_text()
+        tmpl = (ROOT/"admin"/"templates"/"client_metrics.html").read_text(encoding="utf-8")
         self.assertIn('dbs:["oracle"]', tmpl)
 
     def test_db_type_passed_from_route(self):
         self.assertIn('"db_type": db_type', _src(ROUTES))
 
     def test_db_type_set_in_js(self):
-        self.assertIn("window._qbDbType", (ROOT/"admin"/"templates"/"client_metrics.html").read_text())
+        self.assertIn("window._qbDbType", (ROOT/"admin"/"templates"/"client_metrics.html").read_text(encoding="utf-8"))
 
 
 class TestSyntaxValidator(unittest.TestCase):
@@ -768,7 +770,7 @@ class TestSyntaxValidator(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        src   = (ROOT / "admin" / "templates" / "client_metrics.html").read_text()
+        src   = (ROOT / "admin" / "templates" / "client_metrics.html").read_text(encoding="utf-8")
         start = src.find("function updateFormulaHints")
         end   = src.find("function setStatus", start)
         cls._validator_src = src[start:end]
@@ -803,26 +805,26 @@ class TestDuplicateColumnDisambiguation(unittest.TestCase):
     """F4 — duplicate column display uses TABLE.COLUMN, insert uses bare name."""
 
     def test_dup_set_built(self):
-        tmpl = (ROOT/"admin"/"templates"/"client_metrics.html").read_text()
+        tmpl = (ROOT/"admin"/"templates"/"client_metrics.html").read_text(encoding="utf-8")
         self.assertIn("_dupCols", tmpl)
         self.assertIn("_buildDupSet", tmpl)
 
     def test_display_label_uses_table_prefix(self):
-        tmpl = (ROOT/"admin"/"templates"/"client_metrics.html").read_text()
+        tmpl = (ROOT/"admin"/"templates"/"client_metrics.html").read_text(encoding="utf-8")
         self.assertIn("_displayLabel", tmpl)
         self.assertIn('c.table+"."', tmpl)
 
 
     def test_insert_uses_bare_col(self):
         """dropdown item stores bare column name in data-col, not TABLE.COLUMN."""
-        tmpl = (ROOT/"admin"/"templates"/"client_metrics.html").read_text()
+        tmpl = (ROOT/"admin"/"templates"/"client_metrics.html").read_text(encoding="utf-8")
         # JS builds: data-col="'+c.column+'"  — bare column, not display label
         self.assertIn("data-col=", tmpl)
         # _insertSuggestion reads dataset.col (bare name) not the display label
         self.assertIn("_insertSuggestion(item.dataset.col)", tmpl)
 
     def test_insert_suggestion_uses_dataset_col(self):
-        tmpl = (ROOT/"admin"/"templates"/"client_metrics.html").read_text()
+        tmpl = (ROOT/"admin"/"templates"/"client_metrics.html").read_text(encoding="utf-8")
         self.assertIn("_insertSuggestion(item.dataset.col)", tmpl)
 
 

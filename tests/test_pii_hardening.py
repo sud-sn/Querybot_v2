@@ -241,11 +241,11 @@ class TestHistorySQLSanitization(unittest.TestCase):
         self.assertIn("SUM(Revenue)", stored_sql)
 
     def test_sanitize_method_exists(self):
-        src = open(ADAPTER_PY).read()
+        src = open(ADAPTER_PY, encoding="utf-8").read()
         self.assertIn("_sanitize_sql_for_history", src)
 
     def test_sanitize_is_static_method(self):
-        src = open(ADAPTER_PY).read()
+        src = open(ADAPTER_PY, encoding="utf-8").read()
         self.assertIn("@staticmethod", src)
 
     def test_question_is_not_sanitized(self):
@@ -285,26 +285,26 @@ class TestFollowupBriefReading(unittest.TestCase):
 
     def test_reads_columns_as_dict(self):
         """generate_followup_suggestions must handle brief.columns as a dict."""
-        src = open(INSIGHT_PY).read()
+        src = open(INSIGHT_PY, encoding="utf-8").read()
         self.assertIn("isinstance(columns, dict)", src)
 
     def test_reads_category_breakdown_not_columns_list(self):
         """Top values must come from category_breakdown, not a columns list."""
-        src = open(INSIGHT_PY).read()
+        src = open(INSIGHT_PY, encoding="utf-8").read()
         fn_start = src.find("async def generate_followup_suggestions")
         fn_body  = src[fn_start:fn_start+3000]
         self.assertIn("category_breakdown", fn_body)
 
     def test_applies_is_sensitive_field_to_label_col(self):
         """Must check _is_sensitive_field on label_col before including top values."""
-        src = open(INSIGHT_PY).read()
+        src = open(INSIGHT_PY, encoding="utf-8").read()
         fn_start = src.find("async def generate_followup_suggestions")
         fn_body  = src[fn_start:fn_start+3000]
         self.assertIn("_is_sensitive_field", fn_body)
 
     def test_sensitive_label_col_excluded_from_top_values(self):
         """Column named PatientName must not have its values in suggestion context."""
-        src = open(INSIGHT_PY).read()
+        src = open(INSIGHT_PY, encoding="utf-8").read()
         fn_start = src.find("async def generate_followup_suggestions")
         fn_body  = src[fn_start:fn_start+3000]
         # Guard must check the label column for sensitivity
@@ -312,21 +312,21 @@ class TestFollowupBriefReading(unittest.TestCase):
 
     def test_redacted_segment_excluded(self):
         """Already-redacted labels must not be sent to LLM as values."""
-        src = open(INSIGHT_PY).read()
+        src = open(INSIGHT_PY, encoding="utf-8").read()
         fn_start = src.find("async def generate_followup_suggestions")
         fn_body  = src[fn_start:fn_start+3000]
         self.assertIn("redacted segment", fn_body)
 
     def test_numeric_summaries_used_for_ranges(self):
         """Numeric ranges must come from numeric_summaries, not raw values."""
-        src = open(INSIGHT_PY).read()
+        src = open(INSIGHT_PY, encoding="utf-8").read()
         fn_start = src.find("async def generate_followup_suggestions")
         fn_body  = src[fn_start:fn_start+3000]
         self.assertIn("numeric_summaries", fn_body)
 
     def test_no_raw_rows_in_brief_path(self):
         """The function signature must not accept rows parameter."""
-        src = open(INSIGHT_PY).read()
+        src = open(INSIGHT_PY, encoding="utf-8").read()
         fn_start = src.find("async def generate_followup_suggestions")
         fn_sig   = src[fn_start:fn_start+400]
         self.assertNotIn("rows: list", fn_sig)

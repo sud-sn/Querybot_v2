@@ -45,20 +45,21 @@ def _temp_db():
     """
     Context manager:
       1. Creates a temp SQLite file.
-      2. Patches store.db.DB_PATH to point at it.
-      3. Runs init_db() to create all tables.
-      4. Yields the Path.
-      5. Restores the original DB_PATH and deletes the temp file.
+      2. Sets QUERYBOT_DB_PATH env var (read dynamically by _get_sqlite_connection).
+      3. Also patches store.database.DB_PATH for any direct references.
+      4. Runs init_db() to create all tables.
+      5. Yields the Path.
+      6. Restores original state and deletes the temp file.
     """
     tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
     tmp.close()
     db_path = Path(tmp.name)
 
-    # Patch store.database.DB_PATH — that is where _get_sqlite_connection()
-    # actually reads the path from since the adapter layer was introduced.
     import store.database as _db_mod
     original_path = _db_mod.DB_PATH
     _db_mod.DB_PATH = db_path
+    _orig_qdb = os.environ.get("QUERYBOT_DB_PATH")
+    os.environ["QUERYBOT_DB_PATH"] = str(db_path)
 
     try:
         from store.db import init_db
@@ -66,6 +67,10 @@ def _temp_db():
         yield db_path
     finally:
         _db_mod.DB_PATH = original_path
+        if _orig_qdb is None:
+            os.environ.pop("QUERYBOT_DB_PATH", None)
+        else:
+            os.environ["QUERYBOT_DB_PATH"] = _orig_qdb
         try:
             os.unlink(db_path)
         except Exception:

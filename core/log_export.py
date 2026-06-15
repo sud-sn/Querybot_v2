@@ -466,6 +466,13 @@ def _provision_snowflake(cur, schema: str) -> None:
             )
         except Exception:
             pass  # column already exists or DB doesn't support IF NOT EXISTS
+    # Backfill SAMPLE_MODE for tables provisioned before this column was added
+    try:
+        cur.execute(
+            f'ALTER TABLE "{schema}"."{EGRESS_TABLE}" ADD COLUMN IF NOT EXISTS SAMPLE_MODE VARCHAR'
+        )
+    except Exception:
+        pass
 
 
 def _provision_azure_sql(cur, schema: str) -> None:
@@ -565,6 +572,19 @@ def _provision_azure_sql(cur, schema: str) -> None:
             """)
         except Exception as _col_exc:
             log.debug("Azure SQL add column %s skipped: %s", col, _col_exc)
+    # Backfill SAMPLE_MODE for tables provisioned before this column was added
+    try:
+        cur.execute(f"""
+            IF NOT EXISTS (
+                SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE TABLE_SCHEMA = N'{schema}'
+                  AND TABLE_NAME   = N'{EGRESS_TABLE}'
+                  AND COLUMN_NAME  = N'SAMPLE_MODE'
+            )
+            ALTER TABLE [{schema}].[{EGRESS_TABLE}] ADD [SAMPLE_MODE] NVARCHAR(50) NULL
+        """)
+    except Exception as _col_exc:
+        log.debug("Azure SQL SAMPLE_MODE add skipped: %s", _col_exc)
 
 
 def _provision_oracle(cur, schema: str) -> None:
