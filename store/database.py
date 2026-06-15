@@ -41,7 +41,7 @@ log = logging.getLogger("querybot.database")
 
 # ── Environment config ─────────────────────────────────────────────────────────
 DATABASE_URL: str = os.getenv("DATABASE_URL", "")
-DB_PATH = Path(os.getenv("DB_PATH", "data/querybot.db"))
+DB_PATH = Path(os.getenv("QUERYBOT_DB_PATH") or os.getenv("DB_PATH", "data/querybot.db"))
 
 # Compiled patterns — reused across every execute() call
 _RE_INSERT_OR_IGNORE = re.compile(r"\bINSERT\s+OR\s+IGNORE\b", re.IGNORECASE)
@@ -335,8 +335,12 @@ def _get_pg_connection() -> _PgConnection:
 
 def _get_sqlite_connection() -> sqlite3.Connection:
     """Open a new SQLite connection with WAL mode and FK enforcement."""
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
+    # Read env var at call time so test files that change QUERYBOT_DB_PATH
+    # between test classes get correct isolation even if this function object
+    # was captured from a previously imported store.database module.
+    db_path = Path(os.getenv("QUERYBOT_DB_PATH") or os.getenv("DB_PATH", "data/querybot.db"))
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(db_path), check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")

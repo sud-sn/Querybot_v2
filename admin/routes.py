@@ -5188,7 +5188,8 @@ async def admin_build_kb(
                         _syn_used  = _tmeta.get("synthetic_used", False)
                         _mf        = _tmeta.get("masked_fields") or []
                         _mk_mode   = _tmeta.get("mask_mode", "auto")
-                        if _syn_used:
+                        from core.synthetic import should_use_synthetic
+                        if _syn_used or should_use_synthetic(_tname):
                             _smode = "synthetic"
                         elif _mf:
                             _smode = "masked"

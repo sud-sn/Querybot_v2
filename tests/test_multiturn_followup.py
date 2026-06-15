@@ -25,15 +25,17 @@ for mod in list(sys.modules.keys()):
 import store.db as db_mod
 db_mod.init_db()
 
-CHAT_TMPL  = os.path.join(os.path.dirname(__file__), "..", "portal",  "templates", "portal_chat.html")
-DASH_TMPL  = os.path.join(os.path.dirname(__file__), "..", "portal",  "templates", "portal_dashboard.html")
-INSIGHT_PY = os.path.join(os.path.dirname(__file__), "..", "core",    "insight.py")
-LLM_PY     = os.path.join(os.path.dirname(__file__), "..", "core",    "llm.py")
-ADAPTER_PY = os.path.join(os.path.dirname(__file__), "..", "gateway", "web_adapter.py")
-MAIN_PY    = os.path.join(os.path.dirname(__file__), "..", "main.py")
+CHAT_TMPL        = os.path.join(os.path.dirname(__file__), "..", "portal",  "templates", "portal_chat.html")
+DASH_TMPL        = os.path.join(os.path.dirname(__file__), "..", "portal",  "templates", "portal_dashboard.html")
+INSIGHT_PY       = os.path.join(os.path.dirname(__file__), "..", "core",    "insight.py")
+LLM_PY           = os.path.join(os.path.dirname(__file__), "..", "core",    "llm.py")
+ADAPTER_PY       = os.path.join(os.path.dirname(__file__), "..", "gateway", "web_adapter.py")
+MAIN_PY          = os.path.join(os.path.dirname(__file__), "..", "main.py")
+QUERY_PIPELINE_PY = os.path.join(os.path.dirname(__file__), "..", "core",   "query_pipeline.py")
+RESULT_RENDERER_PY = os.path.join(os.path.dirname(__file__), "..", "core",  "result_renderer.py")
 
 def _read(path):
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         return f.read()
 
 
@@ -128,11 +130,11 @@ class TestSqlPromptHistory(unittest.TestCase):
 
     def test_no_history_no_session_block(self):
         p = self._build_prompt(history=None)
-        self.assertNotIn("Session context", p)
+        self.assertNotIn("## Session context", p)
 
     def test_empty_history_no_session_block(self):
         p = self._build_prompt(history=[])
-        self.assertNotIn("Session context", p)
+        self.assertNotIn("## Session context", p)
 
     def test_with_history_adds_session_block(self):
         hist = [{"question":"show revenue","sql":"SELECT SUM(Revenue)","columns":["Customer","Revenue"],"row_count":12}]
@@ -165,39 +167,39 @@ class TestSqlPromptHistory(unittest.TestCase):
         self.assertGreater(len(p), 100)
 
 
-# ── 3  main.py wiring ─────────────────────────────────────────────────────────
+# ── 3  pipeline wiring ────────────────────────────────────────────────────────
 class TestMainWiring(unittest.TestCase):
 
     def test_add_to_history_called_after_send_results(self):
-        src = _read(MAIN_PY)
+        src = _read(QUERY_PIPELINE_PY)
         self.assertIn("add_to_history", src)
 
     def test_get_history_called_before_build_sql_prompt(self):
-        src = _read(MAIN_PY)
+        src = _read(QUERY_PIPELINE_PY)
         self.assertIn("get_history", src)
         self.assertIn("conversation_history=_conv_history", src)
 
     def test_clear_history_called_on_ws_connect(self):
-        src = _read(MAIN_PY)
+        src = _read(ADAPTER_PY)
         self.assertIn("clear_history", src)
 
     def test_history_columns_derived_from_rows(self):
-        src = _read(MAIN_PY)
+        src = _read(QUERY_PIPELINE_PY)
         self.assertIn("list(rows[0].keys())", src)
 
     def test_generate_followup_suggestions_imported(self):
-        src = _read(MAIN_PY)
+        src = _read(RESULT_RENDERER_PY)
         self.assertIn("generate_followup_suggestions", src)
 
     def test_follow_up_suggestions_added_to_payload(self):
-        src = _read(MAIN_PY)
+        src = _read(RESULT_RENDERER_PY)
         self.assertIn("follow_up_suggestions", src)
         self.assertIn("response_payload[\"follow_up_suggestions\"]", src)
 
     def test_follow_up_only_for_portal_users(self):
-        src = _read(MAIN_PY)
+        src = _read(RESULT_RENDERER_PY)
         # Must check portal_user before generating suggestions
-        idx_suggest = src.find("generate_followup_suggestions")
+        idx_suggest = src.rfind("generate_followup_suggestions")
         idx_portal  = src.rfind("portal_user", 0, idx_suggest)
         self.assertGreater(idx_suggest, 0)
         self.assertGreater(idx_portal, 0)
@@ -359,7 +361,7 @@ class TestAuditComponent(unittest.TestCase):
 
     def test_history_injection_uses_existing_sql_gen_scope(self):
         """History is injected into the existing sql_generation scope, not a new one."""
-        src = _read(MAIN_PY)
+        src = _read(QUERY_PIPELINE_PY)
         # The history enriches the system prompt before the sql_generation scope
         idx_conv  = src.find("conversation_history=_conv_history")
         idx_scope = src.find('component="sql_generation"')

@@ -98,7 +98,8 @@ class ExternalLogExportTests(unittest.TestCase):
         with patch("core.log_export.provision_external_log_store") as provision, \
              patch("core.log_export._az_connect", return_value=conn), \
              patch("core.log_export._fetch_query_rows_after", return_value=query_rows) as fetch_q, \
-             patch("core.log_export._fetch_llm_rows_after", return_value=llm_rows) as fetch_l:
+             patch("core.log_export._fetch_llm_rows_after", return_value=llm_rows) as fetch_l, \
+             patch("core.log_export._fetch_egress_rows_after", return_value=[]):
             result = log_export.sync_external_logs(cfg)
 
         provision.assert_called_once()

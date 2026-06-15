@@ -1303,7 +1303,7 @@ document.addEventListener("click", function(e){
     if(item.dataset.tag && _suggestTarget){
       _insertTagValue(_suggestTarget, item.dataset.col);
     } else {
-      _insertSuggestion(item.dataset.col, item.dataset.table, item.dataset.dup === "1");
+      _insertSuggestion(item.dataset.col);
     }
     return;
   }

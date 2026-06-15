@@ -45,11 +45,11 @@ class TestDbTable(unittest.TestCase):
             self.assertIn(col, cols, f"Missing column: {col}")
 
     def test_index_on_account_op(self):
-        src = open(DB_PY).read()
+        src = open(DB_PY, encoding="utf-8").read()
         self.assertIn("idx_kb_egress_account_op", src)
 
     def test_schema_in_db_py(self):
-        src = open(DB_PY).read()
+        src = open(DB_PY, encoding="utf-8").read()
         self.assertIn("CREATE TABLE IF NOT EXISTS kb_data_egress_log", src)
         self.assertIn("sample_mode", src)
         self.assertIn("distinct_col_count", src)
@@ -245,42 +245,42 @@ class TestGetKbEgressSummary(unittest.TestCase):
 class TestEgressArchitectureGuards(unittest.TestCase):
 
     def test_store_exports_log_kb_egress(self):
-        src = open(STORE_INIT).read()
+        src = open(STORE_INIT, encoding="utf-8").read()
         self.assertIn("log_kb_egress", src)
 
     def test_store_exports_list_kb_egress(self):
-        src = open(STORE_INIT).read()
+        src = open(STORE_INIT, encoding="utf-8").read()
         self.assertIn("list_kb_egress", src)
 
     def test_store_exports_get_kb_egress_summary(self):
-        src = open(STORE_INIT).read()
+        src = open(STORE_INIT, encoding="utf-8").read()
         self.assertIn("get_kb_egress_summary", src)
 
     def test_config_store_has_log_fn(self):
-        src = open(CS_PY).read()
+        src = open(CS_PY, encoding="utf-8").read()
         self.assertIn("def log_kb_egress", src)
         self.assertIn("def list_kb_egress", src)
         self.assertIn("def get_kb_egress_summary", src)
 
     def test_routes_wire_egress_after_discover(self):
-        src = open(ROUTES_PY).read()
+        src = open(ROUTES_PY, encoding="utf-8").read()
         self.assertIn("store.log_kb_egress", src)
         # Called for both discovery and kb_build operations
         self.assertIn('operation="discovery"', src)
         self.assertIn('operation="kb_build"', src)
 
     def test_routes_wire_egress_after_build(self):
-        src = open(ROUTES_PY).read()
+        src = open(ROUTES_PY, encoding="utf-8").read()
         # should_use_synthetic used to determine sample_mode in kb_build
         self.assertIn("should_use_synthetic", src)
 
     def test_routes_has_egress_log_api(self):
-        src = open(ROUTES_PY).read()
+        src = open(ROUTES_PY, encoding="utf-8").read()
         self.assertIn("/egress-log", src)
 
     def test_routes_has_no_csv_export(self):
         """Egress data flows through the external DB log export — no CSV route."""
-        src = open(ROUTES_PY).read()
+        src = open(ROUTES_PY, encoding="utf-8").read()
         self.assertNotIn("egress-log/export.csv", src)
 
     def test_egress_table_in_log_export_pipeline(self):
@@ -308,44 +308,44 @@ class TestEgressArchitectureGuards(unittest.TestCase):
 
     def test_migration_adds_egress_watermark_columns(self):
         """v16 migration adds last_egress_id and last_egress_count."""
-        src = open(DB_PY).read()
+        src = open(DB_PY, encoding="utf-8").read()
         self.assertIn('"last_egress_id"', src)
         self.assertIn('"last_egress_count"', src)
 
     def test_setup_template_points_to_databases_page(self):
         """Setup page must direct admins to Admin → Databases for DB export config."""
-        src = open(SETUP_TMPL).read()
+        src = open(SETUP_TMPL, encoding="utf-8").read()
         self.assertIn("External Log Export", src)
         self.assertIn("/admin/databases", src)
 
     def test_setup_template_has_egress_section(self):
-        src = open(SETUP_TMPL).read()
+        src = open(SETUP_TMPL, encoding="utf-8").read()
         self.assertIn("egress_summary", src)
         self.assertIn("Data egress transparency", src)
 
     def test_setup_template_shows_sample_mode(self):
-        src = open(SETUP_TMPL).read()
+        src = open(SETUP_TMPL, encoding="utf-8").read()
         self.assertIn("sample_mode", src)
         self.assertIn("Synthetic", src)
         self.assertIn("Real rows", src)
 
     def test_setup_template_has_real_rows_warning(self):
-        src = open(SETUP_TMPL).read()
+        src = open(SETUP_TMPL, encoding="utf-8").read()
         self.assertIn("real_sample_count", src)
 
     def test_setup_template_shows_per_table_detail(self):
-        src = open(SETUP_TMPL).read()
+        src = open(SETUP_TMPL, encoding="utf-8").read()
         self.assertIn("kb_build_rows", src)
         self.assertIn("table_name", src)
 
     def test_setup_page_passes_egress_summary(self):
-        src = open(ROUTES_PY).read()
+        src = open(ROUTES_PY, encoding="utf-8").read()
         self.assertIn("egress_summary", src)
         self.assertIn("get_kb_egress_summary", src)
 
     def test_egress_logged_after_not_before_discover(self):
         """Egress must be logged AFTER discover_and_write completes."""
-        src = open(ROUTES_PY).read()
+        src = open(ROUTES_PY, encoding="utf-8").read()
         idx_discover = src.find("count = discover_and_write")
         idx_log      = src.find("log_kb_egress", idx_discover)
         self.assertGreater(idx_log, idx_discover,
@@ -353,7 +353,7 @@ class TestEgressArchitectureGuards(unittest.TestCase):
 
     def test_egress_logged_after_not_before_build_kb(self):
         """Egress must be logged AFTER build_kb completes."""
-        src = open(ROUTES_PY).read()
+        src = open(ROUTES_PY, encoding="utf-8").read()
         idx_build = src.find("count = await build_kb(")
         idx_log   = src.find('operation="kb_build"', idx_build)
         self.assertGreater(idx_log, idx_build,

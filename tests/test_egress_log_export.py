@@ -154,20 +154,20 @@ class TestSyncResultIncludesEgress(unittest.TestCase):
 
     def test_result_keys_include_egress_count(self):
         """The result dict from sync must include egress_count."""
-        src = open(LOG_EXPORT_PY).read()
+        src = open(LOG_EXPORT_PY, encoding="utf-8").read()
         self.assertIn('"egress_count"', src)
 
     def test_result_keys_include_last_egress_id(self):
-        src = open(LOG_EXPORT_PY).read()
+        src = open(LOG_EXPORT_PY, encoding="utf-8").read()
         self.assertIn('"last_egress_id"', src)
 
     def test_fetch_egress_called_in_sync(self):
-        src = open(LOG_EXPORT_PY).read()
+        src = open(LOG_EXPORT_PY, encoding="utf-8").read()
         # sync_external_logs must call _fetch_egress_rows_after
         self.assertIn("_fetch_egress_rows_after", src)
 
     def test_egress_insert_called_in_sync(self):
-        src = open(LOG_EXPORT_PY).read()
+        src = open(LOG_EXPORT_PY, encoding="utf-8").read()
         # _insert_rows called with EGRESS_TABLE
         self.assertIn("EGRESS_TABLE, EGRESS_COLUMNS, egress_rows", src)
 
@@ -176,15 +176,15 @@ class TestSyncResultIncludesEgress(unittest.TestCase):
 class TestDbMigration(unittest.TestCase):
 
     def test_migration_adds_last_egress_id(self):
-        src = open(DB_PY).read()
+        src = open(DB_PY, encoding="utf-8").read()
         self.assertIn('"last_egress_id"', src)
 
     def test_migration_adds_last_egress_count(self):
-        src = open(DB_PY).read()
+        src = open(DB_PY, encoding="utf-8").read()
         self.assertIn('"last_egress_count"', src)
 
     def test_migration_targets_correct_table(self):
-        src = open(DB_PY).read()
+        src = open(DB_PY, encoding="utf-8").read()
         # Migration must target external_log_export_state
         idx_eg = src.find('"last_egress_id"')
         region = src[max(0, idx_eg-200):idx_eg+100]
@@ -195,7 +195,7 @@ class TestDbMigration(unittest.TestCase):
 class TestProvisionFunctions(unittest.TestCase):
 
     def test_snowflake_provision_has_egress_table(self):
-        src = open(LOG_EXPORT_PY).read()
+        src = open(LOG_EXPORT_PY, encoding="utf-8").read()
         # Find _provision_snowflake and check it references EGRESS_TABLE
         fn_start = src.find("def _provision_snowflake")
         fn_end   = src.find("\ndef _provision_", fn_start + 1)
@@ -203,21 +203,21 @@ class TestProvisionFunctions(unittest.TestCase):
         self.assertIn("EGRESS_TABLE", fn_body)
 
     def test_azure_provision_has_egress_table(self):
-        src = open(LOG_EXPORT_PY).read()
+        src = open(LOG_EXPORT_PY, encoding="utf-8").read()
         fn_start = src.find("def _provision_azure_sql")
         fn_end   = src.find("\ndef _provision_", fn_start + 1)
         fn_body  = src[fn_start:fn_end]
         self.assertIn("EGRESS_TABLE", fn_body)
 
     def test_oracle_provision_has_egress_table(self):
-        src = open(LOG_EXPORT_PY).read()
+        src = open(LOG_EXPORT_PY, encoding="utf-8").read()
         fn_start = src.find("def _provision_oracle")
         fn_end   = src.find("\ndef _oracle_table_exists", fn_start + 1)
         fn_body  = src[fn_start:fn_end]
         self.assertIn("EGRESS_TABLE", fn_body)
 
     def test_snowflake_egress_has_sample_mode_column(self):
-        src = open(LOG_EXPORT_PY).read()
+        src = open(LOG_EXPORT_PY, encoding="utf-8").read()
         fn_start = src.find("def _provision_snowflake")
         fn_end   = src.find("\ndef _provision_", fn_start + 1)
         fn_body  = src[fn_start:fn_end]
@@ -227,7 +227,7 @@ class TestProvisionFunctions(unittest.TestCase):
         self.assertIn("SAMPLE_MODE", egress_create)
 
     def test_azure_egress_has_sample_mode_column(self):
-        src = open(LOG_EXPORT_PY).read()
+        src = open(LOG_EXPORT_PY, encoding="utf-8").read()
         fn_start = src.find("def _provision_azure_sql")
         fn_end   = src.find("\ndef _provision_", fn_start + 1)
         fn_body  = src[fn_start:fn_end]
@@ -237,7 +237,7 @@ class TestProvisionFunctions(unittest.TestCase):
 
     def test_all_three_dbs_provision_exported_at(self):
         """All three DB flavours must include an EXPORTED_AT audit timestamp."""
-        src = open(LOG_EXPORT_PY).read()
+        src = open(LOG_EXPORT_PY, encoding="utf-8").read()
         for fn_name in ("_provision_snowflake", "_provision_azure_sql", "_provision_oracle"):
             fn_start = src.find(f"def {fn_name}")
             fn_end   = src.find("\ndef ", fn_start + 10)
@@ -250,21 +250,21 @@ class TestProvisionFunctions(unittest.TestCase):
 class TestNoCSVExportEgressGoesToDB(unittest.TestCase):
 
     def test_no_csv_export_route_in_routes(self):
-        src = open(ROUTES_PY).read()
+        src = open(ROUTES_PY, encoding="utf-8").read()
         self.assertNotIn("egress-log/export.csv", src,
             "CSV export route should be removed — egress flows through external log export")
 
     def test_setup_template_references_external_log_export(self):
-        src = open(SETUP_TMPL).read()
+        src = open(SETUP_TMPL, encoding="utf-8").read()
         self.assertIn("External Log Export", src)
 
     def test_setup_template_links_to_databases_page(self):
-        src = open(SETUP_TMPL).read()
+        src = open(SETUP_TMPL, encoding="utf-8").read()
         self.assertIn("/admin/databases", src)
 
     def test_json_api_route_still_present(self):
         """The JSON API for programmatic access should remain."""
-        src = open(ROUTES_PY).read()
+        src = open(ROUTES_PY, encoding="utf-8").read()
         self.assertIn("/egress-log", src)
 
 

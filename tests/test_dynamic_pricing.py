@@ -288,7 +288,7 @@ class TestArchitectureGuards(unittest.TestCase):
         self.assertTrue(callable(store.save_pricing))
 
     def test_billing_template_uses_pricing_rows(self):
-        with open(os.path.join(os.path.dirname(__file__), "..", "admin", "templates", "billing.html")) as f:
+        with open(os.path.join(os.path.dirname(__file__), "..", "admin", "templates", "billing.html"), encoding="utf-8") as f:
             tmpl = f.read()
         self.assertIn("pricing_rows", tmpl,
                       "billing.html must iterate over pricing_rows, not old cost_rates dict")
@@ -296,20 +296,20 @@ class TestArchitectureGuards(unittest.TestCase):
                          "billing.html must not reference old cost_rates.items()")
 
     def test_billing_template_has_pricing_save_form(self):
-        with open(os.path.join(os.path.dirname(__file__), "..", "admin", "templates", "billing.html")) as f:
+        with open(os.path.join(os.path.dirname(__file__), "..", "admin", "templates", "billing.html"), encoding="utf-8") as f:
             tmpl = f.read()
         self.assertIn("billing/pricing/save", tmpl,
                       "billing.html must include the pricing save form action")
 
     def test_metrics_template_has_col_suggest(self):
-        with open(os.path.join(os.path.dirname(__file__), "..", "admin", "templates", "client_metrics.html")) as f:
+        with open(os.path.join(os.path.dirname(__file__), "..", "admin", "templates", "client_metrics.html"), encoding="utf-8") as f:
             tmpl = f.read()
         self.assertIn("col-suggest", tmpl)
         self.assertIn("_allColumns", tmpl)
         self.assertIn("api/columns", tmpl)
 
     def test_metrics_template_has_field_browser(self):
-        with open(os.path.join(os.path.dirname(__file__), "..", "admin", "templates", "client_metrics.html")) as f:
+        with open(os.path.join(os.path.dirname(__file__), "..", "admin", "templates", "client_metrics.html"), encoding="utf-8") as f:
             tmpl = f.read()
         self.assertIn("colBrowser", tmpl)
         self.assertIn("colBrowserSearch", tmpl)
@@ -317,30 +317,30 @@ class TestArchitectureGuards(unittest.TestCase):
 
     def test_metrics_template_cursor_in_parens(self):
         """Snippet buttons now park cursor inside parens."""
-        with open(os.path.join(os.path.dirname(__file__), "..", "admin", "templates", "client_metrics.html")) as f:
+        with open(os.path.join(os.path.dirname(__file__), "..", "admin", "templates", "client_metrics.html"), encoding="utf-8") as f:
             tmpl = f.read()
         self.assertIn("inner = text.match", tmpl,
                       "insertAtCursor should detect empty parens and park cursor inside them")
 
     def test_admin_routes_has_pricing_save_endpoint(self):
-        with open(os.path.join(os.path.dirname(__file__), "..", "admin", "routes.py")) as f:
+        with open(os.path.join(os.path.dirname(__file__), "..", "admin", "routes.py"), encoding="utf-8") as f:
             src = f.read()
         self.assertIn("billing/pricing/save", src)
         self.assertIn("billing_pricing_save", src)
 
     def test_admin_routes_has_columns_api(self):
-        with open(os.path.join(os.path.dirname(__file__), "..", "admin", "routes.py")) as f:
+        with open(os.path.join(os.path.dirname(__file__), "..", "admin", "routes.py"), encoding="utf-8") as f:
             src = f.read()
         self.assertIn("api/columns", src)
         self.assertIn("admin_columns_api", src)
 
     def test_db_has_llm_pricing_table(self):
-        with open(os.path.join(os.path.dirname(__file__), "..", "store", "db.py")) as f:
+        with open(os.path.join(os.path.dirname(__file__), "..", "store", "db.py"), encoding="utf-8") as f:
             src = f.read()
         self.assertIn("CREATE TABLE IF NOT EXISTS llm_pricing", src)
 
     def test_config_store_has_pricing_cache(self):
-        with open(os.path.join(os.path.dirname(__file__), "..", "store", "config_store.py")) as f:
+        with open(os.path.join(os.path.dirname(__file__), "..", "store", "config_store.py"), encoding="utf-8") as f:
             src = f.read()
         self.assertIn("_pricing_cache", src)
         self.assertIn("get_all_pricing", src)

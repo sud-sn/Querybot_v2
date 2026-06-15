@@ -150,7 +150,7 @@
         <button type="button" class="chart-drag-handle" draggable="false" title="Drag to reorder or resize from the card corner" aria-label="Drag chart to reorder">⋮⋮</button>
         <button type="button" class="btn btn-xs btn-secondary"
           onclick="openChartModal(this.closest('.chart-card'))"
-          title="Expand chart" style="font-size:12px;padding:4px 8px"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:3px"><path d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15"/></svg>Expand</button>
+          title="Expand chart" style="font-size:12px;padding:4px 8px">⤢ Expand</button>
         <form method="post" action="/portal/unpin" style="margin:0" id="unpin-{{ chart.id }}">
           <input type="hidden" name="chart_id" value="{{ chart.id }}">
           <button type="button" class="btn btn-xs btn-secondary" style="color:var(--text-muted)"

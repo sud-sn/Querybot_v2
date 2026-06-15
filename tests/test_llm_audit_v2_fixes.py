@@ -18,9 +18,14 @@ if str(ROOT) not in sys.path:
 
 # Point DB + encryption key at a temp location BEFORE importing store modules.
 _tmpdir = tempfile.mkdtemp(prefix="querybot_audit_v2_")
-os.environ["DB_PATH"] = str(Path(_tmpdir) / "test_audit.db")
+_tmp_db = str(Path(_tmpdir) / "test_audit.db")
+os.environ["QUERYBOT_DB_PATH"] = _tmp_db
+os.environ["DB_PATH"] = _tmp_db
 os.environ["QUERYBOT_KEY_FILE"] = str(Path(_tmpdir) / "test_key")
-
+# Clear any previously imported store modules so they re-read the env vars.
+for _m in list(sys.modules.keys()):
+    if _m.startswith("store"):
+        del sys.modules[_m]
 
 from core.llm_audit import (
     sanitize_llm_text,
@@ -101,10 +106,9 @@ class LongTokenRegexTests(unittest.TestCase):
 class QuestionSanitizationTests(unittest.TestCase):
 
     def setUp(self):
-        # Fresh DB per test — must update store_db.DB_PATH so the module
-        # uses the temp path even when imported once by earlier test modules.
-        store_db.DB_PATH = Path(os.environ["DB_PATH"])
-        db_path = Path(os.environ["DB_PATH"])
+        # Fresh DB per test — QUERYBOT_DB_PATH is already set at module level
+        # and _get_sqlite_connection reads it dynamically on every call.
+        db_path = Path(os.environ["QUERYBOT_DB_PATH"])
         for path in [db_path, Path(str(db_path) + "-wal"), Path(str(db_path) + "-shm")]:
             if path.exists():
                 path.unlink(missing_ok=True)
@@ -156,8 +160,7 @@ class QuestionSanitizationTests(unittest.TestCase):
 class RetentionPurgeTests(unittest.TestCase):
 
     def setUp(self):
-        store_db.DB_PATH = Path(os.environ["DB_PATH"])
-        db_path = Path(os.environ["DB_PATH"])
+        db_path = Path(os.environ["QUERYBOT_DB_PATH"])
         for path in [db_path, Path(str(db_path) + "-wal"), Path(str(db_path) + "-shm")]:
             if path.exists():
                 path.unlink(missing_ok=True)
@@ -165,8 +168,7 @@ class RetentionPurgeTests(unittest.TestCase):
         config_store.upsert_client("acct_retain", "zoom")
 
     def _insert_row(self, created_at: str, request_id: str = "r", question_id: str = ""):
-        from store.db import get_db
-        with get_db() as conn:
+        with store_db.get_db() as conn:
             conn.execute(
                 "INSERT INTO llm_call_log "
                 "(account_id, question_id, request_id, question, component, "
@@ -203,8 +205,7 @@ class RetentionPurgeTests(unittest.TestCase):
 class AuditFilterTests(unittest.TestCase):
 
     def setUp(self):
-        store_db.DB_PATH = Path(os.environ["DB_PATH"])
-        db_path = Path(os.environ["DB_PATH"])
+        db_path = Path(os.environ["QUERYBOT_DB_PATH"])
         for path in [db_path, Path(str(db_path) + "-wal"), Path(str(db_path) + "-shm")]:
             if path.exists():
                 path.unlink()
