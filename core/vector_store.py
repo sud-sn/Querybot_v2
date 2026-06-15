@@ -404,14 +404,17 @@ def _get_bm25(
     docs: list[dict] = []
     offset = None
     while True:
-        results, next_offset = client.scroll(
-            collection_name=_COLLECTION,
-            scroll_filter=Filter(must=must),
-            limit=500,
-            offset=offset,
-            with_payload=True,
-            with_vectors=False,
-        )
+        try:
+            results, next_offset = client.scroll(
+                collection_name=_COLLECTION,
+                scroll_filter=Filter(must=must),
+                limit=500,
+                offset=offset,
+                with_payload=True,
+                with_vectors=False,
+            )
+        except (TypeError, ValueError):
+            break
         docs.extend(r.payload for r in results if r.payload)
         if next_offset is None:
             break

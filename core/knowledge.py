@@ -312,7 +312,7 @@ async def build_kb(
         format_column_reference_for_vocab,
         format_schema_intelligence,
     )
-    from core.semantic_model import write_semantic_model
+    from core.semantic_model import patch_field_approval, write_semantic_model
 
     import hashlib as _hashlib
     import json as _json
@@ -354,6 +354,7 @@ async def build_kb(
 
     # Load admin-supplied column context hints (resolves [NEEDS CONTEXT] flags)
     _col_context: dict[str, dict[str, str]] = {}
+    _field_overrides: dict = {"version": 1, "tables": {}}
     if account_id:
         _ctx_file = Path("clients") / account_id / "column_context.json"
         if _ctx_file.exists():
@@ -361,6 +362,15 @@ async def build_kb(
                 _col_context = _json.loads(_ctx_file.read_text(encoding="utf-8"))
             except Exception:
                 pass
+        try:
+            from core.field_overrides import load_field_overrides
+            _field_overrides = load_field_overrides(account_id)
+        except Exception as _override_error:
+            log.warning(
+                "KB: could not load field overrides for %s: %s",
+                account_id,
+                _override_error,
+            )
 
     # Write the naming convention reference as a global KB doc so it is
     # retrieved at query time for any question — structural grammar rules
@@ -379,6 +389,20 @@ async def build_kb(
             "Run schema discovery first."
         )
 
+    current_table_names = {f.stem for f in md_files}
+    for generated in kb_path.glob("*.md"):
+        stale_table = ""
+        if generated.name.endswith("_kb.md"):
+            stale_table = generated.name[:-6]
+        elif generated.name.endswith("_queries.md"):
+            stale_table = generated.name[:-11]
+        if stale_table and stale_table not in current_table_names:
+            try:
+                generated.unlink()
+            except OSError as exc:
+                log.warning("KB: could not remove stale file %s: %s", generated, exc)
+            _schema_hashes.pop(stale_table, None)
+
     try:
         semantic_model = write_semantic_model(
             schema_dir=schema_dir,
@@ -391,6 +415,19 @@ async def build_kb(
             len(semantic_model.get("tables") or []),
             len(semantic_model.get("relationships") or []),
         )
+        for _table_entry in (_field_overrides.get("tables") or {}).values():
+            for _column_key, _override in (_table_entry.get("fields") or {}).items():
+                if not isinstance(_override, dict) or not _override.get("meaning"):
+                    continue
+                patch_field_approval(
+                    kb_dir=kb_dir,
+                    table_fqn=_table_entry.get("table_fqn", ""),
+                    table_name=_table_entry.get("table_name", ""),
+                    schema_name=_table_entry.get("schema_name", ""),
+                    column_name=_override.get("column_name") or _column_key,
+                    approved_meaning=_override["meaning"],
+                    approved_use_case=_override.get("use_case", ""),
+                )
     except Exception as exc:
         log.warning("Structured semantic model generation failed: %s", exc)
 
@@ -475,26 +512,8 @@ async def build_kb(
         schema_md = md_file.read_text(encoding="utf-8")
         table_name = md_file.stem
 
-        # ── Hash-based partial rebuild: skip if schema unchanged ─────────────
-        _schema_hash = _hashlib.sha256(schema_md.encode()).hexdigest()
         _kb_file  = kb_path / f"{table_name}_kb.md"
         _qry_file = kb_path / f"{table_name}_queries.md"
-        if (
-            _schema_hashes.get(table_name) == _schema_hash
-            and _kb_file.exists()
-            and _qry_file.exists()
-        ):
-            log.info("KB partial rebuild: skipping %s — schema unchanged", table_name)
-            processed += 1
-            await _progress(
-                phase="building",
-                step=f"Skipped {table_name} (unchanged)",
-                current=processed,
-                total=len(md_files),
-                percent=round(processed / len(md_files) * 100),
-                current_table=table_name,
-            )
-            continue
 
         # Extract the SQL table name from the schema file header.
         # _az_md writes: **SQL table name:** `[SCHEMA].[TABLE]`
@@ -567,6 +586,12 @@ async def build_kb(
 
         # ── Admin column context hints (resolves [NEEDS CONTEXT] flags) ──────
         _tbl_hints = _col_context.get(table_name, {})
+        from core.field_overrides import table_overrides
+        _tbl_overrides = table_overrides(
+            _field_overrides,
+            table_name,
+            sql_table_name,
+        )
         context_hints_block = ""
         if _tbl_hints:
             _hint_lines = [f"- `{col}`: {hint}" for col, hint in _tbl_hints.items()]
@@ -578,10 +603,33 @@ async def build_kb(
                 + "\n".join(_hint_lines) + "\n"
             )
 
+        field_overrides_block = ""
+        if _tbl_overrides:
+            _override_lines = []
+            for _column_key, _override in _tbl_overrides.items():
+                if not isinstance(_override, dict) or not _override.get("meaning"):
+                    continue
+                _column = _override.get("column_name") or _column_key
+                _line = f"- `{_column}` meaning: {_override['meaning']}"
+                if _override.get("use_case"):
+                    _line += f" | use case: {_override['use_case']}"
+                if _override.get("synonyms"):
+                    _line += f" | synonyms: {', '.join(_override['synonyms'])}"
+                _override_lines.append(_line)
+            if _override_lines:
+                field_overrides_block = (
+                    "\n## Persistent Admin Field Overrides\n"
+                    "These values are administrator-approved and must be preserved exactly:\n"
+                    + "\n".join(_override_lines) + "\n"
+                )
+
         # Inject approved metric formulas from the metric registry so the KB
         # documents the EXACT approved formula — not a nearby similar column.
         approved_metrics_block = _format_approved_metrics_for_kb(
             account_id or chroma_dir, table_name
+        )
+        _confirmed_snippets = "\n".join(
+            _confirmed_rel_map.get(table_name.upper(), [])
         )
 
         # ── Deterministic grounding blocks from schema stats ──────────────────
@@ -631,6 +679,41 @@ async def build_kb(
                     "No row limit required. Document this as a reference or lookup table."
                 ) + "\n"
 
+        _fingerprint_payload = {
+            "schema": schema_md,
+            "business_description": table_biz_desc,
+            "join_map": join_slice,
+            "confirmed_joins": _confirmed_snippets,
+            "context_hints": _tbl_hints,
+            "field_overrides": _tbl_overrides,
+            "approved_metrics": approved_metrics_block,
+            "db_type": db_type,
+            "entity_type": entity_type,
+        }
+        _build_hash = _hashlib.sha256(
+            _json.dumps(
+                _fingerprint_payload,
+                sort_keys=True,
+                default=str,
+            ).encode("utf-8")
+        ).hexdigest()
+        if (
+            _schema_hashes.get(table_name) == _build_hash
+            and _kb_file.exists()
+            and _qry_file.exists()
+        ):
+            log.info("KB partial rebuild: skipping %s - inputs unchanged", table_name)
+            processed += 1
+            await _progress(
+                phase="building",
+                step=f"Skipped {table_name} (unchanged)",
+                current=processed,
+                total=len(md_files),
+                percent=round(processed / len(md_files) * 100),
+                current_table=table_name,
+            )
+            continue
+
         stage1_user = (
             f"Business description:\n{table_biz_desc}\n\n"
             f"Table schema for: {table_name}\n"
@@ -639,6 +722,7 @@ async def build_kb(
             f"\n{schema_intelligence}\n"
             + (f"\n{approved_metrics_block}\n" if approved_metrics_block else "")
             + (context_hints_block if context_hints_block else "")
+            + (field_overrides_block if field_overrides_block else "")
             + (f"\n{data_quality_block}" if data_quality_block else "")
             + (f"\n{temporal_block}" if temporal_block else "")
             + (f"\n{scale_block}" if scale_block else "")
@@ -661,6 +745,8 @@ async def build_kb(
             "in ## Key Metrics — do not substitute nearby columns. "
             "If ADMIN-PROVIDED COLUMN CONTEXT is listed above, use those exact definitions "
             "and do NOT mark those columns with [NEEDS CONTEXT]. "
+            "If PERSISTENT ADMIN FIELD OVERRIDES are listed above, preserve their exact "
+            "meaning, use case, and synonyms. They take precedence over generated text. "
             "Do not promote candidate metrics to official metrics unless the evidence is strong "
             "or the business description explicitly supports it. "
             "Mark any column whose business rule is unclear with [NEEDS CONTEXT]."
@@ -673,6 +759,9 @@ async def build_kb(
 
         # Fix 4: guarantee ERP synonym rows are present regardless of LLM output
         kb_text = _inject_deterministic_synonyms(kb_text, table_cols)
+        if _tbl_overrides:
+            from core.semantic_kb_patch import apply_field_overrides_to_content
+            kb_text = apply_field_overrides_to_content(kb_text, _tbl_overrides)
 
         (kb_path / f"{table_name}_kb.md").write_text(kb_text, encoding="utf-8")
         log.info("Stage 1 KB written for %s (%d cols)", table_name, len(table_cols))
@@ -680,7 +769,6 @@ async def build_kb(
         # ── Stage 2: Question-SQL translation from actual KB content ──────────
         # Fix 3: pass the join-map slice so the LLM generates real cross-table
         # Q&A examples using verified join paths instead of single-table queries.
-        _confirmed_snippets = "\n".join(_confirmed_rel_map.get(table_name.upper(), []))
         query_user = build_kb_query_prompt(
             sql_table_name, kb_text, table_biz_desc,
             related_tables=join_slice,
@@ -697,7 +785,7 @@ async def build_kb(
         log.info("Stage 2 query patterns written for %s", table_name)
 
         # Record hash after successful generation
-        _schema_hashes[table_name] = _schema_hash
+        _schema_hashes[table_name] = _build_hash
 
         processed += 1
         await _progress(

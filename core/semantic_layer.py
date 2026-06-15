@@ -32,6 +32,7 @@ def build_semantic_layer_tables(
     allowed_tables: Iterable[str] | None = None,
     approved_feedback: dict[tuple[str, str], dict] | None = None,
     pending_feedback: set[tuple[str, str]] | None = None,
+    field_overrides: dict | None = None,
 ) -> list[dict]:
     """
     Build table/field metadata for the user portal.
@@ -47,6 +48,7 @@ def build_semantic_layer_tables(
     schema_map = _load_schema_json(schema_root)
     approved_feedback = approved_feedback or {}
     pending_feedback = pending_feedback or set()
+    field_overrides = field_overrides or {}
 
     tables: list[dict] = []
     for kb_file in sorted(root.glob("*_kb.md")):
@@ -94,6 +96,13 @@ def build_semantic_layer_tables(
         else:
             fields = _merge_schema_details(fields, schema_fields)
 
+        from core.field_overrides import table_overrides
+        table_field_overrides = table_overrides(
+            field_overrides,
+            fqn,
+            table_name,
+            kb_file.stem.replace("_kb", ""),
+        )
         for field in fields:
             key = (fqn.upper(), field["column"].upper())
             approved = approved_feedback.get(key)
@@ -105,10 +114,27 @@ def build_semantic_layer_tables(
             else:
                 field["approved"] = False
             field["pending"] = key in pending_feedback
+            override = table_field_overrides.get(field["column"].upper())
+            if override:
+                field["meaning"] = override.get("meaning") or field["meaning"]
+                field["use_case"] = override.get("use_case") or field["use_case"]
+                field["synonyms"] = override.get("synonyms") or []
+                field["admin_note"] = override.get("admin_note") or ""
+                field["updated_at"] = override.get("updated_at") or ""
+                field["confidence"] = 100
+                field["approved"] = True
+                field["needs_context"] = False
+                field["source"] = "admin_override"
+            else:
+                field.setdefault("synonyms", [])
+                field.setdefault("admin_note", "")
+                field.setdefault("updated_at", "")
+                field.setdefault("source", "generated")
 
         avg_conf = round(sum(f["confidence"] for f in fields) / len(fields)) if fields else 0
         tables.append({
             "file": kb_file.name,
+            "file_stem": kb_file.stem.replace("_kb", ""),
             "fqn": fqn.upper(),
             "database": db_name,
             "schema": schema_name,

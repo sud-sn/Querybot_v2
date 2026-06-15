@@ -52,6 +52,10 @@ def apply_approved_feedback(
     approved_meaning: str,
     approved_use_case: str,
     user_comment:     str = "",
+    approved_synonyms: list[str] | None = None,
+    admin_note: str = "",
+    persist_override: bool = False,
+    infer_synonyms: bool = True,
 ) -> tuple[bool, str]:
     """
     Locate the KB file for this table, patch the column metadata AND the
@@ -80,6 +84,20 @@ def apply_approved_feedback(
         )
 
     original = kb_file.read_text(encoding="utf-8", errors="replace")
+    previous_synonyms: list[str] = []
+    if persist_override:
+        try:
+            from core.field_overrides import load_field_overrides, table_overrides
+            previous_fields = table_overrides(
+                load_field_overrides(account_id),
+                table_fqn,
+                table_name,
+                kb_file.stem.replace("_kb", ""),
+            )
+            previous = previous_fields.get(column_name.upper()) or {}
+            previous_synonyms = previous.get("synonyms") or []
+        except Exception:
+            previous_synonyms = []
 
     # ── Step 2: patch the column meaning in ## Columns ────────────────────────
     patched, col_changed = _patch_column(
@@ -91,18 +109,32 @@ def apply_approved_feedback(
     if not col_changed:
         log.warning("Column %s not found in %s — appending", column_name, kb_file.name)
         patched = _append_column(original, column_name, approved_meaning, approved_use_case)
+    if previous_synonyms:
+        patched = _remove_synonyms(patched, column_name, previous_synonyms)
 
     # ── Step 3: extract new synonyms from the approved texts ──────────────────
     # We mine approved_use_case and user_comment for synonym-like terms.
     # The user said "refers to nationality, country" → we extract "country"
     # as a new synonym for the Nationality column and add it to Business Synonyms.
-    new_synonyms = _extract_new_synonyms(
-        column_name=column_name,
-        approved_meaning=approved_meaning,
-        approved_use_case=approved_use_case,
-        user_comment=user_comment,
-        existing_content=original,
-    )
+    new_synonyms = []
+    if infer_synonyms:
+        new_synonyms = _extract_new_synonyms(
+            column_name=column_name,
+            approved_meaning=approved_meaning,
+            approved_use_case=approved_use_case,
+            user_comment=user_comment,
+            existing_content=original,
+        )
+    explicit_synonyms = [
+        str(term).strip()
+        for term in (approved_synonyms or [])
+        if str(term).strip()
+    ]
+    seen_synonyms = {term.lower() for term in new_synonyms}
+    for term in explicit_synonyms:
+        if term.lower() not in seen_synonyms:
+            new_synonyms.append(term)
+            seen_synonyms.add(term.lower())
 
     if new_synonyms:
         patched = _patch_synonyms(patched, column_name, new_synonyms)
@@ -127,6 +159,36 @@ def apply_approved_feedback(
             f"File reverted. Try again or rebuild the full KB."
         )
 
+    if persist_override:
+        try:
+            from core.field_overrides import save_field_override
+            save_field_override(
+                account_id=account_id,
+                table_fqn=table_fqn,
+                schema_name=schema_name,
+                table_name=table_name,
+                file_stem=kb_file.stem.replace("_kb", ""),
+                column_name=column_name,
+                meaning=approved_meaning,
+                use_case=approved_use_case,
+                synonyms=new_synonyms,
+                admin_note=admin_note,
+            )
+        except Exception as e:
+            log.error("Could not persist field override for %s.%s: %s",
+                      table_name, column_name, e)
+            kb_file.write_text(original, encoding="utf-8")
+            try:
+                from core.knowledge import re_embed_file
+                re_embed_file(str(kb_path), account_id, kb_file.name)
+            except Exception as rollback_error:
+                log.error("Field override rollback re-embed failed for %s: %s",
+                          kb_file.name, rollback_error)
+            return False, (
+                f"Field edit could not be persisted: {e}. "
+                "The KB file was reverted."
+            )
+
     semantic_model_changed = False
     try:
         from core.semantic_model import patch_field_approval
@@ -147,6 +209,43 @@ def apply_approved_feedback(
     synonym_note = f" + {len(new_synonyms)} synonym(s) added" if new_synonyms else ""
     model_note = " + semantic model updated" if semantic_model_changed else ""
     return True, f"Approved and KB re-embedded ({kb_file.name}{synonym_note}{model_note})"
+
+
+def apply_field_overrides_to_content(
+    content: str,
+    field_overrides: dict[str, dict],
+) -> str:
+    """Apply persistent admin field overrides to freshly generated KB content."""
+    patched = content
+    for column_key, override in (field_overrides or {}).items():
+        if not isinstance(override, dict):
+            continue
+        column_name = override.get("column_name") or column_key
+        meaning = (override.get("meaning") or "").strip()
+        use_case = (override.get("use_case") or "").strip()
+        if not meaning:
+            continue
+        patched, changed = _patch_column(
+            content=patched,
+            column_name=column_name,
+            approved_meaning=meaning,
+            approved_use_case=use_case,
+        )
+        if not changed:
+            patched = _append_column(
+                patched,
+                column_name,
+                meaning,
+                use_case,
+            )
+        synonyms = [
+            str(term).strip()
+            for term in (override.get("synonyms") or [])
+            if str(term).strip()
+        ]
+        if synonyms:
+            patched = _patch_synonyms(patched, column_name, synonyms)
+    return patched
 
 
 # ── KB file discovery ─────────────────────────────────────────────────────────
@@ -622,3 +721,36 @@ def _patch_synonyms(content: str, column_name: str, new_synonyms: list[str]) -> 
 
     # Append at the end
     return content + section
+
+
+def _remove_synonyms(content: str, column_name: str, synonyms: list[str]) -> str:
+    """Remove previously persisted admin synonyms while preserving other terms."""
+    remove = {str(term).strip().lower() for term in synonyms if str(term).strip()}
+    if not remove:
+        return content
+    column_upper = column_name.upper()
+    lines = content.splitlines(keepends=True)
+    in_synonyms = False
+    output: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if re.match(r"^#{1,3}\s+business synonyms", stripped, re.I):
+            in_synonyms = True
+            output.append(line)
+            continue
+        if in_synonyms and re.match(r"^#{1,3}\s+", stripped):
+            in_synonyms = False
+        if in_synonyms and stripped.startswith("|") and "---" not in stripped:
+            cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+            if len(cells) >= 2 and cells[1].strip("`").upper() == column_upper:
+                kept = [
+                    term.strip()
+                    for term in cells[0].split(",")
+                    if term.strip() and term.strip().lower() not in remove
+                ]
+                if not kept:
+                    continue
+                cells[0] = ", ".join(kept)
+                line = "| " + " | ".join(cells) + " |\n"
+        output.append(line)
+    return "".join(output)
