@@ -1422,33 +1422,47 @@ async def kb_list(request: Request, account_id: str):
         except Exception as exc:
             log.debug("Could not resolve Semantic Layer patch filenames: %s", exc)
 
-    # ── Parse [NEEDS CONTEXT] columns from existing KB files ──────────────
-    needs_context: list[dict] = []
+    view = (request.query_params.get("view") or "fields").strip().lower()
+    if view not in {"fields", "reviews", "files"}:
+        view = "fields"
+
+    semantic_tables: list[dict] = []
+    field_overrides: dict = {"version": 1, "tables": {}}
     if kb_dir and Path(kb_dir).exists():
-        ctx_file = Path("clients") / account_id / "column_context.json"
-        existing_hints: dict = {}
-        if ctx_file.exists():
-            try:
-                existing_hints = json.loads(ctx_file.read_text(encoding="utf-8"))
-            except Exception:
-                pass
-        for kb_file in sorted(Path(kb_dir).glob("*_kb.md")):
-            tbl = kb_file.stem.replace("_kb", "")
-            tbl_hints = existing_hints.get(tbl, {})
-            try:
-                kb_content = kb_file.read_text(encoding="utf-8")
-                for line in kb_content.splitlines():
-                    if "[NEEDS CONTEXT]" in line:
-                        m = re.search(r"`([A-Za-z0-9_]+)`", line)
-                        if m:
-                            col = m.group(1)
-                            needs_context.append({
-                                "table": tbl,
-                                "column": col,
-                                "existing_hint": tbl_hints.get(col, ""),
-                            })
-            except Exception:
-                pass
+        try:
+            from core.field_overrides import load_field_overrides
+            from core.semantic_layer import build_semantic_layer_tables
+            approved_feedback, pending_feedback = store.semantic_feedback_maps(account_id)
+            field_overrides = load_field_overrides(account_id)
+            semantic_tables = build_semantic_layer_tables(
+                kb_dir=kb_dir,
+                schema_dir=schema_dir,
+                approved_feedback=approved_feedback,
+                pending_feedback=pending_feedback,
+                field_overrides=field_overrides,
+            )
+        except Exception as exc:
+            log.warning("Could not build admin field editor for %s: %s", account_id, exc)
+
+    needs_context = [
+        {
+            "table": table["table"],
+            "table_fqn": table["fqn"],
+            "schema": table["schema"],
+            "column": field["column"],
+        }
+        for table in semantic_tables
+        for field in table["fields"]
+        if field.get("needs_context")
+    ]
+    field_count = sum(len(table.get("fields") or []) for table in semantic_tables)
+    approved_field_count = sum(
+        1
+        for table in semantic_tables
+        for field in table.get("fields") or []
+        if field.get("approved")
+    )
+    pending_review_count = store.count_semantic_field_feedback(account_id, "pending")
 
     return _resp(request, "client_kb.html", {
         "client":       client,
@@ -1458,13 +1472,24 @@ async def kb_list(request: Request, account_id: str):
         "schema_dir":   schema_dir,
         "saved":        request.query_params.get("saved"),
         "file_view":    request.query_params.get("file"),
-        "file_content": _read_kb_file(kb_dir, schema_dir,
-                                      request.query_params.get("file", "")),
+        "file_content": _read_kb_file(
+            kb_dir,
+            schema_dir,
+            request.query_params.get("file", ""),
+            request.query_params.get("type", "kb"),
+        ),
         "semantic_feedback": semantic_feedback,
         "semantic_feedback_status": feedback_status,
         "feedback_saved": request.query_params.get("feedback"),
         "feedback_msg":   request.query_params.get("feedback_msg", ""),
+        "field_error": request.query_params.get("field_error", ""),
         "needs_context":  needs_context,
+        "semantic_tables": semantic_tables,
+        "field_count": field_count,
+        "approved_field_count": approved_field_count,
+        "pending_review_count": pending_review_count,
+        "view": view,
+        "selected_table": request.query_params.get("table", ""),
     })
 
 
@@ -1498,7 +1523,7 @@ async def semantic_feedback_review(
         if not kb_dir:
             return RedirectResponse(
                 f"/admin/clients/{account_id}/kb"
-                f"?feedback=error&feedback_msg=KB+directory+not+configured"
+                f"?view=reviews&feedback=error&feedback_msg=KB+directory+not+configured"
                 f"&feedback_status=pending#semantic-feedback",
                 status_code=303,
             )
@@ -1520,13 +1545,15 @@ async def semantic_feedback_review(
             approved_meaning=item["suggested_meaning"],
             approved_use_case=item.get("suggested_use_case", ""),
             user_comment=item.get("user_comment", ""),
+            admin_note=admin_note,
+            persist_override=True,
         )
 
         if not success:
             # KB patch failed — do NOT mark as approved, keep pending
             return RedirectResponse(
                 f"/admin/clients/{account_id}/kb"
-                f"?feedback=error&feedback_msg={quote(msg)}"
+                f"?view=reviews&feedback=error&feedback_msg={quote(msg)}"
                 f"&feedback_status=pending#semantic-feedback",
                 status_code=303,
             )
@@ -1571,9 +1598,10 @@ async def semantic_feedback_review(
     if status == "approved":
         asyncio.create_task(_run_default_evals_async(account_id, generate=True, execute=False))
 
+    target_view = "files" if status == "approved" and patched_file else "reviews"
     redirect = (
         f"/admin/clients/{account_id}/kb"
-        f"?feedback={status}&feedback_status={status}"
+        f"?view={target_view}&feedback={status}&feedback_status={status}"
     )
     if msg:
         redirect += f"&feedback_msg={quote(msg)}"
@@ -1607,7 +1635,7 @@ async def kb_save(
         target_dir = state_data.get("kb_dir", "")
 
     if not target_dir:
-        return RedirectResponse(f"/admin/clients/{account_id}/kb?saved=error",
+        return RedirectResponse(f"/admin/clients/{account_id}/kb?view=files&saved=error",
                                 status_code=303)
 
     filepath = _safe_child_path(target_dir, filename)
@@ -1626,8 +1654,91 @@ async def kb_save(
 
     log.info("Admin edited %s for client %s", filename, account_id)
     return RedirectResponse(
-        f"/admin/clients/{account_id}/kb?saved=1&file={filename}",
+        f"/admin/clients/{account_id}/kb?view=files&saved=1"
+        f"&file={quote(filename)}&type={quote(file_type)}",
         status_code=303
+    )
+
+
+@router.post("/clients/{account_id}/kb/fields/save")
+async def kb_field_save(
+    request: Request,
+    account_id: str,
+    background_tasks: BackgroundTasks,
+    table_fqn: str = Form(...),
+    column_name: str = Form(...),
+    meaning: str = Form(...),
+    use_case: str = Form(""),
+    synonyms: str = Form(""),
+    admin_note: str = Form(""),
+):
+    """Persist and immediately apply an administrator-owned field override."""
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    client = store.get_client(account_id)
+    if not client:
+        return RedirectResponse("/admin/clients", status_code=303)
+    if not meaning.strip():
+        return RedirectResponse(
+            f"/admin/clients/{account_id}/kb?view=fields&field_error="
+            f"{quote('Business meaning is required')}",
+            status_code=303,
+        )
+
+    state_data = json.loads(client.get("state_data") or "{}")
+    kb_dir = state_data.get("kb_dir", "")
+    schema_dir = state_data.get("schema_dir", "")
+    if not kb_dir or not Path(kb_dir).exists():
+        return RedirectResponse(
+            f"/admin/clients/{account_id}/kb?view=fields&field_error="
+            f"{quote('Build the Knowledge Base before editing fields')}",
+            status_code=303,
+        )
+
+    from core.field_overrides import load_field_overrides, parse_synonyms
+    from core.semantic_kb_patch import apply_approved_feedback
+    from core.semantic_layer import build_semantic_layer_tables, find_semantic_field
+
+    approved_feedback, pending_feedback = store.semantic_feedback_maps(account_id)
+    semantic_tables = build_semantic_layer_tables(
+        kb_dir=kb_dir,
+        schema_dir=schema_dir,
+        approved_feedback=approved_feedback,
+        pending_feedback=pending_feedback,
+        field_overrides=load_field_overrides(account_id),
+    )
+    found = find_semantic_field(semantic_tables, table_fqn, column_name)
+    if not found:
+        raise HTTPException(status_code=404, detail="Field not found in this Knowledge Base")
+    table, field = found
+
+    success, msg = apply_approved_feedback(
+        account_id=account_id,
+        kb_dir=kb_dir,
+        table_fqn=table["fqn"],
+        table_name=table["table"],
+        schema_name=table["schema"],
+        column_name=field["column"],
+        approved_meaning=meaning.strip(),
+        approved_use_case=use_case.strip(),
+        approved_synonyms=parse_synonyms(synonyms),
+        admin_note=admin_note.strip(),
+        persist_override=True,
+        infer_synonyms=False,
+    )
+    if not success:
+        return RedirectResponse(
+            f"/admin/clients/{account_id}/kb?view=fields&field_error={quote(msg)}"
+            f"&table={quote(table['fqn'])}",
+            status_code=303,
+        )
+
+    background_tasks.add_task(_run_default_evals_background, account_id)
+    return RedirectResponse(
+        f"/admin/clients/{account_id}/kb?view=fields&saved=field"
+        f"&table={quote(table['fqn'])}"
+        f"#field-{quote(table['table'])}-{quote(field['column'])}",
+        status_code=303,
     )
 
 
@@ -1666,10 +1777,16 @@ async def kb_save_context_hints(request: Request, account_id: str):
     )
 
 
-def _read_kb_file(kb_dir: str, schema_dir: str, filename: str) -> str:
+def _read_kb_file(
+    kb_dir: str,
+    schema_dir: str,
+    filename: str,
+    file_type: str = "kb",
+) -> str:
     if not filename:
         return ""
-    for d in [kb_dir, schema_dir]:
+    directories = [schema_dir] if file_type == "schema" else [kb_dir]
+    for d in directories:
         if d:
             p = _safe_child_path(d, filename)
             if p and p.exists():
@@ -4961,16 +5078,11 @@ async def admin_build_kb(
             from core.knowledge import build_kb
             from core.llm import resolve_provider
 
-            # ── Full replacement: wipe previous KB files and any stored
-            # validated examples so stale tables / queries do not linger.
+            # Retain current per-table KB files so build_kb can compare its
+            # full input fingerprint and skip unchanged tables. build_kb also
+            # removes files for tables that have left the selected scope.
             kp = Path(kb_dir)
-            if kp.exists():
-                for f in kp.iterdir():
-                    if f.is_file() and f.name != "_kb_hashes.json":
-                        try:
-                            f.unlink()
-                        except Exception:
-                            pass
+            kp.mkdir(parents=True, exist_ok=True)
 
             # Clear validated_examples rows for this account. The ChromaDB
             # validated_examples collection will be re-upserted by

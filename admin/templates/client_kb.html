@@ -1,293 +1,592 @@
 {% extends "base.html" %}
-{% from "macros.html" import breadcrumb, client_workspace_nav %}
-{% block title %}Knowledge Base Editor — {{ client.client_name or client.account_id[:16] }}{% endblock %}
+{% from "macros.html" import breadcrumb, client_workspace_nav, page_header, empty_state %}
+{% block title %}Knowledge Base - {{ client.client_name or client.account_id[:16] }}{% endblock %}
 {% block breadcrumb %}
 {{ breadcrumb([
     {"label": "Dashboard", "href": "/admin"},
-    {"label": "Clients",   "href": "/admin/clients"},
+    {"label": "Clients", "href": "/admin/clients"},
     {"label": client.client_name or client.account_id[:16], "href": "/admin/clients/" ~ client.account_id},
     {"label": "Knowledge Base", "href": ""},
 ]) }}
 {% endblock %}
 {% block head %}
 <style>
+.page{transform:none!important}
+.kb-hero-actions{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}
+.kb-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.75rem;margin-bottom:1rem}
+.kb-stat{padding:.9rem 1rem;border:1px solid var(--border);border-radius:var(--radius);background:linear-gradient(180deg,var(--surface),var(--surface-2));box-shadow:var(--shadow)}
+.kb-stat-value{font-size:22px;font-weight:900;letter-spacing:-.03em;color:var(--text)}
+.kb-stat-label{font-size:10px;font-weight:850;text-transform:uppercase;letter-spacing:.07em;color:var(--text-muted);margin-top:.2rem}
+.kb-stat.attention .kb-stat-value{color:var(--amber)}
+.kb-work-nav{display:flex;gap:.35rem;padding:.35rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);box-shadow:var(--shadow);margin-bottom:1rem;overflow-x:auto}
+.kb-work-tab{display:inline-flex;align-items:center;gap:.4rem;padding:.55rem .8rem;border-radius:var(--radius-sm);color:var(--text-muted);font-size:12px;font-weight:800;white-space:nowrap;text-decoration:none}
+.kb-work-tab:hover{background:var(--surface-2);color:var(--text);text-decoration:none}
+.kb-work-tab.active{background:var(--primary-soft);color:var(--primary)}
+.kb-tab-count{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:20px;padding:0 6px;border-radius:999px;background:var(--surface-2);border:1px solid var(--border);font-size:10px}
+.kb-work-tab.active .kb-tab-count{background:var(--surface);border-color:color-mix(in srgb,var(--primary) 28%,transparent)}
+.kb-toolbar{display:flex;gap:.65rem;align-items:center;justify-content:space-between;padding:.75rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);margin-bottom:1rem}
+.kb-toolbar-controls{display:flex;gap:.5rem;align-items:center;flex:1;min-width:0}
+.kb-search{width:min(460px,100%);padding:.6rem .75rem;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)}
+.kb-filter{padding:.6rem .7rem;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);font-size:12px}
+.kb-result-count{font-size:11px;font-weight:750;color:var(--text-muted);white-space:nowrap}
+.kb-fields-layout{display:grid;grid-template-columns:240px minmax(0,1fr);gap:1rem;align-items:start}
+.kb-table-nav{position:sticky;top:1rem;max-height:calc(100vh - 180px);overflow:auto}
+.kb-table-link{display:block;padding:.65rem .75rem;border-bottom:1px solid var(--border);color:var(--text-soft);text-decoration:none}
+.kb-table-link:last-child{border-bottom:none}
+.kb-table-link:hover,.kb-table-link.active{background:var(--surface-2);text-decoration:none}
+.kb-table-link.active{box-shadow:inset 3px 0 0 var(--primary)}
+.kb-table-link-name{display:block;font-family:Consolas,monospace;font-size:12px;font-weight:850;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kb-table-link-meta{display:flex;justify-content:space-between;gap:.5rem;margin-top:.25rem;font-size:10px;color:var(--text-muted)}
+.kb-table-section{scroll-margin-top:1rem}
+.kb-table-head{display:flex;justify-content:space-between;gap:1rem;align-items:flex-start}
+.kb-table-head h2{font-size:15px;color:var(--text)}
+.kb-table-head p{font-size:12px;color:var(--text-muted);margin-top:.25rem;line-height:1.55}
+.kb-field-list{display:grid;gap:.65rem;padding:.75rem}
+.kb-field-card{border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);padding:.8rem;scroll-margin-top:1rem}
+.kb-field-card:hover{border-color:var(--border-strong);box-shadow:var(--shadow)}
+.kb-field-top{display:flex;justify-content:space-between;gap:.75rem;align-items:flex-start}
+.kb-field-name{font-family:Consolas,monospace;font-size:13px;font-weight:900;color:var(--text);word-break:break-word}
+.kb-field-type{font-size:10px;color:var(--text-muted);margin-top:.2rem}
+.kb-field-badges{display:flex;gap:.3rem;flex-wrap:wrap;margin-top:.45rem}
+.kb-field-content{display:grid;grid-template-columns:1fr 1fr;gap:.75rem;margin-top:.75rem}
+.kb-field-block{padding:.65rem;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface-2);min-width:0}
+.kb-field-label{font-size:9px;font-weight:900;text-transform:uppercase;letter-spacing:.08em;color:var(--text-muted);margin-bottom:.3rem}
+.kb-field-text{font-size:12px;line-height:1.55;color:var(--text-soft);white-space:pre-wrap;overflow-wrap:anywhere}
+.kb-field-values{margin-top:.55rem;font-size:10px;color:var(--text-muted);overflow-wrap:anywhere}
+.kb-field-note{margin-top:.55rem;padding:.5rem .65rem;border-left:3px solid var(--primary);background:var(--primary-soft);font-size:11px;color:var(--text-soft)}
+.kb-field-edit{flex-shrink:0}
+.kb-no-results{display:none}
+.kb-no-results.show{display:block}
+.review-list{display:grid;gap:.8rem}
+.review-card{border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);box-shadow:var(--shadow);overflow:hidden}
+.review-head{display:flex;justify-content:space-between;gap:1rem;padding:.8rem 1rem;border-bottom:1px solid var(--border);background:var(--surface-2)}
+.review-field{font-family:Consolas,monospace;font-size:12px;font-weight:900;color:var(--text);overflow-wrap:anywhere}
+.review-meta{font-size:10px;color:var(--text-muted);margin-top:.2rem}
+.review-body{padding:1rem}
+.review-compare{display:grid;grid-template-columns:1fr 1fr;gap:.75rem}
+.review-box{border:1px solid var(--border);border-radius:var(--radius);padding:.75rem;background:var(--surface-2)}
+.review-box.suggested{border-color:color-mix(in srgb,var(--primary) 30%,var(--border));background:color-mix(in srgb,var(--primary-soft) 55%,var(--surface))}
+.review-box h3{font-size:10px;text-transform:uppercase;letter-spacing:.07em;color:var(--text-muted);margin-bottom:.4rem}
+.review-actions{display:flex;gap:.5rem;align-items:flex-end;margin-top:.75rem;flex-wrap:wrap}
+.review-actions textarea{flex:1;min-width:240px;min-height:56px;padding:.55rem;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);resize:vertical}
+.review-filters{display:flex;gap:.35rem;flex-wrap:wrap;margin-bottom:.8rem}
+.review-filter{padding:.45rem .7rem;border:1px solid var(--border);border-radius:999px;background:var(--surface);color:var(--text-muted);font-size:11px;font-weight:800}
+.review-filter.active{background:var(--primary-soft);border-color:color-mix(in srgb,var(--primary) 30%,transparent);color:var(--primary)}
+.file-workspace{display:grid;grid-template-columns:260px minmax(0,1fr);gap:1rem}
 .file-list{list-style:none;padding:0}
-.file-list li{display:flex;align-items:center;justify-content:space-between;
-  padding:.5rem .75rem;border-bottom:1px solid var(--gray-100)}
+.file-list li{display:flex;align-items:center;justify-content:space-between;gap:.5rem;padding:.55rem .75rem;border-bottom:1px solid var(--border)}
 .file-list li:last-child{border-bottom:none}
-.file-list li:hover{background:var(--gray-50)}
-.file-list .fname{font-family:monospace;font-size:12px;color:var(--blue)}
-.file-list .fname:hover{text-decoration:underline}
-.editor-area{width:100%;min-height:420px;padding:.75rem;font-family:Consolas,monospace;
-  font-size:12px;line-height:1.6;border:1px solid var(--gray-300);border-radius:6px;
-  resize:vertical;color:var(--gray-900)}
-.editor-area:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px rgba(13,115,119,.1)}
-.nc-table{width:100%;border-collapse:collapse;font-size:12px}
-.nc-table th{padding:.55rem .75rem;background:var(--surface-2);border-bottom:1px solid var(--border);
-  text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted)}
-.nc-table td{padding:.6rem .75rem;border-bottom:1px solid var(--border);vertical-align:top}
-.nc-table tr:last-child td{border-bottom:none}
-.nc-col{font-family:Consolas,monospace;font-weight:800;color:var(--text)}
-.nc-hint{width:100%;min-height:52px;padding:.4rem .55rem;font-size:12px;border:1px solid var(--border);
-  border-radius:var(--radius-sm);background:var(--surface);color:var(--text);resize:vertical}
-.feedback-filters{display:flex;gap:.4rem;flex-wrap:wrap}
-.feedback-filter{border:1px solid var(--border);border-radius:999px;padding:4px 9px;font-size:11px;font-weight:800;color:var(--text-muted);background:var(--surface);text-decoration:none}
-.feedback-filter.active{background:var(--blue-light);border-color:color-mix(in srgb,var(--blue) 28%,transparent);color:var(--blue)}
-.semantic-feedback-table{width:100%;border-collapse:collapse;font-size:12px}
-.semantic-feedback-table th{padding:.6rem .75rem;background:var(--surface-2);border-bottom:1px solid var(--border);text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted)}
-.semantic-feedback-table td{padding:.75rem;border-bottom:1px solid var(--border);vertical-align:top;color:var(--text-soft)}
-.semantic-feedback-table tr:last-child td{border-bottom:none}
-.feedback-field{font-family:Consolas,monospace;font-weight:800;color:var(--text)}
-.feedback-muted{font-size:11px;color:var(--text-muted);margin-top:3px}
-.feedback-copy{display:grid;grid-template-columns:1fr 1fr;gap:.65rem;min-width:360px}
-.feedback-box{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:.55rem;min-height:76px}
-.feedback-box strong{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);margin-bottom:.35rem}
-.feedback-review-form textarea{width:100%;min-height:58px;border:1px solid var(--border);border-radius:var(--radius-sm);padding:.5rem;background:var(--surface);color:var(--text);resize:vertical}
-.feedback-review-form .actions{display:flex;gap:.4rem;flex-wrap:wrap;margin-top:.45rem}
-@media(max-width:900px){.feedback-copy{grid-template-columns:1fr;min-width:0}.semantic-feedback-table{display:block;overflow-x:auto}}
+.file-list li:hover{background:var(--surface-2)}
+.file-list .fname{font-family:Consolas,monospace;font-size:11px;color:var(--primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.editor-area{width:100%;min-height:520px;padding:.8rem;font-family:Consolas,monospace;font-size:12px;line-height:1.6;border:1px solid var(--border);border-radius:var(--radius);resize:vertical;color:var(--text);background:var(--surface)}
+.editor-actions{display:flex;gap:.5rem;align-items:center;margin-top:.75rem;position:sticky;bottom:0;padding:.65rem 0;background:var(--surface)}
+.advanced-note{padding:.7rem .8rem;border:1px solid color-mix(in srgb,var(--amber) 32%,var(--border));border-radius:var(--radius);background:var(--amber-light);color:var(--amber);font-size:11px;margin-bottom:1rem}
+.field-drawer-backdrop{display:none;position:fixed;inset:0;z-index:var(--z-overlay);background:rgba(15,23,42,.55)}
+.field-drawer-backdrop.open{display:block}
+.field-drawer{position:fixed;top:0;right:0;width:min(560px,100%);height:100vh;height:100dvh;max-height:100dvh;z-index:calc(var(--z-overlay) + 1);display:none;flex-direction:column;background:var(--surface);border-left:1px solid var(--border);box-shadow:var(--shadow-lg)}
+.field-drawer.open{display:flex}
+.field-drawer-head{display:flex;justify-content:space-between;gap:1rem;align-items:flex-start;padding:1rem 1.15rem;border-bottom:1px solid var(--border);background:var(--surface-2)}
+.field-drawer-title{font-size:16px;font-weight:900;color:var(--text)}
+.field-drawer-sub{font-family:Consolas,monospace;font-size:11px;color:var(--text-muted);margin-top:.25rem;overflow-wrap:anywhere}
+.field-drawer-close{border:1px solid var(--border);border-radius:var(--radius-sm);width:32px;height:32px;background:var(--surface);color:var(--text);cursor:pointer}
+.field-drawer-body{flex:1;overflow:auto;padding:1rem 1.15rem}
+.field-editor-group{margin-bottom:1rem}
+.field-editor-group label{display:block;font-size:11px;font-weight:850;color:var(--text-soft);margin-bottom:.35rem}
+.field-editor-group textarea{width:100%;min-height:92px;padding:.7rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--text);resize:vertical}
+.field-editor-group textarea.compact{min-height:70px}
+.field-editor-help{font-size:10px;color:var(--text-muted);margin-top:.3rem;line-height:1.5}
+.field-context-strip{display:grid;grid-template-columns:1fr 1fr;gap:.6rem;margin-bottom:1rem}
+.field-context-tile{padding:.65rem;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface-2)}
+.field-context-value{font-size:11px;color:var(--text-soft);overflow-wrap:anywhere}
+.field-drawer-foot{display:flex;justify-content:flex-end;gap:.5rem;padding:.85rem 1.15rem;border-top:1px solid var(--border);background:var(--surface)}
+@media(max-width:900px){
+  .kb-summary{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .kb-fields-layout,.file-workspace{grid-template-columns:1fr}
+  .kb-table-nav{position:static;max-height:none}
+  .kb-table-nav .card-body{display:flex;overflow-x:auto;padding:.5rem}
+  .kb-table-link{min-width:190px;border:1px solid var(--border);border-radius:var(--radius-sm);margin-right:.4rem}
+  .kb-field-content,.review-compare{grid-template-columns:1fr}
+}
+@media(max-width:860px){
+  .field-drawer-backdrop{top:54px}
+  .field-drawer{height:calc(100dvh - 54px);max-height:calc(100dvh - 54px)}
+}
+@media(max-width:600px){
+  .page-header{align-items:stretch;flex-direction:column}
+  .page-header-actions{width:100%}
+  .kb-hero-actions{display:grid;grid-template-columns:1fr 1fr}
+  .kb-hero-actions .btn{justify-content:center}
+  .kb-summary{grid-template-columns:1fr 1fr;gap:.5rem}
+  .kb-stat{padding:.7rem}
+  .kb-stat-value{font-size:19px}
+  .kb-toolbar{align-items:stretch;flex-direction:column}
+  .kb-toolbar-controls{align-items:stretch;flex-direction:column}
+  .kb-search,.kb-filter{width:100%}
+  .kb-field-top{align-items:stretch;flex-direction:column}
+  .kb-field-edit{width:100%;justify-content:center}
+  .review-head{flex-direction:column}
+  .review-actions{align-items:stretch;flex-direction:column}
+  .review-actions textarea{width:100%;min-width:0}
+  .review-actions .btn{width:100%;justify-content:center}
+  .field-drawer{width:100%}
+  .field-context-strip{grid-template-columns:1fr}
+  .field-drawer-foot .btn{flex:1;justify-content:center}
+}
 </style>
 {% endblock %}
 {% block content %}
 
 {{ client_workspace_nav(client, "kb") }}
 
-<div class="page-header">
-  <h1>Knowledge Base Editor</h1>
-</div>
-
-{% if saved == "1" %}<div class="alert alert-success">File saved and re-embedded into ChromaDB.</div>
-{% elif saved == "context" %}<div class="alert alert-success">Column context hints saved. They will be injected into the next KB rebuild.</div>
-{% elif saved == "error" %}<div class="alert alert-danger">Save failed.</div>{% endif %}
-{% if feedback_saved == "approved" %}<div class="alert alert-success">Semantic Layer correction approved and KB re-embedded. The patched KB file is opened below. {% if feedback_msg %}<br><span style="font-size:12px">{{ feedback_msg }}</span>{% endif %}</div>{% endif %}
-{% if feedback_saved == "rejected" %}<div class="alert alert-info">Semantic Layer correction rejected. No KB changes made.</div>{% endif %}
-{% if feedback_saved == "error" %}<div class="alert alert-danger">Approval failed: {{ feedback_msg or "KB file could not be updated." }} The item remains pending.</div>{% endif %}
-
-<div class="card" id="semantic-feedback" style="margin-bottom:1.25rem">
-  <div class="card-header">
-    <div>
-      <h2>Semantic Layer review queue</h2>
-      <p style="font-size:12px;color:var(--gray-500);margin-top:3px">User-submitted field corrections wait here until an admin approves or rejects them.</p>
-    </div>
-    <div class="feedback-filters">
-      {% for s in ["pending", "approved", "rejected", "all"] %}
-      <a class="feedback-filter {% if semantic_feedback_status == s %}active{% endif %}"
-         href="/admin/clients/{{ client.account_id }}/kb?feedback_status={{ s }}#semantic-feedback">{{ s }}</a>
-      {% endfor %}
-    </div>
+{% call page_header("Knowledge Base", "Review and improve the field metadata QueryBot uses to understand business questions.") %}
+  <div class="kb-hero-actions">
+    <a href="/admin/clients/{{ client.account_id }}/setup" class="btn btn-secondary btn-sm">Build settings</a>
+    {% if kb_files %}<a href="/admin/clients/{{ client.account_id }}/setup#kb-build" class="btn btn-primary btn-sm">Rebuild KB</a>{% endif %}
   </div>
-  {% if not semantic_feedback %}
-  <div class="card-body" style="color:var(--gray-500);font-size:13px">No Semantic Layer corrections in this view.</div>
+{% endcall %}
+
+{% if saved == "1" %}<div class="alert alert-success">File saved and re-embedded into the vector index.</div>
+{% elif saved == "field" %}<div class="alert alert-success">Field metadata saved, applied to the KB, and re-embedded.</div>
+{% elif saved == "context" %}<div class="alert alert-success">Column context hints saved. They will be applied during the next rebuild.</div>
+{% elif saved == "error" %}<div class="alert alert-error">Save failed.</div>{% endif %}
+{% if field_error %}<div class="alert alert-error">{{ field_error }}</div>{% endif %}
+{% if feedback_saved == "approved" %}<div class="alert alert-success">Semantic Layer correction approved and KB re-embedded. The patched KB file is opened below. {% if feedback_msg %}<span>{{ feedback_msg }}</span>{% endif %}</div>{% endif %}
+{% if feedback_saved == "rejected" %}<div class="alert alert-info">Semantic Layer correction rejected. No KB changes made.</div>{% endif %}
+{% if feedback_saved == "error" %}<div class="alert alert-error">Approval failed: {{ feedback_msg or "KB file could not be updated." }} The item remains pending.</div>{% endif %}
+
+<section class="kb-summary" aria-label="Knowledge Base summary">
+  <div class="kb-stat"><div class="kb-stat-value">{{ semantic_tables|length }}</div><div class="kb-stat-label">Tables documented</div></div>
+  <div class="kb-stat"><div class="kb-stat-value">{{ field_count }}</div><div class="kb-stat-label">Fields available</div></div>
+  <div class="kb-stat {% if needs_context %}attention{% endif %}"><div class="kb-stat-value">{{ needs_context|length }}</div><div class="kb-stat-label">Need context</div></div>
+  <div class="kb-stat {% if pending_review_count %}attention{% endif %}"><div class="kb-stat-value">{{ pending_review_count }}</div><div class="kb-stat-label">Pending reviews</div></div>
+</section>
+
+<nav class="kb-work-nav" aria-label="Knowledge Base work areas">
+  <a class="kb-work-tab {% if view == 'fields' %}active{% endif %}" href="?view=fields">
+    Fields <span class="kb-tab-count">{{ field_count }}</span>
+  </a>
+  <a class="kb-work-tab {% if view == 'reviews' %}active{% endif %}" href="?view=reviews&feedback_status=pending">
+    Review queue <span class="kb-tab-count">{{ pending_review_count }}</span>
+  </a>
+  <a class="kb-work-tab {% if view == 'files' %}active{% endif %}" href="?view=files">
+    Advanced files <span class="kb-tab-count">{{ kb_files|length + schema_files|length }}</span>
+  </a>
+</nav>
+
+{% if view == "fields" %}
+  {% if not semantic_tables %}
+  <div class="card">
+    {{ empty_state(
+      icon_name="database",
+      title="No field metadata yet",
+      body="Connect a database, discover the schema, and build the Knowledge Base before editing field meanings.",
+      action_href="/admin/clients/" ~ client.account_id ~ "/setup",
+      action_label="Open KB setup"
+    ) }}
+  </div>
   {% else %}
-  <div style="overflow:auto">
-    <table class="semantic-feedback-table">
-      <thead>
-        <tr>
-          <th>Field</th>
-          <th>Submitted by</th>
-          <th>Correction</th>
-          <th>Status</th>
-          <th style="width:260px">Admin action</th>
-        </tr>
-      </thead>
-      <tbody>
-      {% for item in semantic_feedback %}
-        <tr>
-          <td>
-            <div class="feedback-field">{{ item.table_fqn }}.{{ item.column_name }}</div>
-            <div class="feedback-muted">{{ item.created_at }}{% if item.confidence_score %} | {{ item.confidence_score }}% original confidence{% endif %}</div>
-            {% if item.status == "pending" %}
-            <div class="feedback-muted" style="margin-top:4px;color:var(--blue)">
-              Will patch:
-              {% if item.patch_file %}
-              <a href="/admin/clients/{{ client.account_id }}/kb?file={{ item.patch_file|urlencode }}#kb-editor"><code>{{ item.patch_file }}</code></a>
-              {% else %}
-              <code>{{ item.table_name }}_kb.md</code>
-              {% endif %}
+  <div class="kb-toolbar" id="fields-workspace">
+    <div class="kb-toolbar-controls">
+      <input type="search" class="kb-search" id="kbFieldSearch" placeholder="Search tables, fields, meanings, or use cases..." autocomplete="off">
+      <select class="kb-filter" id="kbFieldFilter" aria-label="Filter fields">
+        <option value="all">All fields</option>
+        <option value="needs-context">Needs context</option>
+        <option value="approved">Admin approved</option>
+        <option value="generated">Generated</option>
+      </select>
+    </div>
+    <span class="kb-result-count" id="kbFieldCount">{{ field_count }} fields</span>
+  </div>
+
+  <div class="kb-fields-layout">
+    <aside class="card kb-table-nav" aria-label="Knowledge Base tables">
+      <div class="card-header"><h2>Tables</h2></div>
+      <div class="card-body" style="padding:0">
+        {% for table in semantic_tables %}
+        <a class="kb-table-link {% if selected_table == table.fqn %}active{% endif %}"
+           href="#kb-table-{{ loop.index }}"
+           data-table-nav="{{ table.fqn|lower }}">
+          <span class="kb-table-link-name">{{ table.schema }}.{{ table.table }}</span>
+          <span class="kb-table-link-meta">
+            <span>{{ table.field_count }} fields</span>
+            <span>{{ table.confidence }}%</span>
+          </span>
+        </a>
+        {% endfor %}
+      </div>
+    </aside>
+
+    <main id="kbFieldTables">
+      {% for table in semantic_tables %}
+      {% set table_index = loop.index %}
+      <section class="card kb-table-section" id="kb-table-{{ table_index }}"
+               data-table-fqn="{{ table.fqn|lower }}"
+               data-table-search="{{ (table.fqn ~ ' ' ~ table.overview)|lower }}">
+        <div class="card-header kb-table-head">
+          <div>
+            <h2>{{ table.schema }}.{{ table.table }}</h2>
+            <p>{{ table.overview or "Field-level metadata generated from this table's schema and approved admin edits." }}</p>
+          </div>
+          <span class="status-pill {% if table.confidence >= 85 %}success{% elif table.confidence >= 65 %}warning{% else %}danger{% endif %}">
+            <span class="status-dot"></span>{{ table.confidence }}% confidence
+          </span>
+        </div>
+        <div class="kb-field-list">
+          {% for field in table.fields %}
+          <article class="kb-field-card"
+                   id="field-{{ table.table }}-{{ field.column }}"
+                   data-field-card
+                   data-status="{% if field.needs_context %}needs-context{% elif field.approved %}approved{% else %}generated{% endif %}"
+                   data-search="{{ (table.fqn ~ ' ' ~ field.column ~ ' ' ~ field.type ~ ' ' ~ field.meaning ~ ' ' ~ field.use_case ~ ' ' ~ (field.synonyms|join(' ')))|lower }}">
+            <div class="kb-field-top">
+              <div>
+                <div class="kb-field-name">{{ field.column }}</div>
+                <div class="kb-field-type">{{ field.type or "type unknown" }}{% if field.nullable %} · nullable {{ field.nullable }}{% endif %}</div>
+                <div class="kb-field-badges">
+                  {% if field.needs_context %}<span class="badge badge-amber">Needs context</span>{% endif %}
+                  {% if field.approved %}<span class="badge badge-green">Admin approved</span>{% else %}<span class="badge badge-gray">Generated</span>{% endif %}
+                  {% if field.pending %}<span class="badge badge-blue">Review pending</span>{% endif %}
+                  <span class="badge {% if field.confidence >= 85 %}badge-green{% elif field.confidence >= 65 %}badge-amber{% else %}badge-red{% endif %}">{{ field.confidence }}%</span>
+                </div>
+              </div>
+              <button type="button" class="btn btn-secondary btn-sm kb-field-edit"
+                      data-table-fqn="{{ table.fqn|e }}"
+                      data-table-label="{{ table.schema }}.{{ table.table }}"
+                      data-column="{{ field.column|e }}"
+                      data-type="{{ field.type|e }}"
+                      data-values="{{ field.distinct_values|e }}"
+                      data-meaning="{{ field.meaning|e }}"
+                      data-use-case="{{ field.use_case|e }}"
+                      data-synonyms="{{ field.synonyms|join(', ')|e }}"
+                      data-admin-note="{{ field.admin_note|e }}"
+                      onclick="openFieldEditor(this)">Edit field</button>
             </div>
-            {% endif %}
-          </td>
-          <td>
-            <strong>{{ item.submitted_by or "Portal user" }}</strong>
-            <div class="feedback-muted">{{ item.submitted_email or "" }}</div>
-          </td>
-          <td>
-            <div class="feedback-copy">
-              <div class="feedback-box">
-                <strong>Current</strong>
-                <div>{{ item.current_meaning or "No current meaning captured." }}</div>
-                <div class="feedback-muted">{{ item.current_use_case or "" }}</div>
+            <div class="kb-field-content">
+              <div class="kb-field-block">
+                <div class="kb-field-label">Business meaning</div>
+                <div class="kb-field-text">{{ field.meaning or "No business meaning has been defined." }}</div>
               </div>
-              <div class="feedback-box">
-                <strong>Suggested</strong>
-                <div>{{ item.suggested_meaning or item.current_meaning or "No suggested meaning." }}</div>
-                <div class="feedback-muted">{{ item.suggested_use_case or item.current_use_case or "" }}</div>
-                {% if item.user_comment %}<div class="feedback-muted" style="margin-top:.4rem">Comment: {{ item.user_comment }}</div>{% endif %}
+              <div class="kb-field-block">
+                <div class="kb-field-label">How QueryBot should use it</div>
+                <div class="kb-field-text">{{ field.use_case or "No query use case has been defined." }}</div>
               </div>
             </div>
-          </td>
-          <td>
-            {% if item.status == "approved" %}<span class="badge badge-green">approved</span>
-            {% elif item.status == "rejected" %}<span class="badge badge-red">rejected</span>
-            {% else %}<span class="badge badge-amber">pending</span>{% endif %}
-            {% if item.reviewed_at %}<div class="feedback-muted">Reviewed {{ item.reviewed_at }}</div>{% endif %}
-            {% if item.admin_note %}<div class="feedback-muted">{{ item.admin_note }}</div>{% endif %}
-            {% if item.status == "approved" and item.patch_file %}
-            <div class="feedback-muted"><a href="/admin/clients/{{ client.account_id }}/kb?file={{ item.patch_file|urlencode }}#kb-editor">Open patched KB file</a></div>
-            {% endif %}
-          </td>
-          <td>
-            {% if item.status == "pending" %}
-            <form method="post" action="/admin/clients/{{ client.account_id }}/semantic-feedback/{{ item.id }}/review" class="feedback-review-form">
-              <input type="hidden" name="status" id="status-{{ item.id }}" value="">
-              <textarea name="admin_note" placeholder="Optional admin note"></textarea>
-              <div class="actions">
-                <button type="button" class="btn btn-success btn-sm"
-                        onclick="submitReview('{{ item.id }}', 'approved', this)">
-                  Approve &amp; update KB
-                </button>
-                <button type="button" class="btn btn-danger btn-sm"
-                        onclick="submitReview('{{ item.id }}', 'rejected', this)">Reject</button>
-              </div>
-            </form>
-            {% else %}
-            <span class="feedback-muted">No action needed.</span>
-            {% endif %}
-          </td>
-        </tr>
+            {% if field.distinct_values %}<div class="kb-field-values"><strong>Known values:</strong> {{ field.distinct_values }}</div>{% endif %}
+            {% if field.synonyms %}<div class="kb-field-values"><strong>Admin synonyms:</strong> {{ field.synonyms|join(", ") }}</div>{% endif %}
+            {% if field.admin_note %}<div class="kb-field-note"><strong>Admin note:</strong> {{ field.admin_note }}</div>{% endif %}
+          </article>
+          {% endfor %}
+        </div>
+      </section>
       {% endfor %}
-      </tbody>
-    </table>
+      <div class="card kb-no-results" id="kbNoFieldResults">
+        {{ empty_state(icon_name="search", title="No matching fields", body="Try a shorter search or change the field filter.") }}
+      </div>
+    </main>
   </div>
   {% endif %}
-</div>
 
-{% if needs_context %}
-<div class="card" style="margin-bottom:1.25rem">
-  <div class="card-header">
-    <div>
-      <h2>Column context needed</h2>
-      <p style="font-size:12px;color:var(--gray-500);margin-top:3px">These columns were flagged <code>[NEEDS CONTEXT]</code> during the last KB build. Provide the business meaning so the next rebuild generates correct SQL instead of skipping them.</p>
+{% elif view == "reviews" %}
+  <div id="semantic-feedback">
+    <div class="review-filters">
+      {% for s in ["pending", "approved", "rejected", "all"] %}
+      <a class="review-filter {% if semantic_feedback_status == s %}active{% endif %}"
+         href="/admin/clients/{{ client.account_id }}/kb?view=reviews&feedback_status={{ s }}#semantic-feedback">{{ s|title }}</a>
+      {% endfor %}
     </div>
-    <span class="badge badge-amber">{{ needs_context|length }} column{{ 's' if needs_context|length != 1 }}</span>
-  </div>
-  <form method="post" action="/admin/clients/{{ client.account_id }}/kb/context-hints">
-    <div style="overflow:auto">
-      <table class="nc-table">
-        <thead>
-          <tr>
-            <th style="width:160px">Table</th>
-            <th style="width:160px">Column</th>
-            <th>Business meaning (what this column represents, how it is used in queries)</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for item in needs_context %}
-          <tr>
-            <td><span class="nc-col">{{ item.table }}</span></td>
-            <td><span class="nc-col">{{ item.column }}</span></td>
-            <td>
-              <textarea name="hint__{{ item.table }}__{{ item.column }}"
-                        class="nc-hint"
-                        placeholder="e.g. Order status code: 0=open, 4=credit hold, 9=closed"
-              >{{ item.existing_hint }}</textarea>
-            </td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-    <div style="padding:.75rem 1rem;border-top:1px solid var(--border);display:flex;gap:.5rem;align-items:center">
-      <button type="submit" class="btn btn-primary btn-sm">Save hints</button>
-      <span style="font-size:11px;color:var(--text-muted)">Only filled-in rows are saved. Hints are injected into the next KB rebuild automatically.</span>
-    </div>
-  </form>
-</div>
-{% endif %}
-
-<div style="display:grid;grid-template-columns:260px 1fr;gap:1.25rem">
-
-  <!-- File list sidebar -->
-  <div>
-    {% if kb_files %}
+    {% if not semantic_feedback %}
     <div class="card">
-      <div class="card-header"><h2>KB files (enriched)</h2></div>
-      <ul class="file-list">
-        {% for f in kb_files %}
-        <li>
-          <a href="?file={{ f|urlencode }}" class="fname">{{ f }}</a>
-          {% if file_view == f %}<span class="badge badge-blue">editing</span>{% endif %}
-        </li>
-        {% endfor %}
-      </ul>
-    </div>
-    {% endif %}
-
-    {% if schema_files %}
-    <div class="card">
-      <div class="card-header"><h2>Schema files (raw)</h2></div>
-      <ul class="file-list">
-        {% for f in schema_files %}
-        <li>
-          <a href="?file={{ f|urlencode }}&type=schema" class="fname">{{ f }}</a>
-          {% if file_view == f %}<span class="badge badge-amber">editing</span>{% endif %}
-        </li>
-        {% endfor %}
-      </ul>
-    </div>
-    {% endif %}
-
-    {% if not kb_files and not schema_files %}
-    <div class="card">
-      <div class="card-body" style="color:var(--gray-500);font-size:13px">
-        No files yet. Schema discovery must run first, then KB generation.
-      </div>
-    </div>
-    {% endif %}
-  </div>
-
-  <!-- Editor -->
-  <div>
-    {% if file_view and file_content is not none %}
-    <div class="card" id="kb-editor">
-      <div class="card-header">
-        <h2>Editing: {{ file_view }}</h2>
-        <span style="font-size:11px;color:var(--gray-500)">
-          {% if "schema" in request.query_params.get("type","") %}Schema file — changes affect discovery only
-          {% else %}KB file — saved changes are immediately re-embedded into ChromaDB{% endif %}
-        </span>
-      </div>
-      <div class="card-body">
-        <form method="post" action="/admin/clients/{{ client.account_id }}/kb/save">
-          <input type="hidden" name="filename" value="{{ file_view }}">
-          <input type="hidden" name="file_type" value="{{ request.query_params.get('type','kb') }}">
-          <textarea name="content" class="editor-area">{{ file_content }}</textarea>
-          <div style="margin-top:.75rem;display:flex;gap:.5rem">
-            <button type="submit" class="btn btn-primary">Save &amp; re-embed</button>
-            <a href="/admin/clients/{{ client.account_id }}/kb" class="btn btn-secondary">Cancel</a>
-          </div>
-        </form>
-      </div>
+      {{ empty_state(
+        icon_name="inbox",
+        title="No corrections in this view",
+        body="User-submitted field corrections will appear here for approval."
+      ) }}
     </div>
     {% else %}
-    <div class="card">
-      <div class="card-body" style="color:var(--gray-500);text-align:center;padding:3rem">
-        Select a file from the list to view and edit it.
-      </div>
+    <div class="review-list">
+      {% for item in semantic_feedback %}
+      <article class="review-card">
+        <div class="review-head">
+          <div>
+            <div class="review-field">{{ item.table_fqn }}.{{ item.column_name }}</div>
+            <div class="review-meta">Submitted {{ item.created_at }} by {{ item.submitted_by or "Portal user" }}{% if item.submitted_email %} · {{ item.submitted_email }}{% endif %}</div>
+          </div>
+          {% if item.status == "approved" %}<span class="badge badge-green">Approved</span>
+          {% elif item.status == "rejected" %}<span class="badge badge-red">Rejected</span>
+          {% else %}<span class="badge badge-amber">Pending</span>{% endif %}
+        </div>
+        <div class="review-body">
+          <div class="review-compare">
+            <div class="review-box">
+              <h3>Current metadata</h3>
+              <div class="kb-field-text">{{ item.current_meaning or "No current meaning captured." }}</div>
+              {% if item.current_use_case %}<div class="kb-field-values">{{ item.current_use_case }}</div>{% endif %}
+            </div>
+            <div class="review-box suggested">
+              <h3>Suggested correction</h3>
+              <div class="kb-field-text">{{ item.suggested_meaning or item.current_meaning or "No suggested meaning." }}</div>
+              {% if item.suggested_use_case %}<div class="kb-field-values">{{ item.suggested_use_case }}</div>{% endif %}
+              {% if item.user_comment %}<div class="kb-field-note">{{ item.user_comment }}</div>{% endif %}
+            </div>
+          </div>
+          {% if item.status == "pending" %}
+          <form method="post" action="/admin/clients/{{ client.account_id }}/semantic-feedback/{{ item.id }}/review" class="review-actions">
+            <input type="hidden" name="status" id="status-{{ item.id }}" value="">
+            <textarea name="admin_note" placeholder="Optional note to the submitter"></textarea>
+            <button type="button" class="btn btn-success btn-sm" onclick="submitReview('{{ item.id }}','approved',this)">Approve and apply</button>
+            <button type="button" class="btn btn-danger btn-sm" onclick="submitReview('{{ item.id }}','rejected',this)">Reject</button>
+          </form>
+          {% else %}
+            {% if item.admin_note %}<div class="kb-field-note"><strong>Admin note:</strong> {{ item.admin_note }}</div>{% endif %}
+            {% if item.patch_file %}<div class="kb-field-values"><a href="/admin/clients/{{ client.account_id }}/kb?view=files&file={{ item.patch_file|urlencode }}#kb-editor">Open patched KB file</a></div>{% endif %}
+          {% endif %}
+        </div>
+      </article>
+      {% endfor %}
     </div>
     {% endif %}
   </div>
 
-</div>
+{% else %}
+  <div class="advanced-note"><strong>Advanced editor.</strong> Raw file changes are applied directly. Use the Fields workspace for normal business-meaning and use-case edits.</div>
+  <div class="file-workspace">
+    <aside>
+      {% if kb_files %}
+      <div class="card">
+        <div class="card-header"><h2>Generated KB files</h2></div>
+        <ul class="file-list">
+          {% for f in kb_files %}
+          <li>
+            <a href="?view=files&file={{ f|urlencode }}" class="fname">{{ f }}</a>
+            {% if file_view == f %}<span class="badge badge-blue">Editing</span>{% endif %}
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
+      {% endif %}
+      {% if schema_files %}
+      <div class="card">
+        <div class="card-header"><h2>Raw schema files</h2></div>
+        <ul class="file-list">
+          {% for f in schema_files %}
+          <li>
+            <a href="?view=files&file={{ f|urlencode }}&type=schema" class="fname">{{ f }}</a>
+            {% if file_view == f %}<span class="badge badge-amber">Editing</span>{% endif %}
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
+      {% endif %}
+    </aside>
+    <main>
+      {% if file_view and file_content is not none %}
+      <div class="card" id="kb-editor">
+        <div class="card-header">
+          <div>
+            <h2>{{ file_view }}</h2>
+            <p style="font-size:11px;color:var(--text-muted);margin-top:.2rem">
+              {% if request.query_params.get("type") == "schema" %}Schema changes affect future discovery and builds.
+              {% else %}Saving immediately re-embeds this file into the vector index.{% endif %}
+            </p>
+          </div>
+        </div>
+        <div class="card-body">
+          <form method="post" action="/admin/clients/{{ client.account_id }}/kb/save" id="rawFileForm">
+            <input type="hidden" name="filename" value="{{ file_view }}">
+            <input type="hidden" name="file_type" value="{{ request.query_params.get('type','kb') }}">
+            <textarea name="content" class="editor-area" id="rawEditor">{{ file_content }}</textarea>
+            <div class="editor-actions">
+              <button type="submit" class="btn btn-primary">Save and re-embed</button>
+              <a href="/admin/clients/{{ client.account_id }}/kb?view=files" class="btn btn-secondary">Cancel</a>
+            </div>
+          </form>
+        </div>
+      </div>
+      {% else %}
+      <div class="card">
+        {{ empty_state(
+          icon_name="inbox",
+          title="Select a file",
+          body="Choose a generated KB file or raw schema file to inspect its Markdown."
+        ) }}
+      </div>
+      {% endif %}
+    </main>
+  </div>
+{% endif %}
+
+<div class="field-drawer-backdrop" id="fieldDrawerBackdrop" onclick="requestCloseFieldEditor()"></div>
+<aside class="field-drawer" id="fieldDrawer" aria-hidden="true" aria-labelledby="fieldDrawerTitle" inert>
+  <div class="field-drawer-head">
+    <div>
+      <div class="field-drawer-title" id="fieldDrawerTitle">Edit field metadata</div>
+      <div class="field-drawer-sub" id="fieldDrawerSub"></div>
+    </div>
+    <button type="button" class="field-drawer-close" aria-label="Close field editor" onclick="requestCloseFieldEditor()">X</button>
+  </div>
+  <form method="post" action="/admin/clients/{{ client.account_id }}/kb/fields/save" id="fieldEditorForm" style="display:flex;flex-direction:column;min-height:0;flex:1">
+    <input type="hidden" name="table_fqn" id="fieldTableFqn">
+    <input type="hidden" name="column_name" id="fieldColumn">
+    <div class="field-drawer-body">
+      <div class="field-context-strip">
+        <div class="field-context-tile"><div class="kb-field-label">Data type</div><div class="field-context-value" id="fieldDataType"></div></div>
+        <div class="field-context-tile"><div class="kb-field-label">Known values</div><div class="field-context-value" id="fieldKnownValues"></div></div>
+      </div>
+      <div class="field-editor-group">
+        <label for="fieldMeaning">Business meaning *</label>
+        <textarea name="meaning" id="fieldMeaning" required placeholder="Explain what this field represents in business language."></textarea>
+        <div class="field-editor-help">Be specific enough that an analyst could distinguish this field from similarly named columns.</div>
+      </div>
+      <div class="field-editor-group">
+        <label for="fieldUseCase">How QueryBot should use this field</label>
+        <textarea name="use_case" id="fieldUseCase" placeholder="Describe when to filter, group, join, or calculate with this field."></textarea>
+        <div class="field-editor-help">Include important restrictions, code meanings, or examples of questions that should use it.</div>
+      </div>
+      <div class="field-editor-group">
+        <label for="fieldSynonyms">Business synonyms</label>
+        <textarea name="synonyms" id="fieldSynonyms" class="compact" placeholder="revenue, sales amount, net sales"></textarea>
+        <div class="field-editor-help">Separate synonyms with commas or new lines.</div>
+      </div>
+      <div class="field-editor-group">
+        <label for="fieldAdminNote">Internal admin note</label>
+        <textarea name="admin_note" id="fieldAdminNote" class="compact" placeholder="Why this definition was chosen or where it was verified."></textarea>
+      </div>
+    </div>
+    <div class="field-drawer-foot">
+      <button type="button" class="btn btn-secondary" onclick="requestCloseFieldEditor()">Cancel</button>
+      <button type="submit" class="btn btn-primary" id="fieldSaveButton">Save and re-embed</button>
+    </div>
+  </form>
+</aside>
+
 <script>
+var fieldEditorDirty = false;
+var fieldEditorOpen = false;
+var fieldEditorTrigger = null;
+
+function openFieldEditor(button) {
+  var drawer = document.getElementById('fieldDrawer');
+  var backdrop = document.getElementById('fieldDrawerBackdrop');
+  fieldEditorTrigger = button;
+  document.getElementById('fieldTableFqn').value = button.dataset.tableFqn || '';
+  document.getElementById('fieldColumn').value = button.dataset.column || '';
+  document.getElementById('fieldDrawerSub').textContent =
+    (button.dataset.tableLabel || button.dataset.tableFqn || '') + ' / ' + (button.dataset.column || '');
+  document.getElementById('fieldDataType').textContent = button.dataset.type || 'Unknown';
+  document.getElementById('fieldKnownValues').textContent = button.dataset.values || 'None captured';
+  document.getElementById('fieldMeaning').value = button.dataset.meaning || '';
+  document.getElementById('fieldUseCase').value = button.dataset.useCase || '';
+  document.getElementById('fieldSynonyms').value = button.dataset.synonyms || '';
+  document.getElementById('fieldAdminNote').value = button.dataset.adminNote || '';
+  fieldEditorDirty = false;
+  fieldEditorOpen = true;
+  drawer.classList.add('open');
+  backdrop.classList.add('open');
+  drawer.setAttribute('aria-hidden', 'false');
+  drawer.removeAttribute('inert');
+  document.body.style.overflow = 'hidden';
+  setTimeout(function(){ document.getElementById('fieldMeaning').focus(); }, 40);
+}
+
+function closeFieldEditor() {
+  var drawer = document.getElementById('fieldDrawer');
+  drawer.classList.remove('open');
+  document.getElementById('fieldDrawerBackdrop').classList.remove('open');
+  drawer.setAttribute('aria-hidden', 'true');
+  drawer.setAttribute('inert', '');
+  document.body.style.overflow = '';
+  fieldEditorDirty = false;
+  fieldEditorOpen = false;
+  if (fieldEditorTrigger) fieldEditorTrigger.focus();
+  fieldEditorTrigger = null;
+}
+
+function requestCloseFieldEditor() {
+  if (!fieldEditorDirty) {
+    closeFieldEditor();
+    return;
+  }
+  qbConfirm({
+    title: 'Discard unsaved field changes?',
+    body: 'The edits in this field form have not been saved.',
+    confirm: 'Discard changes',
+    onConfirm: closeFieldEditor
+  });
+}
+
 function submitReview(itemId, status, btn) {
   var form = btn.closest('form');
   var hiddenStatus = document.getElementById('status-' + itemId);
   if (hiddenStatus) hiddenStatus.value = status;
-  if (status === 'approved') {
-    btn.textContent = 'Approving…';
-    btn.disabled = true;
-  }
+  btn.disabled = true;
+  btn.textContent = status === 'approved' ? 'Applying...' : 'Rejecting...';
   form.submit();
 }
+
+(function(){
+  var fieldForm = document.getElementById('fieldEditorForm');
+  if (fieldForm) {
+    fieldForm.addEventListener('input', function(){ fieldEditorDirty = true; });
+    fieldForm.addEventListener('submit', function(){
+      fieldEditorDirty = false;
+      var save = document.getElementById('fieldSaveButton');
+      save.disabled = true;
+      save.textContent = 'Saving...';
+    });
+  }
+  document.addEventListener('keydown', function(event){
+    if (event.key === 'Escape' && fieldEditorOpen) requestCloseFieldEditor();
+  });
+  window.addEventListener('beforeunload', function(event){
+    if (!fieldEditorDirty) return;
+    event.preventDefault();
+    event.returnValue = '';
+  });
+
+  var search = document.getElementById('kbFieldSearch');
+  var filter = document.getElementById('kbFieldFilter');
+  var count = document.getElementById('kbFieldCount');
+  var noResults = document.getElementById('kbNoFieldResults');
+  if (search && filter) {
+    function applyFieldFilters() {
+      var query = search.value.trim().toLowerCase();
+      var status = filter.value;
+      var visible = 0;
+      document.querySelectorAll('[data-field-card]').forEach(function(card){
+        var queryMatch = !query || (card.dataset.search || '').indexOf(query) !== -1;
+        var statusMatch = status === 'all' || card.dataset.status === status;
+        var show = queryMatch && statusMatch;
+        card.style.display = show ? '' : 'none';
+        if (show) visible += 1;
+      });
+      document.querySelectorAll('.kb-table-section').forEach(function(section){
+        var sectionVisible = Array.prototype.some.call(
+          section.querySelectorAll('[data-field-card]'),
+          function(card){ return card.style.display !== 'none'; }
+        );
+        section.style.display = sectionVisible ? '' : 'none';
+        var nav = document.querySelector('[data-table-nav="' + (section.dataset.tableFqn || '') + '"]');
+        if (nav) nav.style.display = sectionVisible ? '' : 'none';
+      });
+      count.textContent = visible + (visible === 1 ? ' field' : ' fields');
+      noResults.classList.toggle('show', visible === 0);
+    }
+    search.addEventListener('input', applyFieldFilters);
+    filter.addEventListener('change', applyFieldFilters);
+  }
+
+  var rawEditor = document.getElementById('rawEditor');
+  var rawForm = document.getElementById('rawFileForm');
+  var rawDirty = false;
+  if (rawEditor && rawForm) {
+    rawEditor.addEventListener('input', function(){ rawDirty = true; });
+    rawForm.addEventListener('submit', function(){ rawDirty = false; });
+    window.addEventListener('beforeunload', function(event){
+      if (!rawDirty) return;
+      event.preventDefault();
+      event.returnValue = '';
+    });
+  }
+})();
 </script>
 {% endblock %}

@@ -37,6 +37,7 @@ import store
 from core.schema import run_query
 from core.chart import detect_chart_type, build_chart_payload
 from core.semantic_layer import build_semantic_layer_tables, find_semantic_field
+from core.field_overrides import load_field_overrides
 from core.portal_notifications import portal_notification_hub
 
 log = logging.getLogger("querybot.portal")
@@ -1065,6 +1066,7 @@ async def portal_kb(request: Request):
         allowed_tables=allowed,
         approved_feedback=approved_feedback,
         pending_feedback=pending_feedback,
+        field_overrides=load_field_overrides(user["account_id"]),
     )
     schemas = sorted({t["schema"] or "DEFAULT" for t in semantic_tables})
     selected_schema = (request.query_params.get("schema") or "").upper()
@@ -1296,6 +1298,7 @@ async def portal_kb_feedback(
         allowed_tables=store.get_allowed_tables(user),
         approved_feedback=approved_feedback,
         pending_feedback=pending_feedback,
+        field_overrides=load_field_overrides(user["account_id"]),
     )
     found = find_semantic_field(tables, table_fqn, column_name)
     if not found:
