@@ -47,26 +47,93 @@ log = logging.getLogger("querybot")
 
 # ── Cell value formatter ──────────────────────────────────────────────────────
 
-def _format_value(val) -> str:
+# Keywords that indicate a column holds a percentage value.
+_PCT_KEYWORDS = {
+    "pct", "percent", "percentage", "rate", "ratio", "margin", "share",
+    "utilization", "utilisation", "efficiency", "coverage", "yield",
+    "variance", "growth", "change", "discount_pct", "discount_percent",
+    "fill_rate", "hit_rate", "return_rate", "churn_rate", "conversion",
+}
+
+# Keywords that indicate a column holds a currency / money value.
+_CURRENCY_KEYWORDS = {
+    "amount", "amt", "cost", "price", "revenue", "salary", "wage",
+    "budget", "spend", "fee", "charge", "total", "value", "val",
+    "payment", "pay", "income", "profit", "loss", "expense", "expenditure",
+    "sales", "billing", "billed", "invoice", "invoiced", "gross", "net",
+    "earnings", "commission", "bonus", "rebate", "credit", "debit",
+    "balance", "liability", "asset", "tax", "vat", "gst",
+}
+
+
+def _detect_column_format(col_name: str) -> str:
+    """
+    Infer display format from a column name.
+
+    Returns one of: "currency" | "percent" | "number"
+
+    Strategy: tokenise on underscores/spaces/camelCase, then check each
+    token against keyword sets.  Percentage wins over currency when both
+    match (e.g. MARGIN_PCT → percent, not currency).
+    """
+    import re
+    # Split camelCase and underscores into lower-case tokens
+    raw = col_name.lower()
+    tokens = set(re.split(r"[_\s]+", raw))
+    # Also add the full name without separators (e.g. "totalamt" → check "amt")
+    tokens.add(raw.replace("_", "").replace(" ", ""))
+
+    # Percentage check first (takes priority)
+    if tokens & _PCT_KEYWORDS:
+        return "percent"
+    # Suffix-based fast checks common in ERP column codes
+    if raw.endswith(("pct", "pc", "_pct", "_rate", "_ratio", "_percent")):
+        return "percent"
+    if raw.endswith(("amt", "amount", "cost", "price", "rev", "sal")):
+        return "currency"
+    # Token-based currency check
+    if tokens & _CURRENCY_KEYWORDS:
+        return "currency"
+    return "number"
+
+
+def _format_value(val, col_name: str = "") -> str:
     """
     Format a single cell value for clean display.
-    - None          → —
-    - Whole floats  → 792 (not 792.000000)
-    - Decimal floats→ 538.42 (not 538.420000), with comma separators
-    - Large ints    → 1,973,331
-    - Strings       → as-is
+
+    When col_name is supplied the formatter infers whether the value
+    represents a currency amount or a percentage and decorates accordingly:
+      - Currency  → $1,234.56
+      - Percent   → 45.23%
+      - Number    → 1,973,331 / 538.42  (existing behaviour)
+      - None      → —
+      - String    → as-is
     """
     if val is None:
         return "—"
-    if isinstance(val, float):
-        if val == int(val):
-            return f"{int(val):,}"
-        rounded = round(val, 4)
-        parts = f"{rounded:,.4f}".split(".")
-        decimal = parts[1].rstrip("0")
-        return f"{parts[0]}.{decimal}" if decimal else parts[0]
-    if isinstance(val, int) and val > 999:
-        return f"{val:,}"
+
+    fmt = _detect_column_format(col_name) if col_name else "number"
+
+    if isinstance(val, (int, float)):
+        num = float(val)
+
+        if fmt == "currency":
+            return f"${num:,.2f}"
+
+        if fmt == "percent":
+            return f"{num:.2f}%"
+
+        # Plain number — keep existing smart behaviour
+        if isinstance(val, float):
+            if val == int(val):
+                return f"{int(val):,}"
+            rounded = round(val, 4)
+            parts = f"{rounded:,.4f}".split(".")
+            decimal = parts[1].rstrip("0")
+            return f"{parts[0]}.{decimal}" if decimal else parts[0]
+        if val > 999:
+            return f"{val:,}"
+
     return str(val)
 
 
@@ -75,7 +142,7 @@ def _rows_to_table(rows) -> str:
     if not rows:
         return "(no results)"
     headers = list(rows[0].keys())
-    formatted = [{h: _format_value(r.get(h)) for h in headers} for r in rows]
+    formatted = [{h: _format_value(r.get(h), h) for h in headers} for r in rows]
     widths = {
         h: max(len(str(h)), max(len(f[h]) for f in formatted))
         for h in headers
@@ -621,7 +688,7 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
     conf_text = format_success_confidence_text(confidence) + "\n\n" if _has_confidence_context else ""
     if len(rows) == 1 and len(rows[0]) == 1:
         col_name = list(rows[0].keys())[0]
-        value    = _format_value(rows[0][col_name])
+        value    = _format_value(rows[0][col_name], col_name)
         greeting = f"*{portal_user['name']}* — " if portal_user else ""
         reply = (
             f"{greeting}*{question}*\n\n"
