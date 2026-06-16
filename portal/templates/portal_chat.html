@@ -2995,6 +2995,12 @@ function connect(){
       appendAnalysisResponse(msg);
     } else if (msg.type === 'chart') {
       appendChart(msg.chart || {});
+    } else if (msg.type === 'assistant_error') {
+      // Inline action errors (contribution, outliers, set_alert, download_csv…)
+      // The typing indicator is cleared by the server's separate typing:false message.
+      // We still need to surface the error so the user knows what happened.
+      const errDetail = msg.detail ? ` (${msg.detail})` : '';
+      appendSystem(`⚠ ${msg.content || 'Action could not be completed.'}${errDetail}`);
     } else if (msg.type === 'error') {
       _pendingSuggestion = null;  // clear stale pending chip on WS-level error
       showMascotError();
