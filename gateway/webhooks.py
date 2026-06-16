@@ -174,6 +174,27 @@ async def ws_chat(websocket: WebSocket, account_id: str):
     _ws_known_tables = load_known_tables(_ws_state.get("schema_dir", ""))
     _ws_table_columns = load_schema_columns(_ws_state.get("schema_dir", ""))
 
+    def _ws_execute_governed(db_cfg: dict, sql: str, semantic_context: dict | None = None):
+        from core.compliance.governed_query import execute_governed_query
+        from core.compliance.policy_engine import resolve_context
+
+        policy_context = resolve_context(
+            account_id,
+            portal_user,
+            action="query_execution",
+            channel="portal",
+        )
+        return execute_governed_query(
+            db_cfg["credentials"],
+            db_cfg["db_type"],
+            sql,
+            context=policy_context,
+            known_tables=_ws_known_tables,
+            table_columns=_ws_table_columns,
+            allowed_tables=store.get_allowed_tables(portal_user),
+            semantic_context=semantic_context,
+        )
+
     # Per-result-card conversation history for result_chat multi-turn memory.
     # Keyed by result_id; each value is a list of {question, sql, row_count}.
     # Cleared automatically when a new main query replaces the result card.
@@ -564,12 +585,13 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                                 log.info("result_chat fallback SQL repair succeeded")
                                     if _fb_ok:
                                         try:
-                                            _fb_rows = run_query(
-                                                _fb_db_cfg["credentials"],
-                                                _fb_db_cfg["db_type"],
+                                            _fb_governed = _ws_execute_governed(
+                                                _fb_db_cfg,
                                                 _fb_sql_raw,
+                                                _fb_semantic_context,
                                             )
-                                            _fb_sql = _fb_sql_raw
+                                            _fb_rows = _fb_governed.rows
+                                            _fb_sql = _fb_governed.sql
                                         except Exception as _exec_exc:
                                             # Execution failed (e.g. Invalid column name).
                                             # One repair attempt — same pattern as main pipeline.
@@ -620,12 +642,13 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                                     _fb_semantic_context,
                                                 )
                                                 if _exec_ok:
-                                                    _fb_rows = run_query(
-                                                        _fb_db_cfg["credentials"],
-                                                        _fb_db_cfg["db_type"],
+                                                    _fb_governed = _ws_execute_governed(
+                                                        _fb_db_cfg,
                                                         _exec_retry_raw,
+                                                        _fb_semantic_context,
                                                     )
-                                                    _fb_sql = _exec_retry_raw
+                                                    _fb_rows = _fb_governed.rows
+                                                    _fb_sql = _fb_governed.sql
                                                     log.info("result_chat fallback execution repair succeeded")
                         except Exception as _fb_exc:
                             _fb_err = str(_fb_exc)
@@ -875,6 +898,15 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 try:
                     cached = adapter.last_result
 
+                    # Numeric-value check that works for Python int/float AND
+                    # decimal.Decimal returned by Azure SQL / pyodbc.
+                    def _to_float(v):
+                        try:
+                            f = float(str(v).replace(",", "").replace("$", "").replace("%", ""))
+                            return None if f != f else f
+                        except (TypeError, ValueError):
+                            return None
+
                     # ── drill_dim: add a dimension to the result ─────────────
                     # action format: "drill_dim:{DimensionName}"
                     if action.startswith("drill_dim:") and cached and cached.get("rows"):
@@ -902,6 +934,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                     provider=provider,
                                     model=model,
                                     api_key=api_key,
+                                    query_executor=_ws_execute_governed,
                                     **az_kwargs,
                                 )
                             await websocket.send_json(_dd_result)
@@ -962,6 +995,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                     provider=provider,
                                     model=model,
                                     api_key=api_key,
+                                    query_executor=_ws_execute_governed,
                                     business_context=cached.get("rag_context", ""),
                                     semantic_plan=cached.get("semantic_plan"),
                                     **az_kwargs,
@@ -996,9 +1030,12 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                             _ct_rows  = cached["rows"]
                             _ct_ctx   = cached.get("analysis_context") or {}
                             _ct_mcol  = _ct_ctx.get("value_col") or (
-                                # fallback: first numeric col in the first row
+                                # fallback: first numeric col in the first row.
+                                # Use _to_float so decimal.Decimal (returned by
+                                # Azure SQL / pyodbc) is recognised as numeric,
+                                # not just Python int/float.
                                 next((k for k, v in (_ct_rows[0] if _ct_rows else {}).items()
-                                      if isinstance(v, (int, float))), "")
+                                      if _to_float(v) is not None), "")
                             )
                             _ct_result, _ct_stats = add_contribution_pct(_ct_rows, _ct_mcol)
                             if not _ct_stats.get("ok"):
@@ -1045,7 +1082,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                             _ol_ctx  = cached.get("analysis_context") or {}
                             _ol_mcol = _ol_ctx.get("value_col") or (
                                 next((k for k, v in (_ol_rows[0] if _ol_rows else {}).items()
-                                      if isinstance(v, (int, float))), "")
+                                      if _to_float(v) is not None), "")
                             )
                             _ol_result, _ol_stats = filter_outliers(_ol_rows, _ol_mcol)
                             if not _ol_stats.get("ok"):
@@ -1084,7 +1121,35 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     # Pure Python — no LLM, no DB call.
                     if action == "download_csv" and cached and cached.get("rows"):
                         try:
+                            from core.compliance.policy_engine import evaluate, resolve_context
+                            from core.compliance.sql_guard import analyze_sql
                             from core.export import rows_to_csv, build_csv_filename
+                            _csv_analysis = analyze_sql(
+                                cached.get("sql", ""),
+                                (cached.get("db_cfg") or {}).get("db_type", "azure_sql"),
+                            )
+                            _csv_context = resolve_context(
+                                account_id,
+                                portal_user,
+                                action="export",
+                                channel="portal",
+                            )
+                            _csv_decision = evaluate(
+                                _csv_context, _csv_analysis.resources
+                            )
+                            if (
+                                not _csv_decision.effective_allowed
+                                or not _csv_decision.export_allowed
+                            ):
+                                await websocket.send_json({
+                                    "type": "assistant_error",
+                                    "action": "download_csv",
+                                    "content": (
+                                        _csv_decision.explanation
+                                        or "Export is blocked by the workspace data policy."
+                                    ),
+                                })
+                                continue
                             _csv_rows     = cached["rows"]
                             _csv_col_fmts = cached.get("column_formats") or {}
                             _csv_content  = rows_to_csv(
@@ -1117,7 +1182,29 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     # creation time — baseline_value comes from the cached rows.
                     if action == "set_alert" and cached and cached.get("rows"):
                         try:
+                            from core.compliance.policy_engine import evaluate, resolve_context
+                            from core.compliance.sql_guard import analyze_sql
                             from core.alert_engine import create_alert
+                            _alert_analysis = analyze_sql(
+                                cached.get("sql", ""),
+                                (cached.get("db_cfg") or {}).get("db_type", "azure_sql"),
+                            )
+                            _alert_context = resolve_context(
+                                account_id, portal_user, action="alert", channel="portal"
+                            )
+                            _alert_decision = evaluate(
+                                _alert_context, _alert_analysis.resources
+                            )
+                            if not _alert_decision.effective_allowed:
+                                await websocket.send_json({
+                                    "type": "assistant_error",
+                                    "action": "set_alert",
+                                    "content": (
+                                        _alert_decision.explanation
+                                        or "Alerts are blocked by the workspace data policy."
+                                    ),
+                                })
+                                continue
                             _al_rows = cached["rows"]
                             _al_ctx  = cached.get("analysis_context") or {}
                             # Prefer the value_col the response_builder identified;
@@ -1125,7 +1212,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                             _al_mcol = _al_ctx.get("value_col") or (
                                 next(
                                     (k for k, v in (_al_rows[0] if _al_rows else {}).items()
-                                     if isinstance(v, (int, float))),
+                                     if _to_float(v) is not None),
                                     "",
                                 )
                             )
@@ -1155,6 +1242,9 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                     condition  = "change_pct",
                                     threshold  = 10.0,
                                     db_cfg     = cached.get("db_cfg") or {},
+                                    account_id = account_id,
+                                    user_id    = str(portal_user.get("id") or ""),
+                                    purpose_id = _alert_context.purpose_id,
                                 )
                                 await websocket.send_json({
                                     "type":      "assistant_analysis",
@@ -1217,6 +1307,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                     db_cfg=cached.get("db_cfg"),
                                     context=cached.get("rag_context", ""),
                                     known_tables=_ws_known_tables,
+                                    query_executor=_ws_execute_governed,
                                     **az_kwargs,
                                 )
                             await websocket.send_json(insight)
@@ -1262,6 +1353,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                             db_cfg=cached.get("db_cfg"),
                             context=cached.get("rag_context", ""),
                             known_tables=_ws_known_tables,
+                            query_executor=_ws_execute_governed,
                             **az_kwargs,
                         )
                     await websocket.send_json(insight)
