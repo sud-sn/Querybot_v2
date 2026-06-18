@@ -25,7 +25,7 @@ import io
 import json
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
 from urllib.parse import quote
@@ -225,6 +225,57 @@ def _safe_child_path(base_dir: str, filename: str) -> Path | None:
     except ValueError:
         return None
     return target
+
+
+def _default_regulated_rules(pack: dict) -> list[dict]:
+    """Seed a conservative draft policy for a regulated tenant."""
+    rules: list[dict] = []
+    sensitive = set(pack.get("sensitive_tags", []))
+    prohibited_llm = set(pack.get("prohibited_llm_tags", []))
+    for role in ("admin", "analyst"):
+        for tag in pack.get("classification_tags", []):
+            for action in ("query_execution", "result_release"):
+                rules.append({
+                    "name": f"{role}: {action} {tag}",
+                    "subject_type": "role", "subject_id": role,
+                    "resource_type": "classification", "resource_pattern": tag,
+                    "action": action,
+                    "effect": "mask" if tag in sensitive else "allow",
+                    "mask_strategy": "partial" if tag in {"FINANCIAL", "PAYMENT"} else "redact",
+                    "cache_ttl_seconds": int(pack.get("default_cache_ttl_seconds") or 0),
+                })
+            rules.append({
+                "name": f"{role}: aggregate charts for {tag}",
+                "subject_type": "role", "subject_id": role,
+                "resource_type": "classification", "resource_pattern": tag,
+                "action": "chart", "effect": "allow",
+                "aggregate_only": tag in sensitive,
+            })
+            rules.append({
+                "name": f"{role}: exports denied for {tag}",
+                "subject_type": "role", "subject_id": role,
+                "resource_type": "classification", "resource_pattern": tag,
+                "action": "export", "effect": "deny",
+                "mandatory": tag in sensitive,
+            })
+            rules.append({
+                "name": f"{role}: LLM context {tag}",
+                "subject_type": "role", "subject_id": role,
+                "resource_type": "classification", "resource_pattern": tag,
+                "action": "llm_context",
+                "effect": "deny" if tag in prohibited_llm else "mask",
+                "mask_strategy": "redact",
+                "mandatory": tag in prohibited_llm,
+            })
+        for action in ("query_execution", "result_release", "chart", "alert", "cache_read"):
+            rules.append({
+                "name": f"{role}: {action} internal data",
+                "subject_type": "role", "subject_id": role,
+                "resource_type": "classification", "resource_pattern": "*",
+                "action": action, "effect": "allow",
+                "cache_ttl_seconds": int(pack.get("default_cache_ttl_seconds") or 0),
+            })
+    return rules
 
 
 # ── Client Readiness / Health Score ──────────────────────────────────────────
@@ -506,14 +557,16 @@ async def system_page(request: Request):
 @router.post("/system")
 async def system_save(
     request: Request,
-    anthropic_key:        str = Form(""),
-    openai_key:           str = Form(""),
-    azure_openai_key:     str = Form(""),
-    azure_openai_endpoint:str = Form(""),
-    azure_api_version:    str = Form(""),
-    default_provider:     str = Form(""),
-    default_model:        str = Form(""),
-    kb_model:             str = Form(""),
+    anthropic_key:           str = Form(""),
+    openai_key:              str = Form(""),
+    azure_openai_key:        str = Form(""),
+    azure_openai_endpoint:   str = Form(""),
+    azure_api_version:       str = Form(""),
+    azure_query_deployment:  str = Form(""),
+    azure_kb_deployment:     str = Form(""),
+    default_provider:        str = Form(""),
+    default_model:           str = Form(""),
+    kb_model:                str = Form(""),
 ):
     if not _is_auth(request):
         return RedirectResponse("/admin/login", status_code=303)
@@ -528,6 +581,10 @@ async def system_save(
         store.set_system("azure_openai_endpoint", azure_openai_endpoint.strip())
     if azure_api_version.strip():
         store.set_system("azure_openai_api_version", azure_api_version.strip())
+    if azure_query_deployment.strip():
+        store.set_system("azure_query_deployment_name", azure_query_deployment.strip())
+    if azure_kb_deployment.strip():
+        store.set_system("azure_kb_deployment_name", azure_kb_deployment.strip())
     if default_provider:
         store.set_system("default_llm_provider", default_provider)
     if default_model:
@@ -1913,6 +1970,310 @@ async def api_status(request: Request):
 # ══════════════════════════════════════════════════════════════════════════════
 # Groups management
 # ══════════════════════════════════════════════════════════════════════════════
+
+@router.get("/clients/{account_id}/compliance", response_class=HTMLResponse)
+async def compliance_page(request: Request, account_id: str):
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    client = store.get_client(account_id)
+    if not client:
+        return RedirectResponse("/admin/clients", status_code=303)
+    from core.compliance.packs import list_packs
+
+    profile = store.get_compliance_profile(account_id)
+    return _resp(request, "client_compliance.html", {
+        "client": client,
+        "profile": profile,
+        "packs": list_packs(),
+        "classifications": store.list_classifications(account_id),
+        "rules": store.list_policy_rules(
+            account_id, int(profile.get("active_policy_version") or 0) or None
+        ),
+        "row_policies": store.list_row_policies(
+            account_id, int(profile.get("active_policy_version") or 0) or None
+        ),
+        "purposes": store.list_purposes(account_id),
+        "agreements": store.list_provider_agreements(account_id),
+        "assessment": store.get_latest_assessment(account_id),
+        "versions": store.list_policy_versions(account_id),
+        "decisions": store.list_decisions(account_id, limit=30),
+        "users": store.list_users(account_id),
+        "saved": request.query_params.get("saved"),
+        "error": request.query_params.get("error"),
+    })
+
+
+@router.post("/clients/{account_id}/compliance/profile")
+async def compliance_save_profile(request: Request, account_id: str):
+    if not _is_auth(request):
+        raise HTTPException(status_code=401)
+    form = await request.form()
+    industry = str(form.get("industry") or "standard")
+    pack_key = {
+        "banking": "banking_v1",
+        "healthcare_pharmacy": "healthcare_pharmacy_v1",
+    }.get(industry, "")
+    if not pack_key:
+        store.save_compliance_profile(
+            account_id, mode="standard", industry="standard",
+            jurisdictions=[], frameworks=[], policy_pack_key="",
+            policy_pack_version="", lifecycle_state="DRAFT",
+            enforcement_mode="shadow",
+        )
+        return RedirectResponse(
+            f"/admin/clients/{account_id}/compliance?saved=standard", status_code=303
+        )
+
+    from core.compliance.classifier import (
+        import_legacy_masking, import_schema_classifications,
+    )
+    from core.compliance.packs import get_pack
+
+    pack = get_pack(pack_key)
+    jurisdictions = [
+        str(value) for key, value in form.multi_items() if key == "jurisdictions"
+    ]
+    frameworks = list((pack.get("framework_versions") or {}).keys())
+    store.save_compliance_profile(
+        account_id, mode="regulated", industry=industry,
+        jurisdictions=jurisdictions, frameworks=frameworks,
+        policy_pack_key=pack_key, policy_pack_version=pack["version"],
+        lifecycle_state="CLASSIFICATION_PENDING", enforcement_mode="shadow",
+        invalidated_reason="Regulated profile or jurisdiction changed.",
+    )
+    version = store.create_policy_version(
+        account_id,
+        {"pack": pack, "jurisdictions": jurisdictions, "frameworks": frameworks},
+        created_by="admin", change_summary=f"Applied {pack_key}", status="active",
+    )
+    store.activate_policy_version(account_id, version, activated_by="admin")
+    store.replace_purposes(account_id, pack.get("default_purposes", []))
+    store.replace_policy_rules(account_id, version, _default_regulated_rules(pack))
+
+    client = store.get_client(account_id) or {}
+    state_data = json.loads(client.get("state_data") or "{}")
+    import_schema_classifications(
+        account_id, state_data.get("schema_dir", ""), industry
+    )
+    import_legacy_masking(account_id, state_data.get("masking_config") or {})
+    return RedirectResponse(
+        f"/admin/clients/{account_id}/compliance?saved=profile", status_code=303
+    )
+
+
+@router.post("/api/clients/{account_id}/compliance/classifications")
+async def compliance_save_classification(request: Request, account_id: str):
+    if not _is_auth(request):
+        raise HTTPException(status_code=401)
+    body = await request.json()
+    store.save_classification(
+        account_id, str(body.get("table_fqn") or ""),
+        str(body.get("column_name") or ""),
+        sensitivity=str(body.get("sensitivity") or "INTERNAL"),
+        identifiability=str(body.get("identifiability") or "NONE"),
+        tags=list(body.get("tags") or []),
+        confidence=float(body.get("confidence") or 1.0),
+        reviewed=bool(body.get("reviewed", True)), reviewed_by="admin",
+        mask_strategy=str(body.get("mask_strategy") or "redact"),
+        source="admin",
+    )
+    store.save_compliance_profile(
+        account_id, lifecycle_state="POLICY_PENDING", enforcement_mode="shadow",
+        invalidated_reason="Data classification changed.",
+    )
+    return JSONResponse({"ok": True})
+
+
+@router.post("/api/clients/{account_id}/compliance/policies")
+async def compliance_save_policies(request: Request, account_id: str):
+    if not _is_auth(request):
+        raise HTTPException(status_code=401)
+    body = await request.json()
+    profile = store.get_compliance_profile(account_id)
+    rules = list(body.get("rules") or [])
+    version = store.create_policy_version(
+        account_id,
+        {"rules": rules, "purposes": store.list_purposes(account_id), "profile": profile},
+        created_by="admin",
+        change_summary=str(body.get("change_summary") or "Policy rules updated"),
+        status="active",
+    )
+    store.replace_policy_rules(account_id, version, rules)
+    store.activate_policy_version(account_id, version, activated_by="admin")
+    store.save_compliance_profile(
+        account_id, lifecycle_state="POLICY_PENDING", enforcement_mode="shadow",
+        invalidated_reason="Policy rules changed.",
+    )
+    return JSONResponse({"ok": True, "version": version})
+
+
+@router.post("/clients/{account_id}/compliance/agreement")
+async def compliance_save_agreement(request: Request, account_id: str):
+    if not _is_auth(request):
+        raise HTTPException(status_code=401)
+    form = await request.form()
+    frameworks = [
+        item.strip() for item in str(form.get("frameworks") or "").split(",")
+        if item.strip()
+    ]
+    artifact_ref = str(form.get("artifact_ref") or "").strip()
+    store.save_provider_agreement(account_id, {
+        "provider": str(form.get("provider") or ""),
+        "agreement_type": str(form.get("agreement_type") or ""),
+        "frameworks": frameworks, "artifact_ref": artifact_ref,
+        "artifact_hash": hashlib.sha256(artifact_ref.encode()).hexdigest() if artifact_ref else "",
+        "signed_at": str(form.get("signed_at") or "") or None,
+        "expires_at": str(form.get("expires_at") or "") or None,
+    })
+    return RedirectResponse(
+        f"/admin/clients/{account_id}/compliance?saved=agreement", status_code=303
+    )
+
+
+@router.post("/clients/{account_id}/compliance/controls")
+async def compliance_save_controls(request: Request, account_id: str):
+    if not _is_auth(request):
+        raise HTTPException(status_code=401)
+    form = await request.form()
+    store.save_compliance_profile(
+        account_id,
+        identity_control=str(form.get("identity_control") or "password"),
+        managed_secrets_enabled=bool(form.get("managed_secrets_enabled")),
+        immutable_audit_enabled=bool(form.get("immutable_audit_enabled")),
+        external_audit_destination=str(form.get("external_audit_destination") or "").strip(),
+        enforcement_mode="shadow",
+        invalidated_reason="Production security controls changed.",
+    )
+    return RedirectResponse(
+        f"/admin/clients/{account_id}/compliance?saved=controls", status_code=303
+    )
+
+
+@router.post("/api/clients/{account_id}/compliance/row-policies")
+async def compliance_save_row_policies(request: Request, account_id: str):
+    if not _is_auth(request):
+        raise HTTPException(status_code=401)
+    body = await request.json()
+    profile = store.get_compliance_profile(account_id)
+    version = int(profile.get("active_policy_version") or 0)
+    if not version:
+        raise HTTPException(status_code=409, detail="Create a policy profile first.")
+    store.replace_row_policies(account_id, version, list(body.get("row_policies") or []))
+    store.save_compliance_profile(
+        account_id, lifecycle_state="POLICY_PENDING", enforcement_mode="shadow",
+        invalidated_reason="Row policies changed.",
+    )
+    return JSONResponse({"ok": True, "version": version})
+
+
+@router.post("/api/clients/{account_id}/compliance/simulate")
+async def compliance_simulate(request: Request, account_id: str):
+    if not _is_auth(request):
+        raise HTTPException(status_code=401)
+    body = await request.json()
+    user = store.get_user(int(body.get("user_id"))) if body.get("user_id") else {
+        "id": "simulation", "role": str(body.get("role") or "analyst"),
+    }
+    from core.compliance.models import ResourceRef
+    from core.compliance.policy_engine import evaluate, resolve_context
+
+    resources = []
+    for value in body.get("resources") or []:
+        value = str(value).strip()
+        table, _, column = value.rpartition(".")
+        resources.append(ResourceRef(table=table or value, column=column if table else ""))
+    context = resolve_context(
+        account_id, user, action=str(body.get("action") or "query_execution"),
+        channel=str(body.get("channel") or "portal"),
+        purpose_id=str(body.get("purpose_id") or ""),
+        provider=str(body.get("provider") or ""),
+    )
+    decision = evaluate(context, resources, record=False)
+    return JSONResponse({
+        "allowed": decision.allowed, "effective_allowed": decision.effective_allowed,
+        "shadow": decision.shadow, "reason_code": decision.reason_code,
+        "explanation": decision.explanation, "masking": decision.masking,
+        "aggregate_only": [item.key for item in decision.aggregate_only],
+        "cache_ttl_seconds": decision.cache_ttl_seconds,
+        "export_allowed": decision.export_allowed,
+        "policy_version": decision.policy_version,
+    })
+
+
+@router.post("/clients/{account_id}/compliance/assess")
+async def compliance_assess(request: Request, account_id: str):
+    if not _is_auth(request):
+        raise HTTPException(status_code=401)
+    from core.compliance.readiness import assess
+
+    result = assess(account_id)
+    store.save_compliance_profile(account_id, lifecycle_state=result["state"])
+    return RedirectResponse(
+        f"/admin/clients/{account_id}/compliance?saved=assessed", status_code=303
+    )
+
+
+@router.post("/clients/{account_id}/compliance/activate")
+async def compliance_activate(request: Request, account_id: str):
+    if not _is_auth(request):
+        raise HTTPException(status_code=401)
+    from core.compliance.readiness import activate_pilot
+
+    result = activate_pilot(account_id, activated_by="admin")
+    status = "activated" if not result["critical_failed"] else "blocked"
+    return RedirectResponse(
+        f"/admin/clients/{account_id}/compliance?saved={status}", status_code=303
+    )
+
+
+@router.post("/clients/{account_id}/compliance/break-glass")
+async def compliance_break_glass(request: Request, account_id: str):
+    if not _is_auth(request):
+        raise HTTPException(status_code=401)
+    form = await request.form()
+    if _hash(str(form.get("password") or "")) != store.get_system("admin_password_hash", ""):
+        return RedirectResponse(
+            f"/admin/clients/{account_id}/compliance?error=Re-authentication+failed",
+            status_code=303,
+        )
+    duration = min(max(int(form.get("duration_minutes") or 15), 1), 60)
+    expires_at = (datetime.now(timezone.utc) + timedelta(minutes=duration)).strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
+    actions = [
+        item.strip()
+        for item in str(form.get("actions") or "query_execution,result_release").split(",")
+        if item.strip()
+    ]
+    resources = [
+        item.strip() for item in str(form.get("resources") or "*").split(",")
+        if item.strip()
+    ]
+    user_id = str(form.get("user_id") or "")
+    grant_id = store.create_break_glass_grant(
+        account_id, user_id, str(form.get("incident_ref") or ""),
+        str(form.get("reason") or ""), resources, actions, expires_at,
+        created_by="admin",
+    )
+    store.log_policy_decision(
+        account_id=account_id, user_id=user_id, action="break_glass",
+        purpose_id="incident_response", channel="admin", allowed=True,
+        reason_code="break_glass_grant_created", resources=resources,
+        obligations={"grant_id": grant_id, "expires_at": expires_at, "export_allowed": False},
+        policy_version=int(store.get_compliance_profile(account_id).get("active_policy_version") or 0),
+    )
+    await admin_notification_hub.broadcast({
+        "type": "break_glass_grant",
+        "account_id": account_id,
+        "user_id": user_id,
+        "grant_id": grant_id,
+        "expires_at": expires_at,
+        "incident_ref": str(form.get("incident_ref") or ""),
+    })
+    return RedirectResponse(
+        f"/admin/clients/{account_id}/compliance?saved=break-glass", status_code=303
+    )
+
 
 @router.get("/clients/{account_id}/groups", response_class=HTMLResponse)
 async def groups_page(request: Request, account_id: str):
