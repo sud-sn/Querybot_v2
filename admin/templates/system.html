@@ -10,6 +10,45 @@
 .provider-panel.active{display:block}
 .provider-summary{display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap}
 .provider-summary p{font-size:12px;color:var(--text-muted);line-height:1.55;margin-top:.65rem;max-width:760px}
+
+/* Azure deployment picker */
+.az-steps{display:flex;flex-direction:column;gap:1.25rem}
+.az-step{display:flex;gap:.875rem;align-items:flex-start}
+.az-step-num{width:26px;height:26px;border-radius:50%;background:var(--blue);color:#fff;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:2px}
+.az-step-body{flex:1;min-width:0}
+.az-step-title{font-size:13px;font-weight:700;color:var(--text);margin-bottom:.5rem}
+.az-fetch-row{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}
+.az-fetch-row input{flex:1;min-width:180px}
+.btn-fetch{display:inline-flex;align-items:center;gap:.4rem;padding:8px 14px;background:var(--blue);color:#fff;border:none;border-radius:var(--radius-sm);font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap}
+.btn-fetch:hover{filter:brightness(1.1)}
+.btn-fetch:disabled{opacity:.55;cursor:not-allowed}
+.btn-fetch .spinner{width:13px;height:13px;border:2px solid rgba(255,255,255,.35);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;display:none}
+.btn-fetch.loading .spinner{display:inline-block}
+.btn-fetch.loading .btn-fetch-label{display:none}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+#az-fetch-status{font-size:12px;margin-top:.5rem}
+#az-fetch-status.ok{color:var(--green,#16a34a)}
+#az-fetch-status.err{color:var(--red,#dc2626)}
+
+.az-deploy-list{display:flex;flex-direction:column;gap:.5rem;margin-top:.65rem}
+.az-deploy-card{border:1.5px solid var(--border);border-radius:8px;padding:.65rem .875rem;display:flex;align-items:center;justify-content:space-between;gap:.75rem;flex-wrap:wrap;background:var(--surface)}
+.az-deploy-card.succeeded{border-color:var(--green,#16a34a)}
+.az-deploy-info{display:flex;flex-direction:column;gap:2px}
+.az-deploy-name{font-size:13px;font-weight:700;color:var(--text)}
+.az-deploy-meta{font-size:11px;color:var(--text-muted)}
+.az-deploy-actions{display:flex;gap:.4rem;flex-shrink:0}
+.btn-use{font-size:11px;padding:4px 10px;border-radius:var(--radius-sm);border:1.5px solid var(--border);background:var(--surface-2);color:var(--text);cursor:pointer;font-weight:600;white-space:nowrap}
+.btn-use:hover{background:var(--blue);border-color:var(--blue);color:#fff}
+.btn-use.selected{background:var(--blue);border-color:var(--blue);color:#fff}
+.az-badge{display:inline-flex;align-items:center;gap:3px;font-size:10px;padding:2px 7px;border-radius:8px;font-weight:600}
+.az-badge.succeeded{background:#dcfce7;color:#166534}
+.az-badge.failed{background:#fee2e2;color:#991b1b}
+.az-badge.updating{background:#fef3c7;color:#92400e}
+
+.az-selected-summary{margin-top:.75rem;padding:.65rem .875rem;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;font-size:12px;color:var(--text-muted)}
+.az-selected-summary strong{color:var(--text)}
+.az-empty{text-align:center;padding:1.5rem;color:var(--text-muted);font-size:12px;border:1.5px dashed var(--border);border-radius:8px;margin-top:.5rem}
 </style>
 {% endblock %}
 {% block content %}
@@ -23,12 +62,11 @@
 
 <div class="alert alert-info">
   <strong>Safe to update at any time.</strong> Changing API keys or LLM models only affects
-  new queries going forward. All existing client KB files, ChromaDB indexes, database connections,
-  platform credentials, and query history are stored independently and are never affected.
-  Per-client model overrides always take priority over these system defaults.
+  new queries going forward. All existing client KB files, database connections, and query
+  history are never affected. Per-client model overrides always take priority over these defaults.
 </div>
 
-<form method="post" action="/admin/system">
+<form method="post" action="/admin/system" id="system-form">
 
   <div class="card">
     <div class="card-header"><h2>LLM provider setup</h2></div>
@@ -48,19 +86,13 @@
   <div class="card provider-panel" data-provider-panel="anthropic">
     <div class="card-header">
       <h2>Anthropic (Claude)</h2>
-      <a href="https://console.anthropic.com" target="_blank"
-        style="font-size:12px;color:var(--blue)">console.anthropic.com ↗</a>
+      <a href="https://console.anthropic.com" target="_blank" style="font-size:12px;color:var(--blue)">console.anthropic.com ↗</a>
     </div>
     <div class="card-body">
       <div class="form-group">
         <label>Anthropic API key</label>
-        <input type="password" name="anthropic_key"
-          value="{{ cfg.get('anthropic_api_key','') }}"
-          placeholder="sk-ant-api03-...">
-        <p class="form-note">
-          Leave blank to keep existing key.
-          Changing this key only affects future queries — no existing client data is affected.
-        </p>
+        <input type="password" name="anthropic_key" value="{{ cfg.get('anthropic_api_key','') }}" placeholder="sk-ant-api03-...">
+        <p class="form-note">Leave blank to keep existing key. Changing this key only affects future queries.</p>
       </div>
     </div>
   </div>
@@ -69,102 +101,128 @@
   <div class="card provider-panel" data-provider-panel="openai">
     <div class="card-header">
       <h2>OpenAI (GPT-4o)</h2>
-      <a href="https://platform.openai.com" target="_blank"
-        style="font-size:12px;color:var(--blue)">platform.openai.com ↗</a>
+      <a href="https://platform.openai.com" target="_blank" style="font-size:12px;color:var(--blue)">platform.openai.com ↗</a>
     </div>
     <div class="card-body">
       <div class="form-group">
         <label>OpenAI API key</label>
-        <input type="password" name="openai_key"
-          value="{{ cfg.get('openai_api_key','') }}"
-          placeholder="sk-...">
-        <p class="form-note">
-          Required if you want to use GPT-4o or GPT-4o-mini as your LLM.
-          Leave blank to keep existing key.
-        </p>
+        <input type="password" name="openai_key" value="{{ cfg.get('openai_api_key','') }}" placeholder="sk-...">
+        <p class="form-note">Required for GPT-4o or GPT-4o-mini. Leave blank to keep existing key.</p>
       </div>
     </div>
   </div>
 
-  <!-- ── Azure OpenAI ────────────────────────────────────────────────────── -->
+  <!-- ── Azure OpenAI ──────────────────────────────────────────────────── -->
   <div class="card provider-panel" data-provider-panel="azure_openai">
     <div class="card-header">
       <h2>Azure OpenAI</h2>
-      <a href="https://oai.azure.com" target="_blank"
-        style="font-size:12px;color:var(--blue)">Azure OpenAI Studio ↗</a>
+      <a href="https://oai.azure.com" target="_blank" style="font-size:12px;color:var(--blue)">Azure OpenAI Studio ↗</a>
     </div>
     <div class="card-body">
-      <div class="alert alert-info" style="margin-bottom:1rem">
-        <div>
-          <strong>Use Azure OpenAI if:</strong> you have Azure credits, your organisation
-          requires Azure data residency, or you want GPT-4o without a separate OpenAI account.
-          <br><br>
-          <strong>Note:</strong> Azure OpenAI does not host Claude models — use the Anthropic
-          key above for Claude. Azure OpenAI hosts GPT-4o, GPT-4o-mini, and GPT-3.5-turbo.
-        </div>
-      </div>
 
-      <div class="form-group">
-        <label>Azure OpenAI API key</label>
-        <input type="password" name="azure_openai_key"
-          value="{{ cfg.get('azure_openai_api_key','') }}"
-          placeholder="Your Azure OpenAI resource key">
-        <p class="form-note">
-          Found in Azure Portal → Your OpenAI resource → Keys and Endpoint.
-          Leave blank to keep existing key.
-        </p>
-      </div>
+      <div class="az-steps">
 
-      <div class="form-grid">
-        <div class="form-group">
-          <label>Endpoint URL</label>
-          <input type="text" name="azure_openai_endpoint"
-            value="{{ cfg.get('azure_openai_endpoint','') }}"
-            placeholder="https://yourresource.openai.azure.com">
-          <p class="form-note">
-            Found in Azure Portal → Your OpenAI resource → Keys and Endpoint.
-            Must include https:// and no trailing slash.
-          </p>
-        </div>
-        <div class="form-group">
-          <label>API version</label>
-          <input type="text" name="azure_api_version"
-            value="{{ cfg.get('azure_openai_api_version','2024-02-01') }}"
-            placeholder="2024-02-01">
-          <p class="form-note">
-            Leave as <code>2024-02-01</code> unless Azure requires a specific version.
-            Check Azure OpenAI documentation for latest stable version.
-          </p>
-        </div>
-      </div>
-
-      <!-- Azure deployment names -->
-      <div style="background:var(--gray-50);border:1px solid var(--gray-200);border-radius:6px;padding:.875rem;margin-top:.75rem">
-        <p style="font-size:12px;font-weight:700;color:var(--gray-700);margin-bottom:.25rem">
-          Deployment names
-        </p>
-        <p style="font-size:12px;color:var(--gray-500);line-height:1.55;margin-bottom:.75rem">
-          In Azure OpenAI, each model is deployed with a custom name you set in Azure OpenAI Studio.
-          Enter those names below — they are used instead of the model dropdown.
-          Find them under <strong>Azure OpenAI Studio → Deployments</strong>.
-        </p>
-        <div class="form-grid">
-          <div class="form-group" style="margin-bottom:0">
-            <label>Query deployment name</label>
-            <input type="text" name="azure_query_deployment"
-              value="{{ cfg.get('azure_query_deployment_name','') }}"
-              placeholder="e.g. qbot-poc-openai or my-gpt4o-prod">
-            <p class="form-note">Used for every user query. Must match exact name in Azure.</p>
-          </div>
-          <div class="form-group" style="margin-bottom:0">
-            <label>KB generation deployment name</label>
-            <input type="text" name="azure_kb_deployment"
-              value="{{ cfg.get('azure_kb_deployment_name','') }}"
-              placeholder="e.g. qbot-poc-openai or my-gpt4o-prod">
-            <p class="form-note">Used when building the Knowledge Base. Can be the same as above.</p>
+        <!-- Step 1: Credentials -->
+        <div class="az-step">
+          <div class="az-step-num">1</div>
+          <div class="az-step-body">
+            <div class="az-step-title">Enter your Azure credentials</div>
+            <div class="form-group" style="margin-bottom:.75rem">
+              <label>API key</label>
+              <input type="password" name="azure_openai_key"
+                value="{{ cfg.get('azure_openai_api_key','') }}"
+                placeholder="Your Azure OpenAI resource key">
+              <p class="form-note">Azure Portal → Your OpenAI resource → Keys and Endpoint. Leave blank to keep existing.</p>
+            </div>
+            <div class="form-grid" style="margin-bottom:0">
+              <div class="form-group" style="margin-bottom:0">
+                <label>Endpoint URL</label>
+                <input type="text" name="azure_openai_endpoint" id="az-endpoint-input"
+                  value="{{ cfg.get('azure_openai_endpoint','') }}"
+                  placeholder="https://yourresource.openai.azure.com">
+                <p class="form-note">Must include https:// — no trailing slash.</p>
+              </div>
+              <div class="form-group" style="margin-bottom:0">
+                <label>API version</label>
+                <input type="text" name="azure_api_version"
+                  value="{{ cfg.get('azure_openai_api_version','2024-02-01') }}"
+                  placeholder="2024-02-01">
+                <p class="form-note">Leave as <code>2024-02-01</code> unless Azure requires a newer version.</p>
+              </div>
+            </div>
           </div>
         </div>
-      </div>
+
+        <!-- Step 2: Fetch & pick deployments -->
+        <div class="az-step">
+          <div class="az-step-num">2</div>
+          <div class="az-step-body">
+            <div class="az-step-title">Fetch and select deployments</div>
+            <p style="font-size:12px;color:var(--text-muted);margin-bottom:.65rem;line-height:1.55">
+              Save your credentials first, then click the button to pull the list of model deployments
+              directly from your Azure resource. No guessing — pick from what's actually deployed.
+            </p>
+            <button type="button" class="btn-fetch" id="az-fetch-btn" onclick="fetchAzureDeployments()">
+              <span class="spinner"></span>
+              <span class="btn-fetch-label">⟳ Fetch deployments from Azure</span>
+            </button>
+            <div id="az-fetch-status"></div>
+            <div id="az-deploy-list"></div>
+
+            <!-- Hidden inputs updated by JS -->
+            <input type="hidden" name="azure_query_deployment" id="az-query-deploy-val"
+              value="{{ cfg.get('azure_query_deployment_name','') }}">
+            <input type="hidden" name="azure_kb_deployment" id="az-kb-deploy-val"
+              value="{{ cfg.get('azure_kb_deployment_name','') }}">
+
+            <!-- Summary of current selection (always visible) -->
+            <div class="az-selected-summary" id="az-selected-summary">
+              {% set qd = cfg.get('azure_query_deployment_name','') %}
+              {% set kd = cfg.get('azure_kb_deployment_name','') %}
+              {% if qd or kd %}
+                <strong>Currently saved:</strong>
+                Query → <strong>{{ qd or '(none)' }}</strong> &nbsp;·&nbsp;
+                KB → <strong>{{ kd or '(none)' }}</strong>
+              {% else %}
+                No deployments selected yet. Fetch from Azure to pick one.
+              {% endif %}
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 3: Manual override (collapsed) -->
+        <div class="az-step">
+          <div class="az-step-num" style="background:var(--text-muted)">3</div>
+          <div class="az-step-body">
+            <div class="az-step-title" style="color:var(--text-muted)">
+              Or type deployment names manually
+              <span style="font-weight:400;font-size:11px">(only if fetch doesn't work)</span>
+            </div>
+            <details style="margin-top:.4rem">
+              <summary style="font-size:12px;color:var(--blue);cursor:pointer">Show manual fields</summary>
+              <div class="form-grid" style="margin-top:.65rem">
+                <div class="form-group" style="margin-bottom:0">
+                  <label>Query deployment name</label>
+                  <input type="text" id="az-query-manual"
+                    value="{{ cfg.get('azure_query_deployment_name','') }}"
+                    placeholder="e.g. gpt-4o-prod"
+                    oninput="document.getElementById('az-query-deploy-val').value=this.value;updateSummary()">
+                  <p class="form-note">Must match exact name shown in Azure OpenAI Studio → Deployments.</p>
+                </div>
+                <div class="form-group" style="margin-bottom:0">
+                  <label>KB generation deployment name</label>
+                  <input type="text" id="az-kb-manual"
+                    value="{{ cfg.get('azure_kb_deployment_name','') }}"
+                    placeholder="e.g. gpt-4o-prod"
+                    oninput="document.getElementById('az-kb-deploy-val').value=this.value;updateSummary()">
+                  <p class="form-note">Can be the same as the query deployment.</p>
+                </div>
+              </div>
+            </details>
+          </div>
+        </div>
+
+      </div><!-- /az-steps -->
     </div>
   </div>
 
@@ -192,12 +250,9 @@
             </option>
             {% endfor %}
           </select>
-          <p class="form-note">
-            Used for every SQL query. For Azure OpenAI, enter your deployment name here.
-          </p>
+          <p class="form-note">For Azure OpenAI the deployment name above is used instead of this dropdown.</p>
         </div>
       </div>
-
       <div class="form-group" style="max-width:50%">
         <label>KB generation model</label>
         <select name="kb_model">
@@ -208,19 +263,15 @@
           </option>
           {% endfor %}
         </select>
-        <p class="form-note">
-          Used once per client to generate the enriched Knowledge Base.
-          Best quality model recommended — only runs on first setup.
-        </p>
+        <p class="form-note">Used once per client to generate the enriched Knowledge Base.</p>
       </div>
-
       <button type="submit" class="btn btn-primary">Save all settings</button>
     </div>
   </div>
 
 </form>
 
-<!-- ── Password change ─────────────────────────────────────────────────────── -->
+<!-- ── Password change ──────────────────────────────────────────────────── -->
 <div class="card">
   <div class="card-header"><h2>Change admin password</h2></div>
   <div class="card-body">
@@ -240,86 +291,189 @@
   </div>
 </div>
 
-<!-- ── Webhook reference ──────────────────────────────────────────────────── -->
+<!-- ── Webhook reference ─────────────────────────────────────────────────── -->
 <div class="card">
   <div class="card-header"><h2>Webhook URLs</h2></div>
   <div class="card-body">
     <p style="font-size:13px;color:var(--gray-500);margin-bottom:1rem">
-      Paste these into your platform's developer portal.
-      Zoom and Slack require HTTPS — use ngrok during development.
+      Paste these into your platform's developer portal. Zoom and Slack require HTTPS — use ngrok during development.
     </p>
     <table class="table">
       <tr><th>Platform</th><th>Webhook URL</th><th>Where to paste</th></tr>
       <tr>
         <td><span class="badge badge-blue">Zoom</span></td>
         <td><code>https://YOURDOMAIN/webhook/zoom</code></td>
-        <td style="font-size:12px;color:var(--gray-500)">
-          Marketplace → App → Features → Team Chat → Bot Endpoint URL
-        </td>
+        <td style="font-size:12px;color:var(--gray-500)">Marketplace → App → Features → Team Chat → Bot Endpoint URL</td>
       </tr>
       <tr>
         <td><span class="badge badge-blue">Teams</span></td>
         <td><code>https://YOURDOMAIN/webhook/teams</code></td>
-        <td style="font-size:12px;color:var(--gray-500)">
-          Azure Bot Service → Messaging endpoint
-        </td>
+        <td style="font-size:12px;color:var(--gray-500)">Azure Bot Service → Messaging endpoint</td>
       </tr>
       <tr>
         <td><span class="badge badge-blue">Slack</span></td>
         <td><code>https://YOURDOMAIN/webhook/slack</code></td>
-        <td style="font-size:12px;color:var(--gray-500)">
-          Slack App → Event Subscriptions → Request URL
-        </td>
+        <td style="font-size:12px;color:var(--gray-500)">Slack App → Event Subscriptions → Request URL</td>
       </tr>
     </table>
   </div>
 </div>
+
 <script>
 (function(){
+  /* ── Provider tab switching ───────────────────────────────────────────── */
   function ready(fn){
-    if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fn);
-    else fn();
+    if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',fn); else fn();
   }
   function syncProvider(provider){
-    provider = provider || 'anthropic';
-    document.querySelectorAll('[data-provider-panel]').forEach(function(panel){
-      panel.classList.toggle('active', panel.dataset.providerPanel === provider);
+    provider=provider||'anthropic';
+    document.querySelectorAll('[data-provider-panel]').forEach(function(p){
+      p.classList.toggle('active',p.dataset.providerPanel===provider);
     });
-    document.querySelectorAll('[data-provider-button]').forEach(function(button){
-      const active = button.dataset.providerButton === provider;
-      button.classList.toggle('active', active);
-      button.setAttribute('aria-selected', active ? 'true' : 'false');
+    document.querySelectorAll('[data-provider-button]').forEach(function(b){
+      const a=b.dataset.providerButton===provider;
+      b.classList.toggle('active',a);
+      b.setAttribute('aria-selected',a?'true':'false');
     });
-    const providerSelect = document.querySelector('select[name="default_provider"]');
-    if(providerSelect && providerSelect.value !== provider) providerSelect.value = provider;
-    filterModelSelect(document.querySelector('select[name="default_model"]'), provider);
-    filterModelSelect(document.querySelector('select[name="kb_model"]'), provider);
+    const ps=document.querySelector('select[name="default_provider"]');
+    if(ps && ps.value!==provider) ps.value=provider;
+    filterModelSelect(document.querySelector('select[name="default_model"]'),provider);
+    filterModelSelect(document.querySelector('select[name="kb_model"]'),provider);
   }
-  function filterModelSelect(select, provider){
+  function filterModelSelect(select,provider){
     if(!select) return;
-    let selectedStillVisible = false;
-    let firstVisible = null;
-    Array.from(select.options).forEach(function(option){
-      const optionProvider = option.dataset.provider || '';
-      const visible = !optionProvider || optionProvider === provider;
-      option.hidden = !visible;
-      option.disabled = !visible;
-      if(visible && !firstVisible) firstVisible = option;
-      if(visible && option.selected) selectedStillVisible = true;
+    let vis=false, first=null;
+    Array.from(select.options).forEach(function(o){
+      const p=o.dataset.provider||'';
+      const show=!p||p===provider;
+      o.hidden=!show; o.disabled=!show;
+      if(show && !first) first=o;
+      if(show && o.selected) vis=true;
     });
-    if(!selectedStillVisible && firstVisible) firstVisible.selected = true;
+    if(!vis && first) first.selected=true;
   }
   ready(function(){
-    const providerSelect = document.querySelector('select[name="default_provider"]');
-    const initial = (providerSelect && providerSelect.value) || 'anthropic';
-    syncProvider(initial);
-    document.querySelectorAll('[data-provider-button]').forEach(function(button){
-      button.addEventListener('click', function(){ syncProvider(button.dataset.providerButton); });
+    const ps=document.querySelector('select[name="default_provider"]');
+    syncProvider((ps && ps.value)||'anthropic');
+    document.querySelectorAll('[data-provider-button]').forEach(function(b){
+      b.addEventListener('click',function(){ syncProvider(b.dataset.providerButton); });
     });
-    if(providerSelect){
-      providerSelect.addEventListener('change', function(){ syncProvider(providerSelect.value); });
-    }
+    if(ps) ps.addEventListener('change',function(){ syncProvider(ps.value); });
   });
+
+  /* ── Azure deployment fetcher ─────────────────────────────────────────── */
+  var _selectedQuery = document.getElementById('az-query-deploy-val').value || '';
+  var _selectedKb    = document.getElementById('az-kb-deploy-val').value    || '';
+
+  window.fetchAzureDeployments = function(){
+    const btn    = document.getElementById('az-fetch-btn');
+    const status = document.getElementById('az-fetch-status');
+    const list   = document.getElementById('az-deploy-list');
+    btn.disabled = true;
+    btn.classList.add('loading');
+    status.className = '';
+    status.textContent = '';
+    list.innerHTML = '';
+
+    fetch('/admin/system/azure-deployments')
+      .then(function(r){ return r.json(); })
+      .then(function(data){
+        btn.disabled = false;
+        btn.classList.remove('loading');
+        if(!data.ok){
+          status.className = 'err';
+          status.textContent = '✗ ' + data.error;
+          return;
+        }
+        const deploys = data.deployments || [];
+        if(deploys.length === 0){
+          list.innerHTML = '<div class="az-empty">No deployments found in this resource.<br>Go to <strong>Azure OpenAI Studio → Deployments</strong> and deploy a model first.</div>';
+          status.className = 'ok';
+          status.textContent = '✓ Connected to Azure — but no model deployments exist yet.';
+          return;
+        }
+        status.className = 'ok';
+        status.textContent = '✓ Found ' + deploys.length + ' deployment' + (deploys.length!==1?'s':'') + ' in your Azure resource.';
+        renderDeployments(deploys);
+      })
+      .catch(function(err){
+        btn.disabled = false;
+        btn.classList.remove('loading');
+        status.className = 'err';
+        status.textContent = '✗ Request failed — is the server running? (' + err + ')';
+      });
+  };
+
+  function renderDeployments(deploys){
+    const list = document.getElementById('az-deploy-list');
+    list.innerHTML = '<div class="az-deploy-list" id="az-deploy-cards"></div>';
+    const container = document.getElementById('az-deploy-cards');
+    deploys.forEach(function(d){
+      const isQuery = _selectedQuery === d.name;
+      const isKb    = _selectedKb    === d.name;
+      const statusBadge = '<span class="az-badge ' + d.status + '">' +
+        (d.status === 'succeeded' ? '● ' : '○ ') + d.status + '</span>';
+      const card = document.createElement('div');
+      card.className = 'az-deploy-card' + (d.status==='succeeded'?' succeeded':'');
+      card.innerHTML =
+        '<div class="az-deploy-info">' +
+          '<div class="az-deploy-name">' + escHtml(d.name) + '</div>' +
+          '<div class="az-deploy-meta">Model: <strong>' + escHtml(d.model) + '</strong> &nbsp; ' + statusBadge + '</div>' +
+        '</div>' +
+        '<div class="az-deploy-actions">' +
+          '<button type="button" class="btn-use' + (isQuery?' selected':'') + '" ' +
+            'id="btn-query-' + escHtml(d.name) + '" ' +
+            'onclick="selectDeployment(\'query\',\'' + escHtml(d.name) + '\')" ' +
+            (d.status!=='succeeded'?'disabled title="Deployment not ready"':'') + '>' +
+            (isQuery ? '✓ Query' : 'Use for Query') +
+          '</button>' +
+          '<button type="button" class="btn-use' + (isKb?' selected':'') + '" ' +
+            'id="btn-kb-' + escHtml(d.name) + '" ' +
+            'onclick="selectDeployment(\'kb\',\'' + escHtml(d.name) + '\')" ' +
+            (d.status!=='succeeded'?'disabled title="Deployment not ready"':'') + '>' +
+            (isKb ? '✓ KB' : 'Use for KB') +
+          '</button>' +
+        '</div>';
+      container.appendChild(card);
+    });
+  }
+
+  window.selectDeployment = function(role, name){
+    if(role === 'query'){
+      _selectedQuery = name;
+      document.getElementById('az-query-deploy-val').value = name;
+      const m = document.getElementById('az-query-manual');
+      if(m) m.value = name;
+      document.querySelectorAll('[id^="btn-query-"]').forEach(function(b){
+        const isThis = b.id === 'btn-query-' + name;
+        b.classList.toggle('selected', isThis);
+        b.textContent = isThis ? '✓ Query' : 'Use for Query';
+      });
+    } else {
+      _selectedKb = name;
+      document.getElementById('az-kb-deploy-val').value = name;
+      const m = document.getElementById('az-kb-manual');
+      if(m) m.value = name;
+      document.querySelectorAll('[id^="btn-kb-"]').forEach(function(b){
+        const isThis = b.id === 'btn-kb-' + name;
+        b.classList.toggle('selected', isThis);
+        b.textContent = isThis ? '✓ KB' : 'Use for KB';
+      });
+    }
+    updateSummary();
+  };
+
+  window.updateSummary = function(){
+    const q = document.getElementById('az-query-deploy-val').value || '(none)';
+    const k = document.getElementById('az-kb-deploy-val').value    || '(none)';
+    const s = document.getElementById('az-selected-summary');
+    if(s) s.innerHTML = '<strong>Selected:</strong> Query → <strong>' + escHtml(q) +
+      '</strong> &nbsp;·&nbsp; KB → <strong>' + escHtml(k) + '</strong>';
+  };
+
+  function escHtml(s){
+    return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
 })();
 </script>
 {% endblock %}

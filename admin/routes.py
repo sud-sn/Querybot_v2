@@ -554,6 +554,50 @@ async def system_page(request: Request):
         "error": request.query_params.get("error"),
     })
 
+@router.get("/system/azure-deployments")
+async def azure_deployments_api(request: Request):
+    """Fetch available model deployments from the saved Azure OpenAI resource."""
+    if not _is_auth(request):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    cfg = store.get_all_system()
+    endpoint   = cfg.get("azure_openai_endpoint", "").strip().rstrip("/")
+    api_key    = cfg.get("azure_openai_api_key", "").strip()
+    api_version = cfg.get("azure_openai_api_version", "2024-02-01").strip()
+    if not endpoint:
+        return JSONResponse({"ok": False, "error": "No endpoint saved yet — fill in the Endpoint URL and save first."}, status_code=400)
+    if not api_key:
+        return JSONResponse({"ok": False, "error": "No API key saved yet — fill in the Azure API key and save first."}, status_code=400)
+    import httpx
+    url = f"{endpoint}/openai/deployments?api-version={api_version}"
+    try:
+        async with httpx.AsyncClient(timeout=12) as client:
+            resp = await client.get(url, headers={"api-key": api_key})
+        if resp.status_code == 401:
+            return JSONResponse({"ok": False, "error": "API key rejected — check your Azure OpenAI key."}, status_code=400)
+        if resp.status_code == 404:
+            return JSONResponse({"ok": False, "error": "Endpoint not found — check the Endpoint URL format."}, status_code=400)
+        resp.raise_for_status()
+        data = resp.json()
+        deployments = sorted(
+            [
+                {
+                    "name":    d.get("id", ""),
+                    "model":   d.get("model", ""),
+                    "status":  d.get("status", "unknown"),
+                }
+                for d in (data.get("data") or [])
+                if d.get("id")
+            ],
+            key=lambda d: d["name"],
+        )
+        return JSONResponse({"ok": True, "deployments": deployments,
+                             "endpoint": endpoint, "api_version": api_version})
+    except httpx.TimeoutException:
+        return JSONResponse({"ok": False, "error": "Request timed out — check the endpoint URL."}, status_code=400)
+    except Exception as exc:
+        return JSONResponse({"ok": False, "error": f"Could not reach Azure: {exc}"}, status_code=400)
+
+
 @router.post("/system")
 async def system_save(
     request: Request,
