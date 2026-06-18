@@ -556,46 +556,87 @@ async def system_page(request: Request):
 
 @router.get("/system/azure-deployments")
 async def azure_deployments_api(request: Request):
-    """Fetch available model deployments from the saved Azure OpenAI resource."""
+    """Fetch available model deployments from the saved Azure OpenAI resource.
+
+    The stable API version (2024-02-01) does not expose GET /openai/deployments
+    on all resources. We try the configured version first, then fall back to a
+    preview version that is known to support deployment listing.
+    """
     if not _is_auth(request):
         raise HTTPException(status_code=401, detail="Not authenticated")
     cfg = store.get_all_system()
-    endpoint   = cfg.get("azure_openai_endpoint", "").strip().rstrip("/")
-    api_key    = cfg.get("azure_openai_api_key", "").strip()
+    endpoint    = cfg.get("azure_openai_endpoint", "").strip().rstrip("/")
+    api_key     = cfg.get("azure_openai_api_key", "").strip()
     api_version = cfg.get("azure_openai_api_version", "2024-02-01").strip()
     if not endpoint:
         return JSONResponse({"ok": False, "error": "No endpoint saved yet — fill in the Endpoint URL and save first."}, status_code=400)
     if not api_key:
         return JSONResponse({"ok": False, "error": "No API key saved yet — fill in the Azure API key and save first."}, status_code=400)
+
+    # Versions to try in order. The stable 2024-02-01 doesn't support listing
+    # on all resource tiers; preview versions do.
+    _FALLBACK_VERSIONS = ["2024-05-01-preview", "2023-09-01-preview", "2023-05-15"]
+    versions_to_try = [api_version] + [v for v in _FALLBACK_VERSIONS if v != api_version]
+
     import httpx
-    url = f"{endpoint}/openai/deployments?api-version={api_version}"
-    try:
-        async with httpx.AsyncClient(timeout=12) as client:
-            resp = await client.get(url, headers={"api-key": api_key})
-        if resp.status_code == 401:
-            return JSONResponse({"ok": False, "error": "API key rejected — check your Azure OpenAI key."}, status_code=400)
-        if resp.status_code == 404:
-            return JSONResponse({"ok": False, "error": "Endpoint not found — check the Endpoint URL format."}, status_code=400)
-        resp.raise_for_status()
-        data = resp.json()
-        deployments = sorted(
-            [
-                {
-                    "name":    d.get("id", ""),
-                    "model":   d.get("model", ""),
-                    "status":  d.get("status", "unknown"),
-                }
-                for d in (data.get("data") or [])
-                if d.get("id")
-            ],
-            key=lambda d: d["name"],
-        )
-        return JSONResponse({"ok": True, "deployments": deployments,
-                             "endpoint": endpoint, "api_version": api_version})
-    except httpx.TimeoutException:
-        return JSONResponse({"ok": False, "error": "Request timed out — check the endpoint URL."}, status_code=400)
-    except Exception as exc:
-        return JSONResponse({"ok": False, "error": f"Could not reach Azure: {exc}"}, status_code=400)
+    headers = {"api-key": api_key}
+    last_error = ""
+    async with httpx.AsyncClient(timeout=12) as client:
+        for version in versions_to_try:
+            url = f"{endpoint}/openai/deployments?api-version={version}"
+            try:
+                resp = await client.get(url, headers=headers)
+            except httpx.TimeoutException:
+                return JSONResponse({"ok": False, "error": "Request timed out — check the endpoint URL."}, status_code=400)
+            except Exception as exc:
+                return JSONResponse({"ok": False, "error": f"Could not reach Azure: {exc}"}, status_code=400)
+
+            if resp.status_code == 401:
+                return JSONResponse({"ok": False, "error": "API key rejected — check your Azure OpenAI key in Step 1."}, status_code=400)
+
+            if resp.status_code == 404:
+                # Try next version — some tiers return 404 for older versions
+                last_error = f"404 on api-version={version}"
+                continue
+
+            if not resp.is_success:
+                try:
+                    detail = resp.json().get("error", {}).get("message", resp.text[:200])
+                except Exception:
+                    detail = resp.text[:200]
+                last_error = f"HTTP {resp.status_code}: {detail}"
+                continue
+
+            # Success
+            data = resp.json()
+            deployments = sorted(
+                [
+                    {
+                        "name":   d.get("id", ""),
+                        "model":  d.get("model", ""),
+                        "status": d.get("status", "unknown"),
+                    }
+                    for d in (data.get("data") or [])
+                    if d.get("id")
+                ],
+                key=lambda d: d["name"],
+            )
+            return JSONResponse({
+                "ok": True,
+                "deployments": deployments,
+                "api_version_used": version,
+            })
+
+    # All versions failed
+    return JSONResponse({
+        "ok": False,
+        "error": (
+            "Could not list deployments from Azure. This usually means no model deployments "
+            "exist yet in your resource. Go to Azure OpenAI Studio → Deployments → + Deploy model "
+            "to create one, then try again. "
+            f"(Last error: {last_error})"
+        ),
+    }, status_code=400)
 
 
 @router.post("/system")
