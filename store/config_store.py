@@ -130,11 +130,13 @@ SYSTEM_KEYS = {
     "openai_api_key",
     # Azure OpenAI (optional — use instead of openai if you have Azure credits)
     "azure_openai_api_key",
-    "azure_openai_endpoint",    # https://yourresource.openai.azure.com
-    "azure_openai_api_version", # e.g. 2024-02-01
-    "default_llm_provider",     # "anthropic" | "openai" | "azure_openai"
-    "default_llm_model",        # model name or Azure deployment name
-    "kb_llm_model",             # used once for KB generation
+    "azure_openai_endpoint",       # https://yourresource.openai.azure.com
+    "azure_openai_api_version",    # e.g. 2024-02-01
+    "azure_query_deployment_name", # custom Azure deployment name for queries
+    "azure_kb_deployment_name",    # custom Azure deployment name for KB generation
+    "default_llm_provider",        # "anthropic" | "openai" | "azure_openai"
+    "default_llm_model",           # model name or Azure deployment name
+    "kb_llm_model",                # used once for KB generation
     "admin_password_hash",
 }
 
