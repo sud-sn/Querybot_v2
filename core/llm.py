@@ -1100,6 +1100,12 @@ def resolve_provider(client: dict, purpose: str = "query") -> tuple[str, str, st
         api_key  = sys_cfg.get("azure_openai_api_key", "")
         endpoint = sys_cfg.get("azure_openai_endpoint", "")
         version  = sys_cfg.get("azure_openai_api_version", "2024-02-01")
+        # Azure deployment names are set separately from the generic model dropdown.
+        # They take priority so admins can use any custom deployment name.
+        _deploy_key = "azure_kb_deployment_name" if purpose == "kb" else "azure_query_deployment_name"
+        _deploy = sys_cfg.get(_deploy_key, "").strip()
+        if _deploy:
+            model = _deploy
         if not endpoint:
             raise RuntimeError(
                 "Azure OpenAI endpoint not configured. "

@@ -138,18 +138,32 @@
         </div>
       </div>
 
-      <!-- How to get deployment name -->
-      <div style="background:var(--gray-50);border:1px solid var(--gray-200);
-        border-radius:6px;padding:.875rem;margin-top:.25rem">
-        <p style="font-size:12px;font-weight:700;color:var(--gray-700);margin-bottom:.4rem">
-          Azure deployment name vs model name
+      <!-- Azure deployment names -->
+      <div style="background:var(--gray-50);border:1px solid var(--gray-200);border-radius:6px;padding:.875rem;margin-top:.75rem">
+        <p style="font-size:12px;font-weight:700;color:var(--gray-700);margin-bottom:.25rem">
+          Deployment names
         </p>
-        <p style="font-size:12px;color:var(--gray-500);line-height:1.6">
-          When using Azure OpenAI, the <strong>model field below must match your Azure deployment
-          name</strong>, not the OpenAI model family name. For example: if you created a deployment
-          called <code>my-gpt4o-prod</code> in Azure OpenAI Studio, enter
-          <code>my-gpt4o-prod</code> as the model — not <code>gpt-4o</code>.
+        <p style="font-size:12px;color:var(--gray-500);line-height:1.55;margin-bottom:.75rem">
+          In Azure OpenAI, each model is deployed with a custom name you set in Azure OpenAI Studio.
+          Enter those names below — they are used instead of the model dropdown.
+          Find them under <strong>Azure OpenAI Studio → Deployments</strong>.
         </p>
+        <div class="form-grid">
+          <div class="form-group" style="margin-bottom:0">
+            <label>Query deployment name</label>
+            <input type="text" name="azure_query_deployment"
+              value="{{ cfg.get('azure_query_deployment_name','') }}"
+              placeholder="e.g. qbot-poc-openai or my-gpt4o-prod">
+            <p class="form-note">Used for every user query. Must match exact name in Azure.</p>
+          </div>
+          <div class="form-group" style="margin-bottom:0">
+            <label>KB generation deployment name</label>
+            <input type="text" name="azure_kb_deployment"
+              value="{{ cfg.get('azure_kb_deployment_name','') }}"
+              placeholder="e.g. qbot-poc-openai or my-gpt4o-prod">
+            <p class="form-note">Used when building the Knowledge Base. Can be the same as above.</p>
+          </div>
+        </div>
       </div>
     </div>
   </div>
