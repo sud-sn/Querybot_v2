@@ -573,9 +573,16 @@ async def azure_deployments_api(request: Request):
     if not api_key:
         return JSONResponse({"ok": False, "error": "No API key saved yet — fill in the Azure API key and save first."}, status_code=400)
 
-    # Versions to try in order. The stable 2024-02-01 doesn't support listing
-    # on all resource tiers; preview versions do.
-    _FALLBACK_VERSIONS = ["2024-05-01-preview", "2023-09-01-preview", "2023-05-15"]
+    # Versions to try in order. cognitiveservices.azure.com endpoints need
+    # newer preview versions; openai.azure.com works with older ones too.
+    _FALLBACK_VERSIONS = [
+        "2025-01-01-preview",
+        "2024-12-01-preview",
+        "2024-10-21",
+        "2024-05-01-preview",
+        "2023-09-01-preview",
+        "2023-05-15",
+    ]
     versions_to_try = [api_version] + [v for v in _FALLBACK_VERSIONS if v != api_version]
 
     import httpx
@@ -627,13 +634,16 @@ async def azure_deployments_api(request: Request):
                 "api_version_used": version,
             })
 
-    # All versions failed
+    # All versions failed — cognitiveservices.azure.com endpoints do not expose
+    # the data-plane deployment list API; use the manual fields instead.
     return JSONResponse({
         "ok": False,
         "error": (
-            "Could not list deployments from Azure. This usually means no model deployments "
-            "exist yet in your resource. Go to Azure OpenAI Studio → Deployments → + Deploy model "
-            "to create one, then try again. "
+            "Could not list deployments automatically. "
+            "Your endpoint may be an Azure AI Services / Cognitive Services resource "
+            "(cognitiveservices.azure.com) which does not support the listing API. "
+            "Use Step 3 below to type the deployment name manually — "
+            "find it in Azure AI Foundry (ai.azure.com) → Models + endpoints. "
             f"(Last error: {last_error})"
         ),
     }, status_code=400)
