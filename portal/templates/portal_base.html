@@ -95,12 +95,18 @@
         <span class="portal-brand-mark">Q</span>
         <span>Query<span>Bot</span></span>
       </a>
-      <div class="portal-mobile-nav">
-        <a href="/portal/dashboard" class="{% if 'dashboard' in request.url.path %}active{% endif %}">{{ ic("dashboard", 16) }}</a>
-        <a href="/portal/kb" class="{% if '/kb' in request.url.path %}active{% endif %}">{{ ic("database", 16) }}</a>
-        <a href="/portal/chat" class="{% if '/chat' in request.url.path %}active{% endif %}">{{ ic("chat", 16) }}</a>
-      </div>
     </header>
+    <nav class="portal-bottom-nav" aria-label="Mobile navigation">
+      <a href="/portal/dashboard" class="{% if 'dashboard' in request.url.path %}active{% endif %}">
+        {{ ic("dashboard", 20) }}<span>Dashboard</span>
+      </a>
+      <a href="/portal/kb" class="{% if '/kb' in request.url.path %}active{% endif %}">
+        {{ ic("database", 20) }}<span>Semantic Layer</span>
+      </a>
+      <a href="/portal/chat" class="{% if '/chat' in request.url.path %}active{% endif %}">
+        {{ ic("chat", 20) }}<span>Chat</span>
+      </a>
+    </nav>
 {% endif %}
 
 <div class="main">

@@ -59,6 +59,40 @@ def is_insight_question(question: str) -> bool:
     return any(re.search(p, q) for p in _WHY_PATTERNS)
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# Unified analytical intent detection
+# Delegates to the specialised modules; keeps query_pipeline imports clean.
+# ══════════════════════════════════════════════════════════════════════════════
+
+def detect_analytical_intents(question: str) -> dict:
+    """
+    Run all analytical intent detectors against the question and return a
+    summary dict.  The pipeline uses this to decide which analytics route
+    to activate.
+
+    Keys returned
+    ─────────────
+    window        WindowIntent | None   — rolling avg, running total, rank, delta
+    relative_date RelativeDateIntent | None — last N days / this week vs last week
+    contribution  bool                  — % share / mix analysis
+    anomaly       bool                  — outlier / spike detection
+    multi_period  MultiPeriodIntent | None — 3+ period comparison
+    """
+    from core.window_analytics import detect_window_intent
+    from core.relative_date_range import detect_relative_date_question
+    from core.contribution_analysis import detect_contribution_intent
+    from core.anomaly_detection import detect_anomaly_intent
+    from core.multi_period import detect_multi_period_intent
+
+    return {
+        "window":        detect_window_intent(question),
+        "relative_date": detect_relative_date_question(question),
+        "contribution":  detect_contribution_intent(question),
+        "anomaly":       detect_anomaly_intent(question),
+        "multi_period":  detect_multi_period_intent(question),
+    }
+
+
 def detect_comparison_intent(question: str) -> dict:
     """Detect if the question compares two time periods or categories."""
     q = question.lower()
@@ -1116,6 +1150,7 @@ async def generate_drilldown_insight(
     api_key: str = "",
     known_tables: set[str] | None = None,
     business_context: str = "",
+    query_executor=None,
     **extra_kwargs,
 ) -> dict:
     """
@@ -1182,9 +1217,14 @@ async def generate_drilldown_insight(
                         sql, _known, db_cfg["db_type"]
                     )
                     if ok:
-                        dd_rows = run_query(
-                            db_cfg["credentials"], db_cfg["db_type"], sql
-                        )
+                        if query_executor:
+                            governed = query_executor(db_cfg, sql)
+                            dd_rows = governed.rows
+                            sql = governed.sql
+                        else:
+                            dd_rows = run_query(
+                                db_cfg["credentials"], db_cfg["db_type"], sql
+                            )
                         if dd_rows:
                             dd_brief = compute_data_brief(dd_rows, follow_up)
                             dd_brief["drilldown_sql_intent"] = sql[:100]

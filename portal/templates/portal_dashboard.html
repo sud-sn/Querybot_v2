@@ -1,5 +1,5 @@
 {% extends "portal_base.html" %}
-{% from "macros.html" import breadcrumb %}
+{% from "macros.html" import breadcrumb, alert %}
 {% block title %}Dashboard — QueryBot Portal{% endblock %}
 {% block breadcrumb %}
 {{ breadcrumb([{"label": "Dashboard", "href": ""}]) }}
@@ -106,9 +106,9 @@
 </div>
 
 {% if query_status.blocked %}
-<div class="alert alert-error">Monthly query limit reached: {{ query_status.used_label }} / {{ query_status.limit_label }} used. Ask your administrator to increase the workspace limit.</div>
+{{ alert('Monthly query limit reached: ' ~ query_status.used_label ~ ' / ' ~ query_status.limit_label ~ ' used. Ask your administrator to increase the workspace limit.', 'error', 'x-circle') }}
 {% elif query_status.warning %}
-<div class="alert alert-amber">Query usage is above 80%: {{ query_status.used_label }} / {{ query_status.limit_label }} used this month.</div>
+{{ alert('Query usage is above 80%: ' ~ query_status.used_label ~ ' / ' ~ query_status.limit_label ~ ' used this month.', 'amber', 'exclamation-triangle') }}
 {% endif %}
 
 {% if allowed_tables %}
@@ -151,11 +151,11 @@
         <button type="button" class="btn btn-xs btn-secondary"
           onclick="openChartModal(this.closest('.chart-card'))"
           title="Expand chart" style="font-size:12px;padding:4px 8px">⤢ Expand</button>
-        <form method="post" action="/portal/unpin" style="margin:0" id="unpin-{{ chart.id }}">
+        <form method="post" action="/portal/unpin" style="margin:0;display:none" id="unpin-{{ chart.id }}">
           <input type="hidden" name="chart_id" value="{{ chart.id }}">
-          <button type="button" class="btn btn-xs btn-secondary" style="color:var(--text-muted)"
-            onclick="qbConfirm({title:'Unpin chart?',body:'Remove this chart from your dashboard.',confirm:'Unpin',variant:'primary',onConfirm:()=>document.getElementById('unpin-{{ chart.id }}').submit()})"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:3px"><path d="M6 18L18 6M6 6l12 12"/></svg>Unpin</button>
         </form>
+        <button type="button" class="btn btn-xs btn-secondary" style="color:var(--text-muted)"
+          onclick="unpinChart({{ chart.id }}, this.closest('.chart-card'))"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:3px"><path d="M6 18L18 6M6 6l12 12"/></svg>Unpin</button>
       </div>
     </div>
     <div class="chart-card-body">
@@ -698,7 +698,65 @@ function closeChartModal() {
   modal.style.display = 'none';
 }
 
-// Fallback drag-to-reorder dashboard charts for browsers where Gridstack did
+// ── Unpin with undo toast ─────────────────────────────────────────────────────
+let _unpinTimer = null;
+let _unpinCardEl = null;
+let _unpinFormId = null;
+
+function unpinChart(chartId, cardEl) {
+  // Cancel any in-flight unpin
+  if (_unpinTimer) { clearTimeout(_unpinTimer); _unpinTimer = null; }
+
+  // Restore previously fading card (if user unpins a different chart quickly)
+  if (_unpinCardEl && _unpinCardEl !== cardEl) {
+    _unpinCardEl.style.opacity = '';
+    _unpinCardEl.style.transform = '';
+    _unpinCardEl.style.pointerEvents = '';
+  }
+
+  _unpinCardEl = cardEl;
+  _unpinFormId = 'unpin-' + chartId;
+  cardEl.style.transition = 'opacity .25s, transform .25s';
+  cardEl.style.opacity = '0.25';
+  cardEl.style.transform = 'scale(.97)';
+  cardEl.style.pointerEvents = 'none';
+
+  _showUnpinToast();
+  _unpinTimer = setTimeout(_commitUnpin, 5000);
+}
+
+function _commitUnpin() {
+  _hideUnpinToast();
+  if (_unpinFormId) document.getElementById(_unpinFormId)?.submit();
+  _unpinCardEl = null; _unpinFormId = null; _unpinTimer = null;
+}
+
+function _undoUnpin() {
+  if (_unpinTimer) { clearTimeout(_unpinTimer); _unpinTimer = null; }
+  _hideUnpinToast();
+  if (_unpinCardEl) {
+    _unpinCardEl.style.opacity = '';
+    _unpinCardEl.style.transform = '';
+    _unpinCardEl.style.pointerEvents = '';
+    _unpinCardEl = null;
+  }
+  _unpinFormId = null;
+}
+
+function _showUnpinToast() {
+  const t = document.getElementById('unpin-toast');
+  if (!t) return;
+  t.style.display = 'flex';
+  requestAnimationFrame(() => t.classList.add('visible'));
+}
+function _hideUnpinToast() {
+  const t = document.getElementById('unpin-toast');
+  if (!t) return;
+  t.classList.remove('visible');
+  setTimeout(() => { t.style.display = 'none'; }, 200);
+}
+
+// ── Fallback drag-to-reorder dashboard charts for browsers where Gridstack did
 // not load. Persisted Gridstack layout is preferred whenever available.
 function initFallbackDashboardDrag(grid) {
   if (!grid) return;
@@ -763,4 +821,19 @@ function initFallbackDashboardDrag(grid) {
   });
 }
 </script>
+
+<div id="unpin-toast" role="status" aria-live="polite" style="display:none">
+  <span>Chart removed from dashboard</span>
+  <button type="button" class="unpin-toast-undo" onclick="_undoUnpin()">Undo</button>
+  <button type="button" class="unpin-toast-close" onclick="_commitUnpin()" aria-label="Dismiss">×</button>
+</div>
+
+<style>
+#unpin-toast{position:fixed;bottom:1.75rem;left:50%;transform:translateX(-50%) translateY(8px);z-index:9500;background:var(--gray-800,#1e293b);color:#f8fafc;border-radius:var(--radius);padding:.65rem 1rem;font-size:13px;font-weight:600;display:flex;align-items:center;gap:.75rem;box-shadow:0 4px 24px rgba(0,0,0,.28);opacity:0;transition:opacity .2s,transform .2s;white-space:nowrap}
+#unpin-toast.visible{opacity:1;transform:translateX(-50%) translateY(0)}
+.unpin-toast-undo{background:rgba(255,255,255,.15);border:none;color:inherit;cursor:pointer;font-weight:800;font-size:12px;padding:3px 10px;border-radius:999px;transition:background .15s}
+.unpin-toast-undo:hover{background:rgba(255,255,255,.28)}
+.unpin-toast-close{background:none;border:none;color:rgba(255,255,255,.55);cursor:pointer;font-size:18px;line-height:1;padding:0 2px;margin-left:.25rem;transition:color .15s}
+.unpin-toast-close:hover{color:#fff}
+</style>
 {% endblock %}

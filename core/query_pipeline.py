@@ -54,8 +54,23 @@ from core.pipeline_trace import (
 from core.result_renderer import (
     _send_results, _inject_distinct_if_needed,
 )
+from core.compliance.governed_query import (
+    PolicyDeniedError, execute_governed_query,
+)
+from core.compliance.models import ResourceRef
+from core.compliance.policy_engine import evaluate as evaluate_policy, resolve_context
 
 log = logging.getLogger("querybot")
+
+
+def _table_matches_policy_scope(table: str, scope: set[str]) -> bool:
+    table = table.upper()
+    return any(
+        table == candidate
+        or table.endswith("." + candidate)
+        or candidate.endswith("." + table)
+        for candidate in scope
+    )
 
 # ══════════════════════════════════════════════════════════════════════════════
 # DuckDB helper — generate SQL for in-memory result cache queries
@@ -214,8 +229,99 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
     # ("who is below average?", "rank these", "show outliers"), run the query
     # against the in-memory DuckDB result cache instead of hitting the
     # production database.  Fast, private, supports full analytic SQL.
+    compliance_profile = store.get_compliance_profile(account_id)
+    compliance_context = resolve_context(
+        account_id,
+        portal_user,
+        action="query_execution",
+        channel=getattr(event, "platform", "") or "portal",
+        purpose_id=getattr(event, "purpose_id", "") or "",
+        provider=provider,
+        break_glass_grant_id=getattr(event, "break_glass_grant_id", None),
+    )
+
+    def _execute_with_policy(candidate_sql: str, semantic: dict | None = None):
+        context = resolve_context(
+            account_id,
+            portal_user,
+            action="query_execution",
+            channel=getattr(event, "platform", "") or "portal",
+            purpose_id=compliance_context.purpose_id,
+            provider=provider,
+            break_glass_grant_id=compliance_context.break_glass_grant_id,
+        )
+        return execute_governed_query(
+            db_cfg["credentials"],
+            db_cfg["db_type"],
+            candidate_sql,
+            context=context,
+            known_tables=all_known,
+            table_columns=all_columns,
+            allowed_tables=effective,
+            semantic_context=semantic,
+        )
+
+    if compliance_profile.get("mode") == "regulated":
+        classification_map = store.get_classification_map(account_id)
+        scoped_resources = []
+        for key in classification_map:
+            table, _, column = key.rpartition(".")
+            if _table_matches_policy_scope(table, effective):
+                scoped_resources.append(ResourceRef(table=table, column=column))
+        llm_context = resolve_context(
+            account_id,
+            portal_user,
+            action="llm_context",
+            channel=getattr(event, "platform", "") or "portal",
+            purpose_id=compliance_context.purpose_id,
+            provider=provider,
+            break_glass_grant_id=compliance_context.break_glass_grant_id,
+        )
+        llm_decision = evaluate_policy(llm_context, scoped_resources)
+        _trace_step(
+            trace_id,
+            "regulated_llm_context",
+            output_summary={
+                "allowed": llm_decision.effective_allowed,
+                "reason": llm_decision.reason_code,
+                "policy_version": llm_decision.policy_version,
+            },
+            status="success" if llm_decision.effective_allowed else "error",
+        )
+        if not llm_decision.effective_allowed:
+            _trace_finish(
+                trace_id,
+                status="error",
+                answer_type="policy_denied",
+                error_message=llm_decision.explanation,
+            )
+            await adapter.send_message(
+                event,
+                "This request is blocked by the workspace data policy. "
+                f"Reason: {llm_decision.explanation}",
+            )
+            return
+
     _session_id = getattr(adapter, "session_id", None)
     _cached_cols = [s["name"] for s in result_cache.get_schema(_session_id)] if _session_id else []
+    if _session_id and result_cache.has_result(_session_id):
+        cache_context = resolve_context(
+            account_id,
+            portal_user,
+            action="cache_read",
+            channel=getattr(event, "platform", "") or "portal",
+            purpose_id=compliance_context.purpose_id,
+            provider=provider,
+        )
+        cache_decision = evaluate_policy(cache_context, [])
+        if not cache_decision.effective_allowed:
+            result_cache.clear(_session_id)
+        elif compliance_profile.get("mode") == "regulated":
+            _trace_step(
+                trace_id,
+                "regulated_cache_read",
+                output_summary={"reason": cache_decision.reason_code},
+            )
     if _session_id and should_route_to_result_cache(question, result_cache.has_result(_session_id), cached_col_names=_cached_cols):
         _trace_update(trace_id, route="duckdb_cache")
         _trace_step(trace_id, "route", output_summary="duckdb_cache")
@@ -299,7 +405,9 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
         log.info("Metric registry hit: %s → %s", matched_metric["name"], sql_from_metric[:60])
         try:
             await _send_live_stage(adapter, event, "executing_query", "Running query", "Executing the trusted metric query against your database.")
-            rows = run_query(db_cfg["credentials"], db_cfg["db_type"], sql_from_metric)
+            governed = _execute_with_policy(sql_from_metric)
+            rows = governed.rows
+            sql_from_metric = governed.sql
             duration_ms = int(time.time()*1000) - start_ms
             _log_q(account_id, question, sql_from_metric, len(rows), True, "",
                    "metric_registry", "deterministic", 0, 0, duration_ms,
@@ -331,6 +439,19 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                                     "metrics": [matched_metric],
                                 })
             _trace_finish(trace_id, status="success", answer_type="table", row_count=len(rows), duration_ms=duration_ms, final_answer_summary="Answered by metric registry")
+            return
+        except PolicyDeniedError as policy_error:
+            _trace_finish(
+                trace_id,
+                status="error",
+                answer_type="policy_denied",
+                error_message=policy_error.decision.explanation,
+            )
+            await adapter.send_message(
+                event,
+                "This metric is blocked by the workspace data policy. "
+                f"Reason: {policy_error.decision.explanation}",
+            )
             return
         except Exception as e:
             _trace_step(trace_id, "execute_sql", input_summary=sql_from_metric, output_summary=str(e), status="error")
@@ -725,6 +846,58 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
         except Exception as _mf_exc:
             log.debug("Scoped metric formula table coverage skipped: %s", _mf_exc)
 
+    # ── Analytical intent detection — inject SQL hints into system prompt ──────
+    # Detects window functions, anomaly, contribution, relative date patterns
+    # from the question and appends precise SQL construction hints so the LLM
+    # emits the correct syntax without needing general training on window funcs.
+    _analytic_hints: list[str] = []
+    try:
+        from core.insight import detect_analytical_intents
+        from core.window_analytics import build_window_sql_hint
+        from core.anomaly_detection import build_anomaly_sql_hint
+        from core.contribution_analysis import build_contribution_sql_hint
+
+        _intents = detect_analytical_intents(question)
+
+        if _intents.get("window"):
+            _analytic_hints.append(
+                build_window_sql_hint(_intents["window"], db_cfg.get("db_type", "azure_sql"))
+            )
+            log.info("analytic_intent: window=%s", _intents["window"].type)
+
+        if _intents.get("anomaly"):
+            _analytic_hints.append(build_anomaly_sql_hint(db_cfg.get("db_type", "azure_sql")))
+            log.info("analytic_intent: anomaly=True")
+
+        if _intents.get("contribution"):
+            _analytic_hints.append(build_contribution_sql_hint())
+            log.info("analytic_intent: contribution=True")
+
+        if _intents.get("relative_date"):
+            ri = _intents["relative_date"]
+            _analytic_hints.append(
+                f"RELATIVE DATE HINT: The user is asking about a rolling window of "
+                f"{ri.n} {ri.unit}(s). Use dynamic date arithmetic rather than hardcoded dates. "
+                f"For SQL Server/Azure SQL use DATEADD; for Snowflake use DATEADD or interval syntax; "
+                f"for Oracle use INTERVAL or ADD_MONTHS. "
+                f"{'Also compute the prior window for comparison.' if ri.compare else ''}"
+            )
+            log.info("analytic_intent: relative_date=%s", ri.unit)
+
+        # Store intents on event so _send_results can post-process the result
+        if hasattr(event, '__dict__'):
+            event.__dict__['_analytic_intents'] = _intents
+    except Exception as _ai_exc:
+        log.debug("Analytical intent detection skipped: %s", _ai_exc)
+        _intents = {}
+
+    if _analytic_hints:
+        context_with_terms = (
+            context_with_terms
+            + "\n\n---\n\n"
+            + "\n\n".join(_analytic_hints)
+        )
+
     system = build_sql_system_prompt(
         db_cfg["db_type"], context_with_terms,
         conversation_history=_conv_history or None,
@@ -879,8 +1052,26 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
     if ok:
         try:
             await _send_live_stage(adapter, event, "executing_query", "Running query", "Executing the SQL against your connected data source.")
-            rows = run_query(db_cfg["credentials"], db_cfg["db_type"], sql)
+            governed = _execute_with_policy(sql, semantic_context)
+            rows = governed.rows
+            sql = governed.sql
             _trace_step(trace_id, "execute_sql", input_summary=sql, output_summary={"rows": len(rows)})
+        except PolicyDeniedError as policy_error:
+            rows = None
+            exec_error = None
+            ok = False
+            last_reason = policy_error.decision.explanation or "Blocked by regulated data policy."
+            last_code = policy_error.decision.reason_code
+            _trace_step(
+                trace_id,
+                "policy_enforcement",
+                input_summary=sql,
+                output_summary={
+                    "reason": last_code,
+                    "audit_id": policy_error.decision.audit_id,
+                },
+                status="error",
+            )
         except Exception as first_error:
             exec_error = str(first_error)
             _trace_step(trace_id, "execute_sql", input_summary=sql, output_summary=exec_error, status="error")
@@ -1051,13 +1242,23 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                 if ok2:
                     try:
                         await _send_live_stage(adapter, event, "executing_query", "Retrying query", "Running the corrected query against your data.")
-                        rows = run_query(
-                            db_cfg["credentials"], db_cfg["db_type"], sql_retry)
-                        sql         = sql_retry
+                        governed = _execute_with_policy(sql_retry, _retry_semantic_context)
+                        rows = governed.rows
+                        sql         = governed.sql
                         exec_error  = None
                         ok, last_reason, last_code = True, "OK", "ok"
                         retry_count += 1
                         log.info("Retry succeeded for %s", account_id)
+                    except PolicyDeniedError as policy_error:
+                        exec_error = None
+                        ok = False
+                        last_reason = policy_error.decision.explanation or "Blocked by regulated data policy."
+                        last_code = policy_error.decision.reason_code
+                        log.warning(
+                            "Retry denied by policy for %s: %s",
+                            account_id,
+                            last_code,
+                        )
                     except Exception as retry_exec_err:
                         exec_error = str(retry_exec_err)
                         log.warning("Retry execution failed for %s: %s",
@@ -1185,6 +1386,33 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
         # Carried through to cache_result so compare_prior can read them.
         "semantic_plan": _semantic_plan or {},
     }
+
+    # ── Post-processing: apply contribution / anomaly analytics ──────────────
+    # Run after DB execution, before _send_results.  Augments rows in-place
+    # with computed columns so the frontend can render them directly.
+    _post_intents = getattr(event, '_analytic_intents', None) or _intents if '_intents' in dir() else {}
+    if rows and _post_intents:
+        try:
+            if _post_intents.get("contribution") and not any("contribution_pct" in r for r in rows[:1]):
+                from core.contribution_analysis import compute_contribution, infer_numeric_col as _inc
+                _val_col = _inc(rows)
+                if _val_col:
+                    rows = compute_contribution(rows, _val_col)
+                    log.info("post_process: contribution_pct added for col=%s", _val_col)
+
+            if _post_intents.get("anomaly") and not any("anomaly_flag" in r for r in rows[:1]):
+                from core.anomaly_detection import detect_anomalies, infer_value_col as _ivc
+                _val_col = _ivc(rows)
+                if _val_col:
+                    _anom_result = detect_anomalies(rows, _val_col)
+                    rows = _anom_result.rows
+                    log.info(
+                        "post_process: anomaly detection complete col=%s flagged=%d/%d",
+                        _val_col, _anom_result.flagged_rows, _anom_result.total_rows,
+                    )
+        except Exception as _pp_exc:
+            log.debug("Post-processing analytics skipped: %s", _pp_exc)
+
     await _send_results(event, adapter, question, rows, sql, duration_ms,
                         portal_user, account_id, db_cfg,
                         rag_context=context, question_id=audit_request_id,

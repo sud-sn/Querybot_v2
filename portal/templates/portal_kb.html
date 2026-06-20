@@ -1,5 +1,5 @@
 {% extends "portal_base.html" %}
-{% from "macros.html" import breadcrumb %}
+{% from "macros.html" import breadcrumb, alert %}
 {% block title %}Semantic Layer - QueryBot Portal{% endblock %}
 {% block breadcrumb %}
 {{ breadcrumb([
@@ -82,10 +82,10 @@
 </section>
 
 {% if saved %}
-<div class="alert alert-success">Your correction was sent to the admin review queue. It will update the Semantic Layer only after approval.</div>
+{{ alert('Your correction was sent to the admin review queue. It will update the Semantic Layer only after approval.', 'success', 'check-circle') }}
 {% endif %}
 {% if request.query_params.get('error') == 'empty' %}
-<div class="alert alert-error">Add a suggested meaning, suggested use, or comment before submitting.</div>
+{{ alert('Add a suggested meaning, suggested use, or comment before submitting.', 'error', 'x-circle') }}
 {% endif %}
 
 {% if not semantic_tables %}
