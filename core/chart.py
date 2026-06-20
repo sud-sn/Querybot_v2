@@ -87,13 +87,13 @@ def detect_chart_type(
     """
     Inspect result rows and choose the safest chart type.
 
-    Returns one of: bar, line, area, scatter, pie, donut, or None.
+    Returns one of: bar, line, area, scatter, pie, donut, waterfall, heatmap, or None.
     """
     spec = infer_chart_spec(rows, question=question, column_formats=column_formats)
     if not spec:
         return None
     recommended = spec.get("recommended_type")
-    if recommended in {"bar", "line", "area", "scatter", "pie", "donut"}:
+    if recommended in {"bar", "line", "area", "scatter", "pie", "donut", "waterfall", "heatmap"}:
         return recommended
     return None
 
@@ -236,7 +236,7 @@ def build_chart_payload(
     allowed = set(spec.get("renderable_types") or [])
     requested = (chart_type or "").lower().strip()
     effective_type = requested if requested in allowed else spec.get("recommended_type")
-    if effective_type not in {"bar", "line", "area", "scatter", "pie", "donut"}:
+    if effective_type not in {"bar", "line", "area", "scatter", "pie", "donut", "waterfall", "heatmap"}:
         return None
 
     x_spec = spec.get("x") or {}

@@ -884,6 +884,27 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
             )
             log.info("analytic_intent: relative_date=%s", ri.unit)
 
+        # ── Tier 2 SQL hints ──────────────────────────────────────────────────
+        if _intents.get("budget_vs_actual"):
+            from core.budget_vs_actual import build_bva_sql_hint
+            _analytic_hints.append(build_bva_sql_hint())
+            log.info("analytic_intent: budget_vs_actual=True")
+
+        if _intents.get("cohort"):
+            from core.cohort_analysis import build_cohort_sql_hint
+            _analytic_hints.append(build_cohort_sql_hint())
+            log.info("analytic_intent: cohort=True")
+
+        if _intents.get("correlation"):
+            from core.correlation_analysis import build_correlation_sql_hint
+            _analytic_hints.append(build_correlation_sql_hint())
+            log.info("analytic_intent: correlation=True")
+
+        if _intents.get("pivot"):
+            from core.pivot_table import build_pivot_sql_hint
+            _analytic_hints.append(build_pivot_sql_hint())
+            log.info("analytic_intent: pivot=True")
+
         # Store intents on event so _send_results can post-process the result
         if hasattr(event, '__dict__'):
             event.__dict__['_analytic_intents'] = _intents
@@ -1410,6 +1431,37 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                         "post_process: anomaly detection complete col=%s flagged=%d/%d",
                         _val_col, _anom_result.flagged_rows, _anom_result.total_rows,
                     )
+
+            # ── Tier 2 post-processing ────────────────────────────────────────
+            if _post_intents.get("budget_vs_actual") and not any("variance" in r for r in rows[:1]):
+                from core.budget_vs_actual import infer_bva_cols, compute_bva
+                _a_col, _b_col = infer_bva_cols(rows)
+                if _a_col and _b_col:
+                    rows = compute_bva(rows, _a_col, _b_col)
+                    log.info("post_process: bva variance added actual=%s budget=%s", _a_col, _b_col)
+
+            if _post_intents.get("cohort") and not any("cohort" in str(list(r.keys())) for r in rows[:1]):
+                from core.cohort_analysis import infer_cohort_cols, compute_cohort_matrix
+                _cohort_col, _period_col, _value_col = infer_cohort_cols(rows)
+                if _cohort_col and _period_col and _value_col:
+                    rows = compute_cohort_matrix(rows, _cohort_col, _period_col, _value_col)
+                    log.info("post_process: cohort matrix built cohort=%s period=%s", _cohort_col, _period_col)
+
+            if _post_intents.get("correlation") and not any("__corr_r" in r for r in rows[:1]):
+                from core.correlation_analysis import infer_corr_cols, compute_correlation, annotate_rows_with_correlation
+                _x_col, _y_col = infer_corr_cols(rows, question)
+                if _x_col and _y_col:
+                    _corr = compute_correlation(rows, _x_col, _y_col)
+                    rows = annotate_rows_with_correlation(rows, _corr)
+                    log.info("post_process: correlation r=%.4f (%s) n=%d", _corr.pearson_r or 0, _corr.interpretation, _corr.n)
+
+            if _post_intents.get("pivot") and not any("TOTAL" in r for r in rows[:1]):
+                from core.pivot_table import infer_pivot_cols, compute_pivot_table
+                _rk, _ck, _vk = infer_pivot_cols(rows)
+                if _rk and _ck and _vk:
+                    rows = compute_pivot_table(rows, _rk, _ck, _vk)
+                    log.info("post_process: pivot table built row=%s col=%s value=%s", _rk, _ck, _vk)
+
         except Exception as _pp_exc:
             log.debug("Post-processing analytics skipped: %s", _pp_exc)
 

@@ -1250,12 +1250,14 @@ function buildChartOption(payload) {
   // Resolve effective chart type
   const req  = (payload?.chart_type || 'bar').toLowerCase();
   let type;
-  if      (req === 'pie')    type = 'pie';
-  else if (req === 'donut')  type = 'donut';
-  else if (req === 'scatter') type = 'scatter';
-  else if (req === 'area')   type = 'area';
+  if      (req === 'pie')       type = 'pie';
+  else if (req === 'donut')     type = 'donut';
+  else if (req === 'scatter')   type = 'scatter';
+  else if (req === 'area')      type = 'area';
+  else if (req === 'waterfall') type = 'waterfall';
+  else if (req === 'heatmap')   type = 'heatmap';
   else if (req === 'line' || (req !== 'bar' && temporal && req !== 'bar')) type = 'line';
-  else                       type = 'bar';
+  else                          type = 'bar';
 
   const horizontal = type === 'bar' && (longLabels || manyLabels) && !temporal;
 
@@ -1312,6 +1314,164 @@ function buildChartOption(payload) {
         itemStyle: { borderRadius: 6, borderColor: dark ? '#0f172a' : '#fff', borderWidth: 2 },
         emphasis: { itemStyle: { shadowBlur: 14, shadowColor: 'rgba(0,0,0,.2)' }, scale: true, scaleSize: 6 },
       }],
+    };
+  }
+
+  // ── Heatmap (cohort retention) ────────────────────────────────────────────
+  if (type === 'heatmap') {
+    // Expect rows like: [{cohort:"2024-01","Month 0":100,"Month 1":80,...}, ...]
+    // Strip internal __abs_ keys; cohort_size is used for tooltip only.
+    const cohortKey = xKey || Object.keys(rows[0] || {}).find(k => !k.startsWith('__') && k !== 'cohort_size') || 'cohort';
+    const periodKeys = Object.keys(rows[0] || {}).filter(k =>
+      k !== cohortKey && k !== 'cohort_size' && !k.startsWith('__')
+    );
+    const cohortLabels = rows.map(r => String(r[cohortKey] ?? ''));
+    // Build flat [xIdx, yIdx, value] array for ECharts heatmap
+    const hmData = [];
+    rows.forEach((r, yi) => {
+      periodKeys.forEach((pk, xi) => {
+        const v = r[pk];
+        hmData.push([xi, yi, v == null ? null : +v]);
+      });
+    });
+    const maxVal = hmData.reduce((mx, d) => d[2] != null ? Math.max(mx, d[2]) : mx, 0);
+    return {
+      backgroundColor: 'transparent',
+      animationDuration: 400,
+      tooltip: {
+        ...tooltipStyle,
+        formatter: p => {
+          const [xi, yi, val] = p.data ?? [];
+          const pk = periodKeys[xi] ?? '';
+          const cohort = cohortLabels[yi] ?? '';
+          const absKey = `__abs_${pk}`;
+          const abs = rows[yi]?.[absKey];
+          return `<strong>${escHtml(cohort)}</strong> — ${escHtml(pk)}<br/>`
+            + `Retention: <strong>${val != null ? val.toFixed(1) + '%' : 'N/A'}</strong>`
+            + (abs != null ? `<br/><span style="opacity:.7">Users: ${abs}</span>` : '');
+        },
+      },
+      grid: { left: 80, right: 100, top: 32, bottom: 40 },
+      xAxis: {
+        type: 'category',
+        data: periodKeys,
+        axisLabel: { color: axisColor, fontSize: 10 },
+        axisLine: { lineStyle: { color: gridColor } },
+        axisTick: { show: false },
+        splitArea: { show: true },
+      },
+      yAxis: {
+        type: 'category',
+        data: cohortLabels,
+        axisLabel: { color: axisColor, fontSize: 10 },
+        axisLine: { show: false },
+        axisTick: { show: false },
+        splitArea: { show: true },
+      },
+      visualMap: {
+        min: 0, max: maxVal || 100,
+        calculable: true,
+        orient: 'vertical',
+        right: 4, top: 'center',
+        inRange: { color: [dark ? '#1e293b' : '#f0f9ff', '#0ea5e9', '#0369a1'] },
+        textStyle: { color: axisColor, fontSize: 10 },
+        formatter: v => v.toFixed(0) + '%',
+      },
+      series: [{
+        type: 'heatmap',
+        data: hmData,
+        label: {
+          show: periodKeys.length <= 12,
+          formatter: p => p.data[2] != null ? p.data[2].toFixed(0) + '%' : '',
+          color: dark ? '#f8fafc' : '#0f172a',
+          fontSize: 9,
+        },
+        emphasis: { itemStyle: { shadowBlur: 8, shadowColor: 'rgba(0,0,0,.3)' } },
+      }],
+    };
+  }
+
+  // ── Waterfall (budget vs actual variance) ─────────────────────────────────
+  if (type === 'waterfall') {
+    // Expect rows with: dimension col + actual + budget + variance columns.
+    // Fall back gracefully to a signed-bar chart if columns aren't matched.
+    const varKey = yKeys.find(k => /^variance$|^variance_pct$|^var/i.test(k)) || yKeys[0];
+    const varValues = rows.map(r => _chartNumber(r?.[varKey]) ?? 0);
+    const posColor  = '#10b981';  // green — over budget / positive variance
+    const negColor  = '#ef4444';  // red   — under budget / negative
+    const neutralC  = colors[0];
+
+    // Compute running base for waterfall stacking
+    let base = 0;
+    const bases    = [];
+    const barVals  = [];
+    varValues.forEach(v => {
+      bases.push(v >= 0 ? base : base + v);
+      barVals.push(Math.abs(v));
+      base += v;
+    });
+
+    return {
+      backgroundColor: 'transparent',
+      animationDuration: 400,
+      color: [neutralC],
+      grid: { left: 56, right: 24, top: 24, bottom: longLabels ? 82 : 48 },
+      tooltip: {
+        ...tooltipStyle,
+        formatter: p => {
+          const r = rows[p.dataIndex];
+          const v = varValues[p.dataIndex];
+          const sign = v > 0 ? '+' : '';
+          const lbl  = String(r?.[xKey] ?? p.name ?? '');
+          return `<strong>${escHtml(lbl)}</strong><br/>`
+            + `Variance: <strong style="color:${v>=0?posColor:negColor}">${sign}${valueFmt(v, varKey)}</strong>`;
+        },
+      },
+      xAxis: {
+        type: 'category',
+        data: labels,
+        axisLabel: { color: axisColor, rotate: longLabels ? 30 : 0, formatter: labelFmt, fontSize: 11 },
+        axisLine: { lineStyle: { color: gridColor } },
+        axisTick: { show: false },
+      },
+      yAxis: {
+        type: 'value',
+        axisLabel: { color: axisColor, formatter: v => valueFmt(v, varKey, true), fontSize: 11 },
+        splitLine: { show: true, lineStyle: { color: gridColor } },
+        axisTick: { show: false }, axisLine: { show: false },
+      },
+      series: [
+        // Transparent base bar (stacking helper)
+        {
+          type: 'bar', stack: 'waterfall',
+          itemStyle: { color: 'transparent', borderColor: 'transparent' },
+          data: bases,
+          tooltip: { show: false },
+        },
+        // Visible variance bars, colored by direction
+        {
+          type: 'bar', stack: 'waterfall',
+          data: barVals.map((v, i) => ({
+            value: v,
+            itemStyle: {
+              color: varValues[i] >= 0 ? posColor : negColor,
+              borderRadius: [6, 6, 0, 0],
+            },
+          })),
+          barMaxWidth: 50,
+          label: {
+            show: rows.length <= 16,
+            position: varValues.map(v => v >= 0 ? 'top' : 'bottom'),
+            formatter: p => {
+              const v = varValues[p.dataIndex];
+              return (v > 0 ? '+' : '') + valueFmt(v, varKey, true);
+            },
+            color: axisColor,
+            fontSize: 10,
+          },
+          emphasis: { itemStyle: { opacity: 0.85 } },
+        },
+      ],
     };
   }
 
