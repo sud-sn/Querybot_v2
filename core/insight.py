@@ -72,24 +72,36 @@ def detect_analytical_intents(question: str) -> dict:
 
     Keys returned
     ─────────────
-    window        WindowIntent | None   — rolling avg, running total, rank, delta
-    relative_date RelativeDateIntent | None — last N days / this week vs last week
-    contribution  bool                  — % share / mix analysis
-    anomaly       bool                  — outlier / spike detection
-    multi_period  MultiPeriodIntent | None — 3+ period comparison
+    window          WindowIntent | None   — rolling avg, running total, rank, delta
+    relative_date   RelativeDateIntent | None — last N days / this week vs last week
+    contribution    bool                  — % share / mix analysis
+    anomaly         bool                  — outlier / spike detection
+    multi_period    MultiPeriodIntent | None — 3+ period comparison
+    budget_vs_actual bool                 — variance to budget/target/plan
+    cohort          bool                  — cohort retention analysis
+    correlation     bool                  — correlation / scatter between metrics
+    pivot           bool                  — pivot / cross-tab table
     """
     from core.window_analytics import detect_window_intent
     from core.relative_date_range import detect_relative_date_question
     from core.contribution_analysis import detect_contribution_intent
     from core.anomaly_detection import detect_anomaly_intent
     from core.multi_period import detect_multi_period_intent
+    from core.budget_vs_actual import detect_bva_intent
+    from core.cohort_analysis import detect_cohort_intent
+    from core.correlation_analysis import detect_correlation_intent
+    from core.pivot_table import detect_pivot_intent
 
     return {
-        "window":        detect_window_intent(question),
-        "relative_date": detect_relative_date_question(question),
-        "contribution":  detect_contribution_intent(question),
-        "anomaly":       detect_anomaly_intent(question),
-        "multi_period":  detect_multi_period_intent(question),
+        "window":           detect_window_intent(question),
+        "relative_date":    detect_relative_date_question(question),
+        "contribution":     detect_contribution_intent(question),
+        "anomaly":          detect_anomaly_intent(question),
+        "multi_period":     detect_multi_period_intent(question),
+        "budget_vs_actual": detect_bva_intent(question),
+        "cohort":           detect_cohort_intent(question),
+        "correlation":      detect_correlation_intent(question),
+        "pivot":            detect_pivot_intent(question),
     }
 
 
