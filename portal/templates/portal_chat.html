@@ -439,6 +439,22 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .chat-shell{position:relative}
 .history-panel{position:absolute;top:0;right:0;width:288px;height:100%;background:var(--surface);border-left:1px solid var(--border);z-index:60;transform:translateX(100%);transition:transform .25s cubic-bezier(.22,.61,.36,1);display:flex;flex-direction:column;box-shadow:-6px 0 20px rgba(0,0,0,.09)}
 .history-panel.open{transform:translateX(0)}
+/* ── History search ── */
+.hp-search-wrap{display:flex;align-items:center;gap:6px;padding:.5rem .75rem;border-bottom:1px solid var(--border);background:var(--surface-2);position:relative}
+.hp-search-icon{color:var(--text-muted);flex-shrink:0}
+.hp-search-input{flex:1;border:none;background:transparent;font-size:12px;color:var(--text);outline:none;min-width:0}
+.hp-search-input::placeholder{color:var(--text-muted)}
+.hp-search-clear{background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:11px;padding:2px 4px;border-radius:3px;line-height:1;flex-shrink:0}
+.hp-search-clear:hover{color:var(--danger)}
+/* ── Chart fullscreen modal ── */
+.chart-fs-overlay{position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:9000;display:flex;align-items:center;justify-content:center;padding:1.5rem;backdrop-filter:blur(4px)}
+.chart-fs-modal{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);width:100%;max-width:1100px;max-height:90vh;display:flex;flex-direction:column;box-shadow:0 24px 80px rgba(0,0,0,.4)}
+.chart-fs-head{display:flex;align-items:center;justify-content:space-between;padding:.75rem 1.1rem;border-bottom:1px solid var(--border);flex-shrink:0}
+.chart-fs-title{font-size:14px;font-weight:800;color:var(--text)}
+.chart-fs-close{background:none;border:none;color:var(--text-muted);font-size:20px;cursor:pointer;padding:4px 8px;border-radius:4px;line-height:1;transition:color .12s}
+.chart-fs-close:hover{color:var(--text);background:var(--surface-2)}
+.chart-fs-body{flex:1;overflow:hidden;padding:1rem;min-height:0}
+#chartFsEl{width:100%;height:100%;min-height:480px}
 .hp-header{display:flex;align-items:center;justify-content:space-between;padding:.8rem 1rem;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--surface)}
 .hp-title{font-size:13px;font-weight:800;color:var(--text)}
 .hp-close{background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:15px;padding:2px;line-height:1;border-radius:4px}
@@ -526,6 +542,14 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
       <div class="hp-header">
         <span class="hp-title">Recent queries</span>
         <button type="button" class="hp-close" onclick="toggleHistoryPanel()" aria-label="Close history panel">✕</button>
+      </div>
+      <div class="hp-search-wrap">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="hp-search-icon" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+        <input type="text" id="historySearch" class="hp-search-input"
+               placeholder="Search history…" autocomplete="off" spellcheck="false"
+               oninput="filterHistory(this.value)">
+        <button type="button" id="historySearchClear" class="hp-search-clear" style="display:none"
+                onclick="document.getElementById('historySearch').value='';filterHistory('');this.style.display='none'">✕</button>
       </div>
       <div class="hp-list" id="historyList">
         <div class="hp-empty" id="historyEmpty">Loading…</div>
@@ -2290,9 +2314,10 @@ function appendChart(payload, opts = {}){
   const rows = payload.rows || [];
   const div = document.createElement('div');
   div.className = 'msg msg-bot';
-  div.innerHTML = `<div class="msg-avatar">Q</div><div class="msg-content"><div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timestamp}</span></div><div class="chart-card"><div class="chart-header"><div><div class="chart-title">${escHtml(payload.title || payload.question || 'Chart result')}</div><div class="chart-subtitle">${rows.length} rows · ${escHtml(payload.duration_label || '')}</div></div><div class="chart-toolbar"><button type="button" class="chart-btn" data-action="pin">📌 Pin to dashboard</button><button type="button" class="chart-btn" data-action="copy">Copy summary</button></div></div><div id="${chartId}" class="chart-canvas"></div>${renderChartWarnings(payload)}<div class="chart-footer"><span>${escHtml(payload.question || '')}</span><span>${escHtml((payload.chart_type || 'chart').toUpperCase())}</span></div></div></div>`;
+  const _chartTitle = escHtml(payload.title || payload.question || 'Chart result');
+  div.innerHTML = `<div class="msg-avatar">Q</div><div class="msg-content"><div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timestamp}</span></div><div class="chart-card"><div class="chart-header"><div><div class="chart-title">${_chartTitle}</div><div class="chart-subtitle">${rows.length} rows · ${escHtml(payload.duration_label || '')}</div></div><div class="chart-toolbar"><button type="button" class="chart-btn" data-action="pin">📌 Pin to dashboard</button><button type="button" class="chart-btn" data-action="copy">Copy summary</button><button type="button" class="chart-btn" data-action="expand" title="Expand chart" style="padding:5px 8px">⛶</button></div></div><div id="${chartId}" class="chart-canvas"></div>${renderChartWarnings(payload)}<div class="chart-footer"><span>${escHtml(payload.question || '')}</span><span>${escHtml((payload.chart_type || 'chart').toUpperCase())}</span></div></div></div>`;
   thread().appendChild(div);
-  const [pinBtn, copyBtn] = div.querySelectorAll('.chart-btn');
+  const [pinBtn, copyBtn, expandBtn] = div.querySelectorAll('.chart-btn');
   if (!payload.pin_token) {
     pinBtn.style.display = 'none';
   } else {
@@ -2326,6 +2351,9 @@ function appendChart(payload, opts = {}){
     e.currentTarget.textContent = ok ? 'Copied!' : 'Copy failed';
     setTimeout(() => e.currentTarget.textContent = prev, 1400);
     toast(ok ? 'Chart summary copied' : 'Copy failed');
+  });
+  expandBtn?.addEventListener('click', () => {
+    openChartFullscreen(div.querySelector(`#${chartId}`), payload.title || payload.question || 'Chart');
   });
   window._chartPayloads[chartId] = Object.assign({}, payload);
   renderChartInto(div.querySelector(`#${chartId}`), payload);
@@ -2526,7 +2554,35 @@ function shuffleSuggestions(){
   }, 100);
 }
 function prefillComposer(text){ const inp = document.getElementById('input'); inp.value = text; inp.focus(); inp.dispatchEvent(new Event('input')); }
-function updateCharCount(){ const inp = document.getElementById('input'); document.getElementById('charCount').textContent = 500 - inp.value.length; }
+function updateCharCount(){
+  var inp = document.getElementById('input');
+  var el  = document.getElementById('charCount');
+  var rem = 500 - inp.value.length;
+  el.textContent = rem;
+  el.style.color = rem <= 50 ? 'var(--danger)' : rem <= 120 ? 'var(--warning)' : '';
+  el.style.fontWeight = rem <= 50 ? '800' : '';
+}
+
+/* Paste truncation guard */
+document.addEventListener('DOMContentLoaded', function() {
+  var inp = document.getElementById('input');
+  if (!inp) return;
+  inp.addEventListener('paste', function(e) {
+    var pasted = (e.clipboardData || window.clipboardData).getData('text');
+    if (!pasted) return;
+    var cur   = inp.value;
+    var start = inp.selectionStart || 0;
+    var end   = inp.selectionEnd   || 0;
+    var next  = cur.slice(0, start) + pasted + cur.slice(end);
+    if (next.length > 500) {
+      e.preventDefault();
+      inp.value = next.slice(0, 500);
+      inp.selectionStart = inp.selectionEnd = Math.min(start + pasted.length, 500);
+      updateCharCount();
+      if (window.qbToast) window.qbToast.warning('Pasted text was trimmed to 500 characters.');
+    }
+  });
+});
 // ── Doodling particle engine ──────────────────────────────────────────────────
 // Draws soft flowing particles on the processing card canvas while the bot
 // is thinking. Subtle, calming, appropriate for a data analytics tool.
@@ -3090,8 +3146,76 @@ function sendHistoryQuestion(question) {
   setTimeout(() => sendMessage(), 80);
 }
 
+// ── History search filter ────────────────────────────────────────────────────
+function filterHistory(q) {
+  q = (q || '').toLowerCase().trim();
+  const clearBtn = document.getElementById('historySearchClear');
+  if (clearBtn) clearBtn.style.display = q ? '' : 'none';
+  const items = document.querySelectorAll('#historyList .hp-item');
+  let visible = 0;
+  items.forEach(function(el) {
+    const text = (el.querySelector('.hp-q') || el).textContent.toLowerCase();
+    const show = !q || text.includes(q);
+    el.style.display = show ? '' : 'none';
+    if (show) visible++;
+  });
+  // Show/update no-results message
+  var noRes = document.getElementById('historySearchNoResults');
+  if (!noRes) {
+    noRes = document.createElement('div');
+    noRes.id = 'historySearchNoResults';
+    noRes.className = 'hp-empty';
+    noRes.style.display = 'none';
+    var list = document.getElementById('historyList');
+    if (list) list.appendChild(noRes);
+  }
+  if (q && visible === 0) {
+    noRes.textContent = 'No queries matching "' + q + '"';
+    noRes.style.display = '';
+  } else {
+    noRes.style.display = 'none';
+  }
+}
+
 // Reload history list after each successful query so it stays fresh
 window.addEventListener('qb-query-success', () => { _historyLoaded = false; });
+
+// ── Chart fullscreen ─────────────────────────────────────────────────────────
+var _chartFsInstance = null;
+function openChartFullscreen(chartEl, title) {
+  var overlay = document.getElementById('chartFsOverlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'chartFsOverlay';
+    overlay.className = 'chart-fs-overlay';
+    overlay.innerHTML =
+      '<div class="chart-fs-modal">' +
+        '<div class="chart-fs-head">' +
+          '<span class="chart-fs-title" id="chartFsTitle"></span>' +
+          '<button class="chart-fs-close" onclick="closeChartFullscreen()" aria-label="Close">✕</button>' +
+        '</div>' +
+        '<div class="chart-fs-body"><div id="chartFsEl"></div></div>' +
+      '</div>';
+    overlay.addEventListener('click', function(e) { if (e.target === overlay) closeChartFullscreen(); });
+    document.body.appendChild(overlay);
+  }
+  document.getElementById('chartFsTitle').textContent = title || 'Chart';
+  overlay.style.display = 'flex';
+  document.body.style.overflow = 'hidden';
+  // Clone echarts option from source instance
+  var srcChart = echarts.getInstanceByDom(chartEl);
+  if (!srcChart) return;
+  var fsEl = document.getElementById('chartFsEl');
+  if (_chartFsInstance) { _chartFsInstance.dispose(); _chartFsInstance = null; }
+  _chartFsInstance = echarts.init(fsEl, null, { renderer: 'canvas' });
+  _chartFsInstance.setOption(srcChart.getOption());
+}
+function closeChartFullscreen() {
+  var overlay = document.getElementById('chartFsOverlay');
+  if (overlay) overlay.style.display = 'none';
+  document.body.style.overflow = '';
+  if (_chartFsInstance) { _chartFsInstance.dispose(); _chartFsInstance = null; }
+}
 
 // ── AutoSuggest ───────────────────────────────────────────────────────────────
 // Shared autocomplete component for both the main chat input and every
