@@ -583,23 +583,34 @@ async def system_page(request: Request):
 async def azure_deployments_api(request: Request):
     """Fetch available model deployments from the saved Azure OpenAI resource.
 
-    The stable API version (2024-02-01) does not expose GET /openai/deployments
-    on all resources. We try the configured version first, then fall back to a
-    preview version that is known to support deployment listing.
+    Tries the configured API version then falls back through a list of known
+    versions.  Handles both *.openai.azure.com and *.cognitiveservices.azure.com
+    endpoints — the latter requires newer preview versions and may still not
+    expose the listing API on older multi-service accounts.
     """
     if not _is_auth(request):
         raise HTTPException(status_code=401, detail="Not authenticated")
     cfg = store.get_all_system()
-    endpoint    = cfg.get("azure_openai_endpoint", "").strip().rstrip("/")
-    api_key     = cfg.get("azure_openai_api_key", "").strip()
-    api_version = cfg.get("azure_openai_api_version", "2024-02-01").strip()
+    endpoint    = (cfg.get("azure_openai_endpoint") or "").strip().rstrip("/")
+    api_key     = (cfg.get("azure_openai_api_key")  or "").strip()
+    api_version = (cfg.get("azure_openai_api_version") or "2024-02-01").strip()
+
     if not endpoint:
         return JSONResponse({"ok": False, "error": "No endpoint saved yet — fill in the Endpoint URL and save first."}, status_code=400)
     if not api_key:
         return JSONResponse({"ok": False, "error": "No API key saved yet — fill in the Azure API key and save first."}, status_code=400)
 
-    # Versions to try in order. cognitiveservices.azure.com endpoints need
-    # newer preview versions; openai.azure.com works with older ones too.
+    # Fix 1 — auto-add missing scheme; reject http://
+    if not endpoint.startswith(("http://", "https://")):
+        endpoint = "https://" + endpoint
+    if endpoint.startswith("http://"):
+        return JSONResponse({"ok": False, "error": "Endpoint must use https://, not http://."}, status_code=400)
+
+    # Fix 2 — strip any path the user accidentally pasted (e.g. the full /openai/deployments URL)
+    from urllib.parse import urlparse, urlunparse
+    _p = urlparse(endpoint)
+    endpoint = urlunparse((_p.scheme, _p.netloc, "", "", "", ""))
+
     _FALLBACK_VERSIONS = [
         "2025-01-01-preview",
         "2024-12-01-preview",
@@ -619,15 +630,31 @@ async def azure_deployments_api(request: Request):
             try:
                 resp = await client.get(url, headers=headers)
             except httpx.TimeoutException:
-                return JSONResponse({"ok": False, "error": "Request timed out — check the endpoint URL."}, status_code=400)
+                return JSONResponse({"ok": False, "error": "Request timed out — check the endpoint URL is correct."}, status_code=400)
             except Exception as exc:
                 return JSONResponse({"ok": False, "error": f"Could not reach Azure: {exc}"}, status_code=400)
 
             if resp.status_code == 401:
-                return JSONResponse({"ok": False, "error": "API key rejected — check your Azure OpenAI key in Step 1."}, status_code=400)
+                return JSONResponse({"ok": False, "error": "API key rejected (401) — check your Azure OpenAI key in Step 1."}, status_code=400)
+
+            # Fix 3 — 403 is a permissions/firewall issue, not a version issue; stop immediately
+            if resp.status_code == 403:
+                return JSONResponse({"ok": False, "error": (
+                    "Permission denied (403) — the key is valid but the request was blocked. "
+                    "Check: (1) Azure Portal → your resource → Networking — add this server's IP if "
+                    "public access is restricted, or (2) the key may lack the "
+                    "'Cognitive Services OpenAI Contributor' RBAC role."
+                )}, status_code=400)
+
+            # Fix 4 — 429 rate limit applies across all versions; stop immediately
+            if resp.status_code == 429:
+                retry_after = resp.headers.get("Retry-After", "")
+                msg = "Rate limited by Azure (429) — too many requests."
+                if retry_after:
+                    msg += f" Retry after {retry_after}s."
+                return JSONResponse({"ok": False, "error": msg}, status_code=400)
 
             if resp.status_code == 404:
-                # Try next version — some tiers return 404 for older versions
                 last_error = f"404 on api-version={version}"
                 continue
 
@@ -639,8 +666,15 @@ async def azure_deployments_api(request: Request):
                 last_error = f"HTTP {resp.status_code}: {detail}"
                 continue
 
-            # Success
-            data = resp.json()
+            # Fix 5 — wrap JSON parse so a proxy HTML page on a 200 doesn't cause a 500
+            try:
+                data = resp.json()
+            except Exception:
+                return JSONResponse({"ok": False, "error": (
+                    f"Azure returned HTTP {resp.status_code} but the response was not valid JSON. "
+                    "The endpoint URL may point to a proxy or load balancer — verify it in Azure Portal."
+                )}, status_code=400)
+
             deployments = sorted(
                 [
                     {
@@ -659,14 +693,21 @@ async def azure_deployments_api(request: Request):
                 "api_version_used": version,
             })
 
-    # All versions failed — cognitiveservices.azure.com endpoints do not expose
-    # the data-plane deployment list API; use the manual fields instead.
+    # All versions exhausted.  For *.cognitiveservices.azure.com this is expected
+    # on older multi-service accounts — they require manual name entry.
+    is_cogs = "cognitiveservices.azure.com" in endpoint
+    detail_hint = (
+        "Azure AI Services / Cognitive Services resources (cognitiveservices.azure.com) "
+        "only expose the deployment listing API on newer accounts. "
+        "If this is a fresh resource and fetch still fails, the account may require "
+        "management-plane access (subscription + AAD token) which is not supported here."
+        if is_cogs else
+        "All known API versions returned errors."
+    )
     return JSONResponse({
         "ok": False,
         "error": (
-            "Could not list deployments automatically. "
-            "Your endpoint may be an Azure AI Services / Cognitive Services resource "
-            "(cognitiveservices.azure.com) which does not support the listing API. "
+            f"Could not list deployments automatically. {detail_hint} "
             "Use Step 3 below to type the deployment name manually — "
             "find it in Azure AI Foundry (ai.azure.com) → Models + endpoints. "
             f"(Last error: {last_error})"
