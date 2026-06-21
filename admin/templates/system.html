@@ -1,4 +1,6 @@
 {% extends "base.html" %}
+{% from "macros.html" import alert %}
+{% from "icons.html" import ic %}
 {% block title %}System — QueryBot Admin{% endblock %}
 {% block head %}
 <style>
@@ -49,22 +51,68 @@
 .az-selected-summary{margin-top:.75rem;padding:.65rem .875rem;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;font-size:12px;color:var(--text-muted)}
 .az-selected-summary strong{color:var(--text)}
 .az-empty{text-align:center;padding:1.5rem;color:var(--text-muted);font-size:12px;border:1.5px dashed var(--border);border-radius:8px;margin-top:.5rem}
+
+/* ── Provider extras ── */
+.provider-ext-link {
+  font-size: 12px;
+  color: var(--primary);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  text-decoration: none;
+  opacity: .8;
+}
+.provider-ext-link:hover { opacity: 1; }
+.provider-test-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: .75rem;
+  padding-top: .75rem;
+  border-top: 1px solid var(--border);
+}
+.provider-test-result {
+  font-size: 12px;
+  font-weight: 600;
+}
+.provider-test-result.ok  { color: var(--success); }
+.provider-test-result.err { color: var(--danger); }
+.provider-test-result.loading { color: var(--text-muted); }
+
+/* ── Database backend section ── */
+.db-backend-switch{display:inline-flex;gap:.35rem;padding:.3rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface-2);box-shadow:var(--shadow)}
+.db-backend-switch button{border:1px solid transparent;background:transparent;color:var(--text-muted);font-weight:700;font-size:12px;border-radius:var(--radius-sm);padding:8px 14px;cursor:pointer}
+.db-backend-switch button:hover{background:var(--surface);color:var(--text)}
+.db-backend-switch button.active{background:var(--blue);border-color:var(--blue);color:#fff;box-shadow:var(--shadow)}
+.db-panel{display:none;margin-top:1.25rem}
+.db-panel.active{display:block}
+.db-active-status{display:inline-flex;align-items:center;gap:.5rem;font-size:12px;padding:.4rem .75rem;border-radius:6px;background:var(--surface-2);border:1px solid var(--border);margin-bottom:1rem}
+.db-active-status .dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.db-active-status .dot.sqlite{background:#64748b}
+.db-active-status .dot.postgres{background:#16a34a}
+.db-restart-notice{display:flex;align-items:flex-start;gap:.6rem;padding:.65rem .875rem;border-radius:8px;background:#fef9c3;border:1px solid #fde047;font-size:12px;color:#713f12;margin-top:1rem}
 </style>
 {% endblock %}
 {% block content %}
 <div class="page-header">
-  <h1>System settings</h1>
-  <p>API keys, LLM providers, and admin password.</p>
+  <div class="page-header-body">
+    <h1>System settings</h1>
+    <p>API keys, LLM providers, and admin password.</p>
+  </div>
+  <div class="page-header-actions">
+    <button type="submit" form="system-form" class="btn btn-primary btn-sm">{{ ic("check-circle", 14) }} Save settings</button>
+  </div>
 </div>
 
-{% if saved %}<div class="alert alert-success">Settings saved successfully.</div>{% endif %}
-{% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+{% if saved %}{{ alert(message="Settings saved successfully.", type="success", icon_name="check-circle") }}{% endif %}
+{% if error %}{{ alert(message=error, type="error", icon_name="x-circle") }}{% endif %}
 
-<div class="alert alert-info">
-  <strong>Safe to update at any time.</strong> Changing API keys or LLM models only affects
-  new queries going forward. All existing client KB files, database connections, and query
-  history are never affected. Per-client model overrides always take priority over these defaults.
-</div>
+{{ alert(
+    message="Changing API keys or LLM models only affects new queries — existing KB files, database connections, and history are never touched. Per-client overrides always take priority over these defaults.",
+    type="info",
+    icon_name="info",
+    title="Safe to update at any time"
+) }}
 
 <form method="post" action="/admin/system" id="system-form">
 
@@ -86,13 +134,23 @@
   <div class="card provider-panel" data-provider-panel="anthropic">
     <div class="card-header">
       <h2>Anthropic (Claude)</h2>
-      <a href="https://console.anthropic.com" target="_blank" style="font-size:12px;color:var(--blue)">console.anthropic.com ↗</a>
+      <a href="https://console.anthropic.com" target="_blank" class="provider-ext-link">console.anthropic.com {{ ic("external-link", 12) }}</a>
     </div>
     <div class="card-body">
       <div class="form-group">
-        <label>Anthropic API key</label>
-        <input type="password" name="anthropic_key" value="{{ cfg.get('anthropic_api_key','') }}" placeholder="sk-ant-api03-...">
-        <p class="form-note">Leave blank to keep existing key. Changing this key only affects future queries.</p>
+        <label for="anthropic_key">Anthropic API key</label>
+        <div class="input-reveal-wrap">
+          <input type="password" id="anthropic_key" name="anthropic_key"
+                 value="{{ cfg.get('anthropic_api_key','') }}" placeholder="sk-ant-api03-…">
+          <button type="button" class="input-reveal-btn" onclick="toggleReveal('anthropic_key',this)" aria-label="Show">{{ ic("eye", 15) }}</button>
+        </div>
+        <p class="form-note">Leave blank to keep existing key. Changing only affects future queries.</p>
+      </div>
+      <div class="provider-test-row">
+        <button type="button" class="btn btn-secondary btn-sm" onclick="testConnection('anthropic')">
+          {{ ic("refresh", 13) }} Test connection
+        </button>
+        <span class="provider-test-result" id="test-result-anthropic"></span>
       </div>
     </div>
   </div>
@@ -101,13 +159,23 @@
   <div class="card provider-panel" data-provider-panel="openai">
     <div class="card-header">
       <h2>OpenAI (GPT-4o)</h2>
-      <a href="https://platform.openai.com" target="_blank" style="font-size:12px;color:var(--blue)">platform.openai.com ↗</a>
+      <a href="https://platform.openai.com" target="_blank" class="provider-ext-link">platform.openai.com {{ ic("external-link", 12) }}</a>
     </div>
     <div class="card-body">
       <div class="form-group">
-        <label>OpenAI API key</label>
-        <input type="password" name="openai_key" value="{{ cfg.get('openai_api_key','') }}" placeholder="sk-...">
+        <label for="openai_key">OpenAI API key</label>
+        <div class="input-reveal-wrap">
+          <input type="password" id="openai_key" name="openai_key"
+                 value="{{ cfg.get('openai_api_key','') }}" placeholder="sk-…">
+          <button type="button" class="input-reveal-btn" onclick="toggleReveal('openai_key',this)" aria-label="Show">{{ ic("eye", 15) }}</button>
+        </div>
         <p class="form-note">Required for GPT-4o or GPT-4o-mini. Leave blank to keep existing key.</p>
+      </div>
+      <div class="provider-test-row">
+        <button type="button" class="btn btn-secondary btn-sm" onclick="testConnection('openai')">
+          {{ ic("refresh", 13) }} Test connection
+        </button>
+        <span class="provider-test-result" id="test-result-openai"></span>
       </div>
     </div>
   </div>
@@ -128,10 +196,13 @@
           <div class="az-step-body">
             <div class="az-step-title">Enter your Azure credentials</div>
             <div class="form-group" style="margin-bottom:.75rem">
-              <label>API key</label>
-              <input type="password" name="azure_openai_key"
-                value="{{ cfg.get('azure_openai_api_key','') }}"
-                placeholder="Your Azure OpenAI resource key">
+              <label for="azure_openai_key">API key</label>
+              <div class="input-reveal-wrap">
+                <input type="password" id="azure_openai_key" name="azure_openai_key"
+                  value="{{ cfg.get('azure_openai_api_key','') }}"
+                  placeholder="Your Azure OpenAI resource key">
+                <button type="button" class="input-reveal-btn" onclick="toggleReveal('azure_openai_key',this)" aria-label="Show">{{ ic("eye", 15) }}</button>
+              </div>
               <p class="form-note">Azure Portal → Your OpenAI resource → Keys and Endpoint. Leave blank to keep existing.</p>
             </div>
             <div class="form-grid" style="margin-bottom:0">
@@ -152,6 +223,13 @@
             </div>
           </div>
         </div>
+
+            <div class="provider-test-row" style="margin-top:.5rem">
+              <button type="button" class="btn btn-secondary btn-sm" onclick="testConnection('azure_openai')">
+                {{ ic("refresh", 13) }} Test connection
+              </button>
+              <span class="provider-test-result" id="test-result-azure_openai"></span>
+            </div>
 
         <!-- Step 2: Fetch & pick deployments -->
         <div class="az-step">
@@ -265,7 +343,99 @@
         </select>
         <p class="form-note">Used once per client to generate the enriched Knowledge Base.</p>
       </div>
-      <button type="submit" class="btn btn-primary">Save all settings</button>
+      <div class="form-actions">
+        <button type="submit" class="btn btn-primary">{{ ic("check-circle", 14) }} Save all settings</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Database Backend ─────────────────────────────────────────────── -->
+  <div class="card">
+    <div class="card-header">
+      <h2>Database backend</h2>
+      {% if restart_needed %}
+      <span class="badge" style="background:#fef9c3;color:#713f12;border:1px solid #fde047;font-size:11px">Restart required</span>
+      {% endif %}
+    </div>
+    <div class="card-body">
+
+      <!-- Currently active -->
+      <div class="db-active-status">
+        <span class="dot {{ active_backend }}"></span>
+        Currently running:
+        <strong>{% if active_backend == 'postgres' %}PostgreSQL{% else %}SQLite{% endif %}</strong>
+        {% if active_backend == 'postgres' and active_pg_host %}
+        — <code>{{ active_pg_host }}</code>
+        {% elif active_backend == 'sqlite' %}
+        — <code>data/querybot.db</code>
+        {% endif %}
+      </div>
+
+      <!-- Backend toggle -->
+      <div class="db-backend-switch" role="tablist">
+        <button type="button" data-db-btn="sqlite">SQLite</button>
+        <button type="button" data-db-btn="postgres">PostgreSQL</button>
+      </div>
+
+      <!-- Hidden field submitted with the form -->
+      <input type="hidden" id="db-backend-val" name="database_backend" value="{{ saved_backend }}">
+
+      <!-- ── SQLite panel ── -->
+      <div class="db-panel" data-db-panel="sqlite">
+        <p style="font-size:13px;color:var(--text-muted);margin:.75rem 0 .4rem">
+          SQLite is the default backend — zero config, single file on disk.
+          Best for evaluation and single-user deployments.
+        </p>
+        <p class="form-note">File path: <code>data/querybot.db</code></p>
+        <p class="form-note" style="color:var(--warning,#b45309)">
+          ⚠ SQLite serialises all writes — concurrent users will queue.
+          Switch to PostgreSQL for production workloads with multiple simultaneous users.
+        </p>
+      </div>
+
+      <!-- ── PostgreSQL panel ── -->
+      <div class="db-panel" data-db-panel="postgres">
+        <p style="font-size:13px;color:var(--text-muted);margin:.75rem 0 .75rem">
+          PostgreSQL supports concurrent writers and is recommended for production.
+          All SQL translations are handled automatically — no code changes needed.
+        </p>
+        <div class="form-group">
+          <label for="pg_url">Connection URL</label>
+          <div class="input-reveal-wrap">
+            <input type="password" id="pg_url" name="database_url"
+                   value="{{ saved_pg_url }}"
+                   placeholder="postgresql://user:password@host:5432/dbname"
+                   autocomplete="off">
+            <button type="button" class="input-reveal-btn" onclick="toggleReveal('pg_url',this)" aria-label="Show">{{ ic("eye", 15) }}</button>
+          </div>
+          <p class="form-note">
+            Format: <code>postgresql://user:password@host:5432/dbname</code>
+            — leave blank to keep the existing URL.
+          </p>
+        </div>
+        <div class="provider-test-row">
+          <button type="button" class="btn btn-secondary btn-sm" onclick="testPgConnection()">
+            {{ ic("refresh", 13) }} Test connection
+          </button>
+          <span class="provider-test-result" id="pg-test-result"></span>
+        </div>
+        <p class="form-note" style="color:var(--warning,#b45309);margin-top:.75rem">
+          ⚠ Existing SQLite data is <strong>not</strong> migrated automatically.
+          Run <code>init_db()</code> against the new PostgreSQL database on first start to create the schema.
+        </p>
+      </div>
+
+      <!-- Restart notice (shown when saved ≠ active) -->
+      {% if restart_needed %}
+      <div class="db-restart-notice">
+        {{ ic("info", 14) }}
+        <span>
+          The saved backend differs from what's currently running.
+          <strong>Restart the application</strong> to activate the change.
+        </span>
+      </div>
+      {% endif %}
+
     </div>
   </div>
 
@@ -275,18 +445,27 @@
 <div class="card">
   <div class="card-header"><h2>Change admin password</h2></div>
   <div class="card-body">
-    <form method="post" action="/admin/system/password">
+    <form method="post" action="/admin/system/password" id="pw-change-form">
       <div class="form-grid">
         <div class="form-group">
-          <label>New password</label>
-          <input type="password" name="new_password" minlength="8" required>
+          <label for="sys_new_pw">New password</label>
+          <div class="input-reveal-wrap">
+            <input type="password" id="sys_new_pw" name="new_password" minlength="8" required
+                   oninput="validateSysPw()">
+            <button type="button" class="input-reveal-btn" onclick="toggleReveal('sys_new_pw',this)" aria-label="Show">{{ ic("eye", 15) }}</button>
+          </div>
         </div>
         <div class="form-group">
-          <label>Confirm password</label>
-          <input type="password" name="confirm_password" minlength="8" required>
+          <label for="sys_conf_pw">Confirm password</label>
+          <div class="input-reveal-wrap">
+            <input type="password" id="sys_conf_pw" name="confirm_password" minlength="8" required
+                   oninput="validateSysPw()">
+            <button type="button" class="input-reveal-btn" onclick="toggleReveal('sys_conf_pw',this)" aria-label="Show">{{ ic("eye", 15) }}</button>
+          </div>
+          <p class="form-note" id="sys-pw-msg" style="display:none"></p>
         </div>
       </div>
-      <button type="submit" class="btn btn-secondary">Change password</button>
+      <button type="submit" class="btn btn-secondary" id="sys-pw-btn">Change password</button>
     </form>
   </div>
 </div>
@@ -295,27 +474,33 @@
 <div class="card">
   <div class="card-header"><h2>Webhook URLs</h2></div>
   <div class="card-body">
-    <p style="font-size:13px;color:var(--gray-500);margin-bottom:1rem">
+    <p class="text-sm text-muted" style="margin-bottom:1rem">
       Paste these into your platform's developer portal. Zoom and Slack require HTTPS — use ngrok during development.
     </p>
-    <table class="table">
-      <tr><th>Platform</th><th>Webhook URL</th><th>Where to paste</th></tr>
-      <tr>
-        <td><span class="badge badge-blue">Zoom</span></td>
-        <td><code>https://YOURDOMAIN/webhook/zoom</code></td>
-        <td style="font-size:12px;color:var(--gray-500)">Marketplace → App → Features → Team Chat → Bot Endpoint URL</td>
-      </tr>
-      <tr>
-        <td><span class="badge badge-blue">Teams</span></td>
-        <td><code>https://YOURDOMAIN/webhook/teams</code></td>
-        <td style="font-size:12px;color:var(--gray-500)">Azure Bot Service → Messaging endpoint</td>
-      </tr>
-      <tr>
-        <td><span class="badge badge-blue">Slack</span></td>
-        <td><code>https://YOURDOMAIN/webhook/slack</code></td>
-        <td style="font-size:12px;color:var(--gray-500)">Slack App → Event Subscriptions → Request URL</td>
-      </tr>
-    </table>
+    <div class="qb-table-wrap">
+      <table class="qb-table">
+        <thead>
+          <tr><th>Platform</th><th>Webhook URL</th><th>Where to paste</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><span class="badge badge-blue">Zoom</span></td>
+            <td><code>https://YOURDOMAIN/webhook/zoom</code></td>
+            <td class="text-sm text-muted">Marketplace → App → Features → Team Chat → Bot Endpoint URL</td>
+          </tr>
+          <tr>
+            <td><span class="badge badge-blue">Teams</span></td>
+            <td><code>https://YOURDOMAIN/webhook/teams</code></td>
+            <td class="text-sm text-muted">Azure Bot Service → Messaging endpoint</td>
+          </tr>
+          <tr>
+            <td><span class="badge badge-blue">Slack</span></td>
+            <td><code>https://YOURDOMAIN/webhook/slack</code></td>
+            <td class="text-sm text-muted">Slack App → Event Subscriptions → Request URL</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
   </div>
 </div>
 
@@ -475,5 +660,111 @@
     return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
 })();
+
+/* ── API key reveal toggle ─────────────────────────────────────────────── */
+function toggleReveal(inputId, btn) {
+  var inp = document.getElementById(inputId);
+  var showing = inp.type === 'text';
+  inp.type = showing ? 'password' : 'text';
+  btn.setAttribute('aria-label', showing ? 'Show' : 'Hide');
+  btn.innerHTML = showing
+    ? '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex-shrink:0;display:inline-block;vertical-align:-3px"><path d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z"/><path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>'
+    : '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex-shrink:0;display:inline-block;vertical-align:-3px"><path d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88"/></svg>';
+}
+
+/* ── Test connection ───────────────────────────────────────────────────── */
+function testConnection(provider) {
+  var el = document.getElementById('test-result-' + provider);
+  if (!el) return;
+  el.className = 'provider-test-result loading';
+  el.textContent = 'Testing…';
+  fetch('/admin/system/test-connection?provider=' + encodeURIComponent(provider))
+    .then(function(r){ return r.json(); })
+    .then(function(data){
+      if (data.ok) {
+        el.className = 'provider-test-result ok';
+        el.textContent = '✓ Connected' + (data.model ? ' — ' + data.model : '');
+      } else {
+        el.className = 'provider-test-result err';
+        el.textContent = '✗ ' + (data.error || 'Connection failed');
+      }
+    })
+    .catch(function(err){
+      el.className = 'provider-test-result err';
+      el.textContent = '✗ Request failed (' + err + ')';
+    });
+}
+
+/* ── System password match validation ─────────────────────────────────── */
+function validateSysPw() {
+  var pw  = document.getElementById('sys_new_pw').value;
+  var pw2 = document.getElementById('sys_conf_pw').value;
+  var msg = document.getElementById('sys-pw-msg');
+  var btn = document.getElementById('sys-pw-btn');
+  if (!pw2) { msg.style.display = 'none'; btn.disabled = false; return; }
+  if (pw !== pw2) {
+    msg.textContent = 'Passwords do not match.';
+    msg.style.color = 'var(--danger)';
+    msg.style.display = '';
+    btn.disabled = true;
+  } else {
+    msg.textContent = 'Passwords match.';
+    msg.style.color = 'var(--success)';
+    msg.style.display = '';
+    btn.disabled = false;
+  }
+}
+
+/* ── Database backend toggle ──────────────────────────────────────────── */
+(function(){
+  function syncDb(backend) {
+    document.querySelectorAll('[data-db-btn]').forEach(function(b){
+      b.classList.toggle('active', b.dataset.dbBtn === backend);
+    });
+    document.querySelectorAll('[data-db-panel]').forEach(function(p){
+      p.classList.toggle('active', p.dataset.dbPanel === backend);
+    });
+    var hid = document.getElementById('db-backend-val');
+    if (hid) hid.value = backend;
+  }
+
+  document.addEventListener('DOMContentLoaded', function(){
+    var saved = document.getElementById('db-backend-val');
+    syncDb(saved ? saved.value : 'sqlite');
+    document.querySelectorAll('[data-db-btn]').forEach(function(b){
+      b.addEventListener('click', function(){ syncDb(b.dataset.dbBtn); });
+    });
+  });
+
+  window.testPgConnection = function(){
+    var urlInput = document.getElementById('pg_url');
+    var el = document.getElementById('pg-test-result');
+    el.className = 'provider-test-result loading';
+    el.textContent = 'Testing…';
+    var url = urlInput ? encodeURIComponent(urlInput.value) : '';
+    fetch('/admin/system/test-pg?url=' + url)
+      .then(function(r){ return r.json(); })
+      .then(function(data){
+        if (data.ok) {
+          el.className = 'provider-test-result ok';
+          el.textContent = '✓ Connected' + (data.version ? ' — ' + data.version : '');
+        } else {
+          el.className = 'provider-test-result err';
+          el.textContent = '✗ ' + (data.error || 'Connection failed');
+        }
+      })
+      .catch(function(err){
+        el.className = 'provider-test-result err';
+        el.textContent = '✗ Request failed (' + err + ')';
+      });
+  };
+})();
+
+/* ── Toast on save (auto-dismissed after 4 s) ─────────────────────────── */
+{% if saved %}
+document.addEventListener('DOMContentLoaded', function(){
+  if (window.qbToast) window.qbToast.success('Settings saved successfully.');
+});
+{% endif %}
 </script>
 {% endblock %}
