@@ -205,9 +205,7 @@
   <table class="table">
     <tr><th>Name</th><th>Type</th><th>Connection</th><th>KB scope</th><th>Log export</th><th>Created</th><th></th></tr>
     {% for d in dbs %}
-    {% if d.db_type == 'snowflake' %}{% set _ec = {'account': d.credentials.get('account',''), 'warehouse': d.credentials.get('warehouse',''), 'database': d.credentials.get('database',''), 'schema': d.credentials.get('schema','PUBLIC'), 'user': d.credentials.get('user',''), 'role': d.credentials.get('role','')} %}{% elif d.db_type == 'oracle' %}{% set _ec = {'dsn': d.credentials.get('dsn',''), 'user': d.credentials.get('user',''), 'schema': d.credentials.get('schema','')} %}{% else %}{% set _ec = {'server': d.credentials.get('server',''), 'database': d.credentials.get('database',''), 'schema': d.credentials.get('schema','dbo'), 'user': d.credentials.get('user',''), 'driver': d.credentials.get('driver','ODBC Driver 18 for SQL Server')} %}{% endif %}
-    {% set _el = {'enabled': d.log_export_enabled, 'schema': d.log_schema or 'LOGS', 'time': d.log_export_time or '02:00'} %}
-    <tr data-db-id="{{ d.id }}" data-db-type="{{ d.db_type }}" data-db-name="{{ d.name|e }}" data-db-creds="{{ _ec|tojson|e }}" data-db-log="{{ _el|tojson|e }}" data-db-scope="{{ d.selected_schema_tables|tojson|e }}">
+    <tr data-db-id="{{ d.id }}" data-db-type="{{ d.db_type }}" data-db-name="{{ d.name|e }}" data-db-creds="{{ d.edit_creds|tojson|e }}" data-db-log="{{ d.edit_log|tojson|e }}" data-db-scope="{{ d.selected_schema_tables|tojson|e }}">
       <td style="font-weight:600">{{ d.name }}</td>
       <td><span class="badge badge-blue">{{ d.label }}</span></td>
       <td style="font-size:11px;color:var(--gray-500)">
