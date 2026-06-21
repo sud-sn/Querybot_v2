@@ -715,6 +715,130 @@ async def azure_deployments_api(request: Request):
     }, status_code=400)
 
 
+@router.get("/system/test-connection")
+async def test_llm_connection(request: Request, provider: str = ""):
+    """Quick liveness check for each LLM provider using saved credentials.
+
+    Returns {"ok": true, "model": "..."} on success or {"ok": false, "error": "..."}.
+    For Azure OpenAI with a deployment name configured, sends a 1-token completion.
+    Without a deployment name, verifies the key + endpoint are accepted by Azure.
+    """
+    if not _is_auth(request):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    import httpx
+    cfg = store.get_all_system()
+
+    # ── Anthropic ────────────────────────────────────────────────────────────
+    if provider == "anthropic":
+        api_key = (cfg.get("anthropic_api_key") or "").strip()
+        if not api_key:
+            return JSONResponse({"ok": False, "error": "No API key saved — enter it in Step 1 and save."})
+        try:
+            async with httpx.AsyncClient(timeout=12) as client:
+                resp = await client.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers={
+                        "x-api-key": api_key,
+                        "anthropic-version": "2023-06-01",
+                        "content-type": "application/json",
+                    },
+                    json={"model": "claude-haiku-4-5-20251001", "max_tokens": 1,
+                          "messages": [{"role": "user", "content": "hi"}]},
+                )
+            if resp.status_code == 401:
+                return JSONResponse({"ok": False, "error": "API key rejected — check your Anthropic key."})
+            if resp.is_success or resp.status_code in (400, 529):
+                return JSONResponse({"ok": True, "model": "claude-haiku-4-5-20251001"})
+            return JSONResponse({"ok": False, "error": f"HTTP {resp.status_code}"})
+        except httpx.TimeoutException:
+            return JSONResponse({"ok": False, "error": "Request timed out reaching api.anthropic.com."})
+        except Exception as exc:
+            return JSONResponse({"ok": False, "error": str(exc)})
+
+    # ── OpenAI ───────────────────────────────────────────────────────────────
+    if provider == "openai":
+        api_key = (cfg.get("openai_api_key") or "").strip()
+        if not api_key:
+            return JSONResponse({"ok": False, "error": "No API key saved — enter it in Step 1 and save."})
+        try:
+            async with httpx.AsyncClient(timeout=12) as client:
+                resp = await client.get(
+                    "https://api.openai.com/v1/models",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                )
+            if resp.status_code == 401:
+                return JSONResponse({"ok": False, "error": "API key rejected — check your OpenAI key."})
+            if resp.is_success:
+                return JSONResponse({"ok": True, "model": "GPT-4o available"})
+            return JSONResponse({"ok": False, "error": f"HTTP {resp.status_code}"})
+        except httpx.TimeoutException:
+            return JSONResponse({"ok": False, "error": "Request timed out reaching api.openai.com."})
+        except Exception as exc:
+            return JSONResponse({"ok": False, "error": str(exc)})
+
+    # ── Azure OpenAI ─────────────────────────────────────────────────────────
+    if provider == "azure_openai":
+        endpoint   = (cfg.get("azure_openai_endpoint")    or "").strip().rstrip("/")
+        api_key    = (cfg.get("azure_openai_api_key")     or "").strip()
+        api_version = (cfg.get("azure_openai_api_version") or "2024-02-01").strip()
+        deployment  = (cfg.get("azure_query_deployment_name") or "").strip()
+
+        if not endpoint:
+            return JSONResponse({"ok": False, "error": "No endpoint saved — fill in the Endpoint URL and save."})
+        if not api_key:
+            return JSONResponse({"ok": False, "error": "No API key saved — fill in the Azure API key and save."})
+
+        if not endpoint.startswith(("http://", "https://")):
+            endpoint = "https://" + endpoint
+        from urllib.parse import urlparse, urlunparse
+        _p = urlparse(endpoint)
+        endpoint = urlunparse((_p.scheme, _p.netloc, "", "", "", ""))
+
+        try:
+            async with httpx.AsyncClient(timeout=12) as client:
+                if deployment:
+                    # Full smoke-test: 1-token completion against the configured deployment
+                    url = (f"{endpoint}/openai/deployments/{deployment}"
+                           f"/chat/completions?api-version={api_version}")
+                    resp = await client.post(
+                        url,
+                        headers={"api-key": api_key, "content-type": "application/json"},
+                        json={"messages": [{"role": "user", "content": "hi"}], "max_tokens": 1},
+                    )
+                else:
+                    # No deployment name yet — verify key + endpoint are accepted
+                    url = f"{endpoint}/openai/deployments?api-version={api_version}"
+                    resp = await client.get(url, headers={"api-key": api_key})
+
+            if resp.status_code == 401:
+                return JSONResponse({"ok": False, "error": "API key rejected (401) — check your Azure OpenAI key."})
+            if resp.status_code == 403:
+                return JSONResponse({"ok": False, "error": (
+                    "Permission denied (403) — key accepted but access blocked. "
+                    "Check the resource firewall (Azure Portal → Networking) or RBAC role."
+                )})
+            if resp.status_code == 404 and not deployment:
+                # cognitiveservices.azure.com returns 404 on the listing endpoint —
+                # that is expected; the key was accepted (no 401) so credentials are valid.
+                return JSONResponse({"ok": True, "model": "Credentials accepted — save a deployment name to test completion"})
+            if resp.is_success:
+                label = f"deployment: {deployment}" if deployment else "endpoint reachable"
+                return JSONResponse({"ok": True, "model": label})
+            try:
+                detail = resp.json().get("error", {}).get("message", resp.text[:150])
+            except Exception:
+                detail = resp.text[:150]
+            return JSONResponse({"ok": False, "error": f"HTTP {resp.status_code}: {detail}"})
+
+        except httpx.TimeoutException:
+            return JSONResponse({"ok": False, "error": "Request timed out — check the endpoint URL."})
+        except Exception as exc:
+            return JSONResponse({"ok": False, "error": f"Could not reach Azure: {exc}"})
+
+    return JSONResponse({"ok": False, "error": f"Unknown provider '{provider}'."})
+
+
 @router.get("/system/test-pg")
 async def test_pg_connection(request: Request, url: str = ""):
     """Test a PostgreSQL connection string without saving it."""
