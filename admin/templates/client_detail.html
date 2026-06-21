@@ -97,7 +97,7 @@
   </div>
 </div>
 
-{% if saved %}<div class="alert alert-success">Settings saved.</div>{% endif %}
+{% if saved %}{% from "macros.html" import alert %}{{ alert(message="Settings saved.", type="success", icon_name="check-circle") }}{% endif %}
 
 <div class="metrics">
   <div class="metric"><div class="metric-label">Total queries</div><div class="metric-value">{{ stats.total or 0 }}</div></div>
@@ -341,11 +341,49 @@
             </span>
           </label>
         </div>
-        <button type="submit" class="btn btn-primary">Save settings</button>
+        <div class="form-actions" style="align-items:center;gap:.75rem">
+          <button type="submit" class="btn btn-primary" id="settingsSaveBtn">Save settings</button>
+          <span id="settingsDirtyMsg" class="text-sm text-muted" style="display:none">
+            — unsaved changes
+          </span>
+        </div>
       </form>
     </div>
   </div>
 </div>
+
+<script>
+(function(){
+  var form = document.querySelector('#tab-settings form');
+  if (!form) return;
+  var saveBtn = document.getElementById('settingsSaveBtn');
+  var dirtyMsg = document.getElementById('settingsDirtyMsg');
+  // Snapshot initial values
+  var _snapshot = {};
+  function snapshot() {
+    Array.from(form.elements).forEach(function(el) {
+      if (!el.name) return;
+      _snapshot[el.name] = el.type === 'checkbox' ? el.checked : el.value;
+    });
+  }
+  function checkDirty() {
+    var dirty = false;
+    Array.from(form.elements).forEach(function(el) {
+      if (!el.name) return;
+      var cur = el.type === 'checkbox' ? el.checked : el.value;
+      if (cur !== _snapshot[el.name]) dirty = true;
+    });
+    if (dirtyMsg) dirtyMsg.style.display = dirty ? '' : 'none';
+    if (saveBtn) saveBtn.classList.toggle('btn-primary', dirty);
+  }
+  document.addEventListener('DOMContentLoaded', function() {
+    snapshot();
+    form.addEventListener('input', checkDirty);
+    form.addEventListener('change', checkDirty);
+    form.addEventListener('submit', function() { snapshot(); });
+  });
+})();
+</script>
 
 <!-- SCHEMA BROWSER TAB -->
 <div id="tab-schema-browser" class="tab-pane">
@@ -370,8 +408,18 @@
       </div>
     </div>
 
+    {# Search filter — shown after tree loads #}
+    <div id="sb-search-bar" style="display:none;padding:.6rem 1.25rem;border-bottom:1px solid var(--border);background:var(--surface-2)">
+      <div class="clients-search-input-wrap">
+        <span class="clients-search-icon">{% from "icons.html" import ic %}{{ ic("search", 15) }}</span>
+        <input type="text" id="sbSearchInput" placeholder="Filter tables and views…"
+               autocomplete="off" spellcheck="false"
+               oninput="filterSchemaTree(this.value)">
+      </div>
+    </div>
+
     <div id="sb-status" style="display:none;padding:.7rem 1.25rem;font-size:12px"></div>
-    <div id="sb-loading" style="display:none;padding:2rem;text-align:center;color:var(--gray-400);font-size:13px">Connecting to database…</div>
+    <div id="sb-loading" style="display:none;padding:2rem;text-align:center;color:var(--text-muted);font-size:13px">Connecting to database…</div>
     <div id="sb-tree"   style="display:none;padding:1rem 1.25rem"></div>
   </div>
 </div>
@@ -453,6 +501,10 @@
     }
     _render(data.tree);
     _updateFooter();
+    var sb = document.getElementById('sb-search-bar');
+    if (sb) sb.style.display = '';
+    var si = document.getElementById('sbSearchInput');
+    if (si) si.value = '';
   };
 
   // ── Selection helpers ────────────────────────────────────────────────────
@@ -674,6 +726,58 @@
     if (body) body.classList.toggle('open');
   };
 
+  // ── Schema search filter ─────────────────────────────────────────────────
+  window.filterSchemaTree = function(q) {
+    q = q.trim().toLowerCase();
+    const tree  = document.getElementById('sb-tree');
+    if (!tree) return;
+    // If empty, reveal everything and collapse all
+    if (!q) {
+      tree.querySelectorAll('.sb-obj-row').forEach(r => r.style.display = '');
+      tree.querySelectorAll('.sb-section-lbl').forEach(r => r.style.display = '');
+      tree.querySelectorAll('.sb-db,.sb-schema').forEach(r => r.style.display = '');
+      return;
+    }
+    // Hide/show individual object rows
+    tree.querySelectorAll('.sb-objects').forEach(function(objWrap) {
+      let anyVisible = false;
+      objWrap.querySelectorAll('.sb-obj-row').forEach(function(row) {
+        const label = row.querySelector('label,span[style*="italic"]');
+        const text  = label ? label.textContent.toLowerCase() : '';
+        const show  = text.includes(q);
+        row.style.display = show ? '' : 'none';
+        if (show) anyVisible = true;
+      });
+      // Hide section labels if all rows under them are hidden
+      objWrap.querySelectorAll('.sb-section-lbl').forEach(function(lbl) {
+        let next = lbl.nextElementSibling;
+        let lblAny = false;
+        while (next && !next.classList.contains('sb-section-lbl')) {
+          if (next.style.display !== 'none') lblAny = true;
+          next = next.nextElementSibling;
+        }
+        lbl.style.display = lblAny ? '' : 'none';
+      });
+      // Expand schemas/dbs that have matches
+      if (anyVisible) {
+        objWrap.classList.add('open');
+        const schemaHd = objWrap.closest('.sb-schema');
+        if (schemaHd) {
+          const chev = schemaHd.querySelector('.sb-schema-hd .sb-chev');
+          if (chev) chev.classList.add('open');
+        }
+        const dbSchemas = objWrap.closest('.sb-schemas');
+        if (dbSchemas) {
+          dbSchemas.classList.add('open');
+          const dbChev = dbSchemas.previousElementSibling;
+          if (dbChev) dbChev.classList.add('open');
+        }
+      }
+      const schemaEl = objWrap.closest('.sb-schema');
+      if (schemaEl) schemaEl.style.display = anyVisible ? '' : 'none';
+    });
+  };
+
   // Auto-load on first tab click
   document.getElementById('tab-schema-btn').addEventListener('click', function() {
     if (!_loaded) { _loaded = true; loadSchemaTree(false); }
@@ -691,47 +795,53 @@
     {% if not queries %}
     <div class="card-body" style="color:var(--gray-500);text-align:center;padding:2rem">No queries yet.</div>
     {% else %}
-    <table class="table">
-      <tr><th>Time</th><th>User</th><th>Question</th><th>Model</th><th>SQL</th><th>Rows</th><th>Cost</th><th>ms</th><th>Status</th></tr>
+    <div class="qb-table-wrap" style="border:none;border-radius:0">
+    <table class="qb-table">
+      <thead>
+        <tr><th>Time</th><th>User</th><th>Question</th><th>Model</th><th>SQL</th><th>Rows</th><th>Cost</th><th>ms</th><th>Status</th></tr>
+      </thead>
+      <tbody>
       {% for q in queries %}
       {% set is_drilldown = q.parent_question_id and q.parent_question_id != '' %}
-      <tr style="{% if is_drilldown %}background:rgba(99,102,241,0.06);border-left:3px solid var(--indigo-400,#818cf8){% endif %}">
-        <td style="font-size:11px;color:var(--gray-500);white-space:nowrap">
-          {% if is_drilldown %}<span style="color:var(--gray-400);margin-right:4px">↳</span>{% endif %}
+      <tr {% if is_drilldown %}style="background:rgba(99,102,241,0.06);border-left:3px solid var(--indigo-400,#818cf8)"{% endif %}>
+        <td class="text-xs text-muted nowrap">
+          {% if is_drilldown %}<span style="color:var(--text-muted);margin-right:4px">↳</span>{% endif %}
           {{ q.created_at[5:16] }}
         </td>
-        <td style="font-size:11px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+        <td class="text-xs nowrap" style="max-width:120px;overflow:hidden;text-overflow:ellipsis"
             title="{{ q.user_email or q.zoom_user_id or 'unknown' }}">
           {% if q.user_name %}<strong>{{ q.user_name }}</strong>
-          {% elif q.zoom_user_id %}<span style="color:var(--gray-500);font-family:monospace">{{ q.zoom_user_id[:14] }}</span>
-          {% else %}<span style="color:var(--gray-400)">—</span>{% endif %}
+          {% elif q.zoom_user_id %}<span class="text-muted text-mono">{{ q.zoom_user_id[:14] }}</span>
+          {% else %}<span class="text-muted">—</span>{% endif %}
         </td>
-        <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px" title="{{ q.question }}">
+        <td class="text-sm" style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{ q.question }}">
           {% if is_drilldown %}
-            <span style="display:inline-block;font-size:10px;background:rgba(99,102,241,0.15);color:#818cf8;border-radius:3px;padding:1px 5px;margin-right:4px;white-space:nowrap">drill-down</span>
+            <span class="badge" style="font-size:10px;background:rgba(99,102,241,0.15);color:#818cf8;margin-right:4px">drill-down</span>
           {% endif %}
           {{ q.question }}
         </td>
-        <td style="font-size:11px;color:var(--gray-500)">{{ q.llm_model or "—" }}</td>
+        <td class="text-xs text-muted">{{ q.llm_model or "—" }}</td>
         <td>
           {% if q.sql_generated %}
           <div class="sql-cell">
             <code title="Click to expand" onclick="toggleSql(this)">{{ q.sql_generated[:60] }}{% if q.sql_generated|length > 60 %}…{% endif %}</code>
-            <button type="button" class="copy-btn" onclick="copySql(this)"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px"><path d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 01-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 011.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 00-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 01-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 00-3.375-3.375h-1.5a1.125 1.125 0 01-1.125-1.125v-1.5a3.375 3.375 0 00-3.375-3.375H9.75"/></svg>Copy</button>
+            <button type="button" class="copy-btn" onclick="copySql(this)">{{ ic("copy", 11) }} Copy</button>
             <textarea class="sql-hidden" readonly>{{ q.sql_generated }}</textarea>
           </div>
           <pre class="sql-full">{{ q.sql_generated }}</pre>
           {% else %}
-          <span style="font-size:11px;color:var(--gray-400)">—</span>
+          <span class="text-xs text-muted">—</span>
           {% endif %}
         </td>
-        <td style="font-size:12px">{{ q.row_count }}</td>
-        <td style="font-size:11px">${{ "%.4f"|format(q.cost_usd or 0) }}</td>
-        <td style="font-size:11px;color:var(--gray-500)">{{ q.duration_ms }}</td>
+        <td class="text-sm">{{ q.row_count }}</td>
+        <td class="text-xs">${{ "%.4f"|format(q.cost_usd or 0) }}</td>
+        <td class="text-xs text-muted">{{ q.duration_ms }}</td>
         <td>{% if q.success %}<span class="badge badge-green">OK</span>{% else %}<span class="badge badge-red" title="{{ q.error_msg }}">FAIL</span>{% endif %}</td>
       </tr>
       {% endfor %}
+      </tbody>
     </table>
+    </div>
     {% endif %}
   </div>
 </div>
@@ -921,19 +1031,43 @@
 <!-- DANGER ZONE TAB -->
 <div id="tab-danger" class="tab-pane">
   <div class="danger-zone">
-    <div class="card-header"><h2 style="color:var(--red)">Danger zone</h2></div>
-    <div class="card-body" style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:1rem">
-      <div>
-        <p style="font-weight:600;margin-bottom:4px">Reset this client</p>
-        <p style="font-size:12px;color:var(--gray-500);max-width:480px">Permanently deletes all schema files, KB files, ChromaDB vector index, and the client row. You will need to re-register the client from the Clients page.</p>
+    <div class="card-header"><h2 style="color:var(--danger)">Danger zone</h2></div>
+    <div class="card-body">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:1.25rem">
+        <div style="max-width:520px">
+          <p class="font-bold" style="margin-bottom:4px">Reset this client</p>
+          <p class="text-sm text-muted">
+            Permanently deletes all schema files, KB files, ChromaDB vector index, and the client row.
+            You will need to re-register the client from the Clients page. <strong>This cannot be undone.</strong>
+          </p>
+          <div class="form-group" style="margin-top:1rem;max-width:320px">
+            <label style="font-size:12px;font-weight:600;color:var(--danger)">
+              Type <code>{{ client.client_name or client.account_id }}</code> to confirm
+            </label>
+            <input type="text" id="dangerConfirmInput"
+                   placeholder="Type the client name to unlock"
+                   oninput="checkDangerConfirm(this.value)"
+                   autocomplete="off" spellcheck="false">
+          </div>
+        </div>
+        <form method="post" action="/admin/clients/{{ client.account_id }}/reset" id="resetClientForm">
+          <button type="button" class="btn btn-danger" id="dangerResetBtn" disabled
+            onclick="qbConfirm({title:'Reset this client?',body:'Permanently deletes all schema files, KB files, vector index, and the client row. Cannot be undone.',confirm:'Reset client',onConfirm:()=>document.getElementById('resetClientForm').submit()})">
+            {{ ic("trash", 14) }} Reset client
+          </button>
+        </form>
       </div>
-      <form method="post" action="/admin/clients/{{ client.account_id }}/reset" id="resetClientForm">
-        <button type="button" class="btn btn-danger"
-          onclick="qbConfirm({title:'Reset this client?',body:'Permanently deletes all schema files, KB files, vector index, and the client row. Cannot be undone.',confirm:'Reset client',onConfirm:()=>document.getElementById('resetClientForm').submit()})">Reset client</button>
-      </form>
     </div>
   </div>
 </div>
+
+<script>
+var _dangerTarget = {{ (client.client_name or client.account_id) | tojson }};
+function checkDangerConfirm(val) {
+  var btn = document.getElementById('dangerResetBtn');
+  if (btn) btn.disabled = val.trim() !== _dangerTarget.trim();
+}
+</script>
 
 <script>
 function showTab(name, btn) {
@@ -941,7 +1075,29 @@ function showTab(name, btn) {
   document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
   document.getElementById('tab-' + name).classList.add('active');
   btn.classList.add('active');
+  history.replaceState(null, '', '#' + name);
 }
+
+/* Restore tab from URL hash on load */
+document.addEventListener('DOMContentLoaded', function() {
+  var hash = location.hash.replace('#', '');
+  var validTabs = ['overview', 'settings', 'schema-browser', 'queries', 'audit', 'danger'];
+  if (hash && validTabs.indexOf(hash) !== -1) {
+    var pane = document.getElementById('tab-' + hash);
+    var btns = document.querySelectorAll('.tab-btn');
+    if (pane) {
+      document.querySelectorAll('.tab-pane').forEach(el => el.classList.remove('active'));
+      document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+      pane.classList.add('active');
+      btns.forEach(function(b) {
+        if (b.getAttribute('onclick') && b.getAttribute('onclick').indexOf("'" + hash + "'") !== -1) {
+          b.classList.add('active');
+        }
+      });
+      if (hash === 'schema-browser' && !_loaded) { _loaded = true; loadSchemaTree(false); }
+    }
+  }
+});
 
 // Health score arc draw animation on page load
 document.addEventListener('DOMContentLoaded', function() {

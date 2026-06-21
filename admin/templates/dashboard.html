@@ -1,68 +1,111 @@
 {% extends "base.html" %}
-{% from "macros.html" import breadcrumb, metric_card, status_badge %}
+{% from "macros.html" import breadcrumb, metric_card, status_badge, alert, empty_state %}
+{% from "icons.html" import ic %}
 {% block title %}Dashboard — QueryBot Admin{% endblock %}
 {% block breadcrumb %}
 {{ breadcrumb([{"label": "Dashboard", "href": ""}]) }}
 {% endblock %}
 {% block content %}
+
 <div class="page-header">
-  <h1>Dashboard</h1>
-  <p>Live status of all connected clients and integrations.</p>
+  <div class="page-header-body">
+    <h1>Dashboard</h1>
+    <p>Live status of all connected clients and integrations.</p>
+  </div>
+  <div class="page-header-actions">
+    <a href="/admin/clients/new" class="btn btn-primary btn-sm">{{ ic("plus", 14) }} New client</a>
+  </div>
 </div>
 
+{# ── Setup alerts ── #}
 {% if not platforms %}
-<div class="alert alert-error">
-  No platform configured. <a href="/admin/platforms">Add a platform</a> (Zoom, Teams, or Slack) to start receiving messages.
-</div>
+{{ alert(
+    message="Add a platform (Zoom, Teams, or Slack) so users can message the bot.",
+    type="amber",
+    icon_name="alert-triangle",
+    title="No platform configured",
+    action_href="/admin/platforms",
+    action_label="Add platform"
+) }}
 {% endif %}
 {% if not dbs %}
-<div class="alert alert-error">
-  No database configured. <a href="/admin/databases">Add a database connection</a> so the bot can query data.
-</div>
+{{ alert(
+    message="Connect a database so the bot can query your data.",
+    type="error",
+    icon_name="alert-triangle",
+    title="No database configured",
+    action_href="/admin/databases",
+    action_label="Add database"
+) }}
 {% endif %}
 
+{# ── Metrics ── #}
+{% set ready_count = clients|selectattr("state","equalto","READY")|list|length %}
+{% set total_clients = clients|length %}
 <div class="metrics">
-  {{ metric_card("Connected clients", clients|length) }}
-  {{ metric_card("Ready", clients|selectattr("state","equalto","READY")|list|length, "--green") }}
-  {{ metric_card("Total queries", stats.total or 0) }}
-  {{ metric_card("Total cost (USD)", "$" ~ "%.2f"|format(stats.total_cost_usd or 0)) }}
-  {{ metric_card("Platforms", platforms|length) }}
-  {{ metric_card("Databases", dbs|length) }}
+  {{ metric_card("Total clients",   total_clients,
+      delta=(ready_count|string ~ " ready") if total_clients else "",
+      delta_dir="up" if ready_count == total_clients and total_clients > 0 else ("flat" if ready_count == 0 else ""),
+      color_var="") }}
+  {{ metric_card("Ready",           ready_count,
+      color_var="--green",
+      progress=((ready_count / total_clients * 100)|int) if total_clients else 0,
+      progress_cls="success" if ready_count == total_clients else ("warning" if ready_count > 0 else "danger")) }}
+  {{ metric_card("Total queries",   stats.total or 0) }}
+  {{ metric_card("Total cost",      "$" ~ "%.2f"|format(stats.total_cost_usd or 0)) }}
+  {{ metric_card("Platforms",       platforms|length,
+      color_var="--primary" if platforms else "--danger") }}
+  {{ metric_card("Databases",       dbs|length,
+      color_var="--primary" if dbs else "--danger") }}
 </div>
 
+{# ── Clients table ── #}
 <div class="card">
   <div class="card-header">
-    <h2>Connected clients</h2>
-    <a href="/admin/clients" class="btn btn-secondary btn-sm">View all</a>
+    <h2>Recent clients</h2>
+    <a href="/admin/clients" class="btn btn-secondary btn-sm">View all &rarr;</a>
   </div>
+
   {% if not clients %}
-  <div class="card-body" style="color:var(--gray-500);text-align:center;padding:2rem">
-    No clients connected yet. Once someone messages your bot they will appear here.
+  <div class="card-body">
+    {{ empty_state(
+        icon_name="users",
+        title="No clients yet",
+        body="Once a workspace messages your bot, or you register one manually, it will appear here.",
+        action_href="/admin/clients/new",
+        action_label="Register first client"
+    ) }}
   </div>
   {% else %}
-  <table class="table">
-    <tr>
-      <th>Client name</th>
-      <th>Platform</th>
-      <th>State</th>
-      <th>Database</th>
-      <th>Last active</th>
-      <th></th>
-    </tr>
-    {% for c in clients %}
-    <tr>
-      <td>
-        <div style="font-weight:600">{{ c.client_name or "—" }}</div>
-        <div style="font-size:11px;color:var(--gray-500);font-family:monospace">{{ c.account_id[:20] }}…</div>
-      </td>
-      <td><span class="badge badge-blue">{{ c.platform_type }}</span></td>
-      <td>{{ status_badge(c.state) }}</td>
-      <td style="color:var(--gray-500);font-size:12px">{{ c.db_name }}</td>
-      <td style="color:var(--gray-500);font-size:12px">{{ c.updated_at[:16] }}</td>
-      <td><a href="/admin/clients/{{ c.account_id }}" class="btn btn-secondary btn-sm">Details</a></td>
-    </tr>
-    {% endfor %}
-  </table>
+  <div class="qb-table-wrap" style="border:none;border-radius:0">
+    <table class="qb-table">
+      <thead>
+        <tr>
+          <th>Client</th>
+          <th>Platform</th>
+          <th>State</th>
+          <th>Database</th>
+          <th>Last active</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in clients %}
+        <tr>
+          <td>
+            <div class="font-bold">{{ c.client_name or "—" }}</div>
+            <div class="text-xs text-muted text-mono">{{ c.account_id[:22] }}…</div>
+          </td>
+          <td><span class="badge badge-blue">{{ c.platform_type or "portal" }}</span></td>
+          <td>{{ status_badge(c.state) }}</td>
+          <td class="text-sm text-muted">{{ c.db_name or "—" }}</td>
+          <td class="text-sm text-muted nowrap">{{ c.updated_at[:16] if c.updated_at else "—" }}</td>
+          <td><a href="/admin/clients/{{ c.account_id }}" class="btn btn-secondary btn-xs">Details</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
   {% endif %}
 </div>
 {% endblock %}

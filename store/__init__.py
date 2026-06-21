@@ -53,10 +53,23 @@ from store.semantic_feedback import (
 from store.trace_store import (
     create_answer_trace, update_answer_trace, log_answer_trace_step,
     finish_answer_trace, kb_chunk_refs, get_answer_trace, list_answer_traces,
+    store_protected_result_rows,
 )
 from store.eval_store import (
     save_eval_run, save_eval_case_result, list_eval_runs,
     get_eval_run, latest_eval_run,
+)
+from store.compliance_store import (
+    get_compliance_profile, save_compliance_profile,
+    create_policy_version, activate_policy_version, list_policy_versions,
+    list_classifications, get_classification_map, save_classification,
+    list_policy_rules, replace_policy_rules, list_row_policies, replace_row_policies,
+    list_purposes, replace_purposes,
+    provider_agreement_valid, save_provider_agreement, list_provider_agreements,
+    log_policy_decision, list_decisions, log_export_event,
+    create_break_glass_grant, get_active_break_glass_grant,
+    get_active_break_glass_for_user,
+    save_assessment, get_latest_assessment,
 )
 
 __all__ = [
@@ -102,6 +115,17 @@ __all__ = [
     "semantic_feedback_maps","semantic_feedback_pending_summary",
     "create_answer_trace","update_answer_trace","log_answer_trace_step",
     "finish_answer_trace","kb_chunk_refs","get_answer_trace","list_answer_traces",
+    "store_protected_result_rows",
     "save_eval_run","save_eval_case_result","list_eval_runs",
     "get_eval_run","latest_eval_run",
+    "get_compliance_profile","save_compliance_profile",
+    "create_policy_version","activate_policy_version","list_policy_versions",
+    "list_classifications","get_classification_map","save_classification",
+    "list_policy_rules","replace_policy_rules","list_row_policies","replace_row_policies",
+    "list_purposes","replace_purposes",
+    "provider_agreement_valid","save_provider_agreement","list_provider_agreements",
+    "log_policy_decision","list_decisions","log_export_event",
+    "create_break_glass_grant","get_active_break_glass_grant",
+    "get_active_break_glass_for_user",
+    "save_assessment","get_latest_assessment",
 ]

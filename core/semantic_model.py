@@ -101,6 +101,34 @@ def _table_type(table: str) -> str:
     return "dimension"
 
 
+def _infer_table_grain(table: str, columns: list[str], table_type: str) -> tuple[str, str, int]:
+    """Return a conservative, reviewable table-grain candidate.
+
+    Grain errors are a common source of duplicated measures after joins. We make
+    a positive claim only where the physical model gives strong evidence; all
+    other cases deliberately remain for administrator review.
+    """
+    upper_table = table.upper()
+    upper_columns = [str(column).upper() for column in columns]
+
+    if table_type == "dimension":
+        return ("one row per lookup member", "generated", 70)
+    if table_type != "fact":
+        return ("needs_admin_context", "needs_review", 0)
+
+    has_line_key = any(
+        "_LIN_" in column or column.endswith("_LINE") or column in {"PONR", "POSX"}
+        for column in upper_columns
+    )
+    if has_line_key:
+        return ("one row per transaction line", "generated", 80)
+    if "_BAL_" in upper_table and "_PRD_" in upper_table:
+        return ("one row per balance snapshot period", "generated", 65)
+    if "_RCT_" in upper_table:
+        return ("one row per receipt transaction", "generated", 65)
+    return ("needs_admin_context", "needs_review", 0)
+
+
 def _entity_name(table: str) -> str:
     bare = table.split(".")[-1]
     for suffix in ("_FCT", "_DMS", "_DIM"):
@@ -427,6 +455,10 @@ def build_semantic_model(schema_dir: str, *, business_desc: str = "", account_id
     for fqn, meta in schema.items():
         table = _schema_table_name(fqn, meta)
         columns = _column_names(meta)
+        table_type = _table_type(table)
+        grain, grain_status, grain_confidence = _infer_table_grain(
+            table, columns, table_type
+        )
         enriched = enrich_columns(columns)
         fields = [_field_entry(item, meta) for item in enriched]
         date_roles = _date_roles(schema, fqn, meta)
@@ -438,8 +470,10 @@ def build_semantic_model(schema_dir: str, *, business_desc: str = "", account_id
             "table": table,
             "qualified_name": _qualified_name(fqn, meta),
             "entity": _entity_name(table),
-            "type": _table_type(table),
-            "grain": "needs_admin_context",
+            "type": table_type,
+            "grain": grain,
+            "grain_status": grain_status,
+            "grain_confidence": grain_confidence,
             "fields": fields,
             "default_filters": _default_filters(fields),
             "measures": _measure_candidates(fields),
@@ -622,6 +656,13 @@ def preserve_approvals(
         new_t = new_lookup.get(qname)
         if not new_t:
             continue  # table removed — already recorded in drift
+
+        # A manually confirmed grain is a table-level business contract. Keep it
+        # through rebuilds just like approved fields, dimensions, and date roles.
+        if old_t.get("grain_status") == "approved" and old_t.get("grain"):
+            new_t["grain"] = old_t["grain"]
+            new_t["grain_status"] = "approved"
+            new_t["grain_confidence"] = 100
 
         # Fields
         old_by_col: dict[str, dict[str, Any]] = {
@@ -1210,6 +1251,12 @@ def get_model_health(kb_dir: str) -> dict[str, Any]:
     if not model:
         return {"has_model": False}
 
+    try:
+        from core.kb_quality import load_kb_quality_report
+        kb_quality = load_kb_quality_report(kb_dir)
+    except Exception:
+        kb_quality = {}
+
     tables_total = tables_fact = tables_dimension = 0
     fields_total = fields_approved = fields_review = fields_gen = 0
     meas_total = meas_approved = meas_suggested = meas_depr = 0
@@ -1346,6 +1393,7 @@ def get_model_health(kb_dir: str) -> dict[str, Any]:
         },
         "table_summaries": table_summaries,
         "drift": model.get("_last_drift") or {},
+        "kb_quality": kb_quality,
     }
 
 

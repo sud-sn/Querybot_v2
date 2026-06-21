@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "macros.html" import breadcrumb, client_workspace_nav %}
+{% from "macros.html" import breadcrumb, client_workspace_nav, alert %}
 {% from "icons.html" import ic %}
 {% block title %}Setup — {{ client.client_name or client.account_id[:16] }}{% endblock %}
 {% block head %}
@@ -129,15 +129,12 @@
   </div>
 </div>
 
-<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.5rem;flex-wrap:wrap;gap:.75rem">
-  <div>
-    <h1 style="font-size:20px;font-weight:700;margin-top:4px">Schema & Knowledge Base Setup</h1>
-    <p style="font-size:13px;color:var(--gray-500)">
-      Discover database tables and generate the Knowledge Base entirely from the admin panel.
-      No Zoom or Teams required.
-    </p>
+<div class="page-header">
+  <div class="page-header-body">
+    <h1>Schema &amp; Knowledge Base Setup</h1>
+    <p>Discover database tables and generate the Knowledge Base entirely from the admin panel.</p>
   </div>
-  <div style="display:flex;align-items:center;gap:.75rem">
+  <div class="page-header-actions">
     <span class="status-badge
       {% if state == 'READY' %}badge-ready
       {% elif state == 'KB_BUILDING' %}badge-building
@@ -146,22 +143,21 @@
       {{ state }}
     </span>
     {% if db_cfg %}
-    <span style="font-size:12px;color:var(--text-muted);font-family:monospace">
-      {{ db_cfg.db_type }} · {{ db_cfg.name }}
-    </span>
+    <span class="text-xs text-muted text-mono">{{ db_cfg.db_type }} · {{ db_cfg.name }}</span>
     {% endif %}
   </div>
 </div>
 
-{% if saved %}<div class="alert alert-success">{{ saved }}</div>{% endif %}
-{% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+{% if saved %}{{ alert(message=saved, type="success", icon_name="check-circle") }}{% endif %}
+{% if error %}{{ alert(message=error, type="error", icon_name="x-circle") }}{% endif %}
 
 {% if state == 'KB_BUILDING' %}
-<div class="alert alert-info">
-  <strong>⏳ KB generation is running in the background.</strong>
-  Generating business context for each table — takes 5–10 minutes for 10+ tables.
-  This page listens for live progress and will show READY when the build completes.
-</div>
+{{ alert(
+    message="Generating business context for each table — takes 5–10 minutes for 10+ tables. This page polls for live progress and will update when the build completes.",
+    type="info",
+    icon_name="info",
+    title="KB generation is running in the background"
+) }}
 {% endif %}
 
 <!-- ── Step 1: Database ─────────────────────────────────────────────────────── -->
@@ -477,6 +473,21 @@
         <span id="kbProgressPercent" class="kb-progress-percent">{% if state == 'READY' %}100%{% else %}0%{% endif %}</span>
         <span id="kbProgressStep" class="kb-progress-step">{% if state == 'READY' %}Knowledge Base is ready{% else %}Waiting for progress{% endif %}</span>
       </div>
+
+      {# ── KB Build log stream ── #}
+      <div id="kbBuildLog" style="display:{% if state == 'KB_BUILDING' %}block{% else %}none{% endif %};margin-top:.85rem">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.35rem">
+          <span class="text-xs text-muted" style="font-weight:700;text-transform:uppercase;letter-spacing:.05em">Build log</span>
+          <button type="button" class="btn btn-ghost btn-xs" onclick="clearKbLog()" style="font-size:10px">Clear</button>
+        </div>
+        <div id="kbBuildLogEntries"
+             style="font-family:var(--font-mono,monospace);font-size:11px;line-height:1.7;
+                    background:var(--surface-2);border:1px solid var(--border);
+                    border-radius:var(--radius-sm);padding:.6rem .875rem;
+                    max-height:220px;overflow-y:auto;color:var(--text-soft)">
+          {% if state == 'KB_BUILDING' %}<div class="kb-log-entry">⏳ Waiting for build events…</div>{% endif %}
+        </div>
+      </div>
     </form>
 
     {# Delete KB — separate from the build form so it always works independently #}
@@ -572,6 +583,27 @@
   const kbProgressFill = document.getElementById('kbProgressFill');
   const kbInlineStatus = document.getElementById('kbInlineStatus');
   const kbBuildButton = document.getElementById('kbBuildButton');
+  const kbBuildLog    = document.getElementById('kbBuildLog');
+  const kbLogEntries  = document.getElementById('kbBuildLogEntries');
+
+  var _lastLogStep = '';
+  function appendKbLog(msg, type) {
+    if (!kbLogEntries || !msg || msg === _lastLogStep) return;
+    _lastLogStep = msg;
+    var color = type === 'ok' ? 'var(--success)' : type === 'err' ? 'var(--danger)' : 'var(--text-soft)';
+    var ts = new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    var entry = document.createElement('div');
+    entry.className = 'kb-log-entry';
+    entry.style.color = color;
+    entry.textContent = '[' + ts + '] ' + msg;
+    kbLogEntries.appendChild(entry);
+    kbLogEntries.scrollTop = kbLogEntries.scrollHeight;
+  }
+
+  window.clearKbLog = function() {
+    if (kbLogEntries) kbLogEntries.innerHTML = '';
+    _lastLogStep = '';
+  };
 
   function applyKbStatus(state, progress, counts) {
     if (!kbLiveStatus) return;
@@ -590,9 +622,15 @@
         ? (total ? `${total}/${total}` : 'Completed')
         : (total ? `${current}/${total}` : 'Starting');
     }
-    if (kbProgressStep) {
-      kbProgressStep.textContent = p.step || (status === 'ready' ? 'Success - Knowledge Base is ready' : 'Building Knowledge Base');
-    }
+    var stepMsg = p.step || (status === 'ready' ? 'Knowledge Base is ready' : (state === 'KB_BUILDING' ? 'Building Knowledge Base…' : ''));
+    if (kbProgressStep) kbProgressStep.textContent = stepMsg;
+    // Show/hide log panel
+    if (kbBuildLog) kbBuildLog.style.display = (state === 'KB_BUILDING') ? 'block' : kbBuildLog.style.display;
+    // Append to log
+    if (state === 'KB_BUILDING' && stepMsg) appendKbLog(stepMsg);
+    else if (status === 'ready' || state === 'READY') appendKbLog('✓ Build complete — Knowledge Base is ready.', 'ok');
+    else if (status === 'failed') appendKbLog('✗ Build failed. Check error above.', 'err');
+    else if (status === 'stopped') appendKbLog('⏹ Build stopped by user.', 'err');
     if (kbInlineStatus) {
       if (status === 'ready' || state === 'READY') {
         kbInlineStatus.style.color = 'var(--green)';

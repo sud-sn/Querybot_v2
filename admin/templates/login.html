@@ -1,23 +1,132 @@
 {% extends "base.html" %}
+{% from "icons.html" import ic %}
 {% block title %}Login — QueryBot Admin{% endblock %}
 {% block auth_content %}
-<div style="max-width:380px;margin:5rem auto">
-  <div style="text-align:center;margin-bottom:1.5rem">
-    <div style="font-size:28px;font-weight:800;color:var(--navy)">Query<span style="color:var(--blue)">Bot</span></div>
-    <div style="color:var(--gray-500);font-size:13px;margin-top:4px">Admin Panel</div>
+<div class="auth-card-wrap">
+  <div class="auth-brand">
+    <span class="auth-brand-mark">Q</span>
+    <span class="auth-brand-name">Query<span>Bot</span></span>
   </div>
-  <div class="card">
-    <div class="card-header"><h2>Sign in</h2></div>
+  <p class="auth-brand-sub">Admin Console</p>
+
+  <div class="card auth-card">
+    <div class="card-header"><h2>{{ ic("lock", 14) }} Sign in to continue</h2></div>
     <div class="card-body">
-      {% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
-      <form method="post" action="/admin/login">
+      {% if error %}
+      <div class="alert alert-error" role="alert" style="margin-bottom:1rem">
+        <span class="alert-icon">{{ ic("x-circle", 16) }}</span>
+        <div class="alert-body">{{ error }}</div>
+      </div>
+      {% endif %}
+
+      <form method="post" action="/admin/login" id="loginForm">
         <div class="form-group">
-          <label>Password</label>
-          <input type="password" name="password" autofocus required placeholder="Enter admin password">
+          <label for="password">Admin password</label>
+          <div class="input-reveal-wrap">
+            <input type="password" id="password" name="password"
+                   autofocus required placeholder="Enter your admin password"
+                   autocomplete="current-password">
+            <button type="button" class="input-reveal-btn" aria-label="Show password"
+                    onclick="togglePwd(this)">{{ ic("eye", 16) }}</button>
+          </div>
         </div>
-        <button type="submit" class="btn btn-primary" style="width:100%">Sign in →</button>
+        <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center">
+          Sign in &rarr;
+        </button>
       </form>
     </div>
   </div>
 </div>
+
+<script>
+function togglePwd(btn){
+  var inp = document.getElementById('password');
+  var isText = inp.type === 'text';
+  inp.type = isText ? 'password' : 'text';
+  btn.setAttribute('aria-label', isText ? 'Show password' : 'Hide password');
+  /* swap icon inline */
+  btn.innerHTML = isText
+    ? '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex-shrink:0;display:inline-block;vertical-align:-3px"><path d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z"/><path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>'
+    : '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex-shrink:0;display:inline-block;vertical-align:-3px"><path d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88"/></svg>';
+}
+</script>
+
+<style>
+.auth-card-wrap {
+  width: 100%;
+  max-width: 400px;
+  margin: 0 auto;
+  padding-top: 4rem;
+}
+.auth-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: center;
+  margin-bottom: 4px;
+}
+.auth-brand-mark {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, var(--primary), var(--blue-soft));
+  color: #fff;
+  font-size: 18px;
+  font-weight: 900;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--primary) 38%, transparent);
+}
+.auth-brand-name {
+  font-size: 24px;
+  font-weight: 800;
+  color: var(--text);
+  letter-spacing: -.03em;
+}
+.auth-brand-name span { color: var(--primary); }
+.auth-brand-sub {
+  text-align: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  margin-bottom: 1.5rem;
+}
+.auth-card { box-shadow: var(--shadow-md); }
+.auth-card .card-header h2 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-soft);
+}
+
+/* Password reveal wrapper */
+.input-reveal-wrap {
+  position: relative;
+}
+.input-reveal-wrap input {
+  padding-right: 38px;
+}
+.input-reveal-btn {
+  position: absolute;
+  right: 1px;
+  top: 1px;
+  bottom: 1px;
+  width: 36px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0 var(--radius) var(--radius) 0;
+  transition: color .15s, background .15s;
+}
+.input-reveal-btn:hover { color: var(--text); background: var(--surface-2); }
+</style>
 {% endblock %}

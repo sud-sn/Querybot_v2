@@ -31,6 +31,7 @@ import datetime as _datetime
 import logging
 import re
 
+import store
 from core.llm import llm_complete, resolve_provider
 from core.chart import detect_chart_type, build_chart_payload
 from core.response_builder import build_assistant_response, build_column_formats, detect_null_metric_issue
@@ -597,6 +598,14 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
                         display_context: dict | None = None,
                         explicit_column_formats: dict | None = None):
     """Send formatted results to the chat platform. Shared by LLM and metric registry paths."""
+    if question_id:
+        profile = store.get_compliance_profile(account_id)
+        store.store_protected_result_rows(
+            account_id,
+            question_id,
+            rows,
+            policy_version=int(profile.get("active_policy_version") or 0),
+        )
     column_formats = build_column_formats(
         rows,
         display_context=display_context,
@@ -654,6 +663,38 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
         question=question,
         column_formats=column_formats,
     )
+    if chart_type:
+        try:
+            from core.compliance.policy_engine import evaluate, resolve_context
+            from core.compliance.sql_guard import analyze_sql
+
+            analysis = analyze_sql(sql, db_cfg.get("db_type", "azure_sql"))
+            chart_context = resolve_context(
+                account_id,
+                portal_user,
+                action="chart",
+                channel=getattr(event, "platform", "") or "portal",
+            )
+            chart_decision = evaluate(chart_context, analysis.resources)
+            aggregate_sources = {
+                source
+                for output, sources in analysis.lineage.items()
+                if output in analysis.aggregate_outputs
+                for source in sources
+            }
+            required_aggregate = {
+                resource.key for resource in chart_decision.aggregate_only
+            }
+            if (
+                not chart_decision.effective_allowed
+                or bool(required_aggregate - aggregate_sources)
+            ):
+                chart_type = None
+        except Exception as exc:
+            profile = store.get_compliance_profile(account_id)
+            if profile.get("mode") == "regulated" and profile.get("enforcement_mode") == "enforce":
+                log.warning("Chart blocked because policy evaluation failed: %s", exc)
+                chart_type = None
     pin_token = None
     chart_payload = None
     if chart_type and portal_user:

@@ -390,6 +390,38 @@ async def build_kb(
         )
 
     current_table_names = {f.stem for f in md_files}
+
+    # Keep exact related-table columns available for Stage 2 examples. A join
+    # map tells the model how tables connect, but not which display/date/measure
+    # columns actually exist on the other side of the join.
+    _schema_columns_by_table: dict[str, tuple[str, list[str]]] = {}
+    _schema_json_path = schema_path / "_schema.json"
+    if _schema_json_path.exists():
+        try:
+            _schema_payload = _json.loads(_schema_json_path.read_text(encoding="utf-8"))
+            for _fqn, _meta in _schema_payload.items():
+                _columns = [
+                    str(_column.get("name") or "")
+                    for _column in (_meta.get("columns") or [])
+                    if isinstance(_column, dict) and _column.get("name")
+                ]
+                _bare = str(_fqn).rsplit(".", 1)[-1].upper()
+                _schema_columns_by_table[_bare] = (str(_fqn), _columns)
+        except Exception as _schema_column_error:
+            log.warning("KB: could not load related-table columns: %s", _schema_column_error)
+
+    def _related_table_column_block(current_table: str, join_text: str) -> str:
+        if not join_text or not _schema_columns_by_table:
+            return ""
+        current_upper = current_table.upper()
+        join_upper = join_text.upper()
+        lines: list[str] = []
+        for bare, (fqn, columns) in sorted(_schema_columns_by_table.items()):
+            if bare == current_upper or bare not in join_upper or not columns:
+                continue
+            lines.append(f"- {fqn}: {', '.join(columns)}")
+        return "\n".join(lines)
+
     for generated in kb_path.glob("*.md"):
         stale_table = ""
         if generated.name.endswith("_kb.md"):
@@ -403,6 +435,7 @@ async def build_kb(
                 log.warning("KB: could not remove stale file %s: %s", generated, exc)
             _schema_hashes.pop(stale_table, None)
 
+    semantic_model: dict = {}
     try:
         semantic_model = write_semantic_model(
             schema_dir=schema_dir,
@@ -553,6 +586,7 @@ async def build_kb(
 
         # ── Stage 1: DataPilot-style KB document ──────────────────────────────
         join_slice = _slice_join_map(table_name)
+        related_table_columns = _related_table_column_block(table_name, join_slice)
         join_block = (
             f"\nAuto-discovered FK relationships touching this table "
             f"(use these EXACT column names in the Join Keys section — "
@@ -683,6 +717,7 @@ async def build_kb(
             "schema": schema_md,
             "business_description": table_biz_desc,
             "join_map": join_slice,
+            "related_table_columns": related_table_columns,
             "confirmed_joins": _confirmed_snippets,
             "context_hints": _tbl_hints,
             "field_overrides": _tbl_overrides,
@@ -772,6 +807,7 @@ async def build_kb(
         query_user = build_kb_query_prompt(
             sql_table_name, kb_text, table_biz_desc,
             related_tables=join_slice,
+            related_table_columns=related_table_columns,
             db_type=db_type,
             entity_type=entity_type,
             confirmed_joins=_confirmed_snippets,
@@ -810,6 +846,32 @@ async def build_kb(
     if join_map_src.exists():
         _shutil.copy2(join_map_src, join_map_dst)
         log.info("Join map copied to KB dir")
+
+    # Write a deterministic quality report after all table contracts and query
+    # examples exist. It is intentionally JSON rather than a retrieved KB doc:
+    # warnings should guide administrators, not distract SQL generation.
+    try:
+        from core.kb_quality import write_kb_quality_report
+        from core.semantic_model import load_semantic_model
+        final_semantic_model = load_semantic_model(kb_dir) or semantic_model
+        quality_report = write_kb_quality_report(final_semantic_model, kb_dir)
+        log.info(
+            "KB quality report: score=%s status=%s warnings=%s critical=%s",
+            quality_report.get("score"),
+            quality_report.get("status"),
+            (quality_report.get("summary") or {}).get("warnings", 0),
+            (quality_report.get("summary") or {}).get("critical", 0),
+        )
+        await _progress(
+            phase="quality",
+            step=f"KB quality check: {quality_report.get('status', 'ready')}",
+            current=len(md_files),
+            total=len(md_files),
+            percent=100,
+            current_table="",
+        )
+    except Exception as _quality_error:
+        log.warning("KB quality report failed: %s", _quality_error)
 
     # ── Embed everything into Qdrant ──────────────────────────────────────────
     # Delete stale points for this client first so tables removed from the

@@ -178,6 +178,40 @@ table.mh-tbl tr:hover td{background:color-mix(in srgb,var(--primary) 4%,var(--su
     </div>
   </div>
 
+  {% if health.kb_quality %}
+  {% set kbq = health.kb_quality %}
+  <div class="mh-card">
+    <div class="mh-card-header">
+      <h2>KB Readiness</h2>
+      <span class="badge" style="background:{% if kbq.status == 'ready' %}var(--green-soft){% elif kbq.status == 'blocked' %}var(--red-soft){% else %}var(--amber-soft){% endif %};color:{% if kbq.status == 'ready' %}var(--green){% elif kbq.status == 'blocked' %}var(--red){% else %}var(--amber){% endif %}">
+        {{ kbq.status|replace('_', ' ')|title }}
+      </span>
+    </div>
+    <div class="mh-card-body">
+      <p style="margin:0 0 .75rem;font-size:13px;color:var(--text-soft)">
+        Deterministic quality checks for table grain, display fields, date roles, joins, and generated query examples.
+        Score: <strong>{{ kbq.score }}/100</strong>.
+      </p>
+      {% if kbq.issues %}
+      <ul class="drift-list">
+        {% for issue in kbq.issues[:8] %}
+        <li>
+          <strong>{{ issue.severity|title }}:</strong> {{ issue.message }}
+          {% if issue.table %}<code>{{ issue.table }}</code>{% endif %}
+          {% if issue.action %}<span style="color:var(--text-muted)"> {{ issue.action }}</span>{% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+      {% if kbq.issues|length > 8 %}
+      <p style="margin:.6rem 0 0;font-size:12px;color:var(--text-muted)">Showing the first 8 of {{ kbq.issues|length }} checks.</p>
+      {% endif %}
+      {% else %}
+      <div class="drift-clean">All deterministic KB checks passed.</div>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+
   <!-- ── Coverage breakdown ── -->
   <div class="mh-card">
     <div class="mh-card-header">

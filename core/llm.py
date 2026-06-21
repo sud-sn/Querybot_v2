@@ -842,6 +842,7 @@ def build_kb_query_prompt(
     kb_content: str,
     business_desc: str,
     related_tables: str = "",
+    related_table_columns: str = "",
     db_type: str = "azure_sql",
     entity_type: str = "unknown",
     confirmed_joins: str = "",
@@ -864,6 +865,17 @@ def build_kb_query_prompt(
             f"Use them when generating cross-table Q&A pairs. "
             f"Do NOT invent join columns — only use the paths listed here.\n\n"
             f"{related_tables}\n\n"
+        )
+
+    related_columns_block = ""
+    if related_table_columns:
+        related_columns_block = (
+            "## Exact Columns on Related Tables\n"
+            "These are the only columns that may be used from a related table in a "
+            "cross-table example. A join path proves the keys; it does not prove that "
+            "a similarly named descriptive field exists. Never invent columns such as "
+            "MONTH, YEAR, NAME, DESCRIPTION, or AMOUNT on a related table.\n\n"
+            f"{related_table_columns}\n\n"
         )
 
     confirmed_block = ""
@@ -891,6 +903,7 @@ def build_kb_query_prompt(
         f"You have been given the Knowledge Base document for table: {table_name}\n\n"
         f"Business context: {business_desc}\n\n"
         f"{related_block}"
+        f"{related_columns_block}"
         f"{confirmed_block}"
         f"Knowledge Base content:\n{kb_content}\n\n"
         f"## SQL Syntax Requirements\n"

@@ -42,7 +42,7 @@
 {% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
 
 <div class="card">
-  <div class="card-header"><h2>Add database connection</h2></div>
+  <div class="card-header"><h2 id="db-form-title">Add database connection</h2></div>
   <div class="card-body">
     <form method="post" action="/admin/databases/save" id="db-form">
       <input type="hidden" name="db_id" value="">
@@ -87,7 +87,9 @@
           <div class="form-group"><label>User *</label>
             <input type="text" name="sf_user" placeholder="your_username"></div>
           <div class="form-group"><label>Password *</label>
-            <input type="password" name="sf_password"></div>
+            <input type="password" name="sf_password">
+            <p class="form-note" id="sf-pwd-note" style="display:none">Leave blank to keep the existing password.</p>
+          </div>
         </div>
         <div class="form-group"><label>Role (optional)</label>
           <input type="text" name="sf_role" placeholder="leave blank to use default role"></div>
@@ -106,7 +108,9 @@
           <div class="form-group"><label>User *</label>
             <input type="text" name="ora_user" placeholder="your_username"></div>
           <div class="form-group"><label>Password *</label>
-            <input type="password" name="ora_password"></div>
+            <input type="password" name="ora_password">
+            <p class="form-note" id="ora-pwd-note" style="display:none">Leave blank to keep the existing password.</p>
+          </div>
         </div>
         <div class="form-group"><label>Schema / Owner (optional)</label>
           <input type="text" name="ora_schema" placeholder="defaults to username if blank"></div>
@@ -133,7 +137,9 @@
           <div class="form-group"><label>User *</label>
             <input type="text" name="az_user" placeholder="your_username"></div>
           <div class="form-group"><label>Password *</label>
-            <input type="password" name="az_password"></div>
+            <input type="password" name="az_password">
+            <p class="form-note" id="az-pwd-note" style="display:none">Leave blank to keep the existing password.</p>
+          </div>
         </div>
         <div class="form-group"><label>ODBC Driver</label>
           <input type="text" name="az_driver" value="ODBC Driver 18 for SQL Server"></div>
@@ -185,6 +191,7 @@
       <div style="margin-top:1rem;display:flex;align-items:center;gap:1rem">
         <button type="submit" class="btn btn-primary" id="save-btn" disabled>Save database</button>
         <button type="button" class="btn btn-secondary" id="test-btn" disabled>Test connection</button>
+        <button type="button" class="btn btn-secondary" id="cancel-edit-btn" style="display:none" onclick="cancelEdit()">Cancel</button>
         <span id="hint" style="font-size:12px;color:var(--gray-500)">Select a database type above</span>
       </div>
       <div id="db-test-result" style="display:none;margin-top:.75rem;font-size:12px"></div>
@@ -198,7 +205,9 @@
   <table class="table">
     <tr><th>Name</th><th>Type</th><th>Connection</th><th>KB scope</th><th>Log export</th><th>Created</th><th></th></tr>
     {% for d in dbs %}
-    <tr>
+    {% if d.db_type == 'snowflake' %}{% set _ec = {'account': d.credentials.get('account',''), 'warehouse': d.credentials.get('warehouse',''), 'database': d.credentials.get('database',''), 'schema': d.credentials.get('schema','PUBLIC'), 'user': d.credentials.get('user',''), 'role': d.credentials.get('role','')} %}{% elif d.db_type == 'oracle' %}{% set _ec = {'dsn': d.credentials.get('dsn',''), 'user': d.credentials.get('user',''), 'schema': d.credentials.get('schema','')} %}{% else %}{% set _ec = {'server': d.credentials.get('server',''), 'database': d.credentials.get('database',''), 'schema': d.credentials.get('schema','dbo'), 'user': d.credentials.get('user',''), 'driver': d.credentials.get('driver','ODBC Driver 18 for SQL Server')} %}{% endif %}
+    {% set _el = {'enabled': d.log_export_enabled, 'schema': d.log_schema or 'LOGS', 'time': d.log_export_time or '02:00'} %}
+    <tr data-db-id="{{ d.id }}" data-db-type="{{ d.db_type }}" data-db-name="{{ d.name|e }}" data-db-creds="{{ _ec|tojson|e }}" data-db-log="{{ _el|tojson|e }}" data-db-scope="{{ d.selected_schema_tables|tojson|e }}">
       <td style="font-weight:600">{{ d.name }}</td>
       <td><span class="badge badge-blue">{{ d.label }}</span></td>
       <td style="font-size:11px;color:var(--gray-500)">
@@ -252,11 +261,14 @@
       </td>
       <td style="color:var(--gray-500);font-size:12px">{{ d.created_at[:10] }}</td>
       <td>
-        <form method="post" action="/admin/databases/delete" style="display:inline">
-          <input type="hidden" name="db_id" value="{{ d.id }}">
-          <button type="button" class="btn btn-danger btn-sm"
-            onclick="qbConfirm({title:'Delete database?',body:'Delete {{ d.name }}? Clients using this will lose their DB connection.',confirm:'Delete',onConfirm:()=>this.closest('form').submit()})">Delete</button>
-        </form>
+        <div style="display:flex;gap:.35rem">
+          <button type="button" class="btn btn-secondary btn-sm" onclick="editDbRow(this)">Edit</button>
+          <form method="post" action="/admin/databases/delete" style="display:inline">
+            <input type="hidden" name="db_id" value="{{ d.id }}">
+            <button type="button" class="btn btn-danger btn-sm"
+              onclick="qbConfirm({title:'Delete database?',body:'Delete {{ d.name }}? Clients using this will lose their DB connection.',confirm:'Delete',onConfirm:()=>this.closest('form').submit()})">Delete</button>
+          </form>
+        </div>
       </td>
     </tr>
     {% endfor %}
@@ -570,6 +582,89 @@ function row(label, value) {
     <td style="padding:.3rem .5rem;color:var(--text-muted);white-space:nowrap">${label}</td>
     <td style="padding:.3rem .5rem;font-weight:600">${value}</td>
   </tr>`;
+}
+
+function setField(name, val) {
+  const el = document.querySelector('[name="' + name + '"]');
+  if (el) el.value = val;
+}
+
+function editDbRow(btn) {
+  const tr = btn.closest('tr');
+  editDb(
+    tr.dataset.dbId,
+    tr.dataset.dbType,
+    tr.dataset.dbName,
+    JSON.parse(tr.dataset.dbCreds),
+    JSON.parse(tr.dataset.dbLog),
+    JSON.parse(tr.dataset.dbScope)
+  );
+}
+
+function editDb(id, type, name, creds, logCfg, scope) {
+  document.querySelector('[name="db_id"]').value = id;
+  document.getElementById('db-form-title').textContent = 'Edit database connection';
+  document.getElementById('save-btn').textContent = 'Update database';
+  document.getElementById('cancel-edit-btn').style.display = '';
+  document.getElementById('db_type_sel').value = type;
+  showDb(type);
+  setField('name', name);
+
+  ['sf-pwd-note','ora-pwd-note','az-pwd-note'].forEach(function(nid) {
+    const el = document.getElementById(nid);
+    if (el) el.style.display = 'none';
+  });
+
+  if (type === 'snowflake') {
+    setField('sf_account',   creds.account   || '');
+    setField('sf_warehouse', creds.warehouse || '');
+    setField('sf_database',  creds.database  || '');
+    setField('sf_schema',    creds.schema    || 'PUBLIC');
+    setField('sf_user',      creds.user      || '');
+    setField('sf_role',      creds.role      || '');
+    setField('sf_password',  '');
+    document.getElementById('sf-pwd-note').style.display = '';
+  } else if (type === 'oracle') {
+    setField('ora_dsn',      creds.dsn    || '');
+    setField('ora_user',     creds.user   || '');
+    setField('ora_schema',   creds.schema || '');
+    setField('ora_password', '');
+    document.getElementById('ora-pwd-note').style.display = '';
+  } else if (type === 'azure_sql') {
+    setField('az_server',   creds.server   || '');
+    setField('az_database', creds.database || '');
+    setField('az_schema',   creds.schema   || 'dbo');
+    setField('az_user',     creds.user     || '');
+    setField('az_driver',   creds.driver   || 'ODBC Driver 18 for SQL Server');
+    setField('az_password', '');
+    document.getElementById('az-pwd-note').style.display = '';
+  }
+
+  document.querySelector('[name="log_export_enabled"]').checked = !!logCfg.enabled;
+  setField('log_schema', logCfg.schema || 'LOGS');
+  setField('log_export_time', logCfg.time || '02:00');
+
+  dbScopeSelected.clear();
+  (scope || []).forEach(ref => dbScopeSelected.add(ref));
+  document.getElementById('selected_schema_tables').value = scope && scope.length ? JSON.stringify(scope) : '';
+  dbScopeSync();
+  if (scope && scope.length) {
+    dbScopeStatus('info', scope.length + ' table' + (scope.length !== 1 ? 's' : '') + ' in current scope — browse to modify, or save to keep unchanged.');
+  }
+
+  document.querySelector('.card').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function cancelEdit() {
+  document.getElementById('db-form').reset();
+  document.getElementById('db-form-title').textContent = 'Add database connection';
+  document.getElementById('save-btn').textContent = 'Save database';
+  document.getElementById('cancel-edit-btn').style.display = 'none';
+  showDb('');
+  ['sf-pwd-note','ora-pwd-note','az-pwd-note'].forEach(function(nid) {
+    const el = document.getElementById(nid);
+    if (el) el.style.display = 'none';
+  });
 }
 </script>
 {% endblock %}

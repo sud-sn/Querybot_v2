@@ -134,6 +134,7 @@ async def generate_drill_by_dimension(
     model: str,
     api_key: str,
     display_context: dict | None = None,
+    query_executor=None,
     **extra_kwargs,
 ) -> dict:
     """
@@ -229,11 +230,16 @@ async def generate_drill_by_dimension(
     # ── Step 4: Execute ──────────────────────────────────────────────────────
     t0 = time.monotonic()
     try:
-        drill_rows = run_query(
-            db_cfg.get("credentials") or db_cfg,
-            db_cfg.get("db_type", "azure_sql"),
-            drill_sql,
-        )
+        if query_executor:
+            governed = query_executor(db_cfg, drill_sql)
+            drill_rows = governed.rows
+            drill_sql = governed.sql
+        else:
+            drill_rows = run_query(
+                db_cfg.get("credentials") or db_cfg,
+                db_cfg.get("db_type", "azure_sql"),
+                drill_sql,
+            )
     except Exception as exc:
         log.warning("drill_dim: DB execution failed: %s", exc)
         return _fallback(

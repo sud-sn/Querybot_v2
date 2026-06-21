@@ -1,5 +1,6 @@
 {% extends "base.html" %}
-{% from "macros.html" import breadcrumb %}
+{% from "macros.html" import breadcrumb, alert %}
+{% from "icons.html" import ic %}
 {% block title %}Register Client — QueryBot Admin{% endblock %}
 {% block breadcrumb %}
 {{ breadcrumb([
@@ -10,48 +11,51 @@
 {% endblock %}
 {% block content %}
 
-<div style="margin-bottom:1.25rem">
-  <h1 style="font-size:20px;font-weight:700;margin-top:4px">Register a new client</h1>
-  <p style="font-size:13px;color:var(--gray-500)">
-    Create a new workspace entry. After saving, you'll be taken to the
-    Schema &amp; Knowledge Base setup page where you can run discovery
-    and generate the KB for this client.
-  </p>
+<div class="page-header">
+  <div class="page-header-body">
+    <h1>Register a new client</h1>
+    <p>After saving you'll be taken to the Schema &amp; KB setup page.</p>
+  </div>
+  <div class="page-header-actions">
+    <a href="/admin/clients" class="btn btn-secondary btn-sm">{{ ic("arrow-left", 14) }} Back to clients</a>
+  </div>
 </div>
 
-{% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+{% if error %}
+{{ alert(message=error, type="error", icon_name="x-circle") }}
+{% endif %}
 
 <div class="card">
   <div class="card-header"><h2>Client details</h2></div>
   <div class="card-body">
     <form method="post" action="/admin/clients/create">
+
       <div class="form-grid">
         <div class="form-group">
-          <label>Account ID *</label>
-          <input type="text" name="account_id" required
+          <label for="f_account_id">Account ID <span class="text-danger">*</span></label>
+          <input type="text" id="f_account_id" name="account_id" required autofocus
             placeholder="e.g. zoom-acc-7D7A or tenant-guid or team_id">
           <p class="form-note">
-            The unique workspace identifier your chat platform sends.
-            Zoom accountId · Teams tenantId · Slack team_id · or any
-            stable ID if you're only using the internal web chat.
+            The unique workspace identifier your chat platform sends —
+            Zoom <code>accountId</code> · Teams <code>tenantId</code> · Slack <code>team_id</code> ·
+            or any stable string for portal-only workspaces.
           </p>
         </div>
         <div class="form-group">
-          <label>Client name *</label>
-          <input type="text" name="client_name" required
+          <label for="f_client_name">Client name <span class="text-danger">*</span></label>
+          <input type="text" id="f_client_name" name="client_name" required
             placeholder="e.g. Acme Pharmacy">
         </div>
       </div>
 
-      <div class="form-group" style="margin-bottom:.75rem">
-        <label style="display:flex;align-items:flex-start;gap:.65rem;font-weight:600">
+      <div class="form-group" style="margin-bottom:.9rem">
+        <label class="checkbox-label" for="portal_only_chk">
           <input type="checkbox" name="portal_only" value="1" id="portal_only_chk"
-                 onchange="togglePlatformSection(this.checked)" style="margin-top:3px">
+                 onchange="togglePlatformSection(this.checked)">
           <span>
-            Web portal only — no chat platform (Zoom / Teams / Slack)
-            <span class="form-note" style="display:block;margin-top:4px">
+            <strong>Web portal only</strong> — no chat platform (Zoom / Teams / Slack)
+            <span class="form-note" style="display:block;margin-top:3px">
               Users log in at <code>/portal/login</code> with credentials you set in the Users tab.
-              They can start querying immediately — no registration link, no bot needed.
             </span>
           </span>
         </label>
@@ -60,8 +64,8 @@
       <div id="platform-section">
         <div class="form-grid">
           <div class="form-group">
-            <label>Platform</label>
-            <select name="platform_type">
+            <label for="f_platform">Platform</label>
+            <select id="f_platform" name="platform_type">
               <option value="">— none (portal only) —</option>
               <option value="zoom">Zoom</option>
               <option value="teams">Microsoft Teams</option>
@@ -70,8 +74,8 @@
             <p class="form-note">Required only if users will message through a chat app.</p>
           </div>
           <div class="form-group">
-            <label>Assigned database</label>
-            <select name="db_config_id">
+            <label for="f_db">Assigned database</label>
+            <select id="f_db" name="db_config_id">
               <option value="">— choose later —</option>
               {% for db in dbs %}
               <option value="{{ db.id }}">{{ db.name }} ({{ db.label }})</option>
@@ -80,30 +84,29 @@
             <p class="form-note">You can assign this later on the Settings tab.</p>
           </div>
         </div>
-      </div><!-- /platform-section -->
-
-      <script>
-      function togglePlatformSection(portalOnly) {
-        document.getElementById('platform-section').style.display = portalOnly ? 'none' : '';
-      }
-      </script>
+      </div>
 
       <div class="form-group">
-        <label>Business description</label>
-        <textarea name="business_desc" rows="3"
+        <label for="f_desc">Business description</label>
+        <textarea id="f_desc" name="business_desc" rows="3"
           placeholder="e.g. We are a compounding pharmacy managing prescriptions, patients, drug inventory, and insurance claims."></textarea>
         <p class="form-note">
-          Optional now — required before you generate the Knowledge Base.
-          This tells the LLM how to interpret the client's data.
+          Optional now — required before generating the Knowledge Base.
+          Tells the LLM how to interpret this client's data.
         </p>
       </div>
 
-      <div style="display:flex;gap:.625rem">
-        <button type="submit" class="btn btn-primary">Register client →</button>
+      <div class="form-actions">
+        <button type="submit" class="btn btn-primary">Register client &rarr;</button>
         <a href="/admin/clients" class="btn btn-secondary">Cancel</a>
       </div>
     </form>
   </div>
 </div>
 
+<script>
+function togglePlatformSection(portalOnly) {
+  document.getElementById('platform-section').style.display = portalOnly ? 'none' : '';
+}
+</script>
 {% endblock %}

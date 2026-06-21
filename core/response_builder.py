@@ -1313,6 +1313,7 @@ async def generate_analysis_response(
     db_cfg: dict | None = None,
     context: str = "",
     known_tables: set[str] | None = None,
+    query_executor=None,
     **extra_kwargs,
 ) -> dict:
     """
@@ -1343,6 +1344,7 @@ async def generate_analysis_response(
                 api_key=api_key,
                 known_tables=known_tables,
                 business_context=context,
+                query_executor=query_executor,
                 **extra_kwargs,
             )
 

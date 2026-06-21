@@ -225,6 +225,85 @@ function closeSidebar(){
 }
 </script>
 
+{# ── Universal form submit loading state ── #}
+<script>
+(function(){
+  document.addEventListener('submit', function(e){
+    var form = e.target;
+    if(form.dataset.noLoading) return;
+    var btn = form.querySelector('[type="submit"]:not([data-no-loading])');
+    if(!btn || btn.classList.contains('loading')) return;
+    btn.classList.add('loading');
+    btn.disabled = true;
+    /* Re-enable after 15s as a safety net if the response never arrives */
+    setTimeout(function(){ btn.classList.remove('loading'); btn.disabled = false; }, 15000);
+  }, true);
+})();
+</script>
+
+{# ── Toast system (global, replaces ad-hoc toast) ── #}
+<div id="qbToastContainer" style="position:fixed;bottom:20px;right:20px;z-index:9500;display:flex;flex-direction:column;gap:8px;align-items:flex-end;pointer-events:none"></div>
+<script>
+window.qbToast = (function(){
+  var container = null;
+  var icons = {
+    success: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>',
+    error:   '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.75 9.75l4.5 4.5m0-4.5l-4.5 4.5M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>',
+    warning: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/></svg>',
+    info:    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z"/></svg>'
+  };
+  var colors = {
+    success: { bar: '#059669', bg: '#ECFDF5', text: '#065f46' },
+    error:   { bar: '#DC2626', bg: '#FEF2F2', text: '#7f1d1d' },
+    warning: { bar: '#B45309', bg: '#FEF3C7', text: '#78350f' },
+    info:    { bar: '#4F46E5', bg: '#EEF2FF', text: '#312e81' }
+  };
+
+  function show(message, type, duration){
+    if(!container) container = document.getElementById('qbToastContainer');
+    if(!container) return;
+    type = type || 'info';
+    duration = duration != null ? duration : (type === 'error' ? 8000 : type === 'success' ? 4000 : 5000);
+    var c = colors[type] || colors.info;
+    var toast = document.createElement('div');
+    toast.style.cssText = [
+      'max-width:360px','background:'+c.bg,'border:1px solid rgba(0,0,0,.08)',
+      'border-left:4px solid '+c.bar,'border-radius:10px',
+      'box-shadow:0 8px 24px rgba(15,23,42,.12)','padding:10px 14px',
+      'display:flex','align-items:flex-start','gap:10px','color:'+c.text,
+      'font-size:13px','font-weight:600','line-height:1.45',
+      'pointer-events:auto','opacity:0','transform:translateX(12px)',
+      'transition:opacity .18s,transform .18s'
+    ].join(';');
+    toast.innerHTML = '<span style="flex-shrink:0;margin-top:1px;color:'+c.bar+'">'+(icons[type]||'')+
+      '</span><span style="flex:1">'+message+'</span>'+
+      '<button onclick="this.parentNode.remove()" style="background:none;border:none;cursor:pointer;color:'+c.text+';opacity:.5;font-size:16px;line-height:1;padding:0 0 0 6px;flex-shrink:0">&times;</button>';
+    container.appendChild(toast);
+    requestAnimationFrame(function(){ toast.style.opacity='1'; toast.style.transform='translateX(0)'; });
+    if(duration > 0){
+      var timer = setTimeout(function(){
+        toast.style.opacity='0'; toast.style.transform='translateX(12px)';
+        setTimeout(function(){ toast.remove(); }, 200);
+      }, duration);
+      toast.addEventListener('mouseenter', function(){ clearTimeout(timer); });
+      toast.addEventListener('mouseleave', function(){
+        timer = setTimeout(function(){
+          toast.style.opacity='0'; toast.style.transform='translateX(12px)';
+          setTimeout(function(){ toast.remove(); }, 200);
+        }, 2000);
+      });
+    }
+    return toast;
+  }
+  return { show: show,
+    success: function(m,d){ return show(m,'success',d); },
+    error:   function(m,d){ return show(m,'error',d); },
+    warning: function(m,d){ return show(m,'warning',d); },
+    info:    function(m,d){ return show(m,'info',d); }
+  };
+})();
+</script>
+
 {# ── Live notifications WebSocket ── #}
 <script>
 (function(){

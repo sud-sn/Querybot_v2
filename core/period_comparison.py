@@ -347,6 +347,7 @@ async def generate_period_comparison(
     api_key: str,
     business_context: str = "",
     semantic_plan: dict | None = None,
+    query_executor=None,
     **extra_kwargs,
 ) -> dict:
     """
@@ -471,11 +472,16 @@ async def generate_period_comparison(
 
     # ── Step 6: Execute against the live DB ─────────────────────────────────
     try:
-        prior_rows = run_query(
-            db_cfg.get("credentials") or db_cfg,
-            db_cfg.get("db_type", "azure_sql"),
-            prior_sql,
-        )
+        if query_executor:
+            governed = query_executor(db_cfg, prior_sql)
+            prior_rows = governed.rows
+            prior_sql = governed.sql
+        else:
+            prior_rows = run_query(
+                db_cfg.get("credentials") or db_cfg,
+                db_cfg.get("db_type", "azure_sql"),
+                prior_sql,
+            )
     except Exception as exc:
         log.warning("compare_prior: DB execution failed: %s", exc)
         return _fallback(
