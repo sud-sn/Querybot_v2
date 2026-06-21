@@ -1194,6 +1194,36 @@ async def databases_page(request: Request):
         d["log_export_state"] = get_export_state(int(d["id"])) if d["log_export_enabled"] else None
         d["selected_schema_tables"] = _parse_selected_schema_tables(creds.get("selected_schema_tables"))
         d["selected_schema_count"] = len(d["selected_schema_tables"])
+        # Non-secret credentials for the Edit button data attributes (no passwords)
+        db_type = d["db_type"]
+        if db_type == "snowflake":
+            d["edit_creds"] = {
+                "account":   creds.get("account",   ""),
+                "warehouse": creds.get("warehouse",  ""),
+                "database":  creds.get("database",  ""),
+                "schema":    creds.get("schema",    "PUBLIC"),
+                "user":      creds.get("user",      ""),
+                "role":      creds.get("role",      ""),
+            }
+        elif db_type == "oracle":
+            d["edit_creds"] = {
+                "dsn":    creds.get("dsn",    ""),
+                "user":   creds.get("user",   ""),
+                "schema": creds.get("schema", ""),
+            }
+        else:  # azure_sql
+            d["edit_creds"] = {
+                "server":   creds.get("server",   ""),
+                "database": creds.get("database", ""),
+                "schema":   creds.get("schema",   "dbo"),
+                "user":     creds.get("user",     ""),
+                "driver":   creds.get("driver",   "ODBC Driver 18 for SQL Server"),
+            }
+        d["edit_log"] = {
+            "enabled": d["log_export_enabled"],
+            "schema":  d["log_schema"],
+            "time":    d["log_export_time"],
+        }
     return _resp(request, "databases.html", {
         "dbs": dbs,
         "saved": request.query_params.get("saved"),
