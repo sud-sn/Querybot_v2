@@ -87,13 +87,30 @@ def detect_chart_type(
     """
     Inspect result rows and choose the safest chart type.
 
-    Returns one of: bar, line, area, scatter, pie, donut, waterfall, heatmap, or None.
+    Returns one of: bar, line, area, scatter, pie, donut, waterfall, heatmap,
+    funnel, forecast, histogram, boxplot, treemap, or None.
     """
+    # Tier 3 structural signals take priority over spec inference
+    if rows:
+        first = rows[0]
+        if first.get("is_forecast") is not None:
+            return "forecast"
+        if "bp_data" in first:
+            return "boxplot"
+        if "bin_label" in first and "count" in first:
+            return "histogram"
+        if "funnel_pct" in first:
+            return "funnel"
+
     spec = infer_chart_spec(rows, question=question, column_formats=column_formats)
     if not spec:
         return None
     recommended = spec.get("recommended_type")
-    if recommended in {"bar", "line", "area", "scatter", "pie", "donut", "waterfall", "heatmap"}:
+    _all_types = {
+        "bar", "line", "area", "scatter", "pie", "donut",
+        "waterfall", "heatmap", "funnel", "forecast", "histogram", "boxplot", "treemap",
+    }
+    if recommended in _all_types:
         return recommended
     return None
 
@@ -236,7 +253,11 @@ def build_chart_payload(
     allowed = set(spec.get("renderable_types") or [])
     requested = (chart_type or "").lower().strip()
     effective_type = requested if requested in allowed else spec.get("recommended_type")
-    if effective_type not in {"bar", "line", "area", "scatter", "pie", "donut", "waterfall", "heatmap"}:
+    _renderable = {
+        "bar", "line", "area", "scatter", "pie", "donut",
+        "waterfall", "heatmap", "funnel", "forecast", "histogram", "boxplot", "treemap",
+    }
+    if effective_type not in _renderable:
         return None
 
     x_spec = spec.get("x") or {}
@@ -249,16 +270,21 @@ def build_chart_payload(
     else:
         y_keys = spec_y or numeric_cols
 
-    clean_rows = []
-    for r in rows:
-        item = {}
-        for key in [x_key, *y_keys]:
-            val = r.get(key)
-            if key in y_keys:
-                item[key] = _to_float(val)
-            else:
-                item[key] = "" if val is None else str(val)
-        clean_rows.append(item)
+    # For structural chart types, pass through all columns as-is (already computed)
+    _passthrough_types = {"funnel", "histogram", "boxplot", "forecast"}
+    if effective_type in _passthrough_types:
+        clean_rows = [dict(r) for r in rows]
+    else:
+        clean_rows = []
+        for r in rows:
+            item = {}
+            for key in [x_key, *y_keys]:
+                val = r.get(key)
+                if key in y_keys:
+                    item[key] = _to_float(val)
+                else:
+                    item[key] = "" if val is None else str(val)
+            clean_rows.append(item)
 
     return {
         "title": title,
