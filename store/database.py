@@ -40,7 +40,23 @@ from typing import Generator
 log = logging.getLogger("querybot.database")
 
 # ── Environment config ─────────────────────────────────────────────────────────
-DATABASE_URL: str = os.getenv("DATABASE_URL", "")
+# pg_url file: written by admin UI; read at startup when DATABASE_URL env var is absent.
+# Chicken-and-egg safe: the file is plain text so it can be read before the DB opens.
+_PG_URL_FILE = Path(os.getenv("QUERYBOT_DB_PATH", "data/querybot.db")).parent / "pg_url"
+
+
+def _load_database_url() -> str:
+    url = os.getenv("DATABASE_URL", "")
+    if not url:
+        try:
+            if _PG_URL_FILE.exists():
+                url = _PG_URL_FILE.read_text("utf-8").strip()
+        except Exception:
+            pass
+    return url
+
+
+DATABASE_URL: str = _load_database_url()
 DB_PATH = Path(os.getenv("QUERYBOT_DB_PATH") or os.getenv("DB_PATH", "data/querybot.db"))
 
 # Compiled patterns — reused across every execute() call
@@ -379,6 +395,26 @@ def get_db() -> Generator:
         raise
     finally:
         conn.close()
+
+
+def get_saved_pg_url() -> str:
+    """Return the PostgreSQL URL persisted in data/pg_url (empty = SQLite mode)."""
+    try:
+        if _PG_URL_FILE.exists():
+            return _PG_URL_FILE.read_text("utf-8").strip()
+    except Exception:
+        pass
+    return ""
+
+
+def save_pg_url(url: str) -> None:
+    """Write (or clear) the PostgreSQL URL in data/pg_url. Empty string = SQLite mode."""
+    _PG_URL_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _PG_URL_FILE.write_text(url.strip(), "utf-8")
+    log.info(
+        "Database backend saved: %s",
+        "PostgreSQL" if url.strip() else "SQLite (cleared pg_url)",
+    )
 
 
 def get_table_columns(conn, table: str) -> list[str]:

@@ -36,6 +36,7 @@ from fastapi.templating import Jinja2Templates
 
 import store
 from store.db import get_db as _get_db
+from store.database import DATABASE_URL, get_saved_pg_url, save_pg_url
 from store.config_store import get_db_config
 from core.llm_audit import llm_audit_scope, make_llm_audit_request_id
 from core.log_export import (
@@ -546,12 +547,33 @@ async def system_page(request: Request):
     cfg = store.get_all_system()
     masked = {k: (store.mask(v) if "key" in k or "password" in k else v)
               for k, v in cfg.items()}
+
+    # Database backend state
+    saved_pg_url  = get_saved_pg_url()
+    active_pg_url = DATABASE_URL  # what is actually running right now
+    active_backend = "postgres" if active_pg_url.startswith(("postgresql://", "postgres://")) else "sqlite"
+    saved_backend  = "postgres" if saved_pg_url else "sqlite"
+    restart_needed = active_backend != saved_backend or (
+        active_backend == "postgres" and active_pg_url != saved_pg_url
+    )
+    # Show host only (strip credentials) for display
+    def _pg_host(url: str) -> str:
+        import re as _re
+        m = _re.search(r"@([^/]+)", url)
+        return m.group(1) if m else url[:40]
+
     return _resp(request, "system.html", {
         "cfg": masked,
-        "query_models": QUERY_MODELS,
-        "kb_models":    KB_MODELS,
-        "saved": request.query_params.get("saved"),
-        "error": request.query_params.get("error"),
+        "query_models":   QUERY_MODELS,
+        "kb_models":      KB_MODELS,
+        "saved":          request.query_params.get("saved"),
+        "error":          request.query_params.get("error"),
+        # database backend
+        "active_backend":  active_backend,
+        "saved_backend":   saved_backend,
+        "saved_pg_url":    store.mask(saved_pg_url) if saved_pg_url else "",
+        "active_pg_host":  _pg_host(active_pg_url) if active_pg_url else "",
+        "restart_needed":  restart_needed,
     })
 
 @router.get("/system/azure-deployments")
@@ -649,6 +671,36 @@ async def azure_deployments_api(request: Request):
     }, status_code=400)
 
 
+@router.get("/system/test-pg")
+async def test_pg_connection(request: Request, url: str = ""):
+    """Test a PostgreSQL connection string without saving it."""
+    if not _is_auth(request):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    if not url or url.startswith("•"):
+        # No URL provided — test the currently saved one
+        url = get_saved_pg_url()
+    if not url:
+        return JSONResponse({"ok": False, "error": "No PostgreSQL URL configured yet."})
+    if not url.startswith(("postgresql://", "postgres://")):
+        return JSONResponse({"ok": False, "error": "URL must start with postgresql:// or postgres://"})
+    try:
+        import psycopg2
+    except ImportError:
+        return JSONResponse({
+            "ok": False,
+            "error": "psycopg2 is not installed. Run: pip install psycopg2-binary",
+        })
+    try:
+        conn = psycopg2.connect(url, connect_timeout=5)
+        cur = conn.cursor()
+        cur.execute("SELECT version()")
+        version = (cur.fetchone() or [""])[0].split(",")[0]  # e.g. "PostgreSQL 16.2"
+        conn.close()
+        return JSONResponse({"ok": True, "version": version})
+    except Exception as exc:
+        return JSONResponse({"ok": False, "error": str(exc)[:300]})
+
+
 @router.post("/system")
 async def system_save(
     request: Request,
@@ -662,6 +714,8 @@ async def system_save(
     default_provider:        str = Form(""),
     default_model:           str = Form(""),
     kb_model:                str = Form(""),
+    database_backend:        str = Form(""),
+    database_url:            str = Form(""),
 ):
     if not _is_auth(request):
         return RedirectResponse("/admin/login", status_code=303)
@@ -686,6 +740,11 @@ async def system_save(
         store.set_system("default_llm_model", default_model)
     if kb_model:
         store.set_system("kb_llm_model", kb_model)
+    # Database backend: write to data/pg_url (empty = SQLite, URL = PostgreSQL)
+    if database_backend == "sqlite":
+        save_pg_url("")
+    elif database_backend == "postgres" and database_url.strip() and not database_url.startswith("•"):
+        save_pg_url(database_url.strip())
     return RedirectResponse("/admin/system?saved=1", status_code=303)
 
 @router.post("/system/password")
