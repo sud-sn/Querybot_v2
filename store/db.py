@@ -784,6 +784,9 @@ def _run_migrations() -> None:
         ("answer_trace", "metric_version_at_query",    "INTEGER DEFAULT 0"),
         ("answer_trace", "used_deterministic_compiler","INTEGER DEFAULT 0"),
         ("answer_trace", "compiler_confidence",        "REAL DEFAULT 0.0"),
+        # v32: regulated execution stores protected (never raw) rows and policy version.
+        ("answer_trace", "result_rows",                "TEXT NOT NULL DEFAULT '[]'"),
+        ("answer_trace", "policy_version_at_query",    "INTEGER NOT NULL DEFAULT 0"),
         # v30: self-learning loop — feature flags on client
         ("client", "enable_feedback_collection", "INTEGER NOT NULL DEFAULT 0"),
         ("client", "enable_learned_retrieval",   "INTEGER NOT NULL DEFAULT 0"),
@@ -808,6 +811,7 @@ def _run_migrations() -> None:
         _ensure_metric_version_table(conn)
         _ensure_metric_test_table(conn)
         _ensure_learning_loop_tables(conn)
+        _ensure_compliance_tables(conn)
         for table, column, col_def in migrations:
             try:
                 # SAVEPOINT per migration: in PostgreSQL a failed statement
@@ -843,6 +847,227 @@ def _run_migrations() -> None:
                 )
         except Exception as e:
             log.debug("llm_pricing seed skipped: %s", e)
+
+
+def _ensure_compliance_tables(conn: sqlite3.Connection) -> None:
+    """Create the normalized regulated-industry policy and audit schema."""
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS compliance_profile (
+            account_id                 TEXT PRIMARY KEY REFERENCES client(account_id) ON DELETE CASCADE,
+            mode                       TEXT NOT NULL DEFAULT 'standard',
+            industry                   TEXT NOT NULL DEFAULT 'standard',
+            jurisdictions_json         TEXT NOT NULL DEFAULT '[]',
+            frameworks_json            TEXT NOT NULL DEFAULT '[]',
+            policy_pack_key            TEXT NOT NULL DEFAULT '',
+            policy_pack_version        TEXT NOT NULL DEFAULT '',
+            lifecycle_state            TEXT NOT NULL DEFAULT 'DRAFT',
+            enforcement_mode           TEXT NOT NULL DEFAULT 'shadow',
+            active_policy_version       INTEGER NOT NULL DEFAULT 0,
+            identity_control            TEXT NOT NULL DEFAULT 'password',
+            managed_secrets_enabled     INTEGER NOT NULL DEFAULT 0,
+            immutable_audit_enabled     INTEGER NOT NULL DEFAULT 0,
+            external_audit_destination TEXT NOT NULL DEFAULT '',
+            activated_by                TEXT NOT NULL DEFAULT '',
+            activated_at                TEXT DEFAULT NULL,
+            invalidated_at              TEXT DEFAULT NULL,
+            invalidated_reason          TEXT NOT NULL DEFAULT '',
+            created_at                  TEXT DEFAULT (datetime('now')),
+            updated_at                  TEXT DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS compliance_policy_version (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_id      TEXT NOT NULL REFERENCES client(account_id) ON DELETE CASCADE,
+            version         INTEGER NOT NULL,
+            status          TEXT NOT NULL DEFAULT 'draft',
+            snapshot_json   TEXT NOT NULL DEFAULT '{}',
+            change_summary  TEXT NOT NULL DEFAULT '',
+            created_by      TEXT NOT NULL DEFAULT '',
+            activated_by    TEXT NOT NULL DEFAULT '',
+            created_at      TEXT DEFAULT (datetime('now')),
+            activated_at    TEXT DEFAULT NULL,
+            UNIQUE(account_id, version)
+        );
+
+        CREATE TABLE IF NOT EXISTS data_asset_classification (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_id      TEXT NOT NULL REFERENCES client(account_id) ON DELETE CASCADE,
+            table_fqn       TEXT NOT NULL,
+            column_name     TEXT NOT NULL,
+            sensitivity     TEXT NOT NULL DEFAULT 'INTERNAL',
+            identifiability TEXT NOT NULL DEFAULT 'NONE',
+            confidence      REAL NOT NULL DEFAULT 0.0,
+            source          TEXT NOT NULL DEFAULT 'auto',
+            reviewed        INTEGER NOT NULL DEFAULT 0,
+            reviewed_by     TEXT NOT NULL DEFAULT '',
+            reviewed_at     TEXT DEFAULT NULL,
+            mask_strategy   TEXT NOT NULL DEFAULT 'redact',
+            created_at      TEXT DEFAULT (datetime('now')),
+            updated_at      TEXT DEFAULT (datetime('now')),
+            UNIQUE(account_id, table_fqn, column_name)
+        );
+
+        CREATE TABLE IF NOT EXISTS data_classification_tag (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            classification_id INTEGER NOT NULL REFERENCES data_asset_classification(id) ON DELETE CASCADE,
+            tag               TEXT NOT NULL,
+            UNIQUE(classification_id, tag)
+        );
+
+        CREATE TABLE IF NOT EXISTS policy_rule (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_id        TEXT NOT NULL REFERENCES client(account_id) ON DELETE CASCADE,
+            policy_version    INTEGER NOT NULL DEFAULT 1,
+            name              TEXT NOT NULL DEFAULT '',
+            subject_type      TEXT NOT NULL DEFAULT 'role',
+            subject_id        TEXT NOT NULL DEFAULT 'analyst',
+            resource_type     TEXT NOT NULL DEFAULT 'classification',
+            resource_pattern  TEXT NOT NULL DEFAULT '*',
+            action            TEXT NOT NULL DEFAULT 'query_execution',
+            effect            TEXT NOT NULL DEFAULT 'deny',
+            mask_strategy     TEXT NOT NULL DEFAULT '',
+            aggregate_only    INTEGER NOT NULL DEFAULT 0,
+            export_allowed    INTEGER NOT NULL DEFAULT 0,
+            cache_ttl_seconds INTEGER NOT NULL DEFAULT 0,
+            mandatory         INTEGER NOT NULL DEFAULT 0,
+            enabled           INTEGER NOT NULL DEFAULT 1,
+            created_at        TEXT DEFAULT (datetime('now')),
+            updated_at        TEXT DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS row_policy (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_id       TEXT NOT NULL REFERENCES client(account_id) ON DELETE CASCADE,
+            policy_version   INTEGER NOT NULL DEFAULT 1,
+            name             TEXT NOT NULL DEFAULT '',
+            subject_type     TEXT NOT NULL DEFAULT 'role',
+            subject_id       TEXT NOT NULL DEFAULT 'analyst',
+            table_fqn        TEXT NOT NULL,
+            condition_json   TEXT NOT NULL DEFAULT '{}',
+            enabled          INTEGER NOT NULL DEFAULT 1,
+            created_at       TEXT DEFAULT (datetime('now')),
+            updated_at       TEXT DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS purpose_registry (
+            id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_id           TEXT NOT NULL REFERENCES client(account_id) ON DELETE CASCADE,
+            purpose_key          TEXT NOT NULL,
+            name                 TEXT NOT NULL,
+            description          TEXT NOT NULL DEFAULT '',
+            legal_basis_ref      TEXT NOT NULL DEFAULT '',
+            default_for_roles    TEXT NOT NULL DEFAULT '[]',
+            requires_prompt      INTEGER NOT NULL DEFAULT 0,
+            enabled              INTEGER NOT NULL DEFAULT 1,
+            created_at           TEXT DEFAULT (datetime('now')),
+            updated_at           TEXT DEFAULT (datetime('now')),
+            UNIQUE(account_id, purpose_key)
+        );
+
+        CREATE TABLE IF NOT EXISTS purpose_permission (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            purpose_id      INTEGER NOT NULL REFERENCES purpose_registry(id) ON DELETE CASCADE,
+            classification  TEXT NOT NULL,
+            action          TEXT NOT NULL,
+            effect          TEXT NOT NULL DEFAULT 'deny',
+            UNIQUE(purpose_id, classification, action)
+        );
+
+        CREATE TABLE IF NOT EXISTS provider_agreement (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_id      TEXT NOT NULL REFERENCES client(account_id) ON DELETE CASCADE,
+            provider        TEXT NOT NULL,
+            agreement_type  TEXT NOT NULL,
+            frameworks_json TEXT NOT NULL DEFAULT '[]',
+            artifact_ref    TEXT NOT NULL DEFAULT '',
+            artifact_hash   TEXT NOT NULL DEFAULT '',
+            signed_at       TEXT DEFAULT NULL,
+            expires_at      TEXT DEFAULT NULL,
+            enabled         INTEGER NOT NULL DEFAULT 1,
+            created_at      TEXT DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS break_glass_grant (
+            id                TEXT PRIMARY KEY,
+            account_id        TEXT NOT NULL REFERENCES client(account_id) ON DELETE CASCADE,
+            user_id           TEXT NOT NULL,
+            incident_ref      TEXT NOT NULL,
+            reason            TEXT NOT NULL,
+            resource_json     TEXT NOT NULL DEFAULT '[]',
+            action_json       TEXT NOT NULL DEFAULT '[]',
+            expires_at        TEXT NOT NULL,
+            revoked_at        TEXT DEFAULT NULL,
+            created_by        TEXT NOT NULL DEFAULT '',
+            created_at        TEXT DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS compliance_assessment_run (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_id      TEXT NOT NULL REFERENCES client(account_id) ON DELETE CASCADE,
+            policy_version  INTEGER NOT NULL DEFAULT 0,
+            status          TEXT NOT NULL DEFAULT 'running',
+            critical_failed INTEGER NOT NULL DEFAULT 0,
+            high_failed     INTEGER NOT NULL DEFAULT 0,
+            passed_count    INTEGER NOT NULL DEFAULT 0,
+            created_at      TEXT DEFAULT (datetime('now')),
+            completed_at    TEXT DEFAULT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS compliance_assessment_result (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id          INTEGER NOT NULL REFERENCES compliance_assessment_run(id) ON DELETE CASCADE,
+            control_key     TEXT NOT NULL,
+            severity        TEXT NOT NULL,
+            status          TEXT NOT NULL,
+            message         TEXT NOT NULL DEFAULT '',
+            remediation     TEXT NOT NULL DEFAULT ''
+        );
+
+        CREATE TABLE IF NOT EXISTS policy_decision_log (
+            id              TEXT PRIMARY KEY,
+            account_id      TEXT NOT NULL,
+            user_id         TEXT NOT NULL DEFAULT '',
+            action          TEXT NOT NULL,
+            purpose_id      TEXT NOT NULL DEFAULT '',
+            channel         TEXT NOT NULL DEFAULT '',
+            allowed         INTEGER NOT NULL DEFAULT 0,
+            reason_code     TEXT NOT NULL DEFAULT '',
+            resource_json   TEXT NOT NULL DEFAULT '[]',
+            obligation_json TEXT NOT NULL DEFAULT '{}',
+            policy_version  INTEGER NOT NULL DEFAULT 0,
+            previous_hash   TEXT NOT NULL DEFAULT '',
+            record_hash     TEXT NOT NULL DEFAULT '',
+            created_at      TEXT DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS export_event (
+            id              TEXT PRIMARY KEY,
+            account_id      TEXT NOT NULL REFERENCES client(account_id) ON DELETE CASCADE,
+            user_id         TEXT NOT NULL DEFAULT '',
+            trace_id        TEXT NOT NULL DEFAULT '',
+            policy_version  INTEGER NOT NULL DEFAULT 0,
+            purpose_id      TEXT NOT NULL DEFAULT '',
+            format          TEXT NOT NULL DEFAULT 'csv',
+            row_count       INTEGER NOT NULL DEFAULT 0,
+            columns_json    TEXT NOT NULL DEFAULT '[]',
+            fingerprint     TEXT NOT NULL DEFAULT '',
+            status          TEXT NOT NULL DEFAULT 'created',
+            created_at      TEXT DEFAULT (datetime('now'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_classification_account_table
+            ON data_asset_classification(account_id, table_fqn);
+        CREATE INDEX IF NOT EXISTS idx_policy_rule_account_version
+            ON policy_rule(account_id, policy_version, enabled);
+        CREATE INDEX IF NOT EXISTS idx_row_policy_account_table
+            ON row_policy(account_id, table_fqn, enabled);
+        CREATE INDEX IF NOT EXISTS idx_policy_decision_account_created
+            ON policy_decision_log(account_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_assessment_account_created
+            ON compliance_assessment_run(account_id, created_at DESC);
+        """
+    )
 
 
 def _ensure_llm_call_log_table(conn: sqlite3.Connection) -> None:

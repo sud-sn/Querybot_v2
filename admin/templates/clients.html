@@ -1,5 +1,6 @@
 {% extends "base.html" %}
-{% from "macros.html" import breadcrumb %}
+{% from "macros.html" import breadcrumb, status_badge, empty_state %}
+{% from "icons.html" import ic %}
 {% block title %}Clients — QueryBot Admin{% endblock %}
 {% block breadcrumb %}
 {{ breadcrumb([
@@ -8,83 +9,213 @@
 ]) }}
 {% endblock %}
 {% block content %}
-<div class="page-header" style="display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;flex-wrap:wrap">
-  <div>
+
+<div class="page-header">
+  <div class="page-header-body">
     <h1>Registered clients</h1>
-    <p>Every workspace registered with QueryBot. New clients are created from this page.</p>
+    <p>Every workspace registered with QueryBot.</p>
   </div>
-  <a href="/admin/clients/new" class="btn btn-primary">＋ Register client</a>
+  <div class="page-header-actions">
+    <a href="/admin/clients/new" class="btn btn-primary btn-sm">{{ ic("plus", 14) }} Register client</a>
+  </div>
 </div>
 
-<!-- Search -->
-<form method="get" action="/admin/clients" style="display:flex;gap:.75rem;margin-bottom:1.25rem">
-  <input type="text" name="q" value="{{ search }}" placeholder="Search by client name or account ID…"
-    style="flex:1;padding:8px 12px;border:1px solid var(--gray-300);border-radius:6px;font-size:13px">
-  <button type="submit" class="btn btn-secondary">Search</button>
-  {% if search %}<a href="/admin/clients" class="btn btn-secondary">Clear</a>{% endif %}
+{# ── Search + filter bar ── #}
+<form method="get" action="/admin/clients" id="clientSearchForm" data-no-loading>
+  <div class="clients-search-bar">
+    <div class="clients-search-input-wrap">
+      <span class="clients-search-icon">{{ ic("search", 16) }}</span>
+      <input type="text" name="q" id="clientSearch" value="{{ search }}"
+             placeholder="Search by name or account ID…"
+             autocomplete="off" spellcheck="false">
+      {% if search %}
+      <a href="/admin/clients" class="clients-search-clear" title="Clear search">{{ ic("x-circle", 15) }}</a>
+      {% endif %}
+    </div>
+    <button type="submit" class="btn btn-secondary btn-sm">Search</button>
+  </div>
+
+  {# Active filter chips #}
+  {% set state_filter = request.query_params.get('state', '') %}
+  {% set platform_filter = request.query_params.get('platform', '') %}
+  {% if state_filter or platform_filter %}
+  <div class="chip-row" style="margin-top:.6rem">
+    <span class="text-xs text-muted" style="padding:4px 0">Filters:</span>
+    {% if state_filter %}
+    <a href="/admin/clients?q={{ search }}" class="ui-chip active" style="font-size:11px">
+      State: {{ state_filter }} {{ ic("x-circle", 12) }}
+    </a>
+    {% endif %}
+    {% if platform_filter %}
+    <a href="/admin/clients?q={{ search }}" class="ui-chip active" style="font-size:11px">
+      Platform: {{ platform_filter }} {{ ic("x-circle", 12) }}
+    </a>
+    {% endif %}
+    <a href="/admin/clients" class="text-sm text-muted" style="margin-left:4px">Clear all</a>
+  </div>
+  {% endif %}
 </form>
 
+{# ── Results ── #}
 {% if not clients %}
 <div class="card">
-  <div class="card-body" style="text-align:center;padding:3rem;color:var(--gray-500)">
-    {% if search %}No clients matching "{{ search }}".
-    {% else %}No clients yet. Once someone messages your bot they will appear here.{% endif %}
+  <div class="card-body">
+    {% if search %}
+    {{ empty_state(
+        icon_name="search",
+        title='No clients matching "' ~ search ~ '"',
+        body="Try a different name or account ID, or clear the search to see all clients.",
+        sec_href="/admin/clients",
+        sec_label="Clear search"
+    ) }}
+    {% else %}
+    {{ empty_state(
+        icon_name="users",
+        title="No clients registered yet",
+        body="Register your first workspace to get started. You can also wait for users to message your connected bot.",
+        action_href="/admin/clients/new",
+        action_label="Register first client",
+        sec_href="/admin/platforms",
+        sec_label="Set up platform"
+    ) }}
+    {% endif %}
   </div>
 </div>
 {% else %}
 <div class="card">
   <div class="card-header">
-    <h2>Clients ({{ clients|length }}{% if search %} matching "{{ search }}"{% endif %})</h2>
+    <h2>
+      {{ clients|length }} client{{ 's' if clients|length != 1 }}
+      {% if search %}<span class="text-muted" style="font-weight:500"> — matching "{{ search }}"</span>{% endif %}
+    </h2>
+    <span class="text-xs text-muted">{{ clients|selectattr("state","equalto","READY")|list|length }} ready</span>
   </div>
-  <table class="table">
-    <tr>
-      <th>Client name</th>
-      <th>Account ID</th>
-      <th>Platform</th>
-      <th>State</th>
-      <th>Readiness</th>
-      <th>Database</th>
-      <th>Queries limit</th>
-      <th>Connected</th>
-      <th></th>
-    </tr>
-    {% for c in clients %}
-    {% set hs = c.health_score %}
-    <tr>
-      <td style="font-weight:600;min-width:140px">{{ c.client_name or "—" }}</td>
-      <td style="font-family:monospace;font-size:11px;color:var(--gray-500)">{{ c.account_id[:24] }}…</td>
-      <td><span class="badge badge-blue">{{ c.platform_type }}</span></td>
-      <td>
-        {% if c.state == "READY" %}<span class="badge badge-green">READY</span>
-        {% elif c.state == "KB_BUILDING" %}<span class="badge badge-amber">BUILDING KB</span>
-        {% elif c.state == "SCHEMA_READY" %}<span class="badge badge-blue">SCHEMA READY</span>
-        {% else %}<span class="badge badge-gray">{{ c.state }}</span>{% endif %}
-      </td>
-      <td>
-        <div style="display:flex;align-items:center;gap:.5rem">
-          <div style="position:relative;width:34px;height:34px;flex-shrink:0">
-            <svg width="34" height="34" viewBox="0 0 34 34" style="transform:rotate(-90deg)" aria-hidden="true">
-              <circle cx="17" cy="17" r="13" fill="none" stroke="var(--border)" stroke-width="3.5"/>
-              <circle cx="17" cy="17" r="13" fill="none"
-                stroke="{% if hs.color == 'green' %}#10b981{% elif hs.color == 'amber' %}#f59e0b{% else %}#ef4444{% endif %}"
-                stroke-width="3.5"
-                stroke-dasharray="{{ (hs.pct * 81.68 / 100)|round(1) }} 81.68"
-                stroke-linecap="round"/>
-            </svg>
-            <span style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800;color:var(--text)">{{ hs.score }}</span>
-          </div>
-          <span style="font-size:11px;font-weight:800;color:{% if hs.color == 'green' %}#10b981{% elif hs.color == 'amber' %}#f59e0b{% else %}#ef4444{% endif %}">{{ hs.grade }}</span>
-        </div>
-      </td>
-      <td style="color:var(--gray-500);font-size:12px">{{ c.db_name }}</td>
-      <td style="font-size:12px;color:var(--gray-500)">{{ c.query_limit_monthly }}/mo</td>
-      <td style="font-size:12px;color:var(--gray-500)">{{ c.created_at[:10] }}</td>
-      <td>
-        <a href="/admin/clients/{{ c.account_id }}" class="btn btn-secondary btn-sm">Details</a>
-      </td>
-    </tr>
-    {% endfor %}
-  </table>
+  <div class="qb-table-wrap" style="border:none;border-radius:0">
+    <table class="qb-table" id="clientsTable">
+      <thead>
+        <tr>
+          <th>Client</th>
+          <th>Platform</th>
+          <th>State</th>
+          <th>Health</th>
+          <th>Database</th>
+          <th>Limit</th>
+          <th>Connected</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in clients %}
+        {% set hs = c.health_score %}
+        <tr>
+          <td>
+            <div class="font-bold">{{ c.client_name or "—" }}</div>
+            <div class="text-xs text-muted text-mono">{{ c.account_id[:26] }}…</div>
+          </td>
+          <td><span class="badge badge-blue">{{ c.platform_type or "portal" }}</span></td>
+          <td>{{ status_badge(c.state) }}</td>
+          <td>
+            <div class="health-bar-cell">
+              <div class="health-bar-track">
+                <div class="health-bar-fill {% if hs.color == 'green' %}success{% elif hs.color == 'amber' %}warning{% else %}danger{% endif %}"
+                     style="width:{{ hs.pct }}%"></div>
+              </div>
+              <span class="health-bar-label {% if hs.color == 'green' %}text-success{% elif hs.color == 'amber' %}text-warning{% else %}text-danger{% endif %}">
+                {{ hs.score }}<span class="text-muted" style="font-weight:500">/100</span>
+              </span>
+            </div>
+          </td>
+          <td class="text-sm text-muted">{{ c.db_name or "—" }}</td>
+          <td class="text-sm text-muted nowrap">{{ c.query_limit_monthly }}/mo</td>
+          <td class="text-sm text-muted nowrap">{{ c.created_at[:10] if c.created_at else "—" }}</td>
+          <td>
+            <div class="flex-center gap-1">
+              <a href="/admin/clients/{{ c.account_id }}" class="btn btn-secondary btn-xs">Details</a>
+              <a href="/admin/clients/{{ c.account_id }}/setup" class="btn btn-ghost btn-xs qb-tip" data-tip="KB Setup">{{ ic("settings", 13) }}</a>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
 </div>
 {% endif %}
+
+<style>
+/* ── Search bar ── */
+.clients-search-bar {
+  display: flex;
+  gap: .6rem;
+  align-items: center;
+  margin-bottom: .5rem;
+}
+.clients-search-input-wrap {
+  flex: 1;
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.clients-search-icon {
+  position: absolute;
+  left: 10px;
+  color: var(--text-muted);
+  pointer-events: none;
+  display: flex;
+}
+.clients-search-input-wrap input {
+  width: 100%;
+  padding: 8px 36px 8px 34px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 13px;
+  color: var(--text);
+  background: var(--surface);
+  outline: none;
+  transition: border-color .15s, box-shadow .15s;
+}
+.clients-search-input-wrap input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 16%, transparent);
+}
+.clients-search-clear {
+  position: absolute;
+  right: 8px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  transition: color .12s;
+}
+.clients-search-clear:hover { color: var(--danger); text-decoration: none; }
+
+/* ── Health bar ── */
+.health-bar-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 110px;
+}
+.health-bar-track {
+  flex: 1;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+.health-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width .4s cubic-bezier(.22,.61,.36,1);
+}
+.health-bar-fill.success { background: var(--success); }
+.health-bar-fill.warning { background: var(--warning); }
+.health-bar-fill.danger  { background: var(--danger); }
+.health-bar-label {
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+</style>
 {% endblock %}

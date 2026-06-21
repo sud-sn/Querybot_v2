@@ -79,6 +79,24 @@
 .provider-test-result.err { color: var(--danger); }
 .provider-test-result.loading { color: var(--text-muted); }
 
+/* ── Services section ── */
+.svc-row{display:flex;align-items:center;gap:.875rem;padding:.75rem 0;border-bottom:1px solid var(--border)}
+.svc-row:last-child{border-bottom:none;padding-bottom:0}
+.svc-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.svc-dot.up{background:#16a34a}
+.svc-dot.down{background:#dc2626}
+.svc-dot.checking{background:#d97706;animation:svc-pulse 1s ease-in-out infinite}
+@keyframes svc-pulse{0%,100%{opacity:1}50%{opacity:.4}}
+.svc-name{font-size:13px;font-weight:700;color:var(--text);min-width:80px}
+.svc-meta{font-size:11px;color:var(--text-muted);flex:1}
+.svc-actions{display:flex;align-items:center;gap:.5rem;flex-shrink:0}
+.btn-svc{font-size:11px;padding:5px 12px;border-radius:var(--radius-sm);border:1.5px solid var(--border);background:var(--surface-2);color:var(--text);cursor:pointer;font-weight:600;white-space:nowrap}
+.btn-svc:hover{background:var(--blue);border-color:var(--blue);color:#fff}
+.btn-svc:disabled{opacity:.5;cursor:not-allowed}
+.svc-result{font-size:11px;font-weight:600}
+.svc-result.ok{color:#16a34a}
+.svc-result.err{color:#dc2626}
+
 /* ── Database backend section ── */
 .db-backend-switch{display:inline-flex;gap:.35rem;padding:.3rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface-2);box-shadow:var(--shadow)}
 .db-backend-switch button{border:1px solid transparent;background:transparent;color:var(--text-muted);font-weight:700;font-size:12px;border-radius:var(--radius-sm);padding:8px 14px;cursor:pointer}
@@ -90,7 +108,16 @@
 .db-active-status .dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
 .db-active-status .dot.sqlite{background:#64748b}
 .db-active-status .dot.postgres{background:#16a34a}
-.db-restart-notice{display:flex;align-items:flex-start;gap:.6rem;padding:.65rem .875rem;border-radius:8px;background:#fef9c3;border:1px solid #fde047;font-size:12px;color:#713f12;margin-top:1rem}
+.db-restart-notice{display:flex;align-items:center;gap:.6rem;padding:.65rem .875rem;border-radius:8px;background:#fef9c3;border:1px solid #fde047;font-size:12px;color:#713f12;margin-top:1rem}
+.btn-restart{margin-left:auto;flex-shrink:0;padding:6px 14px;background:#92400e;color:#fff;border:none;border-radius:var(--radius-sm);font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap}
+.btn-restart:hover{filter:brightness(1.15)}
+.btn-restart:disabled{opacity:.55;cursor:not-allowed}
+.restart-strip{display:flex;align-items:center;gap:.6rem;padding:.65rem .875rem;border-radius:8px;font-size:12px;margin-top:.5rem}
+.restart-strip.inprogress{background:#fef3c7;border:1px solid #fde047;color:#713f12}
+.restart-strip.success{background:#dcfce7;border:1px solid #86efac;color:#166534}
+.restart-strip.error{background:#fee2e2;border:1px solid #fca5a5;color:#991b1b}
+@keyframes restart-spin{to{transform:rotate(360deg)}}
+.restart-spin{display:inline-block;animation:restart-spin .8s linear infinite;font-size:14px}
 </style>
 {% endblock %}
 {% block content %}
@@ -427,19 +454,47 @@
 
       <!-- Restart notice (shown when saved ≠ active) -->
       {% if restart_needed %}
-      <div class="db-restart-notice">
+      <div class="db-restart-notice" id="restart-notice">
         {{ ic("info", 14) }}
         <span>
           The saved backend differs from what's currently running.
           <strong>Restart the application</strong> to activate the change.
         </span>
+        <button type="button" class="btn-restart" id="restart-btn" onclick="triggerRestart()">
+          ⟳ Restart now
+        </button>
       </div>
+      <div class="restart-strip" id="restart-status" style="display:none"></div>
       {% endif %}
 
     </div>
   </div>
 
 </form>
+
+<!-- ── Services ─────────────────────────────────────────────────────────── -->
+<div class="card">
+  <div class="card-header">
+    <h2>Services</h2>
+    <button type="button" class="btn btn-secondary btn-sm" onclick="refreshQdrantStatus()">
+      {{ ic("refresh", 13) }} Refresh
+    </button>
+  </div>
+  <div class="card-body">
+    <div class="svc-row">
+      <span class="svc-dot checking" id="qdrant-dot"></span>
+      <span class="svc-name">Qdrant</span>
+      <span class="svc-meta" id="qdrant-meta">Checking…</span>
+      <div class="svc-actions">
+        <button type="button" class="btn-svc" id="qdrant-restart-btn"
+                onclick="restartQdrant()" disabled>
+          ⟳ Restart
+        </button>
+        <span class="svc-result" id="qdrant-restart-result"></span>
+      </div>
+    </div>
+  </div>
+</div>
 
 <!-- ── Password change ──────────────────────────────────────────────────── -->
 <div class="card">
@@ -766,5 +821,156 @@ document.addEventListener('DOMContentLoaded', function(){
   if (window.qbToast) window.qbToast.success('Settings saved successfully.');
 });
 {% endif %}
+
+/* ── Qdrant service status + restart ─────────────────────────────────── */
+function refreshQdrantStatus() {
+  var dot  = document.getElementById('qdrant-dot');
+  var meta = document.getElementById('qdrant-meta');
+  var btn  = document.getElementById('qdrant-restart-btn');
+  if (!dot) return;
+
+  dot.className  = 'svc-dot checking';
+  meta.textContent = 'Checking…';
+  btn.disabled   = true;
+
+  fetch('/admin/system/qdrant-status')
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (d.running) {
+        dot.className = 'svc-dot up';
+        meta.innerHTML = '<strong>Running</strong>'
+          + (d.version ? ' &nbsp;v' + d.version : '')
+          + ' &nbsp;·&nbsp; port 6333'
+          + ' &nbsp;·&nbsp; <span style="color:var(--text-muted)">' + d.manager_label + '</span>';
+        btn.disabled = (d.manager === 'unknown');
+      } else {
+        dot.className = 'svc-dot down';
+        meta.innerHTML = '<strong style="color:#dc2626">Offline</strong>'
+          + ' &nbsp;·&nbsp; port 6333 not responding'
+          + (d.manager !== 'unknown'
+              ? ' &nbsp;·&nbsp; <span style="color:var(--text-muted)">' + d.manager_label + '</span>'
+              : ' &nbsp;·&nbsp; <span style="color:var(--text-muted)">Manager not detected</span>');
+        btn.disabled = (d.manager === 'unknown');
+        btn.textContent = d.running ? '⟳ Restart' : '▶ Start';
+      }
+    })
+    .catch(function(){
+      dot.className = 'svc-dot down';
+      meta.textContent = 'Could not reach server';
+      btn.disabled = true;
+    });
+}
+
+function restartQdrant() {
+  var btn    = document.getElementById('qdrant-restart-btn');
+  var result = document.getElementById('qdrant-restart-result');
+  btn.disabled = true;
+  btn.textContent = '⟳ …';
+  result.className = 'svc-result';
+  result.textContent = '';
+
+  fetch('/admin/system/qdrant-restart', { method: 'POST' })
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (d.ok) {
+        result.className = 'svc-result ok';
+        result.textContent = '✓ ' + d.message;
+        setTimeout(refreshQdrantStatus, 3000);
+      } else {
+        result.className = 'svc-result err';
+        result.textContent = '✗ ' + d.message;
+        btn.disabled = false;
+        btn.textContent = '⟳ Restart';
+      }
+    })
+    .catch(function(err){
+      result.className = 'svc-result err';
+      result.textContent = '✗ Request failed';
+      btn.disabled = false;
+      btn.textContent = '⟳ Restart';
+    });
+}
+
+document.addEventListener('DOMContentLoaded', refreshQdrantStatus);
+
+/* ── Restart application ──────────────────────────────────────────────── */
+function triggerRestart() {
+  var btn    = document.getElementById('restart-btn');
+  var notice = document.getElementById('restart-notice');
+  var strip  = document.getElementById('restart-status');
+  if (!btn || !strip) return;
+
+  if (!confirm('This will restart the server. Any active queries will be interrupted.\n\nContinue?')) return;
+
+  btn.disabled = true;
+  btn.textContent = '⟳ Restarting…';
+  strip.className = 'restart-strip inprogress';
+  strip.style.display = 'flex';
+  strip.innerHTML = '<span class="restart-spin">⟳</span><span id="restart-msg">Sending restart request…</span>';
+
+  fetch('/admin/system/restart', { method: 'POST' })
+    .then(function(r){ return r.json(); })
+    .then(function(data){
+      if (!data.ok) {
+        strip.className = 'restart-strip error';
+        strip.innerHTML = '✗ Restart request failed — server returned an error.';
+        btn.disabled = false; btn.textContent = '⟳ Restart now';
+        return;
+      }
+      // Server accepted the restart — poll /admin/ping until the new process responds
+      var elapsed = 0;
+      var poll = setInterval(function(){
+        elapsed++;
+        var msg = document.getElementById('restart-msg');
+        if (msg) msg.textContent = 'Server is restarting, please wait… (' + elapsed + 's)';
+
+        if (elapsed >= 30) {
+          clearInterval(poll);
+          strip.className = 'restart-strip error';
+          strip.innerHTML = '✗ Restart timed out after 30s — check the server logs.';
+          btn.disabled = false; btn.textContent = '⟳ Retry restart';
+          return;
+        }
+
+        fetch('/admin/ping')
+          .then(function(r){
+            if (r.ok) {
+              clearInterval(poll);
+              strip.className = 'restart-strip success';
+              strip.innerHTML = '✓ Server restarted successfully — reloading in 2s…';
+              setTimeout(function(){ window.location.reload(); }, 2000);
+            }
+          })
+          .catch(function(){ /* server still down — expected, keep polling */ });
+      }, 1000);
+    })
+    .catch(function(){
+      // POST itself failed — server may have already started restarting
+      strip.innerHTML = '<span class="restart-spin">⟳</span><span id="restart-msg">Restart triggered — waiting for server… (0s)</span>';
+      var elapsed = 0;
+      var poll = setInterval(function(){
+        elapsed++;
+        var msg = document.getElementById('restart-msg');
+        if (msg) msg.textContent = 'Restart triggered — waiting for server… (' + elapsed + 's)';
+        if (elapsed >= 30) {
+          clearInterval(poll);
+          strip.className = 'restart-strip error';
+          strip.innerHTML = '✗ Restart timed out after 30s — check the server logs.';
+          btn.disabled = false; btn.textContent = '⟳ Retry restart';
+          return;
+        }
+        fetch('/admin/ping')
+          .then(function(r){
+            if (r.ok) {
+              clearInterval(poll);
+              strip.className = 'restart-strip success';
+              strip.innerHTML = '✓ Server restarted successfully — reloading in 2s…';
+              setTimeout(function(){ window.location.reload(); }, 2000);
+            }
+          })
+          .catch(function(){});
+      }, 1000);
+    });
+}
 </script>
 {% endblock %}

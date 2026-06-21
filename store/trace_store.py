@@ -70,12 +70,16 @@ def update_answer_trace(trace_id: int | None, **fields: Any) -> None:
         "completion_tokens", "generated_sql", "sql_validation_status",
         "sql_validation_error", "db_type", "query_row_count", "query_duration_ms",
         "answer_type", "final_answer_summary", "error_message", "status",
+        "result_rows", "policy_version_at_query",
     }
     assignments, params = [], []
     for key, value in fields.items():
         if key not in allowed:
             continue
-        if key in {"allowed_tables_snapshot", "retrieved_kb_chunk_ids", "retrieved_kb_scores"}:
+        if key in {
+            "allowed_tables_snapshot", "retrieved_kb_chunk_ids",
+            "retrieved_kb_scores", "result_rows",
+        }:
             value = _json(value)
         assignments.append(f"{key}=?")
         params.append(value)
@@ -149,6 +153,25 @@ def finish_answer_trace(
 
 def kb_chunk_refs(chunks: list[str] | None) -> list[dict]:
     return _snippet_refs(chunks)
+
+
+def store_protected_result_rows(
+    account_id: str,
+    question_id: str,
+    rows: list[dict],
+    *,
+    policy_version: int = 0,
+) -> None:
+    """Persist only post-policy rows for later authorized export."""
+    with get_db() as conn:
+        conn.execute(
+            """
+            UPDATE answer_trace
+            SET result_rows=?, policy_version_at_query=?
+            WHERE account_id=? AND question_id=?
+            """,
+            (_json(rows), int(policy_version), account_id, question_id),
+        )
 
 
 def get_answer_trace(trace_id: int) -> dict | None:

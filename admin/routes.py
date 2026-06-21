@@ -25,6 +25,9 @@ import io
 import json
 import logging
 import os
+import sys
+import threading
+import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
@@ -701,6 +704,51 @@ async def test_pg_connection(request: Request, url: str = ""):
         return JSONResponse({"ok": False, "error": str(exc)[:300]})
 
 
+@router.get("/system/qdrant-status")
+async def qdrant_status(request: Request):
+    """Return Qdrant running status and detected manager — no auth needed (read-only health check)."""
+    from core.qdrant_manager import get_status, detect_manager, manager_label
+    status  = get_status()
+    manager = detect_manager()
+    return JSONResponse({
+        "running": status["running"],
+        "version": status["version"],
+        "manager": manager,
+        "manager_label": manager_label(manager),
+    })
+
+
+@router.post("/system/qdrant-restart")
+async def qdrant_restart(request: Request):
+    """Restart Qdrant using whichever manager is detected on this host."""
+    if not _is_auth(request):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    from core.qdrant_manager import detect_manager, restart
+    manager = detect_manager()
+    ok, msg = restart(manager)
+    return JSONResponse({"ok": ok, "message": msg, "manager": manager})
+
+
+@router.get("/ping")
+async def admin_ping():
+    """Liveness check — polled by the UI after a restart to detect when the new process is up."""
+    return JSONResponse({"ok": True})
+
+
+@router.post("/system/restart")
+async def system_restart(request: Request):
+    """Schedule a graceful restart via os.execv(). Cross-platform: Linux exec-replace, Windows spawn+exit."""
+    if not _is_auth(request):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    def _do_restart():
+        time.sleep(1.5)
+        os.execv(sys.executable, [sys.executable] + sys.argv)
+
+    threading.Thread(target=_do_restart, daemon=True).start()
+    return JSONResponse({"ok": True})
+
+
 @router.post("/system")
 async def system_save(
     request: Request,
@@ -948,6 +996,9 @@ def _preserve_existing_db_secret_values(db_id: int | None, creds: dict) -> dict:
         for k, v in creds.items():
             if not v:
                 creds[k] = existing["credentials"].get(k, "")
+        if "selected_schema_tables" not in creds and existing["credentials"].get("selected_schema_tables"):
+            creds["selected_schema_tables"] = existing["credentials"]["selected_schema_tables"]
+            creds["selected_schemas"] = existing["credentials"].get("selected_schemas", [])
     return creds
 
 

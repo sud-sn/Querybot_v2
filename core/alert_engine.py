@@ -80,6 +80,9 @@ def create_alert(
     condition: str = "change_pct",
     threshold: float = 10.0,
     db_cfg: dict | None = None,
+    account_id: str = "",
+    user_id: str = "",
+    purpose_id: str = "",
 ) -> dict:
     """
     Create and persist a new alert definition.
@@ -117,6 +120,9 @@ def create_alert(
         "threshold": float(threshold),
         # Non-secret DB hint — needed to route check_alert_now() calls
         "db_type": str((db_cfg or {}).get("db_type", "azure_sql")),
+        "account_id": account_id,
+        "user_id": user_id,
+        "purpose_id": purpose_id,
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "last_checked": None,
         "last_value": None,
@@ -193,11 +199,46 @@ def check_alert_now(alert_id: str, db_cfg: dict) -> dict:
 
     # ── Execute SQL ───────────────────────────────────────────────────────────
     try:
-        rows = run_query(
-            db_cfg.get("credentials") or db_cfg,
-            db_cfg.get("db_type", alert.get("db_type", "azure_sql")),
-            alert["sql"],
-        )
+        if alert.get("account_id") and alert.get("user_id"):
+            import store
+            from core.compliance.governed_query import execute_governed_query
+            from core.compliance.policy_engine import evaluate, resolve_context
+            from core.schema import load_known_tables, load_schema_columns
+
+            user = store.get_user(int(alert["user_id"]))
+            if not user:
+                return {"ok": False, "reason": "alert_user_missing", "alert_id": alert_id}
+            state = store.get_client_state(alert["account_id"])
+            context = resolve_context(
+                alert["account_id"], user, action="query_execution",
+                channel="alert", purpose_id=alert.get("purpose_id", ""),
+            )
+            governed = execute_governed_query(
+                db_cfg.get("credentials") or db_cfg,
+                db_cfg.get("db_type", alert.get("db_type", "azure_sql")),
+                alert["sql"],
+                context=context,
+                known_tables=load_known_tables(state.get("schema_dir", "")),
+                table_columns=load_schema_columns(state.get("schema_dir", "")),
+                allowed_tables=store.get_allowed_tables(user),
+            )
+            alert_context = resolve_context(
+                alert["account_id"], user, action="alert", channel="alert",
+                purpose_id=context.purpose_id,
+            )
+            alert_decision = evaluate(alert_context, governed.analysis.resources)
+            if not alert_decision.effective_allowed:
+                return {
+                    "ok": False, "reason": alert_decision.reason_code,
+                    "detail": alert_decision.explanation, "alert_id": alert_id,
+                }
+            rows = governed.rows
+        else:
+            rows = run_query(
+                db_cfg.get("credentials") or db_cfg,
+                db_cfg.get("db_type", alert.get("db_type", "azure_sql")),
+                alert["sql"],
+            )
     except Exception as exc:
         return {
             "ok": False, "reason": "query_failed",

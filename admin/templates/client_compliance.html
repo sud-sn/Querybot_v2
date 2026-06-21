@@ -1,0 +1,229 @@
+{% extends "base.html" %}
+{% from "macros.html" import breadcrumb, client_workspace_nav %}
+{% block title %}Compliance - {{ client.client_name or client.account_id[:16] }}{% endblock %}
+{% block breadcrumb %}
+{{ breadcrumb([
+  {"label":"Clients","href":"/admin/clients"},
+  {"label":client.client_name or client.account_id[:16],"href":"/admin/clients/" ~ client.account_id},
+  {"label":"Compliance","href":""}
+]) }}
+{% endblock %}
+{% block head %}
+<style>
+.compliance-head{display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;margin-bottom:1rem}
+.readiness{padding:.45rem .7rem;border-radius:999px;font-size:12px;font-weight:800;letter-spacing:.03em}
+.ready-green{background:#dcfce7;color:#166534}.ready-amber{background:#fef3c7;color:#92400e}.ready-red{background:#fee2e2;color:#991b1b}
+.compliance-nav{display:flex;gap:.45rem;overflow:auto;padding:.25rem 0 .55rem;margin-bottom:1rem;position:sticky;top:0;background:var(--surface);z-index:4}
+.compliance-nav button{white-space:nowrap}.compliance-panel{display:none}.compliance-panel.active{display:block}
+.stat-grid{display:grid;grid-template-columns:repeat(4,minmax(140px,1fr));gap:.75rem;margin-bottom:1rem}
+.stat{padding:1rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface)}
+.stat strong{display:block;font-size:24px}.stat span{font-size:11px;color:var(--text-muted)}
+.profile-grid{display:grid;grid-template-columns:repeat(3,minmax(220px,1fr));gap:.75rem}
+.profile-card{display:block;border:1px solid var(--border);border-radius:var(--radius);padding:1rem;cursor:pointer}
+.profile-card:has(input:checked){border-color:var(--blue);background:var(--blue-light)}
+.classification-table{width:100%;border-collapse:collapse}.classification-table th,.classification-table td{padding:.55rem;border-bottom:1px solid var(--border);text-align:left;font-size:12px}
+.tag{display:inline-block;padding:2px 6px;margin:1px;border-radius:999px;background:var(--surface-2);font-size:10px;font-weight:700}
+.split{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(300px,.7fr);gap:1rem}
+.assessment-row{display:grid;grid-template-columns:110px 100px 1fr;gap:.6rem;padding:.65rem 0;border-bottom:1px solid var(--border);font-size:12px}
+.sim-output{white-space:pre-wrap;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius);padding:1rem;min-height:120px;font-family:monospace;font-size:12px}
+.sticky-actions{position:sticky;bottom:0;background:var(--surface);border-top:1px solid var(--border);padding:.75rem 0;display:flex;gap:.5rem}
+@media(max-width:900px){.stat-grid,.profile-grid,.split{grid-template-columns:1fr 1fr}}
+@media(max-width:640px){.compliance-head,.stat-grid,.profile-grid,.split{display:block}.stat,.profile-card{margin-bottom:.65rem}.classification-wrap{overflow:auto}.assessment-row{grid-template-columns:80px 75px minmax(180px,1fr)}}
+</style>
+{% endblock %}
+{% block content %}
+{{ client_workspace_nav(client, "compliance") }}
+<div class="compliance-head">
+  <div><h1 style="font-size:20px">Regulated Data Controls</h1><p style="font-size:13px;color:var(--text-muted)">Technical policy controls and evidence. This does not constitute regulatory certification.</p></div>
+  {% set state = profile.lifecycle_state or 'DRAFT' %}
+  <span class="readiness {% if state == 'REGULATED_READY' %}ready-green{% elif state in ['PILOT_READY','PRODUCTION_BLOCKED','CLASSIFICATION_PENDING','POLICY_PENDING'] %}ready-amber{% else %}ready-red{% endif %}">{{ state }}</span>
+</div>
+{% if saved %}<div class="alert alert-success">Compliance configuration updated: {{ saved }}.</div>{% endif %}
+{% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+
+<div class="stat-grid">
+  <div class="stat"><strong>{{ classifications|length }}</strong><span>classified columns</span></div>
+  <div class="stat"><strong>{{ classifications|selectattr('reviewed','equalto',0)|list|length }}</strong><span>awaiting review</span></div>
+  <div class="stat"><strong>v{{ profile.active_policy_version or 0 }}</strong><span>active policy</span></div>
+  <div class="stat"><strong>{{ agreements|length }}</strong><span>provider agreements</span></div>
+</div>
+
+<div class="compliance-nav" role="tablist">
+  {% for id,label in [('profile','Profile'),('classification','Classification'),('policies','Policies'),('purposes','Purposes'),('egress','AI & Egress'),('simulator','Simulator'),('readiness','Readiness'),('history','History'),('emergency','Break-glass')] %}
+  <button class="btn btn-secondary btn-sm" type="button" data-panel="{{ id }}">{{ label }}</button>
+  {% endfor %}
+</div>
+
+<section class="compliance-panel active" id="panel-profile">
+  <div class="card"><div class="card-header"><h2>Industry profile</h2></div><div class="card-body">
+    <form method="post" action="/admin/clients/{{ client.account_id }}/compliance/profile">
+      <div class="profile-grid">
+        <label class="profile-card"><input type="radio" name="industry" value="standard" {% if profile.industry == 'standard' %}checked{% endif %}><strong> Standard</strong><p>Existing access model with no regulated default-deny controls.</p></label>
+        <label class="profile-card"><input type="radio" name="industry" value="banking" {% if profile.industry == 'banking' %}checked{% endif %}><strong> Banking & Financial</strong><p>PII, PCI, KYC/AML and financial-data controls.</p></label>
+        <label class="profile-card"><input type="radio" name="industry" value="healthcare_pharmacy" {% if profile.industry == 'healthcare_pharmacy' %}checked{% endif %}><strong> Healthcare & Pharmacy</strong><p>PHI, patient, prescription, compounding and payment controls.</p></label>
+      </div>
+      <div class="form-group" style="margin-top:1rem"><label>Jurisdictions</label><div style="display:flex;gap:1rem;flex-wrap:wrap">
+        {% for code in ['US','EU','IN','CA'] %}<label><input type="checkbox" name="jurisdictions" value="{{ code }}" {% if code in profile.jurisdictions %}checked{% endif %}> {{ code }}</label>{% endfor %}
+      </div></div>
+      <button class="btn btn-primary" type="submit">Apply profile and seed draft policy</button>
+    </form>
+  </div></div>
+</section>
+
+<section class="compliance-panel" id="panel-classification">
+  <div class="card"><div class="card-header"><h2>Classification workspace</h2></div><div class="card-body">
+    <div class="form-group"><input id="class-search" type="search" placeholder="Filter table, column or tag"></div>
+    <div class="classification-wrap"><table class="classification-table"><thead><tr><th>Resource</th><th>Tags</th><th>Sensitivity</th><th>Identifiability</th><th>Confidence</th><th>Review</th></tr></thead><tbody>
+      {% for item in classifications %}
+      <tr data-search="{{ item.table_fqn }} {{ item.column_name }} {{ item.tags|join(' ') }}">
+        <td><strong>{{ item.column_name }}</strong><br><span style="color:var(--text-muted)">{{ item.table_fqn }}</span></td>
+        <td>{% for tag in item.tags %}<span class="tag">{{ tag }}</span>{% endfor %}</td>
+        <td><select data-field="sensitivity"><option>{{ item.sensitivity }}</option>{% for v in ['PUBLIC','INTERNAL','CONFIDENTIAL','RESTRICTED'] %}{% if v != item.sensitivity %}<option>{{ v }}</option>{% endif %}{% endfor %}</select></td>
+        <td><select data-field="identifiability"><option>{{ item.identifiability }}</option>{% for v in ['NONE','INDIRECT','DIRECT'] %}{% if v != item.identifiability %}<option>{{ v }}</option>{% endif %}{% endfor %}</select></td>
+        <td>{{ (item.confidence * 100)|round|int }}%</td>
+        <td><button class="btn btn-secondary btn-sm save-classification" data-table="{{ item.table_fqn }}" data-column="{{ item.column_name }}" data-tags="{{ item.tags|join(',') }}" data-mask="{{ item.mask_strategy }}">{{ 'Reviewed' if item.reviewed else 'Review now' }}</button></td>
+      </tr>
+      {% else %}<tr><td colspan="6">No schema classifications yet. Apply a regulated profile after schema discovery.</td></tr>{% endfor %}
+    </tbody></table></div>
+  </div></div>
+</section>
+
+<section class="compliance-panel" id="panel-policies">
+  <div class="split">
+    <div class="card"><div class="card-header"><h2>Effective policy rules</h2></div><div class="card-body">
+      <p style="font-size:12px;color:var(--text-muted)">Mandatory denials take precedence. Regulated tenants default to deny.</p>
+      {% for rule in rules %}<div style="padding:.6rem 0;border-bottom:1px solid var(--border);font-size:12px"><strong>{{ rule.name }}</strong><br>{{ rule.subject_type }}:{{ rule.subject_id }} · {{ rule.action }} · {{ rule.resource_pattern }} · <span class="tag">{{ rule.effect }}</span>{% if rule.mandatory %}<span class="tag">mandatory</span>{% endif %}</div>{% else %}<p>No rules configured.</p>{% endfor %}
+    </div></div>
+    <div class="card"><div class="card-header"><h2>Policy behavior</h2></div><div class="card-body"><p>Apply the industry profile to seed a conservative policy. Use the simulator before activation.</p><p><strong>Current mode:</strong> {{ profile.enforcement_mode }}</p></div></div>
+  </div>
+  <div class="card" style="margin-top:1rem"><div class="card-header"><h2>Structured row access</h2></div><div class="card-body">
+    {% for row_policy in row_policies %}<p><strong>{{ row_policy.name or row_policy.table_fqn }}</strong> · {{ row_policy.subject_type }}:{{ row_policy.subject_id }} · {{ row_policy.condition }}</p>{% else %}<p>No row restrictions configured.</p>{% endfor %}
+    <form id="row-policy-form">
+      <div class="form-grid">
+        <div class="form-group"><label>Table FQN</label><input name="table_fqn" required placeholder="DB.SCHEMA.TABLE"></div>
+        <div class="form-group"><label>Role</label><select name="subject_id"><option>analyst</option><option>admin</option></select></div>
+        <div class="form-group"><label>Field</label><input name="field" required placeholder="BRANCH_ID"></div>
+        <div class="form-group"><label>Operator</label><select name="operator"><option>=</option><option>IN</option><option>!=</option><option>IS NOT NULL</option></select></div>
+        <div class="form-group"><label>Value source</label><select name="value_source"><option value="static">Static value</option><option value="user.id">User ID</option><option value="user.groups">User groups</option><option value="user.attributes.branch_id">User branch attribute</option></select></div>
+        <div class="form-group"><label>Static value</label><input name="value" placeholder="Used only for static value"></div>
+      </div>
+      <button class="btn btn-primary" type="submit">Add row policy</button>
+    </form>
+  </div></div>
+</section>
+
+<section class="compliance-panel" id="panel-purposes">
+  <div class="card"><div class="card-header"><h2>Purpose registry</h2></div><div class="card-body">
+    {% for purpose in purposes %}<div style="padding:.75rem 0;border-bottom:1px solid var(--border)"><strong>{{ purpose.name }}</strong> <span class="tag">{{ purpose.purpose_key }}</span>{% if purpose.requires_prompt %}<span class="tag">prompt user</span>{% endif %}<p style="font-size:12px">{{ purpose.description or 'Seeded from the selected policy pack.' }}</p></div>{% else %}<p>No purposes configured.</p>{% endfor %}
+  </div></div>
+</section>
+
+<section class="compliance-panel" id="panel-egress">
+  <div class="split">
+    <div class="card"><div class="card-header"><h2>Provider agreements</h2></div><div class="card-body">
+      {% for item in agreements %}<p><strong>{{ item.provider }}</strong> · {{ item.agreement_type }} · {{ item.frameworks|join(', ') }}{% if item.expires_at %} · expires {{ item.expires_at }}{% endif %}</p>{% else %}<p>No provider agreement recorded.</p>{% endfor %}
+    </div></div>
+    <div class="card"><div class="card-header"><h2>Record agreement</h2></div><div class="card-body">
+      <form method="post" action="/admin/clients/{{ client.account_id }}/compliance/agreement">
+        <div class="form-group"><label>Provider</label><select name="provider"><option>azure_openai</option><option>openai</option><option>anthropic</option></select></div>
+        <div class="form-group"><label>Agreement type</label><select name="agreement_type"><option>BAA</option><option>DPA</option><option>Service provider contract</option></select></div>
+        <div class="form-group"><label>Frameworks</label><input name="frameworks" placeholder="HIPAA, GLBA_SAFEGUARDS"></div>
+        <div class="form-group"><label>Artifact reference</label><input name="artifact_ref" placeholder="Contract repository reference"></div>
+        <div class="form-grid"><div class="form-group"><label>Signed</label><input type="date" name="signed_at"></div><div class="form-group"><label>Expires</label><input type="date" name="expires_at"></div></div>
+        <button class="btn btn-primary">Record agreement</button>
+      </form>
+    </div></div>
+  </div>
+  <div class="card" style="margin-top:1rem"><div class="card-header"><h2>Production security controls</h2></div><div class="card-body">
+    <form method="post" action="/admin/clients/{{ client.account_id }}/compliance/controls">
+      <div class="form-grid">
+        <div class="form-group"><label>Identity control</label><select name="identity_control"><option value="password" {% if profile.identity_control == 'password' %}selected{% endif %}>Password only</option><option value="mfa" {% if profile.identity_control == 'mfa' %}selected{% endif %}>MFA</option><option value="oidc" {% if profile.identity_control == 'oidc' %}selected{% endif %}>OIDC</option><option value="entra" {% if profile.identity_control == 'entra' %}selected{% endif %}>Microsoft Entra ID</option></select></div>
+        <div class="form-group"><label>Immutable audit destination</label><input name="external_audit_destination" value="{{ profile.external_audit_destination or '' }}" placeholder="Azure Blob/SIEM destination"></div>
+      </div>
+      <label style="display:block;margin:.5rem 0"><input type="checkbox" name="managed_secrets_enabled" {% if profile.managed_secrets_enabled %}checked{% endif %}> Managed secrets enabled</label>
+      <label style="display:block;margin:.5rem 0"><input type="checkbox" name="immutable_audit_enabled" {% if profile.immutable_audit_enabled %}checked{% endif %}> Immutable external audit enabled</label>
+      <button class="btn btn-primary">Save production controls</button>
+    </form>
+  </div></div>
+</section>
+
+<section class="compliance-panel" id="panel-simulator">
+  <div class="split">
+    <div class="card"><div class="card-header"><h2>Policy simulator</h2></div><div class="card-body">
+      <form id="sim-form">
+        <div class="form-group"><label>User</label><select name="user_id"><option value="">Synthetic analyst</option>{% for user in users %}<option value="{{ user.id }}">{{ user.name }} ({{ user.role }})</option>{% endfor %}</select></div>
+        <div class="form-grid"><div class="form-group"><label>Action</label><select name="action"><option>query_execution</option><option>llm_context</option><option>result_release</option><option>chart</option><option>export</option><option>alert</option></select></div><div class="form-group"><label>Purpose</label><select name="purpose_id"><option value="">Role default</option>{% for p in purposes %}<option value="{{ p.purpose_key }}">{{ p.name }}</option>{% endfor %}</select></div></div>
+        <div class="form-group"><label>Resources, one per line</label><textarea name="resources" rows="6" placeholder="DATABASE.SCHEMA.TABLE.COLUMN"></textarea></div>
+        <button class="btn btn-primary">Run dry-run</button>
+      </form>
+    </div></div>
+    <pre class="sim-output" id="sim-output">Run a simulation to see allow/deny, masks, aggregate requirements and cache obligations.</pre>
+  </div>
+</section>
+
+<section class="compliance-panel" id="panel-readiness">
+  <div class="card"><div class="card-header"><h2>Readiness assessment</h2></div><div class="card-body">
+    {% if assessment %}{% for item in assessment.results %}<div class="assessment-row"><span class="tag">{{ item.severity }}</span><strong style="color:{% if item.status == 'pass' %}#15803d{% else %}#b91c1c{% endif %}">{{ item.status|upper }}</strong><div>{{ item.message }}{% if item.status == 'fail' %}<br><span style="color:var(--text-muted)">{{ item.remediation }}</span>{% endif %}</div></div>{% endfor %}{% else %}<p>No assessment has been run.</p>{% endif %}
+    <div class="sticky-actions"><form method="post" action="/admin/clients/{{ client.account_id }}/compliance/assess"><button class="btn btn-secondary">Run assessment</button></form><form method="post" action="/admin/clients/{{ client.account_id }}/compliance/activate"><button class="btn btn-primary">Activate regulated enforcement</button></form></div>
+    <p style="font-size:11px;color:var(--text-muted)">Password-only VM tenants can reach PILOT_READY. REGULATED_READY requires MFA/SSO, managed secrets and immutable external audit storage.</p>
+  </div></div>
+</section>
+
+<section class="compliance-panel" id="panel-history">
+  <div class="split"><div class="card"><div class="card-header"><h2>Policy versions</h2></div><div class="card-body">{% for v in versions %}<p><strong>v{{ v.version }}</strong> · {{ v.status }} · {{ v.change_summary }} · {{ v.created_at }}</p>{% else %}<p>No versions.</p>{% endfor %}</div></div>
+  <div class="card"><div class="card-header"><h2>Recent decisions</h2></div><div class="card-body">{% for d in decisions %}<p><strong>{{ d.action }}</strong> · {{ 'ALLOW' if d.allowed else 'DENY' }} · {{ d.reason_code }}<br><span style="font-size:11px;color:var(--text-muted)">{{ d.created_at }} · v{{ d.policy_version }}</span></p>{% else %}<p>No decisions recorded.</p>{% endfor %}</div></div></div>
+</section>
+
+<section class="compliance-panel" id="panel-emergency">
+  <div class="card"><div class="card-header"><h2>Create time-limited break-glass grant</h2></div><div class="card-body">
+    <div class="alert alert-info">Emergency grants cannot enable exports, cross-tenant access, writes, prohibited LLM egress, or provider-agreement bypasses.</div>
+    <form method="post" action="/admin/clients/{{ client.account_id }}/compliance/break-glass">
+      <div class="form-grid"><div class="form-group"><label>User</label><select name="user_id" required>{% for user in users %}<option value="{{ user.id }}">{{ user.name }}</option>{% endfor %}</select></div><div class="form-group"><label>Duration</label><input type="number" name="duration_minutes" min="1" max="60" value="15"></div></div>
+      <div class="form-group"><label>Incident reference</label><input name="incident_ref" required></div>
+      <div class="form-group"><label>Reason</label><textarea name="reason" required></textarea></div>
+      <div class="form-group"><label>Resources</label><input name="resources" value="*" placeholder="Comma-separated FQNs"></div>
+      <input type="hidden" name="actions" value="query_execution,result_release,chart,alert">
+      <div class="form-group"><label>Re-enter admin password</label><input type="password" name="password" required></div>
+      <button class="btn btn-danger">Create emergency grant</button>
+    </form>
+  </div></div>
+</section>
+
+<script>
+const panels=document.querySelectorAll('.compliance-panel');
+document.querySelectorAll('[data-panel]').forEach(btn=>btn.addEventListener('click',()=>{
+  panels.forEach(p=>p.classList.remove('active'));
+  document.getElementById('panel-'+btn.dataset.panel).classList.add('active');
+}));
+document.getElementById('class-search')?.addEventListener('input',e=>{
+  const q=e.target.value.toLowerCase();
+  document.querySelectorAll('[data-search]').forEach(row=>row.style.display=row.dataset.search.toLowerCase().includes(q)?'':'none');
+});
+document.querySelectorAll('.save-classification').forEach(btn=>btn.addEventListener('click',async()=>{
+  const row=btn.closest('tr');btn.disabled=true;
+  const resp=await fetch('/admin/api/clients/{{ client.account_id }}/compliance/classifications',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+    table_fqn:btn.dataset.table,column_name:btn.dataset.column,tags:btn.dataset.tags.split(',').filter(Boolean),
+    sensitivity:row.querySelector('[data-field=sensitivity]').value,
+    identifiability:row.querySelector('[data-field=identifiability]').value,
+    mask_strategy:btn.dataset.mask,reviewed:true,confidence:1
+  })});
+  btn.textContent=resp.ok?'Reviewed':'Retry';btn.disabled=false;
+}));
+document.getElementById('sim-form')?.addEventListener('submit',async e=>{
+  e.preventDefault();const fd=new FormData(e.target);
+  const body={user_id:fd.get('user_id'),action:fd.get('action'),purpose_id:fd.get('purpose_id'),channel:'portal',resources:String(fd.get('resources')||'').split(/\r?\n/).filter(Boolean)};
+  const resp=await fetch('/admin/api/clients/{{ client.account_id }}/compliance/simulate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  document.getElementById('sim-output').textContent=JSON.stringify(await resp.json(),null,2);
+});
+const existingRowPolicies={{ row_policies|tojson }};
+document.getElementById('row-policy-form')?.addEventListener('submit',async e=>{
+  e.preventDefault();const fd=new FormData(e.target);
+  let value=fd.get('value');
+  if(fd.get('operator')==='IN' && fd.get('value_source')==='static') value=String(value||'').split(',').map(v=>v.trim()).filter(Boolean);
+  const next={name:'Admin row policy',subject_type:'role',subject_id:fd.get('subject_id'),table_fqn:fd.get('table_fqn'),condition:{field:fd.get('field'),operator:fd.get('operator'),value_source:fd.get('value_source'),value:value}};
+  const clean=existingRowPolicies.map(p=>({name:p.name,subject_type:p.subject_type,subject_id:p.subject_id,table_fqn:p.table_fqn,condition:p.condition}));
+  const resp=await fetch('/admin/api/clients/{{ client.account_id }}/compliance/row-policies',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({row_policies:[...clean,next]})});
+  if(resp.ok) location.reload(); else alert('Could not save the row policy.');
+});
+</script>
+{% endblock %}

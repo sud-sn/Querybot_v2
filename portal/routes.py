@@ -751,7 +751,7 @@ async def portal_dashboard(request: Request):
 
     for chart in charts:
         chart_db = store.get_db_config(chart["db_config_id"]) if chart.get("db_config_id") else db_cfg
-        chart_data = _refresh_chart(chart, chart_db)
+        chart_data = _refresh_chart(chart, chart_db, user)
         rendered_charts.append(chart_data)
 
     return _resp(request, "portal_dashboard.html", {
@@ -767,7 +767,7 @@ async def portal_dashboard(request: Request):
     })
 
 
-def _refresh_chart(chart: dict, db_cfg: dict | None) -> dict:
+def _refresh_chart(chart: dict, db_cfg: dict | None, user: dict) -> dict:
     """Re-execute stored SQL and prepare interactive chart data."""
     result = dict(chart)
     result["chart_json"] = None
@@ -779,7 +779,42 @@ def _refresh_chart(chart: dict, db_cfg: dict | None) -> dict:
         return result
 
     try:
-        rows = run_query(db_cfg["credentials"], db_cfg["db_type"], chart["sql_query"])
+        from core.compliance.governed_query import execute_governed_query
+        from core.compliance.policy_engine import evaluate, resolve_context
+        from core.schema import load_known_tables, load_schema_columns
+
+        state = store.get_client_state(user["account_id"])
+        known_tables = load_known_tables(state.get("schema_dir", ""))
+        table_columns = load_schema_columns(state.get("schema_dir", ""))
+        query_context = resolve_context(
+            user["account_id"], user, action="query_execution", channel="portal"
+        )
+        governed = execute_governed_query(
+            db_cfg["credentials"], db_cfg["db_type"], chart["sql_query"],
+            context=query_context, known_tables=known_tables,
+            table_columns=table_columns,
+            allowed_tables=store.get_allowed_tables(user),
+        )
+        chart_context = resolve_context(
+            user["account_id"], user, action="chart", channel="portal",
+            purpose_id=query_context.purpose_id,
+        )
+        chart_decision = evaluate(chart_context, governed.analysis.resources)
+        aggregate_sources = {
+            source
+            for output, sources in governed.analysis.lineage.items()
+            if output in governed.analysis.aggregate_outputs
+            for source in sources
+        }
+        required_aggregate = {
+            resource.key for resource in chart_decision.aggregate_only
+        }
+        if (
+            not chart_decision.effective_allowed
+            or bool(required_aggregate - aggregate_sources)
+        ):
+            raise PermissionError(chart_decision.explanation or "Chart blocked by data policy.")
+        rows = governed.rows
         result["row_count"] = len(rows)
         if rows:
             chart_type = chart.get("chart_type") or detect_chart_type(rows, question=chart.get("question", ""))
@@ -1186,6 +1221,37 @@ async def portal_export_csv(request: Request, trace_id: int | None = None):
     if not rows:
         return JSONResponse({"ok": False, "error": "No rows in this query result."}, status_code=404)
 
+    sql = str(trace.get("sql") or trace.get("generated_sql") or "")
+    try:
+        from core.compliance.policy_engine import evaluate, resolve_context
+        from core.compliance.sql_guard import analyze_sql
+
+        analysis = analyze_sql(sql, trace.get("db_type") or "azure_sql") if sql else None
+        export_context = resolve_context(
+            user["account_id"], user, action="export", channel="portal"
+        )
+        export_decision = evaluate(
+            export_context, analysis.resources if analysis else []
+        )
+        if not export_decision.effective_allowed or not export_decision.export_allowed:
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "error": export_decision.explanation or "Export is blocked by the workspace data policy.",
+                    "reason_code": export_decision.reason_code,
+                },
+                status_code=403,
+            )
+    except Exception as exc:
+        profile = store.get_compliance_profile(user["account_id"])
+        if profile.get("mode") == "regulated" and profile.get("enforcement_mode") == "enforce":
+            return JSONResponse(
+                {"ok": False, "error": f"Export policy could not be verified: {str(exc)[:120]}"},
+                status_code=403,
+            )
+        export_context = None
+        export_decision = None
+
     buf = _io.StringIO()
     writer = csv.DictWriter(buf, fieldnames=list(rows[0].keys()))
     writer.writeheader()
@@ -1195,12 +1261,27 @@ async def portal_export_csv(request: Request, trace_id: int | None = None):
     question_slug = (trace.get("question") or "query")[:40].lower()
     question_slug = "".join(c if c.isalnum() else "_" for c in question_slug).strip("_")
     filename = f"querybot_{question_slug}.csv"
+    export_id = store.log_export_event(
+        account_id=user["account_id"],
+        user_id=str(user.get("id") or ""),
+        trace_id=str(trace.get("question_id") or trace.get("id") or ""),
+        policy_version=int(
+            (export_decision.policy_version if export_decision else 0) or 0
+        ),
+        purpose_id=(export_context.purpose_id if export_context else ""),
+        export_format="csv",
+        row_count=len(rows),
+        columns=list(rows[0].keys()),
+    )
 
     from fastapi.responses import StreamingResponse as _SR
     return _SR(
         iter([buf.getvalue()]),
         media_type="text/csv",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-QueryBot-Export-ID": export_id,
+        },
     )
 
 

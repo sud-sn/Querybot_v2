@@ -577,6 +577,15 @@ class ResultCache:
         with self._lock:
             self._store.pop(session_id, None)
 
+    def clear_account(self, account_id: str) -> int:
+        """Remove every cached session belonging to a tenant."""
+        prefix = f"{account_id}:"
+        with self._lock:
+            keys = [key for key in self._store if key == account_id or key.startswith(prefix)]
+            for key in keys:
+                self._store.pop(key, None)
+        return len(keys)
+
     def _get(self, session_id: str) -> "_CacheEntry | None":
         """Must be called with self._lock held."""
         entry = self._store.get(session_id)
