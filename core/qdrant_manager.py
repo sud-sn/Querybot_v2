@@ -8,12 +8,13 @@ Detection order (first match wins):
   1. Docker   — `docker inspect querybot-qdrant`
   2. systemd  — `systemctl list-units … qdrant*`
   3. Windows  — `sc query qdrant`
-  4. unknown  — status-only, no restart
+  4. process  — `pgrep -x qdrant`  (bare binary, Linux/macOS)
+  5. unknown  — status-only, no restart
 
 Entry points
 ────────────
   get_status()     → {"running": bool, "version": str}
-  detect_manager() → "docker" | "systemd" | "windows-service" | "unknown"
+  detect_manager() → "docker" | "systemd" | "windows-service" | "process" | "unknown"
   manager_label(m) → human-readable string
   restart(m)       → (success: bool, message: str)
 """
@@ -92,6 +93,18 @@ def detect_manager() -> str:
         except (FileNotFoundError, subprocess.TimeoutExpired):
             pass
 
+    # 4. Standalone process — bare binary launched directly (./qdrant or /path/to/qdrant)
+    try:
+        r = subprocess.run(
+            ["pgrep", "-x", "qdrant"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if r.returncode == 0 and r.stdout.strip():
+            log.debug("Qdrant manager: standalone process (pid=%s)", r.stdout.strip().split()[0])
+            return "process"
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+
     log.debug("Qdrant manager: unknown")
     return "unknown"
 
@@ -100,6 +113,7 @@ _MANAGER_LABELS = {
     "docker":          "Docker container",
     "systemd":         "systemd service",
     "windows-service": "Windows service",
+    "process":         "Standalone process",
     "unknown":         "Not detected",
 }
 
@@ -145,6 +159,31 @@ def restart(manager: str) -> tuple[bool, str]:
             if r.returncode == 0:
                 return True, "Windows service 'qdrant' restarted."
             return False, (r.stderr.strip() or "sc start failed")
+
+        elif manager == "process":
+            # Standalone binary: find the PID, resolve its working directory,
+            # kill it, then re-launch from the same directory.
+            pid_r = subprocess.run(["pgrep", "-x", "qdrant"],
+                                   capture_output=True, text=True, timeout=5)
+            if pid_r.returncode != 0 or not pid_r.stdout.strip():
+                return False, "Qdrant process not found — may have already stopped."
+            pid = pid_r.stdout.strip().split()[0]
+            cwd_r = subprocess.run(["readlink", "-f", f"/proc/{pid}/cwd"],
+                                   capture_output=True, text=True, timeout=5)
+            work_dir = cwd_r.stdout.strip() if cwd_r.returncode == 0 else ""
+            if not work_dir:
+                return False, f"Could not resolve working directory for PID {pid}."
+            subprocess.run(["kill", pid], timeout=10)
+            time.sleep(2)
+            import os as _os
+            subprocess.Popen(
+                ["./qdrant"],
+                cwd=work_dir,
+                stdout=_os.open(_os.devnull, _os.O_WRONLY),
+                stderr=_os.open(_os.devnull, _os.O_WRONLY),
+                start_new_session=True,
+            )
+            return True, f"Qdrant restarted (PID {pid} killed, relaunched from {work_dir})."
 
         else:
             return False, "Cannot restart: Qdrant manager not detected on this host."
