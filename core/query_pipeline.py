@@ -905,6 +905,44 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
             _analytic_hints.append(build_pivot_sql_hint())
             log.info("analytic_intent: pivot=True")
 
+        # ── Tier 3 SQL hints ──────────────────────────────────────────────────
+        if _intents.get("funnel"):
+            from core.funnel_analysis import build_funnel_sql_hint
+            _analytic_hints.append(build_funnel_sql_hint())
+            log.info("analytic_intent: funnel=True")
+
+        if _intents.get("forecast"):
+            from core.forecast import build_forecast_sql_hint, extract_forecast_periods
+            _n_fc = extract_forecast_periods(question)
+            _analytic_hints.append(build_forecast_sql_hint(_n_fc))
+            log.info("analytic_intent: forecast=True periods=%d", _n_fc)
+
+        if _intents.get("fiscal"):
+            from core.fiscal_calendar import build_fiscal_sql_hint
+            _fiscal_month = db_cfg.get("fiscal_year_start_month", 1)
+            _analytic_hints.append(
+                build_fiscal_sql_hint(question, _fiscal_month, db_cfg.get("db_type", "azure_sql"))
+            )
+            log.info("analytic_intent: fiscal=True start_month=%d", _fiscal_month)
+
+        if _intents.get("histogram"):
+            from core.distribution_analysis import build_histogram_sql_hint
+            _analytic_hints.append(build_histogram_sql_hint())
+            log.info("analytic_intent: histogram=True")
+
+        if _intents.get("boxplot"):
+            from core.distribution_analysis import build_boxplot_sql_hint
+            _analytic_hints.append(build_boxplot_sql_hint())
+            log.info("analytic_intent: boxplot=True")
+
+        if _intents.get("whatif"):
+            from core.whatif import parse_whatif_params, build_whatif_sql_hint
+            _wi_params = parse_whatif_params(question)
+            _analytic_hints.append(build_whatif_sql_hint(_wi_params))
+            log.info("analytic_intent: whatif=True col_hint=%s", _wi_params.col_hint)
+            if hasattr(event, '__dict__'):
+                event.__dict__['_whatif_params'] = _wi_params
+
         # Store intents on event so _send_results can post-process the result
         if hasattr(event, '__dict__'):
             event.__dict__['_analytic_intents'] = _intents
@@ -1461,6 +1499,43 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                 if _rk and _ck and _vk:
                     rows = compute_pivot_table(rows, _rk, _ck, _vk)
                     log.info("post_process: pivot table built row=%s col=%s value=%s", _rk, _ck, _vk)
+
+            # ── Tier 3 post-processing ────────────────────────────────────────
+            if _post_intents.get("funnel") and not any("funnel_pct" in r for r in rows[:1]):
+                from core.funnel_analysis import infer_funnel_cols, compute_funnel
+                _s_col, _c_col = infer_funnel_cols(rows)
+                if _s_col and _c_col:
+                    rows = compute_funnel(rows, _s_col, _c_col)
+                    log.info("post_process: funnel computed stage=%s count=%s", _s_col, _c_col)
+
+            if _post_intents.get("forecast") and not any("is_forecast" in r for r in rows[:1]):
+                from core.forecast import infer_forecast_cols, compute_forecast, extract_forecast_periods
+                _p_col, _v_col = infer_forecast_cols(rows)
+                if _p_col and _v_col:
+                    _n_fc = extract_forecast_periods(question)
+                    rows = compute_forecast(rows, _p_col, _v_col, _n_fc)
+                    log.info("post_process: forecast appended periods=%d period=%s value=%s", _n_fc, _p_col, _v_col)
+
+            if _post_intents.get("histogram") and not any("bin_label" in r for r in rows[:1]):
+                from core.distribution_analysis import infer_histogram_col, compute_histogram
+                _h_col = infer_histogram_col(rows)
+                if _h_col:
+                    rows = compute_histogram(rows, _h_col)
+                    log.info("post_process: histogram binned col=%s bins=%d", _h_col, len(rows))
+
+            if _post_intents.get("boxplot") and not any("bp_data" in r for r in rows[:1]):
+                from core.distribution_analysis import infer_boxplot_cols, compute_boxplot
+                _g_col, _v_col = infer_boxplot_cols(rows)
+                if _v_col:
+                    rows = compute_boxplot(rows, _v_col, _g_col)
+                    log.info("post_process: boxplot computed group=%s value=%s", _g_col, _v_col)
+
+            if _post_intents.get("whatif") and not any(k.startswith("scenario_") for k in (rows[0] if rows else {})):
+                from core.whatif import compute_whatif
+                _wi_p = getattr(event, '_whatif_params', None)
+                if _wi_p:
+                    rows = compute_whatif(rows, _wi_p)
+                    log.info("post_process: what-if scenario applied delta_pct=%s", _wi_p.delta_pct)
 
         except Exception as _pp_exc:
             log.debug("Post-processing analytics skipped: %s", _pp_exc)

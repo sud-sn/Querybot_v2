@@ -1254,10 +1254,15 @@ function buildChartOption(payload) {
   else if (req === 'donut')     type = 'donut';
   else if (req === 'scatter')   type = 'scatter';
   else if (req === 'area')      type = 'area';
-  else if (req === 'waterfall') type = 'waterfall';
-  else if (req === 'heatmap')   type = 'heatmap';
+  else if (req === 'waterfall')  type = 'waterfall';
+  else if (req === 'heatmap')    type = 'heatmap';
+  else if (req === 'funnel')     type = 'funnel';
+  else if (req === 'forecast')   type = 'forecast';
+  else if (req === 'histogram')  type = 'histogram';
+  else if (req === 'boxplot')    type = 'boxplot';
+  else if (req === 'treemap')    type = 'treemap';
   else if (req === 'line' || (req !== 'bar' && temporal && req !== 'bar')) type = 'line';
-  else                          type = 'bar';
+  else                           type = 'bar';
 
   const horizontal = type === 'bar' && (longLabels || manyLabels) && !temporal;
 
@@ -1472,6 +1477,303 @@ function buildChartOption(payload) {
           emphasis: { itemStyle: { opacity: 0.85 } },
         },
       ],
+    };
+  }
+
+  // ── Funnel (stage conversion) ─────────────────────────────────────────────
+  if (type === 'funnel') {
+    // Expect rows with stage_col + count_col + funnel_pct (added by compute_funnel)
+    const stageKey = xKey || Object.keys(rows[0] || {}).find(k =>
+      !['funnel_pct','conversion_rate','drop_off','cumulative_conversion'].includes(k)
+    ) || 'stage';
+    const countKey = yKey || yKeys.find(k => !['funnel_pct','conversion_rate','drop_off','cumulative_conversion'].includes(k)) || yKeys[0];
+    const funnelData = rows.map(r => ({
+      name:  String(r[stageKey] ?? ''),
+      value: +(_chartNumber(r['funnel_pct'] ?? r[countKey]) ?? 0),
+      __count: _chartNumber(r[countKey]),
+      __conv:  r['conversion_rate'],
+      __drop:  r['drop_off'],
+    }));
+    return {
+      backgroundColor: 'transparent',
+      animationDuration: 500,
+      color: colors,
+      tooltip: {
+        ...tooltipStyle,
+        trigger: 'item',
+        formatter: p => {
+          const d = funnelData[p.dataIndex] ?? {};
+          const conv = d.__conv != null ? ` (${d.__conv.toFixed(1)}% from prev)` : '';
+          const drop = d.__drop != null && d.__drop > 0 ? `<br/><span style="opacity:.7">Drop-off: ${valueFmt(d.__drop, countKey)}</span>` : '';
+          return `<strong>${escHtml(String(p.name ?? ''))}</strong><br/>`
+            + `Count: <strong>${valueFmt(d.__count, countKey)}</strong>${escHtml(conv)}${drop}`;
+        },
+      },
+      legend: { show: false },
+      series: [{
+        type: 'funnel',
+        left: '10%', width: '80%',
+        top: 20, bottom: 20,
+        min: 0, max: 100,
+        minSize: '5%', maxSize: '100%',
+        sort: 'descending',
+        gap: 4,
+        data: funnelData,
+        label: {
+          show: true,
+          position: 'inside',
+          formatter: p => `${escHtml(String(p.name ?? ''))}\n${p.value.toFixed(1)}%`,
+          color: '#fff',
+          fontSize: 12,
+          fontWeight: 'bold',
+        },
+        itemStyle: { borderWidth: 0 },
+        emphasis: { label: { fontSize: 14 } },
+      }],
+    };
+  }
+
+  // ── Forecast (historical + projected line) ────────────────────────────────
+  if (type === 'forecast') {
+    // Rows have is_forecast:bool, period_col, value_col
+    const periodKey = xKey || Object.keys(rows[0] || {}).find(k =>
+      !['is_forecast','forecast_value','__trend_slope','__trend_r2'].includes(k)
+      && typeof rows[0][k] === 'string'
+    ) || 'period';
+    const metricKey = yKey || yKeys.find(k =>
+      !['is_forecast','forecast_value','__trend_slope','__trend_r2'].includes(k)
+      && typeof rows[0][k] === 'number'
+    ) || yKeys[0];
+
+    const historical = rows.filter(r => !r.is_forecast);
+    const forecast   = rows.filter(r =>  r.is_forecast);
+    const allLabels  = rows.map(r => String(r[periodKey] ?? ''));
+    const histVals   = rows.map(r => r.is_forecast ? null : _chartNumber(r[metricKey]));
+    const fcVals     = rows.map(r => r.is_forecast ? _chartNumber(r[metricKey]) : null);
+
+    // Slope annotation
+    const slope = rows[0]?.__trend_slope;
+    const r2    = rows[0]?.__trend_r2;
+    const trendNote = (slope != null && r2 != null)
+      ? `Trend: ${slope >= 0 ? '+' : ''}${valueFmt(slope, metricKey, true)}/period  R²=${r2.toFixed(2)}`
+      : '';
+
+    return {
+      backgroundColor: 'transparent',
+      animationDuration: 400,
+      color: colors,
+      grid: { left: 56, right: 24, top: trendNote ? 44 : 28, bottom: longLabels ? 82 : 48 },
+      title: trendNote ? {
+        text: trendNote,
+        top: 6, left: 56,
+        textStyle: { color: axisColor, fontSize: 11, fontWeight: 'normal' },
+      } : undefined,
+      tooltip: {
+        ...tooltipStyle,
+        trigger: 'axis',
+        formatter: params => {
+          const arr = Array.isArray(params) ? params : [params];
+          const lbl = arr[0]?.axisValueLabel || '';
+          const isFc = forecast.some(r => String(r[periodKey]) === lbl);
+          return `<div style="font-weight:700;margin-bottom:4px">${escHtml(lbl)}${isFc ? ' <em style="opacity:.6">(forecast)</em>' : ''}</div>`
+            + arr.filter(p => p.value != null).map(p =>
+              `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${p.color};margin-right:5px"></span>`
+              + `${escHtml(String(p.seriesName||''))}: <strong>${valueFmt(p.value, metricKey)}</strong>`
+            ).join('<br/>');
+        },
+      },
+      legend: { top: 4, textStyle: { color: axisColor, fontSize: 11 }, icon: 'roundRect' },
+      xAxis: {
+        type: 'category', data: allLabels,
+        axisLabel: { color: axisColor, rotate: longLabels ? 30 : 0, formatter: labelFmt, fontSize: 11 },
+        axisLine: { lineStyle: { color: gridColor } }, axisTick: { show: false },
+      },
+      yAxis: {
+        type: 'value',
+        axisLabel: { color: axisColor, formatter: v => valueFmt(v, metricKey, true), fontSize: 11 },
+        splitLine: { show: true, lineStyle: { color: gridColor } },
+        axisTick: { show: false }, axisLine: { show: false },
+      },
+      series: [
+        {
+          name: 'Actual', type: 'line', smooth: true,
+          data: histVals,
+          symbolSize: historical.length <= 24 ? 5 : 0,
+          lineStyle: { width: 2.5, color: colors[0] },
+          itemStyle: { color: colors[0] },
+          areaStyle: { color: new echarts.graphic.LinearGradient(0,0,0,1,[
+            {offset:0,color:colors[0]+'28'},{offset:1,color:colors[0]+'05'}
+          ])},
+          connectNulls: false,
+        },
+        {
+          name: 'Forecast', type: 'line', smooth: true,
+          data: fcVals,
+          symbolSize: 6,
+          lineStyle: { width: 2.5, color: colors[1] || '#f59e0b', type: 'dashed' },
+          itemStyle: { color: colors[1] || '#f59e0b' },
+          connectNulls: true,
+        },
+      ],
+    };
+  }
+
+  // ── Histogram (frequency distribution) ───────────────────────────────────
+  if (type === 'histogram') {
+    // Rows from compute_histogram: {bin_label, bin_min, bin_max, count, frequency_pct}
+    const binLabels = rows.map(r => String(r.bin_label ?? ''));
+    const counts    = rows.map(r => _chartNumber(r.count) ?? 0);
+    const total     = counts.reduce((s, v) => s + v, 0);
+    return {
+      backgroundColor: 'transparent',
+      animationDuration: 400,
+      color: colors,
+      grid: { left: 56, right: 24, top: 24, bottom: longLabels ? 82 : 56 },
+      tooltip: {
+        ...tooltipStyle,
+        trigger: 'axis',
+        formatter: params => {
+          const p = Array.isArray(params) ? params[0] : params;
+          const r = rows[p.dataIndex] ?? {};
+          const pct = total > 0 ? (p.value / total * 100).toFixed(1) : '?';
+          return `<strong>${escHtml(String(p.name ?? ''))}</strong><br/>`
+            + `Count: <strong>${p.value}</strong> (${pct}%)`;
+        },
+      },
+      xAxis: {
+        type: 'category', data: binLabels,
+        axisLabel: { color: axisColor, rotate: 30, fontSize: 10, formatter: v => v.length > 14 ? v.slice(0,13)+'…' : v },
+        axisLine: { lineStyle: { color: gridColor } }, axisTick: { show: false },
+        name: 'Value range', nameTextStyle: { color: axisColor, fontSize: 10 },
+      },
+      yAxis: {
+        type: 'value', name: 'Count',
+        nameTextStyle: { color: axisColor, fontSize: 10 },
+        axisLabel: { color: axisColor, fontSize: 11 },
+        splitLine: { show: true, lineStyle: { color: gridColor } },
+        axisTick: { show: false }, axisLine: { show: false },
+      },
+      series: [{
+        type: 'bar',
+        data: counts.map((v, i) => ({
+          value: v,
+          itemStyle: {
+            color: new echarts.graphic.LinearGradient(0,0,0,1,[
+              {offset:0,color:gradPair[0]},{offset:1,color:gradPair[1]}
+            ]),
+            borderRadius: [4,4,0,0],
+          },
+        })),
+        barCategoryGap: '2%',
+        emphasis: { itemStyle: { opacity: 0.85 } },
+      }],
+    };
+  }
+
+  // ── Box Plot (quartile distribution) ─────────────────────────────────────
+  if (type === 'boxplot') {
+    // Rows from compute_boxplot: {group, bp_min, bp_q1, bp_median, bp_q3, bp_max, bp_mean, bp_count, bp_outliers, bp_data}
+    const groups   = rows.map(r => String(r.group ?? ''));
+    const bpData   = rows.map(r => Array.isArray(r.bp_data) ? r.bp_data : [r.bp_min, r.bp_q1, r.bp_median, r.bp_q3, r.bp_max]);
+    const outlierData = [];
+    rows.forEach((r, gi) => {
+      (r.bp_outliers || []).forEach(v => outlierData.push([gi, v]));
+    });
+    return {
+      backgroundColor: 'transparent',
+      animationDuration: 400,
+      color: colors,
+      grid: { left: 56, right: 24, top: 24, bottom: longLabels ? 82 : 48 },
+      tooltip: {
+        ...tooltipStyle,
+        trigger: 'item',
+        formatter: p => {
+          if (p.seriesType === 'scatter') {
+            return `<strong>Outlier</strong>: ${valueFmt(p.value[1], yKey)}`;
+          }
+          const r = rows[p.dataIndex] ?? {};
+          return `<strong>${escHtml(groups[p.dataIndex] ?? '')}</strong><br/>`
+            + `Max: ${valueFmt(r.bp_max, yKey)}<br/>`
+            + `Q3:  ${valueFmt(r.bp_q3,  yKey)}<br/>`
+            + `Med: <strong>${valueFmt(r.bp_median, yKey)}</strong><br/>`
+            + `Q1:  ${valueFmt(r.bp_q1,  yKey)}<br/>`
+            + `Min: ${valueFmt(r.bp_min, yKey)}<br/>`
+            + `Mean: ${valueFmt(r.bp_mean, yKey)}<br/>`
+            + `<span style="opacity:.7">n=${r.bp_count}</span>`;
+        },
+      },
+      xAxis: {
+        type: 'category', data: groups,
+        axisLabel: { color: axisColor, rotate: longLabels ? 30 : 0, formatter: labelFmt, fontSize: 11 },
+        axisLine: { lineStyle: { color: gridColor } }, axisTick: { show: false },
+      },
+      yAxis: {
+        type: 'value',
+        axisLabel: { color: axisColor, formatter: v => valueFmt(v, yKey, true), fontSize: 11 },
+        splitLine: { show: true, lineStyle: { color: gridColor } },
+        axisTick: { show: false }, axisLine: { show: false },
+      },
+      series: [
+        {
+          type: 'boxplot',
+          data: bpData,
+          itemStyle: { color: colors[0] + '44', borderColor: colors[0], borderWidth: 2 },
+          emphasis: { itemStyle: { color: colors[0] + '66' } },
+        },
+        outlierData.length ? {
+          type: 'scatter',
+          data: outlierData,
+          symbolSize: 7,
+          itemStyle: { color: '#ef4444', opacity: 0.8 },
+        } : null,
+      ].filter(Boolean),
+    };
+  }
+
+  // ── Treemap (hierarchical proportion) ────────────────────────────────────
+  if (type === 'treemap') {
+    // Rows with name/label + value. If there's a parent col, group nodes.
+    const nameKey  = xKey || Object.keys(rows[0] || {}).find(k => typeof rows[0][k] === 'string') || '';
+    const sizeKey  = yKey || yKeys[0] || '';
+    const tmData   = rows.map(r => ({
+      name:  String(r[nameKey] ?? ''),
+      value: Math.abs(_chartNumber(r[sizeKey]) ?? 0),
+    })).filter(d => d.value > 0);
+    const totalVal = tmData.reduce((s, d) => s + d.value, 0);
+    return {
+      backgroundColor: 'transparent',
+      animationDuration: 400,
+      color: colors,
+      tooltip: {
+        ...tooltipStyle,
+        formatter: p => {
+          const pct = totalVal > 0 ? (p.value / totalVal * 100).toFixed(1) : '?';
+          return `<strong>${escHtml(String(p.name ?? ''))}</strong><br/>`
+            + `${escHtml(String(sizeKey || 'Value'))}: <strong>${valueFmt(p.value, sizeKey)}</strong><br/>`
+            + `<span style="opacity:.7">${pct}% of total</span>`;
+        },
+      },
+      series: [{
+        type: 'treemap',
+        data: tmData,
+        width: '100%', height: '100%',
+        roam: false,
+        nodeClick: false,
+        breadcrumb: { show: false },
+        label: {
+          show: true,
+          formatter: p => `${escHtml(String(p.name ?? ''))}\n${(p.value / totalVal * 100).toFixed(1)}%`,
+          color: '#fff',
+          fontSize: 11,
+          overflow: 'truncate',
+        },
+        itemStyle: { gapWidth: 2, borderWidth: 0 },
+        levels: [{
+          itemStyle: { borderWidth: 2, borderColor: dark ? '#0f172a' : '#fff', gapWidth: 2 },
+          upperLabel: { show: false },
+        }],
+        emphasis: { itemStyle: { shadowBlur: 8, shadowColor: 'rgba(0,0,0,.3)' } },
+      }],
     };
   }
 

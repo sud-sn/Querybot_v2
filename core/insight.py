@@ -81,6 +81,12 @@ def detect_analytical_intents(question: str) -> dict:
     cohort          bool                  — cohort retention analysis
     correlation     bool                  — correlation / scatter between metrics
     pivot           bool                  — pivot / cross-tab table
+    funnel          bool                  — funnel / conversion stage analysis
+    forecast        bool                  — trend forecast / projection
+    fiscal          bool                  — fiscal year / FY period reference
+    histogram       bool                  — distribution / frequency histogram
+    boxplot         bool                  — quartile / box-plot analysis
+    whatif          bool                  — what-if / scenario analysis
     """
     from core.window_analytics import detect_window_intent
     from core.relative_date_range import detect_relative_date_question
@@ -91,6 +97,11 @@ def detect_analytical_intents(question: str) -> dict:
     from core.cohort_analysis import detect_cohort_intent
     from core.correlation_analysis import detect_correlation_intent
     from core.pivot_table import detect_pivot_intent
+    from core.funnel_analysis import detect_funnel_intent
+    from core.forecast import detect_forecast_intent
+    from core.fiscal_calendar import detect_fiscal_intent
+    from core.distribution_analysis import detect_histogram_intent, detect_boxplot_intent
+    from core.whatif import detect_whatif_intent
 
     return {
         "window":           detect_window_intent(question),
@@ -102,6 +113,12 @@ def detect_analytical_intents(question: str) -> dict:
         "cohort":           detect_cohort_intent(question),
         "correlation":      detect_correlation_intent(question),
         "pivot":            detect_pivot_intent(question),
+        "funnel":           detect_funnel_intent(question),
+        "forecast":         detect_forecast_intent(question),
+        "fiscal":           detect_fiscal_intent(question),
+        "histogram":        detect_histogram_intent(question),
+        "boxplot":          detect_boxplot_intent(question),
+        "whatif":           detect_whatif_intent(question),
     }
 
 
