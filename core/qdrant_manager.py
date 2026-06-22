@@ -33,6 +33,30 @@ log = logging.getLogger("querybot.qdrant")
 QDRANT_URL      = "http://localhost:6333"
 CONTAINER_NAME  = "querybot-qdrant"
 
+# Populated by detect_manager() on Windows — holds the real service name
+# (may differ from "qdrant", e.g. "Qdrant", "qdrant-service", etc.)
+_windows_service_name: str = "qdrant"
+
+
+def _find_windows_qdrant_service() -> "str | None":
+    """PowerShell wildcard search for any service with 'qdrant' in name or display name."""
+    try:
+        r = subprocess.run(
+            [
+                "powershell", "-NoProfile", "-NonInteractive", "-Command",
+                "Get-Service | Where-Object { $_.Name -like '*qdrant*' -or $_.DisplayName -like '*qdrant*' } "
+                "| Select-Object -First 1 -ExpandProperty Name",
+            ],
+            capture_output=True, text=True, timeout=10,
+        )
+        if r.returncode == 0:
+            name = r.stdout.strip().splitlines()[0].strip() if r.stdout.strip() else ""
+            if name:
+                return name
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+    return None
+
 
 # ── Status ────────────────────────────────────────────────────────────────────
 
@@ -80,18 +104,15 @@ def detect_manager() -> str:
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass
 
-    # 3. Windows Service
+    # 3. Windows Service — PowerShell wildcard so any service name containing
+    #    "qdrant" is found (handles "Qdrant", "qdrant-service", etc.)
     if platform.system() == "Windows":
-        try:
-            r = subprocess.run(
-                ["sc", "query", "qdrant"],
-                capture_output=True, text=True, timeout=5,
-            )
-            if r.returncode == 0:
-                log.debug("Qdrant manager: windows-service")
-                return "windows-service"
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            pass
+        svc = _find_windows_qdrant_service()
+        if svc:
+            global _windows_service_name
+            _windows_service_name = svc
+            log.debug("Qdrant manager: windows-service (name=%s)", svc)
+            return "windows-service"
 
     # 4. Standalone process — bare binary launched directly (./qdrant or /path/to/qdrant)
     try:
@@ -149,16 +170,17 @@ def restart(manager: str) -> tuple[bool, str]:
             return False, (r.stderr.strip() or "systemctl restart failed")
 
         elif manager == "windows-service":
-            subprocess.run(["sc", "stop", "qdrant"],
+            svc = _windows_service_name
+            subprocess.run(["sc", "stop", svc],
                            capture_output=True, timeout=10)
             time.sleep(2)
             r = subprocess.run(
-                ["sc", "start", "qdrant"],
+                ["sc", "start", svc],
                 capture_output=True, text=True, timeout=15,
             )
             if r.returncode == 0:
-                return True, "Windows service 'qdrant' restarted."
-            return False, (r.stderr.strip() or "sc start failed")
+                return True, f"Windows service '{svc}' restarted."
+            return False, (r.stderr.strip() or f"sc start {svc} failed")
 
         elif manager == "process":
             # Standalone binary: find the PID, resolve its working directory,
