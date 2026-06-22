@@ -36,6 +36,8 @@ CONTAINER_NAME  = "querybot-qdrant"
 # Populated by detect_manager() on Windows — holds the real service name
 # (may differ from "qdrant", e.g. "Qdrant", "qdrant-service", etc.)
 _windows_service_name: str = "qdrant"
+# Populated by detect_manager() on Windows — holds the Scheduled Task name
+_windows_task_name: str = "Qdrant"
 
 
 def _find_windows_qdrant_service() -> "str | None":
@@ -46,6 +48,26 @@ def _find_windows_qdrant_service() -> "str | None":
                 "powershell", "-NoProfile", "-NonInteractive", "-Command",
                 "Get-Service | Where-Object { $_.Name -like '*qdrant*' -or $_.DisplayName -like '*qdrant*' } "
                 "| Select-Object -First 1 -ExpandProperty Name",
+            ],
+            capture_output=True, text=True, timeout=10,
+        )
+        if r.returncode == 0:
+            name = r.stdout.strip().splitlines()[0].strip() if r.stdout.strip() else ""
+            if name:
+                return name
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+    return None
+
+
+def _find_windows_qdrant_task() -> "str | None":
+    """PowerShell search for a Scheduled Task with 'qdrant' in its name."""
+    try:
+        r = subprocess.run(
+            [
+                "powershell", "-NoProfile", "-NonInteractive", "-Command",
+                "Get-ScheduledTask | Where-Object { $_.TaskName -like '*qdrant*' } "
+                "| Select-Object -First 1 -ExpandProperty TaskName",
             ],
             capture_output=True, text=True, timeout=10,
         )
@@ -114,6 +136,15 @@ def detect_manager() -> str:
             log.debug("Qdrant manager: windows-service (name=%s)", svc)
             return "windows-service"
 
+    # 3b. Windows Scheduled Task — common on Windows when not installed as a service
+    if platform.system() == "Windows":
+        task = _find_windows_qdrant_task()
+        if task:
+            global _windows_task_name
+            _windows_task_name = task
+            log.debug("Qdrant manager: windows-task (name=%s)", task)
+            return "windows-task"
+
     # 4. Standalone process — bare binary launched directly (./qdrant or /path/to/qdrant)
     try:
         r = subprocess.run(
@@ -134,6 +165,7 @@ _MANAGER_LABELS = {
     "docker":          "Docker container",
     "systemd":         "systemd service",
     "windows-service": "Windows service",
+    "windows-task":    "Scheduled Task",
     "process":         "Standalone process",
     "unknown":         "Not detected",
 }
@@ -168,6 +200,24 @@ def restart(manager: str) -> tuple[bool, str]:
             if r.returncode == 0:
                 return True, "systemd service 'qdrant' restarted."
             return False, (r.stderr.strip() or "systemctl restart failed")
+
+        elif manager == "windows-task":
+            task = _windows_task_name
+            # Stop the task (ignore failure — it may already be stopped)
+            subprocess.run(
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command",
+                 f"Stop-ScheduledTask -TaskName '{task}' -ErrorAction SilentlyContinue"],
+                capture_output=True, timeout=15,
+            )
+            time.sleep(2)
+            r = subprocess.run(
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command",
+                 f"Start-ScheduledTask -TaskName '{task}'"],
+                capture_output=True, text=True, timeout=15,
+            )
+            if r.returncode == 0:
+                return True, f"Scheduled Task '{task}' restarted."
+            return False, (r.stderr.strip() or f"Start-ScheduledTask '{task}' failed")
 
         elif manager == "windows-service":
             svc = _windows_service_name
