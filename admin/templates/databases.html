@@ -588,15 +588,24 @@ function setField(name, val) {
 }
 
 function editDbRow(btn) {
-  const tr = btn.closest('tr');
-  editDb(
-    tr.dataset.dbId,
-    tr.dataset.dbType,
-    tr.dataset.dbName,
-    JSON.parse(tr.dataset.dbCreds),
-    JSON.parse(tr.dataset.dbLog),
-    JSON.parse(tr.dataset.dbScope)
-  );
+  try {
+    const tr = btn.closest('tr');
+    if (!tr) { console.error('editDbRow: <tr> not found'); return; }
+    const credsRaw = tr.dataset.dbCreds;
+    const logRaw   = tr.dataset.dbLog;
+    const scopeRaw = tr.dataset.dbScope;
+    editDb(
+      tr.dataset.dbId,
+      tr.dataset.dbType,
+      tr.dataset.dbName,
+      credsRaw  ? JSON.parse(credsRaw)  : {},
+      logRaw    ? JSON.parse(logRaw)    : {},
+      scopeRaw  ? JSON.parse(scopeRaw)  : []
+    );
+  } catch (e) {
+    console.error('editDbRow failed:', e);
+    alert('Could not open edit form: ' + e.message + '\nSee browser console (F12) for details.');
+  }
 }
 
 function editDb(id, type, name, creds, logCfg, scope) {
