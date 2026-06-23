@@ -1057,11 +1057,22 @@ async def _azure_openai_complete(system, user, model, api_key, max_tokens, endpo
             "Azure OpenAI endpoint not configured. "
             "Go to Admin → System and enter your endpoint URL."
         )
-    client = _oai.AsyncAzureOpenAI(
-        api_key=api_key,
-        azure_endpoint=endpoint.rstrip("/"),
-        api_version=api_version or "2024-02-01",
-    )
+    base = endpoint.rstrip("/")
+
+    # Azure AI Foundry (services.ai.azure.com) uses the v1 inference API —
+    # no deployment in URL, no api-version query param, model passed in body.
+    if "services.ai.azure.com" in base:
+        client = _oai.AsyncOpenAI(
+            api_key=api_key,
+            base_url=f"{base}/openai/v1",
+            default_headers={"api-key": api_key},
+        )
+    else:
+        client = _oai.AsyncAzureOpenAI(
+            api_key=api_key,
+            azure_endpoint=base,
+            api_version=api_version or "2024-02-01",
+        )
     try:
         resp = await client.chat.completions.create(
             model=model, max_tokens=max_tokens,
