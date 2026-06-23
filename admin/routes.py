@@ -606,10 +606,15 @@ async def azure_deployments_api(request: Request):
     if endpoint.startswith("http://"):
         return JSONResponse({"ok": False, "error": "Endpoint must use https://, not http://."}, status_code=400)
 
-    # Fix 2 — strip any path the user accidentally pasted (e.g. the full /openai/deployments URL)
+    # Fix 2 — strip paths that look like accidentally-pasted /openai/* URLs,
+    # but KEEP /api/projects/* paths required for Azure AI Foundry project endpoints.
     from urllib.parse import urlparse, urlunparse
     _p = urlparse(endpoint)
-    endpoint = urlunparse((_p.scheme, _p.netloc, "", "", "", ""))
+    _path = _p.path.rstrip("/")
+    if _path.startswith("/openai"):
+        endpoint = urlunparse((_p.scheme, _p.netloc, "", "", "", ""))
+    else:
+        endpoint = urlunparse((_p.scheme, _p.netloc, _path, "", "", ""))
 
     _FALLBACK_VERSIONS = [
         "2025-01-01-preview",
@@ -793,7 +798,11 @@ async def test_llm_connection(request: Request, provider: str = ""):
             endpoint = "https://" + endpoint
         from urllib.parse import urlparse, urlunparse
         _p = urlparse(endpoint)
-        endpoint = urlunparse((_p.scheme, _p.netloc, "", "", "", ""))
+        _path = _p.path.rstrip("/")
+        if _path.startswith("/openai"):
+            endpoint = urlunparse((_p.scheme, _p.netloc, "", "", "", ""))
+        else:
+            endpoint = urlunparse((_p.scheme, _p.netloc, _path, "", "", ""))
 
         try:
             async with httpx.AsyncClient(timeout=12) as client:
