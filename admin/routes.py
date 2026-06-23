@@ -804,21 +804,34 @@ async def test_llm_connection(request: Request, provider: str = ""):
         else:
             endpoint = urlunparse((_p.scheme, _p.netloc, _path, "", "", ""))
 
+        is_foundry = "services.ai.azure.com" in endpoint
+
         try:
             async with httpx.AsyncClient(timeout=12) as client:
                 if deployment:
-                    # Full smoke-test: 1-token completion against the configured deployment
-                    url = (f"{endpoint}/openai/deployments/{deployment}"
-                           f"/chat/completions?api-version={api_version}")
-                    resp = await client.post(
-                        url,
-                        headers={"api-key": api_key, "content-type": "application/json"},
-                        json={"messages": [{"role": "user", "content": "hi"}], "max_tokens": 1},
-                    )
+                    if is_foundry:
+                        # Azure AI Foundry endpoints use the v1 inference API:
+                        # no api-version query param, no deployment in URL — model in body.
+                        url = f"{endpoint}/openai/v1/chat/completions"
+                        resp = await client.post(
+                            url,
+                            headers={"api-key": api_key, "content-type": "application/json"},
+                            json={"model": deployment, "messages": [{"role": "user", "content": "hi"}], "max_tokens": 1},
+                        )
+                    else:
+                        # Classic Azure OpenAI: deployment in URL, api-version in query
+                        url = (f"{endpoint}/openai/deployments/{deployment}"
+                               f"/chat/completions?api-version={api_version}")
+                        resp = await client.post(
+                            url,
+                            headers={"api-key": api_key, "content-type": "application/json"},
+                            json={"messages": [{"role": "user", "content": "hi"}], "max_tokens": 1},
+                        )
                 else:
                     # No deployment name yet — verify key + endpoint are accepted
-                    url = f"{endpoint}/openai/deployments?api-version={api_version}"
-                    resp = await client.get(url, headers={"api-key": api_key})
+                    check_url = (f"{endpoint}/openai/v1/models" if is_foundry
+                                 else f"{endpoint}/openai/deployments?api-version={api_version}")
+                    resp = await client.get(check_url, headers={"api-key": api_key})
 
             if resp.status_code == 401:
                 return JSONResponse({"ok": False, "error": "API key rejected (401) — check your Azure OpenAI key."})
