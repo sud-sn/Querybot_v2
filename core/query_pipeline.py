@@ -487,6 +487,48 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                 if fp not in (pinned + table_kbs):
                     table_kbs.insert(0, fp)
 
+        # ── Multi-schema coherence (no schema_hint = "All" mode) ─────────────
+        # When the user is in "All" mode across multiple schemas, the semantic
+        # search can return KB docs from different schemas. If one schema
+        # dominates the top results (≥60%, ≥2 docs), do a focused re-retrieval
+        # scoped only to that schema's tables so the LLM gets clean, single-
+        # schema context instead of a mix.
+        if not schema_hint and table_kbs:
+            _schema_votes: dict[str, int] = {}
+            for _doc in table_kbs:
+                _first_line = _doc.splitlines()[0].strip().lstrip("#").strip()
+                _parts = _first_line.upper().split(".")
+                if len(_parts) >= 2:
+                    _sch = _parts[-2].strip("[]")
+                    if _sch and _sch not in {"DBO", "SYS", "INFORMATION_SCHEMA", "GUEST"}:
+                        _schema_votes[_sch] = _schema_votes.get(_sch, 0) + 1
+            if _schema_votes:
+                _dominant_sch = max(_schema_votes, key=_schema_votes.get)
+                _total_votes  = sum(_schema_votes.values())
+                _dom_ratio    = _schema_votes[_dominant_sch] / _total_votes
+                if _dom_ratio >= 0.6 and _total_votes >= 2 and len(_schema_votes) > 1:
+                    # Build a focused filter for just the dominant schema
+                    _base_pool = effective if effective else all_known
+                    _focused = {
+                        t for t in _base_pool
+                        if len(t.split(".")) >= 2
+                        and t.upper().split(".")[-2].strip("[]") == _dominant_sch
+                    }
+                    if _focused:
+                        _focused_kbs = retriever.retrieve(
+                            question, n=_n, allowed_tables=_focused
+                        )
+                        _focused_table_kbs = [
+                            d for d in _focused_kbs if not retriever._is_global(d)
+                        ]
+                        if len(_focused_table_kbs) >= 2:
+                            table_kbs = _focused_table_kbs
+                            log.info(
+                                "Multi-schema: re-retrieved focused on %s "
+                                "(ratio=%.0f%%, schemas_seen=%d)",
+                                _dominant_sch, _dom_ratio * 100, len(_schema_votes),
+                            )
+
         relevant_kbs = (pinned + table_kbs)[:7]
         context = "\n\n---\n\n".join(relevant_kbs)
         _trace_update(
