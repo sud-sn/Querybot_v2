@@ -73,6 +73,14 @@ _FORMAT_ALIASES = {
     "percentage": "percentage",
 }
 
+# If any token in the column name is a time/calendar dimension word, skip
+# currency detection — e.g. INVOICEYEAR, ORDER_MONTH, FISCAL_QUARTER.
+_DIMENSION_KEYWORDS = {
+    "year", "month", "quarter", "week", "day", "date", "time",
+    "hour", "minute", "second", "period", "fiscal", "fy", "ytd",
+    "mtd", "qtd", "calendar", "dt",
+}
+
 
 def _detect_column_format(col_name: str) -> str:
     """
@@ -95,6 +103,10 @@ def _detect_column_format(col_name: str) -> str:
     # Suffix-based fast checks common in ERP column codes
     if compact.endswith(("pct", "pc", "rate", "ratio", "percent", "percentage")):
         return "percent"
+    # If any token is a time/calendar dimension, treat as plain number even if
+    # another token looks like a currency word (e.g. INVOICEYEAR, ORDER_MONTH).
+    if tokens & _DIMENSION_KEYWORDS:
+        return "number"
     if compact.endswith(
         ("amt", "amount", "cost", "price", "revenue", "rev", "salary", "sal")
     ):
