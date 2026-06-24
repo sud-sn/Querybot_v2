@@ -936,6 +936,12 @@ def save_metric(account_id: str, metric: dict, *, db_type: str = "azure_sql") ->
 
     with get_db() as conn:
         _ensure_metric_registry_schema(conn)
+        existing = conn.execute(
+            "SELECT id FROM metric_registry WHERE account_id=? AND is_active=1 AND lower(name)=lower(?)",
+            (account_id, metric["name"]),
+        ).fetchone()
+        if existing:
+            raise ValueError(f"A metric named \"{metric['name']}\" already exists.")
         cur = conn.execute("""
             INSERT INTO metric_registry
                 (account_id, name, synonyms, sql_template, description,

@@ -36,18 +36,53 @@ _HELP = (
 )
 
 
-# ── Registration ──────────────────────────────────────────────────────────────
+# ── Access request (admin-approval flow, no registration link) ────────────────
 
 async def handle_unregistered_user(account_id, zoom_user_id, event, adapter):
-    token   = store.create_registration_token(account_id, zoom_user_id)
-    reg_url = f"{get_portal_base()}/portal/register?token={token}"
-    await adapter.send_message(event,
-        "👋 *Welcome to QueryBot!*\n\n"
-        "You need to register before you can query data.\n\n"
-        f"*Register here (link valid 48 hours):*\n{reg_url}\n\n"
-        "_Your administrator will assign you to a group after registration._"
+    """
+    Create a pending_platform_user row and notify the user once.
+    If the user is already pending/rejected, stay silent so they aren't spammed.
+    Approved users should never reach this path (they have a portal_user row).
+    """
+    platform_type = getattr(event, "platform", "teams") or "teams"
+
+    # Extract display name from the raw webhook payload — structure varies per platform
+    raw = getattr(event, "raw", None) or {}
+    if platform_type == "teams":
+        display_name = (raw.get("from") or {}).get("name", "") or ""
+    elif platform_type == "zoom":
+        display_name = (raw.get("payload") or {}).get("userName", "") or ""
+    else:
+        # Slack and others don't carry the display name in the event payload
+        display_name = ""
+
+    is_new, _pending = store.upsert_pending_user(
+        account_id=account_id,
+        platform_type=platform_type,
+        platform_user_id=zoom_user_id,
+        display_name=display_name,
+        conversation_ref=event.channel_id or "{}",
     )
-    log.info("Registration link sent to zoom_user_id=%s", zoom_user_id)
+
+    if is_new:
+        await adapter.send_message(event,
+            "👋 *Welcome to QueryBot!*\n\n"
+            "Your access request has been sent to your administrator.\n"
+            "You'll receive a message here once your access is approved.\n\n"
+            "_You don't need to do anything — your admin will be in touch._"
+        )
+        log.info(
+            "Pending access request created: platform=%s user=%s account=%s name=%r",
+            platform_type, zoom_user_id, account_id, display_name,
+        )
+    else:
+        status = _pending.get("status", "pending")
+        if status == "rejected":
+            await adapter.send_message(event,
+                "Your access request was not approved. "
+                "Please contact your administrator for assistance."
+            )
+        # If still pending: stay silent — they already got the "request sent" message
 
 
 # ── Background tasks ──────────────────────────────────────────────────────────

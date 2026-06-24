@@ -421,12 +421,41 @@ window.qbToast = (function(){
     socket.onerror=function(){try{socket.close();}catch(_){}};
   }
 
+  // ── Pending platform-users badge (per-client workspace pages) ────────────────
+  function pollPendingUsers(){
+    var tabLink=document.querySelector('.ws-tab-bar a[href*="/pending-users"]');
+    if(!tabLink) return;
+    var m=tabLink.getAttribute('href').match(/\/clients\/([^\/]+)\/pending-users/);
+    if(!m) return;
+    var accountId=m[1];
+    fetch('/admin/api/clients/'+encodeURIComponent(accountId)+'/pending-users/count',{credentials:'same-origin'})
+      .then(function(r){return r.ok?r.json():null;})
+      .then(function(data){
+        if(!data) return;
+        var count=Number(data.count||0);
+        var badge=tabLink.querySelector('.pu-nav-badge');
+        if(count>0){
+          if(!badge){
+            badge=document.createElement('span');
+            badge.className='pu-nav-badge';
+            badge.style.cssText='margin-left:4px;background:#ef4444;color:#fff;border-radius:999px;font-size:10px;font-weight:800;padding:1px 5px;line-height:1.3;display:inline-block';
+            tabLink.appendChild(badge);
+          }
+          badge.textContent=count>99?'99+':String(count);
+        }else if(badge){
+          badge.remove();
+        }
+      }).catch(function(){});
+  }
+
   ready(function(){
     if(location.pathname==='/admin/login'||location.pathname==='/admin/setup') return;
     if(!document.querySelector('a[href="/admin/logout"]')) return;
     pollSummary();
+    pollPendingUsers();
     connectSocket();
     window.setInterval(pollSummary,30000);
+    window.setInterval(pollPendingUsers,30000);
     window.setInterval(function(){
       if(socket&&socket.readyState===WebSocket.OPEN){try{socket.send('ping');}catch(_){}}
     },25000);

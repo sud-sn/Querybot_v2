@@ -1,0 +1,198 @@
+{% extends "base.html" %}
+{% from "macros.html" import breadcrumb, client_workspace_nav %}
+{% block title %}Pending Access — {{ client.client_name or client.account_id[:16] }}{% endblock %}
+{% block breadcrumb %}
+{{ breadcrumb([
+    {"label": "Dashboard", "href": "/admin"},
+    {"label": "Clients",   "href": "/admin/clients"},
+    {"label": client.client_name or client.account_id[:16], "href": "/admin/clients/" ~ client.account_id},
+    {"label": "Pending Access", "href": ""},
+]) }}
+{% endblock %}
+{% block head %}
+<style>
+.pu-filters{display:flex;gap:.4rem;flex-wrap:wrap;margin-bottom:1.1rem}
+.pu-filter{border:1px solid var(--border);border-radius:999px;padding:4px 10px;font-size:11px;font-weight:800;color:var(--text-muted);background:var(--surface);text-decoration:none}
+.pu-filter.active{background:rgba(239,68,68,.1);border-color:rgba(239,68,68,.28);color:#ef4444}
+.pu-table{width:100%;border-collapse:collapse;font-size:12px}
+.pu-table th{padding:.55rem .75rem;background:var(--surface-2);border-bottom:1px solid var(--border);text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);font-weight:800;white-space:nowrap}
+.pu-table td{padding:.75rem;border-bottom:1px solid var(--border);vertical-align:middle;color:var(--text-soft)}
+.pu-table tr:last-child td{border-bottom:none}
+.pu-table tr:hover td{background:var(--row-hover,rgba(0,0,0,.025))}
+.pu-name{color:var(--text);font-weight:600}
+.pu-uid{font-family:monospace;font-size:11px;color:var(--text-muted);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block}
+.pu-platform{display:inline-block;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:700;background:var(--surface-2);border:1px solid var(--border);color:var(--text-muted);text-transform:uppercase;letter-spacing:.04em}
+.pu-btn{display:inline-block;padding:4px 10px;border-radius:var(--radius-sm);border:1px solid var(--border);font-size:11px;font-weight:800;cursor:pointer;background:var(--surface);color:var(--text-muted);transition:background .12s,color .12s,border-color .12s}
+.pu-btn:hover{background:var(--surface-3,var(--surface-2));color:var(--text)}
+.pu-btn-approve{border-color:rgba(16,185,129,.4);color:#10b981}
+.pu-btn-approve:hover{background:rgba(16,185,129,.1)}
+.pu-btn-reject{border-color:rgba(239,68,68,.4);color:#dc2626}
+.pu-btn-reject:hover{background:rgba(239,68,68,.1)}
+.pu-stats{display:flex;gap:.75rem;flex-wrap:wrap;margin-bottom:1.25rem}
+.pu-stat-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:.75rem 1rem;min-width:100px;text-align:center}
+.pu-stat-n{font-size:22px;font-weight:900;color:var(--text)}
+.pu-stat-l{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);margin-top:.15rem}
+.pu-empty{text-align:center;padding:3rem;color:var(--text-muted);font-size:14px}
+.expand-detail{display:none}
+.expand-detail.open{display:table-row}
+.detail-panel{background:var(--surface-2);padding:.85rem 1rem;border-radius:var(--radius-sm);border:1px solid var(--border)}
+.approve-section{border-left:3px solid rgba(16,185,129,.4);padding-left:.75rem}
+.reject-section{border-left:3px solid rgba(239,68,68,.4);padding-left:.75rem}
+.detail-section-label{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.5rem}
+.group-select{font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);padding:.3rem .55rem;background:var(--surface);color:var(--text);width:100%;margin-bottom:.4rem}
+.group-select:focus{outline:none;border-color:var(--blue,#0d7377);box-shadow:0 0 0 3px rgba(13,115,119,.08)}
+.detail-note-input{font-size:12px;border:1px solid var(--border);border-radius:var(--radius-sm);padding:.3rem .55rem;background:var(--surface);color:var(--text);width:100%;margin-bottom:.5rem}
+.detail-note-input:focus{outline:none;border-color:var(--blue,#0d7377);box-shadow:0 0 0 3px rgba(13,115,119,.08)}
+.field-label{font-size:11px;color:var(--text-muted);display:block;margin-bottom:.25rem}
+</style>
+{% endblock %}
+{% block content %}
+{{ client_workspace_nav(client, "pending_users") }}
+
+<!-- Stats row -->
+<div class="pu-stats">
+  <div class="pu-stat-card"
+    {% if counts.pending > 0 %}style="border-color:rgba(239,68,68,.3);background:rgba(239,68,68,.05)"{% endif %}>
+    <div class="pu-stat-n"{% if counts.pending > 0 %} style="color:#ef4444"{% endif %}>{{ counts.pending }}</div>
+    <div class="pu-stat-l">Pending</div>
+  </div>
+  <div class="pu-stat-card">
+    <div class="pu-stat-n" style="color:#10b981">{{ counts.approved }}</div>
+    <div class="pu-stat-l">Approved</div>
+  </div>
+  <div class="pu-stat-card">
+    <div class="pu-stat-n">{{ counts.rejected }}</div>
+    <div class="pu-stat-l">Rejected</div>
+  </div>
+  <div class="pu-stat-card">
+    <div class="pu-stat-n">{{ counts.pending + counts.approved + counts.rejected }}</div>
+    <div class="pu-stat-l">Total</div>
+  </div>
+</div>
+
+<!-- Status filters -->
+<div class="pu-filters">
+  <a href="?status=pending"  class="pu-filter{% if status_filter=='pending'  %} active{% endif %}">Pending ({{ counts.pending }})</a>
+  <a href="?status=approved" class="pu-filter{% if status_filter=='approved' %} active{% endif %}">Approved ({{ counts.approved }})</a>
+  <a href="?status=rejected" class="pu-filter{% if status_filter=='rejected' %} active{% endif %}">Rejected ({{ counts.rejected }})</a>
+</div>
+
+{% if saved %}
+<div class="alert alert-success" style="margin-bottom:.85rem">{{ saved }}</div>
+{% endif %}
+
+{% if not pending_users %}
+<div class="pu-empty">
+  {% if status_filter == 'pending' %}
+  No pending access requests — the queue is clear.
+  {% elif status_filter == 'approved' %}
+  No approved platform users yet.
+  {% else %}
+  No rejected requests.
+  {% endif %}
+</div>
+{% else %}
+<div style="overflow-x:auto">
+<table class="pu-table" id="puTable">
+  <thead>
+    <tr>
+      <th style="width:28px"></th>
+      <th>Name</th>
+      <th>Platform</th>
+      <th>Platform ID</th>
+      <th>Status</th>
+      <th>Requested</th>
+      <th>Reviewed</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for u in pending_users %}
+  <tr class="pu-row" data-uid="{{ u.id }}">
+    <td>
+      <button type="button" class="pu-btn" style="padding:2px 6px;font-size:10px"
+        onclick="togglePuDetail('{{ u.id }}')">+</button>
+    </td>
+    <td><span class="pu-name">{{ u.display_name or '—' }}</span></td>
+    <td><span class="pu-platform">{{ u.platform_type }}</span></td>
+    <td><span class="pu-uid" title="{{ u.platform_user_id }}">{{ u.platform_user_id }}</span></td>
+    <td>
+      <span class="badge
+        {%- if u.status == 'approved' %} badge-green
+        {%- elif u.status == 'rejected' %} badge-red
+        {%- else %} badge-amber{% endif %}">
+        {{ u.status }}
+      </span>
+    </td>
+    <td>{{ u.created_at[:10] if u.created_at else '—' }}</td>
+    <td>{{ u.reviewed_at[:10] if u.reviewed_at else '—' }}</td>
+  </tr>
+  <!-- Expand: approve / reject forms or reviewer note -->
+  <tr class="expand-detail" id="pu-detail-{{ u.id }}">
+    <td colspan="7">
+      <div class="detail-panel">
+        {% if u.status == 'pending' %}
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.25rem">
+
+          <!-- Approve -->
+          <div class="approve-section">
+            <div class="detail-section-label" style="color:#10b981">Approve</div>
+            <form method="post"
+              action="/admin/clients/{{ client.account_id }}/pending-users/{{ u.id }}/approve">
+              <label class="field-label">
+                Assign to group <span style="color:#dc2626" aria-hidden="true">*</span>
+              </label>
+              <select name="group_id" class="group-select" required>
+                <option value="">— select group —</option>
+                {% for g in groups %}
+                <option value="{{ g.id }}">{{ g.name }}</option>
+                {% endfor %}
+              </select>
+              <label class="field-label">Note (optional)</label>
+              <input type="text" name="reviewer_note" class="detail-note-input"
+                placeholder="e.g. Sales team member">
+              <button type="submit" class="pu-btn pu-btn-approve">Approve access</button>
+            </form>
+          </div>
+
+          <!-- Reject -->
+          <div class="reject-section">
+            <div class="detail-section-label" style="color:#dc2626">Reject</div>
+            <form method="post"
+              action="/admin/clients/{{ client.account_id }}/pending-users/{{ u.id }}/reject">
+              <label class="field-label">Reason (optional — sent to user)</label>
+              <input type="text" name="reviewer_note" class="detail-note-input"
+                placeholder="e.g. Not an active employee">
+              <button type="submit" class="pu-btn pu-btn-reject">Reject request</button>
+            </form>
+          </div>
+
+        </div>
+        {% else %}
+        <!-- Already reviewed: show reviewer note -->
+        <div style="font-size:12px;color:var(--text-muted)">
+          {% if u.reviewer_note %}
+          <strong>Reviewer note:</strong> {{ u.reviewer_note }}
+          {% else %}
+          No reviewer note recorded.
+          {% endif %}
+        </div>
+        {% endif %}
+      </div>
+    </td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endif %}
+
+<script>
+function togglePuDetail(uid) {
+  var row = document.getElementById('pu-detail-' + uid);
+  var btn = document.querySelector('[data-uid="' + uid + '"] > td:first-child > button');
+  if (!row) return;
+  var open = row.classList.toggle('open');
+  if (btn) btn.textContent = open ? '−' : '+';
+}
+</script>
+{% endblock %}

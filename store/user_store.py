@@ -353,6 +353,180 @@ def consume_registration_token(token: str) -> Optional[dict]:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# Pending platform users (admin-approval flow)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def upsert_pending_user(
+    account_id: str,
+    platform_type: str,
+    platform_user_id: str,
+    display_name: str,
+    conversation_ref: str,
+) -> tuple[bool, dict]:
+    """
+    Insert a pending platform user row, or update the conversation_ref if
+    the row already exists (so repeated messages keep the ref fresh).
+
+    Returns (is_new: bool, row: dict).
+    is_new=True  → first time this user messaged; caller should reply to them.
+    is_new=False → already pending/approved/rejected; caller stays silent.
+    """
+    import json as _json
+    with get_db() as conn:
+        existing = conn.execute(
+            "SELECT * FROM pending_platform_user WHERE account_id=? AND platform_user_id=?",
+            (account_id, platform_user_id),
+        ).fetchone()
+        if existing:
+            # Update conversation_ref so proactive message always goes to latest conv
+            conn.execute(
+                "UPDATE pending_platform_user SET conversation_ref=?, display_name=? "
+                "WHERE account_id=? AND platform_user_id=?",
+                (conversation_ref, display_name or dict(existing).get("display_name", ""),
+                 account_id, platform_user_id),
+            )
+            row = conn.execute(
+                "SELECT * FROM pending_platform_user WHERE account_id=? AND platform_user_id=?",
+                (account_id, platform_user_id),
+            ).fetchone()
+            return False, dict(row)
+        conn.execute(
+            """INSERT INTO pending_platform_user
+               (account_id, platform_type, platform_user_id, display_name, conversation_ref)
+               VALUES (?,?,?,?,?)""",
+            (account_id, platform_type, platform_user_id, display_name, conversation_ref),
+        )
+        row = conn.execute(
+            "SELECT * FROM pending_platform_user WHERE account_id=? AND platform_user_id=?",
+            (account_id, platform_user_id),
+        ).fetchone()
+    return True, dict(row)
+
+
+def list_pending_users(account_id: str, status: str = "pending") -> list[dict]:
+    """Return pending platform users for this account filtered by status."""
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM pending_platform_user WHERE account_id=? AND status=? "
+            "ORDER BY created_at DESC",
+            (account_id, status),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_pending_user_count(account_id: str) -> int:
+    """Return count of users with status='pending' for dashboard badge."""
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM pending_platform_user WHERE account_id=? AND status='pending'",
+            (account_id,),
+        ).fetchone()
+    return row[0] if row else 0
+
+
+def approve_pending_user(
+    pending_id: int,
+    account_id: str,
+    group_id: Optional[int],
+    reviewer_id: str = "admin",
+    reviewer_note: str = "",
+) -> Optional[dict]:
+    """
+    Approve a pending platform user:
+      1. Create a portal_user row (no password — they auth via platform).
+      2. Link the platform_user_id as zoom_user_id on the new portal_user.
+      3. Mark the pending row approved + set portal_user_id FK.
+
+    Returns the new portal_user dict, or None if pending row not found.
+    """
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    with get_db() as conn:
+        pending = conn.execute(
+            "SELECT * FROM pending_platform_user WHERE id=? AND account_id=?",
+            (pending_id, account_id),
+        ).fetchone()
+        if not pending:
+            return None
+        pending = dict(pending)
+
+        # Create the portal_user.  A placeholder password hash is used (unusable
+        # hash — they will never log in via the portal, only via Teams).
+        import hashlib as _hashlib
+        _placeholder_hash = _hashlib.sha256(b"__platform_user__").hexdigest()
+        conn.execute(
+            """INSERT OR IGNORE INTO portal_user
+               (account_id, group_id, name, email, password_hash,
+                zoom_user_id, role, is_temp_pw, is_active, created_at, updated_at)
+               VALUES (?,?,?,?,?,?,?,0,1,?,?)""",
+            (
+                account_id,
+                group_id,
+                pending["display_name"] or pending["platform_user_id"],
+                f"{pending['platform_user_id']}@platform.internal",
+                _placeholder_hash,
+                pending["platform_user_id"],
+                "analyst",
+                now, now,
+            ),
+        )
+        portal_user_row = conn.execute(
+            "SELECT * FROM portal_user WHERE account_id=? AND zoom_user_id=?",
+            (account_id, pending["platform_user_id"]),
+        ).fetchone()
+        portal_user_id = portal_user_row["id"] if portal_user_row else None
+
+        # Update group_id if we just hit the IGNORE path (user existed)
+        if portal_user_row and group_id:
+            conn.execute(
+                "UPDATE portal_user SET group_id=?, updated_at=? WHERE id=?",
+                (group_id, now, portal_user_id),
+            )
+
+        conn.execute(
+            """UPDATE pending_platform_user SET
+               status='approved', portal_user_id=?, reviewer_id=?,
+               reviewer_note=?, reviewed_at=?
+               WHERE id=?""",
+            (portal_user_id, reviewer_id, reviewer_note, now, pending_id),
+        )
+    return dict(portal_user_row) if portal_user_row else None
+
+
+def reject_pending_user(
+    pending_id: int,
+    account_id: str,
+    reviewer_id: str = "admin",
+    reviewer_note: str = "",
+) -> bool:
+    """Mark a pending user as rejected. Returns True if the row existed."""
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    with get_db() as conn:
+        existing = conn.execute(
+            "SELECT id FROM pending_platform_user WHERE id=? AND account_id=?",
+            (pending_id, account_id),
+        ).fetchone()
+        if not existing:
+            return False
+        conn.execute(
+            """UPDATE pending_platform_user SET
+               status='rejected', reviewer_id=?, reviewer_note=?, reviewed_at=?
+               WHERE id=?""",
+            (reviewer_id, reviewer_note, now, pending_id),
+        )
+    return True
+
+
+def get_pending_user(pending_id: int, account_id: str) -> Optional[dict]:
+    """Return a single pending_platform_user row, or None."""
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM pending_platform_user WHERE id=? AND account_id=?",
+            (pending_id, account_id),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Pinned charts
 # ══════════════════════════════════════════════════════════════════════════════
 

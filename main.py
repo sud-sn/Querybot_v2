@@ -79,6 +79,20 @@ async def startup() -> None:
     except Exception as e:
         log.warning("External log export scheduler failed to start: %s", e)
 
+    # Pre-warm vector store singletons so the first user query is not slow.
+    # SentenceTransformer (~90 MB) + CrossEncoder (~22 MB) + Qdrant TCP connect
+    # all lazy-load on the first query — moving them here eliminates that spike.
+    async def _warmup():
+        try:
+            from core.vector_store import _qdrant, _embedder, _get_cross_encoder
+            await asyncio.to_thread(_embedder)           # ~4–6 s: loads all-MiniLM-L6-v2
+            await asyncio.to_thread(_get_cross_encoder)  # ~1–2 s: loads ms-marco cross-encoder
+            await asyncio.to_thread(_qdrant)             # ~0.3 s: TCP connect + collection check
+            log.info("Vector store warm-up complete")
+        except Exception as exc:
+            log.warning("Vector store warm-up failed (non-fatal): %s", exc)
+
+    asyncio.create_task(_warmup())
     log.info("QueryBot v2 started — database ready")
 
 

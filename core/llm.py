@@ -1014,9 +1014,52 @@ async def llm_complete(
     return result
 
 
-async def _anthropic_complete(system, user, model, api_key, max_tokens, temperature=0.7):
+# ── LLM client singletons — keyed by (provider, api_key, endpoint) ───────────
+# Creating a new AsyncAnthropic/AsyncOpenAI per call throws away the HTTP
+# connection pool and re-does TLS handshake on every request. Singletons
+# reuse the underlying httpx connection pool, saving ~200-500 ms per call.
+
+_llm_client_cache: dict[tuple, object] = {}
+
+
+def _get_anthropic_client(api_key: str):
     import anthropic as _ant
-    client = _ant.AsyncAnthropic(api_key=api_key)
+    key = ("anthropic", api_key)
+    if key not in _llm_client_cache:
+        _llm_client_cache[key] = _ant.AsyncAnthropic(api_key=api_key)
+    return _llm_client_cache[key]
+
+
+def _get_openai_client(api_key: str):
+    import openai as _oai
+    key = ("openai", api_key)
+    if key not in _llm_client_cache:
+        _llm_client_cache[key] = _oai.AsyncOpenAI(api_key=api_key)
+    return _llm_client_cache[key]
+
+
+def _get_azure_client(api_key: str, endpoint: str, api_version: str):
+    import openai as _oai
+    base = endpoint.rstrip("/")
+    key = ("azure", api_key, base, api_version)
+    if key not in _llm_client_cache:
+        if "services.ai.azure.com" in base:
+            _llm_client_cache[key] = _oai.AsyncOpenAI(
+                api_key=api_key,
+                base_url=f"{base}/openai/v1",
+                default_headers={"api-key": api_key},
+            )
+        else:
+            _llm_client_cache[key] = _oai.AsyncAzureOpenAI(
+                api_key=api_key,
+                azure_endpoint=base,
+                api_version=api_version or "2024-02-01",
+            )
+    return _llm_client_cache[key]
+
+
+async def _anthropic_complete(system, user, model, api_key, max_tokens, temperature=0.7):
+    client = _get_anthropic_client(api_key)
     try:
         resp = await client.messages.create(
             model=model, max_tokens=max_tokens, system=system,
@@ -1027,13 +1070,10 @@ async def _anthropic_complete(system, user, model, api_key, max_tokens, temperat
     except Exception as e:
         log.error("Anthropic API error: %s", e)
         raise RuntimeError(f"Anthropic API error: {e}") from e
-    finally:
-        await client.close()
 
 
 async def _openai_complete(system, user, model, api_key, max_tokens, temperature=0.7):
-    import openai as _oai
-    client = _oai.AsyncOpenAI(api_key=api_key)
+    client = _get_openai_client(api_key)
     try:
         resp = await client.chat.completions.create(
             model=model, max_tokens=max_tokens,
@@ -1046,33 +1086,15 @@ async def _openai_complete(system, user, model, api_key, max_tokens, temperature
     except Exception as e:
         log.error("OpenAI API error: %s", e)
         raise RuntimeError(f"OpenAI API error: {e}") from e
-    finally:
-        await client.close()
 
 
 async def _azure_openai_complete(system, user, model, api_key, max_tokens, endpoint, api_version, temperature=0.7):
-    import openai as _oai
     if not endpoint:
         raise RuntimeError(
             "Azure OpenAI endpoint not configured. "
             "Go to Admin → System and enter your endpoint URL."
         )
-    base = endpoint.rstrip("/")
-
-    # Azure AI Foundry (services.ai.azure.com) uses the v1 inference API —
-    # no deployment in URL, no api-version query param, model passed in body.
-    if "services.ai.azure.com" in base:
-        client = _oai.AsyncOpenAI(
-            api_key=api_key,
-            base_url=f"{base}/openai/v1",
-            default_headers={"api-key": api_key},
-        )
-    else:
-        client = _oai.AsyncAzureOpenAI(
-            api_key=api_key,
-            azure_endpoint=base,
-            api_version=api_version or "2024-02-01",
-        )
+    client = _get_azure_client(api_key, endpoint, api_version or "2024-02-01")
     try:
         resp = await client.chat.completions.create(
             model=model, max_tokens=max_tokens,
@@ -1088,8 +1110,6 @@ async def _azure_openai_complete(system, user, model, api_key, max_tokens, endpo
             f"Azure OpenAI error: {e}\n\n"
             "Check your endpoint URL, API key, and deployment name in Admin → System."
         ) from e
-    finally:
-        await client.close()
 
 
 # ══════════════════════════════════════════════════════════════════════════════

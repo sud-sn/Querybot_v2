@@ -68,7 +68,7 @@
 /* ── Function helper popover ─────────────────────────────────────────── */
 #fn-popover{position:fixed;top:0;right:0;width:340px;height:100vh;overflow-y:auto;
   background:var(--surface);border-left:1px solid var(--border);box-shadow:-4px 0 24px rgba(0,0,0,.12);
-  z-index:8000;display:none;flex-direction:column}
+  z-index:10500;display:none;flex-direction:column}
 #fn-popover.open{display:flex}
 .fn-pop-head{padding:.75rem 1rem;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:.5rem;position:sticky;top:0;background:var(--surface);z-index:1}
 .fn-pop-head h3{font-size:13px;font-weight:800;margin:0}
@@ -226,6 +226,51 @@
 .metric-row-lineage .meta-pill{max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @media(max-width:700px){.metric-builder-grid,.metric-filter-row{grid-template-columns:1fr}.metric-filter-remove{width:100%}}
 @media(max-width:900px){.metric-builder-steps,.metric-lineage-grid{grid-template-columns:1fr}}
+
+/* ── Metric creation dialog (Qlik-style fx editor) ────────────────────── */
+#mc-overlay{position:fixed;inset:0;background:rgba(0,0,0,.48);z-index:10000;display:none}
+#mc-overlay.open{display:block}
+#mc-dialog{position:fixed;inset:3% 3%;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:0 28px 80px rgba(0,0,0,.26);display:flex;flex-direction:column;z-index:10001;overflow:hidden}
+.mc-dialog-hd{padding:.85rem 1.1rem;border-bottom:1px solid var(--border);background:linear-gradient(180deg,var(--surface-2),var(--surface));display:flex;align-items:center;justify-content:space-between;gap:.75rem;flex-shrink:0}
+.mc-dialog-hd h2{font-size:15px;font-weight:900;margin:0;display:flex;align-items:center;gap:.5rem}
+.mc-fx-badge{font-family:Consolas,monospace;background:var(--primary,#2B5CE6);color:#fff;border-radius:4px;padding:2px 8px;font-size:13px;font-weight:700;letter-spacing:-.02em}
+.mc-dialog-close{background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-muted);padding:0 5px;line-height:1;transition:color .12s}
+.mc-dialog-close:hover{color:var(--text)}
+.mc-body{display:flex;flex:1;overflow:hidden;min-height:0}
+.mc-left{flex:1;min-width:0;overflow-y:auto;padding:1rem 1.1rem 1.5rem}
+.mc-right{width:285px;flex-shrink:0;display:flex;flex-direction:column;overflow:hidden;border-left:1px solid var(--border);background:color-mix(in srgb,var(--surface-2) 70%,var(--surface))}
+.mc-right-top{padding:.75rem .85rem;border-bottom:1px solid var(--border);flex-shrink:0}
+.mc-right-top h3{font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:.08em;color:var(--text-muted);margin:0 0 .5rem}
+.mc-fields-panel{display:flex;flex-direction:column;flex:1;overflow:hidden;min-height:0}
+.mc-fields-hd{padding:.45rem .8rem;font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:.08em;color:var(--text-muted);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+.mc-fields-hd span{font-weight:400;text-transform:none;letter-spacing:0;font-size:10px}
+.mc-fields-search{width:100%;padding:7px 10px;border:none;border-bottom:1px solid var(--border);font-size:12px;outline:none;background:var(--surface-2);font-family:inherit;flex-shrink:0}
+.mc-fields-list{flex:1;overflow-y:auto}
+.mc-field-group{border-bottom:1px solid var(--border)}
+.mc-field-group-hd{padding:.42rem .8rem;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);cursor:pointer;user-select:none;display:flex;align-items:center;justify-content:space-between;background:var(--surface-2);transition:background .1s}
+.mc-field-group-hd:hover{background:color-mix(in srgb,var(--blue,#3182ce) 8%,var(--surface-2))}
+.mc-field-group-hd .mc-chev{font-size:9px;transition:transform .18s;color:var(--text-muted)}
+.mc-field-group.open .mc-field-group-hd .mc-chev{transform:rotate(90deg)}
+.mc-field-group-body{display:none}
+.mc-field-group.open .mc-field-group-body{display:block}
+.mc-field-item{padding:5px 10px 5px 13px;cursor:pointer;display:flex;align-items:center;gap:6px;border-bottom:1px solid color-mix(in srgb,var(--border) 55%,transparent);transition:background .1s}
+.mc-field-item:last-child{border-bottom:none}
+.mc-field-item:hover{background:var(--blue-light)}
+.mc-type-badge{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:3px;font-size:9px;font-weight:800;flex-shrink:0;font-family:Consolas,monospace}
+.mc-type-badge.num{background:#DBEAFE;color:#1D4ED8}
+.mc-type-badge.str{background:#D1FAE5;color:#065F46}
+.mc-type-badge.dt{background:#FFEDD5;color:#C2410C}
+.mc-type-badge.oth{background:var(--surface-2);color:var(--text-muted);border:1px solid var(--border)}
+.mc-field-name{font-family:Consolas,monospace;font-size:11px;font-weight:700;color:var(--text);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mc-field-dtype{font-size:9px;color:var(--text-muted);white-space:nowrap}
+.mc-footer{padding:.7rem 1.1rem;border-top:1px solid var(--border);background:var(--surface-2);display:flex;align-items:center;justify-content:flex-end;gap:.6rem;flex-shrink:0}
+/* Qlik-style table group headers in formula autocomplete */
+.fcs-group-hd{padding:3px 12px;font-size:9px;font-weight:900;text-transform:uppercase;letter-spacing:.08em;color:var(--text-muted);background:var(--surface-2);border-bottom:1px solid var(--border);pointer-events:none}
+@media(max-width:900px){
+  #mc-dialog{inset:0;border-radius:0}
+  .mc-body{flex-direction:column}
+  .mc-right{width:100%;height:220px;border-left:none;border-top:1px solid var(--border)}
+}
 </style>
 <!-- Pass db_type to JS -->
 <script>window._qbDbType = "{{ db_type | default('azure_sql') }}";</script>
@@ -252,6 +297,7 @@
     </p>
   </div>
   <div class="metrics-hero-actions">
+    <button type="button" class="btn btn-primary" onclick="openMetricDialog()"><span style="font-family:Consolas,monospace;font-weight:900;letter-spacing:-.02em">fx</span> New Metric</button>
     <form method="post" action="/admin/clients/{{ client.account_id }}/metrics/harvest">
       <button type="submit" class="btn btn-secondary btn-sm">Refresh examples</button>
     </form>
@@ -293,12 +339,16 @@
   Formulas run against a single table — column names are inserted without table prefix.
 </div>
 
-<div class="card metric-editor-card">
-  <div class="card-header"><h2>Create approved metric</h2></div>
-  <div class="card-body">
-    <form method="post" action="/admin/clients/{{ client.account_id }}/metrics/create" class="metric-form">
-      <div class="builder-shell">
-        <div>
+<!-- ══ Metric creation dialog (fx New Metric) ════════════════════════════ -->
+<div id="mc-overlay" onclick="if(event.target===this)closeMetricDialog()">
+  <div id="mc-dialog" role="dialog" aria-modal="true">
+    <div class="mc-dialog-hd">
+      <h2><span class="mc-fx-badge">fx</span> New Metric</h2>
+      <button class="mc-dialog-close" onclick="closeMetricDialog()" aria-label="Close">✕</button>
+    </div>
+    <form method="post" action="/admin/clients/{{ client.account_id }}/metrics/create" class="metric-form" id="mc-form">
+      <div class="mc-body">
+        <div class="mc-left">
           <div class="form-grid">
             <div class="form-group">
               <label>Metric name *</label>
@@ -446,43 +496,40 @@
             </div>
           </details>
 
-          <button type="submit" class="btn btn-primary">Add formula</button>
-        </div>
+        </div><!-- /.mc-left -->
 
-        <aside class="builder-panel">
-          <h3>Syntax validator</h3>
-          <div class="syntax-panel formula-status">
-            Start with an aggregate formula. The validator will catch common production mistakes.
-          </div>
-          <ul class="hint-list">
-            <li>Use <code>NULLIF(denominator, 0)</code> when dividing.</li>
-            <li>For percentages, calculate from sums instead of averaging row percentages.</li>
-            <li>Use exact column names from the field browser below.</li>
-          </ul>
-          <div style="height:.75rem"></div>
-          <div class="formula-example">
-Profit %:
+        <div class="mc-right">
+          <div class="mc-right-top">
+            <h3>Syntax validator</h3>
+            <div class="syntax-panel formula-status">Start writing a formula — the validator will highlight issues.</div>
+            <ul class="hint-list" style="margin:.45rem 0 0 1rem;font-size:11px">
+              <li>Use <code>NULLIF(denom, 0)</code> when dividing.</li>
+              <li>For percentages, use sums not row averages.</li>
+            </ul>
+            <div class="formula-example" style="margin-top:.5rem;font-size:10px">
 SUM(NetProfit) * 100.0 / NULLIF(SUM(Revenue), 0)
-
-Net profit:
-SUM(GrossMargin) + SUM(Rebates) - SUM(AllocatedCosts)
-          </div>
-          <div style="height:.75rem"></div>
-          <h3 style="margin-top:.5rem">Available columns
-            <span id="col-browser-status" style="font-size:10px;font-weight:400;color:var(--text-muted);margin-left:6px;text-transform:none;letter-spacing:0">loading…</span>
-          </h3>
-          <div class="col-browser" id="colBrowser">
-            <input class="col-browser-search" id="colBrowserSearch" placeholder="Search columns…"
-              type="text" oninput="filterColBrowser(this.value)">
-            <div id="colBrowserList">
-              <div style="padding:8px;font-size:12px;color:var(--text-muted)">Schema not yet discovered — run Discovery first.</div>
             </div>
           </div>
-        </aside>
+          <div class="mc-fields-panel">
+            <div class="mc-fields-hd">
+              Fields
+              <span id="mc-col-status">loading…</span>
+            </div>
+            <input class="mc-fields-search" type="text" placeholder="Search fields…" oninput="filterMcFields(this.value)">
+            <div class="mc-fields-list" id="mc-fields-list">
+              <div style="padding:10px;font-size:12px;color:var(--text-muted)">Schema not yet discovered — run Discovery first.</div>
+            </div>
+          </div>
+        </div><!-- /.mc-right -->
+      </div><!-- /.mc-body -->
+
+      <div class="mc-footer">
+        <button type="button" class="btn btn-secondary" onclick="closeMetricDialog()">Cancel</button>
+        <button type="submit" class="btn btn-primary">Add formula</button>
       </div>
     </form>
-  </div>
-</div>
+  </div><!-- /#mc-dialog -->
+</div><!-- /#mc-overlay -->
 
 <!-- ── Existing metrics ───────────────────────────────────────────────── -->
 {% if metrics %}
@@ -740,7 +787,7 @@ SUM(GrossMargin) + SUM(Rebates) - SUM(AllocatedCosts)
   <input class="fn-search" id="fnSearch" placeholder="Search functions…" oninput="filterFns(this.value)">
   <div id="fn-buckets"></div>
 </div>
-<div id="fn-overlay" style="display:none;position:fixed;inset:0;z-index:7999" onclick="closeFnHelper()"></div>
+<div id="fn-overlay" style="display:none;position:fixed;inset:0;z-index:10499" onclick="closeFnHelper()"></div>
 
 <!-- Column suggestion dropdown (tag inputs: required_columns / allowed_dimensions) -->
 <div id="col-suggest"></div>
@@ -1195,19 +1242,33 @@ function _showSuggestions(editor, token){
   _suggestTarget = editor;
   _suggestIdx = -1;
   // Use bare column name for non-ambiguous, TABLE.COL for ambiguous
-  el.innerHTML = matches.map(function(c, i){
-    var isDup  = _dupCols.has(c.column);
-    var dispToken = lc.includes(".") ? (lc.split(".")[1]||"") : lc;
-    var highlighted = _fcsHighlight(c.column, dispToken);
-    var cls    = _fcsTypeClass(c.type);
-    var icon   = _fcsTypeIcon(cls);
-    var label  = isDup ? escHtml(c.table)+'.'+highlighted : highlighted;
-    return '<div class="fcs-item" data-col="'+escHtml(c.column)+'" data-table="'+escHtml(c.table)+'" data-dup="'+(isDup?"1":"0")+'" data-idx="'+i+'">'
-      +'<span class="fcs-col">'+label+'</span>'
-      +'<span class="fcs-tbl">'+(isDup ? "" : escHtml(c.table))+'</span>'
-      +'<span class="fcs-type '+cls+'">'+icon+' '+escHtml(c.type)+'</span>'
-      +'</div>';
-  }).join("");
+  // Group matches by table for Qlik-style display
+  var _grpMap = {}, _grpOrder = [];
+  matches.forEach(function(c){
+    if(!_grpMap[c.table]){ _grpMap[c.table]=[]; _grpOrder.push(c.table); }
+    _grpMap[c.table].push(c);
+  });
+  var dispToken = lc.includes(".") ? (lc.split(".")[1]||"") : lc;
+  var _rows = [], _gIdx = 0;
+  var _multiTbl = _grpOrder.length > 1;
+  _grpOrder.forEach(function(tbl){
+    if(_multiTbl) _rows.push('<div class="fcs-group-hd">'+escHtml(tbl)+'</div>');
+    _grpMap[tbl].forEach(function(c){
+      var isDup  = _dupCols.has(c.column);
+      var highlighted = _fcsHighlight(c.column, dispToken);
+      var cls    = _fcsTypeClass(c.type);
+      var icon   = _fcsTypeIcon(cls);
+      var label  = isDup ? escHtml(c.table)+'.'+highlighted : highlighted;
+      _rows.push('<div class="fcs-item" data-col="'+escHtml(c.column)+'" data-table="'+escHtml(c.table)+'" data-dup="'+(isDup?"1":"0")+'" data-idx="'+_gIdx+'">'
+        +'<span class="fcs-type '+cls+'" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:3px;font-size:9px;font-weight:800;font-family:Consolas,monospace;flex-shrink:0">'+icon+'</span>'
+        +'<span class="fcs-col">'+label+'</span>'
+        +'<span class="fcs-tbl">'+(isDup||_multiTbl ? "" : escHtml(c.table))+'</span>'
+        +'<span class="fcs-type '+cls+'">'+escHtml(c.type)+'</span>'
+        +'</div>');
+      _gIdx++;
+    });
+  });
+  el.innerHTML = _rows.join("");
 
   // Position below the textarea, left-aligned with it
   var rect = editor.getBoundingClientRect();
@@ -1774,6 +1835,7 @@ window.insertColumnFromBrowser = function(colName){
         _allColumns = data.columns;
         _buildDupSet();
         _buildColBrowser(_allColumns);
+        _buildMcFieldsList(_allColumns);
         _populateTimeColSelects(_allColumns);
         _populateBaseTableInputs(_allColumns);
         _wireMetricBuilderColumnLists(document);
@@ -2035,8 +2097,8 @@ window.cloneMetric = function(id){
   var m   = all.find(function(x){ return x.id === id; });
   if(!m){ alert("Metric data not found."); return; }
 
-  var addForm = document.querySelector(".card .metric-form");
-  if(!addForm){ alert("Add form not found on page."); return; }
+  var addForm = document.getElementById("mc-form") || document.querySelector(".metric-form#mc-form");
+  if(!addForm){ alert("Metric dialog not found on page."); return; }
 
   function _set(name, value){
     var el = addForm.querySelector("[name='"+name+"']");
@@ -2081,10 +2143,12 @@ window.cloneMetric = function(id){
   var editor = addForm.querySelector(".formula-editor");
   if(editor) updateFormulaHints(editor);
 
-  // Scroll to the Add form and highlight name input
-  addForm.scrollIntoView({ behavior: "smooth", block: "start" });
-  var nameInput = addForm.querySelector("[name='name']");
-  if(nameInput){ setTimeout(function(){ nameInput.focus(); nameInput.select(); }, 400); }
+  // Open the dialog with cloned data and focus the name input
+  openMetricDialog();
+  setTimeout(function(){
+    var nameInput = addForm.querySelector("[name='name']");
+    if(nameInput){ nameInput.focus(); nameInput.select(); }
+  }, 120);
 };
 
 // ══════════════════════════════════════════════════════════════════════
@@ -2129,6 +2193,115 @@ window.exportMetricsJSON = function(){
 
 // Initialise count display on page load
 (function(){ if(document.getElementById("metricsListWrap")) applyFilters(); })();
+
+// ══════════════════════════════════════════════════════════════════════
+// METRIC CREATION DIALOG — open / close
+// ══════════════════════════════════════════════════════════════════════
+window.openMetricDialog = function(){
+  var ov = document.getElementById("mc-overlay");
+  if(!ov) return;
+  ov.classList.add("open");
+  document.body.style.overflow = "hidden";
+  var form = document.getElementById("mc-form");
+  if(form){
+    _ensureMetricUxPanels(form);
+    // Wire builder column lists now that dialog is visible
+    if(_allColumns.length) _wireMetricBuilderColumnLists(form);
+  }
+  // Build field list if columns are already loaded
+  if(_allColumns.length) _buildMcFieldsList(_allColumns);
+  setTimeout(function(){
+    var inp = document.querySelector("#mc-form [name='name']");
+    if(inp) inp.focus();
+  }, 60);
+};
+
+window.closeMetricDialog = function(){
+  var ov = document.getElementById("mc-overlay");
+  if(ov) ov.classList.remove("open");
+  document.body.style.overflow = "";
+  _hideSuggestions();
+};
+
+// Close on Escape
+document.addEventListener("keydown", function(e){
+  if(e.key === "Escape"){
+    var ov = document.getElementById("mc-overlay");
+    if(ov && ov.classList.contains("open")){ closeMetricDialog(); }
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════
+// QLIK-STYLE FIELD BROWSER (dialog right panel)
+// ══════════════════════════════════════════════════════════════════════
+function _mcTypeCls(type){
+  var t = (type||"").toLowerCase();
+  if(/int|num|float|decimal|money|real|double|bigint|tinyint|smallint|numeric/.test(t)) return "num";
+  if(/date|time|timestamp|datetime/.test(t)) return "dt";
+  if(/char|text|varchar|nvarchar|string|clob/.test(t)) return "str";
+  return "oth";
+}
+function _mcTypeIcon(cls){
+  return cls==="num" ? "#" : cls==="dt" ? "◷" : cls==="str" ? "Aa" : "?";
+}
+
+window._buildMcFieldsList = function(columns){
+  var list   = document.getElementById("mc-fields-list");
+  var status = document.getElementById("mc-col-status");
+  if(!list) return;
+  if(!columns || !columns.length){
+    list.innerHTML = '<div style="padding:10px;font-size:12px;color:var(--text-muted)">Schema not yet discovered — run Discovery first.</div>';
+    if(status) status.textContent = "";
+    return;
+  }
+  if(status) status.textContent = "("+columns.length+" cols)";
+  var grps = {}, grpOrder = [];
+  columns.forEach(function(c){
+    if(!grps[c.table]){ grps[c.table]=[]; grpOrder.push(c.table); }
+    grps[c.table].push(c);
+  });
+  list.innerHTML = grpOrder.map(function(tbl, gi){
+    var rows = grps[tbl].map(function(c){
+      var tc  = _mcTypeCls(c.type);
+      var til = _mcTypeIcon(tc);
+      return '<div class="mc-field-item" data-col="'+escHtml(c.column)+'" data-tbl="'+escHtml(tbl)+'"'
+        +' onclick="insertColumnFromMcDialog(\''+escHtml(c.column)+'\')"'
+        +' title="'+escHtml(tbl+'.'+c.column+(c.type?' ('+c.type+')':''))+' — click to insert">'
+        +'<span class="mc-type-badge '+tc+'">'+til+'</span>'
+        +'<span class="mc-field-name">'+escHtml(c.column)+'</span>'
+        +'<span class="mc-field-dtype">'+escHtml(c.type||'')+'</span>'
+        +'</div>';
+    }).join("");
+    return '<div class="mc-field-group'+(gi===0?' open':'')+'">'
+      +'<div class="mc-field-group-hd" onclick="toggleMcFieldGroup(this)">'
+      +'<span>'+escHtml(tbl)+'</span><span class="mc-chev">▶</span></div>'
+      +'<div class="mc-field-group-body">'+rows+'</div>'
+      +'</div>';
+  }).join("");
+};
+
+window.filterMcFields = function(q){
+  var lc = (q||"").toLowerCase();
+  document.querySelectorAll("#mc-fields-list .mc-field-item").forEach(function(item){
+    var ok = !lc || item.dataset.col.toLowerCase().includes(lc) || (item.dataset.tbl||"").toLowerCase().includes(lc);
+    item.style.display = ok ? "" : "none";
+  });
+  document.querySelectorAll("#mc-fields-list .mc-field-group").forEach(function(grp){
+    var anyVis = Array.from(grp.querySelectorAll(".mc-field-item")).some(function(i){ return i.style.display!=="none"; });
+    grp.style.display = anyVis ? "" : "none";
+    if(lc && anyVis) grp.classList.add("open");
+  });
+};
+
+window.toggleMcFieldGroup = function(hd){
+  var grp = hd.closest(".mc-field-group");
+  if(grp) grp.classList.toggle("open");
+};
+
+window.insertColumnFromMcDialog = function(colName){
+  var ed = document.querySelector("#mc-form .formula-editor");
+  if(ed){ insertAtCursor(ed, colName); ed.focus(); }
+};
 
 // Build the popover on load
 buildPopover();
