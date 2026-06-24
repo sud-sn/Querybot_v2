@@ -107,6 +107,17 @@
     <div class="lq-stat-n">{{ stats.total }}</div>
     <div class="lq-stat-l">Total</div>
   </div>
+  <div class="lq-stat-card" style="border-color:color-mix(in srgb,var(--blue) 30%,transparent);background:color-mix(in srgb,var(--blue) 6%,var(--surface))">
+    <div class="lq-stat-n" style="color:var(--blue)">{{ governed_count }}</div>
+    <div class="lq-stat-l" style="color:var(--blue)">In Qdrant</div>
+  </div>
+  {% if stats.positive > governed_count %}
+  <form method="post" action="/admin/clients/{{ client.account_id }}/learning-queue/backfill-governed" style="margin:0;align-self:center">
+    <button type="submit" class="lq-btn" style="font-size:11px" title="Sync {{ stats.positive - governed_count }} approved candidate(s) that are not yet in the vector store">
+      Sync {{ stats.positive - governed_count }} missing →
+    </button>
+  </form>
+  {% endif %}
 </div>
 
 <!-- Status filters -->

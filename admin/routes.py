@@ -4178,23 +4178,30 @@ async def metric_create(
         if raw:
             db_type = raw.get("db_type", "azure_sql")
 
-    store.save_metric(account_id, {
-        "name":                name.strip(),
-        "synonyms":            synonyms.strip(),
-        "sql_template":        sql_template.strip(),
-        "description":         description.strip(),
-        "formula_type":        formula_type.strip(),
-        "result_format":       result_format.strip(),
-        "required_columns":    required_columns.strip(),
-        "allowed_dimensions":  allowed_dimensions.strip(),
-        "metric_builder_config": metric_builder_config.strip(),
-        "example_questions":   example_questions.strip(),
-        "grain":               grain.strip(),
-        "category":            category.strip(),
-        "default_time_column": default_time_column.strip(),
-        "base_table":          base_table.strip(),
-        "base_entity":         base_entity.strip(),
-    }, db_type=db_type)
+    try:
+        store.save_metric(account_id, {
+            "name":                name.strip(),
+            "synonyms":            synonyms.strip(),
+            "sql_template":        sql_template.strip(),
+            "description":         description.strip(),
+            "formula_type":        formula_type.strip(),
+            "result_format":       result_format.strip(),
+            "required_columns":    required_columns.strip(),
+            "allowed_dimensions":  allowed_dimensions.strip(),
+            "metric_builder_config": metric_builder_config.strip(),
+            "example_questions":   example_questions.strip(),
+            "grain":               grain.strip(),
+            "category":            category.strip(),
+            "default_time_column": default_time_column.strip(),
+            "base_table":          base_table.strip(),
+            "base_entity":         base_entity.strip(),
+        }, db_type=db_type)
+    except ValueError as dup_exc:
+        from urllib.parse import quote
+        return RedirectResponse(
+            f"/admin/clients/{account_id}/metrics?error={quote(str(dup_exc))}",
+            status_code=303,
+        )
 
     # Sync approved metric formula into the structured semantic model (S2-1).
     try:
@@ -6145,6 +6152,188 @@ async def admin_build_kb(
 # Learning Queue  (Day 3-4 — governed self-learning admin UI)
 # =============================================================================
 
+# =============================================================================
+# Pending Platform Users  (admin approval — no registration link)
+# =============================================================================
+
+@router.get("/clients/{account_id}/pending-users")
+async def admin_pending_users(request: Request, account_id: str):
+    """List platform users waiting for admin approval."""
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    client = store.get_client(account_id)
+    if not client:
+        return RedirectResponse("/admin/clients", status_code=303)
+
+    status_filter = request.query_params.get("status", "pending")
+    saved = request.query_params.get("saved", "")
+
+    pending = store.list_pending_users(account_id, status=status_filter)
+    groups  = store.list_groups(account_id)
+    counts  = {
+        "pending":  store.get_pending_user_count(account_id),
+        "approved": len(store.list_pending_users(account_id, status="approved")),
+        "rejected": len(store.list_pending_users(account_id, status="rejected")),
+    }
+    return _resp(request, "client_pending_users.html", {
+        "client":        client,
+        "pending_users": pending,
+        "groups":        groups,
+        "counts":        counts,
+        "status_filter": status_filter,
+        "saved":         saved,
+    })
+
+
+@router.post("/clients/{account_id}/pending-users/{pending_id}/approve")
+async def admin_pending_users_approve(
+    request: Request, account_id: str, pending_id: int,
+):
+    """Approve a pending platform user, assign a group, send proactive notification."""
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+
+    form         = await request.form()
+    group_id_raw = str(form.get("group_id", "")).strip()
+    reviewer_note = str(form.get("reviewer_note", "")).strip()[:500]
+    group_id     = int(group_id_raw) if group_id_raw.isdigit() else None
+
+    pending = store.get_pending_user(pending_id, account_id)
+    if not pending:
+        return RedirectResponse(
+            f"/admin/clients/{account_id}/pending-users?saved={quote('Pending user not found.')}",
+            status_code=303,
+        )
+
+    portal_user = store.approve_pending_user(
+        pending_id=pending_id,
+        account_id=account_id,
+        group_id=group_id,
+        reviewer_id="admin",
+        reviewer_note=reviewer_note,
+    )
+
+    msg = f"Access approved for {pending.get('display_name') or pending.get('platform_user_id', '?')}."
+
+    # Proactive notification to the user via their platform
+    try:
+        import json as _json
+        platform_type = pending.get("platform_type", "teams")
+
+        try:
+            conv_ref = _json.loads(pending.get("conversation_ref") or "{}")
+        except (ValueError, TypeError):
+            conv_ref = {}
+
+        if platform_type == "teams" and conv_ref.get("service_url"):
+            teams_platforms = store.list_platforms("teams")
+            active_teams = [p for p in teams_platforms if p.get("is_active")]
+            if active_teams:
+                from gateway.teams_adapter import TeamsAdapter
+                from gateway.base import PlatformEvent
+                adapter = TeamsAdapter(active_teams[0]["credentials"])
+                synthetic_event = PlatformEvent(
+                    account_id = account_id,
+                    user_id    = pending["platform_user_id"],
+                    channel_id = pending["conversation_ref"],
+                    text       = "",
+                    platform   = "teams",
+                )
+                group_name = ""
+                if group_id:
+                    g = store.get_group(group_id)
+                    group_name = f" ({g['name']})" if g else ""
+                await adapter.send_message(
+                    synthetic_event,
+                    f"✅ *Your access has been approved!*\n\n"
+                    f"You now have access to QueryBot{group_name}.\n"
+                    f"Go ahead and ask your first question — I'm ready.",
+                )
+                log.info("Proactive approval message sent to %s", pending["platform_user_id"])
+    except Exception as exc:
+        log.warning("Proactive approval message failed for pending_id=%d: %s", pending_id, exc)
+        msg += " (notification could not be sent — user will see access on next message)"
+
+    return RedirectResponse(
+        f"/admin/clients/{account_id}/pending-users?saved={quote(msg)}",
+        status_code=303,
+    )
+
+
+@router.post("/clients/{account_id}/pending-users/{pending_id}/reject")
+async def admin_pending_users_reject(
+    request: Request, account_id: str, pending_id: int,
+):
+    """Reject a pending platform user."""
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+
+    form          = await request.form()
+    reviewer_note = str(form.get("reviewer_note", "")).strip()[:500]
+
+    pending = store.get_pending_user(pending_id, account_id)
+    if not pending:
+        return RedirectResponse(
+            f"/admin/clients/{account_id}/pending-users?saved={quote('Pending user not found.')}",
+            status_code=303,
+        )
+
+    store.reject_pending_user(
+        pending_id=pending_id,
+        account_id=account_id,
+        reviewer_id="admin",
+        reviewer_note=reviewer_note,
+    )
+
+    # Notify the user they were rejected so they can contact the admin
+    try:
+        import json as _json
+        platform_type = pending.get("platform_type", "teams")
+
+        try:
+            conv_ref = _json.loads(pending.get("conversation_ref") or "{}")
+        except (ValueError, TypeError):
+            conv_ref = {}
+
+        if platform_type == "teams" and conv_ref.get("service_url"):
+            teams_platforms = store.list_platforms("teams")
+            active_teams = [p for p in teams_platforms if p.get("is_active")]
+            if active_teams:
+                from gateway.teams_adapter import TeamsAdapter
+                from gateway.base import PlatformEvent
+                adapter = TeamsAdapter(active_teams[0]["credentials"])
+                synthetic_event = PlatformEvent(
+                    account_id = account_id,
+                    user_id    = pending["platform_user_id"],
+                    channel_id = pending["conversation_ref"],
+                    text       = "",
+                    platform   = "teams",
+                )
+                await adapter.send_message(
+                    synthetic_event,
+                    "Your access request was not approved. "
+                    "Please contact your administrator for assistance.",
+                )
+    except Exception as exc:
+        log.warning("Proactive rejection message failed for pending_id=%d: %s", pending_id, exc)
+
+    name = pending.get("display_name") or pending.get("platform_user_id", "?")
+    msg  = f"Access rejected for {name}."
+    return RedirectResponse(
+        f"/admin/clients/{account_id}/pending-users?saved={quote(msg)}",
+        status_code=303,
+    )
+
+
+@router.get("/api/clients/{account_id}/pending-users/count")
+async def admin_pending_users_count(request: Request, account_id: str):
+    """Return JSON count of pending platform users — used for dashboard badges."""
+    if not _is_auth(request):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    count = store.get_pending_user_count(account_id)
+    return {"count": count}
+
+
 @router.get("/clients/{account_id}/learning-queue")
 async def admin_learning_queue(request: Request, account_id: str):
     """Display the admin Learning Queue for a workspace."""
@@ -6179,6 +6368,14 @@ async def admin_learning_queue(request: Request, account_id: str):
         "total":        len(list_candidates(account_id, status=None, limit=9999)),
     }
 
+    # Governed Qdrant count — how many approved Q&A pairs are live in the vector store
+    governed_count = 0
+    try:
+        from core.governed_store import get_governed_count
+        governed_count = get_governed_count(account_id)
+    except Exception:
+        pass
+
     # Parse evidence JSON for each candidate so the template can iterate it
     import json as _json
     for c in candidates:
@@ -6192,12 +6389,13 @@ async def admin_learning_queue(request: Request, account_id: str):
             c["evidence"] = {}
 
     return _resp(request, "client_learning_queue.html", {
-        "client":        client,
-        "candidates":    candidates,
-        "status_filter": status_filter,
-        "stats":         stats,
-        "saved":         saved,
-        "flag_enabled":  bool(client.get("enable_feedback_collection")),
+        "client":          client,
+        "candidates":      candidates,
+        "status_filter":   status_filter,
+        "stats":           stats,
+        "saved":           saved,
+        "flag_enabled":    bool(client.get("enable_feedback_collection")),
+        "governed_count":  governed_count,
     })
 
 
@@ -6211,6 +6409,24 @@ async def admin_learning_queue_toggle_flag(request: Request, account_id: str):
     store.update_client_meta(account_id, enable_feedback_collection=0 if current else 1)
     log.info("Admin toggled enable_feedback_collection → %d for %s", 0 if current else 1, account_id)
     return RedirectResponse(f"/admin/clients/{account_id}/learning-queue", status_code=303)
+
+
+@router.post("/clients/{account_id}/learning-queue/backfill-governed")
+async def admin_learning_queue_backfill_governed(request: Request, account_id: str):
+    """Backfill all approved learning candidates into the querybot_governed Qdrant collection."""
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    try:
+        from core.governed_store import backfill_approved_candidates
+        count = backfill_approved_candidates(account_id)
+        msg = f"Backfill complete — {count} approved candidate(s) synced to vector store."
+    except Exception as exc:
+        log.error("backfill_governed error for %s: %s", account_id, exc)
+        msg = f"Backfill error: {exc}"
+    return RedirectResponse(
+        f"/admin/clients/{account_id}/learning-queue?saved={quote(msg)}",
+        status_code=303,
+    )
 
 
 @router.post("/clients/{account_id}/learning-queue/{candidate_id}/review")
@@ -6247,7 +6463,7 @@ async def admin_learning_queue_review(
     new_status = status_map[action]
 
     try:
-        from store.learning_store import update_candidate_status
+        from store.learning_store import update_candidate_status, get_candidate
         # Admin auth uses cookie-based HMAC (not SessionMiddleware), so no session user id
         reviewer_id = "admin"
         update_candidate_status(
@@ -6258,6 +6474,17 @@ async def admin_learning_queue_review(
         )
         label_map = {"approved": "approved", "rejected": "rejected", "known_failure": "marked as known failure"}
         msg = f"Candidate {candidate_id[:8]}... {label_map[new_status]}."
+
+        # Governed collection sync is handled by update_candidate_status hooks
+        # (_fire_governed_upsert on approved, _fire_governed_delete on revoked).
+        # Rejecting or marking known_failure also needs the delete hook.
+        if new_status in ("rejected", "known_failure"):
+            try:
+                from core.governed_store import delete_governed_example
+                delete_governed_example(candidate_id=candidate_id, account_id=account_id)
+            except Exception as gov_exc:
+                log.warning("governed_store delete failed for %s: %s", candidate_id[:8], gov_exc)
+
     except Exception as exc:
         log.error("admin_learning_queue_review error: %s", exc)
         msg = f"Error: {exc}"
@@ -6293,21 +6520,54 @@ async def admin_learning_queue_correct_sql(
         )
 
     try:
-        from store.learning_store import set_candidate_corrected_sql, update_candidate_status
+        from store.learning_store import (
+            set_candidate_corrected_sql, update_candidate_status, get_candidate,
+        )
         reviewer_id = "admin"
+
+        # Read status BEFORE writing so we know whether to re-sync Qdrant below.
+        pre = get_candidate(candidate_id) or {}
+        was_approved = pre.get("status") == "approved"
+
         set_candidate_corrected_sql(
             candidate_id=candidate_id,
             corrected_sql=corrected_sql,
             reviewer_id=reviewer_id,
         )
-        # Also record reviewer note if provided
+
         if reviewer_note:
+            # Re-queue for explicit re-approval so the corrected SQL goes through review.
             update_candidate_status(
                 candidate_id=candidate_id,
-                status="pending_review",   # keep pending so admin can still approve after correction
+                status="pending_review",
                 reviewer_id=reviewer_id,
                 reviewer_note=reviewer_note,
             )
+            # If it was live in Qdrant, remove the stale point so it isn't used until re-approved.
+            if was_approved:
+                try:
+                    from core.governed_store import delete_governed_example
+                    delete_governed_example(candidate_id=candidate_id, account_id=account_id)
+                except Exception as ge:
+                    log.warning("correct-sql: governed delete failed (non-fatal): %s", ge)
+        elif was_approved:
+            # No reviewer note: candidate stays approved — immediately push corrected SQL to Qdrant.
+            try:
+                from core.governed_store import upsert_governed_example
+                cand = get_candidate(candidate_id) or {}
+                upsert_governed_example(
+                    candidate_id=candidate_id,
+                    account_id=account_id,
+                    question=cand.get("question_text", ""),
+                    sql=corrected_sql,
+                    source="admin_correction",
+                    final_score=85,
+                    schema_scope=cand.get("schema_scope", ""),
+                )
+                log.info("correct-sql: governed example re-synced for %s", candidate_id[:8])
+            except Exception as ge:
+                log.warning("correct-sql: governed upsert failed (non-fatal): %s", ge)
+
         msg = f"Corrected SQL saved for {candidate_id[:8]}... (score set to 85, source=admin_correction)."
     except Exception as exc:
         log.error("admin_learning_queue_correct_sql error: %s", exc)

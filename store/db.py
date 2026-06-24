@@ -270,6 +270,29 @@ CREATE TABLE IF NOT EXISTS user_table_access (
     UNIQUE(user_id, table_name)
 );
 
+-- ── Pending platform users (admin-approval flow, no link required) ──────────
+-- platform_type    : "teams" | "zoom" | "slack"
+-- platform_user_id : raw user ID from the platform (Teams: from.id, etc.)
+-- display_name     : display name from the platform activity
+-- conversation_ref : JSON blob with service_url + conversation_id for proactive msg
+-- status           : pending | approved | rejected
+CREATE TABLE IF NOT EXISTS pending_platform_user (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id         TEXT    NOT NULL REFERENCES client(account_id) ON DELETE CASCADE,
+    platform_type      TEXT    NOT NULL DEFAULT 'teams',
+    platform_user_id   TEXT    NOT NULL,
+    display_name       TEXT    NOT NULL DEFAULT '',
+    conversation_ref   TEXT    NOT NULL DEFAULT '{}',
+    status             TEXT    NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected')),
+    portal_user_id     INTEGER REFERENCES portal_user(id) ON DELETE SET NULL,
+    reviewer_id        TEXT    DEFAULT NULL,
+    reviewer_note      TEXT    DEFAULT '',
+    created_at         TEXT    DEFAULT (datetime('now')),
+    reviewed_at        TEXT    DEFAULT NULL,
+    UNIQUE(account_id, platform_user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_pending_platform_user_account ON pending_platform_user(account_id, status);
+
 -- ── Registration tokens (one-time link sent in chat) ─────────────────────────
 CREATE TABLE IF NOT EXISTS registration_token (
     token      TEXT PRIMARY KEY,
