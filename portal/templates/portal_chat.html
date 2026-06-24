@@ -3573,7 +3573,7 @@ async function loadHistory() {
     const resp = await fetch('/portal/api/history', { credentials: 'same-origin' });
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     const data = await resp.json();
-    const items = Array.isArray(data.history) ? data.history : (Array.isArray(data) ? data : []);
+    const items = Array.isArray(data.items) ? data.items : (Array.isArray(data.history) ? data.history : (Array.isArray(data) ? data : []));
     _historyLoaded = true;
     if (!items.length) {
       if (emptyEl) emptyEl.innerHTML = 'No queries yet.<br><span style="font-size:11px">Your recent queries will appear here.</span>';
