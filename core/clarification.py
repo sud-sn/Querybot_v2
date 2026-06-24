@@ -707,6 +707,23 @@ async def check_ambiguity_glossary_first(
         evidence=evidence,
     )
     if len(menu_terms) >= 2:
+        # If the question explicitly compares multiple known metrics, the user
+        # already named what they want — the LLM seeing multiple menu entries
+        # is not ambiguity, it is expected.  Skip the LLM call entirely.
+        _cmp_intent = analyze_query_intent(question)
+        if (_cmp_intent.get("wants_comparison") or _cmp_intent.get("wants_conditional_split")) \
+                and len(metric_matches) >= 2:
+            log.info(
+                "Skipping LLM ambiguity check: comparison intent + %d metric matches for q='%s'",
+                len(metric_matches),
+                question[:80],
+            )
+            return False, "", {
+                "source": "none",
+                "question": "",
+                "options": [],
+                "generated_options_ignored": False,
+            }
         is_amb, q, options = await _llm_ambiguity_check_constrained(
             account_id,
             question,
