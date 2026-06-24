@@ -632,29 +632,33 @@ async def check_ambiguity_glossary_first(
     matches = store.match_terms_in_question(account_id, question, allowed_tables)
     metric_matches = [m for m in matches if m.get("kind") == "metric"]
     if len(metric_matches) >= 2:
-        implicit_opts = [
-            {
-                "label": _clean_chip_label(m.get("definition", ""), m["term"]),
-                "value": m["term"],
-                "expression": m.get("canonical_expression", ""),
-                "definition": m.get("definition", ""),
-                "_term_id": m["id"],
-                "valid": True,
-            }
-            for m in metric_matches[:3]
-        ]
-        implicit_opts = validated_options(implicit_opts)
-        if len(implicit_opts) >= 2:
-            clarifying_q = (
-                "I see a few ways to interpret this. Which did you mean:\n"
-                + "\n".join(f"  • {o['label']}" for o in implicit_opts)
-            )
-            return True, clarifying_q, {
-                "source": "glossary_multi",
-                "question": clarifying_q,
-                "options": implicit_opts,
-                "generated_options_ignored": False,
-            }
+        # If the user is explicitly asking to compare/breakdown multiple metrics,
+        # they want ALL of them — don't ask which one they meant.
+        _intent = analyze_query_intent(question)
+        if not _intent.get("wants_comparison") and not _intent.get("wants_conditional_split"):
+            implicit_opts = [
+                {
+                    "label": _clean_chip_label(m.get("definition", ""), m["term"]),
+                    "value": m["term"],
+                    "expression": m.get("canonical_expression", ""),
+                    "definition": m.get("definition", ""),
+                    "_term_id": m["id"],
+                    "valid": True,
+                }
+                for m in metric_matches[:3]
+            ]
+            implicit_opts = validated_options(implicit_opts)
+            if len(implicit_opts) >= 2:
+                clarifying_q = (
+                    "I see a few ways to interpret this. Which did you mean:\n"
+                    + "\n".join(f"  • {o['label']}" for o in implicit_opts)
+                )
+                return True, clarifying_q, {
+                    "source": "glossary_multi",
+                    "question": clarifying_q,
+                    "options": implicit_opts,
+                    "generated_options_ignored": False,
+                }
 
     # Step 3: Schema-grounded evidence for ambiguity and typo resolution.
     glossary_hint = _build_glossary_hint(account_id, allowed_tables)
