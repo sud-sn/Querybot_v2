@@ -1283,6 +1283,71 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                             await websocket.send_json({"type": "typing", "active": False})
                         continue
 
+                    # ── diagnose: root-cause analysis for significant drops/rises ─
+                    # Runs the full drilldown pipeline: LLM generates breakdown
+                    # SQL queries, executes them, then synthesises a narrative
+                    # explaining what dimension/segment drove the change.
+                    if action == "diagnose" and cached and cached.get("rows"):
+                        try:
+                            provider, model, api_key, az_kwargs = resolve_provider(client, purpose="query")
+                            from core.response_builder import generate_analysis_response
+                            _dx_brief = cached.get("data_brief") or {}
+                            _dx_ts    = _dx_brief.get("time_series") or {}
+                            _dx_pct   = _dx_ts.get("overall_pct_change") or 0.0
+                            _dx_dir   = _dx_ts.get("direction") or "stable"
+                            _dx_sign  = "dropped" if _dx_pct < 0 else "rose"
+                            _dx_follow_up = (
+                                f"The metric {_dx_sign} by {abs(_dx_pct):.1f}% ({_dx_dir}). "
+                                "Break it down by the available dimensions to identify which "
+                                "segment or category drove this change the most. "
+                                "In 2-3 sentences, explain the primary cause."
+                            )
+                            with llm_audit_scope(
+                                account_id=account_id,
+                                question=f"diagnose: {cached.get('question', '')}".strip(),
+                                enabled=bool(client.get("enable_llm_audit")),
+                                request_id=make_llm_audit_request_id(),
+                                question_id=getattr(adapter, "last_question_id", None) or "",
+                                component="diagnose",
+                            ):
+                                insight = await generate_analysis_response(
+                                    action="why",
+                                    rows=cached["rows"],
+                                    question=cached.get("question", ""),
+                                    provider=provider,
+                                    model=model,
+                                    api_key=api_key,
+                                    follow_up=_dx_follow_up,
+                                    original_sql=cached.get("sql", ""),
+                                    db_cfg=cached.get("db_cfg"),
+                                    context=cached.get("rag_context", ""),
+                                    known_tables=_ws_known_tables,
+                                    query_executor=_ws_execute_governed,
+                                    **az_kwargs,
+                                )
+                            # Override the title so the card is clearly labelled
+                            if isinstance(insight, dict):
+                                insight["action"] = "diagnose"
+                                if not insight.get("title"):
+                                    insight["title"] = "Root cause analysis"
+                            await websocket.send_json(insight)
+                        except Exception as _dx_err:
+                            log.warning("diagnose action failed: %s", _dx_err)
+                            await websocket.send_json({
+                                "type": "assistant_analysis",
+                                "action": "diagnose",
+                                "title": "Root cause analysis",
+                                "body": (
+                                    "I could not run the breakdown automatically. "
+                                    "Try asking directly: \"Why did this value change?\" "
+                                    "or \"Break it down by [dimension]\"."
+                                ),
+                                "bullets": [],
+                            })
+                        finally:
+                            await websocket.send_json({"type": "typing", "active": False})
+                        continue
+
                     # ── standard action buttons (explain, analyze, compare …) ─
                     if cached and cached.get("rows") is not None:
                         try:

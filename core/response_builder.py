@@ -727,10 +727,6 @@ def compute_chip_eligibility(
                 "pre_context": pre_context,
             })
 
-    # ── explain — always eligible when rows exist ────────────────────────────
-    if row_count >= 1 and mode != "empty":
-        _add("explain", "Explain result", 100)
-
     # ── time_series chips ────────────────────────────────────────────────────
     if mode == "time_series":
         direction    = ts.get("direction") or "stable"
@@ -738,13 +734,6 @@ def compute_chip_eligibility(
         pct_change   = ts.get("overall_pct_change")
         if pct_change is None:
             pct_change = ctx.get("pct_change") or 0.0
-
-        # analyze_trend: need ≥4 periods to identify a meaningful pattern
-        if period_count >= 4:
-            _add(
-                "analyze", "Analyze trend", 80,
-                f"{period_count} periods — {direction} trend",
-            )
 
         # compare_period: only meaningful when overall change is non-trivial
         if period_count >= 2 and pct_change is not None and abs(pct_change) >= 3.0:
@@ -755,12 +744,13 @@ def compute_chip_eligibility(
                 f"{sign}{pct_change:.1f}% overall change",
             )
 
-        # predict: not useful on stable or very short series
-        if period_count >= 4 and direction in ("increasing", "decreasing"):
+        # diagnose: root-cause chip for significant movement
+        if pct_change is not None and abs(pct_change) >= 5.0:
+            _change_word = "drop" if pct_change < 0 else "rise"
             _add(
-                "predict", "Predict next period",
-                80 if period_count >= 6 else 72,
-                f"{direction.capitalize()} over {period_count} periods",
+                "diagnose", f"Why the {_change_word}?",
+                88 if abs(pct_change) >= 10 else 80,
+                f"{abs(pct_change):.1f}% {_change_word} — identify what drove this",
             )
 
         # compare_prior: available when the semantic model knows the date role
@@ -777,27 +767,8 @@ def compute_chip_eligibility(
 
     # ── ranking chips ────────────────────────────────────────────────────────
     elif mode == "ranking":
-        if row_count >= 3:
-            _add("analyze", "Analyze ranking", 80)
-
-        gap    = cmp_stats.get("gap") or 0
-        leader = cmp_stats.get("leader") or "top item"
-        if row_count >= 3 and gap > 0:
-            _add(
-                "compare", "Compare top results", 78,
-                f"{leader} leads by {gap:,.0f}",
-            )
-
-        # outliers: top-3 owning ≥60 % signals high concentration worth calling out
-        top3_share = dist.get("top_3_share_pct")
-        if top3_share is not None and top3_share >= 60:
-            _add(
-                "outliers", "Show outliers",
-                75 if top3_share >= 75 else 70,
-                f"Top 3 account for {top3_share:.0f}% of total",
-            )
-
-        # contribution: % share breakdown always useful for ranking results
+        # contribution: % share breakdown useful for ranking results
+        leader      = cmp_stats.get("leader") or "top item"
         leader_share = cmp_stats.get("leader_share_pct")
         if leader_share is not None and row_count >= 2:
             _add(
@@ -805,16 +776,9 @@ def compute_chip_eligibility(
                 f"{leader} holds {leader_share:.0f}% of total",
             )
 
-    # ── numeric_table chips ──────────────────────────────────────────────────
-    elif mode == "numeric_table":
-        if dist.get("std_dev") is not None:
-            _add("analyze", "Analyze spread", 75)
-
     # ── drill_dim — "Break down by X" chips ─────────────────────────────────
-    # Show at most 3 dimensions that are available in the semantic model but
-    # not already present in the current result.  Each chip gets its own id
-    # encoded as "drill_dim:{DimensionName}" so the backend knows which one
-    # was clicked without requiring the frontend to pass extra context.
+    # Show at most 2 dimensions that are available in the semantic model but
+    # not already present in the current result.
     if semantic_plan and semantic_plan.get("enabled") and row_count >= 1:
         result_cols_upper = {
             c.upper()
@@ -822,7 +786,7 @@ def compute_chip_eligibility(
         }
         drill_count = 0
         for dim in (semantic_plan.get("available_dimensions") or []):
-            if drill_count >= 3:
+            if drill_count >= 2:
                 break
             dc = (dim.get("display_column") or "").upper()
             name = (dim.get("name") or "").strip()
@@ -839,12 +803,6 @@ def compute_chip_eligibility(
             )
             drill_count += 1
 
-    # ── decide (advisory next-step) — only when structure is sufficient ──────
-    if mode in ("time_series", "ranking") and row_count >= 3:
-        _add("decide", "Recommend next step", 75)
-    elif mode == "numeric_table" and row_count >= 3 and dist.get("std_dev") is not None:
-        _add("decide", "Recommend next step", 72)
-
     # ── download_csv — available for any non-empty result ────────────────────
     if row_count >= 1 and mode != "empty":
         _add(
@@ -852,30 +810,15 @@ def compute_chip_eligibility(
             f"{row_count} row{'s' if row_count != 1 else ''} ready to export",
         )
 
-    # ── set_alert — monitor a KPI or trend for significant changes ───────────
-    if mode == "single_value":
-        _add(
-            "set_alert", "Alert me on changes", 72,
-            "Notify when this value changes significantly",
-        )
-    elif mode == "time_series" and row_count >= 4:
-        _ts_direction = ts.get("direction") or "stable"
-        _add(
-            "set_alert", "Alert me on changes", 70,
-            f"Watch for direction changes (currently {_ts_direction})",
-        )
-
-    # Fixed display order. drill_dim chips (dynamic ids) slot between
-    # outliers (priority 5) and predict (priority 90).
+    # Fixed display order. drill_dim chips slot between contribution and download.
     _fixed = {
-        "explain": 0, "analyze": 1, "compare": 2, "compare_prior": 3,
-        "contribution": 4, "outliers": 5,
-        "predict": 90, "decide": 91,
-        "download_csv": 92, "set_alert": 93,
+        "compare": 0, "diagnose": 1, "compare_prior": 2,
+        "contribution": 3,
+        "download_csv": 90,
     }
     chips.sort(key=lambda c: (
         _fixed.get(c["id"], 50 if c["id"].startswith("drill_dim:") else 99),
-        c["id"],   # alphabetical tiebreak for multiple drill chips
+        c["id"],
     ))
     return chips
 

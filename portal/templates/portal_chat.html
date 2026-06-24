@@ -68,6 +68,8 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .msg-actions{display:flex;gap:.45rem;flex-wrap:wrap;padding:0 .1rem}
 .msg-action{font-size:11px;font-weight:700;padding:6px 10px;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-soft);cursor:pointer;transition:all .15s}
 .msg-action:hover{background:var(--surface-3);border-color:var(--primary);color:var(--primary)}
+.msg-action-diagnose{border-color:color-mix(in srgb,var(--amber) 40%,var(--border));color:var(--amber);background:color-mix(in srgb,var(--amber-light) 60%,var(--surface-2))}
+.msg-action-diagnose:hover{background:var(--amber-light);border-color:var(--amber);color:color-mix(in srgb,var(--amber) 80%,#000)}
 /* ── Processing row — compact stage indicator, no cartoon ── */
 .processing-row{display:none;align-items:center;gap:.65rem;padding:.45rem 1.25rem .5rem;flex-shrink:0}.processing-row.active{display:flex}
 .stage-status{display:flex;align-items:center;gap:.5rem}
@@ -2503,13 +2505,17 @@ function appendAssistantResponse(msg, opts = {}){
       + `<span class="ds-icon">${dsIcon}</span><span>${escHtml(ds.line)}</span></div>`
     : '';
 
-  // ── Decision actions — incl. on-demand "Recommend next step" (LLM) ────────
+  // ── Decision actions — incl. diagnose and other result chips ────────────
   const nextActions = Array.isArray(msg.next_actions) ? msg.next_actions : [];
   const nextActionsHtml = nextActions.length
-    ? nextActions.map(a =>
-        `<button class="msg-action" type="button" data-analysis-action="${escHtml(a.id)}"`
-        + ` data-analysis-label="${escHtml(a.label)}">${escHtml(a.label)}</button>`
-      ).join('')
+    ? nextActions.map(a => {
+        const isDiagnose = a.id === 'diagnose';
+        const cls = isDiagnose ? 'msg-action msg-action-diagnose' : 'msg-action';
+        const icon = isDiagnose
+          ? '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35M11 8v3M11 14h.01"/></svg>'
+          : '';
+        return `<button class="${cls}" type="button" data-analysis-action="${escHtml(a.id)}" data-analysis-label="${escHtml(a.label)}">${icon}${escHtml(a.label)}</button>`;
+      }).join('')
     : '';
 
   const pinBtnHtml = (hasChart && msg.chart.pin_token)

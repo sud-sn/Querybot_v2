@@ -1,18 +1,13 @@
 """
-Sprint A — Signal-based chip eligibility tests.
+Chip eligibility tests — updated for the slim chip set.
 
-Every test drives ``compute_chip_eligibility`` directly with realistic
-``ctx`` / ``brief`` dicts and asserts on *which* chips appear, *which* are
-suppressed, and that ``pre_context`` carries meaningful signal text.
+Chips that exist:
+  time_series  : compare, diagnose, compare_prior
+  ranking      : contribution
+  all modes    : drill_dim (max 2), download_csv
 
-Design rules verified here:
-  - A 2-row time series must NOT produce predict or analyze chips
-  - A flat/stable time series must NOT produce a predict chip
-  - A ranking with <3 rows must NOT produce analyze/compare chips
-  - A ranking with high concentration MUST produce outliers + contribution chips
-  - compare_prior appears only when semantic_plan has a date_dimension field
-  - explain is always present for non-empty results
-  - decide only appears for mode in (time_series, ranking) with rows >= 3
+Removed chips (no longer generated):
+  explain, analyze, predict, outliers, decide, set_alert
 """
 
 import unittest
@@ -23,7 +18,6 @@ from core.response_builder import compute_chip_eligibility
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 def _ts_ctx(row_count=6, pct_change=15.0):
-    """Minimal time_series ctx."""
     return {
         "mode": "time_series",
         "row_count": row_count,
@@ -34,7 +28,6 @@ def _ts_ctx(row_count=6, pct_change=15.0):
 
 
 def _ts_brief(direction="increasing", period_count=6, overall_pct=15.0):
-    """Minimal time_series brief."""
     return {
         "time_series": {
             "direction": direction,
@@ -69,136 +62,120 @@ def _ids(chips):
     return [c["id"] for c in chips]
 
 
-# ── Tests ─────────────────────────────────────────────────────────────────────
+# ── Removed chips — none of these should appear any more ─────────────────────
 
-class ChipEligibilityExplainTests(unittest.TestCase):
+class RemovedChipsAbsent(unittest.TestCase):
 
-    def test_explain_always_present_for_non_empty(self):
-        """explain chip must appear for every non-empty result mode."""
+    def _assert_absent(self, chip_id, ctx, brief=None, plan=None):
+        chips = compute_chip_eligibility(ctx, brief=brief, semantic_plan=plan)
+        self.assertNotIn(chip_id, _ids(chips), f"removed chip '{chip_id}' must not appear")
+
+    def test_explain_never_generated(self):
         for mode in ("time_series", "ranking", "numeric_table", "single_value"):
             ctx = {"mode": mode, "row_count": 5, "distribution_stats": {}, "comparison_stats": {}}
-            chips = compute_chip_eligibility(ctx)
-            self.assertIn("explain", _ids(chips),
-                          f"explain missing for mode={mode}")
+            self._assert_absent("explain", ctx)
 
-    def test_explain_absent_for_empty_result(self):
-        ctx = {"mode": "empty", "row_count": 0}
-        chips = compute_chip_eligibility(ctx)
-        self.assertNotIn("explain", _ids(chips))
+    def test_analyze_never_generated(self):
+        ctx = _ts_ctx(row_count=6, pct_change=18.0)
+        self._assert_absent("analyze", ctx, brief=_ts_brief(period_count=6, overall_pct=18.0))
+        self._assert_absent("analyze", _ranking_ctx(row_count=10))
 
+    def test_predict_never_generated(self):
+        ctx = _ts_ctx(row_count=6, pct_change=-22.0)
+        brief = _ts_brief(direction="decreasing", period_count=6, overall_pct=-22.0)
+        self._assert_absent("predict", ctx, brief=brief)
+
+    def test_outliers_never_generated(self):
+        ctx = _ranking_ctx(row_count=8, top3_share=90.0)
+        self._assert_absent("outliers", ctx)
+
+    def test_decide_never_generated(self):
+        ctx = _ts_ctx(row_count=5, pct_change=12.0)
+        self._assert_absent("decide", ctx)
+
+    def test_set_alert_never_generated(self):
+        ctx = {"mode": "single_value", "row_count": 1, "distribution_stats": {}, "comparison_stats": {}}
+        self._assert_absent("set_alert", ctx)
+
+
+# ── Time-series chips ─────────────────────────────────────────────────────────
 
 class ChipEligibilityTimeSeries(unittest.TestCase):
 
-    def test_full_series_has_analyze_compare_predict(self):
-        """6-period increasing series → all three time_series chips."""
+    def test_compare_shown_for_significant_change(self):
         ctx = _ts_ctx(row_count=6, pct_change=18.0)
-        brief = _ts_brief(direction="increasing", period_count=6, overall_pct=18.0)
+        brief = _ts_brief(period_count=6, overall_pct=18.0)
         chips = compute_chip_eligibility(ctx, brief=brief)
-        ids = _ids(chips)
-        self.assertIn("analyze", ids)
-        self.assertIn("compare", ids)
-        self.assertIn("predict", ids)
+        self.assertIn("compare", _ids(chips))
 
-    def test_two_row_series_suppresses_analyze_and_predict(self):
-        """2-row series has too few periods for trend analysis or prediction."""
-        ctx = _ts_ctx(row_count=2, pct_change=20.0)
-        brief = _ts_brief(direction="increasing", period_count=2, overall_pct=20.0)
-        chips = compute_chip_eligibility(ctx, brief=brief)
-        ids = _ids(chips)
-        self.assertNotIn("analyze", ids, "analyze must be suppressed for 2-period series")
-        self.assertNotIn("predict", ids, "predict must be suppressed for 2-period series")
-
-    def test_stable_series_suppresses_predict(self):
-        """Stable direction → prediction chip hidden (no trend to extrapolate)."""
-        ctx = _ts_ctx(row_count=6, pct_change=1.0)
-        brief = _ts_brief(direction="stable", period_count=6, overall_pct=1.0)
-        chips = compute_chip_eligibility(ctx, brief=brief)
-        self.assertNotIn("predict", _ids(chips),
-                         "predict must not appear for stable trend")
-
-    def test_flat_change_suppresses_compare(self):
-        """< 3 % overall change → compare chip hidden (nothing meaningful to compare)."""
+    def test_compare_suppressed_for_tiny_change(self):
+        """< 3 % change → compare not useful."""
         ctx = _ts_ctx(row_count=6, pct_change=1.5)
         brief = _ts_brief(direction="stable", period_count=6, overall_pct=1.5)
         chips = compute_chip_eligibility(ctx, brief=brief)
-        self.assertNotIn("compare", _ids(chips),
-                         "compare must be suppressed when change < 3%")
+        self.assertNotIn("compare", _ids(chips))
 
-    def test_declining_series_has_predict(self):
-        """Decreasing trend is still predictable."""
-        ctx = _ts_ctx(row_count=5, pct_change=-22.0)
-        brief = _ts_brief(direction="decreasing", period_count=5, overall_pct=-22.0)
+    def test_diagnose_shown_for_drop_gte_5pct(self):
+        ctx = _ts_ctx(row_count=6, pct_change=-12.0)
+        brief = _ts_brief(direction="decreasing", period_count=6, overall_pct=-12.0)
         chips = compute_chip_eligibility(ctx, brief=brief)
-        self.assertIn("predict", _ids(chips))
+        self.assertIn("diagnose", _ids(chips))
 
-    def test_decide_present_for_structured_series(self):
-        ctx = _ts_ctx(row_count=5, pct_change=12.0)
-        brief = _ts_brief(direction="increasing", period_count=5, overall_pct=12.0)
+    def test_diagnose_shown_for_rise_gte_5pct(self):
+        ctx = _ts_ctx(row_count=6, pct_change=8.0)
+        brief = _ts_brief(direction="increasing", period_count=6, overall_pct=8.0)
         chips = compute_chip_eligibility(ctx, brief=brief)
-        self.assertIn("decide", _ids(chips))
+        self.assertIn("diagnose", _ids(chips))
 
-    def test_decide_absent_for_short_series(self):
-        """2-row series must NOT get a decide chip — not enough structure."""
-        ctx = _ts_ctx(row_count=2, pct_change=10.0)
-        brief = _ts_brief(period_count=2, overall_pct=10.0)
+    def test_diagnose_suppressed_for_small_change(self):
+        """< 5 % change → no diagnose chip."""
+        ctx = _ts_ctx(row_count=6, pct_change=3.0)
+        brief = _ts_brief(period_count=6, overall_pct=3.0)
         chips = compute_chip_eligibility(ctx, brief=brief)
-        self.assertNotIn("decide", _ids(chips))
+        self.assertNotIn("diagnose", _ids(chips))
 
-    def test_compare_prior_chip_from_semantic_plan(self):
-        """compare_prior chip shown only when semantic_plan has a date_dimension field."""
+    def test_diagnose_label_says_drop_vs_rise(self):
+        ctx_drop = _ts_ctx(row_count=4, pct_change=-10.0)
+        brief_drop = _ts_brief(direction="decreasing", period_count=4, overall_pct=-10.0)
+        chips_drop = compute_chip_eligibility(ctx_drop, brief=brief_drop)
+        drop_chip = next(c for c in chips_drop if c["id"] == "diagnose")
+        self.assertIn("drop", drop_chip["label"])
+
+        ctx_rise = _ts_ctx(row_count=4, pct_change=10.0)
+        brief_rise = _ts_brief(direction="increasing", period_count=4, overall_pct=10.0)
+        chips_rise = compute_chip_eligibility(ctx_rise, brief=brief_rise)
+        rise_chip = next(c for c in chips_rise if c["id"] == "diagnose")
+        self.assertIn("rise", rise_chip["label"])
+
+    def test_compare_prior_shown_with_date_role(self):
         ctx = _ts_ctx(row_count=6, pct_change=10.0)
         brief = _ts_brief(period_count=6, overall_pct=10.0)
-        plan_with_date = {
+        plan = {
             "enabled": True,
             "fields": [{"role": "date_dimension", "column": "DT_DMS_KEY"}],
         }
-        chips_with = compute_chip_eligibility(ctx, brief=brief, semantic_plan=plan_with_date)
-        chips_without = compute_chip_eligibility(ctx, brief=brief, semantic_plan=None)
-        self.assertIn("compare_prior", _ids(chips_with))
-        self.assertNotIn("compare_prior", _ids(chips_without))
+        chips = compute_chip_eligibility(ctx, brief=brief, semantic_plan=plan)
+        self.assertIn("compare_prior", _ids(chips))
+
+    def test_compare_prior_absent_without_date_role(self):
+        ctx = _ts_ctx(row_count=6, pct_change=10.0)
+        brief = _ts_brief(period_count=6, overall_pct=10.0)
+        chips = compute_chip_eligibility(ctx, brief=brief, semantic_plan=None)
+        self.assertNotIn("compare_prior", _ids(chips))
 
     def test_compare_prior_absent_when_plan_disabled(self):
         ctx = _ts_ctx(row_count=6, pct_change=10.0)
         brief = _ts_brief(period_count=6)
-        plan_disabled = {"enabled": False, "fields": [{"role": "date_dimension"}]}
-        chips = compute_chip_eligibility(ctx, brief=brief, semantic_plan=plan_disabled)
+        plan = {"enabled": False, "fields": [{"role": "date_dimension"}]}
+        chips = compute_chip_eligibility(ctx, brief=brief, semantic_plan=plan)
         self.assertNotIn("compare_prior", _ids(chips))
 
 
+# ── Ranking chips ─────────────────────────────────────────────────────────────
+
 class ChipEligibilityRanking(unittest.TestCase):
 
-    def test_full_ranking_has_analyze_compare_outliers_contribution(self):
-        """10-row ranking with high concentration → full chip set."""
-        ctx = _ranking_ctx(row_count=10, top3_share=78.0, leader_share=42.0, gap=800.0)
-        chips = compute_chip_eligibility(ctx)
-        ids = _ids(chips)
-        self.assertIn("analyze", ids)
-        self.assertIn("compare", ids)
-        self.assertIn("outliers", ids)
-        self.assertIn("contribution", ids)
-        self.assertIn("decide", ids)
-
-    def test_two_row_ranking_suppresses_analyze_compare_decide(self):
-        """2 items is not a ranking — most chips should be hidden."""
-        ctx = _ranking_ctx(row_count=2, top3_share=95.0, leader_share=65.0, gap=300.0)
-        chips = compute_chip_eligibility(ctx)
-        ids = _ids(chips)
-        self.assertNotIn("analyze", ids)
-        self.assertNotIn("compare", ids)
-        self.assertNotIn("decide", ids)
-
-    def test_low_concentration_suppresses_outliers(self):
-        """Even distribution → outliers chip hidden (top-3 < 60%)."""
-        ctx = _ranking_ctx(row_count=10, top3_share=35.0, leader_share=15.0, gap=50.0)
-        chips = compute_chip_eligibility(ctx)
-        self.assertNotIn("outliers", _ids(chips))
-
-    def test_high_concentration_triggers_outliers(self):
-        ctx = _ranking_ctx(row_count=8, top3_share=80.0, leader_share=50.0, gap=600.0)
-        chips = compute_chip_eligibility(ctx)
-        self.assertIn("outliers", _ids(chips))
-
-    def test_contribution_shows_when_leader_share_known(self):
+    def test_contribution_shown_when_leader_share_known(self):
         ctx = _ranking_ctx(row_count=5, leader_share=38.0)
         chips = compute_chip_eligibility(ctx)
         self.assertIn("contribution", _ids(chips))
@@ -213,65 +190,90 @@ class ChipEligibilityRanking(unittest.TestCase):
         chips = compute_chip_eligibility(ctx)
         self.assertNotIn("contribution", _ids(chips))
 
-    def test_compare_hidden_when_no_gap(self):
-        """Zero gap between leader and runner-up → compare is not useful."""
-        ctx = _ranking_ctx(row_count=5, gap=0.0)
-        chips = compute_chip_eligibility(ctx)
-        self.assertNotIn("compare", _ids(chips))
 
+# ── Drill-dim chips ───────────────────────────────────────────────────────────
 
-class ChipEligibilityNumericTable(unittest.TestCase):
+class ChipEligibilityDrillDim(unittest.TestCase):
 
-    def test_analyze_present_when_std_dev_exists(self):
-        ctx = {
-            "mode": "numeric_table",
-            "row_count": 5,
-            "distribution_stats": {"std_dev": 45.2},
-            "comparison_stats": {},
+    def _plan_with_dims(self, names):
+        return {
+            "enabled": True,
+            "fields": [],
+            "available_dimensions": [
+                {"name": n, "display_column": n.upper(), "status": "approved"}
+                for n in names
+            ],
         }
-        chips = compute_chip_eligibility(ctx)
-        self.assertIn("analyze", _ids(chips))
 
-    def test_analyze_absent_without_std_dev(self):
+    def test_max_two_drill_chips(self):
+        """At most 2 drill_dim chips should be generated."""
+        ctx = _ts_ctx(row_count=6, pct_change=5.0)
+        plan = self._plan_with_dims(["Warehouse", "Customer", "Product", "Region"])
+        chips = compute_chip_eligibility(ctx, semantic_plan=plan)
+        drill = [c for c in chips if c["id"].startswith("drill_dim:")]
+        self.assertLessEqual(len(drill), 2)
+
+    def test_existing_col_skipped(self):
+        """A dimension already in the result columns must not get a drill chip."""
         ctx = {
-            "mode": "numeric_table",
+            "mode": "ranking",
             "row_count": 5,
-            "distribution_stats": {"std_dev": None},
-            "comparison_stats": {},
+            "text_cols": ["WAREHOUSE"],
+            "numeric_cols": [],
+            "distribution_stats": {},
+            "comparison_stats": {"leader_share_pct": 40.0, "leader": "A"},
         }
-        chips = compute_chip_eligibility(ctx)
-        self.assertNotIn("analyze", _ids(chips))
+        plan = self._plan_with_dims(["Warehouse", "Customer"])
+        chips = compute_chip_eligibility(ctx, semantic_plan=plan)
+        ids = _ids(chips)
+        self.assertNotIn("drill_dim:Warehouse", ids)
+        self.assertIn("drill_dim:Customer", ids)
 
+
+# ── Download CSV ──────────────────────────────────────────────────────────────
+
+class ChipEligibilityDownloadCSV(unittest.TestCase):
+
+    def test_download_csv_always_present_for_non_empty(self):
+        for mode in ("time_series", "ranking", "numeric_table"):
+            ctx = {"mode": mode, "row_count": 3, "distribution_stats": {}, "comparison_stats": {}}
+            chips = compute_chip_eligibility(ctx)
+            self.assertIn("download_csv", _ids(chips), f"download_csv missing for mode={mode}")
+
+    def test_download_csv_absent_for_empty_result(self):
+        ctx = {"mode": "empty", "row_count": 0, "distribution_stats": {}, "comparison_stats": {}}
+        chips = compute_chip_eligibility(ctx)
+        self.assertNotIn("download_csv", _ids(chips))
+
+
+# ── Ordering ──────────────────────────────────────────────────────────────────
 
 class ChipEligibilityOrdering(unittest.TestCase):
 
-    def test_explain_is_first_chip(self):
-        """explain must always be the first chip shown."""
-        ctx = _ranking_ctx(row_count=8, top3_share=75.0, leader_share=40.0)
-        chips = compute_chip_eligibility(ctx)
-        self.assertTrue(chips, "Expected at least one chip")
-        self.assertEqual(chips[0]["id"], "explain")
-
-    def test_decide_before_export_chips(self):
-        """decide must appear before download_csv and set_alert (Sprint E chips)."""
-        ctx = _ts_ctx(row_count=6, pct_change=14.0)
-        brief = _ts_brief(direction="increasing", period_count=6, overall_pct=14.0)
+    def test_diagnose_before_download_csv(self):
+        ctx = _ts_ctx(row_count=6, pct_change=-15.0)
+        brief = _ts_brief(direction="decreasing", period_count=6, overall_pct=-15.0)
         chips = compute_chip_eligibility(ctx, brief=brief)
-        ids = [c["id"] for c in chips]
-        self.assertIn("decide", ids)
-        decide_pos = ids.index("decide")
-        for late_chip in ("download_csv", "set_alert"):
-            if late_chip in ids:
-                self.assertGreater(
-                    ids.index(late_chip), decide_pos,
-                    f"{late_chip!r} must appear after 'decide'",
-                )
+        ids = _ids(chips)
+        self.assertIn("diagnose", ids)
+        self.assertIn("download_csv", ids)
+        self.assertLess(ids.index("diagnose"), ids.index("download_csv"))
 
+    def test_compare_before_diagnose(self):
+        ctx = _ts_ctx(row_count=6, pct_change=-15.0)
+        brief = _ts_brief(direction="decreasing", period_count=6, overall_pct=-15.0)
+        chips = compute_chip_eligibility(ctx, brief=brief)
+        ids = _ids(chips)
+        self.assertIn("compare", ids)
+        self.assertIn("diagnose", ids)
+        self.assertLess(ids.index("compare"), ids.index("diagnose"))
+
+
+# ── Pre-context ───────────────────────────────────────────────────────────────
 
 class ChipEligibilityPreContext(unittest.TestCase):
 
     def test_compare_pre_context_contains_pct_change(self):
-        """compare chip pre_context must reference the % change."""
         ctx = _ts_ctx(row_count=6, pct_change=18.5)
         brief = _ts_brief(direction="increasing", period_count=6, overall_pct=18.5)
         chips = compute_chip_eligibility(ctx, brief=brief)
@@ -279,15 +281,15 @@ class ChipEligibilityPreContext(unittest.TestCase):
         self.assertIsNotNone(compare_chip)
         self.assertIn("18.5", compare_chip["pre_context"])
 
-    def test_outliers_pre_context_contains_concentration(self):
-        ctx = _ranking_ctx(row_count=8, top3_share=82.0)
-        chips = compute_chip_eligibility(ctx)
-        outlier_chip = next((c for c in chips if c["id"] == "outliers"), None)
-        self.assertIsNotNone(outlier_chip)
-        self.assertIn("82", outlier_chip["pre_context"])
+    def test_diagnose_pre_context_contains_pct(self):
+        ctx = _ts_ctx(row_count=4, pct_change=-10.0)
+        brief = _ts_brief(direction="decreasing", period_count=4, overall_pct=-10.0)
+        chips = compute_chip_eligibility(ctx, brief=brief)
+        chip = next((c for c in chips if c["id"] == "diagnose"), None)
+        self.assertIsNotNone(chip)
+        self.assertIn("10.0", chip["pre_context"])
 
     def test_all_chips_have_required_keys(self):
-        """Every chip must carry id, label, confidence, and pre_context."""
         ctx = _ranking_ctx(row_count=8, top3_share=75.0, leader_share=40.0, gap=300.0)
         chips = compute_chip_eligibility(ctx)
         for chip in chips:
