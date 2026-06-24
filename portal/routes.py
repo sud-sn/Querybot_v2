@@ -1172,12 +1172,12 @@ async def portal_query_history(request: Request):
     for t in traces:
         items.append({
             "id":         t.get("id"),
-            "question":   t.get("question") or "",
-            "sql":        t.get("sql") or "",
-            "row_count":  t.get("row_count") or 0,
-            "duration_ms":t.get("duration_ms") or 0,
+            "question":   t.get("question_text_sanitized") or t.get("question") or "",
+            "sql":        t.get("generated_sql") or t.get("sql") or "",
+            "row_count":  t.get("query_row_count") or t.get("row_count") or 0,
+            "duration_ms":t.get("query_duration_ms") or t.get("duration_ms") or 0,
             "created_at": (t.get("created_at") or "")[:16].replace("T", " "),
-            "success":    bool(t.get("sql")),  # has SQL = answered
+            "success":    bool(t.get("generated_sql") or t.get("sql")),
         })
     return JSONResponse({"ok": True, "items": items})
 
