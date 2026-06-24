@@ -707,23 +707,31 @@ async def check_ambiguity_glossary_first(
         evidence=evidence,
     )
     if len(menu_terms) >= 2:
-        # If the question explicitly compares multiple known metrics, the user
-        # already named what they want — the LLM seeing multiple menu entries
-        # is not ambiguity, it is expected.  Skip the LLM call entirely.
+        # If the question uses comparison framing and ≥2 of the menu terms are
+        # explicitly named in the question verbatim, the user wants all of them —
+        # multiple matching entries is not ambiguity, it is the feature working.
         _cmp_intent = analyze_query_intent(question)
-        if (_cmp_intent.get("wants_comparison") or _cmp_intent.get("wants_conditional_split")) \
-                and len(metric_matches) >= 2:
-            log.info(
-                "Skipping LLM ambiguity check: comparison intent + %d metric matches for q='%s'",
-                len(metric_matches),
-                question[:80],
+        if _cmp_intent.get("wants_comparison") or _cmp_intent.get("wants_conditional_split"):
+            _q_lower = question.lower()
+            _explicit = sum(
+                1 for _t in menu_terms
+                if re.search(
+                    r"\b" + re.escape((_t.get("term") or "").lower()) + r"\b",
+                    _q_lower,
+                )
             )
-            return False, "", {
-                "source": "none",
-                "question": "",
-                "options": [],
-                "generated_options_ignored": False,
-            }
+            if _explicit >= 2:
+                log.info(
+                    "Skipping LLM ambiguity check: comparison intent + %d explicitly-named terms for q='%s'",
+                    _explicit,
+                    question[:80],
+                )
+                return False, "", {
+                    "source": "none",
+                    "question": "",
+                    "options": [],
+                    "generated_options_ignored": False,
+                }
         is_amb, q, options = await _llm_ambiguity_check_constrained(
             account_id,
             question,
@@ -890,6 +898,9 @@ async def _llm_ambiguity_check_constrained(
         "6. Exact schema-backed categorical values in the question are authoritative, even if they look oddly spelled -> CLEAR.\n"
         "6. Typos that map to known column values are NOT ambiguous → CLEAR.\n"
         "7. Missing JOIN paths are NOT ambiguous → CLEAR. The SQL engine handles joins.\n"
+        "8. If the question uses comparison framing (compare, vs, versus, difference, contrast)\n"
+        "   AND explicitly names two or more distinct menu entries by their label, return CLEAR —\n"
+        "   the user wants all of them together, they are NOT asking which one to use.\n"
     )
 
     user_msg = (
