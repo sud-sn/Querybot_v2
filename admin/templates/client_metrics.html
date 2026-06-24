@@ -175,11 +175,6 @@
 .mr-del-btn{background:none;border:1px solid transparent;border-radius:5px;cursor:pointer;color:var(--text-muted);font-size:12px;padding:3px 7px;line-height:1;transition:all .12s;white-space:nowrap}
 .mr-del-btn:hover{background:var(--red-light,#FEE2E2);color:var(--red,#DC2626);border-color:color-mix(in srgb,var(--red,#DC2626) 30%,transparent)}
 /* ── Status badges ──────────────────────────────────────────────────── */
-.status-badge{display:inline-flex;align-items:center;font-size:10px;font-weight:800;padding:2px 8px;border-radius:999px;text-transform:uppercase;letter-spacing:.04em;border:1px solid transparent}
-.status-badge.draft{background:color-mix(in srgb,var(--amber,#d69e2e) 14%,var(--surface));color:color-mix(in srgb,var(--amber,#d69e2e) 80%,#222);border-color:color-mix(in srgb,var(--amber,#d69e2e) 25%,transparent)}
-.status-badge.validated{background:color-mix(in srgb,var(--blue,#3182ce) 12%,var(--surface));color:var(--blue,#3182ce);border-color:color-mix(in srgb,var(--blue,#3182ce) 25%,transparent)}
-.status-badge.published{background:color-mix(in srgb,var(--green,#38a169) 12%,var(--surface));color:var(--green,#38a169);border-color:color-mix(in srgb,var(--green,#38a169) 25%,transparent)}
-.status-badge.deprecated{background:var(--surface-2);color:var(--text-muted);border-color:var(--border)}
 /* ── Validation alerts on card ──────────────────────────────────────── */
 .val-alerts{margin-top:.5rem;display:flex;flex-direction:column;gap:3px}
 .val-alert{font-size:11px;padding:4px 8px;border-radius:4px;line-height:1.45}
@@ -552,10 +547,6 @@ SUM(NetProfit) * 100.0 / NULLIF(SUM(Revenue), 0)
     <button class="filter-chip"        data-filter="expression" onclick="setChip(this,'expression')">Formula</button>
     <button class="filter-chip"        data-filter="query"      onclick="setChip(this,'query')">Direct SQL</button>
     <button class="filter-chip"        data-filter="inactive"   onclick="setChip(this,'inactive')">Inactive</button>
-    <button class="filter-chip"        data-filter="draft"       onclick="setChip(this,'draft')">Draft</button>
-    <button class="filter-chip"        data-filter="validated"   onclick="setChip(this,'validated')">Validated</button>
-    <button class="filter-chip"        data-filter="published"   onclick="setChip(this,'published')">Published</button>
-    <button class="filter-chip"        data-filter="deprecated"  onclick="setChip(this,'deprecated')">Deprecated</button>
   </div>
   <select id="metricSort" onchange="applyFilters()" title="Sort metrics">
     <option value="name-asc">Name A–Z</option>
@@ -584,9 +575,8 @@ SUM(NetProfit) * 100.0 / NULLIF(SUM(Revenue), 0)
   <div class="metric-row-head">
     <span class="mr-name">{{ m.name }}</span>
     <span class="metric-kind {{ m_type }}">{{ "Formula" if m_type == "expression" else "Direct SQL" }}</span>
-    <span class="status-badge {{ m_status }}">{{ m_status }}</span>
     {% if m.category %}<span class="cat-badge">{{ m.category }}</span>{% endif %}
-    {% if _errs %}<span style="font-size:10px;color:var(--red,#DC2626);flex-shrink:0" title="{{ _errs | join(', ') }}">⚠ {{ _errs | length }} error{{ 's' if _errs | length != 1 }}</span>{% elif m_status == 'draft' %}<span style="font-size:10px;color:var(--amber,#d69e2e);flex-shrink:0">⚠ draft</span>{% endif %}
+    {% if _errs %}<span style="font-size:10px;color:var(--red,#DC2626);flex-shrink:0" title="{{ _errs | join(', ') }}">⚠ {{ _errs | length }} error{{ 's' if _errs | length != 1 }}</span>{% endif %}
     <span class="mr-sep">·</span>
     <span class="mr-formula-preview" title="{{ m.sql_template | e }}">{{ m.sql_template }}</span>
     {% if m.synonyms %}<span class="mr-sep">·</span><span class="mr-synonyms" title="Synonyms: {{ m.synonyms | e }}">{{ m.synonyms }}</span>{% endif %}
@@ -598,11 +588,7 @@ SUM(NetProfit) * 100.0 / NULLIF(SUM(Revenue), 0)
 
   <!-- ── Expand: full edit form (hidden by default) ── -->
   <div class="metric-row-lineage">
-    <span class="meta-pill">Format: {{ (m.result_format or 'number') | capitalize }}</span>
-    {% if m.base_table %}<span class="meta-pill" title="{{ m.base_table | e }}">Table: {{ m.base_table }}</span>{% endif %}
-    {% if m.required_columns %}<span class="meta-pill" title="{{ m.required_columns | e }}">Columns: {{ m.required_columns }}</span>{% endif %}
-    {% if m.allowed_dimensions %}<span class="meta-pill" title="{{ m.allowed_dimensions | e }}">Dims: {{ m.allowed_dimensions }}</span>{% endif %}
-    {% if m.default_time_column %}<span class="meta-pill">Time: {{ m.default_time_column }}</span>{% endif %}
+    <span class="meta-pill">{{ (m.result_format or 'number') | capitalize }}</span>
   </div>
 
   <div id="edit-{{ m.id }}" class="metric-row-expand" style="display:none">
@@ -732,11 +718,8 @@ SUM(NetProfit) * 100.0 / NULLIF(SUM(Revenue), 0)
       </div>
 
       {# Stored validation errors #}
-      {% if _errs or m_status == 'draft' %}
+      {% if _errs %}
       <div class="val-alerts" style="margin-bottom:.75rem">
-        {% if m_status == 'draft' and not _errs %}
-        <div class="val-alert warn">⚠ Draft — formula validation did not pass on last save.</div>
-        {% endif %}
         {% for err in _errs %}
         <div class="val-alert error">✗ {{ err }}</div>
         {% endfor %}
@@ -747,11 +730,6 @@ SUM(NetProfit) * 100.0 / NULLIF(SUM(Revenue), 0)
         <button type="submit" class="btn btn-primary btn-sm">Save changes</button>
         <button type="button" class="btn btn-secondary btn-sm"
           onclick="cloneMetric({{ m.id }})" title="Copy into Add form">Clone</button>
-        {% if m_status != 'deprecated' %}
-        <button type="button" class="btn btn-secondary btn-sm"
-          style="color:var(--amber,#d69e2e);border-color:color-mix(in srgb,var(--amber,#d69e2e) 30%,transparent)"
-          onclick="deprecateMetric({{ m.id }}, '{{ m.name | e }}')">Deprecate</button>
-        {% endif %}
         <button type="button" class="btn btn-secondary btn-sm" onclick="toggleMetricEdit({{ m.id }})">Cancel</button>
         <label style="font-size:12px;margin-left:auto;display:flex;align-items:center;gap:.4rem">
           <input type="checkbox" name="is_active" value="1" {% if m.is_active %}checked{% endif %}> Active
@@ -1754,31 +1732,6 @@ async function liveValidate(btn){
   }
 }
 
-// ══════════════════════════════════════════════════════════════════════
-// DEPRECATE METRIC
-// ══════════════════════════════════════════════════════════════════════
-function deprecateMetric(id, name){
-  qbConfirm({
-    title: "Deprecate metric?",
-    body: "\"" + name + "\" will be hidden from the AI resolver. It won't be deleted — filter for Deprecated to restore it.",
-    confirm: "Deprecate",
-    variant: "warning",
-    onConfirm: async function(){
-      try {
-        var clientMatch = location.pathname.match(/\/clients\/([^/]+)\//);
-        if(!clientMatch){ return; }
-        var resp = await fetch("/admin/clients/"+clientMatch[1]+"/metrics/"+id+"/deprecate", {
-          method: "POST",
-          headers: {"Content-Type": "application/json"}
-        });
-        if(!resp.ok) throw new Error("Server error "+resp.status);
-        window.location.reload();
-      } catch(err){
-        alert("Deprecate failed: "+err.message);
-      }
-    }
-  });
-}
 
 // ══════════════════════════════════════════════════════════════════════
 // FIELD BROWSER (right panel)
@@ -2056,10 +2009,6 @@ window.applyFilters = function(){
     if(_activeFilter === "expression") filterOk = type === "expression";
     else if(_activeFilter === "query") filterOk = type === "query";
     else if(_activeFilter === "inactive") filterOk = active === "0";
-    else if(_activeFilter === "draft")       filterOk = status === "draft";
-    else if(_activeFilter === "validated")   filterOk = status === "validated";
-    else if(_activeFilter === "published")   filterOk = status === "published";
-    else if(_activeFilter === "deprecated")  filterOk = status === "deprecated";
     else if(_activeFilter !== "all"){
       // category chip
       filterOk = cat === _activeFilter;
@@ -2174,7 +2123,6 @@ window.exportMetricsJSON = function(){
       default_time_column: m.default_time_column,
       base_table:          m.base_table,
       base_entity:         m.base_entity,
-      metric_status:       m.metric_status,
       is_active:           m.is_active,
     };
   });
