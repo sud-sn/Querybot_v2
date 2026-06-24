@@ -2025,18 +2025,24 @@ function _formatDisplayValue(value, fmt) {
   }
   if (fmt === 'percentage') {
     const n = _parseDisplayNumber(raw);
-    if (!isNaN(n)) return n.toLocaleString('en-US', {maximumFractionDigits: 2}) + '%';
+    if (!isNaN(n)) return n.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + '%';
   }
   if (fmt === 'number') {
     const n = _parseDisplayNumber(raw);
-    if (!isNaN(n)) return n.toLocaleString('en-US', {maximumFractionDigits: 4});
+    if (!isNaN(n)) return n.toLocaleString('en-US', {maximumFractionDigits: 2});
+  }
+  // Fallback: auto-format plain numeric strings with thousand separators (max 2 dp)
+  // Matches SQL DECIMAL/FLOAT columns not yet classified by column_formats.
+  if (!fmt && /^-?\d+(\.\d+)?$/.test(raw.trim())) {
+    const n = Number(raw);
+    if (!isNaN(n)) return n.toLocaleString('en-US', {maximumFractionDigits: 2});
   }
   return raw;
 }
 function _formatAggregateValue(value, fmt) {
   if (fmt === 'currency') return '$' + value.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
-  if (fmt === 'percentage') return value.toLocaleString('en-US', {maximumFractionDigits: 2}) + '%';
-  return value.toLocaleString(undefined, {maximumFractionDigits: 2});
+  if (fmt === 'percentage') return value.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + '%';
+  return value.toLocaleString('en-US', {maximumFractionDigits: 2});
 }
 function renderDataTable(data, { question = '', trace_id = '' } = {}) {
   if (!data || !Array.isArray(data.rows) || !data.rows.length) return '';
