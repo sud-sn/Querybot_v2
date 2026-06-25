@@ -709,7 +709,7 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
                 chart_type = None
     pin_token = None
     chart_payload = None
-    if chart_type and portal_user:
+    if chart_type and portal_user and portal_user.get("id") is not None:
         pin_token = _create_pin_token(
             user_id=portal_user["id"],
             account_id=account_id,
@@ -803,7 +803,7 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
             f"_{dur_label} · {col_name.replace('_', ' ')}_"
         )
     else:
-        greeting = f"*{portal_user['name']}*\n" if portal_user else ""
+        greeting = f"*{portal_user.get('name', '')}*\n" if portal_user and portal_user.get('name') else ""
         reply = (
             f"{greeting}*{question}*\n\n"
             f"*{len(rows)} {row_word}*\n"
