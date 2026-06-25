@@ -483,7 +483,6 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                     _fb_db_cfg.get("db_type", "azure_sql"),
                                     _fb_full_ctx,
                                     graph_context=_fb_graph_ctx or None,
-                                    db_name=(_fb_db_cfg.get("credentials") or {}).get("database", ""),
                                 )
                                 # Conversation history for this result card (last 5 turns)
                                 if _rc_history:

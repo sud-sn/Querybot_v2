@@ -188,7 +188,6 @@ def build_sql_system_prompt(
     conversation_history: list | None = None,
     graph_context: dict | None = None,
     semantic_plan: dict | None = None,
-    db_name: str = "",
 ) -> str:
     """System prompt for SQL generation — used on every user query.
 
@@ -374,15 +373,7 @@ def build_sql_system_prompt(
         "- If a column name is flagged [NEEDS CONTEXT] in the KB, do not use it — "
         "reply with CANNOT_GENERATE instead.\n"
         f"{syntax}"
-        + (
-            f"- TABLE NAMING OVERRIDE (CRITICAL): This deployment connects to SQL Server database '{db_name}'. "
-            f"ALL tables MUST use three-part names: {db_name}.SCHEMA.TABLE_NAME. "
-            f"The Knowledge Base may show '[SCHEMA].[TABLE]' but you MUST prepend {db_name}. — "
-            f"correct: {db_name}.PROFITABILITY.CUS_ORD_IVC_FCT, NEVER: PROFITABILITY.CUS_ORD_IVC_FCT. "
-            f"This overrides the two-part rule above — use three-part names EXCLUSIVELY.\n"
-            if db_type == "azure_sql" and db_name else ""
-        )
-        + "- Return ONLY the raw SQL query. No markdown fences, no explanation, no comments.\n"
+        "- Return ONLY the raw SQL query. No markdown fences, no explanation, no comments.\n"
         "- If the question cannot be answered from the available tables and columns, "
         "reply with exactly: CANNOT_GENERATE\n"
         "- Never generate CREATE, DROP, ALTER, INSERT, UPDATE, DELETE, TRUNCATE, "
