@@ -1804,6 +1804,62 @@ def save_relationship(
     return row["id"] if row else -1
 
 
+def upsert_relationship_by_pair(
+    account_id: str,
+    from_entity: str,
+    to_entity: str,
+    from_column: str,
+    to_column: str,
+    relationship_type: str = "many_to_one",
+    confidence_score: int = 70,
+    status: str = "suggested",
+    join_type: str = "INNER",
+    label: str = "",
+    generated_by: str = "heuristic",
+    reason: str = "",
+) -> int:
+    """
+    Insert or update a relationship keyed by (account_id, from_entity, to_entity).
+    Enforces one-relationship-per-table-pair: if a suggested/heuristic relationship
+    already exists for this pair it is replaced; confirmed/manual rows are never
+    overwritten.  Returns the relationship id.
+    """
+    with get_db() as conn:
+        existing = conn.execute(
+            """SELECT id, status, generated_by FROM entity_relationships
+               WHERE account_id=? AND from_entity=? AND to_entity=? AND is_active=1
+               LIMIT 1""",
+            (account_id, from_entity, to_entity),
+        ).fetchone()
+
+        if existing:
+            if existing["status"] == "confirmed" or existing["generated_by"] == "manual":
+                return existing["id"]   # never overwrite human work
+            conn.execute(
+                """UPDATE entity_relationships SET
+                       from_column=?, to_column=?, relationship_type=?, join_type=?,
+                       label=?, confidence_score=?, reason=?, generated_by=?,
+                       validation_status='untested', validated_at='', row_count_estimate=-1
+                   WHERE id=?""",
+                (from_column, to_column, relationship_type, join_type,
+                 label, confidence_score, reason, generated_by, existing["id"]),
+            )
+            return existing["id"]
+
+        conn.execute(
+            """INSERT INTO entity_relationships
+                   (account_id, from_entity, to_entity, from_column, to_column,
+                    relationship_type, join_type, label, is_active,
+                    confidence_score, status, generated_by, reason)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)""",
+            (account_id, from_entity, to_entity, from_column, to_column,
+             relationship_type, join_type, label, confidence_score, status,
+             generated_by, reason),
+        )
+        row = conn.execute("SELECT last_insert_rowid() AS id").fetchone()
+    return row["id"] if row else -1
+
+
 def get_relationship(account_id: str, rel_id: int) -> Optional[dict]:
     with get_db() as conn:
         row = conn.execute(

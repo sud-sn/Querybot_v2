@@ -49,12 +49,6 @@ def auto_populate_from_schema(account_id: str, schema_dir: str) -> tuple[int, in
         return 0, 0
 
     existing_entities = {e["entity_name"] for e in store.list_entities(account_id, active_only=False)}
-    existing_rels     = store.list_relationships(account_id, active_only=False)
-    existing_rel_keys = {
-        (r["from_entity"], r["to_entity"], r["from_column"].upper())
-        for r in existing_rels
-    }
-
     ent_added = 0
     for ent in graph_data["entities"]:
         if ent["entity_name"] in existing_entities:
@@ -81,13 +75,12 @@ def auto_populate_from_schema(account_id: str, schema_dir: str) -> tuple[int, in
     rel_added = 0
     all_entities = {e["entity_name"] for e in store.list_entities(account_id, active_only=False)}
     for rel in graph_data["relationships"]:
-        key = (rel["from_entity"], rel["to_entity"], rel["from_column"].upper())
-        if key in existing_rel_keys:
-            continue
-        # Both entities must be present (auto-added or pre-existing)
+        # Both entities must exist before we can add the relationship
         if rel["from_entity"] not in all_entities or rel["to_entity"] not in all_entities:
             continue
-        store.save_relationship(
+        # upsert enforces one-relationship-per-table-pair and never touches
+        # confirmed/manual rows
+        store.upsert_relationship_by_pair(
             account_id        = account_id,
             from_entity       = rel["from_entity"],
             to_entity         = rel["to_entity"],
@@ -101,7 +94,6 @@ def auto_populate_from_schema(account_id: str, schema_dir: str) -> tuple[int, in
             generated_by      = rel.get("generated_by", "heuristic"),
             reason            = rel.get("reason", ""),
         )
-        existing_rel_keys.add(key)
         rel_added += 1
 
     return ent_added, rel_added
