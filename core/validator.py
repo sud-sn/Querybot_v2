@@ -685,8 +685,14 @@ def validate_sql_detailed(
                 if table_key:
                     used_columns.add((table_key, col_name))
 
+            sql_has_group_by = tree.find(sg_exp.Group) is not None
+
             missing_plan_fields: list[dict] = []
             for field in field_plan.get("fields") or []:
+                # Dimension display fields (e.g. CUS_NM) are only required when
+                # the SQL groups results.  Pure aggregates don't need the join.
+                if field.get("display_required") and not sql_has_group_by:
+                    continue
                 plan_col = (field.get("column") or "").upper()
                 plan_table = _find_table_with_column(table_columns, field.get("table") or "", plan_col)
                 if not plan_col or not plan_table:
@@ -717,6 +723,8 @@ def validate_sql_detailed(
 
             required_join_errors: list[dict] = []
             for edge in field_plan.get("joins") or []:
+                if edge.get("enforcement") == "optional":
+                    continue
                 for left_col, right_col in edge.get("conditions") or []:
                     left_col_u = str(left_col).upper()
                     right_col_u = str(right_col).upper()

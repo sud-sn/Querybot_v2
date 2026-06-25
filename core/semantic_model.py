@@ -1144,6 +1144,7 @@ def build_runtime_semantic_plan(
                 continue
 
             # Field: the dimension key must appear in the SQL (satisfied by JOIN ON clause)
+            # enforcement="optional" so cross-schema date roles don't block valid SQL
             fk = (dim_table.upper(), dim_key.upper())
             if fk not in seen_fields:
                 seen_fields.add(fk)
@@ -1157,10 +1158,10 @@ def build_runtime_semantic_plan(
                     "source_key_column": fact_col,
                     "confidence": date_role.get("confidence", 90),
                     "source": "semantic_model_date_role",
-                    "enforcement": "required",
+                    "enforcement": "optional",
                 })
 
-            # Join
+            # Join: optional — the LLM picks which date dim to join based on schema
             cond_key = ((fact_col.upper(), dim_key.upper()),)
             jk = (source_table.upper(), dim_table.upper(), cond_key)
             if jk not in seen_joins:
@@ -1170,7 +1171,7 @@ def build_runtime_semantic_plan(
                     "to": dim_table,
                     "conditions": [(fact_col, dim_key)],
                     "source": "semantic_model_date_role",
-                    "enforcement": "required",
+                    "enforcement": "optional",
                 })
 
             if len(fields) >= max_fields:
