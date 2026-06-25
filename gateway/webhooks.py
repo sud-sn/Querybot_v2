@@ -203,7 +203,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
     # Send welcome message with user name
     await websocket.send_json({
         "type":    "system",
-        "content": f"Connected as {portal_user['name']}. Ask me anything about your data.",
+        "content": f"Connected as {portal_user.get('name', portal_user.get('id', 'user'))}. Ask me anything about your data.",
     })
 
     log.info("WebSocket chat connected: user=%d account=%s", user_id, account_id)
