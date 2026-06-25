@@ -205,7 +205,7 @@
   <table class="table">
     <tr><th>Name</th><th>Type</th><th>Connection</th><th>KB scope</th><th>Log export</th><th>Created</th><th></th></tr>
     {% for d in dbs %}
-    <tr data-db-id="{{ d.id }}" data-db-type="{{ d.db_type }}" data-db-name="{{ d.name|e }}" data-db-creds="{{ d.edit_creds|tojson|e }}" data-db-log="{{ d.edit_log|tojson|e }}" data-db-scope="{{ d.selected_schema_tables|tojson|e }}">
+    <tr data-db-id="{{ d.id }}" data-db-type="{{ d.db_type }}" data-db-name="{{ d.name|e }}" data-db-creds='{{ d.edit_creds|tojson }}' data-db-log='{{ d.edit_log|tojson }}' data-db-scope='{{ d.selected_schema_tables|tojson }}'>
       <td style="font-weight:600">{{ d.name }}</td>
       <td><span class="badge badge-blue">{{ d.label }}</span></td>
       <td style="font-size:11px;color:var(--gray-500)">
