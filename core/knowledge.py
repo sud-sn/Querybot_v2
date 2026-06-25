@@ -549,8 +549,8 @@ async def build_kb(
         _qry_file = kb_path / f"{table_name}_queries.md"
 
         # Extract the SQL table name from the schema file header.
-        # _az_md writes: **SQL table name:** `[SCHEMA].[TABLE]`
-        # This is the exact 2-part name the LLM should use in generated SQL.
+        # _az_md writes: `DB.SCHEMA.TABLE` (3-part) when database is set,
+        # or `[SCHEMA].[TABLE]` (2-part) for Azure SQL Database (no db prefix).
         # Fall back to the file stem if the anchor line isn't present (legacy files).
         sql_table_name = table_name  # default: filename stem
         for line in schema_md.splitlines()[:10]:

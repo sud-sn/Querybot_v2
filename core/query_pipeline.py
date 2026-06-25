@@ -999,11 +999,13 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
             + "\n\n".join(_analytic_hints)
         )
 
+    _db_name = (db_cfg.get("credentials") or {}).get("database", "")
     system = build_sql_system_prompt(
         db_cfg["db_type"], context_with_terms,
         conversation_history=_conv_history or None,
         graph_context=_graph_ctx or None,
         semantic_plan=_semantic_plan or None,
+        db_name=_db_name,
     )
     try:
         await _send_live_stage(adapter, event, "generating_sql", "Generating query", "Translating the business question into SQL.")
@@ -1328,6 +1330,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                         context_with_terms,
                         graph_context=_graph_ctx or None,
                         semantic_plan=_retry_plan,
+                        db_name=_db_name,
                     ),
                     retry_user, provider, model, api_key,
                     max_tokens=512, **az_kwargs,

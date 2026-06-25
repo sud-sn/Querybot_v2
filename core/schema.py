@@ -2150,11 +2150,18 @@ def _az_md(name, meta, columns, sample, schema, distinct_map: dict,
         + (f"  **Database:** {database}" if database else "")
     )
     if schema:
-        # 2-part name for actual SQL — Azure SQL Database only supports [SCHEMA].[TABLE]
-        lines.append(
-            f"\n**SQL table name:** `[{schema}].[{name}]`  "
-            f"— always use this exact two-part name in generated SQL."
-        )
+        if database:
+            # SQL Server / Managed Instance: requires 3-part name db.schema.table
+            lines.append(
+                f"\n**SQL table name:** `{database}.{schema}.{name}`  "
+                f"— always use this exact three-part name in generated SQL."
+            )
+        else:
+            # Azure SQL Database (no database component): 2-part [SCHEMA].[TABLE] only
+            lines.append(
+                f"\n**SQL table name:** `[{schema}].[{name}]`  "
+                f"— always use this exact two-part name in generated SQL."
+            )
     if row_count is not None:
         if row_count >= 1_000_000:
             _rc_display = f"{row_count / 1_000_000:.1f}M"
