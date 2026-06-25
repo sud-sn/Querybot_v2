@@ -35,7 +35,6 @@ cur.execute(
     """DELETE FROM entity_relationships
        WHERE account_id=?
          AND status='suggested'
-         AND generated_by IN ('heuristic', 'llm')
          AND is_active=1""",
     (ACCOUNT,),
 )
@@ -44,9 +43,18 @@ con.commit()
 print(f"Deleted {deleted} stale suggested relationships")
 
 # ── Step 3: find schema_dir for this account ──────────────────────────────────
-cur.execute("SELECT schema_dir FROM client WHERE account_id=?", (ACCOUNT,))
-row = cur.fetchone()
-schema_dir = row["schema_dir"] if row else None
+import json as _json
+schema_dir = None
+cli = store.get_client(ACCOUNT)
+if cli:
+    try:
+        state_data = _json.loads(cli.get("state_data") or "{}")
+        schema_dir = state_data.get("schema_dir", "")
+        # Make absolute if relative
+        if schema_dir and not os.path.isabs(schema_dir):
+            schema_dir = os.path.join("/home/chatbotadmin/Querybot_v2", schema_dir)
+    except Exception as e:
+        print(f"Warning: could not parse state_data: {e}")
 print(f"Schema dir: {schema_dir}")
 
 if not schema_dir or not os.path.exists(schema_dir):
