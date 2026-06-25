@@ -792,7 +792,7 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
             col_name,
             column_formats.get(col_name, ""),
         )
-        greeting = f"*{portal_user['name']}* — " if portal_user else ""
+        greeting = f"*{portal_user.get('name', '')}* — " if portal_user and portal_user.get('name') else ""
         reply = (
             f"{greeting}*{question}*\n\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
