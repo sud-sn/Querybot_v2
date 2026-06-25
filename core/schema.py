@@ -482,6 +482,147 @@ def list_schema_files(schema_dir: str) -> list[str]:
 # Join map generation
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _fetch_pk_columns_azure(cur) -> dict[str, list[str]]:
+    """Return {TABLE_NAME_UPPER: [pk_col, ...]} from sys.key_constraints (Azure SQL / SQL Server)."""
+    pk_map: dict[str, list[str]] = {}
+    try:
+        cur.execute("""
+            SELECT t.name, c.name
+            FROM   sys.key_constraints kc
+            JOIN   sys.index_columns   ic ON kc.parent_object_id = ic.object_id
+                                         AND kc.unique_index_id  = ic.index_id
+            JOIN   sys.tables          t  ON kc.parent_object_id = t.object_id
+            JOIN   sys.columns         c  ON ic.object_id        = c.object_id
+                                         AND ic.column_id        = c.column_id
+            WHERE  kc.type = 'PK'
+            ORDER BY t.name, ic.key_ordinal
+        """)
+        for tbl, col in cur.fetchall():
+            pk_map.setdefault(tbl.upper(), []).append(col)
+    except Exception as exc:
+        log.debug("AzSQL: PK constraint query skipped: %s", exc)
+    return pk_map
+
+
+def _fetch_pk_columns_snowflake(cur, schema: str) -> dict[str, list[str]]:
+    """Return {TABLE_NAME_UPPER: [pk_col, ...]} from INFORMATION_SCHEMA (Snowflake)."""
+    pk_map: dict[str, list[str]] = {}
+    try:
+        cur.execute(f"""
+            SELECT tc.table_name, kcu.column_name
+            FROM   information_schema.table_constraints tc
+            JOIN   information_schema.key_column_usage  kcu
+                ON tc.constraint_name = kcu.constraint_name
+               AND tc.table_schema    = kcu.table_schema
+            WHERE  tc.constraint_type = 'PRIMARY KEY'
+               AND UPPER(tc.table_schema) = UPPER('{schema}')
+            ORDER BY tc.table_name, kcu.ordinal_position
+        """)
+        for tbl, col in cur.fetchall():
+            pk_map.setdefault(tbl.upper(), []).append(col)
+    except Exception as exc:
+        log.debug("Snowflake: PK constraint query skipped: %s", exc)
+    return pk_map
+
+
+def _fetch_pk_columns_oracle(cur, owner: str) -> dict[str, list[str]]:
+    """Return {TABLE_NAME_UPPER: [pk_col, ...]} from ALL_CONSTRAINTS (Oracle)."""
+    pk_map: dict[str, list[str]] = {}
+    try:
+        cur.execute("""
+            SELECT acc.TABLE_NAME, acc.COLUMN_NAME
+            FROM   ALL_CONSTRAINTS  ac
+            JOIN   ALL_CONS_COLUMNS acc
+                ON ac.CONSTRAINT_NAME = acc.CONSTRAINT_NAME
+               AND ac.OWNER           = acc.OWNER
+            WHERE  ac.CONSTRAINT_TYPE = 'P'
+               AND ac.OWNER = :owner
+            ORDER BY acc.TABLE_NAME, acc.POSITION
+        """, owner=owner)
+        for tbl, col in cur.fetchall():
+            pk_map.setdefault(tbl.upper(), []).append(col)
+    except Exception as exc:
+        log.debug("Oracle: PK constraint query skipped: %s", exc)
+    return pk_map
+
+
+def _fetch_fk_constraints_azure(cur) -> list[dict]:
+    """Query sys.foreign_keys for DB-enforced FK relationships (Azure SQL / SQL Server)."""
+    try:
+        cur.execute("""
+            SELECT tp.name, cp.name, tr.name, cr.name
+            FROM   sys.foreign_keys          fk
+            JOIN   sys.foreign_key_columns   fkc ON fk.object_id           = fkc.constraint_object_id
+            JOIN   sys.tables                tp  ON fkc.parent_object_id    = tp.object_id
+            JOIN   sys.columns               cp  ON fkc.parent_object_id    = cp.object_id
+                                                AND fkc.parent_column_id    = cp.column_id
+            JOIN   sys.tables                tr  ON fkc.referenced_object_id = tr.object_id
+            JOIN   sys.columns               cr  ON fkc.referenced_object_id = cr.object_id
+                                                AND fkc.referenced_column_id = cr.column_id
+            ORDER BY tp.name, cp.name
+        """)
+        return [
+            {"parent_table": r[0], "parent_col": r[1], "ref_table": r[2], "ref_col": r[3]}
+            for r in cur.fetchall()
+        ]
+    except Exception as exc:
+        log.debug("AzSQL: FK constraint query skipped: %s", exc)
+        return []
+
+
+def _fetch_fk_constraints_snowflake(cur, schema: str) -> list[dict]:
+    """Query INFORMATION_SCHEMA for Snowflake FK constraints (may be unenforced but declared)."""
+    try:
+        cur.execute(f"""
+            SELECT kcu.table_name, kcu.column_name, ccu.table_name, ccu.column_name
+            FROM   information_schema.table_constraints      tc
+            JOIN   information_schema.key_column_usage       kcu
+                ON tc.constraint_name = kcu.constraint_name
+               AND tc.table_schema    = kcu.table_schema
+            JOIN   information_schema.referential_constraints rc
+                ON tc.constraint_name = rc.constraint_name
+            JOIN   information_schema.constraint_column_usage ccu
+                ON rc.unique_constraint_name   = ccu.constraint_name
+               AND rc.unique_constraint_schema = ccu.table_schema
+            WHERE  tc.constraint_type = 'FOREIGN KEY'
+               AND UPPER(tc.table_schema) = UPPER('{schema}')
+            ORDER BY kcu.table_name, kcu.ordinal_position
+        """)
+        return [
+            {"parent_table": r[0], "parent_col": r[1], "ref_table": r[2], "ref_col": r[3]}
+            for r in cur.fetchall()
+        ]
+    except Exception as exc:
+        log.debug("Snowflake: FK constraint query skipped: %s", exc)
+        return []
+
+
+def _fetch_fk_constraints_oracle(cur, owner: str) -> list[dict]:
+    """Query ALL_CONSTRAINTS for Oracle FK relationships."""
+    try:
+        cur.execute("""
+            SELECT a.TABLE_NAME, a.COLUMN_NAME, b.TABLE_NAME, b.COLUMN_NAME
+            FROM   ALL_CONS_COLUMNS a
+            JOIN   ALL_CONSTRAINTS  ac
+                ON a.CONSTRAINT_NAME = ac.CONSTRAINT_NAME AND a.OWNER = ac.OWNER
+            JOIN   ALL_CONSTRAINTS  pk
+                ON ac.R_CONSTRAINT_NAME = pk.CONSTRAINT_NAME AND ac.R_OWNER = pk.OWNER
+            JOIN   ALL_CONS_COLUMNS b
+                ON b.CONSTRAINT_NAME = pk.CONSTRAINT_NAME AND b.OWNER = pk.OWNER
+               AND b.POSITION = a.POSITION
+            WHERE  ac.CONSTRAINT_TYPE = 'R'
+               AND a.OWNER = :owner
+            ORDER BY a.TABLE_NAME, a.POSITION
+        """, owner=owner)
+        return [
+            {"parent_table": r[0], "parent_col": r[1], "ref_table": r[2], "ref_col": r[3]}
+            for r in cur.fetchall()
+        ]
+    except Exception as exc:
+        log.debug("Oracle: FK constraint query skipped: %s", exc)
+        return []
+
+
 def _build_join_map(master: dict) -> str:
     """
     Analyse all discovered tables and auto-detect FK relationships by matching
@@ -504,8 +645,11 @@ def _build_join_map(master: dict) -> str:
     ]
 
     # Build index: column_name_upper → list of tables that have it
+    # Skip special metadata keys (e.g. __db_fk_constraints__ which is a list, not a table dict)
     col_to_tables: dict[str, list[str]] = {}
     for tbl_name, tbl_info in master.items():
+        if not isinstance(tbl_info, dict):
+            continue
         for col in tbl_info.get("columns", []):
             cname = col["name"].upper()
             col_to_tables.setdefault(cname, []).append(tbl_name)
@@ -513,13 +657,46 @@ def _build_join_map(master: dict) -> str:
     join_pairs_seen: set[str] = set()
     relationships: list[dict] = []
 
+    # ── Pass 0: DB-enforced FK constraints (authoritative, highest priority) ──
+    # These come from sys.foreign_keys / INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS
+    # / ALL_CONSTRAINTS and were stored during schema discovery.  They are always
+    # correct and take precedence over the heuristic passes below.
+    db_fk_lines: list[str] = []
+    for fk in master.get("__db_fk_constraints__", []):
+        pt  = fk["parent_table"]
+        pc  = fk["parent_col"]
+        rt  = fk["ref_table"]
+        rc  = fk["ref_col"]
+        # Register this pair so Pass 1 shared-name detection doesn't duplicate it
+        for _key in (
+            f"{min(pt, rt)}|{max(pt, rt)}|{pc}={rc}",
+            f"{min(pt, rt)}|{max(pt, rt)}|{pc}={pc}",
+        ):
+            join_pairs_seen.add(_key)
+        db_fk_lines.append(f"### {pt} → {rt}  *(DB-enforced FK)*")
+        db_fk_lines.append(
+            f"**Join:** `{pt}.{pc}` = `{rt}.{rc}` "
+            f"— declared foreign key; `{pt}` is the many-side, `{rt}` is the one-side (parent)."
+        )
+        db_fk_lines.append("```sql")
+        db_fk_lines.append(f"-- many-to-one: keep all {pt} rows even with no {rt} match")
+        db_fk_lines.append(f"LEFT JOIN [{rt}] ON [{pt}].[{pc}] = [{rt}].[{rc}]")
+        db_fk_lines.append("```")
+        db_fk_lines.append("")
+
     # ── Pass 1: shared column name joins ──────────────────────────────────────
     for col_name, tables in col_to_tables.items():
         if len(tables) < 2:
             continue
-        # Skip very generic columns that are not real FKs
-        if col_name in {"ID", "NAME", "STATUS", "TYPE", "CODE", "DATE",
-                        "CREATED_AT", "UPDATED_AT", "DESCRIPTION", "NOTES"}:
+        # Skip generic / audit columns that are not meaningful join keys
+        if col_name in {
+            "ID", "NAME", "STATUS", "TYPE", "CODE", "DATE",
+            "CREATED_AT", "UPDATED_AT", "DESCRIPTION", "NOTES",
+            # DMS/Azure audit columns present in every fact table — not join keys
+            "AZ_EXT_ID", "AZ_LST_UPD_TS", "AZ_LST_UPD_USR", "AZ_LST_UPD_DT",
+            "DEL_REC_IND", "DEL_ORD_REC_IND", "DEL_SOP_REC_IND", "DEL_IVC_REC_IND",
+            "UNT_OF_MSR",
+        }:
             continue
 
         for i in range(len(tables)):
@@ -578,6 +755,8 @@ def _build_join_map(master: dict) -> str:
     date_role_lines: list[str] = []
     date_dims: list[tuple[str, str]] = []
     for tbl_name, tbl_info in master.items():
+        if not isinstance(tbl_info, dict):
+            continue
         cols = tbl_info.get("columns", [])
         if is_date_dimension_table(tbl_name, cols):
             pk = find_date_dimension_key(cols)
@@ -586,6 +765,8 @@ def _build_join_map(master: dict) -> str:
 
     if date_dims:
         for fact_tbl, tbl_info in master.items():
+            if not isinstance(tbl_info, dict):
+                continue
             fact_cols = [c.get("name", "") for c in tbl_info.get("columns", [])]
             for fact_col in fact_cols:
                 role = detect_date_role(fact_col)
@@ -616,19 +797,43 @@ def _build_join_map(master: dict) -> str:
                     date_role_lines.append("```")
                     date_role_lines.append("")
 
-    if not relationships and not alias_lines and not date_role_lines:
+    if not db_fk_lines and not relationships and not alias_lines and not date_role_lines:
         lines.append("No shared key columns detected automatically.")
         lines.append("")
         lines.append("Tip: Join columns typically end in _ID, _NO, _CODE, or _NUM.")
         return "\n".join(lines)
 
+    if db_fk_lines:
+        lines.append("## DB-Enforced FK Constraints")
+        lines.append("")
+        lines.append(
+            "These relationships are declared as foreign key constraints in the database. "
+            "Use them with highest confidence — the join keys and cardinality are authoritative. "
+            "The many-side (child) should be joined to the one-side (parent) with LEFT JOIN "
+            "when you want to keep all child rows even if the parent is missing."
+        )
+        lines.append("")
+        lines.extend(db_fk_lines)
+
+    # Count how many tables each shared column appears in (to detect dimension keys)
+    _col_table_count = {col: len(tbls) for col, tbls in col_to_tables.items()}
+
     for rel in relationships:
         left_extra = [c for c in rel["right_cols"] if c not in rel["left_cols"]][:6]
+        col = rel["left_col"]
+        _is_dim_key = col.upper().endswith("_DMS_KEY") and _col_table_count.get(col.upper(), 0) >= 3
         lines.append(f"### {rel['left']} ↔ {rel['right']}")
-        lines.append(f"**Join column:** `{rel['left_col']}`")
+        if _is_dim_key:
+            lines.append(
+                f"> **Note:** `{col}` is a dimension surrogate key shared across "
+                f"{_col_table_count[col.upper()]} tables. Both tables reference the same "
+                f"dimension — do NOT join these two fact tables directly on this key. "
+                f"Instead, join each to its respective dimension table."
+            )
+        lines.append(f"**Join column:** `{col}`")
         lines.append("```sql")
         lines.append(
-            f"JOIN [{rel['right']}] ON [{rel['left']}].{rel['left_col']}"
+            f"JOIN [{rel['right']}] ON [{rel['left']}].{col}"
             f" = [{rel['right']}].{rel['right_col']}"
         )
         lines.append("```")
@@ -754,6 +959,64 @@ def _is_audit_column(col_upper: str, total_tables: int, col_table_count: int) ->
     return False
 
 
+# ── Smart FK-to-entity resolution ────────────────────────────────────────────
+# Surrogate key suffixes tried longest-first so _DMS_KEY beats _KEY
+_SURROGATE_SUFFIXES = (
+    "_DMS_KEY", "_KEY", "_FK", "_ID", "_SK",
+    "_CD", "_CODE", "_NO", "_NBR", "_NUM",
+)
+
+# Contact / demographic attributes that are never FK columns
+_DESCRIPTIVE_COLS = frozenset({
+    "NAME", "FIRST_NAME", "LAST_NAME", "MIDDLE_NAME", "FULL_NAME",
+    "DESCRIPTION", "DESC", "NOTES", "NOTE", "COMMENT", "COMMENTS",
+    "REMARK", "REMARKS",
+    "EMAIL", "PHONE", "FAX", "MOBILE", "TELEPHONE",
+    "ADDRESS", "ADDRESS1", "ADDRESS2", "STREET", "SUBURB",
+    "CITY", "STATE", "COUNTRY", "ZIP", "ZIPCODE", "POSTCODE", "POSTAL_CODE",
+    "GENDER", "WEBSITE", "URL", "DOB",
+})
+
+
+def _is_surrogate_key_col(col_name: str) -> bool:
+    """Return True if col_name looks like a surrogate / FK key column."""
+    u = col_name.upper()
+    if u in _DESCRIPTIVE_COLS or u in _GENERIC_COLS:
+        return False
+    for pfx in _AUDIT_COL_PREFIXES:
+        if u.startswith(pfx):
+            return False
+    return any(u.endswith(sfx) for sfx in _SURROGATE_SUFFIXES)
+
+
+def _col_to_target_entity(
+    col_upper: str,
+    entity_upper_map: dict[str, str],
+) -> str | None:
+    """
+    Derive the target entity from a FK column name by stripping the suffix
+    and fuzzy-matching the stem to a known entity.
+
+    WHS_DMS_KEY  → strip _DMS_KEY → WHS  → try WHS, WHS_DMS → WHS_DMS ✓
+    Patient_ID   → strip _ID      → PATIENT → try PATIENT, DIM_PATIENT → DIM_Patient ✓
+    BRAND_DMS_KEY→ strip _DMS_KEY → BRAND → BRAND_DMS ✓
+    """
+    for sfx in _SURROGATE_SUFFIXES:
+        if col_upper.endswith(sfx):
+            stem = col_upper[:-len(sfx)]
+            for candidate in (
+                stem,
+                stem + "_DMS",
+                "DIM_" + stem,
+                "FACT_" + stem,
+                stem + "_DIM",
+            ):
+                if candidate in entity_upper_map:
+                    return entity_upper_map[candidate]
+            break  # only strip the longest matching suffix
+    return None
+
+
 def _infer_entity_type(table_name: str) -> str:
     n = table_name.lower()
     if any(n.startswith(p) for p in _FACT_PREFIXES) or any(n.endswith(s) for s in _FACT_SUFFIXES):
@@ -838,7 +1101,9 @@ def build_entity_graph_from_schema(schema_dir: str) -> dict:
         entity_name = bare_table          # unique within account, short
         entity_type = _infer_entity_type(bare_table)
         columns     = tbl_info.get("columns", [])
-        pk_col      = _infer_pk_column(bare_table, columns)
+        # Prefer DB-authoritative PK; fall back to name-pattern heuristic
+        _db_pks = tbl_info.get("pk_columns", [])
+        pk_col  = _db_pks[0] if _db_pks else _infer_pk_column(bare_table, columns)
         display     = _display_name_from_table(bare_table)
         color       = _ENTITY_COLORS.get(entity_type, "#4F86C6")
 
@@ -931,62 +1196,96 @@ def build_entity_graph_from_schema(schema_dir: str) -> dict:
                     "reason":            f"Date role: {fact_col} → {date_table}.{date_pk}",
                 })
 
-    # ── Build relationship list (reuse shared-column logic from _build_join_map) ─
-    col_to_fqns: dict[str, list[str]] = {}
+    # ── Build relationships via FK column-to-entity resolution ──────────────────
+    # Star-schema rules:
+    #   fact  → dimension  ✓  (standard star edge)
+    #   dim   → dimension  ✓  (snowflake edge — dim has FK to sub-dim)
+    #   fact  → fact        ✗  never (shared dim-keys ≠ a join between facts)
+    #   dim   → fact        ✗  wrong direction
+    #
+    # One relationship per (from_entity, to_entity) pair — highest-confidence
+    # column match wins.
+
+    entity_upper_map: dict[str, str] = {
+        e["entity_name"].upper(): e["entity_name"] for e in entities
+    }
+    entity_type_map: dict[str, str] = {
+        e["entity_name"]: e["entity_type"] for e in entities
+    }
+    pk_map: dict[str, str] = {
+        e["entity_name"]: e["pk_column"]
+        for e in entities if e.get("pk_column")
+    }
+
+    # best_rel[(from, to)] = (confidence, rel_dict)
+    best_rel: dict[tuple[str, str], tuple[int, dict]] = {}
+
     for fqn, tbl_info in master.items():
-        for col in tbl_info.get("columns", []):
-            cname = col["name"].upper()
-            col_to_fqns.setdefault(cname, []).append(fqn)
-
-    seen_pairs: set[str] = set()
-    relationships: list[dict] = []
-    relationships.extend(role_date_relationships)
-
-    entity_names_set = {e["entity_name"] for e in entities}
-
-    total_tables = len(master)
-    for col_name, fqns in col_to_fqns.items():
-        if len(fqns) < 2 or _is_audit_column(col_name, total_tables, len(fqns)):
+        e_name = fqn_to_entity.get(fqn, fqn.split(".")[-1])
+        e_type = entity_type_map.get(e_name)
+        if not e_type:
             continue
-        for i in range(len(fqns)):
-            for j in range(i + 1, len(fqns)):
-                f1 = fqns[i]
-                f2 = fqns[j]
-                e1 = fqn_to_entity.get(f1, f1.split(".")[-1])
-                e2 = fqn_to_entity.get(f2, f2.split(".")[-1])
-                if e1 not in entity_names_set or e2 not in entity_names_set:
-                    continue
 
-                # Prefer fact as from_entity (FK owner)
-                t1_type = _infer_entity_type(e1)
-                t2_type = _infer_entity_type(e2)
-                if t2_type == "fact" and t1_type != "fact":
-                    e1, e2 = e2, e1   # swap so fact is from_entity
+        for col in tbl_info.get("columns", []):
+            col_name  = col.get("name", "")
+            col_upper = col_name.upper()
 
-                pair_key = f"{min(e1,e2)}|{max(e1,e2)}|{col_name}"
-                if pair_key in seen_pairs:
-                    continue
-                seen_pairs.add(pair_key)
+            if not _is_surrogate_key_col(col_name):
+                continue
 
-                # Resolve actual case of the column from master
-                actual_col = col_name   # uppercase; resolver handles quoting
-                for col in master[f1].get("columns", []):
-                    if col["name"].upper() == col_name:
-                        actual_col = col["name"]
-                        break
+            target = _col_to_target_entity(col_upper, entity_upper_map)
+            if not target or target == e_name:
+                continue
 
-                relationships.append({
-                    "from_entity":      e1,
-                    "to_entity":        e2,
-                    "from_column":      actual_col,
-                    "to_column":        actual_col,
+            t_type = entity_type_map.get(target)
+            if not t_type:
+                continue
+
+            # Enforce type rules
+            if e_type == "fact" and t_type == "fact":
+                continue          # never join fact → fact
+            if e_type == "dimension" and t_type == "fact":
+                continue          # wrong direction
+
+            # Confidence: higher when column name closely mirrors target table name
+            stem = col_upper
+            for sfx in _SURROGATE_SUFFIXES:
+                if col_upper.endswith(sfx):
+                    stem = col_upper[:-len(sfx)]
+                    break
+            tgt_upper = target.upper()
+            if stem == tgt_upper or stem + "_DMS" == tgt_upper:
+                confidence = 95   # WHS_DMS_KEY → WHS_DMS  (exact)
+            elif tgt_upper.replace("DIM_", "") == stem or tgt_upper in stem:
+                confidence = 88   # Patient_ID → DIM_Patient  (prefix-stripped)
+            else:
+                confidence = 78   # valid key match, less precise stem
+
+            to_col   = pk_map.get(target) or col_name
+            pair     = (e_name, target)
+            cur_best = best_rel.get(pair, (0, None))[0]
+            if confidence > cur_best:
+                best_rel[pair] = (confidence, {
+                    "from_entity":       e_name,
+                    "to_entity":         target,
+                    "from_column":       col_name,
+                    "to_column":         to_col,
                     "relationship_type": "many_to_one",
-                    "join_type":        "INNER",
-                    "confidence_score": 70,
-                    "status":           "suggested",
-                    "generated_by":     "heuristic",
-                    "reason":           f"Shared column {actual_col} in both tables",
+                    "join_type":         "INNER" if e_type == "fact" else "LEFT",
+                    "confidence_score":  confidence,
+                    "status":            "suggested",
+                    "generated_by":      "heuristic",
+                    "reason":            f"FK column {col_name} resolves to {target}",
                 })
+
+    # Merge: date-role relationships take precedence; add heuristic ones after
+    date_pairs = {
+        (r["from_entity"], r["to_entity"]) for r in role_date_relationships
+    }
+    relationships: list[dict] = list(role_date_relationships)
+    for pair, (_, rel) in best_rel.items():
+        if pair not in date_pairs:
+            relationships.append(rel)
 
     return {"entities": entities, "relationships": relationships}
 
@@ -1077,6 +1376,13 @@ def _discover_snowflake(cfg: dict, out: Path, allowed: set[str] | None = None, m
             key_name = _clean_identifier_part(tbl["TABLE_NAME"])
             name_counts[key_name] = name_counts.get(key_name, 0) + 1
 
+        # Fetch PK columns for all selected tables before the per-table loop
+        _sf_pk_schema = cfg.get("schema") or "PUBLIC"
+        _sf_pk_cur    = conn.cursor()
+        pk_map = _fetch_pk_columns_snowflake(_sf_pk_cur, _sf_pk_schema)
+        if pk_map:
+            log.info("Snowflake: PK columns discovered for %d tables", len(pk_map))
+
         for tbl in selected_tables:
             name = tbl["TABLE_NAME"]
             schema = tbl.get("TABLE_SCHEMA") or cfg.get("schema") or "PUBLIC"
@@ -1136,8 +1442,10 @@ def _discover_snowflake(cfg: dict, out: Path, allowed: set[str] | None = None, m
             distinct_map = {k: v for k, v in distinct_map.items()
                             if k.upper() not in _masked_upper}
 
+            _pk_cols = pk_map.get(name.upper(), [])
             (out / f"{_safe_table_file_stem(file_stem)}.md").write_text(
-                _sf_md(name, tbl, columns, sample, distinct_map), encoding="utf-8"
+                _sf_md(name, tbl, columns, sample, distinct_map, pk_columns=_pk_cols),
+                encoding="utf-8",
             )
             master[table_key] = {
                 "columns": [
@@ -1146,6 +1454,7 @@ def _discover_snowflake(cfg: dict, out: Path, allowed: set[str] | None = None, m
                      "comment": c.get("COMMENT") or ""}
                     for c in columns
                 ],
+                "pk_columns":          _pk_cols,
                 "row_count":           tbl.get("ROW_COUNT"),
                 "comment":             tbl.get("COMMENT") or "",
                 "schema":              schema,
@@ -1159,6 +1468,14 @@ def _discover_snowflake(cfg: dict, out: Path, allowed: set[str] | None = None, m
             }
             log.info("Snowflake: discovered %s (%d cols, %d categorical)",
                      name, len(columns), len(distinct_map))
+
+        # ── Fetch DB-declared FK constraints ─────────────────────────────────
+        _sf_schema = cfg.get("schema") or "PUBLIC"
+        _sf_fk_cur = conn.cursor()
+        _sf_fks = _fetch_fk_constraints_snowflake(_sf_fk_cur, _sf_schema)
+        if _sf_fks:
+            master["__db_fk_constraints__"] = _sf_fks
+            log.info("Snowflake: %d DB-declared FK relationships discovered", len(_sf_fks))
     finally:
         conn.close()
     _write_schema_json(out, master)
@@ -1177,12 +1494,16 @@ def _run_snowflake(cfg: dict, sql: str, max_rows: int = 200) -> list[dict]:
         conn.close()
 
 
-def _sf_md(name, meta, columns, sample, distinct_map: dict) -> str:
+def _sf_md(name, meta, columns, sample, distinct_map: dict,
+           pk_columns: list | None = None) -> str:
     lines = [f"# {name}"]
     if meta.get("COMMENT"):
         lines.append(f"\n{meta['COMMENT']}")
     lines.append(f"\n**Type:** {meta.get('TABLE_TYPE','TABLE')}  ")
     lines.append(f"**Approximate row count:** {meta.get('ROW_COUNT','unknown')}")
+    _pk_set = {c.upper() for c in (pk_columns or [])}
+    if _pk_set:
+        lines.append(f"\n**Primary Key:** {', '.join(f'`{c}`' for c in (pk_columns or []))}")
     lines.append("\n## Columns\n")
     lines.append("| Column | Type | Nullable | Notes | Distinct Values |")
     lines.append("|--------|------|:--------:|-------|-----------------|")
@@ -1196,7 +1517,8 @@ def _sf_md(name, meta, columns, sample, distinct_map: dict) -> str:
             col_type += f"({c['NUMERIC_PRECISION']})"
         cname = c["COLUMN_NAME"]
         dist  = ", ".join(f"'{v}'" for v in distinct_map.get(cname, []))
-        lines.append(f"| `{cname}` | {col_type} | {nullable} | {comment} | {dist} |")
+        label = f"`{cname}` **[PK]**" if cname.upper() in _pk_set else f"`{cname}`"
+        lines.append(f"| {label} | {col_type} | {nullable} | {comment} | {dist} |")
     _append_sample(lines, sample)
     return "\n".join(lines)
 
@@ -1302,6 +1624,11 @@ def _discover_oracle(cfg: dict, out: Path, allowed: set[str] | None = None, mc: 
             key_name = _clean_identifier_part(tbl["TABLE_NAME"])
             name_counts[key_name] = name_counts.get(key_name, 0) + 1
 
+        # Fetch PK columns for all selected tables before the per-table loop
+        pk_map = _fetch_pk_columns_oracle(cur, owner)
+        if pk_map:
+            log.info("Oracle: PK columns discovered for %d tables", len(pk_map))
+
         for tbl in selected_tables:
             name = tbl["TABLE_NAME"]
             tbl_owner = (tbl.get("OWNER") or owner).upper()
@@ -1365,14 +1692,18 @@ def _discover_oracle(cfg: dict, out: Path, allowed: set[str] | None = None, mc: 
             distinct_map = {k: v for k, v in distinct_map.items()
                             if k.upper() not in _masked_upper}
 
+            _pk_cols = pk_map.get(name.upper(), [])
             (out / f"{_safe_table_file_stem(file_stem)}.md").write_text(
-                _ora_md(name, tbl, columns, sample, tbl_owner, distinct_map), encoding="utf-8"
+                _ora_md(name, tbl, columns, sample, tbl_owner, distinct_map,
+                        pk_columns=_pk_cols),
+                encoding="utf-8",
             )
             master[table_key] = {
                 "columns": [{"name": c["COLUMN_NAME"], "type": c["DATA_TYPE"],
                               "nullable": c["IS_NULLABLE"] == "YES",
                               "comment": c.get("COMMENT") or ""}
                              for c in columns],
+                "pk_columns":          _pk_cols,
                 "row_count":           tbl.get("ROW_COUNT"),
                 "comment":             tbl.get("COMMENT") or "",
                 "owner":               tbl_owner,
@@ -1383,6 +1714,12 @@ def _discover_oracle(cfg: dict, out: Path, allowed: set[str] | None = None, mc: 
                 "mask_replacement_map": _replacement_map,
                 "synthetic_used":      _synthetic_used,
             }
+
+        # ── Fetch DB-enforced FK constraints ──────────────────────────────────
+        _ora_fks = _fetch_fk_constraints_oracle(cur, owner)
+        if _ora_fks:
+            master["__db_fk_constraints__"] = _ora_fks
+            log.info("Oracle: %d DB-enforced FK relationships discovered", len(_ora_fks))
     finally:
         conn.close()
     _write_schema_json(out, master)
@@ -1401,12 +1738,16 @@ def _run_oracle(cfg: dict, sql: str, max_rows: int = 200) -> list[dict]:
         conn.close()
 
 
-def _ora_md(name, meta, columns, sample, owner, distinct_map: dict) -> str:
+def _ora_md(name, meta, columns, sample, owner, distinct_map: dict,
+            pk_columns: list | None = None) -> str:
     lines = [f"# {owner}.{name}"]
     if meta.get("COMMENT"):
         lines.append(f"\n{meta['COMMENT']}")
     lines.append(f"\n**Type:** {meta.get('TABLE_TYPE','TABLE')}  **Owner:** {owner}  ")
     lines.append(f"**Approx row count:** {meta.get('ROW_COUNT','unknown')}")
+    _pk_set = {c.upper() for c in (pk_columns or [])}
+    if _pk_set:
+        lines.append(f"\n**Primary Key:** {', '.join(f'`{c}`' for c in (pk_columns or []))}")
     lines.append("\n## Columns\n")
     lines.append("| Column | Type | Nullable | Notes | Distinct Values |")
     lines.append("|--------|------|:--------:|-------|-----------------|")
@@ -1420,7 +1761,8 @@ def _ora_md(name, meta, columns, sample, owner, distinct_map: dict) -> str:
             col_type += f"({c['DATA_LENGTH']})"
         cname = c["COLUMN_NAME"]
         dist  = ", ".join(f"'{v}'" for v in distinct_map.get(cname, []))
-        lines.append(f"| `{cname}` | {col_type} | {nullable} | {comment} | {dist} |")
+        label = f"`{cname}` **[PK]**" if cname.upper() in _pk_set else f"`{cname}`"
+        lines.append(f"| {label} | {col_type} | {nullable} | {comment} | {dist} |")
     _append_sample(lines, sample)
     return "\n".join(lines)
 
@@ -1546,6 +1888,11 @@ def _discover_azure_sql(cfg: dict, out: Path, allowed: set[str] | None = None, m
 
             if not selected:
                 return db_upper, 0
+
+            # Fetch PK columns for all tables in one query (before the per-table loop)
+            pk_map = _fetch_pk_columns_azure(cur)
+            if pk_map:
+                log.info("AzSQL: PK columns discovered for %d tables in %s", len(pk_map), db_upper)
 
             # Detect duplicate table names across schemas
             name_counts: dict[str, int] = {}
@@ -1682,18 +2029,21 @@ def _discover_azure_sql(cfg: dict, out: Path, allowed: set[str] | None = None, m
                 distinct_map = {k: v for k, v in distinct_map.items()
                                 if k.upper() not in _masked_upper}
 
+                _pk_cols = pk_map.get(name.upper(), [])
                 tbl_meta = {"TABLE_SCHEMA": schema, "TABLE_NAME": name,
                             "TABLE_TYPE": "BASE TABLE", "TABLE_CATALOG": db_upper}
                 (out / f"{_safe_table_file_stem(file_stem)}.md").write_text(
                     _az_md(name, tbl_meta, columns, sample, schema,
                            distinct_map, database=db_upper,
-                           stats_map=stats_map, row_count=row_count),
+                           stats_map=stats_map, row_count=row_count,
+                           pk_columns=_pk_cols),
                     encoding="utf-8",
                 )
                 master[table_key] = {
                     "columns": [{"name": c["COLUMN_NAME"], "type": c["DATA_TYPE"],
                                  "nullable": c["IS_NULLABLE"] == "YES", "comment": ""}
                                 for c in columns],
+                    "pk_columns":          _pk_cols,
                     "row_count":           row_count,
                     "comment":             "",
                     "schema":              schema,
@@ -1708,6 +2058,14 @@ def _discover_azure_sql(cfg: dict, out: Path, allowed: set[str] | None = None, m
                 log.info("Azure SQL: discovered [%s].[%s].[%s] (%d cols, %d categorical)",
                          db_upper, schema, name, len(columns), len(distinct_map))
                 written += 1
+
+            # ── Fetch DB-enforced FK constraints for this database ────────────
+            _az_fks = _fetch_fk_constraints_azure(cur)
+            if _az_fks:
+                existing = master.get("__db_fk_constraints__", [])
+                master["__db_fk_constraints__"] = existing + _az_fks
+                log.info("AzSQL: %d DB-enforced FK relationships discovered in %s",
+                         len(_az_fks), db_upper)
 
             return db_upper, written
         finally:
@@ -1774,7 +2132,7 @@ def _run_azure_sql(cfg: dict, sql: str, max_rows: int = 200) -> list[dict]:
 
 def _az_md(name, meta, columns, sample, schema, distinct_map: dict,
            database: str = "", stats_map: dict | None = None,
-           row_count: int | None = None) -> str:
+           row_count: int | None = None, pk_columns: list | None = None) -> str:
     # Header uses full 3-part FQN for identification purposes (KB keys, Qdrant)
     # but the SQL table name anchor uses 2-part [SCHEMA].[TABLE] because
     # Azure SQL Database (cloud) does not support 3-part names in DML queries.
@@ -1810,6 +2168,9 @@ def _az_md(name, meta, columns, sample, schema, distinct_map: dict,
         lines.append(
             f"\n**Row count:** {_rc_display}  **Scale:** {_scale_label}"
         )
+    _pk_set = {c.upper() for c in (pk_columns or [])}
+    if _pk_set:
+        lines.append(f"\n**Primary Key:** {', '.join(f'`{c}`' for c in (pk_columns or []))}")
     lines.append("\n## Columns\n")
     lines.append("| Column | Type | Nullable | Distinct Values |")
     lines.append("|--------|------|:--------:|-----------------|")
@@ -1822,7 +2183,8 @@ def _az_md(name, meta, columns, sample, schema, distinct_map: dict,
             col_type += f"({c['NUMERIC_PRECISION']})"
         cname = c["COLUMN_NAME"]
         dist  = ", ".join(f"'{v}'" for v in distinct_map.get(cname, []))
-        lines.append(f"| `{cname}` | {col_type} | {nullable} | {dist} |")
+        label = f"`{cname}` **[PK]**" if cname.upper() in _pk_set else f"`{cname}`"
+        lines.append(f"| {label} | {col_type} | {nullable} | {dist} |")
 
     # ── Column Statistics section (numeric/date columns only) ─────────────────
     if stats_map:

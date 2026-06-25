@@ -3925,21 +3925,25 @@ async def graph_suggest(request: Request, account_id: str):
             )
             saved_entities += 1
 
-    # ── Save LLM-suggested relationships ────────────────────────────────────
+    # ── Save LLM-suggested relationships (one per table pair) ───────────────
     for rel in rels:
-        store.save_relationship(
+        fe = rel.get("from_entity", "")
+        te = rel.get("to_entity", "")
+        if not fe or not te or fe == te:
+            continue
+        store.upsert_relationship_by_pair(
             account_id        = account_id,
-            from_entity       = rel.get("from_entity",""),
-            to_entity         = rel.get("to_entity",""),
-            from_column       = rel.get("from_column",""),
-            to_column         = rel.get("to_column",""),
-            relationship_type = rel.get("relationship_type","many_to_one"),
-            join_type         = rel.get("join_type","LEFT"),
-            label             = rel.get("label",""),
-            confidence_score  = int(rel.get("confidence_score",70)),
+            from_entity       = fe,
+            to_entity         = te,
+            from_column       = rel.get("from_column", ""),
+            to_column         = rel.get("to_column", ""),
+            relationship_type = rel.get("relationship_type", "many_to_one"),
+            join_type         = rel.get("join_type", "LEFT"),
+            label             = rel.get("label", ""),
+            confidence_score  = int(rel.get("confidence_score", 70)),
             status            = "suggested",
             generated_by      = "llm",
-            reason            = f"LLM suggested join on {rel.get('from_column','')}",
+            reason            = f"LLM suggested join on {rel.get('from_column', '')}",
         )
         saved_rels += 1
 
