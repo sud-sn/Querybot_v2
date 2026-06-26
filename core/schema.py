@@ -466,9 +466,14 @@ def load_schema_columns(schema_dir: str) -> dict[str, dict[str, str]]:
     return result
 
 
+def _normalize_schema(master: dict) -> dict:
+    """Old _schema.json stored columns as a plain list; new format wraps in {"columns": [...]}. Normalise to the new format."""
+    return {k: ({"columns": v} if isinstance(v, list) else v) for k, v in master.items()}
+
+
 def load_schema_json(schema_dir: str) -> dict:
     p = Path(schema_dir) / "_schema.json"
-    return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+    return _normalize_schema(json.loads(p.read_text(encoding="utf-8"))) if p.exists() else {}
 
 
 def list_schema_files(schema_dir: str) -> list[str]:
@@ -1083,7 +1088,7 @@ def build_entity_graph_from_schema(schema_dir: str) -> dict:
     if not schema_json.exists():
         return {"entities": [], "relationships": []}
 
-    master: dict = json.loads(schema_json.read_text(encoding="utf-8"))
+    master: dict = _normalize_schema(json.loads(schema_json.read_text(encoding="utf-8")))
     if not master:
         return {"entities": [], "relationships": []}
     from core.date_roles import detect_date_role, find_date_dimension_key, is_date_dimension_table

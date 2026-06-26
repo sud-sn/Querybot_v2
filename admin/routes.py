@@ -3503,7 +3503,8 @@ async def graph_api_schema_tables(request: Request, account_id: str):
     if not schema_path or not schema_path.exists():
         return JSONResponse([])
 
-    master = _json.loads(schema_path.read_text(encoding="utf-8"))
+    from core.schema import _normalize_schema as _ns
+    master = _ns(_json.loads(schema_path.read_text(encoding="utf-8")))
     tables = []
     for fqn, info in master.items():
         parts       = fqn.split(".")
@@ -3548,7 +3549,8 @@ async def graph_api_columns(request: Request, account_id: str):
     if not schema_path or not schema_path.exists():
         return JSONResponse([])
 
-    master = _json.loads(schema_path.read_text(encoding="utf-8"))
+    from core.schema import _normalize_schema as _ns
+    master = _ns(_json.loads(schema_path.read_text(encoding="utf-8")))
     # Exact match first, then case-insensitive fallback
     info = master.get(fqn)
     if info is None:
@@ -3634,7 +3636,8 @@ async def graph_suggest(request: Request, account_id: str):
         return JSONResponse({"status": "error",
                              "message": "_schema.json not found. Run Discovery first."})
 
-    schema = _json.loads(schema_path.read_text())
+    from core.schema import _normalize_schema
+    schema = _normalize_schema(_json.loads(schema_path.read_text()))
     join_map = join_map_path.read_text() if join_map_path.exists() else ""
 
     # ── Deterministic pre-pass: detect role-playing dimensions ───────────────
@@ -5711,8 +5714,9 @@ async def admin_discover_schema(
                 try:
                     _new_schema_path = Path(schema_dir) / "_schema.json"
                     if _new_schema_path.exists():
-                        _new_schema = json.loads(_new_schema_path.read_text(encoding="utf-8"))
-                        _drift = _compute_schema_drift(_old_schema, _new_schema)
+                        from core.schema import _normalize_schema as _ns
+                        _new_schema = _ns(json.loads(_new_schema_path.read_text(encoding="utf-8")))
+                        _drift = _compute_schema_drift(_ns(_old_schema), _new_schema)
                         if _drift["has_changes"]:
                             next_state["schema_drift"] = _drift
                             log.info(
