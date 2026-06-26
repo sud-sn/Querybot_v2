@@ -44,7 +44,8 @@ def _read_schema(schema_dir: str) -> dict[str, Any]:
     schema_path = Path(schema_dir) / "_schema.json"
     if not schema_path.exists():
         return {}
-    return json.loads(schema_path.read_text(encoding="utf-8"))
+    from core.schema import _normalize_schema
+    return _normalize_schema(json.loads(schema_path.read_text(encoding="utf-8")))
 
 
 def _schema_table_name(fqn: str, meta: dict[str, Any]) -> str:

@@ -5406,7 +5406,8 @@ async def admin_column_sensitivity(request: Request, account_id: str, fqn: str =
 
     if schema_path.exists():
         try:
-            schema_data = json.loads(schema_path.read_text(encoding="utf-8"))
+            from core.schema import _normalize_schema as _ns2
+            schema_data = _ns2(json.loads(schema_path.read_text(encoding="utf-8")))
             fqn_upper = fqn.upper()
             for key, meta in schema_data.items():
                 if key.upper() == fqn_upper:
@@ -5751,7 +5752,8 @@ async def admin_discover_schema(
                 from pathlib import Path as _Path
                 _schema_path = _Path(schema_dir) / "_schema.json"
                 if _schema_path.exists():
-                    _schema = _json.loads(_schema_path.read_text())
+                    from core.schema import _normalize_schema as _ns3
+                    _schema = _ns3(_json.loads(_schema_path.read_text()))
                     for _tkey, _tmeta in _schema.items():
                         _tparts    = _tkey.split(".")
                         _tname     = _tparts[-1]
@@ -5982,7 +5984,8 @@ async def admin_build_kb(
                 from pathlib import Path as _Path
                 _schema_path = _Path(schema_dir) / "_schema.json"
                 if _schema_path.exists():
-                    _schema = _json.loads(_schema_path.read_text())
+                    from core.schema import _normalize_schema as _ns4
+                    _schema = _ns4(_json.loads(_schema_path.read_text()))
                     for _tkey, _tmeta in _schema.items():
                         _tparts    = _tkey.split(".")
                         _tname     = _tparts[-1]
