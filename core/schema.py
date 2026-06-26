@@ -432,7 +432,7 @@ def load_schema_columns(schema_dir: str) -> dict[str, dict[str, str]]:
         return {}
 
     try:
-        master = json.loads(p.read_text(encoding="utf-8"))
+        master = _normalize_schema(json.loads(p.read_text(encoding="utf-8")))
     except Exception:
         return {}
 
