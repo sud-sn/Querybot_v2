@@ -3656,6 +3656,12 @@ async def graph_suggest(request: Request, account_id: str):
 
     from core.date_roles import detect_date_role, find_date_dimension_key, is_date_dimension_table
 
+    def _col_name(c: dict) -> str:
+        return c.get("name") or c.get("COLUMN_NAME") or c.get("column_name") or ""
+
+    def _col_type(c: dict) -> str:
+        return c.get("type") or c.get("DATA_TYPE") or c.get("data_type") or ""
+
     date_dim_names = [
         t for t, info in schema.items()
         if is_date_dimension_table(t, info.get("columns", []))
@@ -3723,12 +3729,6 @@ async def graph_suggest(request: Request, account_id: str):
         _all_tables[i:i + _CHUNK]
         for i in range(0, min(len(_all_tables), _MAX_TABLES), _CHUNK)
     ]
-
-    def _col_name(c: dict) -> str:
-        return c.get("name") or c.get("COLUMN_NAME") or c.get("column_name") or ""
-
-    def _col_type(c: dict) -> str:
-        return c.get("type") or c.get("DATA_TYPE") or c.get("data_type") or ""
 
     def _chunk_summary(chunk: list) -> str:
         lines = []
