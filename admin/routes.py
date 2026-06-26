@@ -3767,7 +3767,7 @@ async def graph_suggest(request: Request, account_id: str):
         from core.llm import llm_complete, resolve_provider
         from core.llm_audit import llm_audit_scope, make_llm_audit_request_id
 
-        provider, model, api_key, az_kw, _ = resolve_provider(account_id)
+        provider, model, api_key, az_kw = resolve_provider(client)
         request_id = make_llm_audit_request_id()
 
         with llm_audit_scope(
