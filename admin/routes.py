@@ -3663,7 +3663,7 @@ async def graph_suggest(request: Request, account_id: str):
 
     for fact in fact_tables:
         fact_info = schema[fact]
-        col_names = [c["name"] for c in fact_info.get("columns", [])]
+        col_names = [_col_name(c) for c in fact_info.get("columns", []) if _col_name(c)]
         # Group columns that end with the same suffix (e.g. DateID, DateId)
         suffix_groups: dict[str, list[str]] = {}
         for col in col_names:
@@ -3724,10 +3724,16 @@ async def graph_suggest(request: Request, account_id: str):
         for i in range(0, min(len(_all_tables), _MAX_TABLES), _CHUNK)
     ]
 
+    def _col_name(c: dict) -> str:
+        return c.get("name") or c.get("COLUMN_NAME") or c.get("column_name") or ""
+
+    def _col_type(c: dict) -> str:
+        return c.get("type") or c.get("DATA_TYPE") or c.get("data_type") or ""
+
     def _chunk_summary(chunk: list) -> str:
         lines = []
         for tbl_name, tbl_info in chunk:
-            cols = [f"{c['name']}:{c['type']}" for c in tbl_info.get("columns", [])[:15]]
+            cols = [f"{_col_name(c)}:{_col_type(c)}" for c in tbl_info.get("columns", [])[:15] if _col_name(c)]
             lines.append(f"{tbl_name}: {', '.join(cols)}")
         return "\n".join(lines)
 
@@ -3871,7 +3877,7 @@ async def graph_suggest(request: Request, account_id: str):
     for dim_name, roles in role_playing.items():
         dim_info  = schema.get(dim_name, {})
         dim_schema = dim_info.get("schema", "")
-        dim_cols   = [c["name"] for c in dim_info.get("columns", [])]
+        dim_cols   = [_col_name(c) for c in dim_info.get("columns", []) if _col_name(c)]
         pk_hint    = (
             find_date_dimension_key(dim_info.get("columns", []))
             if is_date_dimension_table(dim_name, dim_info.get("columns", []))
