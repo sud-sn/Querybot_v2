@@ -1068,6 +1068,12 @@ function renderDiagnosticCard(rawText){
     ${sql ? `<div class="diagnostic-label">SQL tried</div><div class="sql-box">${escHtml(sql)}</div>` : ''}
   </div>`;
 }
+function copySqlBox(btn){
+  const sql = btn.closest('.trust-box').querySelector('.sql-box').textContent;
+  copyText(sql).then(ok => {
+    if(ok){ btn.textContent='Copied!'; setTimeout(()=>btn.textContent='Copy',1500); }
+  });
+}
 async function copyText(text){
   try {
     await navigator.clipboard.writeText(text);
@@ -2563,7 +2569,7 @@ function appendAssistantResponse(msg, opts = {}){
     : '';
 
   const trustSchema = trust.schema || (_activeSchema ? `${_activeSchema} schema` : 'All allowed schemas');
-  const trustHtml = `<details class="trust-box"><summary>How this answer was produced</summary><div class="trust-grid"><div class="trust-item"><div class="trust-k">Rows</div><div class="trust-v">${escHtml(String(trust.row_count ?? ''))}</div></div><div class="trust-item"><div class="trust-k">Runtime</div><div class="trust-v">${escHtml(trust.duration_label || '')}</div></div><div class="trust-item"><div class="trust-k">Data source</div><div class="trust-v">${escHtml((trust.data_source || '').toUpperCase())}</div></div><div class="trust-item"><div class="trust-k">Schema mode</div><div class="trust-v">${escHtml(trustSchema)}</div></div><div class="trust-item"><div class="trust-k">Result scope</div><div class="trust-v">${escHtml(trust.scope_badge || resultScope.badge || '')}</div></div></div><div class="trust-sql-label"><span>SQL used</span>${trust.sql ? `<button class="sql-copy-btn" onclick="navigator.clipboard.writeText(${JSON.stringify('')}+this.closest('.trust-box').querySelector('.sql-box').textContent).then(()=>{this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500)})">Copy</button>` : ''}</div><div class="sql-box">${escHtml(trust.sql || '')}</div></details>`;
+  const trustHtml = `<details class="trust-box"><summary>How this answer was produced</summary><div class="trust-grid"><div class="trust-item"><div class="trust-k">Rows</div><div class="trust-v">${escHtml(String(trust.row_count ?? ''))}</div></div><div class="trust-item"><div class="trust-k">Runtime</div><div class="trust-v">${escHtml(trust.duration_label || '')}</div></div><div class="trust-item"><div class="trust-k">Data source</div><div class="trust-v">${escHtml((trust.data_source || '').toUpperCase())}</div></div><div class="trust-item"><div class="trust-k">Schema mode</div><div class="trust-v">${escHtml(trustSchema)}</div></div><div class="trust-item"><div class="trust-k">Result scope</div><div class="trust-v">${escHtml(trust.scope_badge || resultScope.badge || '')}</div></div></div><div class="trust-sql-label"><span>SQL used</span>${trust.sql ? '<button class="sql-copy-btn" onclick="copySqlBox(this)">Copy</button>' : ''}</div><div class="sql-box">${escHtml(trust.sql || '')}</div></details>`;
 
   // Each result card gets a unique ID for the inline chat
   const rcId = `rc-${chartCounter}`;
