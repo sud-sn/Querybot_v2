@@ -287,6 +287,16 @@ body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-seri
 .jc-cancel{background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:5px;padding:5px 12px;font-size:11px;font-weight:700;cursor:pointer;transition:all .12s}
 .jc-cancel:hover{background:var(--surface-2)}
 .jc-del{background:#FEE2E2;color:#DC2626;border:1px solid #FECACA;border-radius:5px;padding:5px 12px;font-size:11px;font-weight:700;cursor:pointer;transition:opacity .12s}
+/* ThoughtSpot-style join header */
+.je-header{display:grid;grid-template-columns:1fr 150px 1fr;gap:.5rem;background:var(--surface-alt,var(--surface));border:1px solid var(--border);border-radius:7px;padding:.55rem .75rem;margin-bottom:.5rem;align-items:start}
+.je-th-lbl{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);margin-bottom:3px}
+.je-th-name{font-size:12px;font-weight:700;color:var(--text);word-break:break-word}
+.je-center{display:flex;flex-direction:column;align-items:center;gap:.3rem}
+.je-arrow{color:var(--primary);font-size:13px;font-weight:700;letter-spacing:-.5px}
+.je-col-hdrs{display:grid;grid-template-columns:1fr 18px 1fr 26px;gap:.35rem;padding:0 .05rem;margin:.35rem 0 .1rem}
+.je-col-hdrs span{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted)}
+.jc-col-sel{padding:5px 7px;border:1px solid var(--border);border-radius:5px;font-size:11px;background:var(--surface);color:var(--text);outline:none;width:100%}
+.jc-col-sel:focus{border-color:var(--primary)}
 .jc-del:hover{opacity:.85}
 
 /* ── Filter tab ─────────────────────────────────────────────────────────────── */
@@ -476,8 +486,9 @@ body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-seri
 </div>
 
 <script>
-const ACCOUNT_ID = "{{ client.account_id }}";
-const API_BASE   = `/admin/clients/${ACCOUNT_ID}/graph/api`;
+const ACCOUNT_ID    = "{{ client.account_id }}";
+const API_BASE      = `/admin/clients/${ACCOUNT_ID}/graph/api`;
+const ENTITY_COLUMNS = {{ entity_columns | tojson | safe }};
 
 let graphData = {
   entities:      {{ entities      | tojson | safe }},
@@ -812,16 +823,37 @@ function renderJoinCard(r, currentEntity, expanded=false) {
   </div>`;
 }
 
+function _colOptions(cols, selected) {
+  const opts = cols.map(c =>
+    `<option value="${_esc(c)}"${c===selected?' selected':''}>${_esc(c)}</option>`
+  ).join('');
+  return `<option value="">— select —</option>${opts}`;
+}
+
+function _colEl(side, relId, idx, val, cols) {
+  const elId = side==='from' ? `jcf-${relId}-${idx}` : `jct-${relId}-${idx}`;
+  if (cols.length)
+    return `<select class="jc-col-sel" id="${elId}">${_colOptions(cols, val)}</select>`;
+  return `<input type="text" class="jc-col-sel" placeholder="${side==='from'?'Source':'Dest'} col" value="${_esc(val)}" id="${elId}">`;
+}
+
 function _buildJoinEditForm(r, jc) {
+  const fromName = r.from_entity || '';
+  const toName   = r.to_entity   || '';
+  const fromCols = ENTITY_COLUMNS[(fromName).toUpperCase()] || [];
+  const toCols   = ENTITY_COLUMNS[(toName).toUpperCase()]   || [];
+
   const allConds = jc.length
     ? jc
-    : (r.from_column || r.to_column ? [{from_col: r.from_column||'', to_col: r.to_column||''}] : []);
+    : (r.from_column || r.to_column
+       ? [{from_col: r.from_column||'', to_col: r.to_column||''}]
+       : [{from_col:'', to_col:''}]);
 
   const condRows = allConds.map((c, i) => `
     <div class="jc-cond-row" id="jcrow-${r.id}-${i}">
-      <input type="text" placeholder="From col" value="${_esc(c.from_col||'')}" id="jcf-${r.id}-${i}">
+      ${_colEl('from', r.id, i, c.from_col||'', fromCols)}
       <span class="jc-eq">=</span>
-      <input type="text" placeholder="To col" value="${_esc(c.to_col||'')}" id="jct-${r.id}-${i}">
+      ${_colEl('to',   r.id, i, c.to_col||'',   toCols)}
       <button class="jc-rem" onclick="removeJoinCond(${r.id},${i})" title="Remove">−</button>
     </div>`).join('');
 
@@ -830,29 +862,41 @@ function _buildJoinEditForm(r, jc) {
   const wc   = r.where_clause || '';
 
   return `
-    <div class="jc-section-lbl">Join conditions</div>
-    <div id="jc-conds-${r.id}">${condRows || '<div style="color:var(--text-muted);font-size:11px;padding:.2rem 0">No conditions — click + Add condition below.</div>'}</div>
-    <button class="jc-add-btn" onclick="addJoinCond(${r.id})">+ Add condition</button>
-    <div class="jc-section-lbl" style="margin-top:.65rem">Metadata</div>
-    <div class="jc-meta-grid">
+    <div class="je-header">
       <div>
-        <span class="jc-lbl">Join type</span>
-        <select class="jc-select" id="jcjt-${r.id}">
-          <option value="LEFT"  ${jt==='LEFT'?'selected':''}>LEFT JOIN</option>
-          <option value="INNER" ${jt==='INNER'?'selected':''}>INNER JOIN</option>
-          <option value="OUTER" ${jt==='OUTER'?'selected':''}>OUTER JOIN</option>
-        </select>
+        <div class="je-th-lbl">Source Table</div>
+        <div class="je-th-name">${_esc(fromName)}</div>
+      </div>
+      <div class="je-center">
+        <div style="width:100%">
+          <div class="je-th-lbl" style="text-align:center">Join Type</div>
+          <select class="jc-select" id="jcjt-${r.id}">
+            <option value="LEFT"  ${jt==='LEFT'?'selected':''}>LEFT JOIN</option>
+            <option value="INNER" ${jt==='INNER'?'selected':''}>INNER JOIN</option>
+            <option value="OUTER" ${jt==='OUTER'?'selected':''}>OUTER JOIN</option>
+          </select>
+        </div>
+        <div class="je-arrow">──→</div>
+        <div style="width:100%">
+          <div class="je-th-lbl" style="text-align:center">Cardinality</div>
+          <select class="jc-select" id="jccard-${r.id}">
+            <option value="many_to_one" ${card==='many_to_one'?'selected':''}>Many → One</option>
+            <option value="one_to_one"  ${card==='one_to_one'?'selected':''}>One → One</option>
+            <option value="one_to_many" ${card==='one_to_many'?'selected':''}>One → Many</option>
+          </select>
+        </div>
       </div>
       <div>
-        <span class="jc-lbl">Cardinality</span>
-        <select class="jc-select" id="jccard-${r.id}">
-          <option value="many_to_one" ${card==='many_to_one'?'selected':''}>Many → One</option>
-          <option value="one_to_one"  ${card==='one_to_one'?'selected':''}>One → One</option>
-          <option value="one_to_many" ${card==='one_to_many'?'selected':''}>One → Many</option>
-        </select>
+        <div class="je-th-lbl">Destination Table</div>
+        <div class="je-th-name">${_esc(toName)}</div>
       </div>
     </div>
-    <div class="jc-section-lbl">WHERE clause (applied to this join)</div>
+    <div class="je-col-hdrs">
+      <span>Source Column(s)</span><span></span><span>Destination Column(s)</span><span></span>
+    </div>
+    <div id="jc-conds-${r.id}">${condRows}</div>
+    <button class="jc-add-btn" onclick="addJoinCond(${r.id})">+ Add column condition</button>
+    <div class="jc-section-lbl" style="margin-top:.65rem">WHERE clause (applied to this join)</div>
     <textarea class="jc-where" id="jcwhere-${r.id}" placeholder="Optional: e.g. t.is_active = 1">${_esc(wc)}</textarea>
     <div class="jc-actions">
       <button class="jc-del"    onclick="deleteRel(${r.id})">Delete</button>
@@ -892,17 +936,17 @@ function toggleJoinCard(relId) {
 function addJoinCond(relId) {
   const container = document.getElementById(`jc-conds-${relId}`);
   if (!container) return;
-  // Clear placeholder text if any
-  const placeholder = container.querySelector('div');
-  if (placeholder && !placeholder.classList.contains('jc-cond-row')) placeholder.remove();
+  const r = graphData.relationships.find(x => x.id === relId);
+  const fromCols = r ? (ENTITY_COLUMNS[(r.from_entity||'').toUpperCase()] || []) : [];
+  const toCols   = r ? (ENTITY_COLUMNS[(r.to_entity  ||'').toUpperCase()] || []) : [];
   const i = container.querySelectorAll('.jc-cond-row').length;
   const row = document.createElement('div');
   row.className = 'jc-cond-row';
   row.id = `jcrow-${relId}-${i}`;
   row.innerHTML = `
-    <input type="text" placeholder="From col" id="jcf-${relId}-${i}">
+    ${_colEl('from', relId, i, '', fromCols)}
     <span class="jc-eq">=</span>
-    <input type="text" placeholder="To col" id="jct-${relId}-${i}">
+    ${_colEl('to',   relId, i, '', toCols)}
     <button class="jc-rem" onclick="removeJoinCond(${relId},${i})" title="Remove">−</button>
   `;
   container.appendChild(row);
@@ -921,9 +965,10 @@ async function saveJoinEdit(relId) {
   const condRows  = container ? container.querySelectorAll('.jc-cond-row') : [];
   const join_conditions = [];
   condRows.forEach(row => {
-    const inputs = row.querySelectorAll('input');
-    const fc = (inputs[0]?.value || '').trim();
-    const tc = (inputs[1]?.value || '').trim();
+    const fromEl = row.querySelector('[id^="jcf-"]');
+    const toEl   = row.querySelector('[id^="jct-"]');
+    const fc = (fromEl?.value || '').trim();
+    const tc = (toEl?.value   || '').trim();
     if (fc || tc) join_conditions.push({from_col: fc, to_col: tc});
   });
 
