@@ -2982,14 +2982,35 @@ async def graph_page(request: Request, account_id: str):
         + sum(1 for r in relationships if r.get("status") == "suggested" and r.get("is_active", 1))
     )
 
+    # Build entity→column list for the join editor dropdowns (entity name uppercase → [col, ...])
+    entity_columns: dict = {}
+    try:
+        import json as _json
+        from pathlib import Path as _Path
+        from core.schema import _normalize_schema
+        _state = store.get_client_state(account_id)
+        _schema_dir = _state.get("schema_dir", "")
+        if _schema_dir:
+            _schema_json = _Path(_schema_dir) / "_schema.json"
+            if _schema_json.exists():
+                _master = _normalize_schema(_json.loads(_schema_json.read_text(encoding="utf-8")))
+                for _fqn, _tbl in _master.items():
+                    _bare = _fqn.split(".")[-1].upper()
+                    _cols = [c.get("name","") for c in _tbl.get("columns",[]) if c.get("name","")]
+                    if _cols:
+                        entity_columns[_bare] = _cols
+    except Exception:
+        pass
+
     return _resp(request, "client_graph.html", {
-        "client":        client,
-        "entities":      entities,
-        "relationships": relationships,
-        "health":        health,
-        "pending_count": pending_count,
-        "saved":         request.query_params.get("saved"),
-        "error":         request.query_params.get("error"),
+        "client":         client,
+        "entities":       entities,
+        "relationships":  relationships,
+        "health":         health,
+        "pending_count":  pending_count,
+        "entity_columns": entity_columns,
+        "saved":          request.query_params.get("saved"),
+        "error":          request.query_params.get("error"),
     })
 
 
