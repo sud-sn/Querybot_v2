@@ -3167,6 +3167,57 @@ async def graph_api_entity_delete(request: Request, account_id: str, entity_name
     return JSONResponse({"status": "ok"})
 
 
+@router.patch("/clients/{account_id}/graph/api/entities/{entity_name}/position")
+async def graph_api_entity_position(request: Request, account_id: str, entity_name: str):
+    """Update only pos_x/pos_y without touching other entity fields."""
+    if not _is_auth(request):
+        raise HTTPException(status_code=401)
+    data = await request.json()
+    with _get_db() as conn:
+        conn.execute(
+            "UPDATE entity_graph SET pos_x=?, pos_y=? WHERE account_id=? AND entity_name=?",
+            (float(data.get("pos_x", 0)), float(data.get("pos_y", 0)), account_id, entity_name),
+        )
+    return JSONResponse({"status": "ok"})
+
+
+@router.patch("/clients/{account_id}/graph/api/entities/{entity_name}/type")
+async def graph_api_entity_type(request: Request, account_id: str, entity_name: str):
+    """Update only entity_type (and color) without touching other entity fields."""
+    if not _is_auth(request):
+        raise HTTPException(status_code=401)
+    data = await request.json()
+    new_type  = data.get("entity_type", "dimension")
+    new_color = data.get("color", "")
+    with _get_db() as conn:
+        if new_color:
+            conn.execute(
+                "UPDATE entity_graph SET entity_type=?, color=? WHERE account_id=? AND entity_name=?",
+                (new_type, new_color, account_id, entity_name),
+            )
+        else:
+            conn.execute(
+                "UPDATE entity_graph SET entity_type=? WHERE account_id=? AND entity_name=?",
+                (new_type, account_id, entity_name),
+            )
+    return JSONResponse({"status": "ok"})
+
+
+@router.patch("/clients/{account_id}/graph/api/entities/{entity_name}/filter")
+async def graph_api_entity_filter(request: Request, account_id: str, entity_name: str):
+    """Update only entity_filter (row-level WHERE clause) without touching other fields."""
+    if not _is_auth(request):
+        raise HTTPException(status_code=401)
+    data = await request.json()
+    entity_filter = (data.get("entity_filter") or "").strip()
+    with _get_db() as conn:
+        conn.execute(
+            "UPDATE entity_graph SET entity_filter=? WHERE account_id=? AND entity_name=?",
+            (entity_filter, account_id, entity_name),
+        )
+    return JSONResponse({"status": "ok"})
+
+
 @router.post("/clients/{account_id}/graph/api/relationships")
 async def graph_api_rel_upsert(request: Request, account_id: str):
     if not _is_auth(request):
