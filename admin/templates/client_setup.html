@@ -88,6 +88,22 @@
 .wizard-step.active .wizard-step-label{color:var(--blue)}
 .wizard-step-line{flex:1;height:2px;background:var(--border);margin:0 .65rem;border-radius:1px;min-width:16px;transition:background .2s}
 .wizard-step-line.done{background:var(--green)}
+/* ── Table field preview panel ── */
+.tbl-fields-body{padding:.35rem .5rem .5rem 1.5rem;background:var(--surface-2);border-top:1px solid var(--border);border-radius:0 0 var(--radius-sm) var(--radius-sm)}
+.tbl-field-row{display:flex;align-items:center;gap:.4rem;padding:.18rem .25rem;font-size:11px;color:var(--text-soft);border-radius:3px}
+.tbl-field-row:hover{background:var(--row-hover)}
+.tbl-fields-btn{font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:3px;background:var(--surface);color:var(--text-muted);cursor:pointer;white-space:nowrap;flex-shrink:0;line-height:1.5}
+.tbl-fields-btn:hover{border-color:var(--blue);color:var(--blue)}
+/* ── Schema discovery card grid ── */
+.schema-card-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:.45rem;margin-bottom:.875rem}
+.schema-card{border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);overflow:hidden}
+.schema-card-hd{display:flex;align-items:center;gap:.45rem;padding:.45rem .65rem;background:var(--surface-2);min-height:36px}
+.schema-card-name{font-size:11px;font-weight:700;font-family:monospace;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)}
+.schema-card-drift{font-size:9px;font-weight:800;color:var(--amber);background:color-mix(in srgb,var(--amber) 10%,var(--surface));border:1px solid color-mix(in srgb,var(--amber) 35%,transparent);border-radius:999px;padding:1px 6px;white-space:nowrap;flex-shrink:0}
+.schema-card-new{font-size:9px;font-weight:800;color:var(--green);background:color-mix(in srgb,var(--green) 10%,var(--surface));border:1px solid color-mix(in srgb,var(--green) 35%,transparent);border-radius:999px;padding:1px 6px;white-space:nowrap;flex-shrink:0}
+/* ── Wizard step tooltip ── */
+.wizard-step-circle{position:relative;cursor:default}
+.wizard-step-circle[title]:hover::after{content:attr(title);position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);background:var(--text);color:var(--surface);font-size:10px;font-weight:600;padding:4px 8px;border-radius:4px;white-space:nowrap;z-index:10;pointer-events:none}
 </style>
 {% endblock %}
 {% block breadcrumb %}
@@ -109,22 +125,22 @@
 {% set _w4 = state == 'READY' %}
 <div class="wizard-steps">
   <div class="wizard-step {% if _w1 %}done{% else %}active{% endif %}">
-    <div class="wizard-step-circle">{% if _w1 %}✓{% else %}1{% endif %}</div>
+    <div class="wizard-step-circle" title="Assign a database in the client Settings tab">{% if _w1 %}✓{% else %}1{% endif %}</div>
     <div class="wizard-step-label">DB Connection</div>
   </div>
   <div class="wizard-step-line {% if _w1 %}done{% endif %}"></div>
   <div class="wizard-step {% if _w2 %}done{% elif _w1 %}active{% endif %}">
-    <div class="wizard-step-circle">{% if _w2 %}✓{% else %}2{% endif %}</div>
+    <div class="wizard-step-circle" title="Browse schemas and check which tables to include in the KB">{% if _w2 %}✓{% else %}2{% endif %}</div>
     <div class="wizard-step-label">Tables Selected</div>
   </div>
   <div class="wizard-step-line {% if _w2 %}done{% endif %}"></div>
   <div class="wizard-step {% if _w3 %}done{% elif _w2 %}active{% endif %}">
-    <div class="wizard-step-circle">{% if _w3 %}✓{% else %}3{% endif %}</div>
+    <div class="wizard-step-circle" title="Reads each selected table's columns and sample rows from the DB">{% if _w3 %}✓{% else %}3{% endif %}</div>
     <div class="wizard-step-label">Schema Discovery</div>
   </div>
   <div class="wizard-step-line {% if _w3 %}done{% endif %}"></div>
   <div class="wizard-step {% if _w4 %}done{% elif _w3 %}active{% endif %}">
-    <div class="wizard-step-circle">{% if _w4 %}✓{% else %}4{% endif %}</div>
+    <div class="wizard-step-circle" title="LLM generates business context for each table — takes 5–10 minutes">{% if _w4 %}✓{% else %}4{% endif %}</div>
     <div class="wizard-step-label">KB Generated</div>
   </div>
 </div>
@@ -332,8 +348,26 @@
     </div>
     {% endif %}
     {% if schema_files %}
-    <div class="file-list" id="discovery-file-list">
-      {% for f in schema_files %}{% if not f.name.startswith('_') %}{{ f.stem }}<br>{% endif %}{% endfor %}
+    {# Build sets used for drift badges on each card #}
+    {% set _drift_changed = [] %}
+    {% if schema_drift and schema_drift.column_changes %}
+      {% for _fqk in schema_drift.column_changes.keys() %}{% set _ = _drift_changed.append(_fqk.split('.')[-1].upper()) %}{% endfor %}
+    {% endif %}
+    {% set _drift_added = (schema_drift.added_tables | map('upper') | list) if (schema_drift and schema_drift.added_tables) else [] %}
+    <div class="schema-card-grid" id="discovery-file-list">
+    {% for f in schema_files %}{% if not f.name.startswith('_') %}
+      {% set _stem = f.stem %}
+      {% set _fld_key = _stem.upper().replace('-','_').replace('.','_').replace(' ','_') %}
+      <div class="schema-card" data-table="{{ _stem }}">
+        <div class="schema-card-hd">
+          <span class="schema-card-name" title="{{ _stem }}">{{ _stem }}</span>
+          {% if _stem.upper() in _drift_added %}<span class="schema-card-new">new</span>{% endif %}
+          {% if _stem.upper() in _drift_changed %}<span class="schema-card-drift">col changed</span>{% endif %}
+          <button class="tbl-fields-btn" onclick="event.stopPropagation();_toggleSchemaCardFields({{ _stem | tojson }}, this)">▶ Fields</button>
+        </div>
+        <div id="sfld-{{ _fld_key }}" class="tbl-fields-body" style="display:none"></div>
+      </div>
+    {% endif %}{% endfor %}
     </div>
 
     {% if schema_drift and schema_drift.has_changes %}
@@ -701,10 +735,189 @@
   // Pre-populate from server-rendered kb_tables (already saved in state_data)
   let selected = new Set(({{ kb_tables | tojson }} || []).map(t => String(t).toUpperCase()));
 
+  // Map bare table name (upper) → full FQN, used by schema card field expand
+  const _kbTablesFqnMap = new Map();
+  ({{ kb_tables | tojson }} || []).forEach(fqn => {
+    const parts = String(fqn).split('.');
+    _kbTablesFqnMap.set(parts[parts.length - 1].toUpperCase(), String(fqn).toUpperCase());
+  });
+
   // ── Field-level masking state — declared HERE so it exists before the init IIFE below
   const maskingConfig    = new Map();
   const _maskFieldsCache = new Map();
   const _maskPanelOpened = new Set();
+
+  // ── Table field preview (schema browser expand) ────────────────────────────
+  const _tblFieldsCache = new Map();
+  const _tblFieldsOpen  = new Set();
+
+  window._toggleTableFields = async function(fqn, btn) {
+    const key   = fqn.replace(/[^A-Z0-9_]/g, '_');
+    const panel = document.getElementById('tblfld-' + key);
+    if (!panel) return;
+    const open = !_tblFieldsOpen.has(fqn);
+    if (open) _tblFieldsOpen.add(fqn); else _tblFieldsOpen.delete(fqn);
+    panel.style.display = open ? '' : 'none';
+    btn.textContent = open ? '▼ Fields' : '▶ Fields';
+    if (!open) return;
+    if (_tblFieldsCache.has(fqn)) {
+      _renderTblFields(fqn, panel, _tblFieldsCache.get(fqn));
+      return;
+    }
+    panel.innerHTML = '<div style="padding:.4rem;font-size:11px;color:var(--text-muted)">Loading columns…</div>';
+    try {
+      const resp = await fetch(
+        `/admin/clients/${accountId}/setup/column-sensitivity?fqn=${encodeURIComponent(fqn)}`,
+        {credentials: 'same-origin'}
+      );
+      const data = await resp.json();
+      if (data.status !== 'ok') {
+        panel.innerHTML = '<div style="padding:.4rem;font-size:11px;color:var(--amber)">⚠ Could not load columns — run Schema Discovery first or check DB connection.</div>';
+        return;
+      }
+      _tblFieldsCache.set(fqn, data);
+      _renderTblFields(fqn, panel, data);
+    } catch(e) {
+      panel.innerHTML = `<div style="padding:.4rem;font-size:11px;color:var(--red)">Error: ${esc(e.message)}</div>`;
+    }
+  };
+
+  // Schema discovery card expand (Step 3) — resolves table name → FQN then reuses same cache/render
+  window._toggleSchemaCardFields = async function(tableName, btn) {
+    const upper  = tableName.toUpperCase();
+    const fqn    = _kbTablesFqnMap.get(upper) || upper;
+    const panKey = upper.replace(/[^A-Z0-9_]/g, '_');
+    const panel  = document.getElementById('sfld-' + panKey);
+    if (!panel) return;
+    const open = !_tblFieldsOpen.has('sfld-' + panKey);
+    if (open) _tblFieldsOpen.add('sfld-' + panKey);
+    else _tblFieldsOpen.delete('sfld-' + panKey);
+    panel.style.display = open ? '' : 'none';
+    btn.textContent = open ? '▼ Fields' : '▶ Fields';
+    if (!open) return;
+    if (_tblFieldsCache.has(fqn)) { _renderTblFields(fqn, panel, _tblFieldsCache.get(fqn)); return; }
+    panel.innerHTML = '<div style="padding:.4rem;font-size:11px;color:var(--text-muted)">Loading columns…</div>';
+    try {
+      const resp = await fetch(
+        `/admin/clients/${accountId}/setup/column-sensitivity?fqn=${encodeURIComponent(fqn)}`,
+        {credentials: 'same-origin'}
+      );
+      const data = await resp.json();
+      if (data.status !== 'ok') {
+        panel.innerHTML = '<div style="padding:.4rem;font-size:11px;color:var(--amber)">⚠ Could not load columns — check DB connection.</div>';
+        return;
+      }
+      _tblFieldsCache.set(fqn, data);
+      _renderTblFields(fqn, panel, data);
+    } catch(e) {
+      panel.innerHTML = `<div style="padding:.4rem;font-size:11px;color:var(--red)">Error: ${esc(e.message)}</div>`;
+    }
+  };
+
+  function _renderTblFields(fqn, panel, data) {
+    const cols     = data.columns || [];
+    const piiSet   = new Set((data.auto_masked || []).map(f => f.toUpperCase()));
+    const stratMap = data.strategy_map || {};
+    if (!cols.length) {
+      panel.innerHTML = '<div style="padding:.4rem;font-size:11px;color:var(--text-muted)">No columns found.</div>';
+      return;
+    }
+
+    // Tables in the saved selection get masking checkboxes; others are read-only
+    const canMask = selected.has(fqn.toUpperCase());
+
+    // Auto-seed PII fields into maskingConfig on first open for selected tables
+    if (canMask && !maskingConfig.has(fqn)) {
+      maskingConfig.set(fqn, { mode: 'selective', masked_fields: new Set(piiSet) });
+    }
+    const cfg      = maskingConfig.get(fqn) || { mode: 'selective', masked_fields: new Set() };
+    const piiCount = piiSet.size;
+    const maskedCount = cfg.masked_fields.size;
+
+    let html =
+      `<div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.3rem;flex-wrap:wrap">` +
+      `<span style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.04em">` +
+      `${cols.length} column${cols.length!==1?'s':''}` +
+      (piiCount ? ` &nbsp;·&nbsp; <span style="color:var(--amber)">${piiCount} PII</span>` : '') +
+      `</span>` +
+      (canMask && piiCount
+        ? `<button class="tbl-fields-btn" style="margin-left:auto;font-size:9px" onclick="_tblMaskPiiOnly(${JSON.stringify(fqn)}, ${JSON.stringify(panel.id)})">Mark PII only</button>` +
+          `<button class="tbl-fields-btn" style="font-size:9px" onclick="_tblMaskAll(${JSON.stringify(fqn)}, ${JSON.stringify(panel.id)}, ${JSON.stringify(cols.map(c=>c.name))})">All</button>` +
+          `<button class="tbl-fields-btn" style="font-size:9px" onclick="_tblMaskNone(${JSON.stringify(fqn)}, ${JSON.stringify(panel.id)})">None</button>`
+        : '') +
+      `</div>`;
+
+    cols.forEach(col => {
+      const isPii    = piiSet.has(col.name.toUpperCase());
+      const strat    = stratMap[col.name] || stratMap[col.name.toUpperCase()] || '';
+      const isMasked = cfg.masked_fields.has(col.name.toUpperCase());
+      html +=
+        `<div class="tbl-field-row">` +
+        (canMask
+          ? `<input type="checkbox" class="scope-check" ${isMasked ? 'checked' : ''} onclick="_tblFieldMaskToggle(${JSON.stringify(fqn)},${JSON.stringify(col.name)},this.checked,${JSON.stringify(panel.id)})">`
+          : '') +
+        `<span style="flex:1;font-weight:${isPii?'700':'400'}">${esc(col.name)}</span>` +
+        `<span style="font-size:10px;color:var(--text-muted);font-family:monospace;margin-right:.3rem">${esc(col.type||'')}</span>` +
+        (isPii
+          ? `<span style="font-size:9px;font-weight:700;color:var(--amber);background:color-mix(in srgb,var(--amber) 10%,var(--surface));border:1px solid color-mix(in srgb,var(--amber) 30%,transparent);border-radius:3px;padding:0 5px;white-space:nowrap">` +
+            `PII${strat ? ' · ' + strat : ''}` +
+            `</span>`
+          : '') +
+        `</div>`;
+    });
+
+    if (canMask) {
+      html +=
+        `<div style="margin-top:.4rem;padding-top:.4rem;border-top:1px solid var(--border);font-size:10px;color:var(--text-muted)">` +
+        `<span id="tblmask-count-${fqn.replace(/[^A-Z0-9_]/g,'_')}">${maskedCount}</span> of ${cols.length} fields marked for masking` +
+        (maskedCount ? ` — saved automatically when you <strong>Save selection</strong>` : '') +
+        `</div>`;
+    }
+    panel.innerHTML = html;
+  }
+
+  window._tblFieldMaskToggle = function(fqn, colName, checked, panelId) {
+    const cfg = maskingConfig.get(fqn) || { mode: 'selective', masked_fields: new Set() };
+    if (checked) cfg.masked_fields.add(colName.toUpperCase());
+    else cfg.masked_fields.delete(colName.toUpperCase());
+    maskingConfig.set(fqn, cfg);
+    _updateMaskBadge(fqn);
+    // Update the inline count
+    const countEl = document.getElementById('tblmask-count-' + fqn.replace(/[^A-Z0-9_]/g, '_'));
+    if (countEl) countEl.textContent = cfg.masked_fields.size;
+  };
+
+  window._tblMaskPiiOnly = function(fqn, panelId) {
+    const data = _tblFieldsCache.get(fqn);
+    if (!data) return;
+    const piiSet = new Set((data.auto_masked || []).map(f => f.toUpperCase()));
+    const cfg    = maskingConfig.get(fqn) || { mode: 'selective', masked_fields: new Set() };
+    cfg.masked_fields = new Set(piiSet);
+    maskingConfig.set(fqn, cfg);
+    _updateMaskBadge(fqn);
+    const panel = document.getElementById(panelId);
+    if (panel) _renderTblFields(fqn, panel, data);
+  };
+
+  window._tblMaskAll = function(fqn, panelId, colNames) {
+    const data = _tblFieldsCache.get(fqn);
+    const cfg  = maskingConfig.get(fqn) || { mode: 'selective', masked_fields: new Set() };
+    cfg.masked_fields = new Set(colNames.map(n => n.toUpperCase()));
+    maskingConfig.set(fqn, cfg);
+    _updateMaskBadge(fqn);
+    const panel = document.getElementById(panelId);
+    if (panel && data) _renderTblFields(fqn, panel, data);
+  };
+
+  window._tblMaskNone = function(fqn, panelId) {
+    const data = _tblFieldsCache.get(fqn);
+    const cfg  = maskingConfig.get(fqn) || { mode: 'selective', masked_fields: new Set() };
+    cfg.masked_fields.clear();
+    maskingConfig.set(fqn, cfg);
+    _updateMaskBadge(fqn);
+    const panel = document.getElementById(panelId);
+    if (panel && data) _renderTblFields(fqn, panel, data);
+  };
 
   // Restore saved masking config on page load
   ;(function() {
@@ -1505,12 +1718,17 @@
         if (tables.length) {
           html += '<div class="scope-section">Tables</div>';
           tables.forEach(t => {
-            const value = ref(db, schema, t);
-            html += `<div class="scope-object" data-table-name="${esc(t.toLowerCase())}">`
-              + `<label style="display:flex;align-items:center;gap:.45rem;width:100%;cursor:pointer" for="${checkboxId(value)}">`
+            const value  = ref(db, schema, t);
+            const fldKey = value.replace(/[^A-Z0-9_]/g, '_');
+            html += `<div class="scope-object" data-table-name="${esc(t.toLowerCase())}" style="flex-direction:column;align-items:stretch;padding:.1rem .45rem">`
+              + `<div style="display:flex;align-items:center;gap:.4rem;padding:.12rem 0">`
+              + `<label style="display:flex;align-items:center;gap:.45rem;flex:1;cursor:pointer;min-width:0" for="${checkboxId(value)}">`
               + `<input type="checkbox" class="scope-check" id="${checkboxId(value)}" ${selected.has(value) ? 'checked' : ''} onchange='setupScopeCheck(${JSON.stringify(value)}, this.checked)'>`
-              + `<span style="flex:1;font-size:12px">${esc(t)}</span>`
+              + `<span style="flex:1;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t)}</span>`
               + `</label>`
+              + `<button class="tbl-fields-btn" onclick="event.stopPropagation();_toggleTableFields(${JSON.stringify(value)}, this)">▶ Fields</button>`
+              + `</div>`
+              + `<div id="tblfld-${fldKey}" class="tbl-fields-body" style="display:none"></div>`
               + `</div>`;
           });
         }
