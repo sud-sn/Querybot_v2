@@ -519,7 +519,7 @@ def _resolve_on_graph(
     entity_count = len(entities)
     empty = {
         "enabled": False, "detected": [], "join_skeleton": "",
-        "anchor": "", "entity_count": entity_count,
+        "anchor": "", "entity_count": entity_count, "entities": entities,
     }
 
     if not entities:
@@ -559,6 +559,7 @@ def _resolve_on_graph(
             "enabled": True, "detected": detected,
             "join_skeleton": skeleton, "anchor": detected[0],
             "entity_count": entity_count,
+            "entities": entities,
         }
 
     entities_map = {e["entity_name"]: e for e in entities}
@@ -581,6 +582,7 @@ def _resolve_on_graph(
         "anchor":        anchor,
         "entity_count":  entity_count,
         "anti_join":     anti_join,
+        "entities":      entities,
     }
 
 

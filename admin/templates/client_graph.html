@@ -216,23 +216,36 @@ body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-seri
 
 /* ── BP Tabs ────────────────────────────────────────────────────────────────── */
 #bp-tabs{
-  display:flex;border-bottom:1px solid var(--border);
-  background:var(--surface);flex-shrink:0;
+  display:flex;align-items:center;gap:0;
+  padding:.45rem .75rem;
+  background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0;
 }
 .bp-tab{
-  background:none;border:none;border-bottom:2px solid transparent;
-  padding:.4rem .85rem;font-size:12px;font-weight:700;
-  color:var(--text-muted);cursor:pointer;
-  transition:all .12s;margin-bottom:-1px;
   display:flex;align-items:center;gap:.3rem;
+  padding:.3rem .8rem;
+  border:1px solid var(--border);
+  background:none;
+  font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;
+  color:var(--text-muted);cursor:pointer;
+  transition:all .15s;
+  margin-right:-1px;position:relative;
 }
-.bp-tab:hover{color:var(--text)}
-.bp-tab.active{color:var(--primary);border-bottom-color:var(--primary)}
+.bp-tab:first-child{border-radius:5px 0 0 5px}
+.bp-tab:last-child{border-radius:0 5px 5px 0;margin-right:0}
+.bp-tab:hover{background:var(--surface-2);color:var(--text);z-index:1}
+.bp-tab.active{
+  background:color-mix(in srgb,var(--primary) 14%,var(--surface));
+  border-color:var(--primary);color:var(--primary);z-index:2;
+}
 .bp-tab-badge{
-  font-size:9px;font-weight:800;min-width:16px;height:16px;
-  background:color-mix(in srgb,var(--primary) 12%,var(--surface-2));
-  color:var(--primary);border-radius:999px;
-  display:flex;align-items:center;justify-content:center;padding:0 4px;
+  font-size:9px;font-weight:900;min-width:16px;height:16px;
+  border-radius:999px;padding:0 4px;
+  display:inline-flex;align-items:center;justify-content:center;
+  background:color-mix(in srgb,var(--primary) 18%,var(--surface-2));
+  color:var(--primary);
+}
+.bp-tab.active .bp-tab-badge{
+  background:var(--primary);color:#fff;
 }
 #bp-content{flex:1;overflow-y:auto;min-height:0;padding:.65rem .85rem}
 
@@ -400,9 +413,18 @@ body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-seri
       </div>
     </div>
     <div id="bp-tabs">
-      <button class="bp-tab active" data-tab="details" onclick="switchTab('details')">Details</button>
-      <button class="bp-tab" data-tab="joins" onclick="switchTab('joins')">Joins <span id="bp-join-count" class="bp-tab-badge">0</span></button>
-      <button class="bp-tab" data-tab="filter" onclick="switchTab('filter')">Filter</button>
+      <button class="bp-tab active" data-tab="details" onclick="switchTab('details')">
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="1" y="1" width="4" height="4" rx=".5"/><rect x="7" y="1" width="4" height="4" rx=".5"/><rect x="1" y="7" width="4" height="4" rx=".5"/><rect x="7" y="7" width="4" height="4" rx=".5"/></svg>
+        Details
+      </button>
+      <button class="bp-tab" data-tab="joins" onclick="switchTab('joins')">
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="2.5" cy="6" r="1.5"/><circle cx="9.5" cy="6" r="1.5"/><line x1="4" y1="6" x2="8" y2="6"/><polyline points="6.5,4 8,6 6.5,8"/></svg>
+        Joins <span id="bp-join-count" class="bp-tab-badge">0</span>
+      </button>
+      <button class="bp-tab" data-tab="filter" onclick="switchTab('filter')">
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><line x1="1" y1="3" x2="11" y2="3"/><line x1="3" y1="6" x2="9" y2="6"/><line x1="5" y1="9" x2="7" y2="9"/></svg>
+        Filter
+      </button>
     </div>
     <div id="bp-content"></div>
   </div>
@@ -489,6 +511,18 @@ body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-seri
 const ACCOUNT_ID    = "{{ client.account_id }}";
 const API_BASE      = `/admin/clients/${ACCOUNT_ID}/graph/api`;
 const ENTITY_COLUMNS = {{ entity_columns | tojson | safe }};
+
+// Inject <datalist> elements for searchable column inputs — one per entity
+(function(){
+  const frag = document.createDocumentFragment();
+  Object.entries(ENTITY_COLUMNS).forEach(([ename, cols]) => {
+    const dl = document.createElement('datalist');
+    dl.id = 'dl-' + ename.toUpperCase().replace(/[^A-Z0-9_]/g,'_');
+    cols.forEach(c => { const o = document.createElement('option'); o.value = c; dl.appendChild(o); });
+    frag.appendChild(dl);
+  });
+  document.body.appendChild(frag);
+})();
 
 let graphData = {
   entities:      {{ entities      | tojson | safe }},
@@ -823,18 +857,15 @@ function renderJoinCard(r, currentEntity, expanded=false) {
   </div>`;
 }
 
-function _colOptions(cols, selected) {
-  const opts = cols.map(c =>
-    `<option value="${_esc(c)}"${c===selected?' selected':''}>${_esc(c)}</option>`
-  ).join('');
-  return `<option value="">— select —</option>${opts}`;
+function _dlId(entityName) {
+  return 'dl-' + (entityName||'').toUpperCase().replace(/[^A-Z0-9_]/g,'_');
 }
 
-function _colEl(side, relId, idx, val, cols) {
+function _colEl(side, relId, idx, val, cols, entityName) {
   const elId = side==='from' ? `jcf-${relId}-${idx}` : `jct-${relId}-${idx}`;
-  if (cols.length)
-    return `<select class="jc-col-sel" id="${elId}">${_colOptions(cols, val)}</select>`;
-  return `<input type="text" class="jc-col-sel" placeholder="${side==='from'?'Source':'Dest'} col" value="${_esc(val)}" id="${elId}">`;
+  const ph   = side==='from' ? 'Type to search source column…' : 'Type to search dest column…';
+  const listAttr = entityName ? ` list="${_dlId(entityName)}"` : '';
+  return `<input type="text" class="jc-col-sel" id="${elId}"${listAttr} value="${_esc(val)}" placeholder="${ph}" autocomplete="off" spellcheck="false">`;
 }
 
 function _buildJoinEditForm(r, jc) {
@@ -851,9 +882,9 @@ function _buildJoinEditForm(r, jc) {
 
   const condRows = allConds.map((c, i) => `
     <div class="jc-cond-row" id="jcrow-${r.id}-${i}">
-      ${_colEl('from', r.id, i, c.from_col||'', fromCols)}
+      ${_colEl('from', r.id, i, c.from_col||'', fromCols, fromName)}
       <span class="jc-eq">=</span>
-      ${_colEl('to',   r.id, i, c.to_col||'',   toCols)}
+      ${_colEl('to',   r.id, i, c.to_col||'',   toCols, toName)}
       <button class="jc-rem" onclick="removeJoinCond(${r.id},${i})" title="Remove">−</button>
     </div>`).join('');
 
@@ -944,9 +975,9 @@ function addJoinCond(relId) {
   row.className = 'jc-cond-row';
   row.id = `jcrow-${relId}-${i}`;
   row.innerHTML = `
-    ${_colEl('from', relId, i, '', fromCols)}
+    ${_colEl('from', relId, i, '', fromCols, r ? r.from_entity : '')}
     <span class="jc-eq">=</span>
-    ${_colEl('to',   relId, i, '', toCols)}
+    ${_colEl('to',   relId, i, '', toCols,   r ? r.to_entity   : '')}
     <button class="jc-rem" onclick="removeJoinCond(${relId},${i})" title="Remove">−</button>
   `;
   container.appendChild(row);

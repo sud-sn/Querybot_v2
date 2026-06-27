@@ -592,6 +592,34 @@ def build_sql_system_prompt(
             "NEW question informed by this context.\n\n"
             + "\n\n".join(history_lines)
         )
+    # Inject entity type registry from the graph — even before the skeleton block.
+    # This tells the LLM which tables are fact vs dim, using admin-set tags (not name guesses).
+    if graph_context and graph_context.get("entities"):
+        _fact_tbls = [
+            e.get("table_name") or e["entity_name"]
+            for e in graph_context["entities"]
+            if e.get("entity_type") == "fact"
+        ]
+        _dim_tbls = [
+            e.get("table_name") or e["entity_name"]
+            for e in graph_context["entities"]
+            if e.get("entity_type") in ("dimension", "bridge")
+        ]
+        if _fact_tbls or _dim_tbls:
+            _registry_lines = ["- ENTITY TYPE REGISTRY (admin-tagged — overrides any name-pattern guess):"]
+            if _fact_tbls:
+                _registry_lines.append(
+                    f"  FACT tables  → always FROM clause: {', '.join(_fact_tbls)}"
+                )
+            if _dim_tbls:
+                _registry_lines.append(
+                    f"  DIM/BRIDGE tables → always JOIN clause: {', '.join(_dim_tbls)}"
+                )
+            _registry_lines.append(
+                "  Never swap these roles regardless of column aliases or query shape."
+            )
+            base = base + "\n\n" + "\n".join(_registry_lines)
+
     # Inject pre-built JOIN skeleton from entity graph when available.
     # The LLM must use this skeleton and must NOT change table names or JOINs.
     if graph_context and graph_context.get("enabled") and graph_context.get("join_skeleton"):
