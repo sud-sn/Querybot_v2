@@ -1,174 +1,323 @@
-{% extends "base.html" %}
-{% from "macros.html" import breadcrumb, client_workspace_nav %}
-{% block title %}Entity Graph — {{ client.client_name }}{% endblock %}
-{% block breadcrumb %}
-{{ breadcrumb([
-    {"label": "Dashboard", "href": "/admin"},
-    {"label": "Clients",   "href": "/admin/clients"},
-    {"label": client.client_name or client.account_id[:16], "href": "/admin/clients/" ~ client.account_id},
-    {"label": "Entity Graph", "href": ""},
-]) }}
-{% endblock %}
-
-{% block head %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Entity Graph — {{ client.client_name or client.account_id }}</title>
+<link rel="stylesheet" href="/static/css/tokens.css">
+<link rel="stylesheet" href="/static/css/base.css">
+<script>
+(function(){
+  var k='qb-admin-theme';
+  var t=localStorage.getItem(k)||(window.matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light');
+  document.documentElement.setAttribute('data-theme',t);
+  document.documentElement.style.colorScheme=t;
+})();
+</script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.30.2/cytoscape.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/dagre/0.8.5/dagre.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.min.js"></script>
 <style>
-/* ── Shell ────────────────────────────────────────────────────────────────── */
-.eg-shell{display:flex;height:calc(100vh - 56px - 110px);min-height:640px;overflow:hidden;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);box-shadow:var(--shadow-lg)}
-.eg-shell.validate-mode .build-only{display:none!important}
-.validate-only{display:none!important}
-.eg-shell.validate-mode .validate-only{display:flex!important}
+/* ── Reset & full-page ──────────────────────────────────────────────────────── */
+*,*::before,*::after{box-sizing:border-box}
+html,body{height:100%;margin:0;overflow:hidden}
+body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
 
-/* ── Left sidebar ─────────────────────────────────────────────────────────── */
-.eg-sidebar{flex:0 0 232px;display:flex;flex-direction:column;border-right:1px solid var(--border);background:var(--surface);overflow:hidden;transition:flex-basis .2s cubic-bezier(.4,0,.2,1)}
-.eg-sidebar.collapsed{flex-basis:44px!important}
-.eg-sidebar.collapsed .eg-sb-search,.eg-sidebar.collapsed .eg-sb-filter,.eg-sidebar.collapsed .eg-sb-list,.eg-sidebar.collapsed .eg-sb-title,.eg-sidebar.collapsed .eg-sb-count{display:none!important}
-.eg-sidebar.collapsed .eg-sb-head{justify-content:center;padding:.6rem .5rem}
-.eg-sb-head{display:flex;align-items:center;gap:.4rem;padding:.6rem .75rem;border-bottom:1px solid var(--border);min-height:44px;flex-shrink:0;background:linear-gradient(180deg,var(--surface-2),var(--surface))}
-.eg-sb-title{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);flex:1;white-space:nowrap}
-.eg-sb-count{font-size:10px;font-weight:800;min-width:18px;height:18px;background:color-mix(in srgb,var(--primary) 12%,var(--surface-2));color:var(--primary);border-radius:999px;display:flex;align-items:center;justify-content:center;padding:0 5px}
-.eg-sb-collapse{background:none;border:none;cursor:pointer;color:var(--text-muted);font-size:11px;padding:2px 5px;border-radius:4px;line-height:1;flex-shrink:0;transition:color .12s,background .12s}
-.eg-sb-collapse:hover{color:var(--text);background:var(--surface-2)}
-.eg-sb-search{padding:.45rem .65rem;border-bottom:1px solid var(--border);flex-shrink:0}
-.eg-sb-inp{width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:5px;font-size:12px;background:var(--surface-2);color:var(--text);outline:none;box-sizing:border-box}
-.eg-sb-inp:focus{border-color:var(--primary);background:var(--surface)}
-.eg-sb-filter{display:flex;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--surface)}
-.eg-filter-btn{flex:1;background:none;border:none;border-bottom:2px solid transparent;padding:.3rem .25rem;font-size:10px;font-weight:700;color:var(--text-muted);cursor:pointer;transition:color .12s,border-color .12s;white-space:nowrap;margin-bottom:-1px;text-align:center}
-.eg-filter-btn:hover{color:var(--text)}
-.eg-filter-btn.active{color:var(--primary);border-bottom-color:var(--primary)}
-.eg-filter-btn[data-type="fact"].active{color:#92400E;border-bottom-color:#D97706}
-.eg-filter-btn[data-type="dimension"].active{color:#1D4ED8;border-bottom-color:#2563EB}
-.eg-filter-btn[data-type="bridge"].active{color:#6B21A8;border-bottom-color:#7C3AED}
-.eg-sb-list{flex:1;overflow-y:auto;min-height:0}
-.eg-sb-row{display:flex;align-items:center;gap:.5rem;padding:.5rem .75rem;cursor:pointer;border-bottom:1px solid var(--border);transition:background .1s}
-.eg-sb-row:hover{background:var(--surface-2)}
-.eg-sb-row.active{background:color-mix(in srgb,var(--primary) 8%,var(--surface));border-left:3px solid var(--primary);padding-left:calc(.75rem - 3px)}
-.eg-sb-row.suggested{opacity:.78}
-.eg-sb-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
-.eg-sb-name{flex:1;font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)}
-.eg-sb-joins{font-size:9px;font-weight:800;min-width:16px;height:16px;background:var(--surface-2);border:1px solid var(--border);color:var(--text-muted);border-radius:999px;display:flex;align-items:center;justify-content:center;padding:0 4px;flex-shrink:0}
-.eg-sb-empty{padding:1.5rem .75rem;text-align:center;color:var(--text-muted);font-size:12px;line-height:1.65}
+/* ── Page shell ─────────────────────────────────────────────────────────────── */
+#eg-page{display:flex;height:100vh;background:var(--surface-2,#F1F5F9)}
 
-/* ── Canvas area ──────────────────────────────────────────────────────────── */
-.eg-canvas-area{flex:1;display:flex;flex-direction:column;min-width:0;position:relative;background:
-  radial-gradient(ellipse at 25% 20%,color-mix(in srgb,var(--primary) 4%,transparent),transparent 55%),
-  radial-gradient(ellipse at 78% 78%,color-mix(in srgb,#7C3AED 3%,transparent),transparent 50%),
-  var(--surface-2)}
+/* ── Sidebar ────────────────────────────────────────────────────────────────── */
+#eg-sb{
+  width:240px;flex-shrink:0;
+  display:flex;flex-direction:column;
+  background:var(--surface);
+  border-right:1px solid var(--border);
+  overflow:hidden;
+  transition:width .2s cubic-bezier(.4,0,.2,1);
+}
+#eg-sb.collapsed{width:44px}
+#eg-sb.collapsed .sb-hide{display:none!important}
+#eg-sb.collapsed #eg-sb-head{justify-content:center;padding:.5rem .4rem}
+#eg-sb-head{
+  display:flex;align-items:center;gap:.35rem;
+  padding:.5rem .6rem;border-bottom:1px solid var(--border);
+  min-height:48px;flex-shrink:0;
+  background:linear-gradient(180deg,var(--surface-2),var(--surface));
+}
+.sb-back{
+  font-size:11px;font-weight:700;color:var(--text-muted);
+  text-decoration:none;padding:3px 7px;border-radius:4px;
+  background:var(--surface-2);border:1px solid var(--border);
+  transition:all .12s;white-space:nowrap;flex-shrink:0;
+}
+.sb-back:hover{color:var(--text);background:var(--surface-3,var(--border))}
+.sb-title{
+  font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;
+  color:var(--text-muted);flex:1;white-space:nowrap;
+}
+.sb-count{
+  font-size:10px;font-weight:800;min-width:18px;height:18px;
+  background:color-mix(in srgb,var(--primary) 12%,var(--surface-2));
+  color:var(--primary);border-radius:999px;
+  display:flex;align-items:center;justify-content:center;padding:0 5px;
+}
+#sb-toggle-btn{
+  background:none;border:none;cursor:pointer;
+  color:var(--text-muted);font-size:11px;
+  padding:2px 5px;border-radius:4px;line-height:1;flex-shrink:0;transition:all .12s;
+}
+#sb-toggle-btn:hover{color:var(--text);background:var(--surface-2)}
+#sb-search-area{padding:.4rem .6rem;border-bottom:1px solid var(--border);flex-shrink:0}
+#sb-search{
+  width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:5px;
+  font-size:12px;background:var(--surface-2);color:var(--text);outline:none;box-sizing:border-box;
+}
+#sb-search:focus{border-color:var(--primary);background:var(--surface)}
+#sb-filters{display:flex;border-bottom:1px solid var(--border);flex-shrink:0}
+.sf-btn{
+  flex:1;background:none;border:none;border-bottom:2px solid transparent;
+  padding:.3rem .2rem;font-size:10px;font-weight:700;color:var(--text-muted);
+  cursor:pointer;transition:all .12s;white-space:nowrap;margin-bottom:-1px;text-align:center;
+}
+.sf-btn:hover{color:var(--text)}
+.sf-btn.active{color:var(--primary);border-bottom-color:var(--primary)}
+.sf-btn[data-type="fact"].active{color:#92400E;border-bottom-color:#D97706}
+.sf-btn[data-type="dimension"].active{color:#1D4ED8;border-bottom-color:#2563EB}
+.sf-btn[data-type="bridge"].active{color:#6B21A8;border-bottom-color:#7C3AED}
+#sb-list{flex:1;overflow-y:auto;min-height:0}
+.sb-row{
+  display:flex;align-items:center;gap:.4rem;
+  padding:.45rem .6rem;cursor:pointer;border-bottom:1px solid var(--border);transition:background .1s;
+}
+.sb-row:hover{background:var(--surface-2)}
+.sb-row.active{
+  background:color-mix(in srgb,var(--primary) 8%,var(--surface));
+  border-left:3px solid var(--primary);padding-left:calc(.6rem - 3px);
+}
+.sb-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.sb-name{flex:1;font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)}
+.sb-type-pill{
+  font-size:9px;font-weight:800;text-transform:uppercase;
+  padding:1px 5px;border-radius:3px;border:1px solid;flex-shrink:0;
+  cursor:pointer;transition:opacity .12s;line-height:1.5;
+}
+.sb-type-pill:hover{opacity:.75}
+.sb-type-pill.fact{background:#FFFBEB;color:#92400E;border-color:#FCD34D}
+.sb-type-pill.dimension{background:#EFF6FF;color:#1D4ED8;border-color:#BFDBFE}
+.sb-type-pill.bridge{background:#F5F3FF;color:#6B21A8;border-color:#DDD6FE}
+.sb-jbadge{
+  font-size:9px;font-weight:800;min-width:16px;height:16px;
+  background:var(--surface-2);border:1px solid var(--border);color:var(--text-muted);border-radius:999px;
+  display:flex;align-items:center;justify-content:center;padding:0 4px;flex-shrink:0;
+}
+.sb-empty{padding:1.5rem .75rem;text-align:center;color:var(--text-muted);font-size:12px;line-height:1.65}
 
-/* ── Toolbar ──────────────────────────────────────────────────────────────── */
-.eg-toolbar{display:flex;align-items:center;gap:.4rem;padding:.5rem .75rem;border-bottom:1px solid var(--border);background:color-mix(in srgb,var(--surface) 96%,transparent);flex-shrink:0;flex-wrap:wrap;z-index:20}
-.eg-mode-toggle{display:inline-flex;border:1px solid var(--border);border-radius:7px;overflow:hidden;background:var(--surface-2);flex-shrink:0}
-.eg-mode-btn{border:0;border-right:1px solid var(--border);background:transparent;color:var(--text-muted);font-size:11px;font-weight:700;padding:5px 14px;cursor:pointer;transition:background .15s,color .15s;line-height:1.3}
-.eg-mode-btn:last-child{border-right:0}
-.eg-mode-btn:hover:not(.active){background:var(--surface-3,var(--border))}
-.eg-mode-btn.active{background:var(--primary);color:#fff;font-weight:800}
-#mode-validate.active{background:#7C3AED}
-.eg-tb-sep{width:1px;height:20px;background:var(--border);margin:0 .1rem;flex-shrink:0}
-.eg-tb-btn{display:flex;align-items:center;gap:4px;background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:5px 10px;font-size:11px;font-weight:750;cursor:pointer;min-height:30px;transition:all .12s;white-space:nowrap;flex-shrink:0}
-.eg-tb-btn:hover{background:var(--surface-3,var(--border));border-color:var(--border-strong)}
-.eg-tb-btn.primary{background:var(--primary);color:#fff;border-color:var(--primary)}
-.eg-tb-btn.primary:hover{opacity:.85}
-.eg-tb-btn.suggest{color:#7C3AED;border-color:#C4B5FD}
-.eg-tb-btn.suggest:hover{background:#F5F3FF}
-.eg-tb-btn.danger{background:#FEE2E2;color:#DC2626;border-color:#FECACA}
-.eg-layout-toggle{display:inline-flex;border:1px solid var(--border);border-radius:7px;overflow:hidden;background:var(--surface-2);flex-shrink:0}
-.eg-layout-btn{border:0;border-right:1px solid var(--border);background:transparent;color:var(--text-muted);font-size:10px;font-weight:700;padding:5px 10px;cursor:pointer;transition:all .12s;white-space:nowrap}
-.eg-layout-btn:last-child{border-right:0}
-.eg-layout-btn.active{background:var(--surface);color:var(--text);box-shadow:inset 0 1px 3px rgba(0,0,0,.07)}
-.eg-schema-sel{background:var(--surface-2);border:1px solid var(--border);border-radius:5px;font-size:11px;padding:4px 6px;color:var(--text);outline:none;cursor:pointer;max-width:120px}
-.eg-switch{background:none;border:none;cursor:pointer;display:flex;align-items:center;gap:.4rem;padding:0;flex-shrink:0}
-.eg-sw-track{width:32px;height:18px;background:var(--border);border-radius:999px;position:relative;flex-shrink:0;transition:background .2s}
-.eg-switch.on .eg-sw-track{background:var(--primary)}
-.eg-sw-thumb{position:absolute;width:14px;height:14px;background:#fff;border-radius:50%;top:2px;left:2px;box-shadow:0 1px 3px rgba(0,0,0,.2);transition:left .2s}
-.eg-switch.on .eg-sw-thumb{left:16px}
-.eg-sw-lbl{font-size:11px;color:var(--text-muted);white-space:nowrap}
-.eg-health-btn{display:flex;align-items:center;gap:5px;border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;font-weight:800;cursor:pointer;background:var(--surface-2);color:var(--text-muted);white-space:nowrap;transition:all .15s;flex-shrink:0}
-.eg-health-btn.green{background:color-mix(in srgb,#059669 10%,var(--surface));border-color:color-mix(in srgb,#059669 28%,transparent);color:#059669}
-.eg-health-btn.amber{background:color-mix(in srgb,#D97706 10%,var(--surface));border-color:color-mix(in srgb,#D97706 28%,transparent);color:#92400E}
-.eg-health-btn.red{background:color-mix(in srgb,#DC2626 10%,var(--surface));border-color:color-mix(in srgb,#DC2626 28%,transparent);color:#DC2626}
-.eg-health-panel{position:absolute;top:calc(100% + 4px);right:0;width:420px;max-height:68vh;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,.16);z-index:500}
-.eg-hp-head{padding:.65rem .9rem;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;background:var(--surface-2);border-radius:8px 8px 0 0;font-size:13px;font-weight:800;position:sticky;top:0;z-index:1}
+/* ── Main area ──────────────────────────────────────────────────────────────── */
+#eg-main{
+  flex:1;display:flex;flex-direction:column;min-width:0;
+  position:relative;
+  background:
+    radial-gradient(ellipse at 25% 20%,color-mix(in srgb,var(--primary) 4%,transparent),transparent 55%),
+    radial-gradient(ellipse at 78% 78%,color-mix(in srgb,#7C3AED 3%,transparent),transparent 50%),
+    var(--surface-2);
+}
 
-/* ── Pending bar ──────────────────────────────────────────────────────────── */
-.eg-pending-bar{display:flex;align-items:center;gap:.6rem;padding:.35rem .85rem;font-size:11px;background:color-mix(in srgb,#D97706 7%,var(--surface));border-bottom:1px solid color-mix(in srgb,#D97706 22%,transparent);flex-shrink:0}
-.eg-pending-accept{font-size:11px;font-weight:700;color:#92400E;background:color-mix(in srgb,#D97706 12%,var(--surface));border:1px solid color-mix(in srgb,#D97706 30%,transparent);border-radius:5px;padding:3px 10px;cursor:pointer;transition:all .12s;white-space:nowrap}
-.eg-pending-accept:hover{background:color-mix(in srgb,#D97706 20%,var(--surface))}
+/* ── Toolbar ────────────────────────────────────────────────────────────────── */
+#eg-tb{
+  display:flex;align-items:center;gap:.35rem;
+  padding:.4rem .65rem;border-bottom:1px solid var(--border);
+  background:var(--surface);flex-shrink:0;z-index:20;
+}
+.tb-back-lnk{
+  font-size:11px;font-weight:700;color:var(--text-muted);
+  text-decoration:none;padding:4px 9px;border-radius:5px;
+  background:var(--surface-2);border:1px solid var(--border);
+  transition:all .12s;white-space:nowrap;
+}
+.tb-back-lnk:hover{color:var(--text);background:var(--surface-3,var(--border))}
+.tb-sep{width:1px;height:20px;background:var(--border);margin:0 .05rem;flex-shrink:0}
+.tb-btn{
+  display:flex;align-items:center;gap:4px;
+  background:var(--surface-2);border:1px solid var(--border);
+  color:var(--text);border-radius:6px;padding:5px 10px;font-size:11px;font-weight:750;
+  cursor:pointer;min-height:30px;transition:all .12s;white-space:nowrap;flex-shrink:0;
+}
+.tb-btn:hover{background:var(--surface-3,var(--border));border-color:var(--border-strong,var(--border))}
+.tb-btn.primary{background:var(--primary);color:#fff;border-color:var(--primary)}
+.tb-btn.primary:hover{opacity:.85}
+.tb-btn.suggest{color:#7C3AED;border-color:#C4B5FD}
+.tb-btn.suggest:hover{background:#F5F3FF}
+.tb-btn.danger{background:#FEE2E2;color:#DC2626;border-color:#FECACA}
+.tb-btn.danger:hover{opacity:.85}
+.tb-btn.sm{padding:3px 8px;font-size:10px;min-height:24px;border-radius:5px}
 
-/* ── Cytoscape canvas ─────────────────────────────────────────────────────── */
-#cy{flex:1;min-height:0;display:block;cursor:default}
+/* ── Cytoscape ──────────────────────────────────────────────────────────────── */
+#cy{flex:1;display:block;cursor:default;min-height:0}
 
-/* ── Zoom overlay ────────────────────────────────────────────────────────── */
-.eg-zoom-controls{position:absolute;bottom:.9rem;left:.9rem;display:flex;align-items:center;gap:1px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:3px 4px;z-index:10;box-shadow:0 2px 10px rgba(0,0,0,.09)}
-.eg-zoom-controls button{background:none;border:none;cursor:pointer;font-size:14px;width:26px;height:26px;border-radius:5px;display:flex;align-items:center;justify-content:center;color:var(--text-soft);transition:background .12s,color .12s}
-.eg-zoom-controls button:hover{background:var(--surface-2);color:var(--text)}
-.eg-zoom-pill{font-size:11px;font-weight:700;color:var(--text-muted);min-width:40px;text-align:center;font-family:Consolas,monospace;padding:0 2px}
+/* ── Zoom overlay ───────────────────────────────────────────────────────────── */
+#eg-zoom{
+  position:absolute;bottom:.9rem;left:.9rem;
+  display:flex;align-items:center;gap:1px;
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:8px;padding:3px 4px;z-index:10;
+  box-shadow:0 2px 10px rgba(0,0,0,.09);
+}
+#eg-zoom button{
+  background:none;border:none;cursor:pointer;font-size:14px;
+  width:26px;height:26px;border-radius:5px;
+  display:flex;align-items:center;justify-content:center;
+  color:var(--text-muted);transition:all .12s;
+}
+#eg-zoom button:hover{background:var(--surface-2);color:var(--text)}
+#zoom-pill{
+  font-size:11px;font-weight:700;color:var(--text-muted);
+  min-width:42px;text-align:center;font-family:Consolas,monospace;padding:0 2px;
+}
 
-/* ── Right inspector ──────────────────────────────────────────────────────── */
-.eg-inspector{flex:0 0 340px;display:flex;flex-direction:column;border-left:1px solid var(--border);background:var(--surface);overflow:hidden}
-.eg-insp-head{display:flex;align-items:center;gap:.4rem;padding:.65rem .85rem;border-bottom:1px solid var(--border);background:linear-gradient(180deg,var(--surface-2),var(--surface));flex-shrink:0;min-height:46px}
-.eg-insp-title{flex:1;font-size:13px;font-weight:800;color:var(--text);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.eg-insp-action-btn{background:var(--surface-2);border:1px solid var(--border);border-radius:5px;font-size:11px;font-weight:800;cursor:pointer;padding:3px 8px;line-height:1;transition:all .12s}
-.eg-insp-action-btn.confirm{color:#059669;border-color:#A7F3D0;background:#F0FDF4}
-.eg-insp-action-btn.confirm:hover{background:#059669;color:#fff}
-.eg-insp-action-btn.reject{color:#DC2626;border-color:#FECACA;background:#FEF2F2}
-.eg-insp-action-btn.reject:hover{background:#DC2626;color:#fff}
-.eg-insp-action-btn.del{color:var(--text-muted)}
-.eg-insp-action-btn.del:hover{background:#FEE2E2;color:#DC2626;border-color:#FECACA}
-.eg-insp-body{flex:1;overflow-y:auto;min-height:0}
-.eg-insp-empty{padding:3rem 1rem;text-align:center;color:var(--text-muted);font-size:12px;line-height:1.75}
-.eg-insp-meta{display:flex;align-items:center;gap:.4rem;padding:.6rem .75rem;border-bottom:1px solid var(--border);flex-wrap:wrap}
-.eg-type-badge{font-size:9px;font-weight:800;text-transform:uppercase;padding:2px 6px;border-radius:3px;border:1px solid;flex-shrink:0}
-.eg-insp-table{font-size:11px;font-family:Consolas,monospace;color:var(--text-muted);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.eg-conf-badge{font-size:9px;font-weight:800;padding:2px 5px;border-radius:999px;flex-shrink:0}
-.eg-insp-desc{padding:.5rem .75rem;font-size:11px;color:var(--text-soft);line-height:1.55;border-bottom:1px solid var(--border)}
-.eg-insp-section{padding:.35rem .75rem;font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);background:var(--surface-2);border-bottom:1px solid var(--border);border-top:1px solid var(--border);display:flex;align-items:center;gap:.4rem}
-.eg-insp-cnt{font-size:9px;font-weight:800;min-width:16px;height:16px;background:color-mix(in srgb,var(--primary) 10%,var(--surface));color:var(--primary);border-radius:999px;display:flex;align-items:center;justify-content:center;padding:0 4px}
-.eg-insp-edit-row{display:flex;gap:.4rem;padding:.5rem .75rem;border-bottom:1px solid var(--border)}
-.eg-insp-action{flex:1;border:1px solid var(--border);background:var(--surface-2);color:var(--text-soft);border-radius:6px;padding:5px 8px;font-size:11px;font-weight:750;cursor:pointer;text-align:center;transition:all .12s}
-.eg-insp-action:hover{border-color:var(--primary);color:var(--primary);background:color-mix(in srgb,var(--primary) 6%,var(--surface))}
-.eg-insp-action.primary{background:var(--primary);color:#fff;border-color:var(--primary)}
-.eg-insp-action.danger{background:#FEE2E2;color:#DC2626;border-color:#FECACA}
-.eg-insp-action.primary:hover{opacity:.85}
-.eg-insp-action.danger:hover{opacity:.85}
-.eg-insp-joins{padding:.4rem .65rem}
-.eg-insp-none{font-size:11px;color:var(--text-muted);padding:.4rem .1rem}
-.eg-insp-join-row{display:flex;align-items:center;gap:.35rem;padding:.35rem .3rem;border-radius:5px;cursor:pointer;font-size:12px;transition:background .1s}
-.eg-insp-join-row:hover{background:var(--surface-2)}
-.eg-join-status-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
-.eg-join-dir{color:var(--text-muted);font-size:11px;flex-shrink:0}
-.eg-join-partner{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--primary);font-weight:600;cursor:pointer;text-decoration:none}
-.eg-join-partner:hover{text-decoration:underline}
-.eg-join-type{font-size:9px;font-weight:800;text-transform:uppercase;color:var(--text-muted);flex-shrink:0}
-.eg-join-del{background:none;border:1px solid transparent;border-radius:3px;cursor:pointer;color:var(--text-muted);font-size:11px;padding:1px 5px;line-height:1;transition:all .12s;flex-shrink:0}
-.eg-join-del:hover{background:#FEE2E2;color:#DC2626;border-color:#FECACA}
-.eg-insp-props{padding:.4rem .65rem}
-.eg-insp-prop-row{display:flex;align-items:center;gap:.35rem;padding:.28rem .1rem;border-bottom:1px dashed var(--border);font-size:11px}
-.eg-insp-prop-row:last-child{border-bottom:none}
-.eg-prop-col{flex:1;font-family:Consolas,monospace;font-weight:700;color:var(--text);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.eg-prop-role{font-size:9px;font-weight:800;text-transform:uppercase;padding:2px 5px;border-radius:3px;flex-shrink:0}
-.eg-insp-rel-card{padding:.65rem .75rem}
-.eg-rel-entities{display:flex;align-items:center;gap:.4rem;margin-bottom:.65rem;flex-wrap:wrap}
-.eg-rel-ent{font-size:13px;font-weight:800;color:var(--primary);cursor:pointer}
-.eg-rel-ent:hover{text-decoration:underline}
-.eg-rel-arrow{color:var(--text-muted)}
-.eg-rel-meta-grid{display:grid;grid-template-columns:1fr 1fr;gap:.35rem;margin-bottom:.5rem}
-.eg-rel-lbl{font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);display:block;margin-bottom:1px}
-.eg-rel-val{font-size:12px;font-weight:700;color:var(--text)}
-.eg-rel-key{display:flex;align-items:center;gap:.4rem;padding:.45rem .75rem;font-size:11px}
-.eg-rel-key code{background:var(--surface-2);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-family:Consolas,monospace;font-weight:700;color:var(--text)}
-.eg-rel-where{font-size:10px;font-family:Consolas,monospace;background:var(--surface-2);border:1px solid var(--border);border-radius:5px;padding:.4rem .6rem;margin:.3rem .75rem;white-space:pre-wrap;word-break:break-all;color:var(--text-soft)}
+/* ── Bottom panel ───────────────────────────────────────────────────────────── */
+#bp{
+  position:absolute;bottom:0;left:0;right:0;
+  height:44vh;min-height:260px;
+  background:var(--surface);
+  border-top:2px solid var(--border);
+  box-shadow:0 -4px 24px rgba(0,0,0,.12);
+  transform:translateY(100%);
+  transition:transform .25s cubic-bezier(.4,0,.2,1);
+  z-index:100;
+  display:flex;flex-direction:column;
+}
+#bp.open{transform:translateY(0)}
+#bp-header{
+  display:flex;align-items:center;
+  padding:.5rem .85rem;border-bottom:1px solid var(--border);
+  gap:.5rem;flex-shrink:0;background:var(--surface-2);min-height:46px;
+}
+#bp-entity-info{display:flex;align-items:center;gap:.4rem;flex:1;min-width:0}
+#bp-title{
+  font-size:14px;font-weight:800;color:var(--text);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+#bp-header-actions{display:flex;align-items:center;gap:.3rem;flex-shrink:0}
+.type-pill{
+  font-size:9px;font-weight:800;text-transform:uppercase;
+  padding:2px 6px;border-radius:3px;border:1px solid;
+  cursor:pointer;transition:opacity .12s;flex-shrink:0;line-height:1.5;
+}
+.type-pill:hover{opacity:.75}
+.type-pill.fact{background:#FFFBEB;color:#92400E;border-color:#FCD34D}
+.type-pill.dimension{background:#EFF6FF;color:#1D4ED8;border-color:#BFDBFE}
+.type-pill.bridge{background:#F5F3FF;color:#6B21A8;border-color:#DDD6FE}
+#bp-close-btn{
+  background:none;border:none;cursor:pointer;
+  color:var(--text-muted);font-size:16px;padding:2px 6px;
+  border-radius:4px;line-height:1;transition:all .12s;
+}
+#bp-close-btn:hover{background:var(--surface-3,var(--border));color:var(--text)}
 
-/* ── Modals ───────────────────────────────────────────────────────────────── */
+/* ── BP Tabs ────────────────────────────────────────────────────────────────── */
+#bp-tabs{
+  display:flex;border-bottom:1px solid var(--border);
+  background:var(--surface);flex-shrink:0;
+}
+.bp-tab{
+  background:none;border:none;border-bottom:2px solid transparent;
+  padding:.4rem .85rem;font-size:12px;font-weight:700;
+  color:var(--text-muted);cursor:pointer;
+  transition:all .12s;margin-bottom:-1px;
+  display:flex;align-items:center;gap:.3rem;
+}
+.bp-tab:hover{color:var(--text)}
+.bp-tab.active{color:var(--primary);border-bottom-color:var(--primary)}
+.bp-tab-badge{
+  font-size:9px;font-weight:800;min-width:16px;height:16px;
+  background:color-mix(in srgb,var(--primary) 12%,var(--surface-2));
+  color:var(--primary);border-radius:999px;
+  display:flex;align-items:center;justify-content:center;padding:0 4px;
+}
+#bp-content{flex:1;overflow-y:auto;min-height:0;padding:.65rem .85rem}
+
+/* ── Details tab ────────────────────────────────────────────────────────────── */
+.dt-grid{display:grid;grid-template-columns:1fr 1fr;gap:.5rem;margin-bottom:.55rem}
+.dt-field label{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);display:block;margin-bottom:2px}
+.dt-field span{font-size:12px;color:var(--text);font-weight:600}
+.dt-field code{font-family:Consolas,monospace;font-size:11px;color:var(--text);background:var(--surface-2);padding:1px 5px;border-radius:3px;border:1px solid var(--border)}
+.dt-desc{font-size:12px;color:var(--text-muted);line-height:1.6;margin-bottom:.5rem;padding:.4rem .5rem;background:var(--surface-2);border-radius:5px}
+
+/* ── Joins tab ──────────────────────────────────────────────────────────────── */
+.join-card{border:1px solid var(--border);border-radius:7px;margin-bottom:.5rem;overflow:hidden;transition:box-shadow .12s}
+.join-card:hover{box-shadow:0 2px 8px rgba(0,0,0,.08)}
+.join-card-head{
+  display:flex;align-items:center;gap:.5rem;
+  padding:.5rem .75rem;cursor:pointer;background:var(--surface);transition:background .1s;
+}
+.join-card-head:hover{background:var(--surface-2)}
+.join-dir{font-size:16px;flex-shrink:0;color:var(--text-muted)}
+.join-partner{font-size:13px;font-weight:700;color:var(--primary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;background:none;border:none;padding:0;text-align:left}
+.join-partner:hover{text-decoration:underline}
+.join-type-badge{font-size:9px;font-weight:800;text-transform:uppercase;padding:2px 6px;border-radius:3px;background:var(--surface-2);border:1px solid var(--border);color:var(--text-muted);flex-shrink:0}
+.join-cols{font-size:10px;font-family:Consolas,monospace;color:var(--text-muted);flex-shrink:0;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.join-expand{background:none;border:none;cursor:pointer;color:var(--text-muted);font-size:11px;padding:2px 6px;border-radius:4px;flex-shrink:0;transition:all .12s;line-height:1}
+.join-expand:hover{background:var(--surface-2);color:var(--text)}
+.join-card-body{padding:.7rem .75rem;border-top:1px solid var(--border);background:var(--surface-2);display:none}
+.join-card.expanded .join-card-body{display:block}
+
+/* Join edit form */
+.jc-section-lbl{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);margin:.55rem 0 .25rem}
+.jc-cond-row{display:grid;grid-template-columns:1fr 18px 1fr 26px;gap:.35rem;align-items:center;margin-bottom:.35rem}
+.jc-cond-row input{padding:5px 7px;border:1px solid var(--border);border-radius:5px;font-size:11px;background:var(--surface);color:var(--text);outline:none;width:100%}
+.jc-cond-row input:focus{border-color:var(--primary)}
+.jc-eq{color:var(--text-muted);font-size:12px;font-weight:700;text-align:center}
+.jc-rem{background:none;border:none;cursor:pointer;color:var(--text-muted);font-size:14px;padding:2px;transition:all .12s;border-radius:4px;line-height:1;display:flex;align-items:center;justify-content:center}
+.jc-rem:hover{color:#DC2626;background:#FEE2E2}
+.jc-add-btn{font-size:11px;color:var(--primary);background:none;border:1px dashed var(--border);border-radius:5px;padding:4px 10px;cursor:pointer;width:100%;margin-top:.2rem;transition:all .12s;text-align:center}
+.jc-add-btn:hover{border-color:var(--primary);background:color-mix(in srgb,var(--primary) 4%,var(--surface))}
+.jc-meta-grid{display:grid;grid-template-columns:1fr 1fr;gap:.4rem;margin-bottom:.4rem}
+.jc-lbl{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);display:block;margin-bottom:2px}
+.jc-select{width:100%;padding:5px 7px;border:1px solid var(--border);border-radius:5px;font-size:11px;background:var(--surface);color:var(--text);outline:none}
+.jc-select:focus{border-color:var(--primary)}
+.jc-where{
+  width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:5px;
+  font-size:11px;font-family:Consolas,monospace;background:var(--surface);color:var(--text);
+  resize:vertical;min-height:56px;outline:none;box-sizing:border-box;line-height:1.5;
+}
+.jc-where:focus{border-color:var(--primary)}
+.jc-actions{display:flex;gap:.35rem;margin-top:.55rem;justify-content:flex-end;flex-wrap:wrap}
+.jc-save{background:var(--primary);color:#fff;border:1px solid var(--primary);border-radius:5px;padding:5px 14px;font-size:11px;font-weight:700;cursor:pointer;transition:opacity .12s}
+.jc-save:hover{opacity:.85}
+.jc-cancel{background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:5px;padding:5px 12px;font-size:11px;font-weight:700;cursor:pointer;transition:all .12s}
+.jc-cancel:hover{background:var(--surface-2)}
+.jc-del{background:#FEE2E2;color:#DC2626;border:1px solid #FECACA;border-radius:5px;padding:5px 12px;font-size:11px;font-weight:700;cursor:pointer;transition:opacity .12s}
+.jc-del:hover{opacity:.85}
+
+/* ── Filter tab ─────────────────────────────────────────────────────────────── */
+.filter-desc{font-size:12px;color:var(--text-muted);line-height:1.6;margin-bottom:.5rem}
+.filter-active{
+  display:inline-flex;align-items:center;gap:4px;
+  background:#ECFDF5;color:#059669;border:1px solid #A7F3D0;
+  font-size:10px;font-weight:800;padding:2px 8px;border-radius:999px;margin-bottom:.4rem;
+}
+.filter-ta{
+  width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;
+  font-size:12px;font-family:Consolas,monospace;background:var(--surface);color:var(--text);
+  resize:vertical;min-height:90px;outline:none;box-sizing:border-box;line-height:1.5;
+}
+.filter-ta:focus{border-color:var(--primary)}
+.filter-actions{display:flex;gap:.35rem;margin-top:.45rem}
+.filter-save{background:var(--primary);color:#fff;border:1px solid var(--primary);border-radius:6px;padding:6px 16px;font-size:12px;font-weight:700;cursor:pointer;transition:opacity .12s}
+.filter-save:hover{opacity:.85}
+.filter-clear{background:var(--surface-2);color:var(--text-muted);border:1px solid var(--border);border-radius:6px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;transition:all .12s}
+.filter-clear:hover{background:var(--surface-3,var(--border))}
+
+/* ── Modals ─────────────────────────────────────────────────────────────────── */
 .eg-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:8000;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(3px)}
-.eg-modal{background:var(--surface);border-radius:var(--radius,8px);width:520px;max-width:96vw;box-shadow:0 24px 64px rgba(0,0,0,.22);overflow:hidden}
+.eg-modal{background:var(--surface);border-radius:8px;width:520px;max-width:96vw;box-shadow:0 24px 64px rgba(0,0,0,.22);overflow:hidden}
 .eg-modal-head{padding:.8rem 1rem;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;background:var(--surface-2);font-size:14px;font-weight:800}
-.eg-modal-close{background:none;border:none;font-size:18px;cursor:pointer;color:var(--text-muted);padding:0 4px;line-height:1}
+.eg-modal-close{background:none;border:none;font-size:18px;cursor:pointer;color:var(--text-muted);padding:0 4px;line-height:1;transition:color .12s}
+.eg-modal-close:hover{color:var(--text)}
 .eg-modal-body{padding:.85rem 1rem}
 .eg-form-row{display:grid;grid-template-columns:1fr 1fr;gap:.6rem;margin-bottom:.55rem}
 .eg-form-row.full{grid-template-columns:1fr}
-.eg-lbl{display:block;font-size:11px;font-weight:600;color:var(--text-soft);margin-bottom:.2rem}
+.eg-lbl{display:block;font-size:11px;font-weight:600;color:var(--text-muted);margin-bottom:.2rem}
 .eg-inp{width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:5px;font-size:12px;background:var(--surface);color:var(--text);outline:none;box-sizing:border-box;transition:border-color .12s}
 .eg-inp:focus{border-color:var(--primary)}
 .eg-modal-footer{display:flex;justify-content:flex-end;gap:.4rem;margin-top:.7rem;padding-top:.65rem;border-top:1px solid var(--border)}
@@ -177,125 +326,79 @@
 .eg-m-btn.primary{background:var(--primary);color:#fff;border-color:var(--primary)}
 .eg-m-btn.primary:hover{opacity:.85}
 </style>
-{% endblock %}
+</head>
+<body>
 
-{% block content %}
-{{ client_workspace_nav(client, "graph") }}
+<div id="eg-page">
 
-<div class="eg-shell" id="eg-shell">
-
-<!-- ══ LEFT SIDEBAR ══════════════════════════════════════════════════════════ -->
-<aside class="eg-sidebar" id="eg-sidebar">
-  <div class="eg-sb-head">
-    <span class="eg-sb-title">Tables</span>
-    <span class="eg-sb-count" id="sb-count">0</span>
-    <button class="eg-sb-collapse" id="sb-collapse-btn" onclick="toggleSidebar()" title="Collapse sidebar">◀</button>
+<!-- ══ SIDEBAR ═══════════════════════════════════════════════════════════════ -->
+<aside id="eg-sb">
+  <div id="eg-sb-head">
+    <a href="/admin/clients/{{ client.account_id }}" class="sb-back sb-hide" title="Back to client">← Back</a>
+    <span class="sb-title sb-hide">Tables</span>
+    <span id="sb-count" class="sb-count sb-hide">0</span>
+    <button id="sb-toggle-btn" onclick="toggleSidebar()" title="Toggle sidebar">◀</button>
   </div>
-  <div class="eg-sb-search">
-    <input id="sb-search" class="eg-sb-inp" placeholder="Search tables…" oninput="buildSidebar()">
+  <div id="sb-search-area" class="sb-hide">
+    <input id="sb-search" placeholder="Search tables…" oninput="buildSidebar()">
   </div>
-  <div class="eg-sb-filter">
-    <button class="eg-filter-btn active" data-type="" onclick="setTypeFilter(this,'')">All</button>
-    <button class="eg-filter-btn" data-type="fact" onclick="setTypeFilter(this,'fact')">Fact</button>
-    <button class="eg-filter-btn" data-type="dimension" onclick="setTypeFilter(this,'dimension')">Dim</button>
-    <button class="eg-filter-btn" data-type="bridge" onclick="setTypeFilter(this,'bridge')">Bridge</button>
+  <div id="sb-filters" class="sb-hide">
+    <button class="sf-btn active" data-type="" onclick="setTypeFilter(this,'')">All</button>
+    <button class="sf-btn" data-type="fact" onclick="setTypeFilter(this,'fact')">Fact</button>
+    <button class="sf-btn" data-type="dimension" onclick="setTypeFilter(this,'dimension')">Dim</button>
+    <button class="sf-btn" data-type="bridge" onclick="setTypeFilter(this,'bridge')">Bridge</button>
   </div>
-  <div id="sb-list" class="eg-sb-list"></div>
+  <div id="sb-list" class="sb-hide"></div>
 </aside>
 
-<!-- ══ CANVAS AREA ═══════════════════════════════════════════════════════════ -->
-<div class="eg-canvas-area" id="eg-canvas-area">
+<!-- ══ MAIN AREA ══════════════════════════════════════════════════════════════ -->
+<div id="eg-main">
 
   <!-- Toolbar -->
-  <div class="eg-toolbar">
-    <div class="eg-mode-toggle">
-      <button class="eg-mode-btn active" id="mode-model"    onclick="setMode('model')">Model</button>
-      <button class="eg-mode-btn"        id="mode-validate" onclick="setMode('validate')">Validate</button>
-    </div>
-    <span class="eg-tb-sep"></span>
-    <div class="build-only" style="display:flex;gap:.35rem">
-      <button class="eg-tb-btn primary" onclick="openEntityModal(null)">＋ Entity</button>
-      <button class="eg-tb-btn"         onclick="openRelModal()">⇢ Join</button>
-      <button class="eg-tb-btn suggest" id="suggest-btn" onclick="runSuggest()">✦ Suggest</button>
-    </div>
-    <button class="eg-tb-btn primary validate-only" onclick="validateAll()" id="validate-btn">✓ Validate joins</button>
-    <span class="eg-tb-sep"></span>
-    <div class="eg-layout-toggle">
-      <button class="eg-layout-btn active" data-layout="dagre"  onclick="applyLayout('dagre',this)">Hierarchical</button>
-      <button class="eg-layout-btn"        data-layout="cose"   onclick="applyLayout('cose',this)">Force</button>
-      <button class="eg-layout-btn"        data-layout="circle" onclick="applyLayout('circle',this)">Circular</button>
-    </div>
-    <span class="eg-tb-sep"></span>
-    <button class="eg-tb-btn" onclick="fitView()">⤢ Fit</button>
-    <span class="eg-zoom-pill" id="zoom-pill">100%</span>
+  <div id="eg-tb">
+    <a href="/admin/clients/{{ client.account_id }}" class="tb-back-lnk">← {{ client.client_name or client.account_id }}</a>
+    <span class="tb-sep"></span>
+    <button class="tb-btn primary" onclick="openEntityModal(null)">+ Entity</button>
+    <button class="tb-btn" onclick="openAddJoinModal(null)">→ Join</button>
+    <button class="tb-btn suggest" id="suggest-btn" onclick="runSuggest()">✦ Suggest</button>
     <div style="flex:1;min-width:0"></div>
-    <button class="eg-tb-btn danger" id="del-btn" onclick="deleteSelected()" style="display:none">✕ Delete</button>
-    <span class="eg-tb-sep" id="del-sep" style="display:none"></span>
-    <select class="eg-schema-sel" id="schema-filter" onchange="applySchemaFilter()">
-      <option value="">All schemas</option>
-    </select>
-    {% set _use_sugg = client.graph_use_suggested if client.graph_use_suggested is not none else 1 %}
-    <form method="post" action="/admin/clients/{{ client.account_id }}/graph/toggle-suggested" style="margin:0">
-      <button type="submit" class="eg-switch{% if _use_sugg %} on{% endif %}"
-              title="{% if _use_sugg %}Suggestions currently feed SQL generation{% else %}Only confirmed joins used{% endif %}">
-        <span class="eg-sw-track"><span class="eg-sw-thumb"></span></span>
-        <span class="eg-sw-lbl">Suggestions</span>
-      </button>
-    </form>
-    <div style="position:relative;flex-shrink:0">
-      <button id="health-btn" class="eg-health-btn none" onclick="toggleHealth()">♥ Health</button>
-      <div class="eg-health-panel" id="health-panel" style="display:none">
-        <div class="eg-hp-head">
-          Graph Health
-          <button onclick="document.getElementById('health-panel').style.display='none'"
-                  style="background:none;border:none;cursor:pointer;font-size:16px;color:var(--text-muted)">✕</button>
-        </div>
-        <div id="health-body"></div>
-      </div>
-    </div>
+    <button class="tb-btn" onclick="fitView()">⤢ Fit</button>
   </div>
 
-  {% set _pending = pending_count|default(0) %}
-  {% if _pending > 0 %}
-  <div class="eg-pending-bar" id="pending-bar">
-    <span style="color:#D97706">✦</span>
-    <span style="font-weight:600;color:var(--text-soft)"><strong>{{ _pending }}</strong> suggestion{{ 's' if _pending != 1 }} pending review</span>
-    <button class="eg-pending-accept" onclick="bulkAccept(85)">Accept ≥85%</button>
-    <div style="flex:1"></div>
-    <button onclick="this.closest('.eg-pending-bar').style.display='none'"
-            style="background:none;border:none;cursor:pointer;color:var(--text-muted);font-size:15px;line-height:1">✕</button>
-  </div>
-  {% endif %}
-
+  <!-- Cytoscape canvas -->
   <div id="cy"></div>
 
-  <div class="eg-zoom-controls">
+  <!-- Zoom controls -->
+  <div id="eg-zoom">
     <button onclick="cy.zoom(cy.zoom()*1.25);syncZoom()" title="Zoom in">+</button>
-    <span class="eg-zoom-pill" id="zoom-pill2">100%</span>
+    <span id="zoom-pill">100%</span>
     <button onclick="cy.zoom(cy.zoom()*0.8);syncZoom()" title="Zoom out">−</button>
     <button onclick="fitView()" title="Fit to screen">⤢</button>
   </div>
-</div>
 
-<!-- ══ RIGHT INSPECTOR ═══════════════════════════════════════════════════════ -->
-<aside class="eg-inspector" id="eg-inspector">
-  <div class="eg-insp-head">
-    <span class="eg-insp-title" id="insp-title">Nothing selected</span>
-    <div style="display:flex;gap:.3rem;align-items:center">
-      <button id="insp-confirm-btn" class="eg-insp-action-btn confirm" onclick="confirmSelected()" style="display:none" title="Confirm suggestion">✓</button>
-      <button id="insp-reject-btn"  class="eg-insp-action-btn reject"  onclick="rejectSelected()"  style="display:none" title="Reject suggestion">✕</button>
-      <button id="insp-del-btn"     class="eg-insp-action-btn del"     onclick="deleteSelected()"   style="display:none" title="Delete">🗑</button>
+  <!-- ══ BOTTOM PANEL ══════════════════════════════════════════════════════ -->
+  <div id="bp">
+    <div id="bp-header">
+      <div id="bp-entity-info">
+        <span id="bp-title">Select a table</span>
+        <span id="bp-type-tag" class="type-pill dimension" onclick="cycleEntityType()" title="Click to cycle type">DIM</span>
+      </div>
+      <div id="bp-header-actions">
+        <button id="bp-edit-btn" class="tb-btn sm" onclick="openEntityModal(_selectedEntity)" style="display:none">✎ Edit</button>
+        <button id="bp-delete-btn" class="tb-btn sm danger" onclick="deleteSelected()" style="display:none">Delete</button>
+        <button id="bp-close-btn" onclick="closeBP()" title="Close">✕</button>
+      </div>
     </div>
-  </div>
-  <div id="insp-body" class="eg-insp-body">
-    <div class="eg-insp-empty">
-      <div style="font-size:30px;opacity:.25;margin-bottom:.5rem">◈</div>
-      <div>Click a table or join<br>to see its details</div>
+    <div id="bp-tabs">
+      <button class="bp-tab active" data-tab="details" onclick="switchTab('details')">Details</button>
+      <button class="bp-tab" data-tab="joins" onclick="switchTab('joins')">Joins <span id="bp-join-count" class="bp-tab-badge">0</span></button>
+      <button class="bp-tab" data-tab="filter" onclick="switchTab('filter')">Filter</button>
     </div>
+    <div id="bp-content"></div>
   </div>
-</aside>
 
-</div><!-- /eg-shell -->
+</div><!-- /eg-main -->
+</div><!-- /eg-page -->
 
 <!-- ══ ENTITY MODAL ══════════════════════════════════════════════════════════ -->
 <div class="eg-modal-overlay" id="entity-modal" style="display:none" onclick="if(event.target===this)closeEntityModal()">
@@ -307,62 +410,57 @@
     <div class="eg-modal-body">
       <input type="hidden" id="ef-orig-name">
       <div class="eg-form-row">
-        <div><label class="eg-lbl">Entity name *</label><input id="ef-name" class="eg-inp" placeholder="e.g. SALES_FCT"></div>
+        <div><label class="eg-lbl">Entity name *</label><input id="ef-name" class="eg-inp" placeholder="e.g. CUS_ORD_IVC_FCT"></div>
         <div><label class="eg-lbl">Display name</label><input id="ef-display" class="eg-inp" placeholder="e.g. Sales"></div>
       </div>
       <div class="eg-form-row">
-        <div><label class="eg-lbl">Physical table *</label><input id="ef-table" class="eg-inp" placeholder="e.g. dbo.SALES_FCT"></div>
+        <div><label class="eg-lbl">Physical table *</label><input id="ef-table" class="eg-inp" placeholder="e.g. dbo.CUS_ORD_IVC_FCT"></div>
         <div><label class="eg-lbl">Type</label>
           <select id="ef-type" class="eg-inp">
             <option value="fact">Fact</option>
-            <option value="dimension">Dimension</option>
+            <option value="dimension" selected>Dimension</option>
             <option value="bridge">Bridge</option>
           </select>
         </div>
       </div>
-      <div class="eg-form-row full"><div><label class="eg-lbl">Description</label><input id="ef-desc" class="eg-inp" placeholder="What business concept does this represent?"></div></div>
+      <div class="eg-form-row full"><label class="eg-lbl">Description</label><input id="ef-desc" class="eg-inp" placeholder="What business concept does this represent?"></div>
       <div class="eg-form-row">
-        <div><label class="eg-lbl">Primary key column</label><input id="ef-pk" class="eg-inp" placeholder="e.g. SALES_FCT_KEY"></div>
-        <div><label class="eg-lbl">Synonyms (comma-sep)</label><input id="ef-syns" class="eg-inp" placeholder="e.g. orders, invoices"></div>
-      </div>
-      <div class="eg-form-row">
-        <div><label class="eg-lbl">Grain / row represents</label><input id="ef-grain" class="eg-inp" placeholder="e.g. one invoice line"></div>
+        <div><label class="eg-lbl">Primary key column</label><input id="ef-pk" class="eg-inp" placeholder="e.g. CUSTOMER_KEY"></div>
         <div><label class="eg-lbl">Color</label><input id="ef-color" type="color" class="eg-inp" style="height:36px;padding:2px 4px;cursor:pointer"></div>
       </div>
       <div class="eg-modal-footer">
         <button onclick="closeEntityModal()" class="eg-m-btn">Cancel</button>
-        <button onclick="saveEntity()"       class="eg-m-btn primary">Save Entity</button>
+        <button onclick="saveEntity()" class="eg-m-btn primary">Save Entity</button>
       </div>
     </div>
   </div>
 </div>
 
-<!-- ══ RELATIONSHIP MODAL ════════════════════════════════════════════════════ -->
-<div class="eg-modal-overlay" id="rel-modal" style="display:none" onclick="if(event.target===this)closeRelModal()">
+<!-- ══ ADD JOIN MODAL ════════════════════════════════════════════════════════ -->
+<div class="eg-modal-overlay" id="add-join-modal" style="display:none" onclick="if(event.target===this)closeAddJoinModal()">
   <div class="eg-modal" style="width:480px">
     <div class="eg-modal-head">
-      <span>Add Join Relationship</span>
-      <button onclick="closeRelModal()" class="eg-modal-close">✕</button>
+      <span>Add Join</span>
+      <button onclick="closeAddJoinModal()" class="eg-modal-close">✕</button>
     </div>
     <div class="eg-modal-body">
       <div class="eg-form-row">
-        <div><label class="eg-lbl">From entity (many side)</label><select id="rf-from" class="eg-inp"></select></div>
-        <div><label class="eg-lbl">To entity (one side)</label><select id="rf-to" class="eg-inp"></select></div>
+        <div><label class="eg-lbl">From entity (FK side)</label><select id="ajm-from" class="eg-inp"></select></div>
+        <div><label class="eg-lbl">To entity (PK side)</label><select id="ajm-to" class="eg-inp"></select></div>
       </div>
       <div class="eg-form-row">
-        <div><label class="eg-lbl">Left column</label><input id="rf-lcol" class="eg-inp" placeholder="e.g. CUSTOMER_KEY"></div>
-        <div><label class="eg-lbl">Right column</label><input id="rf-rcol" class="eg-inp" placeholder="e.g. CUSTOMER_KEY"></div>
+        <div><label class="eg-lbl">Left column (FK)</label><input id="ajm-lcol" class="eg-inp" placeholder="e.g. CUSTOMER_KEY"></div>
+        <div><label class="eg-lbl">Right column (PK)</label><input id="ajm-rcol" class="eg-inp" placeholder="e.g. CUSTOMER_KEY"></div>
       </div>
       <div class="eg-form-row">
         <div><label class="eg-lbl">Join type</label>
-          <select id="rf-jtype" class="eg-inp">
-            <option value="left">LEFT JOIN</option>
-            <option value="inner">INNER JOIN</option>
-            <option value="outer">OUTER JOIN</option>
+          <select id="ajm-jtype" class="eg-inp">
+            <option value="LEFT">LEFT JOIN</option>
+            <option value="INNER">INNER JOIN</option>
           </select>
         </div>
         <div><label class="eg-lbl">Cardinality</label>
-          <select id="rf-card" class="eg-inp">
+          <select id="ajm-card" class="eg-inp">
             <option value="many_to_one">Many → One</option>
             <option value="one_to_one">One → One</option>
             <option value="one_to_many">One → Many</option>
@@ -370,8 +468,8 @@
         </div>
       </div>
       <div class="eg-modal-footer">
-        <button onclick="closeRelModal()" class="eg-m-btn">Cancel</button>
-        <button onclick="saveRel()"       class="eg-m-btn primary">Add Join</button>
+        <button onclick="closeAddJoinModal()" class="eg-m-btn">Cancel</button>
+        <button onclick="saveNewJoin()" class="eg-m-btn primary">Add Join</button>
       </div>
     </div>
   </div>
@@ -381,57 +479,75 @@
 const ACCOUNT_ID = "{{ client.account_id }}";
 const API_BASE   = `/admin/clients/${ACCOUNT_ID}/graph/api`;
 
-// ── Data ─────────────────────────────────────────────────────────────────────
 let graphData = {
-  entities:      {{ entities | tojson | safe }},
+  entities:      {{ entities      | tojson | safe }},
   relationships: {{ relationships | tojson | safe }},
   properties:    [],
 };
-let _health = {{ health | tojson | safe }};
 
 const TYPE_COLORS = { fact:'#D97706', dimension:'#2563EB', bridge:'#7C3AED' };
 const TYPE_BG     = { fact:'#FFFBEB', dimension:'#EFF6FF', bridge:'#F5F3FF' };
+const TYPE_LABELS = { fact:'FACT', dimension:'DIM', bridge:'BRIDGE' };
+const TYPE_ORDER  = ['fact', 'dimension', 'bridge'];
 
-let cy = null;
-let currentMode        = 'model';
-let sidebarCollapsed   = false;
-let activeTypeFilter   = '';
-let _selectedEntity    = null;
-let _selectedRelId     = null;
-let _savePosTimer      = null;
+let cy              = null;
+let _selectedEntity = null;
+let _selectedRelId  = null;
+let _currentTab     = 'details';
+let _expandedRelId  = null;
+let sidebarCollapsed = false;
+let activeTypeFilter = '';
+let _savePosTimer    = null;
 
-// ── Build Cytoscape elements ──────────────────────────────────────────────────
+// ── Helpers ────────────────────────────────────────────────────────────────────
+function _esc(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function _parseJC(jc) {
+  if (!jc) return [];
+  if (Array.isArray(jc)) return jc;
+  try { return JSON.parse(jc) || []; } catch { return []; }
+}
+
+// ── Cytoscape ──────────────────────────────────────────────────────────────────
 function buildElements() {
-  const nodes = graphData.entities.map(e => ({
-    data: {
-      id:       e.entity_name,
-      label:    e.display_name || e.entity_name,
-      tblFqn:   [e.schema_name, e.table_name].filter(Boolean).join('.') || e.entity_name,
-      type:     e.entity_type || 'dimension',
-      color:    e.color || TYPE_COLORS[e.entity_type] || '#4F86C6',
-      bgColor:  TYPE_BG[e.entity_type] || '#F8FAFC',
-      status:   e.status || 'confirmed',
-      _raw:     e,
-    },
-    position: { x: parseFloat(e.pos_x)||0, y: parseFloat(e.pos_y)||0 },
-  }));
-  const edges = graphData.relationships.map(r => ({
-    data: {
-      id:        `rel-${r.id}`,
-      source:    r.from_entity,
-      target:    r.to_entity,
-      edgeLabel: (r.left_col && r.right_col) ? `${r.left_col} = ${r.right_col}` : '',
-      joinType:  r.join_type || 'left',
-      relStatus: r.rel_status || r.status || 'untested',
-      suggested: r.status === 'suggested',
-      relId:     r.id,
-      _raw:      r,
-    },
-  }));
+  const nodes = graphData.entities.map(e => {
+    const et = e.entity_type || 'dimension';
+    return {
+      data: {
+        id:      e.entity_name,
+        label:   e.display_name || e.entity_name,
+        tblFqn:  [e.schema_name, e.table_name].filter(Boolean).join('.') || e.entity_name,
+        type:    et,
+        color:   e.color || TYPE_COLORS[et] || '#2563EB',
+        bgColor: TYPE_BG[et] || '#EFF6FF',
+        status:  e.status || 'confirmed',
+        _raw:    e,
+      },
+      position: { x: parseFloat(e.pos_x)||0, y: parseFloat(e.pos_y)||0 },
+    };
+  });
+  const edges = graphData.relationships.map(r => {
+    const jc  = _parseJC(r.join_conditions);
+    const fc  = r.from_column || (jc[0]?.from_col || '');
+    const tc  = r.to_column   || (jc[0]?.to_col   || '');
+    return {
+      data: {
+        id:        `rel-${r.id}`,
+        source:    r.from_entity,
+        target:    r.to_entity,
+        edgeLabel: fc && tc ? `${fc} = ${tc}` : '',
+        joinType:  r.join_type || 'LEFT',
+        relStatus: r.validation_status || r.status || 'untested',
+        suggested: r.status === 'suggested',
+        relId:     r.id,
+        _raw:      r,
+      },
+    };
+  });
   return [...nodes, ...edges];
 }
 
-// ── Stylesheet ────────────────────────────────────────────────────────────────
 function cyStyle() {
   return [
     { selector:'node', style:{
@@ -440,36 +556,28 @@ function cyStyle() {
       'label':'data(label)',
       'text-valign':'center','text-halign':'center',
       'font-family':'system-ui,-apple-system,sans-serif','font-size':12,'font-weight':700,
-      'color':'data(color)','text-wrap':'ellipsis','text-max-width':154,
-      'cursor':'pointer',
+      'color':'data(color)','text-wrap':'ellipsis','text-max-width':154,'cursor':'pointer',
     }},
-    { selector:'node[status="suggested"]', style:{ 'border-style':'dashed','opacity':0.78 }},
+    { selector:'node[status="suggested"]', style:{'border-style':'dashed','opacity':0.78}},
     { selector:'node:selected', style:{
-      'border-width':3,'underlay-color':'#2563EB','underlay-padding':5,'underlay-opacity':0.12,
+      'border-width':3,'underlay-color':'data(color)','underlay-padding':5,'underlay-opacity':0.15,
     }},
-    { selector:'node.canvas-hover', style:{
-      'underlay-color':'data(color)','underlay-padding':4,'underlay-opacity':0.10,
-    }},
-    { selector:'node.dimmed', style:{'opacity':0.15}},
+    { selector:'node.canvas-hover', style:{'underlay-color':'data(color)','underlay-padding':4,'underlay-opacity':0.10}},
     { selector:'edge', style:{
       'width':2,'line-color':'#94A3B8','target-arrow-color':'#94A3B8',
       'target-arrow-shape':'triangle','curve-style':'bezier',
-      'label':'','font-size':9,'color':'#64748B',
+      'font-size':9,'color':'#64748B',
       'text-background-color':'white','text-background-opacity':0.85,'text-background-padding':'2px',
     }},
-    { selector:'edge[?suggested]', style:{
-      'line-style':'dashed','line-color':'#F59E0B','target-arrow-color':'#F59E0B','opacity':0.75,
-    }},
+    { selector:'edge[?suggested]', style:{'line-style':'dashed','line-color':'#F59E0B','target-arrow-color':'#F59E0B','opacity':0.75}},
     { selector:'edge[relStatus="valid"]',   style:{'line-color':'#059669','target-arrow-color':'#059669'}},
     { selector:'edge[relStatus="warning"]', style:{'line-style':'dashed','line-color':'#D97706','target-arrow-color':'#D97706'}},
     { selector:'edge[relStatus="broken"]',  style:{'line-style':'dashed','line-color':'#DC2626','target-arrow-color':'#DC2626'}},
     { selector:'edge:selected', style:{'width':3,'line-color':'#F59E0B','target-arrow-color':'#F59E0B','label':'data(edgeLabel)'}},
     { selector:'edge.hovered', style:{'label':'data(edgeLabel)','width':2.5,'line-color':'#475569','target-arrow-color':'#475569'}},
-    { selector:'edge.dimmed', style:{'opacity':0.08}},
   ];
 }
 
-// ── Init ──────────────────────────────────────────────────────────────────────
 function initCytoscape() {
   const hasPos = graphData.entities.some(e => e.pos_x || e.pos_y);
   cy = cytoscape({
@@ -483,53 +591,33 @@ function initCytoscape() {
     minZoom: 0.08,
     maxZoom: 3,
   });
-
   cy.on('tap', 'node', e => { e.stopPropagation(); selectEntity(e.target.data('id')); });
-  cy.on('tap', 'edge', e => { e.stopPropagation(); selectRel(e.target.data('relId')); });
-  cy.on('tap', e => { if (e.target === cy) clearSelection(); });
+  cy.on('tap', 'edge', e => { e.stopPropagation(); selectEdge(e.target.data('relId')); });
+  cy.on('tap', e  => { if (e.target === cy) closeBP(); });
   cy.on('dbltap', e => { if (e.target === cy) openEntityModal(null); });
-
   cy.on('zoom pan', syncZoom);
-
   cy.on('dragfree', 'node', e => {
     const n = e.target, p = n.position();
     clearTimeout(_savePosTimer);
     _savePosTimer = setTimeout(() => saveEntityPosition(n.data('id'), p.x, p.y), 900);
   });
-
   cy.on('mouseover', 'edge', e => e.target.addClass('hovered'));
   cy.on('mouseout',  'edge', e => e.target.removeClass('hovered'));
   cy.on('mouseover', 'node', e => e.target.addClass('canvas-hover'));
   cy.on('mouseout',  'node', e => e.target.removeClass('canvas-hover'));
-
   buildSidebar();
-  populateSchemaFilter();
-  loadProperties().then(() => {
-    if (_health && _health.score !== undefined) renderHealthBadge();
-    else loadHealth();
-  });
+  loadProperties();
   syncZoom();
 }
 
-// ── Layout ────────────────────────────────────────────────────────────────────
-function applyLayout(name, btn) {
-  document.querySelectorAll('.eg-layout-btn').forEach(b => b.classList.remove('active'));
-  if (btn) btn.classList.add('active');
-  const opts = {
-    dagre:  { name:'dagre',  rankDir:'LR', nodeSep:48, rankSep:160, padding:40, animate:true, animationDuration:420 },
-    cose:   { name:'cose',   padding:40, nodeRepulsion:9000, animate:true, animationDuration:500 },
-    circle: { name:'circle', padding:40, animate:true, animationDuration:420 },
-  };
-  cy.layout(opts[name] || opts.dagre).run();
-}
-
-function fitView() { cy.fit(null, 40); }
+function fitView()  { cy.fit(null, 40); }
 function syncZoom() {
-  const z = Math.round(cy.zoom()*100) + '%';
-  ['zoom-pill','zoom-pill2'].forEach(id => { const el = document.getElementById(id); if(el) el.textContent = z; });
+  const z  = Math.round(cy.zoom()*100) + '%';
+  const el = document.getElementById('zoom-pill');
+  if (el) el.textContent = z;
 }
 
-// ── Sidebar ───────────────────────────────────────────────────────────────────
+// ── Sidebar ────────────────────────────────────────────────────────────────────
 function buildSidebar() {
   const list = document.getElementById('sb-list');
   const cnt  = document.getElementById('sb-count');
@@ -543,30 +631,30 @@ function buildSidebar() {
     if (q && !name.includes(q) && !e.entity_name.toLowerCase().includes(q)) return;
     if (typ && e.entity_type !== typ) return;
     visible++;
-    const color = e.color || TYPE_COLORS[e.entity_type] || '#4F86C6';
-    const jc = graphData.relationships.filter(r => r.from_entity===e.entity_name || r.to_entity===e.entity_name).length;
-    const row = document.createElement('div');
-    row.className = 'eg-sb-row'
-      + (e.status==='suggested' ? ' suggested' : '')
-      + (e.entity_name===_selectedEntity ? ' active' : '');
+    const et    = e.entity_type || 'dimension';
+    const color = e.color || TYPE_COLORS[et] || '#2563EB';
+    const jc    = graphData.relationships.filter(r => r.from_entity===e.entity_name || r.to_entity===e.entity_name).length;
+    const row   = document.createElement('div');
+    row.className = 'sb-row' + (e.entity_name===_selectedEntity ? ' active' : '');
     row.dataset.ename = e.entity_name;
     row.innerHTML = `
-      <span class="eg-sb-dot" style="background:${color}"></span>
-      <span class="eg-sb-name">${e.display_name || e.entity_name}</span>
-      ${jc > 0 ? `<span class="eg-sb-joins">${jc}</span>` : ''}
+      <span class="sb-dot" style="background:${color}"></span>
+      <span class="sb-name">${_esc(e.display_name || e.entity_name)}</span>
+      <span class="sb-type-pill ${et}" onclick="event.stopPropagation();cycleEntityType('${e.entity_name}')" title="Click to change type">${TYPE_LABELS[et]||et}</span>
+      ${jc > 0 ? `<span class="sb-jbadge">${jc}</span>` : ''}
     `;
-    row.onclick       = () => focusNode(e.entity_name);
-    row.onmouseenter  = () => cy.getElementById(e.entity_name).addClass('canvas-hover');
-    row.onmouseleave  = () => cy.getElementById(e.entity_name).removeClass('canvas-hover');
+    row.onclick      = () => focusNode(e.entity_name);
+    row.onmouseenter = () => cy.getElementById(e.entity_name).addClass('canvas-hover');
+    row.onmouseleave = () => cy.getElementById(e.entity_name).removeClass('canvas-hover');
     list.appendChild(row);
   });
 
-  cnt.textContent = visible;
-  if (visible === 0) list.innerHTML = '<div class="eg-sb-empty">No tables match.<br>Try a different filter.</div>';
+  if (cnt) cnt.textContent = visible;
+  if (visible === 0) list.innerHTML = '<div class="sb-empty">No tables match.<br>Try a different filter.</div>';
 }
 
 function setTypeFilter(btn, type) {
-  document.querySelectorAll('.eg-filter-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.sf-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
   activeTypeFilter = type;
   buildSidebar();
@@ -574,183 +662,415 @@ function setTypeFilter(btn, type) {
 
 function toggleSidebar() {
   sidebarCollapsed = !sidebarCollapsed;
-  document.getElementById('eg-sidebar').classList.toggle('collapsed', sidebarCollapsed);
-  document.getElementById('sb-collapse-btn').textContent = sidebarCollapsed ? '▶' : '◀';
+  document.getElementById('eg-sb').classList.toggle('collapsed', sidebarCollapsed);
+  document.getElementById('sb-toggle-btn').textContent = sidebarCollapsed ? '▶' : '◀';
 }
 
-// ── Node / Edge selection ─────────────────────────────────────────────────────
+// ── Selection ──────────────────────────────────────────────────────────────────
 function selectEntity(entityName) {
   cy.$(':selected').unselect();
   cy.getElementById(entityName).select();
-  document.querySelectorAll('.eg-sb-row').forEach(r => r.classList.toggle('active', r.dataset.ename === entityName));
-
-  const e = graphData.entities.find(x => x.entity_name === entityName);
-  if (!e) return;
-  _selectedEntity = entityName; _selectedRelId = null;
-
-  document.getElementById('del-btn').style.display    = '';
-  document.getElementById('del-sep').style.display    = '';
-  document.getElementById('insp-del-btn').style.display     = '';
-  document.getElementById('insp-confirm-btn').style.display = e.status==='suggested' ? '' : 'none';
-  document.getElementById('insp-reject-btn').style.display  = e.status==='suggested' ? '' : 'none';
-
-  const color   = e.color || TYPE_COLORS[e.entity_type] || '#4F86C6';
-  const tblFqn  = [e.schema_name, e.table_name].filter(Boolean).join('.') || e.entity_name;
-  const joins   = graphData.relationships.filter(r => r.from_entity===entityName || r.to_entity===entityName);
-  const props   = graphData.properties.filter(p => p.entity_name===entityName);
-  const SCOLORS = { valid:'#059669', warning:'#D97706', broken:'#DC2626', untested:'#94A3B8' };
-  const RCOLORS = { metric:'#D1FAE5/#065F46', dimension:'#EFF6FF/#1D4ED8', date:'#FEF3C7/#92400E', filter:'#F3E8FF/#6B21A8', identifier:'#F1F5F9/#475569', ignore:'#F1F5F9/#94A3B8' };
-
-  document.getElementById('insp-title').innerHTML =
-    `<span style="color:${color}">${e.display_name || e.entity_name}</span>`;
-
-  document.getElementById('insp-body').innerHTML = `
-    <div class="eg-insp-meta">
-      <span class="eg-type-badge" style="background:${TYPE_BG[e.entity_type]||'#F8FAFC'};color:${color};border-color:${color}30">${(e.entity_type||'').toUpperCase()}</span>
-      <span class="eg-insp-table">${tblFqn}</span>
-      ${e.status==='suggested'?`<span class="eg-conf-badge" style="background:#FEF3C7;color:#92400E">${e.confidence_score||'?'}%</span>`:''}
-    </div>
-    ${e.description?`<div class="eg-insp-desc">${e.description}</div>`:''}
-    <div class="eg-insp-section">EDIT</div>
-    <div class="eg-insp-edit-row">
-      <button class="eg-insp-action" onclick="openEntityModal('${entityName}')">✎ Edit entity</button>
-      <button class="eg-insp-action" onclick="openRelModal('${entityName}')">⇢ Add join</button>
-    </div>
-    <div class="eg-insp-section">JOINS <span class="eg-insp-cnt">${joins.length}</span></div>
-    <div class="eg-insp-joins">
-      ${joins.length===0?'<div class="eg-insp-none">No joins yet</div>':
-        joins.map(r=>{
-          const isFrom = r.from_entity===entityName;
-          const partner = isFrom ? r.to_entity : r.from_entity;
-          const sc = SCOLORS[r.rel_status||r.status]||'#94A3B8';
-          return `<div class="eg-insp-join-row" onclick="selectRel(${r.id})">
-            <span class="eg-join-status-dot" style="background:${sc}"></span>
-            <span class="eg-join-dir">${isFrom?'→':'←'}</span>
-            <span class="eg-join-partner" onclick="event.stopPropagation();focusNode('${partner}')">${partner}</span>
-            <span class="eg-join-type">${(r.join_type||'left').toUpperCase()}</span>
-            <button class="eg-join-del" onclick="event.stopPropagation();deleteRel(${r.id})">✕</button>
-          </div>`;
-        }).join('')
-      }
-    </div>
-    ${props.length>0?`
-    <div class="eg-insp-section">COLUMN ROLES <span class="eg-insp-cnt">${props.length}</span></div>
-    <div class="eg-insp-props">
-      ${props.map(p=>{
-        const [rbg,rfc]=(RCOLORS[p.role]||'#F1F5F9/#475569').split('/');
-        return `<div class="eg-insp-prop-row">
-          <span class="eg-prop-col">${p.column_name}</span>
-          <span class="eg-prop-role" style="background:${rbg};color:${rfc}">${p.role||''}</span>
-        </div>`;
-      }).join('')}
-    </div>`:''}
-  `;
+  _highlightSidebarRow(entityName);
+  _selectedEntity = entityName;
+  _selectedRelId  = null;
+  openBP(entityName);
 }
 
-function selectRel(relId) {
+function selectEdge(relId) {
+  const r = graphData.relationships.find(x => x.id === relId);
+  if (!r) return;
   cy.$(':selected').unselect();
   cy.getElementById(`rel-${relId}`).select();
-  _selectedRelId = relId; _selectedEntity = null;
-
-  document.getElementById('del-btn').style.display         = '';
-  document.getElementById('del-sep').style.display         = '';
-  document.getElementById('insp-del-btn').style.display    = '';
-  document.getElementById('insp-confirm-btn').style.display = 'none';
-  document.getElementById('insp-reject-btn').style.display  = 'none';
-
-  const r = graphData.relationships.find(x => x.id===relId);
-  if (!r) return;
-  const SCOLORS = { valid:'#059669', warning:'#D97706', broken:'#DC2626', untested:'#94A3B8' };
-  const sc = SCOLORS[r.rel_status||r.status]||'#94A3B8';
-
-  document.getElementById('insp-title').textContent = 'Join Relationship';
-  document.getElementById('insp-body').innerHTML = `
-    <div class="eg-insp-rel-card">
-      <div class="eg-rel-entities">
-        <span class="eg-rel-ent" onclick="focusNode('${r.from_entity}')">${r.from_entity}</span>
-        <span class="eg-rel-arrow"> → </span>
-        <span class="eg-rel-ent" onclick="focusNode('${r.to_entity}')">${r.to_entity}</span>
-      </div>
-      <div class="eg-rel-meta-grid">
-        <div><span class="eg-rel-lbl">Join type</span><span class="eg-rel-val">${(r.join_type||'left').toUpperCase()}</span></div>
-        <div><span class="eg-rel-lbl">Cardinality</span><span class="eg-rel-val">${(r.cardinality||'many_to_one').replace(/_/g,' ')}</span></div>
-        <div><span class="eg-rel-lbl">Status</span><span class="eg-rel-val" style="color:${sc}">${(r.rel_status||r.status||'untested').toUpperCase()}</span></div>
-        ${r.confidence_score?`<div><span class="eg-rel-lbl">Confidence</span><span class="eg-rel-val">${r.confidence_score}%</span></div>`:''}
-      </div>
-      ${r.left_col||r.right_col?`
-      <div class="eg-insp-section" style="margin:0 -.75rem">JOIN KEY</div>
-      <div class="eg-rel-key"><code>${r.left_col||'?'}</code> <span style="color:var(--text-muted)">=</span> <code>${r.right_col||'?'}</code></div>`:''}
-      ${r.where_conditions?`<div class="eg-insp-section" style="margin:0 -.75rem">WHERE</div><pre class="eg-rel-where">${r.where_conditions}</pre>`:''}
-      <div style="display:flex;gap:.4rem;margin-top:.75rem">
-        <button class="eg-insp-action primary" onclick="validateRel(${r.id})">✓ Validate</button>
-        <button class="eg-insp-action danger"  onclick="deleteRel(${r.id})">Delete</button>
-      </div>
-    </div>
-  `;
-}
-
-function clearSelection() {
-  cy.$(':selected').unselect();
-  document.querySelectorAll('.eg-sb-row').forEach(r => r.classList.remove('active'));
-  _selectedEntity = null; _selectedRelId = null;
-  document.getElementById('del-btn').style.display         = 'none';
-  document.getElementById('del-sep').style.display         = 'none';
-  document.getElementById('insp-del-btn').style.display    = 'none';
-  document.getElementById('insp-confirm-btn').style.display = 'none';
-  document.getElementById('insp-reject-btn').style.display  = 'none';
-  document.getElementById('insp-title').textContent = 'Nothing selected';
-  document.getElementById('insp-body').innerHTML = `
-    <div class="eg-insp-empty">
-      <div style="font-size:30px;opacity:.25;margin-bottom:.5rem">◈</div>
-      <div>Click a table or join<br>to see its details</div>
-    </div>`;
+  _selectedRelId  = relId;
+  const entityName = r.from_entity;
+  _selectedEntity  = entityName;
+  _highlightSidebarRow(entityName);
+  openBP(entityName, 'joins', relId);
 }
 
 function focusNode(entityName) {
   const node = cy.getElementById(entityName);
   if (!node.length) return;
-  cy.animate({ center:{eles:node}, zoom:Math.max(cy.zoom(),1.0), duration:350, easing:'ease-in-out-cubic' });
+  cy.animate({ center:{eles:node}, zoom:Math.max(cy.zoom(), 1.0), duration:350, easing:'ease-in-out-cubic' });
   selectEntity(entityName);
 }
 
-// ── Delete ────────────────────────────────────────────────────────────────────
+function _highlightSidebarRow(entityName) {
+  document.querySelectorAll('.sb-row').forEach(r => r.classList.toggle('active', r.dataset.ename === entityName));
+}
+
+function closeBP() {
+  document.getElementById('bp').classList.remove('open');
+  cy.$(':selected').unselect();
+  document.querySelectorAll('.sb-row').forEach(r => r.classList.remove('active'));
+  _selectedEntity = null;
+  _selectedRelId  = null;
+  _expandedRelId  = null;
+}
+
+function openBP(entityName, tab='details', highlightRelId=null) {
+  _selectedEntity = entityName;
+  _expandedRelId  = highlightRelId;
+  const e = graphData.entities.find(x => x.entity_name === entityName);
+  if (!e) return;
+
+  const et    = e.entity_type || 'dimension';
+  const color = e.color || TYPE_COLORS[et] || '#2563EB';
+
+  const titleEl = document.getElementById('bp-title');
+  titleEl.textContent = e.display_name || e.entity_name;
+  titleEl.style.color = color;
+
+  const tpTag = document.getElementById('bp-type-tag');
+  tpTag.textContent = TYPE_LABELS[et] || et.toUpperCase();
+  tpTag.className = `type-pill ${et}`;
+
+  const joins = graphData.relationships.filter(r => r.from_entity===entityName || r.to_entity===entityName);
+  const jcBadge = document.getElementById('bp-join-count');
+  if (jcBadge) jcBadge.textContent = joins.length;
+
+  document.getElementById('bp-edit-btn').style.display   = '';
+  document.getElementById('bp-delete-btn').style.display = '';
+  document.getElementById('bp').classList.add('open');
+  switchTab(tab);
+}
+
+function switchTab(tab) {
+  _currentTab = tab;
+  document.querySelectorAll('.bp-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+  const e = graphData.entities.find(x => x.entity_name === _selectedEntity);
+  if (!e) return;
+  if      (tab === 'details') renderDetailsTab(e);
+  else if (tab === 'joins')   renderJoinsTab(e.entity_name, _expandedRelId);
+  else if (tab === 'filter')  renderFilterTab(e);
+}
+
+// ── Details tab ────────────────────────────────────────────────────────────────
+function renderDetailsTab(e) {
+  const tblFqn = [e.schema_name, e.table_name].filter(Boolean).join('.') || e.entity_name;
+  const joins  = graphData.relationships.filter(r => r.from_entity===e.entity_name || r.to_entity===e.entity_name);
+  document.getElementById('bp-content').innerHTML = `
+    <div class="dt-grid">
+      <div class="dt-field"><label>Physical Table</label><span><code>${_esc(tblFqn)}</code></span></div>
+      <div class="dt-field"><label>Primary Key</label><span>${e.pk_column ? `<code>${_esc(e.pk_column)}</code>` : '<span style="color:var(--text-muted)">—</span>'}</span></div>
+      <div class="dt-field"><label>Joins</label><span style="font-weight:700">${joins.length} relationship${joins.length!==1?'s':''}</span></div>
+      <div class="dt-field"><label>Status</label><span style="color:${e.status==='confirmed'?'#059669':'#D97706'}">${(e.status||'confirmed').toUpperCase()}</span></div>
+    </div>
+    ${e.description?`<div class="dt-desc">${_esc(e.description)}</div>`:''}
+    <div style="display:flex;gap:.4rem;margin-top:.4rem;flex-wrap:wrap">
+      <button class="tb-btn sm" onclick="switchTab('joins')">⇢ View joins (${joins.length})</button>
+      <button class="tb-btn sm" onclick="switchTab('filter')">⧧ View filter</button>
+      ${e.entity_filter?'<span style="font-size:10px;color:#059669;background:#ECFDF5;border:1px solid #A7F3D0;border-radius:999px;padding:2px 8px;font-weight:800;display:flex;align-items:center">Filter active</span>':''}
+    </div>
+  `;
+}
+
+// ── Joins tab ──────────────────────────────────────────────────────────────────
+function renderJoinsTab(entityName, expandRelId=null) {
+  const joins = graphData.relationships.filter(r => r.from_entity===entityName || r.to_entity===entityName);
+  const content = document.getElementById('bp-content');
+  if (joins.length === 0) {
+    content.innerHTML = `
+      <div style="text-align:center;color:var(--text-muted);padding:1.5rem 0;font-size:12px;line-height:1.7">
+        <div style="font-size:28px;opacity:.2;margin-bottom:.4rem">◦—◦</div>
+        No joins defined yet.
+        <br>
+        <button class="tb-btn sm primary" style="margin-top:.5rem" onclick="openAddJoinModal('${entityName}')">+ Add first join</button>
+      </div>`;
+    return;
+  }
+  const cards = joins.map(r => renderJoinCard(r, entityName, r.id === expandRelId)).join('');
+  content.innerHTML = `
+    <div id="jc-list">${cards}</div>
+    <button class="tb-btn sm" style="margin-top:.35rem;width:100%;justify-content:center" onclick="openAddJoinModal('${entityName}')">+ Add join</button>
+  `;
+  if (expandRelId) {
+    const el = document.getElementById(`jc-${expandRelId}`);
+    if (el) el.scrollIntoView({behavior:'smooth',block:'nearest'});
+  }
+}
+
+function renderJoinCard(r, currentEntity, expanded=false) {
+  const isFrom  = r.from_entity === currentEntity;
+  const partner = isFrom ? r.to_entity : r.from_entity;
+  const jt      = (r.join_type||'LEFT').toUpperCase();
+  const jc      = _parseJC(r.join_conditions);
+  const pFrom   = r.from_column || (jc[0]?.from_col || '');
+  const pTo     = r.to_column   || (jc[0]?.to_col   || '');
+  const colSumm = pFrom && pTo ? `${pFrom} = ${pTo}` : (pFrom || pTo || '—');
+
+  const body = expanded ? _buildJoinEditForm(r, jc) : '';
+  return `<div class="join-card${expanded?' expanded':''}" id="jc-${r.id}">
+    <div class="join-card-head" onclick="toggleJoinCard(${r.id})">
+      <span class="join-dir">${isFrom?'→':'←'}</span>
+      <button class="join-partner" onclick="event.stopPropagation();focusNode('${_esc(partner)}')">${_esc(partner)}</button>
+      <span class="join-type-badge">${jt}</span>
+      <span class="join-cols" title="${_esc(colSumm)}">${_esc(colSumm)}</span>
+      <span class="join-expand">${expanded?'▲':'▼'}</span>
+    </div>
+    <div class="join-card-body">${body}</div>
+  </div>`;
+}
+
+function _buildJoinEditForm(r, jc) {
+  const allConds = jc.length
+    ? jc
+    : (r.from_column || r.to_column ? [{from_col: r.from_column||'', to_col: r.to_column||''}] : []);
+
+  const condRows = allConds.map((c, i) => `
+    <div class="jc-cond-row" id="jcrow-${r.id}-${i}">
+      <input type="text" placeholder="From col" value="${_esc(c.from_col||'')}" id="jcf-${r.id}-${i}">
+      <span class="jc-eq">=</span>
+      <input type="text" placeholder="To col" value="${_esc(c.to_col||'')}" id="jct-${r.id}-${i}">
+      <button class="jc-rem" onclick="removeJoinCond(${r.id},${i})" title="Remove">−</button>
+    </div>`).join('');
+
+  const jt   = r.join_type || 'LEFT';
+  const card = r.relationship_type || 'many_to_one';
+  const wc   = r.where_clause || '';
+
+  return `
+    <div class="jc-section-lbl">Join conditions</div>
+    <div id="jc-conds-${r.id}">${condRows || '<div style="color:var(--text-muted);font-size:11px;padding:.2rem 0">No conditions — click + Add condition below.</div>'}</div>
+    <button class="jc-add-btn" onclick="addJoinCond(${r.id})">+ Add condition</button>
+    <div class="jc-section-lbl" style="margin-top:.65rem">Metadata</div>
+    <div class="jc-meta-grid">
+      <div>
+        <span class="jc-lbl">Join type</span>
+        <select class="jc-select" id="jcjt-${r.id}">
+          <option value="LEFT"  ${jt==='LEFT'?'selected':''}>LEFT JOIN</option>
+          <option value="INNER" ${jt==='INNER'?'selected':''}>INNER JOIN</option>
+          <option value="OUTER" ${jt==='OUTER'?'selected':''}>OUTER JOIN</option>
+        </select>
+      </div>
+      <div>
+        <span class="jc-lbl">Cardinality</span>
+        <select class="jc-select" id="jccard-${r.id}">
+          <option value="many_to_one" ${card==='many_to_one'?'selected':''}>Many → One</option>
+          <option value="one_to_one"  ${card==='one_to_one'?'selected':''}>One → One</option>
+          <option value="one_to_many" ${card==='one_to_many'?'selected':''}>One → Many</option>
+        </select>
+      </div>
+    </div>
+    <div class="jc-section-lbl">WHERE clause (applied to this join)</div>
+    <textarea class="jc-where" id="jcwhere-${r.id}" placeholder="Optional: e.g. t.is_active = 1">${_esc(wc)}</textarea>
+    <div class="jc-actions">
+      <button class="jc-del"    onclick="deleteRel(${r.id})">Delete</button>
+      <button class="jc-cancel" onclick="toggleJoinCard(${r.id})">Cancel</button>
+      <button class="jc-save"   onclick="saveJoinEdit(${r.id})">Save</button>
+    </div>
+  `;
+}
+
+function toggleJoinCard(relId) {
+  const card = document.getElementById(`jc-${relId}`);
+  if (!card) return;
+  const wasExpanded = card.classList.contains('expanded');
+  // Collapse all
+  document.querySelectorAll('.join-card.expanded').forEach(c => {
+    c.classList.remove('expanded');
+    const body = c.querySelector('.join-card-body');
+    const exp  = c.querySelector('.join-expand');
+    if (body) body.innerHTML = '';
+    if (exp)  exp.textContent = '▼';
+  });
+  _expandedRelId = null;
+  if (!wasExpanded) {
+    const r  = graphData.relationships.find(x => x.id === relId);
+    if (!r) return;
+    const jc = _parseJC(r.join_conditions);
+    card.classList.add('expanded');
+    const body = card.querySelector('.join-card-body');
+    const exp  = card.querySelector('.join-expand');
+    if (body) body.innerHTML = _buildJoinEditForm(r, jc);
+    if (exp)  exp.textContent = '▲';
+    _expandedRelId = relId;
+    card.scrollIntoView({behavior:'smooth', block:'nearest'});
+  }
+}
+
+function addJoinCond(relId) {
+  const container = document.getElementById(`jc-conds-${relId}`);
+  if (!container) return;
+  // Clear placeholder text if any
+  const placeholder = container.querySelector('div');
+  if (placeholder && !placeholder.classList.contains('jc-cond-row')) placeholder.remove();
+  const i = container.querySelectorAll('.jc-cond-row').length;
+  const row = document.createElement('div');
+  row.className = 'jc-cond-row';
+  row.id = `jcrow-${relId}-${i}`;
+  row.innerHTML = `
+    <input type="text" placeholder="From col" id="jcf-${relId}-${i}">
+    <span class="jc-eq">=</span>
+    <input type="text" placeholder="To col" id="jct-${relId}-${i}">
+    <button class="jc-rem" onclick="removeJoinCond(${relId},${i})" title="Remove">−</button>
+  `;
+  container.appendChild(row);
+}
+
+function removeJoinCond(relId, idx) {
+  const row = document.getElementById(`jcrow-${relId}-${idx}`);
+  if (row) row.remove();
+}
+
+async function saveJoinEdit(relId) {
+  const r = graphData.relationships.find(x => x.id === relId);
+  if (!r) return;
+
+  const container = document.getElementById(`jc-conds-${relId}`);
+  const condRows  = container ? container.querySelectorAll('.jc-cond-row') : [];
+  const join_conditions = [];
+  condRows.forEach(row => {
+    const inputs = row.querySelectorAll('input');
+    const fc = (inputs[0]?.value || '').trim();
+    const tc = (inputs[1]?.value || '').trim();
+    if (fc || tc) join_conditions.push({from_col: fc, to_col: tc});
+  });
+
+  const join_type         = document.getElementById(`jcjt-${relId}`)?.value   || 'LEFT';
+  const relationship_type = document.getElementById(`jccard-${relId}`)?.value || 'many_to_one';
+  const where_clause      = (document.getElementById(`jcwhere-${relId}`)?.value || '').trim();
+  const from_column       = join_conditions[0]?.from_col || r.from_column || '';
+  const to_column         = join_conditions[0]?.to_col   || r.to_column   || '';
+
+  const payload = {
+    rel_id: relId,
+    from_entity: r.from_entity,
+    to_entity:   r.to_entity,
+    from_column, to_column,
+    join_type, relationship_type,
+    join_conditions, where_clause,
+    label:  r.label || '',
+    status: 'confirmed',
+  };
+
+  const resp = await fetch(`${API_BASE}/relationships`, {
+    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload),
+  });
+  if (!resp.ok) { alert('Save failed'); return; }
+
+  // Update local state
+  const idx = graphData.relationships.findIndex(x => x.id === relId);
+  if (idx >= 0) {
+    graphData.relationships[idx] = {
+      ...graphData.relationships[idx],
+      ...payload,
+      join_conditions: JSON.stringify(join_conditions),
+    };
+  }
+  // Update canvas edge label
+  const edgeLabel = from_column && to_column ? `${from_column} = ${to_column}` : '';
+  cy.getElementById(`rel-${relId}`).data({edgeLabel, joinType: join_type});
+
+  _expandedRelId = null;
+  buildSidebar();
+  renderJoinsTab(_selectedEntity);
+}
+
+// ── Filter tab ─────────────────────────────────────────────────────────────────
+function renderFilterTab(e) {
+  const hasFilter = !!(e.entity_filter||'').trim();
+  document.getElementById('bp-content').innerHTML = `
+    <p class="filter-desc">
+      Define a SQL WHERE condition that is automatically injected whenever this table is used in a query.<br>
+      Example: <code style="background:var(--surface-2);padding:1px 5px;border-radius:3px;font-family:Consolas,monospace;font-size:11px">is_active = 1</code>
+    </p>
+    ${hasFilter ? '<div class="filter-active">✓ Filter active</div><br>' : ''}
+    <textarea class="filter-ta" id="filter-ta" placeholder="e.g. is_deleted = 0 AND fiscal_year = 2024">${_esc(e.entity_filter||'')}</textarea>
+    <div class="filter-actions">
+      <button class="filter-save" onclick="saveFilter()">Save filter</button>
+      ${hasFilter ? `<button class="filter-clear" onclick="clearFilter()">Clear</button>` : ''}
+    </div>
+  `;
+}
+
+async function saveFilter() {
+  if (!_selectedEntity) return;
+  const val = (document.getElementById('filter-ta')?.value || '').trim();
+  const resp = await fetch(`${API_BASE}/entities/${encodeURIComponent(_selectedEntity)}/filter`, {
+    method:'PATCH', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({entity_filter: val}),
+  });
+  if (!resp.ok) { alert('Save failed'); return; }
+  const e = graphData.entities.find(x => x.entity_name === _selectedEntity);
+  if (e) { e.entity_filter = val; renderFilterTab(e); }
+}
+
+async function clearFilter() {
+  const ta = document.getElementById('filter-ta');
+  if (ta) ta.value = '';
+  await saveFilter();
+}
+
+// ── Entity type cycle ──────────────────────────────────────────────────────────
+async function cycleEntityType(entityName) {
+  const en = entityName || _selectedEntity;
+  if (!en) return;
+  const e = graphData.entities.find(x => x.entity_name === en);
+  if (!e) return;
+  const nextType = TYPE_ORDER[(TYPE_ORDER.indexOf(e.entity_type||'dimension') + 1) % TYPE_ORDER.length];
+  e.entity_type = nextType;
+  e.color       = TYPE_COLORS[nextType];
+
+  cy.getElementById(en).data({type: nextType, color: TYPE_COLORS[nextType], bgColor: TYPE_BG[nextType]});
+
+  await fetch(`${API_BASE}/entities/${encodeURIComponent(en)}/type`, {
+    method:'PATCH', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({entity_type: nextType, color: TYPE_COLORS[nextType]}),
+  }).catch(() => {});
+
+  buildSidebar();
+  if (_selectedEntity === en && document.getElementById('bp').classList.contains('open')) {
+    const tpTag = document.getElementById('bp-type-tag');
+    if (tpTag) { tpTag.textContent = TYPE_LABELS[nextType]; tpTag.className = `type-pill ${nextType}`; }
+    const titleEl = document.getElementById('bp-title');
+    if (titleEl) titleEl.style.color = TYPE_COLORS[nextType];
+    if (_currentTab === 'details') renderDetailsTab(e);
+  }
+}
+
+// ── Delete ─────────────────────────────────────────────────────────────────────
 function deleteSelected() {
   if (_selectedRelId)    deleteRel(_selectedRelId);
   else if (_selectedEntity) deleteEntity(_selectedEntity);
 }
+
 async function deleteEntity(name) {
-  if (!confirm(`Delete "${name}"? All its joins will also be removed.`)) return;
+  if (!confirm(`Delete "${name}"?\nAll its joins will also be removed.`)) return;
   const r = await fetch(`${API_BASE}/entities/${encodeURIComponent(name)}`, {method:'DELETE'});
   if (!r.ok) { alert('Delete failed'); return; }
   graphData.entities      = graphData.entities.filter(e => e.entity_name !== name);
   graphData.relationships = graphData.relationships.filter(r => r.from_entity!==name && r.to_entity!==name);
   cy.getElementById(name).remove();
-  cy.edges().filter(e => e.data('source')===name||e.data('target')===name).remove();
-  buildSidebar(); clearSelection();
+  cy.edges().filter(e => e.data('source')===name || e.data('target')===name).remove();
+  closeBP();
+  buildSidebar();
 }
+
 async function deleteRel(relId) {
   if (!confirm('Delete this join?')) return;
   const r = await fetch(`${API_BASE}/relationships/${relId}`, {method:'DELETE'});
   if (!r.ok) { alert('Delete failed'); return; }
   graphData.relationships = graphData.relationships.filter(x => x.id !== relId);
   cy.getElementById(`rel-${relId}`).remove();
-  buildSidebar(); clearSelection();
+  _selectedRelId = null;
+  _expandedRelId = null;
+  buildSidebar();
+  if (_selectedEntity) renderJoinsTab(_selectedEntity);
 }
 
-// ── Entity CRUD ───────────────────────────────────────────────────────────────
+// ── Entity CRUD ────────────────────────────────────────────────────────────────
 function openEntityModal(entityName) {
-  const e = entityName ? graphData.entities.find(x => x.entity_name===entityName) : null;
+  const e = entityName ? graphData.entities.find(x => x.entity_name === entityName) : null;
   document.getElementById('entity-modal-title').textContent = e ? 'Edit Entity' : 'New Entity';
-  document.getElementById('ef-orig-name').value = e?.entity_name || '';
-  document.getElementById('ef-name').value      = e?.entity_name || '';
-  document.getElementById('ef-display').value   = e?.display_name || '';
-  document.getElementById('ef-table').value     = [e?.schema_name, e?.table_name].filter(Boolean).join('.') || '';
-  document.getElementById('ef-type').value      = e?.entity_type || 'fact';
-  document.getElementById('ef-desc').value      = e?.description || '';
-  document.getElementById('ef-syns').value      = e?.synonyms || '';
-  document.getElementById('ef-pk').value        = e?.pk_column || '';
-  document.getElementById('ef-grain').value     = e?.grain || '';
-  document.getElementById('ef-color').value     = e?.color || TYPE_COLORS[e?.entity_type] || '#2563EB';
+  document.getElementById('ef-orig-name').value  = e?.entity_name   || '';
+  document.getElementById('ef-name').value       = e?.entity_name   || '';
+  document.getElementById('ef-display').value    = e?.display_name  || '';
+  document.getElementById('ef-table').value      = [e?.schema_name, e?.table_name].filter(Boolean).join('.') || '';
+  document.getElementById('ef-type').value       = e?.entity_type   || 'dimension';
+  document.getElementById('ef-desc').value       = e?.description   || '';
+  document.getElementById('ef-pk').value         = e?.pk_column     || '';
+  document.getElementById('ef-color').value      = e?.color || TYPE_COLORS[e?.entity_type] || '#2563EB';
   document.getElementById('entity-modal').style.display = 'flex';
   setTimeout(() => document.getElementById('ef-name').focus(), 50);
 }
@@ -767,26 +1087,24 @@ async function saveEntity() {
     schema_name:  parts.length>1 ? parts[0] : '',
     entity_type:  document.getElementById('ef-type').value,
     description:  document.getElementById('ef-desc').value.trim(),
-    synonyms:     document.getElementById('ef-syns').value.trim(),
     pk_column:    document.getElementById('ef-pk').value.trim(),
-    grain:        document.getElementById('ef-grain').value.trim(),
     color:        document.getElementById('ef-color').value,
     status:       'confirmed',
   };
-  if (!payload.entity_name||!payload.table_name) { alert('Entity name and table are required.'); return; }
-  const r = await fetch(`${API_BASE}/entities`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+  if (!payload.entity_name || !payload.table_name) { alert('Entity name and table are required.'); return; }
+  const r = await fetch(`${API_BASE}/entities`, {
+    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload),
+  });
   if (!r.ok) { alert('Save failed'); return; }
   const saved = await r.json();
-  const color = payload.color || TYPE_COLORS[payload.entity_type] || '#4F86C6';
-  const idx   = graphData.entities.findIndex(e => e.entity_name===(origName||payload.entity_name));
-  if (idx>=0) graphData.entities[idx] = {...graphData.entities[idx], ...payload};
-  else        graphData.entities.push({...payload, id:saved.id});
+  const color  = payload.color || TYPE_COLORS[payload.entity_type] || '#2563EB';
+  const idx    = graphData.entities.findIndex(e => e.entity_name===(origName||payload.entity_name));
+  if (idx >= 0) graphData.entities[idx] = {...graphData.entities[idx], ...payload};
+  else          graphData.entities.push({...payload, id:saved.id, entity_filter:''});
 
   const isRename = origName && origName !== payload.entity_name;
   if (isRename) {
-    // Remove old node (and its connected edges — Cytoscape does this automatically)
     cy.getElementById(origName).remove();
-    // Re-add edges that referenced the old name now with new name
     graphData.relationships.forEach(r => {
       if (r.from_entity===origName) r.from_entity = payload.entity_name;
       if (r.to_entity===origName)   r.to_entity   = payload.entity_name;
@@ -794,216 +1112,153 @@ async function saveEntity() {
   }
 
   if (!isRename && cy.getElementById(payload.entity_name).length) {
-    // In-place update of existing node
     cy.getElementById(payload.entity_name).data({
-      label:   payload.display_name||payload.entity_name,
-      color,
-      bgColor: TYPE_BG[payload.entity_type]||'#F8FAFC',
-      type:    payload.entity_type,
-      _raw:    payload,
+      label:   payload.display_name || payload.entity_name,
+      color, bgColor: TYPE_BG[payload.entity_type] || '#EFF6FF',
+      type:    payload.entity_type, _raw: payload,
     });
   } else {
-    // New node or renamed node — place near current viewport center
     const ext = cy.extent();
-    const pos  = { x: (ext.x1+ext.x2)/2 + (Math.random()-0.5)*80, y: (ext.y1+ext.y2)/2 };
+    const pos  = { x:(ext.x1+ext.x2)/2 + (Math.random()-0.5)*80, y:(ext.y1+ext.y2)/2 };
     cy.add({
-      data: {
-        id:      payload.entity_name,
-        label:   payload.display_name||payload.entity_name,
-        tblFqn:  [payload.schema_name,payload.table_name].filter(Boolean).join('.'),
-        type:    payload.entity_type,
-        color,
-        bgColor: TYPE_BG[payload.entity_type]||'#F8FAFC',
-        status:  'confirmed',
-        _raw:    payload,
+      data:{
+        id: payload.entity_name, label: payload.display_name||payload.entity_name,
+        tblFqn: [payload.schema_name, payload.table_name].filter(Boolean).join('.'),
+        type: payload.entity_type, color, bgColor: TYPE_BG[payload.entity_type]||'#EFF6FF',
+        status:'confirmed', _raw:payload,
       },
       position: pos,
     });
     if (isRename) {
-      // Re-add edges with corrected entity names
-      graphData.relationships.forEach(r => {
-        if (r.from_entity===payload.entity_name || r.to_entity===payload.entity_name) {
+      graphData.relationships.forEach(rel => {
+        if (rel.from_entity===payload.entity_name || rel.to_entity===payload.entity_name) {
+          const jc = _parseJC(rel.join_conditions);
+          const fc = rel.from_column || (jc[0]?.from_col||'');
+          const tc = rel.to_column   || (jc[0]?.to_col||'');
           cy.add({data:{
-            id:`rel-${r.id}`,source:r.from_entity,target:r.to_entity,
-            edgeLabel:r.left_col&&r.right_col?`${r.left_col} = ${r.right_col}`:'',
-            joinType:r.join_type,relStatus:r.rel_status||'untested',
-            suggested:r.status==='suggested',relId:r.id,_raw:r,
+            id:`rel-${rel.id}`, source:rel.from_entity, target:rel.to_entity,
+            edgeLabel: fc&&tc?`${fc} = ${tc}`:'',
+            joinType:rel.join_type, relStatus:'untested',
+            suggested:rel.status==='suggested', relId:rel.id, _raw:rel,
           }});
         }
       });
     }
   }
-  buildSidebar(); closeEntityModal();
+  buildSidebar();
+  closeEntityModal();
 }
 
-// ── Relationship CRUD ─────────────────────────────────────────────────────────
-function openRelModal(preFrom) {
-  const opts = graphData.entities.map(e => `<option value="${e.entity_name}">${e.display_name||e.entity_name}</option>`).join('');
-  document.getElementById('rf-from').innerHTML = opts;
-  document.getElementById('rf-to').innerHTML   = opts;
-  if (preFrom) document.getElementById('rf-from').value = preFrom;
-  document.getElementById('rf-lcol').value=''; document.getElementById('rf-rcol').value='';
-  document.getElementById('rel-modal').style.display='flex';
+// ── Add Join modal ─────────────────────────────────────────────────────────────
+function openAddJoinModal(preFrom) {
+  const opts = graphData.entities.map(e =>
+    `<option value="${_esc(e.entity_name)}"${e.entity_name===preFrom?' selected':''}>${_esc(e.display_name||e.entity_name)}</option>`
+  ).join('');
+  document.getElementById('ajm-from').innerHTML = opts;
+  document.getElementById('ajm-to').innerHTML   = opts;
+  if (preFrom) { document.getElementById('ajm-from').value = preFrom; }
+  document.getElementById('ajm-lcol').value = '';
+  document.getElementById('ajm-rcol').value = '';
+  document.getElementById('add-join-modal').style.display='flex';
 }
-function closeRelModal() { document.getElementById('rel-modal').style.display='none'; }
-async function saveRel() {
-  const payload = {
-    from_entity: document.getElementById('rf-from').value,
-    to_entity:   document.getElementById('rf-to').value,
-    left_col:    document.getElementById('rf-lcol').value.trim(),
-    right_col:   document.getElementById('rf-rcol').value.trim(),
-    join_type:   document.getElementById('rf-jtype').value,
-    cardinality: document.getElementById('rf-card').value,
-    status:      'confirmed',
-  };
-  if (payload.from_entity===payload.to_entity) { alert('Cannot join a table to itself.'); return; }
-  const r = await fetch(`${API_BASE}/relationships`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+function closeAddJoinModal() { document.getElementById('add-join-modal').style.display='none'; }
+
+async function saveNewJoin() {
+  const from_entity       = document.getElementById('ajm-from').value;
+  const to_entity         = document.getElementById('ajm-to').value;
+  const from_column       = document.getElementById('ajm-lcol').value.trim();
+  const to_column         = document.getElementById('ajm-rcol').value.trim();
+  const join_type         = document.getElementById('ajm-jtype').value;
+  const relationship_type = document.getElementById('ajm-card').value;
+
+  if (from_entity === to_entity) { alert('Cannot join a table to itself.'); return; }
+
+  const join_conditions = from_column && to_column ? [{from_col:from_column, to_col:to_column}] : [];
+  const payload = {from_entity, to_entity, from_column, to_column, join_type, relationship_type, join_conditions, status:'confirmed'};
+
+  const r = await fetch(`${API_BASE}/relationships`, {
+    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload),
+  });
   if (!r.ok) { alert('Save failed'); return; }
   const saved = await r.json();
-  const rel = {...payload, id:saved.id||saved.rel_id, rel_status:'untested'};
+  const rel   = {...payload, id:saved.id||saved.rel_id, validation_status:'untested', join_conditions: JSON.stringify(join_conditions)};
   graphData.relationships.push(rel);
-  cy.add({data:{id:`rel-${rel.id}`,source:rel.from_entity,target:rel.to_entity,edgeLabel:rel.left_col&&rel.right_col?`${rel.left_col} = ${rel.right_col}`:'',joinType:rel.join_type,relStatus:'untested',suggested:false,relId:rel.id,_raw:rel}});
-  buildSidebar(); closeRelModal();
-}
 
-// ── Confirm / Reject ──────────────────────────────────────────────────────────
-async function confirmSelected() {
-  if (!_selectedEntity) return;
-  await fetch(`${API_BASE}/confirm/entity/${encodeURIComponent(_selectedEntity)}`,{method:'POST'});
-  const e=graphData.entities.find(x=>x.entity_name===_selectedEntity);
-  if(e){e.status='confirmed';cy.getElementById(_selectedEntity).data('status','confirmed');}
-  selectEntity(_selectedEntity);
-}
-async function rejectSelected() {
-  if (!_selectedEntity) return;
-  if (!confirm(`Reject "${_selectedEntity}"?`)) return;
-  await fetch(`${API_BASE}/reject/entity/${encodeURIComponent(_selectedEntity)}`,{method:'POST'});
-  graphData.entities=graphData.entities.filter(e=>e.entity_name!==_selectedEntity);
-  cy.getElementById(_selectedEntity).remove();
-  buildSidebar(); clearSelection();
-}
+  const edgeLabel = from_column && to_column ? `${from_column} = ${to_column}` : '';
+  cy.add({data:{
+    id:`rel-${rel.id}`, source:from_entity, target:to_entity,
+    edgeLabel, joinType:join_type, relStatus:'untested', suggested:false, relId:rel.id, _raw:rel,
+  }});
 
-// ── Position ──────────────────────────────────────────────────────────────────
-async function saveEntityPosition(name, x, y) {
-  await fetch(`${API_BASE}/entities`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({entity_name:name,pos_x:Math.round(x),pos_y:Math.round(y)})}).catch(()=>{});
-}
-
-// ── Validate ──────────────────────────────────────────────────────────────────
-async function validateRel(relId) {
-  const r = await fetch(`${API_BASE}/relationships/${relId}/validate`,{method:'POST'});
-  if(!r.ok) return;
-  const d = await r.json();
-  const rel = graphData.relationships.find(x=>x.id===relId);
-  if(rel) rel.rel_status=d.status;
-  cy.getElementById(`rel-${relId}`).data('relStatus',d.status);
-  selectRel(relId);
-}
-async function validateAll() {
-  const btn=document.getElementById('validate-btn');
-  btn.textContent='⟳ Validating…'; btn.disabled=true;
-  try {
-    const r=await fetch(`${API_BASE}/relationships/validate-all`,{method:'POST'});
-    if(r.ok){const d=await r.json();(d.results||[]).forEach(res=>{const rel=graphData.relationships.find(x=>x.id===res.id);if(rel)rel.rel_status=res.status;cy.getElementById(`rel-${res.id}`).data('relStatus',res.status);});}
-  } finally { btn.textContent='✓ Validate joins'; btn.disabled=false; loadHealth(); }
-}
-
-// ── Suggest ───────────────────────────────────────────────────────────────────
-async function runSuggest() {
-  const btn=document.getElementById('suggest-btn');
-  btn.textContent='⟳ Thinking…'; btn.disabled=true;
-  try {
-    const r=await fetch(`${API_BASE}/suggest`,{method:'POST'});
-    if(r.ok){
-      const fresh=await fetch(`${API_BASE}/graph.json`);
-      const gd=await fresh.json();
-      graphData.entities=gd.entities; graphData.relationships=gd.relationships; graphData.properties=gd.properties||[];
-      cy.elements().remove(); cy.add(buildElements());
-      cy.layout({name:'dagre',rankDir:'LR',nodeSep:48,rankSep:160,padding:40}).run();
-      buildSidebar();
-    }
-  } finally { btn.textContent='✦ Suggest'; btn.disabled=false; }
-}
-
-// ── Bulk accept ───────────────────────────────────────────────────────────────
-async function bulkAccept(minConf) {
-  const r=await fetch(`${API_BASE}/bulk-accept`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({min_confidence:minConf})});
-  if(!r.ok) return;
-  graphData.entities.forEach(e=>{if(e.status==='suggested'&&(e.confidence_score||0)>=minConf){e.status='confirmed';cy.getElementById(e.entity_name).data('status','confirmed');}});
-  document.getElementById('pending-bar')?.remove();
   buildSidebar();
+  closeAddJoinModal();
+  // Update join count badge if panel is open
+  if (_selectedEntity) {
+    const joins = graphData.relationships.filter(r => r.from_entity===_selectedEntity || r.to_entity===_selectedEntity);
+    const badge = document.getElementById('bp-join-count');
+    if (badge) badge.textContent = joins.length;
+    if (_currentTab === 'joins') renderJoinsTab(_selectedEntity);
+  }
 }
 
-// ── Mode ──────────────────────────────────────────────────────────────────────
-function setMode(mode) {
-  currentMode=mode;
-  document.getElementById('mode-model').classList.toggle('active',mode==='model');
-  document.getElementById('mode-validate').classList.toggle('active',mode==='validate');
-  document.getElementById('eg-shell').classList.toggle('validate-mode',mode==='validate');
+// ── Suggest ────────────────────────────────────────────────────────────────────
+async function runSuggest() {
+  const btn = document.getElementById('suggest-btn');
+  btn.textContent = '⟳ Thinking…'; btn.disabled = true;
+  try {
+    const r = await fetch(`${API_BASE}/suggest`, {method:'POST'});
+    if (r.ok) {
+      const fresh = await fetch(`${API_BASE}/graph.json`);
+      const gd = await fresh.json();
+      graphData.entities      = gd.entities;
+      graphData.relationships = gd.relationships;
+      graphData.properties    = gd.properties || [];
+      cy.elements().remove();
+      cy.add(buildElements());
+      cy.layout({name:'dagre', rankDir:'LR', nodeSep:48, rankSep:160, padding:40}).run();
+      buildSidebar();
+      closeBP();
+    } else {
+      alert('Suggestion failed. Check the console for details.');
+    }
+  } catch(e) {
+    alert('Suggestion error: ' + e.message);
+  } finally {
+    btn.textContent = '✦ Suggest'; btn.disabled = false;
+  }
 }
 
-// ── Schema filter ─────────────────────────────────────────────────────────────
-function populateSchemaFilter() {
-  const schemas=[...new Set(graphData.entities.map(e=>e.schema_name).filter(Boolean))];
-  const sel=document.getElementById('schema-filter');
-  schemas.forEach(s=>{const o=document.createElement('option');o.value=s;o.textContent=s;sel.appendChild(o);});
-}
-function applySchemaFilter() {
-  const s=document.getElementById('schema-filter').value;
-  cy.nodes().forEach(n=>{n.style('display',!s||n.data('_raw')?.schema_name===s?'element':'none');});
+// ── Position ───────────────────────────────────────────────────────────────────
+async function saveEntityPosition(name, x, y) {
+  await fetch(`${API_BASE}/entities/${encodeURIComponent(name)}/position`, {
+    method:'PATCH', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({pos_x: Math.round(x), pos_y: Math.round(y)}),
+  }).catch(() => {});
 }
 
-// ── Health ────────────────────────────────────────────────────────────────────
-async function loadHealth() {
-  try{const r=await fetch(`${API_BASE}/health`);if(r.ok){_health=await r.json();renderHealthBadge();}}catch(e){}
-}
-function renderHealthBadge() {
-  const btn=document.getElementById('health-btn');if(!btn)return;
-  const s=_health.score;
-  const cls=s===null?'none':s>=85?'green':s>=60?'amber':'red';
-  btn.className=`eg-health-btn ${cls}`;
-  btn.innerHTML=`♥ Health ${s!==null?s+'%':'—'}`;
-}
-function toggleHealth() {
-  const panel=document.getElementById('health-panel');
-  if(panel.style.display!=='none'){panel.style.display='none';return;}
-  panel.style.display='block';
-  const body=document.getElementById('health-body');
-  const issues=_health.issues||[];
-  const unmapped=_health.unmapped_tables||[];
-  body.innerHTML=`
-    <div style="padding:.65rem .9rem;border-bottom:1px solid var(--border)">
-      <div style="font-size:26px;font-weight:800;color:var(--text)">${_health.score??'—'}<span style="font-size:13px;color:var(--text-muted)">%</span></div>
-      <div style="font-size:11px;color:var(--text-muted)">${_health.error_count||0} errors · ${_health.warning_count||0} warnings</div>
-    </div>
-    ${issues.map(i=>`<div style="padding:.5rem .9rem;border-bottom:1px solid var(--border);font-size:12px;display:flex;gap:.5rem">
-      <span style="width:14px;height:14px;border-radius:50%;background:${i.severity==='error'?'#DC2626':'#D97706'};flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;font-size:9px;font-weight:900;color:#fff;margin-top:1px">!</span>
-      <div><div style="color:var(--text-soft)">${i.message}</div>${i.entity_name?`<div style="font-size:10px;font-weight:700;color:var(--primary);cursor:pointer" onclick="focusNode('${i.entity_name}');document.getElementById('health-panel').style.display='none'">${i.entity_name}</div>`:''}</div>
-    </div>`).join('')}
-    ${unmapped.length?`<div style="padding:.35rem .9rem;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);background:var(--surface-2);border-bottom:1px solid var(--border)">UNMAPPED (${unmapped.length})</div>
-    ${unmapped.map(t=>`<div style="padding:.4rem .9rem;border-bottom:1px solid var(--border);font-size:11px;font-family:Consolas,monospace;color:var(--text-soft)">${t}</div>`).join('')}`:''}
-    ${!issues.length&&!unmapped.length?'<div style="padding:1.5rem;text-align:center;color:var(--text-muted);font-size:12px">✓ No issues found</div>':''}
-  `;
-}
-
-// ── Properties ────────────────────────────────────────────────────────────────
+// ── Properties ─────────────────────────────────────────────────────────────────
 async function loadProperties() {
-  try{const r=await fetch(`${API_BASE}/graph.json`);if(r.ok){const d=await r.json();graphData.properties=d.properties||[];}}catch(e){}
+  try {
+    const r = await fetch(`${API_BASE}/graph.json`);
+    if (r.ok) { const d = await r.json(); graphData.properties = d.properties || []; }
+  } catch(e) {}
 }
 
-// ── Keyboard ──────────────────────────────────────────────────────────────────
-document.addEventListener('keydown', e => {
-  if (e.target.tagName==='INPUT'||e.target.tagName==='TEXTAREA'||e.target.tagName==='SELECT') return;
-  if (e.key==='Delete'||e.key==='Backspace') deleteSelected();
-  if (e.key==='f'||e.key==='F') fitView();
-  if (e.key==='n'||e.key==='N') openEntityModal(null);
-  if (e.key==='r'||e.key==='R') openRelModal();
-  if (e.key==='Escape') { clearSelection(); document.getElementById('health-panel').style.display='none'; }
+// ── Keyboard shortcuts ─────────────────────────────────────────────────────────
+document.addEventListener('keydown', ev => {
+  if (ev.target.tagName==='INPUT'||ev.target.tagName==='TEXTAREA'||ev.target.tagName==='SELECT') return;
+  if (ev.key==='Delete'||ev.key==='Backspace') deleteSelected();
+  if (ev.key==='f'||ev.key==='F') fitView();
+  if (ev.key==='n'||ev.key==='N') openEntityModal(null);
+  if (ev.key==='r'||ev.key==='R') openAddJoinModal(_selectedEntity);
+  if (ev.key==='Escape') { closeBP(); document.querySelectorAll('.eg-modal-overlay').forEach(m=>m.style.display='none'); }
 });
 
-// ── Boot ──────────────────────────────────────────────────────────────────────
+// ── Boot ───────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   cytoscape.use(cytoscapeDagre);
   initCytoscape();
 });
 </script>
-{% endblock %}
+</body>
+</html>
