@@ -888,6 +888,7 @@ def _build_join_map(master: dict) -> str:
 
 _FACT_PREFIXES   = {"fact_", "fct_"}
 _FACT_SUFFIXES   = {"_fact", "_fct"}
+_FACT_CONTAINS   = {"_fact_"}
 _BRIDGE_PREFIXES = {"bridge_", "brg_", "xref_", "map_", "rel_"}
 _BRIDGE_SUFFIXES = {"_bridge", "_brg", "_xref", "_map"}
 
@@ -1024,7 +1025,9 @@ def _col_to_target_entity(
 
 def _infer_entity_type(table_name: str) -> str:
     n = table_name.lower()
-    if any(n.startswith(p) for p in _FACT_PREFIXES) or any(n.endswith(s) for s in _FACT_SUFFIXES):
+    if (any(n.startswith(p) for p in _FACT_PREFIXES)
+            or any(n.endswith(s) for s in _FACT_SUFFIXES)
+            or any(seg in n for seg in _FACT_CONTAINS)):
         return "fact"
     if any(n.startswith(p) for p in _BRIDGE_PREFIXES) or any(n.endswith(s) for s in _BRIDGE_SUFFIXES):
         return "bridge"
