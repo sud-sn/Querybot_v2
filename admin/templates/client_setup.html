@@ -841,9 +841,9 @@
       (piiCount ? ` &nbsp;·&nbsp; <span style="color:var(--amber)">${piiCount} PII</span>` : '') +
       `</span>` +
       (canMask && piiCount
-        ? `<button class="tbl-fields-btn" style="margin-left:auto;font-size:9px" onclick="_tblMaskPiiOnly(${JSON.stringify(fqn)}, ${JSON.stringify(panel.id)})">Mark PII only</button>` +
-          `<button class="tbl-fields-btn" style="font-size:9px" onclick="_tblMaskAll(${JSON.stringify(fqn)}, ${JSON.stringify(panel.id)}, ${JSON.stringify(cols.map(c=>c.name))})">All</button>` +
-          `<button class="tbl-fields-btn" style="font-size:9px" onclick="_tblMaskNone(${JSON.stringify(fqn)}, ${JSON.stringify(panel.id)})">None</button>`
+        ? `<button class="tbl-fields-btn" style="margin-left:auto;font-size:9px" onclick='_tblMaskPiiOnly(${JSON.stringify(fqn)}, ${JSON.stringify(panel.id)})'>Mark PII only</button>` +
+          `<button class="tbl-fields-btn" style="font-size:9px" onclick='_tblMaskAll(${JSON.stringify(fqn)}, ${JSON.stringify(panel.id)}, ${JSON.stringify(cols.map(c=>c.name))})'>All</button>` +
+          `<button class="tbl-fields-btn" style="font-size:9px" onclick='_tblMaskNone(${JSON.stringify(fqn)}, ${JSON.stringify(panel.id)})'>None</button>`
         : '') +
       `</div>`;
 
@@ -854,7 +854,7 @@
       html +=
         `<div class="tbl-field-row">` +
         (canMask
-          ? `<input type="checkbox" class="scope-check" ${isMasked ? 'checked' : ''} onclick="_tblFieldMaskToggle(${JSON.stringify(fqn)},${JSON.stringify(col.name)},this.checked,${JSON.stringify(panel.id)})">`
+          ? `<input type="checkbox" class="scope-check" ${isMasked ? 'checked' : ''} onclick='_tblFieldMaskToggle(${JSON.stringify(fqn)},${JSON.stringify(col.name)},this.checked,${JSON.stringify(panel.id)})'>`
           : '') +
         `<span style="flex:1;font-weight:${isPii?'700':'400'}">${esc(col.name)}</span>` +
         `<span style="font-size:10px;color:var(--text-muted);font-family:monospace;margin-right:.3rem">${esc(col.type||'')}</span>` +
@@ -1726,7 +1726,7 @@
               + `<input type="checkbox" class="scope-check" id="${checkboxId(value)}" ${selected.has(value) ? 'checked' : ''} onchange='setupScopeCheck(${JSON.stringify(value)}, this.checked)'>`
               + `<span style="flex:1;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t)}</span>`
               + `</label>`
-              + `<button class="tbl-fields-btn" onclick="event.stopPropagation();_toggleTableFields(${JSON.stringify(value)}, this)">▶ Fields</button>`
+              + `<button class="tbl-fields-btn" onclick='event.stopPropagation();_toggleTableFields(${JSON.stringify(value)}, this)'>▶ Fields</button>`
               + `</div>`
               + `<div id="tblfld-${fldKey}" class="tbl-fields-body" style="display:none"></div>`
               + `</div>`;
