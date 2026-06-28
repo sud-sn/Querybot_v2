@@ -68,7 +68,10 @@
         Historical rows keep the cost that was active at call time.
       </p>
     </div>
-    <button type="button" class="btn btn-secondary btn-sm" id="addModelBtn">+ Add new model</button>
+    <div style="display:flex;gap:.5rem">
+      <button type="button" class="btn btn-secondary btn-sm" id="syncPricesBtn">⟳ Sync from provider prices</button>
+      <button type="button" class="btn btn-secondary btn-sm" id="addModelBtn">+ Add custom model</button>
+    </div>
   </div>
 
   {% if saved_pricing %}
@@ -180,6 +183,51 @@
 </div>
 {% endif %}
 
+<!-- ── Sync prices modal ───────────────────────────────────────────────────── -->
+<div id="syncModal" style="display:none;position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,.55);align-items:center;justify-content:center">
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;width:min(680px,95vw);max-height:82vh;display:flex;flex-direction:column;box-shadow:0 8px 32px rgba(0,0,0,.4)">
+    <!-- header -->
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:.9rem 1.1rem;border-bottom:1px solid var(--border)">
+      <div>
+        <strong style="font-size:15px">Sync from provider prices</strong>
+        <span style="font-size:11px;color:var(--text-muted);margin-left:.5rem">Public list prices · USD per 1M tokens</span>
+      </div>
+      <button type="button" onclick="closeSyncModal()" style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--text-muted);line-height:1">✕</button>
+    </div>
+    <!-- filter bar -->
+    <div style="padding:.6rem 1.1rem;border-bottom:1px solid var(--border);display:flex;gap:.5rem;flex-wrap:wrap;align-items:center">
+      <input id="syncSearch" type="text" placeholder="Filter models…"
+        oninput="filterSyncRows()"
+        style="padding:5px 8px;border:1px solid var(--border);border-radius:5px;font-size:13px;flex:1;min-width:140px;background:var(--surface-2);color:var(--text)">
+      <div id="syncProviderBtns" style="display:flex;gap:.3rem;flex-wrap:wrap"></div>
+    </div>
+    <!-- body -->
+    <div id="syncBody" style="overflow-y:auto;flex:1;padding:.5rem 1.1rem">
+      <div id="syncLoading" style="text-align:center;padding:2rem;color:var(--text-muted)">Loading prices…</div>
+      <table id="syncTable" class="table" style="display:none">
+        <thead><tr>
+          <th style="width:32px"><input type="checkbox" id="syncCheckAll" onchange="toggleAllSync(this)"></th>
+          <th>Model</th>
+          <th>Provider</th>
+          <th>Input / 1M</th>
+          <th>Output / 1M</th>
+          <th style="width:80px">Status</th>
+        </tr></thead>
+        <tbody id="syncRows"></tbody>
+      </table>
+      <div id="syncError" style="display:none;color:var(--red);padding:1rem"></div>
+    </div>
+    <!-- footer -->
+    <div style="padding:.75rem 1.1rem;border-top:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:.5rem;flex-wrap:wrap">
+      <span id="syncSelCount" style="font-size:12px;color:var(--text-muted)">0 selected</span>
+      <div style="display:flex;gap:.5rem">
+        <button type="button" class="btn btn-secondary btn-sm" onclick="closeSyncModal()">Cancel</button>
+        <button type="button" class="btn btn-primary btn-sm" id="syncSaveBtn" onclick="saveSyncedPrices()" disabled>Save selected</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
 document.getElementById('addModelBtn').addEventListener('click', function() {
   var f = document.getElementById('addModelForm');
@@ -217,7 +265,6 @@ function savePricingRow(btn, model, accountId) {
     alert('Please enter valid numeric rates.');
     return;
   }
-  // Submit via a hidden inline form so we stay on the same page with feedback
   var form = document.createElement('form');
   form.method = 'post';
   form.action = '/admin/clients/' + accountId + '/billing/pricing/save';
@@ -228,6 +275,164 @@ function savePricingRow(btn, model, accountId) {
   });
   document.body.appendChild(form);
   form.submit();
+}
+
+/* ── Sync prices modal ─────────────────────────────────────────────────── */
+var _syncPrices   = [];
+var _syncFilter   = '';
+var _syncProvider = '';
+var _accountId    = '{{ client.account_id }}';
+
+document.getElementById('syncPricesBtn').addEventListener('click', openSyncModal);
+
+function openSyncModal() {
+  var modal = document.getElementById('syncModal');
+  modal.style.display = 'flex';
+  if (_syncPrices.length === 0) loadSyncPrices();
+}
+
+function closeSyncModal() {
+  document.getElementById('syncModal').style.display = 'none';
+}
+// Close on backdrop click
+document.getElementById('syncModal').addEventListener('click', function(e) {
+  if (e.target === this) closeSyncModal();
+});
+
+function loadSyncPrices() {
+  document.getElementById('syncLoading').style.display = 'block';
+  document.getElementById('syncTable').style.display   = 'none';
+  document.getElementById('syncError').style.display   = 'none';
+
+  fetch('/admin/clients/' + _accountId + '/billing/known-prices')
+    .then(function(r){ return r.json(); })
+    .then(function(data) {
+      document.getElementById('syncLoading').style.display = 'none';
+      if (!data.ok) {
+        document.getElementById('syncError').textContent = data.error || 'Failed to load prices.';
+        document.getElementById('syncError').style.display = 'block';
+        return;
+      }
+      _syncPrices = data.prices || [];
+      buildProviderBtns();
+      renderSyncRows();
+      document.getElementById('syncTable').style.display = 'table';
+    })
+    .catch(function(err) {
+      document.getElementById('syncLoading').style.display = 'none';
+      document.getElementById('syncError').textContent = 'Request failed: ' + err;
+      document.getElementById('syncError').style.display = 'block';
+    });
+}
+
+function buildProviderBtns() {
+  var providers = [...new Set(_syncPrices.map(function(p){ return p.provider; }))];
+  var container = document.getElementById('syncProviderBtns');
+  container.innerHTML = '';
+  // "All" pill
+  var all = document.createElement('button');
+  all.type = 'button';
+  all.textContent = 'All';
+  all.className = 'btn btn-xs btn-primary';
+  all.dataset.provider = '';
+  all.onclick = function(){ _syncProvider = ''; updateProviderBtns(this); filterSyncRows(); };
+  container.appendChild(all);
+  providers.forEach(function(prov) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = prov;
+    b.className = 'btn btn-xs btn-secondary';
+    b.dataset.provider = prov;
+    b.onclick = function(){ _syncProvider = prov; updateProviderBtns(this); filterSyncRows(); };
+    container.appendChild(b);
+  });
+}
+
+function updateProviderBtns(active) {
+  document.querySelectorAll('#syncProviderBtns button').forEach(function(b) {
+    b.className = b === active ? 'btn btn-xs btn-primary' : 'btn btn-xs btn-secondary';
+  });
+}
+
+function filterSyncRows() {
+  _syncFilter = (document.getElementById('syncSearch').value || '').toLowerCase();
+  renderSyncRows();
+}
+
+function renderSyncRows() {
+  var tbody = document.getElementById('syncRows');
+  tbody.innerHTML = '';
+  var visible = _syncPrices.filter(function(p) {
+    if (_syncProvider && p.provider !== _syncProvider) return false;
+    if (_syncFilter && p.model.toLowerCase().indexOf(_syncFilter) === -1) return false;
+    return true;
+  });
+  visible.forEach(function(p, i) {
+    var tr = document.createElement('tr');
+    tr.dataset.model    = p.model;
+    tr.dataset.tokensIn  = p.tokens_in;
+    tr.dataset.tokensOut = p.tokens_out;
+    var badge = p.exists
+      ? '<span style="font-size:10px;background:var(--blue);color:#fff;padding:1px 5px;border-radius:3px">saved</span>'
+      : '<span style="font-size:10px;background:var(--green);color:#fff;padding:1px 5px;border-radius:3px">new</span>';
+    tr.innerHTML =
+      '<td><input type="checkbox" class="sync-chk" onchange="updateSyncCount()" ' + (p.exists ? '' : 'checked') + '></td>' +
+      '<td><code style="font-size:12px">' + p.model + '</code></td>' +
+      '<td style="font-size:12px;color:var(--text-muted)">' + p.provider + '</td>' +
+      '<td style="font-size:13px">$' + p.tokens_in.toFixed(2) + '</td>' +
+      '<td style="font-size:13px">$' + p.tokens_out.toFixed(2) + '</td>' +
+      '<td>' + badge + '</td>';
+    tbody.appendChild(tr);
+  });
+  updateSyncCount();
+}
+
+function toggleAllSync(master) {
+  document.querySelectorAll('#syncRows .sync-chk').forEach(function(c){ c.checked = master.checked; });
+  updateSyncCount();
+}
+
+function updateSyncCount() {
+  var n = document.querySelectorAll('#syncRows .sync-chk:checked').length;
+  document.getElementById('syncSelCount').textContent = n + ' selected';
+  document.getElementById('syncSaveBtn').disabled = n === 0;
+  document.getElementById('syncCheckAll').checked =
+    n > 0 && n === document.querySelectorAll('#syncRows .sync-chk').length;
+}
+
+function saveSyncedPrices() {
+  var rows = document.querySelectorAll('#syncRows tr');
+  var toSave = [];
+  rows.forEach(function(tr) {
+    var chk = tr.querySelector('.sync-chk');
+    if (chk && chk.checked) {
+      toSave.push({ model: tr.dataset.model, tokens_in: tr.dataset.tokensIn, tokens_out: tr.dataset.tokensOut });
+    }
+  });
+  if (toSave.length === 0) return;
+
+  var btn = document.getElementById('syncSaveBtn');
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+
+  // Save sequentially via fetch POSTs so we don't spam form submits
+  var saved = 0;
+  function saveNext() {
+    if (saved >= toSave.length) {
+      // All done — reload page to show updated table
+      window.location.href = '/admin/clients/' + _accountId + '/billing?saved_pricing=1';
+      return;
+    }
+    var item = toSave[saved++];
+    var fd = new FormData();
+    fd.append('model', item.model);
+    fd.append('tokens_in', item.tokens_in);
+    fd.append('tokens_out', item.tokens_out);
+    fetch('/admin/clients/' + _accountId + '/billing/pricing/save', { method: 'POST', body: fd })
+      .then(saveNext)
+      .catch(saveNext);
+  }
+  saveNext();
 }
 </script>
 {% endblock %}

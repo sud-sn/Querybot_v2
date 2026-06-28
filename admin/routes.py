@@ -2327,6 +2327,54 @@ async def billing_pricing_save(
     )
 
 
+@router.get("/clients/{account_id}/billing/known-prices")
+async def billing_known_prices(request: Request, account_id: str):
+    """Return a static lookup of current model pricing (USD per 1M tokens).
+
+    Sources: OpenAI pricing page, Anthropic pricing page, Google pricing page.
+    Updated 2026-06. All prices are public list prices — no discount/commitment tiers.
+    """
+    if not _is_auth(request):
+        raise HTTPException(status_code=401)
+
+    PRICES = [
+        # ── OpenAI ──────────────────────────────────────────────────────────
+        {"model": "gpt-4o",                  "provider": "OpenAI",    "tokens_in": 2.50,  "tokens_out": 10.00},
+        {"model": "gpt-4o-2024-11-20",       "provider": "OpenAI",    "tokens_in": 2.50,  "tokens_out": 10.00},
+        {"model": "gpt-4o-mini",             "provider": "OpenAI",    "tokens_in": 0.15,  "tokens_out": 0.60},
+        {"model": "gpt-4o-mini-2024-07-18",  "provider": "OpenAI",    "tokens_in": 0.15,  "tokens_out": 0.60},
+        {"model": "gpt-4-turbo",             "provider": "OpenAI",    "tokens_in": 10.00, "tokens_out": 30.00},
+        {"model": "gpt-4",                   "provider": "OpenAI",    "tokens_in": 30.00, "tokens_out": 60.00},
+        {"model": "gpt-3.5-turbo",           "provider": "OpenAI",    "tokens_in": 0.50,  "tokens_out": 1.50},
+        {"model": "o1",                      "provider": "OpenAI",    "tokens_in": 15.00, "tokens_out": 60.00},
+        {"model": "o1-mini",                 "provider": "OpenAI",    "tokens_in": 1.10,  "tokens_out": 4.40},
+        {"model": "o3",                      "provider": "OpenAI",    "tokens_in": 10.00, "tokens_out": 40.00},
+        {"model": "o3-mini",                 "provider": "OpenAI",    "tokens_in": 1.10,  "tokens_out": 4.40},
+        {"model": "o4-mini",                 "provider": "OpenAI",    "tokens_in": 1.10,  "tokens_out": 4.40},
+        # ── Anthropic ───────────────────────────────────────────────────────
+        {"model": "claude-opus-4-8",         "provider": "Anthropic", "tokens_in": 15.00, "tokens_out": 75.00},
+        {"model": "claude-sonnet-4-6",       "provider": "Anthropic", "tokens_in": 3.00,  "tokens_out": 15.00},
+        {"model": "claude-haiku-4-5",        "provider": "Anthropic", "tokens_in": 0.80,  "tokens_out": 4.00},
+        {"model": "claude-3-5-sonnet-20241022","provider":"Anthropic", "tokens_in": 3.00,  "tokens_out": 15.00},
+        {"model": "claude-3-5-haiku-20241022","provider": "Anthropic", "tokens_in": 0.80,  "tokens_out": 4.00},
+        {"model": "claude-3-opus-20240229",  "provider": "Anthropic", "tokens_in": 15.00, "tokens_out": 75.00},
+        {"model": "claude-3-sonnet-20240229","provider": "Anthropic", "tokens_in": 3.00,  "tokens_out": 15.00},
+        {"model": "claude-3-haiku-20240307", "provider": "Anthropic", "tokens_in": 0.25,  "tokens_out": 1.25},
+        # ── Google ──────────────────────────────────────────────────────────
+        {"model": "gemini-2.5-pro",          "provider": "Google",    "tokens_in": 1.25,  "tokens_out": 10.00},
+        {"model": "gemini-2.5-flash",        "provider": "Google",    "tokens_in": 0.15,  "tokens_out": 0.60},
+        {"model": "gemini-1.5-pro",          "provider": "Google",    "tokens_in": 1.25,  "tokens_out": 5.00},
+        {"model": "gemini-1.5-flash",        "provider": "Google",    "tokens_in": 0.075, "tokens_out": 0.30},
+    ]
+
+    # Mark which models are already in the DB
+    existing = {r["model"] for r in store.get_all_pricing()}
+    for p in PRICES:
+        p["exists"] = p["model"] in existing
+
+    return JSONResponse({"ok": True, "prices": PRICES})
+
+
 @router.get("/clients/{account_id}/billing/export.csv")
 async def billing_export(request: Request, account_id: str):
     if not _is_auth(request):
