@@ -1,5 +1,5 @@
-{% extends "base.html" %}
-{% from "macros.html" import breadcrumb, client_workspace_nav, alert %}
+{% extends "client_base.html" %}
+{% from "macros.html" import breadcrumb, alert %}
 {% from "icons.html" import ic %}
 {% block title %}Setup — {{ client.client_name or client.account_id[:16] }}{% endblock %}
 {% block head %}
@@ -116,7 +116,6 @@
 {% endblock %}
 {% block content %}
 
-{{ client_workspace_nav(client, "setup") }}
 
 {# ── Wizard step indicator ── #}
 {% set _w1 = db_cfg is not none %}

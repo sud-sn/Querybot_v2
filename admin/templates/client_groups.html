@@ -1,5 +1,5 @@
-{% extends "base.html" %}
-{% from "macros.html" import breadcrumb, client_workspace_nav %}
+{% extends "client_base.html" %}
+{% from "macros.html" import breadcrumb %}
 {% block title %}Groups — {{ client.client_name }}{% endblock %}
 {% block breadcrumb %}
 {{ breadcrumb([
@@ -25,7 +25,6 @@
 {% endblock %}
 {% block content %}
 
-{{ client_workspace_nav(client, "groups") }}
 
 <div style="margin-bottom:1.25rem">
   <h1 style="font-size:20px;font-weight:700">Groups &amp; Table Access</h1>

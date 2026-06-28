@@ -63,6 +63,7 @@
 <div class="shell">
 
   {# ──────── Sidebar ──────── #}
+  {% block sidebar %}
   <aside class="sidebar" id="sidebar" aria-label="Admin navigation">
 
     <div class="sidebar-brand">
@@ -115,6 +116,7 @@
     </div>
 
   </aside>
+  {% endblock sidebar %}
   {# ── end sidebar ── #}
 
   {# ──────── Main area ──────── #}

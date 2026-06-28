@@ -1,5 +1,5 @@
-{% extends "base.html" %}
-{% from "macros.html" import breadcrumb, client_workspace_nav %}
+{% extends "client_base.html" %}
+{% from "macros.html" import breadcrumb %}
 {% block title %}Metric Registry — {{ client.client_name }}{% endblock %}
 {% block breadcrumb %}
 {{ breadcrumb([
@@ -272,7 +272,6 @@
 {% endblock %}
 {% block content %}
 
-{{ client_workspace_nav(client, "metrics") }}
 
 {% set metric_list = metrics if metrics else [] %}
 {% set formula_count = metric_list | selectattr('formula_type', 'equalto', 'expression') | list | length %}

@@ -1,5 +1,5 @@
-{% extends "base.html" %}
-{% from "macros.html" import breadcrumb, client_workspace_nav, alert, empty_state %}
+{% extends "client_base.html" %}
+{% from "macros.html" import breadcrumb, alert, empty_state %}
 {% from "icons.html" import ic %}
 {% block title %}Users — {{ client.client_name }}{% endblock %}
 {% block breadcrumb %}
@@ -12,7 +12,6 @@
 {% endblock %}
 {% block content %}
 
-{{ client_workspace_nav(client, "users") }}
 
 <div class="page-header">
   <div class="page-header-body">
