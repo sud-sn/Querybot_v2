@@ -1,5 +1,5 @@
-{% extends "base.html" %}
-{% from "macros.html" import breadcrumb, client_workspace_nav, page_header, empty_state %}
+{% extends "client_base.html" %}
+{% from "macros.html" import breadcrumb, page_header, empty_state %}
 {% block title %}Knowledge Base - {{ client.client_name or client.account_id[:16] }}{% endblock %}
 {% block breadcrumb %}
 {{ breadcrumb([
@@ -136,7 +136,6 @@
 {% endblock %}
 {% block content %}
 
-{{ client_workspace_nav(client, "kb") }}
 
 {% call page_header("Knowledge Base", "Review and improve the field metadata QueryBot uses to understand business questions.") %}
   <div class="kb-hero-actions">

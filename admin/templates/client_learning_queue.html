@@ -1,5 +1,5 @@
-{% extends "base.html" %}
-{% from "macros.html" import breadcrumb, client_workspace_nav %}
+{% extends "client_base.html" %}
+{% from "macros.html" import breadcrumb %}
 {% block title %}Learning Queue — {{ client.client_name or client.account_id[:16] }}{% endblock %}
 {% block breadcrumb %}
 {{ breadcrumb([
@@ -62,7 +62,6 @@
 </style>
 {% endblock %}
 {% block content %}
-{{ client_workspace_nav(client, "learning_queue") }}
 
 {% if not flag_enabled %}
 <div class="flag-off-notice" style="display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap">

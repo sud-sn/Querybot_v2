@@ -1,5 +1,5 @@
-{% extends "base.html" %}
-{% from "macros.html" import breadcrumb, client_workspace_nav %}
+{% extends "client_base.html" %}
+{% from "macros.html" import breadcrumb %}
 {% block title %}Business Glossary — {{ client.client_name }}{% endblock %}
 {% block breadcrumb %}
 {{ breadcrumb([
@@ -58,7 +58,6 @@ details[open].edit-panel summary{background:var(--gray-100)}
 {% endblock %}
 {% block content %}
 
-{{ client_workspace_nav(client, "glossary") }}
 
 <div style="display:flex;align-items:center;justify-content:space-between;
   margin-bottom:1.25rem;flex-wrap:wrap;gap:.75rem">

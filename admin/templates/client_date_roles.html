@@ -1,5 +1,5 @@
-{% extends "base.html" %}
-{% from "macros.html" import breadcrumb, client_workspace_nav, alert, empty_state %}
+{% extends "client_base.html" %}
+{% from "macros.html" import breadcrumb, alert, empty_state %}
 {% block title %}Date Roles — {{ client.client_name }}{% endblock %}
 {% block breadcrumb %}
 {{ breadcrumb([
@@ -74,7 +74,6 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
 {% endblock %}
 {% block content %}
 
-{{ client_workspace_nav(client, "date_roles") }}
 
 {% if saved %}
 {{ alert("Date role approved and saved to semantic model.", "success") }}

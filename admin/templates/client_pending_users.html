@@ -1,5 +1,5 @@
-{% extends "base.html" %}
-{% from "macros.html" import breadcrumb, client_workspace_nav %}
+{% extends "client_base.html" %}
+{% from "macros.html" import breadcrumb %}
 {% block title %}Pending Access — {{ client.client_name or client.account_id[:16] }}{% endblock %}
 {% block breadcrumb %}
 {{ breadcrumb([
@@ -47,7 +47,6 @@
 </style>
 {% endblock %}
 {% block content %}
-{{ client_workspace_nav(client, "pending_users") }}
 
 <!-- Stats row -->
 <div class="pu-stats">

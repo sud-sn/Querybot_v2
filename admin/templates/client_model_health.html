@@ -1,5 +1,5 @@
-{% extends "base.html" %}
-{% from "macros.html" import breadcrumb, client_workspace_nav, alert, empty_state %}
+{% extends "client_base.html" %}
+{% from "macros.html" import breadcrumb, alert, empty_state %}
 {% block title %}Model Health — {{ client.client_name }}{% endblock %}
 {% block breadcrumb %}
 {{ breadcrumb([
@@ -96,7 +96,6 @@ table.mh-tbl tr:hover td{background:color-mix(in srgb,var(--primary) 4%,var(--su
 {% endblock %}
 {% block content %}
 
-{{ client_workspace_nav(client, "model_health") }}
 
 {% if not health.has_model %}
 <div class="mh-shell">

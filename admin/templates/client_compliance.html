@@ -1,5 +1,5 @@
-{% extends "base.html" %}
-{% from "macros.html" import breadcrumb, client_workspace_nav %}
+{% extends "client_base.html" %}
+{% from "macros.html" import breadcrumb %}
 {% block title %}Compliance - {{ client.client_name or client.account_id[:16] }}{% endblock %}
 {% block breadcrumb %}
 {{ breadcrumb([
@@ -32,7 +32,6 @@
 </style>
 {% endblock %}
 {% block content %}
-{{ client_workspace_nav(client, "compliance") }}
 <div class="compliance-head">
   <div><h1 style="font-size:20px">Regulated Data Controls</h1><p style="font-size:13px;color:var(--text-muted)">Technical policy controls and evidence. This does not constitute regulatory certification.</p></div>
   {% set state = profile.lifecycle_state or 'DRAFT' %}

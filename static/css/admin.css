@@ -411,3 +411,184 @@ html[data-theme='dark'] .sidebar-foot .btn-secondary:hover {
 #healthArc {
   transition: stroke-dasharray .8s cubic-bezier(.22,.61,.36,1), stroke .3s;
 }
+
+/* ════════════════════════════════════════════════════════════════════
+   Client Workspace Sidebar
+   ════════════════════════════════════════════════════════════════════ */
+.client-sidebar {
+  width: 210px;
+  flex-shrink: 0;
+  background: var(--teal-900);
+  display: flex;
+  flex-direction: column;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+  border-right: 1px solid color-mix(in srgb, var(--teal-800) 70%, transparent);
+  z-index: 200;
+}
+html[data-theme='dark'] .client-sidebar {
+  background: color-mix(in srgb, var(--bg) 80%, var(--surface));
+  border-right-color: var(--border);
+}
+
+/* ── Client header ── */
+.cs-header {
+  padding: .9rem 1rem .8rem;
+  border-bottom: 1px solid color-mix(in srgb, white 10%, transparent);
+  flex-shrink: 0;
+}
+html[data-theme='dark'] .cs-header { border-bottom-color: var(--border); }
+
+.cs-back {
+  display: inline-flex;
+  align-items: center;
+  gap: .25rem;
+  font-size: 10px;
+  font-weight: 600;
+  color: color-mix(in srgb, white 45%, transparent);
+  text-decoration: none;
+  margin-bottom: .5rem;
+  letter-spacing: .02em;
+}
+html[data-theme='dark'] .cs-back { color: var(--text-muted); }
+.cs-back:hover { color: #fff; text-decoration: none; }
+html[data-theme='dark'] .cs-back:hover { color: var(--text); }
+
+.cs-name {
+  font-size: 13px;
+  font-weight: 800;
+  color: #fff;
+  letter-spacing: -.01em;
+  line-height: 1.25;
+  word-break: break-word;
+}
+html[data-theme='dark'] .cs-name { color: var(--text); }
+
+.cs-account-id {
+  font-size: 10px;
+  color: color-mix(in srgb, white 35%, transparent);
+  font-family: 'SFMono-Regular', Menlo, Consolas, monospace;
+  margin-top: .35rem;
+}
+html[data-theme='dark'] .cs-account-id { color: var(--text-muted); }
+
+/* ── Nav container ── */
+.cs-nav {
+  flex: 1;
+  overflow-y: auto;
+  padding: .4rem 0 .5rem;
+  scrollbar-width: thin;
+}
+
+/* ── Collapsible group ── */
+.cs-group { margin: 0; }
+
+.cs-group-btn {
+  display: flex;
+  align-items: center;
+  gap: .4rem;
+  width: 100%;
+  padding: .45rem 1rem .4rem;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  color: color-mix(in srgb, white 40%, transparent);
+  text-align: left;
+  transition: color .12s;
+}
+html[data-theme='dark'] .cs-group-btn { color: var(--text-muted); }
+.cs-group-btn:hover { color: color-mix(in srgb, white 75%, transparent); }
+html[data-theme='dark'] .cs-group-btn:hover { color: var(--text-soft); }
+
+/* Chevron SVG arrow */
+.cs-chevron {
+  width: 6px;
+  height: 10px;
+  flex-shrink: 0;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform .18s ease;
+}
+.cs-group.open > .cs-group-btn .cs-chevron { transform: rotate(90deg); }
+
+/* Items container — CSS height animation */
+.cs-items {
+  overflow: hidden;
+  max-height: 0;
+  transition: max-height .22s ease;
+}
+.cs-group.open > .cs-items { max-height: 400px; }
+
+/* ── Nav item link ── */
+.cs-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: .38rem 1rem .38rem 1.6rem;
+  font-size: 12px;
+  font-weight: 500;
+  color: color-mix(in srgb, white 55%, transparent);
+  text-decoration: none;
+  transition: background .1s, color .1s;
+  border-left: 2px solid transparent;
+}
+html[data-theme='dark'] .cs-item { color: var(--text-soft); }
+
+.cs-item:hover {
+  background: color-mix(in srgb, white 6%, transparent);
+  color: #fff;
+  text-decoration: none;
+}
+html[data-theme='dark'] .cs-item:hover {
+  background: var(--row-hover);
+  color: var(--text);
+}
+
+.cs-item.active {
+  color: #fff;
+  font-weight: 700;
+  background: color-mix(in srgb, var(--teal-400) 15%, transparent);
+  border-left-color: var(--teal-300);
+}
+html[data-theme='dark'] .cs-item.active {
+  color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 10%, transparent);
+  border-left-color: var(--primary);
+}
+
+/* ── Pending badge ── */
+.cs-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #ef4444;
+  color: #fff;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 800;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  flex-shrink: 0;
+}
+
+/* ── Mobile: client sidebar behaves like global sidebar ── */
+@media (max-width: 860px) {
+  .client-sidebar {
+    position: fixed;
+    left: -220px;
+    transition: left .25s;
+    z-index: 500;
+    height: 100%;
+  }
+  .client-sidebar.open { left: 0; }
+}

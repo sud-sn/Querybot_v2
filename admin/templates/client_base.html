@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+{% from "icons.html" import ic %}
+
+{# ── Client workspace: override global sidebar with per-client nav ── #}
+{% block sidebar %}
+{%- set _p  = request.url.path -%}
+{%- set _b  = "/admin/clients/" ~ client.account_id -%}
+
+{# Determine which group is active so it starts open #}
+{%- set _in_configure  = ('/setup' in _p or ('/kb' in _p and '/billing' not in _p) or '/graph' in _p or '/date-roles' in _p or '/glossary' in _p) -%}
+{%- set _in_monitor    = (_p == _b or _p == _b ~ '/' or '/metrics' in _p or '/model-health' in _p or '/traces' in _p or '/evals' in _p) -%}
+{%- set _in_access     = ('/users' in _p or '/groups' in _p or '/pending-users' in _p) -%}
+{%- set _in_governance = ('/compliance' in _p or '/billing' in _p or '/learning-queue' in _p) -%}
+
+<aside class="client-sidebar" id="sidebar" aria-label="Client workspace navigation">
+
+  {# ── Back + Client header ── #}
+  <div class="cs-header">
+    <a href="/admin/clients" class="cs-back">← All Clients</a>
+    <div class="cs-name">{{ client.client_name or client.account_id }}</div>
+    <div style="display:flex;align-items:center;gap:.4rem;margin-top:.3rem;flex-wrap:wrap">
+      {%- if client.state == "READY" %}<span class="badge badge-green" style="font-size:9px">READY</span>
+      {%- elif client.state == "KB_BUILDING" %}<span class="badge badge-amber" style="font-size:9px">BUILDING KB</span>
+      {%- elif client.state == "SCHEMA_READY" %}<span class="badge badge-blue" style="font-size:9px">SCHEMA READY</span>
+      {%- else %}<span class="badge badge-gray" style="font-size:9px">{{ client.state }}</span>{% endif %}
+    </div>
+    <div class="cs-account-id">{{ client.account_id }}</div>
+  </div>
+
+  {# ── Nav groups ── #}
+  <nav class="cs-nav" aria-label="Client sections">
+
+    {# Configure #}
+    <div class="cs-group{% if _in_configure %} open{% endif %}" id="csg-configure">
+      <button class="cs-group-btn" onclick="csToggleGroup('configure')" aria-expanded="{{ 'true' if _in_configure else 'false' }}">
+        <svg class="cs-chevron" viewBox="0 0 6 10" fill="currentColor"><path d="M1 1l4 4-4 4"/></svg>
+        Configure
+      </button>
+      <div class="cs-items">
+        <a href="{{ _b }}/setup"      class="cs-item{% if '/setup'      in _p %} active{% endif %}">Setup Wizard</a>
+        <a href="{{ _b }}/kb"         class="cs-item{% if '/kb'         in _p and '/billing' not in _p %} active{% endif %}">KB Editor</a>
+        <a href="{{ _b }}/graph"      class="cs-item{% if '/graph'      in _p %} active{% endif %}">Entity Graph</a>
+        <a href="{{ _b }}/date-roles" class="cs-item{% if '/date-roles' in _p %} active{% endif %}">Date Roles</a>
+        <a href="{{ _b }}/glossary"   class="cs-item{% if '/glossary'   in _p %} active{% endif %}">Glossary</a>
+      </div>
+    </div>
+
+    {# Monitor #}
+    <div class="cs-group{% if _in_monitor %} open{% endif %}" id="csg-monitor">
+      <button class="cs-group-btn" onclick="csToggleGroup('monitor')" aria-expanded="{{ 'true' if _in_monitor else 'false' }}">
+        <svg class="cs-chevron" viewBox="0 0 6 10" fill="currentColor"><path d="M1 1l4 4-4 4"/></svg>
+        Monitor
+      </button>
+      <div class="cs-items">
+        <a href="{{ _b }}"              class="cs-item{% if _p == _b or _p == _b ~ '/' %} active{% endif %}">Overview</a>
+        <a href="{{ _b }}/metrics"      class="cs-item{% if '/metrics'      in _p %} active{% endif %}">Metrics</a>
+        <a href="{{ _b }}/model-health" class="cs-item{% if '/model-health' in _p %} active{% endif %}">Model Health</a>
+        <a href="{{ _b }}/traces"       class="cs-item{% if '/traces'       in _p %} active{% endif %}">Traces</a>
+        <a href="{{ _b }}/evals"        class="cs-item{% if '/evals'        in _p %} active{% endif %}">Evals</a>
+      </div>
+    </div>
+
+    {# Access #}
+    <div class="cs-group{% if _in_access %} open{% endif %}" id="csg-access">
+      <button class="cs-group-btn" onclick="csToggleGroup('access')" aria-expanded="{{ 'true' if _in_access else 'false' }}">
+        <svg class="cs-chevron" viewBox="0 0 6 10" fill="currentColor"><path d="M1 1l4 4-4 4"/></svg>
+        Access
+      </button>
+      <div class="cs-items">
+        <a href="{{ _b }}/users"         class="cs-item{% if '/users'         in _p %} active{% endif %}">Users</a>
+        <a href="{{ _b }}/groups"        class="cs-item{% if '/groups'        in _p %} active{% endif %}">Groups</a>
+        <a href="{{ _b }}/pending-users" class="cs-item{% if '/pending-users' in _p %} active{% endif %}">
+          Pending Access
+          {%- if pending_count is defined and pending_count > 0 %}
+          <span class="cs-badge">{{ pending_count }}</span>
+          {%- endif %}
+        </a>
+      </div>
+    </div>
+
+    {# Governance #}
+    <div class="cs-group{% if _in_governance %} open{% endif %}" id="csg-governance">
+      <button class="cs-group-btn" onclick="csToggleGroup('governance')" aria-expanded="{{ 'true' if _in_governance else 'false' }}">
+        <svg class="cs-chevron" viewBox="0 0 6 10" fill="currentColor"><path d="M1 1l4 4-4 4"/></svg>
+        Governance
+      </button>
+      <div class="cs-items">
+        <a href="{{ _b }}/compliance"    class="cs-item{% if '/compliance'    in _p %} active{% endif %}">Compliance</a>
+        <a href="{{ _b }}/billing"       class="cs-item{% if '/billing'       in _p %} active{% endif %}">Billing</a>
+        <a href="{{ _b }}/learning-queue" class="cs-item{% if '/learning-queue' in _p %} active{% endif %}">Learning Queue</a>
+      </div>
+    </div>
+
+  </nav>
+
+  {# ── Footer: theme + logout ── #}
+  <div class="sidebar-foot">
+    <button type="button" class="theme-toggle" data-theme-toggle onclick="window.__qbAdminToggleTheme()">
+      <span class="ti-moon">{{ ic("moon", 16) }}</span>
+      <span class="ti-sun">{{ ic("sun", 16) }}</span>
+      <span class="theme-label">Dark mode</span>
+    </button>
+    <a href="/admin/logout" class="btn btn-secondary btn-sm">Logout</a>
+  </div>
+
+</aside>
+
+<script>
+(function () {
+  var STORE_KEY = 'qb-cs-collapsed-{{ client.account_id }}';
+
+  function getCollapsed() {
+    try { return JSON.parse(localStorage.getItem(STORE_KEY) || '[]'); } catch(e) { return []; }
+  }
+
+  function setCollapsed(arr) {
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(arr)); } catch(e) {}
+  }
+
+  function applyCollapsed() {
+    var collapsed = getCollapsed();
+    document.querySelectorAll('.cs-group').forEach(function(g) {
+      var id = g.id.replace('csg-', '');
+      var hasActive = g.querySelector('.cs-item.active');
+      // Never collapse the group that owns the active page
+      if (hasActive) {
+        g.classList.add('open');
+        return;
+      }
+      if (collapsed.indexOf(id) !== -1) {
+        g.classList.remove('open');
+      } else {
+        g.classList.add('open');
+      }
+    });
+  }
+
+  window.csToggleGroup = function(id) {
+    var g = document.getElementById('csg-' + id);
+    if (!g) return;
+    var hasActive = g.querySelector('.cs-item.active');
+    if (hasActive) return; // don't collapse active group
+    var isOpen = g.classList.toggle('open');
+    var btn = g.querySelector('.cs-group-btn');
+    if (btn) btn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+    var collapsed = getCollapsed();
+    if (isOpen) {
+      collapsed = collapsed.filter(function(x) { return x !== id; });
+    } else {
+      if (collapsed.indexOf(id) === -1) collapsed.push(id);
+    }
+    setCollapsed(collapsed);
+  };
+
+  // Apply on page load (after server-side open classes are rendered)
+  document.addEventListener('DOMContentLoaded', applyCollapsed);
+})();
+</script>
+{% endblock sidebar %}

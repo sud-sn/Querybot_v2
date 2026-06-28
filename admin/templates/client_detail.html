@@ -1,5 +1,5 @@
-{% extends "base.html" %}
-{% from "macros.html" import breadcrumb, client_workspace_nav %}
+{% extends "client_base.html" %}
+{% from "macros.html" import breadcrumb %}
 {% from "icons.html" import ic %}
 {% block title %}{{ client.client_name or client.account_id[:16] }} — QueryBot Admin{% endblock %}
 {% block breadcrumb %}
@@ -84,7 +84,6 @@
 {% endblock %}
 {% block content %}
 
-{{ client_workspace_nav(client, "overview") }}
 
 <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.75rem;margin-bottom:1.25rem">
   <div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap">
