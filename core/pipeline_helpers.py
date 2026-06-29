@@ -264,7 +264,7 @@ def _build_zero_row_message(
 
 # ── Metric formula helpers ────────────────────────────────────────────────────
 
-def _format_metric_formula_context(metrics: list[dict]) -> str:
+def _format_metric_formula_context(metrics: list[dict], account_id: str = "") -> str:
     if not metrics:
         return ""
 
@@ -301,6 +301,12 @@ def _format_metric_formula_context(metrics: list[dict]) -> str:
         if metric.get("default_time_column"):
             lines.append(f"   Default time column: {metric.get('default_time_column')} — use this column when grouping by date/period")
         sql_tpl = (metric.get("sql_template") or "").strip()
+        if account_id and "${" in sql_tpl:
+            try:
+                from store.config_store import resolve_metric_refs
+                sql_tpl = resolve_metric_refs(account_id, sql_tpl)
+            except Exception:
+                pass  # use raw formula if resolution fails
         lines.append(f"   EXACT formula to use in SELECT: {sql_tpl}")
         if formula_type == "expression" and req_cols:
             lines.append(
