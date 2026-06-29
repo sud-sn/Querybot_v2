@@ -1048,7 +1048,20 @@ async def platform_save(request: Request):
         store.save_platform(platform_type, name, creds, platform_id)
         return RedirectResponse("/admin/platforms?saved=1", status_code=303)
     except ValueError as e:
-        return RedirectResponse(f"/admin/platforms?error={e}", status_code=303)
+        # Re-render with form values intact so the user doesn't have to retype everything
+        platforms = store.list_platforms()
+        for p in platforms:
+            p["creds_masked"] = {k: store.mask(v) for k, v in p["credentials"].items()}
+        return _resp(request, "platforms.html", {
+            "platforms":       platforms,
+            "platform_fields": store.PLATFORM_FIELDS,
+            "error":           str(e),
+            "prefill": {
+                "platform_type": platform_type,
+                "name":          name,
+                **creds,
+            },
+        })
 
 @router.post("/platforms/delete")
 async def platform_delete(request: Request, platform_id: int = Form(...)):
