@@ -1184,6 +1184,44 @@ def list_metric_formula_context(account_id: str, question: str, limit: int = 6) 
     return [metric for _, metric in scored[: max(1, int(limit or 6))]]
 
 
+import re as _mref_re
+_METRIC_REF_RE = _mref_re.compile(r'\$\{([^}]+)\}')
+
+
+def resolve_metric_refs(account_id: str, formula: str, _seen: frozenset = frozenset()) -> str:
+    """
+    Expand ${MetricName} references in a formula recursively.
+    Each reference is wrapped in parens to preserve operator precedence.
+    Raises ValueError on unknown refs or circular dependencies.
+    """
+    if not formula or "${" not in formula:
+        return formula
+    metrics_by_name = {m["name"].lower(): m for m in list_metrics(account_id)}
+
+    def _expand(match: "_mref_re.Match") -> str:
+        ref_name = match.group(1).strip()
+        ref_key  = ref_name.lower()
+        if ref_key in _seen:
+            raise ValueError(f"Circular metric reference: ${{{ref_name}}}")
+        if ref_key not in metrics_by_name:
+            raise ValueError(f"Unknown metric \"{ref_name}\" — save that metric first before referencing it.")
+        inner = (metrics_by_name[ref_key].get("sql_template") or "").strip()
+        return f"({resolve_metric_refs(account_id, inner, _seen | frozenset([ref_key]))})"
+
+    return _METRIC_REF_RE.sub(_expand, formula)
+
+
+def validate_metric_refs(account_id: str, formula: str) -> list[str]:
+    """Return list of error strings for ${...} ref problems. Empty list = all OK."""
+    if not formula or "${" not in formula:
+        return []
+    try:
+        resolve_metric_refs(account_id, formula)
+        return []
+    except ValueError as exc:
+        return [str(exc)]
+
+
 def match_metric(account_id: str, question: str) -> dict | None:
     """
     Check if the question matches any trusted full-SQL metric by synonym lookup.

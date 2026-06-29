@@ -852,7 +852,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
         return
 
     _matched_metrics = _metric_scope.metrics
-    metric_formula_context = _format_metric_formula_context(_matched_metrics)
+    metric_formula_context = _format_metric_formula_context(_matched_metrics, account_id=account_id)
     _metric_formula_tables = set()
     for _metric in _matched_metrics:
         _metric_formula_tables.update(metric_source_tables(_metric, all_columns))

@@ -273,10 +273,16 @@ def validate_metric(
         )
 
     # ── 3. Extract functions and build formula_ast ───────────────────────────
-    functions_used    = _extract_functions(formula)
-    columns_referenced = _extract_columns(formula)
+    # Strip ${MetricName} refs before syntactic analysis — they expand to valid
+    # aggregates at runtime and should not be treated as unknown identifiers.
+    _METRIC_REF_STRIP = re.compile(r'\$\{[^}]+\}')
+    has_metric_refs   = bool(_METRIC_REF_STRIP.search(formula))
+    formula_stripped  = _METRIC_REF_STRIP.sub('SUM(1)', formula) if has_metric_refs else formula
+
+    functions_used    = _extract_functions(formula_stripped)
+    columns_referenced = _extract_columns(formula_stripped)
     aggregate_fns     = functions_used & _AGGREGATE_FUNCTIONS
-    has_subquery      = bool(_SUBQUERY_PATTERN.search(formula))
+    has_subquery      = bool(_SUBQUERY_PATTERN.search(formula_stripped))
 
     result.formula_ast = {
         "type":                 formula_type,
@@ -285,6 +291,7 @@ def validate_metric(
         "columns_referenced":   sorted(columns_referenced),
         "has_subquery":         has_subquery,
         "has_dangerous_keyword": not result.valid,
+        "has_metric_refs":      has_metric_refs,
     }
 
     # Stop further checks if we already have fatal errors
@@ -304,7 +311,8 @@ def validate_metric(
         )
 
     # ── 5. Aggregate rule for expression-type metrics ────────────────────────
-    if formula_type == "expression" and not aggregate_fns:
+    # Skip when metric refs are present — they expand to aggregates at runtime.
+    if formula_type == "expression" and not aggregate_fns and not has_metric_refs:
         result.add_error(
             "Expression-type metrics must contain at least one aggregate function "
             f"(e.g. SUM, COUNT, AVG). Found none in: {formula[:120]}"

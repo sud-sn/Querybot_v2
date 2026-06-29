@@ -4314,6 +4314,14 @@ async def metric_create(
         if raw:
             db_type = raw.get("db_type", "azure_sql")
 
+    # Validate ${MetricName} references before saving
+    _ref_errors = store.validate_metric_refs(account_id, sql_template.strip())
+    if _ref_errors:
+        from urllib.parse import quote
+        return RedirectResponse(
+            f"/admin/clients/{account_id}/metrics?error={quote(_ref_errors[0])}",
+            status_code=303)
+
     try:
         store.save_metric(account_id, {
             "name":                name.strip(),
@@ -4409,6 +4417,14 @@ async def metric_update(
         raw = store.get_db_config(client["db_config_id"])
         if raw:
             db_type = raw.get("db_type", "azure_sql")
+
+    # Validate ${MetricName} references before updating
+    _ref_errors_upd = store.validate_metric_refs(account_id, sql_template.strip())
+    if _ref_errors_upd:
+        from urllib.parse import quote
+        return RedirectResponse(
+            f"/admin/clients/{account_id}/metrics?error={quote(_ref_errors_upd[0])}",
+            status_code=303)
 
     store.update_metric(metric_id, {
         "name":                name.strip(),
@@ -4509,6 +4525,19 @@ async def metrics_validate(request: Request, account_id: str):
 
     from core.metric_validator import validate_metric, load_schema_columns
     schema_columns = load_schema_columns(account_id)
+
+    # Check metric refs separately so we can surface a clear error
+    _sql = (body.get("sql_template") or "").strip()
+    _ref_errs = store.validate_metric_refs(account_id, _sql)
+    if _ref_errs:
+        return JSONResponse({
+            "status":      "ok",
+            "valid":       False,
+            "errors":      _ref_errs,
+            "warnings":    [],
+            "formula_ast": {},
+        })
+
     result = validate_metric(body, db_type=db_type, schema_columns=schema_columns)
     return JSONResponse({
         "status":      "ok",
