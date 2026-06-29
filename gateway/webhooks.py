@@ -10,13 +10,14 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 
 import store
 from fastapi import APIRouter, Request, HTTPException, BackgroundTasks, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 
-from gateway import get_adapter
+from gateway import get_adapter, PlatformEvent
 from core.webhook_dedup import is_duplicate_event, remember_event
 from core.dispatcher import dispatch
 from core.query_pipeline import handle_query, _generate_duckdb_sql
@@ -49,6 +50,132 @@ from core.clarification import (
 log = logging.getLogger("querybot")
 
 router = APIRouter()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# REST API adapter — used by /api/ask (Copilot Studio, Power Automate, testing)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class _CaptureAdapter:
+    """
+    In-memory adapter that buffers pipeline output instead of posting to a
+    chat platform.  Used by POST /api/ask so callers get a synchronous text
+    response without needing Azure Bot / Slack / Zoom credentials.
+
+    Charts and live-status events are silently dropped — they make no sense
+    over a plain HTTP response.  Clarification prompts are captured as
+    structured data AND as plain text so the 'answer' field is always set.
+    """
+
+    platform_type = "api"
+
+    def __init__(self):
+        self.messages: list[str] = []
+        self.clarification: dict | None = None
+
+    # Required abstract methods
+    async def verify_request(self, body: bytes, headers: dict) -> bool:
+        return True
+
+    def parse_event(self, body: bytes, headers: dict):
+        return None
+
+    async def send_message(self, event, text: str) -> None:
+        if text and text.strip():
+            self.messages.append(text.strip())
+
+    async def upload_file(self, event, file_bytes: bytes, filename: str, mime_type: str = "image/png") -> None:
+        pass  # charts not returned over REST
+
+    # Optional methods called by the pipeline
+    async def send_status(self, event, stage: str, label: str, detail: str = "") -> None:
+        pass  # progress indicators not needed for sync API
+
+    async def send_clarification_prompt(self, event, question: str, options: list, pending_id=None) -> None:
+        self.clarification = {
+            "question": question,
+            "options": [
+                {"id": o.get("id") or o.get("_term_id") or "", "label": o.get("label") or o.get("value") or ""}
+                for o in (options or [])
+            ],
+        }
+        # Also populate messages so 'answer' is never empty
+        opts_text = "\n".join(f"- {o.get('label') or o.get('value', '')}" for o in (options or []))
+        self.messages.append(f"{question}\n\n{opts_text}")
+
+    async def send_chart(self, event, chart: dict) -> None:
+        pass  # charts not returned over REST
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# POST /api/ask — synchronous REST endpoint
+# ══════════════════════════════════════════════════════════════════════════════
+
+@router.post("/api/ask")
+async def api_ask(request: Request):
+    """
+    Synchronous question-answering endpoint for Copilot Studio, Power Automate,
+    and any HTTP caller that wants a plain JSON response.
+
+    Request body (JSON):
+        {
+            "question":   "What is my total revenue this month?",
+            "account_id": "Emco_Poc",
+            "api_key":    "your-secret-key"   ← required if QUERYBOT_API_KEY is set
+        }
+
+    Response:
+        {
+            "answer":        "Your total revenue is $1.2 M ...",
+            "clarification": null | { "question": "...", "options": [...] }
+        }
+
+    Security: set QUERYBOT_API_KEY environment variable to restrict access.
+    If the env var is not set the endpoint is open (suitable for local dev/demo only).
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(400, detail="Request body must be valid JSON.")
+
+    question   = (body.get("question") or "").strip()
+    account_id = (body.get("account_id") or "").strip()
+    api_key    = (body.get("api_key") or "").strip()
+
+    if not question:
+        raise HTTPException(400, detail="'question' is required.")
+    if not account_id:
+        raise HTTPException(400, detail="'account_id' is required.")
+
+    # API key guard — only enforced when QUERYBOT_API_KEY is set
+    expected_key = os.getenv("QUERYBOT_API_KEY", "")
+    if expected_key and api_key != expected_key:
+        raise HTTPException(401, detail="Invalid or missing api_key.")
+
+    # Confirm the client exists before spinning up the pipeline
+    client = store.get_client(account_id)
+    if not client:
+        raise HTTPException(404, detail=f"No client found for account_id '{account_id}'.")
+
+    event = PlatformEvent(
+        account_id = account_id,
+        user_id    = "api",
+        channel_id = "api",
+        text       = question,
+        platform   = "api",
+    )
+    adapter = _CaptureAdapter()
+
+    # Run the full pipeline synchronously — portal_user=None gives admin-level
+    # table access (no per-user restrictions), which is correct for system callers.
+    await handle_query(account_id, event, adapter, question, portal_user=None)
+
+    answer = "\n\n".join(adapter.messages) if adapter.messages else "No answer generated."
+    return {
+        "answer":        answer,
+        "clarification": adapter.clarification,
+    }
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Webhooks

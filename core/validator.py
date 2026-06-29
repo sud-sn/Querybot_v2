@@ -682,10 +682,26 @@ def validate_sql_detailed(
                     table_key = alias_to_table.get(table_ref, "")
                 elif len(unique_base_keys) == 1:
                     table_key = unique_base_keys[0]
+                else:
+                    # Unqualified column in a multi-table query — search all base
+                    # tables to find which one owns it (mirrors the unknown-column
+                    # scanner at line ~598 to avoid false plan-mismatch errors).
+                    table_key = next(
+                        (k for k in unique_base_keys if col_name in {str(c).upper() for c in (table_columns.get(k) or {})}),
+                        "",
+                    )
                 if table_key:
                     used_columns.add((table_key, col_name))
 
             sql_has_group_by = tree.find(sg_exp.Group) is not None
+
+            # Collect column names that appear in any approved metric formula —
+            # if the plan field is satisfied by a metric, skip the raw-column check.
+            _metric_formula_cols: set[str] = set()
+            for _mf in (semantic_context or {}).get("metric_formulas") or []:
+                _tpl = (_mf.get("sql_template") or "").upper()
+                for _m in re.finditer(r'\b([A-Z][A-Z0-9_]*)\b', _tpl):
+                    _metric_formula_cols.add(_m.group(1))
 
             missing_plan_fields: list[dict] = []
             for field in field_plan.get("fields") or []:
@@ -696,6 +712,10 @@ def validate_sql_detailed(
                 plan_col = (field.get("column") or "").upper()
                 plan_table = _find_table_with_column(table_columns, field.get("table") or "", plan_col)
                 if not plan_col or not plan_table:
+                    continue
+                # If the column is referenced by an approved metric formula,
+                # the formula is the authoritative source — skip this check.
+                if plan_col in _metric_formula_cols:
                     continue
                 if not any(_table_matches(used_table, plan_table) and used_col == plan_col for used_table, used_col in used_columns):
                     missing_plan_fields.append({
