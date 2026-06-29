@@ -339,12 +339,10 @@ def _role_for_column(column: str, data_type: str = "", distinct_values: str = ""
         return "infrastructure", evidence, warnings, default_filter
 
     if col in {"DELETED", "ARCHIVED"}:
-        evidence.append("standard soft-delete/archive flag")
-        default_filter = f"{col} = false"
+        evidence.append("standard soft-delete/archive flag — apply as optional filter only when user asks for active/non-deleted records")
         return "status_filter", evidence, warnings, default_filter
     if col == "DEL_REC_IND" or re.match(r"^DEL_[A-Z]+_REC_IND$", col):
-        evidence.append("standard deleted-record indicator — filter = 0 for active records")
-        default_filter = f"{col} = 0"
+        evidence.append("deleted-record indicator — do NOT auto-filter; only apply as WHERE condition when user explicitly requests active or non-deleted records")
         return "status_filter", evidence, warnings, default_filter
     if col.endswith("_FCT_KEY") or col.endswith("_KEY") and col.startswith(col.rsplit("_", 1)[0]):
         if col.endswith("_FCT_KEY"):
@@ -507,7 +505,11 @@ def format_schema_intelligence(table_name: str, columns: list[str], schema_md: s
 
     filters = [c.default_filter for c in enriched if c.default_filter]
     if filters:
-        lines.extend(["", "Default filter candidates:", *[f"- {f}" for f in filters]])
+        lines.extend([
+            "",
+            "Optional status filter columns (apply ONLY when user explicitly requests active/non-deleted records — do NOT add these to every query automatically):",
+            *[f"- {f}" for f in filters],
+        ])
 
     joins = [(c.column, eq) for c in enriched for eq in c.join_equivalents]
     if joins:
