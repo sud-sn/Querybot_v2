@@ -3981,13 +3981,16 @@ async def graph_suggest(request: Request, account_id: str):
         saved_entities += 1
 
         for field in ent.get("fields", []):
+            _syn = field.get("synonyms", "") or ""
+            if isinstance(_syn, list):
+                _syn = ", ".join(str(s) for s in _syn)
             store.save_entity_property(
                 account_id       = account_id,
                 entity_name      = ent.get("entity_name", ""),
                 column_name      = field.get("column_name", ""),
                 role             = field.get("role", "dimension"),
                 display_name     = field.get("display_name", ""),
-                synonyms         = field.get("synonyms", ""),
+                synonyms         = _syn,
                 confidence_score = int(field.get("confidence_score", 70)),
                 status           = "suggested",
             )
