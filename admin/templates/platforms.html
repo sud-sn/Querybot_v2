@@ -14,19 +14,20 @@
   <div class="card-body">
     <form method="post" action="/admin/platforms/save">
       <input type="hidden" name="platform_id" value="">
+      {% set pf = prefill or {} %}
       <div class="form-grid">
         <div class="form-group">
           <label>Platform type *</label>
           <select name="platform_type" onchange="showFields(this.value)" required>
             <option value="">— select —</option>
-            <option value="zoom">Zoom Team Chat</option>
-            <option value="teams">Microsoft Teams</option>
-            <option value="slack">Slack</option>
+            <option value="zoom"  {% if pf.get('platform_type')=='zoom'  %}selected{% endif %}>Zoom Team Chat</option>
+            <option value="teams" {% if pf.get('platform_type')=='teams' %}selected{% endif %}>Microsoft Teams</option>
+            <option value="slack" {% if pf.get('platform_type')=='slack' %}selected{% endif %}>Slack</option>
           </select>
         </div>
         <div class="form-group">
           <label>Friendly name *</label>
-          <input type="text" name="name" placeholder="e.g. Production Zoom" required>
+          <input type="text" name="name" placeholder="e.g. Production Zoom" value="{{ pf.get('name','') }}" required>
         </div>
       </div>
 
@@ -38,15 +39,15 @@
         </div>
         <div class="form-grid">
           <div class="form-group"><label>Client ID *</label>
-            <input type="text" name="client_id" placeholder="From Zoom App Credentials"></div>
+            <input type="text" name="client_id" placeholder="From Zoom App Credentials" value="{{ pf.get('client_id','') }}"></div>
           <div class="form-group"><label>Client Secret *</label>
-            <input type="password" name="client_secret"></div>
+            <input type="password" name="client_secret" value="{{ pf.get('client_secret','') }}"></div>
         </div>
         <div class="form-grid">
           <div class="form-group"><label>Bot JID *</label>
-            <input type="text" name="bot_jid" placeholder="botname@xmpp.zoom.us"></div>
+            <input type="text" name="bot_jid" placeholder="botname@xmpp.zoom.us" value="{{ pf.get('bot_jid','') }}"></div>
           <div class="form-group"><label>Webhook Secret Token *</label>
-            <input type="password" name="webhook_secret" placeholder="From Zoom → Webhook section"></div>
+            <input type="password" name="webhook_secret" placeholder="From Zoom → Webhook section" value="{{ pf.get('webhook_secret','') }}"></div>
         </div>
       </div>
 
@@ -57,12 +58,12 @@
         </div>
         <div class="form-grid">
           <div class="form-group"><label>Azure Bot App ID *</label>
-            <input type="text" name="app_id" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"></div>
+            <input type="text" name="app_id" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" value="{{ pf.get('app_id','') }}"></div>
           <div class="form-group"><label>App Password *</label>
-            <input type="password" name="app_password"></div>
+            <input type="password" name="app_password" value="{{ pf.get('app_password','') }}"></div>
         </div>
         <div class="form-group"><label>Tenant ID</label>
-          <input type="text" name="tenant_id" placeholder="common (for multi-tenant) or your Azure AD tenant ID">
+          <input type="text" name="tenant_id" placeholder="common (for multi-tenant) or your Azure AD tenant ID" value="{{ pf.get('tenant_id','') }}">
           <p class="form-note">Use "common" for multi-tenant bots</p>
         </div>
       </div>
@@ -73,12 +74,12 @@
           Webhook URL for Slack: <code>http://YOUR-VM-IP:8000/webhook/slack</code>
         </div>
         <div class="form-group"><label>Bot Token *</label>
-          <input type="password" name="bot_token" placeholder="xoxb-..."></div>
+          <input type="password" name="bot_token" placeholder="xoxb-..." value="{{ pf.get('bot_token','') }}"></div>
         <div class="form-grid">
           <div class="form-group"><label>Signing Secret *</label>
-            <input type="password" name="signing_secret"></div>
+            <input type="password" name="signing_secret" value="{{ pf.get('signing_secret','') }}"></div>
           <div class="form-group"><label>App ID *</label>
-            <input type="text" name="app_id" placeholder="A0XXXXXXXXX"></div>
+            <input type="text" name="app_id" placeholder="A0XXXXXXXXX" value="{{ pf.get('app_id','') if pf.get('platform_type')=='slack' else '' }}"></div>
         </div>
       </div>
 
@@ -119,5 +120,10 @@
 function showFields(t){
   ['zoom','teams','slack'].forEach(x=>document.getElementById('f-'+x).style.display=x===t?'block':'none');
 }
+// Auto-show fields if form is being re-rendered after a validation error
+(function(){
+  var pre = "{{ pf.get('platform_type','') }}";
+  if(pre) showFields(pre);
+})();
 </script>
 {% endblock %}
