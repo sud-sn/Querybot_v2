@@ -1034,10 +1034,17 @@ def _infer_entity_type(table_name: str) -> str:
     return "dimension"
 
 
-def _infer_pk_column(table_name: str, columns: list[dict]) -> str:
+def _col_name(col) -> str:
+    """Safe column name extraction — handles str columns and dict columns with any key."""
+    if isinstance(col, dict):
+        return str(col.get("name") or col.get("COLUMN_NAME") or col.get("column_name") or "")
+    return str(col)
+
+
+def _infer_pk_column(table_name: str, columns: list) -> str:
     """Heuristic: find the most likely primary-key column for a table."""
     bare = table_name.split(".")[-1].upper()
-    col_names_upper = [c["name"].upper() for c in columns]
+    col_names_upper = [_col_name(c).upper() for c in columns]
 
     # 1. <TABLE>_ID pattern (e.g. CUSTOMER_ID in DIM_CUSTOMER)
     for suffix in ("_ID", "_KEY", "_NO", "_NUM", "_CODE"):
@@ -1046,19 +1053,19 @@ def _infer_pk_column(table_name: str, columns: list[dict]) -> str:
         for check in (bare + suffix, candidate):
             if check in col_names_upper:
                 idx = col_names_upper.index(check)
-                return columns[idx]["name"]
+                return _col_name(columns[idx])
 
     # 2. Column literally named "ID"
     if "ID" in col_names_upper:
-        return columns[col_names_upper.index("ID")]["name"]
+        return _col_name(columns[col_names_upper.index("ID")])
 
     # 3. First column whose name ends with _ID
     for col in columns:
-        if col["name"].upper().endswith("_ID"):
-            return col["name"]
+        if _col_name(col).upper().endswith("_ID"):
+            return _col_name(col)
 
     # 4. Fallback: first column
-    return columns[0]["name"] if columns else ""
+    return _col_name(columns[0]) if columns else ""
 
 
 def _display_name_from_table(table_name: str) -> str:
@@ -1162,7 +1169,7 @@ def build_entity_graph_from_schema(schema_dir: str) -> dict:
             if _infer_entity_type(fact_entity) != "fact":
                 continue
             for col in tbl_info.get("columns", []):
-                fact_col = col.get("name", "")
+                fact_col = _col_name(col)
                 role = detect_date_role(fact_col)
                 if not role:
                     continue
@@ -1235,7 +1242,7 @@ def build_entity_graph_from_schema(schema_dir: str) -> dict:
             continue
 
         for col in tbl_info.get("columns", []):
-            col_name  = col.get("name", "")
+            col_name  = _col_name(col)
             col_upper = col_name.upper()
 
             if not _is_surrogate_key_col(col_name):
