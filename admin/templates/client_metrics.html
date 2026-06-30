@@ -1755,6 +1755,8 @@ async function testFormula(btn){
   }
 }
 
+window.testFormula = testFormula;
+
 // ══════════════════════════════════════════════════════════════════════
 // LIVE BACKEND VALIDATOR — calls /metrics/validate and shows inline result
 // ══════════════════════════════════════════════════════════════════════
@@ -1807,7 +1809,7 @@ async function liveValidate(btn){
     btn.disabled = false; btn.textContent = origText;
   }
 }
-
+window.liveValidate = liveValidate;
 
 // ══════════════════════════════════════════════════════════════════════
 // FIELD BROWSER (right panel)
