@@ -1323,6 +1323,16 @@ function _insertSuggestion(bareColName, tableName, isDup){
   editor.focus(); editor.setSelectionRange(next, next);
   updateFormulaHints(editor);
   _hideSuggestions();
+  // Auto-fill base_table if it is empty
+  if(tableName){
+    var form = editor.closest(".metric-form");
+    var btInput = form ? form.querySelector("[name='base_table']") : null;
+    if(btInput && !btInput.value.trim()){
+      var colEntry = _allColumns.find(function(c){ return c.column === bareColName && c.table === tableName; });
+      btInput.value = (colEntry && colEntry.table_fqn) ? colEntry.table_fqn : tableName;
+      _updateMetricUxPanels(form);
+    }
+  }
 }
 
 // Keyboard navigation for formula-col-suggest dropdown
