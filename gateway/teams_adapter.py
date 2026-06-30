@@ -144,43 +144,198 @@ class TeamsAdapter(PlatformAdapter):
     # ── Send message ──────────────────────────────────────────────────────────
 
     @staticmethod
-    def _format_for_teams(text: str) -> str:
+    def _build_result_card(text: str) -> dict | None:
         """
-        Reformat a result message for Teams rendering:
-        - Wrap the pipe-table section in a code block so it stays monospace
-        - Replace unicode box-drawing separators (─) with plain dashes
-        - Ensure the greeting line doesn't run into the question on the same line
+        Convert a query result message (table or single-value) to an Adaptive Card.
+        Returns None for plain messages (errors, help, status, clarification prompts).
         """
         import re
 
-        # Fix greeting + question running together (single \n collapsed by Teams)
-        # "*Name*\n*Question*" → "*Name*\n\n*Question*"
-        text = re.sub(r'(\*[^\*\n]+\*)\n(\*[^\*\n]+\*)', r'\1\n\n\2', text)
+        lines      = text.split("\n")
+        has_table  = any("|" in l for l in lines)
+        has_single = "━" in text  # single-value box uses ━━━ separator
 
-        # Replace unicode box-drawing dashes with plain ASCII so they render
-        # consistently across Teams clients
-        text = text.replace("─", "-").replace("━", "-")
+        if not has_table and not has_single:
+            return None
 
-        # Detect and wrap the pipe-table block in a code fence.
-        # The table is a contiguous block of lines that all contain '|'.
-        lines  = text.split("\n")
-        result = []
-        i      = 0
-        while i < len(lines):
-            line = lines[i]
-            if "|" in line:
-                # Collect the full table block
-                table_lines = []
-                while i < len(lines) and ("|" in lines[i] or re.match(r"^[-+\s]+$", lines[i])):
-                    table_lines.append(lines[i])
-                    i += 1
-                result.append("```")
-                result.extend(table_lines)
-                result.append("```")
-            else:
-                result.append(line)
-                i += 1
-        return "\n".join(result)
+        body = []
+
+        def _clean(s: str) -> str:
+            """Strip markdown bold/italic markers."""
+            s = re.sub(r"\*\*?([^*]+)\*\*?", r"\1", s)
+            s = re.sub(r"_([^_]+)_", r"\1", s)
+            return s.strip()
+
+        # ── Single-value result ────────────────────────────────────────────────
+        if has_single and not has_table:
+            header_q  = ""
+            col_label = ""
+            value_str = ""
+            duration  = ""
+
+            for line in lines:
+                s = line.strip()
+                if not s or re.match(r"^[━\-─\s]+$", s):
+                    continue
+                m_dur  = re.match(r"^_(.+)_$", s)
+                m_bold = re.match(r"^\*\*?(.+?)\*\*?$", s)
+                if m_dur:
+                    duration = m_dur.group(1)
+                elif m_bold:
+                    val = m_bold.group(1)
+                    if not header_q:
+                        header_q = val
+                    elif not value_str:
+                        value_str = val
+                elif not col_label and "Confidence" not in s and not s.startswith("-"):
+                    col_label = s
+
+            if header_q:
+                body.append({
+                    "type": "TextBlock", "text": header_q,
+                    "wrap": True, "weight": "Bolder", "size": "Medium",
+                })
+            body.append({
+                "type": "Container",
+                "style": "emphasis",
+                "spacing": "Medium",
+                "items": [
+                    {
+                        "type": "TextBlock",
+                        "text": col_label.replace("_", " ").title() if col_label else "Result",
+                        "size": "Small", "color": "Accent", "weight": "Bolder",
+                    },
+                    {
+                        "type": "TextBlock",
+                        "text": value_str or col_label,
+                        "size": "ExtraLarge", "weight": "Bolder", "spacing": "None",
+                    },
+                ],
+            })
+            if duration:
+                body.append({
+                    "type": "TextBlock", "text": duration,
+                    "size": "Small", "isSubtle": True, "spacing": "Small",
+                })
+
+        # ── Multi-row table result ────────────────────────────────────────────
+        elif has_table:
+            pre_lines, table_lines, post_lines = [], [], []
+            section = "pre"
+            for line in lines:
+                if section == "pre":
+                    if "|" in line:
+                        section = "table"
+                        table_lines.append(line)
+                    else:
+                        pre_lines.append(line)
+                elif section == "table":
+                    if "|" in line or re.match(r"^[\-+\s]+$", line):
+                        table_lines.append(line)
+                    else:
+                        section = "post"
+                        post_lines.append(line)
+                else:
+                    post_lines.append(line)
+
+            # Render pre-table header lines
+            for line in pre_lines:
+                s = line.strip()
+                if not s or re.match(r"^[-─━\s]+$", s):
+                    continue
+                clean = _clean(s)
+                is_bold = s.startswith("*")
+                is_rows = bool(re.match(r"^\d+\s+rows?$", clean, re.I))
+                body.append({
+                    "type": "TextBlock", "text": clean, "wrap": True,
+                    "weight": "Bolder" if (is_bold or is_rows) else "Default",
+                    "color": "Accent" if is_rows else "Default",
+                    "spacing": "Small",
+                })
+
+            # Parse table headers + data rows
+            headers     = []
+            parsed_rows = []
+            for line in table_lines:
+                if not line.strip():
+                    continue
+                cells = [c.strip() for c in line.split("|")]
+                # remove empty outer items from split
+                if cells and not cells[0]:
+                    cells = cells[1:]
+                if cells and not cells[-1]:
+                    cells = cells[:-1]
+                if not cells:
+                    continue
+                # separator line?
+                if all(re.match(r"^[-+]+$", c) for c in cells):
+                    continue
+                if not headers:
+                    headers = cells
+                else:
+                    parsed_rows.append(cells)
+
+            if headers:
+                # Compute column widths for neat monospace table
+                col_w = [
+                    max(len(headers[i]),
+                        max((len(r[i]) if i < len(r) else 0) for r in parsed_rows) if parsed_rows else 0)
+                    for i in range(len(headers))
+                ]
+                num_w = len(str(len(parsed_rows)))  # digits needed for row numbers
+
+                def _row_str(cells, idx=None):
+                    prefix = f"{str(idx).rjust(num_w)}  " if idx is not None else " " * (num_w + 2)
+                    return prefix + " | ".join(
+                        (cells[i] if i < len(cells) else "").ljust(col_w[i])
+                        for i in range(len(headers))
+                    )
+
+                header_str = _row_str(headers)
+                sep_str    = " " * (num_w + 2) + "-+-".join("-" * w for w in col_w)
+                rows_str   = "\n".join(_row_str(r, idx) for idx, r in enumerate(parsed_rows, 1))
+                table_str  = f"{header_str}\n{sep_str}\n{rows_str}"
+
+                body.append({
+                    "type": "TextBlock",
+                    "text": table_str,
+                    "fontType": "Monospace",
+                    "wrap": True,
+                    "separator": True,
+                    "spacing": "Medium",
+                    "size": "Small",
+                })
+
+            # Post-table: confidence summary + duration
+            conf_summary = ""
+            duration     = ""
+            for line in post_lines:
+                s = line.strip()
+                if not s:
+                    continue
+                m_dur = re.match(r"^_(.+)_$", s)
+                if m_dur:
+                    duration = m_dur.group(1)
+                elif "Confidence:" in s and not conf_summary:
+                    m = re.match(r"(Confidence:\s*[\w ]+\(\d+/\d+\))", s)
+                    conf_summary = m.group(1) if m else ""
+
+            footer = " · ".join(x for x in [conf_summary, duration] if x)
+            if footer:
+                body.append({
+                    "type": "TextBlock", "text": footer,
+                    "size": "Small", "isSubtle": True, "wrap": True, "spacing": "Small",
+                })
+
+        if not body:
+            return None
+
+        return {
+            "type":    "AdaptiveCard",
+            "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+            "version": "1.3",
+            "body":    body,
+        }
 
     async def send_message(self, event: PlatformEvent, text: str) -> None:
         channel_info    = json.loads(event.channel_id)
@@ -192,11 +347,22 @@ class TeamsAdapter(PlatformAdapter):
         )
         token = await self._get_token()
 
-        activity = {
-            "type":        "message",
-            "text":        self._format_for_teams(text),
-            "textFormat":  "markdown",
-        }
+        card = self._build_result_card(text)
+        if card:
+            activity = {
+                "type": "message",
+                "attachments": [{
+                    "contentType": "application/vnd.microsoft.card.adaptive",
+                    "content":     card,
+                }],
+            }
+        else:
+            # Plain messages (errors, help, status, clarification) — send as markdown
+            activity = {
+                "type":       "message",
+                "text":       text,
+                "textFormat": "markdown",
+            }
         async with httpx.AsyncClient() as client:
             resp = await client.post(
                 reply_url,
