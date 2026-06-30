@@ -1323,13 +1323,43 @@ function _insertSuggestion(bareColName, tableName, isDup){
   editor.focus(); editor.setSelectionRange(next, next);
   updateFormulaHints(editor);
   _hideSuggestions();
-  // Auto-fill base_table if it is empty
+  // Auto-fill base_table and detect multi-table formulas
   if(tableName){
     var form = editor.closest(".metric-form");
     var btInput = form ? form.querySelector("[name='base_table']") : null;
-    if(btInput && !btInput.value.trim()){
+    if(btInput){
+      // Scan all column tokens in the updated formula to find referenced tables
+      var tokens = editor.value.match(/\b[A-Z_][A-Z0-9_]{2,}\b/gi) || [];
+      var tablesInFormula = new Set();
+      tokens.forEach(function(tok){
+        var hit = _allColumns.find(function(c){ return c.column.toLowerCase() === tok.toLowerCase(); });
+        if(hit) tablesInFormula.add(hit.table);
+      });
+      tablesInFormula.add(tableName);
+
       var colEntry = _allColumns.find(function(c){ return c.column === bareColName && c.table === tableName; });
-      btInput.value = (colEntry && colEntry.table_fqn) ? colEntry.table_fqn : tableName;
+      var fqn = (colEntry && colEntry.table_fqn) ? colEntry.table_fqn : tableName;
+
+      if(tablesInFormula.size === 1){
+        // Single table — safe to auto-fill
+        btInput.value = fqn;
+        // Clear any multi-table warning
+        var warn = form ? form.querySelector(".multi-table-warn") : null;
+        if(warn) warn.remove();
+      } else {
+        // Multiple tables — fill with primary table but show warning
+        if(!btInput.value.trim()) btInput.value = fqn;
+        var existWarn = form ? form.querySelector(".multi-table-warn") : null;
+        if(!existWarn && form){
+          var vr = form.querySelector(".validate-result");
+          if(vr){
+            vr.className = "validate-result show warn multi-table-warn";
+            vr.innerHTML = "⚠ Formula uses columns from multiple tables ("
+              + Array.from(tablesInFormula).join(", ")
+              + "). Test will run against the Base table only — use <strong>Validate</strong> for full checks, or write a subquery.";
+          }
+        }
+      }
       _updateMetricUxPanels(form);
     }
   }
