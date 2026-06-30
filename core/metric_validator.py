@@ -179,6 +179,12 @@ _SQL_KEYWORDS: set[str] = {
     "END", "WHEN", "CASE", "CAST", "CONVERT", "LIKE", "WITH", "NOLOCK",
     "ASC", "DESC", "ALL", "SOME", "ANY", "EXISTS", "UNION",
     "INTERSECT", "EXCEPT", "ROWNUM", "DUAL",
+    # SQL data types — appear as TYPE(n) in CAST/CONVERT but are not functions
+    "VARCHAR", "NVARCHAR", "CHAR", "NCHAR",
+    "INT", "INTEGER", "BIGINT", "SMALLINT", "TINYINT",
+    "FLOAT", "REAL", "DECIMAL", "NUMERIC", "MONEY", "SMALLMONEY",
+    "DATE", "DATETIME", "DATETIME2", "SMALLDATETIME", "TIME", "TIMESTAMP",
+    "BIT", "BINARY", "VARBINARY", "TEXT", "NTEXT", "IMAGE",
 }
 
 
