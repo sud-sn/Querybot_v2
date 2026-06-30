@@ -276,35 +276,46 @@ class TeamsAdapter(PlatformAdapter):
                     parsed_rows.append(cells)
 
             if headers:
-                # Compute column widths for neat monospace table
-                col_w = [
-                    max(len(headers[i]),
-                        max((len(r[i]) if i < len(r) else 0) for r in parsed_rows) if parsed_rows else 0)
-                    for i in range(len(headers))
-                ]
-                num_w = len(str(len(parsed_rows)))  # digits needed for row numbers
+                num_cols = len(headers)
 
-                def _row_str(cells, idx=None):
-                    prefix = f"{str(idx).rjust(num_w)}  " if idx is not None else " " * (num_w + 2)
-                    return prefix + " | ".join(
-                        (cells[i] if i < len(cells) else "").ljust(col_w[i])
-                        for i in range(len(headers))
-                    )
+                def _col(text_val, weight="Default", color="Default", is_num=False, is_first=False):
+                    return {
+                        "type":  "Column",
+                        "width": "auto" if (is_num or not is_first) else "stretch",
+                        "items": [{
+                            "type":    "TextBlock",
+                            "text":    str(text_val),
+                            "weight":  weight,
+                            "color":   color,
+                            "size":    "Small",
+                            "wrap":    not is_num,
+                            "spacing": "None",
+                        }],
+                    }
 
-                header_str = _row_str(headers)
-                sep_str    = " " * (num_w + 2) + "-+-".join("-" * w for w in col_w)
-                rows_str   = "\n".join(_row_str(r, idx) for idx, r in enumerate(parsed_rows, 1))
-                table_str  = f"{header_str}\n{sep_str}\n{rows_str}"
-
+                # Header ColumnSet
                 body.append({
-                    "type": "TextBlock",
-                    "text": table_str,
-                    "fontType": "Monospace",
-                    "wrap": True,
+                    "type": "ColumnSet",
                     "separator": True,
                     "spacing": "Medium",
-                    "size": "Small",
+                    "columns": (
+                        [_col("#", weight="Bolder", color="Accent", is_num=True)]
+                        + [_col(h, weight="Bolder", is_first=(i == 0))
+                           for i, h in enumerate(headers)]
+                    ),
                 })
+
+                # Data rows
+                for idx, row in enumerate(parsed_rows, 1):
+                    cells = [row[i] if i < len(row) else "" for i in range(num_cols)]
+                    body.append({
+                        "type": "ColumnSet",
+                        "spacing": "Small",
+                        "columns": (
+                            [_col(idx, color="Accent", is_num=True)]
+                            + [_col(c, is_first=(i == 0)) for i, c in enumerate(cells)]
+                        ),
+                    })
 
             # Post-table: confidence summary + duration
             conf_summary = ""
