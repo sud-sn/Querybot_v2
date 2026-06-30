@@ -118,12 +118,25 @@
 
 <script>
 function showFields(t){
-  ['zoom','teams','slack'].forEach(x=>document.getElementById('f-'+x).style.display=x===t?'block':'none');
+  ['zoom','teams','slack'].forEach(function(x){
+    var el = document.getElementById('f-'+x);
+    var show = x === t;
+    el.style.display = show ? 'block' : 'none';
+    el.querySelectorAll('input,select,textarea').forEach(function(inp){
+      inp.disabled = !show;
+    });
+  });
 }
 // Auto-show fields if form is being re-rendered after a validation error
 (function(){
   var pre = "{{ pf.get('platform_type','') }}";
   if(pre) showFields(pre);
+  // Disable all hidden section inputs on initial load
+  else ['zoom','teams','slack'].forEach(function(x){
+    document.getElementById('f-'+x).querySelectorAll('input,select,textarea').forEach(function(inp){
+      inp.disabled = true;
+    });
+  });
 })();
 </script>
 {% endblock %}
