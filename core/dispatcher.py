@@ -112,60 +112,76 @@ async def _classify_is_data_question(text: str, client: dict) -> bool:
         return True  # fail open — never silently block a legitimate query
 
 
-# ── Persistent typing loop (Teams / bot adapters) ─────────────────────────────
+# ── Background query task (typing + classification + pipeline) ────────────────
 
-async def _run_with_typing_loop(
-    account_id, event, adapter, text, portal_user, *, is_clarification=False
+async def _run_query_with_guard(
+    account_id, event, adapter, text, portal_user, client_row, *, is_clarification=False
 ):
     """
-    Wraps handle_query with a background task that re-sends a typing activity
-    every 2.5 s.  Teams drops the '...' indicator after ~4 s; this keeps it
-    alive for the full duration of the pipeline without polluting the chat with
-    visible status messages.  Only called when adapter.persistent_typing is True.
+    Background task — three stages:
+      1. Immediate typing indicator so the user sees '...' before any LLM work.
+         Running this in the background (not in dispatch) keeps the HTTP 200
+         response to Teams instant, avoiding the 5-second webhook timeout.
+      2. Off-topic classification — only for fresh queries; skipped for
+         clarification replies which have already been through the pipeline.
+      3. Query pipeline wrapped in a persistent typing loop for adapters like
+         Teams that drop the indicator after ~4 s (re-sent every 2.5 s).
     """
     import asyncio
     from core.query_pipeline import handle_query as _hq
 
-    stop  = asyncio.Event()
     _send = getattr(adapter, "send_status", None)
 
-    async def _loop():
-        while not stop.is_set():
-            if _send:
+    # Stage 1 — immediate typing so the user has instant feedback
+    if _send:
+        try:
+            await _send(event, "processing", "Working on it")
+        except Exception:
+            pass
+
+    # Stage 2 — off-topic guard (skipped for clarification replies)
+    if not is_clarification:
+        if not await _classify_is_data_question(text, client_row):
+            await adapter.send_message(event, _OFF_TOPIC_REPLY)
+            return
+
+    # Stage 3 — run query pipeline; Teams needs re-sent typing every 2.5 s
+    if getattr(adapter, "persistent_typing", False) and _send:
+        stop = asyncio.Event()
+
+        async def _loop():
+            while not stop.is_set():
                 try:
                     await _send(event, "processing", "Working on it")
                 except Exception:
                     pass
-            try:
-                await asyncio.wait_for(asyncio.shield(stop.wait()), timeout=2.5)
-            except asyncio.TimeoutError:
-                pass
+                try:
+                    await asyncio.wait_for(asyncio.shield(stop.wait()), timeout=2.5)
+                except asyncio.TimeoutError:
+                    pass
 
-    task = asyncio.create_task(_loop()) if _send else None
-    try:
-        await _hq(account_id, event, adapter, text, portal_user,
-                  is_clarification=is_clarification)
-    finally:
-        stop.set()
-        if task:
+        task = asyncio.create_task(_loop())
+        try:
+            await _hq(account_id, event, adapter, text, portal_user,
+                      is_clarification=is_clarification)
+        finally:
+            stop.set()
             task.cancel()
             try:
                 await task
             except asyncio.CancelledError:
                 pass
-
-
-def _enqueue_query(bg, account_id, event, adapter, text, portal_user, *, is_clarification=False):
-    """Schedule handle_query, wrapping with a typing loop for persistent_typing adapters."""
-    if getattr(adapter, "persistent_typing", False):
-        bg.add_task(
-            _run_with_typing_loop, account_id, event, adapter, text, portal_user,
-            is_clarification=is_clarification,
-        )
     else:
-        from core.query_pipeline import handle_query as _hq
-        bg.add_task(_hq, account_id, event, adapter, text, portal_user,
-                    is_clarification=is_clarification)
+        await _hq(account_id, event, adapter, text, portal_user,
+                  is_clarification=is_clarification)
+
+
+def _enqueue_query(bg, account_id, event, adapter, text, portal_user, client_row, *, is_clarification=False):
+    """Schedule the query pipeline as a background task."""
+    bg.add_task(
+        _run_query_with_guard, account_id, event, adapter, text, portal_user, client_row,
+        is_clarification=is_clarification,
+    )
 
 
 # ── Access request (admin-approval flow, no registration link) ────────────────
@@ -356,7 +372,7 @@ async def dispatch(
                                 pending["original_q"][:80],
                                 text[:80],
                             )
-                            _enqueue_query(bg, account_id, event, adapter, text, portal_user)
+                            _enqueue_query(bg, account_id, event, adapter, text, portal_user, client_row)
                             return
                         send_prompt = getattr(adapter, "send_clarification_prompt", None)
                         if callable(send_prompt):
@@ -383,7 +399,7 @@ async def dispatch(
                         combined[:120],
                     )
                     _enqueue_query(bg, account_id, event, adapter,
-                                   combined, portal_user, is_clarification=True)
+                                   combined, portal_user, client_row, is_clarification=True)
                     return
                 combined, term_hint = combine_with_clarification(
                     pending["original_q"],
@@ -397,7 +413,7 @@ async def dispatch(
                 log.info("Clarification received for '%s' — combined: '%s' (term_hint=%s)",
                          pending["original_q"][:50], combined[:120], bool(term_hint))
                 _enqueue_query(bg, account_id, event, adapter,
-                               combined, portal_user, is_clarification=True)
+                               combined, portal_user, client_row, is_clarification=True)
                 return
 
             # Fix #7 — their clarification lapsed in the 5-min TTL. Tell them
@@ -414,13 +430,8 @@ async def dispatch(
                     )
                     return
 
-        # Off-topic guard — LLM classifies the message before the query pipeline
-        if not await _classify_is_data_question(text, client_row):
-            await adapter.send_message(event, _OFF_TOPIC_REPLY)
-            return
-
         # DDL check on raw user message before any LLM call
         if is_ddl_attempt(text):
             await adapter.send_message(event, _DDL_USER_MESSAGE)
             return
-        _enqueue_query(bg, account_id, event, adapter, text, portal_user)
+        _enqueue_query(bg, account_id, event, adapter, text, portal_user, client_row)
