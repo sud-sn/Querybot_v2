@@ -5263,10 +5263,11 @@ async def admin_columns_api(request: Request, account_id: str):
                             col_type = ""
                         if col_name:
                             columns.append({
-                                "table":  tbl_name,
-                                "column": col_name,
-                                "type":   col_type,
-                                "fqn":    f"{tbl_name}.{col_name}",
+                                "table":     tbl_name,
+                                "table_fqn": fqn_key,
+                                "column":    col_name,
+                                "type":      col_type,
+                                "fqn":       f"{tbl_name}.{col_name}",
                             })
             except Exception as exc:
                 log.warning("admin_columns_api: failed to read _schema.json for %s: %s", account_id, exc)
