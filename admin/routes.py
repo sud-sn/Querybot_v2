@@ -4587,27 +4587,37 @@ async def metrics_test_formula(request: Request, account_id: str):
     db_type = raw_cfg.get("db_type", "azure_sql")
     creds   = raw_cfg.get("credentials", {})
 
-    # Find the first available table from the schema to anchor the query
+    # Find the table to anchor the query — prefer base_table from request, else first in schema
     import json as _json
     from pathlib import Path as _Path
 
-    state      = store.get_client_state(account_id)
-    schema_dir = (state or {}).get("schema_dir") or ""
-    schema_path = _Path(schema_dir) / "_schema.json" if schema_dir else None
+    base_table_raw = (body.get("base_table") or "").strip()
+
+    def _fqn_to_sql(fqn: str) -> str:
+        parts = fqn.split(".")
+        if db_type == "azure_sql" and len(parts) >= 2:
+            return f"[{parts[-2]}].[{parts[-1]}]"
+        if db_type == "snowflake" and len(parts) >= 3:
+            return f'"{parts[0]}"."{parts[1]}"."{parts[2]}"'
+        if db_type == "oracle" and len(parts) >= 2:
+            return f'"{parts[-2]}"."{parts[-1]}"'
+        return ""
 
     first_table_sql = None
-    if schema_path and schema_path.exists():
-        master = _json.loads(schema_path.read_text(encoding="utf-8"))
-        for fqn in master:
-            parts = fqn.split(".")
-            if db_type == "azure_sql" and len(parts) >= 2:
-                first_table_sql = f"[{parts[-2]}].[{parts[-1]}]"
-            elif db_type == "snowflake" and len(parts) >= 3:
-                first_table_sql = f'"{parts[0]}"."{parts[1]}"."{parts[2]}"'
-            elif db_type == "oracle" and len(parts) >= 2:
-                first_table_sql = f'"{parts[-2]}"."{parts[-1]}"'
-            if first_table_sql:
-                break
+
+    if base_table_raw:
+        first_table_sql = _fqn_to_sql(base_table_raw)
+
+    if not first_table_sql:
+        state      = store.get_client_state(account_id)
+        schema_dir = (state or {}).get("schema_dir") or ""
+        schema_path = _Path(schema_dir) / "_schema.json" if schema_dir else None
+        if schema_path and schema_path.exists():
+            master = _json.loads(schema_path.read_text(encoding="utf-8"))
+            for fqn in master:
+                first_table_sql = _fqn_to_sql(fqn)
+                if first_table_sql:
+                    break
 
     if not first_table_sql:
         return JSONResponse({"status": "error", "detail": "No tables found in schema — run discovery first"})
