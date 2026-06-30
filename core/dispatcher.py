@@ -109,6 +109,62 @@ _ABOUT_RE = re.compile(
 )
 
 
+# ── Persistent typing loop (Teams / bot adapters) ─────────────────────────────
+
+async def _run_with_typing_loop(
+    account_id, event, adapter, text, portal_user, *, is_clarification=False
+):
+    """
+    Wraps handle_query with a background task that re-sends a typing activity
+    every 2.5 s.  Teams drops the '...' indicator after ~4 s; this keeps it
+    alive for the full duration of the pipeline without polluting the chat with
+    visible status messages.  Only called when adapter.persistent_typing is True.
+    """
+    import asyncio
+    from core.query_pipeline import handle_query as _hq
+
+    stop  = asyncio.Event()
+    _send = getattr(adapter, "send_status", None)
+
+    async def _loop():
+        while not stop.is_set():
+            if _send:
+                try:
+                    await _send(event, "processing", "Working on it")
+                except Exception:
+                    pass
+            try:
+                await asyncio.wait_for(asyncio.shield(stop.wait()), timeout=2.5)
+            except asyncio.TimeoutError:
+                pass
+
+    task = asyncio.create_task(_loop()) if _send else None
+    try:
+        await _hq(account_id, event, adapter, text, portal_user,
+                  is_clarification=is_clarification)
+    finally:
+        stop.set()
+        if task:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+
+def _enqueue_query(bg, account_id, event, adapter, text, portal_user, *, is_clarification=False):
+    """Schedule handle_query, wrapping with a typing loop for persistent_typing adapters."""
+    if getattr(adapter, "persistent_typing", False):
+        bg.add_task(
+            _run_with_typing_loop, account_id, event, adapter, text, portal_user,
+            is_clarification=is_clarification,
+        )
+    else:
+        from core.query_pipeline import handle_query as _hq
+        bg.add_task(_hq, account_id, event, adapter, text, portal_user,
+                    is_clarification=is_clarification)
+
+
 # ── Access request (admin-approval flow, no registration link) ────────────────
 
 async def handle_unregistered_user(account_id, zoom_user_id, event, adapter):
@@ -212,7 +268,6 @@ async def dispatch(
     bg: BackgroundTasks,
     portal_user: dict | None = None,   # pre-authenticated for web portal sessions
 ):
-    from core.query_pipeline import handle_query
 
     text = event.text.strip()
 
@@ -298,7 +353,7 @@ async def dispatch(
                                 pending["original_q"][:80],
                                 text[:80],
                             )
-                            bg.add_task(handle_query, account_id, event, adapter, text, portal_user)
+                            _enqueue_query(bg, account_id, event, adapter, text, portal_user)
                             return
                         send_prompt = getattr(adapter, "send_clarification_prompt", None)
                         if callable(send_prompt):
@@ -324,8 +379,8 @@ async def dispatch(
                         pending["original_q"][:80],
                         combined[:120],
                     )
-                    bg.add_task(handle_query, account_id, event, adapter,
-                                combined, portal_user, is_clarification=True)
+                    _enqueue_query(bg, account_id, event, adapter,
+                                   combined, portal_user, is_clarification=True)
                     return
                 combined, term_hint = combine_with_clarification(
                     pending["original_q"],
@@ -338,8 +393,8 @@ async def dispatch(
                 clear_pending(account_id, event.user_id)
                 log.info("Clarification received for '%s' — combined: '%s' (term_hint=%s)",
                          pending["original_q"][:50], combined[:120], bool(term_hint))
-                bg.add_task(handle_query, account_id, event, adapter,
-                            combined, portal_user, is_clarification=True)
+                _enqueue_query(bg, account_id, event, adapter,
+                               combined, portal_user, is_clarification=True)
                 return
 
             # Fix #7 — their clarification lapsed in the 5-min TTL. Tell them
@@ -365,4 +420,4 @@ async def dispatch(
         if is_ddl_attempt(text):
             await adapter.send_message(event, _DDL_USER_MESSAGE)
             return
-        bg.add_task(handle_query, account_id, event, adapter, text, portal_user)
+        _enqueue_query(bg, account_id, event, adapter, text, portal_user)
