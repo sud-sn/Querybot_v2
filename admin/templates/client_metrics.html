@@ -1702,13 +1702,34 @@ function _initialiseMetricBuilder(builder){
   }catch(e){}
 }
 
+function _checkParens(sql){
+  var depth = 0;
+  for(var i = 0; i < sql.length; i++){
+    if(sql[i] === "(") depth++;
+    else if(sql[i] === ")") depth--;
+    if(depth < 0) return "Unexpected closing ) — check parentheses balance.";
+  }
+  if(depth > 0) return depth + " unclosed parenthes" + (depth===1?"is":"es") + " — add missing ).";
+  return null;
+}
+
 async function testFormula(btn){
-  var form   = btn.closest(".metric-form");
-  var editor = form ? form.querySelector(".formula-editor") : null;
-  if(!editor || !editor.value.trim()){ alert("Write a formula first."); return; }
-  var panel  = form ? form.querySelector(".formula-status") : null;
+  var form        = btn.closest(".metric-form");
+  var editor      = form ? form.querySelector(".formula-editor") : null;
+  var resultPanel = form ? form.querySelector(".validate-result") : null;
+  if(!editor || !editor.value.trim()){
+    if(resultPanel){ resultPanel.className="validate-result show warn"; resultPanel.innerHTML="Write a formula first."; }
+    return;
+  }
+  // Client-side parenthesis check
+  var parenErr = _checkParens(editor.value.trim());
+  if(parenErr){
+    if(resultPanel){ resultPanel.className="validate-result show fail"; resultPanel.innerHTML="✗ Syntax error: "+escHtml(parenErr); }
+    return;
+  }
   var origText = btn.textContent;
   btn.disabled = true; btn.textContent = "…";
+  if(resultPanel){ resultPanel.className="validate-result show"; resultPanel.innerHTML="Running test…"; }
   try {
     var m = location.pathname.match(/\/clients\/([^/]+)\//);
     if(!m) throw new Error("Cannot determine account from URL");
@@ -1721,15 +1742,14 @@ async function testFormula(btn){
     if(data.status === "ok"){
       var resultLine = data.result !== undefined && data.result !== null
         ? "<div style='font-family:Consolas,monospace;margin-top:4px;font-size:11px'>Result: "
-          + JSON.stringify(data.result) + "</div>"
+          + escHtml(JSON.stringify(data.result)) + "</div>"
         : "";
-      if(panel) setStatus(panel, "good",
-        "<div>✓ Test passed — formula executed against the database.</div>" + resultLine);
+      if(resultPanel){ resultPanel.className="validate-result show ok"; resultPanel.innerHTML="<div>✓ Test passed — formula executed against the database.</div>"+resultLine; }
     } else {
-      if(panel) setStatus(panel, "danger", "<div>✗ Test failed: " + (data.detail||"unknown error") + "</div>");
+      if(resultPanel){ resultPanel.className="validate-result show fail"; resultPanel.innerHTML="<div>✗ Test failed: "+escHtml(data.detail||"unknown error")+"</div>"; }
     }
   } catch(err){
-    if(panel) setStatus(panel, "danger", "<div>✗ " + err.message + "</div>");
+    if(resultPanel){ resultPanel.className="validate-result show fail"; resultPanel.innerHTML="<div>✗ "+escHtml(err.message)+"</div>"; }
   } finally {
     btn.disabled = false; btn.textContent = origText;
   }
