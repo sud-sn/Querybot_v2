@@ -15,7 +15,7 @@ import time
 
 import store
 from fastapi import APIRouter, Request, HTTPException, BackgroundTasks, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from gateway import get_adapter, PlatformEvent
 from core.webhook_dedup import is_duplicate_event, remember_event
@@ -229,7 +229,7 @@ async def webhook_teams(request: Request, bg: BackgroundTasks):
         return {"status": "ignored"}
     # Fix #8 — webhook idempotency
     if is_duplicate_event(event):
-        return {"type": "message", "text": ""}
+        return Response(status_code=200)
     remember_event(event)
 
     # The Teams tenant ID rarely matches a QueryBot account_id directly.
@@ -250,8 +250,15 @@ async def webhook_teams(request: Request, bg: BackgroundTasks):
                 event.account_id, len(configured),
             )
 
+    send_status = getattr(adapter, "send_status", None)
+    if callable(send_status):
+        try:
+            await send_status(event, "accepted", "Working on it")
+        except Exception as exc:
+            log.debug("Teams initial typing indicator failed: %s", exc)
+
     await dispatch(event.account_id, event, adapter, bg)
-    return {"type": "message", "text": ""}
+    return Response(status_code=200)
 
 
 @router.post("/webhook/slack")
