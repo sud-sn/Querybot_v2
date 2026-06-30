@@ -1733,10 +1733,11 @@ async function testFormula(btn){
   try {
     var m = location.pathname.match(/\/clients\/([^/]+)\//);
     if(!m) throw new Error("Cannot determine account from URL");
+    var baseTable = (form.querySelector("[name='base_table']")||{}).value || "";
     var resp = await fetch("/admin/clients/"+m[1]+"/metrics/test-formula", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({ formula: editor.value.trim() })
+      body: JSON.stringify({ formula: editor.value.trim(), base_table: baseTable })
     });
     var data = await resp.json();
     if(data.status === "ok"){
