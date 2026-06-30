@@ -402,10 +402,31 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
         _trace_step(trace_id, "route", output_summary={"route": "metric_registry", "metric": matched_metric.get("name", "")})
         await _send_live_stage(adapter, event, "metric_registry", "Using known metric", "Found a trusted metric definition for this question.")
         sql_from_metric = matched_metric["sql_template"].strip()
+        # Warn when user asks for a dimensional breakdown of a query-type metric
+        import re as _re_grp
+        if matched_metric.get("formula_type") == "query" and _re_grp.search(r'\b(by|per|for each|grouped by|split by|breakdown)\b', question, _re_grp.IGNORECASE):
+            await adapter.send_message(
+                event,
+                f"ℹ️ **{matched_metric.get('label') or matched_metric.get('name', 'This metric')}** is a fixed SQL query — "
+                "it returns an overall value and cannot be broken down by individual dimensions. "
+                "Showing the overall result:",
+            )
         log.info("Metric registry hit: %s → %s", matched_metric["name"], sql_from_metric[:60])
         try:
             await _send_live_stage(adapter, event, "executing_query", "Running query", "Executing the trusted metric query against your database.")
-            governed = _execute_with_policy(sql_from_metric)
+            _loop = asyncio.get_running_loop()
+            try:
+                governed = await asyncio.wait_for(
+                    _loop.run_in_executor(None, _execute_with_policy, sql_from_metric),
+                    timeout=60.0,
+                )
+            except asyncio.TimeoutError:
+                await adapter.send_message(
+                    event,
+                    "⏱ Query timed out after 60 seconds. Try adding a filter (e.g. date range or specific customer) to narrow the result.",
+                )
+                _trace_finish(trace_id, status="error", answer_type="timeout", error_message="Metric query timed out after 60s")
+                return
             rows = governed.rows
             sql_from_metric = governed.sql
             duration_ms = int(time.time()*1000) - start_ms
@@ -1153,10 +1174,18 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
     if ok:
         try:
             await _send_live_stage(adapter, event, "executing_query", "Running query", "Executing the SQL against your connected data source.")
-            governed = _execute_with_policy(sql, semantic_context)
+            _loop = asyncio.get_running_loop()
+            governed = await asyncio.wait_for(
+                _loop.run_in_executor(None, _execute_with_policy, sql, semantic_context),
+                timeout=60.0,
+            )
             rows = governed.rows
             sql = governed.sql
             _trace_step(trace_id, "execute_sql", input_summary=sql, output_summary={"rows": len(rows)})
+        except asyncio.TimeoutError:
+            exec_error = "Query timed out after 60 seconds. Try narrowing your question with a filter (e.g. date range or specific customer)."
+            _trace_step(trace_id, "execute_sql", input_summary=sql, output_summary=exec_error, status="error")
+            log.warning("Query timed out for %s", account_id)
         except PolicyDeniedError as policy_error:
             rows = None
             exec_error = None
@@ -1343,13 +1372,20 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                 if ok2:
                     try:
                         await _send_live_stage(adapter, event, "executing_query", "Retrying query", "Running the corrected query against your data.")
-                        governed = _execute_with_policy(sql_retry, _retry_semantic_context)
+                        _loop = asyncio.get_running_loop()
+                        governed = await asyncio.wait_for(
+                            _loop.run_in_executor(None, _execute_with_policy, sql_retry, _retry_semantic_context),
+                            timeout=60.0,
+                        )
                         rows = governed.rows
                         sql         = governed.sql
                         exec_error  = None
                         ok, last_reason, last_code = True, "OK", "ok"
                         retry_count += 1
                         log.info("Retry succeeded for %s", account_id)
+                    except asyncio.TimeoutError:
+                        exec_error = "Retry query timed out after 60 seconds."
+                        log.warning("Retry query timed out for %s", account_id)
                     except PolicyDeniedError as policy_error:
                         exec_error = None
                         ok = False
