@@ -460,9 +460,10 @@ class TeamsAdapter(PlatformAdapter):
         label: str,
         detail: str = "",
     ) -> None:
-        channel_info    = json.loads(event.channel_id)
-        service_url     = channel_info["service_url"]
-        conversation_id = channel_info["conversation_id"]
+        channel_info     = json.loads(event.channel_id)
+        service_url      = channel_info["service_url"]
+        conversation_id  = channel_info["conversation_id"]
+        reply_activity_id = channel_info.get("activity_id", "")
         reply_url = (
             f"{service_url.rstrip('/')}/v3/conversations/"
             f"{conversation_id}/activities"
@@ -472,7 +473,21 @@ class TeamsAdapter(PlatformAdapter):
         except Exception as e:
             log.debug("Teams send_status: token fetch failed: %s", e)
             return
-        activity = {"type": "typing"}
+
+        # Bot Framework requires from/recipient/conversation on every activity.
+        # Without them Teams silently drops the typing indicator.
+        raw = getattr(event, "raw", {}) or {}
+        activity = {
+            "type":        "typing",
+            "from":        raw.get("recipient") or {"id": self._app_id, "role": "bot"},
+            "recipient":   raw.get("from") or {},
+            "conversation": raw.get("conversation") or {"id": conversation_id},
+            "channelId":   "msteams",
+            "serviceUrl":  service_url,
+        }
+        if reply_activity_id:
+            activity["replyToId"] = reply_activity_id
+
         try:
             async with httpx.AsyncClient() as client:
                 await client.post(
