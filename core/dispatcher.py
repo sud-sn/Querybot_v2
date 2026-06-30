@@ -13,6 +13,7 @@ Covers:
 from __future__ import annotations
 
 import logging
+import re
 
 import store
 from gateway import PlatformEvent
@@ -33,6 +34,40 @@ _HELP = (
     "  • _Show top 10 customers by value_\n"
     "  • _How many records were created last week?_\n\n"
     "*Commands:* `help` · `status` · `whoami`"
+)
+
+_ABOUT = (
+    "*QueryBot* — Your AI-powered data assistant\n\n"
+    "I connect directly to your business database and answer plain-English "
+    "questions with live data. No dashboards, no filters — just ask.\n\n"
+    "*What I can do:*\n"
+    "  • Answer questions about revenue, sales, customers, inventory, and more\n"
+    "  • Show trends over any time period — today, this month, last quarter\n"
+    "  • Compare values across products, regions, customers, or teams\n"
+    "  • Calculate KPIs and business metrics (margin %, days to pay, etc.)\n"
+    "  • Rank and filter — top 10 customers, lowest performing products\n"
+    "  • Produce charts automatically for visual results\n\n"
+    "*Example questions:*\n"
+    "  • _What is our gross margin percentage this year?_\n"
+    "  • _Show revenue and COGS by customer_\n"
+    "  • _Which products had the most sales last month?_\n"
+    "  • _What is the average days to pay for each customer?_\n\n"
+    "Just type your question in plain English and I'll query the database for you.\n"
+    "Type `help` for commands or `status` to check your connection."
+)
+
+# Patterns that signal the user is asking about the bot itself rather than data
+_ABOUT_RE = re.compile(
+    r"\b("
+    r"who are you|what are you|tell me about (your)?self|about you(rself)?"
+    r"|what (can|do) you do|what('s| is) your (purpose|function|role|job)"
+    r"|what (are )?your capabilities|what (can|could) (i|we) ask (you)?"
+    r"|how (can|do) you help|how do(es)? (this|querybot|the bot) work"
+    r"|what is querybot|what('s| is) querybot|querybot (features?|capabilities?)"
+    r"|are you (a )?bot|are you (an )?ai|what kind of (bot|assistant) are you"
+    r"|what questions? (can|should) (i|we) ask"
+    r")\b",
+    re.IGNORECASE,
 )
 
 
@@ -155,6 +190,9 @@ async def dispatch(
 
     if text.lower() == "help":
         await adapter.send_message(event, _HELP); return
+
+    if _ABOUT_RE.search(text):
+        await adapter.send_message(event, _ABOUT); return
 
     if text.lower() == "whoami":
         pu = portal_user or (store.get_user_by_zoom_id(event.user_id) if event.user_id else None)
