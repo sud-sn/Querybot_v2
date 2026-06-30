@@ -41,7 +41,8 @@ _SCOPE     = "https://api.botframework.com/.default"
 
 class TeamsAdapter(PlatformAdapter):
 
-    platform_type = "teams"
+    platform_type    = "teams"
+    persistent_typing = True   # re-send typing indicator every 2.5 s during pipeline
 
     def __init__(self, credentials: dict):
         super().__init__(credentials)
