@@ -4,6 +4,7 @@ from store.crypto import encrypt, decrypt, decrypt_json, mask
 from store.config_store import (
     save_metric, list_metrics, get_metric, update_metric,
     delete_metric, deprecate_metric, match_metric, list_metric_formula_context,
+    validate_metric_refs,
     save_validated_example, get_validated_examples,
     harvest_successful_queries,
     load_schema_tables,
