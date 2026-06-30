@@ -174,7 +174,7 @@ def get_all_system() -> dict[str, str]:
 
 PLATFORM_FIELDS: dict[str, list[str]] = {
     "zoom":  ["client_id", "client_secret", "bot_jid", "webhook_secret"],
-    "teams": ["app_id", "app_password", "tenant_id"],
+    "teams": ["app_id", "app_password", "tenant_id", "account_id"],
     "slack": ["bot_token", "signing_secret", "app_id"],
 }
 
