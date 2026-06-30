@@ -45,10 +45,9 @@ class TeamsAdapter(PlatformAdapter):
 
     def __init__(self, credentials: dict):
         super().__init__(credentials)
-        self._app_id        = credentials["app_id"]
-        self._app_password  = credentials["app_password"]
-        self._tenant_id     = credentials.get("tenant_id", "common")
-        self._account_id    = credentials.get("account_id", "")  # QueryBot client to route to
+        self._app_id       = credentials["app_id"]
+        self._app_password = credentials["app_password"]
+        self._tenant_id    = credentials.get("tenant_id", "common")
 
     # ── Signature / auth verification ─────────────────────────────────────────
     # Teams uses JWT Bearer tokens on incoming requests.
@@ -108,13 +107,12 @@ class TeamsAdapter(PlatformAdapter):
         if not text:
             return None
 
-        # account_id: use configured client mapping if set, otherwise fall back to tenant ID
         channel_data = activity.get("channelData", {})
         tenant_id    = (
             channel_data.get("tenant", {}).get("id")
             or activity.get("conversation", {}).get("tenantId", "")
         )
-        account_id = self._account_id or tenant_id
+        account_id = tenant_id
 
         return PlatformEvent(
             account_id = account_id,

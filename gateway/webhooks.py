@@ -231,6 +231,25 @@ async def webhook_teams(request: Request, bg: BackgroundTasks):
     if is_duplicate_event(event):
         return {"type": "message", "text": ""}
     remember_event(event)
+
+    # The Teams tenant ID rarely matches a QueryBot account_id directly.
+    # If no client is found by tenant ID, look for the single configured client
+    # (one with a db_config assigned) and route there automatically.
+    # This works for the common single-tenant deployment with no hardcoding.
+    if not store.get_client(event.account_id):
+        all_clients = store.list_clients()
+        configured  = [c for c in all_clients if c.get("db_config_id")]
+        if len(configured) == 1:
+            tenant_id = event.account_id
+            event.account_id = configured[0]["account_id"]
+            log.info("Teams: auto-mapped tenant %s → client %s", tenant_id, event.account_id)
+        else:
+            log.warning(
+                "Teams: tenant %s not registered; %d configured clients found — "
+                "cannot auto-map (need exactly 1)",
+                event.account_id, len(configured),
+            )
+
     await dispatch(event.account_id, event, adapter, bg)
     return {"type": "message", "text": ""}
 
