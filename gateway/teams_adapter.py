@@ -474,11 +474,14 @@ class TeamsAdapter(PlatformAdapter):
             log.debug("Teams send_status: token fetch failed: %s", e)
             return
 
-        # Bot Framework requires from/recipient/conversation on every activity.
-        # Without them Teams silently drops the typing indicator.
+        import uuid
+        from datetime import datetime, timezone
+
         raw = getattr(event, "raw", {}) or {}
         activity = {
             "type":        "typing",
+            "id":          str(uuid.uuid4()),
+            "timestamp":   datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
             "from":        raw.get("recipient") or {"id": self._app_id, "role": "bot"},
             "recipient":   raw.get("from") or {},
             "conversation": raw.get("conversation") or {"id": conversation_id},
