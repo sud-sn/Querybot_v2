@@ -4604,69 +4604,135 @@ async def metrics_test_formula(request: Request, account_id: str):
         return ""
 
     first_table_sql = None
+    master = {}
+
+    state      = store.get_client_state(account_id)
+    schema_dir = (state or {}).get("schema_dir") or ""
+    schema_path = _Path(schema_dir) / "_schema.json" if schema_dir else None
+    if schema_path and schema_path.exists():
+        master = _json.loads(schema_path.read_text(encoding="utf-8"))
 
     if base_table_raw:
         first_table_sql = _fqn_to_sql(base_table_raw)
 
     if not first_table_sql:
-        state      = store.get_client_state(account_id)
-        schema_dir = (state or {}).get("schema_dir") or ""
-        schema_path = _Path(schema_dir) / "_schema.json" if schema_dir else None
-        if schema_path and schema_path.exists():
-            master = _json.loads(schema_path.read_text(encoding="utf-8"))
-            for fqn in master:
-                first_table_sql = _fqn_to_sql(fqn)
-                if first_table_sql:
-                    break
+        for fqn in master:
+            first_table_sql = _fqn_to_sql(fqn)
+            if first_table_sql:
+                break
 
-    if not first_table_sql:
+    if not master and not first_table_sql:
         return JSONResponse({"status": "error", "detail": "No tables found in schema — run discovery first"})
 
-    if db_type == "azure_sql":
-        probe = f"SELECT TOP 1 ({formula}) AS _result FROM {first_table_sql} WITH (NOLOCK)"
-    elif db_type == "snowflake":
-        probe = f"SELECT ({formula}) AS _result FROM {first_table_sql} LIMIT 1"
-    else:  # oracle
-        probe = f"SELECT ({formula}) AS _result FROM {first_table_sql} WHERE ROWNUM <= 1"
+    # ── Detect which schema columns the formula references ──────────────────
+    import re as _re
+    # Extract bare identifiers (skip SQL keywords and function names)
+    _SQL_KW = {
+        "SELECT","FROM","WHERE","AND","OR","NOT","IN","IS","NULL","AS","CASE",
+        "WHEN","THEN","ELSE","END","BETWEEN","LIKE","TOP","LIMIT","DISTINCT",
+        "WITH","NOLOCK","SUM","AVG","COUNT","MIN","MAX","COALESCE","NULLIF",
+        "ISNULL","NVL","CAST","CONVERT","ROUND","ABS","FLOOR","CEILING","IF",
+        "IIF","DATEDIFF","DATEADD","DATE","LEFT","RIGHT","MID","LEN","TRIM",
+        "UPPER","LOWER","REPLACE","SUBSTRING","CONCAT","ROWNUM",
+    }
+    tokens = [t.upper() for t in _re.findall(r'\b[A-Za-z_][A-Za-z0-9_]{2,}\b', formula)
+              if t.upper() not in _SQL_KW]
+
+    # Build column→table_fqn map from _schema.json
+    col_to_tables: dict[str, list[str]] = {}  # col_upper → [fqn, ...]
+    if master:
+        for fqn_key, tbl_data in master.items():
+            if not isinstance(tbl_data, dict):
+                continue
+            for col in (tbl_data.get("columns") or []):
+                col_name = (col.get("name") if isinstance(col, dict) else str(col) or "").upper()
+                if col_name:
+                    col_to_tables.setdefault(col_name, []).append(fqn_key)
+
+    # Map each token to its table (first match wins when unambiguous)
+    table_to_cols: dict[str, list[str]] = {}   # fqn → [col, ...]
+    unresolved: list[str] = []
+    for tok in tokens:
+        if tok in col_to_tables:
+            fqn_key = col_to_tables[tok][0]    # pick first table that has this column
+            table_to_cols.setdefault(fqn_key, []).append(tok)
+        # else: could be a literal/alias/keyword we didn't strip — ignore
+
+    multi_table = len(table_to_cols) > 1
+    single_table_fqn = next(iter(table_to_cols)) if len(table_to_cols) == 1 else None
+
+    def _tbl_sql(fqn: str) -> str:
+        parts = fqn.split(".")
+        if db_type == "azure_sql" and len(parts) >= 2:
+            return f"[{parts[-2]}].[{parts[-1]}]"
+        if db_type == "snowflake" and len(parts) >= 3:
+            return f'"{parts[0]}"."{parts[1]}"."{parts[2]}"'
+        if db_type == "oracle" and len(parts) >= 2:
+            return f'"{parts[-2]}"."{parts[-1]}"'
+        return fqn
 
     try:
         from core.schema import _az_connect, _sf_connect, _ora_connect
 
-        def _run():
-            if db_type == "azure_sql":
-                conn = _az_connect(creds)
-                try:
-                    cur = conn.cursor()
-                    cur.execute(probe)
-                    row = cur.fetchone()
-                    return row[0] if row else None
-                finally:
-                    conn.close()
-            elif db_type == "snowflake":
-                conn = _sf_connect(creds)
-                try:
-                    cur = conn.cursor()
-                    cur.execute(probe)
-                    row = cur.fetchone()
-                    return row[0] if row else None
-                finally:
-                    conn.close()
-            else:
-                conn = _ora_connect(creds)
-                try:
-                    cur = conn.cursor()
-                    cur.execute(probe)
-                    row = cur.fetchone()
-                    return row[0] if row else None
-                finally:
-                    conn.close()
+        def _get_conn():
+            if db_type == "azure_sql":   return _az_connect(creds)
+            if db_type == "snowflake":   return _sf_connect(creds)
+            return _ora_connect(creds)
 
-        loop   = asyncio.get_running_loop()
-        result = await asyncio.wait_for(loop.run_in_executor(None, _run), timeout=20)
-        # Coerce non-serialisable types (Decimal, date, etc.) to string
-        if result is not None and not isinstance(result, (int, float, str, bool)):
-            result = str(result)
-        return JSONResponse({"status": "ok", "result": result})
+        def _run_probe(sql: str):
+            conn = _get_conn()
+            try:
+                cur = conn.cursor()
+                cur.execute(sql)
+                row = cur.fetchone()
+                return row[0] if row else None
+            finally:
+                conn.close()
+
+        loop = asyncio.get_running_loop()
+
+        if multi_table:
+            # Per-table column existence probes
+            probe_results = []
+            all_ok = True
+            for fqn_key, cols in table_to_cols.items():
+                tbl_sql = _tbl_sql(fqn_key)
+                col_list = ", ".join(cols)
+                if db_type == "azure_sql":
+                    probe = f"SELECT TOP 1 {col_list} FROM {tbl_sql} WITH (NOLOCK)"
+                elif db_type == "snowflake":
+                    probe = f"SELECT {col_list} FROM {tbl_sql} LIMIT 1"
+                else:
+                    probe = f"SELECT {col_list} FROM {tbl_sql} WHERE ROWNUM <= 1"
+                try:
+                    await asyncio.wait_for(loop.run_in_executor(None, _run_probe, probe), timeout=15)
+                    probe_results.append(f"✓ {fqn_key.split('.')[-1]} ({col_list})")
+                except Exception as exc:
+                    probe_results.append(f"✗ {fqn_key.split('.')[-1]} ({col_list}): {exc}")
+                    all_ok = False
+
+            summary = f"Multi-table formula — {len(table_to_cols)} tables probed:\n" + "\n".join(probe_results)
+            if all_ok:
+                return JSONResponse({"status": "ok", "result": summary})
+            else:
+                return JSONResponse({"status": "error", "detail": summary})
+
+        else:
+            # Single table — run the full formula expression
+            tbl_sql = _tbl_sql(single_table_fqn) if single_table_fqn else first_table_sql
+            if not tbl_sql:
+                return JSONResponse({"status": "error", "detail": "No tables found in schema — run discovery first"})
+            if db_type == "azure_sql":
+                probe = f"SELECT TOP 1 ({formula}) AS _result FROM {tbl_sql} WITH (NOLOCK)"
+            elif db_type == "snowflake":
+                probe = f"SELECT ({formula}) AS _result FROM {tbl_sql} LIMIT 1"
+            else:
+                probe = f"SELECT ({formula}) AS _result FROM {tbl_sql} WHERE ROWNUM <= 1"
+
+            result = await asyncio.wait_for(loop.run_in_executor(None, _run_probe, probe), timeout=20)
+            if result is not None and not isinstance(result, (int, float, str, bool)):
+                result = str(result)
+            return JSONResponse({"status": "ok", "result": result})
 
     except asyncio.TimeoutError:
         return JSONResponse({"status": "error", "detail": "Query timed out (20 s)"})
