@@ -257,6 +257,58 @@ class SendStatusTests(unittest.TestCase):
 
         self.assertEqual(captured["json"], {"type": "typing"})
 
+    def test_initial_status_creates_visible_progress_activity(self):
+        adapter = _make_adapter()
+        event = _make_event()
+        calls = []
+
+        async def fake_post(url, **kwargs):
+            calls.append(kwargs.get("json"))
+            class FakeResp:
+                status_code = 201
+                text = ""
+                def json(self):
+                    return {"id": "progress-1"}
+            return FakeResp()
+
+        with patch.object(adapter, "_get_token", new=AsyncMock(return_value="t")):
+            with patch("gateway.teams_adapter.httpx.AsyncClient") as FakeClient:
+                instance = FakeClient.return_value.__aenter__.return_value
+                instance.post = AsyncMock(side_effect=fake_post)
+                _run(adapter.send_status(event, "accepted", "Working on it"))
+
+        self.assertEqual(calls[0], {"type": "typing"})
+        self.assertEqual(calls[1]["type"], "message")
+        self.assertIn("QueryBot is working", calls[1]["text"])
+        self.assertEqual(event.raw["_teams_progress_activity_id"], "progress-1")
+
+    def test_final_message_updates_visible_progress_activity(self):
+        adapter = _make_adapter()
+        event = _make_event()
+        event.raw["_teams_progress_activity_id"] = "progress-1"
+        captured = {}
+
+        async def fake_put(url, **kwargs):
+            captured["url"] = url
+            captured["json"] = kwargs.get("json")
+            class FakeResp:
+                status_code = 200
+                text = ""
+                def raise_for_status(self):
+                    return None
+            return FakeResp()
+
+        with patch.object(adapter, "_get_token", new=AsyncMock(return_value="t")):
+            with patch("gateway.teams_adapter.httpx.AsyncClient") as FakeClient:
+                instance = FakeClient.return_value.__aenter__.return_value
+                instance.put = AsyncMock(side_effect=fake_put)
+                _run(adapter.send_message(event, "Done"))
+
+        self.assertTrue(captured["url"].endswith("/activities/progress-1"))
+        self.assertEqual(captured["json"]["type"], "message")
+        self.assertEqual(captured["json"]["text"], "Done")
+        self.assertNotIn("_teams_progress_activity_id", event.raw)
+
     def test_token_failure_is_swallowed(self):
         """send_status must never raise — it's best-effort UX only."""
         adapter = _make_adapter()

@@ -375,13 +375,40 @@ class TeamsAdapter(PlatformAdapter):
                 "text":       text,
                 "textFormat": "markdown",
             }
+        event_raw = getattr(event, "raw", None)
+        if event_raw is None:
+            event.raw = {}
+            event_raw = event.raw
+        progress_activity_id = event_raw.pop("_teams_progress_activity_id", "")
         async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                reply_url,
-                headers={"Authorization": f"Bearer {token}"},
-                json=activity,
-                timeout=15,
-            )
+            if progress_activity_id:
+                activity["id"] = progress_activity_id
+                resp = await client.put(
+                    f"{reply_url}/{progress_activity_id}",
+                    headers={"Authorization": f"Bearer {token}"},
+                    json=activity,
+                    timeout=15,
+                )
+                if resp.status_code not in (200, 201):
+                    log.warning(
+                        "Teams progress update failed %s: %s; sending final message normally",
+                        resp.status_code,
+                        resp.text,
+                    )
+                    activity.pop("id", None)
+                    resp = await client.post(
+                        reply_url,
+                        headers={"Authorization": f"Bearer {token}"},
+                        json=activity,
+                        timeout=15,
+                    )
+            else:
+                resp = await client.post(
+                    reply_url,
+                    headers={"Authorization": f"Bearer {token}"},
+                    json=activity,
+                    timeout=15,
+                )
             if resp.status_code not in (200, 201):
                 log.error("Teams send_message %s: %s", resp.status_code, resp.text)
             resp.raise_for_status()
@@ -474,14 +501,14 @@ class TeamsAdapter(PlatformAdapter):
             log.debug("Teams send_status: token fetch failed: %s", e)
             return
 
-        activity = {"type": "typing"}
+        typing_activity = {"type": "typing"}
 
         try:
             async with httpx.AsyncClient() as client:
                 resp = await client.post(
                     reply_url,
                     headers={"Authorization": f"Bearer {token}"},
-                    json=activity,
+                    json=typing_activity,
                     timeout=5,
                 )
                 if resp.status_code not in (200, 201, 202):
@@ -492,6 +519,58 @@ class TeamsAdapter(PlatformAdapter):
                         resp.status_code,
                         resp.text,
                     )
+
+                raw = getattr(event, "raw", None)
+                if raw is None:
+                    event.raw = {}
+                    raw = event.raw
+                progress_id = raw.get("_teams_progress_activity_id", "")
+                progress_started = raw.get("_teams_progress_started", False)
+                progress_text = "QueryBot is working on your question..."
+                if label:
+                    progress_text = f"QueryBot is working... {label}"
+
+                progress_activity = {
+                    "type": "message",
+                    "text": progress_text,
+                    "textFormat": "markdown",
+                }
+                if progress_id:
+                    progress_activity["id"] = progress_id
+                    progress_resp = await client.put(
+                        f"{reply_url}/{progress_id}",
+                        headers={"Authorization": f"Bearer {token}"},
+                        json=progress_activity,
+                        timeout=5,
+                    )
+                    if progress_resp.status_code not in (200, 201):
+                        log.debug(
+                            "Teams progress update ignored for stage=%s: %s %s",
+                            stage,
+                            progress_resp.status_code,
+                            progress_resp.text,
+                        )
+                elif not progress_started and stage == "accepted":
+                    progress_resp = await client.post(
+                        reply_url,
+                        headers={"Authorization": f"Bearer {token}"},
+                        json=progress_activity,
+                        timeout=5,
+                    )
+                    raw["_teams_progress_started"] = True
+                    if progress_resp.status_code in (200, 201):
+                        try:
+                            raw["_teams_progress_activity_id"] = progress_resp.json().get("id", "")
+                        except Exception:
+                            raw["_teams_progress_activity_id"] = ""
+                    else:
+                        log.warning(
+                            "Teams visible progress message rejected for conversation=%s stage=%s: %s %s",
+                            conversation_id,
+                            stage,
+                            progress_resp.status_code,
+                            progress_resp.text,
+                        )
         except Exception as e:
             # Typing indicator is best-effort; never block the query on it.
             log.debug("Teams typing indicator failed for stage=%s: %s", stage, e)
