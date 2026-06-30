@@ -901,6 +901,14 @@ def _ensure_metric_registry_schema(conn) -> None:
         "grain": "TEXT DEFAULT ''",
         "category": "TEXT DEFAULT ''",
         "default_time_column": "TEXT DEFAULT ''",
+        "base_entity": "TEXT DEFAULT ''",
+        "base_table": "TEXT DEFAULT ''",
+        "formula_ast": "TEXT DEFAULT '[]'",
+        "metric_status": "TEXT DEFAULT 'draft'",
+        "validation_errors": "TEXT DEFAULT '[]'",
+        "last_validated_at": "TEXT DEFAULT ''",
+        "version": "INTEGER DEFAULT 1",
+        "owner": "TEXT DEFAULT ''",
     }
     for column, definition in columns.items():
         if column not in existing:
