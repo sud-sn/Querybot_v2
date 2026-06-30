@@ -143,6 +143,45 @@ class TeamsAdapter(PlatformAdapter):
 
     # ── Send message ──────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _format_for_teams(text: str) -> str:
+        """
+        Reformat a result message for Teams rendering:
+        - Wrap the pipe-table section in a code block so it stays monospace
+        - Replace unicode box-drawing separators (─) with plain dashes
+        - Ensure the greeting line doesn't run into the question on the same line
+        """
+        import re
+
+        # Fix greeting + question running together (single \n collapsed by Teams)
+        # "*Name*\n*Question*" → "*Name*\n\n*Question*"
+        text = re.sub(r'(\*[^\*\n]+\*)\n(\*[^\*\n]+\*)', r'\1\n\n\2', text)
+
+        # Replace unicode box-drawing dashes with plain ASCII so they render
+        # consistently across Teams clients
+        text = text.replace("─", "-").replace("━", "-")
+
+        # Detect and wrap the pipe-table block in a code fence.
+        # The table is a contiguous block of lines that all contain '|'.
+        lines  = text.split("\n")
+        result = []
+        i      = 0
+        while i < len(lines):
+            line = lines[i]
+            if "|" in line:
+                # Collect the full table block
+                table_lines = []
+                while i < len(lines) and ("|" in lines[i] or re.match(r"^[-+\s]+$", lines[i])):
+                    table_lines.append(lines[i])
+                    i += 1
+                result.append("```")
+                result.extend(table_lines)
+                result.append("```")
+            else:
+                result.append(line)
+                i += 1
+        return "\n".join(result)
+
     async def send_message(self, event: PlatformEvent, text: str) -> None:
         channel_info    = json.loads(event.channel_id)
         service_url     = channel_info["service_url"]
@@ -153,10 +192,9 @@ class TeamsAdapter(PlatformAdapter):
         )
         token = await self._get_token()
 
-        # Teams supports Markdown in text via content_type: "text/markdown"
         activity = {
             "type":        "message",
-            "text":        text,
+            "text":        self._format_for_teams(text),
             "textFormat":  "markdown",
         }
         async with httpx.AsyncClient() as client:
