@@ -24,7 +24,7 @@ from core.clarification import (
     get_pending, clear_pending, combine_with_clarification,
     resolve_option_text, was_recently_expired, acknowledge_recently_expired,
 )
-from core.llm import is_ddl_attempt, _DDL_USER_MESSAGE
+from core.llm import is_ddl_attempt, _DDL_USER_MESSAGE, llm_complete, resolve_provider
 
 log = logging.getLogger("querybot")
 
@@ -56,34 +56,6 @@ _ABOUT = (
     "Type `help` for commands or `status` to check your connection."
 )
 
-# Questions that are clearly outside business-data scope
-_OFF_TOPIC_RE = re.compile(
-    r"\b("
-    # Sports & tournaments
-    r"world\s*cup|premier\s*league|champions\s*league|ipl|nba|nfl|fifa|uefa|icc"
-    r"|(cricket|football|soccer|tennis|golf|rugby|hockey|baseball|basketball)"
-    r"\s+(match|game|score|result|update|team|player|news|tournament|standings?)"
-    r"|match\s+(score|result|update|highlight|preview|report)"
-    r"|(score|result|highlight)\s+of\s+(the\s+)?(match|game)"
-    # Current events / news
-    r"|(latest|breaking|today.s?|tonight.s?|current|this\s+week.s?)\s+(news|update|event|affairs?)"
-    r"|news\s+(about|on|from|update)"
-    r"|what.s\s+happening\s+(in|with|around)"
-    r"|trending\s+(now|today|this\s+week)"
-    # Weather
-    r"|what.s\s+the\s+weather|(weather|temperature|forecast)\s+(today|tomorrow|this\s+week)"
-    r"|will\s+it\s+(rain|snow|be\s+(hot|cold|sunny|cloudy))"
-    # General knowledge / trivia not related to data
-    r"|who\s+is\s+the\s+(president|prime\s+minister|king|queen|pope|chancellor)"
-    r"|capital\s+(city\s+)?of\s+\w+"
-    r"|population\s+of\s+\w+"
-    r"|history\s+of\s+\w+"
-    r"|recipe\s+for|how\s+to\s+cook|best\s+(movie|song|book|restaurant)"
-    r"|stock\s+(market\s+)?(price|update|news)\s+of\s+(?!my|our|the\s+company)"
-    r")\b",
-    re.IGNORECASE,
-)
-
 _OFF_TOPIC_REPLY = (
     "I'm QueryBot — I only answer questions about your business data.\n\n"
     "That question is outside my scope. Try asking me something like:\n"
@@ -107,6 +79,37 @@ _ABOUT_RE = re.compile(
     r")\b",
     re.IGNORECASE,
 )
+
+
+# ── Off-topic classifier (LLM-based, dynamic) ────────────────────────────────
+
+async def _classify_is_data_question(text: str, client: dict) -> bool:
+    """
+    Ask the configured LLM whether `text` is a business-data question.
+    Returns True  → let it through to the query pipeline.
+    Returns False → redirect with _OFF_TOPIC_REPLY.
+    Fails open (True) on any error so a misconfigured LLM never blocks users.
+    """
+    try:
+        provider, model, api_key, extra = resolve_provider(client, purpose="query")
+        system = (
+            "You are a classifier for a business analytics chatbot called QueryBot. "
+            "QueryBot ONLY answers questions about company data: revenue, sales, "
+            "customers, products, inventory, margins, finance, and similar business topics.\n\n"
+            "Reply with exactly one word:\n"
+            "  DATA — if the message is asking about business or company data\n"
+            "  OFF_TOPIC — if the message is about anything else "
+            "(weather, news, sports, politics, geopolitics, general knowledge, cooking, etc.)"
+        )
+        reply, _, _ = await llm_complete(
+            system, f'Message: "{text}"',
+            provider, model, api_key,
+            max_tokens=10, temperature=0.0, **extra,
+        )
+        return not reply.strip().upper().startswith("OFF_TOPIC")
+    except Exception as e:
+        log.debug("Off-topic classifier error, allowing through: %s", e)
+        return True  # fail open — never silently block a legitimate query
 
 
 # ── Persistent typing loop (Teams / bot adapters) ─────────────────────────────
@@ -411,8 +414,8 @@ async def dispatch(
                     )
                     return
 
-        # Off-topic guard — redirect clearly non-data questions before the LLM
-        if _OFF_TOPIC_RE.search(text):
+        # Off-topic guard — LLM classifies the message before the query pipeline
+        if not await _classify_is_data_question(text, client_row):
             await adapter.send_message(event, _OFF_TOPIC_REPLY)
             return
 
