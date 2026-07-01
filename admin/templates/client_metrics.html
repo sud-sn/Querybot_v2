@@ -195,8 +195,19 @@
 .metric-builder-body{display:none;padding:.85rem}
 .metric-builder.enabled .metric-builder-body{display:block}
 .metric-builder-grid{display:grid;grid-template-columns:130px minmax(160px,1fr);gap:.6rem;margin-bottom:.7rem}
-.metric-builder select,.metric-builder input{width:100%;padding:7px 9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:12px;min-height:33px}
-.metric-builder select:focus,.metric-builder input:focus{border-color:var(--primary);box-shadow:0 0 0 3px color-mix(in srgb,var(--primary) 14%,transparent);outline:none}
+.metric-builder select,.metric-builder input,.metric-builder textarea{width:100%;padding:7px 9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:12px;min-height:33px}
+.metric-builder textarea{min-height:86px;resize:vertical;font-family:Consolas,monospace;line-height:1.45}
+.metric-builder select:focus,.metric-builder input:focus,.metric-builder textarea:focus{border-color:var(--primary);box-shadow:0 0 0 3px color-mix(in srgb,var(--primary) 14%,transparent);outline:none}
+.metric-builder-mode-panel{border:1px solid var(--border);border-radius:7px;background:var(--surface);padding:.65rem;margin:.7rem 0}
+.metric-builder-mode-panel h4{margin:0 0 .45rem;font-size:11px;font-weight:900;letter-spacing:.05em;text-transform:uppercase;color:var(--text-muted)}
+.metric-builder-aggregate-panel{display:block}
+.metric-builder[data-builder-mode="row_calculated"] .metric-builder-aggregate-panel{display:none}
+.metric-builder-row-calc{display:none;margin:.7rem 0;border:1px solid color-mix(in srgb,var(--primary) 18%,var(--border));border-radius:7px;background:color-mix(in srgb,var(--primary-soft) 22%,var(--surface));padding:.7rem}
+.metric-builder[data-builder-mode="row_calculated"] .metric-builder-row-calc{display:block}
+.metric-builder-row-calc .form-note{margin:.35rem 0 .65rem}
+.metric-builder[data-builder-mode="row_calculated"] .metric-builder-add-filter{display:none}
+.metric-builder-join-actions{display:flex;align-items:center;gap:.45rem;flex-wrap:wrap;margin-top:.45rem}
+.metric-builder-join-template{font-size:11px}
 .metric-filter-row{display:grid;grid-template-columns:minmax(145px,1fr) 150px minmax(140px,1fr) 34px;gap:.45rem;margin:.45rem 0;align-items:center}
 .metric-filter-remove{height:33px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text-muted);cursor:pointer;font-weight:800}
 .metric-filter-remove:hover{color:var(--red,#DC2626);border-color:color-mix(in srgb,var(--red,#DC2626) 35%,var(--border))}
@@ -423,10 +434,25 @@
           <div class="metric-builder">
             <div class="metric-builder-head">
               <label><input type="checkbox" class="metric-builder-enabled"> No-code measure builder</label>
-              <button type="button" class="btn btn-secondary btn-xs" onclick="addMetricFilterRow(this)">+ Filter</button>
+              <button type="button" class="btn btn-secondary btn-xs metric-builder-add-filter" onclick="addMetricFilterRow(this)">+ Filter</button>
             </div>
             <div class="metric-builder-body">
               <div class="metric-builder-grid">
+                <div>
+                  <label>Builder mode</label>
+                  <select class="metric-builder-mode">
+                    <option value="aggregate">Aggregate / filtered measure</option>
+                    <option value="row_calculated">Row-level calculated measure</option>
+                  </select>
+                </div>
+                <div>
+                  <label>When to use row mode</label>
+                  <input type="text" value="Calculate per row, then aggregate by the user's requested grain" disabled>
+                </div>
+              </div>
+              <div class="metric-builder-mode-panel metric-builder-aggregate-panel">
+                <h4>Aggregate measure</h4>
+                <div class="metric-builder-grid">
                 <div>
                   <label>Aggregation</label>
                   <select class="metric-builder-aggregation">
@@ -442,9 +468,45 @@
                   <input type="text" class="metric-builder-measure" placeholder="SOP_CUS_IVC_LIN_AMT" autocomplete="off">
                 </div>
               </div>
-              <label style="font-size:12px;font-weight:800;color:var(--text-soft)">Filters</label>
-              <div class="metric-filter-list"></div>
-              <p class="form-note">Multiple filters are joined with AND and compiled into a CASE expression.</p>
+                <label style="font-size:12px;font-weight:800;color:var(--text-soft)">Filters</label>
+                <div class="metric-filter-list"></div>
+                <p class="form-note">Multiple filters are joined with AND and compiled into a CASE expression.</p>
+              </div>
+              <div class="metric-builder-row-calc">
+                <h4>Row-level calculation</h4>
+                <div class="metric-builder-grid">
+                  <div>
+                    <label>Aggregation</label>
+                    <select class="metric-builder-row-aggregation">
+                      <option value="AVG">AVG</option>
+                      <option value="SUM">SUM</option>
+                      <option value="COUNT">COUNT</option>
+                      <option value="MIN">MIN</option>
+                      <option value="MAX">MAX</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label>Output meaning</label>
+                    <input type="text" value="Per-row expression aggregated at query grain" disabled>
+                  </div>
+                </div>
+                <label style="font-size:12px;font-weight:800;color:var(--text-soft)">Row expression</label>
+                <textarea class="metric-builder-row-expression" placeholder="CASE WHEN due_dt.DMS_DT IS NULL THEN NULL WHEN pay_dt.DMS_DT IS NOT NULL THEN DATEDIFF(day, due_dt.DMS_DT, pay_dt.DMS_DT) ELSE DATEDIFF(day, due_dt.DMS_DT, GETDATE()) END"></textarea>
+                <p class="form-note">Enter one row-level SQL expression only. Do not include SELECT, FROM, JOIN, SUM, or AVG here.</p>
+                <div class="metric-builder-grid">
+                  <div>
+                    <label>Base required columns</label>
+                    <input type="text" class="metric-builder-required-columns" placeholder="DUE_DT_DMS_KEY, PAY_DT_DMS_KEY">
+                  </div>
+                  <div>
+                    <label>Required joins JSON</label>
+                    <textarea class="metric-builder-required-joins" placeholder='[{"alias":"due_dt","table":"DT_DMS","from_column":"DUE_DT_DMS_KEY","to_column":"DT_DMS_KEY","role":"due date"},{"alias":"pay_dt","table":"DT_DMS","from_column":"PAY_DT_DMS_KEY","to_column":"DT_DMS_KEY","role":"payment date"}]'></textarea>
+                    <div class="metric-builder-join-actions">
+                      <button type="button" class="btn btn-secondary btn-xs metric-builder-join-template" onclick="insertDateRoleJoinTemplate(this)">Use date-role template</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
               <div class="metric-builder-preview">Enable builder and choose a measure to preview the formula.</div>
             </div>
           </div>
@@ -657,10 +719,25 @@ SUM(NetProfit) * 100.0 / NULLIF(SUM(Revenue), 0)
       <div class="metric-builder" data-config="{{ (m.metric_builder_config or '') | e }}">
         <div class="metric-builder-head">
           <label><input type="checkbox" class="metric-builder-enabled"> No-code measure builder</label>
-          <button type="button" class="btn btn-secondary btn-xs" onclick="addMetricFilterRow(this)">+ Filter</button>
+          <button type="button" class="btn btn-secondary btn-xs metric-builder-add-filter" onclick="addMetricFilterRow(this)">+ Filter</button>
         </div>
         <div class="metric-builder-body">
           <div class="metric-builder-grid">
+            <div>
+              <label>Builder mode</label>
+              <select class="metric-builder-mode">
+                <option value="aggregate">Aggregate / filtered measure</option>
+                <option value="row_calculated">Row-level calculated measure</option>
+              </select>
+            </div>
+            <div>
+              <label>When to use row mode</label>
+              <input type="text" value="Calculate per row, then aggregate by the user's requested grain" disabled>
+            </div>
+          </div>
+          <div class="metric-builder-mode-panel metric-builder-aggregate-panel">
+            <h4>Aggregate measure</h4>
+            <div class="metric-builder-grid">
             <div>
               <label>Aggregation</label>
               <select class="metric-builder-aggregation">
@@ -676,9 +753,45 @@ SUM(NetProfit) * 100.0 / NULLIF(SUM(Revenue), 0)
               <input type="text" class="metric-builder-measure" placeholder="SOP_CUS_IVC_LIN_AMT" autocomplete="off">
             </div>
           </div>
-          <label style="font-size:12px;font-weight:800;color:var(--text-soft)">Filters</label>
-          <div class="metric-filter-list"></div>
-          <p class="form-note">Multiple filters are joined with AND and compiled into a CASE expression.</p>
+            <label style="font-size:12px;font-weight:800;color:var(--text-soft)">Filters</label>
+            <div class="metric-filter-list"></div>
+            <p class="form-note">Multiple filters are joined with AND and compiled into a CASE expression.</p>
+          </div>
+          <div class="metric-builder-row-calc">
+            <h4>Row-level calculation</h4>
+            <div class="metric-builder-grid">
+              <div>
+                <label>Aggregation</label>
+                <select class="metric-builder-row-aggregation">
+                  <option value="AVG">AVG</option>
+                  <option value="SUM">SUM</option>
+                  <option value="COUNT">COUNT</option>
+                  <option value="MIN">MIN</option>
+                  <option value="MAX">MAX</option>
+                </select>
+              </div>
+              <div>
+                <label>Output meaning</label>
+                <input type="text" value="Per-row expression aggregated at query grain" disabled>
+              </div>
+            </div>
+            <label style="font-size:12px;font-weight:800;color:var(--text-soft)">Row expression</label>
+            <textarea class="metric-builder-row-expression" placeholder="CASE WHEN due_dt.DMS_DT IS NULL THEN NULL WHEN pay_dt.DMS_DT IS NOT NULL THEN DATEDIFF(day, due_dt.DMS_DT, pay_dt.DMS_DT) ELSE DATEDIFF(day, due_dt.DMS_DT, GETDATE()) END"></textarea>
+            <p class="form-note">Enter one row-level SQL expression only. Do not include SELECT, FROM, JOIN, SUM, or AVG here.</p>
+            <div class="metric-builder-grid">
+              <div>
+                <label>Base required columns</label>
+                <input type="text" class="metric-builder-required-columns" placeholder="DUE_DT_DMS_KEY, PAY_DT_DMS_KEY">
+              </div>
+              <div>
+                <label>Required joins JSON</label>
+                <textarea class="metric-builder-required-joins" placeholder='[{"alias":"due_dt","table":"DT_DMS","from_column":"DUE_DT_DMS_KEY","to_column":"DT_DMS_KEY","role":"due date"},{"alias":"pay_dt","table":"DT_DMS","from_column":"PAY_DT_DMS_KEY","to_column":"DT_DMS_KEY","role":"payment date"}]'></textarea>
+                <div class="metric-builder-join-actions">
+                  <button type="button" class="btn btn-secondary btn-xs metric-builder-join-template" onclick="insertDateRoleJoinTemplate(this)">Use date-role template</button>
+                </div>
+              </div>
+            </div>
+          </div>
           <div class="metric-builder-preview">Enable builder and choose a measure to preview the formula.</div>
         </div>
       </div>
@@ -1643,6 +1756,7 @@ function _updateMetricUxPanels(form){
 function _collectMetricBuilderConfig(form){
   var builder = form ? form.querySelector(".metric-builder") : null;
   if(!builder) return { enabled:false };
+  var mode = (builder.querySelector(".metric-builder-mode")||{}).value || "aggregate";
   var filters = Array.from(builder.querySelectorAll(".metric-filter-row")).map(function(row){
     return {
       field: (row.querySelector(".metric-builder-field")||{}).value || "",
@@ -1650,8 +1764,27 @@ function _collectMetricBuilderConfig(form){
       value: (row.querySelector(".metric-builder-value")||{}).value || ""
     };
   }).filter(function(row){ return row.field.trim(); });
+  if(mode === "row_calculated"){
+    var joinsRaw = ((builder.querySelector(".metric-builder-required-joins")||{}).value || "").trim();
+    var joins = [];
+    if(joinsRaw){
+      try{ joins = JSON.parse(joinsRaw); }
+      catch(err){ throw new Error("Required joins must be valid JSON."); }
+      if(!Array.isArray(joins)) throw new Error("Required joins must be a JSON array.");
+    }
+    return {
+      enabled: !!(builder.querySelector(".metric-builder-enabled")||{}).checked,
+      mode: "row_calculated",
+      aggregation: (builder.querySelector(".metric-builder-row-aggregation")||{}).value || "AVG",
+      row_expression: (builder.querySelector(".metric-builder-row-expression")||{}).value || "",
+      required_columns: ((builder.querySelector(".metric-builder-required-columns")||{}).value || "")
+        .split(",").map(function(c){ return c.trim(); }).filter(Boolean),
+      required_joins: joins
+    };
+  }
   return {
     enabled: !!(builder.querySelector(".metric-builder-enabled")||{}).checked,
+    mode: "aggregate",
     aggregation: (builder.querySelector(".metric-builder-aggregation")||{}).value || "SUM",
     measure: (builder.querySelector(".metric-builder-measure")||{}).value || "",
     filters: filters
@@ -1661,6 +1794,12 @@ function _collectMetricBuilderConfig(form){
 function _compileMetricBuilderFormula(config){
   if(!config.enabled) return "";
   var agg = (config.aggregation || "SUM").toUpperCase();
+  if(config.mode === "row_calculated"){
+    var expr = (config.row_expression || "").trim();
+    if(!expr) throw new Error("Enter the row-level expression.");
+    if(agg === "COUNT") return "COUNT(CASE WHEN (" + expr + ") IS NOT NULL THEN 1 END)";
+    return agg + "(CAST((" + expr + ") AS float))";
+  }
   var measure = (config.measure || "").trim();
   if(!measure) throw new Error("Choose a measure field for the metric builder.");
   var conditions = (config.filters || []).map(_metricCondition).filter(Boolean);
@@ -1677,6 +1816,11 @@ function _syncMetricBuilder(form){
   if(!builder) return true;
   var enabled = !!(builder.querySelector(".metric-builder-enabled")||{}).checked;
   builder.classList.toggle("enabled", enabled);
+  var modeSelect = builder.querySelector(".metric-builder-mode");
+  var mode = (modeSelect && modeSelect.value) || "aggregate";
+  builder.dataset.builderMode = mode;
+  var filterBtn = builder.querySelector(".metric-builder-add-filter");
+  if(filterBtn) filterBtn.disabled = mode === "row_calculated";
   var hidden = form.querySelector(".metric-builder-config");
   var preview = builder.querySelector(".metric-builder-preview");
   var editor = form.querySelector(".formula-editor");
@@ -1694,8 +1838,10 @@ function _syncMetricBuilder(form){
     if(preview) preview.textContent = formula;
     if(editor){ editor.value = formula; updateFormulaHints(editor); }
     if(required){
-      var cols = [config.measure].concat((config.filters||[]).map(function(f){ return f.field; }))
-        .map(function(c){ return (c || "").split(".").pop().trim(); }).filter(Boolean);
+      var cols = config.mode === "row_calculated"
+        ? (config.required_columns || []).concat((config.required_joins || []).map(function(j){ return j.from_column; }))
+        : [config.measure].concat((config.filters||[]).map(function(f){ return f.field; }));
+      cols = cols.map(function(c){ return (c || "").split(".").pop().trim(); }).filter(Boolean);
       var existing = required.value.split(",").map(function(c){ return c.trim(); }).filter(Boolean);
       cols.forEach(function(c){ if(existing.indexOf(c) === -1) existing.push(c); });
       required.value = existing.join(", ");
@@ -1718,7 +1864,7 @@ function _wireMetricBuilderColumnLists(scope){
     document.body.appendChild(dl);
   }
   dl.innerHTML = _allColumns.map(function(c){ return '<option value="'+escHtml(c.column)+'">'+escHtml(c.table)+'</option>'; }).join("");
-  (scope || document).querySelectorAll(".metric-builder-measure,.metric-builder-field").forEach(function(inp){
+  (scope || document).querySelectorAll(".metric-builder-measure,.metric-builder-field,.metric-builder-required-columns").forEach(function(inp){
     inp.setAttribute("list", "metric-builder-column-options");
   });
 }
@@ -1733,14 +1879,52 @@ function _initialiseMetricBuilder(builder){
     if(!cfg || !cfg.enabled) return;
     builder.querySelector(".metric-builder-enabled").checked = true;
     builder.classList.add("enabled");
+    builder.dataset.builderMode = cfg.mode || "aggregate";
+    var modeSelect = builder.querySelector(".metric-builder-mode");
+    if(modeSelect) modeSelect.value = cfg.mode || "aggregate";
     builder.querySelector(".metric-builder-aggregation").value = (cfg.aggregation || "SUM").toUpperCase();
+    var rowAgg = builder.querySelector(".metric-builder-row-aggregation");
+    if(rowAgg) rowAgg.value = (cfg.aggregation || "AVG").toUpperCase();
     builder.querySelector(".metric-builder-measure").value = cfg.measure || "";
+    var rowExpression = builder.querySelector(".metric-builder-row-expression");
+    if(rowExpression) rowExpression.value = cfg.row_expression || "";
+    var reqColumns = builder.querySelector(".metric-builder-required-columns");
+    if(reqColumns) reqColumns.value = Array.isArray(cfg.required_columns) ? cfg.required_columns.join(", ") : (cfg.required_columns || "");
+    var reqJoins = builder.querySelector(".metric-builder-required-joins");
+    if(reqJoins) reqJoins.value = cfg.required_joins ? JSON.stringify(cfg.required_joins, null, 2) : "";
     var list = builder.querySelector(".metric-filter-list");
     if(list) list.innerHTML = (cfg.filters || []).map(_metricFilterRowHtml).join("");
     _wireMetricBuilderColumnLists(builder);
     _syncMetricBuilder(form);
   }catch(e){}
 }
+
+window.insertDateRoleJoinTemplate = function(btn){
+  var builder = btn ? btn.closest(".metric-builder") : null;
+  if(!builder) return;
+  var joins = builder.querySelector(".metric-builder-required-joins");
+  if(!joins) return;
+  if(joins.value.trim() && !confirm("Replace the current required joins JSON with the date-role template?")) return;
+  joins.value = JSON.stringify([
+    {
+      alias: "due_dt",
+      table: "DT_DMS",
+      from_column: "DUE_DT_DMS_KEY",
+      to_column: "DT_DMS_KEY",
+      role: "due date"
+    },
+    {
+      alias: "pay_dt",
+      table: "DT_DMS",
+      from_column: "PAY_DT_DMS_KEY",
+      to_column: "DT_DMS_KEY",
+      role: "payment date"
+    }
+  ], null, 2);
+  var columns = builder.querySelector(".metric-builder-required-columns");
+  if(columns && !columns.value.trim()) columns.value = "DUE_DT_DMS_KEY, PAY_DT_DMS_KEY";
+  _syncMetricBuilder(builder.closest(".metric-form"));
+};
 
 function _checkParens(sql){
   var depth = 0;
@@ -2011,7 +2195,7 @@ document.addEventListener("input", function(e){
     else _hideSuggestions();
     _updateMetricUxPanels(e.target.closest(".metric-form"));
   }
-  if(e.target.matches(".metric-builder-measure,.metric-builder-field,.metric-builder-value")){
+  if(e.target.matches(".metric-builder-measure,.metric-builder-field,.metric-builder-value,.metric-builder-row-expression,.metric-builder-required-columns,.metric-builder-required-joins")){
     _syncMetricBuilder(e.target.closest(".metric-form"));
   }
   if(e.target.matches("[name='base_table'],[name='base_entity'],[name='grain']")){
@@ -2028,7 +2212,15 @@ document.addEventListener("change", function(e){
     if(editor) updateFormulaHints(editor);
     _updateMetricUxPanels(form);
   }
-  if(e.target.matches(".metric-builder-enabled,.metric-builder-aggregation,.metric-builder-operator")){
+  if(e.target.matches(".metric-builder-mode")){
+    var builder = e.target.closest(".metric-builder");
+    if(builder && e.target.value === "row_calculated"){
+      var rowAgg = builder.querySelector(".metric-builder-row-aggregation");
+      if(rowAgg && !rowAgg.value) rowAgg.value = "AVG";
+    }
+    _syncMetricBuilder(e.target.closest(".metric-form"));
+  }
+  if(e.target.matches(".metric-builder-enabled,.metric-builder-aggregation,.metric-builder-row-aggregation,.metric-builder-operator")){
     _syncMetricBuilder(e.target.closest(".metric-form"));
   }
   if(e.target.matches("[name='result_format'],[name='default_time_column']")){
@@ -2042,7 +2234,7 @@ document.addEventListener("submit", function(e){
   var enabled = builder && (builder.querySelector(".metric-builder-enabled")||{}).checked;
   if(enabled && !_syncMetricBuilder(e.target)){
     e.preventDefault();
-    alert("Metric builder is incomplete. Choose a measure field and valid filter values.");
+    alert("Metric builder is incomplete. Check the measure/row expression and valid filter or join values.");
   }
 }, true);
 
