@@ -26,6 +26,7 @@ ChromaDB:
 """
 
 import asyncio
+import json
 import logging
 import re
 from pathlib import Path
@@ -195,6 +196,30 @@ def _format_approved_metrics_for_kb(account_id: str, table_name: str) -> str:
             continue
         name     = m.get("name", "metric")
         synonyms = m.get("synonyms", "")
+        join_lines = ""
+        builder_config = m.get("metric_builder_config") or ""
+        if builder_config:
+            try:
+                cfg = json.loads(builder_config)
+            except Exception:
+                cfg = {}
+            if isinstance(cfg, dict) and cfg.get("mode") == "row_calculated":
+                joins = []
+                for join in cfg.get("required_joins") or []:
+                    if not isinstance(join, dict):
+                        continue
+                    alias = join.get("alias") or "(choose alias)"
+                    table = join.get("table") or join.get("to_table") or ""
+                    from_col = join.get("from_column") or ""
+                    to_col = join.get("to_column") or ""
+                    role = join.get("role") or ""
+                    if table and from_col and to_col:
+                        joins.append(
+                            f"    - Join {table} AS {alias} ON fact.{from_col} = {alias}.{to_col}"
+                            + (f" for {role}" if role else "")
+                        )
+                if joins:
+                    join_lines = "\n  Required row-expression joins:\n" + "\n".join(joins)
         relevant.append(
             f"- **{name}** (synonyms: {synonyms})\n"
             f"  APPROVED FORMULA: `{sql}`\n"
@@ -202,6 +227,7 @@ def _format_approved_metrics_for_kb(account_id: str, table_name: str) -> str:
             f"  Do NOT document a nearby column (e.g. CUS_IVC_LIN_AMT) as the {name} measure.\n"
             f"  Required columns that MUST appear in the SELECT: "
             f"{m.get('required_columns', 'see formula above')}"
+            f"{join_lines}"
         )
 
     if not relevant:

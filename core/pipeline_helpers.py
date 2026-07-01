@@ -19,6 +19,7 @@ Covers:
 from __future__ import annotations
 
 import logging
+import json
 import re
 
 from core.schema import run_query
@@ -300,6 +301,29 @@ def _format_metric_formula_context(metrics: list[dict], account_id: str = "") ->
             lines.append(f"   Example questions: {metric.get('example_questions')}")
         if metric.get("default_time_column"):
             lines.append(f"   Default time column: {metric.get('default_time_column')} — use this column when grouping by date/period")
+        builder_config = metric.get("metric_builder_config") or ""
+        if builder_config:
+            try:
+                cfg = json.loads(builder_config)
+            except Exception:
+                cfg = {}
+            if isinstance(cfg, dict) and cfg.get("mode") == "row_calculated":
+                lines.append("   Row-level metric: calculate the expression per source row, then aggregate it at the user's requested grain.")
+                joins = cfg.get("required_joins") or []
+                if joins:
+                    lines.append("   Required row-expression joins:")
+                    for join in joins:
+                        if not isinstance(join, dict):
+                            continue
+                        alias = join.get("alias") or "(choose alias)"
+                        table = join.get("table") or join.get("to_table") or ""
+                        from_col = join.get("from_column") or ""
+                        to_col = join.get("to_column") or ""
+                        role = join.get("role") or ""
+                        lines.append(
+                            f"     - Join {table} AS {alias} ON fact.{from_col} = {alias}.{to_col}"
+                            + (f" for {role}" if role else "")
+                        )
         sql_tpl = (metric.get("sql_template") or "").strip()
         if account_id and "${" in sql_tpl:
             try:
@@ -330,6 +354,18 @@ def _extract_metric_formula_tables(metrics: list[dict]) -> set[str]:
         if (metric.get("formula_type") or "query").lower() != "expression":
             continue
         sql = metric.get("sql_template") or ""
+        builder_config = metric.get("metric_builder_config") or ""
+        if builder_config:
+            try:
+                cfg = json.loads(builder_config)
+            except Exception:
+                cfg = {}
+            if isinstance(cfg, dict):
+                for join in cfg.get("required_joins") or []:
+                    if isinstance(join, dict):
+                        table = (join.get("table") or join.get("to_table") or "").strip()
+                        if table:
+                            tables.add(table.upper())
         # Match WORD.WORD patterns (TABLE.COLUMN or SCHEMA.TABLE)
         for match in re.finditer(r'\b([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)\b', sql):
             # The first part is the table (or schema). Collect both so the
