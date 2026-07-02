@@ -55,6 +55,22 @@ _DIALECT: dict[str, str] = {
 }
 
 
+def _strip_literals_and_comments(sql: str) -> str:
+    """
+    Blank out string literals and comments so the DDL/DML keyword scan only
+    sees executable SQL. A filter value like ACTION_TYPE = 'DELETE' is data,
+    not an operation — without this, audit/log-table queries whose values
+    happen to be words like DELETE, UPDATE, or EXEC are falsely rejected.
+    Single-quoted literals handle '' escaping; identifiers in [] / "" are kept
+    (a DDL keyword cannot hide there as an executable statement).
+    """
+    text = sql or ""
+    text = re.sub(r"'(?:[^']|'')*'", "''", text)
+    text = re.sub(r"--[^\n]*", "", text)
+    text = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
+    return text
+
+
 def _normalize_identifier(name: str) -> str:
     return re.sub(r"[^A-Z0-9]+", "", (name or "").upper())
 
@@ -432,7 +448,7 @@ def validate_sql_detailed(
             "cannot_generate",
         )
 
-    m = _DDL_DML.search(sql)
+    m = _DDL_DML.search(_strip_literals_and_comments(sql))
     if m:
         op = m.group(1).upper()
         return SqlValidationResult(

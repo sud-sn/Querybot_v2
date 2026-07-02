@@ -60,6 +60,43 @@ def _quote_col(col: str, db_type: str) -> str:
     return f'"{col}"'
 
 
+def _split_and_conditions(text: str) -> list[str]:
+    """
+    Split a WHERE/filter expression into its top-level AND conditions.
+
+    A naive re.split(r"\\bAND\\b") corrupts BETWEEN x AND y (yielding a dangling
+    "y" condition) and breaks apart parenthesised OR groups. Skip the AND that
+    completes a BETWEEN, and any AND nested inside parentheses.
+    """
+    parts: list[str] = []
+    depth = 0
+    pending_between = 0
+    start = 0
+    for m in re.finditer(r"\(|\)|\bBETWEEN\b|\bAND\b", text or "", re.IGNORECASE):
+        tok = m.group(0)
+        if tok == "(":
+            depth += 1
+        elif tok == ")":
+            depth = max(0, depth - 1)
+        elif tok.upper() == "BETWEEN":
+            if depth == 0:
+                pending_between += 1
+        else:  # AND
+            if depth > 0:
+                continue
+            if pending_between:
+                pending_between -= 1
+                continue
+            piece = text[start:m.start()].strip()
+            if piece:
+                parts.append(piece)
+            start = m.end()
+    tail = (text or "")[start:].strip()
+    if tail:
+        parts.append(tail)
+    return parts
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Entity detection
 # ══════════════════════════════════════════════════════════════════════════════
@@ -409,8 +446,8 @@ def build_join_skeleton(
             # Substitute entity names → SQL aliases
             for ent_name, a in aliases.items():
                 where_sql = where_sql.replace(f"{ent_name}.", f"{a}.")
-            # Split on AND (case-insensitive) to evaluate each condition
-            parts = [p.strip() for p in re.split(r"\bAND\b", where_sql, flags=re.IGNORECASE) if p.strip()]
+            # Split on top-level AND (BETWEEN- and paren-aware) per condition
+            parts = _split_and_conditions(where_sql)
             for part in parts:
                 if part.upper().startswith(f"{new_alias.upper()}."):
                     # condition on the newly-joined dim → goes into ON clause
@@ -430,7 +467,7 @@ def build_join_skeleton(
             for ent_name, a in aliases.items():
                 ef = ef.replace(f"{ent_name}.", f"{a}.")
             # If user wrote bare column names (no table prefix), prepend new alias
-            ef_parts = [p.strip() for p in re.split(r"\bAND\b", ef, flags=re.IGNORECASE) if p.strip()]
+            ef_parts = _split_and_conditions(ef)
             for part in ef_parts:
                 # If part already has an alias prefix, keep as-is; else prepend new_alias
                 if "." not in part.split()[0]:
@@ -451,7 +488,7 @@ def build_join_skeleton(
         af = anchor_filter_sql
         for ent_name, a in aliases.items():
             af = af.replace(f"{ent_name}.", f"{a}.")
-        af_parts = [p.strip() for p in re.split(r"\bAND\b", af, flags=re.IGNORECASE) if p.strip()]
+        af_parts = _split_and_conditions(af)
         for part in af_parts:
             if "." not in part.split()[0]:
                 global_where.append(f"{anchor_alias}.{part}")

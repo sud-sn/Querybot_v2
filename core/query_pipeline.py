@@ -46,7 +46,7 @@ from core.pipeline_helpers import (
     _extract_kb_synonym_injection, _send_live_stage,
     _count_tables_for_zero_row, _build_zero_row_message,
     _format_metric_formula_context, _extract_metric_formula_tables,
-    _build_row_metric_join_sql,
+    _build_row_metric_join_sql, attempt_field_plan_repair,
 )
 from core.pipeline_trace import (
     _log_q, _trace_create, _trace_update, _trace_step, _trace_finish,
@@ -1190,6 +1190,30 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
     ok, reason, code = validate_sql(
         sql, all_known, db_cfg["db_type"], query_scope_tables, all_columns, semantic_context
     )
+
+    # Display-field plan mismatches are mechanically fixable from the plan
+    # itself (add the dimension join, swap key → display column). Try that
+    # before burning an LLM retry — and before surfacing a validator error.
+    if not ok and code == "field_plan_mismatch":
+        try:
+            _repaired_sql = attempt_field_plan_repair(
+                sql, db_cfg["db_type"], all_known, query_scope_tables,
+                all_columns, semantic_context,
+            )
+        except Exception as _rep_exc:
+            _repaired_sql = ""
+            log.debug("Field-plan repair skipped: %s", _rep_exc)
+        if _repaired_sql:
+            _trace_step(
+                trace_id,
+                "field_plan_repair",
+                input_summary=sql,
+                output_summary=_repaired_sql,
+                metadata={"mode": "deterministic"},
+            )
+            sql = _repaired_sql
+            ok, reason, code = True, "OK", "ok"
+
     _trace_update(
         trace_id,
         generated_sql=sql,

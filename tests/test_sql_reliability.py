@@ -575,8 +575,69 @@ class IntentAndGraphReliabilityTests(unittest.TestCase):
             "show rows with no matching invoice",
             "items without receipts",
             "products never sold",
+            "customers who haven't placed orders this year",
+            "suppliers without invoices last month",
+            "which invoices are missing",
         ):
             self.assertTrue(analyze_query_intent(question)["wants_missing_records"], question)
+
+    def test_exclusion_phrasing_does_not_trigger_missing_records(self):
+        # wants_missing_records HARD-enforces LEFT JOIN + IS NULL in the
+        # validator, so exclusion/NULL-filter phrasing must not set it.
+        for question in (
+            "what is the total sales without tax",
+            "total sales, don't include cancelled orders",
+            "list invoice amounts with missing due dates",
+            "show revenue excluding returns, never mind the discounts",
+            "what is the number of days present between payments by each customer",
+        ):
+            self.assertFalse(analyze_query_intent(question)["wants_missing_records"], question)
+
+    def test_ddl_check_ignores_string_literals_and_comments(self):
+        cols = {"EMDW_DMART.AUDIT_LOG": {"ACTION_TYPE": "varchar"}}
+        ok, _, code = validate_sql(
+            "SELECT COUNT(*) FROM EMDW_DMART.AUDIT_LOG WHERE ACTION_TYPE = 'DELETE'",
+            {"EMDW_DMART.AUDIT_LOG"}, "azure_sql", table_columns=cols,
+        )
+        self.assertTrue(ok, code)
+        ok2, _, code2 = validate_sql(
+            "SELECT 1 -- UPDATE nothing\nFROM EMDW_DMART.AUDIT_LOG",
+            {"EMDW_DMART.AUDIT_LOG"}, "azure_sql", table_columns=cols,
+        )
+        self.assertTrue(ok2, code2)
+        ok3, _, code3 = validate_sql(
+            "DELETE FROM EMDW_DMART.AUDIT_LOG", {"EMDW_DMART.AUDIT_LOG"}, "azure_sql",
+        )
+        self.assertFalse(ok3)
+        self.assertEqual(code3, "ddl")
+
+    def test_date_part_dimension_fields_are_optional(self):
+        # "by month"/"in year N" may be answered by bucketing the fact table's
+        # YYYYMMDD key directly (per the DATE-KEY RULE) — DT_DMS.MONTH/YEAR
+        # must be a hint, not a hard requirement.
+        cols = {
+            "EMDW_DMART.DT_DMS": {"DT_DMS_KEY": "int", "YEAR": "int", "MONTH": "int", "DAY": "int"},
+            "EMDW_DMART.CUS_ORD_IVC_FCT": {
+                "CUS_IVC_LIN_AMT": "decimal", "CUS_ORD_DT_DMS_KEY": "int", "CUS_DMS_KEY": "int",
+            },
+        }
+        plan = build_semantic_field_plan("total sales by month", cols, None)
+        month_fields = [f for f in plan["fields"] if f["column"] == "MONTH"]
+        self.assertTrue(month_fields)
+        self.assertEqual(month_fields[0].get("enforcement"), "optional")
+        for edge in plan.get("joins") or []:
+            if edge["to"].endswith("DT_DMS") or edge["from"].endswith("DT_DMS"):
+                self.assertEqual(edge.get("enforcement"), "optional")
+        sql = (
+            "SELECT FORMAT(TRY_CONVERT(date, CONVERT(varchar(8), CUS_ORD_DT_DMS_KEY), 112), 'yyyy-MM') AS PERIOD, "
+            "SUM(CUS_IVC_LIN_AMT) AS TOTAL FROM EMDW_DMART.CUS_ORD_IVC_FCT WHERE CUS_ORD_DT_DMS_KEY > 0 "
+            "GROUP BY FORMAT(TRY_CONVERT(date, CONVERT(varchar(8), CUS_ORD_DT_DMS_KEY), 112), 'yyyy-MM')"
+        )
+        ok, reason, _ = validate_sql(
+            sql, set(cols), "azure_sql", table_columns=cols,
+            semantic_context={"semantic_plan": plan},
+        )
+        self.assertTrue(ok, reason)
 
     def _graph(self):
         return {
@@ -606,6 +667,35 @@ class IntentAndGraphReliabilityTests(unittest.TestCase):
         )
         self.assertIn("Order", found)
         self.assertIn("Product", found)
+
+    def test_entity_filter_with_between_survives_and_split(self):
+        from core.graph_resolver import build_join_skeleton
+        entities_map = {
+            "Fact": {
+                "table_name": "FNN_FCT", "schema_name": "EMDW_DMART",
+                "entity_filter": "PAY_DT_DMS_KEY BETWEEN 20240101 AND 20241231",
+            },
+            "Customer": {"table_name": "CUS_DMS", "schema_name": "EMDW_DMART"},
+        }
+        path = [{
+            "from_entity": "Fact", "to_entity": "Customer",
+            "from_column": "CUS_DMS_KEY", "to_column": "CUS_DMS_KEY",
+            "join_type": "INNER", "_direction": "forward",
+        }]
+        skeleton = build_join_skeleton(path, entities_map, "Fact", "azure_sql")
+        self.assertIn("BETWEEN 20240101 AND 20241231", skeleton)
+        self.assertNotIn("fac.20241231", skeleton)
+
+    def test_split_and_conditions_respects_between_and_parens(self):
+        from core.graph_resolver import _split_and_conditions
+        self.assertEqual(
+            _split_and_conditions("A BETWEEN 1 AND 5 AND B = 2"),
+            ["A BETWEEN 1 AND 5", "B = 2"],
+        )
+        self.assertEqual(
+            _split_and_conditions("(X = 1 OR Y = 2) AND Z BETWEEN 3 AND 4"),
+            ["(X = 1 OR Y = 2)", "Z BETWEEN 3 AND 4"],
+        )
 
     def test_antijoin_resolver_uses_left_join(self):
         result = resolve_for_question(
@@ -684,6 +774,85 @@ class IntentAndGraphReliabilityTests(unittest.TestCase):
         prompt = build_sql_system_prompt("azure_sql", "Table FNN_FCT has column PAY_DT_DMS_KEY")
         self.assertIn(
             "convert it with TRY_CONVERT inside the INNER subquery", prompt
+        )
+
+
+class FieldPlanRepairTests(unittest.TestCase):
+    """Deterministic display-field repair — no LLM retry for mechanical fixes."""
+
+    _COLS = {
+        "EMDW_DMART.CUS_DMS": {"CUS_DMS_KEY": "int", "CUS_NM": "varchar", "CUS_ID": "varchar"},
+        "EMDW_DMART.FNN_FCT": {"CUS_DMS_KEY": "int", "PAY_DT_DMS_KEY": "int", "PAY_AMT": "decimal"},
+    }
+
+    def _plan(self):
+        return {
+            "enabled": True,
+            "fields": [{
+                "term": "customer", "table": "EMDW_DMART.CUS_DMS", "column": "CUS_NM",
+                "role": "display_dimension", "display_required": True,
+                "source_key_column": "CUS_DMS_KEY", "source_key_table": "EMDW_DMART.FNN_FCT",
+            }],
+            "joins": [{
+                "from": "EMDW_DMART.FNN_FCT", "to": "EMDW_DMART.CUS_DMS",
+                "conditions": [("CUS_DMS_KEY", "CUS_DMS_KEY")],
+            }],
+        }
+
+    def _repair(self, sql):
+        from core.pipeline_helpers import attempt_field_plan_repair
+        return attempt_field_plan_repair(
+            sql, "azure_sql", set(self._COLS), None, self._COLS,
+            {"semantic_plan": self._plan()},
+        )
+
+    def test_repairs_key_grouping_by_adding_join_and_display_column(self):
+        sql = (
+            "SELECT CUS_DMS_KEY, SUM(PAY_AMT) AS TOTAL FROM EMDW_DMART.FNN_FCT "
+            "WHERE PAY_DT_DMS_KEY > 0 GROUP BY CUS_DMS_KEY"
+        )
+        fixed = self._repair(sql)
+        self.assertTrue(fixed)
+        self.assertIn("CUS_NM", fixed)
+        self.assertIn("JOIN EMDW_DMART.CUS_DMS", fixed)
+        ok, reason, _ = validate_sql(
+            fixed, set(self._COLS), "azure_sql", table_columns=self._COLS,
+            semantic_context={"semantic_plan": self._plan()},
+        )
+        self.assertTrue(ok, reason)
+
+    def test_repairs_when_dim_already_joined(self):
+        sql = (
+            "SELECT f.CUS_DMS_KEY, SUM(f.PAY_AMT) AS TOTAL FROM EMDW_DMART.FNN_FCT f "
+            "JOIN EMDW_DMART.CUS_DMS c ON f.CUS_DMS_KEY = c.CUS_DMS_KEY GROUP BY f.CUS_DMS_KEY"
+        )
+        fixed = self._repair(sql)
+        self.assertTrue(fixed)
+        self.assertIn("c.CUS_NM", fixed)
+        # The JOIN ON condition must keep the surrogate key untouched.
+        self.assertIn("f.CUS_DMS_KEY = c.CUS_DMS_KEY", fixed)
+
+    def test_bails_on_valid_sql(self):
+        sql = (
+            "SELECT c.CUS_NM, SUM(f.PAY_AMT) AS TOTAL FROM EMDW_DMART.FNN_FCT f "
+            "JOIN EMDW_DMART.CUS_DMS c ON f.CUS_DMS_KEY = c.CUS_DMS_KEY GROUP BY c.CUS_NM"
+        )
+        self.assertEqual(self._repair(sql), "")
+
+    def test_bails_when_key_not_projected(self):
+        # Adding a display column here would change the query grain.
+        sql = "SELECT SUM(PAY_AMT) AS TOTAL FROM EMDW_DMART.FNN_FCT"
+        self.assertEqual(self._repair(sql), "")
+
+    def test_pipeline_wires_repair_before_llm_retry(self):
+        import inspect
+        import core.query_pipeline as qp
+        src = inspect.getsource(qp)
+        self.assertIn("attempt_field_plan_repair(", src)
+        # Repair must run before the retryable/LLM-retry block.
+        self.assertLess(
+            src.index("attempt_field_plan_repair("),
+            src.index("retryable = ("),
         )
 
 

@@ -442,3 +442,197 @@ def _build_row_metric_join_sql(
             )
 
     return "\n".join(lines)
+
+
+# ── Deterministic field-plan repair ──────────────────────────────────────────
+
+_REPAIR_DIALECT = {"azure_sql": "tsql", "oracle": "oracle", "snowflake": "snowflake"}
+
+
+def attempt_field_plan_repair(
+    sql: str,
+    db_type: str,
+    known_tables: set[str],
+    allowed_tables: set[str] | None,
+    table_columns: dict[str, dict[str, str]] | None,
+    semantic_context: dict | None,
+) -> str:
+    """
+    Deterministically repair a field_plan_mismatch failure without an LLM call.
+
+    The most common plan failure is fully mechanical: the plan requires a
+    display dimension (e.g. customer → CUS_DMS.CUS_NM) but the LLM grouped by
+    the surrogate key (CUS_DMS_KEY) instead. Everything needed to fix that is
+    already in the plan — the display table, display column, and join key — so
+    rewrite the SQL directly: add the missing dimension join and swap the key
+    column for the display column in SELECT / GROUP BY / ORDER BY.
+
+    Returns the repaired SQL when the rewrite re-validates cleanly, else "".
+    Only display-field mismatches (and their join edges) are attempted; any
+    other error type bails out to the normal LLM retry.
+    """
+    try:
+        import sqlglot
+        from sqlglot import exp as sg_exp
+    except ImportError:
+        return ""
+    from core.validator import validate_sql_detailed, _table_matches
+
+    plan = (semantic_context or {}).get("semantic_plan") or {}
+    if not plan.get("enabled") or not plan.get("fields"):
+        return ""
+
+    result = validate_sql_detailed(
+        sql, known_tables, db_type, allowed_tables, table_columns, semantic_context
+    )
+    if result.ok or result.code != "field_plan_mismatch":
+        return ""
+
+    plan_fields = {
+        ((f.get("table") or "").upper(), (f.get("column") or "").upper()): f
+        for f in plan.get("fields") or []
+    }
+    missing_display: list[dict] = []
+    display_tables: set[str] = set()
+    for err in result.errors:
+        if err.get("code") == "field_plan_mismatch":
+            f = plan_fields.get(
+                ((err.get("table") or "").upper(), (err.get("column") or "").upper())
+            )
+            # Plan table may differ from the validator-resolved table key —
+            # fall back to matching by column + display flag.
+            if f is None:
+                col_u = (err.get("column") or "").upper()
+                f = next(
+                    (
+                        pf for (pt, pc), pf in plan_fields.items()
+                        if pc == col_u and _table_matches(pt, err.get("table") or "")
+                    ),
+                    None,
+                )
+            if not f or not f.get("display_required") or not f.get("source_key_column"):
+                return ""
+            missing_display.append(f)
+            display_tables.add((f.get("table") or "").upper())
+        elif err.get("code") == "field_plan_join_missing":
+            # Repairable only when the missing join reaches a display table we
+            # are about to add anyway.
+            if (err.get("right_table") or "").upper() not in display_tables and (
+                (err.get("left_table") or "").upper() not in display_tables
+            ):
+                return ""
+        else:
+            return ""
+    if not missing_display:
+        return ""
+
+    dialect = _REPAIR_DIALECT.get(db_type)
+    try:
+        tree = sqlglot.parse_one(sql, dialect=dialect)
+    except Exception:
+        return ""
+
+    def _node_matches_table(node, table_name: str) -> bool:
+        parts = [p for p in [
+            str(node.catalog or ""), str(node.db or ""), str(node.name or "")
+        ] if p]
+        return bool(parts) and _table_matches(".".join(parts), table_name)
+
+    changed = False
+    for field in missing_display:
+        display_table = field.get("table") or ""
+        display_col = (field.get("column") or "").upper()
+        key_col = (field.get("source_key_column") or "").upper()
+        source_table = field.get("source_key_table") or field.get("source_table") or ""
+
+        # Locate the SELECT whose scope contains the source (fact) table.
+        target_select = None
+        source_node = None
+        for select_node in tree.find_all(sg_exp.Select):
+            for tbl in select_node.find_all(sg_exp.Table):
+                if source_table and _node_matches_table(tbl, source_table):
+                    target_select, source_node = select_node, tbl
+                    break
+                for tk, cols in (table_columns or {}).items():
+                    if _node_matches_table(tbl, tk) and key_col in {
+                        str(c).upper() for c in (cols or {})
+                    }:
+                        target_select, source_node = select_node, tbl
+                        break
+                if source_node is not None:
+                    break
+            if source_node is not None:
+                break
+        if target_select is None or source_node is None:
+            return ""
+        src_alias = source_node.alias_or_name or source_node.name
+
+        # Is the display table already joined in this SELECT?
+        disp_alias = ""
+        for tbl in target_select.find_all(sg_exp.Table):
+            if _node_matches_table(tbl, display_table):
+                disp_alias = tbl.alias_or_name or tbl.name
+                break
+        if not disp_alias:
+            bare = display_table.split(".")[-1]
+            base_alias = re.sub(r"[^a-z]", "", bare.lower())[:3] or "d"
+            existing = {
+                (t.alias_or_name or t.name or "").lower()
+                for t in target_select.find_all(sg_exp.Table)
+            }
+            disp_alias = base_alias
+            n = 2
+            while disp_alias in existing:
+                disp_alias = f"{base_alias}{n}"
+                n += 1
+            join_frag = (
+                f"SELECT 1 FROM t JOIN {display_table} AS {disp_alias} "
+                f"ON {src_alias}.{key_col} = {disp_alias}.{key_col}"
+            )
+            try:
+                join_expr = sqlglot.parse_one(join_frag, dialect=dialect).find(sg_exp.Join)
+            except Exception:
+                return ""
+            if join_expr is None:
+                return ""
+            target_select.append("joins", join_expr)
+            changed = True
+
+        # Swap the surrogate key for the display column in projection,
+        # GROUP BY, and ORDER BY (never in JOIN ON / WHERE).
+        swap_scopes = list(target_select.expressions)
+        for arg in ("group", "order"):
+            scope = target_select.args.get(arg)
+            if scope is not None:
+                swap_scopes.append(scope)
+        replaced_here = False
+        for scope in swap_scopes:
+            for col_node in list(scope.find_all(sg_exp.Column)):
+                if (col_node.name or "").upper() != key_col:
+                    continue
+                tbl_ref = (col_node.table or "")
+                if tbl_ref and tbl_ref.upper() != str(src_alias).upper():
+                    continue
+                col_node.replace(sg_exp.column(display_col, table=disp_alias))
+                replaced_here = True
+        if not replaced_here:
+            # Key column not projected/grouped at all — adding the display
+            # column would change the query grain; leave that to the LLM.
+            return ""
+        changed = True
+
+    if not changed:
+        return ""
+
+    try:
+        repaired = tree.sql(dialect=dialect)
+    except Exception:
+        return ""
+
+    recheck = validate_sql_detailed(
+        repaired, known_tables, db_type, allowed_tables, table_columns, semantic_context
+    )
+    if not recheck.ok:
+        return ""
+    log.info("Deterministic field-plan repair applied (no LLM retry needed)")
+    return repaired

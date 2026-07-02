@@ -569,6 +569,15 @@ def _build_required_joins(fields: list[dict], table_columns: dict[str, dict[str,
     return joins
 
 
+# Generic date-part columns on a date dimension. Matching "by month" / "in
+# year 2024" to DT_DMS.MONTH / DT_DMS.YEAR is a useful hint, but must NOT be
+# hard-required: the system prompt's DATE-KEY RULE teaches the LLM to bucket
+# periods directly from the fact table's YYYYMMDD key (FORMAT(TRY_CONVERT(...))),
+# which is equally valid SQL that never touches the dimension's date-part
+# column — enforcing it as required hard-blocks those correct queries.
+_DATE_PART_COLUMNS = {"DAY", "MONTH", "YEAR", "QUARTER", "WEEK", "SEMESTER", "HALF"}
+
+
 def build_semantic_field_plan(
     question: str,
     table_columns: dict[str, dict[str, str]] | None,
@@ -585,7 +594,20 @@ def build_semantic_field_plan(
     fields = _apply_display_dimension_fields(fields, question, normalized_columns, allowed_tables, selected_schema)
     if not fields:
         return {"enabled": False, "fields": [], "joins": [], "reason": "no matching semantic fields"}
+    for field in fields:
+        if (field.get("column") or "").upper() in _DATE_PART_COLUMNS:
+            field["enforcement"] = "optional"
     joins = _build_required_joins(fields, normalized_columns)
+    # Join edges that exist only to reach optional (date-part) fields must be
+    # optional too — otherwise the field is skippable but its join still blocks.
+    _required_fields = [f for f in fields if f.get("enforcement") != "optional"]
+    _required_edge_keys = {
+        (e["from"], e["to"])
+        for e in _build_required_joins(_required_fields, normalized_columns)
+    }
+    for edge in joins:
+        if (edge["from"], edge["to"]) not in _required_edge_keys:
+            edge["enforcement"] = "optional"
     required_tables = sorted({f["table"] for f in fields})
     return {
         "enabled": True,

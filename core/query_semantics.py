@@ -166,21 +166,34 @@ def analyze_query_intent(question: str) -> dict[str, bool]:
         )),
 
         # ── Anti-join / missing records ───────────────────────────────────────
-        # Fixed: escaped dots, added contractions and "unmatched/orphaned" terms.
+        # This flag HARD-enforces a LEFT JOIN + IS NULL shape in the validator,
+        # so a false positive here blocks otherwise-valid SQL. Bare "without" /
+        # "missing" / "never" / "absent" / contractions are NOT enough on their
+        # own — "total sales without tax" and "don't include cancelled orders"
+        # are not anti-join questions. Each trigger needs record/entity context:
+        #   • contraction preceded by a relative pronoun ("customers who haven't…")
+        #   • "never" followed by a verb ("products never sold")
+        #   • "without"/"missing" followed by a record noun ("items without receipts")
         "wants_missing_records": bool(re.search(
-            r"\b(haven'?t|hasn'?t|didn'?t|don'?t|doesn'?t|weren'?t|wasn'?t"
-            r"|never|without|missing|absent|unmatched|unlinked|orphan(?:ed)?"
+            r"\b(?:who|that|which)\s+(?:haven'?t|hasn'?t|didn'?t|don'?t|doesn'?t|weren'?t|wasn'?t)\b"
+            r"|\bnever\s+(?:been\s+)?(?:had|has|have|sold|bought|paid|made|placed|shipped|\w{2,}ed)\b"
+            r"|\babsent\s+from\b"
+            r"|\b(unmatched|unlinked|orphan(?:ed)?"
             r"|no\s+activity|no\s+transactions?|no\s+orders?|no\s+purchases?"
             r"|no\s+matching\s+(shipment|invoice|record|receipt|order|transaction|row|entry)s?"
             r"|zero\s+(orders?|sales?|records?|transactions?|visits?)"
             r"|not\s+placed|not\s+made|not\s+submitted|not\s+attended|skipped|missed)\b"
-            r"|\b(not\s+in|have\s+no|has\s+no|with\s+no|lacks?|lacking"
+            r"|\b(not\s+in|have\s+no|has\s+no|with\s+no|without|missing|lacks?|lacking"
             r"|do\s+not\s+have|does\s+not\s+have|never\s+had)\b"
             r".{0,40}\b(records?|orders?|transactions?|sales?|attendances?|entries|matches?"
             r"|results?|absences?|purchases?|receipts?|shipments?|invoices?|visits?|activities)\b"
+            # Noun-first form needs a strong trailing phrase — bare "never" /
+            # "without" / "missing" after a noun is usually exclusion phrasing
+            # ("sales without tax", "amounts with missing due dates"), not an
+            # anti-join ask.
             r"|\b(records?|orders?|transactions?|sales?|attendances?|entries|matches?"
             r"|results?|absences?|purchases?|receipts?|shipments?|invoices?|visits?|activities)\b"
-            r".{0,40}\b(not\s+in|never|without|missing|absent|never\s+had|have\s+no)\b"
+            r".{0,40}\b(not\s+in|never\s+had|have\s+no|has\s+no|(?:are|is|were|was)\s+missing|(?:were|was)\s+never)\b"
             r"|\b(employees?|customers?|products?|items?|users?|patients?)\b"
             r".{0,50}\b(no|never|without|not)\b.{0,30}"
             r"\b(absences?|orders?|sales?|records?|transactions?|visits?|attendances?|purchases?|receipts?|shipments?|invoices?)\b",
