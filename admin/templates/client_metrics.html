@@ -225,6 +225,17 @@
 .metric-builder[data-builder-mode="row_calculated"] .metric-builder-row-calc{display:block}
 .metric-builder-row-calc .form-note{margin:.35rem 0 .65rem}
 .metric-builder[data-builder-mode="row_calculated"] .metric-builder-add-filter{display:none}
+.metric-builder-date-gap{display:none;margin:.7rem 0;border:1px solid color-mix(in srgb,var(--primary) 18%,var(--border));border-radius:7px;background:color-mix(in srgb,var(--primary-soft) 22%,var(--surface));padding:.7rem}
+.metric-builder[data-builder-mode="date_gap"] .metric-builder-date-gap{display:block}
+.metric-builder[data-builder-mode="date_gap"] .metric-builder-aggregate-panel{display:none}
+.metric-builder[data-builder-mode="date_gap"] .metric-builder-row-calc{display:none}
+.metric-builder[data-builder-mode="date_gap"] .metric-builder-add-filter{display:none}
+.metric-ai-import{border:1px dashed color-mix(in srgb,var(--primary) 40%,var(--border));border-radius:7px;background:color-mix(in srgb,var(--primary-soft) 14%,var(--surface));padding:.65rem;margin:.7rem 0}
+.metric-ai-import label{font-size:12px;font-weight:800;color:var(--text-soft);display:block;margin-bottom:.35rem}
+.metric-ai-import textarea{width:100%;padding:7px 9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:12px;font-family:Consolas,monospace;resize:vertical;min-height:64px}
+.metric-ai-import-status{font-size:11px;font-weight:700}
+.metric-ai-import-status[data-tone="ok"]{color:#166534}
+.metric-ai-import-status[data-tone="err"]{color:#b91c1c}
 .metric-builder-join-actions{display:flex;align-items:center;gap:.45rem;flex-wrap:wrap;margin-top:.45rem}
 .metric-builder-join-template{font-size:11px}
 .metric-builder-join-status{font-size:11px;font-weight:800;border:1px solid var(--border);border-radius:999px;padding:3px 8px;color:var(--text-muted);background:var(--surface-2)}
@@ -452,6 +463,15 @@
             </div>
           </div>
 
+          <div class="metric-ai-import">
+            <label>✨ AI import — paste a DAX measure or describe the metric in plain English</label>
+            <textarea class="metric-ai-import-text" rows="3" placeholder="Paste a Power BI DAX measure here, or describe it: average days between due date and payment date per invoice; unpaid overdue invoices count days up to today, not-yet-due count as 0"></textarea>
+            <div class="metric-builder-join-actions">
+              <button type="button" class="btn btn-secondary btn-xs" onclick="aiImportMetric(this)">Generate config with AI</button>
+              <span class="metric-ai-import-status"></span>
+            </div>
+            <p class="form-note">Nothing is saved automatically — the form below is pre-filled for your review. Use ▶ Test to verify against the database before saving.</p>
+          </div>
           <input type="hidden" name="metric_builder_config" class="metric-builder-config" value="">
           <div class="metric-builder">
             <div class="metric-builder-head">
@@ -464,6 +484,7 @@
                   <label>Calculation mode</label>
                   <select class="metric-builder-mode">
                     <option value="aggregate">Aggregate / filtered measure</option>
+                    <option value="date_gap">Days between two dates (wizard)</option>
                     <option value="row_calculated">Row-level calculated measure</option>
                   </select>
                 </div>
@@ -527,6 +548,65 @@
                       <button type="button" class="btn btn-secondary btn-xs metric-builder-join-template" onclick="insertDateRoleJoinTemplate(this)">Suggest joins from schema</button>
                     </div>
                   </div>
+                </div>
+              </div>
+              <div class="metric-builder-date-gap">
+                <h4>Days between two dates</h4>
+                <p class="form-note">Pick two date roles — joins, sentinel-key guards, and the CASE expression are generated for you. Set the Base table (Advanced options) first, then load the roles.</p>
+                <div class="metric-builder-join-actions">
+                  <button type="button" class="btn btn-secondary btn-xs" onclick="loadDateGapRoles(this)">Load date roles from schema</button>
+                  <span class="metric-builder-dg-status form-note"></span>
+                </div>
+                <div class="metric-builder-grid" style="grid-template-columns:1fr 1fr">
+                  <div>
+                    <label>From date role (start)</label>
+                    <select class="metric-builder-dg-from"><option value="">— load date roles —</option></select>
+                  </div>
+                  <div>
+                    <label>To date role (end)</label>
+                    <select class="metric-builder-dg-to"><option value="">— load date roles —</option></select>
+                  </div>
+                </div>
+                <div class="metric-builder-grid" style="grid-template-columns:1fr 1fr">
+                  <div>
+                    <label>Unit</label>
+                    <select class="metric-builder-dg-unit">
+                      <option value="day">Days</option>
+                      <option value="month">Months</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label>Aggregation</label>
+                    <select class="metric-builder-dg-aggregation">
+                      <option value="AVG">AVG</option>
+                      <option value="SUM">SUM</option>
+                      <option value="COUNT">COUNT</option>
+                      <option value="MIN">MIN</option>
+                      <option value="MAX">MAX</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="metric-builder-grid" style="grid-template-columns:1fr 1fr">
+                  <div>
+                    <label>If the "to" date is missing</label>
+                    <select class="metric-builder-dg-missing">
+                      <option value="null">Exclude the row (NULL)</option>
+                      <option value="today_if_overdue_else_zero">Count to today if overdue, else 0</option>
+                      <option value="today">Count from start date to today</option>
+                      <option value="zero">Count as 0</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label>Invalid key values (mean "no date")</label>
+                    <input type="text" class="metric-builder-dg-invalid" value="0" placeholder="0, 777">
+                  </div>
+                </div>
+                <div class="metric-builder-grid" style="grid-template-columns:1fr 1fr">
+                  <div>
+                    <label>Dimension date column</label>
+                    <input type="text" class="metric-builder-dg-datecol" value="DMS_DT" placeholder="DMS_DT">
+                  </div>
+                  <div></div>
                 </div>
               </div>
               <div class="metric-builder-preview">Enable builder and choose a measure to preview the formula.</div>
@@ -750,6 +830,7 @@ SUM(NetProfit) * 100.0 / NULLIF(SUM(Revenue), 0)
               <label>Calculation mode</label>
               <select class="metric-builder-mode">
                 <option value="aggregate">Aggregate / filtered measure</option>
+                <option value="date_gap">Days between two dates (wizard)</option>
                 <option value="row_calculated">Row-level calculated measure</option>
               </select>
             </div>
@@ -813,6 +894,65 @@ SUM(NetProfit) * 100.0 / NULLIF(SUM(Revenue), 0)
                   <button type="button" class="btn btn-secondary btn-xs metric-builder-join-template" onclick="insertDateRoleJoinTemplate(this)">Suggest joins from schema</button>
                 </div>
               </div>
+            </div>
+          </div>
+          <div class="metric-builder-date-gap">
+            <h4>Days between two dates</h4>
+            <p class="form-note">Pick two date roles — joins, sentinel-key guards, and the CASE expression are generated for you. Set the Base table (Advanced options) first, then load the roles.</p>
+            <div class="metric-builder-join-actions">
+              <button type="button" class="btn btn-secondary btn-xs" onclick="loadDateGapRoles(this)">Load date roles from schema</button>
+              <span class="metric-builder-dg-status form-note"></span>
+            </div>
+            <div class="metric-builder-grid" style="grid-template-columns:1fr 1fr">
+              <div>
+                <label>From date role (start)</label>
+                <select class="metric-builder-dg-from"><option value="">— load date roles —</option></select>
+              </div>
+              <div>
+                <label>To date role (end)</label>
+                <select class="metric-builder-dg-to"><option value="">— load date roles —</option></select>
+              </div>
+            </div>
+            <div class="metric-builder-grid" style="grid-template-columns:1fr 1fr">
+              <div>
+                <label>Unit</label>
+                <select class="metric-builder-dg-unit">
+                  <option value="day">Days</option>
+                  <option value="month">Months</option>
+                </select>
+              </div>
+              <div>
+                <label>Aggregation</label>
+                <select class="metric-builder-dg-aggregation">
+                  <option value="AVG">AVG</option>
+                  <option value="SUM">SUM</option>
+                  <option value="COUNT">COUNT</option>
+                  <option value="MIN">MIN</option>
+                  <option value="MAX">MAX</option>
+                </select>
+              </div>
+            </div>
+            <div class="metric-builder-grid" style="grid-template-columns:1fr 1fr">
+              <div>
+                <label>If the "to" date is missing</label>
+                <select class="metric-builder-dg-missing">
+                  <option value="null">Exclude the row (NULL)</option>
+                  <option value="today_if_overdue_else_zero">Count to today if overdue, else 0</option>
+                  <option value="today">Count from start date to today</option>
+                  <option value="zero">Count as 0</option>
+                </select>
+              </div>
+              <div>
+                <label>Invalid key values (mean "no date")</label>
+                <input type="text" class="metric-builder-dg-invalid" value="0" placeholder="0, 777">
+              </div>
+            </div>
+            <div class="metric-builder-grid" style="grid-template-columns:1fr 1fr">
+              <div>
+                <label>Dimension date column</label>
+                <input type="text" class="metric-builder-dg-datecol" value="DMS_DT" placeholder="DMS_DT">
+              </div>
+              <div></div>
             </div>
           </div>
           <div class="metric-builder-preview">Enable builder and choose a measure to preview the formula.</div>
@@ -2093,6 +2233,29 @@ function _collectMetricBuilderConfig(form){
       required_joins: joins
     };
   }
+  if(mode === "date_gap"){
+    var fromSel = builder.querySelector(".metric-builder-dg-from");
+    var toSel   = builder.querySelector(".metric-builder-dg-to");
+    var fromOpt = fromSel && fromSel.selectedOptions.length ? fromSel.selectedOptions[0] : null;
+    var toOpt   = toSel && toSel.selectedOptions.length ? toSel.selectedOptions[0] : null;
+    var fromJoin = null, toJoin = null;
+    try{
+      if(fromOpt && fromOpt.dataset.join) fromJoin = JSON.parse(fromOpt.dataset.join);
+      if(toOpt && toOpt.dataset.join) toJoin = JSON.parse(toOpt.dataset.join);
+    }catch(err){ /* fall through to null checks */ }
+    var invalidRaw = ((builder.querySelector(".metric-builder-dg-invalid")||{}).value || "").trim();
+    return {
+      enabled: !!(builder.querySelector(".metric-builder-enabled")||{}).checked,
+      mode: "date_gap",
+      aggregation: (builder.querySelector(".metric-builder-dg-aggregation")||{}).value || "AVG",
+      unit: (builder.querySelector(".metric-builder-dg-unit")||{}).value || "day",
+      missing_to: (builder.querySelector(".metric-builder-dg-missing")||{}).value || "null",
+      invalid_keys: invalidRaw,
+      date_column: ((builder.querySelector(".metric-builder-dg-datecol")||{}).value || "DMS_DT").trim() || "DMS_DT",
+      from_join: fromJoin,
+      to_join: toJoin
+    };
+  }
   return {
     enabled: !!(builder.querySelector(".metric-builder-enabled")||{}).checked,
     mode: "aggregate",
@@ -2105,6 +2268,28 @@ function _collectMetricBuilderConfig(form){
 function _compileMetricBuilderFormula(config){
   if(!config.enabled) return "";
   var agg = (config.aggregation || "SUM").toUpperCase();
+  if(config.mode === "date_gap"){
+    if(!config.from_join || !config.to_join) throw new Error("Load date roles and pick both From and To.");
+    if(config.from_join.alias === config.to_join.alias) throw new Error("From and To must be different date roles.");
+    var dcol = config.date_column || "DMS_DT";
+    var fd = config.from_join.alias + "." + dcol;
+    var td = config.to_join.alias + "." + dcol;
+    var unit = config.unit || "day";
+    // Azure SQL flavour for preview — the server compiles the authoritative
+    // dialect-correct version on save.
+    var today = "CAST(GETDATE() AS date)";
+    var gap = "DATEDIFF(" + unit + ", " + fd + ", " + td + ")";
+    var gapToday = "DATEDIFF(" + unit + ", " + fd + ", " + today + ")";
+    var dgExpr = "CASE WHEN " + fd + " IS NULL THEN NULL WHEN " + td + " IS NOT NULL THEN " + gap;
+    var mt = config.missing_to || "null";
+    if(mt === "zero") dgExpr += " ELSE 0";
+    else if(mt === "today") dgExpr += " ELSE " + gapToday;
+    else if(mt === "today_if_overdue_else_zero") dgExpr += " WHEN " + fd + " < " + today + " THEN " + gapToday + " ELSE 0";
+    else dgExpr += " ELSE NULL";
+    dgExpr += " END";
+    if(agg === "COUNT") return "COUNT(CASE WHEN (" + dgExpr + ") IS NOT NULL THEN 1 END)";
+    return agg + "(CAST((" + dgExpr + ") AS float))";
+  }
   if(config.mode === "row_calculated"){
     var expr = (config.row_expression || "").trim();
     if(!expr) throw new Error("Enter the row-level expression.");
@@ -2149,9 +2334,14 @@ function _syncMetricBuilder(form){
     if(preview) preview.textContent = formula;
     if(editor){ editor.value = formula; updateFormulaHints(editor); _renderSqlHighlight(editor); }
     if(required){
-      var cols = config.mode === "row_calculated"
-        ? (config.required_columns || []).concat((config.required_joins || []).map(function(j){ return j.from_column; }))
-        : [config.measure].concat((config.filters||[]).map(function(f){ return f.field; }));
+      var cols;
+      if(config.mode === "row_calculated"){
+        cols = (config.required_columns || []).concat((config.required_joins || []).map(function(j){ return j.from_column; }));
+      } else if(config.mode === "date_gap"){
+        cols = [config.from_join && config.from_join.from_column, config.to_join && config.to_join.from_column];
+      } else {
+        cols = [config.measure].concat((config.filters||[]).map(function(f){ return f.field; }));
+      }
       cols = cols.map(function(c){ return (c || "").split(".").pop().trim(); }).filter(Boolean);
       var existing = required.value.split(",").map(function(c){ return c.trim(); }).filter(Boolean);
       cols.forEach(function(c){ if(existing.indexOf(c) === -1) existing.push(c); });
@@ -2413,11 +2603,37 @@ function _initialiseMetricBuilder(builder){
     if(reqColumns) reqColumns.value = Array.isArray(cfg.required_columns) ? cfg.required_columns.join(", ") : (cfg.required_columns || "");
     var reqJoins = builder.querySelector(".metric-builder-required-joins");
     if(reqJoins) reqJoins.value = cfg.required_joins ? JSON.stringify(cfg.required_joins, null, 2) : "";
+    if(cfg.mode === "date_gap"){
+      _setDateGapRoleOption(builder, ".metric-builder-dg-from", cfg.from_join);
+      _setDateGapRoleOption(builder, ".metric-builder-dg-to", cfg.to_join);
+      var dgUnit = builder.querySelector(".metric-builder-dg-unit");
+      if(dgUnit) dgUnit.value = cfg.unit || "day";
+      var dgMissing = builder.querySelector(".metric-builder-dg-missing");
+      if(dgMissing) dgMissing.value = cfg.missing_to || "null";
+      var dgInvalid = builder.querySelector(".metric-builder-dg-invalid");
+      if(dgInvalid) dgInvalid.value = Array.isArray(cfg.invalid_keys) ? cfg.invalid_keys.join(", ") : (cfg.invalid_keys || "");
+      var dgDateCol = builder.querySelector(".metric-builder-dg-datecol");
+      if(dgDateCol) dgDateCol.value = cfg.date_column || "DMS_DT";
+      var dgAgg = builder.querySelector(".metric-builder-dg-aggregation");
+      if(dgAgg) dgAgg.value = (cfg.aggregation || "AVG").toUpperCase();
+    }
     var list = builder.querySelector(".metric-filter-list");
     if(list) list.innerHTML = (cfg.filters || []).map(_metricFilterRowHtml).join("");
     _wireMetricBuilderColumnLists(builder);
     _syncMetricBuilder(form);
   }catch(e){}
+}
+
+function _setDateGapRoleOption(builder, selector, join){
+  var sel = builder.querySelector(selector);
+  if(!sel || !join || !join.alias) return;
+  var label = (join.role || join.alias) + " (" + (join.from_column || "") + ")";
+  var opt = document.createElement("option");
+  opt.value = join.alias;
+  opt.textContent = label;
+  opt.dataset.join = JSON.stringify(join);
+  sel.appendChild(opt);
+  sel.value = join.alias;
 }
 
 window.insertDateRoleJoinTemplate = async function(btn){
@@ -2460,6 +2676,141 @@ window.insertDateRoleJoinTemplate = async function(btn){
     _syncMetricBuilder(form);
   } catch(err) {
     alert("Failed to look up date roles: "+err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = origLabel;
+  }
+};
+
+window.loadDateGapRoles = async function(btn){
+  var builder = btn ? btn.closest(".metric-builder") : null;
+  var form    = builder ? builder.closest(".metric-form") : null;
+  if(!builder || !form) return;
+  var status = builder.querySelector(".metric-builder-dg-status");
+  var baseTableInput = form.querySelector("[name='base_table']");
+  var table = baseTableInput ? baseTableInput.value.trim() : "";
+  if(!table){
+    if(status) status.textContent = "Set the Base table field (Advanced options) first.";
+    return;
+  }
+  var m = location.pathname.match(/\/clients\/([^/]+)\//);
+  if(!m) return;
+  var origLabel = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "Loading…";
+  if(status) status.textContent = "";
+  try {
+    var resp = await fetch("/admin/clients/"+m[1]+"/metrics/api/date-role-joins?table="+encodeURIComponent(table));
+    var data = await resp.json();
+    var joins = data.joins || [];
+    if(!joins.length){
+      if(status) status.textContent = "No date roles detected for "+table+". Rebuild the KB or check the Date Roles page.";
+      return;
+    }
+    ["dg-from","dg-to"].forEach(function(which){
+      var sel = builder.querySelector(".metric-builder-"+which);
+      if(!sel) return;
+      var current = sel.value;
+      sel.innerHTML = '<option value="">— pick a date role —</option>';
+      joins.forEach(function(j){
+        var opt = document.createElement("option");
+        opt.value = j.alias;
+        opt.textContent = (j.role || j.alias) + " (" + j.from_column + ")";
+        opt.dataset.join = JSON.stringify(j);
+        sel.appendChild(opt);
+      });
+      if(current) sel.value = current;
+    });
+    // Sensible defaults: a role containing "due" starts the gap, "pay" ends it.
+    var fromSel = builder.querySelector(".metric-builder-dg-from");
+    var toSel   = builder.querySelector(".metric-builder-dg-to");
+    if(fromSel && !fromSel.value){
+      var dueOpt = joins.find(function(j){ return /due/i.test(j.role || j.alias); });
+      if(dueOpt) fromSel.value = dueOpt.alias;
+    }
+    if(toSel && !toSel.value){
+      var payOpt = joins.find(function(j){ return /pay/i.test(j.role || j.alias); });
+      if(payOpt) toSel.value = payOpt.alias;
+    }
+    var dateColInput = builder.querySelector(".metric-builder-dg-datecol");
+    var withDateCol = joins.find(function(j){ return j.date_column; });
+    if(dateColInput && withDateCol && (!dateColInput.value || dateColInput.value === "DMS_DT")){
+      dateColInput.value = withDateCol.date_column;
+    }
+    if(status) status.textContent = joins.length + " date role(s) loaded.";
+    _syncMetricBuilder(form);
+  } catch(err) {
+    if(status) status.textContent = "Failed to load date roles: " + err.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = origLabel;
+  }
+};
+
+window.aiImportMetric = async function(btn){
+  var panel = btn ? btn.closest(".metric-ai-import") : null;
+  var form  = btn ? btn.closest(".metric-form") : null;
+  if(!panel || !form) return;
+  var status = panel.querySelector(".metric-ai-import-status");
+  var textEl = panel.querySelector(".metric-ai-import-text");
+  var text = textEl ? textEl.value.trim() : "";
+  if(!text){
+    if(status){ status.dataset.tone = "err"; status.textContent = "Paste a DAX measure or describe the metric first."; }
+    return;
+  }
+  var m = location.pathname.match(/\/clients\/([^/]+)\//);
+  if(!m) return;
+  var origLabel = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "Generating…";
+  if(status){ status.dataset.tone = ""; status.textContent = "Asking the AI to convert the definition…"; }
+  try {
+    var resp = await fetch("/admin/clients/"+m[1]+"/metrics/api/ai-import", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({text: text})
+    });
+    var data = await resp.json();
+    if(data.status !== "ok"){
+      if(status){ status.dataset.tone = "err"; status.textContent = data.message || "AI import failed."; }
+      return;
+    }
+    // Pre-fill the form for review — nothing is saved until the admin submits.
+    var setVal = function(name, value){
+      var el = form.querySelector("[name='"+name+"']");
+      if(el && value) el.value = value;
+    };
+    setVal("name", data.name);
+    setVal("synonyms", data.synonyms);
+    setVal("description", data.description);
+    setVal("base_table", data.base_table);
+    setVal("example_questions", data.example_questions);
+    var fmtSel = form.querySelector("[name='result_format']");
+    if(fmtSel && data.result_format) fmtSel.value = data.result_format;
+    var hidden = form.querySelector(".metric-builder-config");
+    if(hidden) hidden.value = JSON.stringify(data.config);
+    var builder = form.querySelector(".metric-builder");
+    if(builder){
+      builder.dataset.config = JSON.stringify(data.config);
+      // Allow re-initialisation from the AI config, then re-protect against
+      // the async columns-fetch clobbering what we just filled.
+      builder.dataset.userEdited = "";
+      _initialiseMetricBuilder(builder);
+      builder.dataset.userEdited = "1";
+    }
+    var editor = form.querySelector(".formula-editor");
+    if(editor && data.formula){
+      editor.value = data.formula;
+      updateFormulaHints(editor);
+      _renderSqlHighlight(editor);
+    }
+    if(status){
+      status.dataset.tone = "ok";
+      status.textContent = "Config generated — review the fields below, then ▶ Test before saving.";
+    }
+    _updateMetricUxPanels(form);
+  } catch(err) {
+    if(status){ status.dataset.tone = "err"; status.textContent = "AI import failed: " + err.message; }
   } finally {
     btn.disabled = false;
     btn.textContent = origLabel;
@@ -2761,7 +3112,7 @@ document.addEventListener("input", function(e){
     else _hideSuggestions();
     _updateMetricUxPanels(e.target.closest(".metric-form"));
   }
-  if(e.target.matches(".metric-builder-measure,.metric-builder-field,.metric-builder-value,.metric-builder-row-expression,.metric-builder-required-columns,.metric-builder-required-joins")){
+  if(e.target.matches(".metric-builder-measure,.metric-builder-field,.metric-builder-value,.metric-builder-row-expression,.metric-builder-required-columns,.metric-builder-required-joins,.metric-builder-dg-invalid,.metric-builder-dg-datecol")){
     _syncMetricBuilder(e.target.closest(".metric-form"));
     if(e.target.matches(".metric-builder-row-expression,.metric-builder-required-columns")){
       _scheduleMetricBuilderBaseTableInference(e.target.closest(".metric-form"));
@@ -2795,7 +3146,7 @@ document.addEventListener("change", function(e){
     _scheduleMetricBuilderBaseTableInference(e.target.closest(".metric-form"));
     _scheduleAutoDateRoleJoins(e.target.closest(".metric-form"));
   }
-  if(e.target.matches(".metric-builder-enabled,.metric-builder-aggregation,.metric-builder-row-aggregation,.metric-builder-operator")){
+  if(e.target.matches(".metric-builder-enabled,.metric-builder-aggregation,.metric-builder-row-aggregation,.metric-builder-operator,.metric-builder-dg-from,.metric-builder-dg-to,.metric-builder-dg-unit,.metric-builder-dg-aggregation,.metric-builder-dg-missing")){
     _syncMetricBuilder(e.target.closest(".metric-form"));
   }
   if(e.target.matches("[name='result_format'],[name='default_time_column']")){

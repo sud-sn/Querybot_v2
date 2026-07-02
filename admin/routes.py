@@ -4299,6 +4299,51 @@ def _alias_for_date_role(role_key: str, used: set[str]) -> str:
     return f"{short}{i}_dt"
 
 
+def _dimension_date_column(account_id: str, dim_table: str) -> str:
+    """
+    Find the real date column of a date dimension table (e.g. DMS_DT) from the
+    discovered schema, so wizard-built expressions compare actual dates rather
+    than YYYYMMDD surrogate keys.
+    """
+    dim_bare = (dim_table or "").strip().upper().split(".")[-1]
+    if not dim_bare:
+        return ""
+    state = store.get_client_state(account_id) or {}
+    schema_dir = state.get("schema_dir") or ""
+    if not schema_dir:
+        return ""
+    try:
+        schema_path = Path(schema_dir) / "_schema.json"
+        if not schema_path.exists():
+            return ""
+        master = json.loads(schema_path.read_text(encoding="utf-8"))
+    except Exception:
+        return ""
+
+    for fqn, data in (master or {}).items():
+        if str(fqn).upper().split(".")[-1] != dim_bare or not isinstance(data, dict):
+            continue
+        date_typed: list[str] = []
+        name_based: list[str] = []
+        for col in data.get("columns") or []:
+            name = str(col.get("name") if isinstance(col, dict) else col or "").strip().upper()
+            ctype = str(col.get("type") if isinstance(col, dict) else "" or "").upper()
+            if not name or name.endswith("_KEY"):
+                continue
+            if "DATE" in ctype or "TIME" in ctype:
+                date_typed.append(name)
+            elif name.endswith("_DT") or name in ("DT", "DATE", "CAL_DT", "CALENDAR_DATE"):
+                name_based.append(name)
+        for pool in (date_typed, name_based):
+            if not pool:
+                continue
+            # Prefer the conventional DMS date column, else the shortest name
+            # (DMS_DT beats DMS_DT_FISCAL_LABEL etc.).
+            pool.sort(key=lambda n: (n != "DMS_DT", len(n)))
+            return pool[0]
+    return ""
+
+
 def _metric_date_role_join_candidates(account_id: str, table: str) -> list[dict]:
     """Return date-role join candidates for a fact table from the semantic model."""
     table_bare = (table or "").strip().upper().split(".")[-1]
@@ -4323,6 +4368,7 @@ def _metric_date_role_join_candidates(account_id: str, table: str) -> list[dict]
     ]
 
     used_aliases: set[str] = set()
+    date_col_cache: dict[str, str] = {}
     joins = []
     for dr in matched:
         dim_table = str(dr.get("dimension_table") or "").split(".")[-1]
@@ -4333,12 +4379,15 @@ def _metric_date_role_join_candidates(account_id: str, table: str) -> list[dict]
             continue
         alias = _alias_for_date_role(role_key, used_aliases)
         used_aliases.add(alias)
+        if dim_table not in date_col_cache:
+            date_col_cache[dim_table] = _dimension_date_column(account_id, dim_table)
         joins.append({
             "alias": alias,
             "table": dim_table,
             "from_column": fact_col,
             "to_column": dim_key,
             "role": str(dr.get("name") or role_key.replace("_", " ")).lower(),
+            "date_column": date_col_cache[dim_table],
         })
     return joins
 
@@ -4410,7 +4459,7 @@ def _auto_fill_row_metric_base_table(account_id: str, base_table: str, metric_bu
         cfg = json.loads(metric_builder_config)
     except Exception:
         return base_table, metric_builder_config
-    if not isinstance(cfg, dict) or cfg.get("mode") != "row_calculated":
+    if not isinstance(cfg, dict) or cfg.get("mode") not in ("row_calculated", "date_gap"):
         return base_table, metric_builder_config
 
     needed = _row_metric_base_table_columns(cfg)
@@ -4494,6 +4543,178 @@ async def metric_date_role_joins(request: Request, account_id: str, table: str =
     return JSONResponse({"joins": _metric_date_role_join_candidates(account_id, table)})
 
 
+_METRIC_AI_IMPORT_SYSTEM = """You convert business metric definitions (DAX measures, Excel logic, or plain English) into QueryBot metric-builder JSON configs. Output ONLY a JSON object, no markdown fences, no commentary.
+
+Output structure:
+{
+  "name": "<short metric name>",
+  "synonyms": "<comma-separated business phrasings users might say>",
+  "description": "<one sentence>",
+  "result_format": "number" | "currency" | "percent",
+  "base_table": "<schema.table the metric aggregates over — a FACT table>",
+  "example_questions": "<one example user question>",
+  "config": { ...metric builder config, one of the three modes below... }
+}
+
+Mode 1 — simple/filtered aggregate:
+  {"enabled": true, "mode": "aggregate", "aggregation": "SUM|AVG|COUNT|MIN|MAX",
+   "measure": "<numeric column>", "filters": [{"field": "<col>", "operator": "equals|not_equals|greater_than|less_than|contains|in|not_in|between|is_null|is_not_null", "value": "<literal>"}]}
+
+Mode 2 — date gap between two role-playing date keys (PREFER this whenever the metric is a day/month difference between two date roles like due date vs payment date — DAX AVERAGEX + LOOKUPVALUE + DATEDIFF patterns map here):
+  {"enabled": true, "mode": "date_gap", "aggregation": "AVG",
+   "unit": "day" | "month",
+   "date_column": "<real date column in the date dimension, e.g. DMS_DT>",
+   "invalid_keys": [<sentinel key values meaning 'no date', e.g. 0, 777>],
+   "missing_to": "null" | "zero" | "today" | "today_if_overdue_else_zero",
+   "from_join": {"alias": "due_dt", "table": "<date dim table>", "from_column": "<fact date key>", "to_column": "<dim key>", "role": "due date"},
+   "to_join":   {"alias": "pay_dt", "table": "<date dim table>", "from_column": "<fact date key>", "to_column": "<dim key>", "role": "payment date"}}
+  missing_to semantics when the 'to' date is absent: null=exclude row, zero=count as 0, today=days from 'from' date to today, today_if_overdue_else_zero=days to today when 'from' date is past, else 0.
+
+Mode 3 — arbitrary row-level expression aggregated at query grain:
+  {"enabled": true, "mode": "row_calculated", "aggregation": "AVG|SUM|COUNT|MIN|MAX",
+   "row_expression": "<ONE SQL expression for the target dialect — no SELECT/FROM/JOIN, no aggregate functions>",
+   "required_columns": ["<fact columns referenced>"],
+   "required_joins": [{"alias": "<alias>", "table": "<dim table>", "from_column": "<fact FK>", "to_column": "<dim key>", "role": "<role>"}]}
+
+Rules:
+- Use ONLY tables/columns from the provided schema. Never invent names.
+- Use the provided date-role registry for from_join/to_join/required_joins — copy its alias/table/from_column/to_column/date_column values exactly.
+- DAX ISBLANK(key) || key = 0 || key = N guards become "invalid_keys": [0, N].
+- If the definition cannot be expressed, return {"error": "<what is missing>"}."""
+
+
+@router.post("/clients/{account_id}/metrics/api/ai-import")
+async def metric_ai_import(request: Request, account_id: str):
+    """
+    Convert a pasted DAX measure / plain-English definition into a pre-filled
+    metric-builder config. Nothing is saved — the response fills the form for
+    admin review, and the existing Test/Validate buttons confirm it.
+    """
+    if not _is_auth(request):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    text = str(body.get("text") or "").strip()
+    if not text:
+        return JSONResponse({"status": "error", "message": "Paste a DAX measure or describe the metric first."})
+    if len(text) > 8000:
+        return JSONResponse({"status": "error", "message": "Definition too long (8000 char max)."})
+
+    client = store.get_client(account_id)
+    if not client:
+        raise HTTPException(status_code=404, detail="Unknown client")
+
+    db_type = "azure_sql"
+    if client.get("db_config_id"):
+        raw_db = store.get_db_config(client["db_config_id"])
+        if raw_db:
+            db_type = raw_db.get("db_type", "azure_sql")
+
+    # Schema context (capped) + date-role registry for grounding.
+    schema_tables = _load_metric_schema_columns(account_id)
+    schema_lines: list[str] = []
+    for fqn in sorted(schema_tables):
+        cols = ", ".join(sorted(schema_tables[fqn]))
+        schema_lines.append(f"{fqn}: {cols}")
+    schema_text = "\n".join(schema_lines)[:6000]
+
+    role_lines: list[str] = []
+    state = store.get_client_state(account_id) or {}
+    kb_dir = state.get("kb_dir") or ""
+    if kb_dir:
+        try:
+            from core.semantic_model import load_semantic_model
+            model = load_semantic_model(kb_dir)
+            seen_facts: set[str] = set()
+            for dr in model.get("date_roles") or []:
+                fact = str(dr.get("fact_table") or "")
+                if fact and fact not in seen_facts:
+                    seen_facts.add(fact)
+                    for j in _metric_date_role_join_candidates(account_id, fact):
+                        role_lines.append(
+                            f"fact_table={fact} role={j['role']} alias={j['alias']} "
+                            f"table={j['table']} from_column={j['from_column']} "
+                            f"to_column={j['to_column']} date_column={j.get('date_column') or '?'}"
+                        )
+        except Exception as exc:
+            log.warning("metric ai-import: date-role context failed for %s: %s", account_id, exc)
+    roles_text = "\n".join(role_lines)[:3000] or "None detected"
+
+    user_msg = (
+        f"Target SQL dialect: {db_type}\n\n"
+        f"Schema (table: columns):\n{schema_text}\n\n"
+        f"Date-role registry (use these values verbatim for date joins):\n{roles_text}\n\n"
+        f"Metric definition to convert:\n{text}"
+    )
+
+    try:
+        from core.llm import llm_complete, resolve_provider
+        from core.llm_audit import llm_audit_scope, make_llm_audit_request_id
+        provider, model_name, api_key, az_kw = resolve_provider(client)
+        request_id = make_llm_audit_request_id()
+        with llm_audit_scope(
+            account_id=account_id,
+            question=f"Metric AI import for {account_id}",
+            enabled=bool(client.get("enable_llm_audit")),
+            request_id=request_id,
+            question_id=request_id,
+            component="metric_ai_import",
+        ):
+            raw, _, _ = await llm_complete(
+                _METRIC_AI_IMPORT_SYSTEM, user_msg, provider, model_name, api_key,
+                max_tokens=1800, temperature=0.1, **az_kw,
+            )
+    except Exception as exc:
+        log.error("Metric AI import LLM call failed for %s: %s", account_id, exc)
+        return JSONResponse({"status": "error", "message": f"LLM call failed: {exc}"})
+
+    clean = (raw or "").strip()
+    if clean.startswith("```"):
+        clean = clean.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+    try:
+        parsed = json.loads(clean)
+    except Exception:
+        return JSONResponse({"status": "error", "message": "AI returned invalid JSON — try rephrasing the definition."})
+    if not isinstance(parsed, dict):
+        return JSONResponse({"status": "error", "message": "AI returned an unexpected structure."})
+    if parsed.get("error"):
+        return JSONResponse({"status": "error", "message": str(parsed["error"])})
+
+    config = parsed.get("config")
+    if not isinstance(config, dict):
+        return JSONResponse({"status": "error", "message": "AI response is missing the builder config."})
+    config["enabled"] = True
+
+    # Compile server-side so the admin reviews a real formula, and config
+    # errors surface now rather than at save time.
+    try:
+        from core.metric_builder import compile_metric_builder_config
+        compiled = compile_metric_builder_config(config, db_type=db_type)
+    except Exception as exc:
+        return JSONResponse({
+            "status": "error",
+            "message": f"AI config did not compile: {exc}",
+            "config": config,
+        })
+    if compiled is None:
+        return JSONResponse({"status": "error", "message": "AI config compiled to nothing."})
+
+    return JSONResponse({
+        "status": "ok",
+        "name": str(parsed.get("name") or "").strip(),
+        "synonyms": str(parsed.get("synonyms") or "").strip(),
+        "description": str(parsed.get("description") or "").strip(),
+        "result_format": str(parsed.get("result_format") or "number").strip().lower(),
+        "base_table": str(parsed.get("base_table") or "").strip(),
+        "example_questions": str(parsed.get("example_questions") or "").strip(),
+        "config": json.loads(compiled.config_json),
+        "formula": compiled.formula,
+        "required_columns": compiled.required_columns,
+    })
+
+
 @router.post("/clients/{account_id}/metrics/create")
 async def metric_create(
     request:      Request,
@@ -4522,6 +4743,15 @@ async def metric_create(
             f"/admin/clients/{account_id}/metrics?error={quote('Name and SQL are required')}",
             status_code=303)
 
+    # Resolve db_type first — the builder compiler emits dialect-specific SQL
+    # (DATEDIFF vs date subtraction) and save_metric runs the validator with it.
+    db_type = "azure_sql"
+    client  = store.get_client(account_id)
+    if client and client.get("db_config_id"):
+        raw = store.get_db_config(client["db_config_id"])
+        if raw:
+            db_type = raw.get("db_type", "azure_sql")
+
     try:
         from core.metric_builder import compile_metric_builder_config, merge_required_columns
         base_table, metric_builder_config = _auto_fill_row_metric_base_table(
@@ -4530,7 +4760,7 @@ async def metric_create(
         metric_builder_config = _auto_fill_row_metric_date_joins(
             account_id, base_table.strip(), metric_builder_config
         )
-        compiled = compile_metric_builder_config(metric_builder_config)
+        compiled = compile_metric_builder_config(metric_builder_config, db_type=db_type)
         if compiled and (formula_type or "").strip().lower() == "expression":
             sql_template = compiled.formula
             required_columns = merge_required_columns(required_columns, compiled.required_columns)
@@ -4542,14 +4772,6 @@ async def metric_create(
         return RedirectResponse(
             f"/admin/clients/{account_id}/metrics?error={quote('Metric builder filter is invalid: ' + str(exc))}",
             status_code=303)
-
-    # Resolve db_type so save_metric can run the validator correctly
-    db_type = "azure_sql"
-    client  = store.get_client(account_id)
-    if client and client.get("db_config_id"):
-        raw = store.get_db_config(client["db_config_id"])
-        if raw:
-            db_type = raw.get("db_type", "azure_sql")
 
     # Validate ${MetricName} references before saving
     _ref_errors = store.validate_metric_refs(account_id, sql_template.strip())
@@ -4632,6 +4854,14 @@ async def metric_update(
     if not _is_auth(request):
         return RedirectResponse("/admin/login", status_code=303)
 
+    # Resolve db_type first — the builder compiler emits dialect-specific SQL.
+    db_type = "azure_sql"
+    client  = store.get_client(account_id)
+    if client and client.get("db_config_id"):
+        raw = store.get_db_config(client["db_config_id"])
+        if raw:
+            db_type = raw.get("db_type", "azure_sql")
+
     try:
         from core.metric_builder import compile_metric_builder_config, merge_required_columns
         base_table, metric_builder_config = _auto_fill_row_metric_base_table(
@@ -4640,7 +4870,7 @@ async def metric_update(
         metric_builder_config = _auto_fill_row_metric_date_joins(
             account_id, base_table.strip(), metric_builder_config
         )
-        compiled = compile_metric_builder_config(metric_builder_config)
+        compiled = compile_metric_builder_config(metric_builder_config, db_type=db_type)
         if compiled and (formula_type or "").strip().lower() == "expression":
             sql_template = compiled.formula
             required_columns = merge_required_columns(required_columns, compiled.required_columns)
@@ -4652,14 +4882,6 @@ async def metric_update(
         return RedirectResponse(
             f"/admin/clients/{account_id}/metrics?error={quote('Metric builder filter is invalid: ' + str(exc))}",
             status_code=303)
-
-    # Resolve db_type for re-validation
-    db_type = "azure_sql"
-    client  = store.get_client(account_id)
-    if client and client.get("db_config_id"):
-        raw = store.get_db_config(client["db_config_id"])
-        if raw:
-            db_type = raw.get("db_type", "azure_sql")
 
     # Validate ${MetricName} references before updating
     _ref_errors_upd = store.validate_metric_refs(account_id, sql_template.strip())

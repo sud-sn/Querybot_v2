@@ -413,7 +413,7 @@ def _build_row_metric_join_sql(
             cfg = json.loads(builder_config)
         except Exception:
             continue
-        if not isinstance(cfg, dict) or cfg.get("mode") != "row_calculated":
+        if not isinstance(cfg, dict) or cfg.get("mode") not in ("row_calculated", "date_gap"):
             continue
 
         for join in cfg.get("required_joins") or []:
@@ -436,10 +436,18 @@ def _build_row_metric_join_sql(
             from_sql = _quote_col(from_col, db_type)
             to_sql = _quote_col(to_col, db_type)
 
-            lines.append(
-                f"LEFT  JOIN {tbl_sql} {alias}"
-                f" ON {anchor_alias}.{from_sql} = {alias}.{to_sql}"
-            )
+            on_clause = f"{anchor_alias}.{from_sql} = {alias}.{to_sql}"
+            # Sentinel key values (0, 777…) mean "no date" — excluding them in
+            # the LEFT JOIN makes the dimension date read as NULL, matching the
+            # ISBLANK guard of the equivalent DAX measure.
+            invalid_keys = [
+                str(int(k)) for k in (join.get("invalid_keys") or [])
+                if str(k).strip().lstrip("-").isdigit()
+            ]
+            if invalid_keys:
+                on_clause += f" AND {anchor_alias}.{from_sql} NOT IN ({', '.join(invalid_keys)})"
+
+            lines.append(f"LEFT  JOIN {tbl_sql} {alias} ON {on_clause}")
 
     return "\n".join(lines)
 
