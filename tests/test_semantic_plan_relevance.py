@@ -52,6 +52,15 @@ def _write_runtime_model(kb_dir: Path) -> None:
                         "approved_meaning": "Warehouse description",
                         "confidence": 100,
                     },
+                    {
+                        "name": "Purchase Group",
+                        "source_key": "PCH_GRP_DMS_KEY",
+                        "display_table": "PROFITABILITY.ITM_DMS",
+                        "display_key": "PCH_GRP_DMS_KEY",
+                        "display_column": "ITM_NM",
+                        "approved_meaning": "Item purchasing group",
+                        "confidence": 100,
+                    },
                 ],
                 "date_roles": [
                     {
@@ -120,6 +129,23 @@ class RuntimeSemanticRelevanceTests(unittest.TestCase):
         self.assertIn("WHS_DSC", columns)
         self.assertIn("DT_DMS_KEY", columns)
         self.assertTrue(any("DT_DMS" in str(j.get("to", "")).upper() for j in plan.get("joins", [])))
+
+    def test_purchase_receipt_question_does_not_require_purchase_group(self):
+        # Regression: PCH_GRP_DMS_KEY's business role used to collapse to the
+        # bare, single-word "Purchase" (missing entity-prefix vocabulary entry
+        # for the compound PCH_GRP prefix). A single-word role name matches
+        # any bare mention of that word in a question, so "purchase receipt"
+        # falsely pulled in an unrelated ITM_DMS join. See
+        # core/naming_convention.py's ENTITY_PREFIX_VOCABULARY["PCH_GRP"].
+        plan = self._plan("which month has highest number of purchase receipt")
+        columns = {f.get("column") for f in plan.get("fields", [])}
+        self.assertNotIn("PCH_GRP_DMS_KEY", columns)
+        self.assertNotIn("ITM_NM", columns)
+
+    def test_explicit_purchase_group_question_still_requires_it(self):
+        plan = self._plan("show revenue by purchase group")
+        columns = {f.get("column") for f in plan.get("fields", [])}
+        self.assertIn("ITM_NM", columns)
 
 
 class GraphDateEntityRelevanceTests(unittest.TestCase):

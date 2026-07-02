@@ -611,6 +611,7 @@ ENTITY_PREFIX_VOCABULARY: dict[str, str] = {
     "CUS_ORD": "Customer Order",
     "CUS_IVC": "Customer Invoice",
     "PCH_ORD": "Purchase Order",
+    "PCH_GRP": "Purchase Group",
     "DLV_TER": "Delivery Territory",
     "DLV_MTH": "Delivery Method",
     "ITM_BUS_ARA": "Item Business Area",

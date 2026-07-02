@@ -173,6 +173,20 @@ class EntityPrefixTests(unittest.TestCase):
     def test_unknown_prefix_returns_none(self):
         self.assertIsNone(match_entity_prefix("ORNO"))
 
+    def test_pch_grp_prefers_compound_over_bare_pch(self):
+        # PCH_GRP_DMS_KEY must resolve to the compound "Purchase Group" entry,
+        # not collapse to the bare "PCH" -> "Purchase" prefix. A single-word
+        # role here previously caused any question containing "purchase" in
+        # any sense (e.g. "purchase receipt") to falsely require this field
+        # and force an unrelated ITM_DMS join. See core/semantic_model.py's
+        # _runtime_match_score single-word matching rule.
+        entity = match_entity_prefix("PCH_GRP_DMS_KEY")
+        self.assertEqual(entity, "Purchase Group")
+
+    def test_pch_ord_still_resolves_to_purchase_order(self):
+        entity = match_entity_prefix("PCH_ORD_RCT_FCT")
+        self.assertEqual(entity, "Purchase Order")
+
 
 class HintGenerationTests(unittest.TestCase):
 
