@@ -25,6 +25,7 @@ import io
 import json
 import logging
 import os
+import re
 import sys
 import threading
 import time
@@ -4298,36 +4299,23 @@ def _alias_for_date_role(role_key: str, used: set[str]) -> str:
     return f"{short}{i}_dt"
 
 
-@router.get("/clients/{account_id}/metrics/api/date-role-joins")
-async def metric_date_role_joins(request: Request, account_id: str, table: str = ""):
-    """
-    Return candidate row-calculated-metric joins for a fact table, sourced from
-    the date roles the KB build already detected (core/semantic_model.py —
-    same data shown on the Date Roles admin page). No new detection logic;
-    this just exposes the existing semantic model to the metric builder so
-    admins don't have to hand-type joins the system already knows about.
-
-    Returns:
-      { "joins": [ { "alias", "table", "from_column", "to_column", "role" }, ... ] }
-    """
-    if not _is_auth(request):
-        raise HTTPException(status_code=401, detail="Not authenticated")
-
+def _metric_date_role_join_candidates(account_id: str, table: str) -> list[dict]:
+    """Return date-role join candidates for a fact table from the semantic model."""
     table_bare = (table or "").strip().upper().split(".")[-1]
     if not table_bare:
-        return JSONResponse({"joins": []})
+        return []
 
     state = store.get_client_state(account_id)
     kb_dir = (state or {}).get("kb_dir") or ""
     if not kb_dir:
-        return JSONResponse({"joins": []})
+        return []
 
     try:
         from core.semantic_model import load_semantic_model
         model = load_semantic_model(kb_dir)
     except Exception as exc:
         log.warning("metric_date_role_joins: failed to load semantic model for %s: %s", account_id, exc)
-        return JSONResponse({"joins": []})
+        return []
 
     matched = [
         dr for dr in (model.get("date_roles") or [])
@@ -4352,8 +4340,85 @@ async def metric_date_role_joins(request: Request, account_id: str, table: str =
             "to_column": dim_key,
             "role": str(dr.get("name") or role_key.replace("_", " ")).lower(),
         })
+    return joins
 
-    return JSONResponse({"joins": joins})
+
+_METRIC_DATE_KEY_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*\.)?([A-Za-z_][A-Za-z0-9_]*(?:_DT_DMS_KEY|_DATE_DMS_KEY))\b", re.I)
+
+
+def _row_metric_date_key_columns(config: dict) -> set[str]:
+    cols: set[str] = set()
+    for value in config.get("required_columns") or []:
+        col = str(value or "").strip().split(".")[-1].upper()
+        if col.endswith("_DT_DMS_KEY") or col.endswith("_DATE_DMS_KEY"):
+            cols.add(col)
+    for match in _METRIC_DATE_KEY_RE.finditer(config.get("row_expression") or ""):
+        cols.add(match.group(2).upper())
+    return cols
+
+
+def _auto_fill_row_metric_date_joins(account_id: str, base_table: str, metric_builder_config: str) -> str:
+    """
+    Auto-populate row-calculated metric date joins from semantic date roles.
+
+    The UI normally fills this before submit. This server-side fallback keeps
+    API/direct form submissions from requiring admins to hand-write JSON.
+    """
+    if not metric_builder_config or not base_table:
+        return metric_builder_config
+    try:
+        cfg = json.loads(metric_builder_config)
+    except Exception:
+        return metric_builder_config
+    if not isinstance(cfg, dict) or cfg.get("mode") != "row_calculated":
+        return metric_builder_config
+    if cfg.get("required_joins"):
+        return metric_builder_config
+
+    date_keys = _row_metric_date_key_columns(cfg)
+    if not date_keys:
+        return metric_builder_config
+
+    candidates = _metric_date_role_join_candidates(account_id, base_table)
+    joins = [
+        j for j in candidates
+        if str(j.get("from_column") or "").upper() in date_keys
+    ]
+    if not joins:
+        return metric_builder_config
+
+    existing_cols = [
+        str(c or "").strip()
+        for c in (cfg.get("required_columns") or [])
+        if str(c or "").strip()
+    ]
+    for join in joins:
+        from_col = str(join.get("from_column") or "").strip()
+        if from_col and from_col not in existing_cols:
+            existing_cols.append(from_col)
+
+    cfg["required_joins"] = joins
+    cfg["required_columns"] = existing_cols
+    cfg["date_joins_auto_filled"] = True
+    return json.dumps(cfg, separators=(",", ":"))
+
+
+@router.get("/clients/{account_id}/metrics/api/date-role-joins")
+async def metric_date_role_joins(request: Request, account_id: str, table: str = ""):
+    """
+    Return candidate row-calculated-metric joins for a fact table, sourced from
+    the date roles the KB build already detected (core/semantic_model.py —
+    same data shown on the Date Roles admin page). No new detection logic;
+    this just exposes the existing semantic model to the metric builder so
+    admins don't have to hand-type joins the system already knows about.
+
+    Returns:
+      { "joins": [ { "alias", "table", "from_column", "to_column", "role" }, ... ] }
+    """
+    if not _is_auth(request):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    return JSONResponse({"joins": _metric_date_role_join_candidates(account_id, table)})
 
 
 @router.post("/clients/{account_id}/metrics/create")
@@ -4386,6 +4451,9 @@ async def metric_create(
 
     try:
         from core.metric_builder import compile_metric_builder_config, merge_required_columns
+        metric_builder_config = _auto_fill_row_metric_date_joins(
+            account_id, base_table.strip(), metric_builder_config
+        )
         compiled = compile_metric_builder_config(metric_builder_config)
         if compiled and (formula_type or "").strip().lower() == "expression":
             sql_template = compiled.formula
@@ -4490,6 +4558,9 @@ async def metric_update(
 
     try:
         from core.metric_builder import compile_metric_builder_config, merge_required_columns
+        metric_builder_config = _auto_fill_row_metric_date_joins(
+            account_id, base_table.strip(), metric_builder_config
+        )
         compiled = compile_metric_builder_config(metric_builder_config)
         if compiled and (formula_type or "").strip().lower() == "expression":
             sql_template = compiled.formula

@@ -2159,6 +2159,105 @@ function _syncMetricBuilder(form){
   }
 }
 
+function _metricBuilderDateKeyColumns(builder){
+  if(!builder) return [];
+  var text = [
+    (builder.querySelector(".metric-builder-row-expression")||{}).value || "",
+    (builder.querySelector(".metric-builder-required-columns")||{}).value || ""
+  ].join(" ");
+  var re = /\b(?:[A-Za-z_][A-Za-z0-9_]*\.)?([A-Za-z_][A-Za-z0-9_]*(?:_DT_DMS_KEY|_DATE_DMS_KEY))\b/gi;
+  var seen = {}, out = [], m;
+  while((m = re.exec(text))){
+    var col = (m[1] || "").toUpperCase();
+    if(col && !seen[col]){ seen[col] = true; out.push(col); }
+  }
+  return out;
+}
+
+function _setMetricJoinStatus(builder, message, tone){
+  if(!builder) return;
+  var slot = builder.querySelector(".metric-builder-join-status");
+  if(!slot){
+    var actions = builder.querySelector(".metric-builder-join-actions");
+    if(!actions) return;
+    slot = document.createElement("span");
+    slot.className = "metric-builder-join-status";
+    actions.appendChild(slot);
+  }
+  slot.textContent = message || "";
+  slot.dataset.tone = tone || "neutral";
+}
+
+async function _applyDateRoleJoins(form, opts){
+  opts = opts || {};
+  var builder = form ? form.querySelector(".metric-builder") : null;
+  if(!builder) return false;
+  var mode = (builder.querySelector(".metric-builder-mode")||{}).value || "aggregate";
+  if(mode !== "row_calculated") return false;
+
+  var joinsEl = builder.querySelector(".metric-builder-required-joins");
+  if(!joinsEl) return false;
+  if(joinsEl.value.trim() && !opts.force) return false;
+
+  var baseTableInput = form.querySelector("[name='base_table']");
+  var table = baseTableInput ? baseTableInput.value.trim() : "";
+  if(!table){
+    if(opts.showAlerts) alert("Set the Base table field (Advanced options) first — date roles are looked up per table.");
+    return false;
+  }
+
+  var dateKeys = _metricBuilderDateKeyColumns(builder);
+  if(!opts.force && !dateKeys.length) return false;
+
+  var m = location.pathname.match(/\/clients\/([^/]+)\//);
+  if(!m) return false;
+
+  var btn = opts.button || null;
+  var origLabel = btn ? btn.textContent : "";
+  if(btn){ btn.disabled = true; btn.textContent = "Looking up..."; }
+  try {
+    var resp = await fetch("/admin/clients/"+m[1]+"/metrics/api/date-role-joins?table="+encodeURIComponent(table));
+    var data = await resp.json();
+    var joins = data.joins || [];
+    if(dateKeys.length){
+      var keySet = {};
+      dateKeys.forEach(function(k){ keySet[k.toUpperCase()] = true; });
+      joins = joins.filter(function(j){ return keySet[String(j.from_column || "").toUpperCase()]; });
+    }
+    if(!joins.length){
+      if(opts.showAlerts) alert("No matching date roles were detected for "+table+". Rebuild the KB, check the Date Roles page, or enter joins manually.");
+      else _setMetricJoinStatus(builder, "No matching date roles found yet", "warn");
+      return false;
+    }
+    if(joinsEl.value.trim() && opts.confirmReplace && !confirm("Replace the current required joins JSON with "+joins.length+" date role(s) found for "+table+"?")) return false;
+    joinsEl.value = JSON.stringify(joins, null, 2);
+    var columns = builder.querySelector(".metric-builder-required-columns");
+    if(columns){
+      var existing = (columns.value || "").split(",").map(function(c){ return c.trim(); }).filter(Boolean);
+      joins.forEach(function(j){ if(j.from_column && existing.indexOf(j.from_column) === -1) existing.push(j.from_column); });
+      columns.value = existing.join(", ");
+    }
+    _setMetricJoinStatus(builder, "Date joins filled from schema", "ok");
+    _syncMetricBuilder(form);
+    return true;
+  } catch(err) {
+    if(opts.showAlerts) alert("Failed to look up date roles: "+err.message);
+    else _setMetricJoinStatus(builder, "Date join lookup failed", "warn");
+    return false;
+  } finally {
+    if(btn){ btn.disabled = false; btn.textContent = origLabel; }
+  }
+}
+
+function _scheduleAutoDateRoleJoins(form){
+  var builder = form ? form.querySelector(".metric-builder") : null;
+  if(!builder) return;
+  clearTimeout(builder._dateRoleAutoTimer);
+  builder._dateRoleAutoTimer = setTimeout(function(){
+    _applyDateRoleJoins(form, {force:false, showAlerts:false});
+  }, 350);
+}
+
 function _wireMetricBuilderColumnLists(scope){
   if(!_allColumns.length) return;
   var dl = document.getElementById("metric-builder-column-options");
@@ -2218,6 +2317,7 @@ window.insertDateRoleJoinTemplate = async function(btn){
   var builder = btn ? btn.closest(".metric-builder") : null;
   var form    = builder ? builder.closest(".metric-form") : null;
   if(!builder || !form) return;
+  return _applyDateRoleJoins(form, {force:true, confirmReplace:true, showAlerts:true, button:btn});
   var joinsEl = builder.querySelector(".metric-builder-required-joins");
   if(!joinsEl) return;
 
@@ -2555,9 +2655,15 @@ document.addEventListener("input", function(e){
   }
   if(e.target.matches(".metric-builder-measure,.metric-builder-field,.metric-builder-value,.metric-builder-row-expression,.metric-builder-required-columns,.metric-builder-required-joins")){
     _syncMetricBuilder(e.target.closest(".metric-form"));
+    if(e.target.matches(".metric-builder-row-expression,.metric-builder-required-columns")){
+      _scheduleAutoDateRoleJoins(e.target.closest(".metric-form"));
+    }
   }
   if(e.target.matches("[name='base_table'],[name='base_entity'],[name='grain']")){
     _updateMetricUxPanels(e.target.closest(".metric-form"));
+    if(e.target.matches("[name='base_table']")){
+      _scheduleAutoDateRoleJoins(e.target.closest(".metric-form"));
+    }
   }
 });
 
@@ -2577,6 +2683,7 @@ document.addEventListener("change", function(e){
       if(rowAgg && !rowAgg.value) rowAgg.value = "AVG";
     }
     _syncMetricBuilder(e.target.closest(".metric-form"));
+    _scheduleAutoDateRoleJoins(e.target.closest(".metric-form"));
   }
   if(e.target.matches(".metric-builder-enabled,.metric-builder-aggregation,.metric-builder-row-aggregation,.metric-builder-operator")){
     _syncMetricBuilder(e.target.closest(".metric-form"));
