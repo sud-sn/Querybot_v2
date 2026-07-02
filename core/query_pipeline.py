@@ -46,6 +46,7 @@ from core.pipeline_helpers import (
     _extract_kb_synonym_injection, _send_live_stage,
     _count_tables_for_zero_row, _build_zero_row_message,
     _format_metric_formula_context, _extract_metric_formula_tables,
+    _build_row_metric_join_sql,
 )
 from core.pipeline_trace import (
     _log_q, _trace_create, _trace_update, _trace_step, _trace_finish,
@@ -908,6 +909,29 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                 )
         except Exception as _mf_exc:
             log.debug("Scoped metric formula table coverage skipped: %s", _mf_exc)
+
+    # Row-calculated metric joins → promote from text hints to deterministic SQL.
+    # After metric scoping we know which metrics are active. If any are
+    # row-calculated and the graph resolver has produced a join skeleton, append
+    # the required joins so the LLM treats them as hard constraints (part of the
+    # "MUST use this exact structure" block) rather than optional instructions.
+    if _graph_ctx.get("enabled") and _matched_metrics:
+        try:
+            _row_joins = _build_row_metric_join_sql(
+                _matched_metrics,
+                db_cfg.get("db_type", "azure_sql"),
+                _graph_ctx.get("join_skeleton", ""),
+            )
+            if _row_joins:
+                _graph_ctx = {
+                    **_graph_ctx,
+                    "join_skeleton": _graph_ctx["join_skeleton"] + "\n" + _row_joins,
+                }
+                log.info(
+                    "Row-metric joins appended to graph skeleton for %s", account_id
+                )
+        except Exception as _rmj_exc:
+            log.debug("Row-metric join injection skipped: %s", _rmj_exc)
 
     # ── Analytical intent detection — inject SQL hints into system prompt ──────
     # Detects window functions, anomaly, contribution, relative date patterns

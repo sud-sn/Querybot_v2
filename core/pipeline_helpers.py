@@ -373,3 +373,72 @@ def _extract_metric_formula_tables(metrics: list[dict]) -> set[str]:
             tables.add(match.group(1).upper())
             tables.add(f"{match.group(1).upper()}.{match.group(2).upper()}")
     return tables
+
+
+def _build_row_metric_join_sql(
+    metrics: list[dict],
+    db_type: str,
+    existing_skeleton: str,
+) -> str:
+    """
+    For row-calculated metrics, build LEFT JOIN clauses using the metric-defined
+    aliases (e.g. due_dt, pay_dt) and return them ready to append to the graph
+    join skeleton. Returns "" when there is nothing to inject or the anchor alias
+    cannot be determined.
+
+    The anchor alias is parsed from the FROM line of the existing skeleton so the
+    ON clause references the correct fact-table alias (e.g. inv, pre).
+    """
+    from core.graph_resolver import _quote_table, _quote_col
+
+    anchor_alias = ""
+    for line in (existing_skeleton or "").splitlines():
+        if line.strip().upper().startswith("FROM "):
+            parts = line.strip().split()
+            if len(parts) >= 3:
+                anchor_alias = parts[-1]
+            break
+
+    if not anchor_alias:
+        return ""
+
+    seen: set[str] = set()
+    lines: list[str] = []
+
+    for metric in metrics:
+        builder_config = metric.get("metric_builder_config") or ""
+        if not builder_config:
+            continue
+        try:
+            cfg = json.loads(builder_config)
+        except Exception:
+            continue
+        if not isinstance(cfg, dict) or cfg.get("mode") != "row_calculated":
+            continue
+
+        for join in cfg.get("required_joins") or []:
+            if not isinstance(join, dict):
+                continue
+            alias = (join.get("alias") or "").strip()
+            table = (join.get("table") or "").strip()
+            from_col = (join.get("from_column") or "").strip()
+            to_col = (join.get("to_column") or "").strip()
+
+            if not alias or not table or not from_col or not to_col:
+                continue
+
+            key = f"{alias}:{table.upper()}:{from_col.upper()}:{to_col.upper()}"
+            if key in seen:
+                continue
+            seen.add(key)
+
+            tbl_sql = _quote_table(table, "", db_type)
+            from_sql = _quote_col(from_col, db_type)
+            to_sql = _quote_col(to_col, db_type)
+
+            lines.append(
+                f"LEFT  JOIN {tbl_sql} {alias}"
+                f" ON {anchor_alias}.{from_sql} = {alias}.{to_sql}"
+            )
+
+    return "\n".join(lines)

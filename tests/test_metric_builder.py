@@ -8,7 +8,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from core.metric_builder import compile_metric_builder_config, merge_required_columns
-from core.pipeline_helpers import _format_metric_formula_context
+from core.pipeline_helpers import _format_metric_formula_context, _build_row_metric_join_sql
 
 
 class MetricBuilderTests(unittest.TestCase):
@@ -20,6 +20,13 @@ class MetricBuilderTests(unittest.TestCase):
         self.assertIn("metric-builder-required-joins", template)
         self.assertIn("insertDateRoleJoinTemplate", template)
         self.assertIn('data-builder-mode="row_calculated"', template)
+
+    def test_metric_builder_ui_wires_schema_autocomplete_to_row_calc_fields(self):
+        template = (ROOT / "admin" / "templates" / "client_metrics.html").read_text(encoding="utf-8")
+        self.assertIn('.metric-builder-row-expression,.metric-builder-required-joins', template)
+        self.assertIn("_joinTableContext", template)
+        self.assertIn("_distinctTables", template)
+        self.assertIn('editor.matches(".metric-builder-required-joins")', template)
 
     def test_compiles_sum_with_multiple_filters(self):
         compiled = compile_metric_builder_config({
@@ -138,6 +145,65 @@ class MetricBuilderTests(unittest.TestCase):
         self.assertIn("Row-level metric", prompt)
         self.assertIn("Join DT_DMS AS due_dt ON fact.DUE_DT_DMS_KEY = due_dt.DT_DMS_KEY for due date", prompt)
         self.assertIn("Join DT_DMS AS pay_dt ON fact.PAY_DT_DMS_KEY = pay_dt.DT_DMS_KEY for payment date", prompt)
+
+    def test_row_joins_appended_to_graph_skeleton_azure(self):
+        skeleton = "FROM [dbo].[CUS_ORD_IVC_FCT] inv\nINNER JOIN [dbo].[DIM_DATE] d ON inv.[DATE_KEY] = d.[DATE_KEY]"
+        compiled = compile_metric_builder_config({
+            "enabled": True,
+            "mode": "row_calculated",
+            "aggregation": "AVG",
+            "row_expression": "DATEDIFF(day, due_dt.DMS_DT, pay_dt.DMS_DT)",
+            "required_columns": ["DUE_DT_DMS_KEY", "PAY_DT_DMS_KEY"],
+            "required_joins": [
+                {"alias": "due_dt", "table": "DT_DMS", "from_column": "DUE_DT_DMS_KEY", "to_column": "DT_DMS_KEY", "role": "due date"},
+                {"alias": "pay_dt", "table": "DT_DMS", "from_column": "PAY_DT_DMS_KEY", "to_column": "DT_DMS_KEY", "role": "payment date"},
+            ],
+        })
+        metric = {
+            "formula_type": "expression",
+            "metric_builder_config": compiled.config_json,
+            "sql_template": compiled.formula,
+        }
+        result = _build_row_metric_join_sql([metric], "azure_sql", skeleton)
+        self.assertIn("LEFT  JOIN [DT_DMS] due_dt ON inv.[DUE_DT_DMS_KEY] = due_dt.[DT_DMS_KEY]", result)
+        self.assertIn("LEFT  JOIN [DT_DMS] pay_dt ON inv.[PAY_DT_DMS_KEY] = pay_dt.[DT_DMS_KEY]", result)
+
+    def test_row_joins_deduplicates_same_join(self):
+        skeleton = "FROM [dbo].[FACT] f"
+        metric_cfg = json.dumps({
+            "enabled": True, "mode": "row_calculated", "aggregation": "AVG",
+            "row_expression": "due_dt.DMS_DT",
+            "required_joins": [
+                {"alias": "due_dt", "table": "DT_DMS", "from_column": "DUE_DT_DMS_KEY", "to_column": "DT_DMS_KEY"},
+            ],
+        })
+        metrics = [
+            {"metric_builder_config": metric_cfg},
+            {"metric_builder_config": metric_cfg},
+        ]
+        result = _build_row_metric_join_sql(metrics, "azure_sql", skeleton)
+        self.assertEqual(result.count("LEFT  JOIN"), 1)
+
+    def test_row_joins_empty_when_no_anchor(self):
+        skeleton = ""
+        metric_cfg = json.dumps({
+            "enabled": True, "mode": "row_calculated", "aggregation": "AVG",
+            "row_expression": "due_dt.DMS_DT",
+            "required_joins": [
+                {"alias": "due_dt", "table": "DT_DMS", "from_column": "DUE_DT_DMS_KEY", "to_column": "DT_DMS_KEY"},
+            ],
+        })
+        result = _build_row_metric_join_sql([{"metric_builder_config": metric_cfg}], "azure_sql", skeleton)
+        self.assertEqual(result, "")
+
+    def test_row_joins_skips_aggregate_metrics(self):
+        skeleton = "FROM [dbo].[FACT] f"
+        metric_cfg = json.dumps({
+            "enabled": True, "mode": "aggregate", "aggregation": "SUM",
+            "measure": "AMOUNT", "filters": [],
+        })
+        result = _build_row_metric_join_sql([{"metric_builder_config": metric_cfg}], "azure_sql", skeleton)
+        self.assertEqual(result, "")
 
     def test_rejects_sql_in_field_name(self):
         with self.assertRaises(ValueError):
