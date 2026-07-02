@@ -155,6 +155,8 @@
 .fcs-type.num{background:#EFF6FF;color:#1D4ED8;border-color:#BFDBFE}
 .fcs-type.date{background:#FFF7ED;color:#C2410C;border-color:#FED7AA}
 .fcs-type.text{background:#F0FFF4;color:#065F46;border-color:#A7F3D0}
+.fcs-type.fn{background:#F5F3FF;color:#6D28D9;border-color:#DDD6FE}
+.fcs-item.fcs-fn .fcs-col{color:#6D28D9}
 /* ── Synonym collision warning ──────────────────────────────────────── */
 .collision-warn{display:none;margin-top:.35rem;padding:5px 9px;border-radius:5px;font-size:11px;line-height:1.5;
   background:color-mix(in srgb,var(--amber,#d69e2e) 10%,var(--surface));
@@ -938,25 +940,25 @@ var DB_LABELS = {
 
 var FN_CATALOGUE = [
   // ── Aggregation ─────────────────────────────────────────────────────
-  { bucket:"Aggregation", name:"SUM",
+  { bucket:"Aggregation", name:"SUM", fnName:"SUM",
     tpl:function(){ return "SUM()"; },
     desc:"Total of a numeric column. Most common aggregate." },
-  { bucket:"Aggregation", name:"COUNT all rows",
+  { bucket:"Aggregation", name:"COUNT all rows", fnName:"COUNT",
     tpl:function(){ return "COUNT(*)"; },
     desc:"Count every row in the result, including nulls." },
   { bucket:"Aggregation", name:"COUNT DISTINCT",
     tpl:function(){ return "COUNT(DISTINCT )"; },
     desc:"Count unique values only — unique customers, orders, SKUs." },
-  { bucket:"Aggregation", name:"AVG",
+  { bucket:"Aggregation", name:"AVG", fnName:"AVG",
     tpl:function(){ return "AVG()"; },
     desc:"Mean value. Note: AVG silently ignores nulls — use COALESCE if that matters." },
-  { bucket:"Aggregation", name:"MIN",
+  { bucket:"Aggregation", name:"MIN", fnName:"MIN",
     tpl:function(){ return "MIN()"; },
     desc:"Lowest value or earliest date in the set." },
-  { bucket:"Aggregation", name:"MAX",
+  { bucket:"Aggregation", name:"MAX", fnName:"MAX",
     tpl:function(){ return "MAX()"; },
     desc:"Highest value or latest date in the set." },
-  { bucket:"Aggregation", name:"MEDIAN",
+  { bucket:"Aggregation", name:"MEDIAN", fnName:"MEDIAN",
     tpl:function(db){
       if(db==="azure_sql") return "PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY )";
       return "MEDIAN()";
@@ -972,6 +974,59 @@ var FN_CATALOGUE = [
     desc:"Concatenate values from multiple rows into one string — e.g. list all products per customer.",
     dbNote:{ azure_sql:"STRING_AGG(col, sep)", snowflake:"LISTAGG(col, sep)", oracle:"LISTAGG with WITHIN GROUP" } },
 
+  // ── Date & Time ────────────────────────────────────────────────────────
+  { bucket:"Date & Time", name:"TRY_CONVERT (YYYYMMDD key → date)", fnName:"TRY_CONVERT",
+    tpl:function(){ return "TRY_CONVERT(date, CONVERT(varchar(8), ), 112)"; },
+    desc:"Columns ending in _DT_DMS_KEY / _DATE_DMS_KEY are integer YYYYMMDD keys, not real dates. "
+        +"Convert with this before comparing, filtering, or applying DATEDIFF/DATEADD — never operate on the raw key directly.",
+    dbs:["azure_sql"] },
+  { bucket:"Date & Time", name:"DATEDIFF (days/months between two dates)", fnName:"DATEDIFF",
+    tpl:function(db){
+      if(db==="azure_sql") return "DATEDIFF(day, , )";
+      if(db==="snowflake") return "DATEDIFF('day', , )";
+      return " - ";  // Oracle: date subtraction returns a day count directly
+    },
+    desc:"Difference between two dates. Oracle has no DATEDIFF function — subtract the dates directly instead.",
+    dbNote:{ azure_sql:"DATEDIFF(day, start, end)", snowflake:"DATEDIFF('day', start, end)", oracle:"end_date - start_date" } },
+  { bucket:"Date & Time", name:"DATEADD (shift a date)", fnName:"DATEADD",
+    tpl:function(db){
+      if(db==="azure_sql") return "DATEADD(day, , )";
+      if(db==="snowflake") return "DATEADD('day', , )";
+      return " + ";  // Oracle: date + N (days)
+    },
+    desc:"Add or subtract a time interval from a date. On a _DT_DMS_KEY column, convert it with TRY_CONVERT first — "
+        +"never call DATEADD on the raw integer key.",
+    dbNote:{ azure_sql:"DATEADD(day, N, date)", snowflake:"DATEADD('day', N, date)", oracle:"date + N" } },
+  { bucket:"Date & Time", name:"YEAR / EXTRACT (year from date)", fnName:"YEAR",
+    tpl:function(db){
+      if(db==="oracle") return "EXTRACT(YEAR FROM )";
+      return "YEAR()";
+    },
+    desc:"Extract the year from a date column. Oracle uses EXTRACT(YEAR FROM date) instead of YEAR().",
+    dbNote:{ azure_sql:"YEAR(date)", snowflake:"YEAR(date)", oracle:"EXTRACT(YEAR FROM date)" } },
+  { bucket:"Date & Time", name:"FORMAT (month bucket, Azure SQL)", fnName:"FORMAT",
+    tpl:function(){ return "FORMAT(, 'yyyy-MM')"; },
+    desc:"Bucket a date into a 'yyyy-MM' month label for GROUP BY. Azure SQL only — use DATE_TRUNC (Snowflake) or TRUNC (Oracle) elsewhere.",
+    dbs:["azure_sql"] },
+  { bucket:"Date & Time", name:"DATE_TRUNC (month bucket, Snowflake)", fnName:"DATE_TRUNC",
+    tpl:function(){ return "DATE_TRUNC('month', )"; },
+    desc:"Bucket a date to the start of its month for GROUP BY.",
+    dbs:["snowflake"] },
+  { bucket:"Date & Time", name:"TRUNC (month bucket, Oracle)", fnName:"TRUNC",
+    tpl:function(){ return "TRUNC(, 'MM')"; },
+    desc:"Bucket a date to the start of its month for GROUP BY.",
+    dbs:["oracle"] },
+  { bucket:"Date & Time", name:"GETDATE (today, Azure SQL)", fnName:"GETDATE",
+    tpl:function(){ return "GETDATE()"; },
+    desc:"Current date/time. CAUTION: never use for relative-time questions (last month, this year) — the database "
+        +"may be historical. Anchor to MAX(date_col) from the table instead.",
+    dbs:["azure_sql"] },
+  { bucket:"Date & Time", name:"CURRENT_DATE (today, Snowflake/Oracle)", fnName:"CURRENT_DATE",
+    tpl:function(){ return "CURRENT_DATE"; },
+    desc:"Current date. CAUTION: never use for relative-time questions (last month, this year) — the database "
+        +"may be historical. Anchor to MAX(date_col) from the table instead.",
+    dbs:["snowflake","oracle"] },
+
   // ── Ratio and Safe Division ──────────────────────────────────────────
   { bucket:"Ratio & Division", name:"Safe divide (NULLIF denominator)",
     tpl:function(){ return "SUM() / NULLIF(SUM(), 0)"; },
@@ -982,13 +1037,13 @@ var FN_CATALOGUE = [
   { bucket:"Ratio & Division", name:"Period-over-period growth %",
     tpl:function(){ return "ROUND((SUM(current_col) - SUM(prior_col)) * 100.0 / NULLIF(SUM(prior_col), 0), 2)"; },
     desc:"Change percentage between two periods. Replace current_col and prior_col with actual column names." },
-  { bucket:"Ratio & Division", name:"NULLIF (zero → null)",
+  { bucket:"Ratio & Division", name:"NULLIF (zero → null)", fnName:"NULLIF",
     tpl:function(){ return "NULLIF(, 0)"; },
     desc:"Turns a zero value into NULL. Primary use: make a denominator safe for division." },
-  { bucket:"Ratio & Division", name:"ROUND",
+  { bucket:"Ratio & Division", name:"ROUND", fnName:"ROUND",
     tpl:function(){ return "ROUND(, 2)"; },
     desc:"Round to N decimal places. Every percentage or ratio should pass through ROUND before display." },
-  { bucket:"Ratio & Division", name:"ABS (absolute value)",
+  { bucket:"Ratio & Division", name:"ABS (absolute value)", fnName:"ABS",
     tpl:function(){ return "ABS()"; },
     desc:"Strip the sign — useful for variance metrics where you want magnitude regardless of direction." },
 
@@ -999,10 +1054,10 @@ var FN_CATALOGUE = [
   { bucket:"Conditional", name:"Conditional COUNT",
     tpl:function(){ return "COUNT(CASE WHEN  = '' THEN 1 END)"; },
     desc:"Count only rows matching a condition — e.g. count only active customers without a subquery." },
-  { bucket:"Conditional", name:"CASE expression (label/bucket values)",
+  { bucket:"Conditional", name:"CASE expression (label/bucket values)", fnName:"CASE",
     tpl:function(){ return "CASE WHEN  > 0 THEN 'Positive' WHEN  < 0 THEN 'Negative' ELSE 'Zero' END"; },
     desc:"Branch on conditions to produce labels or buckets. Works inside or outside an aggregate." },
-  { bucket:"Conditional", name:"IIF (inline if)",
+  { bucket:"Conditional", name:"IIF (inline if)", fnName:"IIF",
     tpl:function(db){
       if(db==="oracle") return "CASE WHEN  THEN  ELSE  END";
       return "IIF(, , )";
@@ -1011,14 +1066,14 @@ var FN_CATALOGUE = [
     dbNote:{ oracle:"Rewritten to CASE WHEN for Oracle" } },
 
   // ── Null Handling ─────────────────────────────────────────────────────
-  { bucket:"Null Handling", name:"COALESCE (cross-DB, null → default)",
+  { bucket:"Null Handling", name:"COALESCE (cross-DB, null → default)", fnName:"COALESCE",
     tpl:function(){ return "COALESCE(, 0)"; },
     desc:"Returns the first non-null value. Works on all three supported databases. Use this over ISNULL or NVL for portability." },
-  { bucket:"Null Handling", name:"ISNULL (Azure SQL only)",
+  { bucket:"Null Handling", name:"ISNULL (Azure SQL only)", fnName:"ISNULL",
     tpl:function(){ return "ISNULL(, 0)"; },
     desc:"Azure SQL / SQL Server specific null replacement. Slightly faster than COALESCE but not portable.",
     dbs:["azure_sql"] },
-  { bucket:"Null Handling", name:"NVL (Oracle only)",
+  { bucket:"Null Handling", name:"NVL (Oracle only)", fnName:"NVL",
     tpl:function(){ return "NVL(, 0)"; },
     desc:"Oracle-specific null replacement equivalent to COALESCE(col, default).",
     dbs:["oracle"] },
@@ -1027,7 +1082,7 @@ var FN_CATALOGUE = [
     desc:"Turns a specific value into NULL. Opposite of COALESCE — mainly used on zero denominators." },
 
   // ── Type Conversion ───────────────────────────────────────────────────
-  { bucket:"Type Conversion", name:"CAST to DECIMAL (fix integer division)",
+  { bucket:"Type Conversion", name:"CAST to DECIMAL (fix integer division)", fnName:"CAST",
     tpl:function(){ return "CAST( AS DECIMAL(18,4))"; },
     desc:"CRITICAL: integer ÷ integer = integer in SQL. 7/2 = 3 not 3.5. Always CAST before division." },
   { bucket:"Type Conversion", name:"CAST to FLOAT",
@@ -1036,7 +1091,7 @@ var FN_CATALOGUE = [
   { bucket:"Type Conversion", name:"CAST to INT",
     tpl:function(){ return "CAST( AS INT)"; },
     desc:"Truncate to whole number. Use FLOOR() if you need explicit round-down control." },
-  { bucket:"Type Conversion", name:"FLOOR / CEILING",
+  { bucket:"Type Conversion", name:"FLOOR / CEILING", fnName:"FLOOR",
     tpl:function(){ return "FLOOR()"; },
     desc:"FLOOR rounds down, CEILING rounds up to nearest whole number. Useful for age bands and bin sizes." },
 
@@ -1048,20 +1103,20 @@ var FN_CATALOGUE = [
     },
     desc:"Join two text fields. Azure SQL uses + operator; Snowflake and Oracle use ||.",
     dbNote:{ azure_sql:"Uses + operator", snowflake:"Uses || operator", oracle:"Uses || operator" } },
-  { bucket:"String", name:"UPPER / LOWER",
+  { bucket:"String", name:"UPPER / LOWER", fnName:"UPPER",
     tpl:function(){ return "UPPER()"; },
     desc:"Standardise case before grouping — prevents 'London' and 'LONDON' appearing as separate groups." },
-  { bucket:"String", name:"TRIM",
+  { bucket:"String", name:"TRIM", fnName:"TRIM",
     tpl:function(){ return "TRIM()"; },
     desc:"Remove leading and trailing spaces. Catches data quality issues that break GROUP BY matching." },
-  { bucket:"String", name:"LEFT / RIGHT",
+  { bucket:"String", name:"LEFT / RIGHT", fnName:"LEFT",
     tpl:function(db){
       if(db==="oracle") return "SUBSTR(, 1, N)";
       return "LEFT(, N)";
     },
     desc:"Extract N characters from the start or end. Oracle uses SUBSTR() instead of LEFT/RIGHT.",
     dbNote:{ oracle:"Uses SUBSTR(col, 1, N) for LEFT" } },
-  { bucket:"String", name:"LEN / LENGTH (string length)",
+  { bucket:"String", name:"LEN / LENGTH (string length)", fnName:"LEN",
     tpl:function(db){
       if(db==="azure_sql") return "LEN()";
       return "LENGTH()";
@@ -1250,7 +1305,8 @@ function updateFormulaHints(editor){
         "DISTINCT","PERCENTILE_CONT","WITHIN","GROUP","MEDIAN","NVL","ROUND","FLOOR","CEIL",
         "CEILING","ABS","POWER","SQRT","MOD","LEN","LENGTH","TRIM","UPPER","LOWER","REPLACE",
         "SUBSTRING","DATEADD","DATEDIFF","GETDATE","CURRENT_DATE","YEAR","MONTH","DAY","IIF",
-        "SIGN","TOP","SELECT","FROM","WHERE","HAVING","TRY_CAST","CONVERT","FORMAT",
+        "SIGN","TOP","SELECT","FROM","WHERE","HAVING","TRY_CAST","TRY_CONVERT","CONVERT","FORMAT",
+        "DATE","DATETIME","TIME","DATE_TRUNC","TRUNC","EXTRACT","VARCHAR2","NUMBER",
         "STRING_AGG","LISTAGG","CONCAT","ILIKE","LIKE"]);
       var _tokens = _valForCheck.match(/[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*/g) || [];
       var _unknown = _tokens.filter(function(tok){
@@ -1331,6 +1387,26 @@ function _joinTableContext(editor){
   return /"table"\s*:\s*"[A-Za-z0-9_]*$/.test(text);
 }
 
+function _matchingFunctions(token){
+  // DB-aware function-name suggestions sourced from FN_CATALOGUE (the same
+  // data backing the ƒ Functions browser) so typing "DATED" or "TRY_CON"
+  // suggests DATEDIFF / TRY_CONVERT for the client's actual connected DB
+  // dialect, not a generic/wrong-dialect function.
+  if(!token || typeof FN_CATALOGUE === "undefined") return [];
+  var lc = token.toLowerCase();
+  var seen = {};
+  var out = [];
+  FN_CATALOGUE.forEach(function(fn){
+    if(!fn.fnName) return;
+    if(fn.dbs && fn.dbs.indexOf(DB) === -1) return;
+    if(seen[fn.fnName]) return;
+    if(fn.fnName.toLowerCase().indexOf(lc) !== 0) return;
+    seen[fn.fnName] = true;
+    out.push({ fnName: fn.fnName, bucket: fn.bucket, desc: fn.desc, tpl: fn.tpl(DB) });
+  });
+  return out.slice(0, 6);
+}
+
 function _currentToken(editor){
   var pos  = editor.selectionStart || 0;
   var text = editor.value.slice(0, pos);
@@ -1372,7 +1448,9 @@ function _fcsCurrentToken(editor){
 
 function _showSuggestions(editor, token){
   var el = document.getElementById("formula-col-suggest");
-  if(!_allColumns.length || token.length < 1){ if(el) el.style.display="none"; return; }
+  var wantsFns = editor.matches(".formula-editor,.metric-builder-row-expression");
+  var fnMatches = wantsFns ? _matchingFunctions(token) : [];
+  if((!_allColumns.length && !fnMatches.length) || token.length < 1){ if(el) el.style.display="none"; return; }
   var tableMode = editor.matches(".metric-builder-required-joins") && _joinTableContext(editor);
   var lc = token.toLowerCase();
   var matches;
@@ -1393,9 +1471,25 @@ function _showSuggestions(editor, token){
     var ct = _allColumns.filter(function(c){ return !c.column.toLowerCase().startsWith(lc) && c.column.toLowerCase().includes(lc); });
     matches = sw.concat(ct).slice(0, 10);
   }
-  if(!matches.length){ if(el) el.style.display="none"; return; }
+  if(!matches.length && !fnMatches.length){ if(el) el.style.display="none"; return; }
   _suggestTarget = editor;
   _suggestIdx = -1;
+  var _rows = [], _gIdx = 0;
+
+  // Function suggestions — shown first, DB-aware (see FN_CATALOGUE)
+  if(fnMatches.length){
+    _rows.push('<div class="fcs-group-hd">Functions</div>');
+    fnMatches.forEach(function(fn){
+      _rows.push('<div class="fcs-item fcs-fn" data-isfn="1" data-tpl="'+escHtml(fn.tpl)+'" data-idx="'+_gIdx+'" title="'+escHtml(fn.desc)+'">'
+        +'<span class="fcs-type fn" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:3px;font-size:9px;font-weight:800;font-family:Consolas,monospace;flex-shrink:0">ƒ</span>'
+        +'<span class="fcs-col">'+_fcsHighlight(fn.fnName, token)+'</span>'
+        +'<span class="fcs-tbl">'+escHtml(fn.bucket)+'</span>'
+        +'<span class="fcs-type fn"></span>'
+        +'</div>');
+      _gIdx++;
+    });
+  }
+
   // Use bare column name for non-ambiguous, TABLE.COL for ambiguous
   // Group matches by table for Qlik-style display
   var _grpMap = {}, _grpOrder = [];
@@ -1404,7 +1498,6 @@ function _showSuggestions(editor, token){
     _grpMap[c.table].push(c);
   });
   var dispToken = (!tableMode && lc.includes(".")) ? (lc.split(".")[1]||"") : lc;
-  var _rows = [], _gIdx = 0;
   var _multiTbl = !tableMode && _grpOrder.length > 1;
   _grpOrder.forEach(function(tbl){
     if(_multiTbl) _rows.push('<div class="fcs-group-hd">'+escHtml(tbl)+'</div>');
@@ -1443,6 +1536,22 @@ function _hideSuggestions(){
   var el2 = document.getElementById("col-suggest");
   if(el2) el2.style.display = "none";
   _suggestIdx = -1; _suggestTarget = null;
+}
+
+function _insertFunctionSuggestion(tpl){
+  // Replace the partially-typed token (e.g. "DATED") with the full,
+  // DB-correct function template, then park the cursor inside the first
+  // empty parens via insertAtCursor — same UX as the ƒ Functions browser.
+  var editor = _suggestTarget || _activeEditor;
+  if(!editor || !tpl) return;
+  var pos     = editor.selectionStart || 0;
+  var before  = editor.value.slice(0, pos);
+  var replaced = before.replace(/[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?$/, "");
+  editor.value = replaced + editor.value.slice(pos);
+  editor.setSelectionRange(replaced.length, replaced.length);
+  _hideSuggestions();
+  insertAtCursor(editor, tpl);
+  if(!editor.matches(".formula-editor")) _syncMetricBuilder(editor.closest(".metric-form"));
 }
 
 function _insertSuggestion(bareColName, tableName, isDup){
@@ -1523,6 +1632,7 @@ document.addEventListener("keydown", function(e){
       if(_suggestIdx >= 0){
         var sel = items[_suggestIdx];
         e.preventDefault();
+        if(sel.dataset.isfn === "1"){ _insertFunctionSuggestion(sel.dataset.tpl); return; }
         _insertSuggestion(sel.dataset.col, sel.dataset.table, sel.dataset.dup === "1");
         return;
       }
@@ -1578,7 +1688,11 @@ document.addEventListener("click", function(e){
   if(e.target.closest("#mc-metric-suggest")) return;
   // ThoughtSpot formula dropdown click
   var fcsItem = e.target.closest(".fcs-item");
-  if(fcsItem){ _insertSuggestion(fcsItem.dataset.col, fcsItem.dataset.table, fcsItem.dataset.dup === "1"); return; }
+  if(fcsItem){
+    if(fcsItem.dataset.isfn === "1"){ _insertFunctionSuggestion(fcsItem.dataset.tpl); return; }
+    _insertSuggestion(fcsItem.dataset.col, fcsItem.dataset.table, fcsItem.dataset.dup === "1");
+    return;
+  }
   if(e.target.closest("#formula-col-suggest")) return;  // clicking inside dropdown but not on item
   // Tag input dropdown click
   var item = e.target.closest(".col-suggest-item");

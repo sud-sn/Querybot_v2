@@ -74,7 +74,7 @@ class TestDuplicateColumnDisplay(unittest.TestCase):
 
 # ── 2  Function helper popover ──────────────────────────────────────────────
 class TestFnHelperPopover(unittest.TestCase):
-    """ƒ button replaces old pill toolbar; popover has 6 buckets; search works."""
+    """ƒ button replaces old pill toolbar; popover has 7 buckets; search works."""
 
     def test_fn_helper_button_present(self):
         tmpl = _tmpl()
@@ -92,10 +92,10 @@ class TestFnHelperPopover(unittest.TestCase):
         self.assertIn("fn-popover", tmpl)
         self.assertIn("fn-buckets", tmpl)
 
-    def test_six_buckets_defined(self):
+    def test_seven_buckets_defined(self):
         tmpl = _tmpl()
         # Each bucket name must appear in FN_CATALOGUE
-        for bucket in ("Aggregation", "Ratio & Division", "Conditional",
+        for bucket in ("Aggregation", "Date & Time", "Ratio & Division", "Conditional",
                        "Null Handling", "Type Conversion", "String"):
             self.assertIn(bucket, tmpl, f"Bucket '{bucket}' missing from FN_CATALOGUE")
 
@@ -133,6 +133,54 @@ class TestFnHelperPopover(unittest.TestCase):
     def test_catalogue_has_median(self):
         tmpl = _tmpl()
         self.assertIn("MEDIAN", tmpl)
+
+    def test_catalogue_has_date_functions(self):
+        tmpl = _tmpl()
+        for fn in ("TRY_CONVERT", "DATEDIFF", "DATEADD", "DATE_TRUNC", "GETDATE", "CURRENT_DATE"):
+            self.assertIn(fn, tmpl, f"Date function '{fn}' missing from FN_CATALOGUE")
+
+    def test_try_convert_documents_dms_key_columns(self):
+        tmpl = _tmpl()
+        self.assertIn("_DT_DMS_KEY", tmpl)
+        self.assertIn("never operate on the raw key directly", tmpl)
+
+
+class TestInlineFunctionSuggestions(unittest.TestCase):
+    """While typing in the formula editor / row-expression field, matching
+    SQL function names from FN_CATALOGUE are suggested inline (DB-aware),
+    in addition to the existing column-name autocomplete."""
+
+    def test_matching_functions_helper_present(self):
+        tmpl = _tmpl()
+        self.assertIn("function _matchingFunctions(token)", tmpl)
+        self.assertIn("fn.dbs.indexOf(DB)", tmpl)
+
+    def test_row_expression_field_requests_function_suggestions(self):
+        tmpl = _tmpl()
+        self.assertIn('editor.matches(".formula-editor,.metric-builder-row-expression")', tmpl)
+
+    def test_function_suggestion_insert_helper_present(self):
+        tmpl = _tmpl()
+        self.assertIn("function _insertFunctionSuggestion(tpl)", tmpl)
+
+    def test_keydown_and_click_route_function_suggestions_separately(self):
+        tmpl = _tmpl()
+        self.assertIn('sel.dataset.isfn === "1"', tmpl)
+        self.assertIn('fcsItem.dataset.isfn === "1"', tmpl)
+
+    def test_function_rows_render_with_distinct_marker(self):
+        tmpl = _tmpl()
+        self.assertIn('data-isfn="1"', tmpl)
+        self.assertIn("fcs-fn", tmpl)
+
+    def test_unknown_identifier_check_recognises_try_convert_and_date(self):
+        # Regression: TRY_CONVERT(date, ...) — the exact pattern this
+        # session's DATE-KEY RULE prompt fix recommends — was previously
+        # flagged as containing unknown identifiers "TRY_CONVERT" and
+        # "date" by the admin-facing syntax checker.
+        tmpl = _tmpl()
+        self.assertIn('"TRY_CONVERT"', tmpl)
+        self.assertIn('"DATE"', tmpl)
 
 
 # ── 3  DB-aware syntax ────────────────────────────────────────────────────────
