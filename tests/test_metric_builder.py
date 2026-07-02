@@ -21,6 +21,27 @@ class MetricBuilderTests(unittest.TestCase):
         self.assertIn("insertDateRoleJoinTemplate", template)
         self.assertIn('data-builder-mode="row_calculated"', template)
 
+    def test_initialise_metric_builder_does_not_clobber_in_progress_user_edits(self):
+        # Regression: _initialiseMetricBuilder only ever runs from the async
+        # /api/columns fetch callback. If that fetch is still in flight when
+        # the admin opens the edit dialog and pastes/types into the row
+        # expression, it used to resolve later and silently overwrite the
+        # user's in-progress edit with the stale server-rendered saved
+        # config the moment it completed — losing the paste entirely.
+        # Confirmed with a live repro harness before this fix: the paste
+        # survived once _initialiseMetricBuilder skips value population for
+        # a builder marked userEdited, and normal (untouched) builders still
+        # populate correctly from the saved config on first load.
+        template = (ROOT / "admin" / "templates" / "client_metrics.html").read_text(encoding="utf-8")
+        self.assertIn('if(builder.dataset.userEdited === "1"){', template)
+        self.assertIn('_mbForFlag.dataset.userEdited = "1";', template)
+        # The guard must be the FIRST thing _initialiseMetricBuilder checks,
+        # before it reads builder.dataset.config / overwrites any field.
+        idx_fn = template.index("function _initialiseMetricBuilder(builder){")
+        idx_guard = template.index('builder.dataset.userEdited === "1"', idx_fn)
+        idx_overwrite = template.index("rowExpression.value = cfg.row_expression", idx_fn)
+        self.assertLess(idx_guard, idx_overwrite)
+
     def test_metric_builder_ui_wires_schema_autocomplete_to_row_calc_fields(self):
         template = (ROOT / "admin" / "templates" / "client_metrics.html").read_text(encoding="utf-8")
         self.assertIn('.metric-builder-row-expression,.metric-builder-required-joins', template)

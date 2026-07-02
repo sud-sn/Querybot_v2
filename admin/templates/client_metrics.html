@@ -2174,6 +2174,17 @@ function _wireMetricBuilderColumnLists(scope){
 }
 
 function _initialiseMetricBuilder(builder){
+  // This runs from the async /api/columns fetch callback (see loadColumns
+  // below). If that fetch is still in flight when the admin opens the
+  // edit dialog and starts pasting/typing into the row expression, it
+  // used to resolve later and silently overwrite their in-progress edit
+  // with the stale server-rendered saved config the moment it completed.
+  // Once the user has touched any field in this builder, only (re)wire
+  // the column autocomplete lists — never touch field values again.
+  if(builder.dataset.userEdited === "1"){
+    _wireMetricBuilderColumnLists(builder);
+    return;
+  }
   var form = builder.closest(".metric-form");
   var hidden = form ? form.querySelector(".metric-builder-config") : null;
   var raw = (hidden && hidden.value) || builder.dataset.config || "";
@@ -2509,6 +2520,15 @@ document.addEventListener("focusin", function(e){
 });
 
 document.addEventListener("input", function(e){
+  // Mark this builder as having live, in-progress user edits — set by a
+  // real keystroke/paste (native `input` events; programmatic .value
+  // assignment from _initialiseMetricBuilder/_syncMetricBuilder does NOT
+  // fire input, so this only catches genuine user action). Prevents the
+  // async columns-fetch callback from later clobbering unsaved edits with
+  // the stale server-rendered config if it resolves after the user has
+  // already started typing/pasting.
+  var _mbForFlag = e.target.closest(".metric-builder");
+  if(_mbForFlag) _mbForFlag.dataset.userEdited = "1";
   if(e.target.matches(".formula-editor")){
     _activeEditor = e.target;
     updateFormulaHints(e.target);
