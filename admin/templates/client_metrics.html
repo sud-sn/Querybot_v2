@@ -510,7 +510,7 @@
                   </div>
                 </div>
                 <label style="font-size:12px;font-weight:800;color:var(--text-soft)">Row expression</label>
-                <textarea class="metric-builder-row-expression" placeholder="CASE WHEN due_dt.DMS_DT IS NULL THEN NULL WHEN pay_dt.DMS_DT IS NOT NULL THEN DATEDIFF(day, due_dt.DMS_DT, pay_dt.DMS_DT) ELSE DATEDIFF(day, due_dt.DMS_DT, GETDATE()) END"></textarea>
+                <textarea class="metric-builder-row-expression" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off" placeholder="CASE WHEN due_dt.DMS_DT IS NULL THEN NULL WHEN pay_dt.DMS_DT IS NOT NULL THEN DATEDIFF(day, due_dt.DMS_DT, pay_dt.DMS_DT) ELSE DATEDIFF(day, due_dt.DMS_DT, GETDATE()) END"></textarea>
                 <p class="form-note">Enter one row-level SQL expression only. Do not include SELECT, FROM, JOIN, SUM, or AVG here.</p>
                 <div class="metric-builder-grid">
                   <div>
@@ -538,6 +538,7 @@
               <button type="button" class="formula-test-btn" style="background:var(--blue-light);border-color:color-mix(in srgb,var(--blue) 25%,transparent);color:var(--blue)" onclick="liveValidate(this)">✓ Validate</button>
             </div>
             <textarea name="sql_template" rows="4" required class="formula-editor"
+              spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off"
               placeholder="SUM(NetProfit) * 100.0 / NULLIF(SUM(Revenue), 0)"></textarea>
             <div class="validate-result"></div>
             <p class="form-note">
@@ -795,7 +796,7 @@ SUM(NetProfit) * 100.0 / NULLIF(SUM(Revenue), 0)
               </div>
             </div>
             <label style="font-size:12px;font-weight:800;color:var(--text-soft)">Row expression</label>
-            <textarea class="metric-builder-row-expression" placeholder="CASE WHEN due_dt.DMS_DT IS NULL THEN NULL WHEN pay_dt.DMS_DT IS NOT NULL THEN DATEDIFF(day, due_dt.DMS_DT, pay_dt.DMS_DT) ELSE DATEDIFF(day, due_dt.DMS_DT, GETDATE()) END"></textarea>
+            <textarea class="metric-builder-row-expression" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off" placeholder="CASE WHEN due_dt.DMS_DT IS NULL THEN NULL WHEN pay_dt.DMS_DT IS NOT NULL THEN DATEDIFF(day, due_dt.DMS_DT, pay_dt.DMS_DT) ELSE DATEDIFF(day, due_dt.DMS_DT, GETDATE()) END"></textarea>
             <p class="form-note">Enter one row-level SQL expression only. Do not include SELECT, FROM, JOIN, SUM, or AVG here.</p>
             <div class="metric-builder-grid">
               <div>
@@ -821,7 +822,8 @@ SUM(NetProfit) * 100.0 / NULLIF(SUM(Revenue), 0)
           <button type="button" class="formula-test-btn" onclick="testFormula(this)">▶ Test</button>
           <button type="button" class="formula-test-btn" style="background:var(--blue-light);border-color:color-mix(in srgb,var(--blue) 25%,transparent);color:var(--blue)" onclick="liveValidate(this)">✓ Validate</button>
         </div>
-        <textarea name="sql_template" rows="3" required class="formula-editor">{{ m.sql_template }}</textarea>
+        <textarea name="sql_template" rows="3" required class="formula-editor"
+          spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off">{{ m.sql_template }}</textarea>
         <div class="validate-result"></div>
         <!-- Compact inline syntax hint bar — unblocks updateFormulaHints for edit forms -->
         <div class="formula-status syntax-panel" style="font-size:11px;margin-top:.35rem;padding:.35rem .6rem;min-height:0;display:none"></div>

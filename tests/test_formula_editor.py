@@ -194,6 +194,23 @@ class TestSqlSyntaxHighlighting(unittest.TestCase):
         self.assertIn(".sql-hl-backdrop{", tmpl)
         self.assertIn("pointer-events:none", tmpl)
 
+    def test_all_sql_editor_fields_disable_spellcheck(self):
+        # Regression: the transparent-text overlay technique lets the
+        # browser's native spellcheck decoration (e.g. a highlighted
+        # background on an unrecognized word like a column name fragment)
+        # render on top of the custom syntax coloring, clashing with it.
+        # Confirmed visually — reported as a "colour issue" on a partially
+        # typed column name. All 4 SQL-writing textareas (2x
+        # .formula-editor, 2x .metric-builder-row-expression) must disable
+        # spellcheck/autocomplete/autocorrect/autocapitalize.
+        tmpl = _tmpl()
+        self.assertEqual(tmpl.count('class="formula-editor"'), 2)
+        self.assertEqual(tmpl.count('class="metric-builder-row-expression"'), 2)
+        # autocomplete="off" also appears on unrelated inputs elsewhere in
+        # this template (e.g. base-table-input) — scope the check to the
+        # combined attribute cluster these 4 fields actually carry.
+        self.assertEqual(tmpl.count('spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off"'), 4)
+
     def test_token_color_classes_present(self):
         tmpl = _tmpl()
         for cls in (".tok-kw", ".tok-fn", ".tok-col", ".tok-str", ".tok-num", ".tok-op"):
