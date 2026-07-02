@@ -309,11 +309,14 @@ class TestArchitectureGuards(unittest.TestCase):
         self.assertIn("api/columns", tmpl)
 
     def test_metrics_template_has_field_browser(self):
+        # The inline "colBrowser*" sidebar was replaced by the Qlik-style New
+        # Metric modal's field browser (commit ed951e4) — assert on the
+        # current mc-fields-* implementation instead of the removed markup.
         with open(os.path.join(os.path.dirname(__file__), "..", "admin", "templates", "client_metrics.html"), encoding="utf-8") as f:
             tmpl = f.read()
-        self.assertIn("colBrowser", tmpl)
-        self.assertIn("colBrowserSearch", tmpl)
-        self.assertIn("insertColumnFromBrowser", tmpl)
+        self.assertIn("mc-fields-list", tmpl)
+        self.assertIn("mc-fields-search", tmpl)
+        self.assertIn("insertColumnFromMcDialog", tmpl)
 
     def test_metrics_template_cursor_in_parens(self):
         """Snippet buttons now park cursor inside parens."""

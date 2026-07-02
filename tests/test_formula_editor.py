@@ -273,9 +273,12 @@ class TestArchitectureGuards(unittest.TestCase):
             "window._qbDbType must be set before the main IIFE")
 
     def test_col_browser_still_present(self):
+        # The inline "colBrowser*" sidebar was replaced by the Qlik-style New
+        # Metric modal's field browser (commit ed951e4) — assert on the
+        # current mc-fields-* implementation instead of the removed markup.
         tmpl = _tmpl()
-        self.assertIn("colBrowser", tmpl)
-        self.assertIn("colBrowserSearch", tmpl)
+        self.assertIn("mc-fields-list", tmpl)
+        self.assertIn("mc-fields-search", tmpl)
 
     def test_col_suggestion_dropdown_still_present(self):
         tmpl = _tmpl()

@@ -47,7 +47,11 @@ class SchemaEnrichmentTests(unittest.TestCase):
         self.assertIn("customer invoice line amount", enriched["CUS_IVC_LIN_AMT"].business_candidates)
         self.assertEqual(enriched["SOP_CUS_IVC_LIN_CST_AMT"].role, "measure")
         self.assertEqual(enriched["DEL_REC_IND"].role, "status_filter")
-        self.assertEqual(enriched["DEL_REC_IND"].default_filter, "DEL_REC_IND = 0")
+        # No auto default_filter: soft-delete indicators must not be silently
+        # applied to every query — only when the user explicitly asks for
+        # active/non-deleted records (see commit d06fabc).
+        self.assertEqual(enriched["DEL_REC_IND"].default_filter, "")
+        self.assertIn("do NOT auto-filter", " ".join(enriched["DEL_REC_IND"].evidence))
 
     def test_detects_known_join_aliases_for_order_line_tables(self):
         cols = ["CUS_ORD_NUM", "CUS_ORD_LIN_NUM", "CUS_ORD_LIN_SFX", "DLV_NUM"]
@@ -83,7 +87,10 @@ class SchemaEnrichmentTests(unittest.TestCase):
 
         self.assertIn("SCHEMA INTELLIGENCE", block)
         self.assertIn("CUS_IVC_LIN_AMT: role=measure", block)
-        self.assertIn("DEL_REC_IND = 0", block)
+        # Soft-delete indicators are documented but never auto-applied as a
+        # mandatory filter (see commit d06fabc).
+        self.assertNotIn("DEL_REC_IND = 0", block)
+        self.assertIn("do NOT auto-filter", block)
         self.assertIn("known join equivalents=ORNO", block)
         self.assertIn("thousands separators", block)
 
