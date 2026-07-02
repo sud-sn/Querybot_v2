@@ -157,6 +157,23 @@
 .fcs-type.text{background:#F0FFF4;color:#065F46;border-color:#A7F3D0}
 .fcs-type.fn{background:#F5F3FF;color:#6D28D9;border-color:#DDD6FE}
 .fcs-item.fcs-fn .fcs-col{color:#6D28D9}
+
+/* ── SQL syntax highlighting (transparent-text textarea over colored backdrop) ── */
+.sql-hl-wrap{position:relative}
+.sql-hl-backdrop{
+  position:absolute;top:0;left:0;right:0;bottom:0;
+  overflow:hidden;pointer-events:none;
+  white-space:pre-wrap;word-break:break-word;
+  color:transparent;
+  box-sizing:border-box;
+}
+.sql-hl-wrap textarea{position:relative;background:transparent!important;color:transparent!important;z-index:1}
+.tok-kw{color:#2563EB;font-weight:700}
+.tok-fn{color:#7C3AED;font-weight:700}
+.tok-col{color:#047857;font-weight:600}
+.tok-str{color:#B45309}
+.tok-num{color:#0369A1}
+.tok-op{color:#64748B}
 /* ── Synonym collision warning ──────────────────────────────────────── */
 .collision-warn{display:none;margin-top:.35rem;padding:5px 9px;border-radius:5px;font-size:11px;line-height:1.5;
   background:color-mix(in srgb,var(--amber,#d69e2e) 10%,var(--surface));
@@ -1228,6 +1245,7 @@ function insertAtCursor(editor, text){
   editor.focus();
   editor.setSelectionRange(next, next);
   updateFormulaHints(editor);
+  _renderSqlHighlight(editor);
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -1347,6 +1365,140 @@ function updateFormulaHints(editor){
 function setStatus(panel, state, html){
   panel.className = "syntax-panel formula-status" + (state ? " "+state : "");
   panel.innerHTML = html || "";
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// SQL SYNTAX HIGHLIGHTING — transparent-text textarea over a colored
+// backdrop div, like a DB IDE. Applies to .formula-editor and
+// .metric-builder-row-expression (not the required-joins JSON field).
+// ══════════════════════════════════════════════════════════════════════
+var _SQL_HL_KEYWORDS = new Set([
+  "SELECT","FROM","WHERE","GROUP","BY","ORDER","HAVING","AS","CASE","WHEN",
+  "THEN","ELSE","END","AND","OR","NOT","IN","IS","NULL","DISTINCT","WITHIN",
+  "OVER","PARTITION","TOP","ASC","DESC","LIKE","BETWEEN","JOIN","ON","UNION","ALL",
+  // Type names — colored like keywords, matching a real DB IDE
+  "DATE","DATETIME","DATETIME2","TIME","TIMESTAMP","INT","INTEGER","BIGINT",
+  "SMALLINT","TINYINT","FLOAT","DECIMAL","NUMERIC","VARCHAR","NVARCHAR","CHAR",
+  "NCHAR","BIT","BOOLEAN","TEXT","REAL","MONEY"
+]);
+var _SQL_HL_EXTRA_FNS = ["CONVERT","TRY_CAST","SUBSTRING","POWER","SQRT","MOD","REPLACE","CONCAT","ILIKE"];
+
+function _sqlHlFnNames(){
+  var out = {};
+  if(typeof FN_CATALOGUE !== "undefined"){
+    FN_CATALOGUE.forEach(function(fn){ if(fn.fnName) out[fn.fnName.toUpperCase()] = true; });
+  }
+  _SQL_HL_EXTRA_FNS.forEach(function(f){ out[f] = true; });
+  return out;
+}
+
+function _tokenizeSqlHtml(text){
+  if(!text) return "";
+  var fnNames = _sqlHlFnNames();
+  var colNames = {};
+  (_allColumns||[]).forEach(function(c){ colNames[String(c.column).toUpperCase()] = true; });
+
+  var re = /('(?:[^']|'')*')|(\d+\.?\d*)|([A-Za-z_][A-Za-z0-9_]*)|([+\-*/=<>(),.])|(\s+)|([^\s])/g;
+  var out = "";
+  var m;
+  while((m = re.exec(text)) !== null){
+    if(m[1] !== undefined){ out += '<span class="tok-str">'+escHtml(m[1])+'</span>'; }
+    else if(m[2] !== undefined){ out += '<span class="tok-num">'+escHtml(m[2])+'</span>'; }
+    else if(m[3] !== undefined){
+      var word  = m[3];
+      var upper = word.toUpperCase();
+      var nextCh = text.charAt(re.lastIndex);
+      // Keyword check must come first: a few words (e.g. CASE) are both a
+      // reserved keyword AND have an fnName tag (for the ƒ Functions /
+      // autocomplete snippet-insert feature) — for highlighting they must
+      // read as keywords, not functions.
+      if(_SQL_HL_KEYWORDS.has(upper)){
+        out += '<span class="tok-kw">'+escHtml(word)+'</span>';
+      } else if(fnNames[upper] || nextCh === "("){
+        out += '<span class="tok-fn">'+escHtml(word)+'</span>';
+      } else if(colNames[upper]){
+        out += '<span class="tok-col">'+escHtml(word)+'</span>';
+      } else {
+        out += escHtml(word);
+      }
+    }
+    else if(m[4] !== undefined){ out += '<span class="tok-op">'+escHtml(m[4])+'</span>'; }
+    else { out += escHtml(m[5] !== undefined ? m[5] : m[6]); }
+  }
+  return out;
+}
+
+function _renderSqlHighlight(editor){
+  var wrap = editor.closest && editor.closest(".sql-hl-wrap");
+  if(!wrap) return;
+  var backdrop = wrap.querySelector(".sql-hl-backdrop");
+  if(!backdrop) return;
+  // Trailing newline avoids the last line collapsing when the value ends in \n
+  backdrop.innerHTML = _tokenizeSqlHtml(editor.value) + "\n";
+  backdrop.scrollTop  = editor.scrollTop;
+  backdrop.scrollLeft = editor.scrollLeft;
+  // Re-sync box size on every render too — ResizeObserver alone isn't a
+  // reliable enough signal for a manual drag-resize in every environment.
+  backdrop.style.width  = editor.offsetWidth + "px";
+  backdrop.style.height = editor.offsetHeight + "px";
+}
+
+function _initSqlHighlight(editor){
+  if(!editor || editor.dataset.hlInit){ _renderSqlHighlight(editor); return; }
+  editor.dataset.hlInit = "1";
+
+  // Capture the ORIGINAL computed style before any DOM move — once editor
+  // becomes a child of .sql-hl-wrap, the color:transparent/background:
+  // transparent CSS rules immediately apply, corrupting these same reads.
+  var cs = getComputedStyle(editor);
+  var box = {
+    borderTopWidth: cs.borderTopWidth, borderRightWidth: cs.borderRightWidth,
+    borderBottomWidth: cs.borderBottomWidth, borderLeftWidth: cs.borderLeftWidth,
+    borderStyle: cs.borderTopStyle,
+    color: cs.color,
+    paddingTop: cs.paddingTop, paddingRight: cs.paddingRight,
+    paddingBottom: cs.paddingBottom, paddingLeft: cs.paddingLeft,
+    fontFamily: cs.fontFamily, fontSize: cs.fontSize, fontWeight: cs.fontWeight,
+    lineHeight: cs.lineHeight, letterSpacing: cs.letterSpacing, boxSizing: cs.boxSizing
+  };
+
+  var wrap = document.createElement("div");
+  wrap.className = "sql-hl-wrap";
+  editor.parentNode.insertBefore(wrap, editor);
+
+  var backdrop = document.createElement("div");
+  backdrop.className = "sql-hl-backdrop";
+  wrap.appendChild(backdrop);
+  wrap.appendChild(editor);
+
+  // The editor KEEPS its own border/background (border isn't affected by
+  // background:transparent, so it still renders normally on top). The
+  // backdrop only needs a transparent border of the SAME width plus the
+  // same padding/font, so its text lands exactly where the editor's own
+  // (now-invisible) text would have been.
+  backdrop.style.borderWidth = box.borderTopWidth+" "+box.borderRightWidth+" "+box.borderBottomWidth+" "+box.borderLeftWidth;
+  backdrop.style.borderStyle = box.borderStyle;
+  backdrop.style.borderColor = "transparent";
+  ["paddingTop","paddingRight","paddingBottom","paddingLeft",
+   "fontFamily","fontSize","fontWeight","lineHeight","letterSpacing","boxSizing"
+  ].forEach(function(p){ backdrop.style[p] = box[p]; });
+
+  editor.style.caretColor = box.color;
+
+  // ResizeObserver catches most resize sources, but a manual drag on the
+  // textarea's native resize handle doesn't reliably fire it in every
+  // browser/automation context — mouseup after interacting with the editor
+  // is a simple, reliable fallback that catches the end of a drag-resize.
+  if(typeof ResizeObserver !== "undefined"){
+    new ResizeObserver(function(){ _renderSqlHighlight(editor); }).observe(editor);
+  }
+  editor.addEventListener("mouseup", function(){ _renderSqlHighlight(editor); });
+  editor.addEventListener("scroll", function(){
+    backdrop.scrollTop  = editor.scrollTop;
+    backdrop.scrollLeft = editor.scrollLeft;
+  });
+
+  _renderSqlHighlight(editor);
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -1986,7 +2138,7 @@ function _syncMetricBuilder(form){
     var formula = _compileMetricBuilderFormula(config);
     if(hidden) hidden.value = JSON.stringify(config);
     if(preview) preview.textContent = formula;
-    if(editor){ editor.value = formula; updateFormulaHints(editor); }
+    if(editor){ editor.value = formula; updateFormulaHints(editor); _renderSqlHighlight(editor); }
     if(required){
       var cols = config.mode === "row_calculated"
         ? (config.required_columns || []).concat((config.required_joins || []).map(function(j){ return j.from_column; }))
@@ -2265,6 +2417,8 @@ window.insertColumnFromBrowser = function(colName){
         _wireMetricBuilderColumnLists(document);
         document.querySelectorAll(".metric-builder").forEach(_initialiseMetricBuilder);
         document.querySelectorAll(".metric-form").forEach(_ensureMetricUxPanels);
+        // Re-color already-typed identifiers now that real column names are known
+        document.querySelectorAll(".formula-editor,.metric-builder-row-expression").forEach(_initSqlHighlight);
       } else {
         _buildColBrowser([]);
       }
@@ -2339,9 +2493,13 @@ document.addEventListener("focusin", function(e){
   if(e.target.matches(".formula-editor")){
     _activeEditor = e.target;
     updateFormulaHints(e.target);
+    _initSqlHighlight(e.target);
     // Show autocomplete immediately for whatever token is at the cursor —
     // critical for edit forms where value is pre-filled and input never fires
     _showSuggestions(e.target, _currentToken(e.target));
+  }
+  if(e.target.matches(".metric-builder-row-expression")){
+    _initSqlHighlight(e.target);
   }
   if(e.target.matches(".metric-builder-row-expression,.metric-builder-required-joins")){
     _showSuggestions(e.target, _currentToken(e.target));
@@ -2352,12 +2510,16 @@ document.addEventListener("input", function(e){
   if(e.target.matches(".formula-editor")){
     _activeEditor = e.target;
     updateFormulaHints(e.target);
+    _renderSqlHighlight(e.target);
     // ${MetricName} autocomplete takes priority when inside a metric ref
     _checkMetricRefTrigger(e.target);
     if(!_inMetricRef) _showSuggestions(e.target, _currentToken(e.target));
     // Hide live-validate panel on formula change — result is stale
     var vr = e.target.closest(".metric-form") && e.target.closest(".metric-form").querySelector(".validate-result");
     if(vr){ vr.className="validate-result"; vr.innerHTML=""; }
+  }
+  if(e.target.matches(".metric-builder-row-expression")){
+    _renderSqlHighlight(e.target);
   }
   if(e.target.matches(".metric-builder-row-expression,.metric-builder-required-joins")){
     _showSuggestions(e.target, _currentToken(e.target));
@@ -2855,6 +3017,7 @@ window.insertColumnFromMcDialog = function(colName){
 // Build the popover on load
 buildPopover();
 document.querySelectorAll(".formula-editor").forEach(updateFormulaHints);
+document.querySelectorAll(".formula-editor,.metric-builder-row-expression").forEach(_initSqlHighlight);
 
 })();
 
