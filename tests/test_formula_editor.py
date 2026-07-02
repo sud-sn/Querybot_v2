@@ -399,9 +399,16 @@ class TestDbAwareSyntax(unittest.TestCase):
         # ISNULL snippet must be limited to azure_sql
         self.assertIn("dbs:[\"azure_sql\"]", tmpl)
 
-    def test_nvl_marked_oracle_only(self):
+    def test_nvl_marked_oracle_and_snowflake_not_azure(self):
+        # Regression: NVL() is natively supported by both Oracle AND
+        # Snowflake (not Oracle-only as originally scoped) — audited
+        # against real dialect support 2026-07-02. Azure SQL has no NVL;
+        # ISNULL/COALESCE cover that dialect instead.
         tmpl = _tmpl()
-        self.assertIn("dbs:[\"oracle\"]", tmpl)
+        idx = tmpl.index('name:"NVL')
+        entry = tmpl[idx:idx + 320]
+        self.assertIn('dbs:["oracle","snowflake"]', entry)
+        self.assertNotIn("azure_sql", entry)
 
     def test_db_labels_defined(self):
         tmpl = _tmpl()
