@@ -596,6 +596,24 @@ class IntentAndGraphReliabilityTests(unittest.TestCase):
         self.assertIn("ANTI-JOIN GRAPH MODE", prompt)
         self.assertIn("Do not convert these joins back to INNER JOIN", prompt)
 
+    def test_date_key_rule_forbids_dateadd_on_raw_key(self):
+        prompt = build_sql_system_prompt(
+            "azure_sql",
+            "Table CUS_ORD_IVC_FCT has column CUS_ORD_DT_DMS_KEY",
+        )
+        self.assertIn("AZURE SQL DATE-KEY RULE", prompt)
+        self.assertIn("DATEADD()", prompt)
+        self.assertIn("OVERRIDES the CRITICAL TIME RULE", prompt)
+        self.assertIn(
+            "TRY_CONVERT(date, CONVERT(varchar(8), alias.DATE_KEY_COL), 112) >= "
+            "DATEADD(month, -1,",
+            prompt,
+        )
+
+    def test_date_key_rule_absent_without_dms_key_column(self):
+        prompt = build_sql_system_prompt("azure_sql", "Table ORDERS has column ORDER_DATE")
+        self.assertNotIn("AZURE SQL DATE-KEY RULE", prompt)
+
 
 class DiagnosticRenderingReliabilityTests(unittest.TestCase):
     def test_zero_row_message_fences_sql_with_underscored_columns(self):

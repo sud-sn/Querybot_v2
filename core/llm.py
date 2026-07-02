@@ -411,10 +411,19 @@ def build_sql_system_prompt(
         + (
             "- AZURE SQL DATE-KEY RULE: Columns ending in _DT_DMS_KEY or _DATE_DMS_KEY are "
             "integer YYYYMMDD keys, not real date columns. Do NOT call FORMAT(), YEAR(), MONTH(), "
-            "DATEPART(), or LAG ordering directly on the integer key. First convert with "
+            "DATEPART(), DATEADD(), or LAG ordering directly on the integer key — applying DATEADD "
+            "to a raw YYYYMMDD integer produces a meaningless date and the filter silently matches "
+            "the wrong rows (or none at all) instead of erroring. This rule OVERRIDES the CRITICAL "
+            "TIME RULE / relative-date examples above whenever the date column in question is a "
+            "_DT_DMS_KEY or _DATE_DMS_KEY column. First convert with "
             "TRY_CONVERT(date, CONVERT(varchar(8), alias.DATE_KEY_COL), 112), and filter out "
             "invalid zero keys with alias.DATE_KEY_COL > 0. For month buckets use "
-            "FORMAT(TRY_CONVERT(date, CONVERT(varchar(8), alias.DATE_KEY_COL), 112), 'yyyy-MM').\n"
+            "FORMAT(TRY_CONVERT(date, CONVERT(varchar(8), alias.DATE_KEY_COL), 112), 'yyyy-MM'). "
+            "For relative-date ranges (last month, this month vs last month, last N weeks), convert "
+            "the key on BOTH sides before comparing or applying DATEADD:\n"
+            "  WHERE TRY_CONVERT(date, CONVERT(varchar(8), alias.DATE_KEY_COL), 112) >= "
+            "DATEADD(month, -1, (SELECT MAX(TRY_CONVERT(date, CONVERT(varchar(8), DATE_KEY_COL), 112)) "
+            "FROM [schema].[table] WHERE DATE_KEY_COL > 0))\n"
             if ("_DT_DMS_KEY" in table_context.upper() or "_DATE_DMS_KEY" in table_context.upper())
             else ""
         )
