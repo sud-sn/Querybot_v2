@@ -1220,6 +1220,30 @@ def clear_pending(account_id: str, zoom_user_id: str) -> None:
 # Combine original question with the user's clarification reply
 # ══════════════════════════════════════════════════════════════════════════════
 
+_CLARIFICATION_WRAPPER_MARKER = "Clarification for the same request: "
+
+
+def extract_original_question(question: str) -> str:
+    """
+    Strip the "Clarification for the same request: ..." wrapper combine_with_
+    clarification() appends, returning just the user's original question.
+
+    The wrapper text is UI/administrative metadata (often a raw clarification
+    chip label like "Synonyms: customer id, customer key") — useful context
+    for the LLM's SQL-generation prompt, but it isn't natural language and
+    can spuriously trip alias/term matchers built to scan real questions
+    (e.g. matching "key" against a *_DMS_KEY column). Deterministic field-
+    plan builders should see only the original question; the LLM-facing
+    prompt should keep the full combined text.
+
+    Returns the input unchanged if the wrapper marker isn't present.
+    """
+    marker_idx = (question or "").find(_CLARIFICATION_WRAPPER_MARKER)
+    if marker_idx == -1:
+        return question
+    return question[:marker_idx].rstrip()
+
+
 def combine_with_clarification(
     original_q: str,
     clarification: str,
@@ -1256,7 +1280,7 @@ def combine_with_clarification(
     clarification_text = (clarification or "").strip()
     combined = (
         f"{original_q}\n\n"
-        f"Clarification for the same request: {clarification_text}.\n"
+        f"{_CLARIFICATION_WRAPPER_MARKER}{clarification_text}.\n"
         f"Use this clarification to interpret the original request; "
         f"do not treat it as a separate question."
     )

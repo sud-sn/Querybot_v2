@@ -20,7 +20,7 @@ from core.llm import llm_complete, build_sql_system_prompt, resolve_provider
 from core.examples import retrieve_similar_examples, format_examples_for_prompt
 from core.clarification import (
     check_ambiguity_glossary_first, save_pending,
-    build_schema_grounded_clarification_hint,
+    build_schema_grounded_clarification_hint, extract_original_question,
 )
 from core.schema import run_query, load_known_tables, load_schema_columns
 from core.knowledge import load_retriever
@@ -757,10 +757,20 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
         except Exception as _cov_exc:
             log.debug("Table coverage guarantee skipped: %s", _cov_exc)
 
+    # Deterministic field-plan builders scan the question text for literal
+    # aliases/business terms. On a clarification retry, `question` is the
+    # original question PLUS the raw clarification wrapper (e.g. a chip
+    # label like "Synonyms: customer id, customer key") — that wrapper is
+    # UI metadata, not natural language, and can spuriously match column
+    # aliases (e.g. "key" against a *_DMS_KEY column). Strip it back out
+    # for field-plan purposes only; the LLM-facing prompt still gets the
+    # full `question` with clarification context further below.
+    _semantic_plan_question = extract_original_question(question)
+
     _semantic_plan = {}
     try:
         _semantic_plan = build_semantic_field_plan(
-            question,
+            _semantic_plan_question,
             all_columns,
             query_scope_tables,
             selected_schema=schema_hint,
@@ -794,7 +804,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
     try:
         _semantic_model_plan = build_runtime_semantic_plan(
             state.get("kb_dir", ""),
-            question=question,
+            question=_semantic_plan_question,
             selected_schema=schema_hint,
         )
         if _semantic_model_plan.get("enabled"):

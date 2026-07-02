@@ -27,6 +27,7 @@ from core.clarification import (
     _parse_ambiguity_json,
     _pick_option,
     combine_with_clarification,
+    extract_original_question,
     mark_recently_expired,
     was_recently_expired,
     acknowledge_recently_expired,
@@ -365,6 +366,60 @@ class RegressionTests(unittest.TestCase):
         self.assertIn("clarification for the same request", combined.lower())
         self.assertIn("attendance status called late", combined.lower())
         self.assertEqual(injection, "")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# extract_original_question — strip the clarification wrapper before feeding
+# text into deterministic semantic-field matchers
+# ──────────────────────────────────────────────────────────────────────────────
+class ExtractOriginalQuestionTests(unittest.TestCase):
+
+    def test_round_trips_through_combine_with_clarification(self):
+        original = "what is the number of days present between payment by each customer"
+        combined, _ = combine_with_clarification(original, "customer id, customer key")
+        self.assertEqual(extract_original_question(combined), original)
+
+    def test_plain_question_passes_through_unchanged(self):
+        q = "show revenue by customer"
+        self.assertEqual(extract_original_question(q), q)
+
+    def test_empty_string_passes_through(self):
+        self.assertEqual(extract_original_question(""), "")
+
+    def test_clarification_chip_text_does_not_pollute_semantic_field_plan(self):
+        # Regression: a real production clarification reply used a business
+        # term's raw synonym-list chip label ("Synonyms: customer id,
+        # customer key") as its value. combine_with_clarification appends
+        # this verbatim into the "combined" question text, and feeding that
+        # straight into build_semantic_field_plan spuriously matched an
+        # extra "customer id" field (CUS_ID) purely from the chip label —
+        # UI metadata, not something the user actually asked for.
+        from core.semantic_planner import build_semantic_field_plan
+
+        table_columns = {
+            "EMDW_DMART.CUS_ORD_IVC_FCT": {"CUS_DMS_KEY": "bigint", "PAY_DT_DMS_KEY": "bigint"},
+            "EMDW_DMART.CUS_DMS": {"CUS_DMS_KEY": "bigint", "CUS_NM": "varchar", "CUS_ID": "varchar"},
+            "EMDW_DMART.DT_DMS": {"DT_DMS_KEY": "bigint", "DAY": "int", "DT_DSC": "varchar"},
+        }
+        original = "what is the number of days present between payment by each customer"
+        combined, _ = combine_with_clarification(original, "Synonyms: customer id, customer key")
+
+        polluted_plan = build_semantic_field_plan(combined, table_columns)
+        clean_plan = build_semantic_field_plan(extract_original_question(combined), table_columns)
+
+        polluted_columns = {f["column"] for f in polluted_plan.get("fields", [])}
+        clean_columns = {f["column"] for f in clean_plan.get("fields", [])}
+
+        self.assertIn("CUS_ID", polluted_columns, "test fixture must reproduce the pollution")
+        self.assertNotIn("CUS_ID", clean_columns)
+
+    def test_query_pipeline_wires_extraction_into_both_field_plan_builders(self):
+        from pathlib import Path
+        src = (Path(__file__).resolve().parents[1] / "core" / "query_pipeline.py").read_text(encoding="utf-8")
+        self.assertIn("extract_original_question", src)
+        self.assertIn("_semantic_plan_question = extract_original_question(question)", src)
+        self.assertIn("build_semantic_field_plan(\n            _semantic_plan_question,", src)
+        self.assertIn("question=_semantic_plan_question,", src)
 
 
 if __name__ == "__main__":
