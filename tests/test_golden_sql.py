@@ -331,8 +331,17 @@ class GoldenSqlTests(unittest.TestCase):
 
 
     # ── G8: Date role join enforced when plan is active ───────────────────────
-    def test_g8_date_join_enforced_when_date_plan_active(self):
-        """SQL that queries by date but omits the DT_DMS JOIN fails field_plan_mismatch."""
+    def test_g8_date_dim_join_is_optional_not_required(self):
+        """
+        Date-role fields/joins are marked enforcement="optional" in
+        build_runtime_semantic_plan (commit 5990ddc) specifically so a valid
+        alternative — deriving the period straight from the fact table's own
+        YYYYMMDD key via TRY_CONVERT — isn't blocked just because it skips the
+        DT_DMS join. Both the joined and the raw-key-converted forms are
+        legitimate SQL and must pass. (Supersedes the older, stricter
+        behavior this test originally asserted — see core/validator.py's
+        missing_plan_fields loop, which now also respects enforcement.)
+        """
         with _tmp_dir() as tmp:
             _, kb_dir = _setup(Path(tmp))
             plan = build_runtime_semantic_plan(
@@ -346,24 +355,30 @@ class GoldenSqlTests(unittest.TestCase):
                             "Plan must be enabled for date question")
             self.assertTrue(
                 any("DT_DMS" in str(j.get("to", "")).upper() for j in plan.get("joins", [])),
-                "Plan must require DT_DMS join",
+                "Plan must offer a DT_DMS join hint",
+            )
+            date_fields = [f for f in plan.get("fields", []) if f.get("role") == "date_dimension"]
+            self.assertTrue(date_fields, "Plan must include a date_dimension field")
+            self.assertTrue(
+                all(f.get("enforcement") == "optional" for f in date_fields),
+                "Date-role fields must be optional, not hard-required",
             )
 
-            # SQL that uses the raw integer key instead of joining the date dim
-            sql_bad = (
+            # SQL that derives the period from the raw key — valid, no JOIN needed
+            sql_no_join = (
                 "SELECT FORMAT(TRY_CONVERT(date, CONVERT(varchar(8), f.CUS_IVC_DT_DMS_KEY), 112), 'yyyy-MM') AS Month, "
                 "SUM(f.SOP_CUS_IVC_LIN_AMT) AS Revenue "
                 "FROM [PROFITABILITY].[CUS_ORD_IVC_FCT] f "
                 "GROUP BY FORMAT(TRY_CONVERT(date, CONVERT(varchar(8), f.CUS_IVC_DT_DMS_KEY), 112), 'yyyy-MM')"
             )
-            result_bad = validate_sql_detailed(
-                sql_bad, KNOWN_TABLES, "azure_sql", None,
+            result_no_join = validate_sql_detailed(
+                sql_no_join, KNOWN_TABLES, "azure_sql", None,
                 TABLE_COLUMNS, {"semantic_plan": plan},
             )
-            self.assertFalse(result_bad.ok,
-                             "SQL missing date dim JOIN must fail validation")
+            self.assertTrue(result_no_join.ok,
+                            f"Raw-key date derivation must pass, not be forced through DT_DMS: {result_no_join.reason}")
 
-            # SQL that correctly joins the date dimension passes
+            # SQL that joins the date dimension is also valid and still passes
             sql_good = (
                 "SELECT d.MONTH AS Month, SUM(f.SOP_CUS_IVC_LIN_AMT) AS Revenue "
                 "FROM [PROFITABILITY].[CUS_ORD_IVC_FCT] f "

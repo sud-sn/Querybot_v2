@@ -705,6 +705,13 @@ def validate_sql_detailed(
 
             missing_plan_fields: list[dict] = []
             for field in field_plan.get("fields") or []:
+                # Optional fields (e.g. date-role dimension keys) are hints, not
+                # hard requirements — the LLM may satisfy the same intent another
+                # valid way (e.g. deriving a period directly from a YYYYMMDD fact
+                # key instead of joining the date dimension). Mirrors the
+                # enforcement=="optional" skip already applied to join edges below.
+                if field.get("enforcement") == "optional":
+                    continue
                 # Dimension display fields (e.g. CUS_NM) are only required when
                 # the SQL groups results.  Pure aggregates don't need the join.
                 if field.get("display_required") and not sql_has_group_by:
