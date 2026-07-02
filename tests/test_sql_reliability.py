@@ -349,6 +349,26 @@ class StrictColumnValidationTests(unittest.TestCase):
         columns = {f["column"] for f in plan.get("fields", [])}
         self.assertNotIn("DAY", columns)
 
+    def test_semantic_plan_ignores_day_in_between_since_until_idioms(self):
+        # Regression: the original duration-idiom guard only caught "days
+        # to X" — a differently-phrased duration question ("number of days
+        # present between payment") still falsely required the DAY column,
+        # blocking otherwise-correct SQL a second time in production.
+        table_columns = {
+            "EMDW_DMART.CUS_ORD_IVC_FCT": {"CUS_DMS_KEY": "bigint", "PAY_DT_DMS_KEY": "bigint"},
+            "EMDW_DMART.CUS_DMS": {"CUS_DMS_KEY": "bigint", "CUS_NM": "varchar"},
+            "EMDW_DMART.DT_DMS": {"DT_DMS_KEY": "bigint", "DAY": "int"},
+        }
+        for question in (
+            "what is the number of days present between payment by each customer",
+            "days between due date and payment date",
+            "days since last order",
+            "how many days until delivery",
+        ):
+            plan = build_semantic_field_plan(question, table_columns)
+            columns = {f["column"] for f in plan.get("fields", [])}
+            self.assertNotIn("DAY", columns, f"false match for: {question!r}")
+
     def test_semantic_plan_still_matches_day_for_calendar_grouping(self):
         # The guard must not block legitimate "group by day" questions.
         table_columns = {
