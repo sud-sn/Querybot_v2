@@ -330,6 +330,35 @@ class StrictColumnValidationTests(unittest.TestCase):
         self.assertTrue(plan["joins"])
         self.assertFalse(any(col == "AGE" for _, col, _ in fields))
 
+    def test_semantic_plan_ignores_day_inside_duration_idiom(self):
+        # Regression: a bare "DAY" column's alias pluralizes to "days",
+        # which falsely matched inside "avg days to pay" — a duration
+        # metric idiom, not a request to group by calendar day. This
+        # incorrectly forced a DT_DMS join/field requirement onto queries
+        # for a saved "Avg Days To Pay" row-calculated metric, blocking
+        # otherwise-correct SQL. Confirmed against a real production query.
+        table_columns = {
+            "EMDW_DMART.CUS_ORD_IVC_FCT": {"CUS_DMS_KEY": "bigint", "SOP_CUS_IVC_LIN_AMT": "decimal"},
+            "EMDW_DMART.CUS_DMS": {"CUS_DMS_KEY": "bigint", "CUS_NM": "varchar"},
+            "EMDW_DMART.DT_DMS": {"DT_DMS_KEY": "bigint", "DAY": "int"},
+        }
+        plan = build_semantic_field_plan(
+            "what is the avg days to pay by top 10 customers by revenue?",
+            table_columns,
+        )
+        columns = {f["column"] for f in plan.get("fields", [])}
+        self.assertNotIn("DAY", columns)
+
+    def test_semantic_plan_still_matches_day_for_calendar_grouping(self):
+        # The guard must not block legitimate "group by day" questions.
+        table_columns = {
+            "EMDW_DMART.CUS_ORD_IVC_FCT": {"CUS_DMS_KEY": "bigint", "SOP_CUS_IVC_LIN_AMT": "decimal"},
+            "EMDW_DMART.DT_DMS": {"DT_DMS_KEY": "bigint", "DAY": "int"},
+        }
+        plan = build_semantic_field_plan("show revenue by day", table_columns)
+        columns = {f["column"] for f in plan.get("fields", [])}
+        self.assertIn("DAY", columns)
+
     def test_semantic_plan_respects_selected_schema(self):
         plan = build_semantic_field_plan(
             "For each division, what percentage of total invoice line amount comes from each item group?",

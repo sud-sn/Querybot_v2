@@ -249,8 +249,17 @@ def _contains_alias(alias: str, question_norm: str, question_compact: str) -> bo
     return len(alias_compact) >= 6 and alias_compact in question_compact
 
 
+_DURATION_IDIOM_RE = re.compile(r"\bdays?\s+to\s+\w+")
+
+
 def _column_matches_question(column: str, aliases: set[str], question_norm: str, question_compact: str) -> tuple[bool, str]:
     if column == "ITM_DMS_KEY" and "item group" in question_norm:
+        return False, ""
+    # A bare "DAY" column's alias pluralizes to "days", which matches inside
+    # duration idioms like "avg days to pay" / "days to ship" — those ask
+    # for a calculated duration metric, not a calendar-day grouping. Guard
+    # the same way the ITM_DMS_KEY case above does.
+    if column == "DAY" and _DURATION_IDIOM_RE.search(question_norm):
         return False, ""
     for alias in sorted(aliases, key=len, reverse=True):
         if not alias:
