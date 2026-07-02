@@ -4276,6 +4276,86 @@ async def metric_check_collision(
     return JSONResponse({"collisions": collisions})
 
 
+def _alias_for_date_role(role_key: str, used: set[str]) -> str:
+    """Derive a short, non-colliding join alias from a date-role key.
+
+    e.g. "due_date" -> "due_dt", "payment_date" -> "pay_dt",
+    "cancelled_order_date" -> "can_dt". Falls back to a numeric suffix on
+    collision within the same response (rare, since role keys already
+    disambiguate the underlying date-role registry).
+    """
+    base = role_key or "date"
+    if base.endswith("_date"):
+        base = base[: -len("_date")]
+    base = base.replace("_", "")
+    short = (base[:3] or "dat")
+    alias = f"{short}_dt"
+    if alias not in used:
+        return alias
+    i = 2
+    while f"{short}{i}_dt" in used:
+        i += 1
+    return f"{short}{i}_dt"
+
+
+@router.get("/clients/{account_id}/metrics/api/date-role-joins")
+async def metric_date_role_joins(request: Request, account_id: str, table: str = ""):
+    """
+    Return candidate row-calculated-metric joins for a fact table, sourced from
+    the date roles the KB build already detected (core/semantic_model.py —
+    same data shown on the Date Roles admin page). No new detection logic;
+    this just exposes the existing semantic model to the metric builder so
+    admins don't have to hand-type joins the system already knows about.
+
+    Returns:
+      { "joins": [ { "alias", "table", "from_column", "to_column", "role" }, ... ] }
+    """
+    if not _is_auth(request):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    table_bare = (table or "").strip().upper().split(".")[-1]
+    if not table_bare:
+        return JSONResponse({"joins": []})
+
+    state = store.get_client_state(account_id)
+    kb_dir = (state or {}).get("kb_dir") or ""
+    if not kb_dir:
+        return JSONResponse({"joins": []})
+
+    try:
+        from core.semantic_model import load_semantic_model
+        model = load_semantic_model(kb_dir)
+    except Exception as exc:
+        log.warning("metric_date_role_joins: failed to load semantic model for %s: %s", account_id, exc)
+        return JSONResponse({"joins": []})
+
+    matched = [
+        dr for dr in (model.get("date_roles") or [])
+        if str(dr.get("fact_table") or "").upper().split(".")[-1] == table_bare
+    ]
+
+    used_aliases: set[str] = set()
+    joins = []
+    for dr in matched:
+        dim_table = str(dr.get("dimension_table") or "").split(".")[-1]
+        fact_col  = str(dr.get("fact_column") or "")
+        dim_key   = str(dr.get("dimension_key") or "")
+        role_key  = str(dr.get("business_role") or "")
+        if not dim_table or not fact_col or not dim_key:
+            continue
+        alias = _alias_for_date_role(role_key, used_aliases)
+        used_aliases.add(alias)
+        joins.append({
+            "alias": alias,
+            "table": dim_table,
+            "from_column": fact_col,
+            "to_column": dim_key,
+            "role": str(dr.get("name") or role_key.replace("_", " ")).lower(),
+        })
+
+    return JSONResponse({"joins": joins})
+
+
 @router.post("/clients/{account_id}/metrics/create")
 async def metric_create(
     request:      Request,

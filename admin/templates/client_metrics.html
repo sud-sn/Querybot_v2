@@ -439,7 +439,7 @@
             <div class="metric-builder-body">
               <div class="metric-builder-grid">
                 <div>
-                  <label>Builder mode</label>
+                  <label>Calculation mode</label>
                   <select class="metric-builder-mode">
                     <option value="aggregate">Aggregate / filtered measure</option>
                     <option value="row_calculated">Row-level calculated measure</option>
@@ -502,7 +502,7 @@
                     <label>Required joins JSON</label>
                     <textarea class="metric-builder-required-joins" placeholder='[{"alias":"due_dt","table":"DT_DMS","from_column":"DUE_DT_DMS_KEY","to_column":"DT_DMS_KEY","role":"due date"},{"alias":"pay_dt","table":"DT_DMS","from_column":"PAY_DT_DMS_KEY","to_column":"DT_DMS_KEY","role":"payment date"}]'></textarea>
                     <div class="metric-builder-join-actions">
-                      <button type="button" class="btn btn-secondary btn-xs metric-builder-join-template" onclick="insertDateRoleJoinTemplate(this)">Use date-role template</button>
+                      <button type="button" class="btn btn-secondary btn-xs metric-builder-join-template" onclick="insertDateRoleJoinTemplate(this)">Suggest joins from schema</button>
                     </div>
                   </div>
                 </div>
@@ -724,7 +724,7 @@ SUM(NetProfit) * 100.0 / NULLIF(SUM(Revenue), 0)
         <div class="metric-builder-body">
           <div class="metric-builder-grid">
             <div>
-              <label>Builder mode</label>
+              <label>Calculation mode</label>
               <select class="metric-builder-mode">
                 <option value="aggregate">Aggregate / filtered measure</option>
                 <option value="row_calculated">Row-level calculated measure</option>
@@ -787,7 +787,7 @@ SUM(NetProfit) * 100.0 / NULLIF(SUM(Revenue), 0)
                 <label>Required joins JSON</label>
                 <textarea class="metric-builder-required-joins" placeholder='[{"alias":"due_dt","table":"DT_DMS","from_column":"DUE_DT_DMS_KEY","to_column":"DT_DMS_KEY","role":"due date"},{"alias":"pay_dt","table":"DT_DMS","from_column":"PAY_DT_DMS_KEY","to_column":"DT_DMS_KEY","role":"payment date"}]'></textarea>
                 <div class="metric-builder-join-actions">
-                  <button type="button" class="btn btn-secondary btn-xs metric-builder-join-template" onclick="insertDateRoleJoinTemplate(this)">Use date-role template</button>
+                  <button type="button" class="btn btn-secondary btn-xs metric-builder-join-template" onclick="insertDateRoleJoinTemplate(this)">Suggest joins from schema</button>
                 </div>
               </div>
             </div>
@@ -1314,6 +1314,23 @@ function _displayLabel(c){
   return _dupCols.has(c.column) ? c.table+"."+c.column : c.column;
 }
 
+function _distinctTables(){
+  var seen = {}, out = [];
+  _allColumns.forEach(function(c){
+    if(c.table && !seen[c.table]){ seen[c.table]=true; out.push(c.table); }
+  });
+  return out;
+}
+
+function _joinTableContext(editor){
+  // True when the cursor sits inside the value of a JSON "table" key, e.g.
+  // `"table": "DT_D|` — used only for .metric-builder-required-joins so we
+  // suggest table names there instead of column names.
+  var pos  = editor.selectionStart || 0;
+  var text = editor.value.slice(0, pos);
+  return /"table"\s*:\s*"[A-Za-z0-9_]*$/.test(text);
+}
+
 function _currentToken(editor){
   var pos  = editor.selectionStart || 0;
   var text = editor.value.slice(0, pos);
@@ -1356,9 +1373,15 @@ function _fcsCurrentToken(editor){
 function _showSuggestions(editor, token){
   var el = document.getElementById("formula-col-suggest");
   if(!_allColumns.length || token.length < 1){ if(el) el.style.display="none"; return; }
+  var tableMode = editor.matches(".metric-builder-required-joins") && _joinTableContext(editor);
   var lc = token.toLowerCase();
   var matches;
-  if(lc.includes(".")){
+  if(tableMode){
+    matches = _distinctTables()
+      .filter(function(t){ return t.toLowerCase().includes(lc); })
+      .map(function(t){ return {table: t, column: t, type: "table"}; })
+      .slice(0, 10);
+  } else if(lc.includes(".")){
     var dotParts = lc.split(".");
     var tblPfx = dotParts[0], colPfx = dotParts[1] || "";
     matches = _allColumns.filter(function(c){
@@ -1380,13 +1403,13 @@ function _showSuggestions(editor, token){
     if(!_grpMap[c.table]){ _grpMap[c.table]=[]; _grpOrder.push(c.table); }
     _grpMap[c.table].push(c);
   });
-  var dispToken = lc.includes(".") ? (lc.split(".")[1]||"") : lc;
+  var dispToken = (!tableMode && lc.includes(".")) ? (lc.split(".")[1]||"") : lc;
   var _rows = [], _gIdx = 0;
-  var _multiTbl = _grpOrder.length > 1;
+  var _multiTbl = !tableMode && _grpOrder.length > 1;
   _grpOrder.forEach(function(tbl){
     if(_multiTbl) _rows.push('<div class="fcs-group-hd">'+escHtml(tbl)+'</div>');
     _grpMap[tbl].forEach(function(c){
-      var isDup  = _dupCols.has(c.column);
+      var isDup  = !tableMode && _dupCols.has(c.column);
       var highlighted = _fcsHighlight(c.column, dispToken);
       var cls    = _fcsTypeClass(c.type);
       var icon   = _fcsTypeIcon(cls);
@@ -1434,8 +1457,17 @@ function _insertSuggestion(bareColName, tableName, isDup){
   editor.value = replaced + editor.value.slice(pos);
   var next = replaced.length;
   editor.focus(); editor.setSelectionRange(next, next);
-  updateFormulaHints(editor);
   _hideSuggestions();
+
+  if(!editor.matches(".formula-editor")){
+    // Metric-builder row-expression / required-joins fields — just refresh
+    // the builder preview; the base_table auto-fill below is specific to
+    // the main formula editor and doesn't apply here.
+    _syncMetricBuilder(editor.closest(".metric-form"));
+    return;
+  }
+
+  updateFormulaHints(editor);
   // Auto-fill base_table and detect multi-table formulas
   if(tableName){
     var form = editor.closest(".metric-form");
@@ -1535,6 +1567,10 @@ document.addEventListener("click", function(e){
   // Re-evaluate token when clicking into (or repositioning cursor in) formula editor
   if(e.target.matches(".formula-editor")){
     // Use setTimeout(0) so selectionStart reflects the new click position
+    setTimeout(function(){ _showSuggestions(e.target, _currentToken(e.target)); }, 0);
+    return;
+  }
+  if(e.target.matches(".metric-builder-row-expression,.metric-builder-required-joins")){
     setTimeout(function(){ _showSuggestions(e.target, _currentToken(e.target)); }, 0);
     return;
   }
@@ -1899,31 +1935,49 @@ function _initialiseMetricBuilder(builder){
   }catch(e){}
 }
 
-window.insertDateRoleJoinTemplate = function(btn){
+window.insertDateRoleJoinTemplate = async function(btn){
   var builder = btn ? btn.closest(".metric-builder") : null;
-  if(!builder) return;
-  var joins = builder.querySelector(".metric-builder-required-joins");
-  if(!joins) return;
-  if(joins.value.trim() && !confirm("Replace the current required joins JSON with the date-role template?")) return;
-  joins.value = JSON.stringify([
-    {
-      alias: "due_dt",
-      table: "DT_DMS",
-      from_column: "DUE_DT_DMS_KEY",
-      to_column: "DT_DMS_KEY",
-      role: "due date"
-    },
-    {
-      alias: "pay_dt",
-      table: "DT_DMS",
-      from_column: "PAY_DT_DMS_KEY",
-      to_column: "DT_DMS_KEY",
-      role: "payment date"
+  var form    = builder ? builder.closest(".metric-form") : null;
+  if(!builder || !form) return;
+  var joinsEl = builder.querySelector(".metric-builder-required-joins");
+  if(!joinsEl) return;
+
+  var baseTableInput = form.querySelector("[name='base_table']");
+  var table = baseTableInput ? baseTableInput.value.trim() : "";
+  if(!table){
+    alert("Set the Base table field (Advanced options) first — date roles are looked up per table.");
+    return;
+  }
+
+  var m = location.pathname.match(/\/clients\/([^/]+)\//);
+  if(!m) return;
+
+  var origLabel = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "Looking up...";
+  try {
+    var resp = await fetch("/admin/clients/"+m[1]+"/metrics/api/date-role-joins?table="+encodeURIComponent(table));
+    var data = await resp.json();
+    var joins = data.joins || [];
+    if(!joins.length){
+      alert("No date roles were detected for "+table+" in the Knowledge Base. Rebuild the KB, check the Date Roles page, or enter joins manually.");
+      return;
     }
-  ], null, 2);
-  var columns = builder.querySelector(".metric-builder-required-columns");
-  if(columns && !columns.value.trim()) columns.value = "DUE_DT_DMS_KEY, PAY_DT_DMS_KEY";
-  _syncMetricBuilder(builder.closest(".metric-form"));
+    if(joinsEl.value.trim() && !confirm("Replace the current required joins JSON with "+joins.length+" date role(s) found for "+table+"?")) return;
+    joinsEl.value = JSON.stringify(joins, null, 2);
+    var columns = builder.querySelector(".metric-builder-required-columns");
+    if(columns){
+      var existing = (columns.value || "").split(",").map(function(c){ return c.trim(); }).filter(Boolean);
+      joins.forEach(function(j){ if(j.from_column && existing.indexOf(j.from_column) === -1) existing.push(j.from_column); });
+      columns.value = existing.join(", ");
+    }
+    _syncMetricBuilder(form);
+  } catch(err) {
+    alert("Failed to look up date roles: "+err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = origLabel;
+  }
 };
 
 function _checkParens(sql){
@@ -2175,6 +2229,9 @@ document.addEventListener("focusin", function(e){
     // critical for edit forms where value is pre-filled and input never fires
     _showSuggestions(e.target, _currentToken(e.target));
   }
+  if(e.target.matches(".metric-builder-row-expression,.metric-builder-required-joins")){
+    _showSuggestions(e.target, _currentToken(e.target));
+  }
 });
 
 document.addEventListener("input", function(e){
@@ -2187,6 +2244,9 @@ document.addEventListener("input", function(e){
     // Hide live-validate panel on formula change — result is stale
     var vr = e.target.closest(".metric-form") && e.target.closest(".metric-form").querySelector(".validate-result");
     if(vr){ vr.className="validate-result"; vr.innerHTML=""; }
+  }
+  if(e.target.matches(".metric-builder-row-expression,.metric-builder-required-joins")){
+    _showSuggestions(e.target, _currentToken(e.target));
   }
   if(e.target.name === "required_columns" || e.target.name === "allowed_dimensions"){
     var parts = e.target.value.split(",");
