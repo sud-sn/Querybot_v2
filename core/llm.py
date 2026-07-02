@@ -254,6 +254,18 @@ def build_sql_system_prompt(
             "         (ORDER BY date_col ROWS BETWEEN N-1 PRECEDING AND CURRENT ROW) AS ROLLING_AVG\n"
             "FROM [schema].[table] ORDER BY date_col"
         )
+        _avg_interval_pattern = (
+            "SELECT group_col,\n"
+            "       AVG(CAST(DATEDIFF(day, PREV_DATE, EVENT_DATE) AS FLOAT)) AS AVG_DAYS_BETWEEN\n"
+            "FROM (\n"
+            "    SELECT group_col, EVENT_DATE,\n"
+            "           LAG(EVENT_DATE) OVER (PARTITION BY group_col ORDER BY EVENT_DATE) AS PREV_DATE\n"
+            "    FROM [schema].[table]\n"
+            "    WHERE EVENT_DATE IS NOT NULL\n"
+            ") t\n"
+            "WHERE PREV_DATE IS NOT NULL\n"
+            "GROUP BY group_col"
+        )
     elif db_type == "oracle":
         _xjoin_pattern = (
             "Pattern: SELECT d.NAME_COL, SUM(f.METRIC_COL) FROM FACT f "
@@ -305,6 +317,18 @@ def build_sql_system_prompt(
             "         (ORDER BY date_col ROWS BETWEEN N-1 PRECEDING AND CURRENT ROW) AS ROLLING_AVG\n"
             "FROM schema.table ORDER BY date_col"
         )
+        _avg_interval_pattern = (
+            "SELECT group_col,\n"
+            "       AVG(EVENT_DATE - PREV_DATE) AS AVG_DAYS_BETWEEN\n"
+            "FROM (\n"
+            "    SELECT group_col, EVENT_DATE,\n"
+            "           LAG(EVENT_DATE) OVER (PARTITION BY group_col ORDER BY EVENT_DATE) AS PREV_DATE\n"
+            "    FROM schema.table\n"
+            "    WHERE EVENT_DATE IS NOT NULL\n"
+            ") t\n"
+            "WHERE PREV_DATE IS NOT NULL\n"
+            "GROUP BY group_col"
+        )
     else:  # snowflake and ANSI
         _xjoin_pattern = (
             "Pattern: SELECT d.NAME_COL, SUM(f.METRIC_COL) FROM FACT f "
@@ -355,6 +379,18 @@ def build_sql_system_prompt(
             "       AVG(metric) OVER\n"
             "         (ORDER BY date_col ROWS BETWEEN N-1 PRECEDING AND CURRENT ROW) AS ROLLING_AVG\n"
             "FROM db.schema.table ORDER BY date_col LIMIT 200"
+        )
+        _avg_interval_pattern = (
+            "SELECT group_col,\n"
+            "       AVG(DATEDIFF(day, PREV_DATE, EVENT_DATE)) AS AVG_DAYS_BETWEEN\n"
+            "FROM (\n"
+            "    SELECT group_col, EVENT_DATE,\n"
+            "           LAG(EVENT_DATE) OVER (PARTITION BY group_col ORDER BY EVENT_DATE) AS PREV_DATE\n"
+            "    FROM db.schema.table\n"
+            "    WHERE EVENT_DATE IS NOT NULL\n"
+            ") t\n"
+            "WHERE PREV_DATE IS NOT NULL\n"
+            "GROUP BY group_col LIMIT 200"
         )
 
     base = (
@@ -551,6 +587,22 @@ def build_sql_system_prompt(
         "  Replace N with the window size stated by the user (default 3 if unspecified). "
         "Cast integer metrics to FLOAT/DECIMAL to avoid integer division truncation "
         "(Azure SQL: CAST(metric AS FLOAT); Snowflake/Oracle: metric directly as AVG handles it).\n\n"
+        "- AVG INTERVAL BETWEEN EVENTS RULE: When the user asks for the average/typical gap "
+        "in days (or other time unit) BETWEEN CONSECUTIVE events of the same kind per group "
+        "('days between payments', 'time between orders', 'average gap between visits by "
+        "customer') — as opposed to the difference between two DIFFERENT date columns on the "
+        "same row (that's the DATEDIFF rule above, no window function needed) — a window "
+        "function like LAG() CANNOT be combined with an outer aggregate/GROUP BY in the SAME "
+        "SELECT. The database will reject it: the LAG() ORDER BY/PARTITION BY column is not "
+        "itself aggregated or grouped, producing an error like 'column is invalid in the select "
+        "list because it is not contained in either an aggregate function or the GROUP BY "
+        "clause'. ALWAYS compute the per-row gap in an inner subquery using LAG() PARTITION BY "
+        "the group column, THEN aggregate the result in an outer query:\n"
+        f"{_avg_interval_pattern}\n"
+        "  If the event date is a _DT_DMS_KEY/_DATE_DMS_KEY surrogate key, convert it with "
+        "TRY_CONVERT inside the INNER subquery (per the DATE-KEY RULE above) BEFORE applying "
+        "LAG — never apply LAG to the raw integer key and never leave the conversion for the "
+        "outer query.\n\n"
         "- NULL-SAFE JOIN RULE: When writing a JOIN or LEFT JOIN that might produce NULLs for "
         "numeric metrics on the right side (i.e. left join where right rows may be absent), "
         "always wrap the right-side numeric columns in COALESCE(col, 0) or ISNULL(col, 0) "

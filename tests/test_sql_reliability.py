@@ -663,6 +663,29 @@ class IntentAndGraphReliabilityTests(unittest.TestCase):
         prompt = build_sql_system_prompt("azure_sql", "Table ORDERS has column ORDER_DATE")
         self.assertNotIn("AZURE SQL DATE-KEY RULE", prompt)
 
+    def test_avg_interval_rule_present_for_all_dialects(self):
+        for db_type in ("azure_sql", "oracle", "snowflake"):
+            prompt = build_sql_system_prompt(db_type, "Table FNN_FCT")
+            self.assertIn(
+                "AVG INTERVAL BETWEEN EVENTS RULE", prompt, f"missing for {db_type}"
+            )
+            self.assertIn(
+                "LAG(EVENT_DATE) OVER (PARTITION BY group_col ORDER BY EVENT_DATE)",
+                prompt,
+                f"missing nested-subquery pattern for {db_type}",
+            )
+
+    def test_avg_interval_rule_forbids_flat_window_plus_group_by(self):
+        prompt = build_sql_system_prompt("azure_sql", "Table FNN_FCT")
+        self.assertIn("CANNOT be combined with an outer aggregate/GROUP BY", prompt)
+        self.assertIn("not contained in either an aggregate function or the GROUP BY", prompt)
+
+    def test_avg_interval_rule_requires_conversion_inside_inner_subquery(self):
+        prompt = build_sql_system_prompt("azure_sql", "Table FNN_FCT has column PAY_DT_DMS_KEY")
+        self.assertIn(
+            "convert it with TRY_CONVERT inside the INNER subquery", prompt
+        )
+
 
 class DiagnosticRenderingReliabilityTests(unittest.TestCase):
     def test_zero_row_message_fences_sql_with_underscored_columns(self):
