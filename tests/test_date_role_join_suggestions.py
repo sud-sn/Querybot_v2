@@ -15,7 +15,9 @@ dependencies — no FastAPI TestClient, no SQLite, no network.
 
 import asyncio
 import json
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 
@@ -165,6 +167,54 @@ class MetricDateRoleJoinsRouteTests(unittest.TestCase):
 
 
 class AutoFillRowMetricDateJoinsTests(unittest.TestCase):
+    def test_autofills_row_metric_base_table_from_required_columns(self):
+        from admin.routes import _auto_fill_row_metric_base_table
+        cfg = {
+            "enabled": True,
+            "mode": "row_calculated",
+            "aggregation": "AVG",
+            "row_expression": "DATEDIFF(day, due_dt.DMS_DT, pay_dt.DMS_DT)",
+            "required_columns": ["DUE_DT_DMS_KEY", "PAY_DT_DMS_KEY"],
+            "required_joins": [],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "_schema.json").write_text(json.dumps({
+                "PROFITABILITY.CUS_ORD_IVC_FCT": {
+                    "columns": [
+                        {"name": "DUE_DT_DMS_KEY"},
+                        {"name": "PAY_DT_DMS_KEY"},
+                        {"name": "SOP_CUS_IVC_LIN_AMT"},
+                    ]
+                },
+                "PROFITABILITY.DT_DMS": {
+                    "columns": [{"name": "DT_DMS_KEY"}, {"name": "DMS_DT"}]
+                },
+            }), encoding="utf-8")
+            with patch("admin.routes.store.get_client_state", return_value={"schema_dir": tmp}):
+                base_table, filled = _auto_fill_row_metric_base_table("acct1", "", json.dumps(cfg))
+        self.assertEqual(base_table, "PROFITABILITY.CUS_ORD_IVC_FCT")
+        self.assertTrue(json.loads(filled)["base_table_auto_filled"])
+
+    def test_does_not_guess_base_table_when_required_columns_are_ambiguous(self):
+        from admin.routes import _auto_fill_row_metric_base_table
+        raw = json.dumps({
+            "enabled": True,
+            "mode": "row_calculated",
+            "aggregation": "AVG",
+            "row_expression": "A - B",
+            "required_columns": ["DUE_DT_DMS_KEY"],
+            "required_joins": [],
+        })
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "_schema.json").write_text(json.dumps({
+                "PROFITABILITY.FACT_A": {"columns": [{"name": "DUE_DT_DMS_KEY"}]},
+                "PROFITABILITY.FACT_B": {"columns": [{"name": "DUE_DT_DMS_KEY"}]},
+            }), encoding="utf-8")
+            with patch("admin.routes.store.get_client_state", return_value={"schema_dir": tmp}):
+                base_table, filled = _auto_fill_row_metric_base_table("acct1", "", raw)
+        self.assertEqual(base_table, "")
+        self.assertEqual(filled, raw)
+
     def test_autofills_empty_row_metric_joins_from_required_date_keys(self):
         from admin.routes import _auto_fill_row_metric_date_joins
         cfg = {
@@ -234,6 +284,16 @@ class MetricsTemplateDateRoleUiTests(unittest.TestCase):
         self.assertIn("/metrics/api/date-role-joins?table=", template)
         self.assertIn("_scheduleAutoDateRoleJoins", template)
         self.assertIn("_metricBuilderDateKeyColumns", template)
+
+    def test_js_autofills_base_table_before_date_role_lookup(self):
+        template = self._template()
+        self.assertIn("_inferMetricBuilderBaseTable", template)
+        self.assertIn("_scheduleMetricBuilderBaseTableInference", template)
+        self.assertIn("Base table auto-detected", template)
+        self.assertLess(
+            template.index("_scheduleMetricBuilderBaseTableInference(e.target.closest(\".metric-form\"));"),
+            template.index("_scheduleAutoDateRoleJoins(e.target.closest(\".metric-form\"));"),
+        )
 
     def test_js_warns_when_base_table_missing(self):
         template = self._template()

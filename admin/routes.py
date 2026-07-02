@@ -4346,6 +4346,35 @@ def _metric_date_role_join_candidates(account_id: str, table: str) -> list[dict]
 _METRIC_DATE_KEY_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*\.)?([A-Za-z_][A-Za-z0-9_]*(?:_DT_DMS_KEY|_DATE_DMS_KEY))\b", re.I)
 
 
+def _load_metric_schema_columns(account_id: str) -> dict[str, set[str]]:
+    """Return {table_fqn: {COLUMN, ...}} from the discovered schema cache."""
+    state = store.get_client_state(account_id) or {}
+    schema_dir = state.get("schema_dir") or ""
+    if not schema_dir:
+        return {}
+    try:
+        schema_path = Path(schema_dir) / "_schema.json"
+        if not schema_path.exists():
+            return {}
+        master = json.loads(schema_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        log.warning("metric base-table autofill: failed to read schema for %s: %s", account_id, exc)
+        return {}
+
+    tables: dict[str, set[str]] = {}
+    for fqn, data in (master or {}).items():
+        if not isinstance(data, dict):
+            continue
+        cols: set[str] = set()
+        for col in data.get("columns") or []:
+            name = col.get("name") if isinstance(col, dict) else str(col)
+            if name:
+                cols.add(str(name).strip().upper())
+        if cols:
+            tables[str(fqn)] = cols
+    return tables
+
+
 def _row_metric_date_key_columns(config: dict) -> set[str]:
     cols: set[str] = set()
     for value in config.get("required_columns") or []:
@@ -4355,6 +4384,50 @@ def _row_metric_date_key_columns(config: dict) -> set[str]:
     for match in _METRIC_DATE_KEY_RE.finditer(config.get("row_expression") or ""):
         cols.add(match.group(2).upper())
     return cols
+
+
+def _row_metric_base_table_columns(config: dict) -> set[str]:
+    cols = {
+        str(c or "").strip().split(".")[-1].upper()
+        for c in (config.get("required_columns") or [])
+        if str(c or "").strip()
+    }
+    if cols:
+        return cols
+    return _row_metric_date_key_columns(config)
+
+
+def _auto_fill_row_metric_base_table(account_id: str, base_table: str, metric_builder_config: str) -> tuple[str, str]:
+    """
+    Infer a row-calculated metric's base table from required columns.
+
+    This is intentionally conservative: if more than one table contains all
+    referenced columns, the admin must choose the base table explicitly.
+    """
+    if base_table or not metric_builder_config:
+        return base_table, metric_builder_config
+    try:
+        cfg = json.loads(metric_builder_config)
+    except Exception:
+        return base_table, metric_builder_config
+    if not isinstance(cfg, dict) or cfg.get("mode") != "row_calculated":
+        return base_table, metric_builder_config
+
+    needed = _row_metric_base_table_columns(cfg)
+    if not needed:
+        return base_table, metric_builder_config
+
+    schema_tables = _load_metric_schema_columns(account_id)
+    candidates = [
+        table
+        for table, columns in schema_tables.items()
+        if needed.issubset(columns)
+    ]
+    if len(candidates) != 1:
+        return base_table, metric_builder_config
+
+    cfg["base_table_auto_filled"] = True
+    return candidates[0], json.dumps(cfg, separators=(",", ":"))
 
 
 def _auto_fill_row_metric_date_joins(account_id: str, base_table: str, metric_builder_config: str) -> str:
@@ -4451,6 +4524,9 @@ async def metric_create(
 
     try:
         from core.metric_builder import compile_metric_builder_config, merge_required_columns
+        base_table, metric_builder_config = _auto_fill_row_metric_base_table(
+            account_id, base_table.strip(), metric_builder_config
+        )
         metric_builder_config = _auto_fill_row_metric_date_joins(
             account_id, base_table.strip(), metric_builder_config
         )
@@ -4558,6 +4634,9 @@ async def metric_update(
 
     try:
         from core.metric_builder import compile_metric_builder_config, merge_required_columns
+        base_table, metric_builder_config = _auto_fill_row_metric_base_table(
+            account_id, base_table.strip(), metric_builder_config
+        )
         metric_builder_config = _auto_fill_row_metric_date_joins(
             account_id, base_table.strip(), metric_builder_config
         )

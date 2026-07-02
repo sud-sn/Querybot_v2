@@ -227,6 +227,9 @@
 .metric-builder[data-builder-mode="row_calculated"] .metric-builder-add-filter{display:none}
 .metric-builder-join-actions{display:flex;align-items:center;gap:.45rem;flex-wrap:wrap;margin-top:.45rem}
 .metric-builder-join-template{font-size:11px}
+.metric-builder-join-status{font-size:11px;font-weight:800;border:1px solid var(--border);border-radius:999px;padding:3px 8px;color:var(--text-muted);background:var(--surface-2)}
+.metric-builder-join-status[data-tone="ok"]{color:#166534;border-color:#86efac;background:#f0fdf4}
+.metric-builder-join-status[data-tone="warn"]{color:#92400e;border-color:#fcd34d;background:#fffbeb}
 .metric-filter-row{display:grid;grid-template-columns:minmax(145px,1fr) 150px minmax(140px,1fr) 34px;gap:.45rem;margin:.45rem 0;align-items:center}
 .metric-filter-remove{height:33px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text-muted);cursor:pointer;font-weight:800}
 .metric-filter-remove:hover{color:var(--red,#DC2626);border-color:color-mix(in srgb,var(--red,#DC2626) 35%,var(--border))}
@@ -1726,7 +1729,11 @@ function _insertSuggestion(bareColName, tableName, isDup){
     // Metric-builder row-expression / required-joins fields — just refresh
     // the builder preview; the base_table auto-fill below is specific to
     // the main formula editor and doesn't apply here.
-    _syncMetricBuilder(editor.closest(".metric-form"));
+    var mbForm = editor.closest(".metric-form");
+    _syncMetricBuilder(mbForm);
+    if(editor.matches(".metric-builder-row-expression,.metric-builder-required-columns")){
+      _scheduleMetricBuilderBaseTableInference(mbForm);
+    }
     return;
   }
 
@@ -2174,6 +2181,106 @@ function _metricBuilderDateKeyColumns(builder){
   return out;
 }
 
+function _metricBuilderKnownColumns(){
+  var known = {};
+  (_allColumns || []).forEach(function(c){
+    var col = String(c.column || "").toUpperCase();
+    if(col) known[col] = true;
+  });
+  return known;
+}
+
+function _metricBuilderIdentifierColumns(text, opts){
+  opts = opts || {};
+  var known = _metricBuilderKnownColumns();
+  var skip = {
+    CASE:1, WHEN:1, THEN:1, ELSE:1, END:1, NULL:1, IS:1, NOT:1, AND:1, OR:1,
+    AS:1, CAST:1, CONVERT:1, TRY_CONVERT:1, DATEDIFF:1, DATEADD:1, GETDATE:1,
+    CURRENT_TIMESTAMP:1, DAY:1, DAYS:1, DATE:1, TRUE:1, FALSE:1
+  };
+  var seen = {}, out = [], m;
+  var re = /\b([A-Za-z_][A-Za-z0-9_]*)(?:\.([A-Za-z_][A-Za-z0-9_]*))?\b/g;
+  while((m = re.exec(text || ""))){
+    if(opts.skipQualified && m[2]) continue;
+    var col = String(m[2] || m[1] || "").toUpperCase();
+    if(!col || skip[col] || !known[col] || seen[col]) continue;
+    seen[col] = true;
+    out.push(col);
+  }
+  return out;
+}
+
+function _metricBuilderBaseTableColumns(builder){
+  if(!builder) return [];
+  var requiredText = (builder.querySelector(".metric-builder-required-columns")||{}).value || "";
+  var requiredCols = _metricBuilderIdentifierColumns(requiredText, {skipQualified:false});
+  if(requiredCols.length) return requiredCols;
+
+  var dateKeys = _metricBuilderDateKeyColumns(builder);
+  if(dateKeys.length) return dateKeys;
+
+  // Last-resort fallback for expressions that use raw fact columns directly.
+  // Qualified aliases such as due_dt.DMS_DT are ignored so a date dimension
+  // alias does not become the inferred fact/base table.
+  var expr = (builder.querySelector(".metric-builder-row-expression")||{}).value || "";
+  return _metricBuilderIdentifierColumns(expr, {skipQualified:true});
+}
+
+function _inferMetricBuilderBaseTable(form, opts){
+  opts = opts || {};
+  var builder = form ? form.querySelector(".metric-builder") : null;
+  if(!builder || !_allColumns.length) return false;
+  var mode = (builder.querySelector(".metric-builder-mode")||{}).value || "aggregate";
+  if(mode !== "row_calculated") return false;
+
+  var baseInput = form.querySelector("[name='base_table']");
+  if(!baseInput || (baseInput.value.trim() && !opts.force)) return false;
+
+  var needed = _metricBuilderBaseTableColumns(builder);
+  if(!needed.length) return false;
+
+  var tableMap = {};
+  (_allColumns || []).forEach(function(c){
+    var col = String(c.column || "").toUpperCase();
+    if(needed.indexOf(col) === -1) return;
+    var key = c.table_fqn || c.table;
+    if(!key) return;
+    if(!tableMap[key]) tableMap[key] = { table: key, display: c.table || key, columns: {} };
+    tableMap[key].columns[col] = true;
+  });
+
+  var candidates = Object.keys(tableMap).filter(function(table){
+    return needed.every(function(col){ return !!tableMap[table].columns[col]; });
+  });
+
+  if(candidates.length === 1){
+    baseInput.value = candidates[0];
+    _setMetricJoinStatus(builder, "Base table auto-detected: " + tableMap[candidates[0]].display, "ok");
+    _updateMetricUxPanels(form);
+    _syncMetricBuilder(form);
+    _scheduleAutoDateRoleJoins(form);
+    return true;
+  }
+
+  if(candidates.length > 1){
+    _setMetricJoinStatus(
+      builder,
+      "Choose base table: " + candidates.slice(0, 3).map(function(t){ return tableMap[t].display; }).join(", ") + (candidates.length > 3 ? "..." : ""),
+      "warn"
+    );
+  }
+  return false;
+}
+
+function _scheduleMetricBuilderBaseTableInference(form){
+  var builder = form ? form.querySelector(".metric-builder") : null;
+  if(!builder) return;
+  clearTimeout(builder._baseTableAutoTimer);
+  builder._baseTableAutoTimer = setTimeout(function(){
+    _inferMetricBuilderBaseTable(form);
+  }, 180);
+}
+
 function _setMetricJoinStatus(builder, message, tone){
   if(!builder) return;
   var slot = builder.querySelector(".metric-builder-join-status");
@@ -2529,6 +2636,7 @@ window.insertColumnFromBrowser = function(colName){
         _populateBaseTableInputs(_allColumns);
         _wireMetricBuilderColumnLists(document);
         document.querySelectorAll(".metric-builder").forEach(_initialiseMetricBuilder);
+        document.querySelectorAll(".metric-form").forEach(_scheduleMetricBuilderBaseTableInference);
         document.querySelectorAll(".metric-form").forEach(_ensureMetricUxPanels);
         // Re-color already-typed identifiers now that real column names are known
         document.querySelectorAll(".formula-editor,.metric-builder-row-expression").forEach(_initSqlHighlight);
@@ -2656,6 +2764,7 @@ document.addEventListener("input", function(e){
   if(e.target.matches(".metric-builder-measure,.metric-builder-field,.metric-builder-value,.metric-builder-row-expression,.metric-builder-required-columns,.metric-builder-required-joins")){
     _syncMetricBuilder(e.target.closest(".metric-form"));
     if(e.target.matches(".metric-builder-row-expression,.metric-builder-required-columns")){
+      _scheduleMetricBuilderBaseTableInference(e.target.closest(".metric-form"));
       _scheduleAutoDateRoleJoins(e.target.closest(".metric-form"));
     }
   }
@@ -2683,6 +2792,7 @@ document.addEventListener("change", function(e){
       if(rowAgg && !rowAgg.value) rowAgg.value = "AVG";
     }
     _syncMetricBuilder(e.target.closest(".metric-form"));
+    _scheduleMetricBuilderBaseTableInference(e.target.closest(".metric-form"));
     _scheduleAutoDateRoleJoins(e.target.closest(".metric-form"));
   }
   if(e.target.matches(".metric-builder-enabled,.metric-builder-aggregation,.metric-builder-row-aggregation,.metric-builder-operator")){
