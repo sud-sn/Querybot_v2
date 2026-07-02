@@ -41,6 +41,20 @@ class MetricResultFormatTests(unittest.TestCase):
         self.assertEqual(_detect_column_format("ProfitMargin"), "percent")
         self.assertEqual(_detect_column_format("TotalEmployees"), "number")
 
+    def test_plural_duration_words_do_not_fall_through_to_currency(self):
+        # Regression: "AVG_DAYS_TO_PAY" tokenizes to {avg, days, to, pay}.
+        # _DIMENSION_KEYWORDS only had the singular "day", not "days", so
+        # this fell through to the currency check where "pay" matched,
+        # rendering a plain-number row-calculated metric as "$1.00" instead
+        # of "1". Confirmed against a real "Avg Days To Pay" metric whose
+        # result_format is explicitly "number".
+        self.assertEqual(_detect_column_format("AVG_DAYS_TO_PAY"), "number")
+        self.assertEqual(_detect_column_format("DAYS_SALES_OUTSTANDING"), "number")
+        self.assertEqual(_detect_column_format("WEEKS_ON_HAND"), "number")
+        # Currency/percent detection for real money/rate columns must be unaffected
+        self.assertEqual(_detect_column_format("TOTAL_SALES"), "currency")
+        self.assertEqual(_detect_column_format("TOTAL_REVENUE"), "currency")
+
     def test_decimal_values_honor_inferred_and_explicit_formats(self):
         value = Decimal("52677.25")
         self.assertEqual(_format_value(value, "TotalRevenue"), "$52,677.25")

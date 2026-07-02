@@ -75,10 +75,15 @@ _FORMAT_ALIASES = {
 
 # If any token in the column name is a time/calendar dimension word, skip
 # currency detection — e.g. INVOICEYEAR, ORDER_MONTH, FISCAL_QUARTER.
+# Includes plurals: business metric names (e.g. "Avg Days To Pay", "Days
+# Sales Outstanding") use natural-language plural forms, unlike raw ERP
+# column codes — "days" must match here or "pay"/"sales" elsewhere in the
+# same name falls through to the currency keyword check below.
 _DIMENSION_KEYWORDS = {
-    "year", "month", "quarter", "week", "day", "date", "time",
-    "hour", "minute", "second", "period", "fiscal", "fy", "ytd",
-    "mtd", "qtd", "calendar", "dt",
+    "year", "years", "month", "months", "quarter", "quarters",
+    "week", "weeks", "day", "days", "date", "dates", "time", "times",
+    "hour", "hours", "minute", "minutes", "second", "seconds",
+    "period", "periods", "fiscal", "fy", "ytd", "mtd", "qtd", "calendar", "dt",
 }
 
 
