@@ -409,7 +409,13 @@ def _confidence(column: str, role: str, evidence: list[str], expanded_name: str,
         score = min(score, 65)
     if role == "infrastructure":
         score = min(score, 80)          # cap infra fields — not business queryable
-    if expanded_name.replace(" ", "") == col.lower():
+    # A despaced expanded name matching the raw column usually means nothing
+    # was actually expanded (e.g. "cusord" stayed "cusord"). But some ERPs
+    # (Dynamics, NetSuite) name columns in already-readable full English
+    # words, so an ERP-dictionary hit whose label happens to equal the column
+    # name (INVOICEDATE -> "invoice date") is a confident match, not a miss —
+    # exempt dictionary hits from this penalty.
+    if expanded_name.replace(" ", "") == col.lower() and "erp dictionary" not in evidence:
         score = min(score, 45)          # no expansion found at all
     return max(10, min(score, 95))
 

@@ -34,9 +34,9 @@ class PackLoadingTests(unittest.TestCase):
     def test_all_shipped_packs_parse(self):
         manifests = {m["pack_id"]: m for m in list_available_packs()}
         self.assertEqual(set(manifests), _ALL_PACK_IDS)
-        self.assertEqual(manifests["infor_m3"]["status"], "complete")
-        self.assertEqual(manifests["generic_star_schema"]["status"], "complete")
-        for stub in ("sap", "oracle_ebs", "dynamics", "netsuite", "jde"):
+        for complete in ("infor_m3", "generic_star_schema", "dynamics", "netsuite"):
+            self.assertEqual(manifests[complete]["status"], "complete", complete)
+        for stub in ("sap", "oracle_ebs", "jde"):
             self.assertEqual(manifests[stub]["status"], "stub", stub)
 
     def test_unknown_pack_returns_empty(self):
@@ -189,6 +189,99 @@ class GenericStarSchemaPackTests(unittest.TestCase):
         self.assertEqual(detect_date_role("DUE_DATE", vocab=v).key, "due_date")
         self.assertEqual(detect_date_role("PAYMENT_DATE_KEY", vocab=v).key, "payment_date")
         self.assertIsNone(detect_date_role("ORDER_DATE_KEY", vocab=builtin_vocab()))
+
+
+class DynamicsPackTests(unittest.TestCase):
+    def _vocab(self):
+        v = _clone_builtin()
+        _merge_pack(v, load_pack("dynamics"), "dynamics")
+        return v
+
+    def test_classifies_core_tables(self):
+        from core.naming_convention import match_table_suffix
+        v = self._vocab()
+        self.assertEqual(match_table_suffix("SalesTable", vocab=v).table_type, "fact_table")
+        self.assertEqual(match_table_suffix("SalesLine", vocab=v).table_type, "fact_table")
+        self.assertEqual(match_table_suffix("CustTable", vocab=v).table_type, "dimension_table")
+        self.assertEqual(match_table_suffix("InventTable", vocab=v).table_type, "dimension_table")
+        self.assertIsNone(match_table_suffix("SalesTable", vocab=builtin_vocab()))
+
+    def test_date_role_patterns(self):
+        from core.date_roles import detect_date_role
+        v = self._vocab()
+        self.assertEqual(detect_date_role("InvoiceDate", vocab=v).key, "invoice_date")
+        self.assertEqual(detect_date_role("DueDate", vocab=v).key, "due_date")
+        self.assertEqual(detect_date_role("TransDate", vocab=v).key, "accounting_date")
+        self.assertEqual(detect_date_role("ShippingDateRequested", vocab=v).key, "requested_delivery_date")
+        self.assertIsNone(detect_date_role("InvoiceDate", vocab=builtin_vocab()))
+
+    def test_enrich_columns_role_and_confidence(self):
+        from core.schema_enrichment import enrich_columns
+        v = self._vocab()
+        enriched = {e.column: e for e in enrich_columns(
+            ["CUSTACCOUNT", "SALESQTY", "LINEAMOUNT", "InvoiceDate"], vocab=v,
+        )}
+        self.assertEqual(enriched["CUSTACCOUNT"].role, "identifier")
+        self.assertEqual(enriched["CUSTACCOUNT"].confidence, 95)
+        self.assertEqual(enriched["SALESQTY"].role, "measure")
+        self.assertEqual(enriched["LINEAMOUNT"].role, "measure")
+        # Full-English-word dictionary hits must not be penalized as
+        # "no expansion found" just because the label despaced matches the
+        # raw column name (regression: confidence-scoring fix in
+        # core/schema_enrichment.py _confidence()).
+        self.assertEqual(enriched["LINEAMOUNT"].confidence, 95)
+        self.assertEqual(enriched["InvoiceDate"].confidence, 95)
+
+    def test_semantic_field_plan_matches_qualified_alias(self):
+        from core.semantic_planner import build_semantic_field_plan
+        v = self._vocab()
+        cols = {
+            "DBO.SALESTABLE": {"CUSTACCOUNT": "varchar", "SALESID": "varchar"},
+            "DBO.CUSTTABLE": {"CUSTACCOUNT": "varchar", "NAME": "varchar"},
+        }
+        plan = build_semantic_field_plan("total sales by customer account", cols, None, vocab=v)
+        self.assertIn(("customer account", "CUSTACCOUNT"), [(f["term"], f["column"]) for f in plan["fields"]])
+
+
+class NetSuitePackTests(unittest.TestCase):
+    def _vocab(self):
+        v = _clone_builtin()
+        _merge_pack(v, load_pack("netsuite"), "netsuite")
+        return v
+
+    def test_classifies_core_tables(self):
+        from core.naming_convention import match_table_suffix
+        v = self._vocab()
+        self.assertEqual(match_table_suffix("transaction", vocab=v).table_type, "fact_table")
+        self.assertEqual(match_table_suffix("transactionline", vocab=v).table_type, "fact_table")
+        self.assertEqual(match_table_suffix("customer", vocab=v).table_type, "dimension_table")
+        self.assertEqual(match_table_suffix("item", vocab=v).table_type, "dimension_table")
+        self.assertIsNone(match_table_suffix("transaction", vocab=builtin_vocab()))
+
+    def test_date_role_patterns(self):
+        from core.date_roles import detect_date_role
+        v = self._vocab()
+        self.assertEqual(detect_date_role("trandate", vocab=v).key, "accounting_date")
+        self.assertEqual(detect_date_role("duedate", vocab=v).key, "due_date")
+        self.assertEqual(detect_date_role("shipdate", vocab=v).key, "delivery_date")
+        self.assertIsNone(detect_date_role("trandate", vocab=builtin_vocab()))
+
+    def test_custom_field_prefixes_expand_via_abbreviations(self):
+        from core.schema_enrichment import _expand_column
+        v = self._vocab()
+        expanded, evidence = _expand_column("custbody_region_code", vocab=v)
+        self.assertIn("custom transaction field", expanded)
+
+    def test_enrich_columns_role_and_confidence(self):
+        from core.schema_enrichment import enrich_columns
+        v = self._vocab()
+        enriched = {e.column: e for e in enrich_columns(
+            ["tranid", "quantity", "foreigntotal", "duedate"], vocab=v,
+        )}
+        self.assertEqual(enriched["tranid"].role, "identifier")
+        self.assertEqual(enriched["quantity"].role, "measure")
+        self.assertEqual(enriched["foreigntotal"].confidence, 95)
+        self.assertEqual(enriched["duedate"].role, "date_key")
 
 
 class ActivationPointTests(unittest.TestCase):
