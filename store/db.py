@@ -824,6 +824,9 @@ def _run_migrations() -> None:
         ("validated_examples", "quality_score",            "INTEGER NOT NULL DEFAULT 0"),
         ("validated_examples", "schema_scope",             "TEXT NOT NULL DEFAULT ''"),
         ("validated_examples", "semantic_model_version",   "TEXT NOT NULL DEFAULT ''"),
+        # v32: per-client ERP terminology packs — JSON array of pack ids from
+        # packs/ (e.g. ["generic_star_schema"]). Empty = builtin vocab only.
+        ("client", "erp_packs",                  "TEXT NOT NULL DEFAULT '[]'"),
     ]
     with get_db() as conn:
         _ensure_llm_call_log_table(conn)

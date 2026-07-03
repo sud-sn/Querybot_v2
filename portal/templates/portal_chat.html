@@ -1055,8 +1055,11 @@ function renderDiagnosticCard(rawText){
   const techHtml = technical.length
     ? `<div class="diagnostic-section"><div class="diagnostic-label">Technical details</div><ul class="diagnostic-list">${technical.slice(0,5).map(x => `<li>${escHtml(x)}</li>`).join('')}</ul></div>`
     : '';
+  const kicker = /could not run|database error/i.test(headline) ? 'Query failed'
+               : /could not build a trusted|could not answer/i.test(headline) ? 'Validation issue'
+               : 'No rows returned';
   return `<div class="diagnostic-card" data-raw="${encodeURIComponent(rawText)}">
-    <div class="diagnostic-kicker">No rows returned</div>
+    <div class="diagnostic-kicker">${kicker}</div>
     <div class="diagnostic-title">${escHtml(headline)}</div>
     <div class="diagnostic-grid">
       ${confidence ? `<div class="diagnostic-section"><div class="diagnostic-label">Confidence</div><div class="diagnostic-copy">${escHtml(confidence)}</div></div>` : ''}

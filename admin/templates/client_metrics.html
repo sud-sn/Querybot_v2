@@ -1627,6 +1627,11 @@ function _initSqlHighlight(editor){
   ["paddingTop","paddingRight","paddingBottom","paddingLeft",
    "fontFamily","fontSize","fontWeight","lineHeight","letterSpacing","boxSizing"
   ].forEach(function(p){ backdrop.style[p] = box[p]; });
+  // The backdrop is the ONLY visible text layer (the textarea's own text is
+  // transparent), so its base color must be the editor's normal text color —
+  // otherwise any token the tokenizer leaves unspanned (join aliases like
+  // due_dt, [ ] brackets) inherits the CSS color:transparent and vanishes.
+  backdrop.style.color = box.color;
 
   editor.style.caretColor = box.color;
 
@@ -2852,7 +2857,11 @@ async function testFormula(btn){
     var resp = await fetch("/admin/clients/"+m[1]+"/metrics/test-formula", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({ formula: editor.value.trim(), base_table: baseTable })
+      body: JSON.stringify({
+        formula: editor.value.trim(),
+        base_table: baseTable,
+        metric_builder_config: (form.querySelector("[name='metric_builder_config']")||{}).value || ""
+      })
     });
     var data = await resp.json();
     if(data.status === "ok"){

@@ -1,0 +1,1738 @@
+{
+  "pack_id": "infor_m3",
+  "erp_name": "Infor M3",
+  "version": 1,
+  "status": "complete",
+  "description": "Infor M3 / MovEx column codes, abbreviations, and naming conventions. Byte-equivalent to QueryBot's built-in defaults - selecting this pack changes nothing for existing M3 clients; it exists so the M3 vocabulary is visible, versionable, and a template for other ERP packs.",
+  "column_dict": {
+    "ORNO": {
+      "label": "Order Number",
+      "synonyms": [
+        "order",
+        "sales order",
+        "order no",
+        "order number"
+      ]
+    },
+    "PONR": {
+      "label": "Order Line Number",
+      "synonyms": [
+        "line number",
+        "line no",
+        "order line"
+      ]
+    },
+    "POSX": {
+      "label": "Order Line Suffix",
+      "synonyms": [
+        "suffix",
+        "sub-line",
+        "line suffix"
+      ]
+    },
+    "DLIX": {
+      "label": "Delivery Index",
+      "synonyms": [
+        "delivery",
+        "delivery number",
+        "shipment",
+        "delivery index"
+      ]
+    },
+    "CONO": {
+      "label": "Company Number",
+      "synonyms": [
+        "company",
+        "company number"
+      ]
+    },
+    "DIVI": {
+      "label": "Division",
+      "synonyms": [
+        "division",
+        "div",
+        "business unit"
+      ]
+    },
+    "FACI": {
+      "label": "Facility",
+      "synonyms": [
+        "facility",
+        "plant",
+        "site"
+      ]
+    },
+    "WHLO": {
+      "label": "Warehouse",
+      "synonyms": [
+        "warehouse",
+        "location",
+        "whs",
+        "warehouse location"
+      ]
+    },
+    "ITNO": {
+      "label": "Item Number",
+      "synonyms": [
+        "item",
+        "product",
+        "sku",
+        "part number",
+        "item number"
+      ]
+    },
+    "ITGR": {
+      "label": "Item Group",
+      "synonyms": [
+        "item group",
+        "product group",
+        "category"
+      ]
+    },
+    "ITTY": {
+      "label": "Item Type",
+      "synonyms": [
+        "item type",
+        "product type"
+      ]
+    },
+    "ITDS": {
+      "label": "Item Description",
+      "synonyms": [
+        "item description",
+        "product name",
+        "description"
+      ]
+    },
+    "CUNO": {
+      "label": "Customer Number",
+      "synonyms": [
+        "customer",
+        "client",
+        "account",
+        "customer number"
+      ]
+    },
+    "SUNO": {
+      "label": "Supplier Number",
+      "synonyms": [
+        "supplier",
+        "vendor",
+        "vendor number",
+        "supplier number"
+      ]
+    },
+    "SMCD": {
+      "label": "Salesman Code",
+      "synonyms": [
+        "salesman",
+        "salesperson",
+        "sales rep",
+        "rep",
+        "sales person"
+      ]
+    },
+    "BUYE": {
+      "label": "Buyer",
+      "synonyms": [
+        "buyer",
+        "purchaser"
+      ]
+    },
+    "TRQT": {
+      "label": "Transaction Quantity",
+      "synonyms": [
+        "quantity",
+        "transaction qty",
+        "volume",
+        "units",
+        "transaction quantity"
+      ]
+    },
+    "ORQT": {
+      "label": "Ordered Quantity",
+      "synonyms": [
+        "ordered qty",
+        "order quantity",
+        "ordered quantity"
+      ]
+    },
+    "IVQT": {
+      "label": "Invoiced Quantity",
+      "synonyms": [
+        "invoiced qty",
+        "billed quantity",
+        "invoiced quantity"
+      ]
+    },
+    "DLQT": {
+      "label": "Delivered Quantity",
+      "synonyms": [
+        "delivered qty",
+        "shipped quantity",
+        "delivered quantity"
+      ]
+    },
+    "ALQT": {
+      "label": "Allocated Quantity",
+      "synonyms": [
+        "allocated qty",
+        "reserved quantity",
+        "allocated quantity"
+      ]
+    },
+    "RNQT": {
+      "label": "Return Quantity",
+      "synonyms": [
+        "return qty",
+        "returned quantity"
+      ]
+    },
+    "PLQT": {
+      "label": "Planned Quantity",
+      "synonyms": [
+        "planned qty",
+        "forecast quantity"
+      ]
+    },
+    "CUAM": {
+      "label": "Customer Amount (CAD)",
+      "synonyms": [
+        "amount",
+        "revenue",
+        "sales amount",
+        "billed amount",
+        "customer amount"
+      ]
+    },
+    "SAAM": {
+      "label": "Sales Amount",
+      "synonyms": [
+        "sales",
+        "net sales",
+        "total sales",
+        "gross sales"
+      ]
+    },
+    "SGAM": {
+      "label": "Gross Amount",
+      "synonyms": [
+        "gross amount",
+        "gross sales amount"
+      ]
+    },
+    "UCOS": {
+      "label": "Unit Cost",
+      "synonyms": [
+        "cost",
+        "unit cost",
+        "cogs per unit",
+        "cost per unit"
+      ]
+    },
+    "DCOS": {
+      "label": "Delivery Cost",
+      "synonyms": [
+        "delivery cost",
+        "freight",
+        "shipping cost",
+        "freight cost"
+      ]
+    },
+    "MFAM": {
+      "label": "Manufacturing Amount",
+      "synonyms": [
+        "manufacturing cost",
+        "production cost"
+      ]
+    },
+    "SAPR": {
+      "label": "Sales Price",
+      "synonyms": [
+        "sales price",
+        "price",
+        "list price"
+      ]
+    },
+    "NEPR": {
+      "label": "Net Price",
+      "synonyms": [
+        "net price",
+        "discounted price"
+      ]
+    },
+    "PCLA": {
+      "label": "Profit Class / FIFO Layer",
+      "synonyms": [
+        "profit class",
+        "fifo profit",
+        "margin tier",
+        "pcla",
+        "fifo layer",
+        "fifo margin"
+      ]
+    },
+    "OFRA": {
+      "label": "Offered Rate / Margin %",
+      "synonyms": [
+        "margin",
+        "margin percent",
+        "gross margin percent"
+      ]
+    },
+    "IVDT": {
+      "label": "Invoice Date",
+      "synonyms": [
+        "invoice date",
+        "billed date"
+      ]
+    },
+    "ORDT": {
+      "label": "Order Date",
+      "synonyms": [
+        "order date",
+        "placed date",
+        "order creation date"
+      ]
+    },
+    "DLDT": {
+      "label": "Actual Delivery Date",
+      "synonyms": [
+        "delivery date",
+        "shipped date",
+        "actual delivery",
+        "actual ship date"
+      ]
+    },
+    "DWDT": {
+      "label": "Requested Delivery Date",
+      "synonyms": [
+        "requested delivery",
+        "due date",
+        "wanted date",
+        "requested ship date"
+      ]
+    },
+    "CODT": {
+      "label": "Confirmed Delivery Date",
+      "synonyms": [
+        "confirmed delivery",
+        "confirmed date"
+      ]
+    },
+    "ACDT": {
+      "label": "Accounting Date",
+      "synonyms": [
+        "accounting date",
+        "posting date",
+        "gl date",
+        "ledger date"
+      ]
+    },
+    "DSDT": {
+      "label": "Dispatch Date",
+      "synonyms": [
+        "dispatch date",
+        "ship date"
+      ]
+    },
+    "PLDT": {
+      "label": "Planned Delivery Date",
+      "synonyms": [
+        "planned delivery",
+        "planned ship date"
+      ]
+    },
+    "RGDT": {
+      "label": "Registration Date",
+      "synonyms": [
+        "registration date",
+        "created date",
+        "entry date"
+      ]
+    },
+    "LMDT": {
+      "label": "Last Modified Date",
+      "synonyms": [
+        "last modified",
+        "updated date",
+        "last updated"
+      ]
+    },
+    "IVNO": {
+      "label": "Invoice Number",
+      "synonyms": [
+        "invoice",
+        "invoice number",
+        "invoice no",
+        "invoice #"
+      ]
+    },
+    "YEA4": {
+      "label": "Fiscal Year",
+      "synonyms": [
+        "year",
+        "fiscal year",
+        "financial year"
+      ]
+    },
+    "CUCD": {
+      "label": "Currency Code",
+      "synonyms": [
+        "currency",
+        "currency code"
+      ]
+    },
+    "ORST": {
+      "label": "Order Status",
+      "synonyms": [
+        "status",
+        "order status",
+        "order state"
+      ]
+    },
+    "ORTP": {
+      "label": "Order Type",
+      "synonyms": [
+        "order type",
+        "transaction type"
+      ]
+    },
+    "LTYP": {
+      "label": "Line Type",
+      "synonyms": [
+        "line type"
+      ]
+    },
+    "SDST": {
+      "label": "Sales District",
+      "synonyms": [
+        "district",
+        "territory",
+        "sales territory",
+        "region"
+      ]
+    },
+    "CSCD": {
+      "label": "Country Code",
+      "synonyms": [
+        "country",
+        "country code"
+      ]
+    },
+    "DIA1": {
+      "label": "Discount Amount 1",
+      "synonyms": [
+        "discount 1",
+        "discount amount 1"
+      ]
+    },
+    "DIA2": {
+      "label": "Discount Amount 2",
+      "synonyms": [
+        "discount 2",
+        "discount amount 2"
+      ]
+    },
+    "DIP1": {
+      "label": "Discount Percent 1",
+      "synonyms": [
+        "discount % 1",
+        "discount percent 1"
+      ]
+    },
+    "DIP2": {
+      "label": "Discount Percent 2",
+      "synonyms": [
+        "discount % 2",
+        "discount percent 2"
+      ]
+    },
+    "CHNO": {
+      "label": "Change Number",
+      "synonyms": [
+        "version",
+        "change number",
+        "revision"
+      ]
+    },
+    "CHID": {
+      "label": "Changed By",
+      "synonyms": [
+        "changed by",
+        "modified by",
+        "last user"
+      ]
+    },
+    "PRMO": {
+      "label": "Price Model",
+      "synonyms": [
+        "price model",
+        "pricing model"
+      ]
+    },
+    "PYNO": {
+      "label": "Payer Number",
+      "synonyms": [
+        "payer",
+        "bill-to",
+        "billing customer"
+      ]
+    },
+    "JRNO": {
+      "label": "Journal Number",
+      "synonyms": [
+        "journal",
+        "journal number",
+        "journal no"
+      ]
+    },
+    "JSNO": {
+      "label": "Journal Sub-number",
+      "synonyms": [
+        "journal sub",
+        "journal sequence",
+        "journal sub-number"
+      ]
+    },
+    "TRCD": {
+      "label": "Transaction Code",
+      "synonyms": [
+        "transaction code",
+        "transaction type code",
+        "trx code"
+      ]
+    },
+    "CINO": {
+      "label": "Customer Invoice Number",
+      "synonyms": [
+        "customer invoice",
+        "invoice reference"
+      ]
+    },
+    "INYR": {
+      "label": "Invoice Year",
+      "synonyms": [
+        "invoice year"
+      ]
+    },
+    "VSER": {
+      "label": "Voucher Series",
+      "synonyms": [
+        "voucher series"
+      ]
+    },
+    "VONO": {
+      "label": "Voucher Number",
+      "synonyms": [
+        "voucher",
+        "voucher number",
+        "voucher no"
+      ]
+    },
+    "IVTP": {
+      "label": "Invoice Type",
+      "synonyms": [
+        "invoice type"
+      ]
+    },
+    "TDSC": {
+      "label": "Transaction Description",
+      "synonyms": [
+        "description",
+        "transaction description",
+        "line description"
+      ]
+    },
+    "CUCL": {
+      "label": "Customer Class",
+      "synonyms": [
+        "customer class",
+        "customer category",
+        "account class"
+      ]
+    },
+    "CRTP": {
+      "label": "Currency Rate Type",
+      "synonyms": [
+        "currency rate type",
+        "exchange rate type"
+      ]
+    },
+    "ARAT": {
+      "label": "Exchange Rate",
+      "synonyms": [
+        "exchange rate",
+        "fx rate",
+        "currency rate"
+      ]
+    },
+    "DCAM": {
+      "label": "Discount Amount",
+      "synonyms": [
+        "discount",
+        "discount amount",
+        "discount value"
+      ]
+    },
+    "VTAM": {
+      "label": "VAT / Tax Amount",
+      "synonyms": [
+        "vat",
+        "tax",
+        "tax amount",
+        "vat amount",
+        "gst"
+      ]
+    },
+    "BKID": {
+      "label": "Bank ID",
+      "synonyms": [
+        "bank",
+        "bank id",
+        "bank account"
+      ]
+    },
+    "TECD": {
+      "label": "Payment Terms Code",
+      "synonyms": [
+        "payment terms",
+        "terms code",
+        "credit terms"
+      ]
+    },
+    "PYTP": {
+      "label": "Payment Type",
+      "synonyms": [
+        "payment type",
+        "payment method"
+      ]
+    },
+    "PYCD": {
+      "label": "Payment Code",
+      "synonyms": [
+        "payment code"
+      ]
+    },
+    "TEPY": {
+      "label": "Terms of Payment",
+      "synonyms": [
+        "terms of payment",
+        "payment terms",
+        "net days"
+      ]
+    },
+    "RECO": {
+      "label": "Reconciliation Code",
+      "synonyms": [
+        "reconciliation",
+        "reconciled",
+        "matched"
+      ]
+    },
+    "CRST": {
+      "label": "Credit Status",
+      "synonyms": [
+        "credit status",
+        "credit standing",
+        "credit hold"
+      ]
+    },
+    "ACBL": {
+      "label": "Account Balance",
+      "synonyms": [
+        "account balance",
+        "balance",
+        "outstanding balance",
+        "ar balance"
+      ]
+    },
+    "RMST": {
+      "label": "Reminder / Dunning Status",
+      "synonyms": [
+        "reminder status",
+        "dunning status",
+        "collection status"
+      ]
+    },
+    "LRDT": {
+      "label": "Last Reminder Date",
+      "synonyms": [
+        "last reminder",
+        "last dunning date"
+      ]
+    },
+    "RMBL": {
+      "label": "Reminder Balance",
+      "synonyms": [
+        "reminder balance",
+        "dunning balance"
+      ]
+    },
+    "BLBY": {
+      "label": "Blocked By",
+      "synonyms": [
+        "blocked by",
+        "block user"
+      ]
+    },
+    "BLDT": {
+      "label": "Blocked Date",
+      "synonyms": [
+        "blocked date",
+        "hold date"
+      ]
+    },
+    "IIST": {
+      "label": "Interest Status",
+      "synonyms": [
+        "interest status"
+      ]
+    },
+    "IIAM": {
+      "label": "Interest Amount",
+      "synonyms": [
+        "interest",
+        "interest amount",
+        "interest charge"
+      ]
+    },
+    "CLST": {
+      "label": "Collection Status",
+      "synonyms": [
+        "collection status",
+        "collections"
+      ]
+    },
+    "TXID": {
+      "label": "Tax ID",
+      "synonyms": [
+        "tax id",
+        "tax identifier"
+      ]
+    },
+    "APRV": {
+      "label": "Approved",
+      "synonyms": [
+        "approved",
+        "approval status",
+        "authorised"
+      ]
+    },
+    "ARCD": {
+      "label": "AR Code",
+      "synonyms": [
+        "ar code",
+        "accounts receivable code"
+      ]
+    },
+    "IVCL": {
+      "label": "Invoice Class",
+      "synonyms": [
+        "invoice class"
+      ]
+    },
+    "SOP_CUS_IVC_LIN_AMT": {
+      "label": "SOP Invoice Line Amount (Revenue)",
+      "synonyms": [
+        "revenue",
+        "invoiced revenue",
+        "sales revenue",
+        "net revenue",
+        "total revenue",
+        "invoice revenue",
+        "sop revenue"
+      ]
+    },
+    "DEL_IVC_REC_IND": {
+      "label": "Deleted Invoice Record Indicator",
+      "synonyms": [
+        "deleted invoice",
+        "invoice deleted flag",
+        "del ivc rec ind"
+      ]
+    },
+    "DEL_ORD_REC_IND": {
+      "label": "Deleted Order Record Indicator",
+      "synonyms": [
+        "deleted order",
+        "order deleted flag"
+      ]
+    },
+    "DEL_SOP_REC_IND": {
+      "label": "Deleted SOP Record Indicator",
+      "synonyms": [
+        "deleted sop",
+        "sop deleted flag"
+      ]
+    },
+    "MRG_45_PCT": {
+      "label": "45% Margin Threshold Flag",
+      "synonyms": [
+        "45 percent margin",
+        "margin 45",
+        "below 45 margin"
+      ]
+    },
+    "MRG_70_PCT": {
+      "label": "70% Margin Threshold Flag",
+      "synonyms": [
+        "70 percent margin",
+        "margin 70",
+        "below 70 margin"
+      ]
+    },
+    "SGT_MRG": {
+      "label": "Suggested Margin",
+      "synonyms": [
+        "suggested margin",
+        "target margin",
+        "recommended margin"
+      ]
+    },
+    "CUOR": {
+      "label": "Customer Order Reference",
+      "synonyms": [
+        "customer reference",
+        "customer order ref",
+        "customer po"
+      ]
+    },
+    "CUPO": {
+      "label": "Customer Purchase Order",
+      "synonyms": [
+        "customer po number",
+        "po reference",
+        "purchase order reference"
+      ]
+    },
+    "GRWE": {
+      "label": "Gross Weight",
+      "synonyms": [
+        "gross weight",
+        "weight"
+      ]
+    },
+    "NEWE": {
+      "label": "Net Weight",
+      "synonyms": [
+        "net weight"
+      ]
+    },
+    "VOL3": {
+      "label": "Volume",
+      "synonyms": [
+        "volume",
+        "cubic volume",
+        "shipment volume"
+      ]
+    },
+    "PROJ": {
+      "label": "Project",
+      "synonyms": [
+        "project",
+        "project number",
+        "project code"
+      ]
+    },
+    "AGNO": {
+      "label": "Agreement Number",
+      "synonyms": [
+        "agreement",
+        "agreement number",
+        "contract number",
+        "contract"
+      ]
+    },
+    "ALUN": {
+      "label": "Alternate Unit of Measure",
+      "synonyms": [
+        "alternate unit",
+        "alternate uom",
+        "alt unit"
+      ]
+    },
+    "SPUN": {
+      "label": "Sales Price Unit",
+      "synonyms": [
+        "sales price unit",
+        "price uom",
+        "price unit"
+      ]
+    },
+    "STUN": {
+      "label": "Stock Unit of Measure",
+      "synonyms": [
+        "stock unit",
+        "stocking uom"
+      ]
+    },
+    "DISY": {
+      "label": "Discount System",
+      "synonyms": [
+        "discount system",
+        "pricing system"
+      ]
+    },
+    "PRRF": {
+      "label": "Price Reference",
+      "synonyms": [
+        "price reference",
+        "price list ref"
+      ]
+    },
+    "VTCD": {
+      "label": "VAT Code",
+      "synonyms": [
+        "vat code",
+        "tax code",
+        "gst code"
+      ]
+    },
+    "ORTY": {
+      "label": "Order Type",
+      "synonyms": [
+        "order type"
+      ]
+    },
+    "ROUT": {
+      "label": "Route",
+      "synonyms": [
+        "route",
+        "delivery route",
+        "shipping route"
+      ]
+    },
+    "BRAN": {
+      "label": "Branch",
+      "synonyms": [
+        "branch",
+        "branch code"
+      ]
+    },
+    "ORIG": {
+      "label": "Origin",
+      "synonyms": [
+        "origin",
+        "source origin",
+        "order origin"
+      ]
+    },
+    "SERN": {
+      "label": "Serial Number",
+      "synonyms": [
+        "serial number",
+        "serial no",
+        "serial"
+      ]
+    },
+    "RVDT": {
+      "label": "Reversal Date",
+      "synonyms": [
+        "reversal date",
+        "reversed date"
+      ]
+    },
+    "DUDT": {
+      "label": "Due Date",
+      "synonyms": [
+        "due date",
+        "payment due date",
+        "payment deadline"
+      ]
+    },
+    "REDE": {
+      "label": "Reminder Date",
+      "synonyms": [
+        "reminder date",
+        "dunning date"
+      ]
+    },
+    "SLOP": {
+      "label": "Late Payment Option",
+      "synonyms": [
+        "late payment",
+        "late payment option"
+      ]
+    },
+    "PYRS": {
+      "label": "Payment Reference",
+      "synonyms": [
+        "payment reference",
+        "remittance reference"
+      ]
+    },
+    "RMQT": {
+      "label": "Reminder Quantity",
+      "synonyms": [
+        "reminder count",
+        "number of reminders",
+        "dunning level"
+      ]
+    },
+    "IICD": {
+      "label": "Interest Charge Code",
+      "synonyms": [
+        "interest code",
+        "interest charge code"
+      ]
+    },
+    "CLCD": {
+      "label": "Collection Code",
+      "synonyms": [
+        "collection code"
+      ]
+    },
+    "SAGS": {
+      "label": "Sales Agreement",
+      "synonyms": [
+        "sales agreement",
+        "agreement"
+      ]
+    },
+    "GRPD": {
+      "label": "Group Date",
+      "synonyms": [
+        "group date",
+        "batch date"
+      ]
+    },
+    "DFPT": {
+      "label": "Deferred Payment Type",
+      "synonyms": [
+        "deferred payment type"
+      ]
+    },
+    "DFPD": {
+      "label": "Deferred Payment Date",
+      "synonyms": [
+        "deferred payment date"
+      ]
+    },
+    "RGTM": {
+      "label": "Registration Time",
+      "synonyms": [
+        "registration time",
+        "created time"
+      ]
+    },
+    "LMTS": {
+      "label": "Last Modified Timestamp",
+      "synonyms": [
+        "last modified timestamp",
+        "last updated timestamp"
+      ]
+    },
+    "RESP": {
+      "label": "Responsible",
+      "synonyms": [
+        "responsible",
+        "responsible person",
+        "owner"
+      ]
+    },
+    "DNRE": {
+      "label": "Dispute Reference",
+      "synonyms": [
+        "dispute",
+        "dispute reference"
+      ]
+    },
+    "DEDA": {
+      "label": "Deduction Date",
+      "synonyms": [
+        "deduction date"
+      ]
+    },
+    "MIGI": {
+      "label": "Migration Indicator",
+      "synonyms": [
+        "migration indicator",
+        "migrated"
+      ]
+    },
+    "ORQA": {
+      "label": "Ordered Quantity (Alternate Unit)",
+      "synonyms": [
+        "ordered quantity alternate unit",
+        "ordered alt qty"
+      ]
+    },
+    "IVQA": {
+      "label": "Invoiced Quantity (Alternate Unit)",
+      "synonyms": [
+        "invoiced quantity alternate unit",
+        "invoiced alt qty"
+      ]
+    },
+    "DLQA": {
+      "label": "Delivered Quantity (Alternate Unit)",
+      "synonyms": [
+        "delivered quantity alternate unit",
+        "delivered alt qty"
+      ]
+    },
+    "ALQA": {
+      "label": "Allocated Quantity (Alternate Unit)",
+      "synonyms": [
+        "allocated quantity alternate unit"
+      ]
+    },
+    "PLQA": {
+      "label": "Planned Quantity (Alternate Unit)",
+      "synonyms": [
+        "planned quantity alternate unit"
+      ]
+    },
+    "RNQA": {
+      "label": "Return Quantity (Alternate Unit)",
+      "synonyms": [
+        "return quantity alternate unit"
+      ]
+    },
+    "IVQS": {
+      "label": "Invoiced Quantity (Stock Unit)",
+      "synonyms": [
+        "invoiced quantity stock unit"
+      ]
+    },
+    "ORQS": {
+      "label": "Ordered Quantity (Stock Unit)",
+      "synonyms": [
+        "ordered quantity stock unit"
+      ]
+    },
+    "ORQB": {
+      "label": "Ordered Quantity (Base Unit)",
+      "synonyms": [
+        "ordered quantity base unit"
+      ]
+    },
+    "CUTP": {
+      "label": "Customer Type",
+      "synonyms": [
+        "customer type"
+      ]
+    },
+    "CUST": {
+      "label": "Customer Status",
+      "synonyms": [
+        "customer status"
+      ]
+    },
+    "AGNT": {
+      "label": "Agent",
+      "synonyms": [
+        "agent",
+        "agent code"
+      ]
+    },
+    "REPI": {
+      "label": "Replacement Item Indicator",
+      "synonyms": [
+        "replacement",
+        "replacement item"
+      ]
+    },
+    "MUFT": {
+      "label": "Manufacturing Flag",
+      "synonyms": [
+        "manufactured",
+        "manufacturing flag"
+      ]
+    },
+    "ITCL": {
+      "label": "Item Classification",
+      "synonyms": [
+        "item classification",
+        "item class"
+      ]
+    },
+    "SMCC": {
+      "label": "Salesman Commission Class",
+      "synonyms": [
+        "commission class",
+        "salesman commission class"
+      ]
+    },
+    "PRCH": {
+      "label": "Price Changed",
+      "synonyms": [
+        "price changed",
+        "price change indicator"
+      ]
+    },
+    "VANO": {
+      "label": "Voucher Number",
+      "synonyms": [
+        "voucher",
+        "voucher number"
+      ]
+    },
+    "JOBN": {
+      "label": "Job Number",
+      "synonyms": [
+        "job",
+        "job number"
+      ]
+    },
+    "INNO": {
+      "label": "Internal Invoice Number",
+      "synonyms": [
+        "internal invoice",
+        "internal invoice number"
+      ]
+    },
+    "WHS_DMS_KEY": {
+      "label": "Warehouse Dimension Key",
+      "synonyms": [
+        "warehouse key",
+        "warehouse id",
+        "warehouse dimension key"
+      ]
+    },
+    "WHS_CD": {
+      "label": "Warehouse Code",
+      "synonyms": [
+        "warehouse code",
+        "warehouse number"
+      ]
+    },
+    "WHS_DSC": {
+      "label": "Warehouse Description",
+      "synonyms": [
+        "warehouse",
+        "warehouse name",
+        "warehouse description",
+        "warehouse location"
+      ]
+    },
+    "DT_DMS_KEY": {
+      "label": "Date Dimension Key",
+      "synonyms": [
+        "date key",
+        "calendar date key"
+      ]
+    },
+    "ITM_DMS_KEY": {
+      "label": "Item Dimension Key",
+      "synonyms": [
+        "item key",
+        "product key",
+        "sku key"
+      ]
+    },
+    "ITM_CD": {
+      "label": "Item Code",
+      "synonyms": [
+        "item code",
+        "product code",
+        "sku"
+      ]
+    },
+    "ITM_DSC": {
+      "label": "Item Description",
+      "synonyms": [
+        "item",
+        "product",
+        "item name",
+        "product name",
+        "item description"
+      ]
+    },
+    "ITM_GRP_DMS_KEY": {
+      "label": "Item Group Dimension Key",
+      "synonyms": [
+        "item group key",
+        "product group key"
+      ]
+    },
+    "CUS_DMS_KEY": {
+      "label": "Customer Dimension Key",
+      "synonyms": [
+        "customer key",
+        "customer id",
+        "customer dimension key"
+      ]
+    },
+    "CUS_CD": {
+      "label": "Customer Code",
+      "synonyms": [
+        "customer code",
+        "customer number"
+      ]
+    },
+    "CUS_NM": {
+      "label": "Customer Name",
+      "synonyms": [
+        "customer",
+        "customer name",
+        "client name"
+      ]
+    }
+  },
+  "abbreviations": {
+    "ABC": "abc",
+    "ACC": "account",
+    "ACCT": "account",
+    "ACT": "active",
+    "AGM": "agreement",
+    "ALC": "allocated",
+    "ALT": "alternate",
+    "AMT": "amount",
+    "ANN": "annual",
+    "AP": "accounts payable",
+    "AR": "accounts receivable",
+    "APV": "approved",
+    "ARA": "area",
+    "AVG": "average",
+    "BAL": "balance",
+    "BCK": "back",
+    "BIL": "billing",
+    "BILL": "billing",
+    "BUM": "base unit of measure",
+    "BUS": "business",
+    "BYR": "buyer",
+    "CAD": "cad",
+    "CAT": "category",
+    "CCL": "cancelled",
+    "CCY": "currency",
+    "CD": "code",
+    "CFM": "confirmed",
+    "CHG": "change",
+    "CLS": "class",
+    "CLU": "cluster",
+    "CO": "company",
+    "CNT": "count",
+    "CRN": "creation",
+    "CST": "cost",
+    "CTC": "contact",
+    "CUR": "current",
+    "CUS": "customer",
+    "DCN": "discount",
+    "DEL": "deleted",
+    "DLV": "delivery",
+    "DLVD": "delivered",
+    "DMD": "demand",
+    "DMS": "dimension",
+    "DRC": "direct",
+    "DSC": "description",
+    "DESC": "description",
+    "DT": "date",
+    "DVN": "division",
+    "EMCO": "company",
+    "EQP": "equipment",
+    "FCY": "facility",
+    "FCT": "fact",
+    "FIFO": "first in first out",
+    "FRT": "freight",
+    "GL": "general ledger",
+    "GRP": "group",
+    "GRS": "gross",
+    "HST": "highest",
+    "IND": "indicator",
+    "ISP": "inspection",
+    "ITM": "item",
+    "IVC": "invoice",
+    "IVCD": "invoiced",
+    "LIN": "line",
+    "LIS": "list",
+    "LWS": "lowest",
+    "MDA": "media",
+    "MDL": "model",
+    "MFG": "manufacturing",
+    "MGP": "margin profit",
+    "MNL": "manual",
+    "MSR": "measure",
+    "NED": "needed",
+    "NGV": "negative",
+    "NM": "name",
+    "NUM": "number",
+    "ON": "on",
+    "ORD": "order",
+    "ORI": "origin",
+    "PAY": "payment",
+    "PCE": "price",
+    "PC": "profit center",
+    "PCH": "purchase",
+    "PDC": "product",
+    "PFT": "profit",
+    "PHY": "physical",
+    "PIK": "pick",
+    "PLD": "planned",
+    "PLU": "plus",
+    "PRD": "period",
+    "PRL": "profile",
+    "PRM": "promotion",
+    "PRS": "person",
+    "PRU": "product",
+    "PSV": "positive",
+    "PT": "point",
+    "PTY": "party",
+    "PYE": "payee",
+    "PYR": "payer",
+    "QTY": "quantity",
+    "RCT": "receipt",
+    "REC": "record",
+    "RET": "return",
+    "RJC": "rejected",
+    "RGN": "region",
+    "RNL": "rental",
+    "RPL": "replacement",
+    "RPS": "responsible",
+    "RQD": "requested",
+    "RQS": "requesting",
+    "RSV": "reserved",
+    "RVD": "received",
+    "SAL": "sales",
+    "SEG": "segment",
+    "SFX": "suffix",
+    "SHP": "shipment",
+    "SLD": "sold",
+    "SLR": "seller",
+    "SLY": "supply",
+    "SOP": "sales order processing",
+    "SRC": "source",
+    "STK": "stock",
+    "STL": "standard",
+    "STS": "status",
+    "TOT": "total",
+    "TFR": "transfer",
+    "TM": "time",
+    "TS": "timestamp",
+    "TYP": "type",
+    "UNT": "unit",
+    "UOM": "unit of measure",
+    "USR": "user",
+    "USD": "usd",
+    "VLD": "valid",
+    "VOL": "volume",
+    "WHS": "warehouse",
+    "WRG": "wrong",
+    "XCH": "exchange",
+    "XTR": "extra"
+  },
+  "direct_aliases": {
+    "DIVI": [
+      "division"
+    ],
+    "ITM_GRP_DMS_KEY": [
+      "item group",
+      "item group key",
+      "product group"
+    ],
+    "CUS_IVC_LIN_AMT": [
+      "invoice amount",
+      "invoice line amount",
+      "sales amount",
+      "total invoice line amount"
+    ],
+    "SOP_CUS_LIN_GRS_PFT_AMT": [
+      "customer line gross profit",
+      "gross profit",
+      "sales gross profit"
+    ],
+    "CUR_ON_HND_QTY": [
+      "current on hand quantity",
+      "on hand quantity"
+    ],
+    "RCT_BUM_QTY": [
+      "purchase receipt quantity",
+      "receipt quantity"
+    ],
+    "CUR_RPL_CST_AMT": [
+      "current replacement cost",
+      "replacement cost"
+    ],
+    "TRQT": [
+      "transaction qty",
+      "transaction quantity"
+    ],
+    "PCLA": [
+      "fifo layer",
+      "fifo margin",
+      "fifo profit",
+      "margin tier",
+      "pcla",
+      "profit class"
+    ],
+    "SUNO": [
+      "supplier number",
+      "vendor number"
+    ],
+    "CUNO": [
+      "customer number"
+    ],
+    "SMCD": [
+      "sales rep code",
+      "salesman code",
+      "salesperson code",
+      "smcd"
+    ],
+    "CUAM": [
+      "billed amount",
+      "customer amount"
+    ],
+    "SAAM": [
+      "gross sales amount",
+      "net sales amount"
+    ],
+    "UCOS": [
+      "cogs per unit",
+      "cost per unit",
+      "unit cost"
+    ],
+    "WHLO": [
+      "warehouse location",
+      "whs"
+    ],
+    "ORNO": [
+      "order number",
+      "sales order number"
+    ],
+    "IVNO": [
+      "invoice number"
+    ],
+    "IVQT": [
+      "billed quantity",
+      "invoiced qty",
+      "invoiced quantity"
+    ],
+    "ORQT": [
+      "order quantity",
+      "ordered qty",
+      "ordered quantity"
+    ],
+    "DLQT": [
+      "delivered qty",
+      "delivered quantity",
+      "shipped quantity"
+    ],
+    "SAPR": [
+      "list price",
+      "sales price"
+    ],
+    "ITNO": [
+      "item number",
+      "part number"
+    ],
+    "ITGR": [
+      "item group",
+      "product group"
+    ]
+  },
+  "join_synonyms": {
+    "CUS_ORD_NUM": [
+      "ORNO"
+    ],
+    "CUS_ORD_LIN_NUM": [
+      "PONR"
+    ],
+    "CUS_ORD_LIN_SFX": [
+      "POSX"
+    ]
+  },
+  "numbered_series": [
+    {
+      "pattern": "^DIC(\\d+)$",
+      "label": "discount code {}",
+      "role": "attribute"
+    },
+    {
+      "pattern": "^DIP(\\d+)$",
+      "label": "discount percent {}",
+      "role": "measure"
+    },
+    {
+      "pattern": "^DIA(\\d+)$",
+      "label": "discount amount {}",
+      "role": "measure"
+    },
+    {
+      "pattern": "^CMP(\\d+)$",
+      "label": "campaign component {}",
+      "role": "attribute"
+    },
+    {
+      "pattern": "^ATV(\\d+|0)$",
+      "label": "attribute value {}",
+      "role": "attribute"
+    },
+    {
+      "pattern": "^AAV(\\d+)$",
+      "label": "additional attribute value {}",
+      "role": "attribute"
+    },
+    {
+      "pattern": "^UCA(\\d+|0)$",
+      "label": "user defined character attribute {}",
+      "role": "attribute"
+    },
+    {
+      "pattern": "^UDN(\\d+)$",
+      "label": "user defined numeric {}",
+      "role": "measure"
+    },
+    {
+      "pattern": "^UID(\\d+)$",
+      "label": "user defined id {}",
+      "role": "attribute"
+    },
+    {
+      "pattern": "^UCT(\\d+)$",
+      "label": "unit conversion type {}",
+      "role": "attribute"
+    },
+    {
+      "pattern": "^CFE(\\d+)$",
+      "label": "customer free field {}",
+      "role": "attribute"
+    },
+    {
+      "pattern": "^CHL(\\d+)$",
+      "label": "sales channel level {}",
+      "role": "attribute"
+    },
+    {
+      "pattern": "^SMC(\\d+)$",
+      "label": "salesman commission code {}",
+      "role": "attribute"
+    },
+    {
+      "pattern": "^ONK(\\d+)$",
+      "label": "order number key {}",
+      "role": "attribute"
+    },
+    {
+      "pattern": "^DDF(\\d+)$",
+      "label": "date field {}",
+      "role": "date_key"
+    },
+    {
+      "pattern": "^RSC(\\d+)$",
+      "label": "reason code {}",
+      "role": "attribute"
+    },
+    {
+      "pattern": "^FRE(\\d+)$",
+      "label": "free field {}",
+      "role": "attribute"
+    },
+    {
+      "pattern": "^ODI(\\d+)$",
+      "label": "other discount info {}",
+      "role": "attribute"
+    },
+    {
+      "pattern": "^MTX(\\d+)$",
+      "label": "matrix {}",
+      "role": "attribute"
+    },
+    {
+      "pattern": "^BOP(\\d+)$",
+      "label": "back-order priority {}",
+      "role": "attribute"
+    },
+    {
+      "pattern": "^TEL(\\d+)$",
+      "label": "terms of delivery {}",
+      "role": "attribute"
+    },
+    {
+      "pattern": "^LNA(\\d+)$",
+      "label": "line name {}",
+      "role": "attribute"
+    },
+    {
+      "pattern": "^DMA(\\d+)$",
+      "label": "delivery method alternative {}",
+      "role": "attribute"
+    },
+    {
+      "pattern": "^DTP(\\d+)$",
+      "label": "date type {}",
+      "role": "date_key"
+    },
+    {
+      "pattern": "^VOL(\\d+)$",
+      "label": "volume {}",
+      "role": "measure"
+    }
+  ],
+  "raw_identifier_codes": [
+    "AGNO",
+    "BKID",
+    "CINO",
+    "CONO",
+    "CUNO",
+    "DIVI",
+    "DLIX",
+    "FACI",
+    "IVNO",
+    "JRNO",
+    "JSNO",
+    "ORNO",
+    "PONR",
+    "POSX",
+    "PROJ",
+    "PYNO",
+    "ROUT",
+    "SMCD",
+    "SUNO",
+    "VONO",
+    "WHLO"
+  ],
+  "raw_measure_codes": [
+    "ACBL",
+    "ALQA",
+    "ALQT",
+    "CUAM",
+    "DCAM",
+    "DCOS",
+    "DLQA",
+    "DLQT",
+    "GRWE",
+    "IIAM",
+    "IVQA",
+    "IVQS",
+    "IVQT",
+    "MFAM",
+    "NEPR",
+    "NEWE",
+    "OFRA",
+    "ORQA",
+    "ORQB",
+    "ORQS",
+    "ORQT",
+    "PCLA",
+    "PLQA",
+    "PLQT",
+    "RMBL",
+    "RNQA",
+    "RNQT",
+    "SAAM",
+    "SAPR",
+    "SGAM",
+    "TRQT",
+    "UCOS",
+    "VOL3",
+    "VTAM"
+  ],
+  "raw_date_codes": [
+    "ACDT",
+    "ADAT",
+    "BLDT",
+    "CODT",
+    "DLDT",
+    "DSDT",
+    "DUDT",
+    "DWDT",
+    "IVDT",
+    "LMDT",
+    "LRDT",
+    "ORDT",
+    "PLDT",
+    "RGDT",
+    "RVDT"
+  ]
+}

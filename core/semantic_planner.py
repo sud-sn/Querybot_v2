@@ -161,21 +161,31 @@ def _table_variants(table: str) -> set[str]:
     return {v for v in variants if v}
 
 
-def _column_words(column: str) -> list[str]:
+def _planner_vocab(vocab=None):
+    """Resolve the terminology vocab; defaults preserve legacy constants."""
+    if vocab is not None:
+        return vocab
+    from core.vocab_packs import get_active_vocab
+    return get_active_vocab()
+
+
+def _column_words(column: str, vocab=None) -> list[str]:
+    abbreviations = _planner_vocab(vocab).planner_abbreviations
     words: list[str] = []
     for token in re.split(r"[_\W]+", (column or "").upper()):
         if not token:
             continue
-        word = _ABBREVIATIONS.get(token, token.lower())
+        word = abbreviations.get(token, token.lower())
         if word not in {"key", "dimension"}:
             words.append(word)
     return words
 
 
-def _aliases_for_column(column: str) -> set[str]:
+def _aliases_for_column(column: str, vocab=None) -> set[str]:
+    v = _planner_vocab(vocab)
     col = (column or "").upper()
-    aliases = {_norm(col), _norm(" ".join(_column_words(col)))}
-    aliases.update(_norm(a) for a in _DIRECT_ALIASES.get(col, set()))
+    aliases = {_norm(col), _norm(" ".join(_column_words(col, vocab=v)))}
+    aliases.update(_norm(a) for a in v.direct_aliases.get(col, set()))
     return {a for a in aliases if a}
 
 
@@ -281,6 +291,7 @@ def _find_candidates(
     table_columns: dict[str, dict[str, str]],
     allowed_tables: set[str] | None,
     selected_schema: str = "",
+    vocab=None,
 ) -> list[dict]:
     qn = _norm(question)
     qc = _compact(question)
@@ -301,7 +312,7 @@ def _find_candidates(
                 continue
         for col, col_type in (cols or {}).items():
             col_u = str(col).upper()
-            aliases = _aliases_for_column(col_u)
+            aliases = _aliases_for_column(col_u, vocab=vocab)
             matched, term = _column_matches_question(col_u, aliases, qn, qc)
             if not matched:
                 continue
@@ -481,7 +492,8 @@ def _apply_display_dimension_fields(
     return out
 
 
-def _join_edges(table_columns: dict[str, dict[str, str]]) -> dict[str, list[dict]]:
+def _join_edges(table_columns: dict[str, dict[str, str]], vocab=None) -> dict[str, list[dict]]:
+    join_synonyms = _planner_vocab(vocab).join_synonyms
     tables = {str(t).upper(): {str(c).upper() for c in (cols or {})} for t, cols in table_columns.items()}
     graph: dict[str, list[dict]] = {t: [] for t in tables}
     table_list = list(tables)
@@ -492,7 +504,7 @@ def _join_edges(table_columns: dict[str, dict[str, str]]) -> dict[str, list[dict
             # DIVI is a grouping/filter dimension, not a relational key — exclude it
             # from join conditions so it doesn't create false graph edges.
             conditions.extend((c, c) for c in common if c.endswith("_DMS_KEY") or c in {"CONO", "ORNO", "PONR", "POSX", "DLIX"})
-            for lcol, rcols in _JOIN_SYNONYMS.items():
+            for lcol, rcols in join_synonyms.items():
                 if lcol in tables[left]:
                     conditions.extend((lcol, rc) for rc in rcols if rc in tables[right])
                 if lcol in tables[right]:
@@ -528,14 +540,14 @@ def _shortest_join_path(source: str, target: str, graph: dict[str, list[dict]]) 
     return []
 
 
-def _build_required_joins(fields: list[dict], table_columns: dict[str, dict[str, str]]) -> list[dict]:
+def _build_required_joins(fields: list[dict], table_columns: dict[str, dict[str, str]], vocab=None) -> list[dict]:
     tables = []
     for f in fields:
         if f["table"] not in tables:
             tables.append(f["table"])
     if len(tables) <= 1:
         return []
-    graph = _join_edges(table_columns)
+    graph = _join_edges(table_columns, vocab=vocab)
     anchor = next((f["table"] for f in fields if f["role"] == "measure"), tables[0])
 
     # For display_dimension fields we already know the exact join key (source_key_column).
@@ -583,13 +595,15 @@ def build_semantic_field_plan(
     table_columns: dict[str, dict[str, str]] | None,
     allowed_tables: set[str] | None = None,
     selected_schema: str = "",
+    vocab=None,
 ) -> dict:
     """Build a conservative field-source plan from exact known schema columns."""
+    vocab = _planner_vocab(vocab)
     normalized_columns = {
         str(t).upper(): {str(c).upper(): str(v) for c, v in (cols or {}).items()}
         for t, cols in (table_columns or {}).items()
     }
-    candidates = _find_candidates(question, normalized_columns, allowed_tables, selected_schema)
+    candidates = _find_candidates(question, normalized_columns, allowed_tables, selected_schema, vocab=vocab)
     fields = _choose_fields(question, candidates)
     fields = _apply_display_dimension_fields(fields, question, normalized_columns, allowed_tables, selected_schema)
     if not fields:
@@ -597,13 +611,13 @@ def build_semantic_field_plan(
     for field in fields:
         if (field.get("column") or "").upper() in _DATE_PART_COLUMNS:
             field["enforcement"] = "optional"
-    joins = _build_required_joins(fields, normalized_columns)
+    joins = _build_required_joins(fields, normalized_columns, vocab=vocab)
     # Join edges that exist only to reach optional (date-part) fields must be
     # optional too — otherwise the field is skippable but its join still blocks.
     _required_fields = [f for f in fields if f.get("enforcement") != "optional"]
     _required_edge_keys = {
         (e["from"], e["to"])
-        for e in _build_required_joins(_required_fields, normalized_columns)
+        for e in _build_required_joins(_required_fields, normalized_columns, vocab=vocab)
     }
     for edge in joins:
         if (edge["from"], edge["to"]) not in _required_edge_keys:

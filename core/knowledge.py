@@ -37,7 +37,7 @@ _EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 _COLLECTION_NAME = "kb_store"
 
 
-def _inject_deterministic_synonyms(kb_text: str, table_cols: list[str]) -> str:
+def _inject_deterministic_synonyms(kb_text: str, table_cols: list[str], vocab=None) -> str:
     """
     Post-process a Stage-1 KB document to guarantee every ERP column that has
     a known entry in ERP_COLUMN_DICT appears in the ## Business Synonyms section.
@@ -48,7 +48,10 @@ def _inject_deterministic_synonyms(kb_text: str, table_cols: list[str]) -> str:
 
     Only adds rows that are genuinely missing — never duplicates existing ones.
     """
-    from core.erp_column_dict import ERP_COLUMN_DICT
+    if vocab is None:
+        from core.vocab_packs import get_active_vocab
+        vocab = get_active_vocab()
+    column_dict = vocab.column_dict
 
     lines = kb_text.splitlines()
 
@@ -75,7 +78,7 @@ def _inject_deterministic_synonyms(kb_text: str, table_cols: list[str]) -> str:
         col_upper = col.upper()
         if col_upper in covered_cols:
             continue
-        entry = ERP_COLUMN_DICT.get(col_upper)
+        entry = column_dict.get(col_upper)
         if not entry:
             continue
         label, synonyms = entry
@@ -339,9 +342,16 @@ async def build_kb(
         format_schema_intelligence,
     )
     from core.semantic_model import patch_field_approval, write_semantic_model
+    from core.vocab_packs import vocab_for_account, activate_vocab, deactivate_vocab
 
     import hashlib as _hashlib
     import json as _json
+
+    # Client terminology packs merge over the builtin vocabulary for the whole
+    # build (ContextVar covers deep call sites; explicit vocab= covers the
+    # direct ones). Default = builtins, so clients with no packs are unchanged.
+    _vocab = vocab_for_account(account_id) if account_id else None
+    _vocab_token = activate_vocab(_vocab) if _vocab is not None else None
 
     schema_path = Path(schema_dir)
     kb_path     = Path(kb_dir)
@@ -401,7 +411,7 @@ async def build_kb(
     # Write the naming convention reference as a global KB doc so it is
     # retrieved at query time for any question — structural grammar rules
     # apply across all tables.
-    naming_conv_doc = build_naming_convention_doc()
+    naming_conv_doc = build_naming_convention_doc(vocab=_vocab)
     (kb_path / "_naming_convention.md").write_text(naming_conv_doc, encoding="utf-8")
     log.info("Naming convention KB doc written (%d chars)", len(naming_conv_doc))
 
@@ -599,16 +609,16 @@ async def build_kb(
 
         # Build a table-specific system prompt that includes ERP short-code hints
         # when the table contains cryptic M3/JDE column names.
-        erp_hints = get_erp_hints(table_cols)
+        erp_hints = get_erp_hints(table_cols, vocab=_vocab)
         # Naming convention hints cover structural patterns (_DMS_KEY, _AMT, _PCT,
         # AZ_ audit prefixes, table type from suffix) — complementary to ERP hints.
-        naming_hints = get_naming_hints(table_cols, table_name)
+        naming_hints = get_naming_hints(table_cols, table_name, vocab=_vocab)
         system = build_kb_system_prompt(erp_hints=erp_hints, naming_hints=naming_hints)
         if erp_hints:
             log.info("ERP hints injected for %s (%d matched codes)", table_name, erp_hints.count("\n") + 1)
         if naming_hints:
             log.info("Naming convention hints injected for %s", table_name)
-        schema_intelligence = format_schema_intelligence(table_name, table_cols, schema_md=schema_md)
+        schema_intelligence = format_schema_intelligence(table_name, table_cols, schema_md=schema_md, vocab=_vocab)
 
         # ── Stage 1: DataPilot-style KB document ──────────────────────────────
         join_slice = _slice_join_map(table_name)
@@ -819,7 +829,7 @@ async def build_kb(
             )
 
         # Fix 4: guarantee ERP synonym rows are present regardless of LLM output
-        kb_text = _inject_deterministic_synonyms(kb_text, table_cols)
+        kb_text = _inject_deterministic_synonyms(kb_text, table_cols, vocab=_vocab)
         if _tbl_overrides:
             from core.semantic_kb_patch import apply_field_overrides_to_content
             kb_text = apply_field_overrides_to_content(kb_text, _tbl_overrides)
@@ -948,6 +958,8 @@ async def build_kb(
     except Exception as _sug_err:
         log.debug("Suggestion cache build failed (non-critical): %s", _sug_err)
 
+    if _vocab_token is not None:
+        deactivate_vocab(_vocab_token)
     return processed
 
 

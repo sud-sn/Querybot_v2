@@ -38,6 +38,39 @@ def format_zero_row_business_response(
     return "\n".join(parts)
 
 
+def format_failure_business_response(
+    *,
+    rca: dict[str, Any],
+    sql: str = "",
+    sql_preview_fn=None,
+) -> str:
+    """
+    Business-readable hard-failure message (validator rejection, DB error).
+
+    Uses the exact section labels of format_zero_row_business_response —
+    "Most likely reason:", "Suggested next step:", "Technical details:" —
+    which the portal's diagnostic-card renderer already parses, so failures
+    get the same styled card with the technical detail demoted. Plain text
+    degrades cleanly on Teams/Zoom.
+    """
+    technical = rca.get("technical_notes") or []
+    parts = [
+        rca.get("headline") or "I could not answer this question.",
+        "",
+        "Most likely reason:",
+        rca.get("most_likely_reason") or "Something went wrong while preparing or running the query.",
+        "",
+        "Suggested next step:",
+        rca.get("suggested_next_step") or "Try rephrasing the question, or contact your administrator.",
+    ]
+    if technical:
+        parts.extend(["", "Technical details:", _bullet_lines(technical[:6])])
+    if sql:
+        preview = sql_preview_fn(sql) if sql_preview_fn else sql[:1200]
+        parts.extend(["", f"SQL tried:\n```sql\n{preview}\n```"])
+    return "\n".join(parts)
+
+
 def format_success_confidence_text(confidence: dict[str, Any]) -> str:
     reasons = confidence.get("reasons") or []
     warnings = confidence.get("warnings") or []

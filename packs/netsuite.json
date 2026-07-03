@@ -1,0 +1,7 @@
+{
+  "pack_id": "netsuite",
+  "erp_name": "Oracle NetSuite",
+  "version": 0,
+  "status": "stub",
+  "description": "Phase 2 - transaction/entity/item camelCase analytics schema. This pack is a placeholder; enabling it currently changes nothing."
+}

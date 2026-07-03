@@ -257,13 +257,22 @@ def _human_join(parts: list[str]) -> str:
     return " ".join(p for p in parts if p).strip()
 
 
-def _expand_column(column: str) -> tuple[str, list[str]]:
+def _active_vocab(vocab=None):
+    """Resolve the effective terminology vocab (client packs merge over builtins)."""
+    if vocab is not None:
+        return vocab
+    from core.vocab_packs import get_active_vocab
+    return get_active_vocab()
+
+
+def _expand_column(column: str, vocab=None) -> tuple[str, list[str]]:
     col = _clean_identifier(column).upper()
     raw = _clean_identifier(column)  # preserve original case for camelCase check
+    v = _active_vocab(vocab)
 
     # 1. ERP dictionary — highest confidence
-    if col in ERP_COLUMN_DICT:
-        label, _ = ERP_COLUMN_DICT[col]
+    if col in v.column_dict:
+        label, _ = v.column_dict[col]
         return label.lower(), ["erp dictionary"]
 
     # 2. Infrastructure / platform fields
@@ -271,7 +280,7 @@ def _expand_column(column: str) -> tuple[str, list[str]]:
         return f"data platform field: {raw}", ["infrastructure/platform field"]
 
     # 3. Numbered series patterns (DIC1, ATV3, UCA7, …)
-    for pattern, label_tpl, _ in _NUMBERED_SERIES:
+    for pattern, label_tpl, _ in v.numbered_series:
         m = pattern.match(col)
         if m:
             label = label_tpl.format(m.group(1))
@@ -281,7 +290,7 @@ def _expand_column(column: str) -> tuple[str, list[str]]:
     parts: list[str] = []
     evidence: list[str] = []
     for token in _tokens(col):
-        expanded = ABBREVIATIONS.get(token)
+        expanded = v.abbreviations.get(token)
         if expanded:
             evidence.append(f"abbreviation {token}={expanded}")
             parts.append(expanded)
@@ -290,14 +299,15 @@ def _expand_column(column: str) -> tuple[str, list[str]]:
     return _human_join(parts), evidence
 
 
-def _metric_candidates(column: str, expanded: str, role: str) -> list[str]:
+def _metric_candidates(column: str, expanded: str, role: str, vocab=None) -> list[str]:
     col = _clean_identifier(column).upper()
+    v = _active_vocab(vocab)
     candidates: list[str] = []
-    date_role = detect_date_role(col)
+    date_role = detect_date_role(col, vocab=v)
     if date_role:
         candidates.extend(date_role_terms(date_role))
-    if col in ERP_COLUMN_DICT:
-        label, synonyms = ERP_COLUMN_DICT[col]
+    if col in v.column_dict:
+        label, synonyms = v.column_dict[col]
         candidates.extend([label.lower(), *[s.lower() for s in synonyms[:4]]])
     if role == "measure":
         candidates.append(expanded)
@@ -324,10 +334,11 @@ def _metric_candidates(column: str, expanded: str, role: str) -> list[str]:
     return deduped[:6]
 
 
-def _role_for_column(column: str, data_type: str = "", distinct_values: str = "") -> tuple[str, list[str], list[str], str]:
+def _role_for_column(column: str, data_type: str = "", distinct_values: str = "", vocab=None) -> tuple[str, list[str], list[str], str]:
     col = _clean_identifier(column).upper()
     ctype = (data_type or "").upper()
     distinct = distinct_values or ""
+    v = _active_vocab(vocab)
     evidence: list[str] = []
     warnings: list[str] = []
     default_filter = ""
@@ -348,7 +359,7 @@ def _role_for_column(column: str, data_type: str = "", distinct_values: str = ""
         if col.endswith("_FCT_KEY"):
             evidence.append("fact surrogate key suffix")
             return "surrogate_key", evidence, warnings, default_filter
-    date_role = detect_date_role(col)
+    date_role = detect_date_role(col, vocab=v)
     if date_role:
         evidence.append("date key naming pattern")
         evidence.append(f"date role={date_role.label}")
@@ -362,10 +373,10 @@ def _role_for_column(column: str, data_type: str = "", distinct_values: str = ""
         evidence.append("dimension key suffix")
         warnings.append("Dimension key values may be displayed with separators; SQL filters should use raw unformatted literals.")
         return "dimension_key", evidence, warnings, default_filter
-    if col in RAW_IDENTIFIER_CODES:
+    if col in v.raw_identifier_codes:
         evidence.append("ERP identifier/dimension code")
         return "identifier", evidence, warnings, default_filter
-    if col in RAW_MEASURE_CODES or any(s in col for s in ("_AMT", "_QTY", "_CST", "_PFT", "_PCE", "_RATE")):
+    if col in v.raw_measure_codes or any(s in col for s in ("_AMT", "_QTY", "_CST", "_PFT", "_PCE", "_RATE")):
         evidence.append("measure naming pattern")
         return "measure", evidence, warnings, default_filter
     if col.endswith("_IND") or col.endswith("_STS") or col.endswith("_STS_DMS_KEY"):
@@ -379,11 +390,11 @@ def _role_for_column(column: str, data_type: str = "", distinct_values: str = ""
     return "attribute", evidence, warnings, default_filter
 
 
-def _confidence(column: str, role: str, evidence: list[str], expanded_name: str) -> int:
+def _confidence(column: str, role: str, evidence: list[str], expanded_name: str, vocab=None) -> int:
     col = _clean_identifier(column).upper()
     score = 35
 
-    if col in ERP_COLUMN_DICT:
+    if col in _active_vocab(vocab).column_dict:
         score = 95
     elif "numbered series pattern" in evidence:
         score = 72          # we know what it is structurally, not semantically
@@ -433,7 +444,9 @@ def parse_schema_markdown(schema_md: str) -> dict[str, dict[str, str]]:
 def enrich_columns(
     columns: list[str],
     schema_md: str = "",
+    vocab=None,
 ) -> list[EnrichedColumn]:
+    v = _active_vocab(vocab)
     schema_meta = parse_schema_markdown(schema_md)
     enriched: list[EnrichedColumn] = []
 
@@ -442,13 +455,13 @@ def enrich_columns(
         meta = schema_meta.get(column, {})
         data_type = meta.get("type", "")
         distinct_values = meta.get("distinct_values", "")
-        expanded, expansion_evidence = _expand_column(column)
-        role, role_evidence, warnings, default_filter = _role_for_column(column, data_type, distinct_values)
+        expanded, expansion_evidence = _expand_column(column, vocab=v)
+        role, role_evidence, warnings, default_filter = _role_for_column(column, data_type, distinct_values, vocab=v)
         evidence = [*expansion_evidence, *role_evidence]
-        confidence = _confidence(column, role, evidence, expanded)
+        confidence = _confidence(column, role, evidence, expanded, vocab=v)
         join_equivalents = KNOWN_JOIN_EQUIVALENTS.get(column.upper(), [])
-        date_role = detect_date_role(column)
-        candidates = _metric_candidates(column, expanded, role)
+        date_role = detect_date_role(column, vocab=v)
+        candidates = _metric_candidates(column, expanded, role, vocab=v)
         enriched.append(
             EnrichedColumn(
                 column=column,
@@ -469,8 +482,8 @@ def enrich_columns(
     return enriched
 
 
-def format_schema_intelligence(table_name: str, columns: list[str], schema_md: str = "") -> str:
-    enriched = enrich_columns(columns, schema_md=schema_md)
+def format_schema_intelligence(table_name: str, columns: list[str], schema_md: str = "", vocab=None) -> str:
+    enriched = enrich_columns(columns, schema_md=schema_md, vocab=vocab)
     if not enriched:
         return ""
 

@@ -381,6 +381,7 @@ def update_client_meta(
     portal_only: Optional[int] = None,
     enable_feedback_collection: Optional[int] = None,
     graph_use_suggested: Optional[int] = None,
+    erp_packs: Optional[str] = None,
 ) -> None:
     """Update one or more metadata fields on a client row."""
     fields, params = [], []
@@ -408,6 +409,8 @@ def update_client_meta(
         fields.append("enable_feedback_collection = ?"); params.append(enable_feedback_collection)
     if graph_use_suggested is not None:
         fields.append("graph_use_suggested = ?"); params.append(graph_use_suggested)
+    if erp_packs is not None:
+        fields.append("erp_packs = ?"); params.append(erp_packs)
     if not fields:
         return
     fields.append("updated_at = datetime('now')")

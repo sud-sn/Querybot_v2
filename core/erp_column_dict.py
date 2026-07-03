@@ -227,15 +227,19 @@ ERP_COLUMN_DICT: dict[str, tuple[str, list[str]]] = {
 }
 
 
-def get_erp_hints(column_names: list[str]) -> str:
+def get_erp_hints(column_names: list[str], vocab=None) -> str:
     """
     Return a formatted hint block for any columns in `column_names` that are
     known ERP short codes.  Returns an empty string when none match so callers
     can use truthiness to skip injection for non-ERP tables.
     """
+    if vocab is None:
+        from core.vocab_packs import get_active_vocab
+        vocab = get_active_vocab()
+    column_dict = vocab.column_dict
     lines: list[str] = []
     for col in column_names:
-        entry = ERP_COLUMN_DICT.get(col.upper())
+        entry = column_dict.get(col.upper())
         if entry:
             label, synonyms = entry
             syn_str = ", ".join(f'"{s}"' for s in synonyms)

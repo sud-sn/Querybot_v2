@@ -636,9 +636,59 @@ def match_column_suffix(column: str) -> SuffixRule | None:
     return None
 
 
-def match_table_suffix(table_name: str) -> TableSuffixRule | None:
-    """Return the first matching TableSuffixRule for this table name."""
+def _nc_vocab(vocab=None):
+    """Resolve the terminology vocab; defaults preserve legacy constants."""
+    if vocab is not None:
+        return vocab
+    from core.vocab_packs import get_active_vocab
+    return get_active_vocab()
+
+
+_PACK_FACT_RULE = TableSuffixRule(
+    suffix="",
+    table_type="fact_table",
+    meaning="Fact table (classified by the client's terminology pack) — transactional records containing measures and FK dimension keys",
+    sql_guidance=(
+        "Contains the numerical measures you aggregate (SUM, COUNT, AVG). "
+        "Join to dimension tables to resolve keys to display labels."
+    ),
+)
+_PACK_DIM_RULE = TableSuffixRule(
+    suffix="",
+    table_type="dimension_table",
+    meaning="Dimension table (classified by the client's terminology pack) — lookup/master records with display fields",
+    sql_guidance="Join from fact tables to resolve keys; select the display/description columns for output.",
+)
+_PACK_BRIDGE_RULE = TableSuffixRule(
+    suffix="",
+    table_type="bridge_table",
+    meaning="Bridge table (classified by the client's terminology pack) — resolves many-to-many relationships",
+    sql_guidance="Join through this table between the two related entities; do not aggregate its rows directly.",
+)
+
+
+def match_table_suffix(table_name: str, vocab=None) -> TableSuffixRule | None:
+    """Return the first matching TableSuffixRule for this table name.
+
+    Terminology-pack classification (explicit table lists, then fact/dim
+    patterns) is consulted first so non-DMS warehouses (FACT_SALES, VBAK…)
+    classify correctly once a pack is enabled; builtin suffix rules follow.
+    """
     tbl_upper = (table_name or "").upper().split(".")[-1]   # bare table name only
+    v = _nc_vocab(vocab)
+    if tbl_upper in v.fact_tables:
+        return _PACK_FACT_RULE
+    if tbl_upper in v.dimension_tables:
+        return _PACK_DIM_RULE
+    for pattern in v.fact_patterns:
+        if pattern.search(tbl_upper):
+            return _PACK_FACT_RULE
+    for pattern in v.dimension_patterns:
+        if pattern.search(tbl_upper):
+            return _PACK_DIM_RULE
+    for pattern in v.bridge_patterns:
+        if pattern.search(tbl_upper):
+            return _PACK_BRIDGE_RULE
     for rule in TABLE_SUFFIX_RULES:
         if tbl_upper.endswith(rule.suffix.upper()):
             return rule
@@ -654,22 +704,23 @@ def match_audit_prefix(column: str) -> AuditPrefixRule | None:
     return None
 
 
-def match_entity_prefix(column: str) -> str | None:
+def match_entity_prefix(column: str, vocab=None) -> str | None:
     """
     Return the entity domain for this column based on its prefix.
-    Tries longest prefix first.
+    Tries longest prefix first. Terminology-pack prefixes merge over builtins.
     """
     col_upper = (column or "").upper()
-    sorted_prefixes = sorted(ENTITY_PREFIX_VOCABULARY.keys(), key=len, reverse=True)
+    prefixes = {**ENTITY_PREFIX_VOCABULARY, **_nc_vocab(vocab).entity_prefixes}
+    sorted_prefixes = sorted(prefixes.keys(), key=len, reverse=True)
     for prefix in sorted_prefixes:
         if col_upper.startswith(prefix.upper() + "_") or col_upper == prefix.upper():
-            return ENTITY_PREFIX_VOCABULARY[prefix]
+            return prefixes[prefix]
     return None
 
 
 # ── Hint generation ────────────────────────────────────────────────────────────
 
-def get_naming_hints(column_names: list[str], table_name: str = "") -> str:
+def get_naming_hints(column_names: list[str], table_name: str = "", vocab=None) -> str:
     """
     Return a formatted hint block for columns in `column_names` that match
     a naming convention pattern.  Parallel to get_erp_hints() in erp_column_dict.
@@ -687,7 +738,7 @@ def get_naming_hints(column_names: list[str], table_name: str = "") -> str:
 
     # Table-level hint (once)
     if table_name:
-        tbl_rule = match_table_suffix(table_name)
+        tbl_rule = match_table_suffix(table_name, vocab=vocab)
         if tbl_rule:
             lines.append(
                 f"TABLE TYPE [{table_name}]: {tbl_rule.table_type.upper()} — "
@@ -710,7 +761,7 @@ def get_naming_hints(column_names: list[str], table_name: str = "") -> str:
 
         # Tier 2: Column suffix rule
         suffix_rule = match_column_suffix(col)
-        entity = match_entity_prefix(col)
+        entity = match_entity_prefix(col, vocab=vocab)
 
         if suffix_rule:
             entity_part = f" | entity domain: {entity}" if entity else ""
@@ -733,18 +784,29 @@ def get_naming_hints(column_names: list[str], table_name: str = "") -> str:
 
 # ── Global KB document ─────────────────────────────────────────────────────────
 
-def build_naming_convention_doc() -> str:
+def build_naming_convention_doc(vocab=None) -> str:
     """
     Build the full _naming_convention.md document embedded as a global KB doc.
     Retrieved at query time to give the LLM structural grammar rules that apply
     across every table — regardless of which table's KB is in context.
     """
+    v = _nc_vocab(vocab)
     lines = [
         "# Data Warehouse Naming Convention Reference",
         "",
         "This document describes the structural naming grammar used across all tables.",
         "Use it alongside per-table KB documents to understand column roles and correct SQL patterns.",
         "",
+    ]
+    pack_ids = [p for p in getattr(v, "source_packs", []) if p != "builtin"]
+    if pack_ids:
+        lines += [
+            f"Client terminology pack(s): {', '.join(pack_ids)}",
+            "Pack-specific conventions below merge over (and take precedence for",
+            "overlapping codes) the built-in defaults.",
+            "",
+        ]
+    lines += [
 
         "---",
         "",

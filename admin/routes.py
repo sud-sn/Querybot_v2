@@ -1704,8 +1704,17 @@ async def client_detail(request: Request, account_id: str):
 
     health_score = _client_health_score(account_id, client)
 
+    try:
+        _client_erp_packs = json.loads(client.get("erp_packs") or "[]")
+        if not isinstance(_client_erp_packs, list):
+            _client_erp_packs = []
+    except Exception:
+        _client_erp_packs = []
+
     return _resp(request, "client_detail.html", {
         "client":          client,
+        "erp_packs_available": _list_erp_packs(),
+        "client_erp_packs":    _client_erp_packs,
         "queries":         queries,
         "llm_calls":       llm_calls,
         "audit_component": audit_component,
@@ -1843,6 +1852,11 @@ async def client_update(
 ):
     if not _is_auth(request):
         return RedirectResponse("/admin/login", status_code=303)
+    # Multi-checkbox field — read from the raw form (FastAPI Form() only binds scalars)
+    form = await request.form()
+    _pack_ids = [str(p).strip() for p in form.getlist("erp_packs") if str(p).strip()]
+    _valid_packs = {m["pack_id"] for m in _list_erp_packs() if m.get("status") != "stub"}
+    _pack_ids = [p for p in _pack_ids if p in _valid_packs]
     is_portal_only = 1 if portal_only else 0
     store.update_client_meta(
         account_id,
@@ -1856,8 +1870,18 @@ async def client_update(
         portal_only         = is_portal_only,
         # Portal-only clients always have the internal chat UI enabled
         chat_ui_enabled     = 1 if is_portal_only else None,
+        erp_packs           = json.dumps(_pack_ids),
     )
     return RedirectResponse(f"/admin/clients/{account_id}?saved=1", status_code=303)
+
+
+def _list_erp_packs() -> list[dict]:
+    try:
+        from core.vocab_packs import list_available_packs
+        return list_available_packs()
+    except Exception as exc:
+        log.warning("Could not list terminology packs: %s", exc)
+        return []
 
 
 @router.post("/clients/{account_id}/reset")
@@ -5045,6 +5069,24 @@ async def metrics_test_formula(request: Request, account_id: str):
 
     base_table_raw = (body.get("base_table") or "").strip()
 
+    # Row-calculated / date-gap metrics reference join aliases (due_dt.DMS_DT)
+    # that only exist once the metric's required_joins are applied — the bare
+    # single-table probe can never bind them ("multi-part identifier could not
+    # be bound"). Detect that config up front and probe WITH the joins below.
+    builder_config_raw = (body.get("metric_builder_config") or "").strip()
+    join_probe = False
+    if builder_config_raw and not formula.upper().startswith("SELECT"):
+        try:
+            _mb_cfg = _json.loads(builder_config_raw)
+        except Exception:
+            _mb_cfg = None
+        if (
+            isinstance(_mb_cfg, dict)
+            and _mb_cfg.get("mode") in ("row_calculated", "date_gap")
+            and _mb_cfg.get("required_joins")
+        ):
+            join_probe = True
+
     def _fqn_to_sql(fqn: str) -> str:
         parts = fqn.split(".")
         if db_type == "azure_sql" and len(parts) >= 2:
@@ -5142,6 +5184,38 @@ async def metrics_test_formula(request: Request, account_id: str):
                 conn.close()
 
         loop = asyncio.get_running_loop()
+
+        if join_probe:
+            # Probe with the metric's required joins applied so join-alias
+            # references (due_dt.DMS_DT) bind. Runs BEFORE the multi-table
+            # token heuristic, which misfires on alias-qualified formulas.
+            if not base_table_raw or not first_table_sql:
+                return JSONResponse({
+                    "status": "error",
+                    "detail": (
+                        "This metric's formula uses join aliases, so the test needs the "
+                        "Base table — set the Base table field (Advanced options) first."
+                    ),
+                })
+            from core.pipeline_helpers import _build_row_metric_join_sql
+            # No "AS" in the skeleton — the helper reads the last token of the
+            # FROM line as the anchor alias.
+            join_sql = _build_row_metric_join_sql(
+                [{"metric_builder_config": builder_config_raw}],
+                db_type,
+                f"FROM {first_table_sql} base",
+            )
+            if db_type == "azure_sql":
+                probe = f"SELECT TOP 1 ({formula}) AS _result FROM {first_table_sql} AS base WITH (NOLOCK)\n{join_sql}"
+            elif db_type == "snowflake":
+                probe = f"SELECT ({formula}) AS _result FROM {first_table_sql} base\n{join_sql}\nLIMIT 1"
+            else:
+                probe = f"SELECT ({formula}) AS _result FROM {first_table_sql} base\n{join_sql}\nWHERE ROWNUM <= 1"
+
+            result = await asyncio.wait_for(loop.run_in_executor(None, _run_probe, probe), timeout=20)
+            if result is not None and not isinstance(result, (int, float, str, bool)):
+                result = str(result)
+            return JSONResponse({"status": "ok", "result": result})
 
         if multi_table:
             # Per-table column existence probes

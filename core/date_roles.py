@@ -116,10 +116,19 @@ def question_has_temporal_intent(question: str) -> bool:
     return any(phrase in q for phrase in temporal_phrases)
 
 
-def detect_date_role(column_name: str) -> DateRole | None:
+def detect_date_role(column_name: str, vocab=None) -> DateRole | None:
     col = (column_name or "").strip().strip('"`[]').upper()
     if not col:
         return None
+    # Terminology-pack patterns run FIRST so a pack can specialize a column
+    # the builtin regexes would miss (e.g. SAP AUDAT → order_date). The 18
+    # builtin role keys stay fixed; packs only map new column names to them.
+    if vocab is None:
+        from core.vocab_packs import get_active_vocab
+        vocab = get_active_vocab()
+    for pattern, role_key in getattr(vocab, "date_role_patterns", ()):
+        if pattern.search(col) and role_key in _ROLE_BY_KEY:
+            return _ROLE_BY_KEY[role_key]
     for pattern, role_key in _COLUMN_PATTERNS:
         if pattern.search(col):
             return _ROLE_BY_KEY[role_key]

@@ -1,0 +1,97 @@
+{
+  "pack_id": "generic_star_schema",
+  "erp_name": "Generic star schema (Kimball)",
+  "version": 1,
+  "status": "complete",
+  "description": "Naming conventions for generic Kimball-style warehouses: FACT_/DIM_ table prefixes, SK/NK surrogate-key tokens, and plain-English date-role columns (ORDER_DATE, DUE_DATE_KEY...). Enable for any client whose warehouse does not follow the DMS/FCT convention.",
+  "abbreviations": {
+    "SK": "surrogate key",
+    "NK": "natural key",
+    "BK": "business key",
+    "DESC": "description",
+    "DSC": "description",
+    "CD": "code",
+    "CDE": "code",
+    "FLG": "flag",
+    "IND": "indicator",
+    "YTD": "year to date",
+    "MTD": "month to date",
+    "QTD": "quarter to date",
+    "LTM": "last twelve months",
+    "CURR": "currency",
+    "LOC": "location",
+    "GEO": "geography",
+    "EMP": "employee",
+    "DEPT": "department",
+    "TXN": "transaction",
+    "TRANS": "transaction",
+    "REV": "revenue",
+    "EXP": "expense",
+    "ACCT": "account"
+  },
+  "table_classification": {
+    "fact_patterns": [
+      "^FACT_",
+      "^FCT_",
+      "^F_",
+      "_FACT$",
+      "_FCT$"
+    ],
+    "dimension_patterns": [
+      "^DIM_",
+      "^D_",
+      "_DIM$",
+      "^DIMENSION_",
+      "^LKP_",
+      "^LOOKUP_"
+    ],
+    "bridge_patterns": [
+      "^BRIDGE_",
+      "^BRG_"
+    ],
+    "fact_tables": [],
+    "dimension_tables": []
+  },
+  "date_role_patterns": [
+    {
+      "pattern": "^ORDER_DATE(_KEY|_ID)?$",
+      "role": "order_date"
+    },
+    {
+      "pattern": "^INVOICE_DATE(_KEY|_ID)?$",
+      "role": "invoice_date"
+    },
+    {
+      "pattern": "^(SHIP|SHIPPING|SHIPPED|DELIVERY)_DATE(_KEY|_ID)?$",
+      "role": "delivery_date"
+    },
+    {
+      "pattern": "^DUE_DATE(_KEY|_ID)?$",
+      "role": "due_date"
+    },
+    {
+      "pattern": "^(PAYMENT|PAID)_DATE(_KEY|_ID)?$",
+      "role": "payment_date"
+    },
+    {
+      "pattern": "^(POST|POSTING|ACCOUNTING|GL)_DATE(_KEY|_ID)?$",
+      "role": "accounting_date"
+    },
+    {
+      "pattern": "^(RECEIPT|RECEIVED)_DATE(_KEY|_ID)?$",
+      "role": "receipt_date"
+    },
+    {
+      "pattern": "^(CREATED?|CREATION)_DATE(_KEY|_ID)?$",
+      "role": "creation_date"
+    },
+    {
+      "pattern": "^(MODIFIED|UPDATED?)_DATE(_KEY|_ID)?$",
+      "role": "modified_date"
+    },
+    {
+      "pattern": "^(TRANSACTION|TXN|TRANS)_DATE(_KEY|_ID)?$",
+      "role": "accounting_date"
+    }
+  ]
+}

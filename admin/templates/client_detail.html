@@ -316,6 +316,23 @@
             <p class="form-note">Overrides the system default for this client only. All other clients are unaffected.</p>
           </div>
         </div>
+        {% if erp_packs_available %}
+        <div class="form-group" style="margin-top:.25rem">
+          <label style="font-weight:600">ERP terminology packs</label>
+          <p class="form-note">Vocabulary packs merge over QueryBot's built-in defaults for KB build and question matching. Leave all unchecked for the standard (Infor M3 / DMS) vocabulary. Re-run the KB build after changing packs.</p>
+          {% for pack in erp_packs_available %}
+          <label style="display:flex;align-items:flex-start;gap:.65rem;font-weight:600;margin-top:.35rem;{% if pack.status == 'stub' %}opacity:.5{% endif %}">
+            <input type="checkbox" name="erp_packs" value="{{ pack.pack_id }}"
+                   {% if pack.pack_id in client_erp_packs %}checked{% endif %}
+                   {% if pack.status == 'stub' %}disabled{% endif %} style="margin-top:3px">
+            <span>
+              {{ pack.erp_name }}{% if pack.status == 'stub' %} <em style="font-weight:400">(coming soon)</em>{% endif %}
+              <span class="form-note" style="display:block;margin-top:2px">{{ pack.description }}</span>
+            </span>
+          </label>
+          {% endfor %}
+        </div>
+        {% endif %}
         <div class="form-group" style="margin-top:.25rem">
           <label style="display:flex;align-items:flex-start;gap:.65rem;font-weight:600">
             <input type="checkbox" name="enable_llm_audit" value="1" {% if client.enable_llm_audit %}checked{% endif %} style="margin-top:3px">

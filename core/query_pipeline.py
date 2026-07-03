@@ -43,7 +43,7 @@ from core.pipeline_context import (
     check_query_limit, check_token_limit,
 )
 from core.pipeline_helpers import (
-    _extract_kb_synonym_injection, _send_live_stage,
+    _extract_kb_synonym_injection, _send_live_stage, _sql_preview,
     _count_tables_for_zero_row, _build_zero_row_message,
     _format_metric_formula_context, _extract_metric_formula_tables,
     _build_row_metric_join_sql, attempt_field_plan_repair,
@@ -111,6 +111,15 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
     state    = get_state(account_id)
     db_cfg   = get_client_db(account_id)
     client   = store.get_client(account_id) or {}
+
+    # Activate the client's terminology packs for this request. Default (no
+    # packs) equals the builtin vocabulary, so behavior is unchanged for
+    # clients that have not enabled any pack. ContextVars do not cross
+    # run_in_executor threads — anything vocab-dependent called through an
+    # executor must take vocab= explicitly.
+    from core.vocab_packs import vocab_for_account, activate_vocab
+    _vocab = vocab_for_account(account_id)
+    activate_vocab(_vocab)
     audit_enabled = bool(client.get("enable_llm_audit"))
     audit_request_id = make_llm_audit_request_id()
 
@@ -774,6 +783,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
             all_columns,
             query_scope_tables,
             selected_schema=schema_hint,
+            vocab=_vocab,
         )
         if _semantic_plan.get("enabled"):
             _trace_step(
@@ -1467,13 +1477,28 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                         account_id, str(retry_err)[:100])
 
     # ── Terminal failure handling ────────────────────────────────────────────
+    # Raw reasons/errors stay in query_log + answer_trace (audit unchanged);
+    # only the chat message is translated to business language with a next step.
     if not ok:
         _log_q(account_id, question, sql, 0, False, last_reason, provider, model,
                tok_in, tok_out, int(time.time()*1000) - start_ms,
                portal_user_id=pu_id, zoom_user_id=zid,
                question_id=audit_request_id)
         _trace_finish(trace_id, status="error", answer_type="error", error_message=last_reason)
-        await adapter.send_message(event, f"❌ {last_reason}")
+        from core.failure_messages import translate_failure, _VALIDATION_REASONS
+        if (last_code or "").lower() in _VALIDATION_REASONS:
+            _rca = translate_failure(
+                kind="validation", code=last_code, reason=last_reason,
+                sql=sql, question=question,
+            )
+            from core.answer_formatter import format_failure_business_response
+            await adapter.send_message(event, format_failure_business_response(
+                rca=_rca, sql=sql, sql_preview_fn=_sql_preview,
+            ))
+        else:
+            # Policy denials and other non-validator codes already carry a
+            # business-written explanation — pass through untouched.
+            await adapter.send_message(event, f"❌ {last_reason}")
         return
 
     if exec_error is not None or rows is None:
@@ -1484,12 +1509,15 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                portal_user_id=pu_id, zoom_user_id=zid,
                question_id=audit_request_id)
         _trace_finish(trace_id, status="error", answer_type="error", error_message=exec_error or "Unknown error")
-        sql_preview = sql[:200] + "..." if len(sql) > 200 else sql
-        await adapter.send_message(event,
-            f"❌ Database error — could not execute after retry.\n"
-            f"Error: {exec_error}\n\n"
-            f"SQL tried:\n```sql\n{sql_preview}\n```"
+        from core.failure_messages import translate_failure
+        from core.answer_formatter import format_failure_business_response
+        _rca = translate_failure(
+            kind="execution", exception_text=exec_error or "Unknown error",
+            sql=sql, question=question,
         )
+        await adapter.send_message(event, format_failure_business_response(
+            rca=_rca, sql=sql, sql_preview_fn=_sql_preview,
+        ))
         return
 
     duration_ms = int(time.time()*1000) - start_ms

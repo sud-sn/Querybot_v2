@@ -565,5 +565,61 @@ class TestArchitectureGuards(unittest.TestCase):
             f"Expected at least 25 catalogue entries, found {count}")
 
 
+# ── Metric Test join-aware probe + editor visibility ─────────────────────────
+
+class TestJoinAwareFormulaProbe(unittest.TestCase):
+    """▶ Test must apply required_joins for row_calculated/date_gap metrics —
+    formulas referencing join aliases (due_dt.DMS_DT) can't bind otherwise."""
+
+    def test_route_reads_builder_config_and_builds_joins(self):
+        routes = _routes()
+        self.assertIn('body.get("metric_builder_config")', routes)
+        self.assertIn("_build_row_metric_join_sql", routes)
+        # Join probe must run before the multi-table heuristic branch.
+        self.assertLess(
+            routes.index("if join_probe:"),
+            routes.index("if multi_table:"),
+        )
+        # Skeleton without AS so the helper parses the anchor alias correctly.
+        self.assertIn('f"FROM {first_table_sql} base"', routes)
+        # Full-SQL formulas bypass the branch.
+        self.assertIn('not formula.upper().startswith("SELECT")', routes)
+
+    def test_client_sends_builder_config_to_test_endpoint(self):
+        tmpl = _tmpl()
+        fetch_block = tmpl[tmpl.index("metrics/test-formula"):]
+        self.assertIn("metric_builder_config:", fetch_block[:600])
+
+    def test_probe_join_sql_binds_aliases(self):
+        import json as _json
+        from core.pipeline_helpers import _build_row_metric_join_sql
+        cfg = _json.dumps({
+            "enabled": True, "mode": "date_gap",
+            "required_joins": [
+                {"alias": "due_dt", "table": "DT_DMS", "from_column": "DUE_DT_DMS_KEY",
+                 "to_column": "DT_DMS_KEY", "invalid_keys": [0, 777]},
+                {"alias": "pay_dt", "table": "DT_DMS", "from_column": "PAY_DT_DMS_KEY",
+                 "to_column": "DT_DMS_KEY", "invalid_keys": [0, 777]},
+            ],
+        })
+        joins = _build_row_metric_join_sql(
+            [{"metric_builder_config": cfg}], "azure_sql", "FROM [dbo].[FNN_FCT] base",
+        )
+        self.assertIn("LEFT  JOIN [DT_DMS] due_dt ON base.[DUE_DT_DMS_KEY] = due_dt.[DT_DMS_KEY]", joins)
+        self.assertIn("base.[DUE_DT_DMS_KEY] NOT IN (0, 777)", joins)
+        self.assertIn("LEFT  JOIN [DT_DMS] pay_dt ON base.[PAY_DT_DMS_KEY] = pay_dt.[DT_DMS_KEY]", joins)
+
+
+class TestBackdropBaseColor(unittest.TestCase):
+    """Unspanned tokens (join aliases, brackets) must not render invisible."""
+
+    def test_backdrop_gets_editor_text_color(self):
+        tmpl = _tmpl()
+        self.assertIn("backdrop.style.color = box.color", tmpl)
+        # The fix must live inside _initSqlHighlight, after style capture.
+        init_block = tmpl[tmpl.index("function _initSqlHighlight"):]
+        self.assertIn("backdrop.style.color = box.color", init_block[:3000])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,7 @@
+{
+  "pack_id": "dynamics",
+  "erp_name": "Microsoft Dynamics 365 F&O",
+  "version": 0,
+  "status": "stub",
+  "description": "Phase 2 - SalesTable/CustTable/InventTable and DataAreaId conventions. This pack is a placeholder; enabling it currently changes nothing."
+}
