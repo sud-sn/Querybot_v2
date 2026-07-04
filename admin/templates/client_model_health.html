@@ -235,6 +235,111 @@ table.mh-tbl tr:hover td{background:color-mix(in srgb,var(--primary) 4%,var(--su
         <div class="cov-counts">{{ appr }} / {{ tot }}</div>
       </div>
       {% endfor %}
+      {% if health.kb_quality and health.kb_quality.vocabulary_coverage %}
+      {% set vc = health.kb_quality.vocabulary_coverage %}
+      {% set vc_cls = "high" if vc.pct >= 70 else ("mid" if vc.pct >= 35 else "low") %}
+      <div class="cov-row">
+        <div class="cov-label">Vocabulary Coverage</div>
+        <div class="cov-bar-wrap">
+          <div class="cov-fill {{ vc_cls }}" style="width:{{ vc.pct }}%"></div>
+        </div>
+        <div class="cov-pct">{{ vc.pct }}%</div>
+        <div class="cov-counts">{{ vc.covered }} / {{ vc.total }}</div>
+      </div>
+      <p style="margin:.4rem 0 0;font-size:12px;color:var(--text-muted)">
+        Share of columns the terminology layer confidently understands (ERP dictionary,
+        naming conventions, or admin approval). Low coverage means weak business-name
+        matching for questions touching those columns.
+      </p>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- ── Columns needing context ── -->
+  {% if health.kb_quality and health.kb_quality.vocabulary_coverage and health.kb_quality.vocabulary_coverage.uncovered %}
+  <div class="mh-card">
+    <div class="mh-card-header">
+      <h2>Columns Needing Context</h2>
+      <span style="font-size:12px;color:var(--text-muted)">worst first · showing up to 30</span>
+    </div>
+    <div class="mh-card-body">
+      <p style="margin:0 0 .6rem;font-size:13px;color:var(--text-soft)">
+        These columns had no confident vocabulary match. Add a short business meaning
+        via the column context editor, or enable a matching ERP terminology pack, then
+        rebuild the KB.
+      </p>
+      <ul class="drift-list">
+        {% for col in health.kb_quality.vocabulary_coverage.uncovered %}
+        <li>
+          <code>{{ col.table }}.{{ col.column }}</code>
+          <span style="color:var(--text-muted)">confidence {{ col.confidence }}</span>
+          <a href="/admin/clients/{{ client.account_id }}/kb?view=fields&table={{ col.table | urlencode }}" style="font-size:12px">add context →</a>
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- ── Fact table grain review ── -->
+  {% set unapproved_grains = health.table_summaries | selectattr("type", "equalto", "fact") | rejectattr("grain_status", "equalto", "approved") | list %}
+  {% if unapproved_grains %}
+  <div class="mh-card">
+    <div class="mh-card-header">
+      <h2>Fact Table Grain Review</h2>
+      <span style="font-size:12px;color:var(--text-muted)">{{ unapproved_grains | length }} awaiting approval</span>
+    </div>
+    <div class="mh-card-body">
+      <p style="margin:0 0 .6rem;font-size:13px;color:var(--text-soft)">
+        Confirm what one row represents in each fact table. Grain errors are the most
+        common cause of duplicated totals after joins — an approved grain survives KB rebuilds.
+      </p>
+      {% for t in unapproved_grains %}
+      <form method="post" action="/admin/clients/{{ client.account_id }}/model-health/grain"
+            style="display:flex;align-items:center;gap:.5rem;margin:.45rem 0;flex-wrap:wrap">
+        <code style="min-width:180px">{{ t.qualified_name or t.table }}</code>
+        <input type="hidden" name="table_fqn" value="{{ t.qualified_name or t.table }}">
+        <input type="text" name="grain" required
+               value="{{ '' if t.grain == 'needs_admin_context' else t.grain }}"
+               placeholder="e.g. one row per invoice line"
+               style="flex:1;min-width:220px;padding:6px 9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:12px">
+        <button type="submit" class="btn btn-secondary btn-xs">Approve grain</button>
+      </form>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- ── Value index (literal grounding) ── -->
+  <div class="mh-card">
+    <div class="mh-card-header">
+      <h2>Value Index</h2>
+      {% if value_index_stats.built_at %}
+      <span style="font-size:12px;color:var(--text-muted)">built {{ value_index_stats.built_at }}</span>
+      {% endif %}
+    </div>
+    <div class="mh-card-body">
+      {% if value_index_stats %}
+      <p style="margin:0 0 .6rem;font-size:13px;color:var(--text-soft)">
+        <strong>{{ value_index_stats.values_indexed }}</strong> values across
+        <strong>{{ value_index_stats.columns_indexed }}</strong> filterable columns are
+        indexed for literal grounding — user-typed filter values ("emco corp") get
+        matched to exact database values before SQL is generated.
+        {% if value_index_stats.columns_skipped_pii %}
+        {{ value_index_stats.columns_skipped_pii }} column(s) skipped as PII.
+        {% endif %}
+        {% if value_index_stats.truncated_columns %}
+        Truncated at cap: {{ value_index_stats.truncated_columns | join(", ") }}.
+        {% endif %}
+      </p>
+      {% else %}
+      <p style="margin:0 0 .6rem;font-size:13px;color:var(--text-muted)">
+        No value index yet — run schema discovery, or refresh below.
+      </p>
+      {% endif %}
+      <form method="post" action="/admin/clients/{{ client.account_id }}/value-index/refresh" style="margin:0">
+        <button type="submit" class="btn btn-secondary btn-xs">Refresh value index</button>
+      </form>
     </div>
   </div>
 

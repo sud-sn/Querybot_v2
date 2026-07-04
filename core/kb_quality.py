@@ -71,6 +71,9 @@ def evaluate_kb_quality(
     fact_tables = 0
     low_confidence_fields = 0
     generated_relationships = 0
+    vocab_covered = 0
+    vocab_total = 0
+    vocab_uncovered: list[dict[str, Any]] = []
     for relationship in relationships:
         if str(relationship.get("status") or "generated") != "approved":
             generated_relationships += 1
@@ -133,8 +136,15 @@ def evaluate_kb_quality(
                 confidence = int(float(field.get("confidence") or 0))
             except (TypeError, ValueError):
                 confidence = 0
+            vocab_total += 1
             if confidence >= 70 or field.get("status") == "approved":
+                vocab_covered += 1
                 continue
+            vocab_uncovered.append({
+                "table": table_name,
+                "column": str(field.get("column") or ""),
+                "confidence": confidence,
+            })
             low_confidence_fields += 1
             issues.append(_issue(
                 "warning",
@@ -180,6 +190,16 @@ def evaluate_kb_quality(
     critical_count = sum(issue["severity"] == "critical" for issue in issues)
     warning_count = sum(issue["severity"] == "warning" for issue in issues)
     info_count = sum(issue["severity"] == "info" for issue in issues)
+    # Vocabulary coverage: how much of the schema the terminology layer
+    # confidently understands. Uncovered columns (worst first) are the
+    # admin's shortlist for column-context hints or a vocab-pack overlay.
+    vocab_uncovered.sort(key=lambda f: (f["confidence"], f["table"], f["column"]))
+    vocabulary_coverage = {
+        "pct": round(vocab_covered * 100.0 / vocab_total, 1) if vocab_total else 0.0,
+        "covered": vocab_covered,
+        "total": vocab_total,
+        "uncovered": vocab_uncovered[:30],
+    }
     return {
         "version": 1,
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -194,6 +214,7 @@ def evaluate_kb_quality(
             "warnings": warning_count,
             "info": info_count,
         },
+        "vocabulary_coverage": vocabulary_coverage,
         "issues": issues,
     }
 

@@ -1315,6 +1315,8 @@ def get_model_health(kb_dir: str) -> dict[str, Any]:
             "qualified_name": table.get("qualified_name", ""),
             "schema":         table.get("schema", ""),
             "type":           t_type,
+            "grain":          str(table.get("grain") or ""),
+            "grain_status":   str(table.get("grain_status") or ""),
             "fields":      {"total": len(t_fields), "approved": t_f_appr},
             "measures":    {"total": len(t_meas),   "approved": t_m_appr},
             "dimensions":  {"total": len(t_dims),   "approved": t_d_appr},
@@ -1703,6 +1705,59 @@ def patch_field_approval(
                 if approved_meaning:
                     dimension["approved_meaning"] = approved_meaning.strip()
                 changed = True
+
+    if not changed:
+        return False
+
+    kb_path = Path(kb_dir)
+    (kb_path / MODEL_JSON).write_text(json.dumps(model, indent=2, sort_keys=True), encoding="utf-8")
+    (kb_path / MODEL_YAML).write_text(_to_yaml(model) + "\n", encoding="utf-8")
+    return True
+
+
+def patch_grain_approval(
+    *,
+    kb_dir: str,
+    table_fqn: str = "",
+    table_name: str = "",
+    schema_name: str = "",
+    grain: str,
+    status: str = "approved",
+) -> bool:
+    """
+    Admin approval of a fact table's grain ("one row per invoice line").
+
+    Grain errors are a common source of duplicated measures after joins —
+    _infer_table_grain deliberately leaves uncertain facts at
+    "needs_admin_context" for a human to fill in. preserve_approvals()
+    already carries an approved grain across KB rebuilds.
+    """
+    grain_text = (grain or "").strip()
+    if not grain_text:
+        return False
+    model = load_semantic_model(kb_dir)
+    if not model:
+        return False
+
+    table_fqn_u = (table_fqn or "").upper()
+    table_u = (table_name or "").upper()
+    schema_u = (schema_name or "").upper()
+    changed = False
+
+    for table in model.get("tables", []) or []:
+        matches_table = False
+        if table_fqn_u and str(table.get("fqn", "")).upper() == table_fqn_u:
+            matches_table = True
+        elif table_fqn_u and str(table.get("qualified_name", "")).upper() == table_fqn_u:
+            matches_table = True
+        elif table_u and str(table.get("table", "")).upper() == table_u:
+            matches_table = not schema_u or str(table.get("schema", "")).upper() == schema_u
+        if not matches_table:
+            continue
+        table["grain"] = grain_text
+        table["grain_status"] = status
+        table["grain_confidence"] = 100
+        changed = True
 
     if not changed:
         return False

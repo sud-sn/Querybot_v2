@@ -92,5 +92,51 @@ class KBQualityTests(unittest.TestCase):
         self.assertIn("Never invent columns such as MONTH", prompt)
 
 
+class VocabularyCoverageTests(unittest.TestCase):
+    def _model(self):
+        return {
+            "tables": [{
+                "table": "SALES_FCT",
+                "qualified_name": "ERP.SALES_FCT",
+                "type": "fact",
+                "grain": "one row per line",
+                "fields": [
+                    {"column": "NET_AMT", "confidence": 95, "status": "generated"},
+                    {"column": "MYSTERY1", "confidence": 30, "status": "generated"},
+                    {"column": "MYSTERY2", "confidence": 45, "status": "approved"},
+                    {"column": "MYSTERY3", "confidence": 10, "status": "generated"},
+                ],
+                "measures": [{"name": "net"}], "dimensions": [], "date_roles": [{"name": "d"}],
+            }],
+            "relationships": [],
+        }
+
+    def test_coverage_math_and_uncovered_ordering(self):
+        report = evaluate_kb_quality(self._model())
+        vc = report["vocabulary_coverage"]
+        # NET_AMT (>=70) + MYSTERY2 (approved) covered; MYSTERY1/3 uncovered
+        self.assertEqual(vc["covered"], 2)
+        self.assertEqual(vc["total"], 4)
+        self.assertEqual(vc["pct"], 50.0)
+        # worst confidence first
+        self.assertEqual([u["column"] for u in vc["uncovered"]], ["MYSTERY3", "MYSTERY1"])
+        self.assertEqual(vc["uncovered"][0]["table"], "ERP.SALES_FCT")
+
+    def test_uncovered_list_capped_at_30(self):
+        model = self._model()
+        model["tables"][0]["fields"] = [
+            {"column": f"COL{i}", "confidence": 20, "status": "generated"}
+            for i in range(40)
+        ]
+        vc = evaluate_kb_quality(model)["vocabulary_coverage"]
+        self.assertEqual(vc["total"], 40)
+        self.assertEqual(vc["covered"], 0)
+        self.assertEqual(len(vc["uncovered"]), 30)
+
+    def test_empty_model_yields_zero_pct(self):
+        vc = evaluate_kb_quality({"tables": [], "relationships": []})["vocabulary_coverage"]
+        self.assertEqual(vc, {"pct": 0.0, "covered": 0, "total": 0, "uncovered": []})
+
+
 if __name__ == "__main__":
     unittest.main()

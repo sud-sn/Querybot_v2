@@ -595,6 +595,38 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
         context,
         allowed_tables=query_scope_tables,
     )
+    # Value grounding: resolve user-typed filter literals ("emco corp") to
+    # exact database values ("EMCO Corporation") via the per-client value
+    # index, so the LLM writes WHERE literals that actually exist. The index
+    # covers high-cardinality display columns that schema discovery's
+    # 30-distinct-value cap excludes from the KB entirely.
+    verified_values_hint = ""
+    _value_clarify: list[dict] = []
+    try:
+        from core.value_index import value_index_enabled
+        from core.value_resolver import resolve_literals, build_verified_values_injection
+        if value_index_enabled(state):
+            _known_terms = {
+                str(c).lower() for cols in (all_columns or {}).values() for c in (cols or {})
+            }
+            _resolved_values = resolve_literals(
+                account_id, question, allowed_tables=query_scope_tables,
+                known_terms=_known_terms,
+            )
+            verified_values_hint = build_verified_values_injection(_resolved_values)
+            _value_clarify = _resolved_values.get("clarify") or []
+            if verified_values_hint or _value_clarify:
+                _trace_step(
+                    trace_id,
+                    "value_resolution",
+                    output_summary={
+                        "verified": len(_resolved_values.get("verified") or []),
+                        "in_lists": len(_resolved_values.get("in_lists") or []),
+                        "clarify": len(_value_clarify),
+                    },
+                )
+    except Exception as _vr_exc:
+        log.debug("Value resolution skipped: %s", _vr_exc)
     generic_hints = build_generic_query_hints(question)
     query_intent = analyze_query_intent(question)
     # Candidate metrics are account-wide. We delay injecting/enforcing them
@@ -654,12 +686,55 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
             term_injection,
             kb_synonym_injection,
             schema_grounded_hint,
+            verified_values_hint,
             generic_hints,
             context,
         )
         if part
     ]
     context_with_terms = "\n\n".join(context_parts)
+
+    # Value-resolution ambiguity across DIFFERENT columns ("Emco" matches a
+    # customer name AND an item description) can't be settled deterministically
+    # or by the LLM — ask the user, mirroring the metric-scope clarification.
+    if _value_clarify and not is_clarification:
+        _vc = _value_clarify[0]
+        _vc_options = [
+            {
+                "label": f"{opt['value']} ({opt.get('business_name') or opt['column']})",
+                "value": opt["value"],
+            }
+            for opt in (_vc.get("options") or [])[:5]
+        ]
+        if _vc_options:
+            clarifying_q = (
+                f"'{_vc['phrase']}' matches more than one thing in your data. "
+                f"Which one did you mean?"
+            )
+            if event.user_id:
+                save_pending(
+                    account_id,
+                    event.user_id,
+                    question,
+                    context_with_terms,
+                    clarification_meta={
+                        "term": _vc["phrase"],
+                        "options": _vc_options,
+                        "source": "value_resolver",
+                    },
+                )
+            send_prompt = getattr(adapter, "send_clarification_prompt", None)
+            if callable(send_prompt):
+                await send_prompt(event, clarifying_q, _vc_options)
+            else:
+                option_lines = "\n".join(f"  • {o['label']}" for o in _vc_options)
+                await adapter.send_message(
+                    event,
+                    f"❓ {clarifying_q}\n\n{option_lines}\n\n"
+                    "_Reply with one of the options above._",
+                )
+            return
+
     try:
         _semantic_model_context = build_runtime_semantic_context(
             state.get("kb_dir", ""),
@@ -1553,6 +1628,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                 tables_used=_zr_tables,
                 empty_tables=_zr_empty_tables,
                 semantic_plan=_semantic_plan,
+                account_id=account_id,
             ))
             return
 

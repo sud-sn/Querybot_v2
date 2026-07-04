@@ -5290,10 +5290,61 @@ async def model_health_page(request: Request, account_id: str):
         except Exception as exc:
             log.warning("model_health_page: failed for %s: %s", account_id, exc)
 
+    # Value-index stats for the health panel (literal-grounding coverage)
+    value_index_stats: dict = {}
+    try:
+        from core.value_index import load_index_stats
+        value_index_stats = load_index_stats(account_id)
+    except Exception:
+        pass
+
     return _resp(request, "client_model_health.html", {
         "client": client,
         "health": health,
+        "value_index_stats": value_index_stats,
     })
+
+
+@router.post("/clients/{account_id}/model-health/grain")
+async def model_health_approve_grain(
+    request: Request,
+    account_id: str,
+    table_fqn: str = Form(...),
+    grain: str = Form(...),
+):
+    """One-click grain approval from the Model Health page. Refreshes the
+    KB quality report immediately so the grain_needs_review warning clears."""
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    client = store.get_client(account_id)
+    if not client:
+        raise HTTPException(status_code=404)
+
+    state  = store.get_client_state(account_id)
+    kb_dir = (state or {}).get("kb_dir") or ""
+    from urllib.parse import quote
+    if not kb_dir:
+        return RedirectResponse(
+            f"/admin/clients/{account_id}/model-health?error={quote('No KB built yet')}",
+            status_code=303)
+
+    try:
+        from core.semantic_model import patch_grain_approval, load_semantic_model
+        from core.kb_quality import write_kb_quality_report
+        ok = patch_grain_approval(kb_dir=kb_dir, table_fqn=table_fqn, grain=grain)
+        if ok:
+            write_kb_quality_report(load_semantic_model(kb_dir), kb_dir)
+            log.info("Grain approved for %s %s: %r", account_id, table_fqn, grain.strip())
+            return RedirectResponse(
+                f"/admin/clients/{account_id}/model-health?saved=grain", status_code=303)
+        return RedirectResponse(
+            f"/admin/clients/{account_id}/model-health?error={quote('Table not found in the semantic model')}",
+            status_code=303)
+    except Exception as exc:
+        log.error("Grain approval failed for %s: %s", account_id, exc)
+        return RedirectResponse(
+            f"/admin/clients/{account_id}/model-health?error={quote('Grain approval failed: ' + str(exc)[:120])}",
+            status_code=303)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -6561,6 +6612,25 @@ async def admin_discover_schema(
             except Exception as _elog_exc:
                 log.warning("KB egress log (discovery) write failed for %s: %s",
                             account_id, _elog_exc)
+            # ── Value index (literal grounding) ────────────────────────────
+            # Harvest distinct values of filterable display columns so the
+            # query pipeline can resolve user-typed WHERE literals to exact
+            # DB values. Non-fatal; DB probing runs off the event loop.
+            try:
+                from core.value_index import build_value_index, value_index_enabled
+                if value_index_enabled(state_data_existing):
+                    from core.vocab_packs import vocab_for_account
+                    _vi_stats = await asyncio.to_thread(
+                        build_value_index, account_id, creds, db_type, schema_dir,
+                        vocab=vocab_for_account(account_id),
+                    )
+                    log.info(
+                        "Value index for %s: %s columns, %s values",
+                        account_id, _vi_stats.get("columns_indexed"),
+                        _vi_stats.get("values_indexed"),
+                    )
+            except Exception as _vi_exc:
+                log.warning("Value index build failed for %s: %s", account_id, _vi_exc)
             # ── Entity graph auto-populate ─────────────────────────────────
             try:
                 _schema_path = Path(schema_dir) / "_schema.json"
@@ -6596,6 +6666,53 @@ async def admin_discover_schema(
     from urllib.parse import quote
     return RedirectResponse(
         f"/admin/clients/{account_id}/setup?saved={quote('Schema discovery started — refresh in 60 seconds')}",
+        status_code=303)
+
+
+@router.post("/clients/{account_id}/value-index/refresh")
+async def admin_refresh_value_index(
+    request: Request,
+    account_id: str,
+    bg: BackgroundTasks,
+):
+    """Rebuild the literal-grounding value index without a full schema rescan
+    or KB rebuild — the lightweight freshness path when dimension values
+    change (new customers, new items)."""
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    client = store.get_client(account_id)
+    if not client:
+        return RedirectResponse("/admin/clients", status_code=303)
+    db_cfg_id = client.get("db_config_id")
+    raw = get_db_config(db_cfg_id) if db_cfg_id else None
+    if not raw:
+        from urllib.parse import quote
+        return RedirectResponse(
+            f"/admin/clients/{account_id}/model-health?error={quote('No database assigned')}",
+            status_code=303)
+
+    creds      = raw["credentials"]
+    db_type    = raw["db_type"]
+    state_data = json.loads(client.get("state_data") or "{}")
+    schema_dir = state_data.get("schema_dir") or str(Path("clients") / account_id / "schema")
+
+    async def _do_refresh():
+        try:
+            from core.value_index import build_value_index
+            from core.vocab_packs import vocab_for_account
+            stats = await asyncio.to_thread(
+                build_value_index, account_id, creds, db_type, schema_dir,
+                vocab=vocab_for_account(account_id),
+            )
+            log.info("Value index refreshed for %s: %s columns, %s values",
+                     account_id, stats.get("columns_indexed"), stats.get("values_indexed"))
+        except Exception as exc:
+            log.error("Value index refresh failed for %s: %s", account_id, exc)
+
+    bg.add_task(_do_refresh)
+    from urllib.parse import quote
+    return RedirectResponse(
+        f"/admin/clients/{account_id}/model-health?saved={quote('Value index refresh started')}",
         status_code=303)
 
 

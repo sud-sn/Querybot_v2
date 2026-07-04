@@ -87,6 +87,7 @@ def build_business_rca(
     retry_count: int = 0,
     graph_context: dict | None = None,
     semantic_plan: dict | None = None,
+    unmatched_literals: list[dict] | None = None,
 ) -> dict[str, Any]:
     tables = [str(t) for t in (tables_used or []) if str(t).strip()]
     empty = [str(t) for t in (empty_tables or []) if str(t).strip()]
@@ -107,6 +108,29 @@ def build_business_rca(
             "headline": "I could not produce a trusted answer for this question.",
             "most_likely_reason": "The generated SQL did not pass the validation checks.",
             "suggested_next_step": "Ask an administrator to review the field mapping or rephrase the question with a specific metric and table.",
+            "technical_notes": technical_notes,
+        }
+
+    # A filter value that matches nothing in the actual data is the most
+    # specific zero-row explanation available — takes precedence over the
+    # generic empty-table / join-path reasons.
+    if row_count == 0 and unmatched_literals:
+        first = unmatched_literals[0]
+        label = first.get("business_name") or first.get("column") or "value"
+        reason = f"There is no {label} matching '{first.get('literal')}' in the data."
+        closest = [c for c in (first.get("closest") or []) if c]
+        if closest:
+            listed = ", ".join(f"'{c}'" for c in closest[:3])
+            next_step = f"Closest values in your data: {listed} — try one of these."
+        else:
+            next_step = "Check the spelling, or ask without the filter to see the available values."
+        technical_notes.append(
+            f"Unmatched filter literal: {first.get('column')} = '{first.get('literal')}'"
+        )
+        return {
+            "headline": "I could not find matching records for this question.",
+            "most_likely_reason": reason,
+            "suggested_next_step": next_step,
             "technical_notes": technical_notes,
         }
 

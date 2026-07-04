@@ -233,9 +233,20 @@ def _build_zero_row_message(
     tables_used: list[str] | None = None,
     empty_tables: list[str] | None = None,
     semantic_plan: dict | None = None,
+    account_id: str = "",
 ) -> str:
     tables = tables_used or extract_sql_tables(sql)
     empty = empty_tables or []
+    # A WHERE literal that matches nothing in the value index is the most
+    # actionable zero-row explanation — the user gets the closest real values
+    # instead of a generic "no matching records".
+    unmatched_literals: list[dict] = []
+    if account_id:
+        try:
+            from core.value_resolver import find_unmatched_literals
+            unmatched_literals = find_unmatched_literals(sql, account_id)
+        except Exception as exc:
+            log.debug("Unmatched-literal check skipped: %s", exc)
     confidence = build_answer_confidence(
         validation_code=validation_code or "ok",
         row_count=0,
@@ -254,6 +265,7 @@ def _build_zero_row_message(
         retry_count=retry_count,
         graph_context=graph_ctx,
         semantic_plan=semantic_plan,
+        unmatched_literals=unmatched_literals,
     )
     return format_zero_row_business_response(
         confidence=confidence,
