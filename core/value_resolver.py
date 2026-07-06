@@ -53,6 +53,46 @@ def _stopwords() -> set[str]:
     return set(_COMMON_STOPWORDS)
 
 
+def build_known_terms(account_id: str, all_columns: dict | None) -> set[str]:
+    """
+    Terms that must NEVER be treated as literal-value candidates, even though
+    they are not schema column names.
+
+    Raw column names alone are not enough: a plain business/dimension word
+    like "customer" or "warehouse" is not itself a column name (the real
+    columns are CUS_NM, WHS_DMS...), so without this it gets extracted as a
+    candidate phrase and fuzzy-matched against real indexed VALUES that
+    happen to contain it as a substring ("Internal customer", "#864 EMCO PL
+    - BC WAREHOUSE") — hijacking a grouping/dimension question ("across each
+    customer", "which warehouse has...") into a bogus filter-value
+    disambiguation. Reusing the entity-prefix vocabulary (this account's
+    terminology pack, or the Infor M3 builtin) and the admin's business-term
+    glossary covers exactly this class of generic entity/dimension noun.
+    """
+    terms: set[str] = {
+        str(c).lower() for cols in (all_columns or {}).values() for c in (cols or {})
+    }
+    try:
+        from core.vocab_packs import vocab_for_account
+        for label in vocab_for_account(account_id).entity_prefixes.values():
+            for word in re.split(r"[^A-Za-z]+", label):
+                if word:
+                    terms.add(word.lower())
+    except Exception as exc:
+        log.debug("Entity-prefix known-terms lookup skipped: %s", exc)
+    try:
+        import store
+        for term_row in store.list_terms(account_id):
+            for phrase in [term_row.get("term", ""), *str(term_row.get("aliases") or "").split(",")]:
+                phrase = phrase.strip().lower()
+                if phrase:
+                    terms.add(phrase)
+                    terms.update(phrase.split())
+    except Exception as exc:
+        log.debug("Business-term known-terms lookup skipped: %s", exc)
+    return terms
+
+
 def extract_candidate_phrases(question: str, known_terms: set[str] | None = None) -> list[str]:
     """
     Conservative candidate extraction: quoted spans, capitalized multi-word

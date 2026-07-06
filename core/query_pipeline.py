@@ -604,11 +604,12 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
     _value_clarify: list[dict] = []
     try:
         from core.value_index import value_index_enabled
-        from core.value_resolver import resolve_literals, build_verified_values_injection
+        from core.value_resolver import (
+            resolve_literals, build_verified_values_injection,
+            build_known_terms,
+        )
         if value_index_enabled(state):
-            _known_terms = {
-                str(c).lower() for cols in (all_columns or {}).values() for c in (cols or {})
-            }
+            _known_terms = build_known_terms(account_id, all_columns)
             _resolved_values = resolve_literals(
                 account_id, question, allowed_tables=query_scope_tables,
                 known_terms=_known_terms,

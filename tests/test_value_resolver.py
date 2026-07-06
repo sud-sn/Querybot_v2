@@ -10,6 +10,7 @@ Question-time literal grounding:
   5. Pipeline wiring guards
 """
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -19,9 +20,19 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+# Isolate DB — this file's business-term glossary test writes through
+# store.save_term/list_terms and must never touch the real dev DB.
+_tmp_db = os.path.join(tempfile.mkdtemp(), "test_vr.db")
+os.environ["QUERYBOT_DB_PATH"] = _tmp_db
+for mod in list(sys.modules.keys()):
+    if mod.startswith("store"):
+        del sys.modules[mod]
+import store.db as db_mod
+db_mod.init_db()
+
 from core.value_index import build_value_index
 from core.value_resolver import (
-    build_verified_values_injection, extract_candidate_phrases,
+    build_known_terms, build_verified_values_injection, extract_candidate_phrases,
     find_unmatched_literals, resolve_literals,
 )
 
@@ -181,11 +192,80 @@ class FindUnmatchedLiteralsTests(unittest.TestCase):
         self.assertTrue(out and out[0]["literal"] == "Emko Corpp")
 
 
+class KnownTermsExcludeGenericDimensionWordsTests(unittest.TestCase):
+    """
+    Regression: raw column names alone are not enough for known_terms — a
+    plain business/dimension word like "customer" or "warehouse" is not
+    itself a column name (the real columns are CUS_NM, WHS_DMS...), so it
+    was falling through into candidate-phrase extraction and getting fuzzy-
+    matched against real indexed VALUES that happen to contain it as a
+    substring. Confirmed in production: "find revenue and cogs across each
+    customer" and "which warehouse has the highest..." both got hijacked
+    into a bogus filter-value clarification instead of being read as
+    grouping/dimension language, and picking a chip then filtered on that
+    value, producing zero rows for what should have been an aggregate-by
+    question.
+    """
+
+    def test_entity_prefix_vocabulary_words_are_known(self):
+        known = build_known_terms("acct_no_such_client", {})
+        for word in ("customer", "warehouse", "item", "order", "invoice"):
+            self.assertIn(word, known, word)
+
+    def test_customer_grouping_question_extracts_no_dimension_word(self):
+        known = build_known_terms("acct_no_such_client", {})
+        phrases = extract_candidate_phrases(
+            "find the revenue and cogs across each customer", known,
+        )
+        self.assertNotIn("customer", [p.lower() for p in phrases])
+
+    def test_warehouse_grouping_question_extracts_no_dimension_word(self):
+        known = build_known_terms("acct_no_such_client", {})
+        phrases = extract_candidate_phrases(
+            "Which warehouse has the highest ordered quantity but the "
+            "lowest invoiced quantity conversion rate?",
+            known,
+        )
+        self.assertNotIn("warehouse", [p.lower() for p in phrases])
+
+    def test_customer_word_no_longer_triggers_clarify_against_real_index(self):
+        # End-to-end: build a value index whose CUS_NM values happen to
+        # contain the word "customer" (exactly the production data shape:
+        # "Internal customer", "Cash Customer", "Temporary customer"), then
+        # confirm resolve_literals no longer flags it.
+        base = tempfile.mkdtemp()
+        _make_index(base, values_by_col={
+            "CUS_NM": ["Internal customer", "Cash Customer", "Temporary customer",
+                       "EMCO Corporation"],
+        })
+        known = build_known_terms("acct", {"EMCODW.EMDW_DMART.CUS_DMS": {"CUS_NM": "varchar"}})
+        resolved = resolve_literals(
+            "acct", "find the revenue and cogs across each customer",
+            known_terms=known, base_dir=base,
+        )
+        self.assertEqual(resolved["clarify"], [])
+        self.assertEqual(resolved["verified"], [])
+        self.assertEqual(resolved["in_lists"], [])
+
+    def test_business_term_glossary_entries_are_known(self):
+        import store
+        store.upsert_client("acct_glossary_test", "portal")
+        store.save_term(
+            "acct_glossary_test", "active customer", kind="filter",
+            canonical_expression="STATUS = 'Active'",
+            aliases="current customer, live customer",
+        )
+        known = build_known_terms("acct_glossary_test", {})
+        for word in ("active", "customer", "current", "live"):
+            self.assertIn(word, known, word)
+
+
 class PipelineWiringGuards(unittest.TestCase):
     def test_query_pipeline_resolves_before_prompt_build(self):
         src = (ROOT / "core" / "query_pipeline.py").read_text(encoding="utf-8")
         self.assertIn("resolve_literals", src)
         self.assertIn("build_verified_values_injection", src)
+        self.assertIn("build_known_terms", src)
         self.assertLess(src.index("resolve_literals"), src.index("build_sql_system_prompt("))
         self.assertIn("verified_values_hint", src)
         self.assertIn('"source": "value_resolver"', src)
