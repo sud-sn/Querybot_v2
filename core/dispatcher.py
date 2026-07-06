@@ -12,6 +12,7 @@ Covers:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 
@@ -238,18 +239,31 @@ async def handle_unregistered_user(account_id, zoom_user_id, event, adapter):
 async def _run_example_validation(
     account_id: str, kb_dir: str, chroma_dir: str, db_cfg: dict
 ) -> None:
-    """Step 2 — Validate Stage 2 SQL patterns against real DB in background."""
+    """Step 2 — Validate Stage 2 SQL patterns against real DB in background.
+
+    validate_and_store_examples() is synchronous and runs up to ~200 blocking
+    DB calls sequentially on one connection. Run it in the default executor
+    (thread pool), not directly on the event loop — otherwise a slow pattern
+    freezes every other request the whole app is serving, not just this KB
+    build. core/examples.py sets a per-query driver timeout so a single bad
+    pattern can't stall the batch itself; this wait_for is an outer ceiling
+    in case that somehow doesn't fire (e.g. a hung network read).
+    """
     try:
         from core.examples import validate_and_store_examples
-        count = validate_and_store_examples(
-            account_id  = account_id,
-            queries_dir = kb_dir,
-            credentials = db_cfg["credentials"],
-            db_type     = db_cfg["db_type"],
-            chroma_dir  = chroma_dir,
+        loop = asyncio.get_running_loop()
+        count = await asyncio.wait_for(
+            loop.run_in_executor(
+                None,
+                validate_and_store_examples,
+                account_id, kb_dir, db_cfg["credentials"], db_cfg["db_type"], chroma_dir,
+            ),
+            timeout=1200.0,  # 20 min ceiling for the whole batch
         )
         log.info("Example validation complete: %d validated examples for %s",
                  count, account_id)
+    except asyncio.TimeoutError:
+        log.error("Example validation timed out after 20 min for %s", account_id)
     except Exception as e:
         log.error("Example validation failed for %s: %s", account_id, e)
 

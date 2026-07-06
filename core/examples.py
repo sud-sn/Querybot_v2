@@ -129,23 +129,52 @@ def validate_and_store_examples(
     return len(validated)
 
 
+# Per-query ceiling for the validation batch. Each pattern probes a real
+# table with a LIMIT/TOP 1 — 20s is generous for that and matches the
+# admin metric Test-button probe timeout (admin/routes.py metrics_test_formula).
+# Without this, one slow pattern (full scan, lock wait) hangs the entire
+# sequential batch indefinitely — the DB driver enforces it, not asyncio,
+# since these are synchronous blocking calls on a single shared connection.
+_QUERY_TIMEOUT_SECONDS = 20
+
+
 def _open_connection(credentials: dict, db_type: str):
     """Open a single reusable DB connection for batch validation.
-    
+
     Uses the same credential key names as core/schema.py — the credentials
     dict comes from db_config.credentials_encrypted which stores keys
     matching the DB_REQUIRED_FIELDS definitions in config_store.py.
+
+    Sets a driver-enforced query timeout so a single slow validation pattern
+    raises instead of blocking the rest of the sequential batch forever.
     """
     try:
         if db_type == "snowflake":
             from core.schema import _sf_connect
-            return _sf_connect(credentials)
+            conn = _sf_connect(credentials)
+            try:
+                cur = conn.cursor()
+                cur.execute(f"ALTER SESSION SET STATEMENT_TIMEOUT_IN_SECONDS = {_QUERY_TIMEOUT_SECONDS}")
+                cur.close()
+            except Exception as e:
+                log.debug("Could not set Snowflake statement timeout: %s", e)
+            return conn
         elif db_type == "oracle":
             from core.schema import _ora_connect
-            return _ora_connect(credentials)
+            conn = _ora_connect(credentials)
+            try:
+                conn.call_timeout = _QUERY_TIMEOUT_SECONDS * 1000  # milliseconds
+            except Exception as e:
+                log.debug("Could not set Oracle call_timeout: %s", e)
+            return conn
         elif db_type == "azure_sql":
             from core.schema import _az_connect
-            return _az_connect(credentials)
+            conn = _az_connect(credentials)
+            try:
+                conn.timeout = _QUERY_TIMEOUT_SECONDS
+            except Exception as e:
+                log.debug("Could not set pyodbc timeout: %s", e)
+            return conn
     except Exception as e:
         log.error("Failed to open validation connection: %s", e)
         return None
