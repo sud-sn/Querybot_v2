@@ -403,9 +403,11 @@ def _compute_time_series_brief(
             "pct_change": pct,
         })
 
-    # Find biggest swings
-    biggest_drop = min(pop_changes, key=lambda x: x["absolute_change"])
-    biggest_gain = max(pop_changes, key=lambda x: x["absolute_change"])
+    # Find biggest swings — a single-period result (e.g. "which month has the
+    # highest X" resolving to one row) has no period-over-period change to
+    # compare; leave both None rather than crash on an empty pop_changes.
+    biggest_drop = min(pop_changes, key=lambda x: x["absolute_change"]) if pop_changes else None
+    biggest_gain = max(pop_changes, key=lambda x: x["absolute_change"]) if pop_changes else None
 
     # Peak and trough
     peak_i = max(range(n), key=lambda i: values[i])
