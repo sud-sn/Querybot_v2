@@ -1015,6 +1015,23 @@ def get_metric(metric_id: int) -> dict | None:
     return dict(row) if row else None
 
 
+def increment_metric_usage(account_id: str, names: list[str]) -> None:
+    """Bump usage_count for metrics matched on a query, for the Metric Registry
+    list's "Most used" sort and usage badge. Best-effort — never raises."""
+    names = [n for n in (names or []) if n]
+    if not names:
+        return
+    from store.db import get_db
+    placeholders = ",".join("?" * len(names))
+    with get_db() as conn:
+        _ensure_metric_registry_schema(conn)
+        conn.execute(
+            f"UPDATE metric_registry SET usage_count = COALESCE(usage_count, 0) + 1 "
+            f"WHERE account_id=? AND name IN ({placeholders})",
+            (account_id, *names),
+        )
+
+
 def update_metric(
     metric_id: int,
     updates: dict,

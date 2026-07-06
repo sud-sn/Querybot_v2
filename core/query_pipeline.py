@@ -969,6 +969,11 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
         return
 
     _matched_metrics = _metric_scope.metrics
+    if _matched_metrics:
+        try:
+            store.increment_metric_usage(account_id, [m.get("name") for m in _matched_metrics if m.get("name")])
+        except Exception as _usage_exc:
+            log.debug("Metric usage increment skipped: %s", _usage_exc)
     metric_formula_context = _format_metric_formula_context(_matched_metrics, account_id=account_id)
     _metric_formula_tables = set()
     for _metric in _matched_metrics:

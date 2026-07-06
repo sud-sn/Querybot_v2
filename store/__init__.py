@@ -4,7 +4,7 @@ from store.crypto import encrypt, decrypt, decrypt_json, mask
 from store.config_store import (
     save_metric, list_metrics, get_metric, update_metric,
     delete_metric, deprecate_metric, match_metric, list_metric_formula_context,
-    validate_metric_refs,
+    validate_metric_refs, increment_metric_usage,
     save_validated_example, get_validated_examples,
     harvest_successful_queries,
     load_schema_tables,
@@ -88,6 +88,7 @@ __all__ = [
     "save_entity_property","list_entity_properties","list_all_entity_properties","get_full_graph",
     "save_metric","list_metrics","get_metric","update_metric",
     "delete_metric","deprecate_metric","match_metric","list_metric_formula_context",
+    "increment_metric_usage",
     "save_platform","get_platform","list_platforms","delete_platform",
     "PLATFORM_FIELDS","PLATFORM_LABELS",
     "save_db_config","get_db_config","list_db_configs","delete_db_config",

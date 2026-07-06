@@ -1,5 +1,5 @@
 {% extends "client_base.html" %}
-{% from "macros.html" import breadcrumb %}
+{% from "macros.html" import breadcrumb, empty_state %}
 {% block title %}Metric Registry — {{ client.client_name }}{% endblock %}
 {% block breadcrumb %}
 {{ breadcrumb([
@@ -189,8 +189,11 @@
 .mr-sep{color:var(--border-strong,#CBD5E0);font-size:13px;flex-shrink:0}
 .mr-formula-preview{font-family:Consolas,monospace;font-size:11px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0;cursor:default}
 .mr-synonyms{font-size:10px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:140px;flex-shrink:0}
+.mr-usage{font-size:10px;font-weight:800;color:var(--text-muted);background:var(--surface-2);border:1px solid var(--border);border-radius:999px;padding:1px 8px;flex-shrink:0;white-space:nowrap}
 .mr-actions{display:flex;gap:.3rem;align-items:center;margin-left:auto;flex-shrink:0;padding-left:.5rem}
 .metric-row-expand{border-top:1px solid var(--border);padding:1rem;background:color-mix(in srgb,var(--surface-2) 72%,var(--surface))}
+.mr-edit-sect{font-size:10px;font-weight:900;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted);margin:1rem 0 .4rem;padding-top:.6rem;border-top:1px solid var(--border)}
+.mr-edit-sect:first-child{margin-top:0;padding-top:0;border-top:none}
 .mr-del-btn{background:none;border:1px solid transparent;border-radius:5px;cursor:pointer;color:var(--text-muted);font-size:12px;padding:3px 7px;line-height:1;transition:all .12s;white-space:nowrap}
 .mr-del-btn:hover{background:var(--red-light,#FEE2E2);color:var(--red,#DC2626);border-color:color-mix(in srgb,var(--red,#DC2626) 30%,transparent)}
 /* ── Status badges ──────────────────────────────────────────────────── */
@@ -236,6 +239,56 @@
 .metric-ai-import-status{font-size:11px;font-weight:700}
 .metric-ai-import-status[data-tone="ok"]{color:#166534}
 .metric-ai-import-status[data-tone="err"]{color:#b91c1c}
+
+/* ── Create-metric wizard (stepper copied from client_setup.html) ─────────── */
+.mc-wizard-bar{padding:.6rem 1.25rem 0}
+.wizard-steps{display:flex;align-items:center;margin-bottom:.35rem;padding:.6rem .9rem;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow)}
+.wizard-step{display:flex;align-items:center;gap:.45rem;flex-shrink:0}
+.mc-wizard-bar .wizard-step:not(:last-child){flex:1}
+.wizard-step-circle{width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;flex-shrink:0;border:2px solid var(--border);color:var(--text-muted);background:var(--surface-2);transition:background .2s,border-color .2s,color .2s}
+.wizard-step.done .wizard-step-circle{background:var(--green);border-color:var(--green);color:#fff}
+.wizard-step.active .wizard-step-circle{background:var(--blue);border-color:var(--blue);color:#fff}
+.wizard-step-label{font-size:12px;font-weight:700;color:var(--text-muted);white-space:nowrap}
+.wizard-step.done .wizard-step-label{color:var(--green)}
+.wizard-step.active .wizard-step-label{color:var(--blue)}
+.wizard-step-line{flex:1;height:2px;background:var(--border);margin:0 .65rem;border-radius:1px;min-width:16px;transition:background .2s}
+.wizard-step-line.done{background:var(--green)}
+.wizard-step.visited{cursor:pointer}
+.wizard-step.visited .wizard-step-circle{cursor:pointer}
+@media(max-width:560px){.mc-wizard-bar .wizard-step-label{display:none}}
+
+/* Step visibility — driven purely by #mc-form[data-step] */
+#mc-form .mc-step{display:none}
+#mc-form[data-step="1"] .mc-step[data-step="1"]{display:block}
+#mc-form[data-step="2"] .mc-step[data-step="2"]{display:block}
+#mc-form[data-step="3"] .mc-step[data-step="3"]{display:block}
+#mc-form[data-step="1"] .mc-right{display:none}
+#mc-form:not([data-step="3"]) .mc-footer [type="submit"]{display:none}
+#mc-form[data-step="1"] #mc-back{display:none}
+#mc-form[data-step="3"] #mc-next{display:none}
+#mc-form .mc-legacy{display:none}
+/* No-code modes never show the raw SQL editor */
+#mc-form[data-mc-mode="aggregate"] .mc-formula-group,
+#mc-form[data-mc-mode="date_gap"] .mc-formula-group{display:none}
+
+/* Mode cards */
+.mc-mode-cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.6rem;margin-bottom:.8rem}
+.mc-mode-card{display:flex;flex-direction:column;align-items:flex-start;gap:.3rem;text-align:left;padding:.75rem .85rem;border:1.5px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);cursor:pointer;box-shadow:var(--shadow-sm);transition:border-color .15s,box-shadow .15s,transform .15s;font:inherit;color:var(--text)}
+.mc-mode-card:hover{border-color:color-mix(in srgb,var(--primary) 45%,var(--border));transform:translateY(-1px);box-shadow:var(--shadow)}
+.mc-mode-card.selected{border-color:var(--primary);background:color-mix(in srgb,var(--primary-soft) 55%,var(--surface));box-shadow:0 0 0 3px color-mix(in srgb,var(--primary) 14%,transparent)}
+.mc-mode-title{font-size:13px;font-weight:800}
+.mc-mode-desc{font-size:11px;color:var(--text-muted);line-height:1.45}
+.mc-mode-tag{font-size:9px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;padding:2px 7px;border-radius:999px;margin-top:.15rem}
+.mc-mode-tag.no-sql{background:var(--green-light);color:var(--green)}
+.mc-mode-tag.sql{background:var(--blue-light);color:var(--blue)}
+.mc-row-subtoggle{display:flex;align-items:center;gap:.45rem;margin:-.3rem 0 .8rem}
+#mc-form[data-mc-mode="expression"] .mc-row-subtoggle,
+#mc-form[data-mc-mode="row_calculated"] .mc-row-subtoggle{display:flex !important}
+@media(max-width:700px){.mc-mode-cards{grid-template-columns:1fr}}
+
+/* Review host */
+[data-mc-review]{display:flex;flex-direction:column;gap:.6rem;margin-bottom:.8rem}
+.mc-review-formula{background:var(--code-bg,#0f172a);color:var(--code-text,#e2e8f0);border-radius:var(--radius-sm);padding:.65rem .8rem;font-family:Consolas,monospace;font-size:12px;line-height:1.5;white-space:pre-wrap;word-break:break-word;margin:0;max-height:180px;overflow-y:auto}
 .metric-builder-join-actions{display:flex;align-items:center;gap:.45rem;flex-wrap:wrap;margin-top:.45rem}
 .metric-builder-join-template{font-size:11px}
 .metric-builder-join-status{font-size:11px;font-weight:800;border:1px solid var(--border);border-radius:999px;padding:3px 8px;color:var(--text-muted);background:var(--surface-2)}
@@ -336,6 +389,11 @@
 {% set formula_count = metric_list | selectattr('formula_type', 'equalto', 'expression') | list | length %}
 {% set direct_sql_count = (metric_list | length) - formula_count %}
 {% set active_count = metric_list | selectattr('is_active') | list | length %}
+{% set attn_ns = namespace(count=0) %}
+{% for m in metric_list %}
+  {% set _attn_errs = m.validation_errors | from_json %}
+  {% if m.metric_status == 'draft' or _attn_errs %}{% set attn_ns.count = attn_ns.count + 1 %}{% endif %}
+{% endfor %}
 
 <div class="metrics-shell">
 
@@ -375,9 +433,9 @@
     <small>Pre-authored result queries</small>
   </div>
   <div class="metrics-stat">
-    <span>Active</span>
-    <strong>{{ active_count }}</strong>
-    <small>Available to chat runtime</small>
+    <span>Needs attention</span>
+    <strong>{{ attn_ns.count }}</strong>
+    <small>Drafts or metrics with validation errors</small>
   </div>
 </div>
 
@@ -399,9 +457,38 @@
       <h2><span class="mc-fx-badge">fx</span> New Metric</h2>
       <button class="mc-dialog-close" onclick="closeMetricDialog()" aria-label="Close">✕</button>
     </div>
-    <form method="post" action="/admin/clients/{{ client.account_id }}/metrics/create" class="metric-form" id="mc-form">
+    <form method="post" action="/admin/clients/{{ client.account_id }}/metrics/create" class="metric-form" id="mc-form" data-step="1">
+      <div class="mc-wizard-bar">
+        <div class="wizard-steps">
+          <div class="wizard-step active" data-goto="1" onclick="_mcGoToStep(1)">
+            <span class="wizard-step-circle">1</span>
+            <span class="wizard-step-label">Describe</span>
+            <span class="wizard-step-line"></span>
+          </div>
+          <div class="wizard-step" data-goto="2" onclick="_mcGoToStep(2)">
+            <span class="wizard-step-circle">2</span>
+            <span class="wizard-step-label">Calculate</span>
+            <span class="wizard-step-line"></span>
+          </div>
+          <div class="wizard-step" data-goto="3" onclick="_mcGoToStep(3)">
+            <span class="wizard-step-circle">3</span>
+            <span class="wizard-step-label">Review &amp; test</span>
+          </div>
+        </div>
+      </div>
       <div class="mc-body">
         <div class="mc-left">
+          <div class="mc-step" data-step="1">
+          <div class="metric-ai-import">
+            <label>✨ AI import — paste a DAX measure or describe the metric in plain English, and we'll fill the rest</label>
+            <textarea class="metric-ai-import-text" rows="3" placeholder="Paste a Power BI DAX measure here, or describe it: average days between due date and payment date per invoice; unpaid overdue invoices count days up to today, not-yet-due count as 0"></textarea>
+            <div class="metric-builder-join-actions">
+              <button type="button" class="btn btn-secondary btn-xs" onclick="aiImportMetric(this)">Generate config with AI</button>
+              <span class="metric-ai-import-status"></span>
+            </div>
+            <p class="form-note">Nothing is saved automatically — the wizard is pre-filled for your review. You'll land on Review &amp; test to verify before saving.</p>
+          </div>
+
           <div class="form-grid">
             <div class="form-group">
               <label>Metric name *</label>
@@ -418,14 +505,12 @@
             </div>
           </div>
 
-          <div class="metric-meta-grid">
-            <div class="form-group">
-              <label>Builder mode</label>
-              <select name="formula_type" class="formula-type-select">
-                <option value="expression" selected>Formula expression</option>
-                <option value="query">Full SQL query</option>
-              </select>
-            </div>
+          <div class="form-group">
+            <label>Description</label>
+            <input type="text" name="description" placeholder="Net profit percentage after rebates and allocated costs.">
+          </div>
+
+          <div class="metric-meta-grid two">
             <div class="form-group">
               <label>Result format</label>
               <select name="result_format">
@@ -437,13 +522,6 @@
               </select>
             </div>
             <div class="form-group">
-              <label>Grain</label>
-              <input type="text" name="grain" placeholder="e.g. customer, month, order">
-            </div>
-          </div>
-
-          <div class="metric-meta-grid two">
-            <div class="form-group">
               <label>Category / Domain</label>
               <input type="text" name="category" list="category-options"
                 placeholder="e.g. Finance, Sales, Operations">
@@ -454,32 +532,55 @@
               </datalist>
               <p class="form-note">Group metrics by business domain for filtering.</p>
             </div>
-            <div class="form-group">
-              <label>Default time column</label>
-              <select name="default_time_column" class="time-col-select add-time-col-select">
-                <option value="">— none —</option>
-              </select>
-              <p class="form-note">Date column used when grouping by period.</p>
-            </div>
+          </div>
+          </div><!-- /.mc-step 1 -->
+
+          <div class="mc-step" data-step="2">
+          <div class="mc-mode-cards">
+            <button type="button" class="mc-mode-card" data-mode="aggregate" onclick="selectMcModeCard(this)">
+              <span class="mc-mode-title">Total / filtered total</span>
+              <span class="mc-mode-desc">Sum, average, or count a column — optionally filtered (e.g. revenue where status is Active).</span>
+              <span class="mc-mode-tag no-sql">No SQL</span>
+            </button>
+            <button type="button" class="mc-mode-card" data-mode="date_gap" onclick="selectMcModeCard(this)">
+              <span class="mc-mode-title">Days between two dates</span>
+              <span class="mc-mode-desc">Gap between two date roles (e.g. due date → payment date), with overdue handling.</span>
+              <span class="mc-mode-tag no-sql">No SQL</span>
+            </button>
+            <button type="button" class="mc-mode-card" data-mode="expression" onclick="selectMcModeCard(this)">
+              <span class="mc-mode-title">Advanced SQL expression</span>
+              <span class="mc-mode-desc">Write the aggregate formula yourself with autocomplete and function help.</span>
+              <span class="mc-mode-tag sql">SQL</span>
+            </button>
+            <button type="button" class="mc-mode-card" data-mode="query" onclick="selectMcModeCard(this)">
+              <span class="mc-mode-title">Full SQL query</span>
+              <span class="mc-mode-desc">A complete SELECT statement for metrics that need total control.</span>
+              <span class="mc-mode-tag sql">SQL</span>
+            </button>
+          </div>
+          <div class="mc-row-subtoggle" style="display:none">
+            <label style="font-size:12px;font-weight:700;color:var(--text-soft)">Expression kind:</label>
+            <button type="button" class="ui-chip active" data-rowmode="0" onclick="selectMcRowMode(this)">Aggregate formula</button>
+            <button type="button" class="ui-chip" data-rowmode="1" onclick="selectMcRowMode(this)">Per-row expression</button>
           </div>
 
-          <div class="metric-ai-import">
-            <label>✨ AI import — paste a DAX measure or describe the metric in plain English</label>
-            <textarea class="metric-ai-import-text" rows="3" placeholder="Paste a Power BI DAX measure here, or describe it: average days between due date and payment date per invoice; unpaid overdue invoices count days up to today, not-yet-due count as 0"></textarea>
-            <div class="metric-builder-join-actions">
-              <button type="button" class="btn btn-secondary btn-xs" onclick="aiImportMetric(this)">Generate config with AI</button>
-              <span class="metric-ai-import-status"></span>
+          <div class="mc-legacy">
+            <div class="form-group">
+              <label>Builder mode</label>
+              <select name="formula_type" class="formula-type-select">
+                <option value="expression" selected>Formula expression</option>
+                <option value="query">Full SQL query</option>
+              </select>
             </div>
-            <p class="form-note">Nothing is saved automatically — the form below is pre-filled for your review. Use ▶ Test to verify against the database before saving.</p>
           </div>
           <input type="hidden" name="metric_builder_config" class="metric-builder-config" value="">
           <div class="metric-builder">
             <div class="metric-builder-head">
-              <label><input type="checkbox" class="metric-builder-enabled"> No-code measure builder</label>
+              <label class="mc-legacy"><input type="checkbox" class="metric-builder-enabled"> No-code measure builder</label>
               <button type="button" class="btn btn-secondary btn-xs metric-builder-add-filter" onclick="addMetricFilterRow(this)">+ Filter</button>
             </div>
             <div class="metric-builder-body">
-              <div class="metric-builder-grid">
+              <div class="metric-builder-grid mc-legacy">
                 <div>
                   <label>Calculation mode</label>
                   <select class="metric-builder-mode">
@@ -614,28 +715,56 @@
           </div>
 
           <div class="form-group">
+            <label>Source table</label>
+            <input type="text" name="base_table" class="base-table-input"
+              placeholder="e.g. dbo.SalesOrders" autocomplete="off">
+            <p class="form-note">The fact table this metric aggregates over — powers date-role loading and column validation.</p>
+          </div>
+
+          <div class="form-group mc-formula-group">
             <div class="formula-label-row">
               <label class="formula-label">Approved formula *</label>
               <button type="button" class="fn-helper-btn" onclick="openFnHelper(this)">ƒ Functions</button>
-              <button type="button" class="formula-test-btn" onclick="testFormula(this)">▶ Test</button>
-              <button type="button" class="formula-test-btn" style="background:var(--blue-light);border-color:color-mix(in srgb,var(--blue) 25%,transparent);color:var(--blue)" onclick="liveValidate(this)">✓ Validate</button>
             </div>
             <textarea name="sql_template" rows="4" required class="formula-editor"
               spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off"
               placeholder="SUM(NetProfit) * 100.0 / NULLIF(SUM(Revenue), 0)"></textarea>
-            <div class="validate-result"></div>
             <p class="form-note">
               Expression: write only the aggregate formula. Full SQL: write a complete SELECT.
             </p>
           </div>
+          </div><!-- /.mc-step 2 -->
+
+          <div class="mc-step" data-step="3">
+          <div data-mc-review></div>
 
           <div class="form-group">
-            <label>Description</label>
-            <input type="text" name="description" placeholder="Net profit percentage after rebates and allocated costs.">
+            <div class="formula-label-row">
+              <label class="formula-label">Verify against the database</label>
+              <button type="button" class="formula-test-btn" onclick="testFormula(this)">▶ Test</button>
+              <button type="button" class="formula-test-btn" style="background:var(--blue-light);border-color:color-mix(in srgb,var(--blue) 25%,transparent);color:var(--blue)" onclick="liveValidate(this)">✓ Validate</button>
+            </div>
+            <div class="validate-result"></div>
+            <p class="form-note">▶ Test runs the formula against your live data. ✓ Validate checks syntax and column names.</p>
           </div>
+
           <div class="form-group">
             <label>Example questions</label>
             <textarea name="example_questions" rows="2" placeholder="What is profit percentage by customer?&#10;Show net profit by segment."></textarea>
+          </div>
+
+          <div class="metric-meta-grid two">
+            <div class="form-group">
+              <label>Grain</label>
+              <input type="text" name="grain" placeholder="e.g. customer, month, order">
+            </div>
+            <div class="form-group">
+              <label>Default time column</label>
+              <select name="default_time_column" class="time-col-select add-time-col-select">
+                <option value="">— none —</option>
+              </select>
+              <p class="form-note">Date column used when grouping by period.</p>
+            </div>
           </div>
 
           <!-- Advanced (collapsed by default) -->
@@ -656,19 +785,15 @@
               </div>
               <div class="metric-meta-grid two">
                 <div class="form-group">
-                  <label>Base table</label>
-                  <input type="text" name="base_table" class="base-table-input"
-                    placeholder="e.g. dbo.SalesOrders" autocomplete="off">
-                  <p class="form-note">Primary table — enables column validation.</p>
-                </div>
-                <div class="form-group">
                   <label>Base entity</label>
                   <input type="text" name="base_entity" placeholder="e.g. Order, Customer">
                   <p class="form-note">Entity graph node — enables dimension pickers.</p>
                 </div>
+                <div></div>
               </div>
             </div>
           </details>
+          </div><!-- /.mc-step 3 -->
 
         </div><!-- /.mc-left -->
 
@@ -710,7 +835,10 @@ SUM(NetProfit) * 100.0 / NULLIF(SUM(Revenue), 0)
 
       <div class="mc-footer">
         <button type="button" class="btn btn-secondary" onclick="closeMetricDialog()">Cancel</button>
-        <button type="submit" class="btn btn-primary">Add formula</button>
+        <span style="flex:1"></span>
+        <button type="button" class="btn btn-secondary" id="mc-back" onclick="_mcGoToStep(parseInt(document.getElementById('mc-form').dataset.step||'1',10)-1)">← Back</button>
+        <button type="button" class="btn btn-primary" id="mc-next" onclick="_mcGoToStep(parseInt(document.getElementById('mc-form').dataset.step||'1',10)+1)">Next →</button>
+        <button type="submit" class="btn btn-primary">Save metric</button>
       </div>
     </form>
   </div><!-- /#mc-dialog -->
@@ -736,11 +864,13 @@ SUM(NetProfit) * 100.0 / NULLIF(SUM(Revenue), 0)
     <button class="filter-chip active" data-filter="all"        onclick="setChip(this,'all')">All</button>
     <button class="filter-chip"        data-filter="expression" onclick="setChip(this,'expression')">Formula</button>
     <button class="filter-chip"        data-filter="query"      onclick="setChip(this,'query')">Direct SQL</button>
+    <button class="filter-chip"        data-filter="draft"      onclick="setChip(this,'draft')">Draft</button>
     <button class="filter-chip"        data-filter="inactive"   onclick="setChip(this,'inactive')">Inactive</button>
   </div>
   <select id="metricSort" onchange="applyFilters()" title="Sort metrics">
     <option value="name-asc">Name A–Z</option>
     <option value="name-desc">Name Z–A</option>
+    <option value="usage-desc">Most used</option>
     <option value="type">By Type</option>
     <option value="category">By Category</option>
   </select>
@@ -759,13 +889,19 @@ SUM(NetProfit) * 100.0 / NULLIF(SUM(Revenue), 0)
      data-type="{{ m_type }}"
      data-active="{{ '1' if m.is_active else '0' }}"
      data-status="{{ m_status }}"
+     data-usage="{{ m.usage_count or 0 }}"
      data-category="{{ (m.category or '') | lower }}">
 
   <!-- ── Compact row (always visible) ── -->
   <div class="metric-row-head">
     <span class="mr-name">{{ m.name }}</span>
     <span class="metric-kind {{ m_type }}">{{ "Formula" if m_type == "expression" else "Direct SQL" }}</span>
+    {% if m_status in ('validated',) %}<span class="status-pill ok"><span class="status-dot"></span>Validated</span>
+    {% elif m_status in ('published',) %}<span class="status-pill ok"><span class="status-dot"></span>Live</span>
+    {% elif m_status in ('draft',) %}<span class="status-pill warning"><span class="status-dot"></span>Draft</span>
+    {% elif m_status in ('deprecated',) %}<span class="status-pill error"><span class="status-dot"></span>Deprecated</span>{% endif %}
     {% if m.category %}<span class="cat-badge">{{ m.category }}</span>{% endif %}
+    {% if (m.usage_count or 0) > 0 %}<span class="mr-usage" title="Times this metric was used to answer questions">{{ m.usage_count }}× used</span>{% endif %}
     {% if _errs %}<span style="font-size:10px;color:var(--red,#DC2626);flex-shrink:0" title="{{ _errs | join(', ') }}">⚠ {{ _errs | length }} error{{ 's' if _errs | length != 1 }}</span>{% endif %}
     <span class="mr-sep">·</span>
     <span class="mr-formula-preview" title="{{ m.sql_template | e }}">{{ m.sql_template }}</span>
@@ -779,11 +915,13 @@ SUM(NetProfit) * 100.0 / NULLIF(SUM(Revenue), 0)
   <!-- ── Expand: full edit form (hidden by default) ── -->
   <div class="metric-row-lineage">
     <span class="meta-pill">{{ (m.result_format or 'number') | capitalize }}</span>
+    {% if m.last_validated_at %}<span class="meta-pill" title="Last validated">✓ {{ m.last_validated_at[:10] }}</span>{% endif %}
   </div>
 
   <div id="edit-{{ m.id }}" class="metric-row-expand" style="display:none">
     <form method="post" action="/admin/clients/{{ client.account_id }}/metrics/{{ m.id }}/update" class="metric-form">
       <input type="hidden" name="skip_id" value="{{ m.id }}">
+      <div class="mr-edit-sect">Identity</div>
       <div class="metric-meta-grid two" style="margin-bottom:.75rem">
         <div class="form-group">
           <label>Metric name *</label>
@@ -797,6 +935,7 @@ SUM(NetProfit) * 100.0 / NULLIF(SUM(Revenue), 0)
           <div class="collision-warn" id="edit-collision-warn-{{ m.id }}"></div>
         </div>
       </div>
+      <div class="mr-edit-sect">Calculation</div>
       <div class="metric-meta-grid" style="margin-bottom:.75rem">
         <div class="form-group">
           <label>Builder mode</label>
@@ -971,16 +1110,7 @@ SUM(NetProfit) * 100.0 / NULLIF(SUM(Revenue), 0)
         <!-- Compact inline syntax hint bar — unblocks updateFormulaHints for edit forms -->
         <div class="formula-status syntax-panel" style="font-size:11px;margin-top:.35rem;padding:.35rem .6rem;min-height:0;display:none"></div>
       </div>
-      <div class="metric-meta-grid two" style="margin-bottom:.75rem">
-        <div class="form-group">
-          <label>Required columns</label>
-          <input type="text" name="required_columns" value="{{ m.required_columns }}">
-        </div>
-        <div class="form-group">
-          <label>Allowed dimensions</label>
-          <input type="text" name="allowed_dimensions" value="{{ m.allowed_dimensions }}">
-        </div>
-      </div>
+      <div class="mr-edit-sect">Metadata</div>
       <div class="metric-meta-grid two" style="margin-bottom:.75rem">
         <div class="form-group">
           <label>Category / Domain</label>
@@ -998,18 +1128,6 @@ SUM(NetProfit) * 100.0 / NULLIF(SUM(Revenue), 0)
           </select>
         </div>
       </div>
-      <div class="metric-meta-grid two" style="margin-bottom:.75rem">
-        <div class="form-group">
-          <label>Base table</label>
-          <input type="text" name="base_table" class="base-table-input"
-            value="{{ m.base_table or '' }}" placeholder="e.g. dbo.SalesOrders" autocomplete="off">
-        </div>
-        <div class="form-group">
-          <label>Base entity</label>
-          <input type="text" name="base_entity"
-            value="{{ m.base_entity or '' }}" placeholder="e.g. Order, Customer">
-        </div>
-      </div>
       <div class="form-group">
         <label>Description</label>
         <input type="text" name="description" value="{{ m.description }}">
@@ -1018,6 +1136,35 @@ SUM(NetProfit) * 100.0 / NULLIF(SUM(Revenue), 0)
         <label>Example questions</label>
         <textarea name="example_questions" rows="2">{{ m.example_questions }}</textarea>
       </div>
+
+      <div class="mr-edit-sect">Advanced</div>
+      <details class="metric-advanced" {% if _errs %}open{% endif %}>
+        <summary class="metric-advanced-toggle">Advanced options</summary>
+        <div class="metric-advanced-body">
+          <div class="metric-meta-grid two">
+            <div class="form-group">
+              <label>Required columns</label>
+              <input type="text" name="required_columns" value="{{ m.required_columns }}">
+            </div>
+            <div class="form-group">
+              <label>Allowed dimensions</label>
+              <input type="text" name="allowed_dimensions" value="{{ m.allowed_dimensions }}">
+            </div>
+          </div>
+          <div class="metric-meta-grid two">
+            <div class="form-group">
+              <label>Base table</label>
+              <input type="text" name="base_table" class="base-table-input"
+                value="{{ m.base_table or '' }}" placeholder="e.g. dbo.SalesOrders" autocomplete="off">
+            </div>
+            <div class="form-group">
+              <label>Base entity</label>
+              <input type="text" name="base_entity"
+                value="{{ m.base_entity or '' }}" placeholder="e.g. Order, Customer">
+            </div>
+          </div>
+        </div>
+      </details>
 
       {# Stored validation errors #}
       {% if _errs %}
@@ -1042,14 +1189,17 @@ SUM(NetProfit) * 100.0 / NULLIF(SUM(Revenue), 0)
 
 </div>
 {% endfor %}
-<div id="metricsEmpty" style="display:none;text-align:center;padding:2rem;color:var(--text-muted);font-size:13px;border:1px dashed var(--border);border-radius:var(--radius);margin-bottom:1rem">
-  No metrics match your search or filter.
+<div id="metricsEmpty" style="display:none">
+  {{ empty_state('filter', 'No metrics match your search or filter', 'Try a different search term or clear the active filter chip.') }}
 </div>
 </div><!-- /#metricsListWrap -->
 {% else %}
 <div class="card">
-  <div class="card-body" style="text-align:center;padding:2rem;color:var(--text-muted)">
-    No approved metrics yet. Add your first formula above.
+  <div class="card-body">
+    {{ empty_state('inbox', 'No metrics yet', 'Metrics give the chat runtime an approved, reusable definition for a business measure — total revenue, churn rate, days to pay.') }}
+    <div style="text-align:center;margin-top:-.5rem">
+      <button type="button" class="btn btn-primary btn-sm" onclick="openMetricDialog()">fx New Metric</button>
+    </div>
   </div>
 </div>
 {% endif %}
@@ -2170,7 +2320,7 @@ function _ensureMetricUxPanels(form){
         + '<div class="metric-preview-title"><span>Generated formula</span><span>Saved into approved formula</span></div>');
     }
     if(!form.querySelector(".metric-lineage")){
-      builder.insertAdjacentHTML("afterend",
+      var lineageHtml =
         '<div class="metric-lineage">'
         + '<div class="metric-lineage-title">Metric lineage before publish</div>'
         + '<div class="metric-lineage-grid">'
@@ -2180,7 +2330,19 @@ function _ensureMetricUxPanels(form){
         + '<div class="metric-lineage-item"><div class="metric-lineage-k">Time column</div><div class="metric-lineage-v" data-lineage="time"></div></div>'
         + '<div class="metric-lineage-item"><div class="metric-lineage-k">Result format</div><div class="metric-lineage-v" data-lineage="format"></div></div>'
         + '<div class="metric-lineage-item"><div class="metric-lineage-k">Mode</div><div class="metric-lineage-v" data-lineage="mode"></div></div>'
-        + '</div></div>');
+        + '</div></div>';
+      // Wizard forms host the lineage grid on the Review & test step;
+      // inline edit forms keep the original placement after the builder.
+      var reviewHost = form.querySelector("[data-mc-review]");
+      if(reviewHost){
+        reviewHost.insertAdjacentHTML("beforeend",
+          '<div class="metric-builder-human" data-builder-human></div>'
+          + '<div class="metric-preview-title"><span>Generated formula</span><span>Saved into approved formula</span></div>'
+          + '<pre class="mc-review-formula" data-mc-review-formula>—</pre>'
+          + lineageHtml);
+      } else {
+        builder.insertAdjacentHTML("afterend", lineageHtml);
+      }
     }
   }
   _updateMetricUxPanels(form);
@@ -2189,11 +2351,13 @@ function _ensureMetricUxPanels(form){
 function _updateMetricUxPanels(form){
   if(!form) return;
   var fmt = (form.querySelector("[name='result_format']") || {}).value || "number";
-  var sample = form.querySelector("[data-format-preview]");
-  if(sample) sample.textContent = _metricFormatSample(fmt);
+  form.querySelectorAll("[data-format-preview]").forEach(function(sample){
+    sample.textContent = _metricFormatSample(fmt);
+  });
   var config = _collectMetricBuilderConfig(form);
-  var human = form.querySelector("[data-builder-human]");
-  if(human) human.textContent = _metricBuilderHumanSummary(config);
+  form.querySelectorAll("[data-builder-human]").forEach(function(human){
+    human.textContent = _metricBuilderHumanSummary(config);
+  });
   var source = _listFromInput(form, "base_table") || _listFromInput(form, "base_entity") || "Not selected";
   var cols = _listFromInput(form, "required_columns");
   if(!cols && config.enabled){
@@ -2204,8 +2368,9 @@ function _updateMetricUxPanels(form){
   var mode = ((form.querySelector("[name='formula_type']") || {}).value || "expression") === "query" ? "Full SQL query" : "Formula expression";
   var pairs = { source: source, columns: cols || "Auto from formula", dimensions: dims, time: time, format: fmt + " (" + _metricFormatSample(fmt) + ")", mode: mode };
   Object.keys(pairs).forEach(function(key){
-    var el = form.querySelector("[data-lineage='"+key+"']");
-    if(el) el.textContent = pairs[key];
+    form.querySelectorAll("[data-lineage='"+key+"']").forEach(function(el){
+      el.textContent = pairs[key];
+    });
   });
 }
 
@@ -2814,6 +2979,15 @@ window.aiImportMetric = async function(btn){
       status.textContent = "Config generated — review the fields below, then ▶ Test before saving.";
     }
     _updateMetricUxPanels(form);
+    // Wizard: the AI filled every step — select the matching mode card and
+    // land the admin straight on Review & test.
+    if(form.id === "mc-form"){
+      var _aiCfgMode = (data.config && data.config.mode) || "";
+      var _aiFt = (form.querySelector(".formula-type-select")||{}).value || "expression";
+      _mcSelectCardForConfig(form, _aiCfgMode, _aiFt);
+      _mcVisited = {1:true, 2:true, 3:true};
+      _mcGoToStep(3);
+    }
   } catch(err) {
     if(status){ status.dataset.tone = "err"; status.textContent = "AI import failed: " + err.message; }
   } finally {
@@ -3257,6 +3431,7 @@ window.applyFilters = function(){
     if(_activeFilter === "expression") filterOk = type === "expression";
     else if(_activeFilter === "query") filterOk = type === "query";
     else if(_activeFilter === "inactive") filterOk = active === "0";
+    else if(_activeFilter === "draft") filterOk = status === "draft";
     else if(_activeFilter !== "all"){
       // category chip
       filterOk = cat === _activeFilter;
@@ -3273,6 +3448,10 @@ window.applyFilters = function(){
     var visCards = cards.filter(function(c){ return c.style.display !== "none"; });
     visCards.sort(function(a, b){
       if(sort === "name-desc") return b.dataset.name.localeCompare(a.dataset.name);
+      if(sort === "usage-desc"){
+        var diff = (parseInt(b.dataset.usage||"0",10) - parseInt(a.dataset.usage||"0",10));
+        return diff || a.dataset.name.localeCompare(b.dataset.name);
+      }
       if(sort === "type")      return (a.dataset.type||"").localeCompare(b.dataset.type||"");
       if(sort === "category")  return (a.dataset.category||"zz").localeCompare(b.dataset.category||"zz");
       return a.dataset.name.localeCompare(b.dataset.name); // name-asc default
@@ -3340,8 +3519,17 @@ window.cloneMetric = function(id){
   var editor = addForm.querySelector(".formula-editor");
   if(editor) updateFormulaHints(editor);
 
+  // Wizard: all steps reviewable immediately for a clone, mode card matched
+  // to the cloned config, dialog keeps this state instead of resetting.
+  var _cloneCfgMode = "";
+  try{ _cloneCfgMode = (JSON.parse(m.metric_builder_config || "{}") || {}).mode || ""; }catch(e){}
+  _mcVisited = {1:true, 2:true, 3:true};
+  _mcSelectCardForConfig(addForm, _cloneCfgMode, m.formula_type || "expression");
+  window._mcSkipReset = true;
+
   // Open the dialog with cloned data and focus the name input
   openMetricDialog();
+  _mcSetStep(1);
   setTimeout(function(){
     var nameInput = addForm.querySelector("[name='name']");
     if(nameInput){ nameInput.focus(); nameInput.select(); }
@@ -3391,6 +3579,164 @@ window.exportMetricsJSON = function(){
 (function(){ if(document.getElementById("metricsListWrap")) applyFilters(); })();
 
 // ══════════════════════════════════════════════════════════════════════
+// CREATE WIZARD — step navigation, mode cards, review refresh
+// ══════════════════════════════════════════════════════════════════════
+var _mcVisited = {1:true};
+
+function _mcForm(){ return document.getElementById("mc-form"); }
+
+function _mcValidateStep(n){
+  var form = _mcForm();
+  if(!form) return true;
+  if(n === 1){
+    var nm = form.querySelector("[name='name']");
+    if(nm && !nm.value.trim()){ nm.reportValidity(); return false; }
+    return true;
+  }
+  if(n === 2){
+    if(!form.dataset.mcMode){
+      if(window.qbToast && qbToast.warning) qbToast.warning("Pick how this metric is calculated first.");
+      else alert("Pick how this metric is calculated first.");
+      return false;
+    }
+    var en = form.querySelector(".metric-builder-enabled");
+    if(en && en.checked) return _syncMetricBuilder(form);
+    var ed = form.querySelector(".formula-editor");
+    if(ed && !ed.value.trim()){
+      if(window.qbToast && qbToast.warning) qbToast.warning("Write the formula before continuing.");
+      ed.focus();
+      return false;
+    }
+    return true;
+  }
+  return true;
+}
+
+window._mcGoToStep = function(n){
+  var form = _mcForm();
+  if(!form) return;
+  n = Math.max(1, Math.min(3, n));
+  var cur = parseInt(form.dataset.step || "1", 10);
+  if(n > cur){
+    for(var s = cur; s < n; s++){
+      if(!_mcValidateStep(s)){ _mcSetStep(s); return; }
+      _mcVisited[s + 1] = true;
+    }
+  } else if(n < cur){
+    // going back is always allowed
+  } else {
+    return;
+  }
+  if(!_mcVisited[n]) return;   // direct jumps only to visited steps
+  _mcSetStep(n);
+};
+
+function _mcSetStep(n){
+  var form = _mcForm();
+  if(!form) return;
+  form.dataset.step = String(n);
+  _mcUpdateStepper();
+  if(n === 3) _mcRefreshReview(form);
+  var first = form.querySelector('.mc-step[data-step="' + n + '"] input:not([type="hidden"]), .mc-step[data-step="' + n + '"] textarea');
+  if(first) setTimeout(function(){ try{ first.focus({preventScroll:true}); }catch(e){} }, 50);
+}
+
+function _mcUpdateStepper(){
+  var form = _mcForm();
+  if(!form) return;
+  var cur = parseInt(form.dataset.step || "1", 10);
+  form.querySelectorAll(".mc-wizard-bar .wizard-step").forEach(function(stepEl){
+    var sn = parseInt(stepEl.dataset.goto, 10);
+    stepEl.classList.toggle("active", sn === cur);
+    stepEl.classList.toggle("done", sn < cur);
+    stepEl.classList.toggle("visited", !!_mcVisited[sn]);
+    var line = stepEl.querySelector(".wizard-step-line");
+    if(line) line.classList.toggle("done", sn < cur);
+  });
+}
+
+function _mcApplyMode(form, mode, formulaType){
+  form.dataset.mcMode = mode;
+  var ft = form.querySelector(".formula-type-select");
+  if(ft && ft.value !== formulaType){
+    ft.value = formulaType;
+    ft.dispatchEvent(new Event("change", {bubbles:true}));
+  }
+  var en = form.querySelector(".metric-builder-enabled");
+  var noCode = (mode === "aggregate" || mode === "date_gap" || mode === "row_calculated");
+  if(en && en.checked !== noCode){
+    en.checked = noCode;
+    en.dispatchEvent(new Event("change", {bubbles:true}));
+  }
+  if(noCode){
+    var ms = form.querySelector(".metric-builder-mode");
+    if(ms && ms.value !== mode){
+      ms.value = mode;
+      ms.dispatchEvent(new Event("change", {bubbles:true}));
+    }
+  }
+}
+
+window.selectMcModeCard = function(card){
+  var form = card.closest(".metric-form") || _mcForm();
+  if(!form) return;
+  var mode = card.dataset.mode;
+  form.querySelectorAll(".mc-mode-card").forEach(function(c){ c.classList.toggle("selected", c === card); });
+  var rowChipOn = !!form.querySelector('.mc-row-subtoggle [data-rowmode="1"].active');
+  var effective = (mode === "expression" && rowChipOn) ? "row_calculated" : mode;
+  _mcApplyMode(form, effective, mode === "query" ? "query" : "expression");
+};
+
+window.selectMcRowMode = function(chip){
+  var form = chip.closest(".metric-form");
+  if(!form) return;
+  form.querySelectorAll(".mc-row-subtoggle .ui-chip").forEach(function(c){ c.classList.toggle("active", c === chip); });
+  var perRow = chip.dataset.rowmode === "1";
+  _mcApplyMode(form, perRow ? "row_calculated" : "expression", "expression");
+};
+
+function _mcSelectCardForConfig(form, builderMode, formulaType){
+  var cardMode = (formulaType === "query") ? "query"
+    : (builderMode === "aggregate" || builderMode === "date_gap") ? builderMode
+    : "expression";
+  var rowChip = form.querySelector('.mc-row-subtoggle [data-rowmode="' + (builderMode === "row_calculated" ? "1" : "0") + '"]');
+  if(rowChip){
+    form.querySelectorAll(".mc-row-subtoggle .ui-chip").forEach(function(c){ c.classList.toggle("active", c === rowChip); });
+  }
+  var card = form.querySelector('.mc-mode-card[data-mode="' + cardMode + '"]');
+  if(card) selectMcModeCard(card);
+}
+
+function _mcRefreshReview(form){
+  var pre = form.querySelector("[data-mc-review-formula]");
+  if(pre){
+    var ed = form.querySelector(".formula-editor");
+    pre.textContent = (ed && ed.value.trim()) || "—";
+  }
+  _updateMetricUxPanels(form);
+}
+
+// Enter on steps 1–2 advances instead of implicitly submitting the form.
+document.addEventListener("keydown", function(e){
+  if(e.key !== "Enter") return;
+  var form = e.target.closest && e.target.closest("#mc-form");
+  if(!form || e.target.tagName === "TEXTAREA") return;
+  var step = parseInt(form.dataset.step || "1", 10);
+  if(step !== 3){
+    e.preventDefault();
+    _mcGoToStep(step + 1);
+  }
+});
+
+// Save is only valid once steps 1–2 pass — jump back with the browser's
+// own validity UI instead of a silent "not focusable" submit failure.
+document.addEventListener("submit", function(e){
+  if(e.target.id !== "mc-form") return;
+  if(!_mcValidateStep(1)){ e.preventDefault(); _mcSetStep(1); return; }
+  if(!_mcValidateStep(2)){ e.preventDefault(); _mcSetStep(2); return; }
+}, true);
+
+// ══════════════════════════════════════════════════════════════════════
 // METRIC CREATION DIALOG — open / close
 // ══════════════════════════════════════════════════════════════════════
 window.openMetricDialog = function(){
@@ -3400,6 +3746,14 @@ window.openMetricDialog = function(){
   document.body.style.overflow = "hidden";
   var form = document.getElementById("mc-form");
   if(form){
+    if(!window._mcSkipReset){
+      form.dataset.step = "1";
+      delete form.dataset.mcMode;
+      form.querySelectorAll(".mc-mode-card").forEach(function(c){ c.classList.remove("selected"); });
+      _mcVisited = {1:true};
+    }
+    window._mcSkipReset = false;
+    _mcUpdateStepper();
     _ensureMetricUxPanels(form);
     // Wire builder column lists now that dialog is visible
     if(_allColumns.length) _wireMetricBuilderColumnLists(form);
