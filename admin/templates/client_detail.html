@@ -851,7 +851,11 @@
         </td>
         <td class="text-sm">{{ q.row_count }}</td>
         <td class="text-xs">${{ "%.4f"|format(q.cost_usd or 0) }}</td>
-        <td class="text-xs text-muted">{{ q.duration_ms }}</td>
+        <td class="text-xs text-muted">
+          {% if q.question_id %}
+          <a href="/admin/clients/{{ client.account_id }}/traces?question_id={{ q.question_id }}" title="View query duration breakdown">{{ q.duration_ms }}</a>
+          {% else %}{{ q.duration_ms }}{% endif %}
+        </td>
         <td>{% if q.success %}<span class="badge badge-green">OK</span>{% else %}<span class="badge badge-red" title="{{ q.error_msg }}">FAIL</span>{% endif %}</td>
       </tr>
       {% endfor %}

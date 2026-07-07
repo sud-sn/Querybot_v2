@@ -188,6 +188,24 @@ def get_answer_trace(trace_id: int) -> dict | None:
     return result
 
 
+def get_answer_trace_by_question_id(account_id: str, question_id: str) -> dict | None:
+    """Resolve a query-log row's question_id to its answer_trace, so the admin
+    audit table can link straight to the query-duration breakdown. Both tables
+    already carry question_id — no schema change needed. Picks the most recent
+    trace when duplicates exist (e.g. a retried/re-asked question)."""
+    if not question_id:
+        return None
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT id FROM answer_trace WHERE account_id=? AND question_id=? "
+            "ORDER BY id DESC LIMIT 1",
+            (account_id, question_id),
+        ).fetchone()
+    if not row:
+        return None
+    return get_answer_trace(int(row[0]))
+
+
 def list_answer_traces(account_id: str, limit: int = 50) -> list[dict]:
     with get_db() as conn:
         rows = conn.execute(

@@ -422,6 +422,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                 "Showing the overall result:",
             )
         log.info("Metric registry hit: %s → %s", matched_metric["name"], sql_from_metric[:60])
+        _metric_exec_t0 = time.time()
         try:
             await _send_live_stage(adapter, event, "executing_query", "Running query", "Executing the trusted metric query against your database.")
             _loop = asyncio.get_running_loop()
@@ -485,7 +486,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
             )
             return
         except Exception as e:
-            _trace_step(trace_id, "execute_sql", input_summary=sql_from_metric, output_summary=str(e), status="error")
+            _trace_step(trace_id, "execute_sql", input_summary=sql_from_metric, output_summary=str(e), status="error", duration_ms=int((time.time() - _metric_exec_t0) * 1000))
             log.warning("Metric registry SQL failed, falling through to LLM: %s", e)
             # Fall through to normal LLM pipeline
 
@@ -493,6 +494,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
     # The retriever filters by doc_id (table name), not by substring match,
     # so disallowed tables never leak into the LLM prompt. allowed_tables
     # is passed through explicitly; None means admin/unrestricted.
+    _kb_phase_t0 = time.time()
     try:
         await _send_live_stage(adapter, event, "retrieving_context", "Understanding your data", "Retrieving the most relevant schema, examples, and business context.")
         import re as _re
@@ -567,10 +569,15 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
             route="normal_sql",
             retrieved_kb_chunk_ids=store.kb_chunk_refs(relevant_kbs),
         )
-        _trace_step(trace_id, "retrieve_kb", output_summary={"chunks": len(relevant_kbs)})
+        _trace_step(
+            trace_id, "retrieve_kb",
+            output_summary={"chunks": len(relevant_kbs)},
+            duration_ms=int((time.time() - _kb_phase_t0) * 1000),
+        )
 
         # ── Step 2: Retrieve validated SQL examples — few-shot grounding ─────
         # Examples now live in Qdrant alongside KB docs — no chroma_dir needed
+        _examples_t0 = time.time()
         examples = retrieve_similar_examples(
             question, account_id, n=3,
             allowed_tables=rag_filter,
@@ -579,7 +586,11 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
         if examples:
             context = format_examples_for_prompt(examples) + "\n\n---\n\n" + context
             log.info("Injected %d validated examples into prompt", len(examples))
-            _trace_step(trace_id, "retrieve_examples", output_summary={"examples": len(examples)})
+            _trace_step(
+                trace_id, "retrieve_examples",
+                output_summary={"examples": len(examples)},
+                duration_ms=int((time.time() - _examples_t0) * 1000),
+            )
 
     except Exception as e:
         log.error("RAG retrieval failed: %s", e)
@@ -1153,6 +1164,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
     )
     try:
         await _send_live_stage(adapter, event, "generating_sql", "Generating query", "Translating the business question into SQL.")
+        _llm_gen_t0 = time.time()
         with llm_audit_scope(
             account_id=account_id,
             question=question,
@@ -1173,6 +1185,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                 trace_id,
                 "llm_generate_sql",
                 output_summary={"tokens_in": tok_in, "tokens_out": tok_out},
+                duration_ms=int((time.time() - _llm_gen_t0) * 1000),
             )
     except Exception as e:
         _log_q(account_id, question, "", 0, False, str(e), provider, model, 0, 0,
@@ -1278,14 +1291,17 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
         "semantic_plan": _semantic_plan,
         "metric_formulas": _matched_metrics,
     }
+    _validate_t0 = time.time()
     ok, reason, code = validate_sql(
         sql, all_known, db_cfg["db_type"], query_scope_tables, all_columns, semantic_context
     )
+    _validate_ms = int((time.time() - _validate_t0) * 1000)
 
     # Display-field plan mismatches are mechanically fixable from the plan
     # itself (add the dimension join, swap key → display column). Try that
     # before burning an LLM retry — and before surfacing a validator error.
     if not ok and code == "field_plan_mismatch":
+        _repair_t0 = time.time()
         try:
             _repaired_sql = attempt_field_plan_repair(
                 sql, db_cfg["db_type"], all_known, query_scope_tables,
@@ -1301,6 +1317,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                 input_summary=sql,
                 output_summary=_repaired_sql,
                 metadata={"mode": "deterministic"},
+                duration_ms=int((time.time() - _repair_t0) * 1000),
             )
             sql = _repaired_sql
             ok, reason, code = True, "OK", "ok"
@@ -1318,9 +1335,11 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
         output_summary=reason,
         status="success" if ok else "error",
         metadata={"code": code},
+        duration_ms=_validate_ms,
     )
 
     if ok:
+        _exec_t0 = time.time()
         try:
             await _send_live_stage(adapter, event, "executing_query", "Running query", "Executing the SQL against your connected data source.")
             _loop = asyncio.get_running_loop()
@@ -1330,10 +1349,10 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
             )
             rows = governed.rows
             sql = governed.sql
-            _trace_step(trace_id, "execute_sql", input_summary=sql, output_summary={"rows": len(rows)})
+            _trace_step(trace_id, "execute_sql", input_summary=sql, output_summary={"rows": len(rows)}, duration_ms=int((time.time() - _exec_t0) * 1000))
         except asyncio.TimeoutError:
             exec_error = "Query timed out after 3 minutes. Try narrowing your question with a filter (e.g. date range or specific customer)."
-            _trace_step(trace_id, "execute_sql", input_summary=sql, output_summary=exec_error, status="error")
+            _trace_step(trace_id, "execute_sql", input_summary=sql, output_summary=exec_error, status="error", duration_ms=int((time.time() - _exec_t0) * 1000))
             log.warning("Query timed out for %s", account_id)
         except PolicyDeniedError as policy_error:
             rows = None
@@ -1350,10 +1369,11 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                     "audit_id": policy_error.decision.audit_id,
                 },
                 status="error",
+                duration_ms=int((time.time() - _exec_t0) * 1000),
             )
         except Exception as first_error:
             exec_error = str(first_error)
-            _trace_step(trace_id, "execute_sql", input_summary=sql, output_summary=exec_error, status="error")
+            _trace_step(trace_id, "execute_sql", input_summary=sql, output_summary=exec_error, status="error", duration_ms=int((time.time() - _exec_t0) * 1000))
             log.warning("First execution failed for %s: %s",
                         account_id, exec_error[:100])
     else:
@@ -1492,6 +1512,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
 
         try:
             await _send_live_stage(adapter, event, "repairing_query", "Repairing query", "Fixing a validation or execution issue before retrying.")
+            _retry_llm_t0 = time.time()
             with llm_audit_scope(
                 account_id=account_id,
                 question=question,
@@ -1510,15 +1531,25 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                     retry_user, provider, model, api_key,
                     max_tokens=512, **az_kwargs,
                 )
+            # Retry timings accumulate onto the same buckets as the first
+            # attempt (bucket aggregation sums by step_name), not separate rows.
+            _trace_step(trace_id, "llm_generate_sql", output_summary={"retry": True}, duration_ms=int((time.time() - _retry_llm_t0) * 1000))
             if sql_retry.startswith("```"):
                 sql_retry = "\n".join(sql_retry.split("\n")[1:]).rsplit("```", 1)[0].strip()
 
             sql_retry = _inject_distinct_if_needed(sql_retry, question)
 
             if "CANNOT_GENERATE" not in sql_retry.upper() and len(sql_retry) > 10:
+                _retry_validate_t0 = time.time()
                 ok2, reason2, code2 = validate_sql(
                     sql_retry, all_known, db_cfg["db_type"], query_scope_tables, all_columns, _retry_semantic_context)
+                _trace_step(
+                    trace_id, "validate_sql", input_summary=sql_retry, output_summary=reason2,
+                    status="success" if ok2 else "error", metadata={"code": code2, "retry": True},
+                    duration_ms=int((time.time() - _retry_validate_t0) * 1000),
+                )
                 if ok2:
+                    _retry_exec_t0 = time.time()
                     try:
                         await _send_live_stage(adapter, event, "executing_query", "Retrying query", "Running the corrected query against your data.")
                         _loop = asyncio.get_running_loop()
@@ -1532,9 +1563,11 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                         ok, last_reason, last_code = True, "OK", "ok"
                         retry_count += 1
                         log.info("Retry succeeded for %s", account_id)
+                        _trace_step(trace_id, "execute_sql", input_summary=sql, output_summary={"rows": len(rows), "retry": True}, duration_ms=int((time.time() - _retry_exec_t0) * 1000))
                     except asyncio.TimeoutError:
                         exec_error = "Retry query timed out after 3 minutes."
                         log.warning("Retry query timed out for %s", account_id)
+                        _trace_step(trace_id, "execute_sql", input_summary=sql_retry, output_summary=exec_error, status="error", duration_ms=int((time.time() - _retry_exec_t0) * 1000))
                     except PolicyDeniedError as policy_error:
                         exec_error = None
                         ok = False
@@ -1545,10 +1578,12 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                             account_id,
                             last_code,
                         )
+                        _trace_step(trace_id, "policy_enforcement", input_summary=sql_retry, output_summary={"reason": last_code, "retry": True}, status="error", duration_ms=int((time.time() - _retry_exec_t0) * 1000))
                     except Exception as retry_exec_err:
                         exec_error = str(retry_exec_err)
                         log.warning("Retry execution failed for %s: %s",
                                     account_id, exec_error[:100])
+                        _trace_step(trace_id, "execute_sql", input_summary=sql_retry, output_summary=exec_error, status="error", duration_ms=int((time.time() - _retry_exec_t0) * 1000))
                 else:
                     last_reason, last_code = reason2, code2
                     log.warning("Retry still invalid for %s: %s",

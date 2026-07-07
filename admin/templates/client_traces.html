@@ -15,6 +15,13 @@
 .step{border:1px solid var(--border);border-radius:var(--radius-sm);padding:.65rem;margin-bottom:.55rem;background:var(--surface-2)}
 .step-head{display:flex;justify-content:space-between;gap:.75rem;font-size:12px;font-weight:850}
 .step-body{font-size:11px;color:var(--text-muted);margin-top:.45rem;white-space:pre-wrap;word-break:break-word}
+.duration-row{display:flex;align-items:center;gap:.75rem;margin-bottom:.5rem}
+.duration-row.duration-total{margin-top:.65rem;padding-top:.65rem;border-top:1px solid var(--border);font-weight:850}
+.duration-label{flex:0 0 130px;font-size:12px;color:var(--text-muted)}
+.duration-total .duration-label{color:var(--text)}
+.duration-wrap{flex:1;background:var(--surface-2);border:1px solid var(--border);border-radius:999px;height:14px;overflow:hidden}
+.duration-fill{height:100%;border-radius:999px;background:linear-gradient(90deg,var(--blue),var(--green));transition:width .2s}
+.duration-val{flex:0 0 60px;text-align:right;font-size:12px;font-variant-numeric:tabular-nums}
 </style>
 {% endblock %}
 {% block content %}
@@ -59,6 +66,21 @@
         {% endif %}
       </div>
     </div>
+
+    {% if duration_breakdown %}
+    <div class="card">
+      <div class="card-header"><h2>Query duration</h2></div>
+      <div class="card-body">
+        {% for b in duration_breakdown %}
+        <div class="duration-row{% if b.label == 'Total' %} duration-total{% endif %}">
+          <span class="duration-label">{{ b.label }}</span>
+          <div class="duration-wrap"><div class="duration-fill" style="width:{{ b.pct }}%"></div></div>
+          <span class="duration-val">{% if b.duration_ms >= 1000 %}{{ (b.duration_ms/1000)|round(1) }}s{% else %}{{ b.duration_ms }}ms{% endif %}</span>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
 
     <div class="card">
       <div class="card-header"><h2>Steps</h2></div>

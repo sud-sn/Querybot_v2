@@ -1759,15 +1759,28 @@ async def client_traces(request: Request, account_id: str):
     traces = store.list_answer_traces(account_id, limit=100)
     selected = None
     trace_id = request.query_params.get("trace_id")
+    question_id = request.query_params.get("question_id")
     if trace_id:
         try:
             selected = store.get_answer_trace(int(trace_id))
         except Exception:
             selected = None
+    elif question_id:
+        try:
+            selected = store.get_answer_trace_by_question_id(account_id, question_id)
+        except Exception:
+            selected = None
+    duration_breakdown = None
+    if selected:
+        from core.pipeline_trace import compute_duration_breakdown
+        duration_breakdown = compute_duration_breakdown(
+            selected.get("steps") or [], selected.get("query_duration_ms") or 0,
+        )
     return _resp(request, "client_traces.html", {
         "client": client,
         "traces": traces,
         "selected": selected,
+        "duration_breakdown": duration_breakdown,
     })
 
 

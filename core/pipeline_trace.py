@@ -70,6 +70,54 @@ def _trace_finish(trace_id: int | None, **kwargs) -> None:
         log.debug("answer trace finish failed: %s", exc)
 
 
+# ── Query duration breakdown (Snowflake-style phase bars) ───────────────────
+
+# step_name -> display bucket. Steps not listed here (receive_question,
+# resolve_user_permissions, route, semantic_model_context, semantic_field_plan,
+# semantic_model_plan, value_resolution, regulated_*) are near-instant
+# deterministic Python with no LLM/DB round-trip — they're not bucketed
+# individually, they fall into the computed "Other" remainder instead.
+_DURATION_BUCKETS: dict[str, str] = {
+    "retrieve_kb": "KB retrieval",
+    "retrieve_examples": "KB retrieval",
+    "llm_generate_sql": "SQL generation",
+    "validate_sql": "Validation",
+    "field_plan_repair": "Validation",
+    "execute_sql": "Execution",
+}
+_BUCKET_ORDER = ["KB retrieval", "SQL generation", "Validation", "Execution"]
+
+
+def compute_duration_breakdown(steps: list[dict], total_ms: int) -> list[dict]:
+    """Roll up per-step durations into the four named phase buckets plus an
+    'Other' remainder, for the query-duration bar panel on the Traces page.
+
+    Sums by step_name (not call site), so a retried step — a second
+    llm_generate_sql/validate_sql/execute_sql row — naturally adds onto the
+    same bucket rather than needing special-case retry handling. Computed
+    fresh from the raw steps every time; nothing is persisted separately.
+    """
+    totals = {bucket: 0 for bucket in _BUCKET_ORDER}
+    for step in steps or []:
+        bucket = _DURATION_BUCKETS.get(step.get("step_name") or "")
+        if bucket:
+            totals[bucket] += int(step.get("duration_ms") or 0)
+
+    total_ms = max(0, int(total_ms or 0))
+    bucketed_ms = sum(totals.values())
+    other_ms = max(0, total_ms - bucketed_ms)
+
+    # Percent of total for bar widths; guard divide-by-zero when nothing timed.
+    denom = total_ms if total_ms > 0 else (bucketed_ms or 1)
+    rows = [
+        {"label": label, "duration_ms": totals[label], "pct": round(totals[label] / denom * 100, 1)}
+        for label in _BUCKET_ORDER
+    ]
+    rows.append({"label": "Other", "duration_ms": other_ms, "pct": round(other_ms / denom * 100, 1)})
+    rows.append({"label": "Total", "duration_ms": total_ms, "pct": 100.0})
+    return rows
+
+
 # ── Learning pipeline ─────────────────────────────────────────────────────────
 
 def _create_learning_candidate(
