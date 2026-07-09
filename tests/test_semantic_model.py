@@ -359,6 +359,80 @@ class SemanticModelTests(unittest.TestCase):
             self.assertEqual(result.code, "field_plan_mismatch")
             self.assertIn("PCH_ORD_LIN_CAD_AMT", result.reason)
 
+    def test_approved_field_plan_keeps_best_duplicate_business_quantity_match(self):
+        with _tmp_dir() as tmp:
+            kb_dir = Path(tmp)
+            model = {
+                "tables": [
+                    {
+                        "schema": "EMDW_DMART",
+                        "table": "ITM_BAL_PRD_FCT",
+                        "qualified_name": "EMDW_DMART.ITM_BAL_PRD_FCT",
+                        "fields": [
+                            {
+                                "column": "PCH_QTY",
+                                "role": "measure",
+                                "status": "approved",
+                                "approved_meaning": "Total quantity of items purchased",
+                                "approved_use_case": "Used when a question refers to purchase quantity",
+                                "business_candidates": ["purchase quantity"],
+                                "confidence": 100,
+                            }
+                        ],
+                        "dimensions": [],
+                        "date_roles": [],
+                    },
+                    {
+                        "schema": "EMDW_DMART",
+                        "table": "PCH_ORD_RCT_FCT",
+                        "qualified_name": "EMDW_DMART.PCH_ORD_RCT_FCT",
+                        "fields": [
+                            {
+                                "column": "PCH_ORD_AUM_QTY",
+                                "role": "measure",
+                                "status": "approved",
+                                "approved_meaning": "Purchase order quantity",
+                                "approved_use_case": "Used when a question explicitly refers to purchase quantity",
+                                "business_candidates": ["Purchase quantity", "Number of items purchased"],
+                                "confidence": 100,
+                            }
+                        ],
+                        "dimensions": [],
+                        "date_roles": [],
+                    },
+                ],
+                "relationships": [],
+                "date_roles": [],
+            }
+            (kb_dir / MODEL_JSON).write_text(json.dumps(model), encoding="utf-8")
+
+            plan = build_runtime_semantic_plan(
+                str(kb_dir),
+                question="what is the number of purchase order quantity by purchase order date",
+                selected_schema="EMDW_DMART",
+            )
+            fields = [f"{f['table']}.{f['column']}" for f in plan["fields"]]
+
+            self.assertIn("EMDW_DMART.PCH_ORD_RCT_FCT.PCH_ORD_AUM_QTY", fields)
+            self.assertNotIn("EMDW_DMART.ITM_BAL_PRD_FCT.PCH_QTY", fields)
+
+            correct_sql = (
+                "SELECT SUM(pch.PCH_ORD_AUM_QTY) AS TOTAL_PURCHASE_ORDER_QUANTITY "
+                "FROM [EMDW_DMART].[PCH_ORD_RCT_FCT] pch"
+            )
+            result = validate_sql_detailed(
+                correct_sql,
+                {"EMDW_DMART.PCH_ORD_RCT_FCT", "EMDW_DMART.ITM_BAL_PRD_FCT"},
+                "azure_sql",
+                None,
+                {
+                    "EMDW_DMART.PCH_ORD_RCT_FCT": {"PCH_ORD_AUM_QTY": "decimal"},
+                    "EMDW_DMART.ITM_BAL_PRD_FCT": {"PCH_QTY": "decimal"},
+                },
+                {"semantic_plan": plan},
+            )
+            self.assertTrue(result.ok, result.reason)
+
     def test_metric_approval_patches_model_measures(self):
         """patch_metric_approval sets status=approved and expression on matching measure."""
         with _tmp_dir() as tmp:

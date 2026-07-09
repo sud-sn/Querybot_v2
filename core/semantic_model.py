@@ -920,6 +920,50 @@ def _approved_field_term(field: dict[str, Any]) -> str:
     return str(field.get("column") or "")
 
 
+_TABLE_TOKEN_EXPANSIONS = {
+    "AUM": "amount",
+    "BAL": "balance",
+    "CAD": "cad",
+    "CUS": "customer",
+    "FCT": "fact",
+    "ITM": "item",
+    "ORD": "order",
+    "PCH": "purchase",
+    "PRD": "period",
+    "QTY": "quantity",
+    "RCT": "receipt",
+}
+
+
+def _approved_field_table_score(table: str, question_terms: set[str]) -> int:
+    bare = str(table or "").upper().split(".")[-1]
+    expanded = {
+        _TABLE_TOKEN_EXPANSIONS.get(token, token.lower())
+        for token in re.split(r"[_\W]+", bare)
+        if token
+    }
+    overlap = {
+        term for term in expanded & question_terms
+        if term not in _RUNTIME_MATCH_STOPWORDS and term not in {"fact"}
+    }
+    return min(4, len(overlap) * 2)
+
+
+def _approved_field_match_signature(question_terms: set[str], values: list[str]) -> tuple[str, ...]:
+    matched: set[str] = set()
+    for value in values:
+        value_terms = _runtime_match_terms(value)
+        if not value_terms:
+            continue
+        overlap = {
+            term for term in (question_terms & value_terms)
+            if term not in _RUNTIME_MATCH_STOPWORDS
+        }
+        if overlap:
+            matched.update(overlap)
+    return tuple(sorted(matched))
+
+
 def _question_asks_for_key(question: str, dimension_name: str = "") -> bool:
     q = re.sub(r"[^a-z0-9]+", " ", (question or "").lower()).strip()
     if not q:
@@ -1119,6 +1163,7 @@ def build_runtime_semantic_plan(
     # Admin-approved field meanings are hard semantic mappings.  If the user's
     # wording matches an approved field's meaning/use case, require that exact
     # source column so nearby generated columns cannot win by name similarity.
+    approved_candidates: list[tuple[tuple[str, tuple[str, ...]], int, dict[str, Any]]] = []
     for table in tables:
         source_table = str(table.get("qualified_name") or table.get("table") or "")
         for field in table.get("fields", []) or []:
@@ -1127,25 +1172,61 @@ def build_runtime_semantic_plan(
             column = str(field.get("column") or "")
             if not column:
                 continue
-            score = _runtime_match_score(q_terms, _approved_field_match_values(field))
+            values = _approved_field_match_values(field)
+            score = _runtime_match_score(q_terms, values)
             if score <= 0:
                 continue
-            field_key = (source_table.upper(), column.upper())
-            if field_key in seen_fields:
-                continue
-            seen_fields.add(field_key)
-            fields.append({
-                "term": _approved_field_term(field),
-                "table": source_table,
-                "column": column,
-                "role": field.get("role") or "attribute",
-                "display_required": False,
-                "confidence": field.get("confidence", 100),
-                "source": "approved_semantic_field",
-                "enforcement": "required",
-            })
-            if len(fields) >= max_fields:
-                break
+            signature = _approved_field_match_signature(q_terms, values)
+            if not signature:
+                signature = (column.upper(),)
+            score += _approved_field_table_score(source_table, q_terms)
+            role = str(field.get("role") or "attribute")
+            approved_candidates.append((
+                (role, signature),
+                score,
+                {
+                    "term": _approved_field_term(field),
+                    "table": source_table,
+                    "column": column,
+                    "role": role,
+                    "display_required": False,
+                    "confidence": field.get("confidence", 100),
+                    "source": "approved_semantic_field",
+                    "enforcement": "required",
+                },
+            ))
+
+    best_approved: dict[tuple[str, tuple[str, ...]], tuple[int, dict[str, Any]]] = {}
+    for group, score, field_entry in approved_candidates:
+        current = best_approved.get(group)
+        if (
+            current is None
+            or score > current[0]
+            or (score == current[0] and str(field_entry.get("column") or "") > str(current[1].get("column") or ""))
+        ):
+            best_approved[group] = (score, field_entry)
+
+    approved_winners = [
+        (group, score, field_entry)
+        for group, (score, field_entry) in best_approved.items()
+    ]
+    approved_winners = [
+        (group, score, field_entry)
+        for group, score, field_entry in approved_winners
+        if not any(
+            group[0] == other_group[0]
+            and set(group[1]) < set(other_group[1])
+            and other_score >= score
+            for other_group, other_score, _other_field in approved_winners
+        )
+    ]
+
+    for _group, _score, field_entry in sorted(approved_winners, key=lambda item: (-item[1], item[2].get("table", ""), item[2].get("column", ""))):
+        field_key = (str(field_entry.get("table") or "").upper(), str(field_entry.get("column") or "").upper())
+        if field_key in seen_fields:
+            continue
+        seen_fields.add(field_key)
+        fields.append(field_entry)
         if len(fields) >= max_fields:
             break
 
