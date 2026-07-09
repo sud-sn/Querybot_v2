@@ -474,6 +474,66 @@ class ApplyApprovedFeedbackTests(unittest.TestCase):
             self.assertEqual(mock_embed.call_args.args[1], "acct1")
             self.assertEqual(mock_embed.call_args.args[2], "Attendance_kb.md")
 
+    def test_missing_model_json_surfaces_warning_in_message(self):
+        # Regression: patch_field_approval failures used to be log-only —
+        # the admin saw a plain success message even though runtime field
+        # enforcement silently never activated. _make_kb_dir has no
+        # model.json, so the structured-model patch has nothing to match.
+        with tempfile.TemporaryDirectory() as d:
+            p = self._make_kb_dir(d)
+            with patch("core.knowledge.re_embed_file"):
+                ok, msg = apply_approved_feedback(
+                    account_id="acct1", kb_dir=d,
+                    table_fqn="CHATBOT_DB.HR.ATTENDANCE",
+                    table_name="Attendance", schema_name="HR",
+                    column_name="InStatus",
+                    approved_meaning="New meaning.", approved_use_case="",
+                    user_comment="",
+                )
+            self.assertTrue(ok)   # KB markdown patch still succeeds
+            self.assertIn("WARNING", msg)
+            self.assertIn("structured semantic model", msg.lower())
+
+    def test_synonyms_reach_structured_model_business_candidates(self):
+        # The whole point of a "Business terms" box: approving synonyms must
+        # feed the SAME business_candidates list the runtime SQL-matcher
+        # scores against, not just the KB markdown text.
+        from core.semantic_model import MODEL_JSON, load_semantic_model, write_semantic_model
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            schema_dir = root / "schema"
+            kb_dir = root / "kb"
+            schema_dir.mkdir()
+            schema_dir.joinpath("_schema.json").write_text(
+                '{"CHATBOT_DB.HR.ATTENDANCE": {"database": "CHATBOT_DB", "schema": "HR", '
+                '"table": "ATTENDANCE", "columns": [{"name": "InStatus", "type": "nvarchar"}]}}',
+                encoding="utf-8",
+            )
+            write_semantic_model(schema_dir=str(schema_dir), kb_dir=str(kb_dir))
+            (kb_dir / "Attendance_kb.md").write_text(SAMPLE_KB, encoding="utf-8")
+
+            with patch("core.knowledge.re_embed_file"):
+                ok, msg = apply_approved_feedback(
+                    account_id="acct1", kb_dir=str(kb_dir),
+                    table_fqn="CHATBOT_DB.HR.ATTENDANCE",
+                    table_name="Attendance", schema_name="HR",
+                    column_name="InStatus",
+                    approved_meaning="Employee punch-in status",
+                    approved_use_case="Used for attendance status.",
+                    approved_synonyms=["tardy", "on time flag"],
+                    user_comment="",
+                )
+            self.assertTrue(ok, msg)
+            self.assertIn("semantic model updated", msg)
+            self.assertNotIn("WARNING", msg)
+
+            model = load_semantic_model(str(kb_dir))
+            table = next(t for t in model["tables"] if t["table"] == "ATTENDANCE")
+            field = next(f for f in table["fields"] if f["column"] == "InStatus")
+            candidates_lower = {str(c).lower() for c in field["business_candidates"]}
+            self.assertIn("tardy", candidates_lower)
+            self.assertIn("on time flag", candidates_lower)
+
     def test_missing_kb_file_returns_error(self):
         with tempfile.TemporaryDirectory() as d:
             ok, msg = apply_approved_feedback(

@@ -827,6 +827,10 @@ def _run_migrations() -> None:
         # v32: per-client ERP terminology packs — JSON array of pack ids from
         # packs/ (e.g. ["generic_star_schema"]). Empty = builtin vocab only.
         ("client", "erp_packs",                  "TEXT NOT NULL DEFAULT '[]'"),
+        # v33: portal users can suggest explicit business terms/synonyms for a
+        # field alongside meaning/use case — comma-joined text, parsed the
+        # same way as the admin Edit Field form's synonyms textarea.
+        ("semantic_field_feedback", "suggested_synonyms", "TEXT NOT NULL DEFAULT ''"),
     ]
     with get_db() as conn:
         _ensure_llm_call_log_table(conn)

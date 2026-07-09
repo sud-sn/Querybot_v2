@@ -2058,6 +2058,7 @@ async def semantic_feedback_review(
                 status_code=303,
             )
 
+        from core.field_overrides import parse_synonyms
         from core.semantic_kb_patch import apply_approved_feedback, locate_kb_file_for_feedback
         patched_file = locate_kb_file_for_feedback(
             kb_dir=kb_dir,
@@ -2074,6 +2075,7 @@ async def semantic_feedback_review(
             column_name=item["column_name"],
             approved_meaning=item["suggested_meaning"],
             approved_use_case=item.get("suggested_use_case", ""),
+            approved_synonyms=parse_synonyms(item.get("suggested_synonyms", "")),
             user_comment=item.get("user_comment", ""),
             admin_note=admin_note,
             persist_override=True,
@@ -2120,6 +2122,7 @@ async def semantic_feedback_review(
             column_name=item.get("column_name", ""),
             suggested_meaning=item.get("suggested_meaning", ""),
             suggested_use_case=item.get("suggested_use_case", ""),
+            suggested_synonyms=item.get("suggested_synonyms", ""),
             admin_note=admin_note,
         )
     except Exception as exc:

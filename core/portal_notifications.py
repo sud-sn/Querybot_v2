@@ -70,6 +70,7 @@ async def notify_portal_semantic_feedback_changed(
     column_name: str,
     suggested_meaning: str = "",
     suggested_use_case: str = "",
+    suggested_synonyms: str = "",
     admin_note: str = "",
 ) -> None:
     payload = {
@@ -81,6 +82,7 @@ async def notify_portal_semantic_feedback_changed(
         "column_name": column_name,
         "suggested_meaning": suggested_meaning,
         "suggested_use_case": suggested_use_case,
+        "suggested_synonyms": suggested_synonyms,
         "admin_note": admin_note,
     }
     if portal_user_id:

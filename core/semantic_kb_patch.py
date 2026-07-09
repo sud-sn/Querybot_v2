@@ -201,6 +201,7 @@ def apply_approved_feedback(
             column_name=column_name,
             approved_meaning=approved_meaning,
             approved_use_case=approved_use_case,
+            approved_synonyms=new_synonyms,
         )
         if semantic_model_changed:
             log.info("Structured semantic model patched for %s.%s", table_name, column_name)

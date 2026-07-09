@@ -17,6 +17,7 @@ def save_semantic_field_feedback(
     current_use_case: str = "",
     suggested_meaning: str = "",
     suggested_use_case: str = "",
+    suggested_synonyms: str = "",
     user_comment: str = "",
     confidence_score: int = 0,
 ) -> int:
@@ -28,10 +29,10 @@ def save_semantic_field_feedback(
             INSERT INTO semantic_field_feedback (
                 account_id, portal_user_id, table_fqn, schema_name, table_name,
                 column_name, current_meaning, current_use_case,
-                suggested_meaning, suggested_use_case, user_comment,
-                confidence_score, status
+                suggested_meaning, suggested_use_case, suggested_synonyms,
+                user_comment, confidence_score, status
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
             """,
             (
                 account_id,
@@ -44,6 +45,7 @@ def save_semantic_field_feedback(
                 current_use_case,
                 suggested_meaning,
                 suggested_use_case,
+                suggested_synonyms,
                 user_comment,
                 int(confidence_score or 0),
             ),

@@ -109,6 +109,9 @@ def build_semantic_layer_tables(
             if approved:
                 field["meaning"] = approved.get("suggested_meaning") or field["meaning"]
                 field["use_case"] = approved.get("suggested_use_case") or field["use_case"]
+                if approved.get("suggested_synonyms"):
+                    from core.field_overrides import parse_synonyms
+                    field["synonyms"] = parse_synonyms(approved["suggested_synonyms"])
                 field["confidence"] = 100
                 field["approved"] = True
             else:
@@ -118,7 +121,7 @@ def build_semantic_layer_tables(
             if override:
                 field["meaning"] = override.get("meaning") or field["meaning"]
                 field["use_case"] = override.get("use_case") or field["use_case"]
-                field["synonyms"] = override.get("synonyms") or []
+                field["synonyms"] = override.get("synonyms") or field.get("synonyms") or []
                 field["admin_note"] = override.get("admin_note") or ""
                 field["updated_at"] = override.get("updated_at") or ""
                 field["confidence"] = 100
@@ -126,6 +129,9 @@ def build_semantic_layer_tables(
                 field["needs_context"] = False
                 field["source"] = "admin_override"
             else:
+                # No admin override — fall back to whatever _parse_kb_columns
+                # already found in the KB's Business Synonyms table, so every
+                # field shows its terms, not just ones with an override.
                 field.setdefault("synonyms", [])
                 field.setdefault("admin_note", "")
                 field.setdefault("updated_at", "")
@@ -209,13 +215,18 @@ def _parse_kb_columns(content: str) -> list[dict]:
         if not parsed:
             continue
         col = parsed["column"].upper()
+        # Business terms get their own structured "synonyms" box in the portal
+        # UI now (see build_semantic_layer_tables) instead of being stitched
+        # as a "Business terms: ..." fragment into the free-text use_case —
+        # that stitching only ever ran for columns the KB-build LLM happened
+        # to add a Business Synonyms row for, which is why the fragment used
+        # to appear on some fields but not others.
+        parsed["synonyms"] = list(synonyms.get(col, {}).get("terms") or [])
         use_bits: list[str] = []
         if col in metrics:
             use_bits.append("Metric: " + ", ".join(metrics[col]))
-        if col in synonyms:
-            use_bits.append("Business terms: " + ", ".join(synonyms[col]["terms"]))
-            if synonyms[col].get("notes"):
-                use_bits.append(synonyms[col]["notes"])
+        if col in synonyms and synonyms[col].get("notes"):
+            use_bits.append(synonyms[col]["notes"])
         existing_use_case = (parsed.get("use_case") or "").strip()
         if existing_use_case and use_bits:
             parsed["use_case"] = existing_use_case + " | " + " | ".join(use_bits)

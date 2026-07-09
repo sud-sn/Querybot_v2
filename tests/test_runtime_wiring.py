@@ -518,6 +518,40 @@ class RouteRegistrationTests(unittest.TestCase):
         self.assertNotIn("Browse Knowledge Base", dashboard_html)
         self.assertNotIn("View KB docs", dashboard_html)
 
+    def test_business_terms_box_wired_end_to_end(self):
+        """Business terms: portal input -> route -> store -> admin review
+        display -> approval pass-through -> live-update rendering."""
+        portal_kb_html = _read("portal/templates/portal_kb.html")
+        portal_src = _read("portal/routes.py")
+        admin_kb_html = _read("admin/templates/client_kb.html")
+        admin_src = _read("admin/routes.py")
+        feedback_store_src = _read("store/semantic_feedback.py")
+        notif_src = _read("core/portal_notifications.py")
+
+        # Suggest Edit form has the input and it round-trips into the field's
+        # own display box, not stitched into the use-case textarea.
+        self.assertIn('name="suggested_synonyms"', portal_kb_html)
+        self.assertIn("field-synonyms", portal_kb_html)
+        self.assertIn("term-chips", portal_kb_html)
+
+        # Portal route accepts and stores it.
+        self.assertIn("suggested_synonyms:", portal_src)
+        self.assertIn("suggested_synonyms=suggested_synonyms.strip()", portal_src)
+        self.assertIn("suggested_synonyms: str = \"\",", feedback_store_src)
+
+        # Admin sees what was submitted before approving (not blind-approving).
+        self.assertIn("item.suggested_synonyms", admin_kb_html)
+
+        # Approval passes explicit synonyms into the KB patch, which feeds
+        # both the markdown Business Synonyms table and model.json.
+        self.assertIn("from core.field_overrides import parse_synonyms", admin_src)
+        self.assertIn("approved_synonyms=parse_synonyms(item.get(\"suggested_synonyms\", \"\"))", admin_src)
+
+        # Live WS update carries synonyms back to the portal without reload.
+        self.assertIn("suggested_synonyms: str = \"\",", notif_src)
+        self.assertIn("suggested_synonyms=item.get(\"suggested_synonyms\", \"\")", admin_src)
+        self.assertIn("msg.suggested_synonyms", portal_kb_html)
+
     def test_kb_file_links_are_url_encoded(self):
         """Admin KB editor links must survive spaces and special chars in filenames."""
         admin_kb_html = _read("admin/templates/client_kb.html")

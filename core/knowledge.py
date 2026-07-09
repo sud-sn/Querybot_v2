@@ -496,6 +496,7 @@ async def build_kb(
                     column_name=_override.get("column_name") or _column_key,
                     approved_meaning=_override["meaning"],
                     approved_use_case=_override.get("use_case", ""),
+                    approved_synonyms=_override.get("synonyms") or [],
                 )
     except Exception as exc:
         log.warning("Structured semantic model generation failed: %s", exc)

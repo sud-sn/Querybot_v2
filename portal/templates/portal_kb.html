@@ -52,6 +52,12 @@
 .review-full{grid-column:1/-1}
 .review-actions{grid-column:1/-1;display:flex;justify-content:space-between;gap:.8rem;align-items:center;flex-wrap:wrap}
 .review-note{font-size:11px;color:var(--text-muted)}
+.term-chips{display:flex;flex-wrap:wrap;gap:.3rem;max-width:220px}
+.term-chip{display:inline-flex;border-radius:999px;padding:3px 9px;font-size:11px;font-weight:700;background:var(--primary-soft);border:1px solid color-mix(in srgb,var(--primary) 28%,transparent);color:var(--primary);white-space:nowrap}
+.term-chips-empty{font-size:11px;color:var(--text-muted);font-style:italic}
+.review-panel input[type="text"]{width:100%;border:1.5px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--text);padding:.7rem}
+.review-panel input[type="text"]:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(13,115,119,.12);outline:none}
+.review-panel .review-hint{font-size:10px;color:var(--text-muted);margin-top:.3rem}
 @media(max-width:900px){.semantic-hero{flex-direction:column}.semantic-grid{grid-template-columns:1fr}.table-list{position:static}.review-panel{grid-template-columns:1fr}.field-table{display:block;overflow-x:auto}}
 /* ── Semantic layer search ── */
 .sl-search-wrap{position:relative;margin-bottom:1rem}
@@ -142,9 +148,10 @@
         <table class="field-table">
           <thead>
             <tr>
-              <th style="width:18%">Field</th>
-              <th style="width:30%">What this field is</th>
+              <th style="width:16%">Field</th>
+              <th style="width:26%">What this field is</th>
               <th>What it is used for</th>
+              <th style="width:220px">Business terms</th>
               <th style="width:120px">Confidence</th>
               <th style="width:120px">Feedback</th>
             </tr>
@@ -165,13 +172,22 @@
               </td>
               <td class="field-meaning">{{ field.meaning }}</td>
               <td class="field-use-case">{{ field.use_case }}</td>
+              <td class="field-synonyms">
+                {% if field.synonyms %}
+                <div class="term-chips">
+                  {% for term in field.synonyms %}<span class="term-chip">{{ term }}</span>{% endfor %}
+                </div>
+                {% else %}
+                <span class="term-chips-empty">No business terms yet</span>
+                {% endif %}
+              </td>
               <td>
                 <span class="confidence-pill field-confidence {% if field.confidence >= 85 %}high{% elif field.confidence >= 65 %}med{% else %}low{% endif %}">{{ field.confidence }}%</span>
               </td>
               <td><button type="button" class="review-toggle" data-review-target="{{ row_id }}" aria-expanded="false" onclick="toggleReview(this.dataset.reviewTarget, this)">Suggest edit</button></td>
             </tr>
             <tr class="review-row" id="{{ row_id }}">
-              <td colspan="5">
+              <td colspan="6">
                 <form method="post" action="/portal/kb/feedback" class="review-panel">
                   <input type="hidden" name="table_fqn" value="{{ table.fqn }}">
                   <input type="hidden" name="column_name" value="{{ field.column }}">
@@ -182,6 +198,11 @@
                   <div>
                     <label>Suggested use case</label>
                     <textarea name="suggested_use_case" placeholder="How should QueryBot use this field?">{{ field.use_case }}</textarea>
+                  </div>
+                  <div class="review-full">
+                    <label>Business terms</label>
+                    <input type="text" name="suggested_synonyms" placeholder="Comma-separated, e.g. purchase quantity, number of items purchased" value="{{ field.synonyms|join(', ') if field.synonyms else '' }}">
+                    <div class="review-hint">Other words a question might use for this field — helps QueryBot match phrasing it wouldn't otherwise recognize.</div>
                   </div>
                   <div class="review-full">
                     <label>Comment for admin</label>
@@ -248,6 +269,7 @@ function _setConfidenceClass(pill, value){
       colName:  (row.dataset.columnName || '').toLowerCase(),
       meaning:  (row.querySelector('.field-meaning')  ? row.querySelector('.field-meaning').textContent  : '').toLowerCase(),
       useCase:  (row.querySelector('.field-use-case') ? row.querySelector('.field-use-case').textContent : '').toLowerCase(),
+      synonyms: (row.querySelector('.field-synonyms') ? row.querySelector('.field-synonyms').textContent : '').toLowerCase(),
       fieldType:(row.querySelector('.field-type')     ? row.querySelector('.field-type').textContent     : '').toLowerCase(),
     });
   });
@@ -272,6 +294,7 @@ function _setConfidenceClass(pill, value){
           || fc.colName.includes(q)
           || fc.meaning.includes(q)
           || fc.useCase.includes(q)
+          || fc.synonyms.includes(q)
           || fc.fieldType.includes(q);
 
         fc.row.style.display = match ? '' : 'none';
@@ -345,8 +368,20 @@ window.addEventListener('qb-semantic-feedback-reviewed', function(event){
     if(msg.status === 'approved'){
       const meaning = row.querySelector('.field-meaning');
       const useCase = row.querySelector('.field-use-case');
+      const synBox  = row.querySelector('.field-synonyms');
       if(meaning && msg.suggested_meaning) meaning.textContent = msg.suggested_meaning;
       if(useCase && msg.suggested_use_case) useCase.textContent = msg.suggested_use_case;
+      if(synBox && msg.suggested_synonyms){
+        const terms = String(msg.suggested_synonyms).split(',').map(function(t){ return t.trim(); }).filter(Boolean);
+        if(terms.length){
+          synBox.innerHTML = '<div class="term-chips">' + terms.map(function(t){
+            const span = document.createElement('span');
+            span.className = 'term-chip';
+            span.textContent = t;
+            return span.outerHTML;
+          }).join('') + '</div>';
+        }
+      }
       _setConfidenceClass(row.querySelector('.field-confidence'), 100);
       if(badges && !badges.querySelector('.mini-badge.approved')){
         const badge = document.createElement('span');

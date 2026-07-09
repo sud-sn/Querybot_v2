@@ -169,6 +169,104 @@ class SemanticModelTests(unittest.TestCase):
             dim = next(d for d in whs["dimensions"] if d["display_column"] == "WHS_DSC")
             self.assertEqual(dim["status"], "approved")
 
+    def test_patch_field_approval_merges_synonyms_into_business_candidates(self):
+        # Business terms entered via the portal Suggest Edit box (or the
+        # admin Edit Field form) must reach business_candidates — the SAME
+        # list _approved_field_match_values scores against — so adding a
+        # term actually improves runtime SQL-field matching, not just
+        # documentation on the Semantic Layer page.
+        with _tmp_dir() as tmp:
+            root = Path(tmp)
+            schema_dir = root / "schema"
+            kb_dir = root / "kb"
+            schema_dir.mkdir()
+            _write_schema(schema_dir)
+            write_semantic_model(schema_dir=str(schema_dir), kb_dir=str(kb_dir))
+
+            patch_field_approval(
+                kb_dir=str(kb_dir),
+                table_fqn="CHATBOTDB.PROFITABILITY.WHS_DMS",
+                table_name="WHS_DMS",
+                schema_name="PROFITABILITY",
+                column_name="WHS_DSC",
+                approved_meaning="Warehouse name",
+                approved_use_case="Use whenever users ask for warehouse.",
+                approved_synonyms=["depot", "facility name"],
+            )
+
+            model = load_semantic_model(str(kb_dir))
+            whs = next(t for t in model["tables"] if t["table"] == "WHS_DMS")
+            field = next(f for f in whs["fields"] if f["column"] == "WHS_DSC")
+            candidates_lower = {str(c).lower() for c in field["business_candidates"]}
+            self.assertIn("depot", candidates_lower)
+            self.assertIn("facility name", candidates_lower)
+
+    def test_patch_field_approval_synonym_dedupes_against_existing_candidate(self):
+        with _tmp_dir() as tmp:
+            root = Path(tmp)
+            schema_dir = root / "schema"
+            kb_dir = root / "kb"
+            schema_dir.mkdir()
+            _write_schema(schema_dir)
+            write_semantic_model(schema_dir=str(schema_dir), kb_dir=str(kb_dir))
+
+            patch_field_approval(
+                kb_dir=str(kb_dir), table_fqn="CHATBOTDB.PROFITABILITY.WHS_DMS",
+                table_name="WHS_DMS", schema_name="PROFITABILITY", column_name="WHS_DSC",
+                approved_meaning="Warehouse name", approved_synonyms=["Warehouse name", "depot"],
+            )
+            model = load_semantic_model(str(kb_dir))
+            whs = next(t for t in model["tables"] if t["table"] == "WHS_DMS")
+            field = next(f for f in whs["fields"] if f["column"] == "WHS_DSC")
+            candidates_lower = [str(c).lower() for c in field["business_candidates"]]
+            self.assertEqual(candidates_lower.count("warehouse name"), 1)
+
+    def test_synonym_only_term_makes_field_an_approved_winner(self):
+        # End-to-end: a business term with NO overlap with approved_meaning/
+        # approved_use_case must still be enough to win the field for a
+        # question phrased using only that term.
+        with _tmp_dir() as tmp:
+            kb_dir = Path(tmp)
+            model = {
+                "tables": [{
+                    "schema": "EMDW_DMART", "table": "PCH_ORD_RCT_FCT",
+                    "qualified_name": "EMDW_DMART.PCH_ORD_RCT_FCT",
+                    "fields": [{
+                        "column": "PCH_ORD_AUM_QTY", "role": "measure", "status": "approved",
+                        "approved_meaning": "Purchase order quantity",
+                        "approved_use_case": "Used when a question refers to purchase quantity",
+                        "business_candidates": ["Purchase order quantity"],
+                        "confidence": 100,
+                    }],
+                    "dimensions": [], "date_roles": [],
+                }],
+                "relationships": [], "date_roles": [],
+            }
+            (kb_dir / MODEL_JSON).write_text(json.dumps(model), encoding="utf-8")
+            plan = build_runtime_semantic_plan(
+                str(kb_dir), question="number of items purchased by warehouse",
+                selected_schema="EMDW_DMART",
+            )
+            self.assertFalse(plan["enabled"], "control: term absent from candidates must not match")
+
+            patch_field_approval(
+                kb_dir=str(kb_dir), table_fqn="EMDW_DMART.PCH_ORD_RCT_FCT",
+                table_name="PCH_ORD_RCT_FCT", schema_name="EMDW_DMART",
+                column_name="PCH_ORD_AUM_QTY",
+                approved_meaning="Purchase order quantity",
+                approved_use_case="Used when a question refers to purchase quantity",
+                approved_synonyms=["number of items purchased"],
+            )
+            plan2 = build_runtime_semantic_plan(
+                str(kb_dir), question="number of items purchased by warehouse",
+                selected_schema="EMDW_DMART",
+            )
+            self.assertTrue(plan2["enabled"])
+            self.assertIn(
+                "EMDW_DMART.PCH_ORD_RCT_FCT.PCH_ORD_AUM_QTY",
+                [f"{f['table']}.{f['column']}" for f in plan2["fields"]],
+            )
+
     def test_runtime_context_includes_display_and_date_guidance(self):
         with _tmp_dir() as tmp:
             root = Path(tmp)

@@ -1914,6 +1914,7 @@ def patch_field_approval(
     column_name: str,
     approved_meaning: str,
     approved_use_case: str = "",
+    approved_synonyms: list[str] | None = None,
 ) -> bool:
     model = load_semantic_model(kb_dir)
     if not model:
@@ -1924,6 +1925,7 @@ def patch_field_approval(
     schema_u = (schema_name or "").upper()
     column_u = column_name.upper()
     changed = False
+    synonym_terms = [str(s).strip() for s in (approved_synonyms or []) if str(s).strip()]
 
     for table in model.get("tables", []) or []:
         matches_table = False
@@ -1941,8 +1943,19 @@ def patch_field_approval(
             field["status"] = "approved"
             field["confidence"] = 100
             candidates = field.setdefault("business_candidates", [])
-            if approved_meaning and approved_meaning.lower() not in {str(c).lower() for c in candidates}:
+            existing_lower = {str(c).lower() for c in candidates}
+            if approved_meaning and approved_meaning.lower() not in existing_lower:
                 candidates.insert(0, approved_meaning)
+                existing_lower.add(approved_meaning.lower())
+            # Admin-approved business terms are explicit synonyms for this
+            # field — feed them into the SAME list _approved_field_match_values
+            # scores against, so entering "number of items purchased" as a
+            # term actually helps runtime SQL matching resolve that phrasing,
+            # not just document it on the Semantic Layer page.
+            for term in synonym_terms:
+                if term.lower() not in existing_lower:
+                    candidates.append(term)
+                    existing_lower.add(term.lower())
             changed = True
 
         for dimension in table.get("dimensions", []) or []:

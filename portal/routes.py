@@ -1360,11 +1360,12 @@ async def portal_answer_feedback(request: Request, question_id: str):
 @router.post("/kb/feedback")
 async def portal_kb_feedback(
     request: Request,
-    table_fqn:          str = Form(...),
-    column_name:        str = Form(...),
-    suggested_meaning:  str = Form(""),
-    suggested_use_case: str = Form(""),
-    user_comment:       str = Form(""),
+    table_fqn:           str = Form(...),
+    column_name:         str = Form(...),
+    suggested_meaning:   str = Form(""),
+    suggested_use_case:  str = Form(""),
+    suggested_synonyms:  str = Form(""),
+    user_comment:        str = Form(""),
 ):
     user = _get_portal_user(request)
     if not user:
@@ -1386,7 +1387,10 @@ async def portal_kb_feedback(
         raise HTTPException(status_code=403, detail="Field is not available to this user.")
 
     table, field = found
-    if not (suggested_meaning.strip() or suggested_use_case.strip() or user_comment.strip()):
+    if not (
+        suggested_meaning.strip() or suggested_use_case.strip()
+        or suggested_synonyms.strip() or user_comment.strip()
+    ):
         return RedirectResponse(
             f"/portal/kb?schema={table['schema']}&error=empty",
             status_code=303,
@@ -1403,6 +1407,7 @@ async def portal_kb_feedback(
         current_use_case=field.get("use_case", ""),
         suggested_meaning=suggested_meaning.strip(),
         suggested_use_case=suggested_use_case.strip(),
+        suggested_synonyms=suggested_synonyms.strip(),
         user_comment=user_comment.strip(),
         confidence_score=int(field.get("confidence") or 0),
     )

@@ -325,6 +325,7 @@
               <h3>Suggested correction</h3>
               <div class="kb-field-text">{{ item.suggested_meaning or item.current_meaning or "No suggested meaning." }}</div>
               {% if item.suggested_use_case %}<div class="kb-field-values">{{ item.suggested_use_case }}</div>{% endif %}
+              {% if item.suggested_synonyms %}<div class="kb-field-values"><strong>Business terms:</strong> {{ item.suggested_synonyms }}</div>{% endif %}
               {% if item.user_comment %}<div class="kb-field-note">{{ item.user_comment }}</div>{% endif %}
             </div>
           </div>
