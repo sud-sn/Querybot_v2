@@ -141,6 +141,52 @@ class MetricResultFormatTests(unittest.TestCase):
         self.assertEqual(payload["answer"]["short_value"], "$52,677.25")
         self.assertIn("$52,677.25", payload["answer"]["headline"])
 
+    def test_single_value_decimal_result_is_json_serializable(self):
+        # Regression: pyodbc/Azure SQL returns decimal.Decimal for SUM() on a
+        # numeric/decimal column. summarize_result_context's single-value
+        # branch (one row, one column — exactly "what is the total ordered
+        # quantity") stored rows[0][col] raw, unlike every other branch of
+        # that function which normalizes through _to_float/_to_float_z. The
+        # Decimal rode straight into analysis_contract and crashed
+        # ws.send_json's JSON encoder downstream in gateway/web_adapter.py —
+        # the query succeeded but the user got total silence with no error
+        # ever reaching them (only a server-log line).
+        import json
+        payload = build_assistant_response(
+            question="what is the total ordered quantity",
+            rows=[{"TOTAL_ORDERED_QUANTITY": Decimal("48213.500")}],
+            sql="SELECT SUM(qty) AS TOTAL_ORDERED_QUANTITY FROM orders",
+            duration_ms=1200,
+        )
+        json.dumps(payload)  # must not raise TypeError
+        self.assertEqual(payload["analysis_contract"]["value"], 48213.5)
+        self.assertIsInstance(payload["analysis_contract"]["value"], float)
+
+    def test_single_value_text_result_stays_string_not_lost(self):
+        import json
+        payload = build_assistant_response(
+            question="what is the top customer name",
+            rows=[{"TOP_CUSTOMER": "Acme Industries"}],
+            sql="SELECT TOP 1 name AS TOP_CUSTOMER FROM customers",
+            duration_ms=10,
+        )
+        json.dumps(payload)
+        self.assertEqual(payload["analysis_contract"]["value"], "Acme Industries")
+
+    def test_single_value_zero_decimal_not_dropped(self):
+        # _to_float_z's docstring warns the `_to_float(v) or str(v)` idiom
+        # silently zeroes-out legitimate falsy numeric values; confirm the
+        # fix uses an explicit None-check instead.
+        import json
+        payload = build_assistant_response(
+            question="what is the total returns",
+            rows=[{"TOTAL_RETURNS": Decimal("0")}],
+            sql="SELECT SUM(qty) AS TOTAL_RETURNS FROM returns",
+            duration_ms=10,
+        )
+        json.dumps(payload)
+        self.assertEqual(payload["analysis_contract"]["value"], 0.0)
+
     def test_result_cache_preserves_explicit_formats(self):
         cache = ResultCache()
         cache.store(

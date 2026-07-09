@@ -582,10 +582,20 @@ def summarize_result_context(rows: list[dict], question: str, sql: str = "") -> 
     # can produce a meaningful sentence instead of falling through to return "".
     if len(rows) == 1 and len(rows[0]) == 1:
         col = next(iter(rows[0].keys()))
+        raw_val = rows[0][col]
+        # Every other branch below normalizes DB values through _to_float/
+        # _to_float_z before putting them in ctx; this one didn't, so a raw
+        # decimal.Decimal (returned by pyodbc/Azure SQL for SUM() on a
+        # numeric/decimal column) rode straight into analysis_contract and
+        # broke ws.send_json's JSON encoder — the query succeeded but the
+        # user got total silence with no error surfaced anywhere.
+        safe_val = _to_float(raw_val)
+        if safe_val is None:
+            safe_val = "" if raw_val is None else str(raw_val)
         ctx.update({
             "mode": "single_value",
             "value_column": col,
-            "value": rows[0][col],
+            "value": safe_val,
             "chartable": False,
         })
         ctx["result_scope"] = infer_result_scope(rows, question, sql, mode="single_value")
