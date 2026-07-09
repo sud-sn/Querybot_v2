@@ -15,11 +15,29 @@ from typing import Any
 _ID_SUFFIX_RE = re.compile(
     r"(?i)(^|_)(id|key|code|num|no|nbr|nr|ref|pk|fk|seq|idx|index|rank|number)$"
 )
-_TEMPORAL_NAME_RE = re.compile(r"(?i)(date|day|week|month|quarter|year|period|dt|time)")
-_TEMPORAL_VALUE_RE = re.compile(
-    r"(?i)(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|q[1-4]|"
-    r"\b20\d{2}[-/]\d{1,2}|\b20\d{6}\b|\b20\d{2}\b)"
-)
+# Temporal detection by NAME matches whole tokens, not substrings — plain
+# substring matching classified CONSOLIDATED_SALES ("date"), WIDTH ("dt") and
+# OVERTIME_COST ("time") as temporal, which removed them from the measure list
+# and suppressed the chart entirely.
+_TEMPORAL_NAME_TOKENS = frozenset({
+    "date", "day", "week", "month", "quarter", "year", "period", "dt", "time",
+})
+# Temporal detection by VALUE requires the whole value to look like a date —
+# substring matching flipped dimension columns to temporal whenever any single
+# value contained a month fragment (MARtin, NOVak, DECker, JANssen ...).
+_DATEISH_VALUE_RES = [
+    re.compile(r"^\d{4}[-/.]\d{1,2}([-/.]\d{1,2})?([T ].+)?$"),   # 2026-01[-05][ 10:30]
+    re.compile(r"^\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}$"),             # 05/01/2026
+    re.compile(r"^(19|20)\d{2}$"),                                # bare year
+    re.compile(r"^(19|20)\d{6}$"),                                # YYYYMMDD key
+    re.compile(r"(?i)^q[1-4]([ \-/]*\d{2,4})?$"),                 # Q1, Q1 2026
+    re.compile(r"(?i)^\d{4}[ \-]?q[1-4]$"),                       # 2026-Q1
+    re.compile(                                                    # Jan, March 2026, Aug-26
+        r"(?i)^(jan(uary)?|feb(ruary)?|mar(ch)?|apr(il)?|may|jun(e)?|jul(y)?|"
+        r"aug(ust)?|sep(t(ember)?)?|oct(ober)?|nov(ember)?|dec(ember)?)"
+        r"([ ,\-/']*\d{1,4})?$"
+    ),
+]
 _CURRENCY_RE = re.compile(
     r"(?i)(revenue|sales|amount|amt|charge|cost|cogs|price|margin|profit|usd|value|balance|total)"
 )
@@ -91,13 +109,36 @@ def _is_date_key_name(col: str) -> bool:
     return bool(re.search(r"(?i)(^|_)dt(_|$)|date|_dt_dms_key$", col or ""))
 
 
+def _name_tokens(col: str) -> list[str]:
+    tokens: list[str] = []
+    for part in re.split(r"[^a-zA-Z0-9]+", str(col or "")):
+        tokens.extend(re.findall(r"[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+|\d+", part))
+    return [t.lower() for t in tokens if t]
+
+
+def _is_temporal_name(col: str) -> bool:
+    return bool(_TEMPORAL_NAME_TOKENS & set(_name_tokens(col)))
+
+
+def _value_is_dateish(value: Any) -> bool:
+    s = str(value).strip()
+    if not s:
+        return False
+    return any(rx.match(s) for rx in _DATEISH_VALUE_RES)
+
+
 def _looks_temporal_values(values: list[Any]) -> bool:
-    sample = " ".join(str(v) for v in values[:10] if v is not None)
-    if _TEMPORAL_VALUE_RE.search(sample):
+    # A real date column is uniform: EVERY sampled value must look like a
+    # date, not just one. (One month-fragment match in a joined sample used
+    # to flip whole dimension columns to temporal.)
+    sample = [v for v in values[:10] if v is not None and str(v).strip()]
+    if not sample:
+        return False
+    if all(_value_is_dateish(v) for v in sample):
         return True
-    numeric = [_to_float(v) for v in values[:10]]
+    numeric = [_to_float(v) for v in sample]
     numeric = [v for v in numeric if v is not None]
-    if not numeric:
+    if not numeric or len(numeric) != len(sample):
         return False
     # Integer YYYYMMDD keys, common in warehouse schemas. Fractional values
     # can never be date keys — without this guard, an all-decimal currency
@@ -200,7 +241,7 @@ def _format_for_column(col: str, explicit_formats: dict[str, str]) -> str:
         return "percentage"
     if _CURRENCY_RE.search(col):
         return "currency"
-    if _TEMPORAL_NAME_RE.search(col):
+    if _is_temporal_name(col):
         return "date"
     return "number" if _COUNT_RE.search(col) else "number"
 
@@ -213,10 +254,21 @@ def _column_roles(rows: list[dict], column_formats: dict | None = None) -> dict[
         numeric = _is_numeric_col(rows, col)
         explicit_format = explicit_formats.get(_norm(col))
         explicit_measure = explicit_format in {"currency", "percentage", "number"}
+        # A column the admin explicitly formatted as a measure is never
+        # temporal; a column NAMED like a measure (revenue/profit/count/...)
+        # is never value-sniffed into temporal either — only an explicit date
+        # format or a temporal name token can make it one.
+        looks_measure_name = bool(
+            _CURRENCY_RE.search(col or "")
+            or _PERCENT_RE.search(col or "")
+            or _COUNT_RE.search(col or "")
+        )
         temporal = (
             explicit_format == "date"
-            or _TEMPORAL_NAME_RE.search(col or "") is not None
-            or _looks_temporal_values(vals)
+            or (not explicit_measure and (
+                _is_temporal_name(col)
+                or (not looks_measure_name and _looks_temporal_values(vals))
+            ))
         )
         identifier = _looks_identifier(rows, col) and not temporal and not (numeric and explicit_measure)
         if temporal:
@@ -323,6 +375,15 @@ def infer_chart_spec(
         if len(measures) >= 2:
             allowed.append("scatter")
         x_col = _primary_dimension(dimensions, roles)
+        y_cols = measures[:4]
+    elif temporals and measures:
+        # Time axis + measures is chartable even without trend wording in the
+        # question ("show revenue for each of the last 3 months" used to fall
+        # through to table because it says neither "trend" nor "by month").
+        intent = "trend"
+        recommended = "area" if len(rows) <= 36 else "line"
+        allowed = ["line", "area", "bar", "table"]
+        x_col = _first(temporals)
         y_cols = measures[:4]
     elif len(measures) >= 2:
         intent = "correlation" if scatter_q else "measure_comparison"

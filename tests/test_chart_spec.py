@@ -190,6 +190,70 @@ class ChartSpecTests(unittest.TestCase):
         self.assertEqual(payload["x_key"], "CUSTOMER_NAME")
         self.assertEqual(set(payload["y_keys"]), {"REVENUE", "GROSS_PROFIT"})
 
+    def test_month_substring_in_dimension_values_does_not_kill_chart(self):
+        # Regression: one value containing a month fragment (MARtin, NOVak,
+        # DECker) used to flip the whole dimension column to temporal, leaving
+        # no dimension for the bar branch — single-measure results lost their
+        # chart entirely.
+        rows = [
+            {"CUSTOMER_NAME": "MARTIN SUPPLY CO", "REVENUE": 5000.10},
+            {"CUSTOMER_NAME": "NOVAK & SONS", "REVENUE": 4000.20},
+            {"CUSTOMER_NAME": "DECKER INDUSTRIES", "REVENUE": 3000.30},
+        ]
+        spec = infer_chart_spec(rows, "revenue by customer")
+        self.assertEqual(spec["column_roles"]["CUSTOMER_NAME"]["role"], "dimension")
+        self.assertEqual(spec["recommended_type"], "bar")
+        self.assertEqual(detect_chart_type(rows, "revenue by customer"), "bar")
+
+    def test_temporal_substring_in_column_name_does_not_kill_chart(self):
+        # Regression: substring name matching classified CONSOLIDATED_SALES
+        # ("date"), WIDTH ("dt") and OVERTIME_COST ("time") as temporal.
+        rows = [
+            {"PRODUCT": "A", "CONSOLIDATED_SALES": 900.15, "WIDTH": 12.5, "OVERTIME_COST": 55.25},
+            {"PRODUCT": "B", "CONSOLIDATED_SALES": 800.25, "WIDTH": 9.75, "OVERTIME_COST": 44.75},
+        ]
+        spec = infer_chart_spec(rows, "consolidated sales by product")
+        for col in ("CONSOLIDATED_SALES", "WIDTH", "OVERTIME_COST"):
+            self.assertEqual(spec["column_roles"][col]["role"], "measure", col)
+        self.assertEqual(detect_chart_type(rows, "consolidated sales by product"), "bar")
+
+    def test_temporal_axis_charts_without_trend_keywords(self):
+        # Regression: month + measure with no trend wording in the question
+        # ("for each of the last 3 months" says neither "trend" nor
+        # "by month") used to fall through every branch to table-only.
+        rows = [
+            {"INVOICE_MONTH": "2026-01", "REVENUE": 100.11},
+            {"INVOICE_MONTH": "2026-02", "REVENUE": 120.22},
+            {"INVOICE_MONTH": "2026-03", "REVENUE": 130.33},
+        ]
+        question = "show revenue for each of the last 3 months"
+        spec = infer_chart_spec(rows, question)
+        self.assertEqual(spec["intent"], "trend")
+        self.assertIn(spec["recommended_type"], {"line", "area"})
+        self.assertEqual(spec["x"]["column"], "INVOICE_MONTH")
+        self.assertIn(detect_chart_type(rows, question), {"line", "area"})
+
+    def test_month_name_values_still_classify_temporal(self):
+        rows = [
+            {"MO": "Jan", "REVENUE": 100.5},
+            {"MO": "Feb", "REVENUE": 120.5},
+            {"MO": "Mar", "REVENUE": 130.5},
+        ]
+        spec = infer_chart_spec(rows, "monthly revenue trend")
+        self.assertEqual(spec["column_roles"]["MO"]["role"], "temporal")
+        self.assertEqual(spec["column_roles"]["REVENUE"]["role"], "measure")
+
+    def test_measure_named_column_never_value_sniffed_temporal(self):
+        # Whole-dollar amounts that happen to sit in the 19xx/20xx year range
+        # must stay measures when the column name says revenue/profit/count.
+        rows = [
+            {"CUSTOMER": "A", "REVENUE": 2019},
+            {"CUSTOMER": "B", "REVENUE": 2045},
+        ]
+        spec = infer_chart_spec(rows, "revenue by customer")
+        self.assertEqual(spec["column_roles"]["REVENUE"]["role"], "measure")
+        self.assertEqual(detect_chart_type(rows, "revenue by customer"), "bar")
+
     def test_integer_yyyymmdd_key_column_still_temporal(self):
         rows = [
             {"INV_DT_DMS_KEY": 20260101, "REVENUE": 100.50},
