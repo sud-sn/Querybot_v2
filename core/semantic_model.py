@@ -774,6 +774,18 @@ def build_field_plan_repair_note(semantic_plan: dict[str, Any]) -> str:
     display field name, dimension table, and join key so the LLM knows precisely
     what to change without having to search the prompt context.
     """
+    avoid_lines = "".join(
+        "- Replace {table}.{column} with {use_table}.{use_column} — the admin-approved "
+        "source for '{term}'. Never select {column} for that term.\n".format(
+            table=a.get("table", ""),
+            column=a.get("column", ""),
+            use_table=a.get("use_instead_table", ""),
+            use_column=a.get("use_instead_column", ""),
+            term=a.get("term", "this term"),
+        )
+        for a in (semantic_plan.get("avoid_columns") or [])
+    )
+
     required = [
         f for f in (semantic_plan.get("fields") or [])
         if f.get("display_required") and f.get("table") and f.get("column")
@@ -783,6 +795,7 @@ def build_field_plan_repair_note(semantic_plan: dict[str, Any]) -> str:
             "\nSEMANTIC FIELD PLAN REPAIR RULE:\n"
             "- The SQL ignored one or more deterministic field-source mappings.\n"
             "- Use the exact table.column pairs and required joins from the Semantic field-source plan.\n"
+            + avoid_lines +
             "- Do not move mapped fields to another table and do not remove underscores from column names.\n"
         )
 
@@ -1064,7 +1077,11 @@ def build_runtime_semantic_context(
             score = _runtime_match_score(q_terms, [column, meaning, use_case])
             if score <= 0:
                 continue
-            scored_lines.append((score + 6, f"- Approved field: use {qname}.{column} for {meaning or use_case}"))
+            scored_lines.append((
+                score + 6,
+                f"- Approved field: use {qname}.{column} for {meaning or use_case} "
+                "(authoritative — supersedes other similarly described columns)",
+            ))
 
         for date_role in table.get("date_roles", []) or []:
             if not has_temporal_intent:
@@ -1230,6 +1247,62 @@ def build_runtime_semantic_plan(
         if len(fields) >= max_fields:
             break
 
+    # Term-scoped avoid list: non-approved rivals that claim the same business
+    # term an approved winner just matched.  Approving CAD_AMT for "purchase
+    # order amount" must actively forbid the old generated LIN_AMT — the
+    # positive requirement alone lets the LLM satisfy the plan while ALSO (or
+    # instead) selecting the stale column it learned from raw KB markdown.
+    avoid_columns: list[dict[str, Any]] = []
+    if approved_winners:
+        q_compact = re.sub(r"[^a-z0-9]+", "", (question or "").lower())
+        seen_avoid: set[tuple[str, str]] = set()
+        winner_list = [
+            (set(group[1]), group[0], entry)
+            for group, _score, entry in approved_winners
+        ]
+        for table in tables:
+            source_table = str(table.get("qualified_name") or table.get("table") or "")
+            for field in table.get("fields", []) or []:
+                if str(field.get("status") or "") == "approved":
+                    continue
+                column = str(field.get("column") or "")
+                if not column:
+                    continue
+                rival_key = (source_table.upper(), column.upper())
+                if rival_key in seen_fields or rival_key in seen_avoid:
+                    continue
+                # The user explicitly named this column — don't forbid it.
+                if re.sub(r"[^a-z0-9]+", "", column.lower()) in q_compact:
+                    continue
+                rival_sig = set(_approved_field_match_signature(
+                    q_terms, _approved_field_match_values(field)
+                ))
+                if not rival_sig:
+                    continue
+                rival_role = str(field.get("role") or "attribute")
+                for winner_sig, winner_role, winner_entry in winner_list:
+                    if rival_role != winner_role:
+                        continue
+                    # The rival must claim no question term beyond what the
+                    # winner covers — a field matching extra terms (e.g.
+                    # "quantity") answers a different part of the question
+                    # and stays legitimate.
+                    if not rival_sig <= winner_sig:
+                        continue
+                    seen_avoid.add(rival_key)
+                    avoid_columns.append({
+                        "table": source_table,
+                        "column": column,
+                        "term": winner_entry.get("term") or "",
+                        "use_instead_table": winner_entry.get("table") or "",
+                        "use_instead_column": winner_entry.get("column") or "",
+                    })
+                    break
+                if len(avoid_columns) >= 8:
+                    break
+            if len(avoid_columns) >= 8:
+                break
+
     for table in tables:
         source_table = str(table.get("qualified_name") or table.get("table") or "")
         for dimension in table.get("dimensions", []) or []:
@@ -1385,6 +1458,13 @@ def build_runtime_semantic_plan(
         if len(available_dims) >= 20:   # cap — UI shows at most 3
             break
 
+    # A column later required by a dimension/date-role entry must never sit in
+    # the avoid list — the merge would prune a field the validator demands.
+    avoid_columns = [
+        a for a in avoid_columns
+        if (str(a["table"]).upper(), str(a["column"]).upper()) not in seen_fields
+    ]
+
     return {
         "enabled": True,
         "fields": fields,
@@ -1392,6 +1472,7 @@ def build_runtime_semantic_plan(
         "required_tables": required_tables,
         "reason": "structured semantic model",
         "available_dimensions": available_dims,
+        "avoid_columns": avoid_columns,
     }
 
 

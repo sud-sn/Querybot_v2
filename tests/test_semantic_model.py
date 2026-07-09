@@ -689,5 +689,195 @@ class SemanticModelTests(unittest.TestCase):
                              "display_column not updated by patch_relationship")
 
 
+class ApprovedFieldSupersessionTests(unittest.TestCase):
+    """Deterministic field redirection: approving CAD_AMT for 'purchase order
+    amount' must actively forbid the old generated LIN_AMT — plan avoid list,
+    merge pruning, prompt rendering, validator rejection, deterministic repair,
+    and rebuild survival."""
+
+    QUESTION = "show total purchase order amount by purchase order date"
+
+    @staticmethod
+    def _model() -> dict:
+        return {
+            "tables": [
+                {
+                    "schema": "EMDW_DMART",
+                    "table": "PCH_ORD_RCT_FCT",
+                    "qualified_name": "EMDW_DMART.PCH_ORD_RCT_FCT",
+                    "fields": [
+                        {
+                            "column": "PCH_ORD_LIN_AMT",
+                            "role": "measure",
+                            "status": "generated",
+                            "business_candidates": ["purchase order line amount"],
+                            "confidence": 65,
+                        },
+                        {
+                            "column": "PCH_ORD_LIN_CAD_AMT",
+                            "role": "measure",
+                            "status": "approved",
+                            "approved_meaning": "CAD purchase order line amount",
+                            "approved_use_case": "Used when a question explicitly refers to purchase order amount",
+                            "business_candidates": ["Pch Ord Lin Cad Amt field from the selected table."],
+                            "confidence": 100,
+                        },
+                    ],
+                    "dimensions": [],
+                    "date_roles": [],
+                }
+            ],
+            "relationships": [],
+            "date_roles": [],
+        }
+
+    def _plan(self, kb_dir: Path, question: str | None = None) -> dict:
+        (kb_dir / MODEL_JSON).write_text(json.dumps(self._model()), encoding="utf-8")
+        return build_runtime_semantic_plan(
+            str(kb_dir),
+            question=question or self.QUESTION,
+            selected_schema="EMDW_DMART",
+        )
+
+    def test_avoid_list_contains_superseded_rival(self):
+        with _tmp_dir() as tmp:
+            plan = self._plan(Path(tmp))
+            self.assertTrue(plan["enabled"])
+            avoid = plan.get("avoid_columns") or []
+            self.assertEqual(
+                [(a["column"], a["use_instead_column"]) for a in avoid],
+                [("PCH_ORD_LIN_AMT", "PCH_ORD_LIN_CAD_AMT")],
+            )
+            self.assertEqual(avoid[0]["table"], "EMDW_DMART.PCH_ORD_RCT_FCT")
+
+    def test_question_naming_rival_column_is_not_avoided(self):
+        with _tmp_dir() as tmp:
+            plan = self._plan(
+                Path(tmp),
+                question="show total purchase order amount from PCH_ORD_LIN_AMT",
+            )
+            self.assertEqual(plan.get("avoid_columns") or [], [])
+
+    def test_merge_prunes_llm_planned_rival(self):
+        from core.pipeline_context import _merge_semantic_plans
+        with _tmp_dir() as tmp:
+            model_plan = self._plan(Path(tmp))
+            llm_plan = {
+                "enabled": True,
+                "reason": "llm field plan",
+                "joins": [],
+                "fields": [{
+                    "term": "purchase order amount",
+                    "table": "EMDW_DMART.PCH_ORD_RCT_FCT",
+                    "column": "PCH_ORD_LIN_AMT",
+                    "role": "measure",
+                    "enforcement": "required",
+                    "source": "semantic_field_plan",
+                }],
+            }
+            merged = _merge_semantic_plans(llm_plan, model_plan)
+            cols = [f["column"] for f in merged["fields"]]
+            self.assertIn("PCH_ORD_LIN_CAD_AMT", cols)
+            self.assertNotIn("PCH_ORD_LIN_AMT", cols)
+            self.assertEqual(
+                [a["column"] for a in merged["avoid_columns"]],
+                ["PCH_ORD_LIN_AMT"],
+            )
+
+    def test_validator_rejects_sql_using_avoided_column(self):
+        with _tmp_dir() as tmp:
+            plan = self._plan(Path(tmp))
+            table_columns = {
+                "EMDW_DMART.PCH_ORD_RCT_FCT": {
+                    "PCH_ORD_LIN_AMT": "decimal",
+                    "PCH_ORD_LIN_CAD_AMT": "decimal",
+                }
+            }
+            # Even selecting BOTH columns must fail — the rival silently
+            # answers the question with the wrong data.
+            both_sql = (
+                "SELECT SUM(pch.PCH_ORD_LIN_CAD_AMT) AS CAD_AMT, "
+                "SUM(pch.PCH_ORD_LIN_AMT) AS TOTAL_PURCHASE_AMOUNT "
+                "FROM [EMDW_DMART].[PCH_ORD_RCT_FCT] pch"
+            )
+            result = validate_sql_detailed(
+                both_sql, {"EMDW_DMART.PCH_ORD_RCT_FCT"}, "azure_sql", None,
+                table_columns, {"semantic_plan": plan},
+            )
+            self.assertFalse(result.ok)
+            self.assertEqual(result.code, "field_plan_mismatch")
+            self.assertIn("admin-approved source", result.reason)
+            self.assertIn("PCH_ORD_LIN_CAD_AMT", result.reason)
+
+            good_sql = (
+                "SELECT SUM(pch.PCH_ORD_LIN_CAD_AMT) AS TOTAL_PURCHASE_AMOUNT "
+                "FROM [EMDW_DMART].[PCH_ORD_RCT_FCT] pch"
+            )
+            result_ok = validate_sql_detailed(
+                good_sql, {"EMDW_DMART.PCH_ORD_RCT_FCT"}, "azure_sql", None,
+                table_columns, {"semantic_plan": plan},
+            )
+            self.assertTrue(result_ok.ok, result_ok.reason)
+
+    def test_deterministic_repair_swaps_avoided_for_approved(self):
+        from core.pipeline_helpers import attempt_field_plan_repair
+        with _tmp_dir() as tmp:
+            plan = self._plan(Path(tmp))
+            table_columns = {
+                "EMDW_DMART.PCH_ORD_RCT_FCT": {
+                    "PCH_ORD_LIN_AMT": "decimal",
+                    "PCH_ORD_LIN_CAD_AMT": "decimal",
+                }
+            }
+            wrong_sql = (
+                "SELECT SUM(pch.PCH_ORD_LIN_AMT) AS TOTAL_PURCHASE_AMOUNT "
+                "FROM [EMDW_DMART].[PCH_ORD_RCT_FCT] pch"
+            )
+            repaired = attempt_field_plan_repair(
+                wrong_sql,
+                "azure_sql",
+                {"EMDW_DMART.PCH_ORD_RCT_FCT"},
+                None,
+                table_columns,
+                {"semantic_plan": plan},
+            )
+            self.assertTrue(repaired, "repair returned empty — expected a deterministic swap")
+            self.assertIn("PCH_ORD_LIN_CAD_AMT", repaired)
+            self.assertNotIn("PCH_ORD_LIN_AMT", repaired.replace("PCH_ORD_LIN_CAD_AMT", ""))
+
+    def test_prompt_renders_do_not_use_line(self):
+        from core.semantic_planner import format_semantic_field_plan
+        with _tmp_dir() as tmp:
+            plan = self._plan(Path(tmp))
+            text = format_semantic_field_plan(plan, "azure_sql")
+            self.assertIn("Do NOT use EMDW_DMART.PCH_ORD_RCT_FCT.PCH_ORD_LIN_AMT", text)
+            self.assertIn("admin-approved source is EMDW_DMART.PCH_ORD_RCT_FCT.PCH_ORD_LIN_CAD_AMT", text)
+
+    def test_avoid_list_survives_kb_rebuild(self):
+        from core.semantic_model import preserve_approvals
+        with _tmp_dir() as tmp:
+            kb_dir = Path(tmp)
+            old_model = self._model()
+            # Fresh rebuild regenerates BOTH fields as generated.
+            new_model = self._model()
+            for field in new_model["tables"][0]["fields"]:
+                field["status"] = "generated"
+                field.pop("approved_meaning", None)
+                field.pop("approved_use_case", None)
+            merged, _drift = preserve_approvals(old_model, new_model)
+            (kb_dir / MODEL_JSON).write_text(json.dumps(merged), encoding="utf-8")
+            plan = build_runtime_semantic_plan(
+                str(kb_dir), question=self.QUESTION, selected_schema="EMDW_DMART",
+            )
+            self.assertIn(
+                "EMDW_DMART.PCH_ORD_RCT_FCT.PCH_ORD_LIN_CAD_AMT",
+                [f"{f['table']}.{f['column']}" for f in plan["fields"]],
+            )
+            self.assertEqual(
+                [a["column"] for a in plan.get("avoid_columns") or []],
+                ["PCH_ORD_LIN_AMT"],
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

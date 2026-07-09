@@ -653,6 +653,16 @@ def format_semantic_field_plan(plan: dict, db_type: str = "azure_sql") -> str:
                 f"use {field.get('source_key_column')} only for JOINs unless the user asks for key/id]"
             )
         lines.append(f"- {field['term']}: {expr}{role_hint}")
+    avoid = plan.get("avoid_columns") or []
+    if avoid:
+        lines.append("")
+        lines.append("Superseded columns (admin-approved mappings replace these):")
+        for entry in avoid:
+            term = str(entry.get("term") or "this term").strip()
+            lines.append(
+                f"- Do NOT use {entry['table']}.{entry['column']} for \"{term}\" — "
+                f"the admin-approved source is {entry.get('use_instead_table')}.{entry.get('use_instead_column')}."
+            )
     joins = plan.get("joins") or []
     if joins:
         lines.append("")

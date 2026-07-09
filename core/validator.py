@@ -749,6 +749,35 @@ def validate_sql_detailed(
                         "term": field.get("term", ""),
                     })
 
+            # Superseded columns: an admin-approved mapping actively forbids
+            # the old rival column for the matched business term.  Presence of
+            # the approved field alone is not enough — SQL selecting BOTH (or
+            # only the rival) silently answers with the wrong data.
+            for avoid in field_plan.get("avoid_columns") or []:
+                avoid_col = (avoid.get("column") or "").upper()
+                avoid_table = _find_table_with_column(table_columns, avoid.get("table") or "", avoid_col)
+                if not avoid_col or not avoid_table:
+                    continue
+                if avoid_col in _metric_formula_cols:
+                    continue    # an approved metric formula owns this column
+                if any(_table_matches(used_table, avoid_table) and used_col == avoid_col for used_table, used_col in used_columns):
+                    term = str(avoid.get("term") or "this term")
+                    use_instead = f"{avoid.get('use_instead_table')}.{avoid.get('use_instead_column')}"
+                    missing_plan_fields.append({
+                        "code": "field_plan_mismatch",
+                        "message": (
+                            f"SQL used {avoid_table}.{avoid_col}, but the admin-approved source "
+                            f"for '{term}' is {use_instead}."
+                        ),
+                        "table": avoid_table,
+                        "column": avoid_col,
+                        "term": term,
+                        "avoided_column": avoid_col,
+                        "avoided_table": avoid_table,
+                        "use_instead_table": avoid.get("use_instead_table", ""),
+                        "use_instead_column": avoid.get("use_instead_column", ""),
+                    })
+
             # Build a set of all (left_col, right_col) pairs that appear in any
             # JOIN ... ON equality condition via AST — more precise than raw substring
             # matching which would false-pass if a column name appears only in SELECT.

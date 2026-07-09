@@ -190,6 +190,7 @@ def apply_approved_feedback(
             )
 
     semantic_model_changed = False
+    model_failure = ""
     try:
         from core.semantic_model import patch_field_approval
         semantic_model_changed = patch_field_approval(
@@ -203,12 +204,23 @@ def apply_approved_feedback(
         )
         if semantic_model_changed:
             log.info("Structured semantic model patched for %s.%s", table_name, column_name)
+        else:
+            model_failure = (
+                f" WARNING: the structured semantic model has no matching entry for "
+                f"{table_name}.{column_name} — runtime field enforcement will NOT apply "
+                f"to this approval. Rebuild the KB to regenerate the model."
+            )
+            log.warning("Structured semantic model patch found no match for %s.%s", table_name, column_name)
     except Exception as e:
-        log.warning("Structured semantic model patch skipped for %s.%s: %s", table_name, column_name, e)
+        model_failure = (
+            f" WARNING: KB text was updated but the structured semantic model patch "
+            f"failed ({e}) — runtime field enforcement will NOT apply to this approval."
+        )
+        log.warning("Structured semantic model patch failed for %s.%s: %s", table_name, column_name, e)
 
     synonym_note = f" + {len(new_synonyms)} synonym(s) added" if new_synonyms else ""
     model_note = " + semantic model updated" if semantic_model_changed else ""
-    return True, f"Approved and KB re-embedded ({kb_file.name}{synonym_note}{model_note})"
+    return True, f"Approved and KB re-embedded ({kb_file.name}{synonym_note}{model_note}){model_failure}"
 
 
 def apply_field_overrides_to_content(

@@ -512,10 +512,35 @@ def attempt_field_plan_repair(
         ((f.get("table") or "").upper(), (f.get("column") or "").upper()): f
         for f in plan.get("fields") or []
     }
+    # Superseded-column violations first: swapping the old rival for the
+    # admin-approved column also satisfies the "missing required approved
+    # field" error the same SQL usually raises alongside it.
+    avoided_swaps: list[dict] = [
+        err for err in result.errors
+        if err.get("code") == "field_plan_mismatch"
+        and err.get("avoided_column") and err.get("use_instead_column")
+    ]
+    for err in avoided_swaps:
+        # Only same-table swaps are mechanical; cross-table redirection
+        # changes join shape — leave to the LLM retry, which now carries
+        # the explicit supersession message.
+        if not _table_matches(
+            err.get("use_instead_table") or "", err.get("avoided_table") or ""
+        ):
+            return ""
+
     missing_display: list[dict] = []
     display_tables: set[str] = set()
     for err in result.errors:
         if err.get("code") == "field_plan_mismatch":
+            if err.get("avoided_column") and err.get("use_instead_column"):
+                continue    # already collected above
+            if any(
+                (err.get("column") or "").upper() == (a.get("use_instead_column") or "").upper()
+                and _table_matches(err.get("table") or "", a.get("use_instead_table") or "")
+                for a in avoided_swaps
+            ):
+                continue    # the swap below will introduce this required column
             f = plan_fields.get(
                 ((err.get("table") or "").upper(), (err.get("column") or "").upper())
             )
@@ -543,7 +568,7 @@ def attempt_field_plan_repair(
                 return ""
         else:
             return ""
-    if not missing_display:
+    if not missing_display and not avoided_swaps:
         return ""
 
     dialect = _REPAIR_DIALECT.get(db_type)
@@ -559,6 +584,36 @@ def attempt_field_plan_repair(
         return bool(parts) and _table_matches(".".join(parts), table_name)
 
     changed = False
+
+    # ── Superseded-column swaps (avoided → admin-approved, same table) ────────
+    for err in avoided_swaps:
+        avoid_table = err.get("avoided_table") or ""
+        avoid_col = (err.get("avoided_column") or "").upper()
+        new_col = (err.get("use_instead_column") or "").upper()
+        if not avoid_col or not new_col:
+            return ""
+        aliases = {
+            str(t.alias_or_name or t.name or "").upper()
+            for t in tree.find_all(sg_exp.Table)
+            if _node_matches_table(t, avoid_table)
+        }
+        replaced_here = False
+        for col_node in list(tree.find_all(sg_exp.Column)):
+            if (col_node.name or "").upper() != avoid_col:
+                continue
+            tbl_ref = (col_node.table or "").upper()
+            if tbl_ref and aliases and tbl_ref not in aliases:
+                continue
+            replacement = (
+                sg_exp.column(new_col, table=col_node.table)
+                if col_node.table else sg_exp.column(new_col)
+            )
+            col_node.replace(replacement)
+            replaced_here = True
+        if not replaced_here:
+            return ""
+        changed = True
+
     for field in missing_display:
         display_table = field.get("table") or ""
         display_col = (field.get("column") or "").upper()

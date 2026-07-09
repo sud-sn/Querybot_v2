@@ -918,7 +918,8 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
             )
     except Exception as _smp_exc:
         _semantic_model_plan = {}
-        log.debug("Structured semantic model planning skipped: %s", _smp_exc)
+        log.warning("Structured semantic model planning failed — approved field "
+                    "enforcement inactive for this question: %s", _smp_exc)
 
     _semantic_plan = _merge_semantic_plans(_semantic_plan, _semantic_model_plan)
 

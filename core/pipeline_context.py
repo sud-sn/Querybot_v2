@@ -116,6 +116,28 @@ def _merge_semantic_plans(*plans: dict | None) -> dict:
     seen_fields: set[tuple[str, str]] = set()
     seen_joins: set[tuple[str, str, tuple[tuple[str, str], ...]]] = set()
     reasons: list[str] = []
+
+    # Pre-pass: union avoid lists across plans so the main loop can drop a
+    # superseded column no matter which plan proposed it.  The LLM field
+    # planner routinely re-suggests the old generated column ("purchase order
+    # amount" -> PCH_ORD_LIN_AMT) that an admin-approved mapping replaced; the
+    # dedup key below is (table, column), not business term, so without this
+    # both rivals would survive as required fields.
+    avoid_columns: list[dict] = []
+    seen_avoid: set[tuple[str, str]] = set()
+    for plan in plans:
+        if not plan or not plan.get("enabled"):
+            continue
+        for avoid in plan.get("avoid_columns") or []:
+            key = (
+                _semantic_table_identity(avoid.get("table") or ""),
+                (avoid.get("column") or "").upper(),
+            )
+            if not key[0] or not key[1] or key in seen_avoid:
+                continue
+            seen_avoid.add(key)
+            avoid_columns.append(avoid)
+
     for plan in plans:
         if not plan or not plan.get("enabled"):
             continue
@@ -131,6 +153,8 @@ def _merge_semantic_plans(*plans: dict | None) -> dict:
                 (field.get("column") or "").upper(),
             )
             if not key[0] or not key[1] or key in seen_fields:
+                continue
+            if key in seen_avoid and field.get("source") != "approved_semantic_field":
                 continue
             seen_fields.add(key)
             fields.append(field)
@@ -171,6 +195,7 @@ def _merge_semantic_plans(*plans: dict | None) -> dict:
         "reason": " + ".join(dict.fromkeys(reasons)) or "merged semantic plan",
         "advisory_fields": advisory_fields,
         "available_dimensions": available_dimensions,
+        "avoid_columns": avoid_columns,
     }
 
 

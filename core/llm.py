@@ -736,9 +736,12 @@ def build_sql_system_prompt(
                 "\n\n" + plan_text + "\n\n"
                 + graph_priority_note
                 + "FIELD PLAN RULE: the mapped fields above are deterministic schema-derived "
-                "bindings. Use the listed table.column pairs exactly. If the query requires "
-                "CTEs, place the listed joins and source fields in the base CTE. If you cannot "
-                "use the plan with the available schema, return CANNOT_GENERATE."
+                "bindings. Use the listed table.column pairs exactly. Columns listed as "
+                "'Do NOT use' are superseded admin mappings — never select them for the "
+                "stated term, even if the knowledge base text still describes them that way. "
+                "If the query requires CTEs, place the listed joins and source fields in the "
+                "base CTE. If you cannot use the plan with the available schema, return "
+                "CANNOT_GENERATE."
             )
     return base
 
