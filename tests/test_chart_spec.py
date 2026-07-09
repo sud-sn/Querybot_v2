@@ -165,6 +165,41 @@ class ChartSpecTests(unittest.TestCase):
         self.assertEqual(spec["x"]["column"], "Warehouse")
         self.assertEqual(spec["y"][0]["column"], "Profit_Leakage")
 
+    def test_all_decimal_currency_columns_are_measures_not_temporal(self):
+        # Regression: when every value in a numeric column had a fractional
+        # part (real currency amounts with cents), _looks_temporal_values'
+        # integer-YYYYMMDD check filtered out all values and all([]) vacuously
+        # classified the column as temporal — no measures survived, so
+        # detect_chart_type returned None and no chart rendered at all.
+        rows = [
+            {"CUSTOMER_NAME": "SUMMIT MECHANICAL", "REVENUE": 673520.57, "GROSS_PROFIT": 152466.50},
+            {"CUSTOMER_NAME": "NORM'S CASH & CARRY", "REVENUE": 311810.66, "GROSS_PROFIT": 6414.40},
+            {"CUSTOMER_NAME": "CASH/VISA-PETERBOROUGH", "REVENUE": 306333.55, "GROSS_PROFIT": 83906.43},
+            {"CUSTOMER_NAME": "HAMILTON SMITH LIMITED", "REVENUE": 277972.72, "GROSS_PROFIT": 40669.85},
+            {"CUSTOMER_NAME": "PRIMO MECHANICAL INC.", "REVENUE": 266202.62, "GROSS_PROFIT": 64029.27},
+        ]
+        question = "what is my revenue and gross profit by each top 5 customers by revenue for the last 6 months"
+        spec = infer_chart_spec(rows, question)
+        self.assertEqual(spec["column_roles"]["REVENUE"]["role"], "measure")
+        self.assertEqual(spec["column_roles"]["GROSS_PROFIT"]["role"], "measure")
+        self.assertEqual(spec["recommended_type"], "bar")
+        self.assertEqual(spec["x"]["column"], "CUSTOMER_NAME")
+        self.assertEqual(detect_chart_type(rows, question), "bar")
+        payload = build_chart_payload(rows, "bar", title=question, question=question)
+        self.assertIsNotNone(payload)
+        self.assertEqual(payload["x_key"], "CUSTOMER_NAME")
+        self.assertEqual(set(payload["y_keys"]), {"REVENUE", "GROSS_PROFIT"})
+
+    def test_integer_yyyymmdd_key_column_still_temporal(self):
+        rows = [
+            {"INV_DT_DMS_KEY": 20260101, "REVENUE": 100.50},
+            {"INV_DT_DMS_KEY": 20260201, "REVENUE": 120.25},
+            {"INV_DT_DMS_KEY": 20260301, "REVENUE": 180.75},
+        ]
+        spec = infer_chart_spec(rows, "monthly revenue trend")
+        self.assertEqual(spec["column_roles"]["INV_DT_DMS_KEY"]["role"], "temporal")
+        self.assertEqual(spec["column_roles"]["REVENUE"]["role"], "measure")
+
     def test_non_trend_question_with_date_column_still_uses_business_dimension(self):
         rows = [
             {"Invoice_Date": "2026-01-01", "Warehouse": "A", "Revenue": 1000},

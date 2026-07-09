@@ -99,8 +99,13 @@ def _looks_temporal_values(values: list[Any]) -> bool:
     numeric = [v for v in numeric if v is not None]
     if not numeric:
         return False
-    # Integer YYYYMMDD keys, common in warehouse schemas.
-    return all(19000101 <= int(v) <= 21001231 for v in numeric if float(v).is_integer())
+    # Integer YYYYMMDD keys, common in warehouse schemas. Fractional values
+    # can never be date keys — without this guard, an all-decimal currency
+    # column (every value carrying cents) left the filtered generator empty
+    # and all([]) vacuously classified it as temporal, killing the chart.
+    if not all(float(v).is_integer() for v in numeric):
+        return False
+    return all(19000101 <= int(v) <= 21001231 for v in numeric)
 
 
 def _looks_identifier(rows: list[dict], col: str) -> bool:
