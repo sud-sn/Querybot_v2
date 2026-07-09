@@ -57,6 +57,55 @@ def _tokenize(*parts: str) -> set[str]:
     return tokens
 
 
+# Modifiers that turn a raw column total into a CALCULATED metric — "open
+# order quantity" means ordered MINUS received, not SUM(ordered). Deliberately
+# narrow (inventory/fulfillment/finance subtraction words only): broad terms
+# like growth/change/margin/rate are handled by dedicated engines or are
+# legitimately single columns, and flagging them would be noise.
+_DERIVED_MODIFIERS = (
+    "open", "net", "outstanding", "remaining", "unfulfilled", "unfilled",
+    "backlog", "backordered", "uninvoiced", "unreceived", "unshipped",
+    "undelivered", "unpaid", "shortfall", "surplus", "deficit", "buildup",
+    "leakage",
+)
+_METRIC_NOUNS = (
+    "quantity", "qty", "amount", "amt", "value", "balance", "revenue",
+    "sales", "cost", "units", "volume", "orders", "order", "inventory",
+    "stock", "total",
+)
+_DERIVED_PHRASE_RE = re.compile(
+    r"\b(" + "|".join(_DERIVED_MODIFIERS) + r")\s+(?:\w+\s+){0,2}"
+    r"(" + "|".join(_METRIC_NOUNS) + r")\b",
+    re.IGNORECASE,
+)
+
+
+def detect_derived_metric_gap(
+    question: str,
+    *,
+    has_metric_formula: bool = False,
+    has_term_expression: bool = False,
+) -> str:
+    """Return the derived-metric phrase when the question asks for a
+    calculated business metric that has NO approved formula behind it.
+
+    "what is the open order quantity by purchase order date" reads as
+    ordered − received, but with no registry metric and no business term
+    carrying a canonical_expression, the LLM can only SUM a single raw
+    column — a business-wrong answer delivered with full confidence.
+    This detector lets the confidence layer say so instead.
+
+    Returns "" when a formula source matched (the pipeline injects the
+    approved calculation, so there is no gap) or no derived phrase exists.
+    """
+    if has_metric_formula or has_term_expression:
+        return ""
+    match = _DERIVED_PHRASE_RE.search(question or "")
+    if not match:
+        return ""
+    return re.sub(r"\s+", " ", match.group(0)).strip().lower()
+
+
 def detect_metric_semantics(
     question: str,
     *,

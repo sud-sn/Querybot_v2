@@ -228,6 +228,21 @@ class WebAdapter(PlatformAdapter):
             await self.ws.send_json(payload)
         except Exception as e:
             log.error("WebSocket send_assistant_response failed: %s", e)
+            # A serialization failure here (e.g. a non-JSON-serializable type
+            # sneaking into the payload) used to mean the user saw NOTHING
+            # after "query generated" — send a minimal error frame so the
+            # failure is at least visible in chat.
+            try:
+                await self.ws.send_json({
+                    "type": "assistant_error",
+                    "role": "assistant",
+                    "content": (
+                        "Something went wrong while preparing your answer — "
+                        "please try asking again."
+                    ),
+                })
+            except Exception:
+                pass
 
     async def send_analysis_response(self, event: PlatformEvent, payload: dict) -> None:
         try:

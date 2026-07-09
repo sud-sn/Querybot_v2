@@ -29,6 +29,7 @@ def build_answer_confidence(
     tables_used: list[str] | None = None,
     empty_tables: list[str] | None = None,
     null_metric_issue: bool = False,
+    derived_metric_gap: str = "",
 ) -> dict[str, Any]:
     """
     Convert technical query signals into a compact business-facing confidence score.
@@ -79,6 +80,15 @@ def build_answer_confidence(
     if null_metric_issue:
         score -= 25
         warnings.append("Records matched the filter, but the requested metric values were null or missing.")
+
+    if derived_metric_gap:
+        score -= 25
+        warnings.append(
+            f"'{derived_metric_gap}' looks like a calculated business metric with no "
+            "approved formula — this result may total a raw column instead of the real "
+            "calculation. Ask your administrator to define the formula in the Metric "
+            "Registry or Business Terms."
+        )
 
     if has_semantic_plan:
         score += 5

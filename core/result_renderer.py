@@ -673,6 +673,7 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
         tables_used=confidence_context.get("tables_used") or extract_sql_tables(sql, db_cfg.get("db_type", "azure_sql")),
         empty_tables=confidence_context.get("empty_tables") or [],
         null_metric_issue=bool(null_metric_issue),
+        derived_metric_gap=str(confidence_context.get("derived_metric_gap") or ""),
     )
 
     chart_type = detect_chart_type(

@@ -24,7 +24,7 @@ from core.clarification import (
 )
 from core.schema import run_query, load_known_tables, load_schema_columns
 from core.knowledge import load_retriever
-from core.validator import validate_sql
+from core.validator import normalize_generated_sql, validate_sql
 from core.query_semantics import analyze_query_intent, build_generic_query_hints
 from core.graph_resolver import resolve_for_question as _graph_resolve
 from core.llm_audit import llm_audit_scope, make_llm_audit_request_id
@@ -1204,6 +1204,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
     # Fires only when the LLM forgot DISTINCT on a non-aggregate list query.
     # Silently skipped for aggregate / GROUP BY / already-DISTINCT queries.
     sql = _inject_distinct_if_needed(sql, question)
+    sql = normalize_generated_sql(sql, db_cfg["db_type"])
 
     # CANNOT_GENERATE — try clarification before giving up (Approach B)
     if "CANNOT_GENERATE" in sql.upper():
@@ -1258,8 +1259,14 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                         f"_Reply in plain language and I'll continue with your original question._"
                     )
                 return
+        from core.failure_messages import suggest_closest_terms
+        _closest = suggest_closest_terms(question, account_id, state.get("kb_dir", ""))
+        _closest_line = (
+            f"Closest known terms in your data: {', '.join(_closest)}.\n\n" if _closest else ""
+        )
         await adapter.send_message(event,
                 "❓ I couldn't find the right tables or columns to answer that.\n\n"
+                + _closest_line +
                 "Try rephrasing — for example:\n"
                 "  • Be more specific about the metric you want\n"
                 "  • Include a time range (last month, this year)\n"
@@ -1539,6 +1546,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                 sql_retry = "\n".join(sql_retry.split("\n")[1:]).rsplit("```", 1)[0].strip()
 
             sql_retry = _inject_distinct_if_needed(sql_retry, question)
+            sql_retry = normalize_generated_sql(sql_retry, db_cfg["db_type"])
 
             if "CANNOT_GENERATE" not in sql_retry.upper() and len(sql_retry) > 10:
                 _retry_validate_t0 = time.time()
@@ -1602,11 +1610,17 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                portal_user_id=pu_id, zoom_user_id=zid,
                question_id=audit_request_id)
         _trace_finish(trace_id, status="error", answer_type="error", error_message=last_reason)
-        from core.failure_messages import translate_failure, _VALIDATION_REASONS
+        from core.failure_messages import translate_failure, suggest_closest_terms, _VALIDATION_REASONS
         if (last_code or "").lower() in _VALIDATION_REASONS:
+            _suggest = (
+                suggest_closest_terms(question, account_id, state.get("kb_dir", ""))
+                if (last_code or "").lower() in {"unknown_column", "cannot_generate", "field_plan_mismatch"}
+                else []
+            )
             _rca = translate_failure(
                 kind="validation", code=last_code, reason=last_reason,
                 sql=sql, question=question,
+                suggestions=_suggest,
             )
             from core.answer_formatter import format_failure_business_response
             await adapter.send_message(event, format_failure_business_response(
@@ -1718,12 +1732,21 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
             columns=list(rows[0].keys()) if rows else [],
             row_count=len(rows),
         )
+    from core.metric_semantics import detect_derived_metric_gap
     _confidence_context = {
         "validation_code": last_code or code or "ok",
         "retry_count": retry_count,
         "has_semantic_plan": bool((_semantic_plan or {}).get("enabled")),
         "has_graph_context": bool((_graph_ctx or {}).get("enabled") or (_graph_ctx or {}).get("detected")),
         "tables_used": extract_sql_tables(sql, db_cfg.get("db_type", "azure_sql")),
+        # "open order quantity" with no approved formula anywhere = the LLM
+        # could only SUM a raw column; surface that as a confidence warning
+        # instead of presenting a business-wrong number with full confidence.
+        "derived_metric_gap": detect_derived_metric_gap(
+            question,
+            has_metric_formula=bool(metric_formula_context),
+            has_term_expression=bool(term_injection),
+        ),
         # Carried through to cache_result so compare_prior can read them.
         "semantic_plan": _semantic_plan or {},
     }

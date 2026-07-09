@@ -10,7 +10,7 @@ from core.graph_resolver import detect_entities, resolve_for_question
 from core.llm import build_sql_system_prompt
 from core.query_semantics import analyze_query_intent
 from core.semantic_planner import build_semantic_field_plan
-from core.validator import validate_sql, validate_sql_detailed
+from core.validator import normalize_generated_sql, validate_sql, validate_sql_detailed
 from core.answer_confidence import build_answer_confidence
 from core.answer_rca import build_business_rca, extract_sql_tables
 from core.query_router import should_route_to_result_cache, build_duckdb_system_prompt
@@ -202,6 +202,31 @@ class StrictColumnValidationTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertEqual(code, "date_key_format")
         self.assertIn("Convert YYYYMMDD", msg)
+
+    def test_normalizes_misplaced_sql_server_datepart_cast(self):
+        sql = (
+            "WITH base AS ("
+            "SELECT CAST(YEAR(TRY_CONVERT(DATE, CONVERT(VARCHAR(8), CUS_IVC_DT_DMS_KEY), 112))) AS INT) AS YR, "
+            "SUM(SOP_CUS_IVC_LIN_AMT) AS Revenue "
+            "FROM [PROFITABILITY].[CUS_ORD_IVC_FCT] "
+            "WHERE CUS_IVC_DT_DMS_KEY > 0 "
+            "GROUP BY CAST(YEAR(TRY_CONVERT(DATE, CONVERT(VARCHAR(8), CUS_IVC_DT_DMS_KEY), 112))) AS INT)"
+            ") SELECT * FROM base"
+        )
+        normalized = normalize_generated_sql(sql, "azure_sql")
+        self.assertNotIn("))) AS INT)", normalized)
+        self.assertIn(
+            "CAST(YEAR(TRY_CONVERT(date, CONVERT(varchar(8), CUS_IVC_DT_DMS_KEY), 112)) AS INT)",
+            normalized,
+        )
+        result = validate_sql_detailed(
+            normalized,
+            KNOWN,
+            "azure_sql",
+            None,
+            COLUMNS,
+        )
+        self.assertTrue(result.ok, result.reason)
 
     def test_rejects_filtered_sum_without_null_diagnostics(self):
         result = validate_sql_detailed(
@@ -748,6 +773,10 @@ class IntentAndGraphReliabilityTests(unittest.TestCase):
             "DATEADD(month, -1,",
             prompt,
         )
+        self.assertIn("Azure SQL date-key pattern", prompt)
+        self.assertIn("WITH dated AS", prompt)
+        self.assertIn("GROUP BY YR", prompt)
+        self.assertIn("Never write CAST(YEAR(TRY_CONVERT", prompt)
 
     def test_date_key_rule_absent_without_dms_key_column(self):
         prompt = build_sql_system_prompt("azure_sql", "Table ORDERS has column ORDER_DATE")

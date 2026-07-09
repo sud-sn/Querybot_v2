@@ -1596,6 +1596,21 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     await task.func(*task.args, **task.kwargs)
                 except Exception as e:
                     log.error("WS bg task error: %s", e)
+                    # Defect class: a crash while generating/sending the
+                    # answer used to end in total silence — the query ran,
+                    # the server log had the error, the user saw nothing.
+                    # Degrade to a visible generic error instead.
+                    try:
+                        await websocket.send_json({
+                            "type": "assistant_error",
+                            "role": "assistant",
+                            "content": (
+                                "Something went wrong while preparing your answer — "
+                                "please try asking again."
+                            ),
+                        })
+                    except Exception:
+                        pass
 
             await websocket.send_json({"type": "typing", "active": False})
 

@@ -128,6 +128,106 @@ def sanitize_db_error(raw: str) -> dict[str, str]:
     }
 
 
+# ── "Did you mean" suggestions ───────────────────────────────────────────────
+
+_SUGGEST_STOPWORDS = {
+    "what", "the", "for", "and", "per", "each", "show", "give", "list",
+    "total", "sum", "avg", "average", "count", "number", "how", "many",
+    "much", "previous", "last", "current", "this", "year", "month", "week",
+    "quarter", "date", "top", "bottom", "highest", "lowest", "with", "from",
+}
+
+
+def _suggest_stem(token: str) -> str:
+    """Naive stem so 'ordered'/'orders' meet 'order' — good enough for
+    overlap scoring, never shown to the user."""
+    t = token
+    if t.endswith("ies") and len(t) > 4:
+        return t[:-3] + "y"
+    if t.endswith("ing") and len(t) > 5:
+        return t[:-3]
+    if t.endswith("ed") and len(t) > 4:
+        return t[:-2]
+    if t.endswith("s") and len(t) > 3:
+        return t[:-1]
+    return t
+
+
+def _suggest_tokens(text: str) -> set[str]:
+    return {
+        _suggest_stem(t)
+        for t in re.split(r"[^a-z0-9]+", (text or "").lower())
+        if len(t) > 2 and t not in _SUGGEST_STOPWORDS
+    }
+
+
+def suggest_closest_terms(
+    question: str,
+    account_id: str = "",
+    kb_dir: str = "",
+    limit: int = 3,
+) -> list[str]:
+    """Closest known vocabulary to the question, for 'did you mean' lines on
+    terminal failures (CANNOT_GENERATE / unknown_column).
+
+    Sources — all existing, no new index: registry metric names+synonyms,
+    business-term glossary entries+aliases, and the semantic model's approved
+    meanings / business candidates. A tester who asks for 'customer ordered
+    quantity' and dead-ends gets pointed at 'purchase order quantity' instead
+    of a generic 'try rephrasing'. Never raises; returns [] on any problem.
+    """
+    q_tokens = _suggest_tokens(question)
+    if not q_tokens:
+        return []
+
+    scored: dict[str, tuple[float, str]] = {}
+
+    def _consider(phrase: Any) -> None:
+        display = re.sub(r"\s+", " ", str(phrase or "").strip())
+        if len(display) < 4 or len(display) > 60:
+            return
+        p_tokens = _suggest_tokens(display)
+        if not p_tokens:
+            return
+        overlap = q_tokens & p_tokens
+        # Require either two shared meaningful tokens or a fully-contained
+        # phrase — single-word grazes ("amount") would suggest everything.
+        if len(overlap) < 2 and overlap != p_tokens:
+            return
+        score = len(overlap) + len(overlap) / len(p_tokens)
+        key = display.lower()
+        if key not in scored or score > scored[key][0]:
+            scored[key] = (score, display)
+
+    try:
+        import store
+        for metric in store.list_metrics(account_id) or []:
+            _consider(metric.get("name"))
+            for syn in str(metric.get("synonyms") or "").split(","):
+                _consider(syn)
+        for term_row in store.list_terms(account_id) or []:
+            _consider(term_row.get("term"))
+            for alias in str(term_row.get("aliases") or "").split(","):
+                _consider(alias)
+    except Exception:
+        pass
+
+    try:
+        if kb_dir:
+            from core.semantic_model import load_semantic_model
+            for table in (load_semantic_model(kb_dir) or {}).get("tables") or []:
+                for field in table.get("fields") or []:
+                    if str(field.get("status") or "") == "approved":
+                        _consider(field.get("approved_meaning"))
+                    for cand in (field.get("business_candidates") or [])[:3]:
+                        _consider(cand)
+    except Exception:
+        pass
+
+    ranked = sorted(scored.values(), key=lambda item: -item[0])
+    return [display for _score, display in ranked[:max(1, int(limit))]]
+
+
 # ── Validator-code translations ───────────────────────────────────────────────
 
 _VALIDATION_REASONS: dict[str, str] = {
@@ -164,6 +264,7 @@ def translate_failure(
     sql: str = "",
     question: str = "",
     context: dict[str, Any] | None = None,
+    suggestions: list[str] | None = None,
 ) -> dict[str, Any]:
     """
     Build a business-readable failure RCA. Same dict shape as
@@ -194,10 +295,13 @@ def translate_failure(
                 technical.append(f"Validation: {code_key}")
             if reason:
                 technical.append((reason or "").strip()[:_MAX_TECH_CHARS])
+            next_step = _VALIDATION_NEXT_STEPS.get(code_key, _DEFAULT_VALIDATION_NEXT_STEP)
+            if suggestions:
+                next_step += f" Closest known terms in your data: {', '.join(suggestions)}."
             return {
                 "headline": "I could not build a trusted query for this question.",
                 "most_likely_reason": plain,
-                "suggested_next_step": _VALIDATION_NEXT_STEPS.get(code_key, _DEFAULT_VALIDATION_NEXT_STEP),
+                "suggested_next_step": next_step,
                 "technical_notes": technical,
             }
 

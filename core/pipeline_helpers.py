@@ -488,8 +488,11 @@ def attempt_field_plan_repair(
     column for the display column in SELECT / GROUP BY / ORDER BY.
 
     Returns the repaired SQL when the rewrite re-validates cleanly, else "".
-    Only display-field mismatches (and their join edges) are attempted; any
-    other error type bails out to the normal LLM retry.
+    Three mechanical cases are attempted — display-field mismatches (and
+    their join edges), superseded-column swaps, and missing required MEASURE
+    swaps when the SQL used exactly one non-plan sibling measure on the same
+    table (e.g. plan requires CUS_IVC_LIN_AMT, the LLM summed
+    SOP_CUS_IVC_LIN_AMT). Anything else bails out to the normal LLM retry.
     """
     try:
         import sqlglot
@@ -530,6 +533,7 @@ def attempt_field_plan_repair(
             return ""
 
     missing_display: list[dict] = []
+    missing_measures: list[dict] = []
     display_tables: set[str] = set()
     for err in result.errors:
         if err.get("code") == "field_plan_mismatch":
@@ -555,10 +559,15 @@ def attempt_field_plan_repair(
                     ),
                     None,
                 )
-            if not f or not f.get("display_required") or not f.get("source_key_column"):
+            if f is None:
                 return ""
-            missing_display.append(f)
-            display_tables.add((f.get("table") or "").upper())
+            if f.get("display_required") and f.get("source_key_column"):
+                missing_display.append(f)
+                display_tables.add((f.get("table") or "").upper())
+            elif str(f.get("role") or "").lower() == "measure":
+                missing_measures.append(f)
+            else:
+                return ""
         elif err.get("code") == "field_plan_join_missing":
             # Repairable only when the missing join reaches a display table we
             # are about to add anyway.
@@ -568,7 +577,7 @@ def attempt_field_plan_repair(
                 return ""
         else:
             return ""
-    if not missing_display and not avoided_swaps:
+    if not missing_display and not avoided_swaps and not missing_measures:
         return ""
 
     dialect = _REPAIR_DIALECT.get(db_type)
@@ -612,6 +621,70 @@ def attempt_field_plan_repair(
             replaced_here = True
         if not replaced_here:
             return ""
+        changed = True
+
+    # ── Missing required MEASURE swaps ────────────────────────────────────────
+    # The plan required a measure column but the LLM aggregated a sibling on
+    # the same table (defect: 'sales amount' plan-bound to CUS_IVC_LIN_AMT,
+    # SQL summed SOP_CUS_IVC_LIN_AMT). Mechanical only when exactly ONE
+    # non-plan measure-shaped column from that table appears in the SQL —
+    # any ambiguity goes to the LLM retry with the repair note instead.
+    for field in missing_measures:
+        req_table = field.get("table") or ""
+        req_col = (field.get("column") or "").upper()
+        table_cols_typed: dict[str, str] = {}
+        for tk, cols in (table_columns or {}).items():
+            if _table_matches(tk, req_table):
+                table_cols_typed = {
+                    str(c).upper(): str(t or "") for c, t in (cols or {}).items()
+                }
+                break
+        if req_col not in table_cols_typed:
+            return ""
+        aliases = {
+            str(t.alias_or_name or t.name or "").upper()
+            for t in tree.find_all(sg_exp.Table)
+            if _node_matches_table(t, req_table)
+        }
+        if not aliases:
+            return ""
+        plan_cols_for_table = {
+            pc for (pt, pc) in plan_fields if _table_matches(pt, req_table)
+        }
+
+        def _measure_shaped(name: str, ctype: str) -> bool:
+            if name.endswith(("_KEY", "_ID", "_CD", "_NUM", "_NO")):
+                return False
+            base = ctype.lower().split("(")[0].strip()
+            return any(t in base for t in (
+                "decimal", "numeric", "money", "float", "real", "int", "number",
+            ))
+
+        candidates: set[str] = set()
+        for col_node in tree.find_all(sg_exp.Column):
+            name = (col_node.name or "").upper()
+            tbl_ref = (col_node.table or "").upper()
+            if tbl_ref and tbl_ref not in aliases:
+                continue
+            if not name or name == req_col or name in plan_cols_for_table:
+                continue
+            ctype = table_cols_typed.get(name)
+            if ctype is None or not _measure_shaped(name, ctype):
+                continue
+            candidates.add(name)
+        if len(candidates) != 1:
+            return ""
+        wrong_col = candidates.pop()
+        for col_node in list(tree.find_all(sg_exp.Column)):
+            if (col_node.name or "").upper() != wrong_col:
+                continue
+            tbl_ref = (col_node.table or "").upper()
+            if tbl_ref and tbl_ref not in aliases:
+                continue
+            col_node.replace(
+                sg_exp.column(req_col, table=col_node.table)
+                if col_node.table else sg_exp.column(req_col)
+            )
         changed = True
 
     for field in missing_display:

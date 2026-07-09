@@ -55,6 +55,63 @@ _DIALECT: dict[str, str] = {
 }
 
 
+_SQLSERVER_BAD_DATEPART_CAST_RE = re.compile(
+    r"CAST\s*\(\s*"
+    r"(?P<part>YEAR|MONTH|DAY)\s*\(\s*"
+    r"(?P<inner>"
+    r"TRY_CONVERT\s*\(\s*"
+    r"(?P<date_type>DATE|DATETIME|DATETIME2|SMALLDATETIME)\s*,\s*"
+    r"CONVERT\s*\(\s*"
+    r"(?P<char_type>N?VARCHAR|N?CHAR)\s*\(\s*8\s*\)\s*,\s*"
+    r"(?P<date_col>(?:\[[^\]]+\]|[A-Za-z_][\w$]*)(?:\s*\.\s*(?:\[[^\]]+\]|[A-Za-z_][\w$]*))?)"
+    r"\s*\)\s*,\s*112\s*\)"
+    r")\s*\)\s*\)\s*AS\s+(?P<cast_type>INT|INTEGER|BIGINT)\s*\)",
+    re.IGNORECASE,
+)
+
+
+def normalize_generated_sql(sql: str, db_type: str = "snowflake") -> str:
+    """
+    Apply deterministic, semantics-preserving cleanup to generated SQL before
+    validation/execution.
+
+    The main production case is Azure SQL date-key grouping. LLMs sometimes
+    write this malformed expression:
+
+        CAST(YEAR(TRY_CONVERT(date, CONVERT(varchar(8), col), 112))) AS INT)
+
+    SQL Server expects the target type inside CAST(... AS type), so normalize it
+    to:
+
+        CAST(YEAR(TRY_CONVERT(date, CONVERT(varchar(8), col), 112)) AS INT)
+
+    This is intentionally narrow: it only fixes misplaced CAST type syntax
+    around YEAR/MONTH/DAY over a YYYYMMDD TRY_CONVERT pattern.
+    """
+    if not sql or (db_type or "").lower() != "azure_sql":
+        return sql
+
+    def _replace(match: re.Match) -> str:
+        part = match.group("part").upper()
+        date_type = match.group("date_type").lower()
+        char_type = match.group("char_type").lower()
+        date_col = re.sub(r"\s+", "", match.group("date_col"))
+        cast_type = match.group("cast_type").upper()
+        return (
+            f"CAST({part}(TRY_CONVERT({date_type}, "
+            f"CONVERT({char_type}(8), {date_col}), 112)) AS {cast_type})"
+        )
+
+    previous = None
+    normalized = sql
+    # Re-run until stable in case the same bad expression appears in SELECT,
+    # GROUP BY, ORDER BY, and CTE filters.
+    while previous != normalized:
+        previous = normalized
+        normalized = _SQLSERVER_BAD_DATEPART_CAST_RE.sub(_replace, normalized)
+    return normalized
+
+
 def _strip_literals_and_comments(sql: str) -> str:
     """
     Blank out string literals and comments so the DDL/DML keyword scan only
@@ -441,6 +498,8 @@ def validate_sql_detailed(
     semantic_context: dict | None = None,
 ) -> SqlValidationResult:
     """Return structured validation status and errors."""
+    sql = normalize_generated_sql(sql, db_type)
+
     if sql.strip() == "CANNOT_GENERATE":
         return SqlValidationResult(
             False,
@@ -488,6 +547,7 @@ def validate_sql_detailed(
     denied: list[str] = []
     alias_to_table: dict[str, str] = {}
     base_table_keys: list[str] = []
+    distinct_base_tables: set[str] = set()
 
     for node in tree.find_all(sg_exp.Table):
         variants = _table_variants(node)
@@ -503,6 +563,7 @@ def validate_sql_detailed(
             denied.append(variants[0])
             continue
 
+        distinct_base_tables.add(bare)
         table_key = _pick_table_key(variants, table_columns)
         if table_key:
             base_table_keys.append(table_key)
@@ -590,6 +651,17 @@ def validate_sql_detailed(
             )
 
         unique_base_keys = [k for k in dict.fromkeys(base_table_keys) if k in table_columns]
+        # A bare column matching NO base table is only provably invalid when
+        # every distinct table in the query has populated column metadata —
+        # if any base table's columns are unknown (missing from table_columns
+        # or an empty entry), the column might legitimately live there. The
+        # same condition guards the single-table attribution below: with
+        # partial metadata, "one known table" does not mean "one table".
+        tables_fully_known = (
+            bool(unique_base_keys)
+            and len(unique_base_keys) == len(distinct_base_tables)
+            and all(table_columns.get(k) for k in unique_base_keys)
+        )
         unknown_cols_by_key: dict[tuple[str, str], dict] = {}
         for col_node in tree.find_all(sg_exp.Column):
             col_name = (col_node.name or "").upper()
@@ -606,7 +678,7 @@ def validate_sql_detailed(
             else:
                 if col_name in select_aliases:
                     continue
-                if len(unique_base_keys) == 1:
+                if len(unique_base_keys) == 1 and len(distinct_base_tables) == 1:
                     table_key = unique_base_keys[0]
                 else:
                     # Unqualified column in a multi-table query: find the first base table
@@ -616,6 +688,28 @@ def validate_sql_detailed(
                         "",
                     )
                 if not table_key:
+                    # No base table has this column. Previously a silent skip,
+                    # which let hallucinated calendar columns through — e.g.
+                    # "previous year cost amount" produced SQL referencing YR
+                    # directly on the fact table when YR only exists on the
+                    # DT_DMS date dimension. Flag it (with the tables that DO
+                    # carry the column, so the retry knows to join them) when
+                    # every table in the query has known columns.
+                    if tables_fully_known:
+                        key = ("", col_name)
+                        if key not in unknown_cols_by_key:
+                            candidate_tables = _tables_with_column(col_name, table_columns)
+                            unknown_cols_by_key[key] = {
+                                "code": "unknown_column",
+                                "message": (
+                                    f"Column {col_name} was not found on any table referenced in this query."
+                                ),
+                                "table": "",
+                                "column": col_name,
+                                "alias": "",
+                                "suggestions": [],
+                                "candidate_tables": candidate_tables,
+                            }
                     continue
 
             cols = set(table_columns.get(table_key, {}))
@@ -643,8 +737,9 @@ def validate_sql_detailed(
                 suffix = f" Suggestions: {', '.join(suggestions)}." if suggestions else ""
                 candidate_tables = err.get("candidate_tables") or []
                 if candidate_tables:
-                    suffix += f" Exact column exists on: {', '.join(candidate_tables)}."
-                parts.append(f"{err['column']} on {err['table']}.{suffix}")
+                    suffix += f" Exact column exists on: {', '.join(candidate_tables)} — join that table to use it."
+                location = f"on {err['table']}" if err.get("table") else "on any table in this query"
+                parts.append(f"{err['column']} {location}.{suffix}")
             return SqlValidationResult(
                 False,
                 (
