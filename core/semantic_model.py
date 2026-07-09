@@ -868,6 +868,58 @@ def _runtime_match_score(question_terms: set[str], values: list[str]) -> int:
     return best_score
 
 
+def _semantic_business_phrases(text: str) -> list[str]:
+    """Extract compact business phrases from approved admin text.
+
+    Admin use cases often read like "Used when a question explicitly refers to
+    purchase order amount".  Matching the full sentence is too strict, so we
+    also match the phrase after "refers to".
+    """
+    raw = str(text or "").strip()
+    if not raw:
+        return []
+    phrases: list[str] = []
+    for pattern in (
+        r"\brefers?\s+to\s+(.+)$",
+        r"\bused\s+(?:when|for)\s+(.+)$",
+        r"\bbusiness\s+terms?\s*:\s*(.+)$",
+        r"\bmetric\s*:\s*(.+)$",
+    ):
+        match = re.search(pattern, raw, flags=re.I)
+        if match:
+            tail = match.group(1)
+            for part in re.split(r"[|;,]", tail):
+                part = re.sub(r"^\s*(?:a|an|the|question|explicitly)\s+", "", part.strip(), flags=re.I)
+                if part:
+                    phrases.append(part)
+    return phrases
+
+
+def _approved_field_match_values(field: dict[str, Any]) -> list[str]:
+    values = [
+        str(field.get("column") or ""),
+        str(field.get("expanded_name") or ""),
+        str(field.get("approved_meaning") or ""),
+        str(field.get("approved_use_case") or ""),
+    ]
+    values.extend(str(v) for v in (field.get("business_candidates") or []) if v)
+    values.extend(_semantic_business_phrases(field.get("approved_meaning") or ""))
+    values.extend(_semantic_business_phrases(field.get("approved_use_case") or ""))
+    return [v for v in values if v]
+
+
+def _approved_field_term(field: dict[str, Any]) -> str:
+    for text in (
+        *(_semantic_business_phrases(field.get("approved_use_case") or "")),
+        str(field.get("approved_meaning") or ""),
+        str(field.get("expanded_name") or ""),
+        str(field.get("column") or ""),
+    ):
+        if str(text or "").strip():
+            return str(text).strip()
+    return str(field.get("column") or "")
+
+
 def _question_asks_for_key(question: str, dimension_name: str = "") -> bool:
     q = re.sub(r"[^a-z0-9]+", " ", (question or "").lower()).strip()
     if not q:
@@ -1063,6 +1115,39 @@ def build_runtime_semantic_plan(
     joins: list[dict[str, Any]] = []
     seen_fields: set[tuple[str, str]] = set()
     seen_joins: set[tuple[str, str, tuple[tuple[str, str], ...]]] = set()
+
+    # Admin-approved field meanings are hard semantic mappings.  If the user's
+    # wording matches an approved field's meaning/use case, require that exact
+    # source column so nearby generated columns cannot win by name similarity.
+    for table in tables:
+        source_table = str(table.get("qualified_name") or table.get("table") or "")
+        for field in table.get("fields", []) or []:
+            if str(field.get("status") or "") != "approved":
+                continue
+            column = str(field.get("column") or "")
+            if not column:
+                continue
+            score = _runtime_match_score(q_terms, _approved_field_match_values(field))
+            if score <= 0:
+                continue
+            field_key = (source_table.upper(), column.upper())
+            if field_key in seen_fields:
+                continue
+            seen_fields.add(field_key)
+            fields.append({
+                "term": _approved_field_term(field),
+                "table": source_table,
+                "column": column,
+                "role": field.get("role") or "attribute",
+                "display_required": False,
+                "confidence": field.get("confidence", 100),
+                "source": "approved_semantic_field",
+                "enforcement": "required",
+            })
+            if len(fields) >= max_fields:
+                break
+        if len(fields) >= max_fields:
+            break
 
     for table in tables:
         source_table = str(table.get("qualified_name") or table.get("table") or "")

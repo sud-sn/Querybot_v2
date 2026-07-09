@@ -289,6 +289,76 @@ class SemanticModelTests(unittest.TestCase):
 
     # ── S2-1: patch_metric_approval ───────────────────────────────────────────
 
+    def test_approved_field_mapping_blocks_nearby_generated_amount_column(self):
+        with _tmp_dir() as tmp:
+            kb_dir = Path(tmp)
+            model = {
+                "tables": [
+                    {
+                        "schema": "EMDW_DMART",
+                        "table": "PCH_ORD_RCT_FCT",
+                        "qualified_name": "EMDW_DMART.PCH_ORD_RCT_FCT",
+                        "fields": [
+                            {
+                                "column": "PCH_ORD_LIN_AMT",
+                                "role": "measure",
+                                "status": "generated",
+                                "business_candidates": ["purchase order line amount"],
+                                "confidence": 65,
+                            },
+                            {
+                                "column": "PCH_ORD_LIN_CAD_AMT",
+                                "role": "measure",
+                                "status": "approved",
+                                "approved_meaning": "CAD purchase order line amount",
+                                "approved_use_case": "Used when a question explicitly refers to purchase order amount",
+                                "business_candidates": ["Pch Ord Lin Cad Amt field from the selected table."],
+                                "confidence": 100,
+                            },
+                        ],
+                        "dimensions": [],
+                        "date_roles": [],
+                    }
+                ],
+                "relationships": [],
+                "date_roles": [],
+            }
+            (kb_dir / MODEL_JSON).write_text(json.dumps(model), encoding="utf-8")
+
+            plan = build_runtime_semantic_plan(
+                str(kb_dir),
+                question="show total purchase order amount by purchase order date",
+                selected_schema="EMDW_DMART",
+            )
+
+            self.assertTrue(plan["enabled"])
+            self.assertIn(
+                "EMDW_DMART.PCH_ORD_RCT_FCT.PCH_ORD_LIN_CAD_AMT",
+                [f"{f['table']}.{f['column']}" for f in plan["fields"]],
+            )
+
+            wrong_sql = (
+                "SELECT SUM(pch.PCH_ORD_LIN_AMT) AS TOTAL_PURCHASE_AMOUNT "
+                "FROM [EMDW_DMART].[PCH_ORD_RCT_FCT] pch"
+            )
+            result = validate_sql_detailed(
+                wrong_sql,
+                {"EMDW_DMART.PCH_ORD_RCT_FCT"},
+                "azure_sql",
+                None,
+                {
+                    "EMDW_DMART.PCH_ORD_RCT_FCT": {
+                        "PCH_ORD_LIN_AMT": "decimal",
+                        "PCH_ORD_LIN_CAD_AMT": "decimal",
+                    }
+                },
+                {"semantic_plan": plan},
+            )
+
+            self.assertFalse(result.ok)
+            self.assertEqual(result.code, "field_plan_mismatch")
+            self.assertIn("PCH_ORD_LIN_CAD_AMT", result.reason)
+
     def test_metric_approval_patches_model_measures(self):
         """patch_metric_approval sets status=approved and expression on matching measure."""
         with _tmp_dir() as tmp:
