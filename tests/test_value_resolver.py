@@ -329,6 +329,103 @@ class MetaWordsExcludedFromExtractionTests(unittest.TestCase):
         self.assertEqual(phrases, [])
 
 
+class NgramExtractionTests(unittest.TestCase):
+    """
+    Unquoted lowercase multi-word values ("emco corp", "grand rapids",
+    "steel rod 10mm") were only extracted as single tokens, which score below
+    the conservative fuzzy thresholds — so exactly the case the module
+    docstring promises ("Emco corp" -> "EMCO Corporation") only worked when
+    quoted. Adjacent-token 2/3-grams of non-excluded words close that gap;
+    grams never swallow single tokens, so a speculative gram that matches
+    nothing cannot take a resolving token down with it.
+    """
+
+    def setUp(self):
+        self.base = tempfile.mkdtemp()
+        _make_index(self.base, values_by_col={
+            "CUS_NM": ["EMCO Corporation", "EMCO Corp EU", "MARTIN SUPPLY CO"],
+            "ITM_DSC": ["STEEL ROD 10MM", "STEEL ROD 12MM", "GRAND RAPIDS DC"],
+        })
+        self.known = build_known_terms("acct", {})
+
+    def test_unquoted_multiword_name_resolves_to_in_list(self):
+        r = resolve_literals("acct", "sales for emco corp last month",
+                             known_terms=self.known, base_dir=self.base)
+        self.assertEqual(len(r["in_lists"]), 1)
+        self.assertEqual(set(r["in_lists"][0]["values"]),
+                         {"EMCO Corporation", "EMCO Corp EU"})
+
+    def test_unquoted_trigram_with_digits_verifies_exact_value(self):
+        r = resolve_literals("acct", "sales of steel rod 10mm by month",
+                             known_terms=self.known, base_dir=self.base)
+        self.assertEqual([v["value"] for v in r["verified"]], ["STEEL ROD 10MM"])
+
+    def test_gram_never_swallows_resolving_token(self):
+        # "value open" (a junk gram) must not eliminate the "open" token.
+        phrases = extract_candidate_phrases(
+            "what is the total value of open orders", self.known,
+        )
+        self.assertIn("open", [p.lower() for p in phrases])
+
+    def test_grams_exclude_question_language(self):
+        phrases = extract_candidate_phrases(
+            "sales for emco corp last month", self.known,
+        )
+        lows = [p.lower() for p in phrases]
+        self.assertIn("emco corp", lows)
+        self.assertNotIn("emco corp last", lows)
+        self.assertNotIn("corp last", lows)
+
+    def test_ies_plural_of_known_term_excluded(self):
+        # vocab knows "delivery"; the question says "deliveries".
+        phrases = extract_candidate_phrases(
+            "show me pending deliveries by warehouse", self.known,
+        )
+        lows = [p.lower() for p in phrases]
+        self.assertNotIn("deliveries", lows)
+        self.assertNotIn("pending deliveries", lows)
+        self.assertIn("pending", lows)
+
+
+class StatusValueGroundingTests(unittest.TestCase):
+    """End-to-end: _STS values on a fact table are indexed and resolve status
+    words in questions ("cancelled", "on hold") to verified filters."""
+
+    def setUp(self):
+        import json as _json
+        from core.value_index import build_value_index
+        self.base = tempfile.mkdtemp()
+        schema_dir = Path(self.base) / "schema"
+        schema_dir.mkdir()
+        schema = {
+            "EMCODW.EMDW_DMART.ORD_FCT": {
+                "columns": [{"name": "ORD_STS", "type": "varchar(20)"}],
+                "schema": "EMDW_DMART", "database": "EMCODW",
+                "masked_fields": [], "mask_mode": "partial",
+            },
+        }
+        (schema_dir / "_schema.json").write_text(_json.dumps(schema), encoding="utf-8")
+        statuses = ["OPEN", "CLOSED", "CANCELLED", "SHIPPED", "PENDING", "ON HOLD"]
+
+        def fake_run(creds, db_type, sql, max_rows=0):
+            return [{"ORD_STS": v} for v in statuses]
+
+        build_value_index("acct", {}, "snowflake", str(schema_dir),
+                          run_query_fn=fake_run, base_dir=self.base)
+        self.known = build_known_terms("acct", {})
+
+    def test_cancelled_resolves_to_verified_status_filter(self):
+        r = resolve_literals("acct", "how many orders are cancelled",
+                             known_terms=self.known, base_dir=self.base)
+        self.assertEqual([v["value"] for v in r["verified"]], ["CANCELLED"])
+        self.assertEqual(r["verified"][0]["column"], "ORD_STS")
+
+    def test_on_hold_resolves_via_lone_strong_fuzzy(self):
+        r = resolve_literals("acct", "how many orders are on hold",
+                             known_terms=self.known, base_dir=self.base)
+        self.assertEqual([v["value"] for v in r["verified"]], ["ON HOLD"])
+
+
 class PipelineWiringGuards(unittest.TestCase):
     def test_query_pipeline_resolves_before_prompt_build(self):
         src = (ROOT / "core" / "query_pipeline.py").read_text(encoding="utf-8")

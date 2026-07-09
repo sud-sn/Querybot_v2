@@ -55,7 +55,16 @@ FUZZY_VERIFIED = 0.87
 FUZZY_CANDIDATE = 0.75
 
 # Suffix roles from core/naming_convention.py that mark filterable display text.
+# Gated to dimension tables — indexing every _NM/_DSC column on wide fact
+# tables would balloon the index with row-level text.
 _FILTERABLE_ROLES = {"display", "code"}
+# State/classification roles are low-cardinality by nature and live on FACT
+# tables as often as dimensions (order status on the order fact), so they are
+# indexed regardless of table classification. The _STS naming rule itself
+# says "Use in WHERE to filter by state. Check distinct values in the KB for
+# valid codes" — without indexing them, "how many orders are cancelled" gets
+# no value grounding and a wrong status literal gets no zero-row explanation.
+_FILTERABLE_ANY_TABLE_ROLES = {"status", "type", "group"}
 
 
 # ── Paths / normalization ─────────────────────────────────────────────────────
@@ -133,8 +142,9 @@ def select_filterable_columns(schema: dict, vocab=None) -> list[dict]:
 
             rule = match_column_suffix(name)
             is_display = bool(rule and rule.role in _FILTERABLE_ROLES) and _is_dimension_table(bare_table)
+            is_state = bool(rule and rule.role in _FILTERABLE_ANY_TABLE_ROLES)
             is_cat = _is_categorical(name, ctype)
-            if not (is_display or is_cat):
+            if not (is_display or is_state or is_cat):
                 continue
 
             business_name = ""

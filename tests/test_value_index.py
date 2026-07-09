@@ -78,6 +78,30 @@ class SelectFilterableColumnsTests(unittest.TestCase):
         self.assertNotIn(("CUS_DMS", "CUS_EMAIL"), selected)
         self.assertNotIn(("ITM_DMS", "ITM_SECRET"), selected)
         self.assertNotIn(("HR_DMS", "EMP_NM"), selected)
+
+    def test_status_type_group_columns_indexed_even_on_fact_tables(self):
+        # Regression: _STS/_TYP/_GRP columns carry the values users filter by
+        # ("how many orders are cancelled") and live on FACT tables as often
+        # as dimensions — but _FILTERABLE_ROLES only covered display/code on
+        # dimension tables, so status values were never indexed and got no
+        # grounding and no zero-row explanation.
+        schema = {
+            "EMCODW.EMDW_DMART.ORD_FCT": {
+                "columns": [
+                    {"name": "ORD_STS", "type": "varchar(20)"},
+                    {"name": "ORD_TYP", "type": "varchar(20)"},
+                    {"name": "ITM_GRP", "type": "varchar(20)"},
+                    {"name": "ORD_NM", "type": "varchar(100)"},  # display on a FACT: excluded
+                ],
+                "schema": "EMDW_DMART", "database": "EMCODW",
+                "masked_fields": [], "mask_mode": "partial",
+            },
+        }
+        selected = {c["column"] for c in select_filterable_columns(schema)}
+        self.assertIn("ORD_STS", selected)
+        self.assertIn("ORD_TYP", selected)
+        self.assertIn("ITM_GRP", selected)
+        self.assertNotIn("ORD_NM", selected)
         self.assertNotIn(("FNN_FCT", "PAY_AMT"), selected)
 
     def test_business_name_from_enrichment(self):

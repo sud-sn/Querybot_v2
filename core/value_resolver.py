@@ -74,6 +74,8 @@ _META_WORDS = frozenset({
     "trend", "trends", "monthly", "weekly", "daily", "yearly", "quarterly",
     "month", "months", "year", "years", "week", "weeks", "quarter",
     "quarters", "days", "date", "dates", "today", "yesterday", "tomorrow",
+    "last", "first", "next", "previous", "current", "recent", "latest",
+    "earliest",
 })
 
 
@@ -124,42 +126,78 @@ def build_known_terms(account_id: str, all_columns: dict | None) -> set[str]:
 
 def extract_candidate_phrases(question: str, known_terms: set[str] | None = None) -> list[str]:
     """
-    Conservative candidate extraction: quoted spans, capitalized multi-word
-    spans, and single tokens >= 4 chars that are neither stopwords nor known
-    schema/vocabulary terms. Longest first, substrings deduped, capped.
+    Conservative candidate extraction in three precision tiers:
+      1. spans  — quoted spans and capitalized multi-word spans (explicit
+                  user intent; swallow anything they contain)
+      2. grams  — adjacent-token 2/3-grams of non-excluded words, grounding
+                  unquoted lowercase multi-word values ("emco corp",
+                  "steel rod 10mm") that single tokens under-score against
+                  the fuzzy thresholds
+      3. tokens — single tokens >= 4 chars
+    Grams never swallow tokens: a speculative gram that matches nothing in
+    the index must not take the resolving token down with it ("value open"
+    must not kill "open" -> ORD_STS = OPEN).
     """
     text = question or ""
     known = {t.lower() for t in (known_terms or set())}
     stop = _stopwords()
 
-    candidates: list[str] = []
-    for m in _QUOTED_RE.finditer(text):
-        candidates.append(m.group(1).strip())
-    for m in _CAPITALIZED_RE.finditer(text):
-        candidates.append(m.group(0).strip())
-    for token in re.findall(r"[A-Za-z][\w\-]{3,}", text):
-        low = token.lower()
-        # Check naive singular forms too: known_terms/vocab store "item" and
-        # "customer", but questions say "items" and "customers".
+    def _excluded(word: str) -> bool:
+        low = word.lower()
+        # Check naive singular forms too: known_terms/vocab store "item",
+        # "customer", "delivery" — questions say "items", "customers",
+        # "deliveries".
         variants = {low}
-        if low.endswith("s"):
-            variants.add(low[:-1])
+        if low.endswith("ies"):
+            variants.add(low[:-3] + "y")
         if low.endswith("es"):
             variants.add(low[:-2])
-        if variants & stop or variants & known or variants & _META_WORDS:
-            continue
-        candidates.append(token)
+        if low.endswith("s"):
+            variants.add(low[:-1])
+        return bool(variants & stop or variants & known or variants & _META_WORDS)
 
-    candidates.sort(key=len, reverse=True)
-    out: list[str] = []
-    for cand in candidates:
-        low = cand.lower()
-        if len(out) >= _MAX_PHRASES:
-            break
-        if any(low in kept.lower() for kept in out):
+    spans: list[str] = []
+    for m in _QUOTED_RE.finditer(text):
+        spans.append(m.group(1).strip())
+    for m in _CAPITALIZED_RE.finditer(text):
+        spans.append(m.group(0).strip())
+    spans.sort(key=len, reverse=True)
+    kept_spans: list[str] = []
+    for s in spans:
+        if s and not any(s.lower() in k.lower() for k in kept_spans):
+            kept_spans.append(s)
+
+    grams: list[str] = []
+    words = re.findall(r"[A-Za-z0-9][\w\-]{2,}", text)
+    for n in (3, 2):
+        for i in range(len(words) - n + 1):
+            gram = words[i:i + n]
+            if any(_excluded(w) for w in gram):
+                continue
+            if not any(len(w) >= 4 and w[0].isalpha() for w in gram):
+                continue
+            phrase = " ".join(gram)
+            if len(phrase) >= 7:
+                grams.append(phrase)
+    grams.sort(key=len, reverse=True)
+    kept_grams: list[str] = []
+    for g in grams:
+        if any(g.lower() in k.lower() for k in kept_spans + kept_grams):
             continue
-        out.append(cand)
-    return out
+        kept_grams.append(g)
+
+    tokens: list[str] = []
+    for token in re.findall(r"[A-Za-z][\w\-]{3,}", text):
+        low = token.lower()
+        if _excluded(token):
+            continue
+        if any(low in k.lower() for k in kept_spans):
+            continue
+        if any(low == t.lower() for t in tokens):
+            continue
+        tokens.append(token)
+
+    return (kept_spans + kept_grams + tokens)[:_MAX_PHRASES]
 
 
 def resolve_literals(
