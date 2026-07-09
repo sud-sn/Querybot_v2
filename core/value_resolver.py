@@ -47,6 +47,35 @@ _MAX_VALUE_CHARS = 80
 _QUOTED_RE = re.compile(r"""["'‘’“”]([^"'‘’“”]{2,60})["'‘’“”]""")
 _CAPITALIZED_RE = re.compile(r"\b[A-Z][\w&.\-]*(?:\s+[A-Z0-9][\w&.\-]*)+\b")
 
+# Question-language words that must never become literal-value candidates in
+# the bare-token path. Real data values legitimately CONTAIN these words
+# ("24 AIR SYSTEMS", "GERMANY" ⊃ "many"), so a bare generic token clears the
+# fuzzy containment floor and either hijacks the question into a bogus
+# clarification (cross-column hits) or silently injects a wrong "verified"
+# filter (lone strong hit). Blocked here only — a quoted 'system' or a
+# capitalized multi-word name ("Air Systems Ltd") is still extracted.
+_META_WORDS = frozenset({
+    # the software/data platform itself ("stored in the system")
+    "system", "systems", "data", "database", "databases", "table", "tables",
+    "record", "records", "row", "rows", "column", "columns", "field",
+    "fields", "file", "files", "report", "reports", "dashboard", "chart",
+    "graph", "query", "queries", "result", "results", "info", "information",
+    "application", "platform", "portal", "screen", "page", "stored", "saved",
+    # schema-attribute words ("by their type", "status of orders")
+    "type", "types", "status", "statuses", "name", "names", "code", "codes",
+    "category", "categories", "description", "descriptions", "kind", "kinds",
+    "level", "levels",
+    # quantifier / comparison / time-grain question words
+    "many", "much", "most", "least", "fewer", "every", "over", "under",
+    "between", "during", "within", "across", "about", "above", "below",
+    "after", "before", "since", "until", "highest", "lowest", "best",
+    "worst", "average", "maximum", "minimum", "compare", "compared",
+    "versus", "percent", "percentage", "breakdown", "distribution",
+    "trend", "trends", "monthly", "weekly", "daily", "yearly", "quarterly",
+    "month", "months", "year", "years", "week", "weeks", "quarter",
+    "quarters", "days", "date", "dates", "today", "yesterday", "tomorrow",
+})
+
 
 def _stopwords() -> set[str]:
     from core.clarification import _COMMON_STOPWORDS
@@ -110,7 +139,14 @@ def extract_candidate_phrases(question: str, known_terms: set[str] | None = None
         candidates.append(m.group(0).strip())
     for token in re.findall(r"[A-Za-z][\w\-]{3,}", text):
         low = token.lower()
-        if low in stop or low in known:
+        # Check naive singular forms too: known_terms/vocab store "item" and
+        # "customer", but questions say "items" and "customers".
+        variants = {low}
+        if low.endswith("s"):
+            variants.add(low[:-1])
+        if low.endswith("es"):
+            variants.add(low[:-2])
+        if variants & stop or variants & known or variants & _META_WORDS:
             continue
         candidates.append(token)
 

@@ -260,6 +260,75 @@ class KnownTermsExcludeGenericDimensionWordsTests(unittest.TestCase):
             self.assertIn(word, known, word)
 
 
+class MetaWordsExcludedFromExtractionTests(unittest.TestCase):
+    """
+    Regression: "How many items are stored in the system by their type?" got
+    hijacked into a filter-value clarification because the bare token
+    "system" fuzzy-matched values that merely CONTAIN it across two columns
+    ("24 AIR SYSTEMS" / "*MGO SYSTEMS LTD" in CUS_NM, "36 PIPE SYSTEM #1" in
+    ITM_NM) — each clearing the containment-bonus floor. Picking an option
+    then forced ITM_NM into the field plan and the otherwise-correct
+    count-by-type SQL failed validation with field_plan_mismatch. Words about
+    the platform itself ("system"), schema attributes ("type", "status") and
+    question language ("many" — a substring of GERMANY that scores 0.83 and
+    would inject a bogus VERIFIED filter) are never literal candidates in the
+    bare-token path. Quoted spans and capitalized names still are.
+    """
+
+    def test_system_question_extracts_nothing(self):
+        known = build_known_terms("acct_no_such_client", {})
+        phrases = extract_candidate_phrases(
+            "How many items are stored in the system by their type?", known,
+        )
+        self.assertEqual(phrases, [])
+
+    def test_system_no_longer_triggers_clarify_against_real_index(self):
+        # End-to-end with the exact production data shape from the report.
+        base = tempfile.mkdtemp()
+        _make_index(base, values_by_col={
+            "CUS_NM": ["24 AIR SYSTEMS", "*MGO SYSTEMS LTD", "EMCO Corporation"],
+            "ITM_DSC": ["36 PIPE SYSTEM #1", "STEEL ROD 10MM"],
+        })
+        known = build_known_terms("acct", {})
+        resolved = resolve_literals(
+            "acct", "How many items are stored in the system by their type?",
+            known_terms=known, base_dir=base,
+        )
+        self.assertEqual(resolved["clarify"], [])
+        self.assertEqual(resolved["verified"], [])
+        self.assertEqual(resolved["in_lists"], [])
+
+    def test_many_never_verifies_against_germany(self):
+        base = tempfile.mkdtemp()
+        _make_index(base, values_by_col={"CUS_NM": ["GERMANY", "FRANCE", "SPAIN"]})
+        resolved = resolve_literals(
+            "acct", "how many customers do we have",
+            known_terms={"customer"}, base_dir=base,
+        )
+        self.assertEqual(resolved["verified"], [])
+
+    def test_quoted_meta_word_still_extracted(self):
+        phrases = extract_candidate_phrases("sales for 'system'", set())
+        self.assertIn("system", phrases)
+
+    def test_capitalized_name_containing_meta_word_still_extracted(self):
+        phrases = extract_candidate_phrases("revenue for Air Systems Ltd", set())
+        self.assertIn("Air Systems Ltd", phrases)
+
+    def test_distinctive_tokens_still_extracted(self):
+        phrases = extract_candidate_phrases(
+            "show revenue for peterborough", {"revenue"},
+        )
+        self.assertEqual(phrases, ["peterborough"])
+
+    def test_plurals_of_known_dimension_words_excluded(self):
+        phrases = extract_candidate_phrases(
+            "count of items by customers and warehouses",
+            {"item", "customer", "warehouse"},
+        )
+        self.assertEqual(phrases, [])
+
+
 class PipelineWiringGuards(unittest.TestCase):
     def test_query_pipeline_resolves_before_prompt_build(self):
         src = (ROOT / "core" / "query_pipeline.py").read_text(encoding="utf-8")
