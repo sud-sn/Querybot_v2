@@ -978,6 +978,82 @@ class ApprovedFieldSupersessionTests(unittest.TestCase):
             )
 
 
+class GenericCommandVerbFalsePositiveTests(unittest.TestCase):
+    """
+    Confirmed live defect: an approved field's auto-generated use_case text
+    ("Used when a question explicitly refers to list, show or filter by
+    <column>") gets comma-split by _semantic_business_phrases' "refers to X"
+    extraction into standalone one-word phrases — including a bare "list".
+    _runtime_match_score's single-word branch then treats "list" as a valid
+    business-term match against ANY question phrased as "list the ..."
+    (one of the most common ways to phrase a question), silently forcing an
+    unrelated field into the required plan and failing validation with
+    field_plan_mismatch — while a completely unrelated, correctly-matched
+    metric (Customer Discount Amount) executed fine in the same query.
+    """
+
+    QUESTION = "list the discount amount by each customers top 10"
+
+    @staticmethod
+    def _model() -> dict:
+        return {
+            "tables": [
+                {
+                    "schema": "EMDW_DMART",
+                    "table": "PC_DVN_DMS",
+                    "qualified_name": "EMDW_DMART.PC_DVN_DMS",
+                    "fields": [{
+                        "column": "PC_DVN_CD",
+                        "role": "attribute",
+                        "status": "approved",
+                        "approved_meaning": "Pc Dvn Cd field from the selected table.",
+                        "approved_use_case": "Used when a question explicitly refers to list, show or filter by pc dvn cd.",
+                        "business_candidates": ["PC codes", "PC code", "PC division code", "profit Centre code"],
+                        "confidence": 100,
+                    }],
+                    "dimensions": [], "date_roles": [],
+                }
+            ],
+            "relationships": [], "date_roles": [],
+        }
+
+    def test_unrelated_field_not_required_for_list_phrased_question(self):
+        with _tmp_dir() as tmp:
+            kb_dir = Path(tmp)
+            (kb_dir / MODEL_JSON).write_text(json.dumps(self._model()), encoding="utf-8")
+            plan = build_runtime_semantic_plan(
+                str(kb_dir), question=self.QUESTION, selected_schema="EMDW_DMART",
+            )
+        fields = [f"{f['table']}.{f['column']}" for f in (plan.get("fields") or [])]
+        self.assertNotIn("EMDW_DMART.PC_DVN_DMS.PC_DVN_CD", fields)
+
+    def test_field_still_matches_its_own_real_business_terms(self):
+        # The fix must not make this field unmatchable outright — a question
+        # that actually names one of its real business terms should still
+        # pull it in.
+        with _tmp_dir() as tmp:
+            kb_dir = Path(tmp)
+            (kb_dir / MODEL_JSON).write_text(json.dumps(self._model()), encoding="utf-8")
+            plan = build_runtime_semantic_plan(
+                str(kb_dir), question="show revenue by profit centre code",
+                selected_schema="EMDW_DMART",
+            )
+        fields = [f"{f['table']}.{f['column']}" for f in (plan.get("fields") or [])]
+        self.assertIn("EMDW_DMART.PC_DVN_DMS.PC_DVN_CD", fields)
+
+    def test_list_alone_never_scores_as_a_match(self):
+        from core.semantic_model import _runtime_match_score, _terms_for_text
+        use_case = "Used when a question explicitly refers to list, show or filter by pc dvn cd."
+        q_terms = _terms_for_text(self.QUESTION)
+        self.assertEqual(_runtime_match_score(q_terms, [use_case, "list"]), 0)
+
+    def test_command_verb_stopwords_present(self):
+        from core.semantic_model import _RUNTIME_MATCH_STOPWORDS
+        for word in ("list", "filter", "display", "view", "find", "get",
+                     "give", "tell", "provide", "retrieve", "pull", "fetch"):
+            self.assertIn(word, _RUNTIME_MATCH_STOPWORDS, word)
+
+
 class SemanticModelFingerprintTests(unittest.TestCase):
     """
     semantic_model_fingerprint underpins the Learning Queue staleness

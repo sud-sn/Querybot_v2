@@ -863,6 +863,21 @@ _RUNTIME_MATCH_STOPWORDS = {
     "key", "label", "lowest", "name", "percentage", "result", "show",
     "table", "their", "total", "used", "using", "value", "values", "what",
     "when", "where", "which", "with",
+    # Generic command/imperative verbs a question uses to ASK for something,
+    # never a business term describing WHAT is being asked for. "show" was
+    # already excluded above but its siblings weren't — "list" is exactly
+    # this class of word, and it leaked through as a genuine field match:
+    # an approved field's auto-generated use_case text ("Used when a
+    # question explicitly refers to list, show or filter by <column>")
+    # gets comma-split by _semantic_business_phrases' "refers to X"
+    # extraction into standalone one-word phrases, and a bare "list" then
+    # scores as a valid single-word business-term match (_runtime_match_score's
+    # len(value_terms)==1 branch) against ANY question phrased as "list the
+    # ..." — which is one of the single most common ways to phrase a
+    # question, so this could silently force the field into the required
+    # plan for a huge fraction of unrelated questions.
+    "list", "filter", "display", "view", "find", "get", "give", "tell",
+    "provide", "retrieve", "pull", "fetch", "return", "report",
 }
 
 
