@@ -244,6 +244,42 @@ class StrictColumnValidationTests(unittest.TestCase):
         self.assertTrue(result.errors[0]["requires_non_null_count"])
         self.assertTrue(result.errors[0]["requires_null_safe_sum"])
 
+    def test_plain_time_bounded_aggregate_does_not_require_null_diagnostics(self):
+        # Regression: "what is my sales for the last 7 days" — a WHERE clause
+        # that only range-filters a date column has no "does this entity
+        # exist" ambiguity the way "revenue for customer 123" does. Forcing
+        # MatchedRows/NonNullMetricRows onto it broke the single-value answer
+        # shape and cost an unnecessary repair retry on every plain
+        # time-bounded question.
+        result = validate_sql_detailed(
+            "SELECT SUM(CUS_IVC_LIN_AMT) AS TOTAL_SALES "
+            "FROM [PROFITABILITY].[CUS_ORD_IVC_FCT] "
+            "WHERE CUS_IVC_DT_DMS_KEY >= 20260101",
+            KNOWN, "azure_sql", None, COLUMNS,
+        )
+        self.assertTrue(result.ok, result.reason)
+
+    def test_exact_date_equality_does_not_require_null_diagnostics(self):
+        result = validate_sql_detailed(
+            "SELECT SUM(CUS_IVC_LIN_AMT) AS TOTAL_SALES "
+            "FROM [PROFITABILITY].[CUS_ORD_IVC_FCT] "
+            "WHERE CUS_IVC_DT_DMS_KEY = 20260101",
+            KNOWN, "azure_sql", None, COLUMNS,
+        )
+        self.assertTrue(result.ok, result.reason)
+
+    def test_identity_filter_combined_with_date_range_still_requires_diagnostics(self):
+        # The entity-lookup ambiguity is still present even alongside a date
+        # filter — must still be rejected without diagnostics.
+        result = validate_sql_detailed(
+            "SELECT SUM(CUS_IVC_LIN_AMT) AS Revenue "
+            "FROM [PROFITABILITY].[CUS_ORD_IVC_FCT] "
+            "WHERE CUS_DMS_KEY = 1055930 AND CUS_IVC_DT_DMS_KEY >= 20260101",
+            KNOWN, "azure_sql", None, COLUMNS,
+        )
+        self.assertFalse(result.ok)
+        self.assertEqual(result.code, "null_aggregate_diagnostic")
+
     def test_accepts_filtered_sum_with_null_diagnostics(self):
         result = validate_sql_detailed(
             "SELECT COUNT_BIG(*) AS [MatchedRows], "

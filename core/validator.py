@@ -420,6 +420,13 @@ def _find_date_key_format_errors(sql: str, table_columns: dict[str, dict[str, st
     return errors
 
 
+_DATE_FILTER_COLUMN_RE = re.compile(
+    r"(?i)(_DT_DMS_KEY$|_DATE_DMS_KEY$|_DT$|_DATE$|^DT_|^DATE_|"
+    r"_YR$|^YR$|_YEAR$|^YEAR$|_MTH$|^MTH$|_MONTH$|^MONTH$|"
+    r"_QTR$|^QTR$|_QUARTER$|^QUARTER$|_WK$|^WK$|_WEEK$|^WEEK$)"
+)
+
+
 def _find_null_aggregate_diagnostic_errors(sql: str, tree) -> list[dict]:
     """
     Guard filtered single-row SUM queries from returning a misleading NULL.
@@ -427,8 +434,29 @@ def _find_null_aggregate_diagnostic_errors(sql: str, tree) -> list[dict]:
     For questions like "revenue for customer X", SQL Server returns one row with
     SUM(col)=NULL when rows match but every metric value is NULL.  Require the
     query to carry enough diagnostics for the answer layer to explain that case.
+
+    This must NOT fire on a plain time-bounded aggregate ("sales for the last
+    7 days", "revenue this month") — WHERE order_date >= X has no "does this
+    entity exist" ambiguity the way WHERE customer_id = 123 does, so forcing
+    MatchedRows/NonNullMetricRows onto it only adds noise, breaks the
+    single-value answer shape, and costs an unnecessary repair retry. Only
+    trigger when the WHERE clause has an equality/IN condition on a
+    non-date-like column — the actual identity/category-lookup case this
+    guard was written for.
     """
-    if not sql or tree.find(sg_exp.Where) is None or tree.find(sg_exp.Group) is not None:
+    where = tree.find(sg_exp.Where)
+    if not sql or where is None or tree.find(sg_exp.Group) is not None:
+        return []
+
+    has_identity_filter = False
+    for cond in where.find_all(sg_exp.EQ, sg_exp.In):
+        col_node = cond.this if isinstance(cond.this, sg_exp.Column) else None
+        if col_node is None:
+            continue
+        if not _DATE_FILTER_COLUMN_RE.search(col_node.name or ""):
+            has_identity_filter = True
+            break
+    if not has_identity_filter:
         return []
 
     select = tree.find(sg_exp.Select)
