@@ -424,9 +424,18 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .suggestion-chip,.composer-chip{background:var(--surface);border:1px solid var(--border);color:var(--text-soft);font-size:12px;font-weight:700;padding:9px 13px;border-radius:999px;cursor:pointer;transition:all .15s;max-width:320px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;box-shadow:var(--shadow)}
 .suggestion-chip:hover,.composer-chip:hover{background:var(--surface-3);border-color:var(--primary);color:var(--primary);transform:translateY(-1px)}
 .chat-composer{flex-shrink:0;background:var(--surface);border-top:1px solid var(--border);padding:.85rem 1.25rem;position:relative;--ai-core:#4F46E5;--ai-halo:rgba(79,70,229,.18);--ai-ring:rgba(79,70,229,.35)}
-.chat-input-bar{display:flex;align-items:flex-end;gap:.75rem}.chat-input{flex:1;background:transparent;border:none;outline:none;color:var(--text);font-size:14px;resize:none;max-height:140px;min-height:28px;line-height:1.55}.chat-input::placeholder{color:var(--text-muted)}
-.composer-side{display:flex;align-items:center;gap:.6rem;flex-shrink:0}.char-count{font-size:11px;color:var(--text-muted);min-width:34px;text-align:right}.send-btn{width:44px;height:44px;background:linear-gradient(135deg,var(--primary),var(--primary-hover));border:none;border-radius:var(--radius);cursor:pointer;display:flex;align-items:center;justify-content:center;color:#fff;font-size:17px;flex-shrink:0;transition:transform .15s,opacity .15s,filter .15s;box-shadow:0 10px 18px rgba(13,115,119,.25)}
-.send-btn:hover{transform:translateY(-1px);filter:brightness(1.02)}.send-btn:disabled{opacity:.45;cursor:not-allowed;box-shadow:none;transform:none}
+/* Unified composer pill — the persistent card that makes the whole input read
+   as one control at rest, not bare text that only gets a border on focus. */
+.chat-input-bar{display:flex;align-items:flex-end;gap:.5rem;background:var(--surface-2);border:1.5px solid var(--border);border-radius:22px;padding:.4rem .45rem .4rem .55rem;box-shadow:var(--shadow);transition:border-color .15s,box-shadow .15s,background-color .15s}
+.chat-input-bar:hover{border-color:color-mix(in srgb,var(--primary) 22%,var(--border))}
+.chat-input-bar:focus-within{background:var(--surface);border-color:var(--primary);box-shadow:0 0 0 4px color-mix(in srgb,var(--primary) 14%,transparent),var(--shadow-md)}
+.chat-input{flex:1;background:transparent;border:none;outline:none;color:var(--text);font-size:14px;resize:none;max-height:140px;min-height:24px;line-height:1.55;padding:7px 6px}.chat-input::placeholder{color:var(--text-muted)}
+.chat-input:focus-visible{box-shadow:none} /* the pill itself already shows focus via :focus-within */
+.composer-side{display:flex;align-items:center;gap:.55rem;flex-shrink:0;padding-bottom:2px}.char-count{font-size:11px;color:var(--text-muted);min-width:30px;text-align:right}
+.send-btn{width:38px;height:38px;background:linear-gradient(135deg,var(--primary),var(--primary-hover));border:none;border-radius:999px;cursor:pointer;display:flex;align-items:center;justify-content:center;color:#fff;font-size:16px;flex-shrink:0;transition:transform .15s,opacity .15s,filter .15s,box-shadow .15s;box-shadow:0 3px 10px color-mix(in srgb,var(--primary) 38%,transparent)}
+.send-btn:hover{transform:translateY(-1px) scale(1.04);filter:brightness(1.05);box-shadow:0 5px 14px color-mix(in srgb,var(--primary) 45%,transparent)}
+.send-btn:active{transform:translateY(0) scale(.97)}
+.send-btn:disabled{opacity:.4;cursor:not-allowed;box-shadow:none;transform:none}
 .composer-footer{display:flex;justify-content:space-between;gap:1rem;align-items:center;margin-top:.65rem;flex-wrap:wrap}.composer-hint{font-size:11px;color:var(--text-muted)}
 .composer-actions{display:flex;gap:.45rem;flex-wrap:wrap}
 .toast{position:fixed;right:20px;bottom:20px;padding:.75rem .95rem;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-lg);font-size:12px;color:var(--text);opacity:0;transform:translateY(8px);pointer-events:none;transition:all .18s;z-index:1200}
@@ -756,7 +765,7 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
               <div class="ai-arc ai-arc-2"></div>
               <div class="ai-core"></div>
             </div>
-            <textarea id="input" class="chat-input" placeholder="Ask anything about your data…" rows="1" maxlength="500" spellcheck="true" autocomplete="off" style="padding-left:42px;padding-right:32px"></textarea>
+            <textarea id="input" class="chat-input" placeholder="Ask anything about your data…" rows="1" maxlength="500" spellcheck="true" autocomplete="off" style="padding-left:36px"></textarea>
           </div>
           <div class="composer-side">
             <span class="char-count" id="charCount">500</span>
