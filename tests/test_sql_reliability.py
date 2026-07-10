@@ -10,7 +10,7 @@ from core.graph_resolver import detect_entities, resolve_for_question
 from core.llm import build_sql_system_prompt
 from core.query_semantics import analyze_query_intent
 from core.semantic_planner import build_semantic_field_plan
-from core.validator import normalize_generated_sql, validate_sql, validate_sql_detailed
+from core.validator import has_identity_filter, normalize_generated_sql, validate_sql, validate_sql_detailed
 from core.answer_confidence import build_answer_confidence
 from core.answer_rca import build_business_rca, extract_sql_tables
 from core.query_router import should_route_to_result_cache, build_duckdb_system_prompt
@@ -279,6 +279,17 @@ class StrictColumnValidationTests(unittest.TestCase):
         )
         self.assertFalse(result.ok)
         self.assertEqual(result.code, "null_aggregate_diagnostic")
+
+    def test_has_identity_filter_public_helper(self):
+        # core/examples.py reuses this exact classification to filter stale
+        # few-shot examples — must agree with the validator's own judgment.
+        self.assertFalse(has_identity_filter(
+            "SELECT SUM(x) AS T FROM TBL WHERE SALE_DT_DMS_KEY >= 20260101"))
+        self.assertTrue(has_identity_filter(
+            "SELECT SUM(x) AS T FROM TBL WHERE CUS_DMS_KEY = 123"))
+        self.assertFalse(has_identity_filter("SELECT SUM(x) AS T FROM TBL"))
+        self.assertFalse(has_identity_filter(""))
+        self.assertFalse(has_identity_filter("not valid sql ((("))
 
     def test_accepts_filtered_sum_with_null_diagnostics(self):
         result = validate_sql_detailed(

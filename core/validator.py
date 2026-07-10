@@ -427,6 +427,39 @@ _DATE_FILTER_COLUMN_RE = re.compile(
 )
 
 
+def _where_has_identity_filter(where) -> bool:
+    """True if a parsed WHERE clause has an equality/IN condition on a
+    non-date-like column — an identity/category lookup ("customer_id = 123",
+    "status IN (...)") as opposed to a pure time-range filter. Shared by the
+    validator (below) and by example-filtering (core/examples.py), so a
+    stored few-shot example is held to the exact same rule a freshly
+    generated query is.
+    """
+    for cond in where.find_all(sg_exp.EQ, sg_exp.In):
+        col_node = cond.this if isinstance(cond.this, sg_exp.Column) else None
+        if col_node is None:
+            continue
+        if not _DATE_FILTER_COLUMN_RE.search(col_node.name or ""):
+            return True
+    return False
+
+
+def has_identity_filter(sql: str) -> bool:
+    """Public wrapper: parse *sql* and report whether its WHERE clause has
+    an identity/category filter (see _where_has_identity_filter). False for
+    unparseable SQL, no WHERE clause, or a pure date/time-range filter."""
+    if not _HAS_SQLGLOT or not sql:
+        return False
+    try:
+        tree = sqlglot.parse_one(sql)
+    except Exception:
+        return False
+    where = tree.find(sg_exp.Where)
+    if where is None:
+        return False
+    return _where_has_identity_filter(where)
+
+
 def _find_null_aggregate_diagnostic_errors(sql: str, tree) -> list[dict]:
     """
     Guard filtered single-row SUM queries from returning a misleading NULL.
@@ -448,15 +481,7 @@ def _find_null_aggregate_diagnostic_errors(sql: str, tree) -> list[dict]:
     if not sql or where is None or tree.find(sg_exp.Group) is not None:
         return []
 
-    has_identity_filter = False
-    for cond in where.find_all(sg_exp.EQ, sg_exp.In):
-        col_node = cond.this if isinstance(cond.this, sg_exp.Column) else None
-        if col_node is None:
-            continue
-        if not _DATE_FILTER_COLUMN_RE.search(col_node.name or ""):
-            has_identity_filter = True
-            break
-    if not has_identity_filter:
+    if not _where_has_identity_filter(where):
         return []
 
     select = tree.find(sg_exp.Select)

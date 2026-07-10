@@ -138,5 +138,69 @@ class RunExampleValidationExecutorTests(unittest.TestCase):
                 self.fail("_run_example_validation must not propagate validator exceptions")
 
 
+class StaleNullDiagnosticExampleFilterTests(unittest.TestCase):
+    """
+    A harvested/approved few-shot example carrying the old MatchedRows/
+    NonNullMetricRows diagnostic shape on a plain time-bounded aggregate
+    (from before core/validator.py's null_aggregate_diagnostic guard was
+    narrowed to identity/category filters only) keeps re-teaching that
+    deprecated pattern to the LLM every time it's retrieved — a concrete
+    Q/SQL example in the prompt tends to win over even an explicit prose
+    rule telling the model not to reproduce it. format_examples_for_prompt
+    must drop such examples rather than inject them.
+    """
+
+    _STALE_SQL = (
+        "SELECT COUNT_BIG(*) AS MatchedRows, COUNT(SOP_CUS_IVC_LIN_AMT) AS NonNullMetricRows, "
+        "COALESCE(SUM(SOP_CUS_IVC_LIN_AMT), 0) AS TOTAL_SALES "
+        "FROM EMCODW_DEV.EMDW_DMART.CUS_ORD_IVC_FCT "
+        "WHERE CUS_ORD_DT_DMS_KEY >= 20260101"
+    )
+    _LEGIT_SQL = (
+        "SELECT COUNT_BIG(*) AS MatchedRows, COUNT(CUS_IVC_LIN_AMT) AS NonNullMetricRows, "
+        "COALESCE(SUM(CUS_IVC_LIN_AMT), 0) AS Revenue "
+        "FROM CUS_ORD_IVC_FCT WHERE CUS_DMS_KEY = 123"
+    )
+
+    def test_stale_date_only_diagnostic_example_dropped(self):
+        out = examples.format_examples_for_prompt(
+            [{"question": "what is my sales for the last 7 days", "sql": self._STALE_SQL}]
+        )
+        self.assertEqual(out, "")
+
+    def test_legit_identity_filter_diagnostic_example_kept(self):
+        out = examples.format_examples_for_prompt(
+            [{"question": "revenue for customer 123", "sql": self._LEGIT_SQL}]
+        )
+        self.assertIn("revenue for customer 123", out)
+        self.assertIn("MatchedRows", out)
+
+    def test_example_without_diagnostic_pattern_unaffected(self):
+        out = examples.format_examples_for_prompt(
+            [{"question": "total orders", "sql": "SELECT COUNT(*) AS TotalOrders FROM ORDERS"}]
+        )
+        self.assertIn("total orders", out)
+
+    def test_mixed_list_drops_only_the_stale_one(self):
+        out = examples.format_examples_for_prompt([
+            {"question": "what is my sales for the last 7 days", "sql": self._STALE_SQL},
+            {"question": "total orders", "sql": "SELECT COUNT(*) AS TotalOrders FROM ORDERS"},
+        ])
+        self.assertNotIn("last 7 days", out)
+        self.assertIn("total orders", out)
+
+    def test_all_examples_stale_yields_empty_string(self):
+        out = examples.format_examples_for_prompt(
+            [{"question": "what is my sales for the last 7 days", "sql": self._STALE_SQL}]
+        )
+        self.assertEqual(out, "")  # not just an empty examples list — no header either
+
+    def test_is_stale_helper_direct(self):
+        self.assertTrue(examples._is_stale_null_diagnostic_example(self._STALE_SQL))
+        self.assertFalse(examples._is_stale_null_diagnostic_example(self._LEGIT_SQL))
+        self.assertFalse(examples._is_stale_null_diagnostic_example("SELECT COUNT(*) FROM T"))
+        self.assertFalse(examples._is_stale_null_diagnostic_example(""))
+
+
 if __name__ == "__main__":
     unittest.main()

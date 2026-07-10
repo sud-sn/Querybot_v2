@@ -16,9 +16,12 @@ successful user query becomes a validated example automatically.
 """
 
 import logging
+import re
 from pathlib import Path
 
 log = logging.getLogger("querybot.examples")
+
+_DEPRECATED_NULL_DIAGNOSTIC_RE = re.compile(r"(?i)\bMatchedRows\b|\bNonNullMetricRows\b")
 
 _EMBEDDING_MODEL   = "all-MiniLM-L6-v2"
 _EXAMPLES_COLL     = "validated_examples"   # separate collection from kb_store
@@ -356,11 +359,40 @@ def retrieve_similar_examples(
     return examples
 
 
+def _is_stale_null_diagnostic_example(sql: str) -> bool:
+    """
+    True if *sql* carries the MatchedRows/NonNullMetricRows null-aware
+    diagnostic shape (core/validator.py's null_aggregate_diagnostic guard)
+    on a query that doesn't actually need it — i.e. it was harvested/approved
+    before that guard was narrowed to only require the shape for identity/
+    category filters (customer_id = 123), not plain time-bounded aggregates
+    ("sales for the last 7 days").
+
+    A stale example like this is worse than no example: a concrete Q/SQL
+    pair in the "VERIFIED EXAMPLES" few-shot block tends to override even an
+    explicit prose rule telling the model not to reproduce that shape, so a
+    single old harvested/approved query can keep re-teaching the deprecated
+    pattern indefinitely. Filtered out here — at the single choke-point
+    every retrieval path (governed + legacy) feeds through — rather than at
+    each retrieval source, and rather than relying on re-harvesting/manual
+    cleanup to ever catch every stale example.
+    """
+    if not _DEPRECATED_NULL_DIAGNOSTIC_RE.search(sql or ""):
+        return False
+    try:
+        from core.validator import has_identity_filter
+        return not has_identity_filter(sql)
+    except Exception:
+        # If we can't tell, don't risk re-teaching a deprecated pattern.
+        return True
+
+
 def format_examples_for_prompt(examples: list[dict]) -> str:
     """
     Format validated examples as few-shot context for the SQL generation prompt.
     Returns empty string if no examples.
     """
+    examples = [ex for ex in (examples or []) if not _is_stale_null_diagnostic_example(ex.get("sql", ""))]
     if not examples:
         return ""
 
