@@ -919,30 +919,81 @@ def _runtime_match_score(question_terms: set[str], values: list[str]) -> int:
     return best_score
 
 
+_SEMANTIC_PHRASE_NOISE_PREFIX_RE = re.compile(r"^\s*(?:a|an|the|question|explicitly)\s+", re.I)
+
+
+def _strip_semantic_phrase_noise(part: str) -> str:
+    """Repeatedly strip leading filler words, not just once.
+
+    A single non-looped re.sub only removes the FIRST leading noise word:
+    "a question explicitly refers to X" only lost "a ", leaving the garbled
+    "question explicitly refers to X" — still noise, just less of it, and
+    "question"/"explicitly" then rode along as scoreable "business" terms
+    even though they describe the SENTENCE, not anything about the field.
+    """
+    prev = None
+    cur = part.strip()
+    while cur != prev:
+        prev = cur
+        cur = _SEMANTIC_PHRASE_NOISE_PREFIX_RE.sub("", cur).strip()
+    return cur
+
+
 def _semantic_business_phrases(text: str) -> list[str]:
     """Extract compact business phrases from approved admin text.
 
     Admin use cases often read like "Used when a question explicitly refers to
     purchase order amount".  Matching the full sentence is too strict, so we
     also match the phrase after "refers to".
+
+    Three guards keep this from manufacturing false "business term" matches
+    out of ordinary sentence structure:
+
+    1. Noise-prefix stripping loops (see _strip_semantic_phrase_noise) so a
+       stacked filler prefix reduces all the way down, not just one layer.
+    2. The "used when/for X" pattern is skipped once "refers to" has already
+       matched in the same text — both fire on the single most common
+       use_case sentence shape ("Used when a question explicitly refers to
+       X"), and "used when/for"'s capture is strictly the noisier, longer
+       tail of the exact same sentence, not independent information.
+    3. A candidate phrase with zero meaningful (non-stopword) terms after
+       extraction is dropped outright — the general backstop for whatever
+       specific noise word slips through, rather than chasing individual
+       words into _RUNTIME_MATCH_STOPWORDS one bug report at a time. This is
+       what would have caught "list" on its own even before it was added
+       there explicitly: "Used when a question explicitly refers to list,
+       show or filter by X" ends up splitting out a bare "list" fragment,
+       and if "list" carried no meaningful terms it would never have been
+       returned as a value to score against in the first place.
     """
     raw = str(text or "").strip()
     if not raw:
         return []
+
+    refers_to_pattern = r"\brefers?\s+to\s+(.+)$"
+    has_refers_to = re.search(refers_to_pattern, raw, flags=re.I) is not None
+
+    patterns = [refers_to_pattern]
+    if not has_refers_to:
+        patterns.append(r"\bused\s+(?:when|for)\s+(.+)$")
+    patterns.extend([r"\bbusiness\s+terms?\s*:\s*(.+)$", r"\bmetric\s*:\s*(.+)$"])
+
     phrases: list[str] = []
-    for pattern in (
-        r"\brefers?\s+to\s+(.+)$",
-        r"\bused\s+(?:when|for)\s+(.+)$",
-        r"\bbusiness\s+terms?\s*:\s*(.+)$",
-        r"\bmetric\s*:\s*(.+)$",
-    ):
+    seen: set[str] = set()
+    for pattern in patterns:
         match = re.search(pattern, raw, flags=re.I)
-        if match:
-            tail = match.group(1)
-            for part in re.split(r"[|;,]", tail):
-                part = re.sub(r"^\s*(?:a|an|the|question|explicitly)\s+", "", part.strip(), flags=re.I)
-                if part:
-                    phrases.append(part)
+        if not match:
+            continue
+        tail = match.group(1)
+        for part in re.split(r"[|;,]", tail):
+            cleaned = _strip_semantic_phrase_noise(part)
+            if not cleaned or not _runtime_match_terms(cleaned):
+                continue
+            key = cleaned.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            phrases.append(cleaned)
     return phrases
 
 

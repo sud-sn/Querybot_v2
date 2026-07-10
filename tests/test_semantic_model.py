@@ -1054,6 +1054,84 @@ class GenericCommandVerbFalsePositiveTests(unittest.TestCase):
             self.assertIn(word, _RUNTIME_MATCH_STOPWORDS, word)
 
 
+class SemanticBusinessPhraseExtractionTests(unittest.TestCase):
+    """
+    _semantic_business_phrases is the general mechanism the PC_DVN_CD defect
+    came from — a stopword-list addition for "list" patches that one word,
+    but the underlying extraction had three compounding defects that could
+    surface a DIFFERENT noise word for a DIFFERENT field tomorrow. These
+    tests target the extraction function itself, not a specific word.
+    """
+
+    def test_stacked_noise_prefix_fully_reduces(self):
+        # Single-pass stripping only removed "a ", leaving the garbled
+        # "question explicitly refers to list" as its own scoreable phrase —
+        # noise-extraction artifacts riding along as if they were content.
+        from core.semantic_model import _semantic_business_phrases
+        phrases = _semantic_business_phrases(
+            "Used when a question explicitly refers to list, show or filter by pc dvn cd."
+        )
+        for p in phrases:
+            self.assertNotIn("question", p.lower())
+            self.assertNotIn("explicitly", p.lower())
+
+    def test_redundant_used_when_pattern_skipped_once_refers_to_matches(self):
+        # "refers to" and "used when/for" both fire on the single most common
+        # use_case sentence shape ("Used when a question explicitly refers to
+        # X") — "used when/for" only ever produces a noisier duplicate of the
+        # exact same information in that case, never anything new.
+        from core.semantic_model import _semantic_business_phrases
+        phrases = _semantic_business_phrases(
+            "Used when a question explicitly refers to purchase order amount"
+        )
+        self.assertEqual(phrases, ["purchase order amount"])
+
+    def test_used_for_pattern_still_fires_without_refers_to(self):
+        # Confirms the skip is conditional, not a blanket removal of the
+        # "used when/for" pattern — text with no "refers to" anywhere still
+        # needs it.
+        from core.semantic_model import _semantic_business_phrases
+        self.assertEqual(
+            _semantic_business_phrases("Used for calculating gross margin"),
+            ["calculating gross margin"],
+        )
+
+    def test_content_free_fragment_never_returned(self):
+        # General backstop: a fragment with zero meaningful (non-stopword)
+        # terms after extraction is dropped outright, regardless of which
+        # specific word makes it meaningless — not reliant on that word
+        # already being enumerated in _RUNTIME_MATCH_STOPWORDS.
+        from core.semantic_model import _semantic_business_phrases
+        phrases = _semantic_business_phrases("Used when a question explicitly refers to list")
+        self.assertEqual(phrases, [])
+
+    def test_no_duplicate_phrases_across_patterns(self):
+        from core.semantic_model import _semantic_business_phrases
+        phrases = _semantic_business_phrases(
+            "Used when a question explicitly refers to list, show or filter by pc dvn cd."
+        )
+        self.assertEqual(len(phrases), len(set(p.lower() for p in phrases)))
+
+    def test_comma_separated_synonyms_still_both_extracted(self):
+        from core.semantic_model import _semantic_business_phrases
+        self.assertEqual(
+            _semantic_business_phrases("Used when a question explicitly refers to nationality, country"),
+            ["nationality", "country"],
+        )
+
+    def test_business_terms_colon_pattern_unaffected(self):
+        from core.semantic_model import _semantic_business_phrases
+        self.assertEqual(
+            _semantic_business_phrases("Business terms: gross margin, net margin"),
+            ["gross margin", "net margin"],
+        )
+
+    def test_empty_and_whitespace_text_return_empty_list(self):
+        from core.semantic_model import _semantic_business_phrases
+        self.assertEqual(_semantic_business_phrases(""), [])
+        self.assertEqual(_semantic_business_phrases("   "), [])
+
+
 class SemanticModelFingerprintTests(unittest.TestCase):
     """
     semantic_model_fingerprint underpins the Learning Queue staleness
