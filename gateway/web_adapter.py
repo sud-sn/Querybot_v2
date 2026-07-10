@@ -12,6 +12,7 @@ Charts are sent as structured JSON so the browser can render them inline
 with an interactive library such as ECharts.
 """
 
+import asyncio
 import logging
 from collections import deque
 from typing import Optional
@@ -39,6 +40,15 @@ class WebAdapter(PlatformAdapter):
         # Per-session result cache for action buttons and "why" follow-ups
         self.last_result: dict | None = None
         self.last_question_id: str | None = None   # stable ID linking a question to all its follow-ups
+
+        # Serializes every outgoing frame on this connection. The main WS
+        # receive loop now runs question handling as a background asyncio
+        # task (so it can keep listening for a "cancel" message) — that task
+        # sends through this adapter concurrently with the receive loop's own
+        # sends. ASGI/Starlette don't guarantee interleaved sends are safe,
+        # so every send_json call below (and the loop's own direct sends,
+        # sharing this same lock via `adapter.send_lock`) goes through it.
+        self.send_lock: asyncio.Lock = asyncio.Lock()
 
         # ── Conversation history (multi-turn memory) ──────────────────────
         # Stores the last _HISTORY_MAXLEN successful turns so the SQL
@@ -194,38 +204,42 @@ class WebAdapter(PlatformAdapter):
 
     async def send_message(self, event: PlatformEvent, text: str) -> None:
         try:
-            await self.ws.send_json({
-                "type": "message",
-                "role": "assistant",
-                "content": text,
-            })
+            async with self.send_lock:
+                await self.ws.send_json({
+                    "type": "message",
+                    "role": "assistant",
+                    "content": text,
+                })
         except Exception as e:
             log.error("WebSocket send_message failed: %s", e)
 
     async def send_status(self, event: PlatformEvent, stage: str, label: str, detail: str = "") -> None:
         try:
-            await self.ws.send_json({
-                "type": "status",
-                "stage": stage,
-                "label": label,
-                "detail": detail,
-            })
+            async with self.send_lock:
+                await self.ws.send_json({
+                    "type": "status",
+                    "stage": stage,
+                    "label": label,
+                    "detail": detail,
+                })
         except Exception as e:
             log.error("WebSocket send_status failed: %s", e)
 
     async def send_chart(self, event: PlatformEvent, chart: dict) -> None:
         try:
-            await self.ws.send_json({
-                "type": "chart",
-                "role": "assistant",
-                "chart": chart,
-            })
+            async with self.send_lock:
+                await self.ws.send_json({
+                    "type": "chart",
+                    "role": "assistant",
+                    "chart": chart,
+                })
         except Exception as e:
             log.error("WebSocket send_chart failed: %s", e)
 
     async def send_assistant_response(self, event: PlatformEvent, payload: dict) -> None:
         try:
-            await self.ws.send_json(payload)
+            async with self.send_lock:
+                await self.ws.send_json(payload)
         except Exception as e:
             log.error("WebSocket send_assistant_response failed: %s", e)
             # A serialization failure here (e.g. a non-JSON-serializable type
@@ -233,32 +247,35 @@ class WebAdapter(PlatformAdapter):
             # after "query generated" — send a minimal error frame so the
             # failure is at least visible in chat.
             try:
-                await self.ws.send_json({
-                    "type": "assistant_error",
-                    "role": "assistant",
-                    "content": (
-                        "Something went wrong while preparing your answer — "
-                        "please try asking again."
-                    ),
-                })
+                async with self.send_lock:
+                    await self.ws.send_json({
+                        "type": "assistant_error",
+                        "role": "assistant",
+                        "content": (
+                            "Something went wrong while preparing your answer — "
+                            "please try asking again."
+                        ),
+                    })
             except Exception:
                 pass
 
     async def send_analysis_response(self, event: PlatformEvent, payload: dict) -> None:
         try:
-            await self.ws.send_json(payload)
+            async with self.send_lock:
+                await self.ws.send_json(payload)
         except Exception as e:
             log.error("WebSocket send_analysis_response failed: %s", e)
 
 
     async def send_clarification_prompt(self, event: PlatformEvent, question: str, options: list[dict], pending_id: str | None = None) -> None:
         try:
-            await self.ws.send_json({
-                "type": "clarification_prompt",
-                "question": question,
-                "options": options,
-                "pending_id": pending_id or "",
-            })
+            async with self.send_lock:
+                await self.ws.send_json({
+                    "type": "clarification_prompt",
+                    "question": question,
+                    "options": options,
+                    "pending_id": pending_id or "",
+                })
         except Exception as e:
             log.error("WebSocket send_clarification_prompt failed: %s", e)
 
@@ -271,12 +288,13 @@ class WebAdapter(PlatformAdapter):
     ) -> None:
         # Legacy path for non-interactive image uploads. Kept for compatibility.
         try:
-            await self.ws.send_json({
-                "type": "file_unavailable",
-                "role": "assistant",
-                "filename": filename,
-                "mime_type": mime_type,
-            })
+            async with self.send_lock:
+                await self.ws.send_json({
+                    "type": "file_unavailable",
+                    "role": "assistant",
+                    "filename": filename,
+                    "mime_type": mime_type,
+                })
         except Exception as e:
             log.error("WebSocket upload_file failed: %s", e)
 

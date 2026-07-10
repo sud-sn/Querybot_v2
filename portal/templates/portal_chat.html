@@ -436,6 +436,10 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .send-btn:hover{transform:translateY(-1px) scale(1.04);filter:brightness(1.05);box-shadow:0 5px 14px color-mix(in srgb,var(--primary) 45%,transparent)}
 .send-btn:active{transform:translateY(0) scale(.97)}
 .send-btn:disabled{opacity:.4;cursor:not-allowed;box-shadow:none;transform:none}
+.send-btn-icon{display:flex;align-items:center;justify-content:center;line-height:1}
+.send-btn.is-stop{background:linear-gradient(135deg,var(--text-soft),var(--text-muted));box-shadow:0 3px 10px color-mix(in srgb,var(--text-soft) 30%,transparent)}
+.send-btn.is-stop:hover{filter:none;background:linear-gradient(135deg,var(--danger),color-mix(in srgb,var(--danger) 80%,black));box-shadow:0 5px 14px color-mix(in srgb,var(--danger) 40%,transparent)}
+.stop-icon{width:11px;height:11px;border-radius:3px;background:#fff;display:block}
 .composer-footer{display:flex;justify-content:space-between;gap:1rem;align-items:center;margin-top:.65rem;flex-wrap:wrap}.composer-hint{font-size:11px;color:var(--text-muted)}
 .composer-actions{display:flex;gap:.45rem;flex-wrap:wrap}
 .toast{position:fixed;right:20px;bottom:20px;padding:.75rem .95rem;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-lg);font-size:12px;color:var(--text);opacity:0;transform:translateY(8px);pointer-events:none;transition:all .18s;z-index:1200}
@@ -769,7 +773,7 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
           </div>
           <div class="composer-side">
             <span class="char-count" id="charCount">500</span>
-            <button class="send-btn" id="sendBtn" onclick="sendMessage()" title="Send message" aria-label="Send message">↑</button>
+            <button class="send-btn" id="sendBtn" onclick="sendMessage()" title="Send message" aria-label="Send message"><span id="sendBtnIcon" class="send-btn-icon">↑</span></button>
           </div>
         </div>
         <div class="composer-footer">
@@ -946,6 +950,7 @@ function setProcessing(active){
   // Hide composer mascot while processing — show again when done
   const cm = document.getElementById('composerMascot');
   if (cm) cm.classList.toggle('ai-hidden', !!active);
+  _setSendButtonMode(!!active);
   if (active) {
     _showSkeletonBubble();
     startDoodle();
@@ -959,6 +964,30 @@ function setProcessing(active){
     }
   }
   scrollBottom();
+}
+// While a question is in flight, the send button becomes a Stop control —
+// clicking it sends {type:'cancel'} so the server can cancel the in-flight
+// task (see gateway/webhooks.py's ws_chat: LLM calls are interrupted
+// immediately; a DB query already running may finish server-side, but its
+// result is discarded since nothing is listening anymore).
+function _setSendButtonMode(isStop){
+  const btn  = document.getElementById('sendBtn');
+  const icon = document.getElementById('sendBtnIcon');
+  if (!btn || !icon) return;
+  btn.classList.toggle('is-stop', isStop);
+  icon.textContent = isStop ? '' : '↑';
+  icon.className = isStop ? 'send-btn-icon stop-icon' : 'send-btn-icon';
+  btn.title = isStop ? 'Stop generating' : 'Send message';
+  btn.setAttribute('aria-label', isStop ? 'Stop generating' : 'Send message');
+  btn.onclick = isStop ? stopQuery : sendMessage;
+}
+function stopQuery(){
+  if (!wsReady) return;
+  ws.send(JSON.stringify({ type: 'cancel' }));
+  // Optimistically reset the composer instead of waiting for the server's
+  // round trip — the server-side "Query stopped." message + typing:false
+  // will arrive right behind this and are idempotent with it.
+  setProcessing(false);
 }
 function updateProcessing(stage, label, detail){
   setProcessing(true);
@@ -2989,7 +3018,10 @@ function _refreshSuggestionsForSchema(schemaName) {
 function sendMessage(tableHint){
   const inp = document.getElementById('input');
   const text = inp.value.trim();
-  if (!text || !wsReady) return;
+  // While a question is in flight the button is in Stop mode, but Enter or
+  // a suggestion click can still reach here directly — don't let a second
+  // question overlap the first; the user has Stop for that.
+  if (!text || !wsReady || processingActive) return;
   // ── Genie: if user typed manually (no pending chip), dismiss visible chips ─
   if (!_pendingSuggestion) {
     _visibleSuggestionTexts().forEach(t => _genieEvent('dismissed', t));

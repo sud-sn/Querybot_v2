@@ -8,6 +8,7 @@ Routes registered on an APIRouter that main.py mounts at startup.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -322,6 +323,12 @@ async def ws_chat(websocket: WebSocket, account_id: str):
     zoom_user_id = portal_user.get("zoom_user_id") or f"web_{user_id}"
     adapter      = WebAdapter(websocket, account_id, zoom_user_id)
 
+    # The currently in-flight main-question task, if any — lets the receive
+    # loop below cancel it when the user clicks Stop. Question handling runs
+    # as a background task (not awaited inline) specifically so this loop
+    # stays free to receive a {"type":"cancel"} message while a query runs.
+    current_query_task: asyncio.Task | None = None
+
     # Load known tables once for drill-down validation in insight calls
     _ws_state = get_state(account_id)
     _ws_known_tables = load_known_tables(_ws_state.get("schema_dir", ""))
@@ -364,6 +371,73 @@ async def ws_chat(websocket: WebSocket, account_id: str):
     # `history_sync` message immediately after opening the socket with
     # turns persisted in localStorage so multi-turn memory survives refreshes.
 
+    async def _run_main_question(text: str, table_hint: str, schema_hint: str) -> None:
+        """Answers one question. Runs as a background task (see the send
+        loop below) so the receive loop stays free to see a "cancel"
+        message mid-flight. Wrapped end-to-end in its own error handling
+        since nothing awaits this inline anymore — an unhandled exception
+        here would otherwise only surface as an asyncio "exception was
+        never retrieved" warning, with the user seeing nothing (previously
+        such an error would propagate to the outer handler and silently
+        end the whole connection; this is a strict improvement, not just
+        a refactor).
+        """
+        bg = BackgroundTasks()
+        event = adapter.make_event(text)
+        if table_hint:
+            event.table_hint = table_hint
+        if schema_hint:
+            event.schema_hint = schema_hint
+        try:
+            await dispatch(account_id, event, adapter, bg, portal_user=portal_user)
+
+            # Run any background tasks synchronously in WebSocket context
+            for task in bg.tasks:
+                try:
+                    await task.func(*task.args, **task.kwargs)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    log.error("WS bg task error: %s", e)
+                    # Defect class: a crash while generating/sending the
+                    # answer used to end in total silence — the query ran,
+                    # the server log had the error, the user saw nothing.
+                    # Degrade to a visible generic error instead.
+                    try:
+                        async with adapter.send_lock:
+                            await websocket.send_json({
+                                "type": "assistant_error",
+                                "role": "assistant",
+                                "content": (
+                                    "Something went wrong while preparing your answer — "
+                                    "please try asking again."
+                                ),
+                            })
+                    except Exception:
+                        pass
+
+            async with adapter.send_lock:
+                await websocket.send_json({"type": "typing", "active": False})
+        except asyncio.CancelledError:
+            # User clicked Stop — the "cancel" branch below already sent a
+            # user-facing message, nothing more to do here.
+            raise
+        except Exception as e:
+            log.error("Main question task failed: %s", e)
+            try:
+                async with adapter.send_lock:
+                    await websocket.send_json({
+                        "type": "assistant_error",
+                        "role": "assistant",
+                        "content": (
+                            "Something went wrong while preparing your answer — "
+                            "please try asking again."
+                        ),
+                    })
+                    await websocket.send_json({"type": "typing", "active": False})
+            except Exception:
+                pass
+
     try:
         while True:
             data = await websocket.receive_json()
@@ -385,6 +459,36 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     if callable(load_fn):
                         load_fn(incoming)
                         log.debug("history_sync: loaded %d turn(s) from client", len(incoming))
+                continue
+
+            # ── cancel: user clicked Stop on an in-flight question ───────────
+            # Cancelling the task cleanly interrupts it at its next `await`
+            # (LLM calls are plain asyncio awaits, so this stops SQL
+            # generation immediately). DB execution runs in a thread pool
+            # (asyncio.wait_for around run_in_executor) — cancelling only
+            # stops the pipeline from waiting on it; the query may keep
+            # running server-side to completion in the background, but no
+            # result is ever sent since nothing is listening anymore.
+            if msg_type == "cancel":
+                if current_query_task and not current_query_task.done():
+                    current_query_task.cancel()
+                    try:
+                        await current_query_task
+                    except asyncio.CancelledError:
+                        pass
+                    except Exception as e:
+                        log.debug("cancel: task raised during shutdown: %s", e)
+                    async with adapter.send_lock:
+                        # "system" (not assistant_error) — the frontend
+                        # prefixes assistant_error with a warning triangle,
+                        # which reads like something went wrong. Stopping is
+                        # what the user asked for; it should look calm, like
+                        # the existing "Connected as ..." system notices.
+                        await websocket.send_json({
+                            "type": "system",
+                            "content": "Query stopped.",
+                        })
+                        await websocket.send_json({"type": "typing", "active": False})
                 continue
 
             # ── result_chat: inline card chat — always DuckDB, no routing ────
@@ -1582,37 +1686,14 @@ async def ws_chat(websocket: WebSocket, account_id: str):
 
             # Frontend renders the user message locally before send.
             # Only send processing / assistant events back over the socket.
-            bg = BackgroundTasks()
-            event = adapter.make_event(text)
-            if table_hint:
-                event.table_hint = table_hint
-            if schema_hint:
-                event.schema_hint = schema_hint
-            await dispatch(account_id, event, adapter, bg, portal_user=portal_user)
-
-            # Run any background tasks synchronously in WebSocket context
-            for task in bg.tasks:
-                try:
-                    await task.func(*task.args, **task.kwargs)
-                except Exception as e:
-                    log.error("WS bg task error: %s", e)
-                    # Defect class: a crash while generating/sending the
-                    # answer used to end in total silence — the query ran,
-                    # the server log had the error, the user saw nothing.
-                    # Degrade to a visible generic error instead.
-                    try:
-                        await websocket.send_json({
-                            "type": "assistant_error",
-                            "role": "assistant",
-                            "content": (
-                                "Something went wrong while preparing your answer — "
-                                "please try asking again."
-                            ),
-                        })
-                    except Exception:
-                        pass
-
-            await websocket.send_json({"type": "typing", "active": False})
+            # Runs as a background task (not awaited here) so this loop stays
+            # free to receive a "cancel" message while the question runs. A
+            # new question implicitly supersedes an unfinished one.
+            if current_query_task and not current_query_task.done():
+                current_query_task.cancel()
+            current_query_task = asyncio.create_task(
+                _run_main_question(text, table_hint, schema_hint)
+            )
 
     except WebSocketDisconnect:
         log.info("WebSocket chat disconnected: user=%d account=%s", user_id, account_id)
@@ -1625,4 +1706,10 @@ async def ws_chat(websocket: WebSocket, account_id: str):
             })
         except Exception:
             pass
+    finally:
+        # Don't leak a question-answering task past the connection it was
+        # answering into — cancel it so it stops hitting the (closed) socket
+        # and the LLM/DB calls it's waiting on are released promptly.
+        if current_query_task and not current_query_task.done():
+            current_query_task.cancel()
 
