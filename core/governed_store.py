@@ -138,6 +138,7 @@ def upsert_governed_example(
     source: str = "auto",
     final_score: int = 0,
     schema_scope: str = "",
+    semantic_model_version: str = "",
 ) -> str:
     """
     Embed and upsert a governed example into querybot_governed.
@@ -150,6 +151,14 @@ def upsert_governed_example(
     filter by schema — preventing cross-schema example leakage.  An empty
     string means "unscoped / valid for all schemas" (used for pre-governed
     examples loaded before schema isolation was introduced).
+
+    semantic_model_version is the fingerprint of the structured semantic
+    model (core.semantic_model.semantic_model_fingerprint) at the moment
+    this example's underlying query ran. retrieve_governed_examples uses it
+    to prefer examples born under the CURRENT model over ones from before a
+    KB rebuild or field remapping — never a hard filter, since an approved
+    example still carries useful structural guidance even after the model
+    has moved on; see that function's docstring.
 
     Returns the Qdrant point ID string so the caller can store it in the
     learning_candidate.qdrant_id column for observability.
@@ -183,14 +192,16 @@ def upsert_governed_example(
                 "source":       source,
                 "final_score":  final_score,
                 "schema_scope": schema_scope,
+                "semantic_model_version": semantic_model_version,
                 "doc_type":     "governed_example",
                 "ts":           int(time.time()),
             },
         )],
     )
     log.info(
-        "governed_store: upserted candidate %s for account %s (source=%s score=%d schema=%s)",
+        "governed_store: upserted candidate %s for account %s (source=%s score=%d schema=%s model_version=%s)",
         candidate_id[:12], account_id, source, final_score, schema_scope or "all",
+        semantic_model_version or "unstamped",
     )
     return point_id
 
@@ -233,6 +244,7 @@ def retrieve_governed_examples(
     n: int = 3,
     allowed_tables: set[str] | None = None,   # reserved -- see ACL note in module docstring
     schema_scope: str = "",
+    current_semantic_model_version: str = "",
 ) -> list[dict]:
     """
     Semantic search over querybot_governed for the given tenant.
@@ -253,6 +265,19 @@ def retrieve_governed_examples(
     example from schema A from being injected into a query scoped to schema B.
     When empty (default), no schema filtering is applied — all examples for
     the account are considered.
+
+    current_semantic_model_version: when non-empty, examples are re-ranked
+    (never hard-filtered) to prefer ones whose stored semantic_model_version
+    matches — i.e. examples born under the CURRENT semantic model — over
+    ones stamped with a different, older version (approved before a KB
+    rebuild or field remapping since changed the SQL shape that's now
+    correct). An example with no stamped version (pre-existing/legacy) is
+    treated as "unknown", not "stale", so it is never penalized — this keeps
+    every example approved before this feature shipped fully usable.
+    Semantic similarity still determines ranking within each group; this
+    only demotes a stale example below fresher, comparably-relevant ones,
+    it never drops one that's the ONLY match for the question — approved
+    guidance beats no guidance even when a touch stale.
     """
     from qdrant_client.models import Filter, FieldCondition, MatchValue, IsNullCondition, PayloadField
 
@@ -299,13 +324,17 @@ def retrieve_governed_examples(
     if count == 0:
         return []
 
+    # Fetch a wider pool than requested when we'll be re-ranking by freshness,
+    # so demoting stale hits still leaves enough fresh ones to fill n rather
+    # than silently returning fewer examples than asked for.
+    fetch_limit = n * 4 if current_semantic_model_version else n
     try:
         vector = _embed([question])[0]
         hits = client.query_points(
             collection_name=_GOVERNED_COLLECTION,
             query=vector,
             query_filter=_filter,
-            limit=n,
+            limit=fetch_limit,
             with_payload=True,
             search_params={"hnsw_ef": _EF_SEARCH},
         ).points
@@ -313,18 +342,34 @@ def retrieve_governed_examples(
         log.warning("governed_store: retrieve failed for %s -- %s", account_id, exc)
         return []
 
-    results = []
+    parsed = []
     for h in hits:
         q = (h.payload or {}).get("question", "")
         s = (h.payload or {}).get("sql", "")
         if q and s:
-            results.append({
+            parsed.append({
                 "question": q,
                 "sql":      s,
                 "table":    "",
                 "source":   (h.payload or {}).get("source", "auto"),
+                "_stored_version": (h.payload or {}).get("semantic_model_version", ""),
             })
-    return results
+
+    if current_semantic_model_version:
+        # Stable partition: fresh/unstamped first, stale last — preserves
+        # Qdrant's similarity ordering within each group.
+        fresh = [r for r in parsed if not r["_stored_version"] or r["_stored_version"] == current_semantic_model_version]
+        stale = [r for r in parsed if r["_stored_version"] and r["_stored_version"] != current_semantic_model_version]
+        if stale and fresh != parsed:
+            log.debug(
+                "governed_store: %d/%d retrieved example(s) stale vs current model version",
+                len(stale), len(parsed),
+            )
+        parsed = fresh + stale
+
+    for r in parsed:
+        r.pop("_stored_version", None)
+    return parsed[:n]
 
 
 def get_governed_count(account_id: str) -> int:
@@ -389,6 +434,7 @@ def backfill_approved_candidates(account_id: str) -> int:
                 source=c.get("source", "auto"),
                 final_score=int(c.get("final_score") or 0),
                 schema_scope=c.get("schema_scope", ""),
+                semantic_model_version=c.get("semantic_model_version", ""),
             )
             count += 1
         except Exception as exc:

@@ -582,6 +582,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
             question, account_id, n=3,
             allowed_tables=rag_filter,
             schema_scope=schema_hint,
+            kb_dir=state.get("kb_dir", ""),
         )
         if examples:
             context = format_examples_for_prompt(examples) + "\n\n---\n\n" + context
@@ -1869,6 +1870,9 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
             repair_succeeded  = retry_count > 0,   # if we're here after retries, repair worked
             row_count         = len(rows),
             confidence_ctx    = _confidence_context,
+            schema_scope      = schema_hint,
+            kb_dir            = state.get("kb_dir", ""),
+            schema_dir        = state.get("schema_dir", ""),
         )
 
 

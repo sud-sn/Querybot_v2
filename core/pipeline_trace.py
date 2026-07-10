@@ -120,6 +120,47 @@ def compute_duration_breakdown(steps: list[dict], total_ms: int) -> list[dict]:
 
 # ── Learning pipeline ─────────────────────────────────────────────────────────
 
+def compute_learning_versions(account_id: str, kb_dir: str = "", schema_dir: str = "") -> dict:
+    """
+    Cheap content fingerprints of the three things that can make a stored
+    learning example stale: the semantic model, the discovered schema, and
+    the metric registry. Stamped onto every learning_candidate at creation
+    so retrieval can prefer examples born under the CURRENT model over ones
+    from before a KB rebuild / metric edit. Best-effort — a missing file or
+    DB hiccup yields "" for that fingerprint, never an exception.
+    """
+    import hashlib
+    from pathlib import Path
+
+    def _file_fingerprint(path: Path) -> str:
+        try:
+            if path.is_file():
+                return hashlib.md5(path.read_bytes()).hexdigest()[:12]
+        except Exception:
+            pass
+        return ""
+
+    versions = {"semantic_model_version": "", "schema_version": "", "metric_version": ""}
+    try:
+        if kb_dir:
+            from core.semantic_model import semantic_model_fingerprint
+            versions["semantic_model_version"] = semantic_model_fingerprint(kb_dir)
+        if schema_dir:
+            versions["schema_version"] = _file_fingerprint(Path(schema_dir) / "_schema.json")
+    except Exception as exc:
+        log.debug("compute_learning_versions file fingerprints failed: %s", exc)
+    try:
+        with get_db() as conn:
+            row = conn.execute(
+                "SELECT COALESCE(MAX(id), 0) FROM metric_version WHERE account_id=?",
+                (account_id,),
+            ).fetchone()
+        versions["metric_version"] = str(int(row[0] or 0))
+    except Exception as exc:
+        log.debug("compute_learning_versions metric fingerprint failed: %s", exc)
+    return versions
+
+
 def _create_learning_candidate(
     account_id: str,
     question_id: str,
@@ -130,6 +171,9 @@ def _create_learning_candidate(
     repair_succeeded: bool,
     row_count: int,
     confidence_ctx: dict,
+    schema_scope: str = "",
+    kb_dir: str = "",
+    schema_dir: str = "",
 ) -> None:
     """
     Score this trace and create a learning_candidate row.
@@ -163,6 +207,8 @@ def _create_learning_candidate(
             feedback_delta           = 0,   # no feedback yet at creation time
         )
 
+        versions = compute_learning_versions(account_id, kb_dir=kb_dir, schema_dir=schema_dir)
+
         create_candidate(
             origin_question_id = question_id,
             account_id         = account_id,
@@ -170,6 +216,10 @@ def _create_learning_candidate(
             sql_text           = sql,
             technical_score    = score,
             evidence           = evidence,
+            schema_scope       = schema_scope,
+            semantic_model_version = versions["semantic_model_version"],
+            metric_version         = versions["metric_version"],
+            schema_version         = versions["schema_version"],
         )
     except Exception as exc:
         log.debug("_create_learning_candidate failed (non-fatal): %s", exc)

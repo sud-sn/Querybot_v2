@@ -420,6 +420,7 @@ def retrieve_similar_examples(
     n: int = 3,
     allowed_tables: set[str] | None = None,
     schema_scope: str = "",
+    kb_dir: str = "",
 ) -> list[dict]:
     """
     Return the top-n most semantically similar validated examples to the question.
@@ -440,6 +441,11 @@ def retrieve_similar_examples(
 
     The second parameter was previously chroma_dir (a filesystem path).
     It is now account_id. Legacy filesystem paths are handled gracefully.
+
+    kb_dir: when supplied, its current semantic-model fingerprint is passed
+    to retrieve_governed_examples so examples approved under an older model
+    (before a KB rebuild / field remapping) are de-prioritized in favor of
+    fresher ones — never dropped outright, see that function's docstring.
     """
     from core.vector_store import retrieve_similar_examples as _qs_retrieve
 
@@ -460,10 +466,15 @@ def retrieve_similar_examples(
     governed: list[dict] = []
     try:
         from core.governed_store import retrieve_governed_examples
+        current_version = ""
+        if kb_dir:
+            from core.semantic_model import semantic_model_fingerprint
+            current_version = semantic_model_fingerprint(kb_dir)
         governed = retrieve_governed_examples(
             account_id, question, n=n,
             allowed_tables=allowed_tables,
             schema_scope=schema_scope,
+            current_semantic_model_version=current_version,
         )
     except Exception as exc:
         log.debug("governed example retrieval skipped (non-fatal): %s", exc)

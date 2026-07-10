@@ -40,6 +40,29 @@ MODEL_JSON = "_semantic_model.json"
 MODEL_YAML = "_semantic_model.yaml"
 
 
+def semantic_model_fingerprint(kb_dir: str) -> str:
+    """
+    Cheap content fingerprint of the structured semantic model.
+
+    Used to detect staleness in the learning loop: a governed/harvested
+    few-shot example stamped with one fingerprint and retrieved after the
+    model has since changed (field approved/rewired, KB rebuilt) is a
+    candidate for de-prioritization — its SQL shape may no longer match
+    current field mappings. "" when the model file is missing/unreadable,
+    which callers treat as "unknown" (never penalized), not "stale".
+    """
+    if not kb_dir:
+        return ""
+    try:
+        import hashlib
+        path = Path(kb_dir) / MODEL_JSON
+        if path.is_file():
+            return hashlib.md5(path.read_bytes()).hexdigest()[:12]
+    except Exception:
+        pass
+    return ""
+
+
 def _read_schema(schema_dir: str) -> dict[str, Any]:
     schema_path = Path(schema_dir) / "_schema.json"
     if not schema_path.exists():

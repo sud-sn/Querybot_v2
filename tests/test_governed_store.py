@@ -246,6 +246,33 @@ class TestUpsertGovernedExample(unittest.TestCase):
         self.assertEqual(payload["source"], "admin_correction")
         self.assertEqual(payload["final_score"], 90)
 
+    def test_payload_contains_semantic_model_version(self):
+        client = _make_qdrant_client()
+        captured_point = []
+        client.upsert.side_effect = lambda **kw: captured_point.extend(kw.get("points", []))
+
+        with patch("core.governed_store._qdrant", return_value=client), \
+             patch("core.governed_store._embed", return_value=[_FAKE_VECTOR]):
+            self._call(
+                candidate_id="c1", account_id="acct1",
+                question="What is revenue?", sql="SELECT SUM(rev) FROM sales",
+                semantic_model_version="abc123def456",
+            )
+
+        self.assertEqual(captured_point[0].payload["semantic_model_version"], "abc123def456")
+
+    def test_semantic_model_version_defaults_to_empty_string(self):
+        client = _make_qdrant_client()
+        captured_point = []
+        client.upsert.side_effect = lambda **kw: captured_point.extend(kw.get("points", []))
+
+        with patch("core.governed_store._qdrant", return_value=client), \
+             patch("core.governed_store._embed", return_value=[_FAKE_VECTOR]):
+            self._call(candidate_id="c1", account_id="acct1", question="Q", sql="SELECT 1")
+
+        self.assertIn("semantic_model_version", captured_point[0].payload)
+        self.assertEqual(captured_point[0].payload["semantic_model_version"], "")
+
     def test_upsert_called_exactly_once_per_call(self):
         client = _make_qdrant_client()
         with patch("core.governed_store._qdrant", return_value=client), \
@@ -412,6 +439,113 @@ class TestRetrieveGovernedExamples(unittest.TestCase):
         # what query_points was called with
         call_kwargs = client.query_points.call_args.kwargs
         self.assertEqual(call_kwargs.get("limit"), 2)
+
+
+# ===========================================================================
+# core/governed_store -- retrieve_governed_examples staleness re-ranking
+#
+# A stale governed example (approved under an older semantic model) is
+# de-prioritized, never hard-filtered: an example is still guidance even
+# when a touch stale, and dropping it outright could leave a question with
+# NO few-shot grounding at all right after every KB rebuild (since every
+# prior approval would suddenly be "stale" under a strict filter).
+# ===========================================================================
+
+def _make_versioned_hit(question, sql, version, score=0.9):
+    hit = _make_hit(question, sql, score=score)
+    hit.payload["semantic_model_version"] = version
+    return hit
+
+
+class TestRetrieveGovernedExamplesStaleness(unittest.TestCase):
+
+    def _call(self, current_version, account_id="acct1", question="revenue?", n=2):
+        from core.governed_store import retrieve_governed_examples
+        return retrieve_governed_examples(
+            account_id, question, n=n, current_semantic_model_version=current_version,
+        )
+
+    def test_no_current_version_leaves_order_unchanged(self):
+        # Backward compat: omitting current_semantic_model_version (the
+        # existing call shape used everywhere before this feature) must
+        # behave exactly as before — no reordering, no widened fetch.
+        hits = [
+            _make_versioned_hit("Q1", "SELECT 1", "old"),
+            _make_versioned_hit("Q2", "SELECT 2", "new"),
+        ]
+        client = _make_qdrant_client(count=2, search_results=hits)
+        with patch("core.governed_store._qdrant", return_value=client), \
+             patch("core.governed_store._embed", return_value=[_FAKE_VECTOR]):
+            result = self._call(current_version="", n=2)
+        self.assertEqual([r["question"] for r in result], ["Q1", "Q2"])
+        self.assertEqual(client.query_points.call_args.kwargs.get("limit"), 2)
+
+    def test_fetch_limit_widened_when_checking_staleness(self):
+        client = _make_qdrant_client(count=1, search_results=[])
+        with patch("core.governed_store._qdrant", return_value=client), \
+             patch("core.governed_store._embed", return_value=[_FAKE_VECTOR]):
+            self._call(current_version="new", n=2)
+        # 4x widening (see retrieve_governed_examples) — gives the reorder
+        # step enough fresh candidates to fill n even if some are stale.
+        self.assertEqual(client.query_points.call_args.kwargs.get("limit"), 8)
+
+    def test_fresh_examples_ranked_before_stale(self):
+        hits = [
+            _make_versioned_hit("Stale first", "SELECT 1", "old", score=0.95),  # best match, but stale
+            _make_versioned_hit("Fresh second", "SELECT 2", "new", score=0.80),
+        ]
+        client = _make_qdrant_client(count=2, search_results=hits)
+        with patch("core.governed_store._qdrant", return_value=client), \
+             patch("core.governed_store._embed", return_value=[_FAKE_VECTOR]):
+            result = self._call(current_version="new", n=2)
+        self.assertEqual([r["question"] for r in result], ["Fresh second", "Stale first"])
+
+    def test_unstamped_legacy_examples_treated_as_fresh(self):
+        # A pre-existing approved example from before this feature shipped
+        # has no semantic_model_version in its payload at all — must not be
+        # penalized just because it predates version stamping.
+        hits = [
+            _make_versioned_hit("Stale", "SELECT 1", "old", score=0.95),
+            _make_hit("Unstamped legacy", "SELECT 2", score=0.80),  # no version key
+        ]
+        client = _make_qdrant_client(count=2, search_results=hits)
+        with patch("core.governed_store._qdrant", return_value=client), \
+             patch("core.governed_store._embed", return_value=[_FAKE_VECTOR]):
+            result = self._call(current_version="new", n=2)
+        self.assertEqual([r["question"] for r in result], ["Unstamped legacy", "Stale"])
+
+    def test_matching_version_not_treated_as_stale(self):
+        hits = [
+            _make_versioned_hit("Current", "SELECT 1", "new", score=0.95),
+            _make_versioned_hit("Also current", "SELECT 2", "new", score=0.80),
+        ]
+        client = _make_qdrant_client(count=2, search_results=hits)
+        with patch("core.governed_store._qdrant", return_value=client), \
+             patch("core.governed_store._embed", return_value=[_FAKE_VECTOR]):
+            result = self._call(current_version="new", n=2)
+        self.assertEqual([r["question"] for r in result], ["Current", "Also current"])
+
+    def test_all_stale_still_returns_up_to_n_not_empty(self):
+        # No fresh alternative exists — approved guidance beats no guidance
+        # even when every candidate is stale.
+        hits = [
+            _make_versioned_hit("Q1", "SELECT 1", "old"),
+            _make_versioned_hit("Q2", "SELECT 2", "old"),
+        ]
+        client = _make_qdrant_client(count=2, search_results=hits)
+        with patch("core.governed_store._qdrant", return_value=client), \
+             patch("core.governed_store._embed", return_value=[_FAKE_VECTOR]):
+            result = self._call(current_version="new", n=2)
+        self.assertEqual(len(result), 2)
+
+    def test_result_dicts_never_leak_internal_version_key(self):
+        hits = [_make_versioned_hit("Q1", "SELECT 1", "old")]
+        client = _make_qdrant_client(count=1, search_results=hits)
+        with patch("core.governed_store._qdrant", return_value=client), \
+             patch("core.governed_store._embed", return_value=[_FAKE_VECTOR]):
+            result = self._call(current_version="new", n=2)
+        self.assertNotIn("_stored_version", result[0])
+        self.assertEqual(set(result[0].keys()), {"question", "sql", "table", "source"})
 
 
 # ===========================================================================

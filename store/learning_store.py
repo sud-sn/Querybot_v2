@@ -365,6 +365,7 @@ def _fire_governed_upsert(candidate_id: str) -> None:
             source=candidate.get("source", "auto"),
             final_score=int(candidate.get("final_score") or 0),
             schema_scope=candidate.get("schema_scope", ""),
+            semantic_model_version=candidate.get("semantic_model_version", ""),
         )
         # Write the Qdrant point ID back for observability (best-effort)
         if point_id:

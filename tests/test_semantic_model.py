@@ -15,6 +15,7 @@ from core.semantic_model import (
     patch_field_approval,
     patch_metric_approval,
     patch_relationship,
+    semantic_model_fingerprint,
     write_semantic_model,
 )
 from core.validator import validate_sql_detailed
@@ -975,6 +976,62 @@ class ApprovedFieldSupersessionTests(unittest.TestCase):
                 [a["column"] for a in plan.get("avoid_columns") or []],
                 ["PCH_ORD_LIN_AMT"],
             )
+
+
+class SemanticModelFingerprintTests(unittest.TestCase):
+    """
+    semantic_model_fingerprint underpins the Learning Queue staleness
+    feature — a governed few-shot example is stamped with this fingerprint
+    at approval time and re-checked against the CURRENT one at retrieval
+    time, so an example approved under an older semantic model can be
+    de-prioritized after a KB rebuild or field remapping changes it.
+    """
+
+    def test_empty_kb_dir_returns_empty_string(self):
+        self.assertEqual(semantic_model_fingerprint(""), "")
+
+    def test_missing_model_file_returns_empty_string(self):
+        with _tmp_dir() as tmp:
+            self.assertEqual(semantic_model_fingerprint(tmp), "")
+
+    def test_same_content_same_fingerprint(self):
+        with _tmp_dir() as tmp:
+            (Path(tmp) / MODEL_JSON).write_text('{"tables": []}', encoding="utf-8")
+            fp1 = semantic_model_fingerprint(tmp)
+            fp2 = semantic_model_fingerprint(tmp)
+        self.assertNotEqual(fp1, "")
+        self.assertEqual(fp1, fp2)
+
+    def test_different_content_different_fingerprint(self):
+        with _tmp_dir() as tmp1, _tmp_dir() as tmp2:
+            (Path(tmp1) / MODEL_JSON).write_text('{"tables": []}', encoding="utf-8")
+            (Path(tmp2) / MODEL_JSON).write_text('{"tables": [1]}', encoding="utf-8")
+            fp1 = semantic_model_fingerprint(tmp1)
+            fp2 = semantic_model_fingerprint(tmp2)
+        self.assertNotEqual(fp1, fp2)
+
+    def test_fingerprint_changes_after_a_field_is_approved(self):
+        # The exact real-world trigger: approving a field patches model.json
+        # in place (patch_field_approval) — the fingerprint must move so a
+        # governed example approved before this rewrite is recognized as
+        # stale on the next retrieval.
+        with _tmp_dir() as tmp:
+            root = Path(tmp)
+            schema_dir = root / "schema"
+            kb_dir = root / "kb"
+            schema_dir.mkdir()
+            _write_schema(schema_dir)
+            write_semantic_model(schema_dir=str(schema_dir), kb_dir=str(kb_dir))
+            before = semantic_model_fingerprint(str(kb_dir))
+
+            patch_field_approval(
+                kb_dir=str(kb_dir),
+                table_fqn="CHATBOTDB.PROFITABILITY.WHS_DMS",
+                table_name="WHS_DMS", schema_name="PROFITABILITY",
+                column_name="WHS_DSC", approved_meaning="Warehouse name",
+            )
+            after = semantic_model_fingerprint(str(kb_dir))
+        self.assertNotEqual(before, after)
 
 
 if __name__ == "__main__":
