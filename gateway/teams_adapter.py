@@ -27,6 +27,7 @@ Credentials required:
 from __future__ import annotations
 import json
 import logging
+import os
 from typing import Optional
 
 import httpx
@@ -680,23 +681,45 @@ class TeamsAdapter(PlatformAdapter):
 
     # ── send_chart ────────────────────────────────────────────────────────────
     # Matches web_adapter.send_chart. Accepts a chart_payload dict produced by
-    # core.chart.build_chart_payload() and renders it as a PNG via the existing
-    # matplotlib pipeline, then hands off to upload_file so Teams displays it
-    # inside an Adaptive Card. This keeps the rendering pipeline identical to
-    # the one the portal uses — same colors, formatting, fallback behavior.
+    # core.chart.build_chart_payload() — the same payload the portal's ECharts
+    # renderer consumes. Preferred path: map it onto a native Adaptive Card
+    # v1.5 chart element (gateway/teams_chart_card.py) so Teams renders a real
+    # interactive chart with tooltips and legends. Fallback path (unmappable
+    # type, native card POST failure, or TEAMS_NATIVE_CHARTS=0): rasterize via
+    # the existing matplotlib pipeline and ship as a base64 Image card.
+
+    @staticmethod
+    def _native_charts_enabled() -> bool:
+        # Env kill switch, read at call time so it's toggleable without a
+        # deploy: a tenant whose Teams clients are too old to render Chart.*
+        # elements (POST succeeds, card shows blank) can set
+        # TEAMS_NATIVE_CHARTS=0 and restart to force PNG charts.
+        return os.getenv("TEAMS_NATIVE_CHARTS", "1").strip().lower() not in ("0", "false", "off", "no")
 
     async def send_chart(self, event: PlatformEvent, chart: dict) -> None:
+        rows       = (chart or {}).get("rows") or []
+        chart_type = (chart or {}).get("chart_type") or "bar"
+        title      = (chart or {}).get("title") or "Results"
+        if not rows:
+            log.debug("Teams send_chart: empty rows, nothing to render")
+            return
+
+        if self._native_charts_enabled():
+            try:
+                from gateway.teams_chart_card import build_teams_chart_card
+                card = build_teams_chart_card(chart)
+            except Exception as e:
+                log.warning("Teams send_chart: native card build failed (%s) — falling back to PNG", e)
+                card = None
+            if card is not None:
+                if await self._post_chart_card(event, card):
+                    return
+                log.warning("Teams send_chart: native chart card POST failed — falling back to PNG")
+
         try:
             from core.chart import generate_chart
         except Exception as e:
             log.debug("Teams send_chart: renderer unavailable (%s) — skipping", e)
-            return
-
-        rows       = chart.get("rows") or []
-        chart_type = chart.get("chart_type") or "bar"
-        title      = chart.get("title") or "Results"
-        if not rows:
-            log.debug("Teams send_chart: empty rows, nothing to render")
             return
 
         try:
@@ -710,3 +733,38 @@ class TeamsAdapter(PlatformAdapter):
         filename = "".join(c if c.isalnum() or c in "-_" else "_"
                            for c in title)[:40] + ".png"
         await self.upload_file(event, png_bytes, filename, "image/png")
+
+    async def _post_chart_card(self, event: PlatformEvent, card: dict) -> bool:
+        """POST a native chart Adaptive Card. Returns True on 200/201 so the
+        caller knows whether to skip the PNG fallback. Never raises."""
+        try:
+            channel_info    = json.loads(event.channel_id)
+            service_url     = channel_info["service_url"]
+            conversation_id = channel_info["conversation_id"]
+            reply_url = (
+                f"{service_url.rstrip('/')}/v3/conversations/"
+                f"{conversation_id}/activities"
+            )
+            token = await self._get_token()
+            activity = {
+                "type": "message",
+                "attachments": [{
+                    "contentType": "application/vnd.microsoft.card.adaptive",
+                    "content":     card,
+                }],
+            }
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    reply_url,
+                    headers={"Authorization": f"Bearer {token}"},
+                    json=activity,
+                    timeout=20,
+                )
+            if resp.status_code in (200, 201):
+                log.info("Teams native chart card sent (%s)", card["body"][-1].get("type", "?"))
+                return True
+            log.warning("Teams native chart card %s: %s", resp.status_code, resp.text)
+            return False
+        except Exception as e:
+            log.warning("Teams native chart card send failed: %s", e)
+            return False
