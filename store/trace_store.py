@@ -70,7 +70,7 @@ def update_answer_trace(trace_id: int | None, **fields: Any) -> None:
         "completion_tokens", "generated_sql", "sql_validation_status",
         "sql_validation_error", "db_type", "query_row_count", "query_duration_ms",
         "answer_type", "final_answer_summary", "error_message", "status",
-        "result_rows", "policy_version_at_query",
+        "result_rows", "policy_version_at_query", "contract_version",
     }
     assignments, params = [], []
     for key, value in fields.items():

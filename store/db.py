@@ -831,6 +831,17 @@ def _run_migrations() -> None:
         # field alongside meaning/use case — comma-joined text, parsed the
         # same way as the admin Edit Field form's synonyms textarea.
         ("semantic_field_feedback", "suggested_synonyms", "TEXT NOT NULL DEFAULT ''"),
+        # v34: compiled semantic contract — every answer and eval run is
+        # stamped with the contract version it ran under so quality can be
+        # correlated with exact semantic states.
+        ("answer_trace", "contract_version",       "TEXT NOT NULL DEFAULT ''"),
+        ("learning_candidate", "contract_version", "TEXT NOT NULL DEFAULT ''"),
+        # v34: eval runs record what approval triggered them and whether the
+        # pass rate regressed vs the previous run of the same case file.
+        ("eval_run", "trigger_label",    "TEXT NOT NULL DEFAULT ''"),
+        ("eval_run", "contract_version", "TEXT NOT NULL DEFAULT ''"),
+        ("eval_run", "prev_pass_rate",   "REAL DEFAULT NULL"),
+        ("eval_run", "regressed",        "INTEGER NOT NULL DEFAULT 0"),
     ]
     with get_db() as conn:
         _ensure_llm_call_log_table(conn)

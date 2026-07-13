@@ -62,7 +62,7 @@ from store.trace_store import (
 )
 from store.eval_store import (
     save_eval_run, save_eval_case_result, list_eval_runs,
-    get_eval_run, latest_eval_run,
+    get_eval_run, latest_eval_run, previous_eval_run, latest_regressed_run,
 )
 from store.compliance_store import (
     get_compliance_profile, save_compliance_profile,
@@ -127,7 +127,7 @@ __all__ = [
     "get_answer_trace_by_question_id",
     "store_protected_result_rows",
     "save_eval_run","save_eval_case_result","list_eval_runs",
-    "get_eval_run","latest_eval_run",
+    "get_eval_run","latest_eval_run","previous_eval_run","latest_regressed_run",
     "get_compliance_profile","save_compliance_profile",
     "create_policy_version","activate_policy_version","list_policy_versions",
     "list_classifications","get_classification_map","save_classification",

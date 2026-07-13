@@ -48,6 +48,7 @@ class ComputeLearningVersionsTests(unittest.TestCase):
         versions = compute_learning_versions("acct_learn")
         self.assertEqual(versions, {
             "semantic_model_version": "", "schema_version": "", "metric_version": "0",
+            "contract_version": "",
         })
 
     def test_semantic_model_version_from_kb_dir(self):

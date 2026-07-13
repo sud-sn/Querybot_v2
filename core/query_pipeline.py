@@ -701,8 +701,26 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
         await adapter.send_message(event, "⚠️ Knowledge Base not ready.")
         return
 
+    # ── Compiled semantic contract — the single runtime truth source ─────────
+    # All approved semantics (model, metrics, graph, terms) come from ONE
+    # versioned artifact, recompiled on every admin approval. The consumers
+    # below take the contract's sections instead of re-reading each store, so
+    # the contract_version stamped on this answer is exactly what was used.
+    # Every consumer falls back to its own store read when the contract is
+    # absent (accounts that predate the first compile).
+    from core.semantic_contract import load_contract
+    _contract = load_contract(state.get("kb_dir", ""))
+    _contract_version = (_contract.get("meta") or {}).get("contract_version", "")
+    if _contract_version:
+        _trace_update(trace_id, contract_version=_contract_version)
+    _contract_model = _contract.get("model") if _contract else None
+    _contract_metrics = _contract.get("metrics") if _contract else None
+    _contract_terms = _contract.get("terms") if _contract else None
+
     # SQL generation — inject any matched business-glossary terms as grounding hints
-    term_injection = store.build_term_injection(account_id, question, query_scope_tables)
+    term_injection = store.build_term_injection(
+        account_id, question, query_scope_tables, terms=_contract_terms,
+    )
     schema_grounded_hint = build_schema_grounded_clarification_hint(
         account_id,
         question,
@@ -746,7 +764,9 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
     query_intent = analyze_query_intent(question)
     # Candidate metrics are account-wide. We delay injecting/enforcing them
     # until graph + semantic planning has inferred the question's schema/domain.
-    _metric_candidates = store.list_metric_formula_context(account_id, question, limit=10)
+    _metric_candidates = store.list_metric_formula_context(
+        account_id, question, limit=10, metrics=_contract_metrics,
+    )
     _matched_metrics: list[dict] = []
     metric_formula_context = ""
     _metric_formula_tables: set[str] = set()
@@ -855,6 +875,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
             state.get("kb_dir", ""),
             question=question,
             selected_schema=schema_hint,
+            model=_contract_model,
         )
         if _semantic_model_context:
             context_with_terms = _semantic_model_context + "\n\n" + context_with_terms
@@ -878,7 +899,10 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
     _graph_ctx: dict = {}
     _full_graph: dict = {}
     try:
-        _full_graph = store.get_full_graph(account_id)
+        _full_graph = (
+            dict(_contract.get("graph") or {}) if _contract.get("graph")
+            else store.get_full_graph(account_id)
+        )
         # When the user selected a specific schema, restrict the graph to
         # entities that belong to that schema so the resolver never proposes
         # JOINs to tables from a different schema (which validation would reject).
@@ -1006,6 +1030,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
             state.get("kb_dir", ""),
             question=_semantic_plan_question,
             selected_schema=schema_hint,
+            model=_contract_model,
         )
         if _semantic_model_plan.get("enabled"):
             _trace_step(

@@ -160,6 +160,7 @@ def create_candidate(
     semantic_model_version: str = "",
     metric_version: str = "",
     schema_version: str = "",
+    contract_version: str = "",
     candidate_type: str = "review",
     source: str = "auto",
 ) -> dict[str, Any]:
@@ -188,6 +189,7 @@ def create_candidate(
                     technical_score, feedback_delta, final_score,
                     evidence, status, source,
                     semantic_model_version, metric_version, schema_version,
+                    contract_version,
                     created_at, updated_at
                 ) VALUES (
                     ?, ?, ?, ?,
@@ -195,6 +197,7 @@ def create_candidate(
                     ?, 0, ?,
                     ?, 'pending_review', ?,
                     ?, ?, ?,
+                    ?,
                     ?, ?
                 )
                 """,
@@ -204,6 +207,7 @@ def create_candidate(
                     technical_score, technical_score,
                     json.dumps(evidence, default=str), source,
                     semantic_model_version, metric_version, schema_version,
+                    contract_version,
                     now, now,
                 ),
             )

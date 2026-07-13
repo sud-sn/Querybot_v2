@@ -20,8 +20,23 @@
   <p><a href="/admin/clients/{{ client.account_id }}">← {{ client.client_name or client.account_id[:16] }}</a></p>
 </div>
 
+{% if saved %}
+<div class="alert alert-success" role="alert">{{ saved }}</div>
+{% endif %}
+{% if error %}
+<div class="alert alert-error" role="alert">{{ error }}</div>
+{% endif %}
+
 <div class="card">
-  <div class="card-header"><h2>Run golden-question regression</h2></div>
+  <div class="card-header">
+    <h2>Run golden-question regression</h2>
+    <form method="post" action="/admin/clients/{{ client.account_id }}/evals/seed" style="margin:0">
+      <button class="btn btn-secondary btn-sm" type="submit"
+              title="Harvest the most-asked successful questions (with their validated SQL) into the golden suite. Never overwrites hand-edited cases.">
+        Build golden suite from query history
+      </button>
+    </form>
+  </div>
   <div class="card-body">
     {% if case_files %}
     <form method="post" action="/admin/clients/{{ client.account_id }}/evals/run" class="form-grid">
@@ -46,7 +61,7 @@
       <div style="grid-column:1/-1"><button class="btn btn-primary btn-sm" type="submit">Run evaluation</button></div>
     </form>
     {% else %}
-    <p style="color:var(--text-muted)">No eval case files found. Add one under <code>evals/clients/{{ client.account_id }}/SCHEMA/golden_questions.yaml</code>.</p>
+    <p style="color:var(--text-muted)">No eval case files found. Click <strong>Build golden suite from query history</strong> above to create one automatically, or add one under <code>evals/clients/{{ client.account_id }}/SCHEMA/golden_questions.yaml</code>.</p>
     {% endif %}
   </div>
 </div>

@@ -116,6 +116,28 @@ table.mh-tbl tr:hover td{background:color-mix(in srgb,var(--primary) 4%,var(--su
 
 <div class="mh-shell">
 
+  {% if regressed_run %}
+  {{ alert(
+      message="Answer-quality pass rate dropped to " ~ ((regressed_run.passed_cases / regressed_run.total_cases * 100) | round | int) ~ "% (was " ~ ((regressed_run.prev_pass_rate * 100) | round | int) ~ "%)" ~ (" after: " ~ regressed_run.trigger_label if regressed_run.trigger_label else "") ~ ". Review the recent change or revert it.",
+      type="error",
+      icon_name="alert-triangle",
+      title="Golden-eval regression detected",
+      action_href="/admin/clients/" ~ client.account_id ~ "/evals",
+      action_label="View eval runs"
+  ) }}
+  {% endif %}
+
+  {% if contract_divergence %}
+  {{ alert(
+      message="Semantic approvals have changed since the Knowledge Base was last built (contract " ~ contract_version ~ "). Retrieved KB text may contradict the newly approved semantics until you rebuild.",
+      type="amber",
+      icon_name="alert-triangle",
+      title="KB rebuild recommended",
+      action_href="/admin/clients/" ~ client.account_id ~ "/setup",
+      action_label="Rebuild Knowledge Base"
+  ) }}
+  {% endif %}
+
   <!-- ── Hero + score ── -->
   <div class="mh-hero">
     <div class="mh-hero-body">
@@ -174,6 +196,19 @@ table.mh-tbl tr:hover td{background:color-mix(in srgb,var(--primary) 4%,var(--su
       <div class="mh-stat-label">Dimensions</div>
       <div class="mh-stat-value">{{ health.dimensions.total }}</div>
       <div class="mh-stat-sub">{{ health.dimensions.approved }} approved</div>
+    </div>
+    <div class="mh-stat">
+      <div class="mh-stat-label">Eval Pass Rate</div>
+      {% if eval_pass_rate is not none %}
+      <div class="mh-stat-value" style="color: {{ 'var(--green-600, #16a34a)' if eval_pass_rate >= 90 else ('var(--amber-600, #d97706)' if eval_pass_rate >= 70 else 'var(--red-600, #dc2626)') }}">{{ eval_pass_rate }}%</div>
+      <div class="mh-stat-sub">
+        {{ latest_eval.passed_cases }}/{{ latest_eval.total_cases }} golden questions ·
+        <a href="/admin/clients/{{ client.account_id }}/evals">runs</a>
+      </div>
+      {% else %}
+      <div class="mh-stat-value" style="color:var(--text-muted)">—</div>
+      <div class="mh-stat-sub"><a href="/admin/clients/{{ client.account_id }}/evals">no eval runs yet</a></div>
+      {% endif %}
     </div>
   </div>
 

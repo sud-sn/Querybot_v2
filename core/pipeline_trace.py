@@ -140,11 +140,16 @@ def compute_learning_versions(account_id: str, kb_dir: str = "", schema_dir: str
             pass
         return ""
 
-    versions = {"semantic_model_version": "", "schema_version": "", "metric_version": ""}
+    versions = {
+        "semantic_model_version": "", "schema_version": "",
+        "metric_version": "", "contract_version": "",
+    }
     try:
         if kb_dir:
             from core.semantic_model import semantic_model_fingerprint
             versions["semantic_model_version"] = semantic_model_fingerprint(kb_dir)
+            from core.semantic_contract import contract_fingerprint
+            versions["contract_version"] = contract_fingerprint(kb_dir)
         if schema_dir:
             versions["schema_version"] = _file_fingerprint(Path(schema_dir) / "_schema.json")
     except Exception as exc:
@@ -220,6 +225,7 @@ def _create_learning_candidate(
             semantic_model_version = versions["semantic_model_version"],
             metric_version         = versions["metric_version"],
             schema_version         = versions["schema_version"],
+            contract_version       = versions["contract_version"],
         )
     except Exception as exc:
         log.debug("_create_learning_candidate failed (non-fatal): %s", exc)

@@ -18,22 +18,66 @@ def save_eval_run(
     avg_score: float = 0.0,
     status: str = "completed",
     report_path: str = "",
+    trigger_label: str = "",
+    contract_version: str = "",
+    prev_pass_rate: float | None = None,
+    regressed: bool = False,
 ) -> int:
     with get_db() as conn:
         cur = conn.execute(
             """
             INSERT INTO eval_run
                 (account_id, schema_name, case_file, total_cases, passed_cases,
-                 avg_score, status, report_path)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                 avg_score, status, report_path, trigger_label, contract_version,
+                 prev_pass_rate, regressed)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 account_id, schema_name or "", case_file or "", int(total_cases or 0),
                 int(passed_cases or 0), float(avg_score or 0.0), status or "completed",
-                report_path or "",
+                report_path or "", trigger_label or "", contract_version or "",
+                prev_pass_rate, 1 if regressed else 0,
             ),
         )
         return int(cur.lastrowid)
+
+
+def previous_eval_run(account_id: str, case_file: str) -> dict | None:
+    """Most recent run of the SAME case file — the regression baseline."""
+    with get_db() as conn:
+        row = conn.execute(
+            """
+            SELECT * FROM eval_run
+             WHERE account_id=? AND case_file=?
+             ORDER BY created_at DESC, id DESC
+             LIMIT 1
+            """,
+            (account_id, case_file or ""),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def latest_regressed_run(account_id: str) -> dict | None:
+    """Newest run flagged as a regression, but only if it is still the newest
+    run of its case file — a later recovered run clears the banner."""
+    with get_db() as conn:
+        row = conn.execute(
+            """
+            SELECT r.* FROM eval_run r
+             WHERE r.account_id=? AND r.regressed=1
+               AND NOT EXISTS (
+                   SELECT 1 FROM eval_run newer
+                    WHERE newer.account_id = r.account_id
+                      AND newer.case_file = r.case_file
+                      AND (newer.created_at > r.created_at
+                           OR (newer.created_at = r.created_at AND newer.id > r.id))
+               )
+             ORDER BY r.created_at DESC, r.id DESC
+             LIMIT 1
+            """,
+            (account_id,),
+        ).fetchone()
+    return dict(row) if row else None
 
 
 def save_eval_case_result(

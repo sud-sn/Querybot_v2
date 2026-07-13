@@ -1097,14 +1097,16 @@ def build_runtime_semantic_context(
     question: str = "",
     selected_schema: str = "",
     max_lines: int = 18,
+    model: dict[str, Any] | None = None,
 ) -> str:
     """Return compact model hints for SQL generation.
 
     This is guidance, not an approved metric registry. It helps the LLM choose
     display fields, date roles, and generated relationship roles without
-    flooding the prompt with the full JSON model.
+    flooding the prompt with the full JSON model. `model` overrides the file
+    read (the pipeline passes the compiled semantic contract's model section).
     """
-    model = load_semantic_model(kb_dir)
+    model = model if model is not None else load_semantic_model(kb_dir)
     if not model:
         return ""
 
@@ -1245,9 +1247,14 @@ def build_runtime_semantic_plan(
     question: str = "",
     selected_schema: str = "",
     max_fields: int = 8,
+    model: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Build validator-ready requirements from the structured semantic model."""
-    model = load_semantic_model(kb_dir)
+    """Build validator-ready requirements from the structured semantic model.
+
+    `model` overrides the file read — the query pipeline passes the compiled
+    semantic contract's model section so runtime semantics always come from
+    the single versioned artifact."""
+    model = model if model is not None else load_semantic_model(kb_dir)
     if not model:
         return {"enabled": False, "fields": [], "joins": [], "required_tables": [], "reason": "no semantic model"}
 

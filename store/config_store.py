@@ -985,7 +985,49 @@ def save_metric(account_id: str, metric: dict, *, db_type: str = "azure_sql") ->
             _json.dumps(vr.errors),
             metric.get("owner", ""),
         ))
-        return cur.lastrowid
+        new_id = cur.lastrowid
+        _snapshot_metric_version(conn, int(new_id), account_id)
+        return new_id
+
+
+def _snapshot_metric_version(conn, metric_id: int, account_id: str, changed_by: str = "") -> None:
+    """Append the metric's current definition to the metric_version history.
+
+    This table is what compute_learning_versions' MAX(id) stamp reads —
+    before this hook, nothing in production ever inserted here, so the
+    metric_version stamp on learning candidates and answer traces never
+    moved. Best-effort: a failure must never block the metric save itself.
+    """
+    try:
+        row = conn.execute(
+            "SELECT * FROM metric_registry WHERE id=? AND account_id=?",
+            (metric_id, account_id),
+        ).fetchone()
+        if not row:
+            return
+        m = dict(row)
+        conn.execute(
+            """
+            INSERT INTO metric_version
+                (metric_id, account_id, version, name, synonyms, sql_template,
+                 formula_type, formula_ast, description, base_entity, base_table,
+                 metric_status, changed_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                metric_id, account_id, int(m.get("version") or 1),
+                m.get("name") or "", m.get("synonyms") or "",
+                m.get("sql_template") or "", m.get("formula_type") or "query",
+                m.get("formula_ast") or "{}", m.get("description") or "",
+                m.get("base_entity") or "", m.get("base_table") or "",
+                m.get("metric_status") or "published", changed_by,
+            ),
+        )
+    except Exception as exc:
+        import logging
+        logging.getLogger("querybot.store").debug(
+            "metric_version snapshot skipped for metric %s: %s", metric_id, exc
+        )
 
 
 def list_metrics(account_id: str, active_only: bool = True) -> list[dict]:
@@ -1106,6 +1148,17 @@ def update_metric(
         conn.execute(
             f"UPDATE metric_registry SET {','.join(fields)} WHERE {where}", params
         )
+        # Snapshot content-changing updates into the version history so the
+        # metric_version staleness stamp actually advances.
+        if needs_revalidation:
+            _acct = account_id
+            if not _acct:
+                _row = conn.execute(
+                    "SELECT account_id FROM metric_registry WHERE id=?", (metric_id,)
+                ).fetchone()
+                _acct = (_row["account_id"] if _row else "") or ""
+            if _acct:
+                _snapshot_metric_version(conn, metric_id, _acct)
 
 
 def deprecate_metric(metric_id: int, account_id: str) -> None:
@@ -1193,16 +1246,20 @@ def _score_metric_for_question(metric: dict, question: str) -> int:
     return score
 
 
-def list_metric_formula_context(account_id: str, question: str, limit: int = 6) -> list[dict]:
+def list_metric_formula_context(
+    account_id: str, question: str, limit: int = 6, metrics: list[dict] | None = None,
+) -> list[dict]:
     """
     Return active metric definitions relevant to a user question.
 
     Unlike match_metric(), this does not skip grouped questions. The caller
     injects these approved formulas into the SQL prompt so grouped requests
     such as "profit percentage by customer" can use the trusted calculation.
+    `metrics` overrides the DB read — the query pipeline passes the compiled
+    semantic contract's metrics section.
     """
     scored: list[tuple[int, dict]] = []
-    for metric in list_metrics(account_id):
+    for metric in (metrics if metrics is not None else list_metrics(account_id)):
         score = _score_metric_for_question(metric, question)
         if score > 0:
             metric = dict(metric)

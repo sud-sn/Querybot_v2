@@ -253,8 +253,15 @@ async def run_eval_suite(
     generate: bool = False,
     execute: bool = False,
     out_dir: Path | None = None,
+    trigger: str = "",
 ) -> tuple[list[EvalCaseResult], int]:
-    """Run and persist a golden-question evaluation suite."""
+    """Run and persist a golden-question evaluation suite.
+
+    `trigger` names the semantic approval that caused this run (e.g.
+    "metric 'Gross Margin' updated") — stored on the run so a pass-rate
+    regression can point at what changed. Cases that carry `generated_sql`
+    always score offline (no LLM), regardless of `generate`.
+    """
     store.init_db()
     client = store.get_client(account_id) or {}
     state = json.loads(client.get("state_data") or "{}") if client else {}
@@ -288,6 +295,21 @@ async def run_eval_suite(
 
     passed = sum(1 for r in results if r.passed)
     avg_score = round(sum(r.score for r in results) / max(len(results), 1), 2)
+
+    # Regression check — compare against the previous run of the SAME case
+    # file (fetched before saving this run). A drop is recorded, never
+    # blocking: Model Health shows the banner, the admin decides.
+    pass_rate = passed / max(len(results), 1)
+    prev = store.previous_eval_run(account_id, str(cases_path))
+    prev_pass_rate: float | None = None
+    regressed = False
+    if prev and int(prev.get("total_cases") or 0) > 0:
+        prev_pass_rate = int(prev.get("passed_cases") or 0) / int(prev["total_cases"])
+        regressed = pass_rate < prev_pass_rate
+
+    from core.semantic_contract import contract_fingerprint
+    contract_version = contract_fingerprint(state.get("kb_dir", ""))
+
     run_id = store.save_eval_run(
         account_id=account_id,
         schema_name=schema or "default",
@@ -297,7 +319,19 @@ async def run_eval_suite(
         avg_score=avg_score,
         status="passed" if passed == len(results) else "failed",
         report_path=str(out_dir / "report.html"),
+        trigger_label=trigger,
+        contract_version=contract_version,
+        prev_pass_rate=prev_pass_rate,
+        regressed=regressed,
     )
+    if regressed:
+        import logging
+        logging.getLogger("querybot.evals").warning(
+            "Eval regression for %s/%s: pass rate %.0f%% -> %.0f%%%s",
+            account_id, schema or "default",
+            (prev_pass_rate or 0) * 100, pass_rate * 100,
+            f" after {trigger}" if trigger else "",
+        )
     for r in results:
         store.save_eval_case_result(
             run_id,

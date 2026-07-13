@@ -190,8 +190,12 @@ def _eval_case_files(account_id: str) -> list[Path]:
     return sorted(root.glob("**/golden_questions.y*ml")) + sorted(root.glob("**/golden_questions.json"))
 
 
-async def _run_default_evals_async(account_id: str, *, generate: bool = True, execute: bool = False) -> list[int]:
-    """Run all configured eval case files for a client. Best-effort."""
+async def _run_default_evals_async(
+    account_id: str, *, generate: bool = True, execute: bool = False, trigger: str = "",
+) -> list[int]:
+    """Run all configured eval case files for a client. Best-effort.
+    `trigger` names the approval that caused this run (shown in the
+    regression banner when the pass rate drops)."""
     from evals.run import run_eval_suite
 
     run_ids: list[int] = []
@@ -206,6 +210,7 @@ async def _run_default_evals_async(account_id: str, *, generate: bool = True, ex
                 generate=generate,
                 execute=execute,
                 out_dir=out_dir,
+                trigger=trigger,
             )
             run_ids.append(run_id)
         except Exception as exc:
@@ -218,6 +223,39 @@ def _run_default_evals_background(account_id: str) -> None:
         asyncio.run(_run_default_evals_async(account_id, generate=True, execute=False))
     except Exception as exc:
         log.warning("Background eval trigger failed for %s: %s", account_id, exc)
+
+
+def _after_semantic_approval(account_id: str, trigger: str = "") -> None:
+    """
+    One call for every route that changes approved semantics (metric, field,
+    entity, relationship, date role, grain, term, learning-queue approval).
+
+    Does two things, both best-effort and non-blocking:
+      1. Recompiles the semantic contract so the runtime artifact — and the
+         contract_version stamped on answers/learning candidates — reflects
+         the change immediately (previously most approvals mutated
+         _semantic_model.json only and nothing downstream refreshed).
+      2. Fires the client's golden-eval suites in the background so a
+         quality regression caused by this approval surfaces on Model
+         Health within a minute (warn-only, never blocks the save).
+    """
+    from core.semantic_contract import recompile_contract
+
+    version = recompile_contract(account_id)
+    if version:
+        log.info("Semantic contract v%s after %s for %s", version, trigger or "approval", account_id)
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if loop is not None:
+        asyncio.create_task(_run_default_evals_async(account_id, trigger=trigger))
+    else:
+        # Sync route context (no running loop) — run evals in a thread.
+        import threading
+        threading.Thread(
+            target=_run_default_evals_background, args=(account_id,), daemon=True,
+        ).start()
 
 
 def _safe_child_path(base_dir: str, filename: str) -> Path | None:
@@ -354,7 +392,7 @@ def _client_health_score(account_id: str, client: dict | None = None) -> dict:
 
     # 5 — Eval baseline
     eval_run  = store.latest_eval_run(account_id)
-    eval_ok   = bool(eval_run and (eval_run.get("pass_count") or 0) > 0)
+    eval_ok   = bool(eval_run and (eval_run.get("passed_cases") or 0) > 0)
     components.append({
         "key": "evals", "label": "Eval baseline passed", "points": 20,
         "earned": 20 if eval_ok else 0, "ok": eval_ok,
@@ -1806,6 +1844,8 @@ async def client_evals(request: Request, account_id: str):
         "selected": selected,
         "case_files": [str(p) for p in case_files],
         "latest": runs[0] if runs else None,
+        "saved": request.query_params.get("saved", ""),
+        "error": request.query_params.get("error", ""),
     })
 
 
@@ -1848,6 +1888,42 @@ async def client_evals_run(
         f"/admin/clients/{account_id}/evals?run_id={run_id}",
         status_code=303,
     )
+
+
+@router.post("/clients/{account_id}/evals/seed")
+async def client_evals_seed(request: Request, account_id: str):
+    """Build/extend the golden suite from the client's real query history.
+
+    Harvests the most-asked successful questions (with their validated SQL,
+    so the cases score offline) into golden_questions.yaml. Never modifies
+    or removes hand-edited cases — new cases are merged in by question hash.
+    """
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    client = store.get_client(account_id)
+    if not client:
+        return RedirectResponse("/admin/clients", status_code=303)
+    try:
+        from evals.seed import seed_golden_suite
+        summary = seed_golden_suite(account_id, top_n=20)
+        if summary["added"]:
+            msg = (
+                f"Added {summary['added']} golden question(s) from query history"
+                + (f" ({summary['skipped_existing']} already covered)" if summary["skipped_existing"] else "")
+            )
+        elif summary["skipped_existing"]:
+            msg = "All frequently asked questions are already in the golden suite."
+        else:
+            msg = "No successful query history to harvest yet — ask the bot some questions first."
+        return RedirectResponse(
+            f"/admin/clients/{account_id}/evals?saved={quote(msg)}", status_code=303,
+        )
+    except Exception as exc:
+        log.error("Golden suite seeding failed for %s: %s", account_id, exc)
+        return RedirectResponse(
+            f"/admin/clients/{account_id}/evals?error={quote('Seeding failed: ' + str(exc)[:120])}",
+            status_code=303,
+        )
 
 
 @router.post("/clients/{account_id}/update")
@@ -2129,7 +2205,7 @@ async def semantic_feedback_review(
         log.warning("Portal semantic feedback notification failed: %s", exc)
 
     if status == "approved":
-        asyncio.create_task(_run_default_evals_async(account_id, generate=True, execute=False))
+        _after_semantic_approval(account_id, "semantic field feedback approved")
 
     target_view = "files" if status == "approved" and patched_file else "reviews"
     redirect = (
@@ -2181,7 +2257,7 @@ async def kb_save(
         try:
             from core.knowledge import re_embed_file
             re_embed_file(target_dir, account_id, filename)
-            background_tasks.add_task(_run_default_evals_background, account_id)
+            _after_semantic_approval(account_id, f"KB file '{filename}' edited")
         except Exception as e:
             log.warning("Re-embed failed for %s: %s", filename, e)
 
@@ -2266,7 +2342,7 @@ async def kb_field_save(
             status_code=303,
         )
 
-    background_tasks.add_task(_run_default_evals_background, account_id)
+    _after_semantic_approval(account_id, f"field '{column_name}' meaning approved")
     return RedirectResponse(
         f"/admin/clients/{account_id}/kb?view=fields&saved=field"
         f"&table={quote(table['fqn'])}"
@@ -3148,6 +3224,7 @@ async def graph_entity_create(request: Request, account_id: str):
         entity_type  = (form.get("entity_type") or "dimension").strip(),
         is_active    = 1 if form.get("is_active") else 0,
     )
+    _after_semantic_approval(account_id, f"entity '{entity_name}' saved")
     return RedirectResponse(f"/admin/clients/{account_id}/graph?saved=1", status_code=303)
 
 
@@ -3156,6 +3233,7 @@ async def graph_entity_delete(request: Request, account_id: str, entity_name: st
     if not _is_auth(request):
         return RedirectResponse("/admin/login", status_code=303)
     store.delete_entity(account_id, entity_name)
+    _after_semantic_approval(account_id, f"entity '{entity_name}' deleted")
     return RedirectResponse(f"/admin/clients/{account_id}/graph?saved=1", status_code=303)
 
 
@@ -3205,6 +3283,7 @@ async def graph_rel_create(request: Request, account_id: str):
                 )
     except Exception as _sm_exc:
         log.warning("patch_relationship (rel_create) skipped: %s", _sm_exc)
+    _after_semantic_approval(account_id, f"relationship {_from_entity}->{_to_entity} saved")
     return RedirectResponse(f"/admin/clients/{account_id}/graph?saved=1", status_code=303)
 
 
@@ -3213,6 +3292,7 @@ async def graph_rel_delete(request: Request, account_id: str, rel_id: int):
     if not _is_auth(request):
         return RedirectResponse("/admin/login", status_code=303)
     store.delete_relationship(account_id, rel_id)
+    _after_semantic_approval(account_id, "relationship deleted")
     return RedirectResponse(f"/admin/clients/{account_id}/graph?saved=1", status_code=303)
 
 
@@ -3229,6 +3309,7 @@ async def graph_property_save(request: Request, account_id: str):
         display_name = (form.get("display_name") or "").strip(),
         synonyms     = (form.get("synonyms") or "").strip(),
     )
+    _after_semantic_approval(account_id, "entity property saved")
     return RedirectResponse(f"/admin/clients/{account_id}/graph?saved=1", status_code=303)
 
 
@@ -4157,6 +4238,7 @@ async def graph_confirm_entity(request: Request, account_id: str, entity_name: s
             "WHERE account_id=? AND entity_name=?",
             (account_id, entity_name)
         )
+    _after_semantic_approval(account_id, f"entity '{entity_name}' confirmed")
     return JSONResponse({"status": "ok"})
 
 
@@ -4171,6 +4253,7 @@ async def graph_confirm_property(request: Request, account_id: str):
         entity_name = data.get("entity_name",""),
         column_name = data.get("column_name",""),
     )
+    _after_semantic_approval(account_id, "entity property confirmed")
     return JSONResponse({"status": "ok"})
 
 
@@ -4185,6 +4268,7 @@ async def graph_confirm_rel(request: Request, account_id: str, rel_id: int):
             "WHERE id=? AND account_id=?",
             (rel_id, account_id)
         )
+    _after_semantic_approval(account_id, "relationship confirmed")
     return JSONResponse({"status": "ok"})
 
 @router.post("/clients/{account_id}/graph/api/reject/entity/{entity_name:path}")
@@ -4235,6 +4319,11 @@ async def graph_bulk_accept(request: Request, account_id: str):
             "RETURNING id",
             (account_id, min_conf),
         ).fetchall()
+    if e_rows or r_rows:
+        _after_semantic_approval(
+            account_id,
+            f"graph bulk-accept ({len(e_rows)} entities, {len(r_rows)} relationships)",
+        )
     return JSONResponse({
         "status":           "ok",
         "entities_accepted":      len(e_rows),
@@ -4866,6 +4955,7 @@ async def metric_create(
     except Exception as _sm_exc:
         log.warning("patch_metric_approval (create) skipped for %s: %s", name, _sm_exc)
 
+    _after_semantic_approval(account_id, f"metric '{name.strip()}' created")
     return RedirectResponse(f"/admin/clients/{account_id}/metrics?saved=1", status_code=303)
 
 
@@ -4970,6 +5060,7 @@ async def metric_update(
     except Exception as _sm_exc:
         log.warning("patch_metric_approval (update) skipped for %s: %s", name, _sm_exc)
 
+    _after_semantic_approval(account_id, f"metric '{name.strip()}' updated")
     return RedirectResponse(f"/admin/clients/{account_id}/metrics?saved=1", status_code=303)
 
 
@@ -4984,6 +5075,7 @@ async def metric_deprecate(request: Request, account_id: str, metric_id: int):
             return JSONResponse({"status": "error", "detail": "Not authenticated"}, status_code=401)
         return RedirectResponse("/admin/login", status_code=303)
     store.deprecate_metric(metric_id, account_id)
+    _after_semantic_approval(account_id, "metric deprecated")
     wants_json = "application/json" in request.headers.get("content-type", "")
     if wants_json:
         return JSONResponse({"status": "ok", "metric_id": metric_id})
@@ -4996,6 +5088,7 @@ async def metric_delete(request: Request, account_id: str, metric_id: int):
     if not _is_auth(request):
         return RedirectResponse("/admin/login", status_code=303)
     store.delete_metric(metric_id, account_id)
+    _after_semantic_approval(account_id, "metric deleted")
     # Fetch callers (X-Requested-With: fetch) expect JSON, not a redirect
     if request.headers.get("X-Requested-With") == "fetch":
         from fastapi.responses import JSONResponse as _JSON
@@ -5314,10 +5407,46 @@ async def model_health_page(request: Request, account_id: str):
     except Exception:
         pass
 
+    # Semantic contract vs KB divergence — approvals recompile the contract
+    # instantly, but the KB markdown only refreshes on a full rebuild. When
+    # the versions differ, retrieved KB text may contradict approved
+    # semantics, so surface a "rebuild recommended" warning.
+    contract_version = ""
+    contract_divergence = False
+    try:
+        from core.semantic_contract import contract_fingerprint
+        contract_version = contract_fingerprint(kb_dir) if kb_dir else ""
+        kb_built_cv = (state or {}).get("kb_built_contract_version") or ""
+        contract_divergence = bool(
+            contract_version and kb_built_cv and contract_version != kb_built_cv
+        )
+    except Exception as exc:
+        log.debug("contract divergence check skipped for %s: %s", account_id, exc)
+
+    # Golden-eval status: latest pass rate + any standing regression.
+    latest_eval: dict = {}
+    eval_pass_rate: float | None = None
+    regressed_run: dict = {}
+    try:
+        latest_eval = store.latest_eval_run(account_id) or {}
+        if int(latest_eval.get("total_cases") or 0) > 0:
+            eval_pass_rate = round(
+                int(latest_eval.get("passed_cases") or 0)
+                / int(latest_eval["total_cases"]) * 100
+            )
+        regressed_run = store.latest_regressed_run(account_id) or {}
+    except Exception as exc:
+        log.debug("eval status lookup skipped for %s: %s", account_id, exc)
+
     return _resp(request, "client_model_health.html", {
         "client": client,
         "health": health,
         "value_index_stats": value_index_stats,
+        "contract_version": contract_version,
+        "contract_divergence": contract_divergence,
+        "latest_eval": latest_eval,
+        "eval_pass_rate": eval_pass_rate,
+        "regressed_run": regressed_run,
     })
 
 
@@ -5351,6 +5480,7 @@ async def model_health_approve_grain(
         if ok:
             write_kb_quality_report(load_semantic_model(kb_dir), kb_dir, account_id=account_id)
             log.info("Grain approved for %s %s: %r", account_id, table_fqn, grain.strip())
+            _after_semantic_approval(account_id, f"grain approved for {table_fqn}")
             return RedirectResponse(
                 f"/admin/clients/{account_id}/model-health?saved=grain", status_code=303)
         return RedirectResponse(
@@ -5461,6 +5591,7 @@ async def date_role_approve(
             status_code=303,
         )
 
+    _after_semantic_approval(account_id, f"date role approved on {fact_table.strip()}")
     return RedirectResponse(f"/admin/clients/{account_id}/date-roles?saved=1", status_code=303)
 
 
@@ -5547,6 +5678,7 @@ async def glossary_create(
         return RedirectResponse(
             f"/admin/clients/{account_id}/glossary?error={quote(str(e)[:100])}",
             status_code=303)
+    _after_semantic_approval(account_id, f"business term '{term.strip()}' created")
     return RedirectResponse(
         f"/admin/clients/{account_id}/glossary?saved=1", status_code=303)
 
@@ -5595,6 +5727,7 @@ async def glossary_update(
         term_id=term_id,
     )
     store.set_term_active(term_id, account_id, is_active == "1")
+    _after_semantic_approval(account_id, f"business term '{term.strip()}' updated")
     return RedirectResponse(
         f"/admin/clients/{account_id}/glossary?saved=1", status_code=303)
 
@@ -5604,6 +5737,7 @@ async def glossary_delete(request: Request, account_id: str, term_id: int):
     if not _is_auth(request):
         return RedirectResponse("/admin/login", status_code=303)
     store.delete_term(term_id, account_id)
+    _after_semantic_approval(account_id, "business term deleted")
     return RedirectResponse(
         f"/admin/clients/{account_id}/glossary", status_code=303)
 
@@ -5651,6 +5785,8 @@ async def metrics_harvest(request: Request, account_id: str):
     if chroma_dir:
         from core.examples import harvest_and_embed
         added = harvest_and_embed(account_id, chroma_dir)
+        if added:
+            _after_semantic_approval(account_id, f"metric harvest ({added} examples)")
         from urllib.parse import quote
         return RedirectResponse(
             f"/admin/clients/{account_id}/metrics?saved=1",
@@ -7013,6 +7149,18 @@ async def admin_build_kb(
                 "percent": 100,
                 "current_table": "",
             }
+            # Recompile the contract AFTER the graph auto-populate above so the
+            # recorded version includes the freshly synced entities/joins. The
+            # KB markdown was generated from this same approved state, so this
+            # version is the divergence baseline for "rebuild recommended".
+            _kb_contract_version = ""
+            try:
+                from core.semantic_contract import write_contract
+                _kb_contract = write_contract(account_id, kb_dir)
+                _kb_contract_version = (_kb_contract.get("meta") or {}).get("contract_version", "")
+            except Exception as _cex:
+                log.warning("Contract compile after KB build failed for %s: %s", account_id, _cex)
+
             ready_state = dict(building_state)
             ready_state.update({
                 "schema_dir": schema_dir,
@@ -7020,6 +7168,7 @@ async def admin_build_kb(
                 "chroma_dir": chroma_dir,
                 "business_desc": business_desc,
                 "kb_progress": complete_progress,
+                "kb_built_contract_version": _kb_contract_version,
             })
             save_state(account_id, "READY", ready_state, business_desc)
             await notify_kb_build_changed(
@@ -7036,7 +7185,7 @@ async def admin_build_kb(
 
             log.info("Admin KB build complete: %d tables for %s", count, account_id)
             _kb_stop_events.pop(account_id, None)
-            asyncio.create_task(_run_default_evals_async(account_id, generate=True, execute=False))
+            _after_semantic_approval(account_id, "KB rebuild completed")
             import threading as _threading
             _threading.Thread(target=_sync_all_log_exports_bg, daemon=True).start()
         except Exception as e:
@@ -7392,6 +7541,7 @@ async def admin_learning_queue_review(
         )
         label_map = {"approved": "approved", "rejected": "rejected", "known_failure": "marked as known failure"}
         msg = f"Candidate {candidate_id[:8]}... {label_map[new_status]}."
+        _after_semantic_approval(account_id, f"learning candidate {label_map[new_status]}")
 
         # Governed collection sync is handled by update_candidate_status hooks
         # (_fire_governed_upsert on approved, _fire_governed_delete on revoked).

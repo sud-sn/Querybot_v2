@@ -172,6 +172,7 @@ def match_terms_in_question(
     account_id: str,
     question: str,
     allowed_tables: Optional[set[str]] = None,
+    terms: Optional[list[dict]] = None,
 ) -> list[dict]:
     """
     Find all business terms that appear in the user's question.
@@ -185,7 +186,8 @@ def match_terms_in_question(
     matches first, so "active customer" beats "customer".
     """
     q_lower = question.lower()
-    terms = list_terms(account_id, active_only=True)
+    if terms is None:
+        terms = list_terms(account_id, active_only=True)
 
     matches: list[tuple[int, dict]] = []  # (match_length, term_dict)
     for t in terms:
@@ -269,6 +271,7 @@ def build_term_injection(
     question: Optional[str] = None,
     allowed_tables: Optional[set[str]] = None,
     max_terms: int = 5,
+    terms: Optional[list[dict]] = None,
 ) -> str:
     """
     Build a compact SQL-prompt block from resolved business terms.
@@ -298,12 +301,14 @@ def build_term_injection(
 
     # Disambiguate call shape
     if isinstance(terms_or_account_id, str):
-        # Shape 2: (account_id, question, allowed_tables)
+        # Shape 2: (account_id, question, allowed_tables). The `terms` kwarg
+        # (from the compiled semantic contract) overrides the DB read for the
+        # candidate pool; matching still happens against the question here.
         if not question:
             return ""
         account_id = terms_or_account_id
         terms = match_terms_in_question(
-            account_id, question, allowed_tables,
+            account_id, question, allowed_tables, terms=terms,
         )
     else:
         # Shape 1: terms_list

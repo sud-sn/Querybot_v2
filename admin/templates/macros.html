@@ -135,7 +135,8 @@
     {% endif %}
   </div>
   {% if action_href and action_label %}
-  <a href="{{ action_href }}" class="btn btn-sm btn-{{ type if type != 'amber' else 'warning' }} alert-action">{{ action_label }}</a>
+  {% set btn_type = 'warning' if type == 'amber' else ('danger' if type == 'error' else type) %}
+  <a href="{{ action_href }}" class="btn btn-sm btn-{{ btn_type }} alert-action">{{ action_label }}</a>
   {% endif %}
 </div>
 {%- endmacro %}

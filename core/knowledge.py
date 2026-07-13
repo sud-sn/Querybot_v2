@@ -959,6 +959,17 @@ async def build_kb(
     except Exception as _sug_err:
         log.debug("Suggestion cache build failed (non-critical): %s", _sug_err)
 
+    # ── Compile the semantic contract ─────────────────────────────────────────
+    # The single runtime artifact for all approved semantics. The caller
+    # (admin KB-build task) records kb_built_contract_version in client state
+    # AFTER it saves the READY state, so the stamp isn't overwritten.
+    if account_id:
+        try:
+            from core.semantic_contract import write_contract
+            write_contract(account_id, kb_dir)
+        except Exception as _contract_err:
+            log.warning("Semantic contract compile failed after KB build: %s", _contract_err)
+
     if _vocab_token is not None:
         deactivate_vocab(_vocab_token)
     return processed
