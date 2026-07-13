@@ -59,6 +59,28 @@ def is_insight_question(question: str) -> bool:
     return any(re.search(p, q) for p in _WHY_PATTERNS)
 
 
+# Strict subset of _WHY_PATTERNS: only explicit causal wording. Used by the
+# query pipeline to decide whether a FRESH query deserves an appended why-
+# analysis (an extra LLM round trip on every match, so "analyze"/"explain"/
+# "insight" — which often just mean "show me" — are deliberately excluded;
+# those still get the full treatment on the cached-result follow-up path).
+_CAUSAL_STRICT_PATTERNS = [
+    r"\bwhy\b",
+    r"\breason(s)?\s+(for|behind|why)\b",
+    r"\bwhat.*(drove|driving|caused|behind)\b",
+    r"\broot\s+cause\b",
+    r"\bwhat\s+happened\s+(to|with)\b",
+    r"\bwhat\s+changed\b",
+]
+
+
+def is_causal_question(question: str) -> bool:
+    """Return True only for explicitly causal questions ("why did X drop",
+    "what drove Y") — the ones a plain data table cannot answer by itself."""
+    q = question.lower()
+    return any(re.search(p, q) for p in _CAUSAL_STRICT_PATTERNS)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Unified analytical intent detection
 # Delegates to the specialised modules; keeps query_pipeline imports clean.

@@ -80,6 +80,18 @@ _RERANK_POOL      = 20    # cross-encoder sees top-N candidates from RRF
 _BM25_TTL_SEC     = 300   # BM25 corpus cache TTL (5 minutes)
 _RERANK_ENABLED   = os.getenv("QUERYBOT_RERANK", "true").lower() != "false"
 
+# Relevance floor on cross-encoder scores (sigmoid space, 0..1). Retrieval
+# previously had NO absolute threshold anywhere — top-k always filled, so a
+# question whose vocabulary matched nothing still injected k confidently-
+# ranked-but-irrelevant table docs and the LLM built SQL on the wrong tables.
+# ms-marco cross-encoders separate cleanly in sigmoid space: relevant pairs
+# score >0.5, borderline ~0.3-0.5, and genuinely unrelated text ~<0.001 —
+# 0.05 only drops the unmistakably-irrelevant tail. The floor never empties
+# the result (the best doc is always kept) and sets a weak_retrieval flag on
+# the retriever so answer confidence can say "context matched weakly"
+# instead of presenting a wrong-table answer at full confidence.
+_RAG_MIN_SCORE    = float(os.getenv("QUERYBOT_RAG_MIN_SCORE", "0.05"))
+
 # ── BM25 corpus cache ─────────────────────────────────────────────────────────
 # Key:   "{account_id}:{fqns_str}:{dtypes_str}"
 # Value: (expires_at: float, BM25Okapi, docs: list[dict])
@@ -522,6 +534,11 @@ def _rerank(query: str, candidates: list[dict], top_n: int) -> list[dict]:
     """
     Re-score candidates with the cross-encoder and return top_n.
     Falls back to input order (RRF order) if the model is unavailable.
+
+    Each returned candidate is stamped with "_rerank_score" — the sigmoid of
+    the cross-encoder logit (0..1) — so retrieve() can apply the absolute
+    relevance floor (_RAG_MIN_SCORE). Candidates from the fallback paths
+    carry no stamp and are treated as "score unknown" (never floored).
     """
     if not candidates:
         return candidates
@@ -529,8 +546,11 @@ def _rerank(query: str, candidates: list[dict], top_n: int) -> list[dict]:
     if model is None:
         return candidates[:top_n]
     try:
+        import math
         pairs  = [(query, d.get("content", "")[:512]) for d in candidates]
         scores = model.predict(pairs, show_progress_bar=False)
+        for score, doc in zip(scores, candidates):
+            doc["_rerank_score"] = 1.0 / (1.0 + math.exp(-float(score)))
         ranked = sorted(zip(scores, candidates), key=lambda x: x[0], reverse=True)
         return [doc for _, doc in ranked[:top_n]]
     except Exception as exc:
@@ -953,6 +973,9 @@ class QdrantKBRetriever:
     def __init__(self, account_id: str):
         self._account_id = account_id
         self._client     = _qdrant()
+        # True when the last retrieve() found nothing above the relevance
+        # floor — read by the pipeline to penalize answer confidence.
+        self.last_retrieval_weak = False
 
     # ── Internal helpers ──────────────────────────────────────────────────────
 
@@ -1091,9 +1114,59 @@ class QdrantKBRetriever:
         hits = self._hybrid_search(
             question, n, allowed_fqns, doc_types=["kb", "queries", "global"]
         )
+        hits = self._apply_relevance_floor(hits)
         # Merge section chunks from the same table, preserve global docs
         grouped = _group_chunks_by_table(hits)
         return [doc for doc in grouped if doc.strip()]
+
+    def _apply_relevance_floor(self, hits: list[dict]) -> list[dict]:
+        """
+        Drop table docs whose BEST chunk scored below _RAG_MIN_SCORE on the
+        cross-encoder, and record `self.last_retrieval_weak` for the answer-
+        confidence layer. Rules:
+          - Floor applies per TABLE (a table survives if any of its section
+            chunks is relevant), never per chunk — dropping weak sections of
+            a relevant table would degrade its doc.
+          - Global docs (join map / business vocab) always survive — they're
+            cross-cutting, not question-specific.
+          - Unknown scores (re-ranker unavailable) are never floored.
+          - Never empties the result: when everything is below the floor,
+            keep the single best table anyway and flag weak_retrieval so
+            confidence drops instead of the prompt going context-free.
+        """
+        self.last_retrieval_weak = False
+        scored = [h for h in hits if "_rerank_score" in h and (h.get("fqn") or "") not in ("", "_global")]
+        if not scored:
+            return hits
+
+        best_by_fqn: dict[str, float] = {}
+        for h in scored:
+            fqn = h["fqn"]
+            best_by_fqn[fqn] = max(best_by_fqn.get(fqn, 0.0), h["_rerank_score"])
+
+        if all(score < _RAG_MIN_SCORE for score in best_by_fqn.values()):
+            self.last_retrieval_weak = True
+            best_fqn = max(best_by_fqn, key=best_by_fqn.get)
+            log.warning(
+                "KB retrieval weak: best table match %.4f < floor %.2f — keeping only %s",
+                best_by_fqn[best_fqn], _RAG_MIN_SCORE, best_fqn,
+            )
+            return [
+                h for h in hits
+                if (h.get("fqn") or "") in ("", "_global") or h.get("fqn") == best_fqn
+            ]
+
+        dropped = {fqn for fqn, score in best_by_fqn.items() if score < _RAG_MIN_SCORE}
+        if dropped:
+            log.info(
+                "KB retrieval floor dropped %d irrelevant table(s): %s",
+                len(dropped), ", ".join(sorted(dropped)),
+            )
+            return [
+                h for h in hits
+                if (h.get("fqn") or "") in ("", "_global") or h.get("fqn") not in dropped
+            ]
+        return hits
 
     def retrieve_fact_patterns(
         self,

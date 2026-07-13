@@ -19,10 +19,11 @@ Stage 2 — Query translation document:
 Business vocab KB:
   Covers all tables. Column names explicitly grounded.
 
-ChromaDB:
-  Collection name: kb_store (≥3 chars — ChromaDB requirement).
-  Embedding runs in ThreadPoolExecutor — event loop never blocked.
-  re_embed_file uses safe upsert pattern.
+Vector store (Qdrant):
+  KB chunks are embedded into the shared `querybot_kb` Qdrant collection,
+  partitioned per account (see core/vector_store.py upsert_kb_directory).
+  Embedding runs in a thread executor — the event loop is never blocked.
+  re_embed_file uses a safe delete-then-upsert pattern per file.
 """
 
 import asyncio
@@ -34,7 +35,6 @@ from pathlib import Path
 log = logging.getLogger("querybot.knowledge")
 
 _EMBEDDING_MODEL = "all-MiniLM-L6-v2"
-_COLLECTION_NAME = "kb_store"
 
 
 def _inject_deterministic_synonyms(kb_text: str, table_cols: list[str], vocab=None) -> str:
@@ -891,7 +891,7 @@ async def build_kb(
         from core.kb_quality import write_kb_quality_report
         from core.semantic_model import load_semantic_model
         final_semantic_model = load_semantic_model(kb_dir) or semantic_model
-        quality_report = write_kb_quality_report(final_semantic_model, kb_dir)
+        quality_report = write_kb_quality_report(final_semantic_model, kb_dir, account_id=account_id)
         log.info(
             "KB quality report: score=%s status=%s warnings=%s critical=%s",
             quality_report.get("score"),

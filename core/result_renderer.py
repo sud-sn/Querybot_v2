@@ -674,6 +674,7 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
         empty_tables=confidence_context.get("empty_tables") or [],
         null_metric_issue=bool(null_metric_issue),
         derived_metric_gap=str(confidence_context.get("derived_metric_gap") or ""),
+        weak_retrieval=bool(confidence_context.get("weak_retrieval")),
     )
 
     chart_type = detect_chart_type(

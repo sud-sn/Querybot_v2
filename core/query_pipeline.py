@@ -47,6 +47,7 @@ from core.pipeline_helpers import (
     _count_tables_for_zero_row, _build_zero_row_message,
     _format_metric_formula_context, _extract_metric_formula_tables,
     _build_row_metric_join_sql, attempt_field_plan_repair,
+    _clamp_kb_doc, _clamp_prompt_context,
 )
 from core.pipeline_trace import (
     _log_q, _trace_create, _trace_update, _trace_step, _trace_finish,
@@ -103,6 +104,89 @@ async def _generate_duckdb_sql(question: str, system_prompt: str, client: dict) 
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# Why/causal insight — channel-agnostic follow-through
+# ══════════════════════════════════════════════════════════════════════════════
+# "Why did revenue drop last month?" used to get a real causal analysis only on
+# the portal, and only when a previous result was still cached — on Teams/Zoom/
+# Slack (or with no cached result) it became a plain SQL attempt that cannot
+# answer causality. Now: the factual query runs first as usual, then the same
+# analysis engine that powers the portal's "why" follow-ups runs on the fresh
+# rows and its narrative is sent as a second message on ANY channel.
+
+def _format_insight_markdown(insight: dict) -> str:
+    """Render an assistant_analysis payload as chat-channel markdown.
+    The portal renders the raw payload natively (send_analysis_response);
+    this is the fallback for adapters that only speak text."""
+    parts: list[str] = []
+    headline = (insight.get("headline") or "").strip()
+    if headline:
+        parts.append(f"*{headline}*")
+    body = (insight.get("body") or "").strip()
+    if body:
+        parts.append(body)
+    bullets = [str(b).strip() for b in (insight.get("bullets") or []) if str(b).strip()]
+    if bullets:
+        parts.append("\n".join(f"  • {b}" for b in bullets))
+    next_step = (insight.get("next_step") or "").strip()
+    if next_step:
+        parts.append(f"_Next step: {next_step}_")
+    return "\n\n".join(parts).strip()
+
+
+async def _send_why_insight(
+    adapter, event, *,
+    question: str,
+    rows: list,
+    sql: str,
+    client: dict,
+    account_id: str,
+    db_cfg: dict,
+    rag_context: str = "",
+    known_tables: set | None = None,
+    query_executor=None,
+    question_id: str = "",
+) -> None:
+    """Generate and send a causal analysis of `rows` after the factual answer.
+    Best-effort: the factual answer is already on the wire, so any failure
+    here is logged and swallowed — never surfaced as a user-facing error."""
+    try:
+        from core.response_builder import generate_analysis_response
+        provider, model, api_key, az_kwargs = resolve_provider(client, purpose="query")
+        with llm_audit_scope(
+            account_id=account_id,
+            question=f"why: {question}"[:500],
+            enabled=bool(client.get("enable_llm_audit")),
+            request_id=make_llm_audit_request_id(),
+            question_id=question_id,
+            component="analysis",
+        ):
+            insight = await generate_analysis_response(
+                action="why",
+                rows=rows,
+                question=question,
+                provider=provider,
+                model=model,
+                api_key=api_key,
+                follow_up=question,
+                original_sql=sql,
+                db_cfg=db_cfg,
+                context=rag_context,
+                known_tables=known_tables,
+                query_executor=query_executor,
+                **az_kwargs,
+            )
+        _send_analysis = getattr(adapter, "send_analysis_response", None)
+        if callable(_send_analysis):
+            await _send_analysis(event, insight)
+            return
+        text = _format_insight_markdown(insight)
+        if text:
+            await adapter.send_message(event, text)
+    except Exception as exc:
+        log.warning("Why-insight after factual answer failed (answer already sent): %s", exc)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Query pipeline — table-aware
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -122,6 +206,13 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
     activate_vocab(_vocab)
     audit_enabled = bool(client.get("enable_llm_audit"))
     audit_request_id = make_llm_audit_request_id()
+
+    # Channel-agnostic why-route: explicitly causal questions get the factual
+    # answer first (normal pipeline below), then a causal analysis of the
+    # fresh rows as a second message. Clarification replies are exempt — the
+    # causal wording there belongs to the original question, already handled.
+    from core.insight import is_causal_question
+    _why_mode = bool(not is_clarification and is_causal_question(question))
 
     # Identity passed through every query-log row for audit + billing.
     pu_id  = portal_user.get("id") if portal_user else None
@@ -470,6 +561,15 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                                     "format_scope": "metric_registry",
                                     "metrics": [matched_metric],
                                 })
+            if _why_mode and rows:
+                await _send_why_insight(
+                    adapter, event,
+                    question=question, rows=rows, sql=sql_from_metric,
+                    client=client, account_id=account_id, db_cfg=db_cfg,
+                    known_tables=all_known,
+                    query_executor=lambda _cfg, _s: _execute_with_policy(_s),
+                    question_id=audit_request_id,
+                )
             _trace_finish(trace_id, status="success", answer_type="table", row_count=len(rows), duration_ms=duration_ms, final_answer_summary="Answered by metric registry")
             return
         except PolicyDeniedError as policy_error:
@@ -495,6 +595,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
     # so disallowed tables never leak into the LLM prompt. allowed_tables
     # is passed through explicitly; None means admin/unrestricted.
     _kb_phase_t0 = time.time()
+    _weak_retrieval = False
     try:
         await _send_live_stage(adapter, event, "retrieving_context", "Understanding your data", "Retrieving the most relevant schema, examples, and business context.")
         import re as _re
@@ -508,6 +609,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
 
         rag_filter = query_scope_tables
         relevant_kbs = retriever.retrieve(question, n=_n, allowed_tables=rag_filter)
+        _weak_retrieval = bool(getattr(retriever, "last_retrieval_weak", False))
 
         pinned    = [d for d in relevant_kbs if retriever._is_global(d)]
         table_kbs = [d for d in relevant_kbs if not retriever._is_global(d)]
@@ -562,7 +664,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                                 _dominant_sch, _dom_ratio * 100, len(_schema_votes),
                             )
 
-        relevant_kbs = (pinned + table_kbs)[:7]
+        relevant_kbs = [_clamp_kb_doc(d) for d in (pinned + table_kbs)[:7]]
         context = "\n\n---\n\n".join(relevant_kbs)
         _trace_update(
             trace_id,
@@ -924,6 +1026,43 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
 
     _semantic_plan = _merge_semantic_plans(_semantic_plan, _semantic_model_plan)
 
+    # ── Table-coverage fallback when the entity graph didn't resolve ──────────
+    # The graph-driven gap-fill above is gated on _graph_ctx["enabled"] — an
+    # entity with no table_name, or a disabled/empty graph, silently killed
+    # the ONLY structural recovery for retrieval misses. The merged semantic
+    # plan is a second independent source of "tables this answer definitely
+    # needs": approved-field and planner mappings name exact tables. When the
+    # graph produced nothing, gap-fill against those instead.
+    if not _graph_ctx.get("enabled"):
+        try:
+            from core.table_coverage import guarantee_table_coverage
+            _plan_fqns = {
+                str(f.get("table") or "").upper()
+                for f in (_semantic_plan or {}).get("fields") or []
+                if f.get("table") and "." in str(f.get("table"))
+            }
+            if _plan_fqns:
+                _plan_gap_docs = guarantee_table_coverage(
+                    account_id     = account_id,
+                    required_fqns  = _plan_fqns,
+                    retrieved_docs = relevant_kbs,
+                    rag_filter     = rag_filter,
+                    max_fill       = 3,
+                )
+                if _plan_gap_docs:
+                    context_with_terms = (
+                        context_with_terms
+                        + "\n\n---\n\n"
+                        + "\n\n---\n\n".join(_plan_gap_docs)
+                    )
+                    log.info(
+                        "Table coverage (semantic-plan fallback): injected %d "
+                        "gap-fill doc(s) — graph was unavailable",
+                        len(_plan_gap_docs),
+                    )
+        except Exception as _plan_cov_exc:
+            log.debug("Semantic-plan coverage fallback skipped: %s", _plan_cov_exc)
+
     # Build entity→schema lookup from the (possibly schema-filtered) full graph.
     # Metrics have a base_entity field; this map lets metric_source_schemas() use
     # the entity graph's schema_name directly — more reliable than parsing bare
@@ -1157,6 +1296,11 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
             + "\n\n---\n\n"
             + "\n\n".join(_analytic_hints)
         )
+
+    # Final safety cap after every prepend/append is done. Priority blocks
+    # (metric formulas, semantic model context) sit at the HEAD of the string,
+    # so tail truncation only ever sacrifices the lowest-priority material.
+    context_with_terms = _clamp_prompt_context(context_with_terms)
 
     system = build_sql_system_prompt(
         db_cfg["db_type"], context_with_terms,
@@ -1748,6 +1892,9 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
             has_metric_formula=bool(metric_formula_context),
             has_term_expression=bool(term_injection),
         ),
+        # Everything above the relevance floor was dropped — the KB context
+        # the SQL was built on matched this question only weakly.
+        "weak_retrieval": _weak_retrieval,
         # Carried through to cache_result so compare_prior can read them.
         "semantic_plan": _semantic_plan or {},
     }
@@ -1854,6 +2001,16 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                             "format_scope": "metric_context",
                             "metrics": _matched_metrics,
                         })
+    if _why_mode and rows:
+        await _send_why_insight(
+            adapter, event,
+            question=question, rows=rows, sql=sql,
+            client=client, account_id=account_id, db_cfg=db_cfg,
+            rag_context=context,
+            known_tables=all_known,
+            query_executor=lambda _cfg, _s: _execute_with_policy(_s),
+            question_id=audit_request_id,
+        )
     _trace_finish(trace_id, status="success", answer_type="table", row_count=len(rows), duration_ms=duration_ms, final_answer_summary="Answered from database query")
 
     # ── Learning loop: persist quality candidate ──────────────────────────────

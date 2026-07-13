@@ -30,6 +30,7 @@ def build_answer_confidence(
     empty_tables: list[str] | None = None,
     null_metric_issue: bool = False,
     derived_metric_gap: str = "",
+    weak_retrieval: bool = False,
 ) -> dict[str, Any]:
     """
     Convert technical query signals into a compact business-facing confidence score.
@@ -88,6 +89,13 @@ def build_answer_confidence(
             "approved formula — this result may total a raw column instead of the real "
             "calculation. Ask your administrator to define the formula in the Metric "
             "Registry or Business Terms."
+        )
+
+    if weak_retrieval:
+        score -= 20
+        warnings.append(
+            "The question matched the knowledge base only weakly — the answer may "
+            "use the wrong table. Naming the metric or table explicitly usually fixes this."
         )
 
     if has_semantic_plan:

@@ -31,6 +31,63 @@ from core.answer_rca import build_business_rca, extract_sql_tables
 log = logging.getLogger("querybot")
 
 
+# ── Prompt-context size control ───────────────────────────────────────────────
+# The assembled SQL-generation context previously had NO size limit anywhere:
+# 7 full reassembled table docs + up to 6 gap-fill docs + examples + semantic
+# blocks could grow the prompt unboundedly (quality degradation, cost spikes,
+# context-window overflow on wide schemas). Two layers of control:
+#   _clamp_kb_doc     — per-doc: drop droppable sections from one KB doc
+#   _clamp_prompt_context — final hard cap on the fully assembled string
+import os as _os
+
+_PER_DOC_CHAR_CAP = int(_os.getenv("QUERYBOT_KB_DOC_CHAR_CAP", "9000"))
+_PROMPT_CONTEXT_CHAR_CAP = int(_os.getenv("QUERYBOT_PROMPT_CONTEXT_CHAR_CAP", "120000"))
+
+# Sections safe to drop from an oversized KB doc, in drop order. Columns and
+# Join Keys are never dropped — they are what SQL generation actually needs.
+_DROPPABLE_SECTION_RE = re.compile(
+    r"(?i)^##\s*(business\s+synonyms|sample\s+data|query\s+patterns|patterns|overview)\b"
+)
+
+
+def _clamp_kb_doc(doc: str, cap: int = 0) -> str:
+    """Trim one KB doc to *cap* chars by removing droppable sections from the
+    end first (synonyms/sample-data/patterns/overview), never Columns or Join
+    Keys. Falls back to a hard tail-truncate only if still over after that."""
+    cap = cap or _PER_DOC_CHAR_CAP
+    if len(doc) <= cap:
+        return doc
+
+    # Split into header + "## " sections, preserving order.
+    parts = re.split(r"(?m)^(?=## )", doc)
+    kept = list(parts)
+    # Remove droppable sections from the tail end first.
+    for idx in range(len(kept) - 1, 0, -1):
+        if len("".join(kept)) <= cap:
+            break
+        if _DROPPABLE_SECTION_RE.match(kept[idx]):
+            kept.pop(idx)
+    clamped = "".join(kept)
+    if len(clamped) > cap:
+        clamped = clamped[:cap] + "\n[... truncated for prompt size]"
+    return clamped
+
+
+def _clamp_prompt_context(context: str, cap: int = 0) -> str:
+    """Final hard cap on the assembled prompt context. Priority blocks
+    (semantic model context, metric formulas) are PREPENDED upstream, so a
+    tail truncation always sacrifices the lowest-priority material (the last
+    KB docs / hints), never the deterministic guidance at the head."""
+    cap = cap or _PROMPT_CONTEXT_CHAR_CAP
+    if len(context) <= cap:
+        return context
+    log.warning(
+        "Prompt context clamped: %d chars -> %d cap (tail truncated)",
+        len(context), cap,
+    )
+    return context[:cap] + "\n\n[... additional context truncated for prompt size]"
+
+
 # ── Intent detection ──────────────────────────────────────────────────────────
 
 def _looks_like_new_query(text: str, original_q: str = "") -> bool:

@@ -5349,7 +5349,7 @@ async def model_health_approve_grain(
         from core.kb_quality import write_kb_quality_report
         ok = patch_grain_approval(kb_dir=kb_dir, table_fqn=table_fqn, grain=grain)
         if ok:
-            write_kb_quality_report(load_semantic_model(kb_dir), kb_dir)
+            write_kb_quality_report(load_semantic_model(kb_dir), kb_dir, account_id=account_id)
             log.info("Grain approved for %s %s: %r", account_id, table_fqn, grain.strip())
             return RedirectResponse(
                 f"/admin/clients/{account_id}/model-health?saved=grain", status_code=303)

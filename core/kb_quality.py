@@ -45,12 +45,41 @@ def evaluate_kb_quality(
     semantic_model: dict[str, Any] | None,
     *,
     kb_dir: str = "",
+    account_id: str = "",
 ) -> dict[str, Any]:
-    """Return a compact, deterministic readiness report for a semantic model."""
+    """Return a compact, deterministic readiness report for a semantic model.
+
+    account_id (optional): when supplied, entity-graph configuration is also
+    checked — an entity with no table_name silently disables the graph-driven
+    table-coverage gap-fill for questions that detect it, which is invisible
+    everywhere else until queries start failing on missing join tables.
+    """
     model = semantic_model or {}
     tables = model.get("tables") or []
     relationships = model.get("relationships") or []
     issues: list[dict[str, str]] = []
+
+    if account_id:
+        try:
+            import store
+            unmapped = [
+                str(e.get("entity_name") or "?")
+                for e in store.list_entities(account_id)
+                if not str(e.get("table_name") or "").strip()
+            ]
+            for name in unmapped[:10]:
+                issues.append(_issue(
+                    "warning",
+                    "entity_without_table",
+                    f"Entity '{name}' has no table mapped.",
+                    action=(
+                        "Map this entity to its table in the Entity Graph — until then, "
+                        "questions detecting it get no table-coverage guarantee and can "
+                        "fail on missing join tables."
+                    ),
+                ))
+        except Exception:
+            pass   # entity check is best-effort; never block the report
 
     if not tables:
         issues.append(_issue(
@@ -222,9 +251,10 @@ def evaluate_kb_quality(
 def write_kb_quality_report(
     semantic_model: dict[str, Any] | None,
     kb_dir: str,
+    account_id: str = "",
 ) -> dict[str, Any]:
     """Evaluate and atomically persist ``_kb_quality.json`` beside KB files."""
-    report = evaluate_kb_quality(semantic_model, kb_dir=kb_dir)
+    report = evaluate_kb_quality(semantic_model, kb_dir=kb_dir, account_id=account_id)
     path = Path(kb_dir)
     path.mkdir(parents=True, exist_ok=True)
     target = path / QUALITY_REPORT_FILENAME

@@ -320,6 +320,19 @@ async def dispatch(
     if _ABOUT_RE.search(text):
         await adapter.send_message(event, _ABOUT); return
 
+    # ── Behavioral front door (deterministic, no LLM) ─────────────────────────
+    # Greetings/thanks/goodbye/frustration used to fall through every guard
+    # into the SQL pipeline — "thanks" got answered with "I couldn't find the
+    # right tables or columns". Handle them here, state-independent. The
+    # data-aware kinds (data_inventory / opinion / vague) are handled later,
+    # inside the READY branch, after the pending-clarification check — a
+    # clarification reply must never be hijacked by this classifier.
+    from core.conversational import build_reply, detect_conversational
+    _conv_kind = detect_conversational(text)
+    if _conv_kind in ("greeting", "thanks", "goodbye", "frustration"):
+        await adapter.send_message(event, build_reply(_conv_kind, account_id, portal_user))
+        return
+
     if text.lower() == "whoami":
         pu = portal_user or (store.get_user_by_zoom_id(event.user_id) if event.user_id else None)
         if pu:
@@ -376,6 +389,18 @@ async def dispatch(
                 opts = cmeta.get("options") or []
                 selected_text = text
                 matched_option_id: str | None = None
+                # Compound-split replies run the chosen half as a standalone
+                # question — combining it with the original (bundled) text
+                # would re-create the exact multi-intent problem we split.
+                if cmeta.get("source") == "compound_split" and opts:
+                    match = resolve_option_text(opts, text)
+                    clear_pending(account_id, event.user_id)
+                    chosen_q = str((match or {}).get("value") or text).strip()
+                    log.info("Compound split resolved: running %r", chosen_q[:80])
+                    _enqueue_query(bg, account_id, event, adapter,
+                                   chosen_q, portal_user, client_row,
+                                   is_clarification=True)
+                    return
                 if opts:
                     match = resolve_option_text(opts, text)
                     if not match:
@@ -444,8 +469,52 @@ async def dispatch(
                     )
                     return
 
+        # ── Behavioral front door, data-aware kinds ────────────────────────
+        # Placed after the clarification checks (a pending clarification
+        # reply always wins) and before the DDL/LLM path. These have real
+        # deterministic answers — sending them into SQL generation only
+        # produces a confusing failure.
+        if _conv_kind in ("data_inventory", "opinion", "vague"):
+            await adapter.send_message(event, build_reply(_conv_kind, account_id, portal_user))
+            return
+
         # DDL check on raw user message before any LLM call
         if is_ddl_attempt(text):
             await adapter.send_message(event, _DDL_USER_MESSAGE)
             return
+
+        # ── Compound question — offer a guided split ────────────────────────
+        # Two independent asks in one message ("revenue by region and also
+        # top 10 customers") make one SQL attempt answer half or fail. Offer
+        # to run them one at a time; the user picks which goes first. Never
+        # auto-fan-out into two silent queries.
+        from core.conversational import detect_compound_question
+        _split = detect_compound_question(text)
+        if _split and event.user_id:
+            from core.clarification import save_pending
+            _q1, _q2 = _split
+            _split_opts = [
+                {"id": "part1", "label": _q1[:80], "value": _q1},
+                {"id": "part2", "label": _q2[:80], "value": _q2},
+            ]
+            save_pending(
+                account_id, event.user_id, text,
+                clarification_meta={"source": "compound_split",
+                                    "question": "Which should I answer first?",
+                                    "options": _split_opts},
+            )
+            _prompt = (
+                "That looks like two questions in one — I answer them best "
+                "one at a time. Which should I run first?"
+            )
+            send_prompt = getattr(adapter, "send_clarification_prompt", None)
+            if callable(send_prompt):
+                await send_prompt(event, _prompt, _split_opts)
+            else:
+                await adapter.send_message(
+                    event,
+                    f"{_prompt}\n  1. {_q1}\n  2. {_q2}\n\n"
+                    "Reply with the one you want (or ask it directly).")
+            return
+
         _enqueue_query(bg, account_id, event, adapter, text, portal_user, client_row)
