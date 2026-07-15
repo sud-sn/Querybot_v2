@@ -122,6 +122,111 @@ class ApprovalHookTests(unittest.TestCase):
         self.assertIn("write_contract(account_id, kb_dir)", ksrc)
 
 
+class GraphCanvasApprovalHookTests(unittest.TestCase):
+    """The canvas/JSON graph-editor API mutates entity_graph/entity_relationships
+    directly and was missed by the original hook-wiring pass — found by a
+    fresh audit. Asserts each route's function body calls the shared hook
+    (search is whitespace-tolerant since some calls wrap across lines)."""
+
+    _ROUTE_FUNCS = [
+        "graph_api_entity_upsert",
+        "graph_api_entity_delete",
+        "graph_api_entity_type",
+        "graph_api_entity_filter",
+        "graph_api_rel_upsert",
+        "graph_api_rel_delete",
+        "graph_api_rel_bulk",
+        "graph_api_purge_audit_joins",
+        "graph_api_prop_save",
+        "graph_suggest",
+    ]
+
+    def _function_body(self, src: str, fn_name: str) -> str:
+        marker = f"async def {fn_name}("
+        start = src.index(marker)
+        # body runs until the next top-level route decorator or function def
+        rest = src[start:]
+        next_route = rest.find("\n@router.", 1)
+        next_def = rest.find("\nasync def ", 1)
+        candidates = [x for x in (next_route, next_def) if x != -1]
+        end = min(candidates) if candidates else len(rest)
+        return rest[:end]
+
+    def test_every_canvas_route_calls_the_hook(self):
+        src = _src("admin/routes.py")
+        for fn_name in self._ROUTE_FUNCS:
+            body = self._function_body(src, fn_name)
+            self.assertIn(
+                "_after_semantic_approval(", body,
+                f"{fn_name} does not recompile the semantic contract",
+            )
+
+    def test_position_and_validation_routes_are_exempt(self):
+        # Cosmetic canvas coordinates and read-only validation diagnostics
+        # must NOT trigger a recompile+eval run on every drag/click.
+        src = _src("admin/routes.py")
+        for fn_name in ("graph_api_entity_position", "graph_api_rel_validate_all",
+                        "graph_api_rel_validate"):
+            body = self._function_body(src, fn_name)
+            self.assertNotIn("_after_semantic_approval(", body, fn_name)
+
+    def test_no_duplicate_rel_bulk_handler(self):
+        src = _src("admin/routes.py")
+        self.assertEqual(src.count("async def graph_api_rel_bulk("), 1)
+
+
+class EntityPropertyTermSyncTests(unittest.TestCase):
+    """graph_api_prop_save called store.save_term(column_name=, table_hint=,
+    is_active=) — none of which exist on save_term's real signature — so the
+    'sync to semantic layer business terms' path raised TypeError on every
+    call and was silently swallowed. Verify the corrected call actually
+    succeeds and produces a listable term."""
+
+    def test_route_uses_real_save_term_kwargs(self):
+        src = _src("admin/routes.py")
+        body = src[src.index("async def graph_api_prop_save("):]
+        body = body[:body.index("\n@router.")]
+        self.assertNotIn("column_name  = data[", body)
+        self.assertNotIn("table_hint", body)
+        self.assertIn("canonical_expression", body)
+        self.assertIn("tables_involved", body)
+        # "entity_graph" is not a legal business_term.source (CHECK
+        # constraint allows only manual/kb_extracted/metric_registry) —
+        # the route must use one of the real allowed values.
+        self.assertNotIn('source          = "entity_graph"', body)
+        self.assertIn('source          = "manual"', body)
+
+    def test_corrected_save_term_call_succeeds_and_is_listable(self):
+        from store.semantic_store import save_term, list_terms
+        import store
+        store.init_db()
+        account_id = "acct-entity-prop-sync-test"
+        store.upsert_client(account_id, "portal")
+        # Same call shape graph_api_prop_save now makes.
+        term_id = save_term(
+            account_id=account_id,
+            term="Customer Region",
+            canonical_expression="REGION_CD",
+            tables_involved="ERP.DIM_CUSTOMER",
+            source="manual",
+        )
+        self.assertIsInstance(term_id, int)
+        terms = list_terms(account_id, active_only=True)
+        self.assertTrue(any(t["term"] == "customer region" for t in terms))
+
+    def test_entity_graph_is_not_a_legal_source_value(self):
+        # Documents the CHECK constraint so a future change to the allowed
+        # source set is a deliberate decision, not a silent reintroduction
+        # of this bug.
+        from store.semantic_store import save_term
+        import store
+        store.init_db()
+        account_id = "acct-entity-prop-sync-constraint-test"
+        store.upsert_client(account_id, "portal")
+        with self.assertRaises(Exception):
+            save_term(account_id=account_id, term="Bad Source Term", source="entity_graph")
+
+
 class ConsumerRepointingTests(unittest.TestCase):
     def test_pipeline_loads_contract_once_and_threads_sections(self):
         src = _src("core/query_pipeline.py")

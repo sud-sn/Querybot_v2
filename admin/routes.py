@@ -3360,6 +3360,7 @@ async def graph_api_entity_upsert(request: Request, account_id: str):
         color         = data.get("color", "#4F86C6"),
         entity_filter = data.get("entity_filter", "").strip(),
     )
+    _after_semantic_approval(account_id, f"entity '{data.get('entity_name', '')}' saved (canvas)")
     return JSONResponse({"status": "ok", "id": eid})
 
 
@@ -3368,6 +3369,7 @@ async def graph_api_entity_delete(request: Request, account_id: str, entity_name
     if not _is_auth(request):
         raise HTTPException(status_code=401)
     store.delete_entity(account_id, entity_name)
+    _after_semantic_approval(account_id, f"entity '{entity_name}' deleted (canvas)")
     return JSONResponse({"status": "ok"})
 
 
@@ -3404,6 +3406,7 @@ async def graph_api_entity_type(request: Request, account_id: str, entity_name: 
                 "UPDATE entity_graph SET entity_type=? WHERE account_id=? AND entity_name=?",
                 (new_type, account_id, entity_name),
             )
+    _after_semantic_approval(account_id, f"entity '{entity_name}' type changed")
     return JSONResponse({"status": "ok"})
 
 
@@ -3419,6 +3422,7 @@ async def graph_api_entity_filter(request: Request, account_id: str, entity_name
             "UPDATE entity_graph SET entity_filter=? WHERE account_id=? AND entity_name=?",
             (entity_filter, account_id, entity_name),
         )
+    _after_semantic_approval(account_id, f"entity '{entity_name}' row filter changed")
     return JSONResponse({"status": "ok"})
 
 
@@ -3480,6 +3484,7 @@ async def graph_api_rel_upsert(request: Request, account_id: str):
                 )
     except Exception as _sm_exc:
         log.warning("patch_relationship (api_upsert) skipped: %s", _sm_exc)
+    _after_semantic_approval(account_id, f"relationship {_api_from_entity}->{_api_to_entity} saved (canvas)")
     return JSONResponse({"status": "ok", "id": rid})
 
 
@@ -3582,12 +3587,14 @@ async def graph_api_rel_delete(request: Request, account_id: str, rel_id: int):
     if not _is_auth(request):
         raise HTTPException(status_code=401)
     store.delete_relationship(account_id, rel_id)
+    _after_semantic_approval(account_id, "relationship deleted (canvas)")
     return JSONResponse({"status": "ok"})
 
 
 @router.post("/clients/{account_id}/graph/api/relationships/bulk")
 async def graph_api_rel_bulk(request: Request, account_id: str):
     """Bulk update and/or delete relationships in one round-trip.
+    Used by the Bulk Relationship Manager.
 
     Body JSON:
       updates: [{id, from_entity, to_entity, from_column, to_column,
@@ -3620,35 +3627,10 @@ async def graph_api_rel_bulk(request: Request, account_id: str):
             rel_id            = int(u.get("id") or 0),
         )
 
-    return JSONResponse({"status": "ok", "updated": len(updates), "deleted": len(deletes)})
-
-
-@router.post("/clients/{account_id}/graph/api/relationships/bulk")
-async def graph_api_rel_bulk(request: Request, account_id: str):
-    """Bulk update + delete relationships in one round-trip (used by Bulk Relationship Manager)."""
-    if not _is_auth(request):
-        raise HTTPException(status_code=401)
-    data    = await request.json()
-    updates = data.get("updates", [])
-    deletes = data.get("deletes", [])
-
-    for rel_id in deletes:
-        store.delete_relationship(account_id, int(rel_id))
-
-    for u in updates:
-        store.save_relationship(
-            account_id        = account_id,
-            from_entity       = str(u.get("from_entity", "")).strip(),
-            to_entity         = str(u.get("to_entity", "")).strip(),
-            from_column       = str(u.get("from_column", "")).strip(),
-            to_column         = str(u.get("to_column", "")).strip(),
-            relationship_type = str(u.get("relationship_type", "many_to_one")),
-            join_type         = str(u.get("join_type", "LEFT")),
-            label             = str(u.get("label", "")).strip(),
-            where_clause      = str(u.get("where_clause", "")).strip(),
-            rel_id            = int(u.get("id") or 0),
+    if updates or deletes:
+        _after_semantic_approval(
+            account_id, f"bulk relationship edit ({len(updates)} updated, {len(deletes)} deleted)"
         )
-
     return JSONResponse({"status": "ok", "updated": len(updates), "deleted": len(deletes)})
 
 
@@ -3696,6 +3678,8 @@ async def graph_api_purge_audit_joins(request: Request, account_id: str):
         else:
             kept += 1
 
+    if deleted:
+        _after_semantic_approval(account_id, f"purged {deleted} audit-column joins")
     return JSONResponse({
         "status":     "ok",
         "deleted":    deleted,
@@ -3709,27 +3693,39 @@ async def graph_api_prop_save(request: Request, account_id: str):
     if not _is_auth(request):
         raise HTTPException(status_code=401)
     data = await request.json()
+    entity_name = data.get("entity_name", "")
+    column_name = data.get("column_name", "")
     store.save_entity_property(
         account_id   = account_id,
-        entity_name  = data.get("entity_name", ""),
-        column_name  = data.get("column_name", ""),
+        entity_name  = entity_name,
+        column_name  = column_name,
         role         = data.get("role", "dimension"),
         display_name = data.get("display_name", ""),
         synonyms     = data.get("synonyms", ""),
     )
     # Sync to semantic layer business terms
-    if data.get("display_name") and data.get("column_name"):
+    if data.get("display_name") and column_name:
         try:
+            _entity = store.get_entity(account_id, entity_name)
+            _table = ""
+            if _entity:
+                _sn = (_entity.get("schema_name") or "").strip()
+                _tn = (_entity.get("table_name") or "").strip()
+                _table = f"{_sn}.{_tn}" if _sn else _tn
             store.save_term(
-                account_id   = account_id,
-                term         = data["display_name"].strip(),
-                column_name  = data["column_name"].strip(),
-                table_hint   = "",
-                is_active    = 1,
-                source       = "entity_graph",
+                account_id      = account_id,
+                term            = data["display_name"].strip(),
+                canonical_expression = column_name.strip(),
+                tables_involved = _table,
+                # business_term.source has a CHECK constraint allowing only
+                # manual/kb_extracted/metric_registry — "entity_graph" was
+                # never a legal value, so this call raised on every prior
+                # invocation regardless of the (also wrong) kwargs above.
+                source          = "manual",
             )
-        except Exception:
-            pass
+        except Exception as _term_exc:
+            log.warning("save_term (entity property sync) skipped: %s", _term_exc)
+    _after_semantic_approval(account_id, f"entity property '{entity_name}.{column_name}' saved")
     return JSONResponse({"status": "ok"})
 
 
@@ -4214,6 +4210,10 @@ async def graph_suggest(request: Request, account_id: str):
         )
         saved_rels += 1
 
+    if saved_entities or saved_rels:
+        _after_semantic_approval(
+            account_id, f"graph auto-suggest ({saved_entities} entities, {saved_rels} relationships)"
+        )
     return JSONResponse({
         "status": "ok",
         "saved_entities": saved_entities,
