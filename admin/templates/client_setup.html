@@ -315,15 +315,37 @@
   <div class="step-head">
     <div class="step-num" id="mask-step-num" style="background:color-mix(in srgb,var(--amber) 80%,#fff);font-size:15px">🛡</div>
     <div style="flex:1">
-      <div class="step-title">Field Masking &nbsp;<span style="font-size:11px;font-weight:600;color:var(--text-muted)">(Optional)</span></div>
+      <div class="step-title">
+        Field Masking
+        {% if compliance_profile.mode == 'regulated' %}
+        &nbsp;<span style="font-size:11px;font-weight:700;color:var(--red)">(Required — {{ compliance_profile.industry|replace('_',' ')|title }})</span>
+        {% else %}
+        &nbsp;<span style="font-size:11px;font-weight:600;color:var(--text-muted)">(Optional)</span>
+        {% endif %}
+      </div>
       <div style="font-size:12px;color:var(--text-muted)">
+        {% if compliance_profile.mode == 'regulated' %}
+        This client is tagged <strong>{{ compliance_profile.industry|replace('_',' ')|title }}</strong> — sensitive fields
+        (including industry-specific categories like diagnosis/prescription or account/KYC columns) are auto-detected
+        below. Review them, then confirm to unlock Schema Discovery.
+        {% else %}
         Configure which fields are masked before sample rows are sent to the LLM during KB generation.
         PII columns are auto-detected and pre-checked. Masking is applied locally — no real values leave your network.
+        {% endif %}
       </div>
     </div>
     <span id="mask-done-badge" style="display:none;font-size:12px;color:var(--amber);font-weight:700;flex-shrink:0;margin-left:1rem">✓ Masking configured</span>
   </div>
   <div class="step-body">
+    {% if compliance_profile.mode == 'regulated' and not masking_reviewed_at %}
+    <div style="margin-bottom:.85rem;padding:.65rem .875rem;background:var(--red-light,#fee2e2);border:1px solid color-mix(in srgb,var(--red) 30%,transparent);border-radius:var(--radius);font-size:12px;color:var(--red)">
+      ⚠ Schema Discovery is locked until this review is confirmed.
+    </div>
+    {% elif compliance_profile.mode == 'regulated' %}
+    <div style="margin-bottom:.85rem;padding:.65rem .875rem;background:var(--green-light,#dcfce7);border:1px solid color-mix(in srgb,var(--green) 30%,transparent);border-radius:var(--radius);font-size:12px;color:var(--green)">
+      ✓ Masking reviewed and confirmed — Schema Discovery is unlocked.
+    </div>
+    {% endif %}
     <div id="mask-no-tables" style="font-size:13px;color:var(--text-muted)">
       No tables selected yet — save a table selection in Step 2 above, then this section will populate automatically.
     </div>
@@ -331,11 +353,13 @@
       <div id="mask-table-list"></div>
       <div style="margin-top:1rem;display:flex;align-items:center;gap:.75rem;flex-wrap:wrap;padding-top:.75rem;border-top:1px solid var(--border)">
         <button type="button" class="btn btn-primary btn-sm" id="mask-create-btn" onclick="createMasking()">
-          Create Masking &amp; Discover Schema
+          {% if compliance_profile.mode == 'regulated' %}Confirm Masking Review &amp; Discover Schema{% else %}Create Masking &amp; Discover Schema{% endif %}
         </button>
+        {% if compliance_profile.mode != 'regulated' %}
         <button type="button" class="btn btn-secondary btn-sm" onclick="skipMasking()">
           Skip masking →
         </button>
+        {% endif %}
         <span id="mask-apply-status" style="font-size:12px"></span>
       </div>
       <!-- Discovery progress bar — shown while polling -->
@@ -431,10 +455,12 @@
     </div>
     {% endif %}
 
+    {% set _masking_gate_locked = compliance_profile.mode == 'regulated' and not masking_reviewed_at %}
     <div style="margin-top:.875rem;display:flex;gap:.625rem">
       <form method="post" action="/admin/clients/{{ client.account_id }}/setup/discover">
-        <button type="submit" class="btn btn-secondary btn-sm"
-          {% if not db_cfg %}disabled{% endif %}>
+        <button type="submit" id="rediscover-btn" class="btn btn-secondary btn-sm"
+          {% if not db_cfg or _masking_gate_locked %}disabled{% endif %}
+          {% if _masking_gate_locked %}title="Confirm the Field Masking review above first"{% endif %}>
           Re-discover (for schema changes or new table selection)
         </button>
       </form>
@@ -443,9 +469,12 @@
     <p style="font-size:13px;color:var(--text-muted);margin-bottom:.875rem">
       No schema files yet. Complete Step 2 first, then run discovery.
     </p>
+    {% set _masking_gate_locked = compliance_profile.mode == 'regulated' and not masking_reviewed_at %}
     <form method="post" action="/admin/clients/{{ client.account_id }}/setup/discover">
-      <button type="submit" class="btn btn-primary"
-        {% if not db_cfg %}disabled title="Assign a database first"{% endif %}>
+      <button type="submit" id="discover-btn" class="btn btn-primary"
+        {% if not db_cfg or _masking_gate_locked %}disabled{% endif %}
+        {% if not db_cfg %}title="Assign a database first"
+        {% elif _masking_gate_locked %}title="Confirm the Field Masking review above first"{% endif %}>
         {{ ic("search", 14) }} Discover schema
       </button>
     </form>
@@ -649,6 +678,9 @@
 <script>
 (function(){
   const accountId = {{ client.account_id | tojson }};
+  const IS_REGULATED = {{ (compliance_profile.mode == 'regulated') | tojson }};
+  const REGULATED_INDUSTRY = {{ compliance_profile.industry | tojson }};
+  let MASKING_REVIEWED = {{ (masking_reviewed_at is not none) | tojson }};
   const browseBtn = document.getElementById('setup-scope-browse');
   const kbLiveStatus = document.getElementById('kbLiveStatus');
   const kbProgressText = document.getElementById('kbProgressText');
@@ -1128,6 +1160,10 @@
         `<div class="mask-item-body" id="mask-body-${key}"></div>`;
       listEl.appendChild(item);
       _updateMaskBadge(fqn);
+      // Regulated clients: auto-expand every table so the admin sees the
+      // full auto-detected sensitive-field picture without having to
+      // remember to click into each row individually.
+      if (IS_REGULATED) _toggleMaskItem(fqn);
     });
   }
 
@@ -1277,7 +1313,12 @@
 
     try {
       // ── Step 1: save masking config ─────────────────────────────────────────
-      const saveResp = await fetch(`/admin/clients/${accountId}/kb-tables/masking`, {
+      // Regulated clients confirm review (stamps masking_reviewed_at, which
+      // unlocks Discover Schema) instead of just saving a draft.
+      const saveUrl = IS_REGULATED
+        ? `/admin/clients/${accountId}/setup/masking/confirm`
+        : `/admin/clients/${accountId}/kb-tables/masking`;
+      const saveResp = await fetch(saveUrl, {
         method: 'POST', credentials: 'same-origin',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({ masking_config: config }),
@@ -1288,6 +1329,8 @@
         statusEl.textContent = saveData.message || 'Failed to save masking config.';
         return;
       }
+      if (IS_REGULATED) MASKING_REVIEWED = true;
+      _updateDiscoveryGate();
 
       // ── Step 2: trigger schema discovery ───────────────────────────────────
       btn.textContent = 'Starting discovery…';
@@ -1419,6 +1462,16 @@
     summaryEl.innerHTML = html;
     summaryEl.style.display = 'block';
     summaryEl.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+  }
+
+  function _updateDiscoveryGate() {
+    const locked = IS_REGULATED && !MASKING_REVIEWED;
+    ['discover-btn', 'rediscover-btn'].forEach(id => {
+      const btn = document.getElementById(id);
+      if (!btn) return;
+      btn.disabled = locked;
+      btn.title = locked ? 'Confirm the Field Masking review above first' : '';
+    });
   }
 
   window.skipMasking = function() {

@@ -361,14 +361,24 @@ def scan_values_for_pii(
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
-def detect_sensitive_columns(columns: list[dict]) -> dict[str, str]:
+def detect_sensitive_columns(columns: list[dict], industry: str = "") -> dict[str, str]:
     """
     Return {column_name: masking_strategy} for columns likely to contain PII.
 
-    Detection runs in two passes:
+    Detection runs in three passes:
     1. Name-based regex scan (_PII_PATTERNS).
     2. Type-based free-text detection — flags unbounded text columns whose
        name does not indicate a known-safe business field.
+    3. When `industry` is a regulated pack ("banking" or "healthcare_pharmacy"),
+       also run each remaining column through the compliance classifier
+       (core.compliance.classifier.classify_column) — it detects category
+       patterns pass 1 doesn't cover (e.g. a bare DIAGNOSIS_CD, RX_DRUG_NAME,
+       or NDC code column: PHI/PRESCRIPTION for healthcare, PCI/KYC_AML for
+       banking). This is the same detector the query-time compliance system
+       uses, applied here so unmasked sample rows never reach KB generation
+       for a regulated client. Reuses classify_column's own industry
+       filtering (banking excludes PHI/PRESCRIPTION/PAYMENT tags, healthcare
+       excludes PCI/KYC_AML), so no separate pattern list to maintain here.
     """
     result: dict[str, str] = {}
     for col in columns:
@@ -390,6 +400,24 @@ def detect_sensitive_columns(columns: list[dict]) -> dict[str, str]:
                     "masking: type-based free_text flag on %r (type=%r)",
                     col_name, col_type,
                 )
+                continue
+
+        # Pass 3 — industry-specific compliance categories. Gated on the two
+        # real regulated packs specifically — get_compliance_profile()'s
+        # default row reports industry="standard" for every unconfigured
+        # client, so a bare truthy check here would silently change
+        # detection for every standard client too.
+        if industry in ("banking", "healthcare_pharmacy"):
+            try:
+                from core.compliance.classifier import classify_column
+                if classify_column(col_name, industry).get("tags"):
+                    result[col_name] = strategy_for_field(col_name, col_type)
+                    log.debug(
+                        "masking: industry-tagged (%s) auto-masked %r",
+                        industry, col_name,
+                    )
+            except Exception as exc:
+                log.debug("masking: industry classification skipped for %r: %s", col_name, exc)
 
     return result
 

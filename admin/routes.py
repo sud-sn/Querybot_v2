@@ -270,6 +270,30 @@ def _safe_child_path(base_dir: str, filename: str) -> Path | None:
     return target
 
 
+def _clear_masking_review(account_id: str, *, state_data: dict | None = None, current_state: str | None = None) -> None:
+    """
+    Invalidate a prior masking-review confirmation because the industry
+    changed — the auto-detected sensitive-field set depends on industry
+    (see core.masking.detect_sensitive_columns), so a review done under
+    the old industry no longer covers what "auto" mode will actually catch.
+    Best-effort; never blocks the caller's own save.
+
+    Pass state_data/current_state when the caller already has them loaded
+    (avoids a redundant read); otherwise this fetches them itself.
+    """
+    try:
+        if state_data is None or current_state is None:
+            client = store.get_client(account_id) or {}
+            state_data = json.loads(client.get("state_data") or "{}")
+            current_state = client.get("state")
+        if "masking_reviewed_at" in state_data:
+            state_data = dict(state_data)
+            state_data.pop("masking_reviewed_at", None)
+            store.update_client_state(account_id, current_state or "PENDING", state_data)
+    except Exception as exc:
+        log.warning("_clear_masking_review failed for %s: %s", account_id, exc)
+
+
 def _default_regulated_rules(pack: dict) -> list[dict]:
     """Seed a conservative draft policy for a regulated tenant."""
     rules: list[dict] = []
@@ -2629,6 +2653,7 @@ async def compliance_save_profile(request: Request, account_id: str):
             policy_pack_version="", lifecycle_state="DRAFT",
             enforcement_mode="shadow",
         )
+        _clear_masking_review(account_id)
         return RedirectResponse(
             f"{redirect_base}?saved=standard", status_code=303
         )
@@ -2665,6 +2690,7 @@ async def compliance_save_profile(request: Request, account_id: str):
         account_id, state_data.get("schema_dir", ""), industry
     )
     import_legacy_masking(account_id, state_data.get("masking_config") or {})
+    _clear_masking_review(account_id, state_data=state_data, current_state=client.get("state"))
     return RedirectResponse(
         f"{redirect_base}?saved=profile", status_code=303
     )
@@ -5891,12 +5917,17 @@ async def client_setup_page(request: Request, account_id: str):
     # classification import can auto-fire the moment discovery finishes,
     # regardless of whether the admin picks it before or after discovery.
     compliance_profile = store.get_compliance_profile(account_id)
+    # Gates the Discover Schema button for regulated clients until the
+    # admin has explicitly confirmed the masking review (see
+    # admin_confirm_masking_review) — cleared if tables/industry change.
+    masking_reviewed_at = state_data.get("masking_reviewed_at")
 
     return _resp(request, "client_setup.html", {
         "client":               client,
         "state":                state,
         "db_cfg":               db_cfg,
         "compliance_profile":   compliance_profile,
+        "masking_reviewed_at":  masking_reviewed_at,
         "schema_files":         schema_files,
         "kb_files":             kb_files,
         "kb_tables":            kb_tables,
@@ -6128,6 +6159,9 @@ async def admin_save_kb_tables(
     state_data["masking_config"] = masking_config
     # Remove old synthetic_flags key if present from a previous install
     state_data.pop("synthetic_flags", None)
+    # Table selection changed — any prior masking review no longer covers
+    # the current set of tables, so require re-confirmation before discovery.
+    state_data.pop("masking_reviewed_at", None)
     store.update_client_state(
         account_id,
         client.get("state") or "PENDING",
@@ -6185,6 +6219,41 @@ async def admin_save_masking_only(request: Request, account_id: str):
     # so the admin panel shows the change without waiting for KB rebuild
     updated = store.update_egress_masking(account_id, masking_config)
     return JSONResponse({"status": "ok", "count": len(masking_config), "egress_updated": updated})
+
+
+@router.post("/clients/{account_id}/setup/masking/confirm")
+async def admin_confirm_masking_review(request: Request, account_id: str):
+    """
+    Save masking_config AND stamp masking_reviewed_at — the explicit
+    confirmation that unlocks "Discover Schema" for a regulated client.
+
+    Distinct from admin_save_masking_only (which just persists a draft):
+    this is the "I reviewed the auto-detected sensitive fields, proceed"
+    action. Cleared automatically if the table selection or industry
+    changes afterward (admin_save_kb_tables, compliance_save_profile),
+    since either invalidates what was actually reviewed.
+    """
+    if not _is_auth(request):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    client = store.get_client(account_id)
+    if not client:
+        return JSONResponse({"status": "error", "message": "Client not found"}, status_code=404)
+    body = await request.json()
+    raw_mc = body.get("masking_config") or {}
+    masking_config = {
+        k.upper(): v for k, v in raw_mc.items()
+        if isinstance(v, dict) and v.get("mode") in ("none", "all", "selective", "auto")
+    }
+    current_state = client.get("state") or "configured"
+    state_data = json.loads(client.get("state_data") or "{}")
+    state_data["masking_config"] = masking_config
+    state_data["masking_reviewed_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    store.update_client_state(account_id, current_state, state_data)
+    updated = store.update_egress_masking(account_id, masking_config)
+    return JSONResponse({
+        "status": "ok", "count": len(masking_config), "egress_updated": updated,
+        "masking_reviewed_at": state_data["masking_reviewed_at"],
+    })
 
 
 @router.get("/clients/{account_id}/setup/mask-preview")
@@ -6509,7 +6578,8 @@ async def admin_column_sensitivity(request: Request, account_id: str, fqn: str =
     strategy_map: dict[str, str] = {}
     try:
         from core.masking import detect_sensitive_columns
-        detected     = detect_sensitive_columns(columns)
+        industry = store.get_compliance_profile(account_id).get("industry", "")
+        detected     = detect_sensitive_columns(columns, industry=industry)
         auto_masked  = list(detected.keys())
         strategy_map = detected   # {col_name: strategy_name}
     except Exception:
@@ -6696,10 +6766,12 @@ async def admin_discover_schema(
                         except Exception:
                             pass
             _masking_config = state_data_existing.get("masking_config") or None
+            _discover_industry = store.get_compliance_profile(account_id).get("industry", "")
             count = discover_and_write(creds, db_type, schema_dir,
                                        allowed_tables=allowed_set,
                                        masking_config=_masking_config,
-                                       seed_key=account_id)
+                                       seed_key=account_id,
+                                       industry=_discover_industry)
             next_state = dict(state_data_existing)
             next_state["schema_dir"] = schema_dir
             # ── Schema drift detection ─────────────────────────────────────────

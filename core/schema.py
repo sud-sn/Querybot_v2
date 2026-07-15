@@ -130,6 +130,7 @@ def _apply_masking(
     table_name: str,
     seed_key: str = "",
     allow_unmasked: bool = False,
+    industry: str = "",
 ) -> tuple[list[dict], set[str], dict[str, str], bool]:
     """
     Centralised masking helper shared by all three DB backends.
@@ -176,7 +177,7 @@ def _apply_masking(
     elif mode == "selective":
         masked_fields = explicit_fields or set()
     else:  # "auto"
-        detected = detect_sensitive_columns(col_defs)
+        detected = detect_sensitive_columns(col_defs, industry=industry)
         masked_fields = set(detected.keys())
 
     # Fetch real rows
@@ -242,6 +243,7 @@ def _resolve_masking_fields(
     col_defs: list[dict],
     mode: str,
     explicit_fields: set[str],
+    industry: str = "",
 ) -> set[str]:
     """Return columns that must not expose raw values in samples or distinct lists."""
     from core.masking import detect_sensitive_columns
@@ -252,7 +254,7 @@ def _resolve_masking_fields(
         return {c["name"] for c in col_defs}
     if mode == "selective":
         return explicit_fields or set()
-    detected = detect_sensitive_columns(col_defs)
+    detected = detect_sensitive_columns(col_defs, industry=industry)
     return set(detected.keys())
 
 
@@ -273,6 +275,7 @@ def discover_and_write(
     allowed_tables: set[str] | None = None,
     masking_config: dict | None = None,
     seed_key: str = "",
+    industry: str = "",
 ) -> int:
     """
     Discover schema from the customer DB and write one .md file per table.
@@ -289,17 +292,23 @@ def discover_and_write(
     seed_key        — when non-empty, masking uses HMAC-based deterministic
                       pseudonyms so FK relationships are preserved across tables.
                       Pass account_id from the calling route.
+    industry        — client's compliance profile industry ("banking",
+                      "healthcare_pharmacy", or "" for standard). When set,
+                      "auto" mode masking also catches industry-specific
+                      categories (e.g. bare diagnosis/prescription columns)
+                      the generic PII patterns miss. Pass the compliance
+                      profile's industry from the calling route.
     """
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
     allowed  = {t.upper() for t in allowed_tables} if allowed_tables is not None else None
     mc       = {k.upper(): v for k, v in (masking_config or {}).items()}
     if db_type == "snowflake":
-        return _discover_snowflake(credentials, out, allowed, mc, seed_key=seed_key)
+        return _discover_snowflake(credentials, out, allowed, mc, seed_key=seed_key, industry=industry)
     elif db_type == "oracle":
-        return _discover_oracle(credentials, out, allowed, mc, seed_key=seed_key)
+        return _discover_oracle(credentials, out, allowed, mc, seed_key=seed_key, industry=industry)
     elif db_type == "azure_sql":
-        return _discover_azure_sql(credentials, out, allowed, mc, seed_key=seed_key)
+        return _discover_azure_sql(credentials, out, allowed, mc, seed_key=seed_key, industry=industry)
     else:
         raise ValueError(f"Unsupported db_type: {db_type!r}")
 
@@ -1360,7 +1369,7 @@ def _sf_distinct(cur, schema: str, name: str, col_name: str) -> list[str]:
         return []
 
 
-def _discover_snowflake(cfg: dict, out: Path, allowed: set[str] | None = None, mc: dict | None = None, seed_key: str = "") -> int:
+def _discover_snowflake(cfg: dict, out: Path, allowed: set[str] | None = None, mc: dict | None = None, seed_key: str = "", industry: str = "") -> int:
     import snowflake.connector
     conn = _sf_connect(cfg)
     master = {}
@@ -1422,7 +1431,7 @@ def _discover_snowflake(cfg: dict, out: Path, allowed: set[str] | None = None, m
 
             col_defs = [{"name": c["COLUMN_NAME"], "type": c["DATA_TYPE"]} for c in columns]
             _pre_masked_fields = _resolve_masking_fields(
-                col_defs, _mode, set(_tbl_cfg.get("masked_fields", []))
+                col_defs, _mode, set(_tbl_cfg.get("masked_fields", [])), industry=industry
             )
 
             # Distinct value scan (always for real-row tables)
@@ -1444,6 +1453,7 @@ def _discover_snowflake(cfg: dict, out: Path, allowed: set[str] | None = None, m
                 fetch_fn=lambda: _sf_fetch_sample(cur, _sf_schema, _sf_name),
                 col_defs=col_defs,
                 mode=_mode,
+                industry=industry,
                 explicit_fields=set(_tbl_cfg.get("masked_fields", [])),
                 table_name=name,
                 seed_key=seed_key,
@@ -1586,7 +1596,7 @@ def _ora_distinct(cur, owner: str, name: str, col_name: str) -> list[str]:
         return []
 
 
-def _discover_oracle(cfg: dict, out: Path, allowed: set[str] | None = None, mc: dict | None = None, seed_key: str = "") -> int:
+def _discover_oracle(cfg: dict, out: Path, allowed: set[str] | None = None, mc: dict | None = None, seed_key: str = "", industry: str = "") -> int:
     owner = (cfg.get("schema") or cfg["user"]).upper()
     conn  = _ora_connect(cfg)
     master = {}
@@ -1670,7 +1680,7 @@ def _discover_oracle(cfg: dict, out: Path, allowed: set[str] | None = None, mc: 
 
             col_defs = [{"name": c["COLUMN_NAME"], "type": c["DATA_TYPE"]} for c in columns]
             _pre_masked_fields = _resolve_masking_fields(
-                col_defs, _mode, set(_tbl_cfg.get("masked_fields", []))
+                col_defs, _mode, set(_tbl_cfg.get("masked_fields", [])), industry=industry
             )
 
             distinct_map = {}
@@ -1700,6 +1710,7 @@ def _discover_oracle(cfg: dict, out: Path, allowed: set[str] | None = None, mc: 
                 table_name=name,
                 seed_key=seed_key,
                 allow_unmasked=bool(_tbl_cfg.get("allow_unmasked_kb", False)),
+                industry=industry,
             )
 
             # Strip raw distinct values for masked columns
@@ -1858,7 +1869,7 @@ def _az_distinct(cur, schema: str, name: str, col_name: str) -> list[str]:
         return []
 
 
-def _discover_azure_sql(cfg: dict, out: Path, allowed: set[str] | None = None, mc: dict | None = None, seed_key: str = "") -> int:
+def _discover_azure_sql(cfg: dict, out: Path, allowed: set[str] | None = None, mc: dict | None = None, seed_key: str = "", industry: str = "") -> int:
     """
     Discover Azure SQL schema and write one .md per table.
 
@@ -1949,7 +1960,7 @@ def _discover_azure_sql(cfg: dict, out: Path, allowed: set[str] | None = None, m
                 col_defs = [{"name": c["COLUMN_NAME"], "type": c["DATA_TYPE"]}
                             for c in columns]
                 _pre_masked_fields = _resolve_masking_fields(
-                    col_defs, _mode, set(_tbl_cfg.get("masked_fields", []))
+                    col_defs, _mode, set(_tbl_cfg.get("masked_fields", [])), industry=industry
                 )
 
                 distinct_map: dict[str, list[str]] = {}
@@ -2037,6 +2048,7 @@ def _discover_azure_sql(cfg: dict, out: Path, allowed: set[str] | None = None, m
                     table_name=name,
                     seed_key=seed_key,
                     allow_unmasked=bool(_tbl_cfg.get("allow_unmasked_kb", False)),
+                    industry=industry,
                 )
 
                 # Strip raw distinct values for masked columns
