@@ -137,7 +137,7 @@ body { background: var(--bg); letter-spacing: 0; }
   background: #0F172A;
   border-right-color: #243247;
 }
-.portal-brand-mark { background: var(--primary); box-shadow: none; }
+.portal-brand-mark { background: transparent; box-shadow: none; }
 .portal-brand span span { color: #93C5FD; }
 .portal-nav a { min-height: 40px; border-radius: var(--radius-sm); }
 .portal-nav a:hover {
@@ -210,7 +210,7 @@ body:has(.chat-page) .main { background: var(--bg); }
 .schema-strip,
 .chat-composer { background: var(--surface); }
 .chat-shell-header { min-height: 58px; padding: 10px 16px; }
-.chat-shell-badge { background: var(--primary); box-shadow: none; }
+.chat-shell-badge { background: transparent; box-shadow: none; }
 .chat-thread {
   padding: 22px clamp(18px, 4vw, 64px);
   gap: 18px;

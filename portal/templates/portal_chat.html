@@ -39,7 +39,8 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .chat-shell{background:color-mix(in srgb,var(--surface) 94%, transparent);border:0;border-radius:0;box-shadow:none;overflow:hidden;flex:1;display:flex;flex-direction:column;min-height:0}
 .chat-shell-header{padding:.7rem .95rem;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:1rem;background:var(--surface);flex-shrink:0}
 .chat-shell-title{display:flex;align-items:center;gap:.75rem}
-.chat-shell-badge{width:34px;height:34px;border-radius:var(--radius);background:linear-gradient(135deg,var(--primary),var(--blue-soft));display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;box-shadow:var(--shadow)}
+.chat-shell-badge{width:34px;height:34px;border-radius:var(--radius);background:transparent;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;box-shadow:none;flex-shrink:0}
+.qb-logo-mark{width:100%;height:100%;display:block;filter:drop-shadow(0 3px 8px rgba(37,99,235,.35))}
 .chat-shell-title h2{font-size:15px;font-weight:800;color:var(--text);margin-bottom:3px}
 .chat-shell-title p{font-size:12px;color:var(--text-muted)}
 .status-wrap{display:flex;align-items:center;gap:.6rem;flex-wrap:wrap}
@@ -56,7 +57,7 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .msg-user{flex-direction:row-reverse}
 .msg-avatar{width:38px;height:38px;border-radius:var(--radius);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:800;flex-shrink:0;box-shadow:var(--shadow)}
 .msg-user .msg-avatar{background:linear-gradient(135deg,var(--primary),var(--blue-soft));color:#fff}
-.msg-bot .msg-avatar{background:var(--surface-2);color:var(--primary);border:1px solid var(--border)}
+.msg-bot .msg-avatar{background:transparent;color:var(--primary);border:none;box-shadow:none}
 .msg-content{max-width:min(78%,920px);display:flex;flex-direction:column;gap:.4rem}
 .msg-meta{display:flex;align-items:center;gap:.45rem;font-size:11px;color:var(--text-muted);padding:0 .15rem}.msg-user .msg-meta{justify-content:flex-end}
 .msg-name{font-weight:800;color:var(--text-soft)}
@@ -601,7 +602,7 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
   <section class="chat-shell">
     <div class="chat-shell-header">
       <div class="chat-shell-title">
-        <div class="chat-shell-badge">Q</div>
+        <div class="chat-shell-badge"><img src="/static/img/logo-mark.svg" alt="" class="qb-logo-mark"></div>
         <div>
           <h2>QueryBot live analyst</h2>
           <p>Interactive answers, chart previews, and direct pinning from chat.</p>
@@ -1203,7 +1204,7 @@ function appendBot(rawText, opts = {}){
   const diagnosticHtml = renderDiagnosticCard(rawText);
   const div = document.createElement('div');
   div.className = 'msg msg-bot';
-  div.innerHTML = `<div class="msg-avatar">Q</div><div class="msg-content"><div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timestamp}</span></div><div class="msg-bubble" data-raw="${encodeURIComponent(rawText)}">${formatBotText(rawText)}</div><div class="msg-actions"><button class="msg-action" type="button">Copy answer</button></div></div>`;
+  div.innerHTML = `<div class="msg-avatar"><img src="/static/img/logo-mark.svg" alt="" class="qb-logo-mark"></div><div class="msg-content"><div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timestamp}</span></div><div class="msg-bubble" data-raw="${encodeURIComponent(rawText)}">${formatBotText(rawText)}</div><div class="msg-actions"><button class="msg-action" type="button">Copy answer</button></div></div>`;
   if (diagnosticHtml) {
     const bubbleNode = div.querySelector('.msg-bubble');
     if (bubbleNode) bubbleNode.outerHTML = diagnosticHtml;
@@ -2668,7 +2669,7 @@ function appendAssistantResponse(msg, opts = {}){
   const div = document.createElement('div');
   div.className = 'msg msg-bot';
   div.innerHTML =
-    `<div class="msg-avatar">Q</div>
+    `<div class="msg-avatar"><img src="/static/img/logo-mark.svg" alt="" class="qb-logo-mark"></div>
     <div class="msg-content">
       <div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timestamp}</span></div>
       <div class="assistant-card">
@@ -2863,7 +2864,7 @@ function appendAnalysisResponse(msg, opts = {}){
   const bullets = Array.isArray(msg.bullets) ? msg.bullets : [];
   const resultScope = msg.result_scope || {};
   const metaHtml = resultScope.badge ? `<div class="analysis-meta">Based on: ${escHtml(resultScope.badge)}${resultScope.note ? ` • ${escHtml(resultScope.note)}` : ''}</div>` : '';
-  div.innerHTML = `<div class="msg-avatar">Q</div><div class="msg-content"><div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timestamp}</span></div><div class="analysis-card"><div class="section-label">${escHtml(msg.action || 'analysis')}</div><div class="analysis-title">${escHtml(msg.title || 'Analysis')}</div><div class="analysis-body">${escHtml(msg.body || '')}</div>${msg.secondary ? `<div class="analysis-secondary">${escHtml(msg.secondary)}</div>` : ''}${bullets.length ? `<ul class="analysis-list">${bullets.map(b => `<li>${escHtml(b)}</li>`).join('')}</ul>` : ''}${msg.next_step ? `<div class="analysis-next"><span class="analysis-next-label">Next step</span>${escHtml(msg.next_step)}</div>` : ''}<div class="msg-actions" style="margin-top:.85rem"><button class="msg-action" type="button" data-copy="analysis">Copy analysis</button></div></div></div>`;
+  div.innerHTML = `<div class="msg-avatar"><img src="/static/img/logo-mark.svg" alt="" class="qb-logo-mark"></div><div class="msg-content"><div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timestamp}</span></div><div class="analysis-card"><div class="section-label">${escHtml(msg.action || 'analysis')}</div><div class="analysis-title">${escHtml(msg.title || 'Analysis')}</div><div class="analysis-body">${escHtml(msg.body || '')}</div>${msg.secondary ? `<div class="analysis-secondary">${escHtml(msg.secondary)}</div>` : ''}${bullets.length ? `<ul class="analysis-list">${bullets.map(b => `<li>${escHtml(b)}</li>`).join('')}</ul>` : ''}${msg.next_step ? `<div class="analysis-next"><span class="analysis-next-label">Next step</span>${escHtml(msg.next_step)}</div>` : ''}<div class="msg-actions" style="margin-top:.85rem"><button class="msg-action" type="button" data-copy="analysis">Copy analysis</button></div></div></div>`;
   thread().appendChild(div);
   if (metaHtml) {
     div.querySelector('.analysis-body')?.insertAdjacentHTML('afterend', metaHtml);
@@ -2888,7 +2889,7 @@ function appendChart(payload, opts = {}){
   const div = document.createElement('div');
   div.className = 'msg msg-bot';
   const _chartTitle = escHtml(payload.title || payload.question || 'Chart result');
-  div.innerHTML = `<div class="msg-avatar">Q</div><div class="msg-content"><div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timestamp}</span></div><div class="chart-card"><div class="chart-header"><div><div class="chart-title">${_chartTitle}</div><div class="chart-subtitle">${rows.length} rows · ${escHtml(payload.duration_label || '')}</div></div><div class="chart-toolbar"><button type="button" class="chart-btn" data-action="pin">📌 Pin to dashboard</button><button type="button" class="chart-btn" data-action="copy">Copy summary</button><button type="button" class="chart-btn" data-action="expand" title="Expand chart" style="padding:5px 8px">⛶</button></div></div><div id="${chartId}" class="chart-canvas"></div>${renderChartWarnings(payload)}<div class="chart-footer"><span>${escHtml(payload.question || '')}</span><span>${escHtml((payload.chart_type || 'chart').toUpperCase())}</span></div></div></div>`;
+  div.innerHTML = `<div class="msg-avatar"><img src="/static/img/logo-mark.svg" alt="" class="qb-logo-mark"></div><div class="msg-content"><div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timestamp}</span></div><div class="chart-card"><div class="chart-header"><div><div class="chart-title">${_chartTitle}</div><div class="chart-subtitle">${rows.length} rows · ${escHtml(payload.duration_label || '')}</div></div><div class="chart-toolbar"><button type="button" class="chart-btn" data-action="pin">📌 Pin to dashboard</button><button type="button" class="chart-btn" data-action="copy">Copy summary</button><button type="button" class="chart-btn" data-action="expand" title="Expand chart" style="padding:5px 8px">⛶</button></div></div><div id="${chartId}" class="chart-canvas"></div>${renderChartWarnings(payload)}<div class="chart-footer"><span>${escHtml(payload.question || '')}</span><span>${escHtml((payload.chart_type || 'chart').toUpperCase())}</span></div></div></div>`;
   thread().appendChild(div);
   const [pinBtn, copyBtn, expandBtn] = div.querySelectorAll('.chart-btn');
   if (!payload.pin_token) {
@@ -2955,7 +2956,7 @@ function renderClarificationPrompt(data, opts = {}){
   div.className = 'msg msg-bot';
   const question = data.question || 'Please choose one option so I can continue.';
   const options = Array.isArray(data.options) ? data.options : [];
-  div.innerHTML = `<div class="msg-avatar">Q</div><div class="msg-content"><div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timestamp}</span></div><div class="clarification-card"><div class="clarification-question">${escHtml(question)}</div><div class="clarification-options"></div></div></div>`;
+  div.innerHTML = `<div class="msg-avatar"><img src="/static/img/logo-mark.svg" alt="" class="qb-logo-mark"></div><div class="msg-content"><div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timestamp}</span></div><div class="clarification-card"><div class="clarification-question">${escHtml(question)}</div><div class="clarification-options"></div></div></div>`;
   const wrap = div.querySelector('.clarification-options');
   options.forEach((opt) => {
     const btn = document.createElement('button');
