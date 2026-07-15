@@ -205,6 +205,47 @@
   </div>
 </div>
 
+<!-- Optional step: regulated industry profile -->
+<div class="setup-step">
+  <div class="step-head">
+    <div class="step-num {% if compliance_profile.mode == 'regulated' %}done{% endif %}">
+      {% if compliance_profile.mode == 'regulated' %}✓{% else %}{{ ic('lock', 14) }}{% endif %}
+    </div>
+    <div>
+      <div class="step-title">Regulated industry (optional)</div>
+      <div style="font-size:12px;color:var(--text-muted)">
+        Picking Banking or Healthcare here auto-classifies columns the moment schema discovery finishes — no separate trip to Compliance needed
+      </div>
+    </div>
+    {% if compliance_profile.mode == 'regulated' %}
+    <span style="margin-left:auto;font-size:12px;color:var(--blue);font-weight:700">
+      {{ compliance_profile.industry|replace('_',' ')|title }}
+    </span>
+    {% endif %}
+  </div>
+  <div class="step-body">
+    <form method="post" action="/admin/clients/{{ client.account_id }}/compliance/profile">
+      <input type="hidden" name="next" value="setup">
+      <div class="profile-grid" style="display:grid;grid-template-columns:repeat(3,minmax(200px,1fr));gap:.75rem">
+        <label class="profile-card" style="display:block;border:1px solid var(--border);border-radius:var(--radius);padding:.85rem;cursor:pointer">
+          <input type="radio" name="industry" value="standard" {% if compliance_profile.industry != 'banking' and compliance_profile.industry != 'healthcare_pharmacy' %}checked{% endif %}>
+          <strong> Standard</strong><p style="font-size:12px;margin:.25rem 0 0">No regulated default-deny controls.</p>
+        </label>
+        <label class="profile-card" style="display:block;border:1px solid var(--border);border-radius:var(--radius);padding:.85rem;cursor:pointer">
+          <input type="radio" name="industry" value="banking" {% if compliance_profile.industry == 'banking' %}checked{% endif %}>
+          <strong> Banking &amp; Financial</strong><p style="font-size:12px;margin:.25rem 0 0">PII, PCI, KYC/AML, financial-data controls.</p>
+        </label>
+        <label class="profile-card" style="display:block;border:1px solid var(--border);border-radius:var(--radius);padding:.85rem;cursor:pointer">
+          <input type="radio" name="industry" value="healthcare_pharmacy" {% if compliance_profile.industry == 'healthcare_pharmacy' %}checked{% endif %}>
+          <strong> Healthcare &amp; Pharmacy</strong><p style="font-size:12px;margin:.25rem 0 0">PHI, prescription, compounding, payment controls.</p>
+        </label>
+      </div>
+      <button class="btn btn-secondary btn-sm" type="submit" style="margin-top:.85rem">Save industry profile</button>
+      <a href="/admin/clients/{{ client.account_id }}/compliance" class="btn btn-secondary btn-sm" style="margin-top:.85rem">Full compliance setup →</a>
+    </form>
+  </div>
+</div>
+
 <!-- Step 2: KB table scope -->
 <div class="setup-step">
   <div class="step-head">

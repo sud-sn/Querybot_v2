@@ -2578,12 +2578,13 @@ async def compliance_page(request: Request, account_id: str):
     client = store.get_client(account_id)
     if not client:
         return RedirectResponse("/admin/clients", status_code=303)
-    from core.compliance.packs import list_packs
+    from core.compliance.packs import list_packs, get_pack
 
     profile = store.get_compliance_profile(account_id)
     return _resp(request, "client_compliance.html", {
         "client": client,
         "profile": profile,
+        "pack": get_pack(profile.get("policy_pack_key", "")),
         "packs": list_packs(),
         "classifications": store.list_classifications(account_id),
         "rules": store.list_policy_rules(
@@ -2609,6 +2610,14 @@ async def compliance_save_profile(request: Request, account_id: str):
         raise HTTPException(status_code=401)
     form = await request.form()
     industry = str(form.get("industry") or "standard")
+    # When submitted from the onboarding wizard's industry step, land the
+    # admin back on /setup instead of navigating them away to /compliance.
+    next_page = str(form.get("next") or "")
+    redirect_base = (
+        f"/admin/clients/{account_id}/setup"
+        if next_page == "setup"
+        else f"/admin/clients/{account_id}/compliance"
+    )
     pack_key = {
         "banking": "banking_v1",
         "healthcare_pharmacy": "healthcare_pharmacy_v1",
@@ -2621,7 +2630,7 @@ async def compliance_save_profile(request: Request, account_id: str):
             enforcement_mode="shadow",
         )
         return RedirectResponse(
-            f"/admin/clients/{account_id}/compliance?saved=standard", status_code=303
+            f"{redirect_base}?saved=standard", status_code=303
         )
 
     from core.compliance.classifier import (
@@ -2657,7 +2666,7 @@ async def compliance_save_profile(request: Request, account_id: str):
     )
     import_legacy_masking(account_id, state_data.get("masking_config") or {})
     return RedirectResponse(
-        f"/admin/clients/{account_id}/compliance?saved=profile", status_code=303
+        f"{redirect_base}?saved=profile", status_code=303
     )
 
 
@@ -5878,10 +5887,16 @@ async def client_setup_page(request: Request, account_id: str):
     # Schema drift — populated after re-discovery when columns/tables changed
     schema_drift = state_data.get("schema_drift") or {}
 
+    # Regulated-industry profile — surfaced as an early onboarding step so
+    # classification import can auto-fire the moment discovery finishes,
+    # regardless of whether the admin picks it before or after discovery.
+    compliance_profile = store.get_compliance_profile(account_id)
+
     return _resp(request, "client_setup.html", {
         "client":               client,
         "state":                state,
         "db_cfg":               db_cfg,
+        "compliance_profile":   compliance_profile,
         "schema_files":         schema_files,
         "kb_files":             kb_files,
         "kb_tables":            kb_tables,
@@ -6715,6 +6730,27 @@ async def admin_discover_schema(
                          count, len(allowed_set), account_id)
             else:
                 log.info("Admin schema discovery: %d tables for %s (all tables)", count, account_id)
+            # ── Auto-import compliance classifications ───────────────────────
+            # Catches the onboarding case: an admin who picked a regulated
+            # industry BEFORE running discovery gets classifications the
+            # moment _schema.json exists, without a second manual trip to
+            # the Compliance page. Safely idempotent — import_schema_
+            # classifications skips any column already classified, so this
+            # is a no-op if the industry was instead picked afterward via
+            # compliance_save_profile (which already imports inline).
+            try:
+                _compliance_profile = store.get_compliance_profile(account_id)
+                if _compliance_profile.get("mode") == "regulated":
+                    from core.compliance.classifier import import_schema_classifications
+                    _n_classified = import_schema_classifications(
+                        account_id, schema_dir, _compliance_profile.get("industry", "")
+                    )
+                    log.info(
+                        "Auto-imported %d schema classifications for %s (%s)",
+                        _n_classified, account_id, _compliance_profile.get("industry"),
+                    )
+            except Exception as _cls_exc:
+                log.warning("Auto classification import skipped for %s: %s", account_id, _cls_exc)
             # ── Egress log (discovery) ───────────────────────────────────────
             # schema.json now carries fields_sent, row_count_sent, synthetic_used,
             # synthetic_override — written by _discover_* functions.

@@ -27,6 +27,12 @@
 .assessment-row{display:grid;grid-template-columns:110px 100px 1fr;gap:.6rem;padding:.65rem 0;border-bottom:1px solid var(--border);font-size:12px}
 .sim-output{white-space:pre-wrap;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius);padding:1rem;min-height:120px;font-family:monospace;font-size:12px}
 .sticky-actions{position:sticky;bottom:0;background:var(--surface);border-top:1px solid var(--border);padding:.75rem 0;display:flex;gap:.5rem}
+.readiness-checklist{display:flex;flex-wrap:wrap;gap:.5rem;margin-bottom:1rem}
+.check-pill{display:inline-flex;align-items:center;gap:.4rem;padding:.4rem .7rem;border-radius:999px;font-size:11px;font-weight:700;border:1px solid var(--border);background:none;cursor:pointer;color:var(--text)}
+.check-pill.done{border-color:color-mix(in srgb,var(--green) 45%,transparent);background:var(--green-light);color:var(--green)}
+.check-pill.pending{border-color:color-mix(in srgb,var(--amber) 45%,transparent);background:var(--amber-light);color:var(--amber)}
+.check-pill.tier-production{opacity:.85}
+.check-pill .check-num{font-size:9px;opacity:.75}
 @media(max-width:900px){.stat-grid,.profile-grid,.split{grid-template-columns:1fr 1fr}}
 @media(max-width:640px){.compliance-head,.stat-grid,.profile-grid,.split{display:block}.stat,.profile-card{margin-bottom:.65rem}.classification-wrap{overflow:auto}.assessment-row{grid-template-columns:80px 75px minmax(180px,1fr)}}
 </style>
@@ -39,6 +45,38 @@
 </div>
 {% if saved %}<div class="alert alert-success">Compliance configuration updated: {{ saved }}.</div>{% endif %}
 {% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+
+{# ── Ordered readiness checklist ──────────────────────────────────────────
+   Mirrors readiness.py:assess()'s exact criteria and order, computed here
+   from data already in the template context so it's always live without
+   writing a new assessment_run row on every page view (only the explicit
+   "Run assessment" button below does that). #}
+{% set _c1_profile = profile.policy_pack_key or profile.mode == 'standard' %}
+{% set _c2_classified = classifications|length == 0 or classifications|selectattr('reviewed','equalto',0)|list|length == 0 %}
+{% set _c3_policy = (profile.active_policy_version or 0) > 0 and rules|length > 0 %}
+{% set _c4_purposes = purposes|length > 0 %}
+{% set _agreement_required = pack.provider_agreement_tags|length > 0 if pack.provider_agreement_tags is defined else false %}
+{% set _c5_agreement = (not _agreement_required) or agreements|length > 0 %}
+{% set _c6_identity = profile.identity_control in ['mfa','oidc','entra'] %}
+{% set _c7_secrets = profile.managed_secrets_enabled %}
+{% set _c8_audit = profile.immutable_audit_enabled and profile.external_audit_destination %}
+{% set _criticals_met = _c1_profile and _c2_classified and _c3_policy and _c4_purposes and _c5_agreement %}
+<div class="readiness-checklist">
+  {% for num, ok, label, panel in [
+    (1, _c1_profile, 'Industry profile', 'profile'),
+    (2, _c2_classified, 'Classifications reviewed', 'classification'),
+    (3, _c3_policy, 'Active policy', 'policies'),
+    (4, _c4_purposes, 'Purposes configured', 'purposes'),
+    (5, _c5_agreement, 'Provider agreement', 'egress'),
+    (6, _c6_identity, 'Identity MFA/SSO', 'egress'),
+    (7, _c7_secrets, 'Managed secrets', 'egress'),
+    (8, _c8_audit, 'Immutable audit', 'egress'),
+  ] %}
+  <button type="button" class="check-pill {{ 'done' if ok else 'pending' }}{{ ' tier-production' if num >= 6 else '' }}" data-panel="{{ panel }}" title="{{ 'Production-tier control' if num >= 6 else 'Required to activate' }}">
+    <span class="check-num">{{ num }}</span>{{ '✓' if ok else '○' }} {{ label }}
+  </button>
+  {% endfor %}
+</div>
 
 <div class="stat-grid">
   <div class="stat"><strong>{{ classifications|length }}</strong><span>classified columns</span></div>
@@ -163,7 +201,7 @@
 <section class="compliance-panel" id="panel-readiness">
   <div class="card"><div class="card-header"><h2>Readiness assessment</h2></div><div class="card-body">
     {% if assessment %}{% for item in assessment.results %}<div class="assessment-row"><span class="tag">{{ item.severity }}</span><strong style="color:{% if item.status == 'pass' %}#15803d{% else %}#b91c1c{% endif %}">{{ item.status|upper }}</strong><div>{{ item.message }}{% if item.status == 'fail' %}<br><span style="color:var(--text-muted)">{{ item.remediation }}</span>{% endif %}</div></div>{% endfor %}{% else %}<p>No assessment has been run.</p>{% endif %}
-    <div class="sticky-actions"><form method="post" action="/admin/clients/{{ client.account_id }}/compliance/assess"><button class="btn btn-secondary">Run assessment</button></form><form method="post" action="/admin/clients/{{ client.account_id }}/compliance/activate"><button class="btn btn-primary">Activate regulated enforcement</button></form></div>
+    <div class="sticky-actions"><form method="post" action="/admin/clients/{{ client.account_id }}/compliance/assess"><button class="btn btn-secondary">Run assessment</button></form><form method="post" action="/admin/clients/{{ client.account_id }}/compliance/activate"><button class="btn btn-primary" {% if not _criticals_met %}disabled title="Complete industry profile, classification review, policy, purposes, and provider agreement (if required) first — see the checklist above"{% endif %}>Activate regulated enforcement</button></form></div>
     <p style="font-size:11px;color:var(--text-muted)">Password-only VM tenants can reach PILOT_READY. REGULATED_READY requires MFA/SSO, managed secrets and immutable external audit storage.</p>
   </div></div>
 </section>
