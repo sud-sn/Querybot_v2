@@ -44,6 +44,7 @@
 })();
 </script>
 {% block head %}{% endblock %}
+<link rel="stylesheet" href="/static/css/production.css?v=20260715-1">
 </head>
 <body>
 
@@ -95,6 +96,13 @@
         <span class="portal-brand-mark">Q</span>
         <span>Query<span>Bot</span></span>
       </a>
+      <div class="portal-mobile-actions">
+        <button type="button" class="theme-toggle btn btn-secondary btn-sm" data-theme-toggle onclick="window.__qbToggleTheme()">
+          <span class="ti-moon">{{ ic("moon", 16) }}</span>
+          <span class="ti-sun">{{ ic("sun", 16) }}</span>
+        </button>
+        <a href="/portal/change-password" class="icon-btn" aria-label="Settings" title="Settings">{{ ic("settings", 16) }}</a>
+      </div>
     </header>
     <nav class="portal-bottom-nav" aria-label="Mobile navigation">
       <a href="/portal/dashboard" class="{% if 'dashboard' in request.url.path %}active{% endif %}">

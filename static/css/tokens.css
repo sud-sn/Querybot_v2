@@ -25,38 +25,38 @@
   --line-relaxed: 1.7;
 
   /* ── Radii ── */
-  --radius:    8px;
-  --radius-sm: 6px;
-  --radius-lg: 10px;
+  --radius:    7px;
+  --radius-sm: 5px;
+  --radius-lg: 9px;
   --radius-pill: 999px;
 
   /* ── Shadows ── */
-  --shadow:    0 1px 2px rgba(15,23,42,.05),  0 8px 22px rgba(15,23,42,.06);
-  --shadow-md: 0 16px 34px rgba(15,23,42,.09), 0 6px 14px rgba(15,23,42,.05);
-  --shadow-lg: 0 24px 48px rgba(15,23,42,.12), 0 10px 18px rgba(15,23,42,.06);
+  --shadow:    0 1px 2px rgba(15,23,42,.045);
+  --shadow-md: 0 8px 20px rgba(15,23,42,.075), 0 1px 3px rgba(15,23,42,.05);
+  --shadow-lg: 0 18px 40px rgba(15,23,42,.12), 0 3px 10px rgba(15,23,42,.06);
 
   /* ── Indigo scale (brand) ── */
-  --teal-900: #171E2E;   /* sidebar bg — deep ink          */
-  --teal-800: #232B3E;   /* sidebar border                 */
-  --teal-700: #4338CA;   /* primary hover / deep indigo    */
-  --teal-600: #4F46E5;   /* primary brand indigo           */
-  --teal-500: #6366F1;   /* mid indigo                     */
-  --teal-400: #818CF8;   /* light indigo — sidebar active  */
-  --teal-300: #A5B4FC;   /* sidebar active indicator       */
-  --teal-200: #C7D2FE;
-  --teal-100: #E0E7FF;
-  --teal-50:  #EEF2FF;
+  --teal-900: #0F172A;   /* legacy alias: navigation ink   */
+  --teal-800: #1E293B;   /* legacy alias: navigation edge  */
+  --teal-700: #1D4ED8;   /* legacy alias: primary hover    */
+  --teal-600: #2563EB;   /* legacy alias: primary blue     */
+  --teal-500: #3B82F6;
+  --teal-400: #60A5FA;
+  --teal-300: #93C5FD;
+  --teal-200: #BFDBFE;
+  --teal-100: #DBEAFE;
+  --teal-50:  #EFF6FF;
 
   /* ── Primary (brand aliases — used everywhere) ── */
-  --blue:       #4F46E5;   /* sidebar active, links          */
-  --blue-mid:   #4338CA;   /* hover deepening                */
-  --blue-soft:  #6366F1;   /* accent / avatar gradient       */
-  --blue-light: #EEF2FF;   /* chip backgrounds               */
+  --blue:       #2563EB;   /* sidebar active, links          */
+  --blue-mid:   #1D4ED8;   /* hover deepening                */
+  --blue-soft:  #3B82F6;   /* accent                         */
+  --blue-light: #EFF6FF;   /* chip backgrounds               */
 
   /* Portal aliases */
-  --primary:       #4F46E5;
-  --primary-hover: #4338CA;
-  --primary-soft:  #EEF2FF;
+  --primary:       #2563EB;
+  --primary-hover: #1D4ED8;
+  --primary-soft:  #EFF6FF;
 
   /* ── Semantic colours (role badges, status) ── */
   --green:        #059669;  --green-light:  #D1FAE5;
@@ -69,16 +69,16 @@
 
   /* ── Backgrounds (neutral slate/blue tint) ── */
   --navy:      #0F172A;
-  --bg:        #F8FAFC;
+  --bg:        #F6F8FB;
   --bg-soft:   #F1F5F9;
   --bg-muted:  #E2E8F0;
   --surface:   #FFFFFF;
   --surface-2: #F8FAFC;
-  --surface-3: #EEF2FF;
+  --surface-3: #EAF0F7;
 
   /* ── Borders ── */
-  --border:        #D8E0EA;
-  --border-strong: #94A3B8;
+  --border:        #DCE3EC;
+  --border-strong: #A8B4C3;
 
   /* ── Gray scale (slate-based, neutral) ── */
   --gray-50:  #F8FAFC;
@@ -100,7 +100,7 @@
   /* ── Misc ── */
   --code-bg:   #0F172A;
   --code-text: #E2E8F0;
-  --row-hover: #EFF6FF;
+  --row-hover: #F1F6FD;
 
   /* ── Z-index scale (single source of truth for stacking) ── */
   --z-base:     1;
@@ -117,7 +117,7 @@
   --t-slow:   .35s;
 
   /* ── Focus ring (single source of truth) ── */
-  --focus-ring: 0 0 0 3px color-mix(in srgb, var(--primary) 28%, transparent);
+  --focus-ring: 0 0 0 3px color-mix(in srgb, var(--primary) 22%, transparent);
 
   /* ── Skeleton shimmer surfaces ── */
   --skeleton-base:  color-mix(in srgb, var(--bg-muted) 70%, var(--surface));
@@ -152,13 +152,13 @@ body[data-theme='dark'] {
   --text-muted: #94A3B8;
 
   /* lighter indigo in dark */
-  --blue:       #818CF8;
-  --blue-mid:   #6366F1;
-  --blue-soft:  #818CF8;
-  --blue-light: rgba(129,140,248,.16);
-  --primary:       #818CF8;
-  --primary-hover: #6366F1;
-  --primary-soft:  rgba(129,140,248,.16);
+  --blue:       #60A5FA;
+  --blue-mid:   #3B82F6;
+  --blue-soft:  #60A5FA;
+  --blue-light: rgba(96,165,250,.15);
+  --primary:       #60A5FA;
+  --primary-hover: #3B82F6;
+  --primary-soft:  rgba(96,165,250,.15);
 
   --green:   #34D399;  --green-light:  rgba(16,185,129,.14);
   --red:     #F87171;  --red-light:    rgba(248,113,113,.14);
