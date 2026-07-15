@@ -1,9 +1,11 @@
 {% extends "portal_base.html" %}
 {% from "macros.html" import breadcrumb %}
+{% from "icons.html" import ic %}
 {% block title %}Chat — QueryBot{% endblock %}
 {% block breadcrumb %}{% endblock %}
 {% block head %}
 <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<link rel="stylesheet" href="/static/css/chat_workspace.css?v=20260715-1">
 <style>
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap');
 /* Full-viewport constraints — chat page only */
@@ -531,6 +533,71 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
     <button class="hero-dismiss-btn" id="heroDismissBtn" title="Hide hero panel" aria-label="Dismiss hero panel" onclick="_collapseHero()">×</button>
   </section>
 
+  <div class="chat-workspace">
+    <aside class="chat-conversation-rail" id="chatConversationRail" aria-label="Conversation history and workspace navigation">
+      <div class="chat-rail-heading">
+        <div>
+          <span class="chat-rail-eyebrow">Workspace</span>
+          <h2>Chats</h2>
+        </div>
+        <button type="button" class="chat-rail-icon-btn" onclick="refreshHistory()" title="Refresh recent queries" aria-label="Refresh recent queries">
+          <span aria-hidden="true">&#8635;</span>
+        </button>
+      </div>
+
+      <div class="chat-rail-context">
+        <span class="portal-brand-mark" aria-hidden="true">Q</span>
+        <div>
+          <strong>{{ client.client_name or 'Your workspace' }}</strong>
+          <span>Live data analyst</span>
+        </div>
+      </div>
+
+      <div class="history-panel" id="historyPanel" aria-label="Recent query history" role="complementary">
+        <div class="hp-header">
+          <span class="hp-title">Recent queries</span>
+          <button type="button" class="hp-close" onclick="toggleHistoryPanel()" aria-label="Close history panel">&times;</button>
+        </div>
+        <div class="hp-search-wrap">
+          {{ ic("search", 16, "hp-search-icon") }}
+          <input type="text" id="historySearch" class="hp-search-input"
+                 placeholder="Search chats..." autocomplete="off" spellcheck="false"
+                 oninput="filterHistory(this.value)">
+          <button type="button" id="historySearchClear" class="hp-search-clear" style="display:none"
+                  onclick="document.getElementById('historySearch').value='';filterHistory('');this.style.display='none'">&times;</button>
+        </div>
+        <div class="hp-list" id="historyList">
+          <div class="hp-empty" id="historyEmpty">Loading recent queries...</div>
+        </div>
+      </div>
+
+      <nav class="chat-rail-nav" aria-label="Workspace navigation">
+        <a href="/portal/dashboard">{{ ic("dashboard", 17) }} <span>Dashboard</span></a>
+        <a href="/portal/kb">{{ ic("database", 17) }} <span>Semantic Layer</span></a>
+      </nav>
+
+      <div class="chat-rail-utility">
+        <button type="button" data-theme-toggle onclick="window.__qbToggleTheme()">
+          <span class="ti-moon">{{ ic("moon", 16) }}</span>
+          <span class="ti-sun">{{ ic("sun", 16) }}</span>
+          <span class="theme-label">Dark mode</span>
+        </button>
+        <a href="/portal/logout">Logout</a>
+      </div>
+
+      <div class="chat-rail-account">
+        <div class="avatar" aria-hidden="true">{{ (user.name or 'U')[0].upper() }}</div>
+        <div class="chat-rail-account-copy">
+          <strong>{{ user.name }}</strong>
+          <span>{{ user.group_name or 'No group' }} &middot; {{ user.role }}</span>
+        </div>
+        <a href="/portal/change-password" class="chat-rail-icon-btn" aria-label="Settings" title="Settings">{{ ic("settings", 16) }}</a>
+      </div>
+    </aside>
+
+    <button type="button" class="chat-rail-backdrop" onclick="toggleHistoryPanel()" aria-label="Close chat history"></button>
+
+    <main class="chat-workspace-main">
   <section class="chat-shell">
     <div class="chat-shell-header">
       <div class="chat-shell-title">
@@ -551,25 +618,6 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
           </svg>
           History
         </button>
-      </div>
-    </div>
-
-    <!-- ── Query history side panel ── -->
-    <div class="history-panel" id="historyPanel" aria-label="Query history" role="complementary">
-      <div class="hp-header">
-        <span class="hp-title">Recent queries</span>
-        <button type="button" class="hp-close" onclick="toggleHistoryPanel()" aria-label="Close history panel">✕</button>
-      </div>
-      <div class="hp-search-wrap">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="hp-search-icon" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-        <input type="text" id="historySearch" class="hp-search-input"
-               placeholder="Search history…" autocomplete="off" spellcheck="false"
-               oninput="filterHistory(this.value)">
-        <button type="button" id="historySearchClear" class="hp-search-clear" style="display:none"
-                onclick="document.getElementById('historySearch').value='';filterHistory('');this.style.display='none'">✕</button>
-      </div>
-      <div class="hp-list" id="historyList">
-        <div class="hp-empty" id="historyEmpty">Loading…</div>
       </div>
     </div>
 
@@ -794,6 +842,8 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
       </div>
     </div>
   </section>
+    </main>
+  </div>
 </div>
 <div class="toast" id="toast"></div>
 
@@ -3621,12 +3671,21 @@ let _historyLoaded = false;
 function toggleHistoryPanel() {
   const panel = document.getElementById('historyPanel');
   const btn   = document.getElementById('historyToggleBtn');
+  const page  = document.querySelector('.chat-page');
   if (!panel) return;
   const opening = !panel.classList.contains('open');
   panel.classList.toggle('open', opening);
+  page && page.classList.toggle('history-open', opening);
   btn && btn.classList.toggle('active', opening);
   btn && btn.setAttribute('aria-expanded', opening ? 'true' : 'false');
   if (opening && !_historyLoaded) loadHistory();
+}
+
+function refreshHistory() {
+  const listEl = document.getElementById('historyList');
+  if (listEl) listEl.innerHTML = '<div class="hp-empty" id="historyEmpty">Refreshing recent queries...</div>';
+  _historyLoaded = false;
+  loadHistory();
 }
 
 async function loadHistory() {
@@ -3666,7 +3725,7 @@ async function loadHistory() {
 function sendHistoryQuestion(question) {
   const decoded = question.replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"');
   if (!decoded || !wsReady) { toast('Live session not ready'); return; }
-  toggleHistoryPanel();
+  if (window.matchMedia('(max-width: 900px)').matches) toggleHistoryPanel();
   const inp = document.getElementById('input');
   if (inp) { inp.value = decoded; inp.dispatchEvent(new Event('input')); }
   setTimeout(() => sendMessage(), 80);
@@ -3898,6 +3957,13 @@ document.addEventListener('DOMContentLoaded', () => {
   // Restore conversation history badge on page load
   _localHistory = _loadStoredHistory();
   _updateMemoryBadge();
+  loadHistory();
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && window.matchMedia('(max-width: 900px)').matches) {
+      const panel = document.getElementById('historyPanel');
+      if (panel && panel.classList.contains('open')) toggleHistoryPanel();
+    }
+  });
   window.addEventListener('qb-query-limit-status', (event) => updateQueryLimitKpi(event.detail, {toast:false}));
   const inp = document.getElementById('input');
   inp.addEventListener('input', () => { inp.style.height = 'auto'; inp.style.height = Math.min(inp.scrollHeight, 140) + 'px'; updateCharCount(); });

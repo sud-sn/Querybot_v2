@@ -39,3 +39,17 @@ def test_production_layer_contains_mobile_and_reduced_motion_guards():
     assert "@media (max-width: 640px)" in stylesheet
     assert "@media (prefers-reduced-motion: reduce)" in stylesheet
     assert "scrollWidth" not in stylesheet
+
+
+def test_chat_uses_persistent_workspace_rail_and_responsive_drawer():
+    template = _read("portal/templates/portal_chat.html")
+    stylesheet = _read("static/css/chat_workspace.css")
+
+    assert "chat_workspace.css" in template
+    assert 'class="chat-conversation-rail"' in template
+    assert 'class="chat-workspace-main"' in template
+    assert 'id="historyPanel"' in template
+    assert "loadHistory();" in template
+    assert "grid-template-columns: 300px minmax(0, 1fr)" in stylesheet
+    assert "@media (max-width: 900px)" in stylesheet
+    assert "transform: translateX(-101%)" in stylesheet
