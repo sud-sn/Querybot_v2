@@ -86,7 +86,7 @@
 </div>
 
 <div class="compliance-nav" role="tablist">
-  {% for id,label in [('profile','Profile'),('classification','Classification'),('policies','Policies'),('purposes','Purposes'),('egress','AI & Egress'),('simulator','Simulator'),('readiness','Readiness'),('history','History'),('emergency','Break-glass')] %}
+  {% for id,label in [('profile','Profile'),('classification','Classification'),('policies','Policies'),('purposes','Purposes'),('egress','AI & Egress'),('simulator','Simulator'),('readiness','Readiness'),('trust','Trust evidence'),('history','History'),('emergency','Break-glass')] %}
   <button class="btn btn-secondary btn-sm" type="button" data-panel="{{ id }}">{{ label }}</button>
   {% endfor %}
 </div>
@@ -208,6 +208,106 @@
     {% if assessment %}{% for item in assessment.results %}<div class="assessment-row"><span class="tag">{{ item.severity }}</span><strong style="color:{% if item.status == 'pass' %}#15803d{% else %}#b91c1c{% endif %}">{{ item.status|upper }}</strong><div>{{ item.message }}{% if item.status == 'fail' %}<br><span style="color:var(--text-muted)">{{ item.remediation }}</span>{% endif %}</div></div>{% endfor %}{% else %}<p>No assessment has been run.</p>{% endif %}
     <div class="sticky-actions"><form method="post" action="/admin/clients/{{ client.account_id }}/compliance/assess"><button class="btn btn-secondary">Run assessment</button></form><form method="post" action="/admin/clients/{{ client.account_id }}/compliance/activate"><button class="btn btn-primary" {% if not _criticals_met %}disabled title="Complete industry profile, classification review, policy, purposes, and provider agreement (if required) first — see the checklist above"{% endif %}>Activate regulated enforcement</button></form></div>
     <p style="font-size:11px;color:var(--text-muted)">Password-only VM tenants can reach PILOT_READY. REGULATED_READY requires MFA/SSO, managed secrets and immutable external audit storage.</p>
+  </div></div>
+</section>
+
+<section class="compliance-panel" id="panel-trust">
+  {% set _is_regulated = profile.mode == 'regulated' %}
+  {% set _has_baa = agreements|length > 0 %}
+  {% set _enforcing = profile.enforcement_mode == 'enforce' %}
+
+  <div class="card"><div class="card-header"><h2>Trust evidence — what the AI model can and cannot see</h2></div><div class="card-body">
+    <p style="font-size:12px;color:var(--text-muted);margin-top:0">
+      Live evidence from this workspace's own audit logs (last {{ trust.window_days }} days).
+      For regulated workspaces the AI model's only job is writing SQL — features that would send
+      result data to the model are refused before any prompt is built, and each refusal is recorded.
+      {% if not llm_audit_enabled %}
+      <strong style="color:var(--red)">LLM audit logging is currently disabled for this client — the counts below
+      only cover periods when it was enabled. Enable it in Settings for continuous evidence.</strong>
+      {% endif %}
+    </p>
+
+    <div class="stat-grid" style="margin-bottom:.75rem">
+      <div class="stat">
+        <strong style="color:{% if trust.result_llm_success == 0 %}#15803d{% else %}#b91c1c{% endif %}">{{ trust.result_llm_success }}</strong>
+        <span>result-carrying LLM calls sent{% if _is_regulated %} (must be 0){% endif %}</span>
+      </div>
+      <div class="stat"><strong>{{ trust.blocked }}</strong><span>refusals recorded (proof the boundary fired)</span></div>
+      <div class="stat"><strong>{{ trust.total }}</strong><span>LLM calls audited</span></div>
+      <div class="stat"><strong>{{ decision_counts.allowed + decision_counts.denied }}</strong><span>policy decisions evaluated</span></div>
+    </div>
+
+    {% if _is_regulated and trust.result_llm_success > 0 %}
+    <div class="alert" style="background:var(--red-light);color:var(--red);padding:.6rem .8rem;border-radius:6px;font-size:12px;margin-bottom:.75rem">
+      ⚠ {{ trust.result_llm_success }} result-derived LLM call(s) succeeded in this window. For a regulated
+      workspace this should be impossible on current code — these are most likely calls from before the
+      regulated profile (or the boundary) was applied. Review them in the
+      <a href="/admin/clients/{{ client.account_id }}?audit_component=analysis">LLM audit log</a>.
+    </div>
+    {% endif %}
+
+    <table class="classification-table" style="margin-bottom:.5rem">
+      <thead><tr><th>Control</th><th>Status</th><th>Evidence</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>Result-analysis features (explain / why / compare / narration / suggestions)</td>
+          <td>{% if _is_regulated %}<span class="tag" style="background:var(--green-light);color:var(--green)">Hard-blocked</span>{% else %}<span class="tag">Standard (allowed)</span>{% endif %}</td>
+          <td style="font-size:12px">{{ trust.result_llm_blocked }} refusal record(s) —
+            <a href="/admin/clients/{{ client.account_id }}?audit_status=blocked">view BLOCKED rows</a>
+            {% if trust.last_blocked_at %}· last: {{ trust.last_blocked_at }}{% endif %}</td>
+        </tr>
+        <tr>
+          <td>KB sample rows sent to the model</td>
+          <td>
+            {% if egress_summary.real_sample_count > 0 %}
+            <span class="tag" style="background:var(--red-light);color:var(--red)">{{ egress_summary.real_sample_count }} table(s) sent REAL rows</span>
+            {% else %}
+            <span class="tag" style="background:var(--green-light);color:var(--green)">Masked / synthetic only</span>
+            {% endif %}
+          </td>
+          <td style="font-size:12px">{{ egress_summary.masked_sample_count }} masked · {{ egress_summary.synthetic_sample_count }} synthetic
+            {% if egress_summary.last_discovery_at %}· last discovery {{ egress_summary.last_discovery_at }}{% endif %}
+            — per-table receipts on the <a href="/admin/clients/{{ client.account_id }}/setup">Setup page</a></td>
+        </tr>
+        <tr>
+          <td>SQL-generation prompts (schema + masked samples only)</td>
+          <td><span class="tag">{{ trust.success }} audited call(s)</span></td>
+          <td style="font-size:12px">Each stored with a sanitized preview + SHA-256 payload hash —
+            <a href="/admin/clients/{{ client.account_id }}">LLM audit log</a></td>
+        </tr>
+        <tr>
+          <td>Policy decision log</td>
+          <td><span class="tag">{{ decision_counts.allowed }} allowed · {{ decision_counts.denied }} denied</span></td>
+          <td style="font-size:12px">Hash-chained records (each entry signs the previous) — History tab</td>
+        </tr>
+        <tr>
+          <td>Enforcement mode</td>
+          <td>
+            {% if _enforcing %}
+            <span class="tag" style="background:var(--green-light);color:var(--green)">Enforce — denials block</span>
+            {% else %}
+            <span class="tag" style="background:#fef3c7;color:#92400e">Shadow — logging only, not blocking</span>
+            {% endif %}
+          </td>
+          <td style="font-size:12px">{% if not _enforcing and _is_regulated %}Complete the readiness checklist, then activate on the Readiness tab.{% else %}Readiness tab{% endif %}</td>
+        </tr>
+        <tr>
+          <td>Provider agreement (BAA)</td>
+          <td>
+            {% if _has_baa %}
+            <span class="tag" style="background:var(--green-light);color:var(--green)">On file</span>
+            {% else %}
+            <span class="tag" style="background:#fef3c7;color:#92400e">Not recorded</span>
+            {% endif %}
+          </td>
+          <td style="font-size:12px">{% if not _has_baa %}Record it under AI &amp; Egress — required before activation.{% else %}AI &amp; Egress tab{% endif %}</td>
+        </tr>
+      </tbody>
+    </table>
+    <p style="font-size:11px;color:var(--text-muted)">
+      These counters are technical control evidence, not a regulatory certification. Evidence covers
+      LLM calls made while audit logging was enabled; the KB egress log and policy decision log are always on.
+    </p>
   </div></div>
 </section>
 

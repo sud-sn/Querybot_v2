@@ -347,7 +347,17 @@ def _default_regulated_rules(pack: dict) -> list[dict]:
                 "mask_strategy": "redact",
                 "mandatory": tag in prohibited_llm,
             })
-        for action in ("query_execution", "result_release", "chart", "alert", "cache_read"):
+        # llm_context MUST be in this catch-all list: every discovered column
+        # gets a classification row (most with tags=[]), and the per-tag
+        # llm_context rules above only match tagged resources. Without a
+        # catch-all llm_context allow, an untagged column has NO matching
+        # rule for that action and evaluate() denies by default — which under
+        # enforcement_mode="enforce" blocked EVERY question, not just PHI
+        # ones. Tagged resources still hit their per-tag mask/deny rules
+        # first (list order decides precedence in evaluate()), and the
+        # BAA/prohibited-tag hard checks run before rules entirely.
+        for action in ("query_execution", "result_release", "chart", "alert",
+                       "cache_read", "llm_context"):
             rules.append({
                 "name": f"{role}: {action} internal data",
                 "subject_type": "role", "subject_id": role,
@@ -2668,6 +2678,10 @@ async def compliance_page(request: Request, account_id: str):
         "versions": store.list_policy_versions(account_id),
         "decisions": store.list_decisions(account_id, limit=30),
         "users": store.list_users(account_id),
+        "trust": store.get_llm_trust_summary(account_id, days=30),
+        "decision_counts": store.get_policy_decision_counts(account_id, days=30),
+        "egress_summary": store.get_kb_egress_summary(account_id),
+        "llm_audit_enabled": bool(client.get("enable_llm_audit")),
         "saved": request.query_params.get("saved"),
         "error": request.query_params.get("error"),
     })

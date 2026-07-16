@@ -345,25 +345,19 @@ class DuckdbCacheBaaRecheckPolicyTests(unittest.TestCase):
             decision = policy_engine.evaluate(context, analysis.resources, record=False)
         self.assertTrue(decision.effective_allowed)
 
-    def test_KNOWN_GAP_untagged_resource_denies_llm_context_in_enforce_mode(self):
+    def test_untagged_resource_allows_llm_context_in_enforce_mode(self):
         """
-        Documents a pre-existing gap found while building this re-check, NOT
-        introduced by it: _default_regulated_rules' catch-all "*" rules cover
+        Regression guard for the (fixed) llm_context rule gap:
+        _default_regulated_rules' catch-all "*" rules previously covered
         query_execution/result_release/chart/alert/cache_read but NOT
         llm_context. A resource with zero classification tags (the common
         case — every column gets a classification row at discovery, most
-        with tags=[]) has no matching llm_context rule at all, so it denies
-        by default (no allow_rule found -> denied=True) once mode=regulated
-        AND enforcement_mode=enforce.
-
-        This affects the EXISTING primary llm_context check identically
-        (scoped_resources there is built the same way, from every
-        classification_map entry in the effective tables, tagged or not),
-        not just this new duckdb_cache re-check. Every regulated client
-        observed this session had enforcement_mode="shadow" — under shadow,
-        effective_allowed = allowed OR shadow = True regardless, which is
-        almost certainly why this hasn't been noticed yet. Flagged here as
-        a known finding for a separate fix, not addressed by this change.
+        with tags=[]) had no matching llm_context rule at all, so it denied
+        by default once mode=regulated AND enforcement_mode=enforce —
+        blocking EVERY question, not just PHI ones. The catch-all now
+        includes llm_context; tagged resources still hit their per-tag
+        mask/deny rules first (list order), and the BAA/prohibited-tag
+        hard checks run before rules entirely.
         """
         from unittest.mock import patch
         from core.compliance import policy_engine
@@ -390,7 +384,75 @@ class DuckdbCacheBaaRecheckPolicyTests(unittest.TestCase):
             decision = policy_engine.evaluate(
                 context, [ResourceRef(table="RX.SALES", column="WAREHOUSE_CODE")], record=False,
             )
-        self.assertFalse(decision.effective_allowed, decision.reason_code)
+        self.assertTrue(decision.effective_allowed, decision.reason_code)
+        self.assertNotIn("RX.SALES.WAREHOUSE_CODE", decision.masking)
+
+    def test_phi_tagged_resource_llm_context_still_masked_not_plain_allowed(self):
+        # The new catch-all llm_context allow must NOT override the per-tag
+        # mask rule for tagged resources — per-tag rules come first in list
+        # order, so evaluate() picks the mask rule.
+        from unittest.mock import patch
+        from core.compliance import policy_engine
+        from core.compliance.models import PolicyContext, ResourceRef
+
+        pack, rules = self._rules()
+        context = PolicyContext(
+            account_id="acct-rx", user_id="1", role="analyst",
+            purpose_id="patient_care", action="llm_context", policy_version=1,
+        )
+        profile = {
+            "mode": "regulated", "policy_pack_key": "healthcare_pharmacy_v1",
+            "active_policy_version": 1, "enforcement_mode": "enforce",
+        }
+        with (
+            patch.object(policy_engine.store, "get_compliance_profile", return_value=profile),
+            patch.object(
+                policy_engine.store, "get_classification_map",
+                return_value={"RX.SALES.PATIENT_NAME": {"tags": ["PHI", "PII"], "sensitivity": "RESTRICTED"}},
+            ),
+            patch.object(policy_engine.store, "list_policy_rules", return_value=rules),
+            patch.object(policy_engine.store, "list_purposes", return_value=[]),
+            patch.object(policy_engine.store, "provider_agreement_valid", return_value=True),
+        ):
+            decision = policy_engine.evaluate(
+                context, [ResourceRef(table="RX.SALES", column="PATIENT_NAME")], record=False,
+            )
+        self.assertTrue(decision.effective_allowed)
+        self.assertIn("RX.SALES.PATIENT_NAME", decision.masking)
+
+    def test_prohibited_tag_llm_context_still_hard_denied(self):
+        # Banking's PCI is in prohibited_llm_tags — the hard check runs
+        # before rules, so the catch-all allow can never reopen it.
+        from unittest.mock import patch
+        from admin.routes import _default_regulated_rules
+        from core.compliance import policy_engine
+        from core.compliance.models import PolicyContext, ResourceRef
+        from core.compliance.packs import get_pack
+
+        pack = get_pack("banking_v1")
+        rules = _default_regulated_rules(pack)
+        context = PolicyContext(
+            account_id="acct-bank", user_id="1", role="analyst",
+            purpose_id="customer_service", action="llm_context", policy_version=1,
+        )
+        profile = {
+            "mode": "regulated", "policy_pack_key": "banking_v1",
+            "active_policy_version": 1, "enforcement_mode": "enforce",
+        }
+        with (
+            patch.object(policy_engine.store, "get_compliance_profile", return_value=profile),
+            patch.object(
+                policy_engine.store, "get_classification_map",
+                return_value={"DBO.CARDS.PAN": {"tags": ["PCI"], "sensitivity": "RESTRICTED"}},
+            ),
+            patch.object(policy_engine.store, "list_policy_rules", return_value=rules),
+            patch.object(policy_engine.store, "list_purposes", return_value=[]),
+        ):
+            decision = policy_engine.evaluate(
+                context, [ResourceRef(table="DBO.CARDS", column="PAN")], record=False,
+            )
+        self.assertFalse(decision.effective_allowed)
+        self.assertEqual(decision.reason_code, "prohibited_llm_data")
 
 
 class DuckdbCacheReCheckWiringTests(unittest.TestCase):

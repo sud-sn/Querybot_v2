@@ -802,6 +802,61 @@ def get_recent_llm_calls(
     return result[:limit]
 
 
+# Components whose prompts carry result-derived content (built FROM returned
+# rows / result statistics, not just schema + question text). For regulated
+# tenants every one of these is hard-blocked before any prompt is built —
+# see core.compliance.policy_engine.result_llm_features_allowed — so their
+# success count is the Trust Evidence panel's headline attestation number
+# (it must be 0 for the window).
+RESULT_LLM_COMPONENTS: tuple[str, ...] = (
+    "analysis", "analysis_narrative", "drilldown_planner", "diagnose",
+    "compare_prior", "result_narration", "followup_suggestions",
+)
+
+
+def get_llm_trust_summary(account_id: str, days: int = 30) -> dict:
+    """
+    Aggregate llm_call_log rows into the evidence counts shown on the
+    compliance Trust panel. Only covers calls made while the client's
+    LLM-audit toggle was enabled — the panel states that scope explicitly.
+    """
+    from datetime import timedelta
+    cutoff = (
+        datetime.now(timezone.utc) - timedelta(days=int(days))
+    ).strftime("%Y-%m-%d %H:%M:%S")
+    placeholders = ",".join("?" * len(RESULT_LLM_COMPONENTS))
+    with get_db() as conn:
+        status_rows = conn.execute(
+            "SELECT status, COUNT(*) AS n FROM llm_call_log "
+            "WHERE account_id=? AND created_at >= ? GROUP BY status",
+            (account_id, cutoff),
+        ).fetchall()
+        result_rows = conn.execute(
+            f"SELECT status, COUNT(*) AS n FROM llm_call_log "
+            f"WHERE account_id=? AND created_at >= ? "
+            f"AND component IN ({placeholders}) GROUP BY status",
+            (account_id, cutoff, *RESULT_LLM_COMPONENTS),
+        ).fetchall()
+        last_blocked = conn.execute(
+            "SELECT created_at FROM llm_call_log "
+            "WHERE account_id=? AND status='blocked' "
+            "ORDER BY created_at DESC, id DESC LIMIT 1",
+            (account_id,),
+        ).fetchone()
+    by_status = {row["status"]: row["n"] for row in status_rows}
+    result_by_status = {row["status"]: row["n"] for row in result_rows}
+    return {
+        "window_days": int(days),
+        "total": sum(by_status.values()),
+        "success": by_status.get("success", 0),
+        "error": by_status.get("error", 0),
+        "blocked": by_status.get("blocked", 0),
+        "result_llm_success": result_by_status.get("success", 0),
+        "result_llm_blocked": result_by_status.get("blocked", 0),
+        "last_blocked_at": last_blocked["created_at"] if last_blocked else "",
+    }
+
+
 def purge_old_llm_calls(retention_days: int = 30) -> int:
     """
     Delete llm_call_log rows older than retention_days. Returns the number

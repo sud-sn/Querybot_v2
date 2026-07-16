@@ -26,6 +26,7 @@ from store.config_store import (
     log_query, get_query_stats, get_recent_queries, get_monthly_breakdown,
     get_suggestions,
     log_llm_call, get_recent_llm_calls, purge_old_llm_calls,
+    get_llm_trust_summary, RESULT_LLM_COMPONENTS,
 )
 from store.user_store import (
     create_group, list_groups, get_group, update_group, delete_group,
@@ -72,6 +73,7 @@ from store.compliance_store import (
     list_purposes, replace_purposes,
     provider_agreement_valid, save_provider_agreement, list_provider_agreements,
     log_policy_decision, list_decisions, log_export_event,
+    get_policy_decision_counts,
     create_break_glass_grant, get_active_break_glass_grant,
     get_active_break_glass_for_user,
     save_assessment, get_latest_assessment,
@@ -100,6 +102,7 @@ __all__ = [
     "log_query","get_query_stats","get_recent_queries","get_monthly_breakdown",
     "get_suggestions",
     "log_llm_call","get_recent_llm_calls","purge_old_llm_calls",
+    "get_llm_trust_summary","RESULT_LLM_COMPONENTS",
     "create_group","list_groups","get_group","update_group","delete_group",
     "set_group_tables","get_group_tables",
     "create_user","get_user","get_user_by_email","get_user_by_zoom_id",
@@ -135,6 +138,7 @@ __all__ = [
     "list_purposes","replace_purposes",
     "provider_agreement_valid","save_provider_agreement","list_provider_agreements",
     "log_policy_decision","list_decisions","log_export_event",
+    "get_policy_decision_counts",
     "create_break_glass_grant","get_active_break_glass_grant",
     "get_active_break_glass_for_user",
     "save_assessment","get_latest_assessment",

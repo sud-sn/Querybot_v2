@@ -506,6 +506,26 @@ def log_policy_decision(
     return audit_id
 
 
+def get_policy_decision_counts(account_id: str, days: int = 30) -> dict:
+    """Allowed/denied decision counts for the compliance Trust panel window."""
+    from datetime import datetime, timedelta, timezone
+    cutoff = (
+        datetime.now(timezone.utc) - timedelta(days=int(days))
+    ).strftime("%Y-%m-%d %H:%M:%S")
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT allowed, COUNT(*) AS n FROM policy_decision_log "
+            "WHERE account_id=? AND created_at >= ? GROUP BY allowed",
+            (account_id, cutoff),
+        ).fetchall()
+    counts = {int(row["allowed"]): row["n"] for row in rows}
+    return {
+        "window_days": int(days),
+        "allowed": counts.get(1, 0),
+        "denied": counts.get(0, 0),
+    }
+
+
 def list_decisions(account_id: str, limit: int = 100) -> list[dict]:
     with get_db() as conn:
         rows = conn.execute(
