@@ -302,15 +302,24 @@ def _default_regulated_rules(pack: dict) -> list[dict]:
     for role in ("admin", "analyst"):
         for tag in pack.get("classification_tags", []):
             for action in ("query_execution", "result_release"):
-                rules.append({
+                rule = {
                     "name": f"{role}: {action} {tag}",
                     "subject_type": "role", "subject_id": role,
                     "resource_type": "classification", "resource_pattern": tag,
                     "action": action,
                     "effect": "mask" if tag in sensitive else "allow",
-                    "mask_strategy": "partial" if tag in {"FINANCIAL", "PAYMENT"} else "redact",
                     "cache_ttl_seconds": int(pack.get("default_cache_ttl_seconds") or 0),
-                })
+                }
+                # mask_strategy must only be set on rules that actually mask —
+                # policy_engine.evaluate() treats ANY truthy mask_strategy as a
+                # signal to redact the value, even on an "allow" rule. Setting
+                # it unconditionally here caused every classification_tags tag
+                # (e.g. PAYMENT for healthcare, which isn't in sensitive_tags
+                # and was meant to render as effect="allow") to be masked
+                # anyway.
+                if tag in sensitive:
+                    rule["mask_strategy"] = "partial" if tag in {"FINANCIAL", "PAYMENT"} else "redact"
+                rules.append(rule)
             rules.append({
                 "name": f"{role}: aggregate charts for {tag}",
                 "subject_type": "role", "subject_id": role,

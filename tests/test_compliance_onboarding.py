@@ -215,5 +215,125 @@ class TemplateContextWiringTests(unittest.TestCase):
         self.assertIn("_criticals_met", preceding)
 
 
+class DefaultRegulatedRulesMaskStrategyTests(unittest.TestCase):
+    """_default_regulated_rules — mask_strategy must only be set on rules
+    that actually mask. policy_engine.evaluate() treats ANY truthy
+    mask_strategy as a signal to redact, even on an effect="allow" rule —
+    setting it unconditionally masked every classification tag regardless
+    of whether the pack's sensitive_tags actually called for it (e.g.
+    PAYMENT for healthcare_pharmacy_v1, which isn't in sensitive_tags and
+    was meant to render as effect="allow")."""
+
+    def _rules_by_tag_action(self, rules, tag, action, role="analyst"):
+        return next(
+            r for r in rules
+            if r["resource_pattern"] == tag and r["action"] == action and r["subject_id"] == role
+        )
+
+    def test_non_sensitive_tag_gets_allow_without_mask_strategy(self):
+        from admin.routes import _default_regulated_rules
+        from core.compliance.packs import get_pack
+
+        pack = get_pack("healthcare_pharmacy_v1")
+        self.assertNotIn("PAYMENT", pack["sensitive_tags"])
+        rules = _default_regulated_rules(pack)
+        rule = self._rules_by_tag_action(rules, "PAYMENT", "query_execution")
+        self.assertEqual(rule["effect"], "allow")
+        self.assertNotIn("mask_strategy", rule)
+
+    def test_sensitive_tag_still_gets_mask_and_strategy(self):
+        from admin.routes import _default_regulated_rules
+        from core.compliance.packs import get_pack
+
+        pack = get_pack("healthcare_pharmacy_v1")
+        self.assertIn("PHI", pack["sensitive_tags"])
+        rules = _default_regulated_rules(pack)
+        rule = self._rules_by_tag_action(rules, "PHI", "query_execution")
+        self.assertEqual(rule["effect"], "mask")
+        self.assertEqual(rule["mask_strategy"], "redact")
+
+    def test_sensitive_financial_tag_keeps_partial_strategy(self):
+        from admin.routes import _default_regulated_rules
+        from core.compliance.packs import get_pack
+
+        pack = get_pack("banking_v1")
+        self.assertIn("PCI", pack["sensitive_tags"])
+        rules = _default_regulated_rules(pack)
+        rule = self._rules_by_tag_action(rules, "PCI", "query_execution")
+        self.assertEqual(rule["effect"], "mask")
+        self.assertEqual(rule["mask_strategy"], "redact")
+
+    def _evaluate(self, *, purpose_id, resources, classifications, pack, rules):
+        from unittest.mock import patch
+        from core.compliance import policy_engine
+        from core.compliance.models import PolicyContext
+
+        profile = {
+            "mode": "regulated", "policy_pack_key": pack["key"],
+            "active_policy_version": 1, "enforcement_mode": "enforce",
+        }
+        context = PolicyContext(
+            account_id="rx-a", user_id="1", role="analyst",
+            purpose_id=purpose_id, action="query_execution", policy_version=1,
+        )
+        with (
+            patch.object(policy_engine.store, "get_compliance_profile", return_value=profile),
+            patch.object(policy_engine.store, "get_classification_map", return_value=classifications),
+            patch.object(policy_engine.store, "list_policy_rules", return_value=rules),
+            patch.object(policy_engine.store, "list_purposes", return_value=[]),
+        ):
+            return policy_engine.evaluate(context, resources, record=False)
+
+    def test_end_to_end_non_sensitive_column_renders_unmasked(self):
+        # Full evaluate() + protect_rows() pass for a healthcare_pharmacy_v1
+        # tenant: a PAYMENT-tagged column, under the purpose that actually
+        # grants access to it, comes back with its real value — not masked.
+        from admin.routes import _default_regulated_rules
+        from core.compliance.models import ResourceRef
+        from core.compliance.packs import get_pack
+        from core.compliance.result_guard import protect_rows
+
+        pack = get_pack("healthcare_pharmacy_v1")
+        rules = _default_regulated_rules(pack)
+        decision = self._evaluate(
+            purpose_id="pharmacy_operations",
+            resources=[ResourceRef("RX.PHARMACY", "SALES_AMOUNT")],
+            classifications={"RX.PHARMACY.SALES_AMOUNT": {"tags": ["PAYMENT"], "sensitivity": "CONFIDENTIAL"}},
+            pack=pack, rules=rules,
+        )
+        self.assertTrue(decision.allowed)
+        self.assertEqual(decision.masking, {})
+
+        rows = [{"sales_amt": 4567.89}]
+        lineage = {"sales_amt": ["RX.PHARMACY.SALES_AMOUNT"]}
+        protected = protect_rows(rows, decision, lineage, account_id="rx-a")
+        self.assertEqual(protected[0]["sales_amt"], 4567.89)
+
+    def test_end_to_end_sensitive_column_still_masked(self):
+        # Same pack/pipeline, but a PHI-tagged column under the purpose
+        # that grants PHI access still comes back redacted — the fix must
+        # not weaken masking for genuinely sensitive tags.
+        from admin.routes import _default_regulated_rules
+        from core.compliance.models import ResourceRef
+        from core.compliance.packs import get_pack
+        from core.compliance.result_guard import protect_rows
+
+        pack = get_pack("healthcare_pharmacy_v1")
+        rules = _default_regulated_rules(pack)
+        decision = self._evaluate(
+            purpose_id="patient_care",
+            resources=[ResourceRef("RX.PHARMACY", "PRESCRIBER_NAME")],
+            classifications={"RX.PHARMACY.PRESCRIBER_NAME": {"tags": ["PHI"], "sensitivity": "RESTRICTED"}},
+            pack=pack, rules=rules,
+        )
+        self.assertTrue(decision.allowed)
+        self.assertIn("RX.PHARMACY.PRESCRIBER_NAME", decision.masking)
+
+        rows = [{"prescriber": "Dr. Jane Smith"}]
+        lineage = {"prescriber": ["RX.PHARMACY.PRESCRIBER_NAME"]}
+        protected = protect_rows(rows, decision, lineage, account_id="rx-a")
+        self.assertEqual(protected[0]["prescriber"], "[REDACTED]")
+
+
 if __name__ == "__main__":
     unittest.main()
