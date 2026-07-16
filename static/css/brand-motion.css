@@ -1,0 +1,204 @@
+/* QueryBot brand motion -----------------------------------------------------
+   One restrained motion language for authentication, long-running work, and
+   chat generation. The component is static at rest and motion-safe by design.
+*/
+.qb-brand-motion {
+  --qb-mark-size: 32px;
+  --qb-mark-primary: #2563eb;
+  --qb-mark-secondary: #6d28d9;
+  --qb-mark-accent: #bfdbfe;
+  --qb-mark-status: var(--qb-mark-primary);
+  display: inline-flex;
+  align-items: center;
+  gap: .65rem;
+  min-width: 0;
+  color: var(--text, #0f172a);
+}
+
+.qb-brand-motion--xs { --qb-mark-size: 22px; }
+.qb-brand-motion--sm { --qb-mark-size: 28px; }
+.qb-brand-motion--md { --qb-mark-size: 36px; }
+.qb-brand-motion--lg { --qb-mark-size: 60px; }
+
+.qb-brand-motion__mark {
+  width: var(--qb-mark-size);
+  height: var(--qb-mark-size);
+  display: block;
+  flex: 0 0 var(--qb-mark-size);
+  overflow: visible;
+  filter: drop-shadow(0 5px 12px rgba(37, 99, 235, .2));
+}
+
+.qb-brand-motion__ring,
+.qb-brand-motion__tail,
+.qb-brand-motion__data {
+  vector-effect: non-scaling-stroke;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.qb-brand-motion__ring {
+  fill: none;
+  stroke: #fff;
+  stroke-width: 3.25;
+  stroke-linecap: round;
+  stroke-dasharray: 54.1;
+  stroke-dashoffset: 0;
+}
+
+.qb-brand-motion__tail {
+  fill: none;
+  stroke: #fff;
+  stroke-width: 3.25;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.qb-brand-motion__data {
+  fill: none;
+  stroke: #dbeafe;
+  stroke-width: 1.35;
+  stroke-linecap: round;
+  opacity: .9;
+}
+
+.qb-brand-motion__spark {
+  fill: var(--qb-mark-accent);
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.qb-brand-motion__label {
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.35;
+  color: var(--text-muted, #64748b);
+}
+
+.qb-brand-motion__subtext {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-muted, #64748b);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+/* Loading states use semantic parts of the mark instead of spinning the
+   entire logo. The Q stays recognisable throughout the operation. */
+.qb-brand-motion[data-state="loading"] .qb-brand-motion__ring,
+.qb-brand-motion[data-state="thinking"] .qb-brand-motion__ring,
+.qb-brand-motion[data-state="resolving"] .qb-brand-motion__ring,
+.qb-brand-motion[data-state="querying"] .qb-brand-motion__ring,
+.qb-brand-motion[data-state="answering"] .qb-brand-motion__ring {
+  stroke-dasharray: 14 5;
+  animation: qb-brand-ring 1.65s linear infinite;
+}
+
+.qb-brand-motion[data-state="thinking"] .qb-brand-motion__tail,
+.qb-brand-motion[data-state="resolving"] .qb-brand-motion__tail {
+  animation: qb-brand-tail 1.15s ease-in-out infinite;
+}
+
+.qb-brand-motion[data-state="querying"] .qb-brand-motion__ring {
+  animation-duration: .85s;
+}
+
+.qb-brand-motion[data-state="answering"] .qb-brand-motion__spark {
+  animation: qb-brand-spark 1.1s ease-in-out infinite;
+}
+
+.qb-brand-motion[data-state="success"] {
+  --qb-mark-status: #059669;
+}
+.qb-brand-motion[data-state="success"] .qb-brand-motion__spark {
+  animation: qb-brand-success .7s cubic-bezier(.22, .8, .26, 1) 1;
+}
+
+.qb-brand-motion[data-state="error"] {
+  --qb-mark-primary: #dc2626;
+  --qb-mark-secondary: #991b1b;
+  --qb-mark-accent: #fecaca;
+}
+.qb-brand-motion[data-state="error"] .qb-brand-motion__ring {
+  animation: qb-brand-error .7s ease-out 1;
+}
+
+.qb-brand-motion.qb-brand-motion--intro .qb-brand-motion__mark {
+  animation: qb-brand-enter .48s cubic-bezier(.22, .8, .26, 1) both;
+}
+.qb-brand-motion.qb-brand-motion--intro .qb-brand-motion__spark {
+  animation: qb-brand-success .55s .24s cubic-bezier(.22, .8, .26, 1) both;
+}
+
+.qb-brand-loader-block {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 96px;
+  padding: 1.25rem;
+  color: var(--text-muted, #64748b);
+  text-align: center;
+}
+.qb-brand-loader-block .qb-brand-motion { margin-inline: auto; }
+
+/* Compact chat-composer placement. */
+.ai-indicator.qb-brand-motion {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  transform: translateY(-50%);
+  z-index: 3;
+  animation: none !important;
+  transition: opacity .2s ease, transform .2s ease;
+}
+.ai-indicator.qb-brand-motion .qb-brand-motion__mark {
+  width: 22px;
+  height: 22px;
+  flex-basis: 22px;
+}
+.ai-indicator.qb-brand-motion.ai-focus { transform: translateY(-50%) scale(1.04); }
+.ai-indicator.qb-brand-motion.ai-hidden { opacity: 0; pointer-events: none; }
+
+@keyframes qb-brand-ring {
+  to { stroke-dashoffset: -38; }
+}
+@keyframes qb-brand-tail {
+  0%, 100% { transform: translate(0, 0); opacity: .72; }
+  50% { transform: translate(1.2px, 1.2px); opacity: 1; }
+}
+@keyframes qb-brand-spark {
+  0%, 100% { transform: scale(.78); opacity: .55; }
+  50% { transform: scale(1.1); opacity: 1; }
+}
+@keyframes qb-brand-success {
+  0% { transform: scale(.35) rotate(-18deg); opacity: 0; }
+  70% { transform: scale(1.18) rotate(4deg); opacity: 1; }
+  100% { transform: scale(1) rotate(0); opacity: 1; }
+}
+@keyframes qb-brand-error {
+  0% { stroke: #fff; filter: drop-shadow(0 0 0 rgba(220, 38, 38, 0)); }
+  45% { stroke: #fecaca; filter: drop-shadow(0 0 4px rgba(220, 38, 38, .72)); }
+  100% { stroke: #fff; filter: drop-shadow(0 0 0 rgba(220, 38, 38, 0)); }
+}
+@keyframes qb-brand-enter {
+  from { opacity: 0; transform: translateY(7px) scale(.92); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+html[data-theme="dark"] .qb-brand-motion {
+  --qb-mark-primary: #3b82f6;
+  --qb-mark-secondary: #7c3aed;
+  --qb-mark-accent: #dbeafe;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .qb-brand-motion,
+  .qb-brand-motion * {
+    animation: none !important;
+    transition: none !important;
+  }
+}

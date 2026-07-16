@@ -1,17 +1,22 @@
 {% extends "portal_base.html" %}
 {% from "macros.html" import alert %}
+{% from "macros.html" import brand_motion %}
 {% from "icons.html" import ic %}
 {% block title %}Sign In — QueryBot Portal{% endblock %}
 {% block content %}
 <div class="login-shell">
-
-  <div class="login-brand">Query<span>Bot</span></div>
-  <p class="login-tagline">Sign in to your analytics portal</p>
+  <div class="login-brand-identity">
+    {{ brand_motion('portal-auth', 'error' if error else 'idle', 'lg', root_id='portalAuthMark', extra_class='qb-brand-motion--intro') }}
+    <div>
+      <div class="login-brand">Query<span>Bot</span></div>
+      <p class="login-tagline">Secure data intelligence workspace</p>
+    </div>
+  </div>
 
   <div class="card">
     <div class="card-body login-card-body">
       {% if error %}{{ alert(error, 'error', 'x-circle') }}{% endif %}
-      <form method="post" action="/portal/login" data-loading>
+      <form method="post" action="/portal/login" data-loading data-brand-loading data-brand-target="portalAuthMark">
         <div class="form-group">
           <label for="login-account">Account ID</label>
           <input id="login-account" type="text" name="account_id" autofocus required
@@ -42,9 +47,10 @@
 
 <style>
 .login-shell{max-width:400px;margin:4rem auto}
+.login-brand-identity{display:flex;align-items:center;justify-content:center;gap:14px;margin-bottom:1.6rem}
 .login-brand{font-size:36px;font-weight:900;color:var(--navy);letter-spacing:-.03em;text-align:center;margin-bottom:.35rem}
 .login-brand span{color:var(--blue)}
-.login-tagline{color:var(--text-muted);text-align:center;font-size:14px;margin-bottom:2rem}
+.login-tagline{color:var(--text-muted);text-align:left;font-size:12px;margin:0;line-height:1.45}
 .login-card-body{padding:1.75rem}
 .login-mono-input{font-family:'JetBrains Mono','Cascadia Code',monospace;letter-spacing:.02em;font-size:13px}
 .login-submit{width:100%;justify-content:center;padding:10px;margin-top:.25rem}

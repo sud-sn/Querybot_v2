@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "macros.html" import breadcrumb %}
+{% from "macros.html" import breadcrumb, brand_motion %}
 {% from "icons.html" import ic %}
 {% block title %}Databases — QueryBot Admin{% endblock %}
 {% block breadcrumb %}
@@ -180,7 +180,9 @@
           </div>
         </div>
         <div id="db-scope-status" class="scope-status"></div>
-        <div id="db-scope-loading" style="display:none;padding:1rem;font-size:12px;color:var(--text-muted)">Connecting to database...</div>
+        <div id="db-scope-loading" class="qb-brand-loader-block" style="display:none">
+          {{ brand_motion('database-scope-loader', 'loading', 'sm', 'Connecting to database', status=true) }}
+        </div>
         <div id="db-scope-tree" class="scope-tree"></div>
         <div id="db-scope-footer" class="scope-footer">
           <strong id="db-scope-count" style="color:var(--blue)"></strong>

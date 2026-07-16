@@ -1,13 +1,16 @@
 {% extends "base.html" %}
 {% from "icons.html" import ic %}
+{% from "macros.html" import brand_motion %}
 {% block title %}Login — QueryBot Admin{% endblock %}
 {% block auth_content %}
 <div class="auth-card-wrap">
-  <div class="auth-brand">
-    <span class="auth-brand-mark">Q</span>
-    <span class="auth-brand-name">Query<span>Bot</span></span>
+  <div class="auth-brand-identity">
+    {{ brand_motion('admin-auth', 'error' if error else 'idle', 'lg', root_id='adminAuthMark', extra_class='qb-brand-motion--intro') }}
+    <div>
+      <div class="auth-brand-name">Query<span>Bot</span></div>
+      <div class="auth-brand-sub">Secure administration workspace</div>
+    </div>
   </div>
-  <p class="auth-brand-sub">Admin Console</p>
 
   <div class="card auth-card">
     <div class="card-header"><h2>{{ ic("lock", 14) }} Sign in to continue</h2></div>
@@ -19,7 +22,7 @@
       </div>
       {% endif %}
 
-      <form method="post" action="/admin/login" id="loginForm">
+      <form method="post" action="/admin/login" id="loginForm" data-brand-loading data-brand-target="adminAuthMark">
         <div class="form-group">
           <label for="password">Admin password</label>
           <div class="input-reveal-wrap">
@@ -65,6 +68,13 @@ function togglePwd(btn){
   justify-content: center;
   margin-bottom: 4px;
 }
+.auth-brand-identity {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  margin-bottom: 1.5rem;
+}
 .auth-brand-mark {
   width: 38px;
   height: 38px;
@@ -86,13 +96,12 @@ function togglePwd(btn){
 }
 .auth-brand-name span { color: var(--primary); }
 .auth-brand-sub {
-  text-align: center;
+  text-align: left;
   font-size: 12px;
   font-weight: 600;
   color: var(--text-muted);
   letter-spacing: .04em;
-  text-transform: uppercase;
-  margin-bottom: 1.5rem;
+  margin-top: 3px;
 }
 .auth-card { box-shadow: var(--shadow-md); }
 .auth-card .card-header h2 {

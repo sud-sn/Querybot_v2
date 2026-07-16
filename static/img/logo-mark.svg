@@ -14,9 +14,10 @@
   <rect x="0" y="0" width="40" height="40" rx="10" fill="url(#qb-grad)"/>
   <rect x="0.75" y="0.75" width="38.5" height="38.5" rx="9.25" stroke="#FFFFFF" stroke-opacity="0.14" stroke-width="1"/>
 
-  <!-- Q monogram: geometric ring + tail -->
+  <!-- Query Lens: geometric Q, data rows, and connector tail -->
   <circle cx="19" cy="20" r="8.6" stroke="url(#qb-ring)" stroke-width="3.4" fill="none"/>
-  <line x1="24.3" y1="25.3" x2="29" y2="30" stroke="url(#qb-ring)" stroke-width="3.4" stroke-linecap="round"/>
+  <path d="M24.3 25.3L29 30L29 27.8" stroke="url(#qb-ring)" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M15.2 17.4H21.8M15.2 20.1H20.2M15.2 22.8H18.7" stroke="#DBEAFE" stroke-width="1.15" stroke-linecap="round" opacity=".9"/>
 
   <!-- AI sparkle accent -->
   <path d="M30,3 L31.27,7.73 L36,9 L31.27,10.27 L30,15 L28.73,10.27 L24,9 L28.73,7.73 Z"

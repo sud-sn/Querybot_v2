@@ -438,14 +438,19 @@ class RouteRegistrationTests(unittest.TestCase):
         self.assertIn("pending Semantic Layer review", detail_html)
         self.assertIn("99+", base_html)
 
-    def test_admin_system_provider_toggle_ui(self):
-        """System page should show only the selected LLM provider details."""
+    def test_admin_system_provider_setup_is_progressive(self):
+        """System setup should save a provider before exposing its credentials."""
         system_html = _read("admin/templates/system.html")
 
-        self.assertIn("provider-switch", system_html)
-        self.assertIn('data-provider-button="anthropic"', system_html)
+        self.assertIn("llm-setup-progress", system_html)
+        self.assertIn('data-saved-provider="{{ saved_provider }}"', system_html)
+        self.assertIn("Save selection and continue", system_html)
+        self.assertIn("provider-change-notice", system_html)
+        self.assertIn("provider-configuration-stage", system_html)
         self.assertIn('data-provider-panel="azure_openai"', system_html)
-        self.assertIn("syncProvider", system_html)
+        self.assertIn("syncProviderChoice", system_html)
+        self.assertIn("markProviderDirty", system_html)
+        self.assertIn("Verify saved connection", system_html)
         self.assertIn("filterModelSelect", system_html)
         self.assertIn('data-provider="{{ provider }}"', system_html)
 

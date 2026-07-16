@@ -4,14 +4,43 @@
 {% block title %}System — QueryBot Admin{% endblock %}
 {% block head %}
 <style>
-.provider-switch{display:inline-flex;gap:.35rem;flex-wrap:wrap;padding:.3rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface-2);box-shadow:var(--shadow)}
-.provider-switch button{border:1px solid transparent;background:transparent;color:var(--text-muted);font-weight:850;font-size:12px;border-radius:var(--radius-sm);padding:8px 12px;cursor:pointer}
-.provider-switch button:hover{background:var(--surface);color:var(--text)}
-.provider-switch button.active{background:var(--blue);border-color:var(--blue);color:#fff;box-shadow:var(--shadow)}
 .provider-panel{display:none}
 .provider-panel.active{display:block}
-.provider-summary{display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap}
-.provider-summary p{font-size:12px;color:var(--text-muted);line-height:1.55;margin-top:.65rem;max-width:760px}
+.llm-setup-progress{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);overflow:hidden;margin-bottom:1rem}
+.llm-progress-step{display:flex;align-items:center;gap:.7rem;padding:.85rem 1rem;border-right:1px solid var(--border);min-width:0}
+.llm-progress-step:last-child{border-right:0}
+.llm-progress-dot{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;flex:0 0 auto;background:var(--surface-2);border:1px solid var(--border);color:var(--text-muted);font-size:11px;font-weight:850}
+.llm-progress-copy{min-width:0}
+.llm-progress-copy strong{display:block;font-size:12px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.llm-progress-copy span{display:block;margin-top:2px;font-size:10px;color:var(--text-muted)}
+.llm-progress-step.complete .llm-progress-dot{background:var(--success-light);border-color:color-mix(in srgb,var(--success) 38%,var(--border));color:var(--success)}
+.llm-progress-step.active{background:var(--primary-light)}
+.llm-progress-step.active .llm-progress-dot{background:var(--primary);border-color:var(--primary);color:#fff}
+.llm-stage-heading{display:flex;align-items:flex-start;gap:.75rem;min-width:0}
+.llm-stage-number{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;flex:0 0 auto;background:var(--primary);color:#fff;font-size:12px;font-weight:850}
+.llm-stage-title{font-size:14px;font-weight:800;color:var(--text)}
+.llm-stage-description{font-size:11px;color:var(--text-muted);margin-top:3px;line-height:1.5}
+.llm-stage-status{margin-left:auto;align-self:center;display:inline-flex;align-items:center;gap:.35rem;padding:4px 8px;border:1px solid var(--border);border-radius:999px;background:var(--surface-2);font-size:10px;font-weight:750;color:var(--text-muted);white-space:nowrap}
+.llm-stage-status.configured{background:var(--success-light);border-color:color-mix(in srgb,var(--success) 35%,var(--border));color:var(--success)}
+.llm-provider-change{display:flex;align-items:flex-start;gap:.7rem;padding:.8rem .9rem;border:1px solid color-mix(in srgb,var(--warning) 45%,var(--border));border-radius:var(--radius-sm);background:var(--warning-light);color:var(--text);font-size:12px;line-height:1.5;margin-bottom:1rem}
+.llm-provider-change[hidden]{display:none}
+.llm-provider-name{display:inline-flex;align-items:center;gap:.45rem;font-size:12px;font-weight:800;color:var(--primary);padding:5px 9px;border-radius:999px;background:var(--primary-light);border:1px solid color-mix(in srgb,var(--primary) 24%,var(--border))}
+.llm-azure-model-note{display:none;padding:.8rem .9rem;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface-2);font-size:12px;color:var(--text-muted);line-height:1.5}
+.llm-azure-model-note.visible{display:block}
+.provider-panel.is-dirty .provider-test-row{background:var(--warning-light);border-radius:var(--radius-sm);padding:.75rem}
+.credential-dirty-note{display:none;font-size:11px;color:var(--warning);font-weight:700}
+.provider-panel.is-dirty .credential-dirty-note{display:inline}
+.provider-panel.is-dirty .provider-test-result{display:none}
+.llm-save-row{display:flex;align-items:center;gap:.65rem;flex-wrap:wrap;margin-top:1rem}
+.llm-save-row .form-note{margin:0}
+@media(max-width:760px){
+  .llm-setup-progress{grid-template-columns:1fr}
+  .llm-progress-step{border-right:0;border-bottom:1px solid var(--border)}
+  .llm-progress-step:last-child{border-bottom:0}
+  .llm-stage-status{display:none}
+  #llm-default-grid,#standard-model-selects{grid-template-columns:1fr}
+  #standard-model-selects{grid-column:1/-1!important}
+}
 
 /* Azure deployment picker */
 .az-steps{display:flex;flex-direction:column;gap:1.25rem}
@@ -78,6 +107,7 @@
 .provider-test-result.ok  { color: var(--success); }
 .provider-test-result.err { color: var(--danger); }
 .provider-test-result.loading { color: var(--text-muted); }
+.provider-test-button:disabled{opacity:.5;cursor:not-allowed}
 
 /* ── Services section ── */
 .svc-row{display:flex;align-items:center;gap:.875rem;padding:.75rem 0;border-bottom:1px solid var(--border)}
@@ -124,14 +154,14 @@
 <div class="page-header">
   <div class="page-header-body">
     <h1>System settings</h1>
-    <p>API keys, LLM providers, and admin password.</p>
-  </div>
-  <div class="page-header-actions">
-    <button type="submit" form="system-form" class="btn btn-primary btn-sm">{{ ic("check-circle", 14) }} Save settings</button>
+    <p>Configure the platform defaults, infrastructure, and administrator access.</p>
   </div>
 </div>
 
-{% if saved %}{{ alert(message="Settings saved successfully.", type="success", icon_name="check-circle") }}{% endif %}
+{% if saved %}
+  {% set saved_message = "Default provider saved. Continue with the matching credentials below." if saved == 'defaults' else ("Credentials saved. Verify the saved connection before using it for client workloads." if saved == 'credentials' else ("Database settings saved." if saved == 'database' else "Settings saved successfully.")) %}
+  {{ alert(message=saved_message, type="success", icon_name="check-circle") }}
+{% endif %}
 {% if error %}{{ alert(message=error, type="error", icon_name="x-circle") }}{% endif %}
 
 {{ alert(
@@ -142,25 +172,95 @@
 ) }}
 
 <form method="post" action="/admin/system" id="system-form">
+  {% set saved_provider = cfg.get('default_llm_provider') or 'anthropic' %}
+  {% set anthropic_configured = cfg.get('anthropic_api_key') %}
+  {% set openai_configured = cfg.get('openai_api_key') %}
+  {% set azure_configured = cfg.get('azure_openai_api_key') and cfg.get('azure_openai_endpoint') %}
+  {% set provider_configured = (saved_provider == 'anthropic' and anthropic_configured) or (saved_provider == 'openai' and openai_configured) or (saved_provider == 'azure_openai' and azure_configured) %}
+  {% set azure_model_configured = cfg.get('azure_query_deployment_name') and cfg.get('azure_kb_deployment_name') %}
+  {% set model_configured = azure_model_configured if saved_provider == 'azure_openai' else (cfg.get('default_llm_model') and cfg.get('kb_llm_model')) %}
+  {% set llm_ready = provider_configured and model_configured %}
 
-  <div class="card">
-    <div class="card-header"><h2>LLM provider setup</h2></div>
-    <div class="card-body provider-summary">
-      <div>
-        <div class="provider-switch" role="tablist" aria-label="LLM provider">
-          <button type="button" data-provider-button="anthropic">Anthropic</button>
-          <button type="button" data-provider-button="openai">OpenAI</button>
-          <button type="button" data-provider-button="azure_openai">Azure OpenAI</button>
+  <div class="llm-setup-progress" aria-label="LLM setup progress">
+    <div class="llm-progress-step complete" id="llm-progress-provider">
+      <span class="llm-progress-dot">{{ ic("check-circle", 13) }}</span>
+      <span class="llm-progress-copy"><strong>1. Select provider</strong><span>System default saved</span></span>
+    </div>
+    <div class="llm-progress-step {{ 'complete' if provider_configured else 'active' }}">
+      <span class="llm-progress-dot">{% if provider_configured %}{{ ic("check-circle", 13) }}{% else %}2{% endif %}</span>
+      <span class="llm-progress-copy"><strong>2. Verify credentials</strong><span>{{ 'Connection details saved' if provider_configured else 'Required next' }}</span></span>
+    </div>
+    <div class="llm-progress-step {{ 'complete' if llm_ready else ('active' if provider_configured else '') }}">
+      <span class="llm-progress-dot">{% if llm_ready %}{{ ic("check-circle", 13) }}{% else %}3{% endif %}</span>
+      <span class="llm-progress-copy"><strong>3. Confirm models</strong><span>{{ 'Models selected' if llm_ready else 'Complete after verification' }}</span></span>
+    </div>
+  </div>
+
+  <div class="card" id="llm-default-stage">
+    <div class="card-header">
+      <div class="llm-stage-heading">
+        <span class="llm-stage-number">1</span>
+        <div>
+          <div class="llm-stage-title">Choose the platform default</div>
+          <div class="llm-stage-description">This provider handles new queries unless a client has an explicit override.</div>
         </div>
-        <p>Only the selected provider's credentials are shown below. Existing saved keys are kept unless you enter a new value.</p>
+        <span class="llm-stage-status configured" id="default-provider-status">{{ ic("check-circle", 12) }} Saved</span>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="form-grid" id="llm-default-grid">
+        <div class="form-group">
+          <label for="default-provider">Default provider</label>
+          <select name="default_provider" id="default-provider" data-saved-provider="{{ saved_provider }}">
+            <option value="anthropic" {% if saved_provider == 'anthropic' %}selected{% endif %}>Anthropic</option>
+            <option value="openai" {% if saved_provider == 'openai' %}selected{% endif %}>OpenAI</option>
+            <option value="azure_openai" {% if saved_provider == 'azure_openai' %}selected{% endif %}>Azure OpenAI</option>
+          </select>
+          <p class="form-note">Save this choice before adding credentials. Existing provider keys remain stored.</p>
+        </div>
+        <div id="standard-model-selects" class="form-grid" style="grid-column:span 1;margin:0">
+          <div class="form-group">
+            <label>Default query model</label>
+            <select name="default_model">
+              {% for provider, model, label in query_models %}
+              <option value="{{ model }}" data-provider="{{ provider }}" {% if cfg.get('default_llm_model') == model %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="form-group">
+            <label>KB generation model</label>
+            <select name="kb_model">
+              {% for provider, model, label in kb_models %}
+              <option value="{{ model }}" data-provider="{{ provider }}" {% if cfg.get('kb_llm_model') == model %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+      </div>
+      <div class="llm-azure-model-note" id="azure-model-note">
+        {{ ic("info", 14) }} Azure OpenAI uses deployment names rather than public model IDs. You will select the query and KB deployments after credentials are verified.
+      </div>
+      <div class="llm-save-row">
+        <button type="submit" class="btn btn-primary" name="save_section" value="defaults">{{ ic("chevron-right", 14) }} Save selection and continue</button>
+        <span class="form-note">Per-client model overrides continue to take priority.</span>
       </div>
     </div>
   </div>
 
+  <div class="llm-provider-change" id="provider-change-notice" hidden>
+    {{ ic("alert-triangle", 16) }}
+    <span><strong>Save the provider selection first.</strong> Credential fields are intentionally tied to the saved system default so keys cannot be entered for the wrong provider.</span>
+  </div>
+
+  <div id="provider-configuration-stage">
   <!-- ── Anthropic ──────────────────────────────────────────────────────── -->
-  <div class="card provider-panel" data-provider-panel="anthropic">
+  <div class="card provider-panel {{ 'active' if saved_provider == 'anthropic' else '' }}" data-provider-panel="anthropic">
     <div class="card-header">
-      <h2>Anthropic (Claude)</h2>
+      <div class="llm-stage-heading">
+        <span class="llm-stage-number">2</span>
+        <div><div class="llm-stage-title">Connect Anthropic</div><div class="llm-stage-description">Save the API key, then verify it with a live provider request.</div></div>
+        <span class="llm-stage-status {{ 'configured' if anthropic_configured else '' }}">{{ ic('check-circle', 12) if anthropic_configured else ic('key', 12) }} {{ 'Configured' if anthropic_configured else 'Not configured' }}</span>
+      </div>
       <a href="https://console.anthropic.com" target="_blank" class="provider-ext-link">console.anthropic.com {{ ic("external-link", 12) }}</a>
     </div>
     <div class="card-body">
@@ -173,19 +273,27 @@
         </div>
         <p class="form-note">Leave blank to keep existing key. Changing only affects future queries.</p>
       </div>
+      <div class="llm-save-row">
+        <button type="submit" class="btn btn-primary btn-sm" name="save_section" value="credentials">{{ ic("check-circle", 13) }} Save credentials</button>
+      </div>
       <div class="provider-test-row">
-        <button type="button" class="btn btn-secondary btn-sm" onclick="testConnection('anthropic')">
-          {{ ic("refresh", 13) }} Test connection
+        <button type="button" class="btn btn-secondary btn-sm provider-test-button" onclick="testConnection('anthropic')" {% if not anthropic_configured %}disabled{% endif %}>
+          {{ ic("refresh", 13) }} Verify saved connection
         </button>
+        <span class="credential-dirty-note">Save changes before testing.</span>
         <span class="provider-test-result" id="test-result-anthropic"></span>
       </div>
     </div>
   </div>
 
   <!-- ── OpenAI ────────────────────────────────────────────────────────── -->
-  <div class="card provider-panel" data-provider-panel="openai">
+  <div class="card provider-panel {{ 'active' if saved_provider == 'openai' else '' }}" data-provider-panel="openai">
     <div class="card-header">
-      <h2>OpenAI (GPT-4o)</h2>
+      <div class="llm-stage-heading">
+        <span class="llm-stage-number">2</span>
+        <div><div class="llm-stage-title">Connect OpenAI</div><div class="llm-stage-description">Save the API key, then verify access to the provider model catalog.</div></div>
+        <span class="llm-stage-status {{ 'configured' if openai_configured else '' }}">{{ ic('check-circle', 12) if openai_configured else ic('key', 12) }} {{ 'Configured' if openai_configured else 'Not configured' }}</span>
+      </div>
       <a href="https://platform.openai.com" target="_blank" class="provider-ext-link">platform.openai.com {{ ic("external-link", 12) }}</a>
     </div>
     <div class="card-body">
@@ -198,28 +306,36 @@
         </div>
         <p class="form-note">Required for GPT-4o or GPT-4o-mini. Leave blank to keep existing key.</p>
       </div>
+      <div class="llm-save-row">
+        <button type="submit" class="btn btn-primary btn-sm" name="save_section" value="credentials">{{ ic("check-circle", 13) }} Save credentials</button>
+      </div>
       <div class="provider-test-row">
-        <button type="button" class="btn btn-secondary btn-sm" onclick="testConnection('openai')">
-          {{ ic("refresh", 13) }} Test connection
+        <button type="button" class="btn btn-secondary btn-sm provider-test-button" onclick="testConnection('openai')" {% if not openai_configured %}disabled{% endif %}>
+          {{ ic("refresh", 13) }} Verify saved connection
         </button>
+        <span class="credential-dirty-note">Save changes before testing.</span>
         <span class="provider-test-result" id="test-result-openai"></span>
       </div>
     </div>
   </div>
 
   <!-- ── Azure OpenAI ──────────────────────────────────────────────────── -->
-  <div class="card provider-panel" data-provider-panel="azure_openai">
+  <div class="card provider-panel {{ 'active' if saved_provider == 'azure_openai' else '' }}" data-provider-panel="azure_openai">
     <div class="card-header">
-      <h2>Azure OpenAI</h2>
+      <div class="llm-stage-heading">
+        <span class="llm-stage-number">2</span>
+        <div><div class="llm-stage-title">Connect Azure OpenAI</div><div class="llm-stage-description">Save the resource credentials before testing or fetching deployments.</div></div>
+        <span class="llm-stage-status {{ 'configured' if azure_configured else '' }}">{{ ic('check-circle', 12) if azure_configured else ic('key', 12) }} {{ 'Configured' if azure_configured else 'Not configured' }}</span>
+      </div>
       <a href="https://oai.azure.com" target="_blank" style="font-size:12px;color:var(--blue)">Azure OpenAI Studio ↗</a>
     </div>
     <div class="card-body">
 
       <div class="az-steps">
 
-        <!-- Step 1: Credentials -->
+        <!-- Credentials -->
         <div class="az-step">
-          <div class="az-step-num">1</div>
+          <div class="az-step-num">2</div>
           <div class="az-step-body">
             <div class="az-step-title">Enter your Azure credentials</div>
             <div class="form-group" style="margin-bottom:.75rem">
@@ -251,23 +367,27 @@
           </div>
         </div>
 
+            <div class="llm-save-row">
+              <button type="submit" class="btn btn-primary btn-sm" name="save_section" value="credentials">{{ ic("check-circle", 13) }} Save credentials</button>
+            </div>
             <div class="provider-test-row" style="margin-top:.5rem">
-              <button type="button" class="btn btn-secondary btn-sm" onclick="testConnection('azure_openai')">
-                {{ ic("refresh", 13) }} Test connection
+              <button type="button" class="btn btn-secondary btn-sm provider-test-button" onclick="testConnection('azure_openai')" {% if not azure_configured %}disabled{% endif %}>
+                {{ ic("refresh", 13) }} {{ 'Test selected deployment' if cfg.get('azure_query_deployment_name') else 'Verify saved credentials' }}
               </button>
+              <span class="credential-dirty-note">Save changes before testing.</span>
               <span class="provider-test-result" id="test-result-azure_openai"></span>
             </div>
 
-        <!-- Step 2: Fetch & pick deployments -->
+        <!-- Step 3: Fetch & pick deployments -->
         <div class="az-step">
-          <div class="az-step-num">2</div>
+          <div class="az-step-num">3</div>
           <div class="az-step-body">
             <div class="az-step-title">Fetch and select deployments</div>
             <p style="font-size:12px;color:var(--text-muted);margin-bottom:.65rem;line-height:1.55">
               Save your credentials first, then click the button to pull the list of model deployments
               directly from your Azure resource. No guessing — pick from what's actually deployed.
             </p>
-            <button type="button" class="btn-fetch" id="az-fetch-btn" onclick="fetchAzureDeployments()">
+            <button type="button" class="btn-fetch" id="az-fetch-btn" onclick="fetchAzureDeployments()" {% if not azure_configured %}disabled{% endif %}>
               <span class="spinner"></span>
               <span class="btn-fetch-label">⟳ Fetch deployments from Azure</span>
             </button>
@@ -331,50 +451,7 @@
     </div>
   </div>
 
-  <!-- ── LLM model defaults ──────────────────────────────────────────────── -->
-  <div class="card">
-    <div class="card-header"><h2>Default LLM selection</h2></div>
-    <div class="card-body">
-      <div class="form-grid">
-        <div class="form-group">
-          <label>Default provider</label>
-          <select name="default_provider">
-            <option value="anthropic"    {% if cfg.get('default_llm_provider') == 'anthropic'    %}selected{% endif %}>Anthropic (Claude)</option>
-            <option value="openai"       {% if cfg.get('default_llm_provider') == 'openai'       %}selected{% endif %}>OpenAI (api.openai.com)</option>
-            <option value="azure_openai" {% if cfg.get('default_llm_provider') == 'azure_openai' %}selected{% endif %}>Azure OpenAI</option>
-          </select>
-          <p class="form-note">Per-client overrides always take priority over this default.</p>
-        </div>
-        <div class="form-group">
-          <label>Default query model</label>
-          <select name="default_model">
-            {% for provider, model, label in query_models %}
-            <option value="{{ model }}" data-provider="{{ provider }}"
-              {% if cfg.get('default_llm_model') == model %}selected{% endif %}>
-              {{ label }}
-            </option>
-            {% endfor %}
-          </select>
-          <p class="form-note">For Azure OpenAI the deployment name above is used instead of this dropdown.</p>
-        </div>
-      </div>
-      <div class="form-group" style="max-width:50%">
-        <label>KB generation model</label>
-        <select name="kb_model">
-          {% for provider, model, label in kb_models %}
-          <option value="{{ model }}" data-provider="{{ provider }}"
-            {% if cfg.get('kb_llm_model') == model %}selected{% endif %}>
-            {{ label }}
-          </option>
-          {% endfor %}
-        </select>
-        <p class="form-note">Used once per client to generate the enriched Knowledge Base.</p>
-      </div>
-      <div class="form-actions">
-        <button type="submit" class="btn btn-primary">{{ ic("check-circle", 14) }} Save all settings</button>
-      </div>
-    </div>
-  </div>
+  </div><!-- /provider-configuration-stage -->
 
   <!-- ── Database Backend ─────────────────────────────────────────────── -->
   <div class="card">
@@ -467,6 +544,9 @@
       <div class="restart-strip" id="restart-status" style="display:none"></div>
       {% endif %}
 
+      <div class="llm-save-row">
+        <button type="submit" class="btn btn-secondary btn-sm" name="save_section" value="database">{{ ic("check-circle", 13) }} Save database settings</button>
+      </div>
     </div>
   </div>
 
@@ -561,24 +641,38 @@
 
 <script>
 (function(){
-  /* ── Provider tab switching ───────────────────────────────────────────── */
+  /* ── Governed provider setup ──────────────────────────────────────────── */
   function ready(fn){
     if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',fn); else fn();
   }
-  function syncProvider(provider){
+  function syncProviderChoice(provider){
     provider=provider||'anthropic';
-    document.querySelectorAll('[data-provider-panel]').forEach(function(p){
-      p.classList.toggle('active',p.dataset.providerPanel===provider);
-    });
-    document.querySelectorAll('[data-provider-button]').forEach(function(b){
-      const a=b.dataset.providerButton===provider;
-      b.classList.toggle('active',a);
-      b.setAttribute('aria-selected',a?'true':'false');
-    });
     const ps=document.querySelector('select[name="default_provider"]');
-    if(ps && ps.value!==provider) ps.value=provider;
     filterModelSelect(document.querySelector('select[name="default_model"]'),provider);
     filterModelSelect(document.querySelector('select[name="kb_model"]'),provider);
+    const azure = provider === 'azure_openai';
+    const standardModels = document.getElementById('standard-model-selects');
+    const azureNote = document.getElementById('azure-model-note');
+    if(standardModels) standardModels.style.display = azure ? 'none' : '';
+    if(azureNote) azureNote.classList.toggle('visible',azure);
+
+    const changed = !!ps && provider !== ps.dataset.savedProvider;
+    const savedStatus = document.getElementById('default-provider-status');
+    if(savedStatus){
+      savedStatus.classList.toggle('configured',!changed);
+      savedStatus.textContent = changed ? 'Unsaved change' : 'Saved';
+    }
+    const notice = document.getElementById('provider-change-notice');
+    const stage = document.getElementById('provider-configuration-stage');
+    if(notice) notice.hidden = !changed;
+    if(stage) stage.hidden = changed;
+    const progress = document.getElementById('llm-progress-provider');
+    if(progress){
+      progress.classList.toggle('complete',!changed);
+      progress.classList.toggle('active',changed);
+      const note = progress.querySelector('.llm-progress-copy span');
+      if(note) note.textContent = changed ? 'Save the new selection' : 'System default saved';
+    }
   }
   function filterModelSelect(select,provider){
     if(!select) return;
@@ -594,12 +688,23 @@
   }
   ready(function(){
     const ps=document.querySelector('select[name="default_provider"]');
-    syncProvider((ps && ps.value)||'anthropic');
-    document.querySelectorAll('[data-provider-button]').forEach(function(b){
-      b.addEventListener('click',function(){ syncProvider(b.dataset.providerButton); });
-    });
-    if(ps) ps.addEventListener('change',function(){ syncProvider(ps.value); });
+    syncProviderChoice((ps && ps.value)||'anthropic');
+    if(ps) ps.addEventListener('change',function(){ syncProviderChoice(ps.value); });
+    const activePanel = document.querySelector('.provider-panel.active');
+    if(activePanel){
+      activePanel.querySelectorAll('input:not([type="hidden"])').forEach(function(input){
+        input.addEventListener('input',function(){ markProviderDirty(activePanel); });
+      });
+    }
   });
+
+  function markProviderDirty(panel){
+    if(!panel) return;
+    panel.classList.add('is-dirty');
+    panel.querySelectorAll('.provider-test-button').forEach(function(button){ button.disabled=true; });
+    const fetchButton=panel.querySelector('#az-fetch-btn');
+    if(fetchButton) fetchButton.disabled=true;
+  }
 
   /* ── Azure deployment fetcher ─────────────────────────────────────────── */
   var _selectedQuery = document.getElementById('az-query-deploy-val').value || '';
@@ -700,6 +805,7 @@
         b.textContent = isThis ? '✓ KB' : 'Use for KB';
       });
     }
+    markProviderDirty(document.querySelector('.provider-panel.active'));
     updateSummary();
   };
 
@@ -732,13 +838,14 @@ function testConnection(provider) {
   var el = document.getElementById('test-result-' + provider);
   if (!el) return;
   el.className = 'provider-test-result loading';
-  el.textContent = 'Testing…';
+  el.textContent = 'Sending a live verification request…';
   fetch('/admin/system/test-connection?provider=' + encodeURIComponent(provider))
     .then(function(r){ return r.json(); })
     .then(function(data){
       if (data.ok) {
         el.className = 'provider-test-result ok';
-        el.textContent = '✓ Connected' + (data.model ? ' — ' + data.model : '');
+        const label = data.verification === 'model' ? 'Model request succeeded' : 'Credentials verified';
+        el.textContent = '✓ ' + label + (data.model ? ' — ' + data.model : '');
       } else {
         el.className = 'provider-test-result err';
         el.textContent = '✗ ' + (data.error || 'Connection failed');

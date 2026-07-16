@@ -1,5 +1,5 @@
 {% extends "client_base.html" %}
-{% from "macros.html" import breadcrumb %}
+{% from "macros.html" import breadcrumb, brand_motion %}
 {% from "icons.html" import ic %}
 {% block title %}{{ client.client_name or client.account_id[:16] }} — QueryBot Admin{% endblock %}
 {% block breadcrumb %}
@@ -433,7 +433,9 @@
     </div>
 
     <div id="sb-status" style="display:none;padding:.7rem 1.25rem;font-size:12px"></div>
-    <div id="sb-loading" style="display:none;padding:2rem;text-align:center;color:var(--text-muted);font-size:13px">Connecting to database…</div>
+    <div id="sb-loading" class="qb-brand-loader-block" style="display:none">
+      {{ brand_motion('schema-browser-loader', 'loading', 'sm', 'Connecting to database', status=true) }}
+    </div>
     <div id="sb-tree"   style="display:none;padding:1rem 1.25rem"></div>
   </div>
 </div>

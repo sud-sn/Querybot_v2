@@ -1,5 +1,5 @@
 {% extends "portal_base.html" %}
-{% from "macros.html" import breadcrumb %}
+{% from "macros.html" import breadcrumb, brand_motion %}
 {% from "icons.html" import ic %}
 {% block title %}Chat — QueryBot{% endblock %}
 {% block breadcrumb %}{% endblock %}
@@ -74,13 +74,23 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .msg-action-diagnose{border-color:color-mix(in srgb,var(--amber) 40%,var(--border));color:var(--amber);background:color-mix(in srgb,var(--amber-light) 60%,var(--surface-2))}
 .msg-action-diagnose:hover{background:var(--amber-light);border-color:var(--amber);color:color-mix(in srgb,var(--amber) 80%,#000)}
 /* ── Processing row — compact stage indicator, no cartoon ── */
-.processing-row{display:none;align-items:center;gap:.65rem;padding:.45rem 1.25rem .5rem;flex-shrink:0}.processing-row.active{display:flex}
+.processing-row{position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px!important;overflow:hidden!important;clip:rect(0,0,0,0)!important;white-space:nowrap!important;border:0!important}.processing-row.active{display:flex}
 .stage-status{display:flex;align-items:center;gap:.5rem}
 .stage-dots{display:flex;align-items:center;gap:4px}
 .stage-dot{width:5px;height:5px;border-radius:50%;background:var(--primary);opacity:.35;animation:dot-bounce 1.3s ease-in-out infinite}
 .stage-dot:nth-child(2){animation-delay:.18s}
 .stage-dot:nth-child(3){animation-delay:.36s}
 .stage-label{font-size:12px;font-weight:600;color:var(--text-muted)}
+.answer-progress-card{width:min(100%,620px);padding:1rem 1.05rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);box-shadow:var(--shadow);overflow:hidden}
+.answer-progress-head{display:flex;align-items:center;justify-content:space-between;gap:1rem;margin-bottom:.8rem}
+.answer-progress-status{display:flex;align-items:center;gap:.7rem;min-width:0}
+.answer-progress-copy{min-width:0}
+.answer-progress-label{display:block;font-size:12px;font-weight:750;color:var(--text);line-height:1.35}
+.answer-progress-detail{display:block;margin-top:2px;font-size:11px;color:var(--text-muted);line-height:1.35}
+.answer-progress-elapsed{display:none;flex-shrink:0;font-size:10px;font-weight:700;color:var(--text-muted);font-variant-numeric:tabular-nums}
+.answer-progress-elapsed.visible{display:inline-flex}
+.answer-progress-skeleton{display:grid;gap:7px}
+.answer-progress-skeleton .skeleton{margin:0}
 /* ============================================================================
    Executive AI intelligence indicator — abstract orb that floats around the
    composer. Replaces the previous cartoon mascot.
@@ -632,9 +642,7 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 
         <div class="processing-row" id="processingRow" aria-live="polite">
           <div class="stage-status">
-            <div class="stage-dots">
-              <span class="stage-dot"></span><span class="stage-dot"></span><span class="stage-dot"></span>
-            </div>
+            {{ brand_motion('processing-brand', 'thinking', 'sm', root_id='processingBrand') }}
             <span class="stage-label" id="stageLabel">Thinking…</span>
           </div>
           <!-- Legacy mascot stub — invisible, JS element-guards no-op safely -->
@@ -787,15 +795,7 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
       <div class="chat-composer">
                 <div class="chat-input-bar">
           <div class="chat-input-wrap" id="inputWrap">
-            <!-- Executive AI intelligence indicator (abstract, non-cartoon) -->
-            <div class="ai-indicator ai-idle" id="composerMascot" role="presentation" aria-hidden="true">
-              <div class="ai-tooltip" id="composerTooltip">Ready</div>
-              <div class="ai-halo"></div>
-              <div class="ai-ring"></div>
-              <div class="ai-arc ai-arc-1"></div>
-              <div class="ai-arc ai-arc-2"></div>
-              <div class="ai-core"></div>
-            </div>
+            {{ brand_motion('composer-brand', 'idle', 'xs', 'Ready', 'composerMascot', 'composerTooltip', 'ai-tooltip', 'ai-indicator ai-idle') }}
             <textarea id="input" class="chat-input" placeholder="Ask anything about your data…" rows="1" maxlength="500" spellcheck="true" autocomplete="off" style="padding-left:36px"></textarea>
           </div>
           <div class="composer-side">
@@ -902,6 +902,8 @@ let wsReady = false;
 let reconnectAttempts = 0;
 let restoringCache = false;
 let processingActive = false;
+let processingStartedAt = 0;
+let processingElapsedTimer = null;
 let lastAssistantText = '';
 let chartCounter = 0;
 
@@ -959,20 +961,40 @@ function _showSkeletonBubble(){
   div.className = 'msg msg-bot';
   div.id = 'skeletonBubble';
   div.innerHTML =
-    '<div class="msg-avatar skeleton skeleton-avatar"></div>'
+    '<div class="msg-avatar" id="answerProgressBrandSlot"></div>'
     + '<div class="msg-content" style="flex:1">'
-    + '<div class="msg-bubble" style="background:var(--surface);border:1px solid var(--border);max-width:min(82%,560px)">'
-    + '<span class="skeleton skeleton-text sk-60"></span>'
-    + '<span class="skeleton skeleton-text"></span>'
-    + '<span class="skeleton skeleton-text sk-40"></span>'
+    + '<div class="answer-progress-card">'
+    + '<div class="answer-progress-head"><div class="answer-progress-status">'
+    + '<span class="answer-progress-copy"><span class="answer-progress-label" id="answerStageLabel">Understanding your question</span>'
+    + '<span class="answer-progress-detail" id="answerStageDetail">Checking access to your workspace and data.</span></span>'
+    + '</div><span class="answer-progress-elapsed" id="answerProgressElapsed"></span></div>'
+    + '<div class="answer-progress-skeleton"><span class="skeleton skeleton-text sk-60"></span>'
+    + '<span class="skeleton skeleton-text"></span><span class="skeleton skeleton-text sk-40"></span></div>'
     + '</div></div>';
   t.appendChild(div);
+  const sourceBrand = document.getElementById('processingBrand');
+  const brandSlot = document.getElementById('answerProgressBrandSlot');
+  if (sourceBrand && brandSlot) {
+    const brand = sourceBrand.cloneNode(true);
+    brand.id = 'answerProgressBrand';
+    brand.classList.remove('qb-brand-motion--sm');
+    brand.classList.add('qb-brand-motion--sm');
+    brand.dataset.state = sourceBrand.dataset.state || 'thinking';
+    const gradient = brand.querySelector('linearGradient');
+    const badge = brand.querySelector('.qb-brand-motion__badge');
+    if (gradient && badge) {
+      gradient.id = 'answer-progress-brand-bg';
+      badge.setAttribute('fill', 'url(#answer-progress-brand-bg)');
+    }
+    brandSlot.appendChild(brand);
+  }
   scrollBottom();
 }
 function _removeSkeletonBubble(){
   document.getElementById('skeletonBubble')?.remove();
 }
 function setProcessing(active){
+  const wasActive = processingActive;
   processingActive = active;
   const row = document.getElementById('processingRow');
   row.classList.toggle('active', !!active);
@@ -983,7 +1005,22 @@ function setProcessing(active){
   if (active) {
     _showSkeletonBubble();
     startDoodle();
+    if (!wasActive) {
+      processingStartedAt = Date.now();
+      clearInterval(processingElapsedTimer);
+      processingElapsedTimer = setInterval(() => {
+        const elapsed = Math.floor((Date.now() - processingStartedAt) / 1000);
+        const elapsedNode = document.getElementById('answerProgressElapsed');
+        if (elapsedNode && elapsed >= 8) {
+          elapsedNode.textContent = `${elapsed}s elapsed`;
+          elapsedNode.classList.add('visible');
+        }
+      }, 1000);
+    }
   } else {
+    clearInterval(processingElapsedTimer);
+    processingElapsedTimer = null;
+    processingStartedAt = 0;
     _removeSkeletonBubble();
     stopDoodle();
     _resetStageSteps();
@@ -1020,7 +1057,7 @@ function stopQuery(){
 }
 function updateProcessing(stage, label, detail){
   setProcessing(true);
-  _updateStageSteps(stage);
+  _updateStageSteps(stage, label, detail);
 }
 function escHtml(str){ return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function safeJsonParse(text){ try { return JSON.parse(text); } catch { return null; } }
@@ -3223,8 +3260,28 @@ const MASCOT_STATES = {
 const _OVERLAY_IDS = ['mGlass','mWrench','mGear','mCheck'];
 let _currentMascotStage = '_idle';
 
+const BRAND_STAGE_STATES = {
+  authorization: 'thinking',
+  metric_registry: 'resolving',
+  retrieving_context: 'resolving',
+  generating_sql: 'thinking',
+  validating_sql: 'resolving',
+  repairing_query: 'resolving',
+  executing_query: 'querying',
+  formatting_results: 'answering',
+  chart_ready: 'success',
+  _idle: 'thinking',
+  _error: 'error',
+  _clarify: 'thinking'
+};
+
 function _setMascotState(stageKey) {
   const state   = MASCOT_STATES[stageKey] || MASCOT_STATES['_idle'];
+  const brandState = BRAND_STAGE_STATES[stageKey] || 'thinking';
+  ['processingBrand', 'answerProgressBrand'].forEach(id => {
+    const brand = document.getElementById(id);
+    if (brand) brand.dataset.state = brandState;
+  });
   const body    = document.getElementById('mascotBody');
   const tooltip = document.getElementById('mascotTooltip');
   const armL    = document.getElementById('mArmL');
@@ -3294,11 +3351,18 @@ const STAGE_ORDER = [
 let _completedStages = [];
 let _currentStage = null;
 
-function _updateStageSteps(stage) {
+function _updateStageSteps(stage, label, detail) {
   if (stage && MASCOT_STATES[stage]) _setMascotState(stage);
   if (stage) _currentStage = stage;
+  const fallback = (stage && STATUS_FALLBACK[stage]) || ['Working on your answer', 'Preparing a trusted response.'];
+  const primaryLabel = label || fallback[0];
+  const detailLabel = detail || fallback[1];
   const sl = document.getElementById('stageLabel');
-  if (sl && stage && STATUS_FALLBACK[stage]) sl.textContent = STATUS_FALLBACK[stage][0] + '…';
+  if (sl) sl.textContent = primaryLabel + '…';
+  const answerLabel = document.getElementById('answerStageLabel');
+  const answerDetail = document.getElementById('answerStageDetail');
+  if (answerLabel) answerLabel.textContent = primaryLabel;
+  if (answerDetail) answerDetail.textContent = detailLabel;
 }
 
 function _resetStageSteps() {
@@ -3392,6 +3456,11 @@ function _initComposerMascot() {
     // Reset all state classes then apply the target one
     orb.classList.remove.apply(orb.classList, STATES);
     orb.classList.add('ai-' + name);
+    const brandState = {
+      idle: 'idle', focus: 'idle', typing: 'thinking', thinking: 'resolving',
+      send: 'querying', ready: 'success', error: 'error', hidden: 'idle'
+    }[name] || 'idle';
+    orb.dataset.state = brandState;
 
     // Update tooltip label (executive tone; only shown on hover or error)
     if (tip) {

@@ -44,6 +44,7 @@
 </script>
 {% block head %}{% endblock %}
 <link rel="stylesheet" href="/static/css/production.css?v=20260715-1">
+<link rel="stylesheet" href="/static/css/brand-motion.css?v=20260716-1">
 </head>
 <body data-admin-client-id="{% if client is defined %}{{ client.account_id|default('') }}{% endif %}">
 
@@ -471,5 +472,6 @@ window.qbToast = (function(){
 </script>
 
 {% endif %}{# end _auth_page #}
+<script src="/static/js/brand-motion.js?v=20260716-1"></script>
 </body>
 </html>

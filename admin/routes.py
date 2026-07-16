@@ -796,9 +796,10 @@ async def azure_deployments_api(request: Request):
 async def test_llm_connection(request: Request, provider: str = ""):
     """Quick liveness check for each LLM provider using saved credentials.
 
-    Returns {"ok": true, "model": "..."} on success or {"ok": false, "error": "..."}.
-    For Azure OpenAI with a deployment name configured, sends a 1-token completion.
-    Without a deployment name, verifies the key + endpoint are accepted by Azure.
+    Returns a verification scope so the UI can distinguish credential access from
+    a successful model completion. Azure sends a one-token completion when a
+    deployment is configured; endpoint reachability alone is never called a
+    successful model test.
     """
     if not _is_auth(request):
         raise HTTPException(status_code=401, detail="Not authenticated")
@@ -825,9 +826,17 @@ async def test_llm_connection(request: Request, provider: str = ""):
                 )
             if resp.status_code == 401:
                 return JSONResponse({"ok": False, "error": "API key rejected — check your Anthropic key."})
-            if resp.is_success or resp.status_code in (400, 529):
-                return JSONResponse({"ok": True, "model": "claude-haiku-4-5-20251001"})
-            return JSONResponse({"ok": False, "error": f"HTTP {resp.status_code}"})
+            if resp.is_success:
+                return JSONResponse({
+                    "ok": True,
+                    "verification": "model",
+                    "model": "claude-haiku-4-5-20251001",
+                })
+            try:
+                detail = resp.json().get("error", {}).get("message", resp.text[:150])
+            except Exception:
+                detail = resp.text[:150]
+            return JSONResponse({"ok": False, "error": f"HTTP {resp.status_code}: {detail}"})
         except httpx.TimeoutException:
             return JSONResponse({"ok": False, "error": "Request timed out reaching api.anthropic.com."})
         except Exception as exc:
@@ -847,7 +856,11 @@ async def test_llm_connection(request: Request, provider: str = ""):
             if resp.status_code == 401:
                 return JSONResponse({"ok": False, "error": "API key rejected — check your OpenAI key."})
             if resp.is_success:
-                return JSONResponse({"ok": True, "model": "GPT-4o available"})
+                return JSONResponse({
+                    "ok": True,
+                    "verification": "credentials",
+                    "model": "model catalog accessible",
+                })
             return JSONResponse({"ok": False, "error": f"HTTP {resp.status_code}"})
         except httpx.TimeoutException:
             return JSONResponse({"ok": False, "error": "Request timed out reaching api.openai.com."})
@@ -913,12 +926,18 @@ async def test_llm_connection(request: Request, provider: str = ""):
                     "Check the resource firewall (Azure Portal → Networking) or RBAC role."
                 )})
             if resp.status_code == 404 and not deployment:
-                # cognitiveservices.azure.com returns 404 on the listing endpoint —
-                # that is expected; the key was accepted (no 401) so credentials are valid.
-                return JSONResponse({"ok": True, "model": "Credentials accepted — save a deployment name to test completion"})
+                return JSONResponse({"ok": False, "error": (
+                    "Azure did not expose a deployment listing endpoint, so the credentials "
+                    "could not be fully verified. Enter an exact deployment name, save it, "
+                    "then run the deployment test."
+                )})
             if resp.is_success:
                 label = f"deployment: {deployment}" if deployment else "endpoint reachable"
-                return JSONResponse({"ok": True, "model": label})
+                return JSONResponse({
+                    "ok": True,
+                    "verification": "model" if deployment else "credentials",
+                    "model": label,
+                })
             try:
                 detail = resp.json().get("error", {}).get("message", resp.text[:150])
             except Exception:
@@ -1023,6 +1042,7 @@ async def system_save(
     kb_model:                str = Form(""),
     database_backend:        str = Form(""),
     database_url:            str = Form(""),
+    save_section:            str = Form(""),
 ):
     if not _is_auth(request):
         return RedirectResponse("/admin/login", status_code=303)
@@ -1052,7 +1072,10 @@ async def system_save(
         save_pg_url("")
     elif database_backend == "postgres" and database_url.strip() and not database_url.startswith("•"):
         save_pg_url(database_url.strip())
-    return RedirectResponse("/admin/system?saved=1", status_code=303)
+    saved_section = save_section if save_section in {"defaults", "credentials", "database"} else "settings"
+    anchor = "provider-configuration-stage" if saved_section in {"defaults", "credentials"} else ""
+    suffix = f"#{anchor}" if anchor else ""
+    return RedirectResponse(f"/admin/system?saved={saved_section}{suffix}", status_code=303)
 
 @router.post("/system/password")
 async def system_password(
