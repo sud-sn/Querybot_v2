@@ -448,6 +448,59 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
         _trace_update(trace_id, route="duckdb_cache")
         _trace_step(trace_id, "route", output_summary="duckdb_cache")
         log.info("Routing to DuckDB result cache for session %s", _session_id[:16])
+
+        # Regulated tenants: the cache_read check above only governs whether
+        # the cache may be used at all (its default rule always allows it) —
+        # it does not verify a BAA for whatever's actually IN the cached
+        # table before building a new prompt that embeds sample values from
+        # it. Re-derive the resources from the ORIGINAL cached SQL (not just
+        # the user's broader effective-table scope, which the front-door
+        # llm_context check above already covers) and re-run the same
+        # BAA/prohibited-data check specifically scoped to this cache entry.
+        if compliance_profile.get("mode") == "regulated":
+            _cached_sql = result_cache.get_sql(_session_id)
+            if _cached_sql:
+                from core.compliance.sql_guard import analyze_sql
+
+                _cache_analysis = analyze_sql(_cached_sql, db_cfg.get("db_type", "azure_sql"))
+                _cache_llm_context = resolve_context(
+                    account_id, portal_user, action="llm_context",
+                    channel=getattr(event, "platform", "") or "portal",
+                    purpose_id=compliance_context.purpose_id, provider=provider,
+                    break_glass_grant_id=compliance_context.break_glass_grant_id,
+                )
+                _cache_llm_decision = evaluate_policy(_cache_llm_context, _cache_analysis.resources)
+                _trace_step(
+                    trace_id, "duckdb_cache_llm_context",
+                    output_summary={
+                        "allowed": _cache_llm_decision.effective_allowed,
+                        "reason": _cache_llm_decision.reason_code,
+                    },
+                    status="success" if _cache_llm_decision.effective_allowed else "error",
+                )
+                if not _cache_llm_decision.effective_allowed:
+                    with llm_audit_scope(
+                        account_id=account_id, question=question,
+                        enabled=bool(client.get("enable_llm_audit")),
+                        request_id=make_llm_audit_request_id(),
+                        question_id=audit_request_id, component="duckdb_cache",
+                    ):
+                        from core.llm_audit import record_llm_blocked
+                        record_llm_blocked(
+                            "duckdb_cache",
+                            f"DuckDB follow-up blocked — {_cache_llm_decision.explanation}",
+                        )
+                    _trace_finish(
+                        trace_id, status="error", answer_type="policy_denied",
+                        error_message=_cache_llm_decision.explanation,
+                    )
+                    await adapter.send_message(
+                        event,
+                        "This request is blocked by the workspace data policy. "
+                        f"Reason: {_cache_llm_decision.explanation}",
+                    )
+                    return
+
         await _send_live_stage(adapter, event, "retrieving_context", "Analysing results", "Running analytics on the previously returned data.")
         try:
             _duck_schema = result_cache.get_schema(_session_id)

@@ -904,6 +904,7 @@
           <div><code style="background:var(--surface-3,#f3f4f6);padding:1px 5px;border-radius:3px">followup_suggestions</code> — result-aware "ask next" suggestions.</div>
           <div><code style="background:var(--surface-3,#f3f4f6);padding:1px 5px;border-radius:3px">compare_prior</code> — prior-period comparison narrative.</div>
           <div><code style="background:var(--surface-3,#f3f4f6);padding:1px 5px;border-radius:3px">result_narration</code> — 1-sentence summary of a result-chat answer.</div>
+          <div><code style="background:var(--surface-3,#f3f4f6);padding:1px 5px;border-radius:3px">duckdb_cache</code> — follow-up SQL against a previously cached result.</div>
         </div>
         <div style="margin-top:.6rem;padding-top:.6rem;border-top:1px solid var(--border)">
           <span class="badge badge-blue">BLOCKED</span> — for regulated-industry workspaces, these four
@@ -920,7 +921,7 @@
           <label style="display:block;font-size:11px;font-weight:600;color:var(--gray-600);margin-bottom:3px">Component</label>
           <select name="audit_component" onchange="this.form.submit()" style="width:100%">
             <option value="">All components</option>
-            {% for c in ["sql_generation", "sql_repair", "clarification", "clarification_menu", "clarification_fallback", "analysis", "analysis_narrative", "drilldown_planner", "kb_build", "kb_business_vocab", "kb_table_doc", "kb_query_examples", "followup_suggestions", "compare_prior", "result_narration"] %}
+            {% for c in ["sql_generation", "sql_repair", "clarification", "clarification_menu", "clarification_fallback", "analysis", "analysis_narrative", "drilldown_planner", "kb_build", "kb_business_vocab", "kb_table_doc", "kb_query_examples", "followup_suggestions", "compare_prior", "result_narration", "duckdb_cache"] %}
             <option value="{{ c }}" {% if audit_component == c %}selected{% endif %}>{{ c }}</option>
             {% endfor %}
           </select>

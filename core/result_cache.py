@@ -464,6 +464,12 @@ class ResultCache:
             entry = self._get(session_id)
         return entry.schema if entry else []
 
+    def get_sql(self, session_id: str) -> str:
+        """Return the original SQL that produced the cached result, or ""."""
+        with self._lock:
+            entry = self._get(session_id)
+        return entry.sql if entry else ""
+
     def get_stats(self, session_id: str) -> dict:
         """
         Return a statistical summary of the cached result for DuckDB prompt
