@@ -791,6 +791,7 @@ def get_recent_llm_calls(
             "components":   ", ".join(components_seen),
             "total_chars":  sum(c.get("prompt_chars", 0) for c in calls),
             "any_error":    1 if any(c["status"] == "error" for c in calls) else 0,
+            "any_blocked":  1 if any(c["status"] == "blocked" for c in calls) else 0,
             "calls":        calls,
         })
 

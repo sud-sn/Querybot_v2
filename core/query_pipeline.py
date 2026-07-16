@@ -151,6 +151,23 @@ async def _send_why_insight(
     here is logged and swallowed — never surfaced as a user-facing error."""
     from core.compliance.policy_engine import result_llm_features_allowed
     if not result_llm_features_allowed(account_id):
+        # Silent skip (matches this function's own failure-swallowing
+        # contract) — but still leave a proof-of-refusal audit row, since
+        # this is an auto-triggered second message the user never asked
+        # for, not an action button click that deserves a visible reply.
+        with llm_audit_scope(
+            account_id=account_id,
+            question=f"why: {question}"[:500],
+            enabled=bool(client.get("enable_llm_audit")),
+            request_id=make_llm_audit_request_id(),
+            question_id=question_id,
+            component="analysis",
+        ):
+            from core.llm_audit import record_llm_blocked
+            record_llm_blocked(
+                "analysis",
+                "why-insight blocked — regulated tenant, LLM never received result rows.",
+            )
         return
     try:
         from core.response_builder import generate_analysis_response

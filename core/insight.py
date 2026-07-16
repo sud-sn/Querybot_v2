@@ -1325,7 +1325,26 @@ async def generate_followup_suggestions(
     Reads category_breakdown and numeric_summaries from brief — raw rows never
     reach this function (PII boundary).
     Returns [] on any failure — follow-ups are a UX enhancement, not critical.
+    Regulated tenants get [] unconditionally (see result_llm_features_allowed)
+    with a proof-of-refusal audit row instead of ever building a prompt.
     """
+    from core.compliance.policy_engine import result_llm_features_allowed
+    if not result_llm_features_allowed(account_id):
+        from core.llm_audit import llm_audit_scope, record_llm_blocked
+        with llm_audit_scope(
+            account_id=account_id,
+            question=question,
+            enabled=audit_enabled,
+            request_id=audit_request_id,
+            question_id=audit_request_id,
+            component="followup_suggestions",
+        ):
+            record_llm_blocked(
+                "followup_suggestions",
+                "follow-up suggestions blocked — regulated tenant, LLM never received result rows.",
+            )
+        return []
+
     if not brief:
         return []
 

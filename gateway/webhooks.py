@@ -1028,13 +1028,25 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     # Regulated tenants skip this unconditionally — the LLM's only
                     # job for them is writing SQL, never seeing the answer rows.
                     from core.compliance.policy_engine import result_llm_features_allowed
-                    _rc_narration = (
-                        await _generate_result_narration(
+                    if result_llm_features_allowed(account_id):
+                        _rc_narration = await _generate_result_narration(
                             rc_question, _rc_rows, _rc_currency, client
                         )
-                        if result_llm_features_allowed(account_id)
-                        else ""
-                    )
+                    else:
+                        with llm_audit_scope(
+                            account_id=account_id,
+                            question=rc_question,
+                            enabled=bool(client.get("enable_llm_audit")),
+                            request_id=make_llm_audit_request_id(),
+                            question_id=_rc_question_id,
+                            component="result_narration",
+                        ):
+                            from core.llm_audit import record_llm_blocked
+                            record_llm_blocked(
+                                "result_narration",
+                                "result narration blocked — regulated tenant, LLM never received result rows.",
+                            )
+                        _rc_narration = ""
 
                     await websocket.send_json({
                         "type":             "result_chat_response",

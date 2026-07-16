@@ -901,6 +901,14 @@
           <div><code style="background:var(--surface-3,#f3f4f6);padding:1px 5px;border-radius:3px">kb_business_vocab</code> — business-vocabulary document generated during KB build.</div>
           <div><code style="background:var(--surface-3,#f3f4f6);padding:1px 5px;border-radius:3px">kb_table_doc</code> — per-table KB document (Stage 1) generated during KB build.</div>
           <div><code style="background:var(--surface-3,#f3f4f6);padding:1px 5px;border-radius:3px">kb_query_examples</code> — per-table question→SQL examples (Stage 2).</div>
+          <div><code style="background:var(--surface-3,#f3f4f6);padding:1px 5px;border-radius:3px">followup_suggestions</code> — result-aware "ask next" suggestions.</div>
+          <div><code style="background:var(--surface-3,#f3f4f6);padding:1px 5px;border-radius:3px">compare_prior</code> — prior-period comparison narrative.</div>
+          <div><code style="background:var(--surface-3,#f3f4f6);padding:1px 5px;border-radius:3px">result_narration</code> — 1-sentence summary of a result-chat answer.</div>
+        </div>
+        <div style="margin-top:.6rem;padding-top:.6rem;border-top:1px solid var(--border)">
+          <span class="badge badge-blue">BLOCKED</span> — for regulated-industry workspaces, these four
+          components never reach the LLM at all. The row records that refusal (component, reason, timestamp)
+          instead of a prompt — proof the safeguard fired, not a failure.
         </div>
       </details>
     </div>
@@ -912,7 +920,7 @@
           <label style="display:block;font-size:11px;font-weight:600;color:var(--gray-600);margin-bottom:3px">Component</label>
           <select name="audit_component" onchange="this.form.submit()" style="width:100%">
             <option value="">All components</option>
-            {% for c in ["sql_generation", "sql_repair", "clarification", "clarification_menu", "clarification_fallback", "analysis", "analysis_narrative", "drilldown_planner", "kb_build", "kb_business_vocab", "kb_table_doc", "kb_query_examples"] %}
+            {% for c in ["sql_generation", "sql_repair", "clarification", "clarification_menu", "clarification_fallback", "analysis", "analysis_narrative", "drilldown_planner", "kb_build", "kb_business_vocab", "kb_table_doc", "kb_query_examples", "followup_suggestions", "compare_prior", "result_narration"] %}
             <option value="{{ c }}" {% if audit_component == c %}selected{% endif %}>{{ c }}</option>
             {% endfor %}
           </select>
@@ -923,6 +931,7 @@
             <option value="">All</option>
             <option value="success" {% if audit_status == "success" %}selected{% endif %}>Success</option>
             <option value="error"   {% if audit_status == "error"   %}selected{% endif %}>Error</option>
+            <option value="blocked" {% if audit_status == "blocked" %}selected{% endif %}>Blocked (regulated)</option>
           </select>
         </div>
         {% if audit_component or audit_status %}
@@ -977,6 +986,8 @@
           <td>
             {% if group.any_error %}
             <span class="badge badge-red">ERROR</span>
+            {% elif group.any_blocked %}
+            <span class="badge badge-blue" title="LLM never received the result rows — regulated-tenant safeguard">BLOCKED</span>
             {% else %}
             <span class="badge badge-green">OK</span>
             {% endif %}
@@ -1012,6 +1023,8 @@
             <td colspan="2">
               {% if call.status == "success" %}
               <span class="badge badge-green">OK</span>
+              {% elif call.status == "blocked" %}
+              <span class="badge badge-blue" title="LLM never received the result rows — regulated-tenant safeguard">BLOCKED</span>
               {% else %}
               <span class="badge badge-red" title="{{ call.error_msg }}">ERROR</span>
               {% endif %}

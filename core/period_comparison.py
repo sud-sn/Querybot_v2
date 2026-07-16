@@ -399,6 +399,11 @@ async def generate_period_comparison(
         }
 
     if not result_llm_features_allowed(account_id):
+        from core.llm_audit import record_llm_blocked
+        record_llm_blocked(
+            "compare_prior",
+            "compare_prior blocked — regulated tenant, LLM never received result rows.",
+        )
         return _fallback(
             "This workspace is configured for a regulated industry. To keep "
             "protected data from ever reaching the AI model, the assistant "

@@ -156,27 +156,34 @@ class WhyInsightRegulatedGateTests(unittest.TestCase):
 
 
 class FollowUpSuggestionsRegulatedGateTests(unittest.TestCase):
-    def test_gate_wired_into_send_results(self):
+    def test_gate_wired_into_generate_followup_suggestions(self):
+        # Moved from the _send_results call site into the shared function
+        # itself (matching generate_analysis_response's pattern) so the
+        # block gets audit coverage from the function's own llm_audit_scope.
+        src = _src("core/insight.py")
+        start = src.index("async def generate_followup_suggestions(")
+        fn = src[start:start + 2000]
+        gate_pos = fn.index("result_llm_features_allowed(account_id)")
+        brief_check_pos = fn.index('if not brief:')
+        self.assertLess(gate_pos, brief_check_pos, "gate must run before anything else")
+        self.assertIn("record_llm_blocked(", fn[:brief_check_pos])
+
+    def test_send_results_no_longer_duplicates_the_gate(self):
         src = _src("core/result_renderer.py")
         fn = src[src.index("async def _send_results("):]
-        gen_pos = fn.index("await generate_followup_suggestions(")
-        gate_pos = fn.index("result_llm_features_allowed(account_id)")
-        self.assertLess(gate_pos, gen_pos, "gate must be checked before the LLM call")
-        # The gate must sit in the same conditional that guards the call,
-        # not just appear somewhere earlier in the function.
-        guard_if = fn.rindex("if ", 0, gen_pos)
-        self.assertLess(guard_if, gate_pos)
+        self.assertNotIn("result_llm_features_allowed(account_id)", fn)
 
 
 class ResultChatNarrationRegulatedGateTests(unittest.TestCase):
     def test_gate_wired_into_websocket_handler(self):
         src = _src("gateway/webhooks.py")
-        narration_pos = src.index("_rc_narration = (")
-        block = src[narration_pos:narration_pos + 400]
-        self.assertIn("result_llm_features_allowed(account_id)", block)
+        gate_pos = src.index("if result_llm_features_allowed(account_id):")
+        block = src[gate_pos:gate_pos + 1300]
         self.assertIn("await _generate_result_narration(", block)
-        # Regulated path must fall back to empty, not raise or hang.
-        self.assertIn('else ""', block)
+        # Regulated path must fall back to empty, not raise or hang, and
+        # leave a proof-of-refusal audit row.
+        self.assertIn('_rc_narration = ""', block)
+        self.assertIn("record_llm_blocked(", block)
 
 
 class GenerateAnalysisResponseRegulatedGateTests(unittest.TestCase):

@@ -235,3 +235,39 @@ def record_llm_call(
         )
     except Exception as exc:
         log.warning("LLM audit write failed: %s", exc)
+
+
+def record_llm_blocked(component: str, reason: str) -> None:
+    """
+    Record a proof-of-refusal row: a call site decided NOT to invoke the LLM
+    at all (see core.compliance.policy_engine.result_llm_features_allowed)
+    and is logging that decision instead of the (never-built) prompt.
+
+    Unlike record_llm_call, there is no system/user prompt to hash or
+    preview — status="blocked" plus the reason IS the audit record. Uses the
+    same ambient scope (account_id/enabled) as record_llm_call, so this
+    respects the client's existing "enable LLM audit" toggle rather than
+    forcing extra rows for clients who opted out of audit logging entirely.
+    """
+    scope = _AUDIT_SCOPE.get()
+    if not scope or not scope.get("enabled") or not scope.get("account_id"):
+        return
+    try:
+        import store
+
+        store.log_llm_call(
+            account_id=scope["account_id"],
+            question_id=str(scope.get("question_id") or scope.get("request_id") or ""),
+            request_id=str(scope.get("request_id") or ""),
+            question=sanitize_llm_text(str(scope.get("question") or ""), limit=400),
+            component=component,
+            llm_provider="",
+            llm_model="",
+            status="blocked",
+            payload_hash="",
+            payload_preview_sanitized=reason,
+            prompt_chars=0,
+            error_msg="",
+        )
+    except Exception as exc:
+        log.warning("LLM audit blocked-record write failed: %s", exc)

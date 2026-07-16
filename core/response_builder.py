@@ -1297,6 +1297,11 @@ async def generate_analysis_response(
     """
     from core.compliance.policy_engine import result_llm_features_allowed
     if not result_llm_features_allowed(account_id):
+        from core.llm_audit import record_llm_blocked
+        record_llm_blocked(
+            "analysis",
+            f"action={action!r} blocked — regulated tenant, LLM never received result rows.",
+        )
         return _regulated_analysis_fallback(action)
 
     from core.insight import (
