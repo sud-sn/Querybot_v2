@@ -1024,9 +1024,16 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     except Exception:
                         pass
 
-                    # 1-sentence narration (lightweight LLM call, silent on failure)
-                    _rc_narration = await _generate_result_narration(
-                        rc_question, _rc_rows, _rc_currency, client
+                    # 1-sentence narration (lightweight LLM call, silent on failure).
+                    # Regulated tenants skip this unconditionally — the LLM's only
+                    # job for them is writing SQL, never seeing the answer rows.
+                    from core.compliance.policy_engine import result_llm_features_allowed
+                    _rc_narration = (
+                        await _generate_result_narration(
+                            rc_question, _rc_rows, _rc_currency, client
+                        )
+                        if result_llm_features_allowed(account_id)
+                        else ""
                     )
 
                     await websocket.send_json({

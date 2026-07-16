@@ -12,6 +12,25 @@ _HARD_DENIED_ACTIONS = {"insert", "update", "delete", "ddl", "cross_tenant"}
 _BREAK_GLASS_DENIED_ACTIONS = {"export", "llm_context"}
 
 
+def result_llm_features_allowed(account_id: str) -> bool:
+    """
+    False for any regulated tenant, unconditionally.
+
+    Result narration, follow-up suggestions, and why-insights all hand real
+    query result rows to the LLM as a second call after SQL generation —
+    none of them go through evaluate()'s per-resource masking, so they rely
+    entirely on column-name pattern matching having caught every sensitive
+    field. Regulated tenants get a stricter boundary instead: the LLM's
+    only job is writing SQL from schema/sample-value context (still gated
+    by the llm_context/BAA check); it never sees actual answers.
+
+    Deliberately independent of BAA status and enforcement_mode — a signed
+    agreement covers legal liability for permitted use, not the
+    minimum-necessary-exposure posture this boundary is for.
+    """
+    return store.get_compliance_profile(account_id).get("mode") != "regulated"
+
+
 def resolve_context(
     account_id: str,
     user: dict | None,

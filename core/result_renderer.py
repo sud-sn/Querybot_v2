@@ -766,7 +766,13 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
         # Generate suggestions from the statistical brief already computed
         # inside build_assistant_response — no extra DB call or raw row exposure.
         # Uses a lightweight 160-token LLM call; failures are silent.
-        if portal_user and rows and len(rows[0]) >= 2 if rows else False:
+        # Regulated tenants skip this unconditionally (see
+        # result_llm_features_allowed) — the LLM's only job for them is
+        # writing SQL, never touching anything derived from the answer.
+        from core.compliance.policy_engine import result_llm_features_allowed
+        if (
+            portal_user and rows and len(rows[0]) >= 2 if rows else False
+        ) and result_llm_features_allowed(account_id):
             brief         = response_payload.get("data_brief") or {}
             result_scope  = response_payload.get("result_scope") or {}
             audit_rid     = response_payload.get("analysis_contract", {}).get("request_id", "") or question_id or ""

@@ -149,6 +149,9 @@ async def _send_why_insight(
     """Generate and send a causal analysis of `rows` after the factual answer.
     Best-effort: the factual answer is already on the wire, so any failure
     here is logged and swallowed — never surfaced as a user-facing error."""
+    from core.compliance.policy_engine import result_llm_features_allowed
+    if not result_llm_features_allowed(account_id):
+        return
     try:
         from core.response_builder import generate_analysis_response
         provider, model, api_key, az_kwargs = resolve_provider(client, purpose="query")
