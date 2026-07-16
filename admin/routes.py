@@ -1655,8 +1655,9 @@ async def client_new_page(request: Request):
         return RedirectResponse("/admin/login", status_code=303)
     dbs = store.list_db_configs()
     return _resp(request, "client_new.html", {
-        "dbs":   dbs,
-        "error": request.query_params.get("error"),
+        "dbs":                 dbs,
+        "erp_packs_available": _list_erp_packs(),
+        "error":               request.query_params.get("error"),
     })
 
 
@@ -1699,6 +1700,13 @@ async def client_create(
     # older databases. Use 'zoom' as a neutral placeholder — platform_config_id
     # is NULL so platform_type is never used for portal-only clients anyway.
     effective_platform = "zoom" if is_portal_only else platform_type
+    form = await request.form()
+    selected_packs = [str(value).strip() for value in form.getlist("erp_packs") if str(value).strip()]
+    valid_packs = {
+        pack["pack_id"] for pack in _list_erp_packs()
+        if pack.get("status") != "stub"
+    }
+    selected_packs = [pack_id for pack_id in selected_packs if pack_id in valid_packs]
     store.upsert_client(account_id, effective_platform)
     store.update_client_meta(
         account_id,
@@ -1706,6 +1714,7 @@ async def client_create(
         db_config_id  = int(db_config_id) if db_config_id else None,
         portal_only   = 1 if is_portal_only else 0,
         chat_ui_enabled = 1 if is_portal_only else None,
+        erp_packs       = json.dumps(selected_packs),
     )
 
     # Seed the business description into state_data so the Setup page pre-fills it

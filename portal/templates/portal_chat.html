@@ -535,7 +535,7 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
   </section>
 
   <div class="chat-workspace">
-    <aside class="chat-conversation-rail" id="chatConversationRail" aria-label="Conversation history and workspace navigation">
+    <aside class="chat-conversation-rail" id="chatConversationRail" aria-label="Conversation history">
       <div class="chat-rail-heading">
         <div>
           <span class="chat-rail-eyebrow">Workspace</span>
@@ -572,28 +572,6 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
         </div>
       </div>
 
-      <nav class="chat-rail-nav" aria-label="Workspace navigation">
-        <a href="/portal/dashboard">{{ ic("dashboard", 17) }} <span>Dashboard</span></a>
-        <a href="/portal/kb">{{ ic("database", 17) }} <span>Semantic Layer</span></a>
-      </nav>
-
-      <div class="chat-rail-utility">
-        <button type="button" data-theme-toggle onclick="window.__qbToggleTheme()">
-          <span class="ti-moon">{{ ic("moon", 16) }}</span>
-          <span class="ti-sun">{{ ic("sun", 16) }}</span>
-          <span class="theme-label">Dark mode</span>
-        </button>
-        <a href="/portal/logout">Logout</a>
-      </div>
-
-      <div class="chat-rail-account">
-        <div class="avatar" aria-hidden="true">{{ (user.name or 'U')[0].upper() }}</div>
-        <div class="chat-rail-account-copy">
-          <strong>{{ user.name }}</strong>
-          <span>{{ user.group_name or 'No group' }} &middot; {{ user.role }}</span>
-        </div>
-        <a href="/portal/change-password" class="chat-rail-icon-btn" aria-label="Settings" title="Settings">{{ ic("settings", 16) }}</a>
-      </div>
     </aside>
 
     <button type="button" class="chat-rail-backdrop" onclick="toggleHistoryPanel()" aria-label="Close chat history"></button>

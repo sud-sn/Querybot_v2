@@ -135,6 +135,9 @@
     </header>
 
     <main class="page">
+      {% if client is defined and client %}
+      {% include "_client_workspace_nav.html" %}
+      {% endif %}
       {% block breadcrumb %}{% endblock %}
       {% block content %}{% endblock %}
     </main>

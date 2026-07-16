@@ -1,0 +1,58 @@
+{% from "icons.html" import ic %}
+{% set _p = request.url.path %}
+{% set _b = "/admin/clients/" ~ client.account_id %}
+{% set _is_overview = (_p == _b or _p == _b ~ "/") %}
+{% set _is_model = ('/setup' in _p or ('/kb' in _p and '/billing' not in _p) or '/graph' in _p or '/date-roles' in _p or '/metrics' in _p or '/glossary' in _p) %}
+{% set _is_quality = ('/model-health' in _p or '/evals' in _p or '/traces' in _p or '/learning-queue' in _p) %}
+{% set _is_access = ('/users' in _p or '/groups' in _p or '/pending-users' in _p) %}
+{% set _is_governance = ('/compliance' in _p or '/billing' in _p) %}
+
+<section class="client-workspace-nav" aria-label="Client workspace">
+  <div class="client-workspace-summary">
+    <div class="client-workspace-identity">
+      <a href="/admin/clients" class="client-workspace-back" aria-label="Back to all clients">&larr;</a>
+      <div>
+        <div class="client-workspace-name">{{ client.client_name or client.account_id }}</div>
+        <div class="client-workspace-id">{{ client.account_id }}</div>
+      </div>
+    </div>
+    <span class="badge {% if client.state == 'READY' %}badge-green{% elif client.state in ['KB_BUILDING','SCHEMA_BUILDING'] %}badge-amber{% elif client.state == 'SCHEMA_READY' %}badge-blue{% else %}badge-gray{% endif %}">{{ client.state }}</span>
+  </div>
+
+  <nav class="client-workspace-primary" aria-label="Client lifecycle areas">
+    <a href="{{ _b }}" class="{% if _is_overview %}active{% endif %}">Overview</a>
+    <a href="{{ _b }}/setup" class="{% if _is_model %}active{% endif %}">Data &amp; Model</a>
+    <a href="{{ _b }}/model-health" class="{% if _is_quality %}active{% endif %}">Quality</a>
+    <a href="{{ _b }}/users" class="{% if _is_access %}active{% endif %}">Access</a>
+    <a href="{{ _b }}/compliance" class="{% if _is_governance %}active{% endif %}">Governance</a>
+  </nav>
+
+  {% if _is_model %}
+  <nav class="client-workspace-secondary" aria-label="Data and model tools">
+    <a href="{{ _b }}/setup" class="{% if '/setup' in _p %}active{% endif %}">Setup</a>
+    <a href="{{ _b }}/kb" class="{% if '/kb' in _p and '/billing' not in _p %}active{% endif %}">Knowledge Base</a>
+    <a href="{{ _b }}/graph" class="{% if '/graph' in _p %}active{% endif %}">Entity Graph</a>
+    <a href="{{ _b }}/date-roles" class="{% if '/date-roles' in _p %}active{% endif %}">Date Roles</a>
+    <a href="{{ _b }}/metrics" class="{% if '/metrics' in _p %}active{% endif %}">Metrics</a>
+    <a href="{{ _b }}/glossary" class="{% if '/glossary' in _p %}active{% endif %}">Glossary</a>
+  </nav>
+  {% elif _is_quality %}
+  <nav class="client-workspace-secondary" aria-label="Quality tools">
+    <a href="{{ _b }}/model-health" class="{% if '/model-health' in _p %}active{% endif %}">Model Health</a>
+    <a href="{{ _b }}/evals" class="{% if '/evals' in _p %}active{% endif %}">Evaluations</a>
+    <a href="{{ _b }}/traces" class="{% if '/traces' in _p %}active{% endif %}">Traces</a>
+    <a href="{{ _b }}/learning-queue" class="{% if '/learning-queue' in _p %}active{% endif %}">Learning Queue</a>
+  </nav>
+  {% elif _is_access %}
+  <nav class="client-workspace-secondary" aria-label="Access tools">
+    <a href="{{ _b }}/users" class="{% if '/users' in _p %}active{% endif %}">Users</a>
+    <a href="{{ _b }}/groups" class="{% if '/groups' in _p %}active{% endif %}">Groups</a>
+    <a href="{{ _b }}/pending-users" class="{% if '/pending-users' in _p %}active{% endif %}">Access Requests{% if pending_count is defined and pending_count > 0 %}<span class="client-nav-count">{{ pending_count }}</span>{% endif %}</a>
+  </nav>
+  {% elif _is_governance %}
+  <nav class="client-workspace-secondary" aria-label="Governance tools">
+    <a href="{{ _b }}/compliance" class="{% if '/compliance' in _p %}active{% endif %}">Compliance</a>
+    <a href="{{ _b }}/billing" class="{% if '/billing' in _p %}active{% endif %}">Billing</a>
+  </nav>
+  {% endif %}
+</section>

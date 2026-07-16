@@ -320,40 +320,38 @@
         <div class="form-group" style="margin-top:.25rem">
           <label style="font-weight:600">ERP terminology packs</label>
           <p class="form-note">Vocabulary packs merge over QueryBot's built-in defaults for KB build and question matching. Leave all unchecked for the standard (Infor M3 / DMS) vocabulary. Re-run the KB build after changing packs.</p>
+          <div class="choice-grid" style="margin-top:.7rem">
           {% for pack in erp_packs_available %}
-          <label style="display:flex;align-items:flex-start;gap:.65rem;font-weight:600;margin-top:.35rem;{% if pack.status == 'stub' %}opacity:.5{% endif %}">
+          <label class="choice-card">
             <input type="checkbox" name="erp_packs" value="{{ pack.pack_id }}"
                    {% if pack.pack_id in client_erp_packs %}checked{% endif %}
-                   {% if pack.status == 'stub' %}disabled{% endif %} style="margin-top:3px">
-            <span>
-              {{ pack.erp_name }}{% if pack.status == 'stub' %} <em style="font-weight:400">(coming soon)</em>{% endif %}
-              <span class="form-note" style="display:block;margin-top:2px">{{ pack.description }}</span>
+                   {% if pack.status == 'stub' %}disabled{% endif %}>
+            <span class="choice-card-copy">
+              <span class="choice-card-title">{{ pack.erp_name }}{% if pack.status == 'stub' %} (coming soon){% endif %}</span>
+              <span class="choice-card-description">{{ pack.description }}</span>
             </span>
           </label>
           {% endfor %}
+          </div>
         </div>
         {% endif %}
         <div class="form-group" style="margin-top:.25rem">
-          <label style="display:flex;align-items:flex-start;gap:.65rem;font-weight:600">
-            <input type="checkbox" name="enable_llm_audit" value="1" {% if client.enable_llm_audit %}checked{% endif %} style="margin-top:3px">
-            <span>
-              Enable per-query LLM audit logging
-              <span class="form-note" style="display:block;margin-top:4px">
-                Stores a sanitized preview of each prompt sent to the LLM, grouped by request ID and component.
-              </span>
+          <label class="form-switch">
+            <input type="checkbox" name="enable_llm_audit" value="1" {% if client.enable_llm_audit %}checked{% endif %}>
+            <span class="form-switch-track" aria-hidden="true"></span>
+            <span class="form-switch-copy">
+              <span class="form-switch-title">Enable per-query LLM audit logging</span>
+              <span class="form-switch-description">Stores a sanitized preview of each prompt sent to the LLM, grouped by request ID and component.</span>
             </span>
           </label>
         </div>
         <div class="form-group" style="margin-top:.25rem">
-          <label style="display:flex;align-items:flex-start;gap:.65rem;font-weight:600">
-            <input type="checkbox" name="portal_only" value="1" {% if client.portal_only %}checked{% endif %} style="margin-top:3px">
-            <span>
-              Web portal only (no chat platform required)
-              <span class="form-note" style="display:block;margin-top:4px">
-                Users access QueryBot exclusively through the internal web portal.
-                No Zoom, Teams, or Slack integration needed. Enables the chat UI automatically.
-                Users created in the Users tab can log in immediately with their credentials.
-              </span>
+          <label class="form-switch">
+            <input type="checkbox" name="portal_only" value="1" {% if client.portal_only %}checked{% endif %}>
+            <span class="form-switch-track" aria-hidden="true"></span>
+            <span class="form-switch-copy">
+              <span class="form-switch-title">Web portal only</span>
+              <span class="form-switch-description">Users access QueryBot through the internal portal without a Zoom, Teams, or Slack integration.</span>
             </span>
           </label>
         </div>

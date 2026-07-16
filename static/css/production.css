@@ -45,12 +45,12 @@ body { background: var(--bg); letter-spacing: 0; }
 .btn-xs { min-height: 28px; padding: 4px 8px; }
 .icon-btn { width: 36px; height: 36px; box-shadow: none; }
 
-.form-group input,
+.form-group input:not([type="checkbox"]):not([type="radio"]),
 .form-group select,
 .form-group textarea,
 .input-compact,
 .select-compact { border-width: 1px; }
-.form-group input,
+.form-group input:not([type="checkbox"]):not([type="radio"]),
 .form-group select { min-height: 40px; }
 .form-group label { letter-spacing: 0; }
 
