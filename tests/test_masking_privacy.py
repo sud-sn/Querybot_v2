@@ -193,6 +193,123 @@ class EmbeddedPiiScrubTests(unittest.TestCase):
         self.assertEqual(out[0]["code"], "AB-1234")
 
 
+class _FakeNerAnalyzer:
+    """Stand-in for presidio's AnalyzerEngine — finds 'John Smith' spans.
+
+    Lets the NER-path tests run without presidio/spaCy installed; the real
+    engine is exercised in deployment, the wiring is exercised here."""
+
+    def __init__(self, target: str = "John Smith"):
+        self.target = target
+        self.calls: list[str] = []
+
+    def analyze(self, text, entities, language, score_threshold):
+        assert entities == ["PERSON"]
+        self.calls.append(text)
+        class _Span:
+            def __init__(self, start, end):
+                self.start, self.end = start, end
+        spans = []
+        idx = text.find(self.target)
+        while idx != -1:
+            spans.append(_Span(idx, idx + len(self.target)))
+            idx = text.find(self.target, idx + 1)
+        return spans
+
+
+class NerPersonNameScrubTests(unittest.TestCase):
+    """Presidio-backed person-name scrubbing — the one embedded-PII category
+    regex structurally cannot catch. Regulated-industry KB discovery only."""
+
+    NARRATIVE = "Patient John Smith reported dizziness after the evening dose"
+
+    def test_person_span_replaced(self):
+        from core.masking import scrub_person_names_ner
+        out = scrub_person_names_ner(self.NARRATIVE, analyzer=_FakeNerAnalyzer())
+        self.assertNotIn("John Smith", out)
+        self.assertIn("[PERSON]", out)
+        self.assertIn("reported dizziness", out)  # rest of narrative survives
+
+    def test_multiple_spans_replaced_without_offset_corruption(self):
+        from core.masking import scrub_person_names_ner
+        text = "John Smith spoke to Dr. John Smith about the refill"
+        out = scrub_person_names_ner(text, analyzer=_FakeNerAnalyzer())
+        self.assertNotIn("John Smith", out)
+        self.assertEqual(out.count("[PERSON]"), 2)
+        self.assertIn("about the refill", out)
+
+    def test_all_caps_values_skipped(self):
+        # ERP dimension values ("MARTIN SUPPLY CO") are not prose — NER is
+        # unreliable there and a false positive corrupts a legitimate sample.
+        from core.masking import scrub_person_names_ner
+        fake = _FakeNerAnalyzer(target="MARTIN")
+        out = scrub_person_names_ner("MARTIN SUPPLY CO WAREHOUSE 822", analyzer=fake)
+        self.assertEqual(out, "MARTIN SUPPLY CO WAREHOUSE 822")
+        self.assertEqual(fake.calls, [], "analyzer must not even be invoked for ALL-CAPS values")
+
+    def test_unavailable_presidio_returns_text_unchanged(self):
+        from unittest.mock import patch
+        from core.masking import scrub_person_names_ner
+        with patch("core.masking._get_presidio", return_value=None):
+            self.assertEqual(scrub_person_names_ner(self.NARRATIVE), self.NARRATIVE)
+
+    def test_analyzer_failure_returns_text_unchanged(self):
+        from core.masking import scrub_person_names_ner
+        class _Broken:
+            def analyze(self, **kw):
+                raise RuntimeError("model not loaded")
+        self.assertEqual(
+            scrub_person_names_ner(self.NARRATIVE, analyzer=_Broken()),
+            self.NARRATIVE,
+        )
+
+    def test_regulated_industry_gets_ner_pass_in_free_text_scrub(self):
+        from unittest.mock import patch
+        fake = _FakeNerAnalyzer()
+        cols = [{"name": "remark_field", "type": "varchar(80)"}]
+        rows = [{"remark_field": self.NARRATIVE}]
+        with patch("core.masking._get_presidio", return_value=fake):
+            out = scrub_unmasked_free_text(
+                rows, cols, skip_fields=set(), industry="healthcare_pharmacy"
+            )
+        self.assertNotIn("John Smith", out[0]["remark_field"])
+        self.assertIn("[PERSON]", out[0]["remark_field"])
+
+    def test_standard_client_never_invokes_ner(self):
+        from unittest.mock import patch
+        fake = _FakeNerAnalyzer()
+        cols = [{"name": "remark_field", "type": "varchar(80)"}]
+        for industry in ("", "standard"):
+            rows = [{"remark_field": self.NARRATIVE}]
+            with patch("core.masking._get_presidio", return_value=fake):
+                out = scrub_unmasked_free_text(
+                    rows, cols, skip_fields=set(), industry=industry
+                )
+            self.assertIn("John Smith", out[0]["remark_field"], industry)
+        self.assertEqual(fake.calls, [])
+
+    def test_ner_runs_after_regex_scrub_and_masked_columns_skipped(self):
+        from unittest.mock import patch
+        fake = _FakeNerAnalyzer()
+        cols = [
+            {"name": "remark_field", "type": "varchar(120)"},
+            {"name": "notes", "type": "varchar(600)"},
+        ]
+        rows = [{
+            "remark_field": "John Smith called from j.smith@mail.com about the refill",
+            "notes": "already masked upstream — must be skipped",
+        }]
+        with patch("core.masking._get_presidio", return_value=fake):
+            out = scrub_unmasked_free_text(
+                rows, cols, skip_fields={"notes"}, industry="healthcare_pharmacy"
+            )
+        val = out[0]["remark_field"]
+        self.assertIn("[EMAIL]", val)          # regex scrub still applied
+        self.assertIn("[PERSON]", val)         # NER applied on top
+        self.assertNotIn("John Smith", val)
+        self.assertEqual(out[0]["notes"], "already masked upstream — must be skipped")
+
+
 class PerAccountSeedingTests(unittest.TestCase):
     """B3 — masking is account-isolated; synthetic differs across accounts."""
 

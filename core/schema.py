@@ -234,7 +234,9 @@ def _apply_masking(
 
     # Final safety net: scrub embedded PII from any narrative string column that
     # was NOT explicitly masked above (defense-in-depth). (B2)
-    rows = scrub_unmasked_free_text(rows, col_defs, masked_fields)
+    # Regulated industries also get a local NER pass for embedded person
+    # names, which the regex patterns structurally cannot catch.
+    rows = scrub_unmasked_free_text(rows, col_defs, masked_fields, industry=industry)
 
     return rows, masked_fields, replacement_map, False
 

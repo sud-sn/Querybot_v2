@@ -187,10 +187,89 @@ def scrub_embedded_pii(text: str) -> str:
     return t
 
 
+# ── NER-backed person-name scrubbing (Presidio, optional) ────────────────────
+# Person names have no regex-matchable shape — "Patient John Smith reported
+# dizziness" sails through scrub_embedded_pii with the name intact. Presidio
+# (Microsoft's local NER-based PII engine) closes exactly that gap. Scoped
+# deliberately tight:
+#   • PERSON entities only — LOCATION/ORG hit too many legitimate business
+#     dimension values (warehouse cities, company names) to scrub safely.
+#   • Regulated industries only, and only in the KB-discovery scrub pass
+#     (scrub_unmasked_free_text) — never in the query hot path.
+#   • Mixed-case narrative values only — ERP dimension values are typically
+#     ALL CAPS ("MARTIN SUPPLY CO"), where NER person-detection is both
+#     unreliable and business-destructive.
+#   • Fully local (spaCy model in-process); graceful fallback to regex-only
+#     scrubbing when presidio/spaCy aren't installed.
+
+_presidio_analyzer: Any = None  # None = not tried yet, False = unavailable
+
+
+def _get_presidio():
+    """Lazy Presidio AnalyzerEngine singleton; None when unavailable."""
+    global _presidio_analyzer
+    if _presidio_analyzer is not None:
+        return _presidio_analyzer or None
+    try:
+        import importlib.util
+        from presidio_analyzer import AnalyzerEngine
+        from presidio_analyzer.nlp_engine import NlpEngineProvider
+
+        model = next(
+            (m for m in ("en_core_web_lg", "en_core_web_md", "en_core_web_sm")
+             if importlib.util.find_spec(m)),
+            None,
+        )
+        if model is None:
+            raise ImportError("no spaCy English model installed")
+        provider = NlpEngineProvider(nlp_configuration={
+            "nlp_engine_name": "spacy",
+            "models": [{"lang_code": "en", "model_name": model}],
+        })
+        _presidio_analyzer = AnalyzerEngine(nlp_engine=provider.create_engine())
+        log.info("masking: Presidio NER person-name scrubbing enabled (spaCy model=%s)", model)
+        return _presidio_analyzer
+    except Exception as exc:
+        log.info("masking: Presidio unavailable (%s) — regex-only free-text scrubbing", exc)
+        _presidio_analyzer = False
+        return None
+
+
+def scrub_person_names_ner(text: str, analyzer=None) -> str:
+    """
+    Replace person-name spans in narrative text with [PERSON].
+
+    Best-effort: returns text unchanged when Presidio is unavailable, the
+    value doesn't look like narrative prose (no lowercase letters), or
+    analysis fails. Never raises.
+    """
+    if not text or not isinstance(text, str):
+        return text
+    # ALL-CAPS values are ERP codes/dimension labels, not prose — NER is
+    # unreliable there and a false positive corrupts a legitimate sample.
+    if not any(c.islower() for c in text):
+        return text
+    analyzer = analyzer if analyzer is not None else _get_presidio()
+    if analyzer is None:
+        return text
+    try:
+        results = analyzer.analyze(
+            text=text, entities=["PERSON"], language="en", score_threshold=0.4,
+        )
+        # Replace from the end so earlier span offsets stay valid.
+        for r in sorted(results, key=lambda item: item.start, reverse=True):
+            text = text[:r.start] + "[PERSON]" + text[r.end:]
+        return text
+    except Exception as exc:
+        log.debug("masking: NER scrub skipped (%s)", exc)
+        return text
+
+
 def scrub_unmasked_free_text(
     rows: list[dict],
     columns: list[dict],
     skip_fields: set[str],
+    industry: str = "",
 ) -> list[dict]:
     """
     Final safety net: scrub embedded PII from narrative string values in
@@ -199,16 +278,25 @@ def scrub_unmasked_free_text(
     Only touches string values that look like free text (contain whitespace and
     are reasonably long), so short codes / identifiers are left intact. Mutates
     and returns the same row dicts (rows are short-lived discovery samples).
+
+    For regulated industries ("banking" / "healthcare_pharmacy") an additional
+    NER pass (Presidio, when installed) replaces person-name spans the regex
+    scrub structurally cannot catch — see scrub_person_names_ner. Standard
+    clients keep today's regex-only behavior.
     """
     if not rows:
         return rows
     skip = {f for f in (skip_fields or set())}
+    ner_pass = industry in ("banking", "healthcare_pharmacy")
     for row in rows:
         for field, val in row.items():
             if field in skip:
                 continue
             if isinstance(val, str) and len(val) > 12 and " " in val:
-                row[field] = scrub_embedded_pii(val)
+                scrubbed = scrub_embedded_pii(val)
+                if ner_pass:
+                    scrubbed = scrub_person_names_ner(scrubbed)
+                row[field] = scrubbed
     return rows
 
 

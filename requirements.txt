@@ -52,5 +52,16 @@ python-dotenv>=1.0.0
 # Data masking
 faker>=25.0.0
 
+# Optional: NER-based person-name scrubbing for regulated tenants
+# (core/masking.py::scrub_person_names_ner). Catches patient/person names
+# embedded inside free-text KB sample values, which regex scrubbing
+# structurally cannot. Fully local — no data leaves the server. When not
+# installed, masking degrades gracefully to regex-only scrubbing.
+#
+#   pip install presidio-analyzer
+#   python -m spacy download en_core_web_md   # or en_core_web_lg (larger, more accurate)
+#
+# presidio-analyzer>=2.2.0
+
 # Golden-question evaluation files
 pyyaml>=6.0
