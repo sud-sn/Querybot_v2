@@ -274,6 +274,86 @@ class ChartSpecTests(unittest.TestCase):
         self.assertEqual(spec["x"]["column"], "Warehouse")
 
 
+class ExplicitChartTypeRequestTests(unittest.TestCase):
+    ROWS = [
+        {"Customer": "Acme", "Sales": 5000},
+        {"Customer": "Globex", "Sales": 4200},
+        {"Customer": "Initech", "Sales": 3900},
+        {"Customer": "Umbrella", "Sales": 3400},
+        {"Customer": "Hooli", "Sales": 3100},
+        {"Customer": "Soylent", "Sales": 2800},
+        {"Customer": "Stark", "Sales": 2500},
+        {"Customer": "Wayne", "Sales": 2200},
+        {"Customer": "Wonka", "Sales": 1900},
+        {"Customer": "Vandelay", "Sales": 1600},
+    ]
+
+    def test_explicit_pie_overrides_ranking_bar_recommendation(self):
+        question = "give me the top 10 customer sales in a pie chart"
+        spec = infer_chart_spec(self.ROWS, question)
+        self.assertEqual(spec["recommended_type"], "pie")
+        self.assertEqual(spec["allowed_types"][0], "pie")
+        self.assertEqual(spec["x"]["column"], "Customer")
+        self.assertEqual([y["column"] for y in spec["y"]], ["Sales"])
+        self.assertEqual(detect_chart_type(self.ROWS, question), "pie")
+
+    def test_explicit_donut_wording_still_honored(self):
+        question = "top 5 customers by sales as a donut chart"
+        self.assertEqual(detect_chart_type(self.ROWS[:5], question), "donut")
+
+    def test_explicit_bar_overrides_share_donut_recommendation(self):
+        rows = [
+            {"ItemGroup": "A", "RevenueShare": 40},
+            {"ItemGroup": "B", "RevenueShare": 35},
+            {"ItemGroup": "C", "RevenueShare": 25},
+        ]
+        question = "show percentage contribution by item group as a bar chart"
+        spec = infer_chart_spec(rows, question)
+        self.assertEqual(spec["recommended_type"], "bar")
+
+    def test_explicit_line_chart_wording_on_ranking_question(self):
+        question = "top 5 customer sales as a line chart"
+        spec = infer_chart_spec(self.ROWS[:5], question)
+        self.assertEqual(spec["recommended_type"], "line")
+
+    def test_explicit_scatter_without_second_measure_falls_back_with_warning(self):
+        question = "top 10 customer sales in a scatter plot"
+        spec = infer_chart_spec(self.ROWS, question)
+        self.assertEqual(spec["recommended_type"], "bar")
+        self.assertTrue(any("scatter chart needs at least two" in w for w in spec["warnings"]))
+
+    def test_scatter_wording_with_two_measures_is_honored(self):
+        rows = [
+            {"Warehouse": "A", "Revenue": 100, "GrossProfit": 20},
+            {"Warehouse": "B", "Revenue": 300, "GrossProfit": 70},
+        ]
+        question = "show revenue and gross profit as a scatter chart"
+        spec = infer_chart_spec(rows, question)
+        self.assertEqual(spec["recommended_type"], "scatter")
+
+    def test_no_chart_keyword_leaves_ranking_heuristic_unchanged(self):
+        question = "give me the top 10 customer sales"
+        spec = infer_chart_spec(self.ROWS, question)
+        self.assertEqual(spec["recommended_type"], "bar")
+
+    def test_bare_type_word_without_chart_suffix_is_not_treated_as_explicit(self):
+        # "bar" appearing as ordinary business language (not "bar chart")
+        # must not be misread as an explicit chart-type request.
+        rows = [
+            {"Product": "Chocolate Bar", "Sales": 500},
+            {"Product": "Soda", "Sales": 300},
+        ]
+        spec = infer_chart_spec(rows, "sales by product for the chocolate bar line")
+        self.assertEqual(spec["recommended_type"], "bar")
+
+    def test_explicit_type_end_to_end_through_build_chart_payload(self):
+        question = "give me the top 10 customer sales in a pie chart"
+        payload = build_chart_payload(self.ROWS, None, title=question, question=question)
+        self.assertEqual(payload["chart_type"], "pie")
+        self.assertEqual(payload["x_key"], "Customer")
+        self.assertEqual(payload["y_keys"], ["Sales"])
+
+
 class ChartRendererTemplateTests(unittest.TestCase):
     ROOT = Path(__file__).resolve().parents[1]
     CHAT = ROOT / "portal" / "templates" / "portal_chat.html"

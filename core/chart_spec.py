@@ -69,6 +69,23 @@ _DERIVED_METRIC_RE = re.compile(
     r"margin|percentage|percent|pct|rate|ratio|score)\b",
     re.IGNORECASE,
 )
+# An explicit "in a pie chart" / "as a bar graph" style request names the
+# chart type directly, which should win over the generic intent heuristics
+# below (those only ever infer "donut", never literal "pie").
+_EXPLICIT_CHART_RE = re.compile(
+    r"\b(pie|donut|doughnut|bar|column|line|area|scatter)\s*(chart|graph|plot)\b",
+    re.IGNORECASE,
+)
+_EXPLICIT_CHART_MAP = {
+    "pie": "pie",
+    "donut": "donut",
+    "doughnut": "donut",
+    "bar": "bar",
+    "column": "bar",
+    "line": "line",
+    "area": "area",
+    "scatter": "scatter",
+}
 
 
 def _norm(s: str) -> str:
@@ -391,6 +408,38 @@ def infer_chart_spec(
         allowed = ["scatter", "bar", "table"]
         x_col = headers[0]
         y_cols = measures[:2] if scatter_q else measures[:4]
+
+    requested_type = None
+    explicit_match = _EXPLICIT_CHART_RE.search(q)
+    if explicit_match:
+        requested_type = _EXPLICIT_CHART_MAP.get(explicit_match.group(1).lower())
+
+    if requested_type and measures:
+        if requested_type in {"pie", "donut"} and x_col:
+            intent = "composition"
+            recommended = requested_type
+            y_cols = measures[:1]
+            allowed = [requested_type] + [t for t in allowed if t != requested_type]
+        elif requested_type == "scatter":
+            if len(measures) >= 2:
+                intent = "correlation"
+                recommended = "scatter"
+                x_col = x_col or _primary_dimension(dimensions, roles)
+                y_cols = measures[:2]
+                allowed = ["scatter"] + [t for t in allowed if t != "scatter"]
+            else:
+                warnings.append(
+                    "A scatter chart needs at least two numeric measures; showing the closest match instead."
+                )
+        elif requested_type in {"bar", "line", "area"} and x_col:
+            recommended = requested_type
+            allowed = [requested_type] + [t for t in allowed if t != requested_type]
+        else:
+            warnings.append(
+                f"A {requested_type} chart isn't a good fit for this data; showing {recommended} instead."
+            )
+        if "table" not in allowed:
+            allowed.append("table")
 
     if x_col and roles.get(x_col, {}).get("is_technical_id"):
         warnings.append(
