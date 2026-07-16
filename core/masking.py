@@ -67,6 +67,11 @@ _PII_PATTERNS: list[tuple[str, str]] = [
     # Contact
     (r"email|e[_\s]mail", "email"),
     (r"phone|mobile|cell\b|tel\b|fax", "phone"),
+    # Drug / medication names — MUST precede the bare 'name' pattern below,
+    # which otherwise matches the _NAME suffix and substitutes a fake PERSON
+    # name for a medication column, misleading KB generation into treating
+    # the field as a person identifier.
+    (r"(?:drug|medication|med|compound|ingredient|rx|generic)[_\s]?name", "drug_name"),
     # Name — order matters: first/last before bare 'name'
     (r"first[_\s]?name|fname|given[_\s]?name|forename", "first_name"),
     (r"last[_\s]?name|lname|surname|family[_\s]?name", "last_name"),
@@ -428,6 +433,7 @@ STRATEGY_LABELS: dict[str, str] = {
     "name":          "→ fake full name",
     "first_name":    "→ fake first name",
     "last_name":     "→ fake last name",
+    "drug_name":     "→ fake drug name",
     "email":         "→ fake email",
     "phone":         "→ fake phone number",
     "address":       "→ fake address",
@@ -552,16 +558,16 @@ def _apply_det(value: Any, strategy: str, rng: random.Random) -> Any:
         return rng.choice(_FIRST)
     if strategy == "last_name":
         return rng.choice(_LAST)
+    if strategy == "drug_name":
+        return rng.choice(_DRUG_NAMES)
     if strategy == "email":
         digits = "".join(rng.choices(string.digits, k=4))
         domain = rng.choice(["example.com", "mail.test", "test.org", "sample.net"])
         return f"user{digits}@{domain}"
     if strategy == "phone":
-        return (
-            f"+1-{rng.randint(200, 999)}-"
-            f"{rng.randint(100, 999)}-"
-            f"{rng.randint(1000, 9999)}"
-        )
+        # NNN-555-0100..0199 is the NANP-reserved fictional block — these
+        # numbers can never be assigned to a real subscriber.
+        return f"+1-{rng.randint(200, 999)}-555-01{rng.randint(0, 99):02d}"
     if strategy == "address":
         return f"{rng.randint(1, 9999)} {rng.choice(_STREET_NAMES)} St"
     if strategy == "city":
@@ -573,8 +579,10 @@ def _apply_det(value: Any, strategy: str, rng: random.Random) -> Any:
     if strategy == "country":
         return rng.choice(_COUNTRIES)
     if strategy == "ssn":
+        # Area numbers 900-999 are never issued by the SSA — a generated
+        # fake can never collide with a real person's SSN.
         return (
-            f"{rng.randint(100, 999)}-"
+            f"{rng.randint(900, 999)}-"
             f"{rng.randint(10, 99)}-"
             f"{rng.randint(1000, 9999)}"
         )
@@ -647,12 +655,18 @@ def _apply(value: Any, strategy: str, faker) -> Any:  # noqa: C901
         return faker.first_name() if faker else random.choice(_FIRST)
     if strategy == "last_name":
         return faker.last_name() if faker else random.choice(_LAST)
+    if strategy == "drug_name":
+        # Faker has no medication provider — use the curated fictional pool
+        # in both paths so drug columns never carry person names or real
+        # drug names into KB samples.
+        return random.choice(_DRUG_NAMES)
     if strategy == "email":
         return faker.email() if faker else f"user{random.randint(100,9999)}@example.com"
     if strategy == "phone":
-        return faker.phone_number() if faker else (
-            f"+1-{random.randint(200,999)}-{random.randint(100,999)}-{random.randint(1000,9999)}"
-        )
+        # Never faker.phone_number() — it produces realistic numbers that
+        # can collide with a real subscriber. NNN-555-0100..0199 is the
+        # NANP-reserved fictional block.
+        return f"+1-{random.randint(200, 999)}-555-01{random.randint(0, 99):02d}"
     if strategy == "address":
         return faker.street_address() if faker else f"{random.randint(1,9999)} Oak Street"
     if strategy == "city":
@@ -664,7 +678,8 @@ def _apply(value: Any, strategy: str, faker) -> Any:  # noqa: C901
     if strategy == "country":
         return faker.country_code() if faker else random.choice(_COUNTRIES)
     if strategy == "ssn":
-        return f"{random.randint(100,999)}-{random.randint(10,99)}-{random.randint(1000,9999)}"
+        # Area 900-999 is never issued by the SSA — see _apply_det.
+        return f"{random.randint(900,999)}-{random.randint(10,99)}-{random.randint(1000,9999)}"
     if strategy == "credit_card":
         return f"****-****-****-{random.randint(1000,9999)}"
     if strategy == "ip_address":
@@ -792,6 +807,17 @@ _COUNTRIES = ["US", "GB", "CA", "AU", "DE", "FR", "SG", "IN", "JP", "BR"]
 _STREET_NAMES = [
     "Oak", "Maple", "Cedar", "Pine", "Elm", "Birch",
     "Willow", "Spruce", "Aspen", "Walnut", "Chestnut", "Magnolia",
+]
+
+# Fictional medication names — drug-shaped (common pharma suffixes) but
+# invented, so KB samples look plausible without naming a real product.
+# Used for drug/medication/compound name columns, which previously fell
+# through to the bare 'name' pattern and got fake PERSON names.
+_DRUG_NAMES = [
+    "Abrovine", "Bexatrol", "Cortivane", "Delfazine", "Elutrix", "Fenolart",
+    "Gastrolev", "Hydrovex", "Ivorelin", "Juvelast", "Kelotrine", "Lumizoral",
+    "Mavrodine", "Nortivex", "Oprazane", "Pexolium", "Quorvast", "Rilotane",
+    "Selvatrix", "Tovaprene", "Uxolane", "Ventrizol", "Wexopril", "Zeltravin",
 ]
 
 

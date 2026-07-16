@@ -78,6 +78,92 @@ class HealthcareIdentifierPatternTests(unittest.TestCase):
             self.assertIn(self._strategy(nm), self.REDACTING, nm)
 
 
+class DrugNameStrategyTests(unittest.TestCase):
+    """Drug/medication name columns must get the drug_name strategy — the
+    bare 'name' pattern used to match their _NAME suffix and substitute fake
+    PERSON names, misleading KB generation into treating the field as a
+    person identifier."""
+
+    def _strategy(self, name: str) -> str:
+        return strategy_for_field(name, "varchar(80)")
+
+    def test_drug_columns_get_drug_name_strategy(self):
+        for nm in ("DRUG_NAME", "RX_DRUG_NAME", "MEDICATION_NAME",
+                   "MED_NAME", "COMPOUND_NAME", "INGREDIENT_NAME",
+                   "GENERIC_NAME"):
+            self.assertEqual(self._strategy(nm), "drug_name", nm)
+
+    def test_person_name_columns_unchanged(self):
+        self.assertEqual(self._strategy("FIRST_NAME"), "first_name")
+        self.assertEqual(self._strategy("LAST_NAME"), "last_name")
+        self.assertEqual(self._strategy("CUSTOMER_NAME"), "name")
+        self.assertEqual(self._strategy("PATIENT_NAME"), "name")
+
+    def test_masked_value_is_fictional_drug_not_person(self):
+        from core.masking import _DRUG_NAMES, _FIRST, _LAST
+        cols = [{"name": "DRUG_NAME", "type": "varchar(80)"}]
+        rows = [{"DRUG_NAME": "Metformin"}]
+        masked = mask_rows(rows, {"DRUG_NAME"}, cols, seed_key="acct-1")
+        fake = masked[0]["DRUG_NAME"]
+        self.assertIn(fake, _DRUG_NAMES)
+        self.assertNotIn(fake, _FIRST)
+        self.assertNotIn(fake, _LAST)
+
+    def test_deterministic_across_calls(self):
+        cols = [{"name": "DRUG_NAME", "type": "varchar(80)"}]
+        rows = [{"DRUG_NAME": "Metformin"}]
+        a = mask_rows(rows, {"DRUG_NAME"}, cols, seed_key="acct-1")[0]["DRUG_NAME"]
+        b = mask_rows(rows, {"DRUG_NAME"}, cols, seed_key="acct-1")[0]["DRUG_NAME"]
+        self.assertEqual(a, b)
+
+    def test_nondeterministic_path_also_uses_drug_pool(self):
+        from core.masking import _DRUG_NAMES
+        cols = [{"name": "DRUG_NAME", "type": "varchar(80)"}]
+        rows = [{"DRUG_NAME": "Metformin"}]
+        masked = mask_rows(rows, {"DRUG_NAME"}, cols)  # no seed_key
+        self.assertIn(masked[0]["DRUG_NAME"], _DRUG_NAMES)
+
+
+class SafeFakeIdentifierTests(unittest.TestCase):
+    """Generated fake identifiers must be provably fake — SSA never issues
+    area numbers 900-999, and NNN-555-0100..0199 is the NANP-reserved
+    fictional phone block. Random values in the real ranges could collide
+    with an actual person's identifier."""
+
+    def _mask_one(self, col: str, value: str, seed_key: str = ""):
+        cols = [{"name": col, "type": "varchar(40)"}]
+        return mask_rows([{col: value}], {col}, cols, seed_key=seed_key)[0][col]
+
+    def test_ssn_area_never_issued_deterministic(self):
+        for i in range(20):
+            fake = self._mask_one("SSN", f"123-45-{6000 + i}", seed_key="acct-1")
+            area = int(fake.split("-")[0])
+            self.assertGreaterEqual(area, 900, fake)
+
+    def test_ssn_area_never_issued_nondeterministic(self):
+        for i in range(20):
+            fake = self._mask_one("SSN", f"123-45-{6000 + i}")
+            area = int(fake.split("-")[0])
+            self.assertGreaterEqual(area, 900, fake)
+
+    def test_phone_in_reserved_fictional_block_deterministic(self):
+        for i in range(20):
+            fake = self._mask_one("PHONE", f"+1-415-867-{5300 + i}", seed_key="acct-1")
+            self.assertIn("-555-01", fake, fake)
+
+    def test_phone_in_reserved_fictional_block_nondeterministic(self):
+        for i in range(20):
+            fake = self._mask_one("PHONE", f"+1-415-867-{5300 + i}")
+            self.assertIn("-555-01", fake, fake)
+
+    def test_identifiers_stay_deterministic_per_seed(self):
+        a = self._mask_one("SSN", "123-45-6789", seed_key="acct-1")
+        b = self._mask_one("SSN", "123-45-6789", seed_key="acct-1")
+        c = self._mask_one("SSN", "123-45-6789", seed_key="acct-2")
+        self.assertEqual(a, b)
+        self.assertNotEqual(a, c, "different accounts must map to different fakes")
+
+
 class EmbeddedPiiScrubTests(unittest.TestCase):
     """B2 — embedded PII in an UNFLAGGED narrative column is scrubbed."""
 
