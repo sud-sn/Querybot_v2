@@ -341,6 +341,7 @@ async def generate_period_comparison(
     original_sql: str,
     data_brief: dict,
     db_cfg: dict,
+    account_id: str,
     known_tables: set[str] | None = None,
     provider: str,
     model: str,
@@ -366,12 +367,18 @@ async def generate_period_comparison(
     8. Return an assistant_analysis response (same shape as other actions)
 
     Returns a complete ``assistant_analysis`` dict on success, or a
-    descriptive fallback dict when any step cannot proceed.
+    descriptive fallback dict when any step cannot proceed. For regulated
+    tenants (see core.compliance.policy_engine.result_llm_features_allowed)
+    the whole feature is unavailable — steps 4 and 7 both send real result
+    data to the LLM (the rewritten-SQL step is scoped to this one follow-up
+    action, unlike primary SQL generation, so it's treated the same as the
+    narrative step rather than carved out separately.
     """
     from core.insight import compute_data_brief
     from core.llm import llm_complete
     from core.schema import run_query
     from core.validator import validate_sql
+    from core.compliance.policy_engine import result_llm_features_allowed
 
     def _fallback(reason: str, suggestion: str = "") -> dict:
         return {
@@ -390,6 +397,14 @@ async def generate_period_comparison(
             "source_question": question,
             "mode": data_brief.get("mode", "table"),
         }
+
+    if not result_llm_features_allowed(account_id):
+        return _fallback(
+            "This workspace is configured for a regulated industry. To keep "
+            "protected data from ever reaching the AI model, the assistant "
+            "only writes SQL queries here — it doesn't generate follow-up "
+            "comparisons from results.",
+        )
 
     # ── Step 1: Extract period info from existing brief ──────────────────────
     ts = data_brief.get("time_series") or {}

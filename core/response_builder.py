@@ -1254,6 +1254,23 @@ def build_analysis_response(action: str, contract: dict) -> dict:
     }
 
 
+def _regulated_analysis_fallback(action: str) -> dict:
+    """Static, non-LLM response for regulated tenants — see
+    core.compliance.policy_engine.result_llm_features_allowed."""
+    return {
+        "type": "assistant_analysis",
+        "action": action,
+        "title": "Not available for this workspace",
+        "body": (
+            "This workspace is configured for a regulated industry. To keep "
+            "protected data from ever reaching the AI model, the assistant "
+            "only writes SQL queries here — it doesn't generate follow-up "
+            "analysis, explanations, or comparisons from results."
+        ),
+        "bullets": [],
+    }
+
+
 async def generate_analysis_response(
     action: str,
     rows: list[dict],
@@ -1261,6 +1278,7 @@ async def generate_analysis_response(
     provider: str,
     model: str,
     api_key: str,
+    account_id: str,
     follow_up: str = "",
     original_sql: str = "",
     db_cfg: dict | None = None,
@@ -1272,10 +1290,15 @@ async def generate_analysis_response(
     """
     Async LLM-powered analysis — the preferred path for action buttons
     and "why" follow-up questions.
-    
+
     Falls back to the synchronous build_analysis_response() if the LLM
-    call fails.
+    call fails. Regulated tenants get the static _regulated_analysis_fallback
+    unconditionally instead — the LLM never sees `rows` for them.
     """
+    from core.compliance.policy_engine import result_llm_features_allowed
+    if not result_llm_features_allowed(account_id):
+        return _regulated_analysis_fallback(action)
+
     from core.insight import (
         generate_insight,
         generate_drilldown_insight,

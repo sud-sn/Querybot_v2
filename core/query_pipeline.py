@@ -170,6 +170,7 @@ async def _send_why_insight(
                 provider=provider,
                 model=model,
                 api_key=api_key,
+                account_id=account_id,
                 follow_up=question,
                 original_sql=sql,
                 db_cfg=db_cfg,

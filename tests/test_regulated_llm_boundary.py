@@ -21,6 +21,21 @@ Covers:
      function has too many branches/dependencies to exercise end-to-end).
   4. Result-chat narration gate wired into the WebSocket handler
      (gateway/webhooks.py) — static source assertion, same reasoning.
+  5. generate_analysis_response (core/response_builder.py) — the shared
+     entry point behind ALL FOUR "why"/explain/analyze/compare/diagnose
+     call sites (query_pipeline.py's _send_why_insight, and three WS action
+     handlers in webhooks.py that were previously ungated entirely). Real
+     async invocation: regulated returns the static fallback with no LLM
+     call, standard still calls the LLM.
+  6. generate_period_comparison (core/period_comparison.py) — the
+     "compare_prior" WS action, previously entirely ungated. Real async
+     invocation: regulated returns the fallback before even the SQL-rewrite
+     step, standard proceeds normally.
+  7. Source-wiring checks confirming account_id=account_id reaches every
+     production call site of generate_analysis_response and
+     generate_period_comparison (gateway/webhooks.py, core/query_pipeline.py)
+     — these are the sites that were found ungated during a full-codebase
+     audit of every llm_complete/generate_analysis_response call site.
 """
 
 from __future__ import annotations
@@ -162,6 +177,113 @@ class ResultChatNarrationRegulatedGateTests(unittest.TestCase):
         self.assertIn("await _generate_result_narration(", block)
         # Regulated path must fall back to empty, not raise or hang.
         self.assertIn('else ""', block)
+
+
+class GenerateAnalysisResponseRegulatedGateTests(unittest.TestCase):
+    """generate_analysis_response is the single shared entry point behind
+    _send_why_insight, and (previously ungated) the diagnose/standard
+    action-button/why-text-detection handlers in webhooks.py."""
+
+    def test_regulated_returns_static_fallback_no_llm_call(self):
+        from core.response_builder import generate_analysis_response
+
+        with (
+            patch(
+                "core.compliance.policy_engine.store.get_compliance_profile",
+                return_value={"mode": "regulated"},
+            ),
+            patch("core.insight.generate_insight", new_callable=AsyncMock) as mock_insight,
+            patch("core.insight.generate_drilldown_insight", new_callable=AsyncMock) as mock_dd,
+        ):
+            result = _arun(generate_analysis_response(
+                action="explain",
+                rows=[{"Customer": "Real Name", "Revenue": 5000}],
+                question="explain this",
+                provider="azure_openai", model="gpt-4o", api_key="key",
+                account_id="acct-rx",
+            ))
+        mock_insight.assert_not_called()
+        mock_dd.assert_not_called()
+        self.assertEqual(result["type"], "assistant_analysis")
+        self.assertIn("only writes SQL queries", result["body"])
+
+    def test_standard_tenant_still_calls_llm(self):
+        from core.response_builder import generate_analysis_response
+
+        with (
+            patch(
+                "core.compliance.policy_engine.store.get_compliance_profile",
+                return_value={"mode": "standard"},
+            ),
+            patch(
+                "core.insight.generate_insight", new_callable=AsyncMock,
+                return_value={"type": "assistant_analysis", "action": "explain"},
+            ) as mock_insight,
+        ):
+            result = _arun(generate_analysis_response(
+                action="explain",
+                rows=[{"Customer": "Real Name", "Revenue": 5000}],
+                question="explain this",
+                provider="azure_openai", model="gpt-4o", api_key="key",
+                account_id="acct-std",
+            ))
+        mock_insight.assert_called_once()
+        self.assertEqual(result["action"], "explain")
+
+    def test_account_id_reaches_every_production_call_site(self):
+        # query_pipeline.py's _send_why_insight
+        src = _src("core/query_pipeline.py")
+        fn = src[src.index("async def _send_why_insight("):]
+        fn = fn[:fn.index("\n\n\n")]
+        self.assertIn("account_id=account_id,", fn)
+
+        # webhooks.py's three previously-ungated call sites
+        whsrc = _src("gateway/webhooks.py")
+        occurrences = [
+            m for m in range(len(whsrc))
+            if whsrc.startswith("await generate_analysis_response(", m)
+        ]
+        self.assertEqual(len(occurrences), 3, "expected diagnose + standard-actions + why-text call sites")
+        for start in occurrences:
+            block = whsrc[start:start + 600]
+            self.assertIn("account_id=account_id,", block)
+
+
+class GeneratePeriodComparisonRegulatedGateTests(unittest.TestCase):
+    def test_regulated_returns_fallback_before_any_llm_or_db_call(self):
+        from core.period_comparison import generate_period_comparison
+
+        with (
+            patch(
+                "core.compliance.policy_engine.store.get_compliance_profile",
+                return_value={"mode": "regulated"},
+            ),
+            patch("core.llm.llm_complete", new_callable=AsyncMock) as mock_llm,
+        ):
+            result = _arun(generate_period_comparison(
+                rows=[{"Month": "2025-01", "Revenue": 100}],
+                question="Show revenue by month",
+                original_sql="SELECT 1",
+                data_brief={
+                    "mode": "time_series",
+                    "time_series": {
+                        "first_period": "2025-01", "last_period": "2025-06",
+                        "direction": "increasing", "period_count": 6,
+                    },
+                },
+                db_cfg={"db_type": "azure_sql"},
+                account_id="acct-rx",
+                provider="azure_openai", model="gpt-4o", api_key="key",
+            ))
+        mock_llm.assert_not_called()
+        self.assertEqual(result["action"], "compare_prior")
+        self.assertIn("only writes SQL queries", result["body"])
+
+    def test_account_id_reaches_webhooks_call_site(self):
+        src = _src("gateway/webhooks.py")
+        start = src.index("_cp_result = await generate_period_comparison(")
+        block = src[start:start + 500]
+        self.assertIn("account_id=account_id,", block)
 
 
 if __name__ == "__main__":

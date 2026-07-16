@@ -443,6 +443,7 @@ class GeneratePeriodComparisonFallbackTests(unittest.TestCase):
             original_sql="SELECT 1",
             data_brief={"mode": "time_series"},   # no time_series key
             db_cfg={"db_type": "azure_sql"},
+            account_id="acct-period-cmp-standard",
             provider="anthropic",
             model="claude-sonnet-4-6",
             api_key="dummy",
@@ -467,6 +468,7 @@ class GeneratePeriodComparisonFallbackTests(unittest.TestCase):
                 },
             },
             db_cfg={"db_type": "azure_sql"},
+            account_id="acct-period-cmp-standard",
             provider="anthropic",
             model="claude-sonnet-4-6",
             api_key="dummy",
