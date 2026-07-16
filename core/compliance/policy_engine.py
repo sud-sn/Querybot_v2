@@ -276,9 +276,13 @@ def evaluate(
                     break
                 permitted.append(resource)
                 if allow_rule.get("effect") == "mask" or allow_rule.get("mask_strategy"):
-                    strategy = allow_rule.get("mask_strategy") or (
-                        classification or {}
-                    ).get("mask_strategy", "redact")
+                    policy_strategy = allow_rule.get("mask_strategy") or ""
+                    reviewed_strategy = (
+                        (classification or {}).get("mask_strategy")
+                        if (classification or {}).get("reviewed")
+                        else ""
+                    )
+                    strategy = reviewed_strategy or policy_strategy or "redact"
                     masking[resource.key] = strategy
                 if allow_rule.get("aggregate_only"):
                     aggregate_only.append(resource)

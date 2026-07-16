@@ -96,6 +96,7 @@ def execute_governed_query(
         release_decision,
         analysis.lineage,
         account_id=context.account_id,
+        mask_exempt_outputs=analysis.mask_exempt_outputs,
     )
     return GovernedQueryResult(
         rows=rows,

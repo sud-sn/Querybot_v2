@@ -31,6 +31,16 @@ _PATTERNS = {
 }
 
 
+def _default_mask_strategy(column_name: str, tags: list[str]) -> str:
+    name = str(column_name or "")
+    if set(tags) & {"PII", "PRESCRIPTION"}:
+        if re.search(r"(?:doctor|physician|prescriber|provider|patient|person).*(?:name|_nm)?$", name, re.I):
+            return "safe_alias_name"
+        if re.search(r"(?:rx|prescription|mrn|medical.?record|patient|member).*(?:id|key|num|number|no)$", name, re.I):
+            return "safe_alias_identifier"
+    return "partial" if set(tags) & {"FINANCIAL", "PAYMENT"} else "redact"
+
+
 def classify_column(column_name: str, industry: str) -> dict:
     tags = []
     for tag, pattern in _PATTERNS.items():
@@ -50,7 +60,7 @@ def classify_column(column_name: str, industry: str) -> dict:
         "sensitivity": sensitivity,
         "identifiability": "DIRECT" if direct else ("INDIRECT" if tags else "NONE"),
         "confidence": confidence,
-        "mask_strategy": "partial" if set(tags) & {"FINANCIAL", "PAYMENT"} else "redact",
+        "mask_strategy": _default_mask_strategy(column_name, tags),
     }
 
 

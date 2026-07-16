@@ -24,6 +24,7 @@ class SqlPolicyAnalysis:
     tables: list[str] = field(default_factory=list)
     lineage: dict[str, list[str]] = field(default_factory=dict)
     aggregate_outputs: set[str] = field(default_factory=set)
+    mask_exempt_outputs: set[str] = field(default_factory=set)
     has_star: bool = False
 
 
@@ -48,6 +49,7 @@ def analyze_sql(sql: str, db_type: str) -> SqlPolicyAnalysis:
     resources: dict[str, ResourceRef] = {}
     lineage: dict[str, list[str]] = {}
     aggregate_outputs: set[str] = set()
+    mask_exempt_outputs: set[str] = set()
     has_star = any(isinstance(node, exp.Star) for node in tree.walk())
     select = tree.find(exp.Select)
     if select:
@@ -66,8 +68,12 @@ def analyze_sql(sql: str, db_type: str) -> SqlPolicyAnalysis:
                 resources[resource.key] = resource
                 sources.append(resource.key)
             lineage[str(alias)] = sorted(set(sources))
-            if any(isinstance(node, exp.AggFunc) for node in expression.walk()):
+            aggregate_nodes = [node for node in expression.walk() if isinstance(node, exp.AggFunc)]
+            if aggregate_nodes:
                 aggregate_outputs.add(str(alias))
+                safe_aggregates = {"count", "sum", "avg", "stddev", "variance", "var", "stddev_pop", "variance_pop"}
+                if all(str(getattr(node, "key", "")).lower() in safe_aggregates for node in aggregate_nodes):
+                    mask_exempt_outputs.add(str(alias))
 
     return SqlPolicyAnalysis(
         sql=sql,
@@ -75,6 +81,7 @@ def analyze_sql(sql: str, db_type: str) -> SqlPolicyAnalysis:
         tables=sorted(set(tables)),
         lineage=lineage,
         aggregate_outputs=aggregate_outputs,
+        mask_exempt_outputs=mask_exempt_outputs,
         has_star=has_star,
     )
 

@@ -318,7 +318,11 @@ def _default_regulated_rules(pack: dict) -> list[dict]:
                 # and was meant to render as effect="allow") to be masked
                 # anyway.
                 if tag in sensitive:
-                    rule["mask_strategy"] = "partial" if tag in {"FINANCIAL", "PAYMENT"} else "redact"
+                    rule["mask_strategy"] = (
+                        "partial" if tag in {"FINANCIAL", "PAYMENT"}
+                        else "smart_alias" if tag in {"PII", "PRESCRIPTION"}
+                        else "redact"
+                    )
                 rules.append(rule)
             rules.append({
                 "name": f"{role}: aggregate charts for {tag}",
@@ -2742,6 +2746,13 @@ async def compliance_save_classification(request: Request, account_id: str):
     if not _is_auth(request):
         raise HTTPException(status_code=401)
     body = await request.json()
+    allowed_mask_strategies = {
+        "redact", "smart_alias", "safe_alias_name", "safe_alias_identifier",
+        "partial", "partial_original", "tokenize", "hash", "null",
+    }
+    mask_strategy = str(body.get("mask_strategy") or "redact").lower()
+    if mask_strategy not in allowed_mask_strategies:
+        raise HTTPException(status_code=422, detail="Unsupported display-protection strategy.")
     store.save_classification(
         account_id, str(body.get("table_fqn") or ""),
         str(body.get("column_name") or ""),
@@ -2750,7 +2761,7 @@ async def compliance_save_classification(request: Request, account_id: str):
         tags=list(body.get("tags") or []),
         confidence=float(body.get("confidence") or 1.0),
         reviewed=bool(body.get("reviewed", True)), reviewed_by="admin",
-        mask_strategy=str(body.get("mask_strategy") or "redact"),
+        mask_strategy=mask_strategy,
         source="admin",
     )
     store.save_compliance_profile(

@@ -55,17 +55,17 @@
   <aside class="portal-sidebar" aria-label="Portal navigation">
     <a href="/portal/dashboard" class="portal-brand" aria-label="QueryBot dashboard">
       <span class="portal-brand-mark"><img src="/static/img/logo-mark.svg" alt="" class="qb-logo-mark"></span>
-      <span>Query<span>Bot</span></span>
+      <span class="portal-brand-word">Query<span>Bot</span></span>
     </a>
 
     <nav class="portal-nav">
-      <a href="/portal/dashboard" class="{% if 'dashboard' in request.url.path %}active{% endif %}">
+      <a href="/portal/dashboard" title="Dashboard" class="{% if 'dashboard' in request.url.path %}active{% endif %}">
         {{ ic("dashboard", 17) }} <span>Dashboard</span>
       </a>
-      <a href="/portal/kb" class="{% if '/kb' in request.url.path %}active{% endif %}">
+      <a href="/portal/kb" title="Semantic Layer" class="{% if '/kb' in request.url.path %}active{% endif %}">
         {{ ic("database", 17) }} <span>Semantic Layer</span>
       </a>
-      <a href="/portal/chat" class="{% if '/chat' in request.url.path %}active{% endif %}">
+      <a href="/portal/chat" title="Chat" class="{% if '/chat' in request.url.path %}active{% endif %}">
         {{ ic("chat", 17) }} <span>Chat</span>
       </a>
     </nav>
@@ -87,8 +87,8 @@
     </div>
 
     <div class="portal-side-actions">
-      <a href="/portal/change-password" class="btn btn-secondary btn-sm">{{ ic("settings", 14) }} Settings</a>
-      <a href="/portal/logout" class="btn btn-secondary btn-sm">Logout</a>
+      <a href="/portal/change-password" class="btn btn-secondary btn-sm" title="Settings">{{ ic("settings", 14) }} <span>Settings</span></a>
+      <a href="/portal/logout" class="btn btn-secondary btn-sm" title="Logout"><span class="portal-logout-icon" aria-hidden="true">&#8594;</span><span>Logout</span></a>
     </div>
   </aside>
 

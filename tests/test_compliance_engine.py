@@ -93,6 +93,30 @@ class PolicyEngineTests(unittest.TestCase):
         self.assertTrue(decision.allowed)
         self.assertEqual(decision.masking["DBO.CUSTOMERS.NAME"], "partial")
 
+    def test_reviewed_field_strategy_overrides_generic_mask_rule(self):
+        classification = {
+            "DBO.DOCTORS.DOCTOR_NAME": {
+                "tags": ["PII"], "sensitivity": "RESTRICTED",
+                "mask_strategy": "safe_alias_name", "reviewed": 1,
+            }
+        }
+        rules = [{
+            "subject_type": "role", "subject_id": "analyst",
+            "resource_type": "classification", "resource_pattern": "PII",
+            "action": "query_execution", "effect": "mask",
+            "mask_strategy": "redact", "cache_ttl_seconds": 0,
+        }]
+        with (
+            patch.object(policy_engine.store, "get_compliance_profile", return_value=self._profile()),
+            patch.object(policy_engine.store, "get_classification_map", return_value=classification),
+            patch.object(policy_engine.store, "list_policy_rules", return_value=rules),
+            patch.object(policy_engine.store, "list_purposes", return_value=[]),
+        ):
+            decision = evaluate(
+                self._context(), [ResourceRef("DBO.DOCTORS", "DOCTOR_NAME")], record=False
+            )
+        self.assertEqual(decision.masking["DBO.DOCTORS.DOCTOR_NAME"], "safe_alias_name")
+
     def test_mandatory_deny_wins(self):
         rules = [
             {
@@ -157,6 +181,15 @@ class SqlPolicyTests(unittest.TestCase):
         self.assertIn("DBO.CUSTOMERS.CUSTOMER_NAME", analysis.lineage["customer_name"])
         self.assertIn("DBO.TRANSACTIONS.AMOUNT", analysis.lineage["revenue"])
         self.assertIn("revenue", analysis.aggregate_outputs)
+        self.assertIn("revenue", analysis.mask_exempt_outputs)
+
+    def test_identifier_max_is_not_exempt_from_masking(self):
+        analysis = analyze_sql(
+            "SELECT MAX(p.doctor_name) AS doctor_name FROM dbo.prescriptions p",
+            "azure_sql",
+        )
+        self.assertIn("doctor_name", analysis.aggregate_outputs)
+        self.assertNotIn("doctor_name", analysis.mask_exempt_outputs)
 
     def test_select_star_is_detected_on_source_table(self):
         analysis = analyze_sql("SELECT * FROM dbo.customers", "azure_sql")
@@ -247,6 +280,45 @@ class ResultProtectionTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertNotEqual(first, other)
 
+    def test_safe_aliases_preserve_grouping_without_revealing_original(self):
+        decision = PolicyDecision(
+            allowed=True,
+            reason_code="allow",
+            masking={
+                "RX.PRESCRIPTIONS.DOCTOR_NAME": "safe_alias_name",
+                "RX.PRESCRIPTIONS.RX_NUMBER": "safe_alias_identifier",
+            },
+        )
+        rows = [{"Doctor": "Dr. Kavitha Rao", "Prescription": "RX-100234"}]
+        lineage = {
+            "Doctor": ["RX.PRESCRIPTIONS.DOCTOR_NAME"],
+            "Prescription": ["RX.PRESCRIPTIONS.RX_NUMBER"],
+        }
+        first = protect_rows(rows, decision, lineage, account_id="hospital-a")
+        second = protect_rows(rows, decision, lineage, account_id="hospital-a")
+        other = protect_rows(rows, decision, lineage, account_id="hospital-b")
+        self.assertEqual(first, second)
+        self.assertNotEqual(first, other)
+        self.assertRegex(first[0]["Doctor"], r"^Dr\. [A-Z]-[A-F0-9]{3}$")
+        self.assertRegex(first[0]["Prescription"], r"^RX-[A-F0-9]{4}$")
+        self.assertNotIn("Kavitha", str(first))
+        self.assertNotIn("100234", str(first))
+
+    def test_aggregate_output_is_not_masked_as_an_identifier(self):
+        decision = PolicyDecision(
+            allowed=True,
+            reason_code="allow",
+            masking={"RX.PRESCRIPTIONS.RX_NUMBER": "smart_alias"},
+        )
+        protected = protect_rows(
+            [{"PrescriptionCount": 42}],
+            decision,
+            {"PrescriptionCount": ["RX.PRESCRIPTIONS.RX_NUMBER"]},
+            account_id="hospital-a",
+            mask_exempt_outputs={"PrescriptionCount"},
+        )
+        self.assertEqual(protected[0]["PrescriptionCount"], 42)
+
 
 class ClassificationTests(unittest.TestCase):
     def test_banking_classifier_detects_card_and_financial_fields(self):
@@ -269,6 +341,20 @@ class ClassificationTests(unittest.TestCase):
         # a regulated healthcare tenant.
         for col in ("DOCTOR", "PHYSICIAN", "DOCTOR_NM", "doctor_name"):
             self.assertIn("PII", classify_column(col, "healthcare_pharmacy")["tags"], col)
+
+    def test_healthcare_alias_strategy_is_field_aware(self):
+        self.assertEqual(
+            classify_column("DOCTOR_NAME", "healthcare_pharmacy")["mask_strategy"],
+            "safe_alias_name",
+        )
+        self.assertEqual(
+            classify_column("RX_NUMBER", "healthcare_pharmacy")["mask_strategy"],
+            "safe_alias_identifier",
+        )
+        self.assertEqual(
+            classify_column("PATIENT_DIAGNOSIS", "healthcare_pharmacy")["mask_strategy"],
+            "redact",
+        )
 
     def test_unrelated_provider_columns_not_misclassified(self):
         # 'provider' alone is too ambiguous to tag safely (cloud/insurance

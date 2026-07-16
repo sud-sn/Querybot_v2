@@ -548,19 +548,12 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
     <aside class="chat-conversation-rail" id="chatConversationRail" aria-label="Conversation history">
       <div class="chat-rail-heading">
         <div>
-          <span class="chat-rail-eyebrow">Workspace</span>
+          <span class="chat-rail-eyebrow">Conversations</span>
           <h2>Chats</h2>
         </div>
-        <button type="button" class="chat-rail-icon-btn" onclick="refreshHistory()" title="Refresh recent queries" aria-label="Refresh recent queries">
-          <span aria-hidden="true">&#8635;</span>
-        </button>
-      </div>
-
-      <div class="chat-rail-context">
-        <span class="portal-brand-mark" aria-hidden="true">Q</span>
-        <div>
-          <strong>{{ client.client_name or 'Your workspace' }}</strong>
-          <span>Live data analyst</span>
+        <div class="chat-rail-heading-actions">
+          <button type="button" class="chat-rail-icon-btn chat-new-btn" onclick="startNewChat()" title="New chat" aria-label="Start a new chat">+</button>
+          <button type="button" class="chat-rail-icon-btn chat-collapse-btn" onclick="toggleConversationRail()" title="Collapse chats" aria-label="Collapse chats">&#8249;</button>
         </div>
       </div>
 
@@ -582,11 +575,18 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
         </div>
       </div>
 
+      <div class="chat-rail-footer" title="Current workspace">
+        <span class="chat-rail-workspace-dot" aria-hidden="true"></span>
+        <span class="chat-rail-footer-copy"><small>Workspace</small><strong>{{ client.client_name or 'Your workspace' }}</strong></span>
+        <button type="button" class="chat-rail-refresh" onclick="refreshHistory()" title="Refresh chats" aria-label="Refresh chats">&#8635;</button>
+      </div>
+
     </aside>
 
     <button type="button" class="chat-rail-backdrop" onclick="toggleHistoryPanel()" aria-label="Close chat history"></button>
 
     <main class="chat-workspace-main">
+      <button type="button" class="chat-rail-expand" id="chatRailExpand" onclick="toggleConversationRail(false)" title="Show chats" aria-label="Show chats">&#8250;</button>
   <section class="chat-shell">
     <div class="chat-shell-header">
       <div class="chat-shell-title">
@@ -3715,6 +3715,52 @@ function connect(){
 }
 // ── Query history panel ───────────────────────────────────────────────────────
 let _historyLoaded = false;
+const CHAT_RAIL_STORAGE_KEY = `querybot.chatRailCollapsed:${ACCOUNT_ID}`;
+
+function toggleConversationRail(forceCollapsed) {
+  const workspace = document.querySelector('.chat-workspace');
+  if (!workspace || window.matchMedia('(max-width: 1080px)').matches) return;
+  const collapsed = typeof forceCollapsed === 'boolean'
+    ? forceCollapsed
+    : !workspace.classList.contains('rail-collapsed');
+  workspace.classList.toggle('rail-collapsed', collapsed);
+  try { localStorage.setItem(CHAT_RAIL_STORAGE_KEY, collapsed ? '1' : '0'); } catch (_) {}
+}
+
+function startNewChat() {
+  if (processingActive) {
+    toast('Stop the current query before starting a new chat');
+    return;
+  }
+  clearChatCache();
+  _localHistory = [];
+  _saveHistory([]);
+  location.reload();
+}
+
+function _historyDate(item) {
+  const value = String(item.created_at || '').trim();
+  const date = new Date(value.includes('T') ? value : value.replace(' ', 'T'));
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function _historyGroup(item) {
+  const date = _historyDate(item);
+  if (!date) return 'Older';
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const itemDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const days = Math.round((today - itemDay) / 86400000);
+  if (days <= 0) return 'Today';
+  if (days === 1) return 'Yesterday';
+  if (days <= 7) return 'Previous 7 days';
+  return 'Older';
+}
+
+function _historyTime(item) {
+  const date = _historyDate(item);
+  return date ? date.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '';
+}
 
 function toggleHistoryPanel() {
   const panel = document.getElementById('historyPanel');
@@ -3751,11 +3797,17 @@ async function loadHistory() {
       return;
     }
     if (emptyEl) emptyEl.remove();
+    let lastGroup = '';
     listEl.innerHTML = items.map(item => {
-      const ts   = (item.created_at || '').slice(5, 16);
+      const group = _historyGroup(item);
+      const groupHeader = group !== lastGroup ? `<div class="hp-group-label">${escHtml(group)}</div>` : '';
+      lastGroup = group;
+      const ts   = _historyTime(item);
       const rows = item.row_count != null ? item.row_count.toLocaleString() + ' rows' : '';
       const dur  = item.duration_ms ? Math.round(item.duration_ms) + ' ms' : '';
-      return `<div class="hp-item" onclick="sendHistoryQuestion(${JSON.stringify(escHtml(item.question || ''))})">
+      return `${groupHeader}<div class="hp-item" role="button" tabindex="0" data-question="${encodeURIComponent(item.question || '')}"
+                   onclick="sendHistoryQuestion(decodeURIComponent(this.dataset.question), this)"
+                   onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();sendHistoryQuestion(decodeURIComponent(this.dataset.question),this)}">
         <div class="hp-q">${escHtml(item.question || '—')}</div>
         <div class="hp-meta">
           ${ts ? `<span class="hp-badge">${ts}</span>` : ''}
@@ -3770,9 +3822,11 @@ async function loadHistory() {
   }
 }
 
-function sendHistoryQuestion(question) {
+function sendHistoryQuestion(question, itemEl) {
   const decoded = question.replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"');
   if (!decoded || !wsReady) { toast('Live session not ready'); return; }
+  document.querySelectorAll('#historyList .hp-item.active').forEach(el => el.classList.remove('active'));
+  itemEl && itemEl.classList.add('active');
   if (window.matchMedia('(max-width: 900px)').matches) toggleHistoryPanel();
   const inp = document.getElementById('input');
   if (inp) { inp.value = decoded; inp.dispatchEvent(new Event('input')); }
@@ -3785,6 +3839,7 @@ function filterHistory(q) {
   const clearBtn = document.getElementById('historySearchClear');
   if (clearBtn) clearBtn.style.display = q ? '' : 'none';
   const items = document.querySelectorAll('#historyList .hp-item');
+  document.querySelectorAll('#historyList .hp-group-label').forEach(el => { el.style.display = q ? 'none' : ''; });
   let visible = 0;
   items.forEach(function(el) {
     const text = (el.querySelector('.hp-q') || el).textContent.toLowerCase();
@@ -4006,6 +4061,9 @@ document.addEventListener('DOMContentLoaded', () => {
   _localHistory = _loadStoredHistory();
   _updateMemoryBadge();
   loadHistory();
+  if (!window.matchMedia('(max-width: 1080px)').matches) {
+    try { toggleConversationRail(localStorage.getItem(CHAT_RAIL_STORAGE_KEY) === '1'); } catch (_) {}
+  }
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && window.matchMedia('(max-width: 900px)').matches) {
       const panel = document.getElementById('historyPanel');

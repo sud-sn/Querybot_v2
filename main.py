@@ -62,6 +62,11 @@ async def startup() -> None:
             "⚠️  ADMIN_SESSION_SECRET not set — "
             "admin sessions use an insecure default."
         )
+    if not any(os.getenv(name) for name in ("PII_PSEUDONYM_SECRET", "PORTAL_SESSION_SECRET", "SESSION_SECRET")):
+        log.warning(
+            "PII_PSEUDONYM_SECRET not set - safe display aliases use a development key. "
+            "Set a separate random secret before deploying regulated workloads."
+        )
 
     # LLM audit log retention — default 30 days; override via LLM_AUDIT_RETENTION_DAYS
     try:

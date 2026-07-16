@@ -9,16 +9,43 @@ body:has(.chat-page) .main {
 
 body:has(.chat-page) .main { padding: 0; overflow: hidden; }
 
+/* Chat is a focused workspace: keep global navigation available without
+   spending a quarter of the viewport on a second full-width sidebar. */
+body:has(.chat-page) .portal-app-shell { grid-template-columns: 72px minmax(0, 1fr); }
+body:has(.chat-page) .portal-sidebar { padding: 14px 10px; align-items: stretch; }
+body:has(.chat-page) .portal-brand { justify-content: center; padding-inline: 0; }
+body:has(.chat-page) .portal-brand-word,
+body:has(.chat-page) .portal-nav a span,
+body:has(.chat-page) .portal-theme-toggle .theme-label,
+body:has(.chat-page) .portal-user-meta,
+body:has(.chat-page) .portal-side-actions a > span:last-child { display: none; }
+body:has(.chat-page) .portal-nav a,
+body:has(.chat-page) .portal-theme-toggle,
+body:has(.chat-page) .portal-side-actions .btn { justify-content: center; padding-inline: 0; }
+body:has(.chat-page) .portal-user-card { justify-content: center; padding: 8px 0; }
+body:has(.chat-page) .portal-side-actions { grid-template-columns: 1fr; }
+body:has(.chat-page) .portal-logout-icon { display: inline !important; font-size: 17px; line-height: 1; }
+
 .chat-page { background: var(--surface); }
 .chat-page > .chat-hero { display: none; }
 
 .chat-workspace {
   display: grid;
-  grid-template-columns: 260px minmax(0, 1fr);
+  grid-template-columns: 288px minmax(0, 1fr);
   width: 100%;
   height: 100%;
   min-height: 0;
   background: var(--surface);
+  transition: grid-template-columns .2s ease;
+}
+
+.chat-workspace.rail-collapsed { grid-template-columns: 0 minmax(0, 1fr); }
+.chat-workspace.rail-collapsed .chat-conversation-rail {
+  overflow: hidden;
+  visibility: hidden;
+  opacity: 0;
+  transform: translateX(-18px);
+  pointer-events: none;
 }
 
 .chat-conversation-rail {
@@ -30,6 +57,7 @@ body:has(.chat-page) .main { padding: 0; overflow: hidden; }
   min-height: 0;
   background: color-mix(in srgb, var(--primary-soft) 24%, var(--surface));
   border-right: 1px solid var(--border);
+  transition: opacity .16s ease, transform .2s ease, visibility .2s ease;
 }
 
 .chat-rail-heading {
@@ -81,6 +109,17 @@ body:has(.chat-page) .main { padding: 0; overflow: hidden; }
   color: var(--primary);
   text-decoration: none;
 }
+
+.chat-rail-heading-actions { display: flex; align-items: center; gap: 6px; }
+.chat-new-btn {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: #fff;
+  font-size: 20px;
+  font-weight: 500;
+}
+.chat-new-btn:hover { border-color: var(--primary-hover); background: var(--primary-hover); color: #fff; }
+.chat-collapse-btn { font-size: 20px; }
 
 .chat-rail-context {
   display: flex;
@@ -170,15 +209,34 @@ body:has(.chat-page) .main { padding: 0; overflow: hidden; }
   scrollbar-gutter: stable;
 }
 
+.hp-group { margin: 2px 0 10px; }
+.hp-group-label {
+  padding: 8px 10px 5px;
+  color: var(--text-muted);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
 .chat-conversation-rail .hp-item {
+  position: relative;
   margin: 0 0 2px;
   padding: 10px;
+  border: 1px solid transparent;
   border-radius: 7px;
+  cursor: pointer;
 }
 
 .chat-conversation-rail .hp-item:hover {
   border-color: transparent;
   background: color-mix(in srgb, var(--primary-soft) 70%, var(--surface));
+}
+
+.chat-conversation-rail .hp-item.active {
+  border-color: color-mix(in srgb, var(--primary) 22%, var(--border));
+  background: var(--primary-soft);
+  box-shadow: inset 2px 0 0 var(--primary);
 }
 
 .chat-conversation-rail .hp-q {
@@ -200,6 +258,39 @@ body:has(.chat-page) .main { padding: 0; overflow: hidden; }
   background: transparent;
   color: var(--primary);
 }
+
+.chat-rail-footer {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 58px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+.chat-rail-workspace-dot {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 9px;
+  border-radius: 50%;
+  background: var(--success);
+  box-shadow: 0 0 0 3px var(--success-soft);
+}
+.chat-rail-footer-copy { min-width: 0; flex: 1; }
+.chat-rail-footer-copy small,
+.chat-rail-footer-copy strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-rail-footer-copy small { color: var(--text-muted); font-size: 9px; text-transform: uppercase; }
+.chat-rail-footer-copy strong { margin-top: 2px; color: var(--text); font-size: 11px; }
+.chat-rail-refresh {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.chat-rail-refresh:hover { background: var(--primary-soft); color: var(--primary); }
 
 .chat-rail-nav {
   display: grid;
@@ -298,11 +389,30 @@ html[data-theme='dark'] .chat-rail-utility .ti-sun { display: inline-flex; }
 .chat-rail-account-copy span { margin-top: 2px; color: var(--text-muted); font-size: 10px; }
 
 .chat-workspace-main {
+  position: relative;
   display: flex;
   min-width: 0;
   min-height: 0;
   background: var(--bg);
 }
+
+.chat-rail-expand {
+  position: absolute;
+  top: 20px;
+  left: 0;
+  z-index: 5;
+  display: none;
+  width: 26px;
+  height: 36px;
+  border: 1px solid var(--border);
+  border-left: 0;
+  border-radius: 0 7px 7px 0;
+  background: var(--surface);
+  color: var(--text-muted);
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+}
+.rail-collapsed .chat-rail-expand { display: inline-grid; place-items: center; }
 
 .chat-rail-backdrop { display: none; }
 
@@ -406,6 +516,15 @@ html[data-theme='dark'] .chat-rail-account { background: rgba(17, 24, 39, .92); 
     box-shadow: 18px 0 48px rgba(15, 23, 42, .22);
     transition: transform .2s ease;
   }
+
+  .chat-collapse-btn { display: none; }
+  .chat-workspace.rail-collapsed { grid-template-columns: minmax(0, 1fr); }
+  .chat-workspace.rail-collapsed .chat-conversation-rail {
+    visibility: visible;
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .rail-collapsed .chat-rail-expand { display: none; }
 
   .chat-conversation-rail:has(.history-panel.open) { transform: translateX(0); }
   .chat-page.history-open .chat-rail-backdrop {

@@ -110,17 +110,22 @@
 <section class="compliance-panel" id="panel-classification">
   <div class="card"><div class="card-header"><h2>Classification workspace</h2></div><div class="card-body">
     <div class="form-group"><input id="class-search" type="search" placeholder="Filter table, column or tag"></div>
-    <div class="classification-wrap"><table class="classification-table"><thead><tr><th>Resource</th><th>Tags</th><th>Sensitivity</th><th>Identifiability</th><th>Confidence</th><th>Review</th></tr></thead><tbody>
+    <div class="classification-wrap"><table class="classification-table"><thead><tr><th>Resource</th><th>Tags</th><th>Sensitivity</th><th>Identifiability</th><th>Display protection</th><th>Confidence</th><th>Review</th></tr></thead><tbody>
       {% for item in classifications %}
       <tr data-search="{{ item.table_fqn }} {{ item.column_name }} {{ item.tags|join(' ') }}">
         <td><strong>{{ item.column_name }}</strong><br><span style="color:var(--text-muted)">{{ item.table_fqn }}</span></td>
         <td>{% for tag in item.tags %}<span class="tag">{{ tag }}</span>{% endfor %}</td>
         <td><select data-field="sensitivity"><option>{{ item.sensitivity }}</option>{% for v in ['PUBLIC','INTERNAL','CONFIDENTIAL','RESTRICTED'] %}{% if v != item.sensitivity %}<option>{{ v }}</option>{% endif %}{% endfor %}</select></td>
         <td><select data-field="identifiability"><option>{{ item.identifiability }}</option>{% for v in ['NONE','INDIRECT','DIRECT'] %}{% if v != item.identifiability %}<option>{{ v }}</option>{% endif %}{% endfor %}</select></td>
+        <td><select data-field="mask_strategy" title="Safe aliases preserve analytical grouping without exposing the original value">
+          {% for value,label in [('redact','Strict redaction'),('smart_alias','Safe alias (auto type)'),('safe_alias_name','Safe person alias'),('safe_alias_identifier','Safe identifier alias'),('partial','Show last 4'),('partial_original','Show first character'),('tokenize','Opaque token'),('null','Return null')] %}
+          <option value="{{ value }}" {% if item.mask_strategy == value %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select></td>
         <td>{{ (item.confidence * 100)|round|int }}%</td>
         <td><button class="btn btn-secondary btn-sm save-classification" data-table="{{ item.table_fqn }}" data-column="{{ item.column_name }}" data-tags="{{ item.tags|join(',') }}" data-mask="{{ item.mask_strategy }}">{{ 'Reviewed' if item.reviewed else 'Review now' }}</button></td>
       </tr>
-      {% else %}<tr><td colspan="6">No schema classifications yet. Apply a regulated profile after schema discovery.</td></tr>{% endfor %}
+      {% else %}<tr><td colspan="7">No schema classifications yet. Apply a regulated profile after schema discovery.</td></tr>{% endfor %}
     </tbody></table></div>
   </div></div>
 </section>
@@ -242,7 +247,7 @@ document.querySelectorAll('.save-classification').forEach(btn=>btn.addEventListe
     table_fqn:btn.dataset.table,column_name:btn.dataset.column,tags:btn.dataset.tags.split(',').filter(Boolean),
     sensitivity:row.querySelector('[data-field=sensitivity]').value,
     identifiability:row.querySelector('[data-field=identifiability]').value,
-    mask_strategy:btn.dataset.mask,reviewed:true,confidence:1
+    mask_strategy:row.querySelector('[data-field=mask_strategy]').value,reviewed:true,confidence:1
   })});
   btn.textContent=resp.ok?'Reviewed':'Retry';btn.disabled=false;
 }));
