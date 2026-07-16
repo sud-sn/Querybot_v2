@@ -78,6 +78,30 @@ class HealthcareIdentifierPatternTests(unittest.TestCase):
             self.assertIn(self._strategy(nm), self.REDACTING, nm)
 
 
+class DoctorPhysicianStrategyTests(unittest.TestCase):
+    """DOCTOR/PHYSICIAN columns must resolve to the 'name' masking strategy
+    even without a _NAME suffix (regression: DOCTOR/DOCTOR_NM/PHYSICIAN
+    previously matched no pattern at all and shipped real names into KB
+    samples unmasked)."""
+
+    def _strategy(self, name: str) -> str:
+        return strategy_for_field(name, "varchar(80)")
+
+    def test_bare_doctor_and_physician_get_name_strategy(self):
+        for nm in ("DOCTOR", "DOCTOR_NM", "PHYSICIAN", "doctor_name"):
+            self.assertEqual(self._strategy(nm), "name", nm)
+
+    def test_masked_value_is_fake_person_name(self):
+        from core.masking import _FIRST, _LAST
+        cols = [{"name": "DOCTOR", "type": "varchar(80)"}]
+        rows = [{"DOCTOR": "Dr. Sandra Adams"}]
+        masked = mask_rows(rows, {"DOCTOR"}, cols, seed_key="acct-1")
+        fake = masked[0]["DOCTOR"]
+        first, last = fake.split(" ", 1)
+        self.assertIn(first, _FIRST)
+        self.assertIn(last, _LAST)
+
+
 class DrugNameStrategyTests(unittest.TestCase):
     """Drug/medication name columns must get the drug_name strategy — the
     bare 'name' pattern used to match their _NAME suffix and substitute fake

@@ -262,6 +262,20 @@ class ClassificationTests(unittest.TestCase):
         self.assertIn("PHI", patient["tags"])
         self.assertIn("PRESCRIPTION", compound["tags"])
 
+    def test_doctor_and_physician_classify_as_pii_without_name_suffix(self):
+        # Regression: DOCTOR/PHYSICIAN/DOCTOR_NM previously got tags=[] since
+        # neither contains the substring "name" — they sailed through query
+        # results completely unmasked despite the client being onboarded as
+        # a regulated healthcare tenant.
+        for col in ("DOCTOR", "PHYSICIAN", "DOCTOR_NM", "doctor_name"):
+            self.assertIn("PII", classify_column(col, "healthcare_pharmacy")["tags"], col)
+
+    def test_unrelated_provider_columns_not_misclassified(self):
+        # 'provider' alone is too ambiguous to tag safely (cloud/insurance
+        # providers are legitimate business fields, not people) — this fix
+        # only adds 'doctor'/'physician', not bare 'provider'.
+        self.assertEqual(classify_column("CLOUD_PROVIDER", "healthcare_pharmacy")["tags"], [])
+
 
 if __name__ == "__main__":
     unittest.main()

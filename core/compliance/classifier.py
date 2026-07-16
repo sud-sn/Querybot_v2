@@ -9,7 +9,8 @@ import store
 
 _PATTERNS = {
     "PII": re.compile(
-        r"(name|email|phone|mobile|address|ssn|social.?security|passport|national.?id|dob|birth)",
+        r"(name|email|phone|mobile|address|ssn|social.?security|passport|national.?id|dob|birth|"
+        r"doctor|physician)",
         re.I,
     ),
     "PCI": re.compile(r"(card.?number|pan|cvv|cvc|expiry|cardholder)", re.I),

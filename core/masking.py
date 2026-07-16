@@ -76,6 +76,10 @@ _PII_PATTERNS: list[tuple[str, str]] = [
     (r"first[_\s]?name|fname|given[_\s]?name|forename", "first_name"),
     (r"last[_\s]?name|lname|surname|family[_\s]?name", "last_name"),
     (r"(?<![a-z])name(?![a-z])|full[_\s]?name|display[_\s]?name", "name"),
+    # Doctor / physician — a person identifier same as bare 'name', but
+    # commonly stored without a _NAME suffix in ERP schemas (DOCTOR,
+    # DOCTOR_NM, PHYSICIAN) so it doesn't match the pattern above.
+    (r"(?<![a-z])doctor(?![a-z])|(?<![a-z])physician(?![a-z])", "name"),
     # Address components
     (r"address|street|addr\b", "address"),
     (r"(?<![a-z])city(?![a-z])", "city"),
