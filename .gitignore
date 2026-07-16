@@ -6,3 +6,10 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+
+# Runtime SQLite database — this is live server state, not source. Tracking
+# it means every deploy's live data drifts from the last commit, so every
+# `git pull` on a running server hits "cannot pull: you have unstaged
+# changes" and (worse) a careless stash+pull silently restores an old
+# snapshot over the live database. See data/querybot.db removal commit.
+data/querybot.db
