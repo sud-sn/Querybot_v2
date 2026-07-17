@@ -111,10 +111,17 @@
   <div class="card"><div class="card-header"><h2>Classification workspace</h2></div><div class="card-body">
     <div class="form-group"><input id="class-search" type="search" placeholder="Filter table, column or tag"></div>
     <div class="classification-wrap"><table class="classification-table"><thead><tr><th>Resource</th><th>Tags</th><th>Sensitivity</th><th>Identifiability</th><th>Display protection</th><th>Confidence</th><th>Review</th></tr></thead><tbody>
+      {% set _tag_choices = pack.classification_tags if (pack and pack.classification_tags) else ['PII','PCI','PHI','PRESCRIPTION','PAYMENT','KYC_AML','FINANCIAL'] %}
       {% for item in classifications %}
       <tr data-search="{{ item.table_fqn }} {{ item.column_name }} {{ item.tags|join(' ') }}">
         <td><strong>{{ item.column_name }}</strong><br><span style="color:var(--text-muted)">{{ item.table_fqn }}</span></td>
-        <td>{% for tag in item.tags %}<span class="tag">{{ tag }}</span>{% endfor %}</td>
+        <td data-field="tags" title="Tags decide which mask/deny rules apply to this column">
+          {% for t in _tag_choices %}
+          <label style="display:inline-flex;align-items:center;gap:2px;margin:0 6px 3px 0;font-size:11px;white-space:nowrap">
+            <input type="checkbox" data-tag value="{{ t }}" {% if t in item.tags %}checked{% endif %}> {{ t }}
+          </label>
+          {% endfor %}
+        </td>
         <td><select data-field="sensitivity"><option>{{ item.sensitivity }}</option>{% for v in ['PUBLIC','INTERNAL','CONFIDENTIAL','RESTRICTED'] %}{% if v != item.sensitivity %}<option>{{ v }}</option>{% endif %}{% endfor %}</select></td>
         <td><select data-field="identifiability"><option>{{ item.identifiability }}</option>{% for v in ['NONE','INDIRECT','DIRECT'] %}{% if v != item.identifiability %}<option>{{ v }}</option>{% endif %}{% endfor %}</select></td>
         <td><select data-field="mask_strategy" title="Safe aliases preserve analytical grouping without exposing the original value">
@@ -343,8 +350,9 @@ document.getElementById('class-search')?.addEventListener('input',e=>{
 });
 document.querySelectorAll('.save-classification').forEach(btn=>btn.addEventListener('click',async()=>{
   const row=btn.closest('tr');btn.disabled=true;
+  const tags=[...row.querySelectorAll('[data-tag]:checked')].map(cb=>cb.value);
   const resp=await fetch('/admin/api/clients/{{ client.account_id }}/compliance/classifications',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
-    table_fqn:btn.dataset.table,column_name:btn.dataset.column,tags:btn.dataset.tags.split(',').filter(Boolean),
+    table_fqn:btn.dataset.table,column_name:btn.dataset.column,tags:tags,
     sensitivity:row.querySelector('[data-field=sensitivity]').value,
     identifiability:row.querySelector('[data-field=identifiability]').value,
     mask_strategy:row.querySelector('[data-field=mask_strategy]').value,reviewed:true,confidence:1

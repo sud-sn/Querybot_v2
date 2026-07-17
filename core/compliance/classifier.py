@@ -85,9 +85,22 @@ def import_schema_classifications(account_id: str, schema_dir: str, industry: st
             if not name:
                 continue
             key = f"{str(table_fqn).upper()}.{name.upper()}"
-            if key in existing:
+            current = existing.get(key)
+            # Admin-reviewed classifications are authoritative — never
+            # overwrite a human decision on re-import.
+            if current and current.get("reviewed"):
                 continue
+            # An existing UNREVIEWED auto-classification is refreshed against
+            # the current classifier: re-import used to skip every existing
+            # row, so a column first classified before its pattern existed
+            # (e.g. DOCTOR_NAME before the "doctor" PII pattern was added)
+            # kept its stale empty-tag row forever, and re-applying the
+            # profile silently changed nothing. Only rewrite when the
+            # detection actually differs, so we don't churn timestamps.
             detected = classify_column(name, industry)
+            if current:
+                if set(current.get("tags") or []) == set(detected["tags"]):
+                    continue  # unchanged — leave it (and its timestamp) alone
             store.save_classification(
                 account_id,
                 str(table_fqn),

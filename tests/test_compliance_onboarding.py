@@ -52,6 +52,17 @@ def _make_post_request(form_data: dict):
     return req
 
 
+def _make_json_request(body: dict):
+    req = MagicMock()
+    req.query_params = {}
+
+    async def _json():
+        return body
+
+    req.json = _json
+    return req
+
+
 class ComplianceProfileRedirectTests(unittest.TestCase):
     """compliance_save_profile — real route invocation against the shared
     test DB. Every store call it makes (save_compliance_profile,
@@ -182,6 +193,135 @@ class ImportSchemaClassificationsIdempotencyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as schema_dir:
             result = import_schema_classifications(account_id, schema_dir, "banking")
         self.assertEqual(result, 0)
+
+    def test_rerun_refreshes_unreviewed_stale_classification(self):
+        # Root-cause fix: a column first classified with EMPTY tags (before
+        # its PII pattern existed, or while the profile was still standard)
+        # kept that stale row forever because re-import skipped every
+        # existing column — so masking never fired. Re-import must now
+        # RE-CLASSIFY unreviewed rows against the current classifier.
+        import store
+        from core.compliance import classifier
+        from core.compliance.classifier import import_schema_classifications
+
+        store.init_db()
+        account_id = f"acct-classify-refresh-{uuid.uuid4().hex[:8]}"
+        store.upsert_client(account_id, "portal")
+
+        with tempfile.TemporaryDirectory() as schema_dir:
+            schema = {"RX.DIM_PRESCRIBER": {"columns": [{"name": "DOCTOR_NAME"}]}}
+            (Path(schema_dir) / "_schema.json").write_text(json.dumps(schema), encoding="utf-8")
+
+            # Simulate the stale state: an unreviewed auto row with NO tags,
+            # as if classified before "doctor" was a recognized PII pattern.
+            store.save_classification(
+                account_id, "RX.DIM_PRESCRIBER", "DOCTOR_NAME",
+                sensitivity="INTERNAL", identifiability="NONE", tags=[],
+                confidence=0.55, reviewed=False, reviewed_by="",
+                mask_strategy="redact", source="auto",
+            )
+
+            changed = import_schema_classifications(account_id, schema_dir, "healthcare_pharmacy")
+            self.assertEqual(changed, 1, "stale unreviewed row must be refreshed")
+
+            cmap = store.get_classification_map(account_id)
+            doc = cmap["RX.DIM_PRESCRIBER.DOCTOR_NAME"]
+            self.assertIn("PII", doc["tags"])
+            self.assertFalse(doc.get("reviewed"))
+
+    def test_rerun_leaves_unchanged_unreviewed_row_untouched(self):
+        # No-op when detection is identical — must not churn timestamps or
+        # report spurious changes.
+        import store
+        from core.compliance.classifier import import_schema_classifications
+
+        store.init_db()
+        account_id = f"acct-classify-noop-{uuid.uuid4().hex[:8]}"
+        store.upsert_client(account_id, "portal")
+
+        with tempfile.TemporaryDirectory() as schema_dir:
+            schema = {"RX.DIM_PRESCRIBER": {"columns": [{"name": "DOCTOR_NAME"}]}}
+            (Path(schema_dir) / "_schema.json").write_text(json.dumps(schema), encoding="utf-8")
+
+            first = import_schema_classifications(account_id, schema_dir, "healthcare_pharmacy")
+            self.assertEqual(first, 1)  # created with PII tag
+            second = import_schema_classifications(account_id, schema_dir, "healthcare_pharmacy")
+            self.assertEqual(second, 0, "identical detection must be a no-op")
+
+    def test_rerun_never_overwrites_admin_reviewed_row(self):
+        # Even if the current classifier would tag it differently, an
+        # admin's reviewed decision is authoritative and must survive.
+        import store
+        from core.compliance.classifier import import_schema_classifications
+
+        store.init_db()
+        account_id = f"acct-classify-reviewed-{uuid.uuid4().hex[:8]}"
+        store.upsert_client(account_id, "portal")
+
+        with tempfile.TemporaryDirectory() as schema_dir:
+            schema = {"RX.DIM_PRESCRIBER": {"columns": [{"name": "DOCTOR_NAME"}]}}
+            (Path(schema_dir) / "_schema.json").write_text(json.dumps(schema), encoding="utf-8")
+
+            # Admin deliberately set NO tags and reviewed it (their call).
+            store.save_classification(
+                account_id, "RX.DIM_PRESCRIBER", "DOCTOR_NAME",
+                sensitivity="INTERNAL", identifiability="NONE", tags=[],
+                confidence=1.0, reviewed=True, reviewed_by="admin",
+                mask_strategy="redact", source="admin",
+            )
+            changed = import_schema_classifications(account_id, schema_dir, "healthcare_pharmacy")
+            self.assertEqual(changed, 0)
+            cmap = store.get_classification_map(account_id)
+            self.assertEqual(cmap["RX.DIM_PRESCRIBER.DOCTOR_NAME"]["tags"], [])
+
+
+class ClassificationTagEditTests(unittest.TestCase):
+    """Fix 2 — the admin can add/edit a column's tags (which drive mask/deny
+    rule matching), correcting a missed auto-classification from the panel."""
+
+    def setUp(self):
+        import store
+        store.init_db()
+        self.store = store
+        self.account_id = f"acct-tag-edit-{uuid.uuid4().hex[:8]}"
+        store.upsert_client(self.account_id, "portal")
+
+    def _post(self, body: dict):
+        import admin.routes as routes
+        from unittest.mock import patch
+        with patch.object(routes, "_is_auth", return_value=True):
+            return _arun(routes.compliance_save_classification(
+                _make_json_request(body), self.account_id
+            ))
+
+    def test_admin_can_add_pii_tag(self):
+        result = self._post({
+            "table_fqn": "RX.DIM_PRESCRIBER", "column_name": "DOCTOR_NAME",
+            "tags": ["PII"], "sensitivity": "RESTRICTED",
+            "identifiability": "DIRECT", "mask_strategy": "safe_alias_name",
+            "reviewed": True,
+        })
+        self.assertEqual(json.loads(result.body)["ok"], True)
+        cmap = self.store.get_classification_map(self.account_id)
+        doc = cmap["RX.DIM_PRESCRIBER.DOCTOR_NAME"]
+        self.assertIn("PII", doc["tags"])
+        self.assertTrue(doc["reviewed"])
+        self.assertEqual(doc["mask_strategy"], "safe_alias_name")
+
+    def test_unknown_tag_rejected(self):
+        from fastapi import HTTPException
+        with self.assertRaises(HTTPException) as ctx:
+            self._post({
+                "table_fqn": "RX.T", "column_name": "C",
+                "tags": ["NONSENSE"], "sensitivity": "INTERNAL",
+                "identifiability": "NONE", "mask_strategy": "redact",
+            })
+        self.assertEqual(ctx.exception.status_code, 422)
+
+    def test_template_renders_editable_tag_checkboxes(self):
+        src = _src("admin/templates/client_compliance.html")
+        self.assertIn("data-tag", src)
+        self.assertIn("[data-tag]:checked", src)
 
 
 class TemplateContextWiringTests(unittest.TestCase):

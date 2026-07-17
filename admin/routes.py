@@ -2767,12 +2767,24 @@ async def compliance_save_classification(request: Request, account_id: str):
     mask_strategy = str(body.get("mask_strategy") or "redact").lower()
     if mask_strategy not in allowed_mask_strategies:
         raise HTTPException(status_code=422, detail="Unsupported display-protection strategy.")
+    # Tags drive which policy rules match (mask/deny are keyed on the tag),
+    # so an admin correcting a missed auto-classification edits them here.
+    # Validate against the known compliance vocabulary — an unknown tag would
+    # silently match no rule and mask nothing.
+    allowed_tags = {"PII", "PCI", "PHI", "PRESCRIPTION", "PAYMENT", "KYC_AML", "FINANCIAL"}
+    raw_tags = [str(t).strip().upper() for t in (body.get("tags") or []) if str(t).strip()]
+    bad_tags = [t for t in raw_tags if t not in allowed_tags]
+    if bad_tags:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unknown classification tag(s): {', '.join(bad_tags)}.",
+        )
     store.save_classification(
         account_id, str(body.get("table_fqn") or ""),
         str(body.get("column_name") or ""),
         sensitivity=str(body.get("sensitivity") or "INTERNAL"),
         identifiability=str(body.get("identifiability") or "NONE"),
-        tags=list(body.get("tags") or []),
+        tags=raw_tags,
         confidence=float(body.get("confidence") or 1.0),
         reviewed=bool(body.get("reviewed", True)), reviewed_by="admin",
         mask_strategy=mask_strategy,
