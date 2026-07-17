@@ -685,5 +685,20 @@ class TestEntityGraphScopePruning(unittest.TestCase):
         self.assertFalse(store.list_entity_properties(self.ACC, "Patient"))
 
 
+class TestEntityFilterAutocompleteUI(unittest.TestCase):
+
+    def test_filter_editor_contains_table_scoped_suggestions(self):
+        src = GRAPH_TMPL.read_text(encoding="utf-8")
+        self.assertIn('class="filter-editor-shell"', src)
+        self.assertIn('id="filter-suggest"', src)
+        self.assertIn("loadFilterColumns", src)
+        self.assertIn("validateFilterIdentifiers", src)
+
+    def test_graph_column_api_accepts_schema_table_suffix(self):
+        routes = ROUTES.read_text(encoding="utf-8")
+        self.assertIn('suffix = "." + fqn.upper()', routes)
+        self.assertIn("len(suffix_matches) == 1", routes)
+
+
 if __name__ == "__main__":
     unittest.main()

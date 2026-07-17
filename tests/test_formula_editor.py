@@ -621,5 +621,21 @@ class TestBackdropBaseColor(unittest.TestCase):
         self.assertIn("backdrop.style.color = box.color", init_block[:3000])
 
 
+class TestContainedAutocomplete(unittest.TestCase):
+
+    def test_formula_suggestions_are_editor_contained(self):
+        tmpl = _tmpl()
+        self.assertNotIn("#formula-col-suggest{position:fixed", tmpl)
+        self.assertNotIn("#col-suggest{position:fixed", tmpl)
+        self.assertIn("function _mountSuggestionTray", tmpl)
+        self.assertIn('host.classList.add("suggest-inline-host", "suggest-open")', tmpl)
+
+    def test_metric_builder_does_not_use_native_column_datalist(self):
+        tmpl = _tmpl()
+        wire_block = tmpl[tmpl.index("function _wireMetricBuilderColumnLists"):]
+        self.assertIn('inp.removeAttribute("list")', wire_block[:900])
+        self.assertIn('inp.dataset.inlineSuggest = "1"', wire_block[:900])
+
+
 if __name__ == "__main__":
     unittest.main()

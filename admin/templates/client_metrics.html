@@ -96,8 +96,8 @@
 .fn-item-db.ora{background:#FFFAF0;color:#C05621}
 .fn-item-db.all{background:#F0FFF4;color:#276749}
 /* ── Column suggestion dropdown ───────────────────────────────────────── */
-#col-suggest{position:fixed;background:var(--surface);border:1px solid var(--border);border-radius:6px;
-  box-shadow:0 4px 16px rgba(0,0,0,.12);max-height:220px;overflow-y:auto;z-index:9999;min-width:260px;display:none}
+#col-suggest{position:relative;background:var(--surface);border:1px solid var(--border);border-radius:0 0 6px 6px;
+  box-shadow:none;max-height:220px;overflow-y:auto;z-index:3;min-width:0;width:100%;display:none;margin-top:-1px;grid-column:1/-1}
 .col-suggest-item{padding:6px 10px;cursor:pointer;display:flex;align-items:center;gap:8px;font-size:12px;border-bottom:1px solid var(--border)}
 .col-suggest-item:last-child{border-bottom:none}
 .col-suggest-item:hover,.col-suggest-item.active{background:var(--blue-light)}
@@ -143,9 +143,19 @@
 .metric-advanced-toggle:hover{color:var(--text)}
 .metric-advanced-body{padding:.75rem .85rem;border-top:1px solid var(--border)}
 /* ── Inline column suggestion (ThoughtSpot-style) ───────────────────── */
-#formula-col-suggest{position:fixed;background:var(--surface);border:1px solid var(--border);border-radius:7px;
-  box-shadow:0 6px 24px rgba(0,0,0,.14);max-height:260px;overflow-y:auto;z-index:10200;min-width:280px;
-  display:none;padding:3px 0}
+#formula-col-suggest{position:relative;background:var(--surface);border:1px solid var(--border);border-radius:0 0 7px 7px;
+  box-shadow:none;max-height:260px;overflow-y:auto;z-index:3;min-width:0;width:100%;
+  display:none;padding:3px 0;margin-top:-1px;grid-column:1/-1}
+.suggest-inline-host{min-width:0}
+.suggest-input-shell{width:100%;min-width:0}
+.suggest-input-shell>input{width:100%;box-sizing:border-box}
+.suggest-inline-host.suggest-open{position:relative}
+.suggest-inline-host.suggest-open>.formula-editor,
+.suggest-inline-host.suggest-open>.metric-builder-row-expression,
+.suggest-inline-host.suggest-open>input{border-bottom-left-radius:0!important;border-bottom-right-radius:0!important}
+.metric-filter-row.suggest-inline-host #formula-col-suggest,
+.metric-filter-row.suggest-inline-host #col-suggest{grid-column:1/-1}
+.fcs-group-hd{position:sticky;top:0;z-index:1;padding:5px 10px;border-bottom:1px solid var(--border);background:var(--surface-2);color:var(--text-muted);font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.05em}
 .fcs-item{padding:6px 12px;cursor:pointer;display:flex;align-items:center;gap:8px;border-radius:4px;margin:1px 3px;font-size:12px;transition:background .1s}
 .fcs-item:hover,.fcs-item.active{background:var(--blue-light)}
 .fcs-col{font-family:Consolas,monospace;font-weight:700;color:var(--text);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -1898,13 +1908,35 @@ function _fcsCurrentToken(editor){
   return m ? m[0] : "";
 }
 
-function _showSuggestions(editor, token){
+function _columnsForSuggestionEditor(editor){
+  var columns = _allColumns.slice();
+  var form = editor && editor.closest ? editor.closest(".metric-form") : null;
+  var baseInput = form ? form.querySelector("[name='base_table']") : null;
+  var base = (baseInput && baseInput.value || "").split(".").pop().toLowerCase();
+  var isMeasure = editor && editor.matches && editor.matches(".metric-builder-measure");
+  var numeric = /int|decimal|numeric|float|double|money|number|real/i;
+  columns.sort(function(a, b){
+    var aBase = base && String(a.table).toLowerCase() === base ? 0 : 1;
+    var bBase = base && String(b.table).toLowerCase() === base ? 0 : 1;
+    if(aBase !== bBase) return aBase - bBase;
+    if(isMeasure){
+      var aNum = numeric.test(a.type || "") ? 0 : 1;
+      var bNum = numeric.test(b.type || "") ? 0 : 1;
+      if(aNum !== bNum) return aNum - bNum;
+    }
+    return String(a.column).localeCompare(String(b.column));
+  });
+  return columns;
+}
+
+function _showSuggestions(editor, token, forceAll){
   var el = document.getElementById("formula-col-suggest");
   var wantsFns = editor.matches(".formula-editor,.metric-builder-row-expression");
   var fnMatches = wantsFns ? _matchingFunctions(token) : [];
-  if((!_allColumns.length && !fnMatches.length) || token.length < 1){ if(el) el.style.display="none"; return; }
+  if((!_allColumns.length && !fnMatches.length) || (!forceAll && token.length < 1)){ if(el) el.style.display="none"; return; }
   var tableMode = editor.matches(".metric-builder-required-joins") && _joinTableContext(editor);
   var lc = token.toLowerCase();
+  var sourceColumns = _columnsForSuggestionEditor(editor);
   var matches;
   if(tableMode){
     matches = _distinctTables()
@@ -1914,18 +1946,18 @@ function _showSuggestions(editor, token){
   } else if(lc.includes(".")){
     var dotParts = lc.split(".");
     var tblPfx = dotParts[0], colPfx = dotParts[1] || "";
-    matches = _allColumns.filter(function(c){
+    matches = sourceColumns.filter(function(c){
       return c.table.toLowerCase() === tblPfx && c.column.toLowerCase().startsWith(colPfx);
     }).slice(0, 10);
   } else {
     // Starts-with first, then contains — keep starts-with at top
-    var sw = _allColumns.filter(function(c){ return c.column.toLowerCase().startsWith(lc); });
-    var ct = _allColumns.filter(function(c){ return !c.column.toLowerCase().startsWith(lc) && c.column.toLowerCase().includes(lc); });
+    var sw = sourceColumns.filter(function(c){ return c.column.toLowerCase().startsWith(lc); });
+    var ct = sourceColumns.filter(function(c){ return !c.column.toLowerCase().startsWith(lc) && c.column.toLowerCase().includes(lc); });
     matches = sw.concat(ct).slice(0, 10);
   }
   if(!matches.length && !fnMatches.length){ if(el) el.style.display="none"; return; }
   _suggestTarget = editor;
-  _suggestIdx = -1;
+  _suggestIdx = 0;
   var _rows = [], _gIdx = 0;
 
   // Function suggestions — shown first, DB-aware (see FN_CATALOGUE)
@@ -1969,17 +2001,44 @@ function _showSuggestions(editor, token){
     });
   });
   el.innerHTML = _rows.join("");
-
-  // Position below the textarea, left-aligned with it
-  var rect = editor.getBoundingClientRect();
-  // Try to place just below the textarea; shift left if would overflow viewport
-  var dropW = Math.max(300, Math.min(400, rect.width));
-  var leftPos = rect.left;
-  if(leftPos + dropW > window.innerWidth - 8) leftPos = window.innerWidth - dropW - 8;
-  el.style.left    = leftPos+"px";
-  el.style.top     = (rect.bottom+4)+"px";
-  el.style.width   = dropW+"px";
+  var firstItem = el.querySelector(".fcs-item");
+  if(firstItem) firstItem.classList.add("active");
+  _mountSuggestionTray(el, editor);
   el.style.display = "block";
+}
+
+function _suggestionHostFor(editor){
+  if(!editor) return null;
+  if(editor.matches(".formula-editor,.metric-builder-row-expression")){
+    return editor.closest(".sql-hl-wrap") || editor.parentElement;
+  }
+  if(editor.matches(".metric-builder-field,.metric-builder-measure")){
+    var filterRow = editor.closest(".metric-filter-row");
+    if(filterRow) return filterRow;
+  }
+  var existing = editor.closest(".suggest-input-shell");
+  if(existing) return existing;
+  if(editor.tagName === "INPUT"){
+    var shell = document.createElement("div");
+    shell.className = "suggest-input-shell";
+    editor.parentNode.insertBefore(shell, editor);
+    shell.appendChild(editor);
+    return shell;
+  }
+  return editor.parentElement;
+}
+
+function _mountSuggestionTray(tray, editor){
+  var host = _suggestionHostFor(editor);
+  if(!tray || !host) return;
+  document.querySelectorAll(".suggest-inline-host.suggest-open").forEach(function(node){
+    if(node !== host) node.classList.remove("suggest-open");
+  });
+  host.classList.add("suggest-inline-host", "suggest-open");
+  host.appendChild(tray);
+  tray.style.left = "";
+  tray.style.top = "";
+  tray.style.width = "";
 }
 
 function _hideSuggestions(){
@@ -1987,6 +2046,7 @@ function _hideSuggestions(){
   if(el1) el1.style.display = "none";
   var el2 = document.getElementById("col-suggest");
   if(el2) el2.style.display = "none";
+  document.querySelectorAll(".suggest-inline-host.suggest-open").forEach(function(node){ node.classList.remove("suggest-open"); });
   _suggestIdx = -1; _suggestTarget = null;
 }
 
@@ -2027,6 +2087,9 @@ function _insertSuggestion(bareColName, tableName, isDup){
     var mbForm = editor.closest(".metric-form");
     _syncMetricBuilder(mbForm);
     if(editor.matches(".metric-builder-row-expression,.metric-builder-required-columns")){
+      _scheduleMetricBuilderBaseTableInference(mbForm);
+    }
+    if(editor.matches(".metric-builder-measure")){
       _scheduleMetricBuilderBaseTableInference(mbForm);
     }
     return;
@@ -2079,6 +2142,11 @@ function _insertSuggestion(bareColName, tableName, isDup){
 document.addEventListener("keydown", function(e){
   var fcs = document.getElementById("formula-col-suggest");
   var cs  = document.getElementById("col-suggest");
+  if((e.ctrlKey || e.metaKey) && e.code === "Space" && e.target.matches(".formula-editor,.metric-builder-row-expression,.metric-builder-required-joins,.metric-builder-measure,.metric-builder-field,.metric-builder-required-columns")){
+    e.preventDefault();
+    _showSuggestions(e.target, _currentToken(e.target), true);
+    return;
+  }
   // Handle formula dropdown (ThoughtSpot-style)
   if(fcs && fcs.style.display !== "none"){
     var items = fcs.querySelectorAll(".fcs-item");
@@ -2178,9 +2246,8 @@ function _showTagSuggestions(input, token){
       +'<span class="col-suggest-table">'+c.table+'</span>'
       +'<span class="col-suggest-type">'+c.type+'</span></div>';
   }).join("");
-  var rect = input.getBoundingClientRect();
-  el.style.left=rect.left+"px"; el.style.top=(rect.bottom+2)+"px";
-  el.style.width=Math.max(240,rect.width)+"px"; el.style.display="block";
+  _mountSuggestionTray(el, input);
+  el.style.display="block";
 }
 
 function _insertTagValue(input, colName){
@@ -2727,15 +2794,10 @@ function _scheduleAutoDateRoleJoins(form){
 
 function _wireMetricBuilderColumnLists(scope){
   if(!_allColumns.length) return;
-  var dl = document.getElementById("metric-builder-column-options");
-  if(!dl){
-    dl = document.createElement("datalist");
-    dl.id = "metric-builder-column-options";
-    document.body.appendChild(dl);
-  }
-  dl.innerHTML = _allColumns.map(function(c){ return '<option value="'+escHtml(c.column)+'">'+escHtml(c.table)+'</option>'; }).join("");
   (scope || document).querySelectorAll(".metric-builder-measure,.metric-builder-field,.metric-builder-required-columns").forEach(function(inp){
-    inp.setAttribute("list", "metric-builder-column-options");
+    inp.removeAttribute("list");
+    inp.setAttribute("autocomplete", "off");
+    inp.dataset.inlineSuggest = "1";
   });
 }
 
@@ -3259,6 +3321,9 @@ document.addEventListener("focusin", function(e){
   if(e.target.matches(".metric-builder-row-expression,.metric-builder-required-joins")){
     _showSuggestions(e.target, _currentToken(e.target));
   }
+  if(e.target.matches(".metric-builder-measure,.metric-builder-field,.metric-builder-required-columns")){
+    _showSuggestions(e.target, _currentToken(e.target), true);
+  }
 });
 
 document.addEventListener("input", function(e){
@@ -3286,6 +3351,9 @@ document.addEventListener("input", function(e){
     _renderSqlHighlight(e.target);
   }
   if(e.target.matches(".metric-builder-row-expression,.metric-builder-required-joins")){
+    _showSuggestions(e.target, _currentToken(e.target));
+  }
+  if(e.target.matches(".metric-builder-measure,.metric-builder-field,.metric-builder-required-columns")){
     _showSuggestions(e.target, _currentToken(e.target));
   }
   if(e.target.name === "required_columns" || e.target.name === "allowed_dimensions"){

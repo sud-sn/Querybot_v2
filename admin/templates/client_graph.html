@@ -320,11 +320,24 @@ body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-seri
   font-size:10px;font-weight:800;padding:2px 8px;border-radius:999px;margin-bottom:.4rem;
 }
 .filter-ta{
-  width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;
+  width:100%;padding:8px 10px;border:0;border-radius:0;
   font-size:12px;font-family:Consolas,monospace;background:var(--surface);color:var(--text);
   resize:vertical;min-height:90px;outline:none;box-sizing:border-box;line-height:1.5;
 }
-.filter-ta:focus{border-color:var(--primary)}
+.filter-editor-shell{border:1px solid var(--border);border-radius:7px;background:var(--surface);overflow:hidden;transition:border-color .12s,box-shadow .12s}
+.filter-editor-shell:focus-within{border-color:var(--primary);box-shadow:0 0 0 2px color-mix(in srgb,var(--primary) 12%,transparent)}
+.filter-suggest{display:none;border-top:1px solid var(--border);background:var(--surface-2);max-height:154px;overflow-y:auto}
+.filter-suggest.open{display:block}
+.filter-suggest-head{position:sticky;top:0;z-index:1;display:flex;justify-content:space-between;gap:.5rem;padding:5px 9px;border-bottom:1px solid var(--border);background:var(--surface-2);color:var(--text-muted);font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.05em}
+.filter-suggest-item{display:grid;grid-template-columns:22px minmax(0,1fr) auto;align-items:center;gap:7px;width:100%;padding:6px 9px;border:0;border-bottom:1px solid var(--border);background:var(--surface);color:var(--text);text-align:left;cursor:pointer}
+.filter-suggest-item:last-child{border-bottom:0}
+.filter-suggest-item:hover,.filter-suggest-item.active{background:var(--primary-soft,var(--blue-light))}
+.filter-suggest-icon{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border:1px solid var(--border);border-radius:4px;background:var(--surface-2);font-family:Consolas,monospace;font-size:9px;font-weight:800;color:var(--primary)}
+.filter-suggest-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:Consolas,monospace;font-size:11px;font-weight:700}
+.filter-suggest-type{max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:9px;color:var(--text-muted)}
+.filter-editor-hint{display:flex;justify-content:space-between;gap:.5rem;padding:4px 8px;border-top:1px solid var(--border);background:var(--surface-2);color:var(--text-muted);font-size:9px}
+.filter-editor-error{display:none;margin-top:.4rem;padding:6px 8px;border:1px solid #FECACA;border-radius:5px;background:#FEF2F2;color:#B91C1C;font-size:11px;line-height:1.4}
+.filter-editor-error.show{display:block}
 .filter-actions{display:flex;gap:.35rem;margin-top:.45rem}
 .filter-save{background:var(--primary);color:#fff;border:1px solid var(--primary);border-radius:6px;padding:6px 16px;font-size:12px;font-weight:700;cursor:pointer;transition:opacity .12s}
 .filter-save:hover{opacity:.85}
@@ -544,6 +557,9 @@ let _expandedRelId  = null;
 let sidebarCollapsed = false;
 let activeTypeFilter = '';
 let _savePosTimer    = null;
+const _filterColumnCache = new Map();
+let _filterSuggestIdx = -1;
+let _filterColumns = [];
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 function _esc(s) {
@@ -1047,23 +1063,162 @@ async function saveJoinEdit(relId) {
 // ── Filter tab ─────────────────────────────────────────────────────────────────
 function renderFilterTab(e) {
   const hasFilter = !!(e.entity_filter||'').trim();
+  _filterColumns = [];
   document.getElementById('bp-content').innerHTML = `
     <p class="filter-desc">
       Define a SQL WHERE condition that is automatically injected whenever this table is used in a query.<br>
       Example: <code style="background:var(--surface-2);padding:1px 5px;border-radius:3px;font-family:Consolas,monospace;font-size:11px">is_active = 1</code>
     </p>
     ${hasFilter ? '<div class="filter-active">✓ Filter active</div><br>' : ''}
-    <textarea class="filter-ta" id="filter-ta" placeholder="e.g. is_deleted = 0 AND fiscal_year = 2024">${_esc(e.entity_filter||'')}</textarea>
+    <div class="filter-editor-shell" id="filter-editor-shell">
+      <textarea class="filter-ta" id="filter-ta" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off" placeholder="e.g. is_deleted = 0 AND fiscal_year = 2024">${_esc(e.entity_filter||'')}</textarea>
+      <div class="filter-suggest" id="filter-suggest" role="listbox" aria-label="Field suggestions"></div>
+      <div class="filter-editor-hint"><span>Type a field name or press Ctrl+Space</span><span>Enter to insert</span></div>
+    </div>
+    <div class="filter-editor-error" id="filter-editor-error"></div>
     <div class="filter-actions">
       <button class="filter-save" onclick="saveFilter()">Save filter</button>
       ${hasFilter ? `<button class="filter-clear" onclick="clearFilter()">Clear</button>` : ''}
     </div>
   `;
+  initFilterEditor(e);
+}
+
+function filterEntityFqn(e) {
+  return [e?.schema_name, e?.table_name].filter(Boolean).join('.') || e?.entity_name || '';
+}
+
+async function loadFilterColumns(e) {
+  const fqn = filterEntityFqn(e);
+  if (!fqn) return [];
+  if (_filterColumnCache.has(fqn)) return _filterColumnCache.get(fqn);
+  try {
+    const resp = await fetch(`${API_BASE}/columns?fqn=${encodeURIComponent(fqn)}`);
+    const cols = resp.ok ? await resp.json() : [];
+    let normalized = Array.isArray(cols) ? cols.filter(c => c && c.name) : [];
+    if (!normalized.length) {
+      normalized = (ENTITY_COLUMNS[e.entity_name] || []).map(name => ({name, type:'field', nullable:true}));
+    }
+    _filterColumnCache.set(fqn, normalized);
+    return normalized;
+  } catch (_) {
+    return (ENTITY_COLUMNS[e.entity_name] || []).map(name => ({name, type:'field', nullable:true}));
+  }
+}
+
+function filterCurrentToken(ta) {
+  const pos = ta.selectionStart || 0;
+  const match = ta.value.slice(0, pos).match(/[A-Za-z_][A-Za-z0-9_]*$/);
+  return match ? match[0] : '';
+}
+
+function filterTypeIcon(type) {
+  const t = String(type || '').toLowerCase();
+  if (/int|decimal|numeric|float|double|money|number/.test(t)) return '#';
+  if (/date|time/.test(t)) return 'Dt';
+  if (/bit|bool/.test(t)) return '01';
+  return 'Aa';
+}
+
+function renderFilterSuggestions(ta, forceAll) {
+  const tray = document.getElementById('filter-suggest');
+  if (!tray) return;
+  const token = filterCurrentToken(ta);
+  if (!forceAll && !token) { tray.classList.remove('open'); tray.innerHTML = ''; return; }
+  const q = token.toLowerCase();
+  const starts = _filterColumns.filter(c => !q || String(c.name).toLowerCase().startsWith(q));
+  const contains = _filterColumns.filter(c => q && !String(c.name).toLowerCase().startsWith(q) && String(c.name).toLowerCase().includes(q));
+  const matches = starts.concat(contains).slice(0, 12);
+  _filterSuggestIdx = matches.length ? 0 : -1;
+  if (!matches.length) { tray.classList.remove('open'); tray.innerHTML = ''; return; }
+  tray.innerHTML = `<div class="filter-suggest-head"><span>Fields in this table</span><span>${matches.length} shown</span></div>` + matches.map((c, idx) => `
+    <button type="button" class="filter-suggest-item${idx===0?' active':''}" role="option" data-name="${_esc(c.name)}" data-idx="${idx}" title="Insert ${_esc(c.name)}">
+      <span class="filter-suggest-icon">${filterTypeIcon(c.type)}</span>
+      <span class="filter-suggest-name">${_esc(c.name)}</span>
+      <span class="filter-suggest-type">${_esc(c.type || 'field')}</span>
+    </button>`).join('');
+  tray.classList.add('open');
+  tray.querySelectorAll('.filter-suggest-item').forEach(item => {
+    item.addEventListener('mousedown', ev => { ev.preventDefault(); insertFilterSuggestion(ta, item.dataset.name); });
+  });
+}
+
+function insertFilterSuggestion(ta, name) {
+  const pos = ta.selectionStart || 0;
+  const before = ta.value.slice(0, pos);
+  const nextBefore = before.replace(/[A-Za-z_][A-Za-z0-9_]*$/, name);
+  ta.value = nextBefore + ta.value.slice(ta.selectionEnd || pos);
+  const next = nextBefore.length;
+  ta.focus();
+  ta.setSelectionRange(next, next);
+  const tray = document.getElementById('filter-suggest');
+  if (tray) { tray.classList.remove('open'); tray.innerHTML = ''; }
+  validateFilterIdentifiers(ta.value, false);
+}
+
+function validateFilterIdentifiers(value, showEmpty) {
+  const error = document.getElementById('filter-editor-error');
+  if (!error) return true;
+  if (!value.trim()) { error.classList.remove('show'); error.textContent = ''; return !showEmpty; }
+  if (!_filterColumns.length) { error.classList.remove('show'); error.textContent = ''; return true; }
+  const scrubbed = value.replace(/'(?:[^']|'')*'/g, ' ').replace(/\[(.*?)\]/g, '$1');
+  const known = new Set(_filterColumns.map(c => String(c.name).toLowerCase()));
+  const current = graphData.entities.find(e => e.entity_name === _selectedEntity);
+  [_selectedEntity, current?.table_name, current?.schema_name].filter(Boolean).forEach(name => known.add(String(name).toLowerCase()));
+  const allowed = new Set(['and','or','not','in','is','null','like','between','true','false','case','when','then','else','end','as','cast','convert','try_convert','try_cast','coalesce','getdate','current_date','dateadd','datediff','year','month','day','date','datetime','datetime2','time','timestamp','int','integer','bigint','decimal','numeric','float','varchar','nvarchar','char','nchar','bit','boolean']);
+  const unknown = [];
+  const re = /\b[A-Za-z_][A-Za-z0-9_]*\b/g;
+  let match;
+  while ((match = re.exec(scrubbed)) !== null) {
+    const word = match[0];
+    const lower = word.toLowerCase();
+    const tail = scrubbed.slice(re.lastIndex);
+    if (known.has(lower) || allowed.has(lower) || /^\s*\(/.test(tail)) continue;
+    if (!unknown.includes(word)) unknown.push(word);
+  }
+  if (unknown.length) {
+    error.textContent = `Unknown field${unknown.length>1?'s':''} for this table: ${unknown.join(', ')}`;
+    error.classList.add('show');
+    return false;
+  }
+  error.classList.remove('show'); error.textContent = '';
+  return true;
+}
+
+async function initFilterEditor(e) {
+  const ta = document.getElementById('filter-ta');
+  if (!ta) return;
+  const columns = await loadFilterColumns(e);
+  if (!document.body.contains(ta)) return;
+  _filterColumns = columns;
+  ta.addEventListener('input', () => { renderFilterSuggestions(ta, false); validateFilterIdentifiers(ta.value, false); });
+  ta.addEventListener('focus', () => renderFilterSuggestions(ta, !filterCurrentToken(ta)));
+  ta.addEventListener('click', () => renderFilterSuggestions(ta, false));
+  ta.addEventListener('keydown', ev => {
+    const tray = document.getElementById('filter-suggest');
+    if ((ev.ctrlKey || ev.metaKey) && ev.code === 'Space') { ev.preventDefault(); renderFilterSuggestions(ta, true); return; }
+    if (!tray?.classList.contains('open')) return;
+    const items = Array.from(tray.querySelectorAll('.filter-suggest-item'));
+    if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+      ev.preventDefault();
+      const delta = ev.key === 'ArrowDown' ? 1 : -1;
+      _filterSuggestIdx = Math.max(0, Math.min(items.length - 1, _filterSuggestIdx + delta));
+      items.forEach((item, idx) => item.classList.toggle('active', idx === _filterSuggestIdx));
+      items[_filterSuggestIdx]?.scrollIntoView({block:'nearest'});
+    } else if ((ev.key === 'Enter' || ev.key === 'Tab') && items[_filterSuggestIdx]) {
+      ev.preventDefault(); insertFilterSuggestion(ta, items[_filterSuggestIdx].dataset.name);
+    } else if (ev.key === 'Escape') {
+      ev.preventDefault(); tray.classList.remove('open');
+    }
+  });
+  validateFilterIdentifiers(ta.value, false);
+  if (document.activeElement === ta) renderFilterSuggestions(ta, !filterCurrentToken(ta));
 }
 
 async function saveFilter() {
   if (!_selectedEntity) return;
   const val = (document.getElementById('filter-ta')?.value || '').trim();
+  if (!validateFilterIdentifiers(val, false)) return;
   const resp = await fetch(`${API_BASE}/entities/${encodeURIComponent(_selectedEntity)}/filter`, {
     method:'PATCH', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({entity_filter: val}),

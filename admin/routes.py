@@ -3932,6 +3932,14 @@ async def graph_api_columns(request: Request, account_id: str):
                 info = v
                 break
     if info is None:
+        # Entity graph records commonly store SCHEMA.TABLE while discovery
+        # keeps DATABASE.SCHEMA.TABLE. Accept a unique suffix match so the
+        # editor still receives the exact column types for that entity.
+        suffix = "." + fqn.upper()
+        suffix_matches = [v for k, v in master.items() if k.upper().endswith(suffix)]
+        if len(suffix_matches) == 1:
+            info = suffix_matches[0]
+    if info is None:
         return JSONResponse([])
 
     cols = [
