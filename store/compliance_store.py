@@ -448,6 +448,79 @@ def list_provider_agreements(account_id: str) -> list[dict]:
     return result
 
 
+def save_user_attestation(
+    account_id: str,
+    portal_user_id: str,
+    *,
+    attestation_type: str = "confidentiality",
+    document_ref: str = "",
+    granted_by: str = "",
+) -> int:
+    """Record that a named internal user signed a confidentiality/access
+    attestation and may see unmasked regulated values in query results.
+
+    Org-level provider agreements (BAA/DPA, see provider_agreement above)
+    govern what may reach the LLM provider; this is the per-USER display
+    instrument — a different legal document, kept in a separate table so
+    an auditor never confuses the two. Re-granting after a revoke inserts
+    a fresh row, preserving the full grant/revoke history."""
+    with get_db() as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO user_attestation (
+                account_id, portal_user_id, attestation_type,
+                document_ref, granted_by
+            ) VALUES (?,?,?,?,?)
+            """,
+            (account_id, str(portal_user_id), attestation_type, document_ref, granted_by),
+        )
+        return int(cur.lastrowid)
+
+
+def revoke_user_attestation(account_id: str, attestation_id: int, revoked_by: str = "") -> bool:
+    with get_db() as conn:
+        cur = conn.execute(
+            """
+            UPDATE user_attestation SET revoked_at=datetime('now'), revoked_by=?
+            WHERE account_id=? AND id=? AND revoked_at IS NULL
+            """,
+            (revoked_by, account_id, int(attestation_id)),
+        )
+        return cur.rowcount > 0
+
+
+def user_attestation_valid(account_id: str, portal_user_id: str) -> bool:
+    if not portal_user_id:
+        return False
+    with get_db() as conn:
+        row = conn.execute(
+            """
+            SELECT 1 FROM user_attestation
+            WHERE account_id=? AND portal_user_id=? AND revoked_at IS NULL
+            LIMIT 1
+            """,
+            (account_id, str(portal_user_id)),
+        ).fetchone()
+    return row is not None
+
+
+def list_user_attestations(account_id: str) -> list[dict]:
+    """All attestation rows (active and revoked) with the user's display
+    name/email joined in for the admin panel."""
+    with get_db() as conn:
+        rows = conn.execute(
+            """
+            SELECT ua.*, pu.name AS user_name, pu.email AS user_email
+            FROM user_attestation ua
+            LEFT JOIN portal_user pu ON CAST(pu.id AS TEXT) = ua.portal_user_id
+            WHERE ua.account_id=?
+            ORDER BY ua.granted_at DESC, ua.id DESC
+            """,
+            (account_id,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def log_policy_decision(
     *,
     account_id: str,

@@ -2674,6 +2674,7 @@ async def compliance_page(request: Request, account_id: str):
         ),
         "purposes": store.list_purposes(account_id),
         "agreements": store.list_provider_agreements(account_id),
+        "attestations": store.list_user_attestations(account_id),
         "assessment": store.get_latest_assessment(account_id),
         "versions": store.list_policy_versions(account_id),
         "decisions": store.list_decisions(account_id, limit=30),
@@ -2840,6 +2841,46 @@ async def compliance_save_agreement(request: Request, account_id: str):
     })
     return RedirectResponse(
         f"/admin/clients/{account_id}/compliance?saved=agreement", status_code=303
+    )
+
+
+@router.post("/clients/{account_id}/compliance/attestation")
+async def compliance_grant_attestation(request: Request, account_id: str):
+    """Record a per-USER confidentiality/access attestation. Distinct from
+    the org-level provider agreement above: that governs the LLM provider,
+    this governs which internal user may see unmasked regulated values in
+    query results (consumed by execute_governed_query)."""
+    if not _is_auth(request):
+        raise HTTPException(status_code=401)
+    form = await request.form()
+    portal_user_id = str(form.get("portal_user_id") or "").strip()
+    if not portal_user_id:
+        return RedirectResponse(
+            f"/admin/clients/{account_id}/compliance?error=attestation_user_required",
+            status_code=303,
+        )
+    store.save_user_attestation(
+        account_id,
+        portal_user_id,
+        attestation_type=str(form.get("attestation_type") or "confidentiality"),
+        document_ref=str(form.get("document_ref") or "").strip(),
+        granted_by="admin",
+    )
+    return RedirectResponse(
+        f"/admin/clients/{account_id}/compliance?saved=attestation", status_code=303
+    )
+
+
+@router.post("/clients/{account_id}/compliance/attestation/{attestation_id}/revoke")
+async def compliance_revoke_attestation(request: Request, account_id: str, attestation_id: int):
+    if not _is_auth(request):
+        raise HTTPException(status_code=401)
+    store.revoke_user_attestation(
+        account_id, attestation_id,
+        revoked_by="admin",
+    )
+    return RedirectResponse(
+        f"/admin/clients/{account_id}/compliance?saved=attestation_revoked", status_code=303
     )
 
 

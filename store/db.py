@@ -1048,6 +1048,18 @@ def _ensure_compliance_tables(conn: sqlite3.Connection) -> None:
             created_at      TEXT DEFAULT (datetime('now'))
         );
 
+        CREATE TABLE IF NOT EXISTS user_attestation (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_id       TEXT NOT NULL REFERENCES client(account_id) ON DELETE CASCADE,
+            portal_user_id   TEXT NOT NULL,
+            attestation_type TEXT NOT NULL DEFAULT 'confidentiality',
+            document_ref     TEXT NOT NULL DEFAULT '',
+            granted_by       TEXT NOT NULL DEFAULT '',
+            granted_at       TEXT DEFAULT (datetime('now')),
+            revoked_at       TEXT DEFAULT NULL,
+            revoked_by       TEXT NOT NULL DEFAULT ''
+        );
+
         CREATE TABLE IF NOT EXISTS break_glass_grant (
             id                TEXT PRIMARY KEY,
             account_id        TEXT NOT NULL REFERENCES client(account_id) ON DELETE CASCADE,

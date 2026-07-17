@@ -183,6 +183,42 @@
       </form>
     </div></div>
   </div>
+  <div class="split" style="margin-top:1rem">
+    <div class="card"><div class="card-header"><h2>User attestations</h2></div><div class="card-body">
+      <p style="font-size:12px;color:var(--text-muted);margin-bottom:.75rem">
+        Provider agreements above cover the LLM provider (org-to-org). This is the
+        per-<strong>user</strong> instrument: users with an active attestation see
+        real values in query results; everyone else sees the masked form chosen in
+        Classification. Every unmasked release is written to the tamper-evident
+        decision log.
+      </p>
+      {% for item in attestations %}
+      <div style="display:flex;align-items:center;gap:.5rem;padding:.5rem 0;border-bottom:1px solid var(--border)">
+        <div style="flex:1">
+          <strong>{{ item.user_name or ('user #' ~ item.portal_user_id) }}</strong>
+          {% if item.user_email %}<span style="font-size:11px;color:var(--text-muted)"> {{ item.user_email }}</span>{% endif %}
+          <span class="tag">{{ item.attestation_type }}</span>
+          {% if item.revoked_at %}<span class="tag" style="background:#fee2e2;color:#b91c1c">revoked {{ item.revoked_at[:10] }}</span>{% else %}<span class="tag" style="background:#dcfce7;color:#15803d">active</span>{% endif %}
+          <div style="font-size:11px;color:var(--text-muted)">granted {{ item.granted_at[:10] }} by {{ item.granted_by or 'admin' }}{% if item.document_ref %} · {{ item.document_ref }}{% endif %}</div>
+        </div>
+        {% if not item.revoked_at %}
+        <form method="post" action="/admin/clients/{{ client.account_id }}/compliance/attestation/{{ item.id }}/revoke" onsubmit="return confirm('Revoke this attestation? The user will see masked values again immediately.')">
+          <button class="btn btn-secondary" style="font-size:11px">Revoke</button>
+        </form>
+        {% endif %}
+      </div>
+      {% else %}<p>No user attestations recorded — all users see masked values.</p>{% endfor %}
+    </div></div>
+    <div class="card"><div class="card-header"><h2>Grant attestation</h2></div><div class="card-body">
+      <form method="post" action="/admin/clients/{{ client.account_id }}/compliance/attestation">
+        <div class="form-group"><label>User</label><select name="portal_user_id" required><option value="">Select a user…</option>{% for user in users %}<option value="{{ user.id }}">{{ user.name }} ({{ user.email }})</option>{% endfor %}</select></div>
+        <div class="form-group"><label>Attestation type</label><select name="attestation_type"><option value="confidentiality">Confidentiality agreement</option><option value="hipaa_workforce">HIPAA workforce training</option><option value="access_authorization">Access authorization</option></select></div>
+        <div class="form-group"><label>Document reference</label><input name="document_ref" placeholder="Signed-document reference (HR system, DMS link…)"></div>
+        <button class="btn btn-primary">Grant attestation</button>
+        <p style="font-size:11px;color:var(--text-muted);margin-top:.5rem">Record the signed document reference so an auditor can trace the grant to the paper trail.</p>
+      </form>
+    </div></div>
+  </div>
   <div class="card" style="margin-top:1rem"><div class="card-header"><h2>Production security controls</h2></div><div class="card-body">
     <form method="post" action="/admin/clients/{{ client.account_id }}/compliance/controls">
       <div class="form-grid">
