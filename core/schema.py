@@ -402,6 +402,18 @@ def run_query(credentials: dict, db_type: str, sql: str, max_rows: int = 200) ->
         raise ValueError(f"Unsupported db_type: {db_type!r}")
 
 
+_DEFAULT_QUERY_TIMEOUT_SECONDS = 120
+
+
+def _query_timeout_seconds(cfg: dict) -> int:
+    """Return a bounded driver-level statement timeout for user queries."""
+    try:
+        value = int((cfg or {}).get("query_timeout_seconds", _DEFAULT_QUERY_TIMEOUT_SECONDS))
+    except (TypeError, ValueError):
+        value = _DEFAULT_QUERY_TIMEOUT_SECONDS
+    return max(1, min(value, 600))
+
+
 def load_known_tables(schema_dir: str) -> set[str]:
     """
     Load the set of known table identifiers from _schema.json.
@@ -479,7 +491,10 @@ def load_schema_columns(schema_dir: str) -> dict[str, dict[str, str]]:
 
 def _normalize_schema(master: dict) -> dict:
     """Old _schema.json stored columns as a plain list; new format wraps in {"columns": [...]}. Normalise to the new format."""
-    return {k: ({"columns": v} if isinstance(v, list) else v) for k, v in master.items()}
+    return {
+        k: (v if str(k).startswith("__") else ({"columns": v} if isinstance(v, list) else v))
+        for k, v in master.items()
+    }
 
 
 def load_schema_json(schema_dir: str) -> dict:
@@ -566,7 +581,10 @@ def _fetch_fk_constraints_azure(cur) -> list[dict]:
     """Query sys.foreign_keys for DB-enforced FK relationships (Azure SQL / SQL Server)."""
     try:
         cur.execute("""
-            SELECT tp.name, cp.name, tr.name, cr.name
+            SELECT fk.name,
+                   SCHEMA_NAME(tp.schema_id), tp.name, cp.name,
+                   SCHEMA_NAME(tr.schema_id), tr.name, cr.name,
+                   fkc.constraint_column_id, fk.is_disabled, fk.is_not_trusted
             FROM   sys.foreign_keys          fk
             JOIN   sys.foreign_key_columns   fkc ON fk.object_id           = fkc.constraint_object_id
             JOIN   sys.tables                tp  ON fkc.parent_object_id    = tp.object_id
@@ -575,10 +593,17 @@ def _fetch_fk_constraints_azure(cur) -> list[dict]:
             JOIN   sys.tables                tr  ON fkc.referenced_object_id = tr.object_id
             JOIN   sys.columns               cr  ON fkc.referenced_object_id = cr.object_id
                                                 AND fkc.referenced_column_id = cr.column_id
-            ORDER BY tp.name, cp.name
+            ORDER BY fk.name, fkc.constraint_column_id
         """)
         return [
-            {"parent_table": r[0], "parent_col": r[1], "ref_table": r[2], "ref_col": r[3]}
+            {
+                "constraint_name": r[0],
+                "parent_schema": r[1], "parent_table": r[2], "parent_col": r[3],
+                "ref_schema": r[4], "ref_table": r[5], "ref_col": r[6],
+                "ordinal": int(r[7] or 0),
+                "enforced": not bool(r[8]) and not bool(r[9]),
+                "source": "azure_sql",
+            }
             for r in cur.fetchall()
         ]
     except Exception as exc:
@@ -590,22 +615,35 @@ def _fetch_fk_constraints_snowflake(cur, schema: str) -> list[dict]:
     """Query INFORMATION_SCHEMA for Snowflake FK constraints (may be unenforced but declared)."""
     try:
         cur.execute(f"""
-            SELECT kcu.table_name, kcu.column_name, ccu.table_name, ccu.column_name
+            SELECT tc.constraint_name,
+                   kcu.table_schema, kcu.table_name, kcu.column_name,
+                   rkcu.table_schema, rkcu.table_name, rkcu.column_name,
+                   kcu.ordinal_position
             FROM   information_schema.table_constraints      tc
             JOIN   information_schema.key_column_usage       kcu
                 ON tc.constraint_name = kcu.constraint_name
                AND tc.table_schema    = kcu.table_schema
             JOIN   information_schema.referential_constraints rc
                 ON tc.constraint_name = rc.constraint_name
-            JOIN   information_schema.constraint_column_usage ccu
-                ON rc.unique_constraint_name   = ccu.constraint_name
-               AND rc.unique_constraint_schema = ccu.table_schema
+            JOIN   information_schema.key_column_usage rkcu
+                ON rc.unique_constraint_name   = rkcu.constraint_name
+               AND rc.unique_constraint_schema = rkcu.table_schema
+               AND rkcu.ordinal_position       = kcu.position_in_unique_constraint
             WHERE  tc.constraint_type = 'FOREIGN KEY'
                AND UPPER(tc.table_schema) = UPPER('{schema}')
             ORDER BY kcu.table_name, kcu.ordinal_position
         """)
         return [
-            {"parent_table": r[0], "parent_col": r[1], "ref_table": r[2], "ref_col": r[3]}
+            {
+                "constraint_name": r[0],
+                "parent_schema": r[1], "parent_table": r[2], "parent_col": r[3],
+                "ref_schema": r[4], "ref_table": r[5], "ref_col": r[6],
+                "ordinal": int(r[7] or 0),
+                # Standard Snowflake table constraints are metadata and are
+                # not proof that the rows satisfy referential integrity.
+                "enforced": False,
+                "source": "snowflake",
+            }
             for r in cur.fetchall()
         ]
     except Exception as exc:
@@ -617,7 +655,10 @@ def _fetch_fk_constraints_oracle(cur, owner: str) -> list[dict]:
     """Query ALL_CONSTRAINTS for Oracle FK relationships."""
     try:
         cur.execute("""
-            SELECT a.TABLE_NAME, a.COLUMN_NAME, b.TABLE_NAME, b.COLUMN_NAME
+            SELECT ac.CONSTRAINT_NAME,
+                   a.OWNER, a.TABLE_NAME, a.COLUMN_NAME,
+                   b.OWNER, b.TABLE_NAME, b.COLUMN_NAME,
+                   a.POSITION, ac.STATUS, ac.VALIDATED
             FROM   ALL_CONS_COLUMNS a
             JOIN   ALL_CONSTRAINTS  ac
                 ON a.CONSTRAINT_NAME = ac.CONSTRAINT_NAME AND a.OWNER = ac.OWNER
@@ -631,7 +672,14 @@ def _fetch_fk_constraints_oracle(cur, owner: str) -> list[dict]:
             ORDER BY a.TABLE_NAME, a.POSITION
         """, owner=owner)
         return [
-            {"parent_table": r[0], "parent_col": r[1], "ref_table": r[2], "ref_col": r[3]}
+            {
+                "constraint_name": r[0],
+                "parent_schema": r[1], "parent_table": r[2], "parent_col": r[3],
+                "ref_schema": r[4], "ref_table": r[5], "ref_col": r[6],
+                "ordinal": int(r[7] or 0),
+                "enforced": str(r[8]).upper() == "ENABLED" and str(r[9]).upper() == "VALIDATED",
+                "source": "oracle",
+            }
             for r in cur.fetchall()
         ]
     except Exception as exc:
@@ -678,25 +726,68 @@ def _build_join_map(master: dict) -> str:
     # / ALL_CONSTRAINTS and were stored during schema discovery.  They are always
     # correct and take precedence over the heuristic passes below.
     db_fk_lines: list[str] = []
-    for fk in master.get("__db_fk_constraints__", []):
-        pt  = fk["parent_table"]
-        pc  = fk["parent_col"]
-        rt  = fk["ref_table"]
-        rc  = fk["ref_col"]
-        # Register this pair so Pass 1 shared-name detection doesn't duplicate it
-        for _key in (
-            f"{min(pt, rt)}|{max(pt, rt)}|{pc}={rc}",
-            f"{min(pt, rt)}|{max(pt, rt)}|{pc}={pc}",
-        ):
-            join_pairs_seen.add(_key)
-        db_fk_lines.append(f"### {pt} → {rt}  *(DB-enforced FK)*")
+    grouped_db_fks: dict[tuple, list[dict]] = {}
+    for fk in master.get("__db_fk_constraints__", []) or []:
+        identity = (
+            fk.get("source", "db"), fk.get("constraint_name") or "",
+            fk.get("parent_schema") or "", fk.get("parent_table") or "",
+            fk.get("ref_schema") or "", fk.get("ref_table") or "",
+        )
+        grouped_db_fks.setdefault(identity, []).append(fk)
+
+    def _master_table_info(table: str, schema: str) -> dict:
+        matches = []
+        for fqn, info in master.items():
+            if not isinstance(info, dict):
+                continue
+            parts = str(fqn).split(".")
+            if parts[-1].upper() != str(table).upper():
+                continue
+            candidate_schema = (
+                info.get("schema") or (parts[-2] if len(parts) >= 2 else "")
+            )
+            if schema and str(candidate_schema).upper() != str(schema).upper():
+                continue
+            matches.append(info)
+        return matches[0] if len(matches) == 1 else {}
+
+    for _, fk_rows in grouped_db_fks.items():
+        fk_rows = sorted(fk_rows, key=lambda row: int(row.get("ordinal") or 0))
+        first = fk_rows[0]
+        pt = first["parent_table"]
+        rt = first["ref_table"]
+        pairs = [(row["parent_col"], row["ref_col"]) for row in fk_rows]
+        for pc, rc in pairs:
+            for key in (
+                f"{min(pt, rt)}|{max(pt, rt)}|{pc}={rc}",
+                f"{min(pt, rt)}|{max(pt, rt)}|{pc}={pc}",
+            ):
+                join_pairs_seen.add(key)
+
+        enforced = all(bool(row.get("enforced")) for row in fk_rows)
+        parent_info = _master_table_info(pt, first.get("parent_schema") or "")
+        nullable_map = {
+            str(col.get("name") or "").upper(): bool(col.get("nullable", True))
+            for col in parent_info.get("columns", []) if isinstance(col, dict)
+        }
+        all_required = bool(parent_info) and all(
+            not nullable_map.get(str(pc).upper(), True) for pc, _ in pairs
+        )
+        join_type = "INNER" if enforced and all_required else "LEFT"
+        source_label = "DB-enforced FK" if enforced else "DB-declared FK; validate data"
+        condition = " AND ".join(
+            f"[{pt}].[{pc}] = [{rt}].[{rc}]" for pc, rc in pairs
+        )
+        readable = " AND ".join(
+            f"`{pt}.{pc}` = `{rt}.{rc}`" for pc, rc in pairs
+        )
+        db_fk_lines.append(f"### {pt} → {rt}  *({source_label})*")
         db_fk_lines.append(
-            f"**Join:** `{pt}.{pc}` = `{rt}.{rc}` "
-            f"— declared foreign key; `{pt}` is the many-side, `{rt}` is the one-side (parent)."
+            f"**Join:** {readable} — one atomic {len(pairs)}-column relationship; "
+            f"`{pt}` is the many-side and `{rt}` is the parent."
         )
         db_fk_lines.append("```sql")
-        db_fk_lines.append(f"-- many-to-one: keep all {pt} rows even with no {rt} match")
-        db_fk_lines.append(f"LEFT JOIN [{rt}] ON [{pt}].[{pc}] = [{rt}].[{rc}]")
+        db_fk_lines.append(f"{join_type} JOIN [{rt}] ON {condition}")
         db_fk_lines.append("```")
         db_fk_lines.append("")
 
@@ -1114,12 +1205,17 @@ def build_entity_graph_from_schema(schema_dir: str) -> dict:
         return {"entities": [], "relationships": []}
     from core.date_roles import detect_date_role, find_date_dimension_key, is_date_dimension_table
 
+    table_items = [
+        (fqn, info) for fqn, info in master.items()
+        if isinstance(info, dict) and not str(fqn).startswith("__")
+    ]
+
     # ── Build entity list ────────────────────────────────────────────────────
     entities: list[dict] = []
     # Maps FQN key → bare entity_name for relationship building
     fqn_to_entity: dict[str, str] = {}
 
-    for idx, (fqn, tbl_info) in enumerate(master.items()):
+    for idx, (fqn, tbl_info) in enumerate(table_items):
         parts = fqn.split(".")
         bare_table  = parts[-1]
         schema_part = parts[-2] if len(parts) >= 2 else ""
@@ -1161,7 +1257,7 @@ def build_entity_graph_from_schema(schema_dir: str) -> dict:
     # "Invoice Date", "Delivery Date", etc. so the resolver can choose the
     # correct FK when the user asks for a specific business date.
     date_dims: list[tuple[str, str, str, str]] = []  # fqn, table, schema, pk
-    for fqn, tbl_info in master.items():
+    for fqn, tbl_info in table_items:
         cols = tbl_info.get("columns", [])
         if not is_date_dimension_table(fqn, cols):
             continue
@@ -1175,7 +1271,7 @@ def build_entity_graph_from_schema(schema_dir: str) -> dict:
     role_entity_names: set[str] = {e["entity_name"] for e in entities}
     role_date_relationships: list[dict] = []
     if date_dims:
-        for fqn, tbl_info in master.items():
+        for fqn, tbl_info in table_items:
             fact_entity = fqn_to_entity.get(fqn, fqn.split(".")[-1])
             if _infer_entity_type(fact_entity) != "fact":
                 continue
@@ -1216,13 +1312,125 @@ def build_entity_graph_from_schema(schema_dir: str) -> dict:
                     "relationship_type": "many_to_one",
                     "join_type":         "LEFT",
                     "label":             role.label,
+                    "relationship_key":  f"DATE_ROLE:{fact_entity}:{role.key}:{fact_col}",
                     "confidence_score":  88,
                     "status":            "suggested",
-                    "generated_by":      "heuristic",
+                    "generated_by":      "date_role",
+                    "optionality":       "optional",
                     "reason":            f"Date role: {fact_col} → {date_table}.{date_pk}",
                 })
 
     # ── Build relationships via FK column-to-entity resolution ──────────────────
+    # DB-declared constraints are the strongest structural evidence. Group all
+    # column pairs belonging to one constraint so composite keys remain atomic.
+    role_edge_lookup: dict[tuple[str, str, str], dict] = {}
+    for rel in role_date_relationships:
+        role_table = next(
+            (e.get("table_name", "") for e in entities if e["entity_name"] == rel["to_entity"]),
+            "",
+        )
+        role_edge_lookup[(
+            rel["from_entity"], rel["from_column"].upper(), role_table.upper()
+        )] = rel
+
+    def _find_table_fqn(table: str, schema: str = "") -> str:
+        table_u = (table or "").upper()
+        schema_u = (schema or "").upper()
+        matches: list[str] = []
+        for candidate_fqn, info in table_items:
+            parts = str(candidate_fqn).split(".")
+            bare = parts[-1].upper()
+            candidate_schema = (
+                info.get("schema") or (parts[-2] if len(parts) >= 2 else "")
+            ).upper()
+            if bare == table_u and (not schema_u or candidate_schema == schema_u):
+                matches.append(candidate_fqn)
+        return matches[0] if len(matches) == 1 else ""
+
+    grouped_fks: dict[tuple, list[dict]] = {}
+    for fk in master.get("__db_fk_constraints__", []) or []:
+        if not isinstance(fk, dict):
+            continue
+        identity = (
+            fk.get("source", "db"),
+            fk.get("constraint_name") or "",
+            fk.get("parent_schema") or "",
+            fk.get("parent_table") or "",
+            fk.get("ref_schema") or "",
+            fk.get("ref_table") or "",
+        )
+        grouped_fks.setdefault(identity, []).append(fk)
+
+    db_fk_relationships: list[dict] = []
+    table_info_map = dict(table_items)
+    for identity, rows in grouped_fks.items():
+        rows = sorted(rows, key=lambda item: int(item.get("ordinal") or 0))
+        first = rows[0]
+        from_fqn = _find_table_fqn(first.get("parent_table", ""), first.get("parent_schema", ""))
+        to_fqn = _find_table_fqn(first.get("ref_table", ""), first.get("ref_schema", ""))
+        if not from_fqn or not to_fqn:
+            continue
+        from_entity = fqn_to_entity.get(from_fqn, "")
+        to_entity = fqn_to_entity.get(to_fqn, "")
+        if not from_entity or not to_entity or from_entity == to_entity:
+            continue
+
+        first_from_col = str(first.get("parent_col") or "")
+        first_to_col = str(first.get("ref_col") or "")
+        role_edge = role_edge_lookup.get((
+            from_entity, first_from_col.upper(), str(first.get("ref_table") or "").upper()
+        ))
+        label = ""
+        if role_edge:
+            to_entity = role_edge["to_entity"]
+            label = role_edge.get("label", "")
+
+        nullable_by_col = {
+            _col_name(col).upper(): bool(col.get("nullable", True))
+            for col in table_info_map[from_fqn].get("columns", [])
+            if isinstance(col, dict)
+        }
+        enforced = all(bool(row.get("enforced")) for row in rows)
+        nullable = any(
+            nullable_by_col.get(str(row.get("parent_col") or "").upper(), True)
+            for row in rows
+        )
+        optionality = "required" if enforced and not nullable else "optional"
+        join_type = "INNER" if optionality == "required" else "LEFT"
+        constraint_name = str(first.get("constraint_name") or "")
+        if constraint_name:
+            relationship_key = "DBFK:" + ":".join(str(part or "") for part in identity)
+        else:
+            relationship_key = "DBFK:" + ":".join(
+                [from_entity, to_entity]
+                + [f"{row.get('parent_col')}={row.get('ref_col')}" for row in rows]
+            )
+        db_fk_relationships.append({
+            "from_entity": from_entity,
+            "to_entity": to_entity,
+            "from_column": first_from_col,
+            "to_column": first_to_col,
+            "join_conditions": [
+                {"from_col": str(row.get("parent_col") or ""),
+                 "to_col": str(row.get("ref_col") or "")}
+                for row in rows[1:]
+            ],
+            "relationship_type": "many_to_one",
+            "join_type": join_type,
+            "label": label,
+            "relationship_key": relationship_key.upper(),
+            "constraint_name": constraint_name,
+            "source_enforced": enforced,
+            "optionality": optionality,
+            "confidence_score": 100 if enforced else 94,
+            "status": "suggested",
+            "generated_by": "db_fk" if enforced else "db_declared_fk",
+            "reason": (
+                f"Database constraint {constraint_name or relationship_key} defines "
+                f"{len(rows)} join column pair(s)."
+            ),
+        })
+
     # Star-schema rules:
     #   fact  → dimension  ✓  (standard star edge)
     #   dim   → dimension  ✓  (snowflake edge — dim has FK to sub-dim)
@@ -1246,7 +1454,7 @@ def build_entity_graph_from_schema(schema_dir: str) -> dict:
     # best_rel[(from, to)] = (confidence, rel_dict)
     best_rel: dict[tuple[str, str], tuple[int, dict]] = {}
 
-    for fqn, tbl_info in master.items():
+    for fqn, tbl_info in table_items:
         e_name = fqn_to_entity.get(fqn, fqn.split(".")[-1])
         e_type = entity_type_map.get(e_name)
         if not e_type:
@@ -1298,20 +1506,37 @@ def build_entity_graph_from_schema(schema_dir: str) -> dict:
                     "to_column":         to_col,
                     "relationship_type": "many_to_one",
                     "join_type":         "INNER" if e_type == "fact" else "LEFT",
+                    "relationship_key":  f"HEURISTIC:{e_name}:{target}:{col_name}:{to_col}",
                     "confidence_score":  confidence,
                     "status":            "suggested",
                     "generated_by":      "heuristic",
                     "reason":            f"FK column {col_name} resolves to {target}",
+                    "optionality":       "unknown",
                 })
 
-    # Merge: date-role relationships take precedence; add heuristic ones after
-    date_pairs = {
-        (r["from_entity"], r["to_entity"]) for r in role_date_relationships
-    }
-    relationships: list[dict] = list(role_date_relationships)
-    for pair, (_, rel) in best_rel.items():
-        if pair not in date_pairs:
+    # Merge by full edge identity, not table pair. DB constraints supersede an
+    # identical inferred edge while independent roles remain available.
+    def _signature(rel: dict) -> tuple:
+        extras = tuple(
+            (str(c.get("from_col") or "").upper(), str(c.get("to_col") or "").upper())
+            for c in rel.get("join_conditions", []) or []
+        )
+        return (
+            rel.get("from_entity"), rel.get("to_entity"),
+            str(rel.get("from_column") or "").upper(),
+            str(rel.get("to_column") or "").upper(), extras,
+        )
+
+    relationships: list[dict] = list(db_fk_relationships)
+    authoritative = {_signature(rel) for rel in db_fk_relationships}
+    for rel in role_date_relationships:
+        if _signature(rel) not in authoritative:
             relationships.append(rel)
+    existing = {_signature(rel) for rel in relationships}
+    for _, rel in best_rel.values():
+        if _signature(rel) not in existing:
+            relationships.append(rel)
+            existing.add(_signature(rel))
 
     return {"entities": entities, "relationships": relationships}
 
@@ -1515,6 +1740,9 @@ def _run_snowflake(cfg: dict, sql: str, max_rows: int = 200) -> list[dict]:
     conn = _sf_connect(cfg)
     try:
         cur = conn.cursor(snowflake.connector.DictCursor)
+        cur.execute(
+            f"ALTER SESSION SET STATEMENT_TIMEOUT_IN_SECONDS = {_query_timeout_seconds(cfg)}"
+        )
         cur.execute(sql)
         return [dict(r) for r in cur.fetchmany(max_rows)]
     finally:
@@ -1758,6 +1986,7 @@ def _discover_oracle(cfg: dict, out: Path, allowed: set[str] | None = None, mc: 
 def _run_oracle(cfg: dict, sql: str, max_rows: int = 200) -> list[dict]:
     conn = _ora_connect(cfg)
     try:
+        conn.call_timeout = _query_timeout_seconds(cfg) * 1000
         cur = conn.cursor()
         cur.execute(sql)
         col_names = [d[0] for d in cur.description]
@@ -2151,6 +2380,7 @@ def _discover_azure_sql(cfg: dict, out: Path, allowed: set[str] | None = None, m
 def _run_azure_sql(cfg: dict, sql: str, max_rows: int = 200) -> list[dict]:
     conn = _az_connect(cfg)
     try:
+        conn.timeout = _query_timeout_seconds(cfg)
         cur = conn.cursor()
         cur.execute(sql)
         col_names = [d[0] for d in cur.description]

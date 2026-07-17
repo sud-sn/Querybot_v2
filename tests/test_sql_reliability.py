@@ -8,7 +8,7 @@ if str(ROOT) not in sys.path:
 
 from core.graph_resolver import detect_entities, resolve_for_question
 from core.llm import build_sql_system_prompt
-from core.query_semantics import analyze_query_intent
+from core.query_semantics import analyze_query_intent, detect_top_n_intent
 from core.semantic_planner import build_semantic_field_plan
 from core.validator import has_identity_filter, normalize_generated_sql, validate_sql, validate_sql_detailed
 from core.answer_confidence import build_answer_confidence
@@ -1139,6 +1139,204 @@ class BusinessConfidenceRcaTests(unittest.TestCase):
         tables = extract_sql_tables(sql, "azure_sql")
         self.assertIn("PROFITABILITY.CUS_ORD_IVC_FCT", tables)
         self.assertIn("PROFITABILITY.OOLINE", tables)
+
+
+class TopNSemanticsTests(unittest.TestCase):
+    KNOWN = {
+        "PHARMACY.FACT_PRESCRIPTION_FILL",
+        "FACT_PRESCRIPTION_FILL",
+        "PHARMACY.DIM_PRESCRIBER",
+        "DIM_PRESCRIBER",
+    }
+
+    def _validate(self, sql: str, question: str):
+        intent = detect_top_n_intent(question)
+        self.assertIsNotNone(intent)
+        return validate_sql_detailed(
+            sql,
+            self.KNOWN,
+            "azure_sql",
+            semantic_context={"top_n": intent.to_dict()},
+        )
+
+    def test_detects_awkward_top_two_wording(self):
+        intent = detect_top_n_intent(
+            "find the doctors who have prescribed more prescriptions the top 2"
+        )
+        self.assertIsNotNone(intent)
+        self.assertEqual(intent.limit, 2)
+        self.assertEqual(intent.direction, "descending")
+        self.assertEqual(intent.tie_policy, "exactly_n")
+
+    def test_detects_word_number_and_explicit_ties(self):
+        intent = detect_top_n_intent("show top two doctors and include all ties")
+        self.assertIsNotNone(intent)
+        self.assertEqual(intent.limit, 2)
+        self.assertEqual(intent.tie_policy, "include_ties")
+
+    def test_accepts_final_top_two(self):
+        sql = """
+        WITH PrescriberCounts AS (
+            SELECT dp.Prescriber_ID, dp.Full_Name AS Doctor_Name,
+                   COUNT(fpf.Rx_Fill_ID) AS Total_Prescriptions
+            FROM PHARMACY.FACT_Prescription_Fill fpf
+            JOIN PHARMACY.DIM_Prescriber dp
+              ON fpf.Prescriber_ID = dp.Prescriber_ID
+            GROUP BY dp.Prescriber_ID, dp.Full_Name
+        )
+        SELECT TOP (2) Doctor_Name, Total_Prescriptions
+        FROM PrescriberCounts
+        ORDER BY Total_Prescriptions DESC, Doctor_Name
+        """
+        result = self._validate(sql, "show the top 2 doctors by prescriptions")
+        self.assertTrue(result.ok, result.reason)
+
+    def test_rejects_top_n_with_reversed_order(self):
+        sql = """
+        SELECT TOP (2) dp.Full_Name AS Doctor_Name,
+               COUNT(fpf.Rx_Fill_ID) AS Total_Prescriptions
+        FROM PHARMACY.FACT_Prescription_Fill fpf
+        JOIN PHARMACY.DIM_Prescriber dp
+          ON fpf.Prescriber_ID = dp.Prescriber_ID
+        GROUP BY dp.Full_Name
+        ORDER BY Total_Prescriptions ASC, Doctor_Name
+        """
+        result = self._validate(sql, "show the top 2 doctors by prescriptions")
+        self.assertFalse(result.ok)
+        self.assertEqual(result.code, "top_n_shape")
+
+    def test_accepts_bottom_n_with_ascending_order(self):
+        sql = """
+        SELECT TOP (2) dp.Full_Name AS Doctor_Name,
+               COUNT(fpf.Rx_Fill_ID) AS Total_Prescriptions
+        FROM PHARMACY.FACT_Prescription_Fill fpf
+        JOIN PHARMACY.DIM_Prescriber dp
+          ON fpf.Prescriber_ID = dp.Prescriber_ID
+        GROUP BY dp.Full_Name
+        ORDER BY Total_Prescriptions ASC, Doctor_Name
+        """
+        result = self._validate(sql, "show the bottom 2 doctors by prescriptions")
+        self.assertTrue(result.ok, result.reason)
+
+    def test_rejects_top_n_converted_to_threshold(self):
+        sql = """
+        WITH PrescriberCounts AS (
+            SELECT dp.Prescriber_ID, dp.Full_Name AS Doctor_Name,
+                   COUNT(fpf.Rx_Fill_ID) AS Total_Prescriptions
+            FROM PHARMACY.FACT_Prescription_Fill fpf
+            JOIN PHARMACY.DIM_Prescriber dp
+              ON fpf.Prescriber_ID = dp.Prescriber_ID
+            GROUP BY dp.Prescriber_ID, dp.Full_Name
+        ), Top2 AS (
+            SELECT TOP 2 Total_Prescriptions
+            FROM PrescriberCounts
+            ORDER BY Total_Prescriptions DESC
+        )
+        SELECT pc.Doctor_Name, pc.Total_Prescriptions
+        FROM PrescriberCounts pc
+        WHERE pc.Total_Prescriptions > (
+            SELECT MIN(Total_Prescriptions) FROM Top2
+        )
+        """
+        result = self._validate(
+            sql,
+            "find the doctors who have prescribed more prescriptions the top 2",
+        )
+        self.assertFalse(result.ok)
+        self.assertEqual(result.code, "top_n_shape")
+
+    def test_exact_top_n_rejects_rank_tie_expansion(self):
+        sql = """
+        WITH Ranked AS (
+            SELECT dp.Full_Name AS Doctor_Name,
+                   RANK() OVER (ORDER BY COUNT(fpf.Rx_Fill_ID) DESC) AS rnk
+            FROM PHARMACY.FACT_Prescription_Fill fpf
+            JOIN PHARMACY.DIM_Prescriber dp
+              ON fpf.Prescriber_ID = dp.Prescriber_ID
+            GROUP BY dp.Full_Name
+        )
+        SELECT Doctor_Name FROM Ranked WHERE rnk <= 2
+        """
+        result = self._validate(sql, "show the top 2 doctors")
+        self.assertFalse(result.ok)
+        self.assertEqual(result.code, "top_n_shape")
+
+    def test_explicit_ties_accepts_rank(self):
+        sql = """
+        WITH Ranked AS (
+            SELECT dp.Full_Name AS Doctor_Name,
+                   RANK() OVER (ORDER BY COUNT(fpf.Rx_Fill_ID) DESC) AS rnk
+            FROM PHARMACY.FACT_Prescription_Fill fpf
+            JOIN PHARMACY.DIM_Prescriber dp
+              ON fpf.Prescriber_ID = dp.Prescriber_ID
+            GROUP BY dp.Full_Name
+        )
+        SELECT Doctor_Name FROM Ranked WHERE rnk <= 2
+        """
+        result = self._validate(sql, "show the top 2 doctors including all ties")
+        self.assertTrue(result.ok, result.reason)
+
+
+class ProductionSqlGuardTests(unittest.TestCase):
+    KNOWN = {"S.T", "T", "S.U", "U"}
+
+    def _validate(self, sql: str, db_type: str = "azure_sql", question: str = "show the results"):
+        return validate_sql_detailed(
+            sql,
+            self.KNOWN,
+            db_type,
+            semantic_context={"production_sql": True, "question": question},
+        )
+
+    def test_rejects_limit_for_azure_sql(self):
+        result = self._validate("SELECT A FROM S.T LIMIT 10")
+        self.assertFalse(result.ok)
+        self.assertEqual(result.code, "dialect_mismatch")
+
+    def test_rejects_top_for_oracle(self):
+        result = self._validate("SELECT TOP 10 A FROM S.T", "oracle")
+        self.assertFalse(result.ok)
+        self.assertEqual(result.code, "dialect_mismatch")
+
+    def test_rejects_tsql_try_convert_for_snowflake(self):
+        result = self._validate("SELECT TRY_CONVERT(date, A) FROM S.T", "snowflake")
+        self.assertFalse(result.ok)
+        self.assertEqual(result.code, "dialect_mismatch")
+
+    def test_rejects_projection_wildcards_but_allows_count_star(self):
+        wildcard = self._validate("SELECT t.* FROM S.T t")
+        self.assertFalse(wildcard.ok)
+        self.assertEqual(wildcard.code, "production_shape")
+
+        count = self._validate("SELECT COUNT(*) AS TotalRows FROM S.T")
+        self.assertTrue(count.ok, count.reason)
+
+    def test_rejects_join_without_condition(self):
+        result = self._validate("SELECT t.A FROM S.T t JOIN S.U u")
+        self.assertFalse(result.ok)
+        self.assertEqual(result.code, "production_shape")
+        self.assertEqual(result.errors[0]["code"], "missing_join_condition")
+
+    def test_cross_join_requires_explicit_user_intent(self):
+        rejected = self._validate("SELECT t.A FROM S.T t CROSS JOIN S.U u")
+        self.assertFalse(rejected.ok)
+        self.assertEqual(rejected.code, "production_shape")
+
+        allowed = self._validate(
+            "SELECT t.A FROM S.T t CROSS JOIN S.U u",
+            question="show all possible combinations from T and U",
+        )
+        self.assertTrue(allowed.ok, allowed.reason)
+
+    def test_rejects_multiple_statements(self):
+        result = self._validate("SELECT A FROM S.T; SELECT A FROM S.U")
+        self.assertFalse(result.ok)
+        self.assertEqual(result.code, "multi_statement")
+
+    def test_rejects_select_into_write(self):
+        result = self._validate("SELECT A INTO S.NEW_TABLE FROM S.T")
+        self.assertFalse(result.ok)
+        self.assertEqual(result.code, "ddl")
 
 
 class ResultTransformationRoutingTests(unittest.TestCase):

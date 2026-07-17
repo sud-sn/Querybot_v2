@@ -24,9 +24,11 @@ Integration points
 
 from __future__ import annotations
 
+import heapq
+import itertools
+import json
 import re
 import logging
-from collections import deque
 from typing import Optional
 
 from core.date_roles import question_has_temporal_intent, relationship_matches_date_role
@@ -260,16 +262,72 @@ def _build_adjacency(relationships: list[dict]) -> dict[str, list[dict]]:
     """Build undirected adjacency list from relationship edges."""
     adj: dict[str, list[dict]] = {}
     for rel in relationships:
+        if (rel.get("validation_status") or "").lower() == "broken":
+            continue
         f, t = rel["from_entity"], rel["to_entity"]
         adj.setdefault(f, []).append({**rel, "_direction": "forward"})
         adj.setdefault(t, []).append({**rel, "_direction": "backward"})
     return adj
 
 
+def _edge_weight(rel: dict) -> float:
+    """Return semantic risk cost for one graph edge (lower is safer)."""
+    provenance = (rel.get("generated_by") or "heuristic").lower()
+    status = (rel.get("status") or "confirmed").lower()
+    validation = (rel.get("validation_status") or "untested").lower()
+    multiplicity = (rel.get("join_multiplicity") or "").lower()
+
+    if validation == "broken" or multiplicity == "zero_match":
+        return float("inf")
+
+    if provenance == "manual" and status == "confirmed":
+        cost = 0.5
+    elif provenance == "db_fk" or bool(rel.get("source_enforced")):
+        cost = 1.0
+    elif provenance == "db_declared_fk":
+        cost = 2.0
+    elif provenance in {"date_role", "semantic"}:
+        cost = 3.0
+    elif provenance == "llm":
+        cost = 9.0
+    else:
+        cost = 6.0
+
+    if status == "suggested":
+        cost += 1.5
+    if validation == "valid":
+        cost -= 0.5
+    elif validation == "warning":
+        cost += 4.0
+    else:
+        cost += 1.0
+
+    confidence = max(0.0, min(100.0, float(rel.get("confidence_score") or 0)))
+    cost += (100.0 - confidence) / 25.0
+    if (rel.get("relationship_type") or "").lower() == "many_to_many":
+        cost += 10.0
+
+    try:
+        fanout = float(rel.get("fanout_ratio") or -1)
+    except (TypeError, ValueError):
+        fanout = -1.0
+    try:
+        orphan = float(rel.get("orphan_rate") or -1)
+    except (TypeError, ValueError):
+        orphan = -1.0
+    if fanout > 1.05:
+        cost += min(8.0, (fanout - 1.0) * 2.0)
+    if orphan > 20.0:
+        cost += 4.0
+    return max(0.1, cost)
+
+
 def find_join_path(entity_names: list[str], graph: dict, prefer_fact_anchor: bool = True) -> list[dict]:
     """
-    BFS from the anchor entity (fact table preferred) through relationship
-    edges to reach all other entities. Returns an ordered list of JOIN steps:
+    Weighted shortest path from the anchor entity (fact table preferred)
+    through relationship edges to reach all other entities. Returns an ordered
+    list of JOIN steps. Edge weights prefer governed/validated DB constraints
+    and penalize untested heuristics, fanout, warnings, and many-to-many joins.
 
       [{"from_entity", "to_entity", "from_column", "to_column",
         "join_type", "relationship_type", "_direction"}]
@@ -296,36 +354,61 @@ def find_join_path(entity_names: list[str], graph: dict, prefer_fact_anchor: boo
     visited_edges: list[dict] = []
     visited_nodes = {anchor}
 
-    # BFS to reach each target
+    # Grow a minimum-risk join tree to reach each target.
+    sequence = itertools.count()
     for target in targets:
         if target in visited_nodes:
             continue
-        # BFS from any visited node to target
-        found = False
-        for start_node in list(visited_nodes):
-            queue: deque = deque([(start_node, [])])
-            seen: set = {start_node}
-            while queue:
-                node, path = queue.popleft()
-                if node == target:
-                    for step in path:
-                        if step not in visited_edges:
-                            visited_edges.append(step)
-                    visited_nodes.update(n for step in path
-                                         for n in [step["from_entity"], step["to_entity"]])
-                    found = True
-                    break
-                for edge in adj.get(node, []):
-                    neighbour = (edge["to_entity"] if edge["_direction"] == "forward"
-                                 else edge["from_entity"])
-                    if neighbour not in seen:
-                        seen.add(neighbour)
-                        queue.append((neighbour, path + [edge]))
-            if found:
-                break
+        queue: list[tuple[float, int, str, list[dict]]] = [
+            (0.0, next(sequence), start, []) for start in sorted(visited_nodes)
+        ]
+        heapq.heapify(queue)
+        best_cost: dict[str, float] = {start: 0.0 for start in visited_nodes}
+        chosen_path: list[dict] | None = None
 
-        if not found:
+        while queue:
+            cost, _, node, path = heapq.heappop(queue)
+            if cost > best_cost.get(node, float("inf")):
+                continue
+            if node == target:
+                chosen_path = path
+                break
+            for edge in adj.get(node, []):
+                weight = _edge_weight(edge)
+                if weight == float("inf"):
+                    continue
+                neighbour = (
+                    edge["to_entity"] if edge["_direction"] == "forward"
+                    else edge["from_entity"]
+                )
+                new_cost = cost + weight
+                if new_cost < best_cost.get(neighbour, float("inf")):
+                    best_cost[neighbour] = new_cost
+                    heapq.heappush(
+                        queue,
+                        (new_cost, next(sequence), neighbour, path + [edge]),
+                    )
+
+        if chosen_path is None:
             log.debug("Graph resolver: no path from %s to %s", visited_nodes, target)
+            continue
+        for step in chosen_path:
+            edge_identity = step.get("id") or step.get("relationship_key") or (
+                step.get("from_entity"), step.get("to_entity"),
+                step.get("from_column"), step.get("to_column"),
+            )
+            if not any(
+                (existing.get("id") or existing.get("relationship_key") or (
+                    existing.get("from_entity"), existing.get("to_entity"),
+                    existing.get("from_column"), existing.get("to_column"),
+                )) == edge_identity
+                for existing in visited_edges
+            ):
+                visited_edges.append(step)
+        visited_nodes.update(
+            node_name for step in chosen_path
+            for node_name in [step["from_entity"], step["to_entity"]]
+        )
 
     return visited_edges
 
@@ -433,6 +516,30 @@ def build_join_skeleton(
                 f"{new_alias}.{_quote_col(from_col, db_type)} = "
                 f"{old_alias}.{_quote_col(to_col, db_type)}"
             )
+
+        raw_conditions = step.get("join_conditions") or []
+        if isinstance(raw_conditions, str):
+            try:
+                raw_conditions = json.loads(raw_conditions)
+            except Exception:
+                raw_conditions = []
+        for condition in raw_conditions or []:
+            if not isinstance(condition, dict):
+                continue
+            extra_from = str(condition.get("from_col") or "").strip()
+            extra_to = str(condition.get("to_col") or "").strip()
+            if not extra_from or not extra_to:
+                continue
+            if from_ent == old_ent:
+                on_clause += (
+                    f" AND {old_alias}.{_quote_col(extra_from, db_type)} = "
+                    f"{new_alias}.{_quote_col(extra_to, db_type)}"
+                )
+            else:
+                on_clause += (
+                    f" AND {new_alias}.{_quote_col(extra_from, db_type)} = "
+                    f"{old_alias}.{_quote_col(extra_to, db_type)}"
+                )
 
         # ── WHERE conditions stored on this relationship ──────────────────
         # After alias substitution, split individual AND parts and route them:
@@ -611,6 +718,36 @@ def _resolve_on_graph(
                 break
 
     skeleton = build_join_skeleton(join_path, entities_map, anchor, db_type, anti_join=anti_join)
+    resolved_edges = []
+    for edge in join_path:
+        from_meta = entities_map.get(edge.get("from_entity", ""), {})
+        to_meta = entities_map.get(edge.get("to_entity", ""), {})
+        raw_extra = edge.get("join_conditions") or []
+        if isinstance(raw_extra, str):
+            try:
+                raw_extra = json.loads(raw_extra)
+            except Exception:
+                raw_extra = []
+        conditions = [[edge.get("from_column", ""), edge.get("to_column", "")]]
+        conditions.extend([
+            [condition.get("from_col", ""), condition.get("to_col", "")]
+            for condition in raw_extra or [] if isinstance(condition, dict)
+        ])
+        resolved_edges.append({
+            "id": edge.get("id"),
+            "relationship_key": edge.get("relationship_key", ""),
+            "from_entity": edge.get("from_entity", ""),
+            "to_entity": edge.get("to_entity", ""),
+            "from_table": from_meta.get("table_name", ""),
+            "from_schema": from_meta.get("schema_name", ""),
+            "to_table": to_meta.get("table_name", ""),
+            "to_schema": to_meta.get("schema_name", ""),
+            "conditions": conditions,
+            "join_type": "LEFT" if anti_join else (edge.get("join_type") or "INNER").upper(),
+            "provenance": edge.get("generated_by", ""),
+            "validation_status": edge.get("validation_status", "untested"),
+            "weight": round(_edge_weight(edge), 3),
+        })
 
     return {
         "enabled":       bool(skeleton),
@@ -620,6 +757,8 @@ def _resolve_on_graph(
         "entity_count":  entity_count,
         "anti_join":     anti_join,
         "entities":      entities,
+        "edge_ids":      [edge["id"] for edge in resolved_edges if edge.get("id") is not None],
+        "resolved_edges": resolved_edges,
     }
 
 

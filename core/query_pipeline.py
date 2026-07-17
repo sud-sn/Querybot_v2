@@ -25,7 +25,11 @@ from core.clarification import (
 from core.schema import run_query, load_known_tables, load_schema_columns
 from core.knowledge import load_retriever
 from core.validator import normalize_generated_sql, validate_sql
-from core.query_semantics import analyze_query_intent, build_generic_query_hints
+from core.query_semantics import (
+    analyze_query_intent,
+    build_generic_query_hints,
+    detect_top_n_intent,
+)
 from core.graph_resolver import resolve_for_question as _graph_resolve
 from core.llm_audit import llm_audit_scope, make_llm_audit_request_id
 from core.result_cache import result_cache
@@ -836,6 +840,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
         log.debug("Value resolution skipped: %s", _vr_exc)
     generic_hints = build_generic_query_hints(question)
     query_intent = analyze_query_intent(question)
+    top_n_intent = detect_top_n_intent(question)
     # Candidate metrics are account-wide. We delay injecting/enforcing them
     # until graph + semantic planning has inferred the question's schema/domain.
     _metric_candidates = store.list_metric_formula_context(
@@ -1010,6 +1015,20 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                     "Graph resolved for %s: entities=%s anchor=%s schema_filter=%s",
                     account_id, _graph_ctx.get("detected"), _graph_ctx.get("anchor"),
                     schema_hint or "none",
+                )
+                _trace_step(
+                    trace_id,
+                    "entity_graph_resolution",
+                    input_summary={"question": question, "schema": schema_hint or "all"},
+                    output_summary={
+                        "entities": _graph_ctx.get("detected") or [],
+                        "anchor": _graph_ctx.get("anchor") or "",
+                        "edge_ids": _graph_ctx.get("edge_ids") or [],
+                    },
+                    metadata={
+                        "resolved_edges": _graph_ctx.get("resolved_edges") or [],
+                        "join_skeleton": _graph_ctx.get("join_skeleton") or "",
+                    },
                 )
     except Exception as _gex:
         log.debug("Graph resolution skipped: %s", _gex)
@@ -1419,7 +1438,9 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
             component="sql_generation",
         ):
             sql, tok_in, tok_out = await llm_complete(
-                system, question, provider, model, api_key, max_tokens=512, **az_kwargs)
+                system, question, provider, model, api_key,
+                temperature=0.0, max_tokens=512, **az_kwargs,
+            )
             _trace_update(
                 trace_id,
                 generated_sql=sql,
@@ -1538,7 +1559,9 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
     retry_count = 0
     semantic_context = {
         "intent": query_intent,
+        "top_n": top_n_intent.to_dict() if top_n_intent else None,
         "question": question,
+        "production_sql": True,
         "graph_context": _graph_ctx,
         "semantic_plan": _semantic_plan,
         "metric_formulas": _matched_metrics,
@@ -1631,7 +1654,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
     else:
         last_reason, last_code = reason, code
 
-    retryable = (not ok and code in ("unknown_table", "unknown_column", "date_key_format", "anti_join_shape", "field_plan_mismatch", "metric_formula_mismatch", "null_aggregate_diagnostic", "parse")) or (exec_error is not None)
+    retryable = (not ok and code in ("unknown_table", "unknown_column", "date_key_format", "dialect_mismatch", "production_shape", "anti_join_shape", "top_n_shape", "graph_plan_mismatch", "field_plan_mismatch", "metric_formula_mismatch", "null_aggregate_diagnostic", "parse", "multi_statement", "not_select")) or (exec_error is not None)
 
     if retryable:
         if exec_error is not None:
@@ -1711,8 +1734,52 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                     "- Convert integer YYYYMMDD date keys before FORMAT/YEAR/MONTH/DATEPART.\n"
                     "- For Azure SQL use TRY_CONVERT(date, CONVERT(varchar(8), alias.DATE_KEY_COL), 112).\n"
                 )
+            elif last_code == "top_n_shape":
+                _top_limit = top_n_intent.limit if top_n_intent else "N"
+                _top_direction = (
+                    "ASC" if top_n_intent and top_n_intent.direction == "ascending" else "DESC"
+                )
+                _tie_instruction = (
+                    "Use TOP (N) WITH TIES or RANK/DENSE_RANK <= N because the user explicitly requested ties."
+                    if top_n_intent and top_n_intent.tie_policy == "include_ties"
+                    else "Return exactly N rows with TOP (N), or ROW_NUMBER() followed by rn <= N. Do not use RANK/DENSE_RANK."
+                )
+                _scope_instruction = (
+                    "Use ROW_NUMBER() OVER (PARTITION BY the requested group ORDER BY metric) and filter rn <= N."
+                    if top_n_intent and top_n_intent.per_group
+                    else "Apply the limit to the final ordered result set."
+                )
+                validation_repair_note = (
+                    f"\nTOP-{_top_limit} SEMANTIC REPAIR RULE:\n"
+                    f"- {_scope_instruction}\n"
+                    f"- {_tie_instruction}\n"
+                    f"- Order the requested metric {_top_direction} and use the business dimension as a stable secondary order.\n"
+                    "- Do NOT compare the metric to MIN/MAX from a Top-N CTE; that changes a row-limit request into a threshold and can return zero rows on ties.\n"
+                )
+            elif last_code == "dialect_mismatch":
+                validation_repair_note = (
+                    f"\nDIALECT REPAIR REQUIRED:\n"
+                    f"- Rewrite every incompatible construct using only the configured {db_cfg['db_type']} syntax.\n"
+                    "- Replace the actual row-limit, date, null, cast, and identifier syntax identified by the validator.\n"
+                    "- Do not merely rename aliases or return the same incompatible syntax.\n"
+                )
+            elif last_code == "production_shape":
+                validation_repair_note = (
+                    "\nPRODUCTION QUERY-SHAPE REPAIR REQUIRED:\n"
+                    "- List every projected output column explicitly; SELECT * and alias.* are not allowed.\n"
+                    "- Every non-CROSS JOIN must have an exact ON/USING relationship from the available schema/entity graph.\n"
+                    "- Do not use CROSS JOIN or comma joins unless the original question explicitly asks for a cartesian product.\n"
+                )
             elif last_code == "field_plan_mismatch":
                 validation_repair_note = build_field_plan_repair_note(_semantic_plan or {})
+            elif last_code == "graph_plan_mismatch":
+                validation_repair_note = (
+                    "\nENTITY-GRAPH REPAIR REQUIRED:\n"
+                    "- Copy the exact FROM/JOIN skeleton from ENTITY GRAPH JOIN PLAN into the base query or base CTE.\n"
+                    "- Preserve every composite key condition connected with AND.\n"
+                    "- Preserve LEFT JOIN where the graph marks the relationship optional.\n"
+                    "- Do not substitute a nearby key or invent an alternative join path.\n"
+                )
             elif last_code == "metric_formula_mismatch":
                 # Inject the EXACT approved formula(s) verbatim — do not rely on
                 # the LLM finding them in the KB context, which can be overridden.
@@ -1781,7 +1848,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                         semantic_plan=_retry_plan,
                     ),
                     retry_user, provider, model, api_key,
-                    max_tokens=512, **az_kwargs,
+                    temperature=0.0, max_tokens=512, **az_kwargs,
                 )
             # Retry timings accumulate onto the same buckets as the first
             # attempt (bucket aggregation sums by step_name), not separate rows.

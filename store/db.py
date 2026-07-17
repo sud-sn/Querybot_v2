@@ -553,6 +553,15 @@ CREATE TABLE IF NOT EXISTS entity_relationships (
     is_active         INTEGER NOT NULL DEFAULT 1,
     created_at        TEXT    DEFAULT (datetime('now')),
     join_conditions   TEXT    NOT NULL DEFAULT '[]'           -- JSON: [{from_col,to_col},...] extra join conditions
+    ,relationship_key TEXT    NOT NULL DEFAULT ''              -- stable multi-edge identity
+    ,constraint_name  TEXT    NOT NULL DEFAULT ''              -- source DB constraint, when present
+    ,source_enforced  INTEGER NOT NULL DEFAULT 0               -- DB guarantees referential integrity
+    ,optionality      TEXT    NOT NULL DEFAULT 'unknown'       -- required|optional|unknown
+    ,match_rate       REAL    NOT NULL DEFAULT -1
+    ,orphan_rate      REAL    NOT NULL DEFAULT -1
+    ,null_fk_rate     REAL    NOT NULL DEFAULT -1
+    ,fanout_ratio     REAL    NOT NULL DEFAULT -1
+    ,last_profiled_at TEXT    NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_entity_rel_account
     ON entity_relationships(account_id, is_active);
@@ -797,6 +806,16 @@ def _run_migrations() -> None:
         ("entity_relationships", "validated_at",        "TEXT DEFAULT ''"),
         ("entity_relationships", "row_count_estimate",  "INTEGER DEFAULT -1"),
         ("entity_relationships", "join_multiplicity",   "TEXT DEFAULT ''"),
+        # v40: governed, multi-edge relationship planning
+        ("entity_relationships", "relationship_key", "TEXT NOT NULL DEFAULT ''"),
+        ("entity_relationships", "constraint_name",  "TEXT NOT NULL DEFAULT ''"),
+        ("entity_relationships", "source_enforced",  "INTEGER NOT NULL DEFAULT 0"),
+        ("entity_relationships", "optionality",      "TEXT NOT NULL DEFAULT 'unknown'"),
+        ("entity_relationships", "match_rate",       "REAL NOT NULL DEFAULT -1"),
+        ("entity_relationships", "orphan_rate",      "REAL NOT NULL DEFAULT -1"),
+        ("entity_relationships", "null_fk_rate",     "REAL NOT NULL DEFAULT -1"),
+        ("entity_relationships", "fanout_ratio",     "REAL NOT NULL DEFAULT -1"),
+        ("entity_relationships", "last_profiled_at", "TEXT NOT NULL DEFAULT ''"),
         ("entity_properties",    "generated_by",        "TEXT DEFAULT 'manual'"),
         ("entity_properties",    "model",               "TEXT DEFAULT ''"),
         ("entity_properties",    "reason",              "TEXT DEFAULT ''"),
@@ -1297,6 +1316,8 @@ def _post_migration_indexes(conn: sqlite3.Connection) -> None:
         "ON answer_trace(metric_id)",
         "CREATE INDEX IF NOT EXISTS idx_entity_rel_validation "
         "ON entity_relationships(account_id, validation_status)",
+        "CREATE INDEX IF NOT EXISTS idx_entity_rel_identity "
+        "ON entity_relationships(account_id, relationship_key)",
     ]
     for ddl in idxs:
         try:

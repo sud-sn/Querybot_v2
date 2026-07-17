@@ -1,6 +1,75 @@
 from __future__ import annotations
 
 import re
+from dataclasses import asdict, dataclass
+
+
+_NUMBER_WORDS = {
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+    "twenty": 20,
+    "fifty": 50,
+    "hundred": 100,
+}
+
+
+@dataclass(frozen=True)
+class TopNIntent:
+    """Structured, schema-independent interpretation of a Top-N request."""
+
+    limit: int
+    direction: str = "descending"
+    tie_policy: str = "exactly_n"
+    per_group: bool = False
+
+    def to_dict(self) -> dict[str, object]:
+        return asdict(self)
+
+
+def detect_top_n_intent(question: str) -> TopNIntent | None:
+    """
+    Detect explicit Top/Bottom-N language without guessing business entities.
+
+    A numeric limit is mandatory. Generic words such as "highest" on their
+    own remain ordinary ranking intent and are not forced into a row limit.
+    """
+    q = re.sub(r"\s+", " ", (question or "").strip().lower())
+    if not q:
+        return None
+
+    number = r"(?P<n>\d{1,3}|" + "|".join(_NUMBER_WORDS) + r")"
+    patterns = (
+        rf"\b(?:top|bottom|best|worst|highest|lowest|leading)\s+{number}\b",
+        rf"\b{number}\s+(?:top|bottom|best|worst|highest|lowest|leading)\b",
+    )
+    match = next((m for p in patterns if (m := re.search(p, q))), None)
+    if match is None:
+        return None
+
+    raw_limit = match.group("n")
+    limit = int(raw_limit) if raw_limit.isdigit() else _NUMBER_WORDS[raw_limit]
+    if limit < 1:
+        return None
+
+    direction = "ascending" if re.search(r"\b(bottom|worst|lowest)\b", match.group(0)) else "descending"
+    tie_policy = (
+        "include_ties"
+        if re.search(r"\b(with|include|including|keep)\s+(all\s+)?ties\b", q)
+        else "exactly_n"
+    )
+    per_group = bool(re.search(
+        r"\b(per|for|in|within|from)\s+(each|every)\b|\bper\s+[a-z][\w-]*\b",
+        q,
+    ))
+    return TopNIntent(limit, direction, tie_policy, per_group)
 
 
 def _has_any(text: str, phrases: tuple[str, ...]) -> bool:
@@ -17,6 +86,7 @@ def analyze_query_intent(question: str) -> dict[str, bool]:
     clarification prompts.
     """
     q = (question or "").strip().lower()
+    top_n = detect_top_n_intent(question)
     return {
         # ── People / employee scope ───────────────────────────────────────────
         # Covers direct HR terms, role titles, and generic "people" language.
@@ -289,6 +359,7 @@ def analyze_query_intent(question: str) -> dict[str, bool]:
             r"|top\s+\d+\s+(by|based\s+on|for|in)\b)\b",
             q,
         )),
+        "wants_top_n": top_n is not None,
     }
 
 
@@ -331,6 +402,10 @@ def summarize_query_intent(question: str) -> str:
         labels.append("named period filter (Q/H/month)")
     if intent["wants_ranking"]:
         labels.append("ranking / leaderboard")
+    if intent["wants_top_n"]:
+        top_n = detect_top_n_intent(question)
+        if top_n:
+            labels.append(f"top-{top_n.limit} result limit")
     return ", ".join(labels)
 
 
@@ -347,6 +422,7 @@ def build_generic_query_hints(question: str) -> str:
         return ""
 
     intent = analyze_query_intent(question)
+    top_n = detect_top_n_intent(question)
     hints: list[str] = [
         "GENERIC QUERY INTERPRETATION RULES:",
         "- Exact schema-backed categorical values from the provided context are authoritative and must be preserved exactly, even when they look misspelled. Only normalize a value when that exact literal is absent from schema or business context.",
@@ -461,12 +537,30 @@ def build_generic_query_hints(question: str) -> str:
             "integer mapping. Do NOT use GETDATE()/SYSDATE — anchor to MAX(date_col) in the data."
         )
 
-    if intent["wants_ranking"]:
+    if intent["wants_ranking"] and not top_n:
         hints.append(
             "- RANKING DETECTED: The user wants entities ordered/ranked by a metric. Apply the "
             "RANKING RULE: include RANK() OVER (ORDER BY SUM(metric) DESC) AS RANK alongside the "
             "aggregate in the SELECT list. Use DENSE_RANK() only if the user mentions 'no gaps'. "
             "Always ORDER BY the rank column."
+        )
+
+    if top_n:
+        direction = "ASC" if top_n.direction == "ascending" else "DESC"
+        tie_rule = (
+            "Include all rows tied at the Nth position using TOP (N) WITH TIES or RANK/DENSE_RANK <= N."
+            if top_n.tie_policy == "include_ties"
+            else "Return exactly N rows; use TOP (N), or ROW_NUMBER() followed by rn <= N. Do not use RANK/DENSE_RANK because ties can return more than N rows."
+        )
+        scope_rule = (
+            "This is Top-N per group: use ROW_NUMBER() OVER (PARTITION BY the group dimension ORDER BY the metric) and filter rn <= N."
+            if top_n.per_group
+            else "This is a global Top-N: apply the limit to the final result set."
+        )
+        hints.append(
+            f"- TOP-{top_n.limit} CONTRACT: {scope_rule} {tie_rule} "
+            f"Order the requested metric {direction} and add a stable dimension as a secondary ordering key. "
+            "Never reinterpret Top-N as a threshold such as value > MIN(value FROM TopN); that can return zero rows when the boundary is tied."
         )
 
     summary = summarize_query_intent(question)

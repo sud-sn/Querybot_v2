@@ -196,6 +196,35 @@ class SqlPolicyTests(unittest.TestCase):
         self.assertTrue(analysis.has_star)
         self.assertEqual(analysis.tables, ["DBO.CUSTOMERS"])
 
+    def test_cte_output_lineage_resolves_to_base_tables(self):
+        analysis = analyze_sql(
+            "WITH base AS ("
+            " SELECT c.customer_name, t.amount"
+            " FROM dbo.customers c"
+            " JOIN dbo.transactions t ON c.id=t.customer_id"
+            ")"
+            " SELECT customer_name, SUM(amount) AS revenue"
+            " FROM base GROUP BY customer_name",
+            "azure_sql",
+        )
+        self.assertIn("DBO.CUSTOMERS.CUSTOMER_NAME", analysis.lineage["customer_name"])
+        self.assertIn("DBO.TRANSACTIONS.AMOUNT", analysis.lineage["revenue"])
+        self.assertNotIn("BASE", analysis.tables)
+        self.assertIn("revenue", analysis.aggregate_outputs)
+
+    def test_union_output_lineage_includes_every_branch(self):
+        analysis = analyze_sql(
+            "SELECT customer_name AS label FROM dbo.customers "
+            "UNION ALL "
+            "SELECT prescriber_name AS label FROM dbo.prescribers",
+            "azure_sql",
+        )
+        self.assertEqual(
+            analysis.lineage["label"],
+            ["DBO.CUSTOMERS.CUSTOMER_NAME", "DBO.PRESCRIBERS.PRESCRIBER_NAME"],
+        )
+        self.assertNotIn("label", analysis.mask_exempt_outputs)
+
     def test_row_policy_uses_structured_user_group_values(self):
         policies = [{
             "id": 1,
@@ -241,6 +270,25 @@ class SqlPolicyTests(unittest.TestCase):
                 "azure_sql",
                 PolicyContext(account_id="a", role="analyst"),
             )
+
+    def test_cte_row_policy_is_injected_in_the_table_scope(self):
+        policies = [{
+            "id": 7,
+            "subject_type": "role",
+            "subject_id": "analyst",
+            "table_fqn": "DBO.CUSTOMERS",
+            "condition": {"field": "BRANCH_ID", "operator": "=", "value": "NORTH"},
+        }]
+        context = PolicyContext(account_id="a", role="analyst")
+        with patch.object(sql_guard.store, "list_row_policies", return_value=policies):
+            rewritten, applied = inject_row_policies(
+                "WITH base AS (SELECT c.NAME FROM dbo.CUSTOMERS c) SELECT NAME FROM base",
+                "azure_sql",
+                context,
+            )
+        self.assertIn("FROM dbo.CUSTOMERS AS c WHERE c.BRANCH_ID = 'NORTH'", rewritten)
+        self.assertNotIn("FROM base WHERE c.BRANCH_ID", rewritten)
+        self.assertEqual(applied[0]["policy_id"], 7)
 
 
 class ResultProtectionTests(unittest.TestCase):

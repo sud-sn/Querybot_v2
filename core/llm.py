@@ -222,10 +222,11 @@ def build_sql_system_prompt(
         )
         _top_n_per_group_pattern = (
             "WITH ranked AS (\n"
-            "  SELECT *, ROW_NUMBER() OVER (PARTITION BY group_col ORDER BY metric_col DESC) AS rn\n"
+            "  SELECT group_col, entity_col, metric_col,\n"
+            "         ROW_NUMBER() OVER (PARTITION BY group_col ORDER BY metric_col DESC) AS rn\n"
             "  FROM [schema].[table]\n"
             ")\n"
-            "SELECT * FROM ranked WHERE rn <= N"
+            "SELECT group_col, entity_col, metric_col FROM ranked WHERE rn <= N"
         )
         _pct_total_pattern = (
             "SELECT group_col,\n"
@@ -286,10 +287,11 @@ def build_sql_system_prompt(
         )
         _top_n_per_group_pattern = (
             "WITH ranked AS (\n"
-            "  SELECT t.*, ROW_NUMBER() OVER (PARTITION BY group_col ORDER BY metric_col DESC) AS rn\n"
+            "  SELECT group_col, entity_col, metric_col,\n"
+            "         ROW_NUMBER() OVER (PARTITION BY group_col ORDER BY metric_col DESC) AS rn\n"
             "  FROM schema.table t\n"
             ")\n"
-            "SELECT * FROM ranked WHERE rn <= N"
+            "SELECT group_col, entity_col, metric_col FROM ranked WHERE rn <= N"
         )
         _pct_total_pattern = (
             "SELECT group_col,\n"
@@ -348,10 +350,11 @@ def build_sql_system_prompt(
         )
         _top_n_per_group_pattern = (
             "WITH ranked AS (\n"
-            "  SELECT *, ROW_NUMBER() OVER (PARTITION BY group_col ORDER BY metric_col DESC) AS rn\n"
+            "  SELECT group_col, entity_col, metric_col,\n"
+            "         ROW_NUMBER() OVER (PARTITION BY group_col ORDER BY metric_col DESC) AS rn\n"
             "  FROM db.schema.table\n"
             ")\n"
-            "SELECT * FROM ranked WHERE rn <= N LIMIT 200"
+            "SELECT group_col, entity_col, metric_col FROM ranked WHERE rn <= N LIMIT 200"
         )
         _pct_total_pattern = (
             "SELECT group_col,\n"

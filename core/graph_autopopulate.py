@@ -78,21 +78,27 @@ def auto_populate_from_schema(account_id: str, schema_dir: str) -> tuple[int, in
         # Both entities must exist before we can add the relationship
         if rel["from_entity"] not in all_entities or rel["to_entity"] not in all_entities:
             continue
-        # upsert enforces one-relationship-per-table-pair and never touches
-        # confirmed/manual rows
-        store.upsert_relationship_by_pair(
+        # Identity-based upsert preserves multiple business roles and composite
+        # constraints between the same physical tables. Confirmed/manual rows
+        # are still immutable.
+        store.upsert_relationship_by_identity(
             account_id        = account_id,
             from_entity       = rel["from_entity"],
             to_entity         = rel["to_entity"],
             from_column       = rel["from_column"],
             to_column         = rel["to_column"],
+            relationship_key  = rel.get("relationship_key", ""),
             relationship_type = rel.get("relationship_type", "many_to_one"),
             join_type         = rel.get("join_type", "INNER"),
             label             = rel.get("label", ""),
+            join_conditions   = rel.get("join_conditions", []),
             confidence_score  = rel.get("confidence_score", 70),
             status            = rel.get("status", "suggested"),
             generated_by      = rel.get("generated_by", "heuristic"),
             reason            = rel.get("reason", ""),
+            constraint_name   = rel.get("constraint_name", ""),
+            source_enforced   = bool(rel.get("source_enforced", False)),
+            optionality       = rel.get("optionality", "unknown"),
         )
         rel_added += 1
 

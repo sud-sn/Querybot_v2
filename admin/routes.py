@@ -3652,6 +3652,10 @@ async def graph_api_rel_validate_all(request: Request, account_id: str):
             result.status,
             row_count_estimate=result.row_count_estimate,
             join_multiplicity=result.join_multiplicity,
+            match_rate=result.match_rate,
+            orphan_rate=result.orphan_rate,
+            null_fk_rate=result.null_fk_rate,
+            fanout_ratio=result.fanout_ratio,
         )
         results.append(result.to_dict())
 
@@ -3691,6 +3695,10 @@ async def graph_api_rel_validate(request: Request, account_id: str, rel_id: int)
         result.status,
         row_count_estimate=result.row_count_estimate,
         join_multiplicity=result.join_multiplicity,
+        match_rate=result.match_rate,
+        orphan_rate=result.orphan_rate,
+        null_fk_rate=result.null_fk_rate,
+        fanout_ratio=result.fanout_ratio,
     )
     return JSONResponse({"status": "ok", "result": result.to_dict()})
 

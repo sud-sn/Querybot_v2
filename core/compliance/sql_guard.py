@@ -5,6 +5,7 @@ from typing import Any
 
 import sqlglot
 from sqlglot import exp
+from sqlglot.lineage import lineage as build_lineage
 
 import store
 from core.compliance.models import PolicyContext, ResourceRef
@@ -36,9 +37,16 @@ def _table_name(node: exp.Table) -> str:
 def analyze_sql(sql: str, db_type: str) -> SqlPolicyAnalysis:
     dialect = _DIALECT.get(db_type, "snowflake")
     tree = sqlglot.parse_one(sql, dialect=dialect)
+    cte_aliases = {
+        str(cte.alias).upper()
+        for cte in tree.find_all(exp.CTE)
+        if cte.alias
+    }
     aliases: dict[str, str] = {}
     tables: list[str] = []
     for table in tree.find_all(exp.Table):
+        if table.name.upper() in cte_aliases:
+            continue
         name = _table_name(table)
         if not name:
             continue
@@ -51,29 +59,65 @@ def analyze_sql(sql: str, db_type: str) -> SqlPolicyAnalysis:
     aggregate_outputs: set[str] = set()
     mask_exempt_outputs: set[str] = set()
     has_star = any(isinstance(node, exp.Star) for node in tree.walk())
-    select = tree.find(exp.Select)
-    if select:
-        for expression in select.expressions:
-            alias = expression.alias_or_name or expression.sql(dialect=dialect)
-            sources = []
+    safe_aggregates = {
+        "count", "sum", "avg", "stddev", "variance", "var",
+        "stddev_pop", "variance_pop",
+    }
+    for expression in tree.selects:
+        alias = str(expression.alias_or_name or expression.sql(dialect=dialect))
+        sources: list[str] = []
+        aggregate_nodes: list[exp.Expression] = []
+        try:
+            lineage_node = build_lineage(alias, tree, dialect=dialect)
+            for node in lineage_node.walk():
+                aggregate_nodes.extend(
+                    part for part in node.expression.walk()
+                    if isinstance(part, exp.AggFunc)
+                )
+                if not isinstance(node.expression, exp.Table):
+                    continue
+                source_name = str(node.name or "").rsplit(".", 1)[-1].strip('[]"`')
+                if not source_name or source_name == "*":
+                    continue
+                table_name = _table_name(node.expression)
+                if not table_name or node.expression.name.upper() in cte_aliases:
+                    continue
+                resource = ResourceRef(
+                    table=table_name,
+                    column=source_name,
+                    output_alias=alias,
+                )
+                resources[resource.key] = resource
+                sources.append(resource.key)
+        except Exception:
+            # Conservative fallback for expressions sqlglot lineage cannot
+            # resolve. Qualified columns remain attributable; ambiguous bare
+            # columns are not guessed.
             for column in expression.find_all(exp.Column):
                 if column.name == "*":
                     continue
-                table = aliases.get((column.table or "").upper(), "")
-                if not table and len(tables) == 1:
-                    table = tables[0]
-                if not table:
+                table_name = aliases.get((column.table or "").upper(), "")
+                if not table_name and len(tables) == 1:
+                    table_name = tables[0]
+                if not table_name:
                     continue
-                resource = ResourceRef(table=table, column=column.name, output_alias=alias)
+                resource = ResourceRef(table=table_name, column=column.name, output_alias=alias)
                 resources[resource.key] = resource
                 sources.append(resource.key)
-            lineage[str(alias)] = sorted(set(sources))
-            aggregate_nodes = [node for node in expression.walk() if isinstance(node, exp.AggFunc)]
-            if aggregate_nodes:
-                aggregate_outputs.add(str(alias))
-                safe_aggregates = {"count", "sum", "avg", "stddev", "variance", "var", "stddev_pop", "variance_pop"}
-                if all(str(getattr(node, "key", "")).lower() in safe_aggregates for node in aggregate_nodes):
-                    mask_exempt_outputs.add(str(alias))
+            aggregate_nodes = [
+                node for node in expression.walk() if isinstance(node, exp.AggFunc)
+            ]
+
+        lineage[alias] = sorted(set(sources))
+        # UNION outputs are exempt only after branch-by-branch aggregation can
+        # be proven. Until then, keep them maskable/aggregate-restricted.
+        if aggregate_nodes and not isinstance(tree, exp.Union):
+            aggregate_outputs.add(alias)
+            if all(
+                str(getattr(node, "key", "")).lower() in safe_aggregates
+                for node in aggregate_nodes
+            ):
+                mask_exempt_outputs.add(alias)
 
     return SqlPolicyAnalysis(
         sql=sql,
@@ -148,8 +192,15 @@ def inject_row_policies(
     dialect = _DIALECT.get(db_type, "snowflake")
     tree = sqlglot.parse_one(sql, dialect=dialect)
     applied: list[dict] = []
-    predicates: list[exp.Expression] = []
+    predicates_by_select: dict[int, tuple[exp.Select, list[exp.Expression]]] = {}
+    cte_aliases = {
+        str(cte.alias).upper()
+        for cte in tree.find_all(exp.CTE)
+        if cte.alias
+    }
     for table in tree.find_all(exp.Table):
+        if table.name.upper() in cte_aliases:
+            continue
         table_name = _table_name(table)
         alias = table.alias_or_name or table.name
         for policy in policies:
@@ -163,7 +214,13 @@ def inject_row_policies(
             if not (table_name == configured or table_name.endswith("." + configured) or configured.endswith("." + table_name)):
                 continue
             predicate = _condition_expression(policy.get("condition") or {}, alias, context)
-            predicates.append(predicate)
+            select = table.find_ancestor(exp.Select)
+            if select is None:
+                continue
+            key = id(select)
+            if key not in predicates_by_select:
+                predicates_by_select[key] = (select, [])
+            predicates_by_select[key][1].append(predicate)
             applied.append(
                 {
                     "policy_id": policy["id"],
@@ -171,13 +228,15 @@ def inject_row_policies(
                     "condition": policy.get("condition") or {},
                 }
             )
-    if predicates:
+    for select, predicates in predicates_by_select.values():
+        if not predicates:
+            continue
         combined = predicates[0]
         for predicate in predicates[1:]:
             combined = exp.and_(combined, predicate)
-        existing = tree.args.get("where")
+        existing = select.args.get("where")
         if existing:
-            tree.set("where", exp.Where(this=exp.and_(existing.this, combined)))
+            select.set("where", exp.Where(this=exp.and_(existing.this, combined)))
         else:
-            tree.set("where", exp.Where(this=combined))
+            select.set("where", exp.Where(this=combined))
     return tree.sql(dialect=dialect), applied

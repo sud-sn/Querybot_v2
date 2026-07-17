@@ -128,6 +128,113 @@ def _strip_literals_and_comments(sql: str) -> str:
     return text
 
 
+_DIALECT_INCOMPATIBILITIES: dict[str, tuple[tuple[re.Pattern, str, str], ...]] = {
+    "azure_sql": (
+        (re.compile(r"\bLIMIT\b", re.IGNORECASE), "LIMIT", "Use TOP (N) or OFFSET ... FETCH NEXT."),
+        (re.compile(r"\bQUALIFY\b", re.IGNORECASE), "QUALIFY", "Filter the window result in an outer SELECT/CTE."),
+        (re.compile(r"\bDATE_TRUNC\s*\(", re.IGNORECASE), "DATE_TRUNC", "Use DATEFROMPARTS/DATEADD with DATEPART."),
+        (re.compile(r"\bTO_CHAR\s*\(", re.IGNORECASE), "TO_CHAR", "Use CONVERT or FORMAT with an appropriate SQL Server type."),
+        (re.compile(r"\bNVL\s*\(", re.IGNORECASE), "NVL", "Use COALESCE or ISNULL."),
+        (re.compile(r"\bILIKE\b", re.IGNORECASE), "ILIKE", "Use LIKE with the database collation or explicit LOWER()."),
+        (re.compile(r"(?<!:)::(?!:)", re.IGNORECASE), ":: cast", "Use CAST(expression AS type) or CONVERT(type, expression)."),
+    ),
+    "oracle": (
+        (re.compile(r"\bLIMIT\b", re.IGNORECASE), "LIMIT", "Use FETCH FIRST N ROWS ONLY."),
+        (re.compile(r"\bSELECT\s+(?:DISTINCT\s+)?TOP\s*\(?\s*\d+", re.IGNORECASE), "TOP", "Use FETCH FIRST N ROWS ONLY."),
+        (re.compile(r"\bGETDATE\s*\(", re.IGNORECASE), "GETDATE", "Use CURRENT_DATE or SYSTIMESTAMP."),
+        (re.compile(r"\bDATEADD\s*\(", re.IGNORECASE), "DATEADD", "Use Oracle date/interval arithmetic or ADD_MONTHS."),
+        (re.compile(r"\bDATEDIFF\s*\(", re.IGNORECASE), "DATEDIFF", "Subtract DATE values or use interval extraction."),
+        (re.compile(r"\bTRY_CONVERT\s*\(", re.IGNORECASE), "TRY_CONVERT", "Use TO_DATE/TO_NUMBER with validated input."),
+        (re.compile(r"\bISNULL\s*\(", re.IGNORECASE), "ISNULL", "Use COALESCE or NVL."),
+        (re.compile(r"\[[A-Za-z_][^\]]*\]", re.IGNORECASE), "[identifier]", "Use unquoted identifiers or Oracle double quotes."),
+    ),
+    "snowflake": (
+        (re.compile(r"\bTRY_CONVERT\s*\(", re.IGNORECASE), "TRY_CONVERT", "Use TRY_CAST or TRY_TO_DATE/TRY_TO_NUMBER."),
+        (re.compile(r"\bISNULL\s*\(", re.IGNORECASE), "ISNULL", "Use COALESCE or IFNULL."),
+        (re.compile(r"\[[A-Za-z_][^\]]*\]", re.IGNORECASE), "[identifier]", "Use unquoted identifiers or Snowflake double quotes."),
+    ),
+}
+
+
+def _dialect_compatibility_errors(sql: str, db_type: str) -> list[dict]:
+    """Find high-confidence syntax borrowed from a different SQL dialect.
+
+    sqlglot intentionally accepts and normalizes a broad SQL grammar. That is
+    useful for parsing, but it means parsing alone cannot prove that the target
+    database will execute the original text. Keep this list conservative: only
+    reject constructs whose target-database incompatibility is deterministic.
+    """
+    executable = _strip_literals_and_comments(sql)
+    errors: list[dict] = []
+    for pattern, construct, replacement in _DIALECT_INCOMPATIBILITIES.get(
+        (db_type or "").lower(), ()
+    ):
+        if not pattern.search(executable):
+            continue
+        errors.append({
+            "code": "dialect_mismatch",
+            "message": f"{construct} is not valid for the configured {db_type} dialect.",
+            "construct": construct,
+            "db_type": db_type,
+            "replacement": replacement,
+        })
+    return errors
+
+
+def _production_shape_errors(tree, semantic_context: dict | None) -> list[dict]:
+    """Reject deterministic query shapes that are unsafe in generated SQL.
+
+    These checks are enabled by the runtime pipeline, not by every low-level
+    validator caller. COUNT(*) remains valid; only projection wildcards are
+    blocked. Explicit cartesian products are allowed only when the question
+    actually asks for all combinations/a cartesian product.
+    """
+    context = semantic_context or {}
+    if not context.get("production_sql"):
+        return []
+
+    errors: list[dict] = []
+    for select in tree.find_all(sg_exp.Select):
+        for projection in select.expressions:
+            target = projection.this if isinstance(projection, sg_exp.Alias) else projection
+            is_wildcard = isinstance(target, sg_exp.Star) or (
+                isinstance(target, sg_exp.Column) and isinstance(target.this, sg_exp.Star)
+            )
+            if is_wildcard:
+                errors.append({
+                    "code": "select_star",
+                    "message": "Generated analytical SQL must list its output columns instead of using SELECT * or alias.*.",
+                    "replacement": "Project only the requested dimensions, measures, and required helper columns.",
+                })
+                break
+
+    question = str(context.get("question") or "")
+    cross_requested = bool(re.search(
+        r"\b(cross\s+join|cartesian|all\s+(?:possible\s+)?combinations?)\b",
+        question,
+        re.IGNORECASE,
+    ))
+    for join in tree.find_all(sg_exp.Join):
+        kind = str(join.args.get("kind") or "").upper()
+        has_condition = bool(join.args.get("on") or join.args.get("using"))
+        if isinstance(join.this, sg_exp.Lateral):
+            continue
+        if kind == "CROSS":
+            if not cross_requested:
+                errors.append({
+                    "code": "cartesian_join",
+                    "message": "The SQL uses CROSS JOIN even though the question did not request a cartesian product.",
+                    "replacement": "Use a validated ON/USING relationship from the entity graph.",
+                })
+        elif not has_condition:
+            errors.append({
+                "code": "missing_join_condition",
+                "message": "A JOIN/comma join has no ON or USING condition and would create a cartesian product.",
+                "replacement": "Add the validated entity-graph join condition, or use CROSS JOIN only for an explicit cartesian request.",
+            })
+    return errors
+
+
 def _normalize_identifier(name: str) -> str:
     return re.sub(r"[^A-Z0-9]+", "", (name or "").upper())
 
@@ -211,11 +318,97 @@ def _table_matches(left: str, right: str) -> bool:
         return True
     left_parts = left_u.split(".")
     right_parts = right_u.split(".")
-    if left_parts[-1:] == right_parts[-1:]:
-        return True
     if len(left_parts) >= 2 and len(right_parts) >= 2:
         return ".".join(left_parts[-2:]) == ".".join(right_parts[-2:])
-    return False
+    return left_parts[-1:] == right_parts[-1:]
+
+
+def _graph_plan_errors(tree, graph_context: dict | None, alias_to_table: dict[str, str]) -> list[dict]:
+    """Prove that every resolved entity-graph edge appears in JOIN ... ON.
+
+    The prompt asks the model to preserve the graph skeleton, but this check is
+    the hard boundary before execution. It binds both column names and their
+    resolved physical tables, including every pair in a composite constraint.
+    """
+    graph = graph_context or {}
+    expected_edges = graph.get("resolved_edges") or []
+    if not graph.get("enabled") or not expected_edges:
+        return []
+
+    actual_conditions: list[dict] = []
+    for join in tree.find_all(sg_exp.Join):
+        side = str(join.args.get("side") or "").upper()
+        kind = str(join.args.get("kind") or "").upper()
+        join_type = side or kind or "INNER"
+        for equality in join.find_all(sg_exp.EQ):
+            left, right = equality.left, equality.right
+            if not isinstance(left, sg_exp.Column) or not isinstance(right, sg_exp.Column):
+                continue
+            left_alias = (left.table or "").upper()
+            right_alias = (right.table or "").upper()
+            actual_conditions.append({
+                "left_table": alias_to_table.get(left_alias, ""),
+                "left_column": (left.name or "").upper(),
+                "right_table": alias_to_table.get(right_alias, ""),
+                "right_column": (right.name or "").upper(),
+                "join_type": join_type,
+            })
+
+    errors: list[dict] = []
+    for edge in expected_edges:
+        from_fqn = ".".join(
+            part for part in [edge.get("from_schema", ""), edge.get("from_table", "")] if part
+        )
+        to_fqn = ".".join(
+            part for part in [edge.get("to_schema", ""), edge.get("to_table", "")] if part
+        )
+        expected_type = str(edge.get("join_type") or "INNER").upper()
+        for from_col, to_col in edge.get("conditions") or []:
+            from_col_u = str(from_col or "").upper()
+            to_col_u = str(to_col or "").upper()
+            found = False
+            type_mismatch = ""
+            for condition in actual_conditions:
+                forward = (
+                    _table_matches(condition["left_table"], from_fqn)
+                    and _table_matches(condition["right_table"], to_fqn)
+                    and condition["left_column"] == from_col_u
+                    and condition["right_column"] == to_col_u
+                )
+                reverse = (
+                    _table_matches(condition["left_table"], to_fqn)
+                    and _table_matches(condition["right_table"], from_fqn)
+                    and condition["left_column"] == to_col_u
+                    and condition["right_column"] == from_col_u
+                )
+                if not (forward or reverse):
+                    continue
+                found = True
+                actual_type = condition["join_type"]
+                if expected_type == "LEFT" and actual_type != "LEFT":
+                    type_mismatch = actual_type
+                break
+            if not found:
+                errors.append({
+                    "code": "graph_join_missing",
+                    "message": (
+                        f"Required entity-graph edge was not present: "
+                        f"{from_fqn}.{from_col_u} = {to_fqn}.{to_col_u}."
+                    ),
+                    "edge_id": edge.get("id"),
+                    "relationship_key": edge.get("relationship_key", ""),
+                })
+            elif type_mismatch:
+                errors.append({
+                    "code": "graph_join_type_mismatch",
+                    "message": (
+                        f"Entity-graph edge {from_fqn} to {to_fqn} requires LEFT JOIN "
+                        f"but generated SQL used {type_mismatch} JOIN."
+                    ),
+                    "edge_id": edge.get("id"),
+                    "relationship_key": edge.get("relationship_key", ""),
+                })
+    return errors
 
 
 def _find_table_with_column(table_columns: dict[str, dict[str, str]], table: str, column: str) -> str:
@@ -542,6 +735,116 @@ def _find_null_aggregate_diagnostic_errors(sql: str, tree) -> list[dict]:
     return errors
 
 
+def _literal_int(node) -> int | None:
+    if isinstance(node, sg_exp.Literal) and not node.is_string:
+        try:
+            return int(node.this)
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _top_n_order_matches(order_node, direction: str) -> bool:
+    if order_node is None:
+        return False
+    ordered = next(order_node.find_all(sg_exp.Ordered), None)
+    if ordered is None:
+        return False
+    is_descending = bool(ordered.args.get("desc"))
+    return is_descending if direction == "descending" else not is_descending
+
+
+def _top_n_shape_error(tree, semantic_context: dict | None) -> dict | None:
+    """Return a structured error when SQL changes an explicit Top-N request."""
+    top_n = (semantic_context or {}).get("top_n") or {}
+    try:
+        requested = int(top_n.get("limit") or 0)
+    except (TypeError, ValueError):
+        requested = 0
+    if requested < 1:
+        return None
+
+    outer = tree if isinstance(tree, sg_exp.Select) else None
+    if outer is None:
+        return {
+            "code": "top_n_shape",
+            "message": "The final query is not a SELECT that visibly enforces the requested Top-N limit.",
+            "requested_limit": requested,
+        }
+
+    per_group = bool(top_n.get("per_group"))
+    include_ties = top_n.get("tie_policy") == "include_ties"
+    direction = top_n.get("direction") or "descending"
+
+    # Global TOP/FETCH/LIMIT is valid only on the final SELECT. A TOP clause
+    # buried inside a threshold CTE does not satisfy the user's result limit.
+    limit_node = outer.args.get("limit")
+    if limit_node is not None and not per_group:
+        limit_value = _literal_int(limit_node.args.get("expression"))
+        options = limit_node.args.get("limit_options")
+        has_with_ties = bool(options and options.args.get("with_ties"))
+        is_percent = bool(options and options.args.get("percent"))
+        tie_policy_ok = has_with_ties if include_ties else not has_with_ties
+        if (
+            limit_value == requested
+            and tie_policy_ok
+            and not is_percent
+            and _top_n_order_matches(outer.args.get("order"), direction)
+        ):
+            return None
+
+    # ROW_NUMBER <= N guarantees exactly N (subject to available rows). RANK
+    # and DENSE_RANK are accepted only when the user explicitly asks for ties.
+    row_aliases: dict[str, tuple[bool, bool]] = {}
+    tied_aliases: dict[str, tuple[bool, bool]] = {}
+    for alias_node in tree.find_all(sg_exp.Alias):
+        target = alias_node.this
+        if not isinstance(target, sg_exp.Window) or not alias_node.alias:
+            continue
+        partitioned = bool(target.args.get("partition_by"))
+        direction_ok = _top_n_order_matches(target.args.get("order"), direction)
+        alias = alias_node.alias.upper()
+        if isinstance(target.this, sg_exp.RowNumber):
+            row_aliases[alias] = (partitioned, direction_ok)
+        elif isinstance(target.this, (sg_exp.Rank, sg_exp.DenseRank)):
+            tied_aliases[alias] = (partitioned, direction_ok)
+
+    allowed_aliases = tied_aliases if include_ties else row_aliases
+    filter_nodes = [outer.args.get("where"), outer.args.get("qualify")]
+    for filter_node in filter_nodes:
+        if filter_node is None:
+            continue
+        for comparison in filter_node.find_all(sg_exp.LTE):
+            left = comparison.this
+            right = comparison.expression
+            if not isinstance(left, sg_exp.Column) or left.table:
+                continue
+            if _literal_int(right) != requested:
+                continue
+            alias = (left.name or "").upper()
+            if alias not in allowed_aliases:
+                continue
+            partitioned, direction_ok = allowed_aliases[alias]
+            if per_group != partitioned or not direction_ok:
+                continue
+            return None
+
+    tie_text = "including all boundary ties" if include_ties else "returning at most exactly N rows"
+    scope_text = "within each requested group" if per_group else "on the final result set"
+    return {
+        "code": "top_n_shape",
+        "message": (
+            f"The question requests Top {requested}, but the final SQL does not enforce that limit "
+            f"{scope_text} while {tie_text}."
+        ),
+        "requested_limit": requested,
+        "direction": top_n.get("direction") or "descending",
+        "tie_policy": top_n.get("tie_policy") or "exactly_n",
+        "per_group": per_group,
+        "forbidden_pattern": "Do not turn Top-N into value > MIN(value FROM TopN).",
+    }
+
+
 def validate_sql_detailed(
     sql: str,
     known_tables: set[str],
@@ -569,20 +872,69 @@ def validate_sql_detailed(
             "ddl",
         )
 
+    dialect_errors = _dialect_compatibility_errors(sql, db_type)
+    if dialect_errors:
+        details = " ".join(
+            f"{error['message']} {error['replacement']}"
+            for error in dialect_errors
+        )
+        return SqlValidationResult(
+            False,
+            f"Generated SQL uses syntax from a different database dialect. {details}",
+            "dialect_mismatch",
+            dialect_errors,
+        )
+
     if not _HAS_SQLGLOT:
         log.debug("sqlglot unavailable - skipping structural validation")
         return SqlValidationResult(True, "OK", "ok")
 
     dialect = _DIALECT.get(db_type, "snowflake")
-    tree = None
-    for d in [dialect, None]:
-        try:
-            tree = sqlglot.parse_one(sql, dialect=d)
-            break
-        except Exception:
-            continue
-    if tree is None:
+    try:
+        statements = [
+            statement for statement in sqlglot.parse(sql, read=dialect)
+            if statement is not None
+        ]
+    except Exception:
         return SqlValidationResult(False, "SQL could not be parsed - please check for syntax errors.", "parse")
+    if len(statements) != 1:
+        return SqlValidationResult(
+            False,
+            "Exactly one SELECT query is allowed per request.",
+            "multi_statement",
+        )
+    tree = statements[0]
+    if not isinstance(tree, sg_exp.Query):
+        return SqlValidationResult(
+            False,
+            "Only a SELECT query (including CTEs and set operations) is allowed.",
+            "not_select",
+        )
+    if tree.find(sg_exp.Into):
+        return SqlValidationResult(
+            False,
+            "SELECT ... INTO is not allowed because it creates or writes a table.",
+            "ddl",
+        )
+    if tree.find(sg_exp.Lock):
+        return SqlValidationResult(
+            False,
+            "Locking SELECT statements such as FOR UPDATE are not allowed.",
+            "locking_select",
+        )
+
+    production_shape_errors = _production_shape_errors(tree, semantic_context)
+    if production_shape_errors:
+        details = " ".join(
+            f"{error['message']} {error['replacement']}"
+            for error in production_shape_errors
+        )
+        return SqlValidationResult(
+            False,
+            f"Generated SQL does not meet the production query-shape rules. {details}",
+            "production_shape",
+            production_shape_errors,
+        )
 
     known_upper = _expand_table_set(known_tables) or set()
     allowed_upper = _expand_table_set(allowed_tables)
@@ -681,6 +1033,22 @@ def validate_sql_detailed(
                 [error],
             )
 
+    top_n_error = _top_n_shape_error(tree, semantic_context)
+    if top_n_error:
+        requested = top_n_error.get("requested_limit")
+        return SqlValidationResult(
+            False,
+            (
+                f"Generated SQL does not preserve the requested Top {requested} result semantics. "
+                f"{top_n_error['message']}\n\n"
+                "Apply TOP (N) to the final ordered result, or use ROW_NUMBER() and filter rn <= N. "
+                "Only use WITH TIES or RANK when the user explicitly requests ties. "
+                "Do not convert Top-N into a threshold comparison against the Nth value."
+            ),
+            "top_n_shape",
+            [top_n_error],
+        )
+
     select_aliases: set[str] = set()
     select_column_names: set[str] = set()
     for alias_node in tree.find_all(sg_exp.Alias):
@@ -692,6 +1060,24 @@ def validate_sql_detailed(
             target = expr.this if isinstance(expr, sg_exp.Alias) else expr
             if isinstance(target, sg_exp.Column) and target.name:
                 select_column_names.add(target.name.upper())
+
+    graph_plan_errors = _graph_plan_errors(
+        tree,
+        (semantic_context or {}).get("graph_context"),
+        alias_to_table,
+    )
+    if graph_plan_errors:
+        return SqlValidationResult(
+            False,
+            (
+                "Generated SQL does not follow the resolved entity-graph join plan. "
+                + " ".join(error["message"] for error in graph_plan_errors[:5])
+                + "\n\nUse every exact table.column condition and required join type "
+                  "from the resolved entity graph."
+            ),
+            "graph_plan_mismatch",
+            graph_plan_errors,
+        )
 
     if table_columns:
         date_errors = _find_date_key_format_errors(sql, table_columns)

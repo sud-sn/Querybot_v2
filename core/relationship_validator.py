@@ -30,6 +30,10 @@ class RelationshipValidationResult:
     probe_sql: str = ""
     row_count_estimate: int = -1
     join_multiplicity: str = ""
+    match_rate: float = -1.0
+    orphan_rate: float = -1.0
+    null_fk_rate: float = -1.0
+    fanout_ratio: float = -1.0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -40,6 +44,10 @@ class RelationshipValidationResult:
             "probe_sql": self.probe_sql,
             "row_count_estimate": self.row_count_estimate,
             "join_multiplicity": self.join_multiplicity,
+            "match_rate": self.match_rate,
+            "orphan_rate": self.orphan_rate,
+            "null_fk_rate": self.null_fk_rate,
+            "fanout_ratio": self.fanout_ratio,
         }
 
 
@@ -179,6 +187,41 @@ def build_probe_sql(db_type: str, rel: dict, from_ent: dict, to_ent: dict) -> st
     return f"SELECT COUNT(*) AS row_count FROM {left_table} l {join_type} JOIN {right_table} r ON {on_sql}"
 
 
+def build_profile_sql(db_type: str, rel: dict, from_ent: dict, to_ent: dict) -> str:
+    """Build a read-only join quality profile for one relationship.
+
+    The probe measures source-key nulls, matched source rows, orphans, and
+    join fanout. These signals let the resolver avoid technically valid but
+    operationally poor join paths.
+    """
+    left_table = _quote_table(from_ent.get("schema_name", ""), from_ent.get("table_name", ""), db_type)
+    right_table = _quote_table(to_ent.get("schema_name", ""), to_ent.get("table_name", ""), db_type)
+    pairs = _join_pairs(rel)
+    on_sql = " AND ".join(
+        f"l.{_quote_col(left, db_type)} = r.{_quote_col(right, db_type)}"
+        for left, right in pairs
+    )
+    non_null_sql = " AND ".join(
+        f"l.{_quote_col(left, db_type)} IS NOT NULL" for left, _ in pairs
+    )
+    count_fn = "COUNT_BIG(1)" if db_type == "azure_sql" else "COUNT(*)"
+    return f"""
+SELECT
+  (SELECT {count_fn} FROM {left_table} l) AS left_rows,
+  (SELECT {count_fn} FROM {left_table} l WHERE {non_null_sql}) AS non_null_fk_rows,
+  (SELECT {count_fn} FROM {left_table} l
+    WHERE {non_null_sql} AND EXISTS (
+      SELECT 1 FROM {right_table} r WHERE {on_sql}
+    )) AS matched_left_rows,
+  (SELECT {count_fn} FROM {left_table} l
+    WHERE {non_null_sql} AND NOT EXISTS (
+      SELECT 1 FROM {right_table} r WHERE {on_sql}
+    )) AS orphan_rows,
+  (SELECT {count_fn} FROM {left_table} l
+    INNER JOIN {right_table} r ON {on_sql}) AS join_rows
+""".strip()
+
+
 def _execute_probe(
     account_id: str,
     rel: dict,
@@ -201,9 +244,9 @@ def _execute_probe(
         )
 
     creds = raw_cfg.get("credentials", {})
-    sql = build_probe_sql(db_type, rel, from_ent, to_ent)
+    sql = build_profile_sql(db_type, rel, from_ent, to_ent)
 
-    def _run() -> int:
+    def _run() -> tuple[int, int, int, int, int]:
         if db_type == "azure_sql":
             conn = _az_connect({**creds, "login_timeout": min(timeout_seconds, 20)}, max_retries=1)
         elif db_type == "snowflake":
@@ -214,7 +257,9 @@ def _execute_probe(
             cur = conn.cursor()
             cur.execute(sql)
             row = cur.fetchone()
-            return int(row[0] if row else 0)
+            if not row:
+                return 0, 0, 0, 0, 0
+            return tuple(int(value or 0) for value in row[:5])
         finally:
             try:
                 conn.close()
@@ -224,29 +269,56 @@ def _execute_probe(
     pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     try:
         future = pool.submit(_run)
-        row_count = future.result(timeout=timeout_seconds)
+        left_rows, non_null_rows, matched_rows, orphan_rows, join_rows = future.result(
+            timeout=timeout_seconds
+        )
     finally:
         pool.shutdown(wait=False, cancel_futures=True)
 
-    if row_count <= 0:
+    match_rate = round((matched_rows / non_null_rows) * 100.0, 2) if non_null_rows else 0.0
+    orphan_rate = round((orphan_rows / non_null_rows) * 100.0, 2) if non_null_rows else 0.0
+    null_fk_rate = round(((left_rows - non_null_rows) / left_rows) * 100.0, 2) if left_rows else 0.0
+    fanout_ratio = round(join_rows / matched_rows, 3) if matched_rows else 0.0
+    multiplicity = (
+        "zero_match" if matched_rows <= 0
+        else "one_to_many_or_many_to_many" if fanout_ratio > 1.01
+        else "one_to_one_or_many_to_one"
+    )
+
+    if matched_rows <= 0:
         return RelationshipValidationResult(
             int(rel.get("id") or 0),
             STATUS_WARNING,
             "Join executed successfully but returned zero rows. Check whether this join is logically correct.",
             checked_by="db",
             probe_sql=sql,
-            row_count_estimate=row_count,
-            join_multiplicity="zero_match",
+            row_count_estimate=join_rows,
+            join_multiplicity=multiplicity,
+            match_rate=match_rate,
+            orphan_rate=orphan_rate,
+            null_fk_rate=null_fk_rate,
+            fanout_ratio=fanout_ratio,
         )
+
+    status = STATUS_WARNING if orphan_rate > 5.0 or fanout_ratio > 10.0 else STATUS_VALID
+    quality_note = (
+        f"Matched {match_rate:.2f}% of non-null source keys; "
+        f"orphans {orphan_rate:.2f}%, null keys {null_fk_rate:.2f}%, "
+        f"fanout {fanout_ratio:.3f}x."
+    )
 
     return RelationshipValidationResult(
         int(rel.get("id") or 0),
-        STATUS_VALID,
-        f"Join executed successfully and matched approximately {row_count} rows.",
+        status,
+        f"Join profile completed. {quality_note}",
         checked_by="db",
         probe_sql=sql,
-        row_count_estimate=row_count,
-        join_multiplicity="matched",
+        row_count_estimate=join_rows,
+        join_multiplicity=multiplicity,
+        match_rate=match_rate,
+        orphan_rate=orphan_rate,
+        null_fk_rate=null_fk_rate,
+        fanout_ratio=fanout_ratio,
     )
 
 

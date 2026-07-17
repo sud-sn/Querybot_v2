@@ -2039,6 +2039,92 @@ def upsert_relationship_by_pair(
     return row["id"] if row else -1
 
 
+def upsert_relationship_by_identity(
+    account_id: str,
+    from_entity: str,
+    to_entity: str,
+    from_column: str,
+    to_column: str,
+    *,
+    relationship_key: str,
+    relationship_type: str = "many_to_one",
+    confidence_score: int = 70,
+    status: str = "suggested",
+    join_type: str = "INNER",
+    label: str = "",
+    join_conditions: list | None = None,
+    generated_by: str = "heuristic",
+    reason: str = "",
+    constraint_name: str = "",
+    source_enforced: bool = False,
+    optionality: str = "unknown",
+) -> int:
+    """Insert/update an auto-generated edge without collapsing table pairs.
+
+    ``relationship_key`` identifies the business role or DB constraint, so the
+    same two entities may have order-date, invoice-date, composite-key, and
+    other independent relationships. Confirmed/manual rows remain immutable.
+    """
+    import json as _json
+
+    key = (relationship_key or "").strip()
+    if not key:
+        key = (
+            f"{from_entity}|{to_entity}|{from_column}|{to_column}|{label}"
+        ).upper()
+    optionality = optionality if optionality in {"required", "optional", "unknown"} else "unknown"
+    jc_json = _json.dumps(join_conditions or [])
+
+    with get_db() as conn:
+        existing = conn.execute(
+            """SELECT id, status, generated_by FROM entity_relationships
+                 WHERE account_id=? AND relationship_key=? AND is_active=1
+                 LIMIT 1""",
+            (account_id, key),
+        ).fetchone()
+        if existing:
+            if existing["status"] == "confirmed" or existing["generated_by"] == "manual":
+                return existing["id"]
+            conn.execute(
+                """UPDATE entity_relationships SET
+                       from_entity=?, to_entity=?, from_column=?, to_column=?,
+                       relationship_type=?, join_type=?, label=?, join_conditions=?,
+                       confidence_score=?, status=?, generated_by=?, reason=?,
+                       constraint_name=?, source_enforced=?, optionality=?,
+                       validation_status='untested', validated_at='',
+                       row_count_estimate=-1, join_multiplicity='',
+                       match_rate=-1, orphan_rate=-1, null_fk_rate=-1,
+                       fanout_ratio=-1, last_profiled_at=''
+                   WHERE id=?""",
+                (
+                    from_entity, to_entity, from_column, to_column,
+                    relationship_type, join_type, label, jc_json,
+                    confidence_score, status, generated_by, reason,
+                    constraint_name, 1 if source_enforced else 0, optionality,
+                    existing["id"],
+                ),
+            )
+            return existing["id"]
+
+        conn.execute(
+            """INSERT INTO entity_relationships
+                   (account_id, from_entity, to_entity, from_column, to_column,
+                    relationship_type, join_type, label, is_active,
+                    confidence_score, status, join_conditions, generated_by,
+                    reason, relationship_key, constraint_name, source_enforced,
+                    optionality)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                account_id, from_entity, to_entity, from_column, to_column,
+                relationship_type, join_type, label, confidence_score, status,
+                jc_json, generated_by, reason, key, constraint_name,
+                1 if source_enforced else 0, optionality,
+            ),
+        )
+        row = conn.execute("SELECT last_insert_rowid() AS id").fetchone()
+    return row["id"] if row else -1
+
+
 def get_relationship(account_id: str, rel_id: int) -> Optional[dict]:
     with get_db() as conn:
         row = conn.execute(
@@ -2065,6 +2151,10 @@ def update_relationship_validation(
     *,
     row_count_estimate: int = -1,
     join_multiplicity: str = "",
+    match_rate: float = -1.0,
+    orphan_rate: float = -1.0,
+    null_fk_rate: float = -1.0,
+    fanout_ratio: float = -1.0,
 ) -> None:
     allowed = {"untested", "valid", "warning", "broken"}
     status_value = validation_status if validation_status in allowed else "untested"
@@ -2074,12 +2164,22 @@ def update_relationship_validation(
                SET validation_status=?,
                    validated_at=datetime('now'),
                    row_count_estimate=?,
-                   join_multiplicity=?
+                   join_multiplicity=?,
+                   match_rate=CASE WHEN ? >= 0 THEN ? ELSE match_rate END,
+                   orphan_rate=CASE WHEN ? >= 0 THEN ? ELSE orphan_rate END,
+                   null_fk_rate=CASE WHEN ? >= 0 THEN ? ELSE null_fk_rate END,
+                   fanout_ratio=CASE WHEN ? >= 0 THEN ? ELSE fanout_ratio END,
+                   last_profiled_at=CASE WHEN ? >= 0 THEN datetime('now') ELSE last_profiled_at END
              WHERE account_id=? AND id=?
         """, (
             status_value,
             int(row_count_estimate),
             join_multiplicity or "",
+            float(match_rate), float(match_rate),
+            float(orphan_rate), float(orphan_rate),
+            float(null_fk_rate), float(null_fk_rate),
+            float(fanout_ratio), float(fanout_ratio),
+            float(match_rate),
             account_id,
             rel_id,
         ))
