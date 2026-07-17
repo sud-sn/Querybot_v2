@@ -389,5 +389,153 @@ class ModeNoneGuardTests(unittest.TestCase):
         self.assertEqual(out[0]["email"], "real.person@corp.com")
 
 
+class QuestionPiiScrubTests(unittest.TestCase):
+    """Front-door channel: PII the USER types into a question must be scrubbed
+    before any LLM prompt (SQL generation, off-topic classifier) — schema-side
+    masking can't help when the identifier arrives in the question itself."""
+
+    def test_email_ssn_phone_scrubbed(self):
+        from core.masking import scrub_question_pii
+        out, changed = scrub_question_pii(
+            "email bob@corp.com or call 555-123-4567 re ssn 123-45-6789", ""
+        )
+        self.assertTrue(changed)
+        self.assertNotIn("bob@corp.com", out)
+        self.assertNotIn("555-123-4567", out)
+        self.assertNotIn("123-45-6789", out)
+        for placeholder in ("[EMAIL]", "[PHONE]", "[SSN]"):
+            self.assertIn(placeholder, out)
+
+    def test_iso_dates_preserved(self):
+        # Unlike scrub_embedded_pii, question scrubbing must NOT touch dates —
+        # "revenue from 2024-01-01 to 2024-03-31" is a period filter, and
+        # replacing it with [DATE] would break the core analytics use case.
+        from core.masking import scrub_question_pii
+        q = "revenue from 2024-01-01 to 2024-03-31 by region"
+        out, changed = scrub_question_pii(q, "healthcare_pharmacy")
+        self.assertEqual(out, q)
+        self.assertFalse(changed)
+
+    def test_regulated_industry_gets_ner_person_pass(self):
+        from unittest.mock import patch
+        from core.masking import scrub_question_pii
+        fake = _FakeNerAnalyzer()
+        with patch("core.masking._get_presidio", return_value=fake):
+            out, changed = scrub_question_pii(
+                "why was John Smith's claim denied?", "healthcare_pharmacy"
+            )
+        self.assertTrue(changed)
+        self.assertNotIn("John Smith", out)
+        self.assertIn("[PERSON]", out)
+
+    def test_standard_industry_skips_ner(self):
+        from unittest.mock import patch
+        from core.masking import scrub_question_pii
+        fake = _FakeNerAnalyzer()
+        with patch("core.masking._get_presidio", return_value=fake):
+            out, changed = scrub_question_pii("why was John Smith promoted?", "")
+        self.assertEqual(fake.calls, [], "NER must not run for standard industry")
+        self.assertFalse(changed)
+
+    def test_idempotent(self):
+        # Scrubbing happens at both the dispatcher (before the off-topic
+        # classifier) and handle_query choke points — the second pass must be
+        # a no-op on already-scrubbed text.
+        from unittest.mock import patch
+        from core.masking import scrub_question_pii
+        with patch("core.masking._get_presidio", return_value=_FakeNerAnalyzer()):
+            once, _ = scrub_question_pii(
+                "mail John Smith at bob@corp.com", "healthcare_pharmacy"
+            )
+            twice, changed = scrub_question_pii(once, "healthcare_pharmacy")
+        self.assertEqual(once, twice)
+        self.assertFalse(changed)
+
+    def test_empty_and_none_safe(self):
+        from core.masking import scrub_question_pii
+        self.assertEqual(scrub_question_pii("", "banking"), ("", False))
+        self.assertEqual(scrub_question_pii(None, "banking"), (None, False))
+
+
+class QuestionScrubWiringTests(unittest.TestCase):
+    """The scrub is only worth anything if it actually sits upstream of every
+    LLM prompt. Dispatcher path gets a real execution test (small function);
+    handle_query gets static source assertions, matching this codebase's
+    established pattern for the ~1,100-line pipeline function (see
+    AutoImportHookWiringTests in test_compliance_onboarding.py)."""
+
+    def test_dispatcher_scrubs_before_classifier_and_pipeline(self):
+        import asyncio
+        from unittest.mock import patch, AsyncMock
+        import core.dispatcher as dispatcher
+
+        seen = {}
+
+        async def _fake_classifier(text, client_row):
+            seen["classifier_text"] = text
+            return True
+
+        async def _fake_hq(account_id, event, adapter, text, portal_user, is_clarification=False):
+            seen["pipeline_text"] = text
+
+        adapter = type("A", (), {"send_message": AsyncMock(), "persistent_typing": False})()
+        profile = {"mode": "regulated", "industry": "healthcare_pharmacy"}
+        with (
+            patch.object(dispatcher.store, "get_compliance_profile", return_value=profile),
+            patch.object(dispatcher, "_classify_is_data_question", _fake_classifier),
+            patch("core.query_pipeline.handle_query", _fake_hq),
+            patch("core.masking._get_presidio", return_value=_FakeNerAnalyzer()),
+        ):
+            asyncio.run(dispatcher._run_query_with_guard(
+                "acct-1", object(), adapter,
+                "why was John Smith's claim denied? email bob@corp.com",
+                None, {},
+            ))
+        for key in ("classifier_text", "pipeline_text"):
+            self.assertIn(key, seen)
+            self.assertNotIn("John Smith", seen[key], key)
+            self.assertNotIn("bob@corp.com", seen[key], key)
+            self.assertIn("[PERSON]", seen[key], key)
+            self.assertIn("[EMAIL]", seen[key], key)
+
+    def test_dispatcher_leaves_standard_tenant_text_untouched(self):
+        import asyncio
+        from unittest.mock import patch, AsyncMock
+        import core.dispatcher as dispatcher
+
+        seen = {}
+
+        async def _fake_hq(account_id, event, adapter, text, portal_user, is_clarification=False):
+            seen["pipeline_text"] = text
+
+        adapter = type("A", (), {"send_message": AsyncMock(), "persistent_typing": False})()
+        with (
+            patch.object(dispatcher.store, "get_compliance_profile",
+                         return_value={"mode": "standard", "industry": ""}),
+            patch("core.query_pipeline.handle_query", _fake_hq),
+        ):
+            asyncio.run(dispatcher._run_query_with_guard(
+                "acct-1", object(), adapter,
+                "email the report to bob@corp.com", None, {},
+                is_clarification=True,  # skip the off-topic classifier stage
+            ))
+        self.assertEqual(seen["pipeline_text"], "email the report to bob@corp.com")
+
+    def test_handle_query_scrub_sits_between_profile_fetch_and_first_llm_use(self):
+        from pathlib import Path
+        src = Path("core/query_pipeline.py").read_text(encoding="utf-8")
+        anchor = "compliance_profile = store.get_compliance_profile(account_id)"
+        self.assertIn(anchor, src)
+        after = src[src.index(anchor):]
+        scrub_pos = after.index("scrub_question_pii")
+        # The scrub must run before the compliance context / LLM-context
+        # evaluation that leads into SQL generation and RAG retrieval.
+        context_pos = after.index("compliance_context = resolve_context(")
+        self.assertLess(scrub_pos, context_pos)
+        scrub_block = after[:context_pos]
+        self.assertIn('compliance_profile.get("mode") == "regulated"', scrub_block)
+        self.assertIn("question_pii_scrub", scrub_block)  # trace step for audit
+
+
 if __name__ == "__main__":
     unittest.main()

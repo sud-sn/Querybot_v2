@@ -140,6 +140,19 @@ async def _run_query_with_guard(
         except Exception:
             pass
 
+    # Regulated tenants: scrub user-typed PII from the question BEFORE the
+    # off-topic classifier below sends the raw text to the LLM. handle_query
+    # re-scrubs (idempotent) for callers that bypass this dispatcher — the
+    # user-facing "identifiers were removed" notice is sent from there, not
+    # here, so it isn't duplicated.
+    try:
+        _profile = store.get_compliance_profile(account_id)
+        if _profile.get("mode") == "regulated":
+            from core.masking import scrub_question_pii
+            text, _ = scrub_question_pii(text, _profile.get("industry", ""))
+    except Exception as e:
+        log.debug("question PII scrub skipped: %s", e)
+
     # Stage 2 — off-topic guard (skipped for clarification replies)
     if not is_clarification:
         if not await _classify_is_data_question(text, client_row):

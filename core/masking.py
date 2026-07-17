@@ -269,6 +269,39 @@ def scrub_person_names_ner(text: str, analyzer=None) -> str:
         return text
 
 
+def scrub_question_pii(text: str, industry: str = "") -> tuple[str, bool]:
+    """
+    Scrub PII the USER typed into their question before it reaches any LLM
+    prompt (SQL generation, off-topic classifier, retries).
+
+    KB samples and result rows are already protected elsewhere — this closes
+    the remaining front-door channel: "why was John Smith's claim denied?"
+    carries PHI in the question text itself, regardless of how well the
+    schema-side masking works.
+
+    Deliberately narrower than scrub_embedded_pii:
+      • NO date scrubbing — an ISO date in an analytics question is almost
+        always a period filter ("sales from 2024-01-01"), not a DOB.
+        Replacing it would break the core use case.
+      • NER person-name pass only for regulated industries (same gate as
+        scrub_unmasked_free_text). First call pays the spaCy model load;
+        subsequent calls are milliseconds on question-length text. Falls
+        back to regex-only when Presidio isn't installed.
+
+    Returns (scrubbed_text, changed). Idempotent — placeholders like
+    [EMAIL] contain nothing the patterns re-match, so scrubbing at both the
+    dispatcher and pipeline choke points is safe.
+    """
+    if not text or not isinstance(text, str):
+        return text, False
+    t = _RE_EMAIL_SUB.sub("[EMAIL]", text)
+    t = _RE_SSN_SUB.sub("[SSN]", t)
+    t = _RE_PHONE_SUB.sub("[PHONE]", t)
+    if industry in ("banking", "healthcare_pharmacy"):
+        t = scrub_person_names_ner(t)
+    return t, t != text
+
+
 def scrub_unmasked_free_text(
     rows: list[dict],
     columns: list[dict],

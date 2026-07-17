@@ -356,6 +356,37 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
     # against the in-memory DuckDB result cache instead of hitting the
     # production database.  Fast, private, supports full analytic SQL.
     compliance_profile = store.get_compliance_profile(account_id)
+
+    # ── Front-door PII scrub (regulated tenants) ─────────────────────────────
+    # Everything below this line may embed `question` into an LLM prompt or an
+    # embedding call (SQL generation, RAG retrieval, repair retries). Schema
+    # samples and result rows are masked elsewhere, but the user can type PHI
+    # directly ("why was John Smith's claim denied?") — scrub it here, at the
+    # single point every handle_query caller flows through. The dispatcher
+    # scrubs before its off-topic classifier too; this call is idempotent so
+    # double-scrubbing is harmless, and this one also covers the direct
+    # handle_query callers in gateway/webhooks.py that bypass the dispatcher.
+    # The trace row above already captured the original text (tenant-local,
+    # never sent to the LLM), preserving audit evidence of what was removed.
+    if compliance_profile.get("mode") == "regulated":
+        from core.masking import scrub_question_pii
+        question, _scrubbed = scrub_question_pii(
+            question, compliance_profile.get("industry", "")
+        )
+        if _scrubbed:
+            _trace_step(
+                trace_id,
+                "question_pii_scrub",
+                output_summary={"scrubbed_question": question},
+            )
+            await adapter.send_message(
+                event,
+                "ℹ️ Personal identifiers in your question were removed before "
+                "processing, per this workspace's data policy. Results may be "
+                "less specific — try filtering by an ID or category instead "
+                "of a person's name or contact details.",
+            )
+
     compliance_context = resolve_context(
         account_id,
         portal_user,
