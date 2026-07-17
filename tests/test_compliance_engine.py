@@ -410,6 +410,61 @@ class ClassificationTests(unittest.TestCase):
         # only adds 'doctor'/'physician', not bare 'provider'.
         self.assertEqual(classify_column("CLOUD_PROVIDER", "healthcare_pharmacy")["tags"], [])
 
+    def test_prescriber_identifiers_classify_as_prescription(self):
+        # Regression: NPI/DEA/license numbers identify the prescriber, same
+        # gap class as the DOCTOR_NAME bug — masked in KB samples
+        # (core/masking.py) but previously invisible to query-time
+        # classification, so they sailed through result rows unmasked.
+        # DEA_NUMBER in particular: \b doesn't break on "_" (word char), so
+        # a naive \bdea\b alone misses the underscore-suffixed form.
+        for col in ("NPI", "PRESCRIBER_NPI", "DEA_NUMBER", "LICENSE_NUMBER", "PHARMACY_LICENSE_NO"):
+            self.assertIn("PRESCRIPTION", classify_column(col, "healthcare_pharmacy")["tags"], col)
+        # Bare identifier columns (the ID itself) alias-preserve grouping.
+        for col in ("NPI", "DEA_NUMBER", "LICENSE_NUMBER", "PHARMACY_LICENSE_NO"):
+            self.assertEqual(
+                classify_column(col, "healthcare_pharmacy")["mask_strategy"],
+                "safe_alias_identifier",
+                col,
+            )
+        # PRESCRIBER_NPI matches the pre-existing "prescriber" name-alias
+        # pattern first (unrelated to this fix) — still a safe, non-raw
+        # strategy, just the name-shaped alias rather than the identifier one.
+        self.assertEqual(
+            classify_column("PRESCRIBER_NPI", "healthcare_pharmacy")["mask_strategy"],
+            "safe_alias_name",
+        )
+
+    def test_health_plan_identifiers_classify_as_phi_and_redact(self):
+        # policy/subscriber/group numbers are HIPAA-listed beneficiary
+        # identifiers, same protected class as member_id (already covered).
+        for col in ("POLICY_NUMBER", "SUBSCRIBER_ID", "GROUP_NUMBER"):
+            result = classify_column(col, "healthcare_pharmacy")
+            self.assertIn("PHI", result["tags"], col)
+            self.assertEqual(result["mask_strategy"], "redact", col)
+
+    def test_banking_account_and_routing_numbers_classify_as_pii(self):
+        # A specific customer's account/routing number is a direct
+        # identifier, not an aggregate figure — needs masking even though
+        # FINANCIAL (aggregate balance/revenue) stays queryable for banking.
+        for col in ("ACCOUNT_NUMBER", "ROUTING_NUMBER", "IBAN", "ACCT_NO"):
+            self.assertIn("PII", classify_column(col, "banking")["tags"], col)
+        # ACCOUNT_NUMBER/ROUTING_NUMBER/IBAN also match the FINANCIAL regex
+        # ("account"/"routing"/"iban" as literal substrings) so they get the
+        # digit-preserving "partial" strategy; the "ACCT_NO" abbreviation
+        # doesn't match FINANCIAL's literal tokens, so it falls back to the
+        # still-safe "redact" default. Both are non-raw — no security gap.
+        for col in ("ACCOUNT_NUMBER", "ROUTING_NUMBER", "IBAN"):
+            self.assertEqual(classify_column(col, "banking")["mask_strategy"], "partial", col)
+        self.assertEqual(classify_column("ACCT_NO", "banking")["mask_strategy"], "redact")
+
+    def test_account_balance_not_swept_into_pii(self):
+        # account.?(?:number|num|no) requires the number/num/no suffix —
+        # aggregate figures like ACCOUNT_BALANCE must stay FINANCIAL-only
+        # so banking clients can still query balances freely.
+        result = classify_column("ACCOUNT_BALANCE", "banking")
+        self.assertNotIn("PII", result["tags"])
+        self.assertIn("FINANCIAL", result["tags"])
+
 
 if __name__ == "__main__":
     unittest.main()

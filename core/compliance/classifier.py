@@ -8,9 +8,17 @@ import store
 
 
 _PATTERNS = {
+    # account/routing/IBAN/acct.no direct-identifier suffixes are deliberately
+    # HERE, not just under FINANCIAL below — FINANCIAL isn't in banking's
+    # sensitive_tags (aggregate balance/revenue figures are meant to stay
+    # freely queryable), but a SPECIFIC customer's account or routing number
+    # is a direct identifier, not an aggregate figure. core/masking.py
+    # (KB-time) already treats these as "credit_card"-strategy sensitive;
+    # without a PII tag here, query-time masking never matched that intent.
     "PII": re.compile(
         r"(name|email|phone|mobile|address|ssn|social.?security|passport|national.?id|dob|birth|"
-        r"doctor|physician)",
+        r"doctor|physician|"
+        r"account.?(?:number|num|no)\b|routing.?(?:number|num|no)\b|\biban\b|\bacct.?no\b)",
         re.I,
     ),
     "PCI": re.compile(r"(card.?number|pan|cvv|cvc|expiry|cardholder)", re.I),
@@ -19,12 +27,28 @@ _PATTERNS = {
         r"(account|routing|iban|swift|balance|revenue|profit|loss|income|payment|transaction|credit|debit)",
         re.I,
     ),
+    # policy/subscriber/group numbers are HIPAA-listed health-plan
+    # beneficiary identifiers (same protected-identifier class as member ID,
+    # already covered below) — not clinical data, but still a direct patient
+    # identifier.
     "PHI": re.compile(
-        r"(patient|diagnos|medical|health|allerg|condition|mrn|member.?id|clinical)",
+        r"(patient|diagnos|medical|health|allerg|condition|mrn|member.?id|clinical|"
+        r"policy.?(?:number|num|no|id)|subscriber.?id|group.?(?:number|num|no))",
         re.I,
     ),
+    # NPI/DEA/license numbers identify the PRESCRIBER, not the patient, but
+    # core/masking.py already treats them as sensitive (KB-time) — this was
+    # the exact gap that let DOCTOR_NAME-style columns leak: masked in KB
+    # samples, invisible to query-time classification. "prescriber_license"
+    # etc. already match via the existing "prescriber" alternative below;
+    # these add the BARE forms (a plain "LICENSE_NUMBER" or "NPI" column).
     "PRESCRIPTION": re.compile(
-        r"(prescription|rx|drug|medication|compound|ingredient|prescriber|dosage|ndc)",
+        r"(prescription|rx|drug|medication|compound|ingredient|prescriber|dosage|ndc|"
+        # \b doesn't break on "_" (it's a word char), so "DEA_NUMBER" needs an
+        # explicit underscore/space-tolerant alternative alongside the bare
+        # \bnpi\b/\bdea\b forms.
+        r"\bnpi\b|\bdea\b|npi[_\s]?(?:number|num|no)|dea[_\s]?(?:number|num|no)|"
+        r"licen[sc]e.?(?:number|num|no)|pharmacy.?licen[sc]e|state.?licen[sc]e)",
         re.I,
     ),
     "PAYMENT": re.compile(r"(payment|payer|claim|charge|copay|insurance)", re.I),
@@ -36,7 +60,20 @@ def _default_mask_strategy(column_name: str, tags: list[str]) -> str:
     if set(tags) & {"PII", "PRESCRIPTION"}:
         if re.search(r"(?:doctor|physician|prescriber|provider|patient|person).*(?:name|_nm)?$", name, re.I):
             return "safe_alias_name"
-        if re.search(r"(?:rx|prescription|mrn|medical.?record|patient|member).*(?:id|key|num|number|no)$", name, re.I):
+        # NOTE: policy/subscriber/group numbers are NOT in this identifier
+        # regex — they're tagged PHI (not PII/PRESCRIPTION, see _PATTERNS
+        # above), so this branch never runs for them; they resolve via the
+        # "redact" fallback below instead, which is a safe default and
+        # matches how the pre-existing "member_id" PHI pattern already
+        # behaves. Only PII/PRESCRIPTION-tagged identifiers get the
+        # grouping-preserving alias here.
+        if re.search(
+            r"(?:rx|prescription|mrn|medical.?record|patient|member|"
+            r"npi|dea|licen[sc]e).*(?:id|key|num|number|no)$",
+            name, re.I,
+        ) or re.fullmatch(r"npi|dea", name, re.I):
+            # A bare "NPI"/"DEA" column IS the identifier itself — no
+            # id/num/no suffix to require, unlike "RX_NUMBER" etc.
             return "safe_alias_identifier"
     return "partial" if set(tags) & {"FINANCIAL", "PAYMENT"} else "redact"
 
