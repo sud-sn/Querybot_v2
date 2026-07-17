@@ -235,22 +235,39 @@ def _score_candidate(table: str, column: str, role: str, question: str, base_tab
     return score
 
 
+def _alias_forms(alias_norm: str) -> set[str]:
+    """Singular + plural surface forms an alias can take in a question."""
+    forms = {alias_norm}
+    if not alias_norm.endswith("s"):
+        forms.add(alias_norm + "s")
+        if alias_norm.endswith("y"):
+            forms.add(alias_norm[:-1] + "ies")
+        if alias_norm.endswith(("x", "z", "ch", "sh")):
+            forms.add(alias_norm + "es")
+    if alias_norm.endswith("se"):
+        forms.add(alias_norm[:-1] + "es")
+    if alias_norm == "warehouse":
+        forms.add("warehouses")
+    return forms
+
+
+def _alias_occurrence_spans(alias: str, question_norm: str) -> list[tuple[int, int]]:
+    """Word-boundary spans where the alias (or a plural form) occurs."""
+    alias_norm = _norm(alias)
+    if not alias_norm:
+        return []
+    spans: list[tuple[int, int]] = []
+    for form in _alias_forms(alias_norm):
+        for m in re.finditer(rf"(?<![a-z0-9]){re.escape(form)}(?![a-z0-9])", question_norm):
+            spans.append(m.span())
+    return spans
+
+
 def _contains_alias(alias: str, question_norm: str, question_compact: str) -> bool:
     alias_norm = _norm(alias)
     if not alias_norm:
         return False
-    alias_forms = {alias_norm}
-    if not alias_norm.endswith("s"):
-        alias_forms.add(alias_norm + "s")
-        if alias_norm.endswith("y"):
-            alias_forms.add(alias_norm[:-1] + "ies")
-        if alias_norm.endswith(("x", "z", "ch", "sh")):
-            alias_forms.add(alias_norm + "es")
-    if alias_norm.endswith("se"):
-        alias_forms.add(alias_norm[:-1] + "es")
-    if alias_norm == "warehouse":
-        alias_forms.add("warehouses")
-    for form in alias_forms:
+    for form in _alias_forms(alias_norm):
         if re.search(rf"(?<![a-z0-9]){re.escape(form)}(?![a-z0-9])", question_norm):
             return True
     alias_compact = _compact(alias_norm)
@@ -342,11 +359,51 @@ def _choose_fields(question: str, candidates: list[dict]) -> list[dict]:
         if not current or score > current["_score"]:
             c = dict(c)
             c["_score"] = score
+            c["_tied_sources"] = {(_table_bare(c["table"]), c["column"])}
             chosen_by_term[key] = c
+        elif score == current["_score"]:
+            # Another source matched this term equally well — the pick below
+            # is arbitrary (dict iteration order), so record the tie. The
+            # plan will demote tied fields to enforcement="optional": a
+            # wrong guess as a hard requirement rejects CORRECT SQL (e.g.
+            # "doctors state" resolving to DIM_PATIENT.STATE when the SQL
+            # rightly used DIM_PRESCRIBER.STATE), while a hint costs little.
+            # Tie identity uses the BARE table name — schema catalogs list
+            # the same table under multiple qualified forms (DB.SCHEMA.T,
+            # SCHEMA.T, T), and those are one source, not an ambiguity.
+            current["_tied_sources"].add((_table_bare(c["table"]), c["column"]))
+
+    # Longest-match-wins: a term whose every occurrence in the question sits
+    # inside a longer chosen term is not an independent mention — "insurance
+    # coverage type" mentions "coverage type", not the bare "type" column of
+    # some unrelated table. Only drop when ALL occurrences are covered:
+    # "revenue by item and item group" keeps both "item" and "item group"
+    # because the first "item" stands alone.
+    qn = _norm(question)
+    term_spans = {term: _alias_occurrence_spans(term, qn) for term in chosen_by_term}
+    for term in list(chosen_by_term):
+        spans = term_spans.get(term) or []
+        if not spans:
+            continue  # compact/technical match — can't locate it, keep it
+        longer_spans = [
+            span
+            for other, other_spans in term_spans.items()
+            if other != term and len(other) > len(term)
+            for span in other_spans
+        ]
+        if longer_spans and all(
+            any(ls[0] <= s[0] and s[1] <= ls[1] for ls in longer_spans)
+            for s in spans
+        ):
+            chosen_by_term.pop(term)
+
     fields = list(chosen_by_term.values())
     fields.sort(key=lambda f: (f["role"] != "measure", f["term"], f["table"], f["column"]))
     for f in fields:
         f.pop("_score", None)
+        tied = f.pop("_tied_sources", set())
+        if len(tied) > 1:
+            f["ambiguous_source"] = True
     return fields[:8]
 
 
@@ -610,6 +667,11 @@ def build_semantic_field_plan(
         return {"enabled": False, "fields": [], "joins": [], "reason": "no matching semantic fields"}
     for field in fields:
         if (field.get("column") or "").upper() in _DATE_PART_COLUMNS:
+            field["enforcement"] = "optional"
+        # A term that tied across multiple source tables/columns was resolved
+        # by arbitrary order, not evidence — keep it as a hint, never a hard
+        # requirement (a wrong hard requirement rejects correct SQL).
+        if field.get("ambiguous_source"):
             field["enforcement"] = "optional"
     joins = _build_required_joins(fields, normalized_columns, vocab=vocab)
     # Join edges that exist only to reach optional (date-part) fields must be

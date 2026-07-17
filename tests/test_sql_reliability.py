@@ -441,6 +441,121 @@ class StrictColumnValidationTests(unittest.TestCase):
             columns = {f["column"] for f in plan.get("fields", [])}
             self.assertNotIn("DAY", columns, f"false match for: {question!r}")
 
+    def test_subsumed_generic_term_is_dropped(self):
+        # Production repro: "Show the number of patients grouped by their
+        # insurance coverage type." — the bare word "type" matched
+        # DIM_INGREDIENT.TYPE and became a second REQUIRED field alongside
+        # DIM_PATIENT.Coverage_Type, so the validator rejected correct SQL
+        # with field_plan_mismatch ("SQL did not use required semantic
+        # field type: ...DIM_INGREDIENT.TYPE"). A term whose every
+        # occurrence sits inside a longer matched term is not an
+        # independent mention.
+        table_columns = {
+            "CHATBOT_DB.PHARMACY.DIM_PATIENT": {
+                "PATIENT_ID": "int", "COVERAGE_TYPE": "varchar",
+            },
+            "CHATBOT_DB.PHARMACY.DIM_INGREDIENT": {
+                "INGREDIENT_ID": "int", "TYPE": "varchar",
+            },
+        }
+        plan = build_semantic_field_plan(
+            "Show the number of patients grouped by their insurance coverage type.",
+            table_columns,
+        )
+        self.assertTrue(plan["enabled"])
+        fields = {(f["table"], f["column"]) for f in plan["fields"]}
+        self.assertIn(("CHATBOT_DB.PHARMACY.DIM_PATIENT", "COVERAGE_TYPE"), fields)
+        self.assertNotIn(("CHATBOT_DB.PHARMACY.DIM_INGREDIENT", "TYPE"), fields)
+
+    def test_subsumed_term_dropped_for_plural_phrasing_too(self):
+        table_columns = {
+            "CHATBOT_DB.PHARMACY.DIM_PATIENT": {"COVERAGE_TYPE": "varchar"},
+            "CHATBOT_DB.PHARMACY.DIM_INGREDIENT": {"TYPE": "varchar"},
+        }
+        plan = build_semantic_field_plan(
+            "patient count by coverage types", table_columns,
+        )
+        fields = {(f["table"], f["column"]) for f in plan.get("fields", [])}
+        self.assertNotIn(("CHATBOT_DB.PHARMACY.DIM_INGREDIENT", "TYPE"), fields)
+
+    def test_independent_mention_of_shorter_term_is_kept(self):
+        # "state and state code": the first "state" stands alone, so BOTH
+        # terms must survive — the subsumption drop only fires when every
+        # occurrence of the shorter term is inside a longer one.
+        table_columns = {
+            "CHATBOT_DB.PHARMACY.DIM_PATIENT": {
+                "STATE": "varchar", "STATE_CODE": "varchar",
+            },
+        }
+        plan = build_semantic_field_plan(
+            "patients by state and state code", table_columns,
+        )
+        columns = {f["column"] for f in plan.get("fields", [])}
+        self.assertIn("STATE_CODE", columns)
+        self.assertIn("STATE", columns)
+
+    def test_ambiguous_cross_table_term_is_demoted_to_optional(self):
+        # Production repro: "find the doctors state who are top 5 in
+        # revenue" — STATE exists in both DIM_PATIENT and DIM_PRESCRIBER
+        # with identical scores; the arbitrary pick (DIM_PATIENT) became a
+        # hard requirement and rejected correct SQL that used
+        # DIM_PRESCRIBER.STATE. Ties must demote to a hint.
+        table_columns = {
+            "CHATBOT_DB.PHARMACY.DIM_PATIENT": {
+                "PATIENT_ID": "int", "STATE": "varchar",
+            },
+            "CHATBOT_DB.PHARMACY.DIM_PRESCRIBER": {
+                "PRESCRIBER_ID": "int", "STATE": "varchar",
+            },
+            "CHATBOT_DB.PHARMACY.FACT_PRESCRIPTION_FILL": {
+                "PRESCRIBER_ID": "int", "TOTAL_CHARGE_USD": "decimal",
+            },
+        }
+        plan = build_semantic_field_plan(
+            "find the doctors state who are top 5 in revenue", table_columns,
+        )
+        state_fields = [f for f in plan.get("fields", []) if f["column"] == "STATE"]
+        self.assertTrue(state_fields)
+        for f in state_fields:
+            self.assertEqual(f.get("enforcement"), "optional", f)
+
+    def test_correct_sql_passes_despite_ambiguous_state_plan(self):
+        # End-to-end: the exact SQL the LLM generated in production (using
+        # DIM_PRESCRIBER.STATE) must now pass validation even though the
+        # plan's arbitrary tie-pick suggested DIM_PATIENT.STATE.
+        table_columns = {
+            "CHATBOT_DB.PHARMACY.DIM_PATIENT": {
+                "PATIENT_ID": "int", "STATE": "varchar",
+            },
+            "CHATBOT_DB.PHARMACY.DIM_PRESCRIBER": {
+                "PRESCRIBER_ID": "int", "STATE": "varchar",
+            },
+            "CHATBOT_DB.PHARMACY.FACT_PRESCRIPTION_FILL": {
+                "PRESCRIBER_ID": "int", "TOTAL_CHARGE_USD": "decimal",
+            },
+        }
+        question = "find the doctors state who are top 5 in revenue"
+        plan = build_semantic_field_plan(question, table_columns)
+        known = {
+            "CHATBOT_DB.PHARMACY.DIM_PATIENT", "PHARMACY.DIM_PATIENT", "DIM_PATIENT",
+            "CHATBOT_DB.PHARMACY.DIM_PRESCRIBER", "PHARMACY.DIM_PRESCRIBER", "DIM_PRESCRIBER",
+            "CHATBOT_DB.PHARMACY.FACT_PRESCRIPTION_FILL", "PHARMACY.FACT_PRESCRIPTION_FILL",
+            "FACT_PRESCRIPTION_FILL",
+        }
+        sql = (
+            "SELECT TOP 5 dp.State AS Doctor_State, "
+            "SUM(fpf.Total_Charge_USD) AS Total_Revenue "
+            "FROM PHARMACY.FACT_Prescription_Fill fpf "
+            "JOIN PHARMACY.DIM_Prescriber dp ON fpf.Prescriber_ID = dp.Prescriber_ID "
+            "GROUP BY dp.State ORDER BY Total_Revenue DESC;"
+        )
+        ok, msg, code = validate_sql(
+            sql, known, "azure_sql", None, table_columns,
+            {"semantic_plan": plan},
+        )
+        self.assertTrue(ok, msg)
+        self.assertEqual(code, "ok")
+
     def test_semantic_plan_still_matches_day_for_calendar_grouping(self):
         # The guard must not block legitimate "group by day" questions.
         table_columns = {
