@@ -73,6 +73,34 @@ class UserAttestationStoreTests(unittest.TestCase):
         self.store.save_user_attestation(self.account_id, user_id)
         self.assertFalse(self.store.user_attestation_valid("some-other-account", user_id))
 
+    def test_decision_counts_surface_attested_unmasked_releases(self):
+        # Trust panel evidence: attested unmasked releases are counted
+        # separately from the general allowed/denied split they're part of.
+        acct = f"acct-attest-counts-{uuid.uuid4().hex[:8]}"
+        self.store.upsert_client(acct, "portal")
+        try:
+            for reason, allowed in (
+                ("attested_unmasked_release", True),
+                ("attested_unmasked_release", True),
+                ("policy_allow", True),
+                ("default_deny", False),
+            ):
+                self.store.log_policy_decision(
+                    account_id=acct, user_id="7", action="result_release",
+                    purpose_id="patient_care", channel="portal",
+                    allowed=allowed, reason_code=reason,
+                    resources=["RX.PHARMACY.PRESCRIBER_NAME"],
+                    obligations={}, policy_version=1,
+                )
+            counts = self.store.get_policy_decision_counts(acct, days=30)
+            self.assertEqual(counts["attested_unmasked"], 2)
+            self.assertEqual(counts["allowed"], 3)   # releases stay in allowed too
+            self.assertEqual(counts["denied"], 1)
+        finally:
+            with self.store.get_db() as conn:
+                conn.execute("DELETE FROM policy_decision_log WHERE account_id=?", (acct,))
+                conn.execute("DELETE FROM client WHERE account_id=?", (acct,))
+
 
 class GovernedQueryAttestationTests(unittest.TestCase):
     """Real execution of execute_governed_query's release path with patched
@@ -194,6 +222,14 @@ class AttestationWiringTests(unittest.TestCase):
         # Revoke is guarded by a confirm dialog — instant re-masking is
         # surprising enough to warrant one.
         self.assertIn("Revoke this attestation?", src)
+
+    def test_trust_panel_shows_unmasked_release_count(self):
+        src = _src("admin/templates/client_compliance.html")
+        panel = src[src.index('id="panel-trust"'):]
+        self.assertIn("Unmasked releases to attested users", panel)
+        self.assertIn("decision_counts.attested_unmasked", panel)
+        self.assertIn("None — all results masked", panel)
+        self.assertIn("active attestation(s)", panel)
 
     def test_enforcement_sits_before_protect_rows(self):
         src = _src("core/compliance/governed_query.py")

@@ -591,11 +591,20 @@ def get_policy_decision_counts(account_id: str, days: int = 30) -> dict:
             "WHERE account_id=? AND created_at >= ? GROUP BY allowed",
             (account_id, cutoff),
         ).fetchall()
+        # Attested unmasked releases are a subset of "allowed" — surfaced
+        # separately so the Trust panel can show how often display masking
+        # was waived for attested users (each row names user + columns).
+        attested = conn.execute(
+            "SELECT COUNT(*) AS n FROM policy_decision_log "
+            "WHERE account_id=? AND created_at >= ? AND reason_code=?",
+            (account_id, cutoff, "attested_unmasked_release"),
+        ).fetchone()
     counts = {int(row["allowed"]): row["n"] for row in rows}
     return {
         "window_days": int(days),
         "allowed": counts.get(1, 0),
         "denied": counts.get(0, 0),
+        "attested_unmasked": attested["n"] if attested else 0,
     }
 
 

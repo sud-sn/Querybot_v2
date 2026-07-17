@@ -323,6 +323,20 @@
           <td><span class="tag">{{ decision_counts.allowed }} allowed · {{ decision_counts.denied }} denied</span></td>
           <td style="font-size:12px">Hash-chained records (each entry signs the previous) — History tab</td>
         </tr>
+        {% set _active_attestations = attestations|rejectattr('revoked_at')|list|length %}
+        <tr>
+          <td>Unmasked releases to attested users</td>
+          <td>
+            {% if decision_counts.attested_unmasked > 0 %}
+            <span class="tag">{{ decision_counts.attested_unmasked }} release(s)</span>
+            {% else %}
+            <span class="tag" style="background:var(--green-light);color:var(--green)">None — all results masked</span>
+            {% endif %}
+          </td>
+          <td style="font-size:12px">{{ _active_attestations }} active attestation(s) —
+            each release is a hash-chained log row naming the user and the exact columns
+            whose masking was waived. Manage under AI &amp; Egress.</td>
+        </tr>
         <tr>
           <td>Enforcement mode</td>
           <td>
