@@ -42,6 +42,8 @@ def test_production_layer_contains_mobile_and_reduced_motion_guards():
 
 
 def test_chat_uses_persistent_workspace_rail_and_responsive_drawer():
+    import re
+
     template = _read("portal/templates/portal_chat.html")
     stylesheet = _read("static/css/chat_workspace.css")
 
@@ -50,7 +52,19 @@ def test_chat_uses_persistent_workspace_rail_and_responsive_drawer():
     assert 'class="chat-workspace-main"' in template
     assert 'id="historyPanel"' in template
     assert "loadHistory();" in template
-    assert "grid-template-columns: 300px minmax(0, 1fr)" in stylesheet
+    # Fixed-width rail + flexible main. Width-agnostic on purpose: a previous
+    # hard-coded "300px" literal broke when the rail was restyled to 288px —
+    # the invariant worth pinning is the grid SHAPE, not the pixel value.
+    assert re.search(
+        r"\.chat-workspace\s*\{[^}]*grid-template-columns:\s*\d+px minmax\(0, 1fr\)",
+        stylesheet,
+    )
+    # Collapsible rail (added with the workspace refinement): collapsed state
+    # zeroes the rail column so the conversation gets the full width.
+    assert re.search(
+        r"\.chat-workspace\.rail-collapsed\s*\{[^}]*grid-template-columns:\s*0 minmax\(0, 1fr\)",
+        stylesheet,
+    )
     assert "@media (max-width: 900px)" in stylesheet
     assert "transform: translateX(-101%)" in stylesheet
 
