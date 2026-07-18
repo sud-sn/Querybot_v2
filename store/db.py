@@ -204,6 +204,9 @@ CREATE TABLE IF NOT EXISTS llm_call_log (
     payload_hash              TEXT    DEFAULT '',
     payload_preview_sanitized TEXT    DEFAULT '',
     prompt_chars              INTEGER DEFAULT 0,
+    response_hash             TEXT    DEFAULT '',
+    response_preview_sanitized TEXT   DEFAULT '',
+    response_chars            INTEGER DEFAULT 0,
     error_msg                 TEXT    DEFAULT '',
     created_at                TEXT    DEFAULT (datetime('now'))
 );
@@ -861,6 +864,11 @@ def _run_migrations() -> None:
         ("eval_run", "contract_version", "TEXT NOT NULL DEFAULT ''"),
         ("eval_run", "prev_pass_rate",   "REAL DEFAULT NULL"),
         ("eval_run", "regressed",        "INTEGER NOT NULL DEFAULT 0"),
+        # Response capture: audit rows previously only proved what was SENT
+        # to the LLM (payload hash + preview) — these prove what came BACK.
+        ("llm_call_log", "response_hash",              "TEXT DEFAULT ''"),
+        ("llm_call_log", "response_preview_sanitized", "TEXT DEFAULT ''"),
+        ("llm_call_log", "response_chars",             "INTEGER DEFAULT 0"),
     ]
     with get_db() as conn:
         _ensure_llm_call_log_table(conn)
@@ -1158,6 +1166,9 @@ def _ensure_llm_call_log_table(conn: sqlite3.Connection) -> None:
             payload_hash              TEXT    DEFAULT '',
             payload_preview_sanitized TEXT    DEFAULT '',
             prompt_chars              INTEGER DEFAULT 0,
+            response_hash             TEXT    DEFAULT '',
+            response_preview_sanitized TEXT   DEFAULT '',
+            response_chars            INTEGER DEFAULT 0,
             error_msg                 TEXT    DEFAULT '',
             created_at                TEXT    DEFAULT (datetime('now'))
         );

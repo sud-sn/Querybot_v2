@@ -1035,6 +1035,16 @@
             </td>
             <td>
               <div class="audit-preview">{{ call.payload_preview_sanitized or "—" }}</div>
+              {% if call.response_preview_sanitized %}
+              <div style="margin-top:.4rem;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--gray-500)">Sanitized response preview · {{ call.response_chars }} ch</div>
+              <div class="audit-preview" style="margin-top:2px">{{ call.response_preview_sanitized }}</div>
+              {% endif %}
+              {% if call.payload_hash or call.response_hash %}
+              <div style="margin-top:.35rem;font-size:10px;color:var(--gray-500);font-family:monospace" title="SHA-256 fingerprints of the exact prompt sent / response received — recompute to verify nothing else was exchanged">
+                {% if call.payload_hash %}sent {{ call.payload_hash[:16] }}…{% endif %}
+                {% if call.response_hash %} · recv {{ call.response_hash[:16] }}…{% endif %}
+              </div>
+              {% endif %}
               {% if call.error_msg %}
               <div style="margin-top:.35rem;font-size:11px;color:var(--red)">{{ call.error_msg }}</div>
               {% endif %}

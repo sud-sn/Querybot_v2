@@ -203,6 +203,10 @@ def _payload_hash(system: str, user: str) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
+def _response_hash(response: str) -> str:
+    return hashlib.sha256((response or "").encode("utf-8", errors="ignore")).hexdigest()
+
+
 def record_llm_call(
     *,
     llm_provider: str,
@@ -211,6 +215,7 @@ def record_llm_call(
     user: str,
     status: str,
     error_msg: str = "",
+    response: str = "",
 ) -> None:
     scope = _AUDIT_SCOPE.get()
     if not scope or not scope.get("enabled") or not scope.get("account_id"):
@@ -232,6 +237,13 @@ def record_llm_call(
             payload_preview_sanitized=sanitize_payload_preview(system, user),
             prompt_chars=len(system or "") + len(user or ""),
             error_msg=(error_msg or "")[:500],
+            # Same design as the prompt side: the hash is tamper-evident
+            # proof of the EXACT text the model returned; only a sanitized
+            # preview is retained so the audit log never becomes a store of
+            # raw generated content. Empty on error rows (no response).
+            response_hash=_response_hash(response) if response else "",
+            response_preview_sanitized=sanitize_llm_text(response, limit=1200),
+            response_chars=len(response or ""),
         )
     except Exception as exc:
         log.warning("LLM audit write failed: %s", exc)

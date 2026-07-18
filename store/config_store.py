@@ -685,6 +685,9 @@ def log_llm_call(
     prompt_chars: int = 0,
     error_msg: str = "",
     question_id: str = "",
+    response_hash: str = "",
+    response_preview_sanitized: str = "",
+    response_chars: int = 0,
 ) -> None:
     with get_db() as conn:
         conn.execute(
@@ -692,8 +695,9 @@ def log_llm_call(
             INSERT INTO llm_call_log
                 (account_id, question_id, request_id, question, component,
                  llm_provider, llm_model, status, payload_hash,
-                 payload_preview_sanitized, prompt_chars, error_msg)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 payload_preview_sanitized, prompt_chars, error_msg,
+                 response_hash, response_preview_sanitized, response_chars)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 account_id,
@@ -708,6 +712,9 @@ def log_llm_call(
                 payload_preview_sanitized,
                 prompt_chars,
                 error_msg,
+                response_hash,
+                response_preview_sanitized,
+                response_chars,
             ),
         )
 

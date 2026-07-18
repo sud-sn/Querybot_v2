@@ -1170,6 +1170,7 @@ async def llm_complete(
         system=system,
         user=user,
         status="success",
+        response=result[0] if isinstance(result, tuple) else str(result or ""),
     )
     return result
 
