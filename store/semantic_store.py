@@ -228,12 +228,22 @@ def find_ambiguous_term(
 ) -> Optional[dict]:
     """
     Return the first matched term that requires clarification, or None.
-    
+
     This is the fast-path check: if a term in the question has
     requires_clarification=true, we ask the user to pick from the
     predefined options rather than calling the ambiguity LLM.
+
+    Metric-colliding terms are excluded BEFORE picking: a term that shares
+    its name/alias with a registered metric is suppressed from the SQL
+    prompt anyway (see build_term_injection's priority guarantee), so
+    asking the user to clarify it would collect an answer that cannot
+    influence the final SQL. Filtering the whole match list (not just the
+    first hit) also lets a second, non-colliding ambiguous term still
+    trigger its clarification.
     """
-    matches = match_terms_in_question(account_id, question, allowed_tables)
+    matches = filter_metric_colliding_terms(
+        account_id, match_terms_in_question(account_id, question, allowed_tables)
+    )
     for t in matches:
         if t.get("requires_clarification") and t.get("clarification_options"):
             return t
@@ -264,6 +274,34 @@ def _metric_synonym_set(account_id: str) -> set[str]:
             if s:
                 phrases.add(s)
     return phrases
+
+
+def filter_metric_colliding_terms(account_id: str, terms: list[dict]) -> list[dict]:
+    """
+    Drop business terms whose canonical name OR any alias matches an active
+    metric name/synonym for this account.
+
+    Single source of the metric-priority guarantee, shared by:
+      • build_term_injection — so the SQL prompt never carries a term
+        expression that a registered metric formula supersedes
+      • find_ambiguous_term / the clarification flow — so the user is never
+        asked to clarify a term whose answer the metric would override anyway
+    """
+    if not terms:
+        return terms
+    metric_phrases = _metric_synonym_set(account_id)
+    if not metric_phrases:
+        return terms
+
+    def _collides(t: dict) -> bool:
+        all_forms = [t.get("term", "")]
+        for alias in (t.get("aliases") or t.get("synonyms") or "").split(","):
+            alias = alias.strip()
+            if alias:
+                all_forms.append(alias)
+        return any(f.lower() in metric_phrases for f in all_forms if f)
+
+    return [t for t in terms if not _collides(t)]
 
 
 def build_term_injection(
@@ -317,23 +355,10 @@ def build_term_injection(
     if not terms:
         return ""
 
-    # ── Metric-collision guard ──────────────────────────────────────────────
-    # Build the metric synonym set once per call (only when we have account_id)
-    metric_phrases: set[str] = _metric_synonym_set(account_id) if account_id else set()
-
-    def _term_collides_with_metric(t: dict) -> bool:
-        """Return True if this business term overlaps with any metric synonym."""
-        if not metric_phrases:
-            return False
-        all_forms = [t.get("term", "")]
-        for alias in (t.get("aliases") or t.get("synonyms") or "").split(","):
-            alias = alias.strip()
-            if alias:
-                all_forms.append(alias)
-        return any(f.lower() in metric_phrases for f in all_forms if f)
-
-    filtered_terms = [t for t in terms if not _term_collides_with_metric(t)]
-    # ──────────────────────────────────────────────────────────────────────────
+    # ── Metric-collision guard (shared helper; no-op without account_id) ────
+    filtered_terms = (
+        filter_metric_colliding_terms(account_id, terms) if account_id else terms
+    )
 
     if not filtered_terms:
         return ""

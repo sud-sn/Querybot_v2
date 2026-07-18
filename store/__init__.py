@@ -47,6 +47,7 @@ from store.user_store import (
 from store.semantic_store import (
     save_term, get_term, list_terms, delete_term, set_term_active,
     match_terms_in_question, find_ambiguous_term,
+    filter_metric_colliding_terms,
     build_term_injection, build_term_injection_from_choice,
     extract_terms_from_kb, glossary_stats,
 )
@@ -123,6 +124,7 @@ __all__ = [
     # Business semantic layer
     "save_term","get_term","list_terms","delete_term","set_term_active",
     "match_terms_in_question","find_ambiguous_term",
+    "filter_metric_colliding_terms",
     "build_term_injection","build_term_injection_from_choice",
     "extract_terms_from_kb","glossary_stats",
     "save_semantic_field_feedback","list_semantic_field_feedback",

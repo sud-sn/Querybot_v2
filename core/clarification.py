@@ -629,7 +629,14 @@ async def check_ambiguity_glossary_first(
             }
 
     # Step 2: Question overlaps multiple distinct metrics.
-    matches = store.match_terms_in_question(account_id, question, allowed_tables)
+    # Metric-colliding terms are excluded first: a term superseded by a
+    # registered metric formula is suppressed from the SQL prompt anyway
+    # (build_term_injection's priority guarantee), so offering it as a
+    # clarification choice would collect an answer that can't take effect.
+    matches = store.filter_metric_colliding_terms(
+        account_id,
+        store.match_terms_in_question(account_id, question, allowed_tables),
+    )
     metric_matches = [m for m in matches if m.get("kind") == "metric"]
     if len(metric_matches) >= 2:
         # If the user is explicitly asking to compare/breakdown multiple metrics,
