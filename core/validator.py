@@ -582,7 +582,11 @@ def _is_numeric_date_key(col_name: str, col_type: str = "") -> bool:
     return False
 
 
-def _find_date_key_format_errors(sql: str, table_columns: dict[str, dict[str, str]]) -> list[dict]:
+def _find_date_key_format_errors(
+    sql: str,
+    table_columns: dict[str, dict[str, str]],
+    surrogate_columns: set[str] | None = None,
+) -> list[dict]:
     errors: list[dict] = []
     all_cols: dict[str, str] = {}
     for cols in table_columns.values():
@@ -595,6 +599,10 @@ def _find_date_key_format_errors(sql: str, table_columns: dict[str, dict[str, st
     )
     for match in pattern.finditer(sql or ""):
         col = _strip_identifier(match.group("col"))
+        if col.upper() in (surrogate_columns or set()):
+            # A governed role-playing FK has a stronger, more accurate error
+            # below: join to the date dimension instead of parsing the ID.
+            continue
         col_type = all_cols.get(col, "")
         if _is_numeric_date_key(col, col_type):
             errors.append({
@@ -610,6 +618,43 @@ def _find_date_key_format_errors(sql: str, table_columns: dict[str, dict[str, st
                     f"FORMAT(TRY_CONVERT(date, CONVERT(varchar(8), alias.{col}), 112), 'yyyy-MM')",
                 ],
             })
+    return errors
+
+
+def _find_surrogate_date_conversion_errors(sql: str, policies: list[dict]) -> list[dict]:
+    """Reject attempts to parse role-playing surrogate IDs as dates."""
+    errors: list[dict] = []
+    sql_text = str(sql or "")
+    for policy in policies or []:
+        if str(policy.get("date_key_type") or "") != "surrogate_fk":
+            continue
+        column = str(policy.get("column") or "").strip()
+        if not column:
+            continue
+        col = re.escape(column)
+        patterns = (
+            rf"\b(?:TRY_)?CONVERT\s*\(\s*(?:DATE|DATETIME2?|SMALLDATETIME)\b[^)]*\b{col}\b",
+            rf"\bCAST\s*\([^)]*\b{col}\b[^)]*\bAS\s+(?:DATE|DATETIME2?|SMALLDATETIME)\b",
+            rf"\b(?:FORMAT|YEAR|MONTH|DAY|DATEPART|DATENAME)\s*\([^)]*\b{col}\b",
+        )
+        if not any(re.search(pattern, sql_text, re.IGNORECASE | re.DOTALL) for pattern in patterns):
+            continue
+        errors.append({
+            "code": "surrogate_date_conversion",
+            "message": (
+                f"{policy.get('table')}.{column} is a surrogate date-dimension ID, "
+                "not an encoded calendar date. Join it to "
+                f"{policy.get('date_value_table')} and use "
+                f"{policy.get('role_alias') or policy.get('date_value_table')}."
+                f"{policy.get('date_value_column')} instead."
+            ),
+            "table": policy.get("table", ""),
+            "column": column,
+            "date_key_type": "surrogate_fk",
+            "date_value_table": policy.get("date_value_table", ""),
+            "date_value_column": policy.get("date_value_column", ""),
+            "role_alias": policy.get("role_alias", ""),
+        })
     return errors
 
 
@@ -1080,13 +1125,29 @@ def validate_sql_detailed(
         )
 
     if table_columns:
-        date_errors = _find_date_key_format_errors(sql, table_columns)
+        field_plan = (semantic_context or {}).get("semantic_plan") or {}
+        date_policies = list(field_plan.get("date_key_policies") or [])
+        surrogate_columns = {
+            str(policy.get("column") or "").upper()
+            for policy in date_policies
+            if str(policy.get("date_key_type") or "") == "surrogate_fk"
+        }
+        date_errors = _find_date_key_format_errors(sql, table_columns, surrogate_columns)
         if date_errors:
             return SqlValidationResult(
                 False,
                 "\n".join(e["message"] for e in date_errors),
                 "date_key_format",
                 date_errors,
+            )
+
+        surrogate_date_errors = _find_surrogate_date_conversion_errors(sql, date_policies)
+        if surrogate_date_errors:
+            return SqlValidationResult(
+                False,
+                "\n".join(error["message"] for error in surrogate_date_errors),
+                "surrogate_date_conversion",
+                surrogate_date_errors,
             )
 
         unique_base_keys = [k for k in dict.fromkeys(base_table_keys) if k in table_columns]
@@ -1217,7 +1278,6 @@ def validate_sql_detailed(
                 null_agg_errors,
             )
 
-        field_plan = (semantic_context or {}).get("semantic_plan") or {}
         if field_plan.get("enabled") and field_plan.get("fields"):
             used_columns: set[tuple[str, str]] = set()
             for col_node in tree.find_all(sg_exp.Column):

@@ -23,6 +23,7 @@ class DateRole:
 
 
 DATE_ROLES: tuple[DateRole, ...] = (
+    DateRole("booked_date", "Booked Date", ("booked date", "booking date", "booked month", "booked year"), 97),
     DateRole("invoice_date", "Invoice Date", ("invoice date", "invoiced date", "billing date", "billed date", "invoice month", "invoice year"), 95),
     DateRole("order_date", "Order Date", ("order date", "ordered date", "sales order date", "order month", "order year"), 92),
     DateRole("cancelled_order_date", "Cancelled Order Date", ("cancelled order date", "canceled order date", "order cancellation date", "cancelled order month"), 90),
@@ -46,9 +47,10 @@ DATE_ROLES: tuple[DateRole, ...] = (
 _ROLE_BY_KEY = {role.key: role for role in DATE_ROLES}
 
 _COLUMN_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"(?:^|_)BOOK(?:ED|ING)?_DT(?:_|$)|(?:^|_)BKD_DT(?:_|$)"), "booked_date"),
     (re.compile(r"(?:^|_)CUS_IVC_DT(?:_|$)|(?:^|_)SLR_IVC_DT(?:_|$)|(?:^|_)IVC_DT(?:_|$)|^IVDT$"), "invoice_date"),
     (re.compile(r"(?:^|_)CCL_.*ORD_DT(?:_|$)|(?:^|_)CANCEL(?:LED|ED)?_.*ORD_DT(?:_|$)"), "cancelled_order_date"),
-    (re.compile(r"(?:^|_)CUS_ORD_DT(?:_|$)|(?:^|_)PCH_ORD_DT(?:_|$)|(?:^|_)ORD_DT(?:_|$)|^ORDT$"), "order_date"),
+    (re.compile(r"(?:^|_)CUS_(?:ORD|ORDER)_DT(?:_|$)|(?:^|_)PCH_(?:ORD|ORDER)_DT(?:_|$)|(?:^|_)(?:ORD|ORDER)_DT(?:_|$)|^ORDT$"), "order_date"),
     (re.compile(r"(?:^|_)RQD_.*DLV_DT(?:_|$)|(?:^|_)REQ(?:UESTED)?_.*DLV_DT(?:_|$)|^DWDT$"), "requested_delivery_date"),
     (re.compile(r"(?:^|_)CFM_.*DLV_DT(?:_|$)|(?:^|_)CONF(?:IRMED)?_.*DLV_DT(?:_|$)|^CODT$"), "confirmed_delivery_date"),
     (re.compile(r"(?:^|_)PLD_.*DLV_DT(?:_|$)|(?:^|_)PLANN?ED_.*DLV_DT(?:_|$)|^PLDT$"), "planned_delivery_date"),
@@ -75,6 +77,59 @@ DATE_DIMENSION_KEY_HINTS = (
     "DATE_DMS_KEY", "DT_DMS_KEY", "PRD_DMS_KEY", "DATE_KEY", "DATE_ID",
     "CALENDAR_DATE_KEY", "CALENDAR_KEY", "DAY_KEY", "PERIOD_KEY",
 )
+
+DATE_KEY_TYPES = (
+    "surrogate_fk",
+    "yyyymmdd_integer",
+    "native_date",
+    "timestamp",
+)
+
+
+def normalize_date_key_type(value: str, *, has_date_dimension_fk: bool = False) -> str:
+    """Return one governed date-key type.
+
+    A relationship to a date dimension always wins over name-based inference:
+    integer IDs such as 4067 are surrogate keys, not YYYYMMDD values.
+    """
+    if has_date_dimension_fk:
+        return "surrogate_fk"
+    normalized = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "surrogate": "surrogate_fk",
+        "foreign_key": "surrogate_fk",
+        "fk": "surrogate_fk",
+        "yyyymmdd": "yyyymmdd_integer",
+        "integer_date": "yyyymmdd_integer",
+        "date": "native_date",
+        "datetime": "timestamp",
+        "datetime2": "timestamp",
+    }
+    normalized = aliases.get(normalized, normalized)
+    return normalized if normalized in DATE_KEY_TYPES else "surrogate_fk"
+
+
+def classify_date_key(
+    column_name: str,
+    data_type: str = "",
+    *,
+    has_date_dimension_fk: bool = False,
+    declared_encoding: str = "",
+) -> str:
+    """Classify how a date-related physical column must be interpreted."""
+    if has_date_dimension_fk:
+        return "surrogate_fk"
+    if declared_encoding:
+        return normalize_date_key_type(declared_encoding)
+    db_type = str(data_type or "").strip().lower()
+    if any(token in db_type for token in ("timestamp", "datetime", "smalldatetime")):
+        return "timestamp"
+    if db_type == "date" or db_type.endswith(" date"):
+        return "native_date"
+    # Integer date keys are deliberately not guessed from a *_DT_* name.
+    # YYYYMMDD must be declared/profiled; otherwise treating 4067 as a date
+    # causes invalid conversions and, worse, plausible but incorrect periods.
+    return "yyyymmdd_integer" if normalize_date_key_type(declared_encoding) == "yyyymmdd_integer" else "surrogate_fk"
 
 
 def normalize_date_role_text(text: str) -> str:
@@ -198,6 +253,38 @@ def find_date_dimension_key(columns: list[dict] | list[str]) -> str:
         if ("DATE" in up or up.startswith("DT_") or up.startswith("PRD_")) and (up.endswith("_KEY") or up.endswith("_ID")):
             return col
     return col_names[0] if col_names else ""
+
+
+def find_date_value_column(columns: list[dict] | list[str]) -> str:
+    """Return the business date value column, never the surrogate key."""
+    candidates: list[tuple[int, str]] = []
+    for raw in columns:
+        name = _column_name(raw)
+        if not name:
+            continue
+        upper = name.upper()
+        data_type = ""
+        if isinstance(raw, dict):
+            data_type = str(
+                raw.get("type") or raw.get("DATA_TYPE") or raw.get("data_type") or ""
+            ).lower()
+        if upper in DATE_DIMENSION_KEY_HINTS or upper.endswith(("_KEY", "_ID")):
+            continue
+        score = 0
+        if data_type in {"date", "datetime", "datetime2", "timestamp", "timestamp_ntz", "timestamp_tz"}:
+            score += 100
+        if upper in {"DMS_DT", "DT", "DATE", "CALENDAR_DATE", "FULL_DATE", "DATE_VALUE"}:
+            score += 90
+        elif upper in {"DT_DSC", "DATE_DSC", "DATE_DESC", "DATE_DESCRIPTION"}:
+            score += 70
+        elif "DATE" in upper or upper.endswith("_DT"):
+            score += 55
+        if score:
+            candidates.append((score, name))
+    if not candidates:
+        return ""
+    candidates.sort(key=lambda item: (-item[0], item[1]))
+    return candidates[0][1]
 
 
 def _column_name(col: dict | str) -> str:

@@ -5690,6 +5690,9 @@ async def date_roles_page(request: Request, account_id: str):
     kb_dir = (state or {}).get("kb_dir") or ""
 
     date_roles: list[dict] = []
+    semantic_tables: list[dict] = []
+    metrics: list[dict] = []
+    context_bindings: list[dict] = []
     has_model = False
 
     if kb_dir:
@@ -5698,6 +5701,7 @@ async def date_roles_page(request: Request, account_id: str):
             model = load_semantic_model(kb_dir)
             if model:
                 has_model = True
+                semantic_tables = [dict(table) for table in (model.get("tables") or [])]
                 # Use top-level date_roles for the canonical list — it aggregates
                 # across all fact tables and deduplicates by fact_table+fact_column.
                 date_roles = [dict(dr) for dr in (model.get("date_roles") or [])]
@@ -5710,10 +5714,19 @@ async def date_roles_page(request: Request, account_id: str):
         except Exception as exc:
             log.warning("date_roles_page: failed to load semantic model for %s: %s", account_id, exc)
 
+    try:
+        metrics = store.list_metrics(account_id)
+        context_bindings = store.list_metric_date_contexts(account_id, active_only=False)
+    except Exception as exc:
+        log.warning("date_roles_page: failed to load contextual bindings for %s: %s", account_id, exc)
+
     return _resp(request, "client_date_roles.html", {
         "client":     client,
         "date_roles": date_roles,
         "has_model":  has_model,
+        "semantic_tables": semantic_tables,
+        "metrics": metrics,
+        "context_bindings": context_bindings,
         "saved":      request.query_params.get("saved"),
         "error":      request.query_params.get("error"),
     })
@@ -5728,6 +5741,10 @@ async def date_role_approve(
     dimension_table: str = Form(""),
     dimension_key:   str = Form(""),
     business_role:   str = Form(""),
+    name:            str = Form(""),
+    date_value_column: str = Form(""),
+    date_key_type:     str = Form("surrogate_fk"),
+    synonyms:        str = Form(""),
 ):
     """Approve (and optionally edit) a date role entry in the semantic model."""
     if not _is_auth(request):
@@ -5755,6 +5772,10 @@ async def date_role_approve(
             dimension_table=dimension_table.strip(),
             dimension_key=dimension_key.strip(),
             business_role=business_role.strip(),
+            name=name.strip(),
+            date_value_column=date_value_column.strip(),
+            date_key_type=date_key_type.strip(),
+            synonyms=[value.strip() for value in re.split(r"[,;\n]+", synonyms) if value.strip()],
             status="approved",
         )
         if not changed:
@@ -5773,6 +5794,110 @@ async def date_role_approve(
 
     _after_semantic_approval(account_id, f"date role approved on {fact_table.strip()}")
     return RedirectResponse(f"/admin/clients/{account_id}/date-roles?saved=1", status_code=303)
+
+
+@router.post("/clients/{account_id}/date-roles/add")
+async def date_role_add(
+    request: Request,
+    account_id: str,
+    fact_table: str = Form(...),
+    fact_column: str = Form(...),
+    dimension_table: str = Form(...),
+    dimension_key: str = Form(...),
+    date_value_column: str = Form(...),
+    business_role: str = Form(...),
+    name: str = Form(""),
+    synonyms: str = Form(""),
+    date_key_type: str = Form("surrogate_fk"),
+):
+    """Add a missed role-playing date using schema-grounded columns."""
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    state = store.get_client_state(account_id)
+    kb_dir = (state or {}).get("kb_dir") or ""
+    try:
+        from core.semantic_model import patch_date_role
+        changed = patch_date_role(
+            kb_dir=kb_dir,
+            fact_table=fact_table.strip(),
+            fact_column=fact_column.strip(),
+            dimension_table=dimension_table.strip(),
+            dimension_key=dimension_key.strip(),
+            date_value_column=date_value_column.strip(),
+            date_key_type=date_key_type.strip(),
+            business_role=business_role.strip(),
+            name=name.strip(),
+            synonyms=[value.strip() for value in re.split(r"[,;\n]+", synonyms) if value.strip()],
+            status="approved",
+            create_if_missing=True,
+        )
+        if not changed:
+            raise ValueError("The selected tables or columns are not present in the semantic model.")
+        _after_semantic_approval(account_id, f"date role added on {fact_table.strip()}")
+        return RedirectResponse(f"/admin/clients/{account_id}/date-roles?saved=role-added", status_code=303)
+    except Exception as exc:
+        return RedirectResponse(
+            f"/admin/clients/{account_id}/date-roles?error={quote(str(exc)[:180])}",
+            status_code=303,
+        )
+
+
+@router.post("/clients/{account_id}/date-contexts/save")
+async def date_context_save(
+    request: Request,
+    account_id: str,
+    metric_id: int = Form(...),
+    context_name: str = Form(...),
+    aliases: str = Form(""),
+    role_identity: str = Form(...),
+    is_default: str = Form(""),
+):
+    """Bind one metric/business context to an approved date role."""
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    state = store.get_client_state(account_id)
+    kb_dir = (state or {}).get("kb_dir") or ""
+    try:
+        from core.semantic_model import load_semantic_model
+        model = load_semantic_model(kb_dir)
+        fact_table, fact_column = (role_identity.split("||", 1) + [""])[:2]
+        role = next((
+            item for item in (model.get("date_roles") or [])
+            if str(item.get("fact_table") or "").upper() == fact_table.upper()
+            and str(item.get("fact_column") or "").upper() == fact_column.upper()
+            and str(item.get("status") or "") == "approved"
+        ), None)
+        if not role:
+            raise ValueError("Approve the selected date role before using it in a metric context.")
+        store.save_metric_date_context(account_id, {
+            "metric_id": metric_id,
+            "context_name": context_name.strip(),
+            "aliases": aliases.strip(),
+            "date_role": role.get("business_role") or "business_date",
+            "fact_table": role.get("fact_table") or "",
+            "fact_column": role.get("fact_column") or "",
+            "dimension_table": role.get("dimension_table") or "",
+            "dimension_key": role.get("dimension_key") or "",
+            "date_value_column": role.get("date_value_column") or "",
+            "date_key_type": role.get("date_key_type") or "surrogate_fk",
+            "is_default": bool(is_default),
+        })
+        _after_semantic_approval(account_id, f"metric date context saved: {context_name.strip()}")
+        return RedirectResponse(f"/admin/clients/{account_id}/date-roles?saved=context", status_code=303)
+    except Exception as exc:
+        return RedirectResponse(
+            f"/admin/clients/{account_id}/date-roles?error={quote(str(exc)[:180])}",
+            status_code=303,
+        )
+
+
+@router.post("/clients/{account_id}/date-contexts/{binding_id}/delete")
+async def date_context_delete(request: Request, account_id: str, binding_id: int):
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    store.delete_metric_date_context(binding_id, account_id)
+    _after_semantic_approval(account_id, "metric date context removed")
+    return RedirectResponse(f"/admin/clients/{account_id}/date-roles?saved=context-removed", status_code=303)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

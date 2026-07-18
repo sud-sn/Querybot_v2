@@ -92,6 +92,12 @@ def compile_contract(account_id: str, kb_dir: str = "") -> dict[str, Any]:
         metrics = []
 
     try:
+        date_contexts = store.list_metric_date_contexts(account_id, active_only=True)
+    except Exception as exc:
+        log.warning("Contract compile: date contexts unavailable for %s: %s", account_id, exc)
+        date_contexts = []
+
+    try:
         graph = store.get_full_graph(account_id)
     except Exception as exc:
         log.warning("Contract compile: graph unavailable for %s: %s", account_id, exc)
@@ -115,6 +121,10 @@ def compile_contract(account_id: str, kb_dir: str = "") -> dict[str, Any]:
         "model": model,
         # Approved metric formulas — the highest-authority semantic layer.
         "metrics": metrics,
+        # Governed metric/context -> role-playing date mappings. Keeping these
+        # in the versioned contract makes date policy changes traceable even
+        # though runtime resolution also reads the tenant-scoped DB records.
+        "date_contexts": date_contexts,
         # Entity graph: join contracts between business entities.
         "graph": graph,
         # Business glossary terms (canonical SQL expressions per phrase).

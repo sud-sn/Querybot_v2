@@ -1300,6 +1300,143 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
         # in the 10,000+ chars of KB content that follows.
         context_with_terms = metric_formula_context + "\n\n" + context_with_terms
 
+    # Resolve role-playing dates after metric scoping. The same measure can use
+    # invoice date for sales, accounting date for inventory sales, and another
+    # approved role for a different context. The result is compiled into the
+    # semantic plan so both generation and validation receive the same rule.
+    _date_context_resolution: dict = {"status": "none"}
+    if _matched_metrics:
+        try:
+            from core.contextual_dates import (
+                build_contextual_date_plan,
+                build_contextual_date_plan_many,
+                resolve_contextual_date_binding,
+            )
+            _metric_ids = [
+                int(metric.get("id") or 0) for metric in _matched_metrics
+                if int(metric.get("id") or 0) > 0
+            ]
+            # Contracts compiled by older releases may not carry metric IDs.
+            # Load the tenant-scoped bindings and match by ID when available,
+            # otherwise by canonical metric name. This keeps existing clients
+            # working immediately after deployment without a forced rebuild.
+            _all_date_bindings = store.list_metric_date_contexts(account_id)
+            _metric_names = {
+                str(metric.get("name") or "").strip().casefold()
+                for metric in _matched_metrics if metric.get("name")
+            }
+            _date_bindings = [
+                binding for binding in _all_date_bindings
+                if (
+                    int(binding.get("metric_id") or 0) in _metric_ids
+                    or str(binding.get("metric_name") or "").strip().casefold() in _metric_names
+                )
+            ]
+            _date_context_resolution = resolve_contextual_date_binding(
+                question,
+                matched_metrics=_matched_metrics,
+                bindings=_date_bindings,
+                date_roles=list((_contract_model or {}).get("date_roles") or []),
+            )
+            if _date_context_resolution.get("status") == "ambiguous" and not is_clarification:
+                _date_options = [
+                    {
+                        "label": (
+                            f"{item.get('context_name') or item.get('date_role')} "
+                            f"({item.get('fact_column')})"
+                        ),
+                        "value": item.get("context_name") or item.get("date_role") or "",
+                    }
+                    for item in (_date_context_resolution.get("options") or [])[:6]
+                ]
+                if event.user_id and _date_options:
+                    save_pending(
+                        account_id,
+                        event.user_id,
+                        question,
+                        context_with_terms,
+                        clarification_meta={
+                            "term": "business date",
+                            "options": _date_options,
+                            "source": "metric_date_context",
+                        },
+                    )
+                _date_question = (
+                    "This metric has more than one valid business date. "
+                    "Which date context should I use?"
+                )
+                send_prompt = getattr(adapter, "send_clarification_prompt", None)
+                if callable(send_prompt) and _date_options:
+                    await send_prompt(event, _date_question, _date_options)
+                else:
+                    option_lines = "\n".join(
+                        f"  - {option['label']}" for option in _date_options
+                    )
+                    await adapter.send_message(
+                        event,
+                        f"{_date_question}\n\n{option_lines}\n\n"
+                        "_Reply with one of the options above._",
+                    )
+                return
+            if _date_context_resolution.get("status") in {"selected", "selected_many"}:
+                if _date_context_resolution.get("status") == "selected_many":
+                    _date_plan = build_contextual_date_plan_many(
+                        _date_context_resolution.get("bindings") or []
+                    )
+                else:
+                    _date_plan = build_contextual_date_plan(
+                        _date_context_resolution.get("binding") or {}
+                    )
+                if _date_plan.get("enabled"):
+                    _semantic_plan = _merge_semantic_plans(_semantic_plan, _date_plan)
+                    _binding = (
+                        _date_context_resolution.get("binding")
+                        or ((_date_context_resolution.get("bindings") or [{}])[0])
+                    )
+                    try:
+                        from core.table_coverage import guarantee_table_coverage
+                        _date_required_tables = {
+                            str(table).upper()
+                            for table in (_date_plan.get("required_tables") or [])
+                            if table
+                        }
+                        _date_gap_docs = guarantee_table_coverage(
+                            account_id=account_id,
+                            required_fqns=_date_required_tables,
+                            retrieved_docs=relevant_kbs,
+                            rag_filter=rag_filter,
+                            max_fill=2,
+                        )
+                        if _date_gap_docs:
+                            context_with_terms = (
+                                context_with_terms
+                                + "\n\n---\n\n"
+                                + "\n\n---\n\n".join(_date_gap_docs)
+                            )
+                    except Exception as _date_cov_exc:
+                        log.debug("Contextual date table coverage skipped: %s", _date_cov_exc)
+                    _trace_step(
+                        trace_id,
+                        "date_context_resolution",
+                        output_summary={
+                            "metric": _binding.get("metric_name") or "",
+                            "context": _binding.get("context_name") or "",
+                            "date_role": _binding.get("date_role") or "",
+                            "fact_column": _binding.get("fact_column") or "",
+                            "source": _binding.get("resolution_source") or "",
+                        },
+                    )
+                    log.info(
+                        "Date context resolved for %s: metric=%s context=%s role=%s column=%s",
+                        account_id,
+                        _binding.get("metric_name") or "",
+                        _binding.get("context_name") or "",
+                        _binding.get("date_role") or "",
+                        _binding.get("fact_column") or "",
+                    )
+        except Exception as _date_ctx_exc:
+            log.warning("Contextual date resolution skipped for %s: %s", account_id, _date_ctx_exc)
+
     # Fetch KB docs for every table referenced by the selected metric formulas.
     # This is deliberately after metric scoping; otherwise a generic metric from
     # another schema can pollute an All-schema question.

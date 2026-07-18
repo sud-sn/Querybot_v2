@@ -45,11 +45,18 @@ _GRAPH = {"entities": [{"entity_name": "Customer", "table_name": "DIM_CUSTOMER"}
           "relationships": [], "properties": []}
 _TERMS = [{"id": 7, "term": "active customer", "aliases": "", "definition": "",
            "canonical_expression": "STATUS='A'", "tables_involved": ""}]
+_DATE_CONTEXTS = [{"id": 3, "metric_id": 1, "metric_name": "Revenue",
+                   "context_name": "Sales", "date_role": "invoice_date",
+                   "fact_table": "ERP.SALES_FCT", "fact_column": "INVOICE_DATE_KEY",
+                   "dimension_table": "ERP.DIM_DATE", "dimension_key": "DATE_KEY",
+                   "date_value_column": "FULL_DATE", "is_default": 1}]
 
 
-def _compile_patched(kb_dir: str, model=_MODEL, metrics=_METRICS, graph=_GRAPH, terms=_TERMS):
+def _compile_patched(kb_dir: str, model=_MODEL, metrics=_METRICS, graph=_GRAPH, terms=_TERMS,
+                     date_contexts=_DATE_CONTEXTS):
     from core.semantic_contract import compile_contract
     with patch("store.list_metrics", return_value=metrics), \
+         patch("store.list_metric_date_contexts", return_value=date_contexts), \
          patch("store.get_full_graph", return_value=graph), \
          patch("store.list_terms", return_value=terms), \
          patch("core.field_overrides.load_field_overrides", return_value={}), \
@@ -79,9 +86,13 @@ class ContractCompileTests(unittest.TestCase):
             changed_graph = _compile_patched(
                 tmp, graph={**_GRAPH, "entities": []}
             )["meta"]["contract_version"]
+            changed_date_context = _compile_patched(
+                tmp, date_contexts=[{**_DATE_CONTEXTS[0], "fact_column": "POSTING_DATE_KEY"}]
+            )["meta"]["contract_version"]
         self.assertNotEqual(base, changed_metric)
         self.assertNotEqual(base, changed_term)
         self.assertNotEqual(base, changed_graph)
+        self.assertNotEqual(base, changed_date_context)
         self.assertNotEqual(changed_metric, changed_term)
 
     def test_write_load_roundtrip_and_cache(self):

@@ -156,6 +156,55 @@ class TestGovernedGraphResolution(unittest.TestCase):
 
 
 class TestConstraintImport(unittest.TestCase):
+    def test_two_role_playing_fks_to_same_date_dimension_remain_separate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            schema = {
+                "DBO.FACT_REVENUE": {
+                    "columns": [
+                        {"name": "BOOKED_DT_ID", "type": "int", "nullable": False},
+                        {"name": "ORDER_DT_ID", "type": "int", "nullable": False},
+                        {"name": "AMOUNT", "type": "decimal", "nullable": True},
+                    ],
+                    "pk_columns": [],
+                },
+                "DBO.DIM_DATE": {
+                    "columns": [
+                        {"name": "DATE_ID", "type": "int", "nullable": False},
+                        {"name": "FULL_DATE", "type": "date", "nullable": False},
+                    ],
+                    "pk_columns": ["DATE_ID"],
+                },
+                "__db_fk_constraints__": [
+                    {
+                        "source": "azure_sql", "constraint_name": "FK_REVENUE_BOOKED_DATE",
+                        "parent_schema": "DBO", "parent_table": "FACT_REVENUE",
+                        "parent_col": "BOOKED_DT_ID", "ref_schema": "DBO",
+                        "ref_table": "DIM_DATE", "ref_col": "DATE_ID",
+                        "ordinal": 1, "enforced": True,
+                    },
+                    {
+                        "source": "azure_sql", "constraint_name": "FK_REVENUE_ORDER_DATE",
+                        "parent_schema": "DBO", "parent_table": "FACT_REVENUE",
+                        "parent_col": "ORDER_DT_ID", "ref_schema": "DBO",
+                        "ref_table": "DIM_DATE", "ref_col": "DATE_ID",
+                        "ordinal": 1, "enforced": True,
+                    },
+                ],
+            }
+            Path(tmp, "_schema.json").write_text(json.dumps(schema), encoding="utf-8")
+            graph = build_entity_graph_from_schema(tmp)
+
+        edges = [
+            edge for edge in graph["relationships"]
+            if edge.get("generated_by") == "db_fk"
+        ]
+        self.assertEqual(len(edges), 2)
+        self.assertEqual(
+            {edge["from_column"] for edge in edges},
+            {"BOOKED_DT_ID", "ORDER_DT_ID"},
+        )
+        self.assertEqual({edge["to_column"] for edge in edges}, {"DATE_ID"})
+
     def test_composite_database_fk_becomes_one_edge(self):
         with tempfile.TemporaryDirectory() as tmp:
             schema = {

@@ -70,13 +70,37 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
   background:color-mix(in srgb,var(--primary-soft) 35%,var(--surface));
   border-radius:var(--radius-sm);padding:.65rem .9rem;font-size:12px;
   color:var(--text-soft);line-height:1.55}
+.dr-workbench{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(320px,.8fr);gap:.85rem}
+.dr-panel{border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);box-shadow:var(--shadow-sm);overflow:hidden}
+.dr-panel-head{padding:.75rem .9rem;border-bottom:1px solid var(--border);background:var(--surface-2)}
+.dr-panel-head h2{font-size:14px;margin:0 0 .15rem}.dr-panel-head p{font-size:11px;color:var(--text-muted);margin:0;line-height:1.45}
+.dr-panel-body{padding:.85rem}.dr-form-grid{display:grid;grid-template-columns:1fr 1fr;gap:.65rem}
+.dr-field label{display:block;font-size:11px;font-weight:800;color:var(--text-soft);margin-bottom:.25rem}
+.dr-field input,.dr-field select{width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);padding:.5rem .6rem;font-size:12px}
+.dr-field input:focus,.dr-field select:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 2px var(--primary-soft)}
+.dr-span-2{grid-column:span 2}.dr-check{display:flex;align-items:center;gap:.5rem;font-size:12px;color:var(--text-soft)}
+.dr-check input{width:16px;height:16px;accent-color:var(--primary)}
+.dr-primary{border:0;border-radius:6px;background:var(--primary);color:#fff;font-weight:800;font-size:12px;padding:.55rem .85rem;cursor:pointer}
+.dr-binding{padding:.65rem .75rem;border:1px solid var(--border);border-radius:7px;margin-bottom:.55rem;background:var(--surface)}
+.dr-binding:last-child{margin-bottom:0}.dr-binding-top{display:flex;align-items:flex-start;justify-content:space-between;gap:.5rem}
+.dr-binding strong{font-size:12px}.dr-binding-meta{font-size:11px;color:var(--text-muted);margin-top:.25rem;line-height:1.45}
+.dr-danger{border:0;background:transparent;color:var(--red);font-size:11px;font-weight:800;cursor:pointer}
+@media(max-width:900px){.dr-workbench{grid-template-columns:1fr}.dr-form-grid{grid-template-columns:1fr}.dr-span-2{grid-column:auto}}
 </style>
 {% endblock %}
 {% block content %}
 
 
 {% if saved %}
-{{ alert("Date role approved and saved to semantic model.", "success") }}
+{% if saved == "context" %}
+{{ alert("Metric date context saved. New questions will use this governed date mapping.", "success") }}
+{% elif saved == "context-removed" %}
+{{ alert("Metric date context removed.", "success") }}
+{% elif saved == "role-added" %}
+{{ alert("Date role added, approved, and saved to the semantic model.", "success") }}
+{% else %}
+{{ alert("Date role approved and saved to the semantic model.", "success") }}
+{% endif %}
 {% endif %}
 {% if error %}
 {{ alert(error, "error") }}
@@ -102,7 +126,7 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
       The semantic model uses these mappings at query time to enforce the correct
       date dimension JOIN and prevent raw integer-key date filters.
       Approve auto-detected roles to signal they are correct; edit if the
-      dimension table or key was detected incorrectly.
+      dimension table, role, key, or business date value was detected incorrectly.
     </p>
   </div>
 
@@ -131,6 +155,86 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
     <code>FORMAT(CUS_IVC_DT_DMS_KEY,'yyyy-MM')</code>) will fail validation and be regenerated.
   </div>
 
+  <div class="dr-workbench">
+    <section class="dr-panel">
+      <div class="dr-panel-head">
+        <h2>Metric date contexts</h2>
+        <p>Tell QueryBot which approved business date a metric uses in each context. Explicit user wording still takes priority.</p>
+      </div>
+      <div class="dr-panel-body">
+        {% if metrics and (date_roles | selectattr("status","eq","approved") | list) %}
+        <form method="post" action="/admin/clients/{{ client.account_id }}/date-contexts/save" class="dr-form-grid">
+          <div class="dr-field">
+            <label>Metric</label>
+            <select name="metric_id" required>
+              <option value="">Select metric</option>
+              {% for metric in metrics %}<option value="{{ metric.id }}">{{ metric.name }}</option>{% endfor %}
+            </select>
+          </div>
+          <div class="dr-field">
+            <label>Business context</label>
+            <input name="context_name" required placeholder="e.g. Inventory Sales">
+          </div>
+          <div class="dr-field dr-span-2">
+            <label>Context aliases</label>
+            <input name="aliases" placeholder="inventory revenue, stock sales, inventory movement">
+          </div>
+          <div class="dr-field dr-span-2">
+            <label>Approved date role</label>
+            <select name="role_identity" required>
+              <option value="">Select date role</option>
+              {% for role in date_roles if role.status == "approved" %}
+              <option value="{{ role.fact_table }}||{{ role.fact_column }}">
+                {{ role.name }} - {{ role.fact_table }}.{{ role.fact_column }} -> {{ role.dimension_table }}.{{ role.date_value_column or role.dimension_key }}
+              </option>
+              {% endfor %}
+            </select>
+          </div>
+          <label class="dr-check dr-span-2"><input type="checkbox" name="is_default" value="1">Use when the user asks for this metric with a date but gives no context</label>
+          <div class="dr-span-2"><button class="dr-primary" type="submit">Save date context</button></div>
+        </form>
+        {% else %}
+        <p style="font-size:12px;color:var(--text-muted);margin:0">Create a metric and approve at least one discovered date role to add a context binding.</p>
+        {% endif %}
+
+        {% if context_bindings %}
+        <div style="margin-top:.9rem;padding-top:.8rem;border-top:1px solid var(--border)">
+          {% for binding in context_bindings %}
+          <div class="dr-binding">
+            <div class="dr-binding-top">
+              <div><strong>{{ binding.metric_name }} / {{ binding.context_name }}</strong>{% if binding.is_default %} <span class="status-pill status-approved">default</span>{% endif %}</div>
+              <form method="post" action="/admin/clients/{{ client.account_id }}/date-contexts/{{ binding.id }}/delete"><button class="dr-danger" type="submit">Remove</button></form>
+            </div>
+            <div class="dr-binding-meta">{{ binding.date_role | replace('_',' ') | title }} via <span class="mono">{{ binding.fact_table }}.{{ binding.fact_column }}</span><br>{{ binding.aliases or 'No aliases' }}</div>
+          </div>
+          {% endfor %}
+        </div>
+        {% endif %}
+      </div>
+    </section>
+
+    <section class="dr-panel">
+      <div class="dr-panel-head">
+        <h2>Add a missed date role</h2>
+        <p>Auto-discovered roles appear below. Use this only when a valid role-playing date was not recognized.</p>
+      </div>
+      <div class="dr-panel-body">
+        <form method="post" action="/admin/clients/{{ client.account_id }}/date-roles/add" class="dr-form-grid" id="dateRoleAddForm">
+          <div class="dr-field dr-span-2"><label>Fact table</label><select name="fact_table" id="drFactTable" required><option value="">Select table</option>{% for table in semantic_tables if table.type == 'fact' %}<option value="{{ table.qualified_name }}">{{ table.qualified_name }}</option>{% endfor %}</select></div>
+          <div class="dr-field dr-span-2"><label>Fact date key</label><select name="fact_column" id="drFactColumn" required><option value="">Select fact table first</option></select></div>
+          <div class="dr-field dr-span-2"><label>Date dimension</label><select name="dimension_table" id="drDimensionTable" required><option value="">Select table</option>{% for table in semantic_tables if table.type == 'dimension' %}<option value="{{ table.qualified_name }}">{{ table.qualified_name }}</option>{% endfor %}</select></div>
+          <div class="dr-field"><label>Dimension key</label><select name="dimension_key" id="drDimensionKey" required><option value="">Select dimension</option></select></div>
+          <div class="dr-field"><label>Date value</label><select name="date_value_column" id="drDateValue" required><option value="">Select dimension</option></select></div>
+          <div class="dr-field"><label>Physical key type</label><select name="date_key_type"><option value="surrogate_fk" selected>Surrogate FK (join to date dimension)</option><option value="yyyymmdd_integer">YYYYMMDD integer</option><option value="native_date">Native date</option><option value="timestamp">Timestamp</option></select></div>
+          <div class="dr-field"><label>Role key</label><input name="business_role" required placeholder="e.g. inventory_sales_date"></div>
+          <div class="dr-field"><label>Display name</label><input name="name" placeholder="e.g. Inventory Sales Date"></div>
+          <div class="dr-field dr-span-2"><label>Role phrases</label><input name="synonyms" placeholder="inventory sales date, stock movement date"></div>
+          <div class="dr-span-2"><button class="dr-primary" type="submit">Add and approve role</button></div>
+        </form>
+      </div>
+    </section>
+  </div>
+
   <!-- Table -->
   {% if date_roles %}
   <div class="dr-table-wrap">
@@ -146,6 +250,8 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
           <th>Business Role</th>
           <th>Dimension Table</th>
           <th>Dimension Key</th>
+          <th>Date Value</th>
+          <th>Key Type</th>
           <th>Status</th>
           <th>Conf.</th>
           <th>Action</th>
@@ -162,6 +268,8 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
           </td>
           <td><span class="mono">{{ dr.dimension_table }}</span></td>
           <td><span class="mono">{{ dr.dimension_key }}</span></td>
+          <td><span class="mono">{{ dr.date_value_column or "Review required" }}</span></td>
+          <td><span class="status-pill">{{ (dr.date_key_type or "surrogate_fk") | replace('_',' ') }}</span></td>
           <td>
             <span class="status-pill status-{{ dr.status }}">{{ dr.status }}</span>
           </td>
@@ -193,7 +301,15 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
                     <label>Business role key</label>
                     <input name="business_role"   value="{{ dr.business_role }}">
                   </div>
+                  <div>
+                    <label>Date value column</label>
+                    <input name="date_value_column" value="{{ dr.date_value_column or '' }}">
+                  </div>
                 </div>
+                <label>Physical key type</label>
+                <select name="date_key_type"><option value="surrogate_fk" {% if (dr.date_key_type or 'surrogate_fk') == 'surrogate_fk' %}selected{% endif %}>Surrogate FK</option><option value="yyyymmdd_integer" {% if dr.date_key_type == 'yyyymmdd_integer' %}selected{% endif %}>YYYYMMDD integer</option><option value="native_date" {% if dr.date_key_type == 'native_date' %}selected{% endif %}>Native date</option><option value="timestamp" {% if dr.date_key_type == 'timestamp' %}selected{% endif %}>Timestamp</option></select>
+                <input type="hidden" name="name" value="{{ dr.name }}">
+                <input type="hidden" name="synonyms" value="{{ (dr.synonyms or []) | join(', ') }}">
                 <button type="submit" class="btn-approve" style="margin-top:.35rem">Save edits</button>
               </form>
             </details>
@@ -219,7 +335,15 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
                     <label>Business role key</label>
                     <input name="business_role"   value="{{ dr.business_role }}">
                   </div>
+                  <div>
+                    <label>Date value column</label>
+                    <input name="date_value_column" value="{{ dr.date_value_column or '' }}">
+                  </div>
                 </div>
+                <label>Physical key type</label>
+                <select name="date_key_type"><option value="surrogate_fk" {% if (dr.date_key_type or 'surrogate_fk') == 'surrogate_fk' %}selected{% endif %}>Surrogate FK</option><option value="yyyymmdd_integer" {% if dr.date_key_type == 'yyyymmdd_integer' %}selected{% endif %}>YYYYMMDD integer</option><option value="native_date" {% if dr.date_key_type == 'native_date' %}selected{% endif %}>Native date</option><option value="timestamp" {% if dr.date_key_type == 'timestamp' %}selected{% endif %}>Timestamp</option></select>
+                <input type="hidden" name="name" value="{{ dr.name }}">
+                <input type="hidden" name="synonyms" value="{{ (dr.synonyms or []) | join(', ') }}">
                 <button type="submit" class="btn-approve" style="margin-top:.35rem">Approve</button>
               </form>
             </details>
@@ -242,5 +366,33 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
 
 </div>
 {% endif %}
+
+<script>
+(function(){
+  const tables = {{ semantic_tables | tojson }};
+  const byName = Object.fromEntries(tables.map(t => [String(t.qualified_name || t.table || '').toUpperCase(), t]));
+  function fill(select, tableName, predicate, placeholder){
+    if(!select) return;
+    select.innerHTML = '<option value="">' + placeholder + '</option>';
+    const table = byName[String(tableName || '').toUpperCase()];
+    (table && table.fields || []).filter(predicate).forEach(field => {
+      const option = document.createElement('option');
+      option.value = field.column;
+      option.textContent = field.column + (field.data_type ? ' (' + field.data_type + ')' : '');
+      select.appendChild(option);
+    });
+  }
+  const factTable = document.getElementById('drFactTable');
+  const factColumn = document.getElementById('drFactColumn');
+  const dimTable = document.getElementById('drDimensionTable');
+  const dimKey = document.getElementById('drDimensionKey');
+  const dateValue = document.getElementById('drDateValue');
+  if(factTable) factTable.addEventListener('change', () => fill(factColumn, factTable.value, f => /(?:DATE|_DT|DT_).*?(?:KEY|ID)|(?:_DT_DMS_KEY)$/i.test(f.column || ''), 'Select date key'));
+  if(dimTable) dimTable.addEventListener('change', () => {
+    fill(dimKey, dimTable.value, f => /(?:KEY|ID)$/i.test(f.column || ''), 'Select key');
+    fill(dateValue, dimTable.value, f => !/(?:KEY|ID)$/i.test(f.column || '') && (/(?:DATE|_DT|DT_|DMS_DT)/i.test(f.column || '') || /date|time/i.test(f.data_type || '')), 'Select date value');
+  });
+})();
+</script>
 
 {% endblock %}

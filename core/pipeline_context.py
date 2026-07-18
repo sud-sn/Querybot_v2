@@ -116,6 +116,8 @@ def _merge_semantic_plans(*plans: dict | None) -> dict:
     seen_fields: set[tuple[str, str]] = set()
     seen_joins: set[tuple[str, str, tuple[tuple[str, str], ...]]] = set()
     reasons: list[str] = []
+    date_key_policies: list[dict] = []
+    seen_date_policies: set[tuple[str, str, str]] = set()
 
     # Pre-pass: union avoid lists across plans so the main loop can drop a
     # superseded column no matter which plan proposed it.  The LLM field
@@ -165,10 +167,26 @@ def _merge_semantic_plans(*plans: dict | None) -> dict:
             if source_table:
                 relevant_tables.add(source_table)
         available_dimensions.extend(plan.get("available_dimensions") or [])
+        for policy in plan.get("date_key_policies") or []:
+            policy_key = (
+                _semantic_table_identity(policy.get("table") or ""),
+                str(policy.get("column") or "").upper(),
+                str(policy.get("role_alias") or "").lower(),
+            )
+            if policy_key[0] and policy_key[1] and policy_key not in seen_date_policies:
+                seen_date_policies.add(policy_key)
+                date_key_policies.append(policy)
         relevant_joins = _select_relevant_semantic_joins(
             plan.get("joins") or [],
             relevant_tables,
         )
+        # A role-playing dimension may be joined twice to the same fact using
+        # different FKs (for example booked_date and order_date). A shortest
+        # path selector would retain only one parallel edge, so exact governed
+        # date joins explicitly opt into preservation.
+        for join in plan.get("joins") or []:
+            if join.get("preserve_all") and join not in relevant_joins:
+                relevant_joins.append(join)
         for join in relevant_joins:
             from_table = _semantic_table_identity(join.get("from") or "")
             to_table = _semantic_table_identity(join.get("to") or "")
@@ -196,6 +214,7 @@ def _merge_semantic_plans(*plans: dict | None) -> dict:
         "advisory_fields": advisory_fields,
         "available_dimensions": available_dimensions,
         "avoid_columns": avoid_columns,
+        "date_key_policies": date_key_policies,
     }
 
 

@@ -378,6 +378,31 @@ CREATE TABLE IF NOT EXISTS metric_registry (
     updated_at   TEXT    DEFAULT (datetime('now'))
 );
 
+-- Governed metric/context -> role-playing date bindings. A metric can use
+-- different business dates for different analytical contexts while keeping
+-- one measure expression (for example Revenue by invoice date vs inventory
+-- sales by accounting date).
+CREATE TABLE IF NOT EXISTS metric_date_context (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id      TEXT    NOT NULL REFERENCES client(account_id) ON DELETE CASCADE,
+    metric_id       INTEGER NOT NULL REFERENCES metric_registry(id) ON DELETE CASCADE,
+    context_name    TEXT    NOT NULL,
+    aliases         TEXT    NOT NULL DEFAULT '',
+    date_role       TEXT    NOT NULL,
+    fact_table      TEXT    NOT NULL,
+    fact_column     TEXT    NOT NULL,
+    dimension_table TEXT    NOT NULL,
+    dimension_key   TEXT    NOT NULL,
+    date_value_column TEXT  NOT NULL DEFAULT '',
+    date_key_type   TEXT    NOT NULL DEFAULT 'surrogate_fk',
+    is_default      INTEGER NOT NULL DEFAULT 0,
+    priority        INTEGER NOT NULL DEFAULT 50,
+    is_active       INTEGER NOT NULL DEFAULT 1,
+    created_at      TEXT    DEFAULT (datetime('now')),
+    updated_at      TEXT    DEFAULT (datetime('now')),
+    UNIQUE(account_id, metric_id, context_name)
+);
+
 -- ── Validated examples (proven question→SQL pairs for few-shot) ──────────────
 CREATE TABLE IF NOT EXISTS validated_examples (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -441,6 +466,8 @@ CREATE TABLE IF NOT EXISTS business_term (
 );
 
 CREATE INDEX IF NOT EXISTS idx_metric_registry_account ON metric_registry(account_id);
+CREATE INDEX IF NOT EXISTS idx_metric_date_context_account
+    ON metric_date_context(account_id, metric_id, is_active);
 CREATE INDEX IF NOT EXISTS idx_validated_examples_account ON validated_examples(account_id);
 CREATE INDEX IF NOT EXISTS idx_business_term_account ON business_term(account_id, is_active);
 

@@ -16,9 +16,12 @@ from pathlib import Path
 from typing import Any
 
 from core.date_roles import (
+    classify_date_key,
     detect_date_role,
     find_date_dimension_key,
+    find_date_value_column,
     is_date_dimension_table,
+    normalize_date_key_type,
     question_has_temporal_intent,
 )
 from core.naming_convention import match_column_suffix, match_entity_prefix, match_table_suffix
@@ -33,7 +36,10 @@ _APPROVED_FIELD_KEYS = frozenset(
 )
 _APPROVED_DIMENSION_KEYS = frozenset({"status", "confidence", "approved_meaning"})
 _APPROVED_MEASURE_KEYS = frozenset({"status", "confidence", "expression"})
-_APPROVED_DATE_ROLE_KEYS = frozenset({"status", "confidence"})
+_APPROVED_DATE_ROLE_KEYS = frozenset({
+    "name", "business_role", "dimension_table", "dimension_key",
+    "date_value_column", "date_key_type", "synonyms", "status", "confidence",
+})
 
 
 MODEL_JSON = "_semantic_model.json"
@@ -99,6 +105,13 @@ def _qualified_name(fqn: str, meta: dict[str, Any]) -> str:
 
 def _column_names(meta: dict[str, Any]) -> list[str]:
     return [str(c.get("name") or "") for c in meta.get("columns", []) if c.get("name")]
+
+
+def _schema_tables(schema: dict[str, Any]):
+    return (
+        (fqn, meta) for fqn, meta in schema.items()
+        if not str(fqn).startswith("__") and isinstance(meta, dict)
+    )
 
 
 def _field_type(meta: dict[str, Any], column: str) -> str:
@@ -230,7 +243,7 @@ def _relationship_id(from_table: str, to_table: str, role: str, from_col: str, t
 
 def _table_lookup(schema: dict[str, Any]) -> dict[str, tuple[str, dict[str, Any]]]:
     lookup: dict[str, tuple[str, dict[str, Any]]] = {}
-    for fqn, meta in schema.items():
+    for fqn, meta in _schema_tables(schema):
         table = _schema_table_name(fqn, meta)
         qname = _qualified_name(fqn, meta)
         for key in {fqn.upper(), table.upper(), qname.upper()}:
@@ -242,7 +255,7 @@ def _find_dimension_for_key(schema: dict[str, Any], source_key: str) -> tuple[st
     source_upper = source_key.upper()
     source_prefix = source_upper[: -len("_DMS_KEY")] if source_upper.endswith("_DMS_KEY") else source_upper
     best: tuple[str, dict[str, Any]] | None = None
-    for fqn, meta in schema.items():
+    for fqn, meta in _schema_tables(schema):
         table = _schema_table_name(fqn, meta)
         if _table_type(table) != "dimension":
             continue
@@ -376,19 +389,61 @@ def _dimension_candidates(
 def _date_roles(schema: dict[str, Any], table_fqn: str, meta: dict[str, Any]) -> list[dict[str, Any]]:
     roles: list[dict[str, Any]] = []
     date_dims = [
-        (fqn, m, find_date_dimension_key(m.get("columns", [])))
-        for fqn, m in schema.items()
+        (
+            fqn,
+            m,
+            find_date_dimension_key(m.get("columns", [])),
+            find_date_value_column(m.get("columns", [])),
+        )
+        for fqn, m in _schema_tables(schema)
         if is_date_dimension_table(fqn, m.get("columns", []))
     ]
-    date_dims = [(fqn, m, pk) for fqn, m, pk in date_dims if pk]
+    date_dims = [(fqn, m, pk, value_col) for fqn, m, pk, value_col in date_dims if pk]
     if not date_dims:
         return roles
 
-    date_fqn, date_meta, date_pk = date_dims[0]
+    table_name = _schema_table_name(table_fqn, meta)
+    table_schema = _schema_name(table_fqn, meta)
+    declared_fks = schema.get("__db_fk_constraints__", []) or []
     for col in _column_names(meta):
         role = detect_date_role(col)
         if not role:
             continue
+        chosen = None
+        confidence = 70
+        for fk in declared_fks:
+            if (
+                str(fk.get("parent_table") or "").upper() == table_name.upper()
+                and str(fk.get("parent_col") or "").upper() == col.upper()
+                and (
+                    not table_schema
+                    or not fk.get("parent_schema")
+                    or str(fk.get("parent_schema") or "").upper() == table_schema.upper()
+                )
+            ):
+                for candidate in date_dims:
+                    fqn, date_meta, date_pk, value_col = candidate
+                    if (
+                        _schema_table_name(fqn, date_meta).upper()
+                        == str(fk.get("ref_table") or "").upper()
+                        and date_pk.upper() == str(fk.get("ref_col") or "").upper()
+                    ):
+                        chosen = candidate
+                        confidence = 99
+                        break
+            if chosen:
+                break
+        if not chosen:
+            same_key = [item for item in date_dims if item[2].upper() == col.upper()]
+            same_schema = [
+                item for item in (same_key or date_dims)
+                if _schema_name(item[0], item[1]).upper() == table_schema.upper()
+            ]
+            pool = same_schema or same_key or date_dims
+            chosen = pool[0]
+            confidence = 92 if len(pool) == 1 and (same_schema or same_key) else 70
+
+        date_fqn, date_meta, date_pk, date_value_col = chosen
         roles.append({
             "name": role.label,
             "business_role": role.key,
@@ -396,9 +451,13 @@ def _date_roles(schema: dict[str, Any], table_fqn: str, meta: dict[str, Any]) ->
             "fact_column": col,
             "dimension_table": _qualified_name(date_fqn, date_meta),
             "dimension_key": date_pk,
+            "date_value_column": date_value_col,
+            # This column reaches a role-playing date dimension, so values such
+            # as 4067 are surrogate IDs. They must never be parsed as YYYYMMDD.
+            "date_key_type": classify_date_key(col, has_date_dimension_fk=True),
             "synonyms": role.synonyms,
-            "status": "generated",
-            "confidence": 90,
+            "status": "generated" if confidence >= 85 else "needs_review",
+            "confidence": confidence,
         })
     return roles
 
@@ -407,7 +466,7 @@ def _relationships(schema: dict[str, Any]) -> list[dict[str, Any]]:
     relationships: list[dict[str, Any]] = []
     seen: set[str] = set()
 
-    for fqn, meta in schema.items():
+    for fqn, meta in _schema_tables(schema):
         table = _schema_table_name(fqn, meta)
         if _table_type(table) != "fact":
             continue
@@ -445,7 +504,7 @@ def _relationships(schema: dict[str, Any]) -> list[dict[str, Any]]:
                 "confidence": 88 if display_col else 75,
             })
 
-    for fqn, meta in schema.items():
+    for fqn, meta in _schema_tables(schema):
         for role in _date_roles(schema, fqn, meta):
             rel_id = _relationship_id(
                 role["fact_table"], role["dimension_table"], role["business_role"],
@@ -476,7 +535,7 @@ def build_semantic_model(schema_dir: str, *, business_desc: str = "", account_id
     tables: list[dict[str, Any]] = []
     all_date_roles: list[dict[str, Any]] = []
 
-    for fqn, meta in schema.items():
+    for fqn, meta in _schema_tables(schema):
         table = _schema_table_name(fqn, meta)
         columns = _column_names(meta)
         table_type = _table_type(table)
@@ -773,6 +832,21 @@ def preserve_approvals(
                 if k in old_r:
                     new_r[k] = old_r[k]
 
+        # Preserve an approved role that an admin added manually when the
+        # physical fact column still exists but the naming heuristic did not
+        # rediscover it during this rebuild.
+        new_role_cols = {
+            str(r.get("fact_column") or "").upper()
+            for r in (new_t.get("date_roles") or [])
+        }
+        for col_u, old_r in old_date_roles.items():
+            if (
+                old_r.get("status") == "approved"
+                and col_u in new_cols
+                and col_u not in new_role_cols
+            ):
+                new_t.setdefault("date_roles", []).append(dict(old_r))
+
     # ── Top-level relationships  (keyed by relationship id) ─────────────────
     old_rels: dict[str, dict[str, Any]] = {
         str(r.get("id") or "").upper(): r
@@ -786,6 +860,14 @@ def preserve_approvals(
         for k in ("status", "confidence", "join_type", "display_column", "code_column"):
             if k in old_r:
                 new_r[k] = old_r[k]
+
+    # Top-level date roles are a projection of the per-table records. Rebuild
+    # it after the approval overlay so edited and manually-added roles survive.
+    new_model["date_roles"] = [
+        dict(role)
+        for table in (new_model.get("tables") or [])
+        for role in (table.get("date_roles") or [])
+    ]
 
     return new_model, drift
 
@@ -1270,6 +1352,7 @@ def build_runtime_semantic_plan(
     has_temporal_intent = question_has_temporal_intent(question)
     fields: list[dict[str, Any]] = []
     joins: list[dict[str, Any]] = []
+    date_key_policies: list[dict[str, Any]] = []
     seen_fields: set[tuple[str, str]] = set()
     seen_joins: set[tuple[str, str, tuple[tuple[str, str], ...]]] = set()
 
@@ -1470,7 +1553,8 @@ def build_runtime_semantic_plan(
             fact_col = str(date_role.get("fact_column") or "")
             dim_table = str(date_role.get("dimension_table") or "")
             dim_key = str(date_role.get("dimension_key") or "")
-            if not fact_col or not dim_table or not dim_key:
+            date_value_col = str(date_role.get("date_value_column") or dim_key)
+            if not fact_col or not dim_table or not dim_key or not date_value_col:
                 continue
             name_dr = str(date_role.get("name") or "")
             biz_role_dr = str(date_role.get("business_role") or "").replace("_", " ")
@@ -1479,22 +1563,35 @@ def build_runtime_semantic_plan(
             if score <= 0:
                 continue
 
-            # Field: the dimension key must appear in the SQL (satisfied by JOIN ON clause)
-            # enforcement="optional" so cross-schema date roles don't block valid SQL
-            fk = (dim_table.upper(), dim_key.upper())
+            enforcement = (
+                "required" if str(date_role.get("status") or "") == "approved"
+                else "optional"
+            )
+            role_alias_base = re.sub(
+                r"[^a-z0-9]+", "_", (biz_role_dr or name_dr).lower()
+            ).strip("_") or "business_date"
+            role_alias = role_alias_base if role_alias_base.endswith("date") else f"{role_alias_base}_date"
+            date_key_type = normalize_date_key_type(
+                str(date_role.get("date_key_type") or "surrogate_fk")
+            )
+            # Use the human/business date value for grouping and filtering; the
+            # surrogate key remains confined to the JOIN condition.
+            fk = (dim_table.upper(), date_value_col.upper())
             if fk not in seen_fields:
                 seen_fields.add(fk)
                 fields.append({
                     "term": name_dr,
                     "table": dim_table,
-                    "column": dim_key,
+                    "column": date_value_col,
                     "role": "date_dimension",
                     "display_required": False,
                     "source_table": source_table,
                     "source_key_column": fact_col,
                     "confidence": date_role.get("confidence", 90),
                     "source": "semantic_model_date_role",
-                    "enforcement": "optional",
+                    "enforcement": enforcement,
+                    "date_key_type": date_key_type,
+                    "role_alias": role_alias,
                 })
 
             # Join: optional — the LLM picks which date dim to join based on schema
@@ -1507,8 +1604,21 @@ def build_runtime_semantic_plan(
                     "to": dim_table,
                     "conditions": [(fact_col, dim_key)],
                     "source": "semantic_model_date_role",
-                    "enforcement": "optional",
+                    "enforcement": enforcement,
+                    "role_playing": True,
+                    "preserve_all": enforcement == "required",
+                    "role_alias": role_alias,
+                    "business_role": name_dr,
                 })
+            date_key_policies.append({
+                "table": source_table,
+                "column": fact_col,
+                "date_key_type": date_key_type,
+                "date_value_table": dim_table,
+                "date_value_column": date_value_col,
+                "role_alias": role_alias,
+                "business_role": name_dr,
+            })
 
             if len(fields) >= max_fields:
                 break
@@ -1569,6 +1679,7 @@ def build_runtime_semantic_plan(
         "reason": "structured semantic model",
         "available_dimensions": available_dims,
         "avoid_columns": avoid_columns,
+        "date_key_policies": date_key_policies,
     }
 
 
@@ -1752,7 +1863,12 @@ def patch_date_role(
     dimension_table: str = "",
     dimension_key: str = "",
     business_role: str = "",
+    name: str = "",
+    date_value_column: str = "",
+    date_key_type: str = "",
+    synonyms: list[str] | tuple[str, ...] | None = None,
     status: str = "approved",
+    create_if_missing: bool = False,
 ) -> bool:
     """Patch an approved date role entry in the structured semantic model.
 
@@ -1787,6 +1903,14 @@ def patch_date_role(
             dr["dimension_key"] = dimension_key
         if business_role:
             dr["business_role"] = business_role
+        if name:
+            dr["name"] = name
+        if date_value_column:
+            dr["date_value_column"] = date_value_column
+        if date_key_type:
+            dr["date_key_type"] = normalize_date_key_type(date_key_type)
+        if synonyms is not None:
+            dr["synonyms"] = [str(value).strip() for value in synonyms if str(value).strip()]
         dr["status"] = status
         dr["confidence"] = new_conf
         changed = True
@@ -1806,6 +1930,54 @@ def patch_date_role(
         for dr in table.get("date_roles", []) or []:
             if str(dr.get("fact_column") or "").upper() == fact_col_u:
                 _patch_dr(dr)
+
+    if not changed and create_if_missing:
+        target_table = next((
+            table for table in (model.get("tables") or [])
+            if fact_table_u in {
+                str(table.get("qualified_name") or "").upper(),
+                str(table.get("table") or "").upper(),
+            }
+        ), None)
+        fact_columns = {
+            str(field.get("column") or "").upper()
+            for field in ((target_table or {}).get("fields") or [])
+        }
+        dimension = next((
+            table for table in (model.get("tables") or [])
+            if str(dimension_table or "").upper() in {
+                str(table.get("qualified_name") or "").upper(),
+                str(table.get("table") or "").upper(),
+            }
+        ), None)
+        dimension_columns = {
+            str(field.get("column") or "").upper()
+            for field in ((dimension or {}).get("fields") or [])
+        }
+        if (
+            target_table
+            and dimension
+            and fact_col_u in fact_columns
+            and str(dimension_key or "").upper() in dimension_columns
+            and str(date_value_column or "").upper() in dimension_columns
+        ):
+            role_key = business_role or "business_date"
+            entry = {
+                "name": name or role_key.replace("_", " ").title(),
+                "business_role": role_key,
+                "fact_table": target_table.get("qualified_name") or target_table.get("table"),
+                "fact_column": fact_column,
+                "dimension_table": dimension.get("qualified_name") or dimension.get("table"),
+                "dimension_key": dimension_key,
+                "date_value_column": date_value_column,
+                "date_key_type": normalize_date_key_type(date_key_type or "surrogate_fk"),
+                "synonyms": [str(value).strip() for value in (synonyms or []) if str(value).strip()],
+                "status": status,
+                "confidence": new_conf,
+            }
+            target_table.setdefault("date_roles", []).append(entry)
+            model.setdefault("date_roles", []).append(dict(entry))
+            changed = True
 
     if not changed:
         return False

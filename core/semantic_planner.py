@@ -714,6 +714,11 @@ def format_semantic_field_plan(plan: dict, db_type: str = "azure_sql") -> str:
                 " [business display field - use this in SELECT and GROUP BY; "
                 f"use {field.get('source_key_column')} only for JOINs unless the user asks for key/id]"
             )
+        if field.get("role_alias"):
+            role_hint += (
+                f" [role-playing date alias: {field.get('role_alias')}; "
+                "use the real date value through this alias, never parse the fact FK as a date]"
+            )
         lines.append(f"- {field['term']}: {expr}{role_hint}")
     avoid = plan.get("avoid_columns") or []
     if avoid:
@@ -730,9 +735,15 @@ def format_semantic_field_plan(plan: dict, db_type: str = "azure_sql") -> str:
         lines.append("")
         lines.append("Required join path:")
         for edge in joins:
+            role_alias = str(edge.get("role_alias") or "").strip()
+            right_ref = role_alias or edge["to"]
             conds = " AND ".join(
-                f"{edge['from']}.{left_col} = {edge['to']}.{right_col}"
+                f"{edge['from']}.{left_col} = {right_ref}.{right_col}"
                 for left_col, right_col in edge.get("conditions", [])
             )
-            lines.append(f"- {edge['from']} JOIN {edge['to']} ON {conds}")
+            alias_clause = f" AS {role_alias}" if role_alias else ""
+            role_clause = f" for {edge.get('business_role')}" if edge.get("business_role") else ""
+            lines.append(
+                f"- {edge['from']} JOIN {edge['to']}{alias_clause} ON {conds}{role_clause}"
+            )
     return "\n".join(lines)

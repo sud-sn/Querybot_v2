@@ -57,6 +57,10 @@ from store.semantic_feedback import (
     list_recent_reviewed_semantic_feedback,
     semantic_feedback_maps, semantic_feedback_pending_summary,
 )
+from store.date_context_store import (
+    save_metric_date_context, list_metric_date_contexts,
+    get_metric_date_context, delete_metric_date_context,
+)
 from store.trace_store import (
     create_answer_trace, update_answer_trace, log_answer_trace_step,
     finish_answer_trace, kb_chunk_refs, get_answer_trace, list_answer_traces,
@@ -132,6 +136,8 @@ __all__ = [
     "count_semantic_field_feedback","review_semantic_field_feedback",
     "list_recent_reviewed_semantic_feedback",
     "semantic_feedback_maps","semantic_feedback_pending_summary",
+    "save_metric_date_context","list_metric_date_contexts",
+    "get_metric_date_context","delete_metric_date_context",
     "create_answer_trace","update_answer_trace","log_answer_trace_step",
     "finish_answer_trace","kb_chunk_refs","get_answer_trace","list_answer_traces",
     "get_kb_doc_quality",
