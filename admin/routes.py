@@ -4469,6 +4469,23 @@ async def graph_reject_rel(request: Request, account_id: str, rel_id: int):
     return JSONResponse({"status": "ok"})
 
 
+@router.post("/clients/{account_id}/graph/api/reject/property")
+async def graph_reject_property(request: Request, account_id: str):
+    """Reject a suggested entity property (no is_active column on this table —
+    status='rejected' alone removes it from the confirmed subgraph and the
+    review queue)."""
+    if not _is_auth(request):
+        raise HTTPException(status_code=401)
+    data = await request.json()
+    with __import__("store.db", fromlist=["get_db"]).get_db() as conn:
+        conn.execute(
+            "UPDATE entity_properties SET status='rejected' "
+            "WHERE account_id=? AND entity_name=? AND column_name=?",
+            (account_id, data.get("entity_name", ""), data.get("column_name", "")),
+        )
+    return JSONResponse({"status": "ok"})
+
+
 @router.post("/clients/{account_id}/graph/api/bulk-accept")
 async def graph_bulk_accept(request: Request, account_id: str):
     """Accept all suggested entities and relationships at or above min_confidence."""

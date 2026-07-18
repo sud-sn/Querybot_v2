@@ -150,6 +150,44 @@ body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-seri
 .tb-btn.danger{background:#FEE2E2;color:#DC2626;border-color:#FECACA}
 .tb-btn.danger:hover{opacity:.85}
 .tb-btn.sm{padding:3px 8px;font-size:10px;min-height:24px;border-radius:5px}
+.review-badge{display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 4px;border-radius:8px;background:#D97706;color:#fff;font-size:10px;font-weight:800;margin-left:2px}
+
+/* ── Review queue panel ─────────────────────────────────────────────────────── */
+#review-panel{position:absolute;top:0;right:0;bottom:0;width:360px;max-width:85vw;background:var(--surface);border-left:1px solid var(--border);box-shadow:-6px 0 18px rgba(0,0,0,.08);display:flex;flex-direction:column;transform:translateX(101%);transition:transform .2s ease;z-index:30}
+#review-panel.open{transform:translateX(0)}
+#rv-head{padding:.7rem .9rem;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:.45rem}
+#rv-title-row{display:flex;align-items:center;justify-content:space-between}
+#rv-title{font-size:13px;font-weight:900}
+#rv-progress-track{height:5px;border-radius:3px;background:var(--surface-3,var(--border));overflow:hidden}
+#rv-progress-fill{height:100%;border-radius:3px;background:var(--success,#059669);width:0%;transition:width .25s ease}
+#rv-progress-label{font-size:11px;color:var(--text-muted)}
+#rv-list{flex:1;overflow-y:auto;padding:.5rem}
+.rv-item{border:1px solid var(--border);border-radius:8px;padding:.55rem .65rem;margin-bottom:.5rem;background:var(--surface);cursor:pointer;transition:border-color .12s,background .12s}
+.rv-item:hover{border-color:var(--border-strong,var(--border));background:var(--surface-2)}
+.rv-item-title{font-size:12px;font-weight:700;word-break:break-word}
+.rv-item-title code{font-size:11px}
+.rv-chips{display:flex;flex-wrap:wrap;gap:.3rem;margin:.35rem 0}
+.rv-chip{display:inline-flex;align-items:center;font-size:10px;font-weight:700;padding:1px 7px;border-radius:9px;border:1px solid var(--border);color:var(--text-muted);background:var(--surface-2)}
+.rv-chip.src-llm{color:#7C3AED;border-color:#C4B5FD;background:#F5F3FF}
+.rv-chip.src-heuristic{color:#1D4ED8;border-color:#BFDBFE;background:#EFF6FF}
+.rv-chip.src-kb{color:#92400E;border-color:#FDE68A;background:#FFFBEB}
+.rv-chip.conf-high{color:#059669;border-color:#A7F3D0;background:#ECFDF5}
+.rv-chip.conf-low{color:#D97706;border-color:#FDE68A;background:#FFFBEB}
+.rv-reason{font-size:11px;color:var(--text-muted);line-height:1.35;margin:.15rem 0 .35rem;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.rv-actions{display:flex;gap:.35rem}
+.rv-actions .tb-btn.sm{flex:none}
+.rv-accept{color:#059669;border-color:#A7F3D0}
+.rv-accept:hover{background:#ECFDF5}
+.rv-reject{color:#DC2626;border-color:#FECACA}
+.rv-reject:hover{background:#FEF2F2}
+#rv-empty{padding:1.4rem .9rem;text-align:center;font-size:12px;color:var(--text-muted)}
+#rv-bulk-row{padding:.55rem .9rem;border-top:1px solid var(--border);display:flex;align-items:center;gap:.5rem}
+
+/* ── Resolver test modal output ─────────────────────────────────────────────── */
+#rt-output{background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:.6rem .75rem;font-size:12px;white-space:pre-wrap;word-break:break-word;max-height:300px;overflow-y:auto;font-family:ui-monospace,monospace;display:none}
+.rt-scope-pill{display:inline-block;font-size:10px;font-weight:800;padding:1px 8px;border-radius:9px;margin-left:.4rem}
+.rt-scope-pill.confirmed{background:#ECFDF5;color:#059669}
+.rt-scope-pill.suggested_fallback{background:#FFFBEB;color:#D97706}
 
 /* ── Cytoscape ──────────────────────────────────────────────────────────────── */
 #cy{flex:1;display:block;cursor:default;min-height:0}
@@ -398,7 +436,12 @@ body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-seri
     <button class="tb-btn primary" onclick="openEntityModal(null)">+ Entity</button>
     <button class="tb-btn" onclick="openAddJoinModal(null)">→ Join</button>
     <button class="tb-btn suggest" id="suggest-btn" onclick="runSuggest()">✦ Suggest</button>
+    <button class="tb-btn" id="review-btn" onclick="toggleReviewPanel()" title="Review LLM/heuristic suggestions before they steer SQL joins">
+      ⚑ Review <span id="review-badge" class="review-badge" style="display:none">0</span>
+    </button>
+    <button class="tb-btn" onclick="openResolverModal()" title="Type a sample question and see exactly which JOIN path the resolver picks">🧪 Test resolver</button>
     <div style="flex:1;min-width:0"></div>
+    <button class="tb-btn" onclick="autoLayout()" title="Re-arrange the canvas (fact-centric left-to-right) and save positions">▦ Layout</button>
     <button class="tb-btn" onclick="fitView()">⤢ Fit</button>
   </div>
 
@@ -412,6 +455,26 @@ body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-seri
     <button onclick="cy.zoom(cy.zoom()*0.8);syncZoom()" title="Zoom out">−</button>
     <button onclick="fitView()" title="Fit to screen">⤢</button>
   </div>
+
+  <!-- ══ REVIEW QUEUE PANEL ════════════════════════════════════════════════ -->
+  <aside id="review-panel" aria-label="Suggestion review queue">
+    <div id="rv-head">
+      <div id="rv-title-row">
+        <span id="rv-title">Review suggestions</span>
+        <button class="tb-btn sm" onclick="toggleReviewPanel()" title="Close">✕</button>
+      </div>
+      <div id="rv-progress-track"><div id="rv-progress-fill"></div></div>
+      <span id="rv-progress-label">–</span>
+    </div>
+    <div id="rv-list"></div>
+    <div id="rv-bulk-row">
+      <button class="tb-btn sm rv-accept" id="rv-bulk-btn" onclick="bulkAcceptHighConf()"
+              title="Confirm every suggested entity and join with confidence ≥ 85% in one click">
+        ✓ Accept all ≥ 85%
+      </button>
+      <span style="font-size:11px;color:var(--text-muted)">Joins steer SQL — review low-confidence ones individually.</span>
+    </div>
+  </aside>
 
   <!-- ══ BOTTOM PANEL ══════════════════════════════════════════════════════ -->
   <div id="bp">
@@ -445,6 +508,29 @@ body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-seri
 
 </div><!-- /eg-main -->
 </div><!-- /eg-page -->
+
+<!-- ══ RESOLVER TEST MODAL ═══════════════════════════════════════════════════ -->
+<div class="eg-modal-overlay" id="resolver-modal" style="display:none" onclick="if(event.target===this)closeResolverModal()">
+  <div class="eg-modal" style="max-width:640px">
+    <div class="eg-modal-head">
+      <span>Test the join resolver</span>
+      <button onclick="closeResolverModal()" class="eg-modal-close">✕</button>
+    </div>
+    <div class="eg-modal-body">
+      <p style="margin:0 0 .6rem;font-size:12px;color:var(--text-muted)">
+        Type a question the way a business user would. You'll see which entities the
+        resolver detects and the exact FROM/JOIN skeleton it hands to SQL generation —
+        including whether it had to fall back to unreviewed suggestions.
+      </p>
+      <div style="display:flex;gap:.5rem;margin-bottom:.6rem">
+        <input id="rt-question" class="eg-inp" placeholder="e.g. revenue by prescriber and region"
+               style="flex:1" onkeydown="if(event.key==='Enter')runResolverTest()">
+        <button class="eg-m-btn primary" id="rt-run-btn" onclick="runResolverTest()">Run</button>
+      </div>
+      <div id="rt-output"></div>
+    </div>
+  </div>
+</div>
 
 <!-- ══ ENTITY MODAL ══════════════════════════════════════════════════════════ -->
 <div class="eg-modal-overlay" id="entity-modal" style="display:none" onclick="if(event.target===this)closeEntityModal()">
@@ -1382,7 +1468,7 @@ async function saveEntity() {
 }
 
 // ── Add Join modal ─────────────────────────────────────────────────────────────
-function openAddJoinModal(preFrom) {
+function openAddJoinModal(preFrom, prefill) {
   const opts = graphData.entities.map(e =>
     `<option value="${_esc(e.entity_name)}"${e.entity_name===preFrom?' selected':''}>${_esc(e.display_name||e.entity_name)}</option>`
   ).join('');
@@ -1391,6 +1477,18 @@ function openAddJoinModal(preFrom) {
   if (preFrom) { document.getElementById('ajm-from').value = preFrom; }
   document.getElementById('ajm-lcol').value = '';
   document.getElementById('ajm-rcol').value = '';
+  // Prefill from an existing rel (review-queue Edit): saving upserts by the
+  // (from, to) entity pair, so the edited join REPLACES the suggested row
+  // with confirmed values — edit-then-save doubles as an accept.
+  if (prefill) {
+    const jc = _parseJC(prefill.join_conditions);
+    document.getElementById('ajm-from').value = prefill.from_entity || preFrom || '';
+    document.getElementById('ajm-to').value   = prefill.to_entity || '';
+    document.getElementById('ajm-lcol').value = prefill.from_column || (jc[0]?.from_col || '');
+    document.getElementById('ajm-rcol').value = prefill.to_column   || (jc[0]?.to_col   || '');
+    if (prefill.join_type)         document.getElementById('ajm-jtype').value = prefill.join_type;
+    if (prefill.relationship_type) document.getElementById('ajm-card').value  = prefill.relationship_type;
+  }
   document.getElementById('add-join-modal').style.display='flex';
 }
 function closeAddJoinModal() { document.getElementById('add-join-modal').style.display='none'; }
@@ -1476,6 +1574,242 @@ async function loadProperties() {
   } catch(e) {}
 }
 
+// ── Review queue (Phase 3) ─────────────────────────────────────────────────────
+// Suggested graph content can steer SQL joins via the resolver's
+// suggested-fallback, so the queue exists to drain it: every item shows its
+// provenance evidence (generated_by + reason + confidence) and one-click
+// Accept / Edit / Reject. Sorted joins-first — a wrong join corrupts every
+// answer that crosses it; a wrong entity mostly just sits unused.
+
+function _pendingItems() {
+  const rels = (graphData.relationships || [])
+    .filter(r => r.status === 'suggested')
+    .map(r => ({kind: 'rel', conf: r.confidence_score ?? 0, raw: r}));
+  const ents = (graphData.entities || [])
+    .filter(e => e.status === 'suggested')
+    .map(e => ({kind: 'entity', conf: e.confidence_score ?? 0, raw: e}));
+  const props = (graphData.properties || [])
+    .filter(p => p.status === 'suggested')
+    .map(p => ({kind: 'prop', conf: p.confidence_score ?? 0, raw: p}));
+  const byConf = (a, b) => b.conf - a.conf;
+  return [...rels.sort(byConf), ...ents.sort(byConf), ...props.sort(byConf)];
+}
+
+function updateReviewBadge() {
+  const badge = document.getElementById('review-badge');
+  const n = _pendingItems().length;
+  badge.textContent = n;
+  badge.style.display = n ? 'inline-flex' : 'none';
+}
+
+function toggleReviewPanel() {
+  const panel = document.getElementById('review-panel');
+  panel.classList.toggle('open');
+  if (panel.classList.contains('open')) renderReviewPanel();
+}
+
+function _srcChip(generatedBy) {
+  const g = String(generatedBy || 'manual').toLowerCase();
+  if (g.includes('llm'))       return '<span class="rv-chip src-llm">LLM suggested</span>';
+  if (g.includes('heuristic')) return '<span class="rv-chip src-heuristic">Heuristic</span>';
+  if (g.includes('kb'))        return '<span class="rv-chip src-kb">KB harvest</span>';
+  return `<span class="rv-chip">${_esc(g)}</span>`;
+}
+
+function _confChip(conf) {
+  const cls = conf >= 85 ? 'conf-high' : 'conf-low';
+  return `<span class="rv-chip ${cls}">${conf}% confident</span>`;
+}
+
+function _rvItemHtml(item, idx) {
+  const r = item.raw;
+  let title, kindLabel;
+  if (item.kind === 'rel') {
+    const jc = _parseJC(r.join_conditions);
+    const fc = r.from_column || (jc[0]?.from_col || '');
+    const tc = r.to_column   || (jc[0]?.to_col   || '');
+    kindLabel = 'JOIN';
+    title = `<code>${_esc(r.from_entity)}</code> → <code>${_esc(r.to_entity)}</code>` +
+            (fc && tc ? `<br><span style="font-weight:400;color:var(--text-muted)">${_esc(fc)} = ${_esc(tc)}</span>` : '');
+  } else if (item.kind === 'entity') {
+    kindLabel = (r.entity_type || 'entity').toUpperCase();
+    title = `<code>${_esc(r.entity_name)}</code>`;
+  } else {
+    kindLabel = 'FIELD';
+    title = `<code>${_esc(r.entity_name)}.${_esc(r.column_name)}</code>` +
+            (r.role ? ` <span style="font-weight:400;color:var(--text-muted)">(${_esc(r.role)})</span>` : '');
+  }
+  const reason = r.reason
+    ? `<div class="rv-reason" title="${_esc(r.reason)}">${_esc(r.reason)}</div>` : '';
+  return `
+    <div class="rv-item" data-idx="${idx}" onclick="focusReviewItem(${idx})">
+      <div class="rv-item-title"><span class="rv-chip" style="margin-right:.3rem">${kindLabel}</span>${title}</div>
+      <div class="rv-chips">${_srcChip(r.generated_by)}${_confChip(item.conf)}</div>
+      ${reason}
+      <div class="rv-actions" onclick="event.stopPropagation()">
+        <button class="tb-btn sm rv-accept" onclick="reviewDecide(${idx}, 'accept')">✓ Accept</button>
+        ${item.kind !== 'prop'
+          ? `<button class="tb-btn sm" onclick="reviewEdit(${idx})">✎ Edit</button>` : ''}
+        <button class="tb-btn sm rv-reject" onclick="reviewDecide(${idx}, 'reject')">✕ Reject</button>
+      </div>
+    </div>`;
+}
+
+let _rvItems = [];
+
+function renderReviewPanel() {
+  _rvItems = _pendingItems();
+  const listEl = document.getElementById('rv-list');
+  const pending = _rvItems.length;
+  // Progress across everything visible on the canvas: confirmed + pending.
+  const total =
+    (graphData.entities || []).length +
+    (graphData.relationships || []).length +
+    (graphData.properties || []).length;
+  const reviewed = total - pending;
+  const pct = total ? Math.round((reviewed / total) * 100) : 100;
+  document.getElementById('rv-progress-fill').style.width = pct + '%';
+  document.getElementById('rv-progress-label').textContent =
+    pending ? `${reviewed} of ${total} reviewed · ${pending} pending` : 'All caught up — every item is admin-reviewed.';
+  document.getElementById('rv-bulk-btn').disabled = !_rvItems.some(i => i.conf >= 85 && i.kind !== 'prop');
+  listEl.innerHTML = pending
+    ? _rvItems.map((item, idx) => _rvItemHtml(item, idx)).join('')
+    : '<div id="rv-empty">Nothing pending. New suggestions land here after every KB build or ✦ Suggest run.</div>';
+  updateReviewBadge();
+}
+
+function focusReviewItem(idx) {
+  const item = _rvItems[idx];
+  if (!item || !cy) return;
+  const el = item.kind === 'rel'
+    ? cy.getElementById(`rel-${item.raw.id}`)
+    : cy.getElementById(item.raw.entity_name);
+  if (el && el.length) {
+    cy.animate({center: {eles: el}, zoom: Math.max(cy.zoom(), 1)}, {duration: 250});
+    cy.elements().unselect();
+    el.select();
+  }
+}
+
+function reviewEdit(idx) {
+  const item = _rvItems[idx];
+  if (!item) return;
+  if (item.kind === 'rel')    openAddJoinModal(item.raw.from_entity, item.raw);
+  if (item.kind === 'entity') openEntityModal(item.raw.entity_name);
+}
+
+async function reviewDecide(idx, decision) {
+  const item = _rvItems[idx];
+  if (!item) return;
+  const r = item.raw;
+  let url, opts = {method: 'POST'};
+  if (item.kind === 'rel') {
+    url = `${API_BASE}/${decision === 'accept' ? 'confirm' : 'reject'}/relationship/${r.id}`;
+  } else if (item.kind === 'entity') {
+    url = `${API_BASE}/${decision === 'accept' ? 'confirm' : 'reject'}/entity/${encodeURIComponent(r.entity_name)}`;
+  } else {
+    url = `${API_BASE}/${decision === 'accept' ? 'confirm' : 'reject'}/property`;
+    opts.headers = {'Content-Type': 'application/json'};
+    opts.body = JSON.stringify({entity_name: r.entity_name, column_name: r.column_name});
+  }
+  try {
+    const resp = await fetch(url, opts);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    await _reloadGraphData();
+  } catch (e) {
+    alert(`Could not ${decision}: ${e.message}`);
+  }
+}
+
+async function bulkAcceptHighConf() {
+  const btn = document.getElementById('rv-bulk-btn');
+  btn.disabled = true; btn.textContent = '⟳ Accepting…';
+  try {
+    const resp = await fetch(`${API_BASE}/bulk-accept`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({min_confidence: 85}),
+    });
+    const data = await resp.json();
+    await _reloadGraphData();
+    btn.textContent = `✓ Accepted ${data.entities_accepted + data.relationships_accepted}`;
+    setTimeout(() => { btn.textContent = '✓ Accept all ≥ 85%'; }, 2500);
+  } catch (e) {
+    alert('Bulk accept failed: ' + e.message);
+    btn.textContent = '✓ Accept all ≥ 85%';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function _reloadGraphData() {
+  const fresh = await fetch(`${API_BASE}/graph.json`);
+  const gd = await fresh.json();
+  graphData.entities      = gd.entities || [];
+  graphData.relationships = gd.relationships || [];
+  graphData.properties    = gd.properties || [];
+  // Positions come from the data, so rebuilding keeps the current layout.
+  cy.elements().remove();
+  cy.add(buildElements());
+  buildSidebar();
+  renderReviewPanel();
+}
+
+// ── Resolver test (Phase 3) ────────────────────────────────────────────────────
+function openResolverModal()  { document.getElementById('resolver-modal').style.display = 'flex';
+                                document.getElementById('rt-question').focus(); }
+function closeResolverModal() { document.getElementById('resolver-modal').style.display = 'none'; }
+
+async function runResolverTest() {
+  const q = document.getElementById('rt-question').value.trim();
+  const out = document.getElementById('rt-output');
+  const btn = document.getElementById('rt-run-btn');
+  if (!q) return;
+  btn.disabled = true; btn.textContent = '⟳';
+  out.style.display = 'block';
+  out.textContent = 'Resolving…';
+  try {
+    const resp = await fetch(`${API_BASE}/resolve?q=${encodeURIComponent(q)}`);
+    const d = await resp.json();
+    if (!d.enabled) {
+      out.textContent =
+        'No join path resolved.\n\n' +
+        `Entities in graph: ${d.entity_count ?? 0}\n` +
+        'Either no entity name matched the question, or the graph has no\n' +
+        'confirmed path between the detected entities. Check entity display\n' +
+        'names/synonyms, or review pending suggestions (⚑ Review).';
+    } else {
+      const scope = d.graph_scope || 'confirmed';
+      const scopeNote = scope === 'suggested_fallback'
+        ? '⚠ UNREVIEWED suggestions were needed for this path — confirm them in ⚑ Review to make it trustworthy.'
+        : '✓ Resolved from admin-confirmed graph content only.';
+      out.textContent =
+        `Detected entities: ${(d.detected || []).join(', ') || '—'}\n` +
+        `Anchor (root):     ${d.anchor || '—'}\n` +
+        `Scope:             ${scope}   ${scopeNote}\n\n` +
+        `JOIN skeleton handed to SQL generation:\n${d.join_skeleton || '—'}`;
+    }
+  } catch (e) {
+    out.textContent = 'Resolver test failed: ' + e.message;
+  } finally {
+    btn.disabled = false; btn.textContent = 'Run';
+  }
+}
+
+// ── Auto-layout (Phase 3) ──────────────────────────────────────────────────────
+function autoLayout() {
+  if (!cy) return;
+  const layout = cy.layout({name: 'dagre', rankDir: 'LR', nodeSep: 48, rankSep: 160, padding: 40});
+  layout.on('layoutstop', () => {
+    // Persist so the arrangement survives reloads (same PATCH the drag-save uses).
+    cy.nodes().forEach(n => {
+      const p = n.position();
+      saveEntityPosition(n.id(), p.x, p.y);
+    });
+    fitView();
+  });
+  layout.run();
+}
+
 // ── Keyboard shortcuts ─────────────────────────────────────────────────────────
 document.addEventListener('keydown', ev => {
   if (ev.target.tagName==='INPUT'||ev.target.tagName==='TEXTAREA'||ev.target.tagName==='SELECT') return;
@@ -1490,6 +1824,17 @@ document.addEventListener('keydown', ev => {
 document.addEventListener('DOMContentLoaded', () => {
   cytoscape.use(cytoscapeDagre);
   initCytoscape();
+  // Review-first: properties load lazily, then the badge reflects the real
+  // pending count. When anything awaits review, open the queue immediately —
+  // unreviewed suggestions can steer SQL joins via the resolver fallback, so
+  // review is the FIRST thing this page should ask for, not a hidden extra.
+  loadProperties().then(() => {
+    updateReviewBadge();
+    if (_pendingItems().length) {
+      document.getElementById('review-panel').classList.add('open');
+      renderReviewPanel();
+    }
+  });
 });
 </script>
 </body>
