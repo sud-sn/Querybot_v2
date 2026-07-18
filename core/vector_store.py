@@ -976,6 +976,13 @@ class QdrantKBRetriever:
         # True when the last retrieve() found nothing above the relevance
         # floor — read by the pipeline to penalize answer confidence.
         self.last_retrieval_weak = False
+        # Per-table telemetry from the last retrieve(): one entry per table
+        # fqn with its best cross-encoder score, section count, and whether
+        # the relevance floor kept or dropped it. The pipeline persists this
+        # into answer_trace.retrieved_kb_scores so every "wrong table"
+        # complaint is diagnosable from the trace, and the Model Health
+        # page can aggregate it into the KB doc-quality ranking.
+        self.last_retrieval_stats: list[dict] = []
 
     # ── Internal helpers ──────────────────────────────────────────────────────
 
@@ -1135,6 +1142,27 @@ class QdrantKBRetriever:
             confidence drops instead of the prompt going context-free.
         """
         self.last_retrieval_weak = False
+
+        # Telemetry: one stats entry per table fqn in the candidate set.
+        # Built BEFORE floor decisions so dropped tables are recorded too —
+        # "the right table was retrieved but floored" and "the right table
+        # never appeared" are different bugs and the trace must tell them apart.
+        stats: dict[str, dict] = {}
+        for h in hits:
+            fqn = h.get("fqn") or ""
+            if fqn in ("", "_global"):
+                continue
+            entry = stats.setdefault(
+                fqn, {"fqn": fqn, "sections": 0, "best_score": None, "kept": True}
+            )
+            entry["sections"] += 1
+            score = h.get("_rerank_score")
+            if score is not None and (
+                entry["best_score"] is None or float(score) > entry["best_score"]
+            ):
+                entry["best_score"] = round(float(score), 4)
+        self.last_retrieval_stats = list(stats.values())
+
         scored = [h for h in hits if "_rerank_score" in h and (h.get("fqn") or "") not in ("", "_global")]
         if not scored:
             return hits
@@ -1147,6 +1175,8 @@ class QdrantKBRetriever:
         if all(score < _RAG_MIN_SCORE for score in best_by_fqn.values()):
             self.last_retrieval_weak = True
             best_fqn = max(best_by_fqn, key=best_by_fqn.get)
+            for entry in self.last_retrieval_stats:
+                entry["kept"] = entry["fqn"] == best_fqn
             log.warning(
                 "KB retrieval weak: best table match %.4f < floor %.2f — keeping only %s",
                 best_by_fqn[best_fqn], _RAG_MIN_SCORE, best_fqn,
@@ -1158,6 +1188,9 @@ class QdrantKBRetriever:
 
         dropped = {fqn for fqn, score in best_by_fqn.items() if score < _RAG_MIN_SCORE}
         if dropped:
+            for entry in self.last_retrieval_stats:
+                if entry["fqn"] in dropped:
+                    entry["kept"] = False
             log.info(
                 "KB retrieval floor dropped %d irrelevant table(s): %s",
                 len(dropped), ", ".join(sorted(dropped)),

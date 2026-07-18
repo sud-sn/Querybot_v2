@@ -345,6 +345,55 @@ table.mh-tbl tr:hover td{background:color-mix(in srgb,var(--primary) 4%,var(--su
   </div>
   {% endif %}
 
+  <!-- ── KB doc quality (most retrieved, least answerable) ── -->
+  <div class="mh-card">
+    <div class="mh-card-header">
+      <h2>KB Doc Quality — Where Edits Pay Off Most</h2>
+      <span style="font-size:12px;color:var(--text-muted)">last 30 days of live questions</span>
+    </div>
+    <div class="mh-card-body">
+      {% if kb_doc_quality %}
+      <p style="margin:0 0 .6rem;font-size:13px;color:var(--text-soft)">
+        Ranked by <strong>attention score</strong> — tables pulled into many prompts but
+        rarely used in working SQL, often failing, or matching only weakly. Editing the
+        top doc's wording (Overview / Business Synonyms) gives the biggest answer-quality
+        gain per minute spent. Edit via the KB tab on the client page, then the file
+        re-embeds automatically.
+      </p>
+      <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+        <thead><tr style="text-align:left;color:var(--text-muted)">
+          <th style="padding:.35rem .5rem">Table</th>
+          <th style="padding:.35rem .5rem" title="Questions where this table entered the retrieval candidate set">Retrieved</th>
+          <th style="padding:.35rem .5rem" title="Of those, how often the final SQL actually used this table">Used in SQL</th>
+          <th style="padding:.35rem .5rem" title="Of those, how often the question failed (error/timeout/cannot-generate)">Failed</th>
+          <th style="padding:.35rem .5rem" title="Kept, but best relevance score was borderline (&lt;0.3) — the doc's wording matches the question weakly">Borderline</th>
+          <th style="padding:.35rem .5rem" title="Mean best cross-encoder relevance score">Avg score</th>
+          <th style="padding:.35rem .5rem" title="retrieved x max(failure rate, unused rate, borderline rate)">Attention</th>
+        </tr></thead>
+        <tbody>
+        {% for row in kb_doc_quality %}
+        <tr style="border-top:1px solid var(--border)">
+          <td style="padding:.35rem .5rem"><code>{{ row.fqn }}</code></td>
+          <td style="padding:.35rem .5rem">{{ row.retrieved }}{% if row.floored %} <span style="color:var(--text-muted)" title="dropped by the relevance floor">({{ row.floored }} floored)</span>{% endif %}</td>
+          <td style="padding:.35rem .5rem">{{ row.used_in_sql }} ({{ (row.used_rate * 100) | round | int }}%)</td>
+          <td style="padding:.35rem .5rem;{% if row.failure_rate >= 0.3 %}color:var(--red-600,#dc2626);font-weight:700{% endif %}">{{ row.failed }}</td>
+          <td style="padding:.35rem .5rem">{{ row.borderline }}</td>
+          <td style="padding:.35rem .5rem">{{ row.avg_score if row.avg_score is not none else "—" }}</td>
+          <td style="padding:.35rem .5rem;font-weight:700">{{ row.attention_score }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <p style="margin:0;font-size:13px;color:var(--text-muted)">
+        No retrieval telemetry yet — this fills in as users ask questions. Each answered
+        question records which tables were retrieved, their relevance scores, and whether
+        the question succeeded, so this ranking gets sharper with use.
+      </p>
+      {% endif %}
+    </div>
+  </div>
+
   <!-- ── Value index (literal grounding) ── -->
   <div class="mh-card">
     <div class="mh-card-header">

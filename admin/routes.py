@@ -5608,6 +5608,15 @@ async def model_health_page(request: Request, account_id: str):
     except Exception as exc:
         log.debug("eval status lookup skipped for %s: %s", account_id, exc)
 
+    # KB doc quality: per-table retrieval telemetry aggregated into a
+    # "most retrieved, least answerable" ranking — tells the admin which
+    # table docs to edit first for the biggest answer-quality gain.
+    kb_doc_quality: list = []
+    try:
+        kb_doc_quality = store.get_kb_doc_quality(account_id, days=30)
+    except Exception as exc:
+        log.debug("kb doc quality lookup skipped for %s: %s", account_id, exc)
+
     return _resp(request, "client_model_health.html", {
         "client": client,
         "health": health,
@@ -5617,6 +5626,7 @@ async def model_health_page(request: Request, account_id: str):
         "latest_eval": latest_eval,
         "eval_pass_rate": eval_pass_rate,
         "regressed_run": regressed_run,
+        "kb_doc_quality": kb_doc_quality,
     })
 
 

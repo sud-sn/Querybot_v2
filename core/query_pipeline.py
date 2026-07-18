@@ -775,14 +775,28 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
 
         relevant_kbs = [_clamp_kb_doc(d) for d in (pinned + table_kbs)[:7]]
         context = "\n\n---\n\n".join(relevant_kbs)
+        # Per-table retrieval telemetry: which tables were candidates, their
+        # best cross-encoder score, and whether the relevance floor kept them.
+        # Re-read weak flag too — the focused re-retrieval above may have
+        # replaced the first retrieve()'s stats, and what fed the prompt is
+        # what matters. Persisted on the trace so every "wrong table" report
+        # is diagnosable, and aggregated by store.get_kb_doc_quality for the
+        # Model Health KB doc-quality ranking.
+        _retrieval_stats = list(getattr(retriever, "last_retrieval_stats", []) or [])
+        _weak_retrieval = bool(getattr(retriever, "last_retrieval_weak", False))
         _trace_update(
             trace_id,
             route="normal_sql",
             retrieved_kb_chunk_ids=store.kb_chunk_refs(relevant_kbs),
+            retrieved_kb_scores=_retrieval_stats,
         )
         _trace_step(
             trace_id, "retrieve_kb",
-            output_summary={"chunks": len(relevant_kbs)},
+            output_summary={
+                "chunks": len(relevant_kbs),
+                "weak_retrieval": _weak_retrieval,
+                "tables": _retrieval_stats,
+            },
             duration_ms=int((time.time() - _kb_phase_t0) * 1000),
         )
 

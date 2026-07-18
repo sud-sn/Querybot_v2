@@ -155,6 +155,119 @@ def kb_chunk_refs(chunks: list[str] | None) -> list[dict]:
     return _snippet_refs(chunks)
 
 
+# Cross-encoder sigmoid scores below this are "borderline" relevance — the
+# doc was kept, but it matched the question weakly. High borderline rates
+# on a heavily-retrieved table = the KB doc's wording doesn't match how
+# users actually ask, which is exactly what an admin edit fixes.
+_KB_BORDERLINE_SCORE = 0.3
+
+# answer_type values that count as "the question failed after this table
+# was retrieved" for doc-quality attribution.
+_FAILED_ANSWER_TYPES = {"error", "timeout", "policy_denied", "cannot_generate"}
+
+
+def get_kb_doc_quality(
+    account_id: str,
+    days: int = 30,
+    min_retrievals: int = 2,
+    limit: int = 15,
+) -> list[dict]:
+    """
+    Rank KB table docs by "most retrieved, least answerable" so admins edit
+    the docs that matter first.
+
+    Aggregates answer_trace.retrieved_kb_scores (per-table retrieval
+    telemetry) against each trace's outcome. Per table:
+      retrieved     — questions where this table entered the candidate set
+      used_in_sql   — of those, how often the final SQL actually used it
+      failed        — of those, how often the question errored out
+      floored       — dropped by the relevance floor despite being retrieved
+      borderline    — kept, but best score below the borderline threshold
+      avg_score     — mean best cross-encoder score across retrievals
+
+    attention_score = retrieved x max(failure rate, unused rate, borderline
+    rate) — a table that's pulled into many prompts but rarely ends up in
+    working SQL (or matches only weakly) floats to the top. Sorted
+    descending; only tables above min_retrievals are ranked.
+    """
+    import re
+    from datetime import datetime, timedelta, timezone
+
+    cutoff = (
+        datetime.now(timezone.utc) - timedelta(days=int(days))
+    ).strftime("%Y-%m-%d %H:%M:%S")
+
+    with get_db() as conn:
+        rows = conn.execute(
+            """
+            SELECT retrieved_kb_scores, generated_sql, status, answer_type
+              FROM answer_trace
+             WHERE account_id=? AND created_at >= ?
+               AND retrieved_kb_scores NOT IN ('', '[]')
+            """,
+            (account_id, cutoff),
+        ).fetchall()
+
+    agg: dict[str, dict] = {}
+    for row in rows:
+        try:
+            stats = json.loads(row["retrieved_kb_scores"]) or []
+        except Exception:
+            continue
+        if not isinstance(stats, list):
+            continue
+        sql_upper = (row["generated_sql"] or "").upper()
+        failed = (
+            (row["status"] or "") == "error"
+            or (row["answer_type"] or "") in _FAILED_ANSWER_TYPES
+        )
+        for s in stats:
+            if not isinstance(s, dict):
+                continue
+            fqn = str(s.get("fqn") or "").upper()
+            if not fqn:
+                continue
+            e = agg.setdefault(fqn, {
+                "fqn": fqn, "retrieved": 0, "used_in_sql": 0,
+                "failed": 0, "floored": 0, "borderline": 0,
+                "_score_sum": 0.0, "_score_n": 0,
+            })
+            e["retrieved"] += 1
+            kept = bool(s.get("kept", True))
+            if not kept:
+                e["floored"] += 1
+            score = s.get("best_score")
+            if isinstance(score, (int, float)):
+                e["_score_sum"] += float(score)
+                e["_score_n"] += 1
+                if kept and float(score) < _KB_BORDERLINE_SCORE:
+                    e["borderline"] += 1
+            bare = fqn.split(".")[-1]
+            if bare and re.search(rf"\b{re.escape(bare)}\b", sql_upper):
+                e["used_in_sql"] += 1
+            if failed:
+                e["failed"] += 1
+
+    ranked: list[dict] = []
+    for e in agg.values():
+        n = e["retrieved"]
+        if n < min_retrievals:
+            continue
+        e["avg_score"] = (
+            round(e["_score_sum"] / e["_score_n"], 3) if e["_score_n"] else None
+        )
+        e["used_rate"] = round(e["used_in_sql"] / n, 2)
+        e["failure_rate"] = round(e["failed"] / n, 2)
+        e["attention_score"] = round(
+            n * max(e["failure_rate"], 1 - e["used_rate"], e["borderline"] / n), 1
+        )
+        del e["_score_sum"], e["_score_n"]
+        ranked.append(e)
+
+    ranked.sort(key=lambda x: (-x["attention_score"], -x["retrieved"]))
+    return ranked[:limit]
+
+
 def store_protected_result_rows(
     account_id: str,
     question_id: str,

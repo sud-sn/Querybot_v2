@@ -60,6 +60,7 @@ from store.semantic_feedback import (
 from store.trace_store import (
     create_answer_trace, update_answer_trace, log_answer_trace_step,
     finish_answer_trace, kb_chunk_refs, get_answer_trace, list_answer_traces,
+    get_kb_doc_quality,
     get_answer_trace_by_question_id,
     store_protected_result_rows,
 )
@@ -133,6 +134,7 @@ __all__ = [
     "semantic_feedback_maps","semantic_feedback_pending_summary",
     "create_answer_trace","update_answer_trace","log_answer_trace_step",
     "finish_answer_trace","kb_chunk_refs","get_answer_trace","list_answer_traces",
+    "get_kb_doc_quality",
     "get_answer_trace_by_question_id",
     "store_protected_result_rows",
     "save_eval_run","save_eval_case_result","list_eval_runs",
