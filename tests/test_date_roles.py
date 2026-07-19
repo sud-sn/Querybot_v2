@@ -7,6 +7,7 @@ from pathlib import Path
 from core.date_roles import detect_date_role, find_date_dimension_key, is_date_dimension_table
 from core.graph_resolver import resolve_for_question
 from core.schema import build_entity_graph_from_schema
+from core.semantic_model import build_semantic_model
 
 
 class DateRoleDetectionTests(unittest.TestCase):
@@ -34,6 +35,94 @@ class DateRoleDetectionTests(unittest.TestCase):
         cols = [{"name": "DATE_DMS_KEY"}, {"name": "FULL_DATE"}, {"name": "YEAR"}]
         self.assertTrue(is_date_dimension_table("DIM_DATE", cols))
         self.assertEqual(find_date_dimension_key(cols), "DATE_DMS_KEY")
+
+    def test_detects_plain_warehouse_date_id_and_dynamic_roles(self):
+        cases = {
+            "WRITTEN_DATE_ID": ("written_date", "Written Date"),
+            "ORDER_DATE_ID": ("order_date", "Order Date"),
+            "THERAPY_START_DATE_ID": ("therapy_start_date", "Therapy Start Date"),
+            "THERAPY_END_DATE_ID": ("therapy_end_date", "Therapy End Date"),
+            "BOOKED_DATE_ID": ("booked_date", "Booked Date"),
+            "SCHEDULED_FILL_DATE_ID": ("scheduled_fill_date", "Scheduled Fill Date"),
+            "DISPENSE_DATE_ID": ("dispense_date", "Dispense Date"),
+            "PICKUP_DATE_ID": ("pickup_date", "Pickup Date"),
+            "REVERSAL_DATE_ID": ("reversal_date", "Reversal Date"),
+            "SUBMIT_DATE_ID": ("submit_date", "Submit Date"),
+            "ADJUDICATION_DATE_ID": ("adjudication_date", "Adjudication Date"),
+            "PAID_DATE_ID": ("paid_date", "Paid Date"),
+            "DENIAL_DATE_ID": ("denial_date", "Denial Date"),
+            "INVOICE_DATE_ID": ("invoice_date", "Invoice Date"),
+            "DUE_DATE_ID": ("due_date", "Due Date"),
+            "PAYMENT_DATE_ID": ("payment_date", "Payment Date"),
+            "POST_DATE_ID": ("post_date", "Post Date"),
+            "SNAPSHOT_DATE_ID": ("snapshot_date", "Snapshot Date"),
+            "EXPIRY_DATE_ID": ("expiry_date", "Expiry Date"),
+            "LAST_RECEIPT_DATE_ID": ("last_receipt_date", "Last Receipt Date"),
+            "PO_DATE_ID": ("purchase_order_date", "Purchase Order Date"),
+            "EXPECTED_DELIVERY_DATE_ID": ("expected_delivery_date", "Expected Delivery Date"),
+            "RECEIPT_DATE_ID": ("receipt_date", "Receipt Date"),
+            "DISPENSE_DATE_KEY": ("dispense_date", "Dispense Date"),
+            "EXPIRY_DT_ID": ("expiry_date", "Expiry Date"),
+        }
+        for column, expected in cases.items():
+            with self.subTest(column=column):
+                role = detect_date_role(column)
+                self.assertIsNotNone(role)
+                self.assertEqual((role.key, role.label), expected)
+
+    def test_fact_date_columns_do_not_make_fact_a_date_dimension(self):
+        cols = [
+            {"name": "RX_ORDER_ID", "type": "bigint"},
+            {"name": "ORDER_DATE_ID", "type": "int"},
+            {"name": "CREATED_AT_UTC", "type": "datetime2"},
+        ]
+        self.assertFalse(is_date_dimension_table("F_RX_ORDER", cols))
+
+    def test_fk_first_discovery_supports_pharma_lab_naming(self):
+        schema = {
+            "PHARMA_LAB.F_RX_FILL": {
+                "schema": "PHARMA_LAB",
+                "table": "F_RX_FILL",
+                "columns": [
+                    {"name": "RX_FILL_ID", "type": "bigint"},
+                    {"name": "BOOKED_DATE_ID", "type": "int"},
+                    {"name": "DISPENSE_DATE_ID", "type": "int"},
+                    {"name": "NET_REVENUE_AMT", "type": "decimal"},
+                ],
+            },
+            "PHARMA_LAB.D_DATE": {
+                "schema": "PHARMA_LAB",
+                "table": "D_DATE",
+                "columns": [
+                    {"name": "DATE_ID", "type": "int"},
+                    {"name": "CALENDAR_DATE", "type": "date"},
+                ],
+            },
+            "__db_fk_constraints__": [
+                {
+                    "parent_schema": "PHARMA_LAB", "parent_table": "F_RX_FILL",
+                    "parent_col": "BOOKED_DATE_ID", "ref_schema": "PHARMA_LAB",
+                    "ref_table": "D_DATE", "ref_col": "DATE_ID",
+                },
+                {
+                    "parent_schema": "PHARMA_LAB", "parent_table": "F_RX_FILL",
+                    "parent_col": "DISPENSE_DATE_ID", "ref_schema": "PHARMA_LAB",
+                    "ref_table": "D_DATE", "ref_col": "DATE_ID",
+                },
+            ],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "_schema.json").write_text(json.dumps(schema), encoding="utf-8")
+            model = build_semantic_model(tmp)
+
+        table = next(t for t in model["tables"] if t["table"] == "F_RX_FILL")
+        self.assertEqual(table["type"], "fact")
+        roles = {role["fact_column"]: role for role in model["date_roles"]}
+        self.assertEqual(set(roles), {"BOOKED_DATE_ID", "DISPENSE_DATE_ID"})
+        self.assertEqual(roles["BOOKED_DATE_ID"]["business_role"], "booked_date")
+        self.assertEqual(roles["DISPENSE_DATE_ID"]["business_role"], "dispense_date")
+        self.assertEqual(roles["DISPENSE_DATE_ID"]["date_value_column"], "CALENDAR_DATE")
+        self.assertEqual(roles["DISPENSE_DATE_ID"]["confidence"], 99)
 
 
 class DateRoleGraphTests(unittest.TestCase):

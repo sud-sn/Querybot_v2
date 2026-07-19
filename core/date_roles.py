@@ -46,6 +46,13 @@ DATE_ROLES: tuple[DateRole, ...] = (
 
 _ROLE_BY_KEY = {role.key: role for role in DATE_ROLES}
 
+_GENERIC_DATE_KEY_RE = re.compile(
+    r"(?:^|_)(?:DATE|DT)(?:_(?:DMS_)?(?:KEY|ID))$"
+)
+_PLAIN_DATE_KEY_RE = re.compile(
+    r"(?:^|_)DATE(?:_(?:DMS_)?(?:KEY|ID))$"
+)
+
 _COLUMN_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"(?:^|_)BOOK(?:ED|ING)?_DT(?:_|$)|(?:^|_)BKD_DT(?:_|$)"), "booked_date"),
     (re.compile(r"(?:^|_)CUS_IVC_DT(?:_|$)|(?:^|_)SLR_IVC_DT(?:_|$)|(?:^|_)IVC_DT(?:_|$)|^IVDT$"), "invoice_date"),
@@ -181,20 +188,37 @@ def detect_date_role(column_name: str, vocab=None) -> DateRole | None:
     if vocab is None:
         from core.vocab_packs import get_active_vocab
         vocab = get_active_vocab()
+    # Plain warehouse names often spell DATE where ERP models use DT. Run the
+    # same governed patterns against both forms so ORDER_DATE_ID and
+    # ORDER_DT_DMS_KEY resolve to the same business role.
+    canonical = re.sub(r"(^|_)DATE(?=_|$)", r"\1DT", col)
+    candidates = (col,) if canonical == col else (col, canonical)
     for pattern, role_key in getattr(vocab, "date_role_patterns", ()):
-        if pattern.search(col) and role_key in _ROLE_BY_KEY:
+        if any(pattern.search(candidate) for candidate in candidates) and role_key in _ROLE_BY_KEY:
             return _ROLE_BY_KEY[role_key]
+    # Preserve modifiers in descriptive warehouse names. For example,
+    # LAST_RECEIPT_DATE_ID is a distinct role from RECEIPT_DATE_ID.
+    if _PLAIN_DATE_KEY_RE.search(col):
+        return derive_date_role(column_name)
     for pattern, role_key in _COLUMN_PATTERNS:
-        if pattern.search(col):
+        if any(pattern.search(candidate) for candidate in candidates):
             return _ROLE_BY_KEY[role_key]
-    if col.endswith("_DT_DMS_KEY") or col.endswith("_DATE_DMS_KEY"):
-        return DateRole(
-            "business_date",
-            _label_from_column(col),
-            (_label_from_column(col).lower(),),
-            45,
-        )
+    if _GENERIC_DATE_KEY_RE.search(col):
+        return derive_date_role(column_name)
     return None
+
+
+def derive_date_role(column_name: str) -> DateRole:
+    """Derive a reviewable business role from any date-dimension FK column.
+
+    This is intentionally deterministic. A physical FK to a recognized date
+    dimension is stronger evidence than a naming dictionary, so unfamiliar
+    names such as DISPENSE_DATE_ID and THERAPY_START_DATE_KEY must survive into
+    the semantic model instead of being silently dropped.
+    """
+    label = _label_from_column(column_name)
+    key = re.sub(r"[^a-z0-9]+", "_", label.lower()).strip("_") or "business_date"
+    return DateRole(key, label, (label.lower(),), 60)
 
 
 def is_date_role_column(column_name: str) -> bool:
@@ -236,10 +260,12 @@ def is_date_dimension_table(table_name: str, columns: list[dict] | list[str]) ->
     if compact in DATE_DIMENSION_TABLE_HINTS or any(h in compact for h in ("DIM_DATE", "DATE_DIM", "CALENDAR")):
         return True
     col_names = {_column_name(c).upper() for c in columns}
-    if col_names & set(DATE_DIMENSION_KEY_HINTS):
-        return True
-    has_date_text = any("DATE" in c or c in {"YEAR", "MONTH", "DAY"} for c in col_names)
-    return has_date_text and any(c.endswith("_KEY") or c.endswith("_ID") for c in col_names)
+    # Structural inference requires both a canonical date key and a separate
+    # business date value. Merely containing ORDER_DATE_ID must not cause a
+    # fact table to be mistaken for the date dimension itself.
+    return bool(col_names & set(DATE_DIMENSION_KEY_HINTS)) and bool(
+        find_date_value_column(columns)
+    )
 
 
 def find_date_dimension_key(columns: list[dict] | list[str]) -> str:
@@ -294,10 +320,15 @@ def _column_name(col: dict | str) -> str:
 
 
 def _label_from_column(column: str) -> str:
-    text = column
+    text = (column or "").strip().strip('"`[]').upper()
+    text = re.sub(
+        r"_(?:DATE|DT)(?:_DMS)?_(?:KEY|ID)$",
+        "",
+        text,
+    )
     text = re.sub(r"_?DMS_KEY$", "", text)
-    text = re.sub(r"_?DATE_KEY$", "", text)
-    text = re.sub(r"_?DT$", "", text)
+    text = re.sub(r"_(?:KEY|ID)$", "", text)
+    text = re.sub(r"_?(?:DATE|DT)$", "", text)
     parts = [p for p in text.split("_") if p and p not in {"CUS", "PCH", "SLR"}]
     expanded = []
     mini = {
@@ -305,7 +336,7 @@ def _label_from_column(column: str) -> str:
         "CFM": "Confirmed", "PLD": "Planned", "RCT": "Receipt", "DUE": "Due",
         "ACD": "Accounting", "CRN": "Created", "CUR": "Current", "CST": "Cost",
         "PRE": "Previous", "CCL": "Cancelled", "VLD": "Valid", "LIN": "Line",
-        "PCH": "Purchase",
+        "PCH": "Purchase", "PO": "Purchase Order",
     }
     for part in parts:
         expanded.append(mini.get(part, part.capitalize()))

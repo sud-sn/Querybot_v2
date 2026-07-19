@@ -17,6 +17,7 @@ from typing import Any
 
 from core.date_roles import (
     classify_date_key,
+    derive_date_role,
     detect_date_role,
     find_date_dimension_key,
     find_date_value_column,
@@ -131,7 +132,7 @@ def _table_type(table: str) -> str:
         if "bridge" in rule.table_type:
             return "bridge"
     upper = table.upper()
-    if upper.endswith("_FCT") or "_FCT" in upper or upper.startswith(("FACT_", "FCT_")):
+    if upper.endswith("_FCT") or "_FCT" in upper or upper.startswith(("FACT_", "FCT_", "F_")):
         return "fact"
     if upper.endswith("_DMS") or upper.startswith(("DIM_", "DMS_")):
         return "dimension"
@@ -402,15 +403,19 @@ def _date_roles(schema: dict[str, Any], table_fqn: str, meta: dict[str, Any]) ->
     if not date_dims:
         return roles
 
+    # The date dimension supplies values; it is not one of its own roles.
+    if is_date_dimension_table(table_fqn, meta.get("columns", [])):
+        return roles
+
     table_name = _schema_table_name(table_fqn, meta)
     table_schema = _schema_name(table_fqn, meta)
     declared_fks = schema.get("__db_fk_constraints__", []) or []
     for col in _column_names(meta):
-        role = detect_date_role(col)
-        if not role:
-            continue
         chosen = None
         confidence = 70
+        # Resolve physical FK evidence first. This supports arbitrary source
+        # names as long as the database explicitly points them at a date
+        # dimension.
         for fk in declared_fks:
             if (
                 str(fk.get("parent_table") or "").upper() == table_name.upper()
@@ -433,6 +438,11 @@ def _date_roles(schema: dict[str, Any], table_fqn: str, meta: dict[str, Any]) ->
                         break
             if chosen:
                 break
+        role = detect_date_role(col)
+        if not role and chosen:
+            role = derive_date_role(col)
+        if not role:
+            continue
         if not chosen:
             same_key = [item for item in date_dims if item[2].upper() == col.upper()]
             same_schema = [

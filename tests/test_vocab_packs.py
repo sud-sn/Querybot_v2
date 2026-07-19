@@ -188,7 +188,12 @@ class GenericStarSchemaPackTests(unittest.TestCase):
         self.assertEqual(detect_date_role("ORDER_DATE_KEY", vocab=v).key, "order_date")
         self.assertEqual(detect_date_role("DUE_DATE", vocab=v).key, "due_date")
         self.assertEqual(detect_date_role("PAYMENT_DATE_KEY", vocab=v).key, "payment_date")
-        self.assertIsNone(detect_date_role("ORDER_DATE_KEY", vocab=builtin_vocab()))
+        # Plain *_DATE_ID/KEY conventions are now production defaults; a
+        # terminology pack is only needed for vendor-specific spellings.
+        self.assertEqual(
+            detect_date_role("ORDER_DATE_KEY", vocab=builtin_vocab()).key,
+            "order_date",
+        )
 
 
 class DynamicsPackTests(unittest.TestCase):
