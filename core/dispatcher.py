@@ -81,6 +81,26 @@ _ABOUT_RE = re.compile(
     re.IGNORECASE,
 )
 
+_DATA_REQUEST_ACTION_RE = re.compile(
+    r"^\s*(?:please\s+)?(?:show|list|find|retrieve|display|give|count|calculate|"
+    r"compute|compare|analy[sz]e|summari[sz]e|rank|identify)\b",
+    re.IGNORECASE,
+)
+_DATA_REQUEST_SHAPE_RE = re.compile(
+    r"\b(?:all|top|bottom|total|count|number|average|trend|records?|rows?|"
+    r"fields?|columns?|include|with|where|whose|who\s+have|by|per|for\s+each|each)\b",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_data_request(text: str) -> bool:
+    """Recognize explicit record retrieval without making policy decisions."""
+    value = (text or "").strip()
+    return bool(
+        _DATA_REQUEST_ACTION_RE.search(value)
+        and _DATA_REQUEST_SHAPE_RE.search(value)
+    )
+
 
 # ── Off-topic classifier (LLM-based, dynamic) ────────────────────────────────
 
@@ -91,12 +111,33 @@ async def _classify_is_data_question(text: str, client: dict) -> bool:
     Returns False → redirect with _OFF_TOPIC_REPLY.
     Fails open (True) on any error so a misconfigured LLM never blocks users.
     """
+    # Sensitive database requests must reach governed execution. The
+    # compliance layer, not the off-topic guard, decides whether to mask or
+    # deny fields such as patient names, diagnoses, and member identifiers.
+    if _looks_like_data_request(text):
+        return True
+
     try:
         provider, model, api_key, extra = resolve_provider(client, purpose="query")
+        business_context = str(
+            (client or {}).get("business_description")
+            or (client or {}).get("description")
+            or ""
+        ).strip()[:800]
+        context_note = (
+            f"Tenant business context: {business_context}\n\n"
+            if business_context else ""
+        )
         system = (
             "You are a classifier for a business analytics chatbot called QueryBot. "
-            "QueryBot ONLY answers questions about company data: revenue, sales, "
-            "customers, products, inventory, margins, finance, and similar business topics.\n\n"
+            "QueryBot answers questions that retrieve, count, list, compare, or analyze "
+            "records and fields in a connected company database. This includes every "
+            "business domain, including finance, operations, healthcare, pharma, insurance, "
+            "HR, and manufacturing. A request involving sensitive fields is still DATA; "
+            "a separate policy engine decides whether those fields are allowed or masked. "
+            "Never label a database request OFF_TOPIC merely because it mentions patients, "
+            "diagnoses, prescriptions, claims, payments, or members.\n\n"
+            f"{context_note}"
             "Reply with exactly one word:\n"
             "  DATA — if the message is asking about business or company data\n"
             "  OFF_TOPIC — if the message is about anything else "

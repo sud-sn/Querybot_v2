@@ -78,6 +78,35 @@ def _table_matches_policy_scope(table: str, scope: set[str]) -> bool:
         for candidate in scope
     )
 
+
+def _graph_entities_for_verified_values(resolved: dict, graph: dict) -> set[str]:
+    """Map verified filter values to graph entities by physical table."""
+    table_refs: set[str] = set()
+    for bucket in ("verified", "in_lists"):
+        for item in (resolved or {}).get(bucket) or []:
+            ref = str(item.get("table_fqn") or "").upper()
+            ref = ref.replace("[", "").replace("]", "").replace('"', "").strip()
+            if ref:
+                table_refs.add(ref)
+
+    matched: set[str] = set()
+    for entity in (graph or {}).get("entities") or []:
+        table = str(entity.get("table_name") or "").upper()
+        schema = str(entity.get("schema_name") or "").upper()
+        if not table:
+            continue
+        candidates = {table, f"{schema}.{table}" if schema else table}
+        if any(
+            ref in candidates
+            or ref.endswith("." + table)
+            or any(candidate and ref.endswith("." + candidate) for candidate in candidates)
+            for ref in table_refs
+        ):
+            name = str(entity.get("entity_name") or "")
+            if name:
+                matched.add(name)
+    return matched
+
 # ══════════════════════════════════════════════════════════════════════════════
 # DuckDB helper — generate SQL for in-memory result cache queries
 # ══════════════════════════════════════════════════════════════════════════════
@@ -857,6 +886,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
     # 30-distinct-value cap excludes from the KB entirely.
     verified_values_hint = ""
     _value_clarify: list[dict] = []
+    _resolved_values: dict = {}
     try:
         from core.value_index import value_index_enabled
         from core.value_resolver import (
@@ -1047,12 +1077,16 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                 "properties": _full_graph.get("properties", []),
             }
         if _full_graph.get("entities"):
+            _value_required_entities = _graph_entities_for_verified_values(
+                _resolved_values, _full_graph,
+            )
             _graph_ctx = _graph_resolve(
                 question=question,
                 account_id=account_id,
                 db_type=db_cfg.get("db_type", "azure_sql"),
                 graph=_full_graph,
                 intent=query_intent,
+                required_entities=_value_required_entities,
                 metric_formula_tables=set(),
             )
             if _graph_ctx.get("enabled"):
