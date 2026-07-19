@@ -1339,6 +1339,38 @@ class ProductionSqlGuardTests(unittest.TestCase):
         )
         self.assertTrue(allowed.ok, allowed.reason)
 
+    def test_allows_cross_join_to_inline_scalar_aggregate(self):
+        result = self._validate(
+            "SELECT t.A, b.Benchmark "
+            "FROM S.T t CROSS JOIN (SELECT AVG(u.A) AS Benchmark FROM S.U u) b"
+        )
+        self.assertTrue(result.ok, result.reason)
+
+    def test_allows_cross_join_to_scalar_aggregate_cte(self):
+        result = self._validate(
+            "WITH benchmark AS (SELECT AVG(u.A) AS Benchmark FROM S.U u) "
+            "SELECT t.A, b.Benchmark FROM S.T t CROSS JOIN benchmark b"
+        )
+        self.assertTrue(result.ok, result.reason)
+
+    def test_rejects_cross_join_to_grouped_benchmark(self):
+        result = self._validate(
+            "SELECT t.A, b.Benchmark "
+            "FROM S.T t CROSS JOIN "
+            "(SELECT u.A, AVG(u.A) AS Benchmark FROM S.U u GROUP BY u.A) b"
+        )
+        self.assertFalse(result.ok)
+        self.assertEqual(result.errors[0]["code"], "cartesian_join")
+
+    def test_rejects_cross_join_to_windowed_multirow_relation(self):
+        result = self._validate(
+            "SELECT t.A, b.Benchmark "
+            "FROM S.T t CROSS JOIN "
+            "(SELECT AVG(u.A) OVER () AS Benchmark FROM S.U u) b"
+        )
+        self.assertFalse(result.ok)
+        self.assertEqual(result.errors[0]["code"], "cartesian_join")
+
     def test_rejects_multiple_statements(self):
         result = self._validate("SELECT A FROM S.T; SELECT A FROM S.U")
         self.assertFalse(result.ok)

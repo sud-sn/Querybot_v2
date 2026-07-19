@@ -181,6 +181,78 @@ def _dialect_compatibility_errors(sql: str, db_type: str) -> list[dict]:
     return errors
 
 
+def _select_limit_at_most_one(select) -> bool:
+    limit = select.args.get("limit")
+    if not limit:
+        return False
+    expression = limit.args.get("expression")
+    try:
+        return int(str(expression.this)) <= 1
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+
+def _column_is_covered_by_aggregate(column, select) -> bool:
+    node = column.parent
+    covered = False
+    while node is not None and node is not select:
+        if isinstance(node, sg_exp.Select):
+            return True  # Column belongs to a nested scalar query.
+        if isinstance(node, sg_exp.Window):
+            return False
+        if isinstance(node, sg_exp.AggFunc):
+            covered = True
+        node = node.parent
+    return covered
+
+
+def _select_is_provably_scalar(select) -> bool:
+    """Return True only when a SELECT can emit at most one row."""
+    if _select_limit_at_most_one(select):
+        return True
+    if not select.args.get("from_"):
+        return True
+    if select.args.get("group"):
+        return False
+
+    has_aggregate = False
+    for projection in select.expressions:
+        for aggregate in projection.find_all(sg_exp.AggFunc):
+            node = aggregate.parent
+            is_nested = False
+            is_windowed = False
+            while node is not None and node is not select:
+                if isinstance(node, sg_exp.Select):
+                    is_nested = True
+                    break
+                if isinstance(node, sg_exp.Window):
+                    is_windowed = True
+                node = node.parent
+            if not is_nested and not is_windowed:
+                has_aggregate = True
+        for column in projection.find_all(sg_exp.Column):
+            if not _column_is_covered_by_aggregate(column, select):
+                return False
+    return has_aggregate
+
+
+def _is_provably_scalar_relation(relation, ctes: dict[str, object], seen=None) -> bool:
+    """Prove that a CROSS JOIN relation cannot multiply its left input."""
+    seen = set(seen or ())
+    if isinstance(relation, sg_exp.Subquery):
+        relation = relation.this
+    if isinstance(relation, sg_exp.Select):
+        return _select_is_provably_scalar(relation)
+    if isinstance(relation, sg_exp.Values):
+        return len(relation.expressions or []) <= 1
+    if isinstance(relation, sg_exp.Table) and not relation.args.get("db") and not relation.args.get("catalog"):
+        name = _normalize_identifier(relation.name)
+        if name and name in ctes and name not in seen:
+            seen.add(name)
+            return _is_provably_scalar_relation(ctes[name], ctes, seen)
+    return False
+
+
 def _production_shape_errors(tree, semantic_context: dict | None) -> list[dict]:
     """Reject deterministic query shapes that are unsafe in generated SQL.
 
@@ -214,17 +286,23 @@ def _production_shape_errors(tree, semantic_context: dict | None) -> list[dict]:
         question,
         re.IGNORECASE,
     ))
+    ctes = {
+        _normalize_identifier(cte.alias_or_name): cte.this
+        for cte in tree.find_all(sg_exp.CTE)
+        if cte.alias_or_name
+    }
     for join in tree.find_all(sg_exp.Join):
         kind = str(join.args.get("kind") or "").upper()
         has_condition = bool(join.args.get("on") or join.args.get("using"))
         if isinstance(join.this, sg_exp.Lateral):
             continue
         if kind == "CROSS":
-            if not cross_requested:
+            scalar_benchmark = _is_provably_scalar_relation(join.this, ctes)
+            if not cross_requested and not scalar_benchmark:
                 errors.append({
                     "code": "cartesian_join",
                     "message": "The SQL uses CROSS JOIN even though the question did not request a cartesian product.",
-                    "replacement": "Use a validated ON/USING relationship from the entity graph.",
+                    "replacement": "Use a validated ON/USING relationship from the entity graph. For an overall benchmark, prefer AVG(metric) OVER () or join only a provably single-row aggregate.",
                 })
         elif not has_condition:
             errors.append({

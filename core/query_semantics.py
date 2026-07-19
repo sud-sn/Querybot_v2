@@ -433,6 +433,17 @@ def build_generic_query_hints(question: str) -> str:
             "- When the user asks for a unique employee count or distinct employee total, use COUNT(DISTINCT stable employee key). Prefer EMPLOYEE_ID, EMPLOYEE_NUMBER, PERSON_ID, PERSON_NUMBER, STAFF_ID, or USER_ID over employee names when such keys exist."
         )
 
+    if re.search(
+        r"\b(?:above|below|higher|lower|over|under)[-\s]+(?:the\s+)?(?:overall\s+)?(?:average|mean)\b"
+        r"|\b(?:average|mean)\b.*\b(?:above|below|higher|lower|over|under)\b",
+        q,
+    ):
+        hints.append(
+            "- ABOVE/BELOW AVERAGE BENCHMARK DETECTED: Aggregate once per requested group, "
+            "then calculate AVG(metric_alias) OVER () in a scored CTE and apply the comparison "
+            "in the final SELECT. Do not CROSS JOIN physical tables."
+        )
+
     if intent["has_employee_scope"] and intent["wants_grouping"]:
         hints.append(
             "- When the user asks for employees by a category such as department, group by that category and count distinct employees rather than counting raw attendance or event rows unless the question explicitly asks for record volume."

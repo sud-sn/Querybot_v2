@@ -1985,6 +1985,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                     "- List every projected output column explicitly; SELECT * and alias.* are not allowed.\n"
                     "- Every non-CROSS JOIN must have an exact ON/USING relationship from the available schema/entity graph.\n"
                     "- Do not use CROSS JOIN or comma joins unless the original question explicitly asks for a cartesian product.\n"
+                    "- For above/below-average group comparisons, use a grouped CTE followed by AVG(metric_alias) OVER () in a scored CTE.\n"
                 )
             elif last_code == "period_comparison_shape":
                 validation_repair_note = (
