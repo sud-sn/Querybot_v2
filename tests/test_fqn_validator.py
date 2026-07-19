@@ -396,5 +396,48 @@ class EndToEndFQNPipelineTests(unittest.TestCase):
         self.assertEqual(code, "unknown_table")
 
 
+class SchemaMetadataKeyToleranceTests(unittest.TestCase):
+    """Regression: discovery writes top-level "__*" metadata arrays (e.g.
+    __fk_constraints) into _schema.json. _normalize_schema passes them
+    through UNWRAPPED (as lists), and load_schema_columns crashed with
+    "'list' object has no attribute 'get'" on every chat WebSocket connect
+    for clients re-discovered after that change. load_known_tables silently
+    added "__FK_CONSTRAINTS" to the validator's known-table set too."""
+
+    def setUp(self):
+        self._dir = tempfile.mkdtemp()
+        payload = {
+            "__fk_constraints": [
+                {"from": "ERP.FACT_SALES.CUST_KEY", "to": "ERP.DIM_CUSTOMER.CUST_KEY"},
+            ],
+            "ERP.FACT_SALES": {
+                "columns": [
+                    {"name": "CUST_KEY", "type": "int"},
+                    {"name": "NET_AMT", "type": "decimal(18,2)"},
+                ],
+            },
+            # Legacy shape: columns stored as a bare list.
+            "ERP.DIM_CUSTOMER": [
+                {"name": "CUST_KEY", "type": "int"},
+                {"name": "CUST_NAME", "type": "varchar(80)"},
+            ],
+        }
+        (Path(self._dir) / "_schema.json").write_text(
+            json.dumps(payload), encoding="utf-8"
+        )
+
+    def test_load_schema_columns_skips_metadata_and_reads_both_shapes(self):
+        cols = schema.load_schema_columns(self._dir)  # crashed before the fix
+        self.assertNotIn("__FK_CONSTRAINTS", cols)
+        self.assertIn("NET_AMT", cols["ERP.FACT_SALES"])
+        self.assertIn("CUST_NAME", cols["ERP.DIM_CUSTOMER"])  # legacy list shape
+
+    def test_load_known_tables_excludes_metadata_keys(self):
+        known = schema.load_known_tables(self._dir)
+        self.assertNotIn("__FK_CONSTRAINTS", known)
+        self.assertIn("ERP.FACT_SALES", known)
+        self.assertIn("DIM_CUSTOMER", known)  # bare-name expansion intact
+
+
 if __name__ == "__main__":
     unittest.main()

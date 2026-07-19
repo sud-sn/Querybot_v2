@@ -436,6 +436,10 @@ async def build_kb(
         try:
             _schema_payload = _json.loads(_schema_json_path.read_text(encoding="utf-8"))
             for _fqn, _meta in _schema_payload.items():
+                # Skip "__*" discovery-metadata keys (e.g. __fk_constraints —
+                # a LIST, so .get() would raise) and legacy non-dict shapes.
+                if str(_fqn).startswith("__") or not isinstance(_meta, dict):
+                    continue
                 _columns = [
                     str(_column.get("name") or "")
                     for _column in (_meta.get("columns") or [])

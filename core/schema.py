@@ -432,6 +432,11 @@ def load_known_tables(schema_dir: str) -> set[str]:
         return set()
     result: set[str] = set()
     for key in json.loads(p.read_text(encoding="utf-8")):
+        # Top-level "__*" keys are discovery metadata (e.g. __fk_constraints),
+        # not tables — including them would let the validator accept SQL
+        # referencing a non-existent "__FK_CONSTRAINTS" table.
+        if str(key).startswith("__"):
+            continue
         upper = key.upper()
         result.add(upper)                        # full FQN
         parts = upper.split(".")
@@ -461,6 +466,12 @@ def load_schema_columns(schema_dir: str) -> dict[str, dict[str, str]]:
 
     result: dict[str, dict[str, str]] = {}
     for key, info in master.items():
+        # "__*" keys carry discovery metadata (e.g. __fk_constraints lists);
+        # _normalize_schema passes them through UNWRAPPED, so info here can
+        # be a list — calling .get() on it crashed every chat WebSocket
+        # connect for clients re-discovered after FK metadata was added.
+        if str(key).startswith("__") or not isinstance(info, dict):
+            continue
         upper = str(key).upper()
         parts = upper.split(".")
         variants = [upper]
@@ -468,7 +479,9 @@ def load_schema_columns(schema_dir: str) -> dict[str, dict[str, str]]:
             variants.extend([parts[-1], ".".join(parts[-2:])])
 
         cols: dict[str, str] = {}
-        for col in (info or {}).get("columns", []) or []:
+        for col in info.get("columns", []) or []:
+            if not isinstance(col, dict):
+                continue
             name = (
                 col.get("name")
                 or col.get("COLUMN_NAME")
