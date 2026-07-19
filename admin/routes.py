@@ -2746,13 +2746,24 @@ async def compliance_save_profile(request: Request, account_id: str):
 
     client = store.get_client(account_id) or {}
     state_data = json.loads(client.get("state_data") or "{}")
-    import_schema_classifications(
-        account_id, state_data.get("schema_dir", ""), industry
-    )
-    import_legacy_masking(account_id, state_data.get("masking_config") or {})
+    classification_error = False
+    try:
+        import_schema_classifications(
+            account_id, state_data.get("schema_dir", ""), industry
+        )
+        import_legacy_masking(account_id, state_data.get("masking_config") or {})
+    except Exception:
+        # The profile and active policy version have already been persisted.
+        # Keep onboarding recoverable if a malformed/legacy schema artifact
+        # prevents this best-effort import; discovery can safely retry it.
+        classification_error = True
+        log.exception("Compliance classification import failed for %s", account_id)
     _clear_masking_review(account_id, state_data=state_data, current_state=client.get("state"))
+    result_query = "saved=profile"
+    if classification_error:
+        result_query += "&error=classification_import"
     return RedirectResponse(
-        f"{redirect_base}?saved=profile", status_code=303
+        f"{redirect_base}?{result_query}", status_code=303
     )
 
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Mapping
 from pathlib import Path
 
 import store
@@ -109,10 +110,28 @@ def import_schema_classifications(account_id: str, schema_dir: str, industry: st
         schema = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return 0
+    if not isinstance(schema, Mapping):
+        return 0
     existing = store.get_classification_map(account_id)
     created = 0
     for table_fqn, table in schema.items():
-        for column in (table or {}).get("columns", []) or []:
+        # Discovery stores non-table metadata (for example FK constraints) in
+        # top-level ``__*`` arrays. Legacy schema files also store a table's
+        # columns directly as a list instead of under {"columns": [...]}.
+        # Neither shape should make applying a compliance profile fail.
+        if str(table_fqn).startswith("__"):
+            continue
+        if isinstance(table, list):
+            columns = table
+        elif isinstance(table, Mapping):
+            columns = table.get("columns", []) or []
+        else:
+            continue
+        if not isinstance(columns, list):
+            continue
+        for column in columns:
+            if not isinstance(column, Mapping):
+                continue
             name = str(
                 column.get("name")
                 or column.get("COLUMN_NAME")

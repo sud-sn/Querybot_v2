@@ -125,6 +125,30 @@ class ComplianceProfileRedirectTests(unittest.TestCase):
         self.assertIn(f"/admin/clients/{self.account_id}/compliance", result.headers["location"])
         self.assertNotIn("/setup", result.headers["location"])
 
+    def test_profile_save_remains_recoverable_when_classification_import_fails(self):
+        import admin.routes as routes
+        from unittest.mock import patch
+
+        req = _make_post_request({"industry": "healthcare_pharmacy", "next": "setup"})
+        with (
+            patch.object(routes, "_is_auth", return_value=True),
+            patch(
+                "core.compliance.classifier.import_schema_classifications",
+                side_effect=RuntimeError("malformed schema metadata"),
+            ),
+        ):
+            result = _arun(routes.compliance_save_profile(req, self.account_id))
+
+        self.assertEqual(result.status_code, 303)
+        self.assertIn(f"/admin/clients/{self.account_id}/setup", result.headers["location"])
+        self.assertIn("saved=profile", result.headers["location"])
+        self.assertIn("error=classification_import", result.headers["location"])
+
+        import store
+        profile = store.get_compliance_profile(self.account_id)
+        self.assertEqual(profile["industry"], "healthcare_pharmacy")
+        self.assertEqual(profile["mode"], "regulated")
+
 
 class AutoImportHookWiringTests(unittest.TestCase):
     """_do_discover's auto-classification hook — static source assertions,
@@ -149,6 +173,76 @@ class AutoImportHookWiringTests(unittest.TestCase):
 
 
 class ImportSchemaClassificationsIdempotencyTests(unittest.TestCase):
+    def test_accepts_legacy_table_lists_and_skips_schema_metadata(self):
+        import store
+        from core.compliance.classifier import import_schema_classifications
+
+        store.init_db()
+        account_id = f"acct-classify-mixed-schema-{uuid.uuid4().hex[:8]}"
+        store.upsert_client(account_id, "portal")
+
+        with tempfile.TemporaryDirectory() as schema_dir:
+            schema = {
+                "PHARMA.D_PATIENT": [
+                    {"name": "PATIENT_NAME"},
+                    {"name": "MEMBER_ID"},
+                ],
+                "PHARMA.F_RX_FILL": {
+                    "columns": [{"name": "RX_NUMBER"}, {"name": "NET_AMOUNT"}],
+                },
+                "__db_fk_constraints__": [
+                    {
+                        "from_table": "PHARMA.F_RX_FILL",
+                        "from_column": "PATIENT_ID",
+                        "to_table": "PHARMA.D_PATIENT",
+                        "to_column": "PATIENT_ID",
+                    }
+                ],
+            }
+            (Path(schema_dir) / "_schema.json").write_text(
+                json.dumps(schema), encoding="utf-8"
+            )
+
+            changed = import_schema_classifications(
+                account_id, schema_dir, "healthcare_pharmacy"
+            )
+
+        self.assertEqual(changed, 4)
+        keys = set(store.get_classification_map(account_id))
+        self.assertIn("PHARMA.D_PATIENT.PATIENT_NAME", keys)
+        self.assertIn("PHARMA.F_RX_FILL.RX_NUMBER", keys)
+        self.assertFalse(any(key.startswith("__DB_FK_CONSTRAINTS__") for key in keys))
+
+    def test_ignores_malformed_non_table_and_non_column_values(self):
+        import store
+        from core.compliance.classifier import import_schema_classifications
+
+        store.init_db()
+        account_id = f"acct-classify-malformed-schema-{uuid.uuid4().hex[:8]}"
+        store.upsert_client(account_id, "portal")
+
+        with tempfile.TemporaryDirectory() as schema_dir:
+            schema = {
+                "PHARMA.GOOD_TABLE": {
+                    "columns": [None, "PATIENT_NAME", {"name": "DOCTOR_NAME"}],
+                },
+                "PHARMA.BAD_TABLE": "not a table definition",
+                "__audit__": {"fields_sent": 1},
+            }
+            (Path(schema_dir) / "_schema.json").write_text(
+                json.dumps(schema), encoding="utf-8"
+            )
+
+            changed = import_schema_classifications(
+                account_id, schema_dir, "healthcare_pharmacy"
+            )
+
+        self.assertEqual(changed, 1)
+        self.assertIn(
+            "PHARMA.GOOD_TABLE.DOCTOR_NAME",
+            store.get_classification_map(account_id),
+        )
+
     def test_rerun_does_not_reclassify_existing_columns(self):
         import store
         from core.compliance.classifier import import_schema_classifications
