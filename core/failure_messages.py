@@ -240,6 +240,7 @@ _VALIDATION_REASONS: dict[str, str] = {
     "metric_formula_mismatch": "The generated query did not use the approved formula for a metric mentioned in your question.",
     "null_aggregate_diagnostic": "The generated query could not distinguish 'zero' from 'no data' for this metric.",
     "order_alias_mismatch": "The generated query sorted by a column it did not select.",
+    "period_comparison_shape": "The generated period comparison did not aggregate the metric before calculating the prior-period change.",
     "parse": "The generated query was not valid SQL.",
     "ddl": "The generated query tried an operation that is not allowed — only read-only questions are supported.",
     "cannot_generate": "I could not turn this question into a query using the available data.",

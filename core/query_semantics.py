@@ -507,10 +507,14 @@ def build_generic_query_hints(question: str) -> str:
     if intent["wants_mom_qoq"]:
         hints.append(
             "- MONTH-OVER-MONTH / QUARTER-OVER-QUARTER DETECTED: The user wants period-over-period "
-            "change. Apply the MoM/QoQ RULE: build a CTE with period buckets using DATE_TRUNC/"
-            "FORMAT/TRUNC (dialect-appropriate), then use LAG() OVER (ORDER BY PERIOD) to get "
-            "the prior period value. Always output: period, current value, prior value, "
-            "difference, and PCT_CHANGE rounded to 2 decimal places."
+            "change. Apply the staged MoM/QoQ RULE: (1) aggregate the approved metric by the "
+            "resolved business-date period in period_totals, (2) compute LAG(METRIC) from that "
+            "alias in period_comparison, and (3) calculate difference and PCT_CHANGE in the final "
+            "SELECT. Never use LAG(SUM(...)). Use a native date-dimension value directly; only "
+            "convert a numeric key when schema metadata identifies it as YYYYMMDD. Date-role words "
+            "such as booked/paid/dispensed select a date JOIN and do not imply a status filter. "
+            "Always output: period, current value, prior value, difference, and PCT_CHANGE rounded "
+            "to 2 decimal places."
         )
 
     if intent["wants_cumulative"]:

@@ -967,6 +967,17 @@ class IntentAndGraphReliabilityTests(unittest.TestCase):
             "convert it with TRY_CONVERT inside the INNER subquery", prompt
         )
 
+    def test_period_comparison_prompt_uses_staged_native_date_pattern(self):
+        prompt = build_sql_system_prompt(
+            "azure_sql",
+            "PHARMA_LAB.F_RX_FILL joins PHARMA_LAB.D_DATE; CALENDAR_DATE date",
+        )
+        self.assertIn("WITH period_totals AS", prompt)
+        self.assertIn("period_comparison AS", prompt)
+        self.assertIn("Never write LAG(SUM(...))", prompt)
+        self.assertIn("Never convert an already-native date", prompt)
+        self.assertIn("DATE ROLE IS NOT STATUS", prompt)
+
 
 class FieldPlanRepairTests(unittest.TestCase):
     """Deterministic display-field repair — no LLM retry for mechanical fixes."""
@@ -1337,6 +1348,84 @@ class ProductionSqlGuardTests(unittest.TestCase):
         result = self._validate("SELECT A INTO S.NEW_TABLE FROM S.T")
         self.assertFalse(result.ok)
         self.assertEqual(result.code, "ddl")
+
+
+class PeriodComparisonSqlTests(unittest.TestCase):
+    TABLES = {
+        "CHATBOT_DB.PHARMA_LAB.F_RX_FILL": {
+            "BOOKED_DATE_ID": "int",
+            "NET_REVENUE_AMT": "decimal",
+            "FILL_STATUS": "varchar",
+        },
+        "CHATBOT_DB.PHARMA_LAB.D_DATE": {
+            "DATE_ID": "int",
+            "CALENDAR_DATE": "date",
+            "CALENDAR_YEAR": "int",
+        },
+    }
+    QUESTION = "What was net revenue by booked month in 2025, and how did it change month over month?"
+
+    def _validate(self, sql: str):
+        return validate_sql_detailed(
+            sql,
+            set(self.TABLES),
+            "azure_sql",
+            table_columns=self.TABLES,
+            semantic_context={"production_sql": True, "question": self.QUESTION},
+        )
+
+    def test_parse_error_preserves_exact_location_and_token(self):
+        malformed = """
+        SELECT ROUND((SUM(f.NET_REVENUE_AMT) -
+            LAG(SUM(f.NET_REVENUE_AMT)) OVER (ORDER BY d.CALENDAR_DATE) * 100.0 /
+            NULLIF(LAG(SUM(f.NET_REVENUE_AMT)) OVER (ORDER BY d.CALENDAR_DATE), 0), 2) AS PCT_CHANGE
+        FROM CHATBOT_DB.PHARMA_LAB.F_RX_FILL f
+        JOIN CHATBOT_DB.PHARMA_LAB.D_DATE d ON f.BOOKED_DATE_ID = d.DATE_ID
+        GROUP BY d.CALENDAR_DATE
+        """
+        result = self._validate(malformed)
+        self.assertFalse(result.ok)
+        self.assertEqual(result.code, "parse")
+        self.assertTrue(result.errors[0]["line"])
+        self.assertEqual(result.errors[0]["token"].upper(), "AS")
+        self.assertIn("Expecting )", result.reason)
+
+    def test_rejects_lag_wrapped_aggregate_for_period_comparison(self):
+        fragile = """
+        SELECT d.CALENDAR_DATE AS PERIOD,
+               SUM(f.NET_REVENUE_AMT) AS METRIC,
+               LAG(SUM(f.NET_REVENUE_AMT)) OVER (ORDER BY d.CALENDAR_DATE) AS PREV_METRIC
+        FROM CHATBOT_DB.PHARMA_LAB.F_RX_FILL f
+        JOIN CHATBOT_DB.PHARMA_LAB.D_DATE d ON f.BOOKED_DATE_ID = d.DATE_ID
+        GROUP BY d.CALENDAR_DATE
+        """
+        result = self._validate(fragile)
+        self.assertFalse(result.ok)
+        self.assertEqual(result.code, "period_comparison_shape")
+
+    def test_accepts_staged_booked_date_month_comparison(self):
+        staged = """
+        WITH period_totals AS (
+            SELECT DATEFROMPARTS(YEAR(d.CALENDAR_DATE), MONTH(d.CALENDAR_DATE), 1) AS PERIOD,
+                   SUM(f.NET_REVENUE_AMT) AS METRIC
+            FROM CHATBOT_DB.PHARMA_LAB.F_RX_FILL f
+            JOIN CHATBOT_DB.PHARMA_LAB.D_DATE d ON f.BOOKED_DATE_ID = d.DATE_ID
+            WHERE d.CALENDAR_DATE >= DATEFROMPARTS(2025, 1, 1)
+              AND d.CALENDAR_DATE < DATEFROMPARTS(2026, 1, 1)
+            GROUP BY DATEFROMPARTS(YEAR(d.CALENDAR_DATE), MONTH(d.CALENDAR_DATE), 1)
+        ), period_comparison AS (
+            SELECT PERIOD, METRIC,
+                   LAG(METRIC) OVER (ORDER BY PERIOD) AS PREV_METRIC
+            FROM period_totals
+        )
+        SELECT PERIOD, METRIC, PREV_METRIC,
+               METRIC - PREV_METRIC AS DIFF,
+               ROUND((METRIC - PREV_METRIC) * 100.0 / NULLIF(PREV_METRIC, 0), 2) AS PCT_CHANGE
+        FROM period_comparison
+        ORDER BY PERIOD
+        """
+        result = self._validate(staged)
+        self.assertTrue(result.ok, result.reason)
 
 
 class ResultTransformationRoutingTests(unittest.TestCase):

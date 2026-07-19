@@ -3110,7 +3110,10 @@ function sendMessage(tableHint){
   appendUser(text);
   _collapseHero();   // auto-collapse hero on first message send
   const payload = { text };
-  if (tableHint) payload.table_hint = tableHint;
+  const normalizedTableHint = typeof tableHint === 'string'
+    ? tableHint.trim()
+    : String(tableHint?.fqn || tableHint?.table_hint || tableHint?.table || '').trim();
+  if (normalizedTableHint) payload.table_hint = normalizedTableHint;
   if (_activeSchema) payload.schema_hint = _activeSchema;
   ws.send(JSON.stringify(payload));
   inp.value = '';

@@ -263,6 +263,17 @@ class TestWindowAnalyticsComputation:
         assert "running_total" in hint
         assert "OVER" in hint
 
+    def test_sql_hint_row_delta_requires_staged_metric_alias(self):
+        from core.window_analytics import build_window_sql_hint, WindowIntent
+        hint = build_window_sql_hint(
+            WindowIntent(type="row_delta", delta_grain="month"),
+            "azure_sql",
+        )
+        assert "period_totals CTE" in hint
+        assert "period_comparison CTE" in hint
+        assert "Never place SUM/COUNT/AVG directly inside LAG/LEAD" in hint
+        assert "NULLIF(PREV_METRIC, 0)" in hint
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 2. Relative Date Range

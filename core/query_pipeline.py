@@ -1836,7 +1836,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
     else:
         last_reason, last_code = reason, code
 
-    retryable = (not ok and code in ("unknown_table", "unknown_column", "date_key_format", "dialect_mismatch", "production_shape", "anti_join_shape", "top_n_shape", "graph_plan_mismatch", "field_plan_mismatch", "metric_formula_mismatch", "null_aggregate_diagnostic", "parse", "multi_statement", "not_select")) or (exec_error is not None)
+    retryable = (not ok and code in ("unknown_table", "unknown_column", "date_key_format", "dialect_mismatch", "production_shape", "period_comparison_shape", "anti_join_shape", "top_n_shape", "graph_plan_mismatch", "field_plan_mismatch", "metric_formula_mismatch", "null_aggregate_diagnostic", "parse", "multi_statement", "not_select")) or (exec_error is not None)
 
     if retryable:
         if exec_error is not None:
@@ -1951,6 +1951,15 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                     "- List every projected output column explicitly; SELECT * and alias.* are not allowed.\n"
                     "- Every non-CROSS JOIN must have an exact ON/USING relationship from the available schema/entity graph.\n"
                     "- Do not use CROSS JOIN or comma joins unless the original question explicitly asks for a cartesian product.\n"
+                )
+            elif last_code == "period_comparison_shape":
+                validation_repair_note = (
+                    "\nPERIOD-COMPARISON STRUCTURE REQUIRED:\n"
+                    "- In a period_totals CTE, group by the resolved business date period and calculate the approved metric once.\n"
+                    "- In a period_comparison CTE, calculate LAG(METRIC) or LEAD(METRIC) from the metric alias; never use LAG(SUM(...)).\n"
+                    "- In the final SELECT, calculate difference and percentage from METRIC and PREV_METRIC.\n"
+                    "- Keep NULLIF(PREV_METRIC, 0) around the denominator and balance every parenthesis.\n"
+                    "- Preserve the exact governed date-role JOIN and use a native date value directly when the date dimension exposes one.\n"
                 )
             elif last_code == "field_plan_mismatch":
                 validation_repair_note = build_field_plan_repair_note(_semantic_plan or {})

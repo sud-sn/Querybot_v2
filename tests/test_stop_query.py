@@ -167,6 +167,36 @@ class WebhooksWiringTests(unittest.TestCase):
         self.assertIn("import asyncio", self.src)
 
 
+class WebSocketPayloadNormalizationTests(unittest.TestCase):
+    def test_plain_text_is_trimmed(self):
+        from gateway.webhooks import _ws_text_value
+
+        self.assertEqual(_ws_text_value("  monthly receipts  "), "monthly receipts")
+
+    def test_structured_question_is_recovered(self):
+        from gateway.webhooks import _ws_text_value
+
+        value = {"question": "Show monthly receipts by supplier", "kind": "history"}
+        self.assertEqual(
+            _ws_text_value(value, "text", "question", "value", "label"),
+            "Show monthly receipts by supplier",
+        )
+
+    def test_structured_table_hint_is_recovered(self):
+        from gateway.webhooks import _ws_text_value
+
+        value = {"fqn": "CHATBOT_DB.PHARMA_LAB.F_PURCHASE_RECEIPT"}
+        self.assertEqual(
+            _ws_text_value(value, "fqn", "table_hint", "table", "value"),
+            "CHATBOT_DB.PHARMA_LAB.F_PURCHASE_RECEIPT",
+        )
+
+    def test_unknown_object_is_ignored_instead_of_stringified(self):
+        from gateway.webhooks import _ws_text_value
+
+        self.assertEqual(_ws_text_value({"unexpected": ["value"]}, "text"), "")
+
+
 class FrontendWiringTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -187,6 +217,13 @@ class FrontendWiringTests(unittest.TestCase):
         body = self.html[start:start + 400]
         self.assertIn("JSON.stringify({ type: 'cancel' })", body)
         self.assertIn("if (!wsReady) return;", body)
+
+    def test_structured_table_hint_is_normalized_before_send(self):
+        start = self.html.index("function sendMessage(tableHint)")
+        body = self.html[start:start + 1800]
+        self.assertIn("normalizedTableHint", body)
+        self.assertIn("tableHint?.fqn", body)
+        self.assertIn("payload.table_hint = normalizedTableHint", body)
 
     def test_set_processing_drives_button_mode(self):
         start = self.html.index("function setProcessing(active)")

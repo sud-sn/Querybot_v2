@@ -53,6 +53,30 @@ log = logging.getLogger("querybot")
 router = APIRouter()
 
 
+def _ws_text_value(value, *preferred_keys: str) -> str:
+    """Return a safe text value from a WebSocket payload field.
+
+    Autocomplete and suggestion features may carry structured metadata. A
+    hint object must never tear down live chat because plain text was expected.
+    """
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, (int, float, bool)):
+        return str(value).strip()
+    if isinstance(value, dict):
+        for key in preferred_keys:
+            candidate = value.get(key)
+            if isinstance(candidate, str):
+                candidate = candidate.strip()
+                if candidate:
+                    return candidate
+            elif isinstance(candidate, (int, float, bool)):
+                return str(candidate).strip()
+    return ""
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # REST API adapter — used by /api/ask (Copilot Studio, Power Automate, testing)
 # ══════════════════════════════════════════════════════════════════════════════
@@ -441,15 +465,31 @@ async def ws_chat(websocket: WebSocket, account_id: str):
     try:
         while True:
             data = await websocket.receive_json()
-            msg_type   = (data.get("type") or "").strip()
-            action     = (data.get("action") or "").strip()
-            context    = data.get("context") or {}
-            text       = (data.get("text") or "").strip()
+            if not isinstance(data, dict):
+                await websocket.send_json({
+                    "type": "assistant_error",
+                    "role": "assistant",
+                    "content": "I could not read that message. Please send the question again.",
+                })
+                continue
+
+            msg_type = _ws_text_value(data.get("type"), "type", "value")
+            action = _ws_text_value(data.get("action"), "action", "value")
+            context = data.get("context")
+            if not isinstance(context, dict):
+                context = {}
+            text = _ws_text_value(
+                data.get("text"), "text", "question", "value", "label"
+            )
             # table_hint: FQN hint from clicked suggested question
-            table_hint = (data.get("table_hint") or "").strip()
+            table_hint = _ws_text_value(
+                data.get("table_hint"), "fqn", "table_hint", "table", "value"
+            )
             # schema_hint: schema name selected by the user in the portal UI
             # e.g. "HR" or "PHARMACY" — filters allowed_tables to that schema only
-            schema_hint = (data.get("schema_hint") or "").strip().upper()
+            schema_hint = _ws_text_value(
+                data.get("schema_hint"), "schema_hint", "schema", "name", "value"
+            ).upper()
 
             # ── history_sync: browser restores prior-session history ──────────
             if msg_type == "history_sync":
@@ -496,8 +536,10 @@ async def ws_chat(websocket: WebSocket, account_id: str):
             # result_id tags the response so the browser renders it inside
             # the correct card rather than the main thread.
             if msg_type == "result_chat":
-                rc_question  = (data.get("question") or "").strip()
-                rc_result_id = (data.get("result_id") or "").strip()
+                rc_question = _ws_text_value(
+                    data.get("question"), "question", "text", "value", "label"
+                )
+                rc_result_id = _ws_text_value(data.get("result_id"), "id", "value")
                 if not rc_question:
                     await websocket.send_json({
                         "type": "result_chat_error",
@@ -1099,7 +1141,9 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 cmeta = pending.get("clarification_meta") or {}
                 opts = cmeta.get("options") or []
                 selected_id = str(data.get("option_id") or "").strip()
-                free_text = (data.get("text") or "").strip()
+                free_text = _ws_text_value(
+                    data.get("text"), "text", "question", "value", "label"
+                )
 
                 # Fix #9 — if the pending has no options (pure free-text
                 # clarification, e.g. from the plain LLM classifier fallback),
@@ -1667,6 +1711,11 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 continue
 
             if not text:
+                await websocket.send_json({
+                    "type": "assistant_error",
+                    "role": "assistant",
+                    "content": "I could not read that question. Please type it again.",
+                })
                 await websocket.send_json({"type": "typing", "active": False})
                 continue
 
@@ -1721,7 +1770,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
     except WebSocketDisconnect:
         log.info("WebSocket chat disconnected: user=%d account=%s", user_id, account_id)
     except Exception as e:
-        log.error("WebSocket error for user %d: %s", user_id, e)
+        log.exception("WebSocket error for user %d: %s", user_id, e)
         try:
             await websocket.send_json({
                 "type":    "error",

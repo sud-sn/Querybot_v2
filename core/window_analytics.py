@@ -211,21 +211,19 @@ def build_window_sql_hint(intent: WindowIntent, db_type: str = "azure_sql") -> s
 
     if intent.type == "row_delta":
         grain_label = intent.delta_grain or "month"
-        if is_tsql:
-            lag_expr = "LAG(metric_col, 1) OVER (PARTITION BY category ORDER BY period_col)"
-        else:
-            lag_expr = "LAG(metric_col, 1) OVER (PARTITION BY category ORDER BY period_col)"
         return (
             f"WINDOW FUNCTION HINT — {grain_label.upper()}-OVER-{grain_label.upper()} DELTA:\n"
-            "The user wants the change vs the prior period for each row. Use this pattern:\n"
-            f"  {lag_expr} AS prev_value,\n"
-            f"  metric_col - {lag_expr} AS delta,\n"
-            f"  CASE WHEN {lag_expr} <> 0 THEN\n"
-            f"    (metric_col - {lag_expr}) * 100.0 / ABS({lag_expr})\n"
-            f"  ELSE NULL END AS pct_change\n"
-            "Replace metric_col with the actual numeric column and period_col with the date column.\n"
-            "If there is no natural partition (single series), omit the PARTITION BY clause.\n"
-            "Include the period, current value, previous value, absolute delta, and % change."
+            "The user wants change versus the prior period. Use exactly three stages:\n"
+            "  1. period_totals CTE: SELECT period_col AS PERIOD, category (when requested), "
+            "<approved aggregate> AS METRIC; GROUP BY the period and category.\n"
+            "  2. period_comparison CTE: SELECT PERIOD, category, METRIC, "
+            "LAG(METRIC, 1) OVER (PARTITION BY category ORDER BY PERIOD) AS PREV_METRIC.\n"
+            "  3. Final SELECT: METRIC - PREV_METRIC AS DIFF and "
+            "ROUND((METRIC - PREV_METRIC) * 100.0 / NULLIF(PREV_METRIC, 0), 2) AS PCT_CHANGE.\n"
+            "Omit PARTITION BY when the result is one series. Never place SUM/COUNT/AVG directly "
+            "inside LAG/LEAD, and never repeat LAG in the arithmetic expression. Use the semantic "
+            "date-role's native date value directly when one is available. Include period, current "
+            "value, previous value, absolute delta, and percentage change."
         )
 
     return ""

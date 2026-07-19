@@ -621,6 +621,83 @@ def _find_date_key_format_errors(
     return errors
 
 
+def _parse_error_details(exc: Exception, dialect: str) -> list[dict]:
+    """Convert sqlglot parser failures into repair-safe structured evidence."""
+    raw_errors = getattr(exc, "errors", None) or []
+    details: list[dict] = []
+    for item in raw_errors[:3]:
+        if not isinstance(item, dict):
+            continue
+        description = str(item.get("description") or str(exc)).strip()
+        line = int(item.get("line") or 0)
+        column = int(item.get("col") or 0)
+        token = str(item.get("highlight") or "").strip()
+        details.append({
+            "code": "parse",
+            "message": description,
+            "line": line,
+            "column": column,
+            "token": token,
+            "dialect": dialect,
+        })
+    if not details:
+        details.append({
+            "code": "parse",
+            "message": str(exc).strip() or "SQL parser rejected the statement.",
+            "line": 0,
+            "column": 0,
+            "token": "",
+            "dialect": dialect,
+        })
+    return details
+
+
+_PERIOD_COMPARISON_QUESTION_RE = re.compile(
+    r"\b(?:"
+    r"month[ -]?over[ -]?month|mom|quarter[ -]?over[ -]?quarter|qoq|"
+    r"week[ -]?over[ -]?week|wow|year[ -]?over[ -]?year|yoy|"
+    r"period[ -]?over[ -]?period|previous\s+(?:month|quarter|week|year|period)|"
+    r"prior\s+(?:month|quarter|week|year|period)|"
+    r"change\s+(?:each|by)\s+(?:month|quarter|week|year)"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def _period_comparison_shape_errors(tree, semantic_context: dict | None) -> list[dict]:
+    """Reject fragile aggregate-inside-LAG shapes for period comparisons.
+
+    Aggregate the requested metric to the business period first, then apply
+    LAG/LEAD to that stable metric alias in an outer query. This rule is
+    independent of physical table, metric, date role, and SQL dialect.
+    """
+    context = semantic_context or {}
+    question = str(context.get("question") or "")
+    if not _PERIOD_COMPARISON_QUESTION_RE.search(question):
+        return []
+
+    errors: list[dict] = []
+    for window in tree.find_all(sg_exp.Window):
+        function = window.this
+        if not isinstance(function, (sg_exp.Lag, sg_exp.Lead)):
+            continue
+        argument = function.this
+        if argument is None or not any(argument.find_all(sg_exp.AggFunc)):
+            continue
+        errors.append({
+            "code": "period_comparison_shape",
+            "message": (
+                "Period comparison SQL applies LAG/LEAD directly to an aggregate expression. "
+                "Aggregate the metric by period in a base CTE, compute the previous value from "
+                "that metric alias in a comparison CTE, then calculate difference and percentage "
+                "in the final SELECT."
+            ),
+            "function": function.key.upper(),
+            "replacement": "period_totals CTE -> period_comparison CTE -> final calculation",
+        })
+    return errors
+
+
 def _find_surrogate_date_conversion_errors(sql: str, policies: list[dict]) -> list[dict]:
     """Reject attempts to parse role-playing surrogate IDs as dates."""
     errors: list[dict] = []
@@ -940,8 +1017,16 @@ def validate_sql_detailed(
             statement for statement in sqlglot.parse(sql, read=dialect)
             if statement is not None
         ]
-    except Exception:
-        return SqlValidationResult(False, "SQL could not be parsed - please check for syntax errors.", "parse")
+    except Exception as exc:
+        parse_errors = _parse_error_details(exc, dialect)
+        first = parse_errors[0]
+        location = ""
+        if first.get("line") and first.get("column"):
+            location = f" Line {first['line']}, column {first['column']}."
+        token = f" Near token '{first['token']}'." if first.get("token") else ""
+        reason = f"SQL could not be parsed: {first['message']}.{location}{token}"
+        log.info("SQL parse validation failed (%s): %s", dialect, reason)
+        return SqlValidationResult(False, reason, "parse", parse_errors)
     if len(statements) != 1:
         return SqlValidationResult(
             False,
@@ -966,6 +1051,15 @@ def validate_sql_detailed(
             False,
             "Locking SELECT statements such as FOR UPDATE are not allowed.",
             "locking_select",
+        )
+
+    period_shape_errors = _period_comparison_shape_errors(tree, semantic_context)
+    if period_shape_errors:
+        return SqlValidationResult(
+            False,
+            "\n".join(error["message"] for error in period_shape_errors),
+            "period_comparison_shape",
+            period_shape_errors,
         )
 
     production_shape_errors = _production_shape_errors(tree, semantic_context)
