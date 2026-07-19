@@ -126,8 +126,98 @@ def _extract_overview(content: str) -> str:
 
 _PLAIN_IDENT = re.compile(r"[A-Za-z][A-Za-z0-9_]*$")
 
+_MEASURE_NAME_RE = re.compile(
+    r"(?:^|_)(?:AMT|AMOUNT|QTY|QUANTITY|COUNT|CNT|COST|CST|PRICE|PRC|"
+    r"REVENUE|SALES|PROFIT|MARGIN|BALANCE|TOTAL|RATE|PCT|PERCENT|"
+    r"DAYS|DURATION|VOLUME|VALUE|UNITS?)(?:_|$)", re.IGNORECASE,
+)
+_IDENTIFIER_NAME_RE = re.compile(
+    r"(?:^|_)(?:ID|KEY|SK|NK|UUID|GUID|NUMBER|NUM|NO|CODE|CD)(?:_|$)",
+    re.IGNORECASE,
+)
+_TECHNICAL_NAME_RE = re.compile(
+    r"(?:^|_)(?:LST_UPD|LAST_UPDATED|CREATED_BY|UPDATED_BY|ROW_VERSION|"
+    r"ETL|LOAD_TS|INGEST|AUDIT|HASH|CHECKSUM)(?:_|$)", re.IGNORECASE,
+)
+_NUMERIC_TYPE_RE = re.compile(
+    r"(?:tinyint|smallint|bigint|int|decimal|numeric|money|float|real|double)",
+    re.IGNORECASE,
+)
+_DATE_TYPE_RE = re.compile(r"(?:date|time)", re.IGNORECASE)
 
-def enrich_graph_from_kb(account_id: str, kb_dir: str) -> dict:
+
+def _humanize_column(column_name: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"[^A-Za-z0-9]+", " ", column_name or "")).strip().lower()
+
+
+def classify_harvested_property(
+    column_name: str,
+    data_type: str = "",
+    *,
+    is_primary_key: bool = False,
+    metric_claim: bool = False,
+) -> str:
+    """Classify a KB field without trusting an LLM-provided role label."""
+    from core.date_roles import detect_date_role
+
+    name = (column_name or "").strip().strip('"`[]')
+    dtype = str(data_type or "")
+    if detect_date_role(name) or _DATE_TYPE_RE.search(dtype):
+        return "date"
+    if is_primary_key or _IDENTIFIER_NAME_RE.search(name.upper()):
+        return "identifier"
+    looks_measure = bool(_MEASURE_NAME_RE.search(name.upper()))
+    is_numeric = not dtype or bool(_NUMERIC_TYPE_RE.search(dtype))
+    if metric_claim and is_numeric:
+        return "metric"
+    if looks_measure and is_numeric:
+        return "metric"
+    return "dimension"
+
+
+def _schema_column_index(schema_dir: str | None) -> dict[str, dict[str, dict]]:
+    """Return FQN/schema.table/bare-table column metadata variants."""
+    if not schema_dir:
+        return {}
+    try:
+        from core.schema import load_schema_json
+        master = load_schema_json(schema_dir)
+    except Exception:
+        return {}
+
+    index: dict[str, dict[str, dict]] = {}
+    for table_key, raw in master.items():
+        if str(table_key).startswith("__") or not isinstance(raw, dict):
+            continue
+        pk_columns = {str(c).upper() for c in (raw.get("pk_columns") or [])}
+        columns: dict[str, dict] = {}
+        for col in raw.get("columns", []) or []:
+            if not isinstance(col, dict):
+                continue
+            name = col.get("name") or col.get("column_name") or col.get("COLUMN_NAME") or ""
+            if not name:
+                continue
+            columns[str(name).upper()] = {
+                "name": str(name),
+                "type": str(col.get("type") or col.get("data_type") or col.get("DATA_TYPE") or ""),
+                "is_primary_key": str(name).upper() in pk_columns,
+            }
+        upper = str(table_key).upper()
+        parts = upper.split(".")
+        variants = {upper, parts[-1]}
+        if len(parts) >= 2:
+            variants.add(".".join(parts[-2:]))
+        for variant in variants:
+            index.setdefault(variant, {}).update(columns)
+    return index
+
+
+def _has_useful_synonym(column_name: str, terms: set[str]) -> bool:
+    physical = _humanize_column(column_name)
+    return any(_humanize_column(term) not in {"", physical} for term in terms)
+
+
+def enrich_graph_from_kb(account_id: str, kb_dir: str, schema_dir: str | None = None) -> dict:
     """
     Harvest Stage 1 KB markdown into the entity graph.
 
@@ -152,6 +242,8 @@ def enrich_graph_from_kb(account_id: str, kb_dir: str) -> dict:
 
     desc_count = 0
     prop_count = 0
+    schema_columns = _schema_column_index(schema_dir)
+    harvested_keys: set[tuple[str, str]] = set()
 
     for md_file in sorted(kb_path.glob("*_kb.md")):
         table = md_file.stem[:-3].upper() if md_file.stem.endswith("_kb") else md_file.stem.upper()
@@ -188,6 +280,12 @@ def enrich_graph_from_kb(account_id: str, kb_dir: str) -> dict:
             matches[0],
         )
         ename = target["entity_name"]
+        table_variants = [
+            ".".join(filter(None, [target.get("schema_name"), target.get("table_name")])).upper(),
+            str(target.get("table_name") or table).upper(),
+            table,
+        ]
+        column_meta = next((schema_columns[v] for v in table_variants if v in schema_columns), {})
         existing = {
             (p.get("column_name") or "").upper(): p
             for p in store.list_entity_properties(account_id, ename)
@@ -207,22 +305,36 @@ def enrich_graph_from_kb(account_id: str, kb_dir: str) -> dict:
             terms = sorted({t.strip().lower() for t in terms if t.strip()})
             if not terms:
                 continue
-            entry = plan.setdefault(col, {"role": "", "display_name": "", "synonyms": set()})
+            entry = plan.setdefault(col, {"metric_claim": False, "display_name": "", "synonyms": set()})
             entry["synonyms"].update(terms)
 
         for met in _extract_key_metrics(content, table):
             expr = (met.get("expression") or "").strip()
             if not _PLAIN_IDENT.fullmatch(expr):
                 continue  # only plain column references — skip formulas
-            entry = plan.setdefault(expr, {"role": "", "display_name": "", "synonyms": set()})
-            entry["role"] = "metric"
+            entry = plan.setdefault(expr, {"metric_claim": False, "display_name": "", "synonyms": set()})
+            entry["metric_claim"] = True
             if not entry["display_name"]:
                 entry["display_name"] = (met.get("term") or "").strip().title()
 
         for col, entry in plan.items():
             prev = existing.get(col.upper())
-            if prev and (prev.get("status") or "") == "confirmed":
+            if prev and (prev.get("status") or "") in {"confirmed", "rejected"}:
                 continue  # admin-confirmed — never touch
+            meta = column_meta.get(col.upper(), {})
+            role = classify_harvested_property(
+                col,
+                meta.get("type", ""),
+                is_primary_key=bool(meta.get("is_primary_key")),
+                metric_claim=bool(entry["metric_claim"]),
+            )
+            if _TECHNICAL_NAME_RE.search(col) and not entry["metric_claim"]:
+                continue
+            useful_synonym = _has_useful_synonym(col, entry["synonyms"])
+            if not entry["metric_claim"] and not useful_synonym:
+                continue
+            if entry["metric_claim"] and role != "metric" and not useful_synonym:
+                continue
             merged_syns = set(entry["synonyms"])
             if prev and (prev.get("synonyms") or "").strip():
                 merged_syns.update(
@@ -232,7 +344,7 @@ def enrich_graph_from_kb(account_id: str, kb_dir: str) -> dict:
                 account_id       = account_id,
                 entity_name      = ename,
                 column_name      = col,
-                role             = entry["role"] or (prev or {}).get("role") or "dimension",
+                role             = role,
                 display_name     = entry["display_name"] or (prev or {}).get("display_name") or "",
                 synonyms         = ", ".join(sorted(merged_syns)),
                 confidence_score = 80,
@@ -240,7 +352,25 @@ def enrich_graph_from_kb(account_id: str, kb_dir: str) -> dict:
                 generated_by     = "kb_harvest",
                 reason           = f"Harvested from {md_file.name}",
             )
+            harvested_keys.add((ename.upper(), col.upper()))
             prop_count += 1
+
+    # Delete only obsolete machine suggestions. Explicit admin decisions and
+    # manually-authored properties survive every rebuild.
+    with store.get_db() as conn:
+        stale = conn.execute(
+            "SELECT entity_name, column_name FROM entity_properties "
+            "WHERE account_id=? AND status='suggested' AND generated_by='kb_harvest'",
+            (account_id,),
+        ).fetchall()
+        for row in stale:
+            key = (str(row["entity_name"]).upper(), str(row["column_name"]).upper())
+            if key not in harvested_keys:
+                conn.execute(
+                    "DELETE FROM entity_properties WHERE account_id=? AND entity_name=? "
+                    "AND column_name=? AND status='suggested' AND generated_by='kb_harvest'",
+                    (account_id, row["entity_name"], row["column_name"]),
+                )
 
     return {"descriptions": desc_count, "properties": prop_count}
 
@@ -392,7 +522,7 @@ def sync_graph_after_kb_build(account_id: str, schema_dir: str, kb_dir: str) -> 
 
     # 3. KB enrichment
     try:
-        enriched = enrich_graph_from_kb(account_id, kb_dir)
+        enriched = enrich_graph_from_kb(account_id, kb_dir, schema_dir=schema_dir)
         summary["descriptions_enriched"] = enriched["descriptions"]
         summary["properties_enriched"]   = enriched["properties"]
     except Exception as exc:

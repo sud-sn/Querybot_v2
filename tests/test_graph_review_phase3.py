@@ -97,6 +97,30 @@ class GraphReviewEndpointTests(unittest.TestCase):
         self.assertEqual(entities["DIM_HIGH"]["status"], "confirmed")
         self.assertEqual(entities["DIM_LOW"]["status"], "suggested")  # below bar
 
+    def test_unified_bulk_review_accepts_fields_for_one_table(self):
+        import admin.routes as routes
+
+        for entity in ("FACT_SALES", "FACT_OTHER"):
+            self.store.save_entity(self.account_id, entity, entity, status="confirmed")
+            self.store.save_entity_property(
+                self.account_id, entity, "NET_AMT", role="metric",
+                status="suggested", confidence_score=80, generated_by="kb_harvest",
+            )
+        req = _JsonRequest({
+            "action": "accept", "kinds": ["prop"],
+            "min_confidence": 0, "entity_name": "FACT_SALES",
+        })
+        with patch.object(routes, "_is_auth", return_value=True), patch.object(routes, "_after_semantic_approval"):
+            resp = _arun(routes.graph_bulk_review(req, self.account_id))
+        body = json.loads(resp.body)
+        self.assertEqual(body["properties"], 1)
+        statuses = {
+            (p["entity_name"], p["column_name"]): p["status"]
+            for p in self.store.list_all_entity_properties(self.account_id)
+        }
+        self.assertEqual(statuses[("FACT_SALES", "NET_AMT")], "confirmed")
+        self.assertEqual(statuses[("FACT_OTHER", "NET_AMT")], "suggested")
+
 
 class GraphReviewUiWiringTests(unittest.TestCase):
     SRC = (ROOT / "admin/templates/client_graph.html").read_text(encoding="utf-8")
@@ -113,6 +137,14 @@ class GraphReviewUiWiringTests(unittest.TestCase):
             'id="review-panel"', 'id="rv-progress-fill"',
             "bulkAcceptHighConf()", "min_confidence: 85",
             "_srcChip", "generated_by", "rv-reason",
+        ):
+            self.assertIn(needle, self.SRC, needle)
+
+    def test_review_panel_filters_and_bulk_field_actions(self):
+        for needle in (
+            'id="rv-entity-filter"', "setReviewKind('prop')",
+            "bulkReviewVisible('accept')", "bulkReviewVisible('reject')",
+            "/review/bulk",
         ):
             self.assertIn(needle, self.SRC, needle)
 

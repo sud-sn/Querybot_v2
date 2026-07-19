@@ -193,6 +193,7 @@ class CorrectionFlagTests(_GraphAccountTest):
             self.account_id, "FACT_SALES", "MYSTERY_COL", status="suggested",
         )
         self.assertEqual(self.store.count_pending_graph_reviews(self.account_id), 2)
+        self.assertEqual(self.store.count_pending_structural_graph_reviews(self.account_id), 1)
 
 
 class Phase4WiringTests(unittest.TestCase):
@@ -205,7 +206,7 @@ class Phase4WiringTests(unittest.TestCase):
         self.assertIn("graph_pending_reviews", self.SETUP)
         fn = self.ROUTES[self.ROUTES.index("async def client_setup_page("):]
         fn = fn[:fn.index("\n@router.")]
-        self.assertIn("count_pending_graph_reviews", fn)
+        self.assertIn("count_pending_structural_graph_reviews", fn)
 
     def test_correction_route_diffs_tables_and_flags_joins(self):
         fn = self.ROUTES[self.ROUTES.index("async def admin_learning_queue_correct_sql("):]

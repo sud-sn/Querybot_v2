@@ -2242,6 +2242,7 @@ def confirm_entity_property(
     account_id: str,
     entity_name: str,
     column_name: str,
+    reviewed_by: str = "admin",
 ) -> None:
     """
     Admin confirms a field role — sets status='confirmed', confidence_score=100,
@@ -2254,9 +2255,10 @@ def confirm_entity_property(
     with get_db() as conn:
         conn.execute("""
             UPDATE entity_properties
-               SET status='confirmed', confidence_score=100
+               SET status='confirmed', confidence_score=100,
+                   reviewed_by=?, reviewed_at=datetime('now')
              WHERE account_id=? AND entity_name=? AND column_name=?
-        """, (account_id, entity_name, column_name))
+        """, (reviewed_by, account_id, entity_name, column_name))
         # Read the current property to get display_name / synonyms for sync
         row = conn.execute("""
             SELECT * FROM entity_properties
@@ -2314,6 +2316,23 @@ def confirm_entity_property(
                 ))
     except Exception:
         pass  # semantic_field_feedback sync is best-effort
+
+
+def reject_entity_property(
+    account_id: str,
+    entity_name: str,
+    column_name: str,
+    reviewed_by: str = "admin",
+) -> bool:
+    """Persist an explicit rejection so KB rebuilds cannot resurrect it."""
+    with get_db() as conn:
+        cur = conn.execute(
+            "UPDATE entity_properties SET status='rejected', reviewed_by=?, "
+            "reviewed_at=datetime('now') WHERE account_id=? AND entity_name=? "
+            "AND column_name=? AND status='suggested'",
+            (reviewed_by, account_id, entity_name, column_name),
+        )
+        return cur.rowcount > 0
 
 def list_entity_properties(account_id: str, entity_name: str) -> list[dict]:
     with get_db() as conn:
@@ -2529,3 +2548,24 @@ def count_pending_graph_reviews(account_id: str) -> int:
             (account_id,),
         ).fetchone()[0]
     return int(ents) + int(rels) + int(props)
+
+
+def count_pending_structural_graph_reviews(account_id: str) -> int:
+    """Pending entities/joins that can affect resolver paths and SQL.
+
+    Field enrichment remains visible in the graph review queue, but it is not
+    allowed to hold the client's onboarding workflow hostage.
+    """
+    with get_db() as conn:
+        ents = conn.execute(
+            "SELECT COUNT(*) FROM entity_graph "
+            "WHERE account_id=? AND is_active=1 AND status='suggested'",
+            (account_id,),
+        ).fetchone()[0]
+        rels = conn.execute(
+            "SELECT COUNT(*) FROM entity_relationships "
+            "WHERE account_id=? AND is_active=1 AND "
+            "(status='suggested' OR validation_status='needs_review')",
+            (account_id,),
+        ).fetchone()[0]
+    return int(ents) + int(rels)

@@ -4580,13 +4580,92 @@ async def graph_reject_property(request: Request, account_id: str):
     if not _is_auth(request):
         raise HTTPException(status_code=401)
     data = await request.json()
-    with __import__("store.db", fromlist=["get_db"]).get_db() as conn:
-        conn.execute(
-            "UPDATE entity_properties SET status='rejected' "
-            "WHERE account_id=? AND entity_name=? AND column_name=?",
-            (account_id, data.get("entity_name", ""), data.get("column_name", "")),
-        )
+    store.reject_entity_property(
+        account_id, data.get("entity_name", ""), data.get("column_name", "")
+    )
     return JSONResponse({"status": "ok"})
+
+
+@router.post("/clients/{account_id}/graph/api/review/bulk")
+async def graph_bulk_review(request: Request, account_id: str):
+    """Accept or reject selected suggestion kinds within this tenant."""
+    if not _is_auth(request):
+        raise HTTPException(status_code=401)
+    data = await request.json()
+    action = str(data.get("action") or "").lower()
+    if action not in {"accept", "reject"}:
+        raise HTTPException(status_code=400, detail="action must be accept or reject")
+    allowed_kinds = {"entity", "rel", "prop"}
+    kinds = {str(k) for k in (data.get("kinds") or allowed_kinds)} & allowed_kinds
+    min_conf = max(0, min(100, int(data.get("min_confidence", 0))))
+    entity_filter = str(data.get("entity_name") or "").strip()
+    counts = {"entities": 0, "relationships": 0, "properties": 0}
+
+    with __import__("store.db", fromlist=["get_db"]).get_db() as conn:
+        if "entity" in kinds:
+            rows = conn.execute(
+                "SELECT entity_name FROM entity_graph WHERE account_id=? "
+                "AND status='suggested' AND COALESCE(confidence_score,0)>=?",
+                (account_id, min_conf),
+            ).fetchall()
+            if rows:
+                status = "confirmed" if action == "accept" else "rejected"
+                for row in rows:
+                    conn.execute(
+                        "UPDATE entity_graph SET status=?, confidence_score=? "
+                        "WHERE account_id=? AND entity_name=? AND status='suggested'",
+                        (status, 100 if action == "accept" else 0, account_id, row["entity_name"]),
+                    )
+                counts["entities"] = len(rows)
+        if "rel" in kinds:
+            rows = conn.execute(
+                "SELECT id, status, validation_status FROM entity_relationships WHERE account_id=? "
+                "AND (status='suggested' OR validation_status='needs_review') "
+                "AND COALESCE(confidence_score,0)>=?",
+                (account_id, min_conf),
+            ).fetchall()
+            if rows:
+                for row in rows:
+                    if action == "accept":
+                        conn.execute(
+                            "UPDATE entity_relationships SET status='confirmed', "
+                            "confidence_score=100, validation_status=CASE WHEN "
+                            "validation_status='needs_review' THEN 'untested' ELSE validation_status END "
+                            "WHERE account_id=? AND id=?",
+                            (account_id, row["id"]),
+                        )
+                    else:
+                        conn.execute(
+                            "UPDATE entity_relationships SET status='rejected', confidence_score=0 "
+                            "WHERE account_id=? AND id=?",
+                            (account_id, row["id"]),
+                        )
+                counts["relationships"] = len(rows)
+        prop_rows = []
+        if "prop" in kinds:
+            sql = (
+                "SELECT entity_name, column_name FROM entity_properties "
+                "WHERE account_id=? AND status='suggested' "
+                "AND COALESCE(confidence_score,0)>=?"
+            )
+            params = [account_id, min_conf]
+            if entity_filter:
+                sql += " AND entity_name=?"
+                params.append(entity_filter)
+            prop_rows = conn.execute(sql, tuple(params)).fetchall()
+
+    # Property confirmation performs semantic-layer synchronization, so it is
+    # intentionally routed through the store API rather than a raw UPDATE.
+    for row in prop_rows:
+        if action == "accept":
+            store.confirm_entity_property(account_id, row["entity_name"], row["column_name"])
+        else:
+            store.reject_entity_property(account_id, row["entity_name"], row["column_name"])
+    counts["properties"] = len(prop_rows)
+
+    if action == "accept" and any(counts.values()):
+        _after_semantic_approval(account_id, f"graph bulk review {counts}")
+    return JSONResponse({"status": "ok", "action": action, **counts})
 
 
 @router.post("/clients/{account_id}/graph/api/bulk-accept")
@@ -6312,11 +6391,11 @@ async def client_setup_page(request: Request, account_id: str):
     # admin_confirm_masking_review) — cleared if tables/industry change.
     masking_reviewed_at = state_data.get("masking_reviewed_at")
 
-    # Semantic-review wizard step: pending graph suggestions (entities/joins/
-    # fields awaiting review, incl. correction-flagged joins). The graph
-    # steers SQL JOINs, so onboarding isn't done until the count is zero.
+    # Semantic-review wizard step: only unresolved tables/joins gate setup.
+    # Optional field enrichment remains reviewable on the graph page without
+    # blocking client onboarding.
     try:
-        graph_pending_reviews = store.count_pending_graph_reviews(account_id)
+        graph_pending_reviews = store.count_pending_structural_graph_reviews(account_id)
     except Exception as exc:
         log.debug("graph pending count skipped for %s: %s", account_id, exc)
         graph_pending_reviews = 0
