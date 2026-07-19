@@ -142,6 +142,16 @@
     <div class="wizard-step-circle" title="LLM generates business context for each table — takes 5–10 minutes">{% if _w4 %}✓{% else %}4{% endif %}</div>
     <div class="wizard-step-label">KB Generated</div>
   </div>
+  {% set _w5 = _w4 and (graph_pending_reviews | default(0) | int) == 0 %}
+  <div class="wizard-step-line {% if _w4 %}done{% endif %}"></div>
+  <div class="wizard-step {% if _w5 %}done{% elif _w4 %}active{% endif %}">
+    <div class="wizard-step-circle" title="Review auto-suggested entities, joins and fields — unreviewed suggestions can steer SQL joins">{% if _w5 %}✓{% else %}5{% endif %}</div>
+    <div class="wizard-step-label">
+      <a href="/admin/clients/{{ client.account_id }}/graph" style="color:inherit;text-decoration:none">
+        Semantic Review{% if (graph_pending_reviews | default(0) | int) > 0 %} <span style="display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 4px;border-radius:8px;background:#D97706;color:#fff;font-size:10px;font-weight:800">{{ graph_pending_reviews }}</span>{% endif %}
+      </a>
+    </div>
+  </div>
 </div>
 
 <div class="page-header">

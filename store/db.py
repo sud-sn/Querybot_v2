@@ -610,6 +610,19 @@ CREATE TABLE IF NOT EXISTS entity_properties (
     UNIQUE(account_id, entity_name, column_name)
 );
 
+-- Point-in-time snapshots of the whole entity graph (entities +
+-- relationships + properties as one JSON blob). Written on demand from the
+-- graph Tools menu and automatically before destructive operations
+-- (import, restore), so a bad import is always one restore away from undone.
+CREATE TABLE IF NOT EXISTS graph_version (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id    TEXT    NOT NULL REFERENCES client(account_id) ON DELETE CASCADE,
+    label         TEXT    NOT NULL DEFAULT '',
+    created_by    TEXT    NOT NULL DEFAULT 'admin',
+    snapshot_json TEXT    NOT NULL DEFAULT '{}',
+    created_at    TEXT    DEFAULT (datetime('now'))
+);
+
 -- =============================================================================
 -- Learning loop tables (v30)
 -- =============================================================================

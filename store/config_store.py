@@ -2341,3 +2341,191 @@ def get_full_graph(account_id: str) -> dict:
         "relationships": list_relationships(account_id, active_only=True),
         "properties":    list_all_entity_properties(account_id),
     }
+
+
+def save_graph_version(account_id: str, label: str = "", created_by: str = "admin") -> int:
+    """Snapshot the FULL graph (including inactive/rejected rows, so a
+    restore reproduces the exact state) into graph_version. Returns the id."""
+    with get_db() as conn:
+        snapshot = {
+            "entities": [dict(r) for r in conn.execute(
+                "SELECT * FROM entity_graph WHERE account_id=?", (account_id,)
+            ).fetchall()],
+            "relationships": [dict(r) for r in conn.execute(
+                "SELECT * FROM entity_relationships WHERE account_id=?", (account_id,)
+            ).fetchall()],
+            "properties": [dict(r) for r in conn.execute(
+                "SELECT * FROM entity_properties WHERE account_id=?", (account_id,)
+            ).fetchall()],
+        }
+        cur = conn.execute(
+            "INSERT INTO graph_version (account_id, label, created_by, snapshot_json) "
+            "VALUES (?,?,?,?)",
+            (account_id, label or "manual snapshot", created_by,
+             json.dumps(snapshot, default=str)),
+        )
+        return int(cur.lastrowid)
+
+
+def list_graph_versions(account_id: str, limit: int = 30) -> list[dict]:
+    """Version list for the history modal — metadata + item counts, no blobs."""
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT id, label, created_by, created_at, snapshot_json "
+            "FROM graph_version WHERE account_id=? ORDER BY id DESC LIMIT ?",
+            (account_id, int(limit)),
+        ).fetchall()
+    result = []
+    for row in rows:
+        item = dict(row)
+        try:
+            snap = json.loads(item.pop("snapshot_json") or "{}")
+            item["entity_count"] = len(snap.get("entities") or [])
+            item["relationship_count"] = len(snap.get("relationships") or [])
+        except Exception:
+            item.pop("snapshot_json", None)
+            item["entity_count"] = item["relationship_count"] = 0
+        result.append(item)
+    return result
+
+
+def get_graph_version(account_id: str, version_id: int) -> dict | None:
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM graph_version WHERE id=? AND account_id=?",
+            (int(version_id), account_id),
+        ).fetchone()
+    if not row:
+        return None
+    item = dict(row)
+    try:
+        item["snapshot"] = json.loads(item.pop("snapshot_json") or "{}")
+    except Exception:
+        item["snapshot"] = {}
+    return item
+
+
+def replace_graph_from_snapshot(account_id: str, snapshot: dict) -> dict:
+    """
+    Replace this account's ENTIRE graph with a snapshot's contents
+    (restore / import). Row dicts are filtered to the columns that exist in
+    the current schema, so snapshots taken before a migration still restore.
+    `id` is dropped (fresh autoincrement); relationships reference entities
+    by name, so identity survives. Runs in one transaction — a failed
+    restore leaves the current graph untouched.
+    """
+    tables = {
+        "entity_graph": snapshot.get("entities") or [],
+        "entity_relationships": snapshot.get("relationships") or [],
+        "entity_properties": snapshot.get("properties") or [],
+    }
+    counts: dict[str, int] = {}
+    with get_db() as conn:
+        for table, rows in tables.items():
+            conn.execute(f"DELETE FROM {table} WHERE account_id=?", (account_id,))
+            cols = set(get_table_columns(conn, table))
+            inserted = 0
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                keys = [k for k in row.keys() if k in cols and k != "id"]
+                if not keys:
+                    continue
+                values = [row[k] for k in keys]
+                # Force the target account unconditionally: exports from
+                # another client must not carry their tenant key in, and
+                # hand-crafted rows without one must still land scoped.
+                if "account_id" in keys:
+                    values[keys.index("account_id")] = account_id
+                else:
+                    keys.append("account_id")
+                    values.append(account_id)
+                conn.execute(
+                    f"INSERT INTO {table} ({','.join(keys)}) "
+                    f"VALUES ({','.join('?' * len(keys))})",
+                    values,
+                )
+                inserted += 1
+            counts[table] = inserted
+    return counts
+
+
+def flag_relationships_needing_review(account_id: str, tables: set[str]) -> int:
+    """
+    Mark confirmed joins touching any of `tables` (bare or qualified names,
+    case-insensitive) with validation_status='needs_review'.
+
+    Called when an admin corrects a learning-queue candidate's SQL and the
+    correction CHANGED the table set — the strongest available signal that
+    the graph steered the original SQL to the wrong tables. Flagged joins
+    surface in the graph review queue (and the pending count) so the admin
+    re-examines them; the flag never removes a join from SQL generation.
+    Returns the number of joins flagged.
+    """
+    bare = {str(t).upper().split(".")[-1] for t in tables if t}
+    if not bare:
+        return 0
+    placeholders = ",".join("?" for _ in bare)
+    with get_db() as conn:
+        cur = conn.execute(
+            f"""
+            UPDATE entity_relationships
+               SET validation_status='needs_review'
+             WHERE account_id=? AND is_active=1 AND status='confirmed'
+               AND COALESCE(validation_status,'') != 'needs_review'
+               AND (
+                 from_entity IN (
+                   SELECT entity_name FROM entity_graph
+                    WHERE account_id=? AND (
+                      UPPER(COALESCE(table_name,'')) IN ({placeholders})
+                      OR UPPER(entity_name) IN ({placeholders})
+                    )
+                 )
+                 OR to_entity IN (
+                   SELECT entity_name FROM entity_graph
+                    WHERE account_id=? AND (
+                      UPPER(COALESCE(table_name,'')) IN ({placeholders})
+                      OR UPPER(entity_name) IN ({placeholders})
+                    )
+                 )
+               )
+            """,
+            (account_id, account_id, *bare, *bare, account_id, *bare, *bare),
+        )
+        return cur.rowcount
+
+
+def clear_relationship_review_flag(account_id: str, rel_id: int) -> bool:
+    """Admin re-examined a correction-flagged join and kept it."""
+    with get_db() as conn:
+        cur = conn.execute(
+            "UPDATE entity_relationships SET validation_status='untested' "
+            "WHERE id=? AND account_id=? AND validation_status='needs_review'",
+            (int(rel_id), account_id),
+        )
+        return cur.rowcount > 0
+
+
+def count_pending_graph_reviews(account_id: str) -> int:
+    """Number of graph items awaiting admin review: suggested entities/joins/
+    fields plus confirmed joins flagged for re-review by a learning-queue
+    correction. Drives the setup wizard's 'Semantic Review' step and the
+    graph page badge."""
+    with get_db() as conn:
+        ents = conn.execute(
+            "SELECT COUNT(*) FROM entity_graph "
+            "WHERE account_id=? AND is_active=1 AND status='suggested'",
+            (account_id,),
+        ).fetchone()[0]
+        rels = conn.execute(
+            "SELECT COUNT(*) FROM entity_relationships "
+            "WHERE account_id=? AND is_active=1 AND "
+            "(status='suggested' OR validation_status='needs_review')",
+            (account_id,),
+        ).fetchone()[0]
+        props = conn.execute(
+            "SELECT COUNT(*) FROM entity_properties "
+            "WHERE account_id=? AND status='suggested'",
+            (account_id,),
+        ).fetchone()[0]
+    return int(ents) + int(rels) + int(props)

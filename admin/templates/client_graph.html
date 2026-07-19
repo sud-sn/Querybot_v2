@@ -185,6 +185,12 @@ body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-seri
 
 /* ── Resolver test modal output ─────────────────────────────────────────────── */
 #rt-output{background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:.6rem .75rem;font-size:12px;white-space:pre-wrap;word-break:break-word;max-height:300px;overflow-y:auto;font-family:ui-monospace,monospace;display:none}
+
+/* ── Tools menu + version history ───────────────────────────────────────────── */
+.tools-item{display:block;width:100%;text-align:left;background:none;border:none;border-radius:6px;padding:7px 10px;font-size:12px;font-weight:600;color:var(--text);cursor:pointer}
+.tools-item:hover{background:var(--surface-2)}
+.gv-row{display:flex;align-items:center;gap:.6rem;padding:.5rem 0;border-bottom:1px solid var(--border);font-size:12px}
+.gv-row code{font-size:11px;color:var(--text-muted)}
 .rt-scope-pill{display:inline-block;font-size:10px;font-weight:800;padding:1px 8px;border-radius:9px;margin-left:.4rem}
 .rt-scope-pill.confirmed{background:#ECFDF5;color:#059669}
 .rt-scope-pill.suggested_fallback{background:#FFFBEB;color:#D97706}
@@ -443,6 +449,16 @@ body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-seri
     <div style="flex:1;min-width:0"></div>
     <button class="tb-btn" onclick="autoLayout()" title="Re-arrange the canvas (fact-centric left-to-right) and save positions">▦ Layout</button>
     <button class="tb-btn" onclick="fitView()">⤢ Fit</button>
+    <div style="position:relative">
+      <button class="tb-btn" id="tools-btn" onclick="toggleToolsMenu()" title="Versions, export, import">⋯ Tools</button>
+      <div id="tools-menu" style="display:none;position:absolute;right:0;top:calc(100% + 4px);background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:var(--shadow);min-width:190px;z-index:60;padding:.3rem">
+        <button class="tools-item" onclick="openVersionsModal()">🕘 Version history…</button>
+        <button class="tools-item" onclick="saveVersionPrompt()">📌 Save version…</button>
+        <button class="tools-item" onclick="exportGraph()">⬇ Export JSON</button>
+        <button class="tools-item" onclick="document.getElementById('graph-import-file').click()">⬆ Import JSON…</button>
+      </div>
+      <input type="file" id="graph-import-file" accept="application/json,.json" style="display:none" onchange="importGraphFile(this)">
+    </div>
   </div>
 
   <!-- Cytoscape canvas -->
@@ -508,6 +524,23 @@ body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-seri
 
 </div><!-- /eg-main -->
 </div><!-- /eg-page -->
+
+<!-- ══ VERSION HISTORY MODAL ═════════════════════════════════════════════════ -->
+<div class="eg-modal-overlay" id="versions-modal" style="display:none" onclick="if(event.target===this)closeVersionsModal()">
+  <div class="eg-modal" style="max-width:560px">
+    <div class="eg-modal-head">
+      <span>Graph version history</span>
+      <button onclick="closeVersionsModal()" class="eg-modal-close">✕</button>
+    </div>
+    <div class="eg-modal-body">
+      <p style="margin:0 0 .6rem;font-size:12px;color:var(--text-muted)">
+        Snapshots of the whole graph. Restoring replaces the current graph —
+        the current state is auto-snapshotted first, so any restore can itself be undone.
+      </p>
+      <div id="gv-list" style="max-height:340px;overflow-y:auto">Loading…</div>
+    </div>
+  </div>
+</div>
 
 <!-- ══ RESOLVER TEST MODAL ═══════════════════════════════════════════════════ -->
 <div class="eg-modal-overlay" id="resolver-modal" style="display:none" onclick="if(event.target===this)closeResolverModal()">
@@ -1583,8 +1616,13 @@ async function loadProperties() {
 
 function _pendingItems() {
   const rels = (graphData.relationships || [])
-    .filter(r => r.status === 'suggested')
-    .map(r => ({kind: 'rel', conf: r.confidence_score ?? 0, raw: r}));
+    .filter(r => r.status === 'suggested' || r.validation_status === 'needs_review')
+    .map(r => ({
+      kind: 'rel', conf: r.confidence_score ?? 0, raw: r,
+      // Confirmed join implicated by a learning-queue SQL correction — it
+      // stays live in SQL generation, but the admin should re-examine it.
+      flagged: r.status !== 'suggested' && r.validation_status === 'needs_review',
+    }));
   const ents = (graphData.entities || [])
     .filter(e => e.status === 'suggested')
     .map(e => ({kind: 'entity', conf: e.confidence_score ?? 0, raw: e}));
@@ -1641,13 +1679,19 @@ function _rvItemHtml(item, idx) {
   }
   const reason = r.reason
     ? `<div class="rv-reason" title="${_esc(r.reason)}">${_esc(r.reason)}</div>` : '';
+  // Correction-flagged joins: still confirmed and live in SQL — the queue
+  // asks the admin to re-examine, not to re-approve from scratch.
+  const flagChip = item.flagged
+    ? '<span class="rv-chip conf-low" title="A learning-queue SQL correction changed the tables around this join — re-check it">⚑ correction flagged</span>'
+    : '';
+  const acceptLabel = item.flagged ? '✓ Keep join' : '✓ Accept';
   return `
     <div class="rv-item" data-idx="${idx}" onclick="focusReviewItem(${idx})">
       <div class="rv-item-title"><span class="rv-chip" style="margin-right:.3rem">${kindLabel}</span>${title}</div>
-      <div class="rv-chips">${_srcChip(r.generated_by)}${_confChip(item.conf)}</div>
+      <div class="rv-chips">${_srcChip(r.generated_by)}${_confChip(item.conf)}${flagChip}</div>
       ${reason}
       <div class="rv-actions" onclick="event.stopPropagation()">
-        <button class="tb-btn sm rv-accept" onclick="reviewDecide(${idx}, 'accept')">✓ Accept</button>
+        <button class="tb-btn sm rv-accept" onclick="reviewDecide(${idx}, 'accept')">${acceptLabel}</button>
         ${item.kind !== 'prop'
           ? `<button class="tb-btn sm" onclick="reviewEdit(${idx})">✎ Edit</button>` : ''}
         <button class="tb-btn sm rv-reject" onclick="reviewDecide(${idx}, 'reject')">✕ Reject</button>
@@ -1703,7 +1747,11 @@ async function reviewDecide(idx, decision) {
   if (!item) return;
   const r = item.raw;
   let url, opts = {method: 'POST'};
-  if (item.kind === 'rel') {
+  if (item.kind === 'rel' && item.flagged && decision === 'accept') {
+    // "Keep join" on a correction-flagged (already-confirmed) join just
+    // clears the re-review flag — nothing else about the join changes.
+    url = `${API_BASE}/relationships/${r.id}/clear-review-flag`;
+  } else if (item.kind === 'rel') {
     url = `${API_BASE}/${decision === 'accept' ? 'confirm' : 'reject'}/relationship/${r.id}`;
   } else if (item.kind === 'entity') {
     url = `${API_BASE}/${decision === 'accept' ? 'confirm' : 'reject'}/entity/${encodeURIComponent(r.entity_name)}`;
@@ -1808,6 +1856,110 @@ function autoLayout() {
     fitView();
   });
   layout.run();
+}
+
+// ── Tools menu: versions / export / import (Phase 4) ───────────────────────────
+function toggleToolsMenu() {
+  const m = document.getElementById('tools-menu');
+  m.style.display = m.style.display === 'none' ? 'block' : 'none';
+}
+document.addEventListener('click', ev => {
+  if (!ev.target.closest('#tools-btn') && !ev.target.closest('#tools-menu')) {
+    document.getElementById('tools-menu').style.display = 'none';
+  }
+});
+
+function openVersionsModal() {
+  toggleToolsMenu();
+  document.getElementById('versions-modal').style.display = 'flex';
+  loadVersions();
+}
+function closeVersionsModal() { document.getElementById('versions-modal').style.display = 'none'; }
+
+async function loadVersions() {
+  const list = document.getElementById('gv-list');
+  list.textContent = 'Loading…';
+  try {
+    const r = await fetch(`${API_BASE}/versions`);
+    const d = await r.json();
+    const versions = d.versions || [];
+    if (!versions.length) {
+      list.innerHTML = '<p style="font-size:12px;color:var(--text-muted)">No snapshots yet — use “Save version…” in the Tools menu, or they are created automatically before imports and restores.</p>';
+      return;
+    }
+    list.innerHTML = versions.map(v => `
+      <div class="gv-row">
+        <div style="flex:1">
+          <strong>${_esc(v.label)}</strong><br>
+          <code>v${v.id} · ${_esc(v.created_at)} · ${v.entity_count} entities · ${v.relationship_count} joins</code>
+        </div>
+        <button class="tb-btn sm" onclick="restoreVersion(${v.id})">↩ Restore</button>
+      </div>`).join('');
+  } catch (e) {
+    list.textContent = 'Failed to load versions: ' + e.message;
+  }
+}
+
+async function restoreVersion(vid) {
+  if (!confirm(`Restore version v${vid}?\nThe current graph will be replaced (a backup snapshot is taken automatically first).`)) return;
+  try {
+    const r = await fetch(`${API_BASE}/versions/${vid}/restore`, {method: 'POST'});
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    closeVersionsModal();
+    await _reloadGraphData();
+    fitView();
+  } catch (e) {
+    alert('Restore failed: ' + e.message);
+  }
+}
+
+async function saveVersionPrompt() {
+  toggleToolsMenu();
+  const label = prompt('Label for this snapshot:', 'before cleanup');
+  if (label === null) return;
+  try {
+    const r = await fetch(`${API_BASE}/versions`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({label}),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  } catch (e) {
+    alert('Snapshot failed: ' + e.message);
+  }
+}
+
+function exportGraph() {
+  toggleToolsMenu();
+  window.location.href = `${API_BASE}/export`;
+}
+
+function importGraphFile(input) {
+  const file = input.files && input.files[0];
+  input.value = '';
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = async () => {
+    let data;
+    try { data = JSON.parse(reader.result); }
+    catch { alert('Not valid JSON.'); return; }
+    const ents = (data.entities || []).length, rels = (data.relationships || []).length;
+    if (!confirm(`Import "${file.name}"?\n${ents} entities and ${rels} joins will REPLACE the current graph.\nA backup snapshot of the current graph is taken automatically first.`)) return;
+    try {
+      const r = await fetch(`${API_BASE}/import`, {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(data),
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        throw new Error(err.detail || `HTTP ${r.status}`);
+      }
+      await _reloadGraphData();
+      fitView();
+    } catch (e) {
+      alert('Import failed: ' + e.message);
+    }
+  };
+  reader.readAsText(file);
 }
 
 // ── Keyboard shortcuts ─────────────────────────────────────────────────────────

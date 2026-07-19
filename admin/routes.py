@@ -4469,6 +4469,98 @@ async def graph_reject_rel(request: Request, account_id: str, rel_id: int):
     return JSONResponse({"status": "ok"})
 
 
+@router.get("/clients/{account_id}/graph/api/versions")
+async def graph_versions_list(request: Request, account_id: str):
+    if not _is_auth(request):
+        raise HTTPException(status_code=401)
+    return JSONResponse({"versions": store.list_graph_versions(account_id)})
+
+
+@router.post("/clients/{account_id}/graph/api/versions")
+async def graph_versions_save(request: Request, account_id: str):
+    """Manual point-in-time snapshot of the whole graph."""
+    if not _is_auth(request):
+        raise HTTPException(status_code=401)
+    data = await request.json()
+    vid = store.save_graph_version(
+        account_id, label=str(data.get("label") or "").strip()[:80] or "manual snapshot",
+    )
+    return JSONResponse({"status": "ok", "version_id": vid})
+
+
+@router.post("/clients/{account_id}/graph/api/versions/{version_id}/restore")
+async def graph_versions_restore(request: Request, account_id: str, version_id: int):
+    """Replace the current graph with a snapshot. The current state is
+    auto-snapshotted first, so a restore is itself always restorable."""
+    if not _is_auth(request):
+        raise HTTPException(status_code=401)
+    version = store.get_graph_version(account_id, version_id)
+    if not version:
+        raise HTTPException(status_code=404, detail="Version not found")
+    store.save_graph_version(account_id, label=f"pre-restore of v{version_id} (auto)")
+    counts = store.replace_graph_from_snapshot(account_id, version.get("snapshot") or {})
+    _after_semantic_approval(account_id, f"graph restored from version {version_id}")
+    return JSONResponse({"status": "ok", "restored": counts})
+
+
+@router.get("/clients/{account_id}/graph/api/export")
+async def graph_export(request: Request, account_id: str):
+    """Download the full graph (incl. suggested/rejected rows) as JSON —
+    for backup or copying a curated graph to another environment."""
+    if not _is_auth(request):
+        raise HTTPException(status_code=401)
+    with __import__("store.db", fromlist=["get_db"]).get_db() as conn:
+        snapshot = {
+            "querybot_graph_export": 1,
+            "account_id": account_id,
+            "entities": [dict(r) for r in conn.execute(
+                "SELECT * FROM entity_graph WHERE account_id=?", (account_id,)
+            ).fetchall()],
+            "relationships": [dict(r) for r in conn.execute(
+                "SELECT * FROM entity_relationships WHERE account_id=?", (account_id,)
+            ).fetchall()],
+            "properties": [dict(r) for r in conn.execute(
+                "SELECT * FROM entity_properties WHERE account_id=?", (account_id,)
+            ).fetchall()],
+        }
+    return JSONResponse(
+        snapshot,
+        headers={
+            "Content-Disposition":
+                f'attachment; filename="entity_graph_{account_id}.json"'
+        },
+    )
+
+
+@router.post("/clients/{account_id}/graph/api/import")
+async def graph_import(request: Request, account_id: str):
+    """Replace the graph with an uploaded export. Auto-snapshots the current
+    graph first so a bad import is one restore away from undone."""
+    if not _is_auth(request):
+        raise HTTPException(status_code=401)
+    data = await request.json()
+    if not isinstance(data, dict) or not (
+        data.get("entities") or data.get("relationships")
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Not a graph export — expected JSON with entities/relationships.",
+        )
+    store.save_graph_version(account_id, label="pre-import backup (auto)")
+    counts = store.replace_graph_from_snapshot(account_id, data)
+    _after_semantic_approval(account_id, "graph replaced by import")
+    return JSONResponse({"status": "ok", "imported": counts})
+
+
+@router.post("/clients/{account_id}/graph/api/relationships/{rel_id}/clear-review-flag")
+async def graph_clear_review_flag(request: Request, account_id: str, rel_id: int):
+    """Admin re-examined a correction-flagged join and decided to keep it."""
+    if not _is_auth(request):
+        raise HTTPException(status_code=401)
+    store.clear_relationship_review_flag(account_id, rel_id)
+    return JSONResponse({"status": "ok"})
+
+
 @router.post("/clients/{account_id}/graph/api/reject/property")
 async def graph_reject_property(request: Request, account_id: str):
     """Reject a suggested entity property (no is_active column on this table —
@@ -6209,9 +6301,19 @@ async def client_setup_page(request: Request, account_id: str):
     # admin_confirm_masking_review) — cleared if tables/industry change.
     masking_reviewed_at = state_data.get("masking_reviewed_at")
 
+    # Semantic-review wizard step: pending graph suggestions (entities/joins/
+    # fields awaiting review, incl. correction-flagged joins). The graph
+    # steers SQL JOINs, so onboarding isn't done until the count is zero.
+    try:
+        graph_pending_reviews = store.count_pending_graph_reviews(account_id)
+    except Exception as exc:
+        log.debug("graph pending count skipped for %s: %s", account_id, exc)
+        graph_pending_reviews = 0
+
     return _resp(request, "client_setup.html", {
         "client":               client,
         "state":                state,
+        "graph_pending_reviews": graph_pending_reviews,
         "db_cfg":               db_cfg,
         "compliance_profile":   compliance_profile,
         "masking_reviewed_at":  masking_reviewed_at,
@@ -8032,6 +8134,42 @@ async def admin_learning_queue_correct_sql(
                 log.warning("correct-sql: governed upsert failed (non-fatal): %s", ge)
 
         msg = f"Corrected SQL saved for {candidate_id[:8]}... (score set to 85, source=admin_correction)."
+
+        # ── Phase 4b: flag joins the correction implicates ────────────────
+        # When the corrected SQL uses a DIFFERENT table set than the original,
+        # the graph most likely steered the original to the wrong tables.
+        # Flag confirmed joins touching the changed tables for re-review
+        # (they stay live in SQL generation; they just re-enter the graph
+        # review queue with a "correction flagged" marker). Best-effort:
+        # a parse failure must never break saving the correction itself.
+        try:
+            original_sql = str(pre.get("sql_text") or "")
+            if original_sql:
+                from core.compliance.sql_guard import analyze_sql
+                from core.pipeline_context import get_client_db
+                _db_cfg = get_client_db(account_id) or {}
+                _db_type = _db_cfg.get("db_type", "azure_sql")
+                _orig_tables = {
+                    str(t).upper().split(".")[-1]
+                    for t in analyze_sql(original_sql, _db_type).tables
+                }
+                _corr_tables = {
+                    str(t).upper().split(".")[-1]
+                    for t in analyze_sql(corrected_sql, _db_type).tables
+                }
+                changed = _orig_tables ^ _corr_tables
+                if changed:
+                    n_flagged = store.flag_relationships_needing_review(
+                        account_id, changed
+                    )
+                    if n_flagged:
+                        msg += (
+                            f" {n_flagged} graph join(s) touching "
+                            f"{', '.join(sorted(changed))} flagged for re-review "
+                            "on the Entity Graph page."
+                        )
+        except Exception as fe:
+            log.warning("correct-sql: join flagging skipped (non-fatal): %s", fe)
     except Exception as exc:
         log.error("admin_learning_queue_correct_sql error: %s", exc)
         msg = f"Error saving corrected SQL: {exc}"
