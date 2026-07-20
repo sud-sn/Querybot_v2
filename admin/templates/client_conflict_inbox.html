@@ -1,0 +1,218 @@
+{% extends "client_base.html" %}
+{% from "macros.html" import breadcrumb, empty_state %}
+{% block title %}Conflict Inbox — {{ client.client_name }}{% endblock %}
+{% block breadcrumb %}
+{{ breadcrumb([
+    {"label": "Dashboard",     "href": "/admin"},
+    {"label": "Clients",       "href": "/admin/clients"},
+    {"label": client.client_name or client.account_id[:16], "href": "/admin/clients/" ~ client.account_id},
+    {"label": "Model Health",  "href": "/admin/clients/" ~ client.account_id ~ "/model-health"},
+    {"label": "Conflict Inbox", "href": ""},
+]) }}
+{% endblock %}
+{% block head %}
+<style>
+.ci-shell{display:flex;flex-direction:column;gap:1rem}
+.ci-toolbar{display:flex;align-items:center;gap:.6rem;flex-wrap:wrap}
+.ci-toolbar a{padding:5px 11px;border:1px solid var(--border);border-radius:6px;font-size:12px;
+  font-weight:700;color:var(--text-soft);text-decoration:none}
+.ci-toolbar a.active{background:var(--primary);border-color:var(--primary);color:#fff}
+.ci-card{border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);
+  box-shadow:var(--shadow);overflow:hidden}
+.ci-card-head{padding:.85rem 1rem;display:flex;align-items:flex-start;justify-content:space-between;
+  gap:1rem;border-bottom:1px solid var(--border)}
+.ci-msg{font-size:13px;font-weight:600;color:var(--text)}
+.ci-meta{font-size:11px;color:var(--text-muted);margin-top:3px}
+.ci-body{padding:.85rem 1rem;display:flex;flex-direction:column;gap:.6rem}
+.ci-row{display:flex;gap:1.4rem;flex-wrap:wrap}
+.ci-col{flex:1;min-width:220px}
+.ci-col h4{margin:0 0 4px;font-size:11px;text-transform:uppercase;letter-spacing:.03em;
+  color:var(--text-muted);font-weight:800}
+.ci-evidence{font-family:Consolas,monospace;font-size:11.5px;background:var(--surface-2);
+  border:1px solid var(--border);border-radius:6px;padding:.5rem .6rem;white-space:pre-wrap;word-break:break-word}
+.ci-suggestions{margin:0;padding-left:1.1rem;font-size:12.5px;color:var(--text-soft)}
+.ci-questions{margin:0;padding-left:1.1rem;font-size:12px;color:var(--text-soft)}
+.ci-actions{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;padding:.7rem 1rem;
+  border-top:1px solid var(--border);background:var(--surface-2)}
+.ci-actions input[type=text]{flex:1;min-width:180px;padding:5px 9px;border:1px solid var(--border);
+  border-radius:6px;background:var(--surface);color:var(--text);font-size:12px}
+</style>
+{% endblock %}
+{% block content %}
+<div class="ci-shell">
+  <div class="ci-card">
+    <div class="ci-card-head" style="border-bottom:1px solid var(--border)">
+      <div>
+        <div class="ci-msg">Test a question before publishing</div>
+        <div class="ci-meta">
+          Resolves the question with the same deterministic metric/term matchers the live pipeline uses,
+          then checks whether it touches any currently open conflict. Does not generate or run SQL.
+        </div>
+      </div>
+    </div>
+    <div class="ci-body">
+      <div style="display:flex;gap:.5rem">
+        <input type="text" id="tq-question" placeholder="e.g. what is total revenue by region?"
+               style="flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:13px">
+        <button type="button" id="tq-run" class="btn btn-primary btn-sm">Test</button>
+      </div>
+      <div id="tq-result" style="display:none"></div>
+    </div>
+  </div>
+
+  <div class="ci-toolbar">
+    {% for opt, label in [('open','Open'), ('acknowledged','Acknowledged'), ('resolved','Resolved'), ('dismissed','Dismissed')] %}
+    <a href="?status={{ opt }}{% if severity %}&severity={{ severity }}{% endif %}" class="{{ 'active' if status == opt else '' }}">{{ label }}</a>
+    {% endfor %}
+    <span style="width:1px;height:20px;background:var(--border);margin:0 .3rem"></span>
+    {% for opt, label in [('', 'All severities'), ('ERROR','Error'), ('WARNING','Warning'), ('INFO','Info'), ('STALE','Stale')] %}
+    <a href="?status={{ status }}{% if opt %}&severity={{ opt }}{% endif %}" class="{{ 'active' if severity == opt else '' }}">{{ label }}</a>
+    {% endfor %}
+  </div>
+
+  {% if request.query_params.get('saved') %}
+  <div class="badge badge-green" style="padding:6px 10px">Saved.</div>
+  {% endif %}
+  {% if request.query_params.get('error') %}
+  <div class="badge badge-red" style="padding:6px 10px">{{ request.query_params.get('error') }}</div>
+  {% endif %}
+
+  {% if not conflicts %}
+    {{ empty_state(
+        icon_name="check-circle",
+        title="Nothing here",
+        body="No " ~ status ~ (" " ~ severity if severity else "") ~ " conflicts for this tenant."
+    ) }}
+  {% else %}
+  {% for c in conflicts %}
+  <div class="ci-card">
+    <div class="ci-card-head">
+      <div>
+        <div class="ci-msg">{{ c.message }}</div>
+        <div class="ci-meta">
+          <span class="badge badge-{{ 'red' if c.severity == 'ERROR' else ('amber' if c.severity == 'WARNING' else 'gray') }}">{{ c.severity }}</span>
+          &nbsp;<span class="mono" style="font-family:Consolas,monospace">{{ c.code }}</span>
+          &nbsp;·&nbsp;{{ c.origin }}
+          &nbsp;·&nbsp;opened {{ c.created_at }}
+          {% if c.status != 'open' %}
+          &nbsp;·&nbsp;{{ c.status }} by {{ c.resolved_by or 'unknown' }} at {{ c.resolved_at }}
+          {% if c.resolution_note %}&nbsp;— "{{ c.resolution_note }}"{% endif %}
+          {% endif %}
+        </div>
+      </div>
+      {% if c.object_info.edit_href %}
+      <a href="{{ c.object_info.edit_href }}" class="btn btn-secondary btn-xs" target="_blank" rel="noopener">
+        Fix in {{ c.object_info.object_type | replace('_', ' ') | title }} editor
+      </a>
+      {% endif %}
+    </div>
+    <div class="ci-body">
+      <div class="ci-row">
+        <div class="ci-col">
+          <h4>Object</h4>
+          <div class="ci-evidence">{{ c.object_info.label }}</div>
+        </div>
+        <div class="ci-col">
+          <h4>Evidence</h4>
+          <div class="ci-evidence">{% for k, v in c.evidence.items() %}{{ k }}: {{ v }}
+{% endfor %}</div>
+        </div>
+      </div>
+      {% if c.suggestions %}
+      <div>
+        <h4 style="margin:0 0 4px;font-size:11px;text-transform:uppercase;letter-spacing:.03em;color:var(--text-muted);font-weight:800">Suggested action</h4>
+        <ul class="ci-suggestions">
+          {% for s in c.suggestions %}<li>{{ s }}</li>{% endfor %}
+        </ul>
+      </div>
+      {% endif %}
+      {% if c.impacted_questions %}
+      <div>
+        <h4 style="margin:0 0 4px;font-size:11px;text-transform:uppercase;letter-spacing:.03em;color:var(--text-muted);font-weight:800">
+          Recently asked ({{ c.impacted_questions | length }})
+        </h4>
+        <ul class="ci-questions">
+          {% for q in c.impacted_questions %}<li>"{{ q.question }}" — {{ q.created_at }}</li>{% endfor %}
+        </ul>
+      </div>
+      {% endif %}
+    </div>
+    {% if status == 'open' %}
+    <form method="post" action="/admin/clients/{{ client.account_id }}/model-health/conflicts/{{ c.conflict_id }}/resolve" class="ci-actions">
+      <input type="text" name="note" placeholder="Optional note (why you're resolving this)">
+      <button type="submit" name="action" value="acknowledge" class="btn btn-secondary btn-xs">Acknowledge</button>
+      <button type="submit" name="action" value="resolve" class="btn btn-primary btn-xs">Mark resolved</button>
+      <button type="submit" name="action" value="dismiss" class="btn btn-ghost btn-xs">Dismiss</button>
+    </form>
+    {% endif %}
+  </div>
+  {% endfor %}
+  {% endif %}
+</div>
+<script>
+(function () {
+  var btn = document.getElementById('tq-run');
+  var input = document.getElementById('tq-question');
+  var out = document.getElementById('tq-result');
+  if (!btn || !input || !out) return;
+
+  function escapeHtml(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+    });
+  }
+
+  async function run() {
+    var q = input.value.trim();
+    if (!q) return;
+    btn.disabled = true;
+    btn.textContent = 'Testing…';
+    out.style.display = 'block';
+    out.innerHTML = '<div class="ci-meta">Resolving…</div>';
+    try {
+      var resp = await fetch(window.location.pathname.replace('/conflicts', '/test-question'), {
+        method: 'POST',
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        body: 'question=' + encodeURIComponent(q),
+      });
+      var data = await resp.json();
+      if (!resp.ok) {
+        out.innerHTML = '<div class="badge badge-red" style="padding:6px 10px">' + escapeHtml(data.error || 'Failed') + '</div>';
+        return;
+      }
+      var html = '';
+      html += '<div class="ci-row" style="margin-top:.6rem">';
+      html += '<div class="ci-col"><h4>Matched metric</h4><div class="ci-evidence">' +
+        (data.matched_metric ? escapeHtml(data.matched_metric.name) : '(none — would route through the LLM instead)') + '</div></div>';
+      html += '<div class="ci-col"><h4>Matched business terms</h4><div class="ci-evidence">' +
+        (data.matched_terms.length ? data.matched_terms.map(function (t) { return escapeHtml(t.term); }).join(', ') : '(none)') + '</div></div>';
+      html += '<div class="ci-col"><h4>Confidence</h4><div class="ci-evidence">' + data.confidence + '%' +
+        (data.resolved_deterministically ? '' : ' — has clarifications') + '</div></div>';
+      html += '</div>';
+      if (data.clarifications && data.clarifications.length) {
+        html += '<div style="margin-top:.5rem"><span class="badge badge-red">Blocking</span><ul class="ci-suggestions">';
+        data.clarifications.forEach(function (c) { html += '<li>' + escapeHtml(c.message || c.type) + '</li>'; });
+        html += '</ul></div>';
+      }
+      if (data.advisories && data.advisories.length) {
+        html += '<div style="margin-top:.5rem"><span class="badge badge-amber">Advisory</span><ul class="ci-suggestions">';
+        data.advisories.forEach(function (a) { html += '<li>' + escapeHtml(a.message) + '</li>'; });
+        html += '</ul></div>';
+      }
+      if (!data.clarifications.length && !data.advisories.length) {
+        html += '<div class="badge badge-green" style="margin-top:.5rem">No open conflicts touched.</div>';
+      }
+      out.innerHTML = html;
+    } catch (err) {
+      out.innerHTML = '<div class="badge badge-red" style="padding:6px 10px">Request failed.</div>';
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Test';
+    }
+  }
+
+  btn.addEventListener('click', run);
+  input.addEventListener('keydown', function (ev) { if (ev.key === 'Enter') run(); });
+})();
+</script>
+{% endblock %}

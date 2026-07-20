@@ -657,6 +657,31 @@ def get_suggestions(account_id: str, q: str, limit: int = 8) -> list[dict]:
     return result
 
 
+def search_recent_queries_referencing(
+    account_id: str, keyword: str, *, limit: int = 5,
+) -> list[dict]:
+    """Recent successful questions whose text or generated SQL mentions
+    `keyword` (a table or metric name) - Sprint 5's conflict-inbox "impacted
+    questions" preview. A simple LIKE scan, not full SQL parsing: good
+    enough to show an admin "yes, this is actually being asked" before they
+    spend time resolving a conflict, not a precise blast-radius report."""
+    keyword = (keyword or "").strip()
+    if not keyword:
+        return []
+    pattern = f"%{keyword}%"
+    with get_db() as conn:
+        rows = conn.execute(
+            """SELECT question, sql_generated, created_at, row_count
+                 FROM query_log
+                WHERE account_id = ? AND success = 1
+                  AND (question LIKE ? OR sql_generated LIKE ?)
+                ORDER BY created_at DESC
+                LIMIT ?""",
+            (account_id, pattern, pattern, max(1, min(int(limit), 50))),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def get_recent_queries(account_id: str, limit: int = 50) -> list[dict]:
     with get_db() as conn:
         rows = conn.execute("""

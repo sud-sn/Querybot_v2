@@ -104,9 +104,13 @@ table.mh-tbl tr:hover td{background:color-mix(in srgb,var(--primary) 4%,var(--su
   <div class="mh-card">
     <div class="mh-card-header">
       <h2>Semantic Compiler</h2>
-      <span class="badge" style="background:var(--primary-soft);color:var(--primary)">
-        {{ (compiler_state.mode or 'shadow') | upper }}
-      </span>
+      <div style="display:flex;align-items:center;gap:.5rem">
+        <a href="/admin/clients/{{ client.account_id }}/model-health/conflicts" class="btn btn-secondary btn-xs">Conflict Inbox</a>
+        <a href="/admin/clients/{{ client.account_id }}/model-health/versions" class="btn btn-secondary btn-xs">Version History</a>
+        <span class="badge" style="background:var(--primary-soft);color:var(--primary)">
+          {{ (compiler_state.mode or 'shadow') | upper }}
+        </span>
+      </div>
     </div>
     <div class="mh-card-body">
       <div class="mh-stat-grid">

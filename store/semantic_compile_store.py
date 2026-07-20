@@ -216,18 +216,25 @@ def reconcile_semantic_conflicts(
 
 
 def list_semantic_conflicts(
-    account_id: str, *, status: str = "open", limit: int = 50,
+    account_id: str, *, status: str = "open", severity: str = "", limit: int = 50,
 ) -> list[dict[str, Any]]:
     where = "account_id = ?"
     params: list[Any] = [account_id]
     if status:
         where += " AND status = ?"
         params.append(status)
+    if severity:
+        where += " AND severity = ?"
+        params.append(severity)
     params.append(max(1, min(int(limit), 500)))
     with get_db() as conn:
         rows = conn.execute(
             f"""SELECT * FROM semantic_conflict WHERE {where}
-                ORDER BY created_at DESC LIMIT ?""",
+                ORDER BY
+                    CASE severity WHEN 'ERROR' THEN 0 WHEN 'WARNING' THEN 1
+                                  WHEN 'INFO' THEN 2 ELSE 3 END,
+                    created_at DESC
+                LIMIT ?""",
             tuple(params),
         ).fetchall()
     result = []
@@ -243,6 +250,98 @@ def list_semantic_conflicts(
                 item[target] = default
         result.append(item)
     return result
+
+
+def get_semantic_conflict(account_id: str, conflict_id: str) -> dict[str, Any]:
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM semantic_conflict WHERE account_id = ? AND conflict_id = ?",
+            (account_id, conflict_id),
+        ).fetchone()
+    item = _row(row)
+    if not item:
+        return {}
+    for source, target, default in (
+        ("evidence_json", "evidence", {}),
+        ("suggestions_json", "suggestions", []),
+    ):
+        try:
+            item[target] = json.loads(item.get(source) or "")
+        except Exception:
+            item[target] = default
+    return item
+
+
+_CONFLICT_ACTIONS = {
+    "resolve": "resolved",
+    "acknowledge": "acknowledged",
+    "dismiss": "dismissed",
+}
+
+
+def resolve_semantic_conflict(
+    account_id: str, conflict_id: str, *, action: str, note: str = "", resolved_by: str = "",
+) -> dict[str, Any]:
+    """Manually transition one conflict's review status (Sprint 5's conflict
+    inbox). Distinct from reconcile_semantic_conflicts(), which the compiler
+    itself calls when a conflict's underlying cause disappears on its own —
+    this is the admin saying "I looked at this," not the compiler detecting
+    it's moot. Scoped to account_id so one tenant can never touch another's
+    conflict by guessing an id."""
+    status = _CONFLICT_ACTIONS.get(action)
+    if not status:
+        raise ValueError(f"action must be one of {sorted(_CONFLICT_ACTIONS)}")
+    with get_db() as conn:
+        cur = conn.execute(
+            """UPDATE semantic_conflict
+               SET status = ?, resolution_note = ?, resolved_by = ?,
+                   resolved_at = datetime('now')
+               WHERE account_id = ? AND conflict_id = ? AND status = 'open'""",
+            (status, note, resolved_by, account_id, conflict_id),
+        )
+        if cur.rowcount == 0:
+            existing = conn.execute(
+                "SELECT 1 FROM semantic_conflict WHERE account_id = ? AND conflict_id = ?",
+                (account_id, conflict_id),
+            ).fetchone()
+            if not existing:
+                raise LookupError("Conflict not found for this account.")
+            raise ValueError("This conflict is no longer open — it may already have been resolved.")
+    return get_semantic_conflict(account_id, conflict_id)
+
+
+def list_semantic_contract_versions(account_id: str, *, limit: int = 20) -> list[dict[str, Any]]:
+    """Version history for Sprint 5's diff/rollback UI. Excludes contract_json
+    (large) - callers needing the full body call get_semantic_contract_version."""
+    with get_db() as conn:
+        rows = conn.execute(
+            """SELECT account_id, version, status, compile_run_id, created_by,
+                      created_at, published_at
+               FROM semantic_contract_version
+               WHERE account_id = ?
+               ORDER BY created_at DESC LIMIT ?""",
+            (account_id, max(1, min(int(limit), 200))),
+        ).fetchall()
+    return [_row(row) for row in rows]
+
+
+def get_semantic_contract_version(account_id: str, version: str) -> dict[str, Any]:
+    """Full stored contract body for one version, for Sprint 5's diff view
+    and for publish_semantic_contract_version-based rollback."""
+    with get_db() as conn:
+        row = conn.execute(
+            """SELECT * FROM semantic_contract_version
+               WHERE account_id = ? AND version = ?""",
+            (account_id, version),
+        ).fetchone()
+    item = _row(row)
+    if not item:
+        return {}
+    try:
+        item["contract"] = json.loads(item.get("contract_json") or "{}")
+    except Exception:
+        item["contract"] = {}
+    return item
 
 
 def get_semantic_compiler_summary(account_id: str) -> dict[str, Any]:

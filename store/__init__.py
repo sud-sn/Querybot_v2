@@ -29,6 +29,7 @@ from store.config_store import (
     update_client_state, update_client_meta, get_monthly_query_count,
     get_monthly_token_usage, get_monthly_token_status,
     log_query, get_query_stats, get_recent_queries, get_monthly_breakdown,
+    search_recent_queries_referencing,
     get_suggestions,
     log_llm_call, get_recent_llm_calls, purge_old_llm_calls,
     get_llm_trust_summary, RESULT_LLM_COMPONENTS,
@@ -97,7 +98,9 @@ from store.semantic_compile_store import (
     save_semantic_contract_version, publish_semantic_contract_version,
     set_semantic_draft_version, save_semantic_conflicts,
     reconcile_semantic_conflicts, list_semantic_conflicts,
-    get_semantic_compiler_summary,
+    get_semantic_compiler_summary, get_semantic_conflict,
+    resolve_semantic_conflict, list_semantic_contract_versions,
+    get_semantic_contract_version,
 )
 
 __all__ = [
@@ -126,6 +129,7 @@ __all__ = [
     "update_client_state","update_client_meta","get_monthly_query_count",
     "get_monthly_token_usage","get_monthly_token_status",
     "log_query","get_query_stats","get_recent_queries","get_monthly_breakdown",
+    "search_recent_queries_referencing",
     "get_suggestions",
     "log_llm_call","get_recent_llm_calls","purge_old_llm_calls",
     "get_llm_trust_summary","RESULT_LLM_COMPONENTS",
@@ -179,5 +183,7 @@ __all__ = [
     "save_semantic_contract_version","publish_semantic_contract_version",
     "set_semantic_draft_version","save_semantic_conflicts",
     "reconcile_semantic_conflicts","list_semantic_conflicts",
-    "get_semantic_compiler_summary",
+    "get_semantic_compiler_summary","get_semantic_conflict",
+    "resolve_semantic_conflict","list_semantic_contract_versions",
+    "get_semantic_contract_version",
 ]

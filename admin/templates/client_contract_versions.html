@@ -1,0 +1,134 @@
+{% extends "client_base.html" %}
+{% from "macros.html" import breadcrumb, empty_state %}
+{% block title %}Contract Version History — {{ client.client_name }}{% endblock %}
+{% block breadcrumb %}
+{{ breadcrumb([
+    {"label": "Dashboard",     "href": "/admin"},
+    {"label": "Clients",       "href": "/admin/clients"},
+    {"label": client.client_name or client.account_id[:16], "href": "/admin/clients/" ~ client.account_id},
+    {"label": "Model Health",  "href": "/admin/clients/" ~ client.account_id ~ "/model-health"},
+    {"label": "Version History", "href": ""},
+]) }}
+{% endblock %}
+{% block head %}
+<style>
+.cv-shell{display:flex;flex-direction:column;gap:1rem}
+.cv-tbl{width:100%;border-collapse:collapse;font-size:12.5px}
+.cv-tbl th{text-align:left;padding:8px 10px;border-bottom:2px solid var(--border);
+  font-size:11px;text-transform:uppercase;letter-spacing:.03em;color:var(--text-muted)}
+.cv-tbl td{padding:8px 10px;border-bottom:1px solid var(--border);vertical-align:middle}
+.cv-tbl tr:last-child td{border-bottom:none}
+.cv-version{font-family:Consolas,monospace;font-size:12px}
+.cv-card{border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);box-shadow:var(--shadow)}
+.cv-diff-bar{display:flex;align-items:center;gap:.6rem;padding:.85rem 1rem;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.cv-diff-bar select{padding:5px 9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:12px}
+.cv-diff-body{padding:.85rem 1rem}
+.cv-diff-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:.6rem}
+.cv-diff-cell{border:1px solid var(--border);border-radius:8px;padding:.6rem .7rem}
+.cv-diff-cell h5{margin:0 0 6px;font-size:11px;text-transform:uppercase;color:var(--text-muted);font-weight:800}
+.cv-diff-num{font-size:11px}
+.cv-diff-num.added{color:var(--green)}
+.cv-diff-num.removed{color:var(--red)}
+</style>
+{% endblock %}
+{% block content %}
+<div class="cv-shell">
+
+  {% if request.query_params.get('saved') %}
+  <div class="badge badge-green" style="padding:6px 10px">Saved.</div>
+  {% endif %}
+  {% if request.query_params.get('error') %}
+  <div class="badge badge-red" style="padding:6px 10px">{{ request.query_params.get('error') }}</div>
+  {% endif %}
+
+  <div class="cv-card">
+    <div class="cv-diff-bar">
+      <strong style="font-size:13px">Diff two versions</strong>
+      <select id="cv-base">
+        {% for v in versions %}<option value="{{ v.version }}" {{ 'selected' if loop.index0 == 1 else '' }}>{{ v.version }} ({{ v.status }})</option>{% endfor %}
+      </select>
+      <span style="color:var(--text-muted);font-size:12px">vs</span>
+      <select id="cv-compare">
+        {% for v in versions %}<option value="{{ v.version }}" {{ 'selected' if loop.first else '' }}>{{ v.version }} ({{ v.status }})</option>{% endfor %}
+      </select>
+      <button type="button" id="cv-diff-run" class="btn btn-primary btn-xs">Compare</button>
+    </div>
+    <div class="cv-diff-body" id="cv-diff-out">
+      <span style="color:var(--text-muted);font-size:12px">Pick two versions above and compare.</span>
+    </div>
+  </div>
+
+  {% if not versions %}
+    {{ empty_state(icon_name="clock", title="No compiled contract versions yet", body="Versions appear here after the first governed compile.") }}
+  {% else %}
+  <div class="cv-card">
+    <table class="cv-tbl">
+      <thead><tr><th>Version</th><th>Status</th><th>Created by</th><th>Created</th><th>Published</th><th></th></tr></thead>
+      <tbody>
+        {% for v in versions %}
+        <tr>
+          <td class="cv-version">{{ v.version }}</td>
+          <td>
+            <span class="badge badge-{{ 'green' if v.status == 'active' else ('gray' if v.status == 'superseded' else ('red' if v.status == 'rejected' else 'blue')) }}">
+              {{ v.status }}
+            </span>
+          </td>
+          <td>{{ v.created_by or '—' }}</td>
+          <td>{{ v.created_at }}</td>
+          <td>{{ v.published_at or '—' }}</td>
+          <td style="text-align:right">
+            {% if v.status != 'active' %}
+            <form method="post" action="/admin/clients/{{ client.account_id }}/model-health/versions/{{ v.version }}/rollback"
+                  onsubmit="return confirm('Publish version {{ v.version }} as the active contract? This supersedes the current active version.');">
+              <button type="submit" class="btn btn-secondary btn-xs">Publish this version</button>
+            </form>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</div>
+<script>
+(function () {
+  var btn = document.getElementById('cv-diff-run');
+  var out = document.getElementById('cv-diff-out');
+  var baseSel = document.getElementById('cv-base');
+  var compareSel = document.getElementById('cv-compare');
+  if (!btn || !out || !baseSel || !compareSel) return;
+
+  var SECTION_LABELS = {metrics: 'Metrics', terms: 'Business terms', date_roles: 'Date roles', relationships: 'Relationships'};
+
+  async function run() {
+    var base = baseSel.value, compare = compareSel.value;
+    if (!base || !compare) return;
+    out.innerHTML = '<span style="color:var(--text-muted);font-size:12px">Comparing…</span>';
+    try {
+      var url = window.location.pathname + '/diff?base=' + encodeURIComponent(base) + '&compare=' + encodeURIComponent(compare);
+      var resp = await fetch(url);
+      var data = await resp.json();
+      if (!resp.ok) {
+        out.innerHTML = '<div class="badge badge-red" style="padding:6px 10px">' + (data.error || 'Failed') + '</div>';
+        return;
+      }
+      var html = '<div class="cv-diff-grid">';
+      Object.keys(SECTION_LABELS).forEach(function (key) {
+        var s = data.sections[key] || {added: 0, removed: 0, unchanged: 0};
+        html += '<div class="cv-diff-cell"><h5>' + SECTION_LABELS[key] + '</h5>' +
+          '<div class="cv-diff-num added">+' + s.added + ' added</div>' +
+          '<div class="cv-diff-num removed">-' + s.removed + ' removed</div>' +
+          '<div class="cv-diff-num">' + s.unchanged + ' unchanged</div></div>';
+      });
+      html += '</div>';
+      out.innerHTML = html;
+    } catch (err) {
+      out.innerHTML = '<div class="badge badge-red" style="padding:6px 10px">Request failed.</div>';
+    }
+  }
+
+  btn.addEventListener('click', run);
+})();
+</script>
+{% endblock %}

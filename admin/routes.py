@@ -5901,6 +5901,281 @@ async def model_health_set_compiler_mode(
     )
 
 
+_CONFLICT_OBJECT_LINKS = {
+    "metric": "/admin/clients/{account_id}/metrics",
+    "business_term": "/admin/clients/{account_id}/glossary",
+    "field": "/admin/clients/{account_id}/kb",
+    "relationship": "/admin/clients/{account_id}/graph",
+}
+
+
+def _describe_conflict_object(account_id: str, conflict: dict) -> dict:
+    """Resolve a conflict's object_id into a human-readable label + a link
+    to wherever an admin actually fixes it — the "side-by-side conflicting
+    definitions" and "merge/deprecate/reject" bullets don't need a bespoke
+    in-place editor per object type when Metric Registry, Glossary, the KB
+    editor, and the graph canvas already ARE that editor for each type."""
+    from core.semantic_ids import parse_semantic_id
+
+    object_id = conflict.get("object_id") or ""
+    label = object_id
+    edit_href = ""
+    try:
+        object_type, key = parse_semantic_id(object_id)
+    except ValueError:
+        object_type, key = conflict.get("object_type") or "", ""
+
+    if object_type == "metric":
+        try:
+            metric = store.get_metric(int(key))
+        except (TypeError, ValueError):
+            metric = None
+        if metric:
+            label = metric.get("name") or label
+    elif object_type == "term":
+        try:
+            term = store.get_term(int(key))
+        except (TypeError, ValueError):
+            term = None
+        if term:
+            label = term.get("term") or label
+        object_type = "business_term"
+    elif object_type == "join":
+        try:
+            rel = store.get_relationship(account_id, int(key))
+        except (TypeError, ValueError):
+            rel = None
+        if rel:
+            label = f"{rel.get('from_entity')} -> {rel.get('to_entity')}"
+        object_type = "relationship"
+    elif object_type == "field":
+        label = key
+
+    href_template = _CONFLICT_OBJECT_LINKS.get(object_type, "")
+    if href_template:
+        edit_href = href_template.format(account_id=account_id)
+
+    return {"object_type": object_type, "label": label, "edit_href": edit_href}
+
+
+def _impacted_questions(account_id: str, conflict: dict) -> list[dict]:
+    """Best-effort 'is this actually being asked' preview — a keyword scan
+    over recent successful questions, not a precise blast-radius report
+    (see store.search_recent_queries_referencing's own docstring)."""
+    keyword = (conflict.get("table_name") or "").split(",")[0].strip()
+    if not keyword:
+        evidence = conflict.get("evidence") or {}
+        keyword = str(evidence.get("phrase") or evidence.get("base_table") or "").strip()
+    if not keyword:
+        return []
+    return store.search_recent_queries_referencing(account_id, keyword, limit=5)
+
+
+@router.get("/clients/{account_id}/model-health/conflicts", response_class=HTMLResponse)
+async def model_health_conflict_inbox(request: Request, account_id: str, severity: str = "", status: str = "open"):
+    """Sprint 5's dedicated conflict inbox — Model Health's card only ever
+    shows the newest 8 conflicts with no way to act on one. This is every
+    conflict at the requested status, with the evidence each Sprint 2
+    detector already captured, an impacted-questions preview, and the
+    resolve/acknowledge/dismiss actions the schema has supported since
+    Sprint 2 but nothing ever called."""
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    client = store.get_client(account_id)
+    if not client:
+        raise HTTPException(status_code=404)
+
+    if severity not in {"", "ERROR", "WARNING", "INFO", "STALE"}:
+        severity = ""
+    if status not in {"open", "resolved", "acknowledged", "dismissed"}:
+        status = "open"
+
+    conflicts = store.list_semantic_conflicts(account_id, status=status, severity=severity, limit=200)
+    for conflict in conflicts:
+        conflict["object_info"] = _describe_conflict_object(account_id, conflict)
+        conflict["impacted_questions"] = _impacted_questions(account_id, conflict) if status == "open" else []
+
+    return _resp(request, "client_conflict_inbox.html", {
+        "client": client,
+        "conflicts": conflicts,
+        "severity": severity,
+        "status": status,
+    })
+
+
+@router.post("/clients/{account_id}/model-health/conflicts/{conflict_id}/resolve")
+async def model_health_resolve_conflict(
+    request: Request, account_id: str, conflict_id: str,
+    action: str = Form(...), note: str = Form(""),
+):
+    """Manually transition a conflict's review status. See
+    store.resolve_semantic_conflict's docstring for how this differs from
+    the compiler's own automatic reconciliation."""
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    if not store.get_client(account_id):
+        raise HTTPException(status_code=404)
+
+    try:
+        store.resolve_semantic_conflict(
+            account_id, conflict_id, action=action, note=note, resolved_by="admin",
+        )
+    except (ValueError, LookupError) as exc:
+        return RedirectResponse(
+            f"/admin/clients/{account_id}/model-health/conflicts?error={quote(str(exc))}",
+            status_code=303,
+        )
+
+    log.info("Semantic conflict %s %s for %s", conflict_id, action, account_id)
+    return RedirectResponse(
+        f"/admin/clients/{account_id}/model-health/conflicts?saved=conflict_{action}",
+        status_code=303,
+    )
+
+
+@router.post("/clients/{account_id}/model-health/test-question")
+async def model_health_test_question(request: Request, account_id: str, question: str = Form(...)):
+    """'Test a question before publishing' — resolves a question through
+    the SAME deterministic, DB-backed matchers the live pipeline uses
+    (store.match_metric, store.match_terms_in_question) and cross-references
+    the result against currently open compile-time conflicts via
+    core.semantic_resolution.build_resolution_plan (Sprint 3/4's own logic,
+    not a reimplementation).
+
+    Scope note: this is real matching against real data, but it does not
+    run metric_scope's embedding-based scope resolution or generate SQL —
+    it answers "what would this touch and does that hit an open conflict",
+    not "what SQL would the LLM write." That is intentionally the safer
+    half of this bullet; running an unpublished draft's SQL generation
+    against production would be a materially bigger, riskier change.
+    """
+    if not _is_auth(request):
+        raise HTTPException(status_code=401)
+    if not store.get_client(account_id):
+        raise HTTPException(status_code=404)
+
+    question = (question or "").strip()
+    if not question:
+        return JSONResponse({"error": "Enter a question to test."}, status_code=400)
+
+    from core.semantic_resolution import build_resolution_plan
+
+    matched_metric = store.match_metric(account_id, question)
+    term_hits = store.match_terms_in_question(account_id, question)
+    open_conflicts = store.list_semantic_conflicts(account_id, status="open")
+
+    plan = build_resolution_plan(
+        account_id=account_id,
+        question=question,
+        matched_metrics=[matched_metric] if matched_metric else [],
+        open_conflicts=open_conflicts,
+    )
+
+    return JSONResponse({
+        "matched_metric": (
+            {"id": matched_metric.get("id"), "name": matched_metric.get("name")}
+            if matched_metric else None
+        ),
+        "matched_terms": [
+            {"term": term.get("term"), "canonical_expression": term.get("canonical_expression")}
+            for term in (term_hits or [])
+        ],
+        "confidence": plan["confidence"],
+        "resolved_deterministically": plan["resolved_deterministically"],
+        "clarifications": plan["clarifications"],
+        "advisories": plan["advisories"],
+    })
+
+
+@router.get("/clients/{account_id}/model-health/versions", response_class=HTMLResponse)
+async def model_health_contract_versions(request: Request, account_id: str):
+    """Contract version history — diff and rollback. save_semantic_contract_version
+    and publish_semantic_contract_version have existed since Sprint 1; nothing
+    admin-facing ever listed what they'd accumulated until now."""
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    client = store.get_client(account_id)
+    if not client:
+        raise HTTPException(status_code=404)
+
+    versions = store.list_semantic_contract_versions(account_id, limit=50)
+    return _resp(request, "client_contract_versions.html", {
+        "client": client,
+        "versions": versions,
+    })
+
+
+def _diff_contract_sections(old: dict, new: dict) -> dict:
+    """Shallow, section-level diff for the version-history page: counts of
+    added/removed/changed top-level entries per compiled section (metrics,
+    terms, date_roles, relationships) by canonical id where available,
+    falling back to positional length comparison for sections without one.
+    Not a deep field-by-field diff — enough to answer "what changed" at a
+    glance, matching the level of detail Sprint 2's conflict messages
+    already give for any single object."""
+    sections: dict[str, dict] = {}
+    for key in ("metrics", "terms", "date_roles", "relationships"):
+        old_items = old.get(key) or []
+        new_items = new.get(key) or []
+
+        def _id_of(item):
+            if isinstance(item, dict):
+                return item.get("canonical_id") or item.get("id") or json.dumps(item, sort_keys=True)
+            return item
+
+        old_ids = {_id_of(i) for i in old_items}
+        new_ids = {_id_of(i) for i in new_items}
+        sections[key] = {
+            "added": len(new_ids - old_ids),
+            "removed": len(old_ids - new_ids),
+            "unchanged": len(old_ids & new_ids),
+        }
+    return sections
+
+
+@router.get("/clients/{account_id}/model-health/versions/diff")
+async def model_health_contract_version_diff(request: Request, account_id: str, base: str, compare: str):
+    if not _is_auth(request):
+        raise HTTPException(status_code=401)
+    if not store.get_client(account_id):
+        raise HTTPException(status_code=404)
+
+    base_version = store.get_semantic_contract_version(account_id, base)
+    compare_version = store.get_semantic_contract_version(account_id, compare)
+    if not base_version or not compare_version:
+        return JSONResponse({"error": "One or both versions were not found."}, status_code=404)
+
+    diff = _diff_contract_sections(
+        base_version.get("contract") or {}, compare_version.get("contract") or {},
+    )
+    return JSONResponse({"base": base, "compare": compare, "sections": diff})
+
+
+@router.post("/clients/{account_id}/model-health/versions/{version}/rollback")
+async def model_health_rollback_contract_version(request: Request, account_id: str, version: str):
+    """Republish an older contract version as active. Uses the exact same
+    publish_semantic_contract_version() a normal governed compile calls —
+    a rollback IS a publish, just of an older body, so it gets the same
+    superseded-marking and compiler-state bookkeeping for free."""
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    if not store.get_client(account_id):
+        raise HTTPException(status_code=404)
+
+    target = store.get_semantic_contract_version(account_id, version)
+    if not target:
+        return RedirectResponse(
+            f"/admin/clients/{account_id}/model-health/versions?error={quote('Version not found')}",
+            status_code=303,
+        )
+
+    store.publish_semantic_contract_version(account_id, version)
+    log.warning("Semantic contract rolled back to %s for %s", version, account_id)
+    return RedirectResponse(
+        f"/admin/clients/{account_id}/model-health/versions?saved=rollback", status_code=303,
+    )
+
+
 @router.post("/clients/{account_id}/model-health/grain")
 async def model_health_approve_grain(
     request: Request,
