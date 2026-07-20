@@ -920,6 +920,7 @@ def _run_migrations() -> None:
         _ensure_metric_test_table(conn)
         _ensure_learning_loop_tables(conn)
         _ensure_compliance_tables(conn)
+        _ensure_semantic_compiler_tables(conn)
         for table, column, col_def in migrations:
             try:
                 # SAVEPOINT per migration: in PostgreSQL a failed statement
@@ -955,6 +956,89 @@ def _run_migrations() -> None:
                 )
         except Exception as e:
             log.debug("llm_pricing seed skipped: %s", e)
+
+
+def _ensure_semantic_compiler_tables(conn: sqlite3.Connection) -> None:
+    """Create the tenant-scoped semantic compiler control-plane tables."""
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS semantic_compiler_state (
+            account_id       TEXT PRIMARY KEY REFERENCES client(account_id) ON DELETE CASCADE,
+            mode             TEXT NOT NULL DEFAULT 'shadow'
+                             CHECK(mode IN ('off','shadow','enforce')),
+            publish_mode     TEXT NOT NULL DEFAULT 'auto_publish_clean'
+                             CHECK(publish_mode IN ('auto_publish_clean','explicit_publish')),
+            baseline_version TEXT NOT NULL DEFAULT '',
+            active_version   TEXT NOT NULL DEFAULT '',
+            draft_version    TEXT NOT NULL DEFAULT '',
+            updated_at       TEXT DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS semantic_compile_run (
+            run_id                   TEXT PRIMARY KEY,
+            account_id               TEXT NOT NULL REFERENCES client(account_id) ON DELETE CASCADE,
+            trigger_label            TEXT NOT NULL DEFAULT '',
+            initiated_by             TEXT NOT NULL DEFAULT '',
+            mode                     TEXT NOT NULL DEFAULT 'shadow',
+            status                   TEXT NOT NULL DEFAULT 'running',
+            base_version             TEXT NOT NULL DEFAULT '',
+            draft_version            TEXT NOT NULL DEFAULT '',
+            published_version        TEXT NOT NULL DEFAULT '',
+            error_count              INTEGER NOT NULL DEFAULT 0,
+            warning_count            INTEGER NOT NULL DEFAULT 0,
+            info_count               INTEGER NOT NULL DEFAULT 0,
+            source_fingerprints_json TEXT NOT NULL DEFAULT '{}',
+            message                  TEXT NOT NULL DEFAULT '',
+            started_at               TEXT DEFAULT (datetime('now')),
+            completed_at             TEXT NOT NULL DEFAULT ''
+        );
+        CREATE INDEX IF NOT EXISTS idx_semantic_compile_run_account
+            ON semantic_compile_run(account_id, started_at DESC);
+
+        CREATE TABLE IF NOT EXISTS semantic_contract_version (
+            account_id               TEXT NOT NULL REFERENCES client(account_id) ON DELETE CASCADE,
+            version                  TEXT NOT NULL,
+            status                   TEXT NOT NULL DEFAULT 'draft'
+                                     CHECK(status IN ('draft','active','superseded','rejected')),
+            contract_json            TEXT NOT NULL,
+            source_fingerprints_json TEXT NOT NULL DEFAULT '{}',
+            compile_run_id           TEXT NOT NULL DEFAULT '',
+            created_by               TEXT NOT NULL DEFAULT '',
+            created_at               TEXT DEFAULT (datetime('now')),
+            published_at             TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY (account_id, version)
+        );
+        CREATE INDEX IF NOT EXISTS idx_semantic_contract_version_status
+            ON semantic_contract_version(account_id, status, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS semantic_conflict (
+            conflict_id       TEXT PRIMARY KEY,
+            compile_run_id    TEXT NOT NULL REFERENCES semantic_compile_run(run_id) ON DELETE CASCADE,
+            account_id        TEXT NOT NULL REFERENCES client(account_id) ON DELETE CASCADE,
+            conflict_key      TEXT NOT NULL,
+            code              TEXT NOT NULL,
+            severity          TEXT NOT NULL DEFAULT 'ERROR'
+                              CHECK(severity IN ('ERROR','WARNING','INFO','STALE')),
+            object_type       TEXT NOT NULL DEFAULT '',
+            object_id         TEXT NOT NULL DEFAULT '',
+            schema_name       TEXT NOT NULL DEFAULT '',
+            table_name        TEXT NOT NULL DEFAULT '',
+            origin            TEXT NOT NULL DEFAULT '',
+            message           TEXT NOT NULL,
+            evidence_json     TEXT NOT NULL DEFAULT '{}',
+            suggestions_json  TEXT NOT NULL DEFAULT '[]',
+            status            TEXT NOT NULL DEFAULT 'open'
+                              CHECK(status IN ('open','resolved','acknowledged','dismissed')),
+            resolution_note   TEXT NOT NULL DEFAULT '',
+            resolved_by       TEXT NOT NULL DEFAULT '',
+            created_at        TEXT DEFAULT (datetime('now')),
+            resolved_at       TEXT NOT NULL DEFAULT '',
+            UNIQUE(compile_run_id, conflict_key)
+        );
+        CREATE INDEX IF NOT EXISTS idx_semantic_conflict_account
+            ON semantic_conflict(account_id, status, severity, created_at DESC);
+        """
+    )
 
 
 def _ensure_compliance_tables(conn: sqlite3.Connection) -> None:

@@ -239,11 +239,19 @@ def _after_semantic_approval(account_id: str, trigger: str = "") -> None:
          quality regression caused by this approval surfaces on Model
          Health within a minute (warn-only, never blocks the save).
     """
-    from core.semantic_contract import recompile_contract
+    from core.semantic_contract import governed_recompile_contract
 
-    version = recompile_contract(account_id)
-    if version:
-        log.info("Semantic contract v%s after %s for %s", version, trigger or "approval", account_id)
+    compile_result = governed_recompile_contract(
+        account_id, trigger=trigger or "approval", initiated_by="admin",
+    )
+    version = compile_result.get("published_version") or ""
+    if not version:
+        log.warning(
+            "Semantic compile after %s for %s finished as %s; active contract unchanged",
+            trigger or "approval", account_id, compile_result.get("status") or "unknown",
+        )
+        return
+    log.info("Semantic contract v%s after %s for %s", version, trigger or "approval", account_id)
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
@@ -5816,6 +5824,12 @@ async def model_health_page(request: Request, account_id: str):
     except Exception as exc:
         log.debug("kb doc quality lookup skipped for %s: %s", account_id, exc)
 
+    compiler: dict = {}
+    try:
+        compiler = store.get_semantic_compiler_summary(account_id)
+    except Exception as exc:
+        log.debug("semantic compiler status lookup skipped for %s: %s", account_id, exc)
+
     return _resp(request, "client_model_health.html", {
         "client": client,
         "health": health,
@@ -5826,7 +5840,18 @@ async def model_health_page(request: Request, account_id: str):
         "eval_pass_rate": eval_pass_rate,
         "regressed_run": regressed_run,
         "kb_doc_quality": kb_doc_quality,
+        "compiler": compiler,
     })
+
+
+@router.get("/clients/{account_id}/model-health/compiler")
+async def model_health_compiler_status(request: Request, account_id: str):
+    """Read-only compiler status endpoint used by Model Health and support tooling."""
+    if not _is_auth(request):
+        raise HTTPException(status_code=401)
+    if not store.get_client(account_id):
+        raise HTTPException(status_code=404)
+    return JSONResponse(store.get_semantic_compiler_summary(account_id))
 
 
 @router.post("/clients/{account_id}/model-health/grain")

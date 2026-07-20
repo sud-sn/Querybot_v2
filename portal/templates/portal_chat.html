@@ -303,6 +303,17 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .data-table tbody tr:last-child td{border-bottom:none}
 .data-table tbody tr:hover td{background:color-mix(in srgb,var(--primary-soft) 18%, transparent)}
 .data-table tbody tr.dt-hidden{display:none}
+.data-table .dt-select-col{width:38px;min-width:38px;max-width:38px;padding-left:10px;padding-right:6px;text-align:center;cursor:default}
+.data-table .dt-row-select,.data-table .dt-select-all{width:15px;height:15px;accent-color:var(--primary);cursor:pointer}
+.dt-selection-status{font-size:11px;color:var(--text-muted);white-space:nowrap}
+.dt-exclude-btn{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--border);background:var(--surface);color:var(--text);border-radius:6px;padding:6px 9px;font-size:11px;font-weight:750;cursor:pointer}
+.dt-exclude-btn:hover:not(:disabled){border-color:var(--primary);color:var(--primary);background:var(--primary-soft)}
+.dt-exclude-btn:disabled{opacity:.45;cursor:not-allowed}
+.result-exclusion-proof{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:.7rem 0;padding:10px;border:1px solid color-mix(in srgb,var(--success) 38%,var(--border));background:color-mix(in srgb,var(--success) 7%,var(--surface));border-radius:7px}
+.result-exclusion-proof div{min-width:0}
+.result-exclusion-proof strong{display:block;color:var(--success);font-size:11px;text-transform:uppercase}
+.result-exclusion-proof span{display:block;margin-top:2px;color:var(--text-soft);font-size:11px}
+@media(max-width:760px){.result-exclusion-proof{grid-template-columns:1fr}.dt-selection-status{display:none}}
 .data-table-foot{padding:6px 12px;font-size:11px;color:var(--text-muted);background:color-mix(in srgb,var(--surface-2) 35%, transparent);border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;gap:.5rem;flex-wrap:wrap}
 /* ── Inline result chat ──────────────────────────────────────────────────── */
 .rc-toggle{display:inline-flex;align-items:center;gap:.4rem;padding:5px 12px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--primary);font-size:12px;font-weight:700;cursor:pointer;transition:background .15s,border-color .15s}
@@ -2164,15 +2175,23 @@ function _formatAggregateValue(value, fmt) {
 function renderDataTable(data, { question = '', trace_id = '' } = {}) {
   if (!data || !Array.isArray(data.rows) || !data.rows.length) return '';
   const headers = Array.isArray(data.headers) ? data.headers : Object.keys(data.rows[0] || {});
+  const rowTokens = Array.isArray(data.row_tokens) ? data.row_tokens : [];
+  const selectable = !!trace_id && rowTokens.length === data.rows.length;
   const dtId = `dt-${++_dtIdCounter}`;
   const colFormats = _columnFormatMap(data);
 
-  const headHtml = headers.map((h, i) =>
+  const headHtml = (selectable
+    ? `<th class="dt-select-col" data-no-sort="true"><input class="dt-select-all" type="checkbox" aria-label="Select all returned rows"></th>`
+    : '') + headers.map((h, i) =>
     `<th data-col="${i}">${escHtml(h)}</th>`
   ).join('');
 
-  const bodyHtml = data.rows.map(r =>
-    '<tr>' + headers.map(h => {
+  const bodyHtml = data.rows.map((r, rowIndex) =>
+    `<tr${selectable ? ` data-row-token="${escHtml(rowTokens[rowIndex])}"` : ''}>`
+    + (selectable
+      ? `<td class="dt-select-col"><input class="dt-row-select" type="checkbox" aria-label="Select row ${rowIndex + 1}"></td>`
+      : '')
+    + headers.map(h => {
       const fmt = colFormats.get(_normaliseColumnKey(h));
       return `<td>${escHtml(_formatDisplayValue(r[h], fmt))}</td>`;
     }).join('') + '</tr>'
@@ -2193,6 +2212,7 @@ function renderDataTable(data, { question = '', trace_id = '' } = {}) {
   const csvIcon = `<svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v9M4 7l4 4 4-4"/><path d="M2 14h12"/></svg>`;
   const toolbarHtml = `<div class="data-table-toolbar">
     <input class="data-table-filter" type="text" placeholder="Filter rows…" aria-label="Filter table rows" data-dt="${dtId}">
+    ${selectable ? `<span class="dt-selection-status" id="${dtId}-selection">0 selected</span><button type="button" class="dt-exclude-btn" data-dt="${dtId}" disabled>Exclude selected</button>` : ''}
     <span class="data-table-agg" id="${dtId}-agg"></span>
     <button type="button" class="dt-csv-btn" data-dt="${dtId}" title="Download as CSV">${csvIcon} CSV</button>
   </div>`;
@@ -2220,7 +2240,7 @@ function _mountDataTableControls(wrapEl, question) {
   const aggEl   = wrapEl.querySelector(`#${dtId}-agg`);
 
   // Infer numeric columns
-  const allRows = Array.from(tbody.querySelectorAll('tr'));
+  let allRows = Array.from(tbody.querySelectorAll('tr'));
   const numColIndexes = headers.map((_, ci) => {
     const vals = allRows.slice(0, 20).map(r => r.cells[ci]?.textContent ?? '');
     return vals.some(v => v !== '' && !isNaN(_parseDisplayNumber(v)));
@@ -2285,6 +2305,7 @@ function _mountDataTableControls(wrapEl, question) {
 
   // Sort on header click
   headers.forEach((th, ci) => {
+    if (th.dataset.noSort === 'true') return;
     th.addEventListener('click', () => {
       if (sortCol === ci) {
         sortDir *= -1;
@@ -2314,12 +2335,47 @@ function _mountDataTableControls(wrapEl, question) {
     });
   }
 
+  const traceId = wrapEl.dataset.traceId || '';
+  const selectAll = wrapEl.querySelector('.dt-select-all');
+  const excludeBtn = wrapEl.querySelector(`.dt-exclude-btn[data-dt="${dtId}"]`);
+  const selectionEl = wrapEl.querySelector(`#${dtId}-selection`);
+  const rowChecks = () => Array.from(tbody.querySelectorAll('.dt-row-select'));
+  const updateSelection = () => {
+    const checks = rowChecks();
+    const selected = checks.filter(input => input.checked);
+    if (selectionEl) selectionEl.textContent = `${selected.length} selected`;
+    if (excludeBtn) excludeBtn.disabled = selected.length === 0 || !wsReady;
+    if (selectAll) {
+      selectAll.checked = checks.length > 0 && selected.length === checks.length;
+      selectAll.indeterminate = selected.length > 0 && selected.length < checks.length;
+    }
+  };
+  rowChecks().forEach(input => input.addEventListener('change', updateSelection));
+  selectAll?.addEventListener('change', () => {
+    rowChecks().forEach(input => { input.checked = selectAll.checked; });
+    updateSelection();
+  });
+  excludeBtn?.addEventListener('click', () => {
+    const selectedTokens = rowChecks()
+      .filter(input => input.checked)
+      .map(input => input.closest('tr')?.dataset.rowToken || '')
+      .filter(Boolean);
+    if (!selectedTokens.length) return;
+    if (!wsReady) { toast('Connection not ready. Please wait.'); return; }
+    excludeBtn.disabled = true;
+    excludeBtn.textContent = 'Creating filtered view...';
+    ws.send(JSON.stringify({
+      type: 'result_exclusion',
+      result_id: traceId,
+      row_tokens: selectedTokens,
+    }));
+  });
+
   updateAgg();
 
   // ── CSV export button ────────────────────────────────────────────────────
   const csvBtn = wrapEl.querySelector(`.dt-csv-btn[data-dt="${dtId}"]`);
   if (csvBtn) {
-    const traceId = wrapEl.dataset.traceId || '';
     csvBtn.addEventListener('click', () => {
       if (traceId) {
         // Full server-side export (includes truncated rows)
@@ -2331,9 +2387,9 @@ function _mountDataTableControls(wrapEl, question) {
         document.body.removeChild(a);
       } else {
         // Client-side export from current DOM (all rows, including hidden-by-filter)
-        const hdrs = Array.from(table.querySelectorAll('thead th')).map(th => th.textContent.trim());
+        const hdrs = Array.from(table.querySelectorAll('thead th:not(.dt-select-col)')).map(th => th.textContent.trim());
         const rows = Array.from(tbody.querySelectorAll('tr')).map(tr =>
-          Array.from(tr.cells).map(td => td.textContent.trim())
+          Array.from(tr.querySelectorAll('td:not(.dt-select-col)')).map(td => td.textContent.trim())
         );
         const esc = v => `"${String(v).replace(/"/g, '""')}"`;
         const lines = [hdrs.map(esc).join(','), ...rows.map(r => r.map(esc).join(','))];
@@ -2584,7 +2640,7 @@ function appendAssistantResponse(msg, opts = {}){
       </div>`
     : '';
 
-  const msgTraceId = String(msg.trace_id || msg.trust?.trace_id || '');
+  const msgTraceId = String(msg.trace_id || msg.trust?.trace_id || msg.trust?.question_id || '');
   // Body: prefer chart when present, otherwise the data table, otherwise the question echo
   let bodyHtml = '';
   if (hasChart) {
@@ -2676,6 +2732,14 @@ function appendAssistantResponse(msg, opts = {}){
     : '';
 
   const trustSchema = trust.schema || (_activeSchema ? `${_activeSchema} schema` : 'All allowed schemas');
+  const exclusion = msg.result_exclusion || {};
+  const exclusionProofHtml = exclusion.excluded_count
+    ? `<div class="result-exclusion-proof">
+        <div><strong>${escHtml(String(exclusion.excluded_count))} excluded</strong><span>${escHtml(String(exclusion.rows_after))} rows remain in this filtered view</span></div>
+        <div><strong>No LLM call</strong><span>0 result rows sent to any model</span></div>
+        <div><strong>No database query</strong><span>Derived from the governed session cache</span></div>
+      </div>`
+    : '';
   const trustHtml = `<details class="trust-box"><summary>How this answer was produced</summary><div class="trust-grid"><div class="trust-item"><div class="trust-k">Rows</div><div class="trust-v">${escHtml(String(trust.row_count ?? ''))}</div></div><div class="trust-item"><div class="trust-k">Runtime</div><div class="trust-v">${escHtml(trust.duration_label || '')}</div></div><div class="trust-item"><div class="trust-k">Data source</div><div class="trust-v">${escHtml((trust.data_source || '').toUpperCase())}</div></div><div class="trust-item"><div class="trust-k">Schema mode</div><div class="trust-v">${escHtml(trustSchema)}</div></div><div class="trust-item"><div class="trust-k">Result scope</div><div class="trust-v">${escHtml(trust.scope_badge || resultScope.badge || '')}</div></div></div><div class="trust-sql-label"><span>SQL used</span>${trust.sql ? '<button class="sql-copy-btn" onclick="copySqlBox(this)">Copy</button>' : ''}</div><div class="sql-box">${escHtml(trust.sql || '')}</div></details>`;
 
   // Each result card gets a unique ID for the inline chat
@@ -2698,6 +2762,7 @@ function appendAssistantResponse(msg, opts = {}){
         </div>
         ${insightSummaryHtml}
         ${decisionSignalHtml}
+        ${exclusionProofHtml}
         ${confidenceHtml}
         <div class="result-layout">
           ${anomalyCalloutsHtml}
@@ -3659,6 +3724,17 @@ function connect(){
       _setMascotState('chart_ready');
       const row = document.getElementById('processingRow');
       if (row) row.classList.add('active');
+      const exclusionSourceId = String(msg.result_exclusion?.result_id || '');
+      if (exclusionSourceId) {
+        document.querySelectorAll('.data-table-wrap').forEach(wrap => {
+          if (wrap.dataset.traceId !== exclusionSourceId) return;
+          const button = wrap.querySelector('.dt-exclude-btn');
+          if (button) {
+            button.textContent = 'Filtered view created';
+            button.disabled = true;
+          }
+        });
+      }
       // ── Genie: record executed + successful for the chip that triggered this ──
       if (_pendingSuggestion) {
         _genieEvent('executed', _pendingSuggestion);
@@ -3697,6 +3773,18 @@ function connect(){
     } else if (msg.type === 'result_chat_error') {
       _rcPanels[msg.result_id]?.onTyping(false);
       _rcPanels[msg.result_id]?.onError(msg);
+    } else if (msg.type === 'result_exclusion_error') {
+      const exclusionSourceId = String(msg.result_id || '');
+      document.querySelectorAll('.data-table-wrap').forEach(wrap => {
+        if (wrap.dataset.traceId !== exclusionSourceId) return;
+        const button = wrap.querySelector('.dt-exclude-btn');
+        if (button) {
+          button.textContent = 'Exclude selected';
+          button.disabled = false;
+        }
+      });
+      toast(msg.content || 'The filtered view could not be created.');
+      appendSystem(msg.content || 'The filtered view could not be created.');
     }
   };
   ws.onclose = (evt) => {

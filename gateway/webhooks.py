@@ -535,6 +535,167 @@ async def ws_chat(websocket: WebSocket, account_id: str):
             # Sent by the inline mini-chat panel inside each result card.
             # result_id tags the response so the browser renders it inside
             # the correct card rather than the main thread.
+            # The browser submits only opaque row handles. Filtering,
+            # summaries, and chart reconstruction all happen in-process;
+            # neither selected values nor remaining rows are sent to an LLM.
+            if msg_type == "result_exclusion":
+                result_id = _ws_text_value(data.get("result_id"), "id", "value")
+                raw_tokens = data.get("row_tokens")
+                row_tokens = (
+                    [token for token in raw_tokens if isinstance(token, str)][:200]
+                    if isinstance(raw_tokens, list)
+                    else []
+                )
+                start_ms = int(time.time() * 1000)
+                question_id = make_llm_audit_request_id()
+                parent_question_id = getattr(adapter, "last_question_id", "") or ""
+                trace_id = _trace_create(
+                    account_id=account_id,
+                    question_id=question_id,
+                    parent_question_id=parent_question_id,
+                    question="Exclude selected rows from the returned result",
+                    portal_user_id=portal_user.get("id") if portal_user else None,
+                    platform_user_id=zoom_user_id or "",
+                    session_id=getattr(adapter, "session_id", "") or "",
+                    request_source="portal",
+                    route="deterministic_result_exclusion",
+                )
+                _trace_step(
+                    trace_id,
+                    "receive_exclusion",
+                    output_summary={
+                        "opaque_handles": len(row_tokens),
+                        "raw_values_received": 0,
+                    },
+                )
+                try:
+                    session_id = getattr(adapter, "session_id", "") or ""
+                    excluded = result_cache.exclude_rows(session_id, row_tokens)
+                    safe_rows = _sanitize_rows(excluded["rows"])
+                    duration_ms = int(time.time() * 1000) - start_ms
+
+                    if isinstance(getattr(adapter, "last_result", None), dict):
+                        adapter.last_result["rows"] = excluded["rows"]
+
+                    chart_payload = None
+                    try:
+                        chart_type = detect_chart_type(
+                            safe_rows,
+                            question=excluded.get("question") or "Filtered result",
+                            column_formats=excluded.get("column_formats") or {},
+                        )
+                        if chart_type:
+                            chart_payload = build_chart_payload(
+                                safe_rows,
+                                chart_type,
+                                title="Filtered result",
+                                question=excluded.get("question") or "Filtered result",
+                                column_formats=excluded.get("column_formats") or {},
+                            )
+                    except Exception as chart_exc:
+                        log.debug("Filtered result chart generation skipped: %s", chart_exc)
+
+                    from core.response_builder import build_assistant_response
+
+                    response = build_assistant_response(
+                        question=(excluded.get("question") or "Result") + " (selected rows excluded)",
+                        rows=safe_rows,
+                        sql=excluded.get("sql") or "",
+                        duration_ms=duration_ms,
+                        chart=chart_payload,
+                        data_source="governed result cache",
+                        column_formats=excluded.get("column_formats") or {},
+                        question_id=question_id,
+                    )
+                    response["result_exclusion"] = {
+                        "result_id": result_id,
+                        "excluded_count": excluded["excluded_count"],
+                        "rows_before": excluded["rows_before"],
+                        "rows_after": excluded["rows_after"],
+                        "llm_invoked": False,
+                        "rows_sent_to_llm": 0,
+                        "database_queried": False,
+                        "audit_request_id": question_id,
+                    }
+                    response.setdefault("trust", {}).update({
+                        "question_id": question_id,
+                        "parent_question_id": parent_question_id,
+                        "operation": "Deterministic result exclusion",
+                        "llm_invoked": False,
+                        "rows_sent_to_llm": 0,
+                        "database_queried": False,
+                    })
+
+                    with llm_audit_scope(
+                        account_id=account_id,
+                        question="Exclude selected rows from the returned result",
+                        enabled=bool(client.get("enable_llm_audit")),
+                        request_id=question_id,
+                        question_id=question_id,
+                        component="result_exclusion",
+                    ):
+                        from core.llm_audit import record_llm_blocked
+
+                        record_llm_blocked(
+                            "result_exclusion",
+                            "Deterministic cache exclusion; "
+                            f"selected={excluded['excluded_count']}; "
+                            f"rows_before={excluded['rows_before']}; "
+                            f"rows_after={excluded['rows_after']}; "
+                            "rows_sent_to_llm=0; database_queried=false.",
+                        )
+
+                    _trace_step(
+                        trace_id,
+                        "exclude_cached_rows",
+                        output_summary={
+                            "excluded_count": excluded["excluded_count"],
+                            "rows_before": excluded["rows_before"],
+                            "rows_after": excluded["rows_after"],
+                            "llm_invoked": False,
+                            "rows_sent_to_llm": 0,
+                            "database_queried": False,
+                        },
+                    )
+                    _trace_finish(
+                        trace_id,
+                        status="success",
+                        answer_type="table",
+                        row_count=excluded["rows_after"],
+                        duration_ms=duration_ms,
+                        final_answer_summary="Governed cached result exclusion completed without an LLM or database call",
+                    )
+                    await adapter.send_assistant_response(
+                        adapter.make_event("Exclude selected rows"),
+                        response,
+                    )
+                except (ValueError, LookupError) as exc:
+                    _trace_finish(
+                        trace_id,
+                        status="error",
+                        answer_type="error",
+                        error_message=str(exc),
+                    )
+                    await websocket.send_json({
+                        "type": "result_exclusion_error",
+                        "result_id": result_id,
+                        "content": str(exc),
+                    })
+                except Exception as exc:
+                    log.exception("Governed result exclusion failed: %s", exc)
+                    _trace_finish(
+                        trace_id,
+                        status="error",
+                        answer_type="error",
+                        error_message=str(exc),
+                    )
+                    await websocket.send_json({
+                        "type": "result_exclusion_error",
+                        "result_id": result_id,
+                        "content": "The filtered view could not be created. Please retry.",
+                    })
+                continue
+
             if msg_type == "result_chat":
                 rc_question = _ws_text_value(
                     data.get("question"), "question", "text", "value", "label"

@@ -238,6 +238,21 @@ class WebAdapter(PlatformAdapter):
 
     async def send_assistant_response(self, event: PlatformEvent, payload: dict) -> None:
         try:
+            # Attach opaque, cache-generation-scoped row handles for governed
+            # UI actions such as "Exclude selected". These handles reveal no
+            # database value and cannot be reused after the result changes.
+            if payload.get("type") == "assistant_response":
+                data = payload.get("data")
+                if isinstance(data, dict) and isinstance(data.get("rows"), list):
+                    try:
+                        from core.result_cache import result_cache
+
+                        data["row_tokens"] = result_cache.get_row_tokens(
+                            self.session_id,
+                            limit=len(data["rows"]),
+                        )
+                    except Exception as token_exc:
+                        log.debug("Result row token generation failed: %s", token_exc)
             async with self.send_lock:
                 await self.ws.send_json(payload)
         except Exception as e:

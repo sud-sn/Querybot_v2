@@ -29,7 +29,11 @@ result_cache  — module-level singleton
 from __future__ import annotations
 
 import logging
+import hashlib
+import hmac
+import json
 import re
+import secrets
 import threading
 import time
 from collections import OrderedDict
@@ -53,6 +57,7 @@ log = logging.getLogger("querybot.result_cache")
 
 _MAX_SESSIONS  = 200
 _TTL_SECONDS   = 600      # 10 minutes
+_ROW_TOKEN_SECRET = secrets.token_bytes(32)
 
 
 def _normalise_result_format(value: Any) -> str:
@@ -329,7 +334,10 @@ def _project_fallback_rows(rows: list[dict], sql: str) -> list[dict]:
 # ══════════════════════════════════════════════════════════════════════════════
 
 class _CacheEntry:
-    __slots__ = ("rows", "schema", "question", "sql", "column_formats", "stored_at")
+    __slots__ = (
+        "rows", "schema", "question", "sql", "column_formats", "stored_at",
+        "row_token_nonce",
+    )
 
     def __init__(
         self,
@@ -344,6 +352,7 @@ class _CacheEntry:
         self.sql            = sql
         self.column_formats = _normalise_column_formats(rows, column_formats)
         self.stored_at      = time.monotonic()
+        self.row_token_nonce = secrets.token_hex(16)
 
     def is_expired(self) -> bool:
         return (time.monotonic() - self.stored_at) > _TTL_SECONDS
@@ -422,6 +431,82 @@ class ResultCache:
             except Exception as fb_exc:
                 log.warning("Python fallback also failed: %s", fb_exc)
                 return []
+
+    @staticmethod
+    def _row_token(entry: _CacheEntry, index: int, row: dict) -> str:
+        """Return an opaque handle for one cached row.
+
+        The handle is scoped to the current cache generation. It contains no
+        row value and becomes invalid after any exclusion or cache refresh.
+        """
+        canonical = json.dumps(row, sort_keys=True, default=str, separators=(",", ":"))
+        row_hash = hashlib.sha256(canonical.encode("utf-8", errors="ignore")).hexdigest()
+        message = f"{entry.row_token_nonce}:{index}:{row_hash}".encode("utf-8")
+        return hmac.new(_ROW_TOKEN_SECRET, message, hashlib.sha256).hexdigest()[:32]
+
+    def get_row_tokens(self, session_id: str, limit: int | None = None) -> list[str]:
+        """Return opaque, ordered handles aligned with the cached rows."""
+        with self._lock:
+            entry = self._get(session_id)
+            if entry is None:
+                return []
+            rows = entry.rows if limit is None else entry.rows[: max(0, int(limit))]
+            return [self._row_token(entry, index, row) for index, row in enumerate(rows)]
+
+    def exclude_rows(self, session_id: str, row_tokens: list[str]) -> dict:
+        """Remove selected rows from a session result without invoking an LLM.
+
+        Only opaque handles issued for the current cache generation are
+        accepted. The returned rows remain inside the existing governed result
+        boundary; callers may safely render them back to the same user.
+        """
+        requested = {
+            str(token).strip()
+            for token in (row_tokens or [])
+            if isinstance(token, str) and str(token).strip()
+        }
+        if not requested:
+            raise ValueError("Select at least one result row to exclude.")
+
+        with self._lock:
+            entry = self._get(session_id)
+            if entry is None:
+                raise LookupError("The result has expired. Run the query again.")
+
+            token_to_index = {
+                self._row_token(entry, index, row): index
+                for index, row in enumerate(entry.rows)
+            }
+            unknown = requested - token_to_index.keys()
+            if unknown:
+                raise ValueError("One or more selected rows are stale. Refresh the result and retry.")
+
+            excluded_indexes = {token_to_index[token] for token in requested}
+            before = len(entry.rows)
+            entry.rows = [
+                row for index, row in enumerate(entry.rows)
+                if index not in excluded_indexes
+            ]
+            # Preserve the original schema even when every row is excluded.
+            entry.stored_at = time.monotonic()
+            entry.row_token_nonce = secrets.token_hex(16)
+            self._store.move_to_end(session_id)
+            after = len(entry.rows)
+            new_tokens = [
+                self._row_token(entry, index, row)
+                for index, row in enumerate(entry.rows)
+            ]
+
+            return {
+                "rows": list(entry.rows),
+                "row_tokens": new_tokens,
+                "rows_before": before,
+                "rows_after": after,
+                "excluded_count": before - after,
+                "question": entry.question,
+                "sql": entry.sql,
+                "column_formats": dict(entry.column_formats),
+            }
 
     def _duckdb_query(
         self, rows: list[dict], schema: list[dict], safe_sql: str

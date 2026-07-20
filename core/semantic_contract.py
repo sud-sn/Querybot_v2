@@ -40,6 +40,8 @@ from typing import Any
 log = logging.getLogger("querybot.semantic_contract")
 
 CONTRACT_FILENAME = "_semantic_contract.json"
+_compile_locks_guard = threading.Lock()
+_compile_locks: dict[str, threading.Lock] = {}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -66,7 +68,28 @@ def _load_column_context(account_id: str) -> dict:
     return {}
 
 
-def compile_contract(account_id: str, kb_dir: str = "") -> dict[str, Any]:
+def _compile_lock(account_id: str) -> threading.Lock:
+    with _compile_locks_guard:
+        return _compile_locks.setdefault(account_id, threading.Lock())
+
+
+def _source_conflict(source: str, exc: Exception) -> dict[str, Any]:
+    return {
+        "conflict_key": f"source_unavailable:{source}",
+        "code": "semantic_source_unavailable",
+        "severity": "ERROR",
+        "object_type": "semantic_source",
+        "object_id": source,
+        "origin": source,
+        "message": f"The {source} semantic source could not be read.",
+        "evidence": {"error_type": type(exc).__name__, "detail": str(exc)[:500]},
+        "suggestions": ["Restore the source and compile again."],
+    }
+
+
+def _compile_contract_internal(
+    account_id: str, kb_dir: str = "",
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """
     Gather every approved semantic source into one deterministic dict.
 
@@ -83,36 +106,47 @@ def compile_contract(account_id: str, kb_dir: str = "") -> dict[str, Any]:
         state = store.get_client_state(account_id) or {}
         kb_dir = state.get("kb_dir") or ""
 
-    model = load_semantic_model(kb_dir) if kb_dir else {}
+    diagnostics: list[dict[str, Any]] = []
+    try:
+        model = load_semantic_model(kb_dir) if kb_dir else {}
+    except Exception as exc:
+        log.warning("Contract compile: model unavailable for %s: %s", account_id, exc)
+        diagnostics.append(_source_conflict("semantic_model", exc))
+        model = {}
 
     try:
         metrics = store.list_metrics(account_id, active_only=True)
     except Exception as exc:
         log.warning("Contract compile: metrics unavailable for %s: %s", account_id, exc)
+        diagnostics.append(_source_conflict("metrics", exc))
         metrics = []
 
     try:
         date_contexts = store.list_metric_date_contexts(account_id, active_only=True)
     except Exception as exc:
         log.warning("Contract compile: date contexts unavailable for %s: %s", account_id, exc)
+        diagnostics.append(_source_conflict("date_contexts", exc))
         date_contexts = []
 
     try:
         graph = store.get_full_graph(account_id)
     except Exception as exc:
         log.warning("Contract compile: graph unavailable for %s: %s", account_id, exc)
+        diagnostics.append(_source_conflict("entity_graph", exc))
         graph = {}
 
     try:
         terms = store.list_terms(account_id, active_only=True)
     except Exception as exc:
         log.warning("Contract compile: terms unavailable for %s: %s", account_id, exc)
+        diagnostics.append(_source_conflict("business_terms", exc))
         terms = []
 
     try:
         field_overrides = load_field_overrides(account_id)
     except Exception as exc:
         log.warning("Contract compile: overrides unavailable for %s: %s", account_id, exc)
+        diagnostics.append(_source_conflict("field_overrides", exc))
         field_overrides = {}
 
     body = {
@@ -137,7 +171,7 @@ def compile_contract(account_id: str, kb_dir: str = "") -> dict[str, Any]:
     }
 
     contract_version = _hash(body)
-    return {
+    contract = {
         "meta": {
             "contract_version": contract_version,
             "account_id": account_id,
@@ -148,6 +182,12 @@ def compile_contract(account_id: str, kb_dir: str = "") -> dict[str, Any]:
         },
         **body,
     }
+    return contract, diagnostics
+
+
+def compile_contract(account_id: str, kb_dir: str = "") -> dict[str, Any]:
+    """Backward-compatible pure compiler. Governance uses the diagnostics too."""
+    return _compile_contract_internal(account_id, kb_dir)[0]
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -156,6 +196,14 @@ def compile_contract(account_id: str, kb_dir: str = "") -> dict[str, Any]:
 
 def contract_path(kb_dir: str) -> Path:
     return Path(kb_dir) / CONTRACT_FILENAME
+
+
+def _write_contract_file(contract: dict[str, Any], kb_dir: str) -> None:
+    target = contract_path(kb_dir)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_suffix(".tmp")
+    tmp.write_text(json.dumps(contract, indent=2, sort_keys=True), encoding="utf-8")
+    tmp.replace(target)
 
 
 def write_contract(account_id: str, kb_dir: str = "") -> dict[str, Any]:
@@ -171,11 +219,20 @@ def write_contract(account_id: str, kb_dir: str = "") -> dict[str, Any]:
         return {}
 
     contract = compile_contract(account_id, kb_dir)
-    target = contract_path(kb_dir)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    tmp = target.with_suffix(".tmp")
-    tmp.write_text(json.dumps(contract, indent=2, sort_keys=True), encoding="utf-8")
-    tmp.replace(target)
+    _write_contract_file(contract, kb_dir)
+    # Existing tenants receive a grandfathered baseline without changing the
+    # runtime contract format or requiring an admin migration step.
+    try:
+        state = store.get_semantic_compiler_state(account_id)
+        version = contract["meta"]["contract_version"]
+        store.save_semantic_contract_version(
+            account_id, contract, status="active", created_by="legacy_compile",
+        )
+        store.publish_semantic_contract_version(
+            account_id, version, baseline=not bool(state.get("baseline_version")),
+        )
+    except Exception as exc:
+        log.debug("Contract baseline persistence skipped for %s: %s", account_id, exc)
     log.info(
         "Semantic contract compiled for %s: version=%s (%d metrics, %d terms, %d tables)",
         account_id,
@@ -187,12 +244,135 @@ def write_contract(account_id: str, kb_dir: str = "") -> dict[str, Any]:
     return contract
 
 
-def recompile_contract(account_id: str) -> str:
+def governed_recompile_contract(
+    account_id: str, *, trigger: str = "approval", initiated_by: str = "system",
+) -> dict[str, Any]:
+    """Compile, record diagnostics, and safely switch the active contract.
+
+    The current JSON artifact remains the runtime read path. A failed compile
+    never replaces it. Shadow is the default migration mode; enforce is ready
+    for a later tenant-by-tenant rollout.
+    """
+    import store
+
+    with _compile_lock(account_id):
+        client_state = store.get_client_state(account_id) or {}
+        kb_dir = client_state.get("kb_dir") or ""
+        compiler_state = store.get_semantic_compiler_state(account_id)
+        current = load_contract(kb_dir) if kb_dir else {}
+        current_version = str(
+            compiler_state.get("active_version")
+            or (current.get("meta") or {}).get("contract_version")
+            or ""
+        )
+
+        # Grandfather the exact contract already serving traffic.
+        if current and not compiler_state.get("baseline_version"):
+            store.save_semantic_contract_version(
+                account_id, current, status="active", created_by="migration_baseline",
+            )
+            store.publish_semantic_contract_version(
+                account_id, current_version, baseline=True,
+            )
+            compiler_state = store.get_semantic_compiler_state(account_id)
+
+        run_id = store.create_semantic_compile_run(
+            account_id,
+            trigger=trigger,
+            initiated_by=initiated_by,
+            mode=compiler_state.get("mode") or "shadow",
+            base_version=current_version,
+        )
+        try:
+            if not kb_dir:
+                raise ValueError("Client has no Knowledge Base directory yet")
+            contract, conflicts = _compile_contract_internal(account_id, kb_dir)
+            version = str((contract.get("meta") or {}).get("contract_version") or "")
+            store.save_semantic_contract_version(
+                account_id, contract, status="draft",
+                compile_run_id=run_id, created_by=initiated_by,
+            )
+            store.set_semantic_draft_version(account_id, version)
+            store.save_semantic_conflicts(run_id, account_id, conflicts)
+
+            error_count = sum(c.get("severity") == "ERROR" for c in conflicts)
+            warning_count = sum(c.get("severity") == "WARNING" for c in conflicts)
+            info_count = len(conflicts) - error_count - warning_count
+            mode = compiler_state.get("mode") or "shadow"
+            hard_source_failure = any(
+                c.get("code") == "semantic_source_unavailable" for c in conflicts
+            )
+            if not hard_source_failure:
+                store.reconcile_semantic_conflicts(
+                    account_id,
+                    {str(c.get("conflict_key") or "") for c in conflicts},
+                    run_id=run_id,
+                )
+            blocks = hard_source_failure or (mode == "enforce" and error_count > 0)
+            auto_publish = (
+                compiler_state.get("publish_mode") or "auto_publish_clean"
+            ) == "auto_publish_clean"
+
+            published = ""
+            status = "invalid" if blocks else "valid"
+            message = "Compile completed."
+            if blocks:
+                message = "Compile rejected; the last active contract remains in service."
+            elif auto_publish:
+                _write_contract_file(contract, kb_dir)
+                try:
+                    store.publish_semantic_contract_version(account_id, version)
+                except Exception:
+                    # Keep the materialized runtime artifact aligned with the
+                    # active-version pointer if the metadata switch fails.
+                    if current:
+                        _write_contract_file(current, kb_dir)
+                    raise
+                published = version
+                status = "published"
+                message = "Compile completed and the active contract was switched atomically."
+
+            store.finish_semantic_compile_run(
+                run_id,
+                status=status,
+                draft_version=version,
+                published_version=published,
+                error_count=error_count,
+                warning_count=warning_count,
+                info_count=info_count,
+                source_fingerprints=(contract.get("meta") or {}).get("sources") or {},
+                message=message,
+            )
+            return {
+                "run_id": run_id,
+                "status": status,
+                "draft_version": version,
+                "published_version": published,
+                "active_version": published or current_version,
+                "conflicts": conflicts,
+                "message": message,
+            }
+        except Exception as exc:
+            store.finish_semantic_compile_run(
+                run_id, status="failed", message=str(exc)[:1000], error_count=1,
+            )
+            log.error("Governed contract compile failed for %s: %s", account_id, exc)
+            return {
+                "run_id": run_id,
+                "status": "failed",
+                "active_version": current_version,
+                "published_version": "",
+                "conflicts": [],
+                "message": str(exc),
+            }
+
+
+def recompile_contract(account_id: str, *, trigger: str = "approval") -> str:
     """Best-effort recompile used by admin approval routes — one line to call,
     never raises. Returns the new contract_version ("" on skip/failure)."""
     try:
-        contract = write_contract(account_id)
-        return (contract.get("meta") or {}).get("contract_version", "")
+        result = governed_recompile_contract(account_id, trigger=trigger)
+        return str(result.get("active_version") or "")
     except Exception as exc:
         log.error("Contract recompile failed for %s: %s", account_id, exc)
         return ""

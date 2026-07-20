@@ -91,6 +91,14 @@ from store.compliance_store import (
     get_active_break_glass_for_user,
     save_assessment, get_latest_assessment,
 )
+from store.semantic_compile_store import (
+    get_semantic_compiler_state, set_semantic_compiler_mode,
+    create_semantic_compile_run, finish_semantic_compile_run,
+    save_semantic_contract_version, publish_semantic_contract_version,
+    set_semantic_draft_version, save_semantic_conflicts,
+    reconcile_semantic_conflicts, list_semantic_conflicts,
+    get_semantic_compiler_summary,
+)
 
 __all__ = [
     "init_db","get_db","encrypt","decrypt","decrypt_json","mask",
@@ -166,4 +174,10 @@ __all__ = [
     "create_break_glass_grant","get_active_break_glass_grant",
     "get_active_break_glass_for_user",
     "save_assessment","get_latest_assessment",
+    "get_semantic_compiler_state","set_semantic_compiler_mode",
+    "create_semantic_compile_run","finish_semantic_compile_run",
+    "save_semantic_contract_version","publish_semantic_contract_version",
+    "set_semantic_draft_version","save_semantic_conflicts",
+    "reconcile_semantic_conflicts","list_semantic_conflicts",
+    "get_semantic_compiler_summary",
 ]

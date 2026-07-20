@@ -818,6 +818,7 @@ def get_recent_llm_calls(
 RESULT_LLM_COMPONENTS: tuple[str, ...] = (
     "analysis", "analysis_narrative", "drilldown_planner", "diagnose",
     "compare_prior", "result_narration", "followup_suggestions",
+    "result_exclusion",
 )
 
 

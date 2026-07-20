@@ -96,6 +96,61 @@ table.mh-tbl tr:hover td{background:color-mix(in srgb,var(--primary) 4%,var(--su
 {% endblock %}
 {% block content %}
 
+{% if compiler and compiler.state %}
+{% set compiler_state = compiler.state %}
+{% set compile_run = compiler.latest_run or {} %}
+{% set compile_counts = compiler.counts or {} %}
+<div class="mh-shell" style="margin-bottom:1.1rem">
+  <div class="mh-card">
+    <div class="mh-card-header">
+      <h2>Semantic Compiler</h2>
+      <span class="badge" style="background:var(--primary-soft);color:var(--primary)">
+        {{ (compiler_state.mode or 'shadow') | upper }}
+      </span>
+    </div>
+    <div class="mh-card-body">
+      <div class="mh-stat-grid">
+        <div class="mh-stat">
+          <div class="mh-stat-label">Active contract</div>
+          <div class="mh-stat-value" style="font-size:15px;font-family:Consolas,monospace">
+            {{ compiler_state.active_version or 'Not compiled' }}
+          </div>
+          <div class="mh-stat-sub">Baseline {{ compiler_state.baseline_version or 'pending' }}</div>
+        </div>
+        <div class="mh-stat">
+          <div class="mh-stat-label">Latest compile</div>
+          <div class="mh-stat-value" style="font-size:17px">
+            {{ (compile_run.status or 'not run') | replace('_', ' ') | title }}
+          </div>
+          <div class="mh-stat-sub">{{ compile_run.trigger_label or 'No approval compile recorded' }}</div>
+        </div>
+        <div class="mh-stat">
+          <div class="mh-stat-label">Open conflicts</div>
+          <div class="mh-stat-value" style="color:{% if compile_counts.errors %}var(--red){% elif compile_counts.warnings %}var(--amber){% else %}var(--green){% endif %}">
+            {{ compile_counts.open_total or 0 }}
+          </div>
+          <div class="mh-stat-sub">{{ compile_counts.errors or 0 }} errors Â· {{ compile_counts.warnings or 0 }} warnings</div>
+        </div>
+      </div>
+      {% if compiler.conflicts %}
+      <table class="mh-tbl" style="margin-top:1rem">
+        <thead><tr><th>Severity</th><th>Source</th><th>Conflict</th><th>Suggested action</th></tr></thead>
+        <tbody>
+        {% for conflict in compiler.conflicts %}
+          <tr>
+            <td><span class="badge">{{ conflict.severity }}</span></td>
+            <td><span class="mono">{{ conflict.origin or conflict.object_type }}</span></td>
+            <td>{{ conflict.message }}</td>
+            <td>{{ conflict.suggestions[0] if conflict.suggestions else 'Review the semantic source.' }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endif %}
 
 {% if not health.has_model %}
 <div class="mh-shell">
