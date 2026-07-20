@@ -7,10 +7,11 @@ and core.contextual_dates' date_context_resolution - into one structured
 object, plus computes confidence/clarifications from cross-referencing
 what the question touches against Sprint 2's open compile-time conflicts.
 
-This module does not call any resolver itself and does not gate the
-pipeline yet - see core/semantic_resolution.py's own module docstring for
-what's deliberately deferred (SQL-plan enforcement, actually blocking on
-resolved_deterministically).
+This module does not call any resolver itself and, as of this file, did not
+yet gate the pipeline - see test_sprint4_enforcement.py for Sprint 4, which
+closed that gap: core/query_pipeline.py now blocks answering (in "enforce"
+mode only) on an ERROR-severity conflict, and check_sql_plan_coverage()
+compares generated SQL against this plan (advisory-only, never blocking).
 """
 from __future__ import annotations
 

@@ -34,14 +34,14 @@ exist anywhere today:
      non-blocking advisories, mirroring the same severity contract
      governed_recompile_contract already uses for publish-blocking.
 
-Deliberately NOT done in this pass (both are separate, larger, riskier
-changes queued as explicit follow-ups, not silent scope-creep):
-  - SQL-plan enforcement (validating generated SQL against this plan).
-  - Actually gating the pipeline on `resolved_deterministically` /
-    `clarifications` — right now this plan is built and traced for
-    visibility only; core/query_pipeline.py's existing clarification
-    paths (e.g. date_context_resolution's own "ambiguous" branch) are
-    unchanged and still make the real decisions.
+Sprint 4 built on top of this module:
+  - check_sql_plan_coverage() (below) compares generated SQL's table usage
+    against this plan — advisory-only, never blocking; an LLM legitimately
+    touching an unlisted join/lookup table is common and not a defect.
+  - core/query_pipeline.py now actually gates on `clarifications` — but
+    only in "enforce" mode (see store.get_semantic_compiler_state). In
+    "off"/"shadow" this plan is still built and traced only, exactly as
+    Sprint 3 left it.
 """
 
 from __future__ import annotations
@@ -243,4 +243,51 @@ def build_resolution_plan(
         "advisories": advisories,
         "confidence": round(confidence, 1),
         "resolved_deterministically": not clarifications,
+    }
+
+
+def check_sql_plan_coverage(
+    sql: str, plan: dict[str, Any], db_type: str = "azure_sql",
+) -> dict[str, Any]:
+    """
+    Sprint 4b — advisory-only comparison of what the generated SQL actually
+    touches against what the resolution plan expected, table-level only
+    (dimensions and date_roles are the only plan sections that carry table
+    names; metrics and graph_path do not).
+
+    Never blocks and is not a validator: a mismatch is often legitimate (the
+    LLM may reasonably touch an unlisted join or lookup table that
+    metric_scope/semantic_plan never resolved), so this is pure trace-level
+    visibility for now — the same "observe first" step Sprint 2's detectors
+    and Sprint 3's resolution plan itself both went through before anything
+    built on them could gate an answer.
+    """
+    from core.answer_rca import extract_sql_tables
+    from core.semantic_conflicts import _table_fqn_variants
+
+    sql_tables = extract_sql_tables(sql, db_type)
+    sql_variants: set[str] = set()
+    for table in sql_tables:
+        sql_variants |= _table_fqn_variants(table)
+
+    expected_tables: set[str] = set()
+    for dim in plan.get("dimensions") or []:
+        table = dim.get("table")
+        if table:
+            expected_tables.add(str(table))
+    for role in plan.get("date_roles") or []:
+        canonical_id = str(role.get("canonical_id") or "")
+        if canonical_id.startswith("date_role:") and "." in canonical_id:
+            expected_tables.add(canonical_id.split(":", 1)[1].rsplit(".", 1)[0])
+
+    expected = sorted(expected_tables)
+    unused = [table for table in expected if not (_table_fqn_variants(table) & sql_variants)]
+    covered = len(expected) - len(unused)
+    coverage_ratio = 1.0 if not expected else round(covered / len(expected), 2)
+
+    return {
+        "sql_tables": sql_tables,
+        "expected_tables": expected,
+        "unused_expected_tables": unused,
+        "coverage_ratio": coverage_ratio,
     }

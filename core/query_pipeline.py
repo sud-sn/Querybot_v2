@@ -1668,8 +1668,11 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
 
     # Sprint 3 — assemble the structured resolution plan (what got matched,
     # by canonical id, cross-referenced against open compile-time conflicts)
-    # purely for trace visibility. Observational only: it does not gate SQL
-    # generation and a failure here must never break answering.
+    # for trace visibility. Building/tracing it never gates SQL generation
+    # and a failure here must never break answering — the actual enforcement
+    # decision (Sprint 4a) is a separate, explicit step just below so a bug
+    # in this assembly step fails open, not closed.
+    _resolution_plan: dict | None = None
     try:
         from core.semantic_resolution import build_resolution_plan
         _open_conflicts = store.list_semantic_conflicts(account_id, status="open")
@@ -1697,6 +1700,42 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
         )
     except Exception as _resolution_plan_exc:
         log.debug("resolution plan build skipped: %s", _resolution_plan_exc)
+
+    # Sprint 4a — full runtime enforcement. A question that resolves onto an
+    # ERROR-severity compile-time conflict (Sprint 2's detectors) is blocked
+    # instead of silently answered under contested semantics — but only in
+    # "enforce" mode. "off"/"shadow" leave answering exactly as Sprint 3 left
+    # it (observational only). Mirrors governed_recompile_contract's severity
+    # contract (ERROR blocks, WARNING/INFO/STALE are advisory-only) and the
+    # ambiguous-date-context clarification pattern above it in this same
+    # function. Best-effort: any failure here falls through to normal
+    # answering rather than blocking on an enforcement-check bug.
+    if _resolution_plan and not is_clarification:
+        _blocking_conflicts = [
+            c for c in _resolution_plan.get("clarifications") or []
+            if c.get("type") == "compile_time_conflict"
+        ]
+        if _blocking_conflicts:
+            try:
+                _compiler_mode = store.get_semantic_compiler_state(account_id).get("mode", "shadow")
+            except Exception:
+                _compiler_mode = "shadow"
+            if _compiler_mode == "enforce":
+                _conflict_lines = "\n".join(
+                    f"  - {c['message']}" for c in _blocking_conflicts if c.get("message")
+                )
+                _trace_finish(
+                    trace_id, status="error", answer_type="semantic_conflict_blocked",
+                    error_message="; ".join(c.get("message", "") for c in _blocking_conflicts),
+                )
+                await adapter.send_message(
+                    event,
+                    "I can't answer this confidently yet — it touches part of the "
+                    "semantic model with an unresolved conflict:\n\n"
+                    f"{_conflict_lines}\n\n"
+                    "Please ask an admin to resolve this in Model Health, then try again.",
+                )
+                return
 
     system = build_sql_system_prompt(
         db_cfg["db_type"], context_with_terms,
@@ -1731,6 +1770,26 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                 output_summary={"tokens_in": tok_in, "tokens_out": tok_out},
                 duration_ms=int((time.time() - _llm_gen_t0) * 1000),
             )
+            # Sprint 4b — advisory-only: does the generated SQL actually
+            # touch the tables the resolution plan expected? Trace-level
+            # visibility only, same as Sprint 3's plan itself — a mismatch
+            # here does not block or retry generation.
+            if _resolution_plan:
+                try:
+                    from core.semantic_resolution import check_sql_plan_coverage
+                    _sql_plan_coverage = check_sql_plan_coverage(
+                        sql, _resolution_plan, db_cfg["db_type"],
+                    )
+                    _trace_step(
+                        trace_id, "sql_plan_coverage",
+                        output_summary={
+                            "coverage_ratio": _sql_plan_coverage["coverage_ratio"],
+                            "unused_expected_tables": _sql_plan_coverage["unused_expected_tables"],
+                        },
+                        metadata=_sql_plan_coverage,
+                    )
+                except Exception as _coverage_exc:
+                    log.debug("sql plan coverage check skipped: %s", _coverage_exc)
     except Exception as e:
         _log_q(account_id, question, "", 0, False, str(e), provider, model, 0, 0,
                int(time.time()*1000)-start_ms,
