@@ -33,6 +33,12 @@ from core.result_renderer import (
     _inject_distinct_if_needed,
 )
 from core.result_cache import result_cache
+from core.result_commands import parse_result_command, execute_result_command
+from core.result_planner import (
+    is_metadata_result_question,
+    plan_result_command,
+    strip_result_context,
+)
 from core.schema import run_query, load_known_tables, load_schema_columns
 from core.knowledge import load_retriever
 from core.validator import validate_sql
@@ -461,6 +467,318 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     await websocket.send_json({"type": "typing", "active": False})
             except Exception:
                 pass
+
+    async def _run_local_result_command(
+        text: str, command, table_hint: str = "", schema_hint: str = "",
+        planner_evidence: dict | None = None,
+    ) -> None:
+        """Apply a conservative, deterministic command to the latest result.
+
+        The user's command may contain a regulated value. It is therefore not
+        copied into traces or LLM audit text. Execution has no route to either
+        the LLM or source database. ``planner_evidence`` records a preceding
+        metadata-only planning call; it never contains rows or literal values.
+        """
+        planner_evidence = dict(planner_evidence or {})
+        planner_used = bool(planner_evidence)
+        start_ms = int(time.time() * 1000)
+        question_id = make_llm_audit_request_id()
+        parent_question_id = getattr(adapter, "last_question_id", "") or ""
+        session_id = getattr(adapter, "session_id", "") or ""
+        trace_id = _trace_create(
+            account_id=account_id,
+            question_id=question_id,
+            parent_question_id=parent_question_id,
+            question="Transform the prior result locally",
+            portal_user_id=portal_user.get("id") if portal_user else None,
+            platform_user_id=zoom_user_id or "",
+            session_id=session_id,
+            request_source="portal",
+            route="deterministic_result_command",
+        )
+        _trace_step(
+            trace_id,
+            "receive_result_command",
+            output_summary={
+                "operation": getattr(command, "action", ""),
+                "raw_values_logged": 0,
+                "llm_invoked": planner_used,
+                "llm_input_mode": "metadata_only" if planner_used else "none",
+                "rows_sent_to_llm": 0,
+                "sample_values_sent_to_llm": 0,
+                "database_queried": False,
+            },
+        )
+        try:
+            source_result_id = getattr(adapter, "last_result_id", None)
+            outcome = execute_result_command(
+                session_id,
+                command,
+                source_result_id=source_result_id,
+            )
+            if not outcome.ok:
+                if not outcome.handled and getattr(command, "fallback_allowed", False):
+                    _trace_finish(
+                        trace_id,
+                        status="success",
+                        answer_type="governed_fallback",
+                        final_answer_summary=(
+                            "Cached result lacked required columns; routed to governed query pipeline"
+                        ),
+                    )
+                    await _run_main_question(text, table_hint, schema_hint)
+                    return
+                _trace_finish(
+                    trace_id,
+                    status="error",
+                    answer_type="local_result_command",
+                    error_message="Local result command could not be resolved",
+                )
+                async with adapter.send_lock:
+                    await websocket.send_json({
+                        "type": "assistant_error",
+                        "role": "assistant",
+                        "content": outcome.message,
+                        "detail": "No LLM or database query was used.",
+                    })
+                    await websocket.send_json({"type": "typing", "active": False})
+                return
+
+            snapshot = outcome.snapshot
+            rows = list(snapshot.get("rows") or [])
+            safe_rows = _sanitize_rows(rows)
+            column_formats = dict(snapshot.get("column_formats") or {})
+            source_question = str(snapshot.get("question") or "Result")
+            duration_ms = int(time.time() * 1000) - start_ms
+
+            chart_payload = None
+            try:
+                chart_type = detect_chart_type(
+                    safe_rows,
+                    question=source_question,
+                    column_formats=column_formats,
+                )
+                if chart_type:
+                    chart_payload = build_chart_payload(
+                        safe_rows,
+                        chart_type,
+                        title="Updated result",
+                        question=source_question,
+                        column_formats=column_formats,
+                    )
+            except Exception as chart_exc:
+                log.debug("Local result chart generation skipped: %s", chart_exc)
+
+            from core.response_builder import build_assistant_response
+
+            response = build_assistant_response(
+                question=f"{source_question} (locally updated)",
+                rows=safe_rows,
+                sql=str(snapshot.get("sql") or ""),
+                duration_ms=duration_ms,
+                chart=chart_payload,
+                data_source="governed session cache",
+                column_formats=column_formats,
+                question_id=question_id,
+            )
+            response["result_command"] = {
+                "operation": outcome.operation,
+                "source_result_id": outcome.source_result_id,
+                "derived_result_id": outcome.derived_result_id,
+                "affected_count": outcome.affected_count,
+                "rows_before": outcome.rows_before,
+                "rows_after": outcome.rows_after,
+                "llm_invoked": planner_used,
+                "llm_input_mode": "metadata_only" if planner_used else "none",
+                "rows_sent_to_llm": 0,
+                "sample_values_sent_to_llm": 0,
+                "database_queried": False,
+                "execution_engine": "duckdb",
+                "audit_request_id": question_id,
+            }
+            response.setdefault("trust", {}).update({
+                "question_id": question_id,
+                "parent_question_id": parent_question_id,
+                "result_id": outcome.derived_result_id,
+                "operation": (
+                    "Metadata-planned cached-result transform"
+                    if planner_used else "Deterministic cached-result transform"
+                ),
+                "llm_invoked": planner_used,
+                "llm_input_mode": "metadata_only" if planner_used else "none",
+                "rows_sent_to_llm": 0,
+                "sample_values_sent_to_llm": 0,
+                "source_sql_sent_to_llm": False,
+                "database_queried": False,
+                "execution_engine": "DuckDB (session-local)",
+            })
+            if planner_used:
+                response["result_command"]["planner"] = planner_evidence
+                response["trust"]["planner"] = planner_evidence
+
+            previous = getattr(adapter, "last_result", None)
+            if not isinstance(previous, dict):
+                previous = {}
+            previous.update({
+                "rows": rows,
+                "result_id": outcome.derived_result_id,
+                "column_formats": column_formats,
+                "result_operation": outcome.operation,
+            })
+            adapter.last_result = previous
+            adapter.last_result_id = outcome.derived_result_id
+            adapter.last_question_id = question_id
+
+            with llm_audit_scope(
+                account_id=account_id,
+                question="Transform the prior result locally",
+                enabled=bool(client.get("enable_llm_audit")),
+                request_id=question_id,
+                question_id=question_id,
+                component="result_command",
+            ):
+                from core.llm_audit import record_llm_blocked
+
+                record_llm_blocked(
+                    "result_command",
+                    "Deterministic session-cache transform; "
+                    f"operation={outcome.operation}; affected={outcome.affected_count}; "
+                    f"rows_before={outcome.rows_before}; rows_after={outcome.rows_after}; "
+                    "raw_values_logged=0; rows_sent_to_llm=0; sample_values_sent_to_llm=0; "
+                    f"planner_used={str(planner_used).lower()}; database_queried=false.",
+                )
+
+            _trace_step(
+                trace_id,
+                "transform_cached_result",
+                output_summary={
+                    "operation": outcome.operation,
+                    "affected_count": outcome.affected_count,
+                    "rows_before": outcome.rows_before,
+                    "rows_after": outcome.rows_after,
+                    "raw_values_logged": 0,
+                    "llm_invoked": planner_used,
+                    "llm_input_mode": "metadata_only" if planner_used else "none",
+                    "rows_sent_to_llm": 0,
+                    "sample_values_sent_to_llm": 0,
+                    "database_queried": False,
+                },
+            )
+            _trace_finish(
+                trace_id,
+                status="success",
+                answer_type="table",
+                row_count=outcome.rows_after,
+                duration_ms=duration_ms,
+                final_answer_summary=(
+                    "Cached result transformed locally after metadata-only planning"
+                    if planner_used
+                    else "Cached result transformed locally without an LLM or database call"
+                ),
+            )
+            await adapter.send_assistant_response(
+                adapter.make_event("Transform the prior result locally"),
+                response,
+            )
+            async with adapter.send_lock:
+                await websocket.send_json({"type": "typing", "active": False})
+        except Exception as exc:
+            log.exception("Deterministic result command failed: %s", exc)
+            _trace_finish(
+                trace_id,
+                status="error",
+                answer_type="local_result_command",
+                error_message="Deterministic result transform failed",
+            )
+            async with adapter.send_lock:
+                await websocket.send_json({
+                    "type": "assistant_error",
+                    "role": "assistant",
+                    "content": "I could not update the cached result. Please run the business question again.",
+                    "detail": "No result values were sent to an LLM.",
+                })
+                await websocket.send_json({"type": "typing", "active": False})
+
+    async def _run_metadata_result_planner(
+        text: str, table_hint: str = "", schema_hint: str = "",
+    ) -> None:
+        """Plan a cached-result transform from metadata, then execute locally."""
+        session_id = getattr(adapter, "session_id", "") or ""
+        source_result_id = getattr(adapter, "last_result_id", None)
+        snapshot = result_cache.get_snapshot(session_id, source_result_id)
+        if not snapshot:
+            await _run_main_question(strip_result_context(text), table_hint, schema_hint)
+            return
+
+        provider, model, api_key, az_kwargs = resolve_provider(client, purpose="query")
+
+        async def _complete_metadata_plan(**kwargs):
+            return await llm_complete(
+                provider=provider,
+                model=model,
+                api_key=api_key,
+                **kwargs,
+                **az_kwargs,
+            )
+
+        planner_request_id = make_llm_audit_request_id()
+        with llm_audit_scope(
+            account_id=account_id,
+            question="Plan a cached-result analysis from metadata",
+            enabled=bool(client.get("enable_llm_audit")),
+            request_id=planner_request_id,
+            question_id=getattr(adapter, "last_question_id", None) or "",
+            component="result_metadata_planner",
+        ):
+            planned = await plan_result_command(
+                text,
+                snapshot,
+                _complete_metadata_plan,
+            )
+
+        if planned.ok and planned.command is not None:
+            evidence = {
+                "mode": "metadata_only",
+                "rows_sent_to_llm": 0,
+                "sample_values_sent_to_llm": 0,
+                "source_sql_sent_to_llm": False,
+                "literal_binding_count": planned.binding_count,
+                "literal_values_logged": 0,
+                "column_count_disclosed": int(planned.metadata.get("column_count_disclosed") or 0),
+                "row_count_disclosed": int(planned.metadata.get("row_count_disclosed") or 0),
+                "planner_request_id": planner_request_id,
+            }
+            await _run_local_result_command(
+                text,
+                planned.command,
+                table_hint,
+                schema_hint,
+                planner_evidence=evidence,
+            )
+            return
+
+        # A locally bound literal may be regulated. If planning cannot safely
+        # compile it, do not let the original wording fall into another LLM.
+        if planned.binding_count:
+            async with adapter.send_lock:
+                await websocket.send_json({
+                    "type": "assistant_error",
+                    "role": "assistant",
+                    "content": (
+                        "I could not safely apply that operation to the cached result. "
+                        "Use an exact result column name or a row number."
+                    ),
+                    "detail": (
+                        "The request was stopped locally. No cached rows, sample values, "
+                        "or bound literals were sent to the LLM or source database."
+                    ),
+                })
+                await websocket.send_json({"type": "typing", "active": False})
+            return
+
+        # Non-value-bearing analytical requests may use the existing governed
+        # source-query pipeline when the cached schema cannot answer them.
+        await _run_main_question(strip_result_context(text), table_hint, schema_hint)
 
     try:
         while True:
@@ -1878,6 +2196,32 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     "content": "I could not read that question. Please type it again.",
                 })
                 await websocket.send_json({"type": "typing", "active": False})
+                continue
+
+            # Conversational result operations run before every insight/LLM
+            # route. Recognised commands fail closed: a sensitive value in an
+            # exclusion command can never fall through into a model prompt.
+            result_command = parse_result_command(text)
+            if result_command is not None:
+                if current_query_task and not current_query_task.done():
+                    current_query_task.cancel()
+                current_query_task = asyncio.create_task(
+                    _run_local_result_command(
+                        text, result_command, table_hint, schema_hint,
+                    )
+                )
+                continue
+
+            # Natural-language analytics over the cached result use a model
+            # only to choose a constrained operation from column metadata.
+            # Cached rows, sample values, source SQL, and locally bound filter
+            # literals are never included in that prompt.
+            if is_metadata_result_question(text):
+                if current_query_task and not current_query_task.done():
+                    current_query_task.cancel()
+                current_query_task = asyncio.create_task(
+                    _run_metadata_result_planner(text, table_hint, schema_hint)
+                )
                 continue
 
             # Detect "why" follow-up questions about the last result

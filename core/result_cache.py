@@ -1,7 +1,7 @@
 """
 core/result_cache.py
 
-Session-keyed in-memory result store for Tier 2 analytical queries.
+Session-scoped, versioned in-memory result store for analytical follow-ups.
 
 When a user asks a follow-up question like "who is below average?" or
 "show the ratio of charges to fills", this module re-runs that query
@@ -10,20 +10,25 @@ round-trip to the production database, no LIMIT constraints, full SQL
 analytic functions (MEDIAN, STDDEV, PERCENTILE_CONT, window functions).
 
 Design:
-  - One DuckDB connection created fresh per query — no shared state
-  - Rows are stored as plain list[dict] keyed by session_id
-  - LRU eviction: max 200 sessions, 10-minute TTL
-  - Falls back to a lightweight pure-Python executor if DuckDB is not
-    installed (handles simple SELECT * WHERE / ORDER BY / LIMIT)
+  - Every source result and local transform is an immutable snapshot.
+  - Snapshot IDs are scoped to one authenticated chat session.
+  - One DuckDB connection is created per local query; values are bound as
+    parameters instead of being interpolated into generated SQL.
+  - LRU eviction: max 200 sessions, 10-minute TTL by default.
+  - A lightweight Python fallback supports the narrow deterministic command
+    surface when DuckDB is unavailable.
 
 Public API
 ----------
-result_cache  — module-level singleton
-    .store(session_id, rows, question, sql)  → None
-    .query(session_id, sql)                  → list[dict]
-    .get_schema(session_id)                  → list[dict]  [{name, type}, ...]
-    .has_result(session_id)                  → bool
-    .clear(session_id)                       → None
+result_cache — module-level singleton
+    .store(session_id, rows, question, sql) → result_id
+    .derive_snapshot(session_id, parent_result_id, rows, ...) → snapshot
+    .query(session_id, sql, result_id=..., parameters=...) → list[dict]
+    .get_snapshot(session_id, result_id=...) → snapshot
+    .restore_parent(session_id, result_id=...) → snapshot
+    .get_schema(session_id, result_id=...) → list[dict]
+    .has_result(session_id, result_id=...) → bool
+    .clear(session_id) → None
 """
 
 from __future__ import annotations
@@ -36,6 +41,7 @@ import re
 import secrets
 import threading
 import time
+import uuid
 from collections import OrderedDict
 from typing import Any
 
@@ -336,7 +342,8 @@ def _project_fallback_rows(rows: list[dict], sql: str) -> list[dict]:
 class _CacheEntry:
     __slots__ = (
         "rows", "schema", "question", "sql", "column_formats", "stored_at",
-        "row_token_nonce",
+        "row_token_nonce", "session_id", "result_id", "parent_result_id",
+        "operation", "created_at", "metadata",
     )
 
     def __init__(
@@ -345,14 +352,27 @@ class _CacheEntry:
         question: str,
         sql: str,
         column_formats: dict | None = None,
+        *,
+        session_id: str = "",
+        result_id: str = "",
+        parent_result_id: str = "",
+        operation: str = "source_query",
+        schema: list[dict] | None = None,
+        metadata: dict | None = None,
     ):
         self.rows           = rows
-        self.schema         = _schema_from_rows(rows)
+        self.schema         = list(schema or _schema_from_rows(rows))
         self.question       = question
         self.sql            = sql
         self.column_formats = _normalise_column_formats(rows, column_formats)
         self.stored_at      = time.monotonic()
         self.row_token_nonce = secrets.token_hex(16)
+        self.session_id = session_id
+        self.result_id = result_id or uuid.uuid4().hex
+        self.parent_result_id = parent_result_id
+        self.operation = operation
+        self.created_at = time.time()
+        self.metadata = dict(metadata or {})
 
     def is_expired(self) -> bool:
         return (time.monotonic() - self.stored_at) > _TTL_SECONDS
@@ -367,7 +387,10 @@ class ResultCache:
 
     def __init__(self, max_sessions: int = _MAX_SESSIONS):
         self._store: OrderedDict[str, _CacheEntry] = OrderedDict()
+        self._snapshots: OrderedDict[str, _CacheEntry] = OrderedDict()
+        self._session_snapshots: dict[str, list[str]] = {}
         self._max   = max_sessions
+        self._max_snapshots = max_sessions * 8
         # RLock so the same thread can re-acquire (e.g. store→_evict_expired→_get)
         self._lock  = threading.RLock()
 
@@ -380,22 +403,117 @@ class ResultCache:
         question: str = "",
         sql: str = "",
         column_formats: dict | None = None,
-    ) -> None:
-        """Cache `rows` under `session_id`.  Evicts oldest entry when full."""
+        *,
+        result_id: str | None = None,
+        parent_result_id: str = "",
+        operation: str = "source_query",
+        metadata: dict | None = None,
+    ) -> str:
+        """Cache rows and return a versioned, session-scoped result id.
+
+        Existing callers still resolve the newest snapshot by ``session_id``.
+        New result-command callers can address an immutable source snapshot by
+        ``result_id`` and derive a new child without mutating the source.
+        """
         if not session_id or not rows:
-            return
+            return ""
         with self._lock:
             self._evict_expired()
-            if session_id in self._store:
-                self._store.move_to_end(session_id)
-            elif len(self._store) >= self._max:
-                self._store.popitem(last=False)   # evict LRU
-            self._store[session_id] = _CacheEntry(rows, question, sql, column_formats)
+            snapshot_id = str(result_id or uuid.uuid4().hex).strip() or uuid.uuid4().hex
+            existing = self._snapshots.get(snapshot_id)
+            if existing is not None and existing.session_id != session_id:
+                snapshot_id = uuid.uuid4().hex
+            entry = _CacheEntry(
+                list(rows), question, sql, column_formats,
+                session_id=session_id,
+                result_id=snapshot_id,
+                parent_result_id=parent_result_id,
+                operation=operation,
+                metadata=metadata,
+            )
+            self._register_snapshot(entry)
         log.debug("Cached %d rows for session %s", len(rows), session_id[:12])
+        return entry.result_id
+
+    def derive_snapshot(
+        self,
+        session_id: str,
+        source_result_id: str,
+        rows: list[dict],
+        *,
+        question: str,
+        operation: str,
+        sql: str = "",
+        metadata: dict | None = None,
+        schema: list[dict] | None = None,
+        column_formats: dict | None = None,
+    ) -> dict:
+        """Create a child snapshot while preserving the original result."""
+        with self._lock:
+            source = self._get(session_id, source_result_id)
+            if source is None:
+                raise LookupError("The source result has expired. Run the query again.")
+            source_columns = [item.get("name") for item in source.schema]
+            result_columns = list(rows[0].keys()) if rows else source_columns
+            resolved_schema = (
+                list(schema)
+                if schema is not None
+                else list(source.schema)
+                if result_columns == source_columns
+                else _schema_from_rows(rows)
+            )
+            resolved_formats = (
+                dict(source.column_formats)
+                if column_formats is None
+                else dict(column_formats)
+            )
+            child = _CacheEntry(
+                list(rows),
+                question or source.question,
+                sql or source.sql,
+                resolved_formats,
+                session_id=session_id,
+                result_id=uuid.uuid4().hex,
+                parent_result_id=source.result_id,
+                operation=operation,
+                schema=resolved_schema,
+                metadata=metadata,
+            )
+            self._register_snapshot(child)
+            return self._snapshot_payload(child)
+
+    def get_snapshot(self, session_id: str, result_id: str | None = None) -> dict:
+        with self._lock:
+            entry = self._get(session_id, result_id)
+            if entry is None:
+                return {}
+            return self._snapshot_payload(entry)
+
+    def restore_parent(self, session_id: str, result_id: str | None = None) -> dict:
+        """Make the parent snapshot current and return it without copying rows."""
+        with self._lock:
+            current = self._get(session_id, result_id)
+            if current is None:
+                raise LookupError("The result has expired. Run the query again.")
+            if not current.parent_result_id:
+                raise ValueError("This result has no previous version to restore.")
+            parent = self._get(session_id, current.parent_result_id)
+            if parent is None:
+                raise LookupError("The previous result version has expired.")
+            self._store[session_id] = parent
+            self._store.move_to_end(session_id)
+            return self._snapshot_payload(parent)
 
     # ── Query ─────────────────────────────────────────────────────────────────
 
-    def query(self, session_id: str, sql: str) -> list[dict]:
+    def query(
+        self,
+        session_id: str,
+        sql: str,
+        *,
+        result_id: str | None = None,
+        parameters: list[Any] | tuple[Any, ...] | None = None,
+    ) -> list[dict]:
         """
         Run `sql` against the cached result for `session_id`.
 
@@ -408,7 +526,7 @@ class ResultCache:
         # The DuckDB query itself runs without the lock — entry.rows is
         # immutable once stored, so no corruption risk during the query.
         with self._lock:
-            entry = self._get(session_id)
+            entry = self._get(session_id, result_id)
         if entry is None:
             return []
 
@@ -420,7 +538,9 @@ class ResultCache:
 
         try:
             import duckdb
-            return self._duckdb_query(entry.rows, entry.schema, safe_sql)
+            return self._duckdb_query(
+                entry.rows, entry.schema, safe_sql, parameters=parameters,
+            )
         except ImportError:
             log.debug("DuckDB not installed — using Python fallback")
             return _python_fallback_query(entry.rows, safe_sql)
@@ -444,16 +564,22 @@ class ResultCache:
         message = f"{entry.row_token_nonce}:{index}:{row_hash}".encode("utf-8")
         return hmac.new(_ROW_TOKEN_SECRET, message, hashlib.sha256).hexdigest()[:32]
 
-    def get_row_tokens(self, session_id: str, limit: int | None = None) -> list[str]:
+    def get_row_tokens(
+        self, session_id: str, limit: int | None = None,
+        *, result_id: str | None = None,
+    ) -> list[str]:
         """Return opaque, ordered handles aligned with the cached rows."""
         with self._lock:
-            entry = self._get(session_id)
+            entry = self._get(session_id, result_id)
             if entry is None:
                 return []
             rows = entry.rows if limit is None else entry.rows[: max(0, int(limit))]
             return [self._row_token(entry, index, row) for index, row in enumerate(rows)]
 
-    def exclude_rows(self, session_id: str, row_tokens: list[str]) -> dict:
+    def exclude_rows(
+        self, session_id: str, row_tokens: list[str],
+        *, result_id: str | None = None,
+    ) -> dict:
         """Remove selected rows from a session result without invoking an LLM.
 
         Only opaque handles issued for the current cache generation are
@@ -469,7 +595,7 @@ class ResultCache:
             raise ValueError("Select at least one result row to exclude.")
 
         with self._lock:
-            entry = self._get(session_id)
+            entry = self._get(session_id, result_id)
             if entry is None:
                 raise LookupError("The result has expired. Run the query again.")
 
@@ -509,7 +635,8 @@ class ResultCache:
             }
 
     def _duckdb_query(
-        self, rows: list[dict], schema: list[dict], safe_sql: str
+        self, rows: list[dict], schema: list[dict], safe_sql: str,
+        *, parameters: list[Any] | tuple[Any, ...] | None = None,
     ) -> list[dict]:
         import duckdb
 
@@ -534,7 +661,7 @@ class ResultCache:
                     f"INSERT INTO result ({cols_str}) VALUES ({placeholders})", batch
                 )
 
-            cursor = conn.execute(safe_sql)
+            cursor = conn.execute(safe_sql, list(parameters or []))
             result = cursor.fetchall()
             col_names_out = [desc[0] for desc in cursor.description]
             return [dict(zip(col_names_out, row)) for row in result]
@@ -543,19 +670,23 @@ class ResultCache:
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
-    def get_schema(self, session_id: str) -> list[dict]:
+    def get_schema(
+        self, session_id: str, *, result_id: str | None = None,
+    ) -> list[dict]:
         """Return [{name, type}, ...] for the cached result, or []."""
         with self._lock:
-            entry = self._get(session_id)
-        return entry.schema if entry else []
+            entry = self._get(session_id, result_id)
+        return list(entry.schema) if entry else []
 
-    def get_sql(self, session_id: str) -> str:
+    def get_sql(self, session_id: str, *, result_id: str | None = None) -> str:
         """Return the original SQL that produced the cached result, or ""."""
         with self._lock:
-            entry = self._get(session_id)
+            entry = self._get(session_id, result_id)
         return entry.sql if entry else ""
 
-    def get_stats(self, session_id: str) -> dict:
+    def get_stats(
+        self, session_id: str, *, result_id: str | None = None,
+    ) -> dict:
         """
         Return a statistical summary of the cached result for DuckDB prompt
         injection.  Gives the LLM concrete knowledge of the data shape so it
@@ -576,7 +707,7 @@ class ResultCache:
         Returns {} when session is unknown or expired.
         """
         with self._lock:
-            entry = self._get(session_id)
+            entry = self._get(session_id, result_id)
         if not entry or not entry.rows:
             return {}
 
@@ -631,19 +762,23 @@ class ResultCache:
 
         return {"row_count": len(rows), "columns": col_stats}
 
-    def get_currency_columns(self, session_id: str) -> list[str]:
+    def get_currency_columns(
+        self, session_id: str, *, result_id: str | None = None,
+    ) -> list[str]:
         """
         Return column names from the cached result that are auto-detected as
         currency/monetary values.  Used to apply $ formatting and inform the
         LLM that these are dollar amounts.
         """
-        stats = self.get_stats(session_id)
+        stats = self.get_stats(session_id, result_id=result_id)
         return [
             c["name"] for c in stats.get("columns", [])
             if c.get("is_currency")
         ]
 
-    def get_column_formats(self, session_id: str) -> dict[str, str]:
+    def get_column_formats(
+        self, session_id: str, *, result_id: str | None = None,
+    ) -> dict[str, str]:
         """
         Return display formats for cached result columns.
 
@@ -651,22 +786,22 @@ class ResultCache:
         added as a fallback for older cached results and non-metric queries.
         """
         with self._lock:
-            entry = self._get(session_id)
+            entry = self._get(session_id, result_id)
         if entry is None:
             return {}
         formats = dict(entry.column_formats)
-        for col in self.get_currency_columns(session_id):
+        for col in self.get_currency_columns(session_id, result_id=result_id):
             formats.setdefault(col, "currency")
         return formats
 
-    def has_result(self, session_id: str) -> bool:
+    def has_result(self, session_id: str, *, result_id: str | None = None) -> bool:
         with self._lock:
-            entry = self._get(session_id)
+            entry = self._get(session_id, result_id)
         return entry is not None
 
     def clear(self, session_id: str) -> None:
         with self._lock:
-            self._store.pop(session_id, None)
+            self._clear_session(session_id)
 
     def clear_account(self, account_id: str) -> int:
         """Remove every cached session belonging to a tenant."""
@@ -674,25 +809,94 @@ class ResultCache:
         with self._lock:
             keys = [key for key in self._store if key == account_id or key.startswith(prefix)]
             for key in keys:
-                self._store.pop(key, None)
+                self._clear_session(key)
         return len(keys)
 
-    def _get(self, session_id: str) -> "_CacheEntry | None":
+    def _get(
+        self, session_id: str, result_id: str | None = None,
+    ) -> "_CacheEntry | None":
         """Must be called with self._lock held."""
-        entry = self._store.get(session_id)
+        entry = (
+            self._snapshots.get(str(result_id))
+            if result_id
+            else self._store.get(session_id)
+        )
         if entry is None:
             return None
-        if entry.is_expired():
-            del self._store[session_id]
+        if entry.session_id != session_id:
             return None
-        self._store.move_to_end(session_id)   # LRU refresh
+        if entry.is_expired():
+            self._remove_snapshot(entry.result_id)
+            return None
+        self._snapshots.move_to_end(entry.result_id)
+        if not result_id and session_id in self._store:
+            self._store.move_to_end(session_id)
         return entry
 
     def _evict_expired(self) -> None:
         """Must be called with self._lock held."""
-        expired = [k for k, v in self._store.items() if v.is_expired()]
-        for k in expired:
-            del self._store[k]
+        expired = [key for key, entry in self._snapshots.items() if entry.is_expired()]
+        for result_id in expired:
+            self._remove_snapshot(result_id)
+
+    def _register_snapshot(self, entry: _CacheEntry) -> None:
+        """Register a snapshot and make it the latest for its session."""
+        if entry.session_id not in self._store and len(self._store) >= self._max:
+            oldest_session = next(iter(self._store))
+            self._clear_session(oldest_session)
+
+        self._snapshots[entry.result_id] = entry
+        self._snapshots.move_to_end(entry.result_id)
+        history = self._session_snapshots.setdefault(entry.session_id, [])
+        if entry.result_id not in history:
+            history.append(entry.result_id)
+        self._store[entry.session_id] = entry
+        self._store.move_to_end(entry.session_id)
+
+        while len(self._snapshots) > self._max_snapshots:
+            oldest_result_id = next(iter(self._snapshots))
+            self._remove_snapshot(oldest_result_id)
+
+    def _remove_snapshot(self, result_id: str) -> None:
+        entry = self._snapshots.pop(result_id, None)
+        if entry is None:
+            return
+        history = self._session_snapshots.get(entry.session_id, [])
+        if result_id in history:
+            history.remove(result_id)
+        if not history:
+            self._session_snapshots.pop(entry.session_id, None)
+            self._store.pop(entry.session_id, None)
+            return
+        latest = self._store.get(entry.session_id)
+        if latest is entry:
+            replacement = self._snapshots.get(history[-1])
+            if replacement is None:
+                self._store.pop(entry.session_id, None)
+            else:
+                self._store[entry.session_id] = replacement
+
+    def _clear_session(self, session_id: str) -> None:
+        for result_id in list(self._session_snapshots.get(session_id, [])):
+            self._snapshots.pop(result_id, None)
+        self._session_snapshots.pop(session_id, None)
+        self._store.pop(session_id, None)
+
+    @staticmethod
+    def _snapshot_payload(entry: _CacheEntry) -> dict:
+        return {
+            "result_id": entry.result_id,
+            "parent_result_id": entry.parent_result_id,
+            "operation": entry.operation,
+            "rows": list(entry.rows),
+            "row_count": len(entry.rows),
+            "question": entry.question,
+            "sql": entry.sql,
+            "schema": list(entry.schema),
+            "column_formats": dict(entry.column_formats),
+            "created_at": entry.created_at,
+            "metadata": dict(entry.metadata),
+        }
 
 
 def _coerce(value: Any, dtype: str) -> Any:

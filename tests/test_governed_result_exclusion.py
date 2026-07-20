@@ -71,14 +71,14 @@ class GovernedResultExclusionTests(unittest.TestCase):
 
 
 class GovernedResultExclusionWiringTests(unittest.TestCase):
-    def test_portal_sends_only_opaque_row_tokens(self):
+    def test_legacy_checkbox_action_is_not_exposed_in_portal(self):
         template = (ROOT / "portal" / "templates" / "portal_chat.html").read_text(
             encoding="utf-8"
         )
-        self.assertIn("type: 'result_exclusion'", template)
-        self.assertIn("row_tokens: selectedTokens", template)
-        self.assertIn("Exclude selected", template)
-        self.assertNotIn("rows: selectedRows", template)
+        self.assertNotIn("type: 'result_exclusion'", template)
+        self.assertNotIn("row_tokens: selectedTokens", template)
+        self.assertNotIn("Exclude selected", template)
+        self.assertIn("msg.result_command", template)
 
     def test_websocket_route_records_zero_llm_proof(self):
         source = (ROOT / "gateway" / "webhooks.py").read_text(encoding="utf-8")

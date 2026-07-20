@@ -40,6 +40,7 @@ class WebAdapter(PlatformAdapter):
         # Per-session result cache for action buttons and "why" follow-ups
         self.last_result: dict | None = None
         self.last_question_id: str | None = None   # stable ID linking a question to all its follow-ups
+        self.last_result_id: str | None = None
 
         # Serializes every outgoing frame on this connection. The main WS
         # receive loop now runs question handling as a background asyncio
@@ -173,6 +174,7 @@ class WebAdapter(PlatformAdapter):
             # without recomputing on the follow-up round-trip.
             "data_brief":     data_brief or {},
             "semantic_plan":  semantic_plan or {},
+            "result_id":      "",
         }
         # Persist the parent question_id so drilldowns can reference it.
         if question_id:
@@ -183,13 +185,21 @@ class WebAdapter(PlatformAdapter):
         # from the already-fetched rows without hitting the production DB.
         try:
             from core.result_cache import result_cache
-            result_cache.store(
+            cached_result_id = result_cache.store(
                 self.session_id,
                 rows,
                 question,
                 sql,
                 column_formats=column_formats,
+                result_id=question_id,
+                metadata={
+                    "account_id": self._account,
+                    "user_id": self._user_id,
+                    "metadata_contains_raw_values": False,
+                },
             )
+            self.last_result_id = cached_result_id or None
+            self.last_result["result_id"] = cached_result_id or ""
         except Exception as _ce:
             log.debug("Result cache store failed (non-critical): %s", _ce)
 
@@ -238,21 +248,11 @@ class WebAdapter(PlatformAdapter):
 
     async def send_assistant_response(self, event: PlatformEvent, payload: dict) -> None:
         try:
-            # Attach opaque, cache-generation-scoped row handles for governed
-            # UI actions such as "Exclude selected". These handles reveal no
-            # database value and cannot be reused after the result changes.
             if payload.get("type") == "assistant_response":
                 data = payload.get("data")
-                if isinstance(data, dict) and isinstance(data.get("rows"), list):
-                    try:
-                        from core.result_cache import result_cache
-
-                        data["row_tokens"] = result_cache.get_row_tokens(
-                            self.session_id,
-                            limit=len(data["rows"]),
-                        )
-                    except Exception as token_exc:
-                        log.debug("Result row token generation failed: %s", token_exc)
+                if isinstance(data, dict) and self.last_result_id:
+                    data["result_id"] = self.last_result_id
+                payload.setdefault("trust", {})["result_id"] = self.last_result_id or ""
             async with self.send_lock:
                 await self.ws.send_json(payload)
         except Exception as e:
