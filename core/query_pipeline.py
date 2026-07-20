@@ -488,6 +488,17 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
             )
             return
 
+    # Sprint 3e — cheap contract-version stamp, fetched early so it's
+    # available to the result-cache staleness check right below and to
+    # every _send_results() call site further down (the duckdb-cache and
+    # metric-registry routes both return before the full contract load
+    # later in this function). load_contract() is mtime-cached, so this
+    # costs one extra stat() call, not a re-parse.
+    from core.semantic_contract import load_contract as _load_contract_early
+    _contract_version = (
+        _load_contract_early(state.get("kb_dir", "")).get("meta") or {}
+    ).get("contract_version", "")
+
     _session_id = getattr(adapter, "session_id", None)
     _cached_cols = [s["name"] for s in result_cache.get_schema(_session_id)] if _session_id else []
     if _session_id and result_cache.has_result(_session_id):
@@ -502,12 +513,29 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
         cache_decision = evaluate_policy(cache_context, [])
         if not cache_decision.effective_allowed:
             result_cache.clear(_session_id)
-        elif compliance_profile.get("mode") == "regulated":
-            _trace_step(
-                trace_id,
-                "regulated_cache_read",
-                output_summary={"reason": cache_decision.reason_code},
-            )
+        else:
+            _cached_contract_version = result_cache.get_contract_version(_session_id)
+            if (
+                _cached_contract_version and _contract_version
+                and _cached_contract_version != _contract_version
+            ):
+                # The semantic contract was recompiled since these rows were
+                # cached (a metric/field/join changed meaning) — stale rows
+                # must not silently answer a follow-up under new semantics.
+                _trace_step(
+                    trace_id, "result_cache_stale",
+                    output_summary={
+                        "cached_version": _cached_contract_version,
+                        "current_version": _contract_version,
+                    },
+                )
+                result_cache.clear(_session_id)
+            elif compliance_profile.get("mode") == "regulated":
+                _trace_step(
+                    trace_id,
+                    "regulated_cache_read",
+                    output_summary={"reason": cache_decision.reason_code},
+                )
     if _session_id and should_route_to_result_cache(question, result_cache.has_result(_session_id), cached_col_names=_cached_cols):
         _trace_update(trace_id, route="duckdb_cache")
         _trace_step(trace_id, "route", output_summary="duckdb_cache")
@@ -614,7 +642,8 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                                         question_id=audit_request_id,
                                         explicit_column_formats=(
                                             result_cache.get_column_formats(_session_id)
-                                        ))
+                                        ),
+                                        contract_version=_contract_version)
                     _trace_finish(
                         trace_id,
                         status="success",
@@ -698,7 +727,8 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                                 display_context={
                                     "format_scope": "metric_registry",
                                     "metrics": [matched_metric],
-                                })
+                                },
+                                contract_version=_contract_version)
             if _why_mode and rows:
                 await _send_why_insight(
                     adapter, event,
@@ -1636,6 +1666,38 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
     # so tail truncation only ever sacrifices the lowest-priority material.
     context_with_terms = _clamp_prompt_context(context_with_terms)
 
+    # Sprint 3 — assemble the structured resolution plan (what got matched,
+    # by canonical id, cross-referenced against open compile-time conflicts)
+    # purely for trace visibility. Observational only: it does not gate SQL
+    # generation and a failure here must never break answering.
+    try:
+        from core.semantic_resolution import build_resolution_plan
+        _open_conflicts = store.list_semantic_conflicts(account_id, status="open")
+        _resolution_plan = build_resolution_plan(
+            account_id=account_id,
+            question=question,
+            contract=_contract,
+            matched_metrics=_matched_metrics,
+            graph_ctx=_graph_ctx,
+            semantic_plan=_semantic_plan,
+            date_context_resolution=_date_context_resolution,
+            schema_hint=schema_hint,
+            allowed_tables=query_scope_tables,
+            open_conflicts=_open_conflicts,
+        )
+        _trace_step(
+            trace_id, "resolution_plan",
+            output_summary={
+                "confidence": _resolution_plan["confidence"],
+                "resolved_deterministically": _resolution_plan["resolved_deterministically"],
+                "clarifications": len(_resolution_plan["clarifications"]),
+                "advisories": len(_resolution_plan["advisories"]),
+            },
+            metadata=_resolution_plan,
+        )
+    except Exception as _resolution_plan_exc:
+        log.debug("resolution plan build skipped: %s", _resolution_plan_exc)
+
     system = build_sql_system_prompt(
         db_cfg["db_type"], context_with_terms,
         conversation_history=_conv_history or None,
@@ -2392,7 +2454,8 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                         display_context={
                             "format_scope": "metric_context",
                             "metrics": _matched_metrics,
-                        })
+                        },
+                        contract_version=_contract_version)
     if _why_mode and rows:
         await _send_why_insight(
             adapter, event,

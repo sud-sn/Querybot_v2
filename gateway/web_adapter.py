@@ -161,6 +161,7 @@ class WebAdapter(PlatformAdapter):
         column_formats: dict | None = None,
         data_brief: dict | None = None,
         semantic_plan: dict | None = None,
+        contract_version: str = "",
     ) -> None:
         """Cache the last query result for insight follow-ups and Tier-2 DuckDB queries."""
         self.last_result = {
@@ -196,6 +197,7 @@ class WebAdapter(PlatformAdapter):
                     "account_id": self._account,
                     "user_id": self._user_id,
                     "metadata_contains_raw_values": False,
+                    "contract_version": contract_version,
                 },
             )
             self.last_result_id = cached_result_id or None

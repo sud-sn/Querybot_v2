@@ -613,7 +613,8 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
                         rag_context: str = "", question_id: str | None = None,
                         confidence_context: dict | None = None,
                         display_context: dict | None = None,
-                        explicit_column_formats: dict | None = None):
+                        explicit_column_formats: dict | None = None,
+                        contract_version: str = ""):
     """Send formatted results to the chat platform. Shared by LLM and metric registry paths."""
     if question_id:
         profile = store.get_compliance_profile(account_id)
@@ -656,6 +657,7 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
             column_formats=column_formats,
             data_brief=confidence_context.get("data_brief") if confidence_context else None,
             semantic_plan=confidence_context.get("semantic_plan") if confidence_context else None,
+            contract_version=contract_version,
         )
 
     table_text = _rows_to_table(rows, column_formats)

@@ -684,6 +684,18 @@ class ResultCache:
             entry = self._get(session_id, result_id)
         return entry.sql if entry else ""
 
+    def get_contract_version(self, session_id: str, *, result_id: str | None = None) -> str:
+        """Semantic contract_version stamped on the cached result at store
+        time, or "" when unknown (pre-Sprint-3e caches, or accounts with no
+        compiled contract). Callers should only treat a cache entry as stale
+        when BOTH the cached and current versions are non-empty and differ —
+        an empty value here is "unknown", not "version zero"."""
+        with self._lock:
+            entry = self._get(session_id, result_id)
+        if entry is None:
+            return ""
+        return str(entry.metadata.get("contract_version") or "")
+
     def get_stats(
         self, session_id: str, *, result_id: str | None = None,
     ) -> dict:
