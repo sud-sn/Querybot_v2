@@ -249,6 +249,17 @@ def _compile_contract_internal(
 
     _stamp_canonical_ids(body)
     contract_version = _hash(body)
+
+    # Sprint 2 conflict detectors run over the already-stamped, already-
+    # hashed body — they're read-only analysis of the content, not content
+    # themselves, so they never influence contract_version. Failures inside
+    # a single detector are isolated by run_all_detectors() and never reach
+    # here, matching the fail-soft contract the source reads above already
+    # have (a broken detector degrades to "found nothing", it doesn't break
+    # the compile).
+    from core.semantic_conflicts import run_all_detectors
+    diagnostics.extend(run_all_detectors(body))
+
     contract = {
         "meta": {
             "contract_version": contract_version,
