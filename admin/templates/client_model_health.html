@@ -147,9 +147,43 @@ table.mh-tbl tr:hover td{background:color-mix(in srgb,var(--primary) 4%,var(--su
         </tbody>
       </table>
       {% endif %}
+      <form method="post" action="/admin/clients/{{ client.account_id }}/model-health/compiler/mode"
+            id="compiler-mode-form" style="margin-top:1rem;padding-top:.85rem;border-top:1px solid var(--border);display:flex;align-items:center;gap:.6rem;flex-wrap:wrap">
+        <label for="compiler-mode-select" style="font-size:12px;font-weight:700;color:var(--text-muted)">Enforcement mode</label>
+        <select name="mode" id="compiler-mode-select" style="padding:5px 9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:12px">
+          <option value="off" {% if compiler_state.mode == 'off' %}selected{% endif %}>Off — record only, no compiler checks surfaced</option>
+          <option value="shadow" {% if not compiler_state.mode or compiler_state.mode == 'shadow' %}selected{% endif %}>Shadow — record conflicts, always publish anyway (default)</option>
+          <option value="enforce" {% if compiler_state.mode == 'enforce' %}selected{% endif %}>Enforce — reject a compile with any open ERROR conflict</option>
+        </select>
+        <button type="submit" class="btn btn-primary btn-xs">Save mode</button>
+        {% if compile_counts.errors %}
+        <span style="font-size:11px;color:var(--red)">
+          {{ compile_counts.errors }} open ERROR conflict(s) right now — switching to Enforce will block the next compile until they're resolved.
+        </span>
+        {% endif %}
+      </form>
     </div>
   </div>
 </div>
+<script>
+(function () {
+  var form = document.getElementById('compiler-mode-form');
+  var select = document.getElementById('compiler-mode-select');
+  if (!form || !select) return;
+  var initialMode = select.value;
+  form.addEventListener('submit', function (ev) {
+    if (select.value === 'enforce' && initialMode !== 'enforce') {
+      var ok = confirm(
+        'Switch to Enforce mode?\n\n' +
+        'The NEXT compile (the next approval, or a manual recompile) will be ' +
+        'REJECTED if it has any open ERROR-severity conflict — the last known-good ' +
+        'contract stays active instead. This can affect real approvals going forward.'
+      );
+      if (!ok) { ev.preventDefault(); }
+    }
+  });
+})();
+</script>
 {% endif %}
 
 {% if not health.has_model %}

@@ -5854,6 +5854,53 @@ async def model_health_compiler_status(request: Request, account_id: str):
     return JSONResponse(store.get_semantic_compiler_summary(account_id))
 
 
+@router.post("/clients/{account_id}/model-health/compiler/mode")
+async def model_health_set_compiler_mode(
+    request: Request,
+    account_id: str,
+    mode: str = Form(...),
+):
+    """
+    Switch the semantic compiler's enforcement mode for this tenant.
+
+      off     - detectors run and record conflicts; nothing about
+                publishing changes.
+      shadow  - the default every tenant is grandfathered into. Conflicts
+                are recorded and shown here, but a compile always
+                publishes anyway, even with open ERROR conflicts.
+      enforce - a compile with any ERROR-severity conflict is REJECTED;
+                the last known-good contract stays active instead (see
+                core.semantic_contract.governed_recompile_contract's
+                `blocks` check). This is the only mode where the detectors
+                built in Sprint 2 can actually stop something from going
+                live, rather than just recording that it happened.
+
+    This only changes stored state — it does not trigger a recompile, so
+    flipping to enforce has no effect until the next governed compile
+    (the next approval, or the "Recompile now" action). The open-conflicts
+    count already shown on this page is the best signal of what enforce
+    would currently block if it ran right now.
+    """
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    client = store.get_client(account_id)
+    if not client:
+        raise HTTPException(status_code=404)
+
+    from urllib.parse import quote
+    if mode not in {"off", "shadow", "enforce"}:
+        return RedirectResponse(
+            f"/admin/clients/{account_id}/model-health?error={quote('Invalid compiler mode')}",
+            status_code=303,
+        )
+
+    store.set_semantic_compiler_mode(account_id, mode)
+    log.info("Semantic compiler mode set to %r for %s", mode, account_id)
+    return RedirectResponse(
+        f"/admin/clients/{account_id}/model-health?saved=compiler_mode", status_code=303,
+    )
+
+
 @router.post("/clients/{account_id}/model-health/grain")
 async def model_health_approve_grain(
     request: Request,
