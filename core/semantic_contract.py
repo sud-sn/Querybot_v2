@@ -226,6 +226,22 @@ def _compile_contract_internal(
         diagnostics.append(_source_conflict("field_overrides", exc))
         field_overrides = {}
 
+    try:
+        # Keyed "TABLE_FQN.COLUMN" (upper) — the exact same shape
+        # core.semantic_ids.field_id() produces minus its "field:" prefix,
+        # so detectors can go straight from a canonical field id to its
+        # classification. Making this a proper compiled source (not a
+        # detector-side live read) is what lets a masking/classification
+        # change move contract_version — previously a classification edit
+        # was invisible to the contract entirely, so a metric's published
+        # meaning could silently drift out of sync with how its columns are
+        # actually being masked.
+        classifications = store.get_classification_map(account_id)
+    except Exception as exc:
+        log.warning("Contract compile: classifications unavailable for %s: %s", account_id, exc)
+        diagnostics.append(_source_conflict("classifications", exc))
+        classifications = {}
+
     body = {
         # The approval-preserving structured model: tables (fields, measures,
         # dimensions, date_roles, grain, default_filters) and relationships.
@@ -240,6 +256,9 @@ def _compile_contract_internal(
         "graph": graph,
         # Business glossary terms (canonical SQL expressions per phrase).
         "terms": terms,
+        # Column-level sensitivity classifications (masking/compliance).
+        # Keyed "TABLE_FQN.COLUMN" — see core.semantic_ids.field_id().
+        "classifications": classifications,
         # Persistent admin field overrides + free-form column context notes.
         "overrides": {
             "field_overrides": field_overrides,
