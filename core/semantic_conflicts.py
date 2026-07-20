@@ -639,6 +639,318 @@ def detect_compliance_gaps(contract: dict[str, Any]) -> list[dict[str, Any]]:
     return conflicts
 
 
+def _relationship_pair_key(rel: dict[str, Any]) -> tuple[str, str]:
+    """Unordered entity-pair key so A-B and B-A group together — the graph
+    adjacency core/graph_resolver.py builds is undirected (see
+    _build_adjacency), so a competing edge can legitimately be stored in
+    either direction."""
+    a = str(rel.get("from_entity") or "").upper()
+    b = str(rel.get("to_entity") or "").upper()
+    return tuple(sorted((a, b)))
+
+
+def detect_competing_join_paths(contract: dict[str, Any]) -> list[dict[str, Any]]:
+    """
+    Two or more active relationship edges connect the SAME pair of entities
+    through DIFFERENT columns — genuinely different join semantics, not a
+    redundant duplicate of the same join (e.g. "orders joined to customer
+    via customer_id" vs. "orders joined to customer via
+    referred_by_customer_id" both connect ORDERS<->CUSTOMER but mean
+    different things).
+
+    core/graph_resolver.py's find_join_path() already resolves this
+    silently via a weighted-shortest-path search (_edge_weight scores each
+    edge's "semantic risk cost") — it always produces AN answer, with no
+    signal that a competing, differently-meaning path existed. This
+    detector surfaces that structural ambiguity at compile time instead of
+    leaving it to be discovered only when a question happens to need
+    disambiguation.
+
+    Severity is WARNING, not ERROR: the resolver's weighting is a real,
+    deterministic tie-break (governed/validated edges are preferred over
+    heuristic ones), so this is a "look at this" signal, not proof the
+    wrong join is winning. The computed weight gap is included as evidence
+    so an admin can judge how close the resolver's call actually was.
+
+    Scoped to the primary from_column/to_column pair — composite joins
+    recorded via the relationship's join_conditions list are not compared
+    here; two edges with the same primary columns but different composite
+    conditions will not be flagged by this detector.
+    """
+    from core.graph_resolver import _edge_weight
+
+    conflicts: list[dict[str, Any]] = []
+    by_pair: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for rel in (contract.get("graph") or {}).get("relationships") or []:
+        if not isinstance(rel, dict) or not rel.get("canonical_id"):
+            continue
+        if (rel.get("is_active", 1) in (0, False)):
+            continue
+        by_pair.setdefault(_relationship_pair_key(rel), []).append(rel)
+
+    for pair, rels in by_pair.items():
+        if len(rels) < 2:
+            continue
+        by_signature: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        for rel in rels:
+            sig = (
+                str(rel.get("from_column") or "").upper(),
+                str(rel.get("to_column") or "").upper(),
+            )
+            by_signature.setdefault(sig, []).append(rel)
+        if len(by_signature) < 2:
+            continue  # same join key repeated — not a competing path
+
+        try:
+            weighted = sorted(
+                ((_edge_weight(r), r) for group in by_signature.values() for r in group),
+                key=lambda item: item[0],
+            )
+        except Exception:
+            weighted = []
+        weight_gap = (
+            round(weighted[1][0] - weighted[0][0], 2) if len(weighted) >= 2 else None
+        )
+
+        participant_ids = sorted({r["canonical_id"] for r in rels})
+        signatures = [
+            {"from_column": sig[0], "to_column": sig[1],
+             "join_ids": sorted({r["canonical_id"] for r in group})}
+            for sig, group in by_signature.items()
+        ]
+        conflicts.append({
+            "conflict_key": conflict_key("competing_join_paths", *participant_ids),
+            "code": "competing_join_paths",
+            "severity": "WARNING",
+            "object_type": "relationship",
+            "object_id": participant_ids[0],
+            "schema_name": "",
+            "table_name": "",
+            "origin": "entity_graph",
+            "message": (
+                f"{pair[0]} and {pair[1]} are connected by {len(by_signature)} "
+                f"different join keys across {len(rels)} active edges — the resolver "
+                "picks one by risk-weighted default."
+            ),
+            "evidence": {"entities": list(pair), "join_signatures": signatures, "weight_gap": weight_gap},
+            "suggestions": [
+                "Confirm which join key is correct for this entity pair and deactivate the others.",
+                "If both are legitimate for different questions, document the distinction.",
+            ],
+        })
+
+    return conflicts
+
+
+def detect_cardinality_fanout_risk(contract: dict[str, Any]) -> list[dict[str, Any]]:
+    """
+    A confirmed, active relationship edge carries a HIGH risk score from
+    core/graph_resolver.py's own _edge_weight — reusing that exact scoring
+    function (not a parallel heuristic) so this detector's assessment can
+    never disagree with what the resolver itself would compute for the
+    same edge. _edge_weight already folds in the graph-profiling columns
+    entity_relationships stores per edge (fanout_ratio, orphan_rate,
+    validation_status, confidence_score, many_to_many) — see
+    core/graph_resolver.py::_edge_weight for the exact formula.
+
+    Only CONFIRMED edges are scored here: a suggested edge already carries
+    the review-queue's own signal (see admin/templates/client_graph.html's
+    Phase 3 review panel) and re-flagging it here would be noise on top of
+    a state the admin already knows is unreviewed.
+
+    Threshold: _edge_weight's baseline for a manually confirmed edge is
+    0.5; every fanout/orphan/many-to-many penalty stacks on top of that.
+    8.0 is roughly "several risk factors present at once, or one severe
+    one (many_to_many alone adds 10.0)" — high enough that an isolated,
+    mildly elevated fanout_ratio on an otherwise-clean edge won't trigger
+    a WARNING on every confirmed join in a schema.
+    """
+    from core.graph_resolver import _edge_weight
+
+    _RISK_THRESHOLD = 8.0
+    conflicts: list[dict[str, Any]] = []
+    for rel in (contract.get("graph") or {}).get("relationships") or []:
+        if not isinstance(rel, dict) or not rel.get("canonical_id"):
+            continue
+        if str(rel.get("status") or "confirmed").lower() != "confirmed":
+            continue
+        try:
+            weight = _edge_weight(rel)
+        except Exception:
+            continue
+        if weight == float("inf") or weight < _RISK_THRESHOLD:
+            continue
+        reasons = []
+        try:
+            if float(rel.get("fanout_ratio") or -1) > 1.05:
+                reasons.append(f"fanout_ratio={rel.get('fanout_ratio')}")
+        except (TypeError, ValueError):
+            pass
+        try:
+            if float(rel.get("orphan_rate") or -1) > 20.0:
+                reasons.append(f"orphan_rate={rel.get('orphan_rate')}")
+        except (TypeError, ValueError):
+            pass
+        if str(rel.get("relationship_type") or "").lower() == "many_to_many":
+            reasons.append("many_to_many")
+        if str(rel.get("validation_status") or "").lower() == "warning":
+            reasons.append("validation_status=warning")
+        conflicts.append({
+            "conflict_key": conflict_key("high_risk_join_edge", rel["canonical_id"]),
+            "code": "high_risk_join_edge",
+            "severity": "WARNING",
+            "object_type": "relationship",
+            "object_id": rel["canonical_id"],
+            "schema_name": "",
+            "table_name": "",
+            "origin": "entity_graph",
+            "message": (
+                f'Join {rel.get("from_entity")} -> {rel.get("to_entity")} carries '
+                f"elevated risk (score={round(weight, 2)}): {', '.join(reasons) or 'multiple factors'}."
+            ),
+            "evidence": {"risk_score": round(weight, 2), "reasons": reasons},
+            "suggestions": [
+                "Re-profile this relationship, or add a pre-aggregation step before joining on it.",
+            ],
+        })
+
+    return conflicts
+
+
+def detect_cross_schema_term_collisions(contract: dict[str, Any]) -> list[dict[str, Any]]:
+    """
+    A single business_term's OWN tables_involved declaration spans more
+    than one schema — e.g. one term named "active customer" listing both
+    PHARMACY.DIM_CUSTOMER and PROFITABILITY.DIM_CUSTOMER. That is a
+    different failure mode from detect_synonym_collisions' phrase check
+    (which compares DIFFERENT term rows against each other): here, ONE
+    term row's own declared scope is internally inconsistent, suggesting
+    either the canonical_expression is ambiguous about which schema's
+    table it actually means, or two distinct schema-local business
+    concepts were merged into a single term definition — precisely
+    "same term resolves to multiple schema-local meanings."
+
+    Scoped to business terms only for this pass: metrics' required_columns
+    are bare column names with no schema qualification available to check
+    (see detect_metric_column_existence for what IS checked on metrics),
+    and allowed_dimensions is unstructured admin free text (see that
+    field's actual Form() definition in admin/routes.py) with no reliable
+    tokenization — validating it here would risk false positives on
+    business-friendly labels that don't literally match a column name.
+    """
+    conflicts: list[dict[str, Any]] = []
+    for term in contract.get("terms") or []:
+        if not isinstance(term, dict) or not term.get("canonical_id"):
+            continue
+        involved = [t.strip() for t in str(term.get("tables_involved") or "").split(",") if t.strip()]
+        if len(involved) < 2:
+            continue
+        schemas = {_table_schema_part(t) for t in involved}
+        schemas.discard("")
+        if len(schemas) < 2:
+            continue
+        conflicts.append({
+            "conflict_key": conflict_key("cross_schema_term_scope", term["canonical_id"]),
+            "code": "cross_schema_term_scope",
+            "severity": "WARNING",
+            "object_type": "business_term",
+            "object_id": term["canonical_id"],
+            "schema_name": ", ".join(sorted(schemas)),
+            "table_name": ", ".join(involved),
+            "origin": "business_terms",
+            "message": (
+                f'Business term "{term.get("term")}" spans {len(schemas)} different '
+                f"schemas ({', '.join(sorted(schemas))}) — confirm this is one concept, "
+                "not two schema-local meanings sharing a name."
+            ),
+            "evidence": {"tables_involved": involved, "schemas": sorted(schemas)},
+            "suggestions": [
+                "Split into one term per schema if these are actually different concepts.",
+                "If genuinely one cross-schema concept, leave as-is — this is informational.",
+            ],
+        })
+    return conflicts
+
+
+def _table_schema_part(table_ref: str) -> str:
+    """Best-effort schema segment from a 2-or-3-part table identifier
+    ("SCHEMA.TABLE" or "DB.SCHEMA.TABLE"). Empty for a bare table name —
+    nothing to compare, not a false "different schema" signal."""
+    parts = str(table_ref or "").upper().strip().split(".")
+    return parts[-2] if len(parts) >= 2 else ""
+
+
+def detect_metric_column_existence(contract: dict[str, Any]) -> list[dict[str, Any]]:
+    """
+    A metric's required_columns token (see core/metric_scope.py's own
+    tokenizer, reused here for consistency) does not exist as a column
+    anywhere in the compiled semantic model — the metric's base_table is
+    otherwise resolvable (see detect_stale_references for the case where
+    the table itself can't be found at all), but this specific column
+    can't be found on ANY table the model knows about.
+
+    Checked against the WHOLE model, not just base_table's own fields:
+    a required column legitimately sourced from a joined table (not the
+    metric's own base_table) is common and must not be flagged as broken.
+    Only a column absent from the ENTIRE compiled model is reported — the
+    strongest, lowest-false-positive signal that it's a typo or references
+    a table outside the KB's current scope, hence WARNING (not ERROR):
+    the compiled model's column universe may itself be incomplete relative
+    to the live database, so this is "worth checking", not proof of a
+    broken metric.
+    """
+    from core.metric_scope import _split_required_columns
+
+    conflicts: list[dict[str, Any]] = []
+    known_columns: set[str] = set()
+    for table in (contract.get("model") or {}).get("tables") or []:
+        if not isinstance(table, dict):
+            continue
+        for field in table.get("fields") or []:
+            if isinstance(field, dict) and field.get("column"):
+                known_columns.add(str(field["column"]).upper())
+
+    if not known_columns:
+        return conflicts  # no model to check against — nothing to say
+
+    table_lookup = _table_by_base_table(contract)
+    for metric in contract.get("metrics") or []:
+        if not isinstance(metric, dict) or not metric.get("canonical_id"):
+            continue
+        base_table = str(metric.get("base_table") or "").strip()
+        required = _split_required_columns(str(metric.get("required_columns") or ""))
+        if not base_table or not required:
+            continue
+        if not any(v in table_lookup for v in _table_fqn_variants(base_table)):
+            continue  # unresolvable table is detect_stale_references' concern
+        missing = sorted(col for col in required if col not in known_columns)
+        if not missing:
+            continue
+        conflicts.append({
+            "conflict_key": conflict_key(
+                "metric_column_not_found", metric["canonical_id"], *missing,
+            ),
+            "code": "metric_column_not_found",
+            "severity": "WARNING",
+            "object_type": "metric",
+            "object_id": metric["canonical_id"],
+            "schema_name": "",
+            "table_name": base_table,
+            "origin": "metric_registry",
+            "message": (
+                f'Metric "{metric.get("name") or metric.get("id")}" requires '
+                f"{', '.join(missing)}, not found on any table in the compiled model."
+            ),
+            "evidence": {"base_table": base_table, "missing_columns": missing},
+            "suggestions": [
+                "Fix the column name if it's a typo.",
+                "Add the source table to the KB scope if the column is legitimate but unmapped.",
+            ],
+        })
+
+    return conflicts
+
+
 # Registry of detectors run.py wires into the compiler. Each entry is a pure
 # function (contract) -> list[conflict dict]. New Sprint 2 detectors are
 # added here, not by editing core/semantic_contract.py.
@@ -648,6 +960,10 @@ DETECTORS: tuple[Any, ...] = (
     detect_duplicate_metric_names,
     detect_stale_references,
     detect_compliance_gaps,
+    detect_competing_join_paths,
+    detect_cardinality_fanout_risk,
+    detect_cross_schema_term_collisions,
+    detect_metric_column_existence,
 )
 
 
