@@ -73,6 +73,83 @@ def _compile_lock(account_id: str) -> threading.Lock:
         return _compile_locks.setdefault(account_id, threading.Lock())
 
 
+def _stamp_canonical_ids(body: dict[str, Any]) -> None:
+    """Attach a stable core.semantic_ids canonical_id to every compiled
+    semantic object, in place.
+
+    Purely additive — every existing key on every dict is left untouched, so
+    nothing that already reads these structures (runtime SQL generation, the
+    Model Health panels, admin routes) can be affected by this call. It runs
+    BEFORE contract_version is hashed, so the id becomes part of what the
+    version fingerprints — the same admin-approved state always mints the
+    same ids, and a real semantic edit changes the version exactly as it did
+    before.
+
+    This is Sprint 2's prerequisite, not Sprint 2 itself: no conflict
+    detection happens here. It only gives every future detector a stable way
+    to say "this field" instead of "the field named net_amt on whichever
+    table happened to come first" — which is what makes
+    store.reconcile_semantic_conflicts() able to recognize the same conflict
+    across two compiles instead of opening a duplicate every run.
+    """
+    from core.semantic_ids import (
+        date_role_id, entity_id, field_id, join_id, metric_id,
+        resolve_entity_table_fqn, table_id, term_id,
+    )
+
+    for metric in body.get("metrics") or []:
+        if isinstance(metric, dict) and metric.get("id") is not None:
+            metric["canonical_id"] = metric_id(metric["id"])
+
+    for term in body.get("terms") or []:
+        if isinstance(term, dict) and term.get("id") is not None:
+            term["canonical_id"] = term_id(term["id"])
+
+    model = body.get("model") or {}
+    for table in model.get("tables") or []:
+        if not isinstance(table, dict):
+            continue
+        table_fqn = str(table.get("qualified_name") or table.get("fqn") or "")
+        if table_fqn:
+            table["canonical_id"] = table_id(table_fqn)
+        for field in table.get("fields") or []:
+            if isinstance(field, dict) and table_fqn and field.get("column"):
+                field["canonical_id"] = field_id(table_fqn, field["column"])
+        for role in table.get("date_roles") or []:
+            if isinstance(role, dict) and role.get("fact_table") and role.get("fact_column"):
+                role["canonical_id"] = date_role_id(role["fact_table"], role["fact_column"])
+    # Top-level date_roles is a separate projection assembled from the same
+    # per-table records (see core/semantic_model.py) — after a JSON
+    # round-trip it is not guaranteed to share dict identity with the
+    # entries above, so it needs its own stamping pass even though both
+    # sides mint the identical id for the same physical column.
+    for role in model.get("date_roles") or []:
+        if isinstance(role, dict) and role.get("fact_table") and role.get("fact_column"):
+            role["canonical_id"] = date_role_id(role["fact_table"], role["fact_column"])
+
+    graph = body.get("graph") or {}
+    entity_fqn_by_name: dict[str, str] = {}
+    for entity in graph.get("entities") or []:
+        if not isinstance(entity, dict) or not entity.get("entity_name"):
+            continue
+        entity["canonical_id"] = entity_id(entity["entity_name"])
+        entity_fqn_by_name[str(entity["entity_name"]).upper()] = resolve_entity_table_fqn(entity)
+    for rel in graph.get("relationships") or []:
+        if isinstance(rel, dict) and rel.get("id") is not None:
+            rel["canonical_id"] = join_id(rel["id"])
+    for prop in graph.get("properties") or []:
+        if not isinstance(prop, dict) or not prop.get("column_name"):
+            continue
+        # entity_properties is keyed by entity_name, but field identity must
+        # be keyed by the PHYSICAL column so a graph property and a
+        # schema-derived model field describing the same column mint the
+        # SAME canonical id — resolve through the entity lookup built above
+        # rather than using entity_name as the id's table component.
+        table_fqn = entity_fqn_by_name.get(str(prop.get("entity_name") or "").upper())
+        if table_fqn:
+            prop["canonical_id"] = field_id(table_fqn, prop["column_name"])
+
+
 def _source_conflict(source: str, exc: Exception) -> dict[str, Any]:
     return {
         "conflict_key": f"source_unavailable:{source}",
@@ -170,6 +247,7 @@ def _compile_contract_internal(
         },
     }
 
+    _stamp_canonical_ids(body)
     contract_version = _hash(body)
     contract = {
         "meta": {
