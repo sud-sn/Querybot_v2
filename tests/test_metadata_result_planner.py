@@ -163,10 +163,13 @@ class MetadataResultPlannerWiringTests(unittest.TestCase):
         end = source.index("\n    try:\n        while True:", start)
         block = source[start:end]
         self.assertIn('component="result_metadata_planner"', block)
-        self.assertIn('"rows_sent_to_llm": 0', block)
-        self.assertIn('"sample_values_sent_to_llm": 0', block)
+        self.assertIn("run_governed_result_followup(", block)
         self.assertNotIn("get_stats(", block)
-        self.assertNotIn("sample_values", block.split("evidence =", 1)[0])
+        governed = (ROOT / "core" / "governed_result_followup.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('"rows_sent_to_llm": 0', governed)
+        self.assertIn('"sample_values_sent_to_llm": 0', governed)
 
 
 if __name__ == "__main__":

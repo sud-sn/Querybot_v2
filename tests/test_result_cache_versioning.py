@@ -122,12 +122,12 @@ class ResultCacheVersioningWiringTests(unittest.TestCase):
         self.assertIn('"result_cache_stale"', block)
 
     def test_send_results_call_sites_pass_contract_version(self):
-        # All three _send_results() call sites (duckdb-cache route,
+        # All three _send_results() call sites (governed-cache route,
         # metric-registry route, main LLM-SQL route) must stamp the result
         # they cache with the version that was live when it was produced.
         for anchor, next_call in (
             (
-                "await _send_results(event, adapter, question, _duck_rows, _duck_sql,",
+                "await _send_results(\n                event,\n                adapter,\n                question,\n                _cache_rows,",
                 "await _send_results(event, adapter, question, rows, sql_from_metric,",
             ),
             (

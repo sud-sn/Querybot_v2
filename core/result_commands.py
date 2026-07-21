@@ -320,9 +320,12 @@ def execute_result_command(
 
         if command.action == "keep_top":
             limit = int(command.limit or 1)
-            transform_sql = "SELECT * FROM result LIMIT ?"
+            # ``limit`` is locally parsed and clamped to 1..1000. DuckDB does
+            # not consistently preserve parameterized LIMIT clauses through
+            # the cache validator/fallback path, so emit the safe integer.
+            transform_sql = f"SELECT * FROM result LIMIT {limit}"
             transformed = cache.query(
-                session_id, transform_sql, result_id=source_id, parameters=[limit],
+                session_id, transform_sql, result_id=source_id,
             )
             if not transformed and rows:
                 transformed = rows[:limit]

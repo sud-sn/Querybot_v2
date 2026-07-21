@@ -616,6 +616,9 @@ class ResultCache:
             # Preserve the original schema even when every row is excluded.
             entry.stored_at = time.monotonic()
             entry.row_token_nonce = secrets.token_hex(16)
+            # The selected result is now the active portal result. Keep the
+            # session pointer aligned even when the user edited an older card.
+            self._store[session_id] = entry
             self._store.move_to_end(session_id)
             after = len(entry.rows)
             new_tokens = [

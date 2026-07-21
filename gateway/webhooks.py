@@ -21,22 +21,22 @@ from fastapi.responses import JSONResponse, Response
 from gateway import get_adapter, PlatformEvent
 from core.webhook_dedup import is_duplicate_event, remember_event
 from core.dispatcher import dispatch
-from core.query_pipeline import handle_query, _generate_duckdb_sql
+from core.query_pipeline import handle_query
 from core.pipeline_context import get_state, get_client_db
 from core.pipeline_trace import (
     _log_q, _trace_create, _trace_update, _trace_step, _trace_finish,
 )
 from core.pipeline_helpers import _extract_kb_synonym_injection
 from core.result_renderer import (
-    _sanitize_rows, _generate_result_narration, _result_has_identifiers,
-    _build_followup_sql_context, _build_cannot_generate_hint,
+    _sanitize_rows, _result_has_identifiers, _build_metadata_followup_context,
+    _build_cannot_generate_hint,
     _inject_distinct_if_needed,
 )
 from core.result_cache import result_cache
 from core.result_commands import parse_result_command, execute_result_command
+from core.governed_result_followup import adopt_cached_snapshot, run_governed_result_followup
 from core.result_planner import (
     is_metadata_result_question,
-    plan_result_command,
     strip_result_context,
 )
 from core.schema import run_query, load_known_tables, load_schema_columns
@@ -44,8 +44,6 @@ from core.knowledge import load_retriever
 from core.validator import validate_sql
 from core.llm import llm_complete, build_sql_system_prompt, resolve_provider
 from core.llm_audit import llm_audit_scope, make_llm_audit_request_id
-from core.query_router import build_duckdb_system_prompt
-from core.duckdb_sql_validator import validate_duckdb_result_sql
 from core.query_semantics import analyze_query_intent, build_generic_query_hints
 from core.graph_resolver import resolve_for_question as _graph_resolve
 from core.chart import detect_chart_type, build_chart_payload
@@ -471,6 +469,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
     async def _run_local_result_command(
         text: str, command, table_hint: str = "", schema_hint: str = "",
         planner_evidence: dict | None = None,
+        precomputed_outcome=None,
     ) -> None:
         """Apply a conservative, deterministic command to the latest result.
 
@@ -511,7 +510,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
         )
         try:
             source_result_id = getattr(adapter, "last_result_id", None)
-            outcome = execute_result_command(
+            outcome = precomputed_outcome or execute_result_command(
                 session_id,
                 command,
                 source_result_id=source_result_id,
@@ -616,18 +615,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 response["result_command"]["planner"] = planner_evidence
                 response["trust"]["planner"] = planner_evidence
 
-            previous = getattr(adapter, "last_result", None)
-            if not isinstance(previous, dict):
-                previous = {}
-            previous.update({
-                "rows": rows,
-                "result_id": outcome.derived_result_id,
-                "column_formats": column_formats,
-                "result_operation": outcome.operation,
-            })
-            adapter.last_result = previous
-            adapter.last_result_id = outcome.derived_result_id
-            adapter.last_question_id = question_id
+            adopt_cached_snapshot(adapter, snapshot, question_id=question_id)
 
             with llm_audit_scope(
                 account_id=account_id,
@@ -730,36 +718,29 @@ async def ws_chat(websocket: WebSocket, account_id: str):
             question_id=getattr(adapter, "last_question_id", None) or "",
             component="result_metadata_planner",
         ):
-            planned = await plan_result_command(
+            followup = await run_governed_result_followup(
                 text,
-                snapshot,
-                _complete_metadata_plan,
+                session_id,
+                complete=_complete_metadata_plan,
+                source_result_id=source_result_id,
             )
 
-        if planned.ok and planned.command is not None:
-            evidence = {
-                "mode": "metadata_only",
-                "rows_sent_to_llm": 0,
-                "sample_values_sent_to_llm": 0,
-                "source_sql_sent_to_llm": False,
-                "literal_binding_count": planned.binding_count,
-                "literal_values_logged": 0,
-                "column_count_disclosed": int(planned.metadata.get("column_count_disclosed") or 0),
-                "row_count_disclosed": int(planned.metadata.get("row_count_disclosed") or 0),
-                "planner_request_id": planner_request_id,
-            }
+        if followup.executed and followup.command is not None:
+            evidence = dict(followup.evidence)
+            evidence["planner_request_id"] = planner_request_id
             await _run_local_result_command(
                 text,
-                planned.command,
+                followup.command,
                 table_hint,
                 schema_hint,
                 planner_evidence=evidence,
+                precomputed_outcome=followup.outcome,
             )
             return
 
         # A locally bound literal may be regulated. If planning cannot safely
         # compile it, do not let the original wording fall into another LLM.
-        if planned.binding_count:
+        if followup.status == "blocked":
             async with adapter.send_lock:
                 await websocket.send_json({
                     "type": "assistant_error",
@@ -888,12 +869,22 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 )
                 try:
                     session_id = getattr(adapter, "session_id", "") or ""
-                    excluded = result_cache.exclude_rows(session_id, row_tokens)
+                    excluded = result_cache.exclude_rows(
+                        session_id,
+                        row_tokens,
+                        result_id=result_id or None,
+                    )
+                    excluded_snapshot = result_cache.get_snapshot(
+                        session_id,
+                        result_id or None,
+                    )
+                    adopt_cached_snapshot(
+                        adapter,
+                        excluded_snapshot,
+                        question_id=question_id,
+                    )
                     safe_rows = _sanitize_rows(excluded["rows"])
                     duration_ms = int(time.time() * 1000) - start_ms
-
-                    if isinstance(getattr(adapter, "last_result", None), dict):
-                        adapter.last_result["rows"] = excluded["rows"]
 
                     chart_payload = None
                     try:
@@ -1058,22 +1049,170 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                         })
                         continue
 
-                    _rc_schema      = result_cache.get_schema(_sid)
-                    _rc_stats       = result_cache.get_stats(_sid)
-                    _rc_currency    = result_cache.get_currency_columns(_sid)
-                    _rc_formats     = result_cache.get_column_formats(_sid)
+                    _rc_source_id = (
+                        rc_result_id
+                        if result_cache.has_result(_sid, result_id=rc_result_id)
+                        else getattr(adapter, "last_result_id", None)
+                    )
+                    _rc_snapshot = result_cache.get_snapshot(_sid, _rc_source_id)
+                    _rc_schema = list(_rc_snapshot.get("schema") or [])
+                    _rc_stats: dict = {}
+                    _rc_formats = dict(_rc_snapshot.get("column_formats") or {})
+                    _rc_currency = [
+                        name for name, value in _rc_formats.items()
+                        if str(value).lower() == "currency"
+                    ]
                     _rc_db_cfg      = get_client_db(account_id) or {}
                     _rc_history     = _result_chat_histories.get(rc_result_id, [])
 
-                    _rc_sys = build_duckdb_system_prompt(
-                        _rc_schema,
-                        db_type   = _rc_db_cfg.get("db_type", "azure_sql"),
-                        data_stats= _rc_stats,
-                        history   = _rc_history,
+                    _rc_provider, _rc_model, _rc_key, _rc_az = resolve_provider(
+                        client, purpose="query"
                     )
-                    _rc_sql = await _generate_duckdb_sql(rc_question, _rc_sys, client)
-                    _trace_update(_rc_trace_id, generated_sql=_rc_sql, db_type="duckdb")
-                    _trace_step(_rc_trace_id, "llm_generate_sql", output_summary={"sql": (_rc_sql or "")[:300]})
+
+                    async def _complete_result_plan(**kwargs):
+                        return await llm_complete(
+                            provider=_rc_provider,
+                            model=_rc_model,
+                            api_key=_rc_key,
+                            **kwargs,
+                            **_rc_az,
+                        )
+
+                    _rc_planner_request_id = make_llm_audit_request_id()
+                    with llm_audit_scope(
+                        account_id=account_id,
+                        question="Plan a cached-result analysis from metadata",
+                        enabled=bool(client.get("enable_llm_audit")),
+                        request_id=_rc_planner_request_id,
+                        question_id=_rc_question_id,
+                        component="result_metadata_planner",
+                    ):
+                        _rc_followup = await run_governed_result_followup(
+                            rc_question,
+                            _sid,
+                            complete=_complete_result_plan,
+                            source_result_id=_rc_source_id,
+                        )
+
+                    _trace_step(
+                        _rc_trace_id,
+                        "governed_result_followup",
+                        output_summary={
+                            "status": _rc_followup.status,
+                            **_rc_followup.evidence,
+                        },
+                        status="success" if _rc_followup.executed else "error",
+                    )
+
+                    if _rc_followup.executed and _rc_followup.outcome is not None:
+                        _rc_outcome = _rc_followup.outcome
+                        _derived = _rc_outcome.snapshot
+                        _rc_rows = _sanitize_rows(list(_derived.get("rows") or []))
+                        _rc_sql = str(_derived.get("sql") or "")
+                        _rc_formats = dict(_derived.get("column_formats") or {})
+                        _rc_currency = [
+                            name for name, value in _rc_formats.items()
+                            if str(value).lower() == "currency"
+                        ]
+                        _rc_dur_ms = int(time.time() * 1000) - _rc_start_ms
+
+                        _rc_chart = None
+                        try:
+                            _rc_chart_type = detect_chart_type(
+                                _rc_rows,
+                                question=rc_question,
+                                column_formats=_rc_formats,
+                            )
+                            if _rc_chart_type:
+                                _rc_chart = build_chart_payload(
+                                    _rc_rows,
+                                    _rc_chart_type,
+                                    title=rc_question,
+                                    question=rc_question,
+                                    column_formats=_rc_formats,
+                                )
+                        except Exception:
+                            pass
+
+                        adopt_cached_snapshot(
+                            adapter,
+                            _derived,
+                            question_id=_rc_question_id,
+                        )
+
+                        _rc_history.append({
+                            "question": rc_question,
+                            "row_count": len(_rc_rows),
+                            "operation": _rc_outcome.operation,
+                        })
+                        _result_chat_histories[rc_result_id] = _rc_history[-5:]
+                        _log_q(
+                            account_id, rc_question, _rc_sql, len(_rc_rows), True, "",
+                            "governed_result_cache", "duckdb", 0, 0, _rc_dur_ms,
+                            portal_user_id=_rc_pu_id, zoom_user_id=zoom_user_id,
+                            question_id=_rc_question_id,
+                            parent_question_id=_rc_parent_qid,
+                        )
+                        await websocket.send_json({
+                            "type": "result_chat_response",
+                            "result_id": _rc_outcome.derived_result_id,
+                            "parent_result_id": _rc_outcome.source_result_id,
+                            "question": rc_question,
+                            "sql": _rc_sql,
+                            "rows": _rc_rows,
+                            "row_count": len(_rc_rows),
+                            "source": "governed_cache",
+                            "source_note": (
+                                "Computed locally from the cached result. "
+                                "No result values were sent to the model."
+                            ),
+                            "currency_columns": _rc_currency,
+                            "column_formats": _rc_formats,
+                            "chart": _rc_chart,
+                            "narration": _rc_outcome.message or None,
+                            "trust": _rc_followup.evidence,
+                        })
+                        _trace_finish(
+                            _rc_trace_id,
+                            status="success",
+                            answer_type="table",
+                            row_count=len(_rc_rows),
+                            duration_ms=_rc_dur_ms,
+                            final_answer_summary=(
+                                "Result-chat answered from governed session cache"
+                            ),
+                        )
+                        continue
+
+                    if _rc_followup.status in {"blocked", "error", "missing"}:
+                        detail = (
+                            "The request was stopped locally. No cached rows, sample values, "
+                            "source SQL, or bound literals were sent to the model."
+                            if _rc_followup.status == "blocked"
+                            else "Run the business question again or use an exact result column."
+                        )
+                        await websocket.send_json({
+                            "type": "result_chat_error",
+                            "result_id": rc_result_id,
+                            "content": _rc_followup.reason or "The cached result could not be updated.",
+                            "detail": detail,
+                        })
+                        _trace_finish(
+                            _rc_trace_id,
+                            status="error",
+                            answer_type="cache_transform_error",
+                            error_message=_rc_followup.reason,
+                        )
+                        continue
+
+                    # The metadata-only cache engine cannot answer this request.
+                    # Continue through the governed production database fallback.
+                    _rc_sql = "CANNOT_GENERATE"
+                    _trace_update(
+                        _rc_trace_id,
+                        route="result_chat_db_fallback",
+                        sql_validation_status="cannot_generate",
+                    )
 
                     # ── DuckDB CANNOT_GENERATE → fallback to production DB ────
                     if not _rc_sql or _rc_sql.strip().upper() == "CANNOT_GENERATE":
@@ -1269,25 +1408,16 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                         _fb_hist_lines.append(
                                             f"  Q: {_ht.get('question','')[:80]}"
                                         )
-                                        if _ht.get("sql"):
-                                            _fb_hist_lines.append(
-                                                f"  SQL: {_ht['sql'][:120]}"
-                                            )
                                     _fb_system = _fb_system + "\n\n" + "\n".join(_fb_hist_lines)
 
                                 # Original SQL anchor — unified for both aggregate and
                                 # identifier results. The LLM can use it as a subquery,
                                 # CTE, or just keep the same WHERE conditions.
-                                _prev_rows = _cached_result.get("rows") or []
-                                _orig_sql  = _cached_result.get("sql", "")
                                 _orig_q    = _cached_result.get("question", "")
-                                _drill_ctx = _build_followup_sql_context(
-                                    original_sql      = _orig_sql,
+                                _drill_ctx = _build_metadata_followup_context(
                                     original_question = _orig_q,
                                     follow_up_question= rc_question,
-                                    prev_rows         = _prev_rows,
                                     schema            = _rc_schema,
-                                    has_identifiers   = _fb_has_ids,
                                 )
                                 if _drill_ctx:
                                     _fb_system = _fb_system + "\n\n---\n\n" + _drill_ctx
@@ -1491,104 +1621,6 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                             })
                         continue
 
-                    # ── DuckDB answered — run query ───────────────────────────
-                    _rc_verdict = validate_duckdb_result_sql(_rc_sql)
-                    _trace_update(
-                        _rc_trace_id,
-                        sql_validation_status="pass" if _rc_verdict.ok else "fail",
-                        sql_validation_error="" if _rc_verdict.ok else _rc_verdict.reason,
-                    )
-                    _trace_step(
-                        _rc_trace_id,
-                        "validate_sql",
-                        input_summary=_rc_sql,
-                        output_summary=_rc_verdict.reason,
-                        status="success" if _rc_verdict.ok else "error",
-                        metadata={"code": _rc_verdict.code},
-                    )
-                    if not _rc_verdict.ok:
-                        raise ValueError(f"DuckDB SQL rejected: {_rc_verdict.reason}")
-                    _rc_rows   = _sanitize_rows(result_cache.query(_sid, _rc_sql))
-                    _rc_dur_ms = int(time.time() * 1000) - _rc_start_ms
-                    _trace_step(_rc_trace_id, "execute_sql", input_summary=_rc_sql, output_summary={"rows": len(_rc_rows)}, duration_ms=_rc_dur_ms)
-
-                    _log_q(account_id, rc_question, _rc_sql, len(_rc_rows), True, "",
-                           "result_chat", "duckdb", 0, 0, _rc_dur_ms,
-                           portal_user_id=_rc_pu_id, zoom_user_id=zoom_user_id,
-                           question_id=_rc_question_id,
-                           parent_question_id=_rc_parent_qid)
-
-                    # Update multi-turn history for this result card
-                    _rc_history.append({
-                        "question":  rc_question,
-                        "sql":       _rc_sql,
-                        "row_count": len(_rc_rows),
-                    })
-                    _result_chat_histories[rc_result_id] = _rc_history[-5:]
-
-                    # Auto-chart detection
-                    _rc_chart = None
-                    try:
-                        _rc_chart_type = detect_chart_type(
-                            _rc_rows,
-                            question=rc_question,
-                            column_formats=_rc_formats,
-                        )
-                        if _rc_chart_type:
-                            _rc_chart = build_chart_payload(
-                                _rc_rows,
-                                _rc_chart_type,
-                                title=rc_question,
-                                question=rc_question,
-                                column_formats=_rc_formats,
-                            )
-                    except Exception:
-                        pass
-
-                    # 1-sentence narration (lightweight LLM call, silent on failure).
-                    # Regulated tenants skip this unconditionally — the LLM's only
-                    # job for them is writing SQL, never seeing the answer rows.
-                    from core.compliance.policy_engine import result_llm_features_allowed
-                    if result_llm_features_allowed(account_id):
-                        _rc_narration = await _generate_result_narration(
-                            rc_question, _rc_rows, _rc_currency, client
-                        )
-                    else:
-                        with llm_audit_scope(
-                            account_id=account_id,
-                            question=rc_question,
-                            enabled=bool(client.get("enable_llm_audit")),
-                            request_id=make_llm_audit_request_id(),
-                            question_id=_rc_question_id,
-                            component="result_narration",
-                        ):
-                            from core.llm_audit import record_llm_blocked
-                            record_llm_blocked(
-                                "result_narration",
-                                "result narration blocked — regulated tenant, LLM never received result rows.",
-                            )
-                        _rc_narration = ""
-
-                    await websocket.send_json({
-                        "type":             "result_chat_response",
-                        "result_id":        rc_result_id,
-                        "question":         rc_question,
-                        "sql":              _rc_sql,
-                        "rows":             _rc_rows,
-                        "row_count":        len(_rc_rows),
-                        "source":           "cache",
-                        "currency_columns": _rc_currency,
-                        "column_formats":   _rc_formats,
-                        "chart":            _rc_chart,
-                        "narration":        _rc_narration or None,
-                    })
-                    _trace_finish(_rc_trace_id, status="success", answer_type="table", row_count=len(_rc_rows), duration_ms=_rc_dur_ms, final_answer_summary="Result-chat answered from DuckDB cache")
-                    log.info(
-                        "result_chat answered %r → %d rows via DuckDB (parent=%s, "
-                        "chart=%s, narration=%s)",
-                        rc_question[:60], len(_rc_rows), _rc_parent_qid[:16] or "none",
-                        bool(_rc_chart), bool(_rc_narration),
-                    )
 
                 except Exception as _rce:
                     log.warning("result_chat error: %s", _rce)

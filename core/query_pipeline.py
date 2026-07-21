@@ -3,9 +3,8 @@ core/query_pipeline.py
 ──────────────────────
 Main query pipeline extracted from main.py.
 
-Covers:
-  • _generate_duckdb_sql  — LLM-backed DuckDB SELECT for result-cache queries
-  • handle_query()        — full query pipeline (~1,100 lines)
+Covers the full governed query pipeline, including metadata-only cached-result
+follow-ups and governed source-query fallback.
 """
 
 from __future__ import annotations
@@ -33,8 +32,8 @@ from core.query_semantics import (
 from core.graph_resolver import resolve_for_question as _graph_resolve
 from core.llm_audit import llm_audit_scope, make_llm_audit_request_id
 from core.result_cache import result_cache
-from core.query_router import should_route_to_result_cache, build_duckdb_system_prompt
-from core.duckdb_sql_validator import validate_duckdb_result_sql
+from core.query_router import should_route_to_result_cache
+from core.governed_result_followup import adopt_cached_snapshot, run_governed_result_followup
 from core.semantic_planner import build_semantic_field_plan
 from core.semantic_model import (
     build_runtime_semantic_context, build_runtime_semantic_plan,
@@ -106,45 +105,6 @@ def _graph_entities_for_verified_values(resolved: dict, graph: dict) -> set[str]
             if name:
                 matched.add(name)
     return matched
-
-# ══════════════════════════════════════════════════════════════════════════════
-# DuckDB helper — generate SQL for in-memory result cache queries
-# ══════════════════════════════════════════════════════════════════════════════
-
-async def _generate_duckdb_sql(question: str, system_prompt: str, client: dict) -> str:
-    """
-    Use the LLM to generate a DuckDB SELECT query for the virtual `result` table.
-
-    Returns the raw SQL string, or "CANNOT_GENERATE" if the LLM signals it
-    cannot answer the question from the cached data.
-    """
-    try:
-        provider, model, api_key, az_kwargs = resolve_provider(client, purpose="query")
-        sql, _, _ = await llm_complete(
-            system=system_prompt,
-            user=question,
-            provider=provider,
-            model=model,
-            api_key=api_key,
-            temperature=0.0,
-            max_tokens=512,
-            **az_kwargs,
-        )
-        return (sql or "").strip()
-    except Exception as exc:
-        log.warning("_generate_duckdb_sql failed: %s", exc)
-        return "CANNOT_GENERATE"
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Why/causal insight — channel-agnostic follow-through
-# ══════════════════════════════════════════════════════════════════════════════
-# "Why did revenue drop last month?" used to get a real causal analysis only on
-# the portal, and only when a previous result was still cached — on Teams/Zoom/
-# Slack (or with no cached result) it became a plain SQL attempt that cannot
-# answer causality. Now: the factual query runs first as usual, then the same
-# analysis engine that powers the portal's "why" follow-ups runs on the fresh
-# rows and its narrative is sent as a second message on ANY channel.
 
 def _format_insight_markdown(insight: dict) -> str:
     """Render an assistant_analysis payload as chat-channel markdown.
@@ -536,126 +496,151 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                     "regulated_cache_read",
                     output_summary={"reason": cache_decision.reason_code},
                 )
-    if _session_id and should_route_to_result_cache(question, result_cache.has_result(_session_id), cached_col_names=_cached_cols):
-        _trace_update(trace_id, route="duckdb_cache")
-        _trace_step(trace_id, "route", output_summary="duckdb_cache")
-        log.info("Routing to DuckDB result cache for session %s", _session_id[:16])
+    _route_to_cached_result = bool(
+        _session_id
+        and should_route_to_result_cache(
+            question,
+            result_cache.has_result(_session_id),
+            cached_col_names=_cached_cols,
+        )
+    )
+    if _route_to_cached_result:
+        _trace_update(trace_id, route="governed_result_cache")
+        _trace_step(trace_id, "route", output_summary="governed_result_cache")
+        await _send_live_stage(
+            adapter,
+            event,
+            "retrieving_context",
+            "Analysing results",
+            "Running a governed analysis on the previously returned data.",
+        )
 
-        # Regulated tenants: the cache_read check above only governs whether
-        # the cache may be used at all (its default rule always allows it) —
-        # it does not verify a BAA for whatever's actually IN the cached
-        # table before building a new prompt that embeds sample values from
-        # it. Re-derive the resources from the ORIGINAL cached SQL (not just
-        # the user's broader effective-table scope, which the front-door
-        # llm_context check above already covers) and re-run the same
-        # BAA/prohibited-data check specifically scoped to this cache entry.
-        if compliance_profile.get("mode") == "regulated":
-            _cached_sql = result_cache.get_sql(_session_id)
-            if _cached_sql:
-                from core.compliance.sql_guard import analyze_sql
+        _cache_provider, _cache_model, _cache_key, _cache_az = resolve_provider(
+            client, purpose="query"
+        )
 
-                _cache_analysis = analyze_sql(_cached_sql, db_cfg.get("db_type", "azure_sql"))
-                _cache_llm_context = resolve_context(
-                    account_id, portal_user, action="llm_context",
-                    channel=getattr(event, "platform", "") or "portal",
-                    purpose_id=compliance_context.purpose_id, provider=provider,
-                    break_glass_grant_id=compliance_context.break_glass_grant_id,
-                )
-                _cache_llm_decision = evaluate_policy(_cache_llm_context, _cache_analysis.resources)
-                _trace_step(
-                    trace_id, "duckdb_cache_llm_context",
-                    output_summary={
-                        "allowed": _cache_llm_decision.effective_allowed,
-                        "reason": _cache_llm_decision.reason_code,
-                    },
-                    status="success" if _cache_llm_decision.effective_allowed else "error",
-                )
-                if not _cache_llm_decision.effective_allowed:
-                    with llm_audit_scope(
-                        account_id=account_id, question=question,
-                        enabled=bool(client.get("enable_llm_audit")),
-                        request_id=make_llm_audit_request_id(),
-                        question_id=audit_request_id, component="duckdb_cache",
-                    ):
-                        from core.llm_audit import record_llm_blocked
-                        record_llm_blocked(
-                            "duckdb_cache",
-                            f"DuckDB follow-up blocked — {_cache_llm_decision.explanation}",
-                        )
-                    _trace_finish(
-                        trace_id, status="error", answer_type="policy_denied",
-                        error_message=_cache_llm_decision.explanation,
-                    )
-                    await adapter.send_message(
-                        event,
-                        "This request is blocked by the workspace data policy. "
-                        f"Reason: {_cache_llm_decision.explanation}",
-                    )
-                    return
-
-        await _send_live_stage(adapter, event, "retrieving_context", "Analysing results", "Running analytics on the previously returned data.")
-        try:
-            _duck_schema = result_cache.get_schema(_session_id)
-            _duck_stats  = result_cache.get_stats(_session_id)
-            _duck_sys_prompt = build_duckdb_system_prompt(
-                _duck_schema,
-                db_type    = db_cfg.get("db_type", "azure_sql"),
-                data_stats = _duck_stats,
+        async def _complete_cache_plan(**kwargs):
+            return await llm_complete(
+                provider=_cache_provider,
+                model=_cache_model,
+                api_key=_cache_key,
+                **kwargs,
+                **_cache_az,
             )
-            _duck_sql = await _generate_duckdb_sql(question, _duck_sys_prompt, client)
-            if _duck_sql and _duck_sql.strip().upper() != "CANNOT_GENERATE":
-                _duck_verdict = validate_duckdb_result_sql(_duck_sql)
-                _trace_update(
-                    trace_id,
-                    generated_sql=_duck_sql,
-                    sql_validation_status="pass" if _duck_verdict.ok else "fail",
-                    sql_validation_error="" if _duck_verdict.ok else _duck_verdict.reason,
-                )
-                _trace_step(
-                    trace_id,
-                    "validate_sql",
-                    input_summary=_duck_sql,
-                    output_summary=_duck_verdict.reason,
-                    status="success" if _duck_verdict.ok else "error",
-                    metadata={"code": _duck_verdict.code},
-                )
-                if not _duck_verdict.ok:
-                    raise ValueError(f"DuckDB SQL rejected: {_duck_verdict.reason}")
-                await _send_live_stage(adapter, event, "executing_query", "Running query", "Querying in-memory result set.")
-                _duck_rows = result_cache.query(_session_id, _duck_sql)
-                if _duck_rows is not None:
-                    duration_ms = int(time.time() * 1000) - start_ms
-                    _log_q(account_id, question, _duck_sql, len(_duck_rows), True, "",
-                           "duckdb_cache", "duckdb", 0, 0, duration_ms,
-                           portal_user_id=pu_id, zoom_user_id=zid,
-                           question_id=audit_request_id)
-                    _add_history = getattr(adapter, "add_to_history", None)
-                    if callable(_add_history) and _duck_rows:
-                        _add_history(
-                            question=question,
-                            sql=_duck_sql,
-                            columns=list(_duck_rows[0].keys()) if _duck_rows else [],
-                            row_count=len(_duck_rows),
-                        )
-                    await _send_results(event, adapter, question, _duck_rows, _duck_sql,
-                                        duration_ms, portal_user, account_id, db_cfg,
-                                        question_id=audit_request_id,
-                                        explicit_column_formats=(
-                                            result_cache.get_column_formats(_session_id)
-                                        ),
-                                        contract_version=_contract_version)
-                    _trace_finish(
-                        trace_id,
-                        status="success",
-                        answer_type="table",
-                        row_count=len(_duck_rows),
-                        duration_ms=duration_ms,
-                        final_answer_summary="Answered from in-memory DuckDB result cache",
-                    )
-                    return
-        except Exception as _duck_exc:
-            log.warning("DuckDB cache route failed, falling through to normal pipeline: %s", _duck_exc)
-        # Fall through to normal pipeline if DuckDB routing fails
+
+        _planner_request_id = make_llm_audit_request_id()
+        with llm_audit_scope(
+            account_id=account_id,
+            question="Plan a cached-result analysis from metadata",
+            enabled=bool(client.get("enable_llm_audit")),
+            request_id=_planner_request_id,
+            question_id=audit_request_id,
+            component="result_metadata_planner",
+        ):
+            _cache_followup = await run_governed_result_followup(
+                question,
+                _session_id,
+                complete=_complete_cache_plan,
+                source_result_id=getattr(adapter, "last_result_id", None),
+            )
+
+        _trace_step(
+            trace_id,
+            "governed_result_followup",
+            output_summary={
+                "status": _cache_followup.status,
+                **_cache_followup.evidence,
+            },
+            status="success" if _cache_followup.executed else "error",
+        )
+
+        if _cache_followup.executed and _cache_followup.outcome is not None:
+            _cache_outcome = _cache_followup.outcome
+            _cache_snapshot = _cache_outcome.snapshot
+            _cache_rows = list(_cache_snapshot.get("rows") or [])
+            _cache_sql = str(_cache_snapshot.get("sql") or "")
+            _cache_formats = dict(_cache_snapshot.get("column_formats") or {})
+            _cache_duration = int(time.time() * 1000) - start_ms
+
+            adopt_cached_snapshot(
+                adapter,
+                _cache_snapshot,
+                question_id=audit_request_id,
+            )
+
+            _log_q(
+                account_id, question, _cache_sql, len(_cache_rows), True, "",
+                "governed_result_cache", "duckdb", 0, 0, _cache_duration,
+                portal_user_id=pu_id, zoom_user_id=zid,
+                question_id=audit_request_id,
+            )
+            await _send_results(
+                event,
+                adapter,
+                question,
+                _cache_rows,
+                _cache_sql,
+                _cache_duration,
+                portal_user,
+                account_id,
+                db_cfg,
+                question_id=audit_request_id,
+                explicit_column_formats=_cache_formats,
+                contract_version=_contract_version,
+                cache_result=False,
+            )
+            _trace_finish(
+                trace_id,
+                status="success",
+                answer_type="table",
+                row_count=len(_cache_rows),
+                duration_ms=_cache_duration,
+                final_answer_summary=(
+                    "Answered from the governed session cache; no result values were sent to the model"
+                ),
+            )
+            return
+
+        if _cache_followup.status == "blocked":
+            _trace_finish(
+                trace_id,
+                status="error",
+                answer_type="cache_transform_blocked",
+                error_message=_cache_followup.reason,
+            )
+            await adapter.send_message(
+                event,
+                "I could not safely apply that operation to the cached result. "
+                "Use an exact result column name or a row number. No cached values "
+                "were sent to the model or source database.",
+            )
+            return
+
+        if _cache_followup.status in {"error", "missing"}:
+            _trace_finish(
+                trace_id,
+                status="error",
+                answer_type="cache_transform_error",
+                error_message=_cache_followup.reason,
+            )
+            await adapter.send_message(
+                event,
+                _cache_followup.reason
+                or "The cached result could not be updated. Run the business question again.",
+            )
+            return
+        else:
+            _trace_step(
+                trace_id,
+                "governed_result_fallback",
+                output_summary={
+                    "reason": _cache_followup.reason,
+                    "cached_values_forwarded": False,
+                },
+            )
+
+    # Unsupported cache requests continue through the governed source-query pipeline.
+
 
     # ── Step 3: Metric registry — deterministic SQL for known metrics ────────
     # If the question matches a defined metric, assemble SQL without the LLM.
