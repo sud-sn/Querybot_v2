@@ -44,7 +44,9 @@ class CrossChannelSqlPlanReuseTests(unittest.TestCase):
                 db_type TEXT,
                 contract_version TEXT,
                 sql_validation_status TEXT,
-                status TEXT
+                status TEXT,
+                query_row_count INTEGER DEFAULT 0,
+                request_source TEXT DEFAULT ''
             );
             """
         )
@@ -64,9 +66,9 @@ class CrossChannelSqlPlanReuseTests(unittest.TestCase):
             """INSERT INTO answer_trace
                (id, account_id, question_id, selected_schema,
                 allowed_tables_snapshot, db_type, contract_version,
-                sql_validation_status, status)
+                sql_validation_status, status, query_row_count, request_source)
                VALUES (10, 'client-a', 'portal-q1', '', ?,
-                       'azure_sql', 'contract-v4', 'fail', 'success')""",
+                       'azure_sql', 'contract-v4', 'fail', 'success', 12, 'portal')""",
             ('["PHARMA_LAB.D_DATE", "PHARMA_LAB.F_INVENTORY_SNAPSHOT"]',),
         )
         self.db_patch = patch(
@@ -101,13 +103,61 @@ class CrossChannelSqlPlanReuseTests(unittest.TestCase):
         self.assertIsNotNone(plan)
         self.assertEqual(plan["query_log_id"], 1)
         self.assertIn("ON_HAND_QUANTITY", plan["sql_generated"])
+        self.assertEqual(plan["query_row_count"], 12)
+
+    def test_skips_newer_zero_row_plan_and_reuses_positive_plan(self):
+        self.conn.execute(
+            """INSERT INTO query_log
+               (id, account_id, question, sql_generated, success, question_id, created_at)
+               VALUES (2, 'client-a', ?, ?, 1, 'teams-q2', '2026-07-21 11:38:00')""",
+            (
+                "Which drugs have inventory expiring within 210 days?",
+                "SELECT fin.SNAPSHOT_DATE_ID FROM PHARMA_LAB.F_INVENTORY_SNAPSHOT fin "
+                "WHERE fin.SNAPSHOT_DATE_ID < 0",
+            ),
+        )
+        self.conn.execute(
+            """INSERT INTO answer_trace
+               (id, account_id, question_id, selected_schema,
+                allowed_tables_snapshot, db_type, contract_version,
+                sql_validation_status, status, query_row_count, request_source)
+               VALUES (20, 'client-a', 'teams-q2', 'PHARMA_LAB', ?,
+                       'azure_sql', 'contract-v4', 'pass', 'success', 0, 'teams')""",
+            ('["PHARMA_LAB.F_INVENTORY_SNAPSHOT"]',),
+        )
+
+        plan = self._find()
+        self.assertIsNotNone(plan)
+        self.assertEqual(plan["query_log_id"], 1)
+        self.assertEqual(plan["request_source"], "portal")
+
+    def test_reuses_plan_when_current_acl_authorizes_all_referenced_tables(self):
+        # Unrelated ACL differences between Portal and Teams must not split the
+        # plan pool when the SQL only references a table both users may access.
+        plan = self._find(allowed_tables=["PHARMA_LAB.F_INVENTORY_SNAPSHOT"])
+        self.assertIsNotNone(plan)
+        self.assertEqual(plan["query_log_id"], 1)
+
+    def test_catalog_qualified_sql_matches_schema_table_acl(self):
+        self.conn.execute(
+            """UPDATE query_log
+                  SET sql_generated=?
+                WHERE id=1""",
+            (
+                "SELECT fin.SNAPSHOT_DATE_ID FROM "
+                "CHATBOT_DB.PHARMA_LAB.F_INVENTORY_SNAPSHOT fin",
+            ),
+        )
+        self.assertIsNotNone(self._find(
+            allowed_tables=["PHARMA_LAB.F_INVENTORY_SNAPSHOT"],
+        ))
 
     def test_does_not_reuse_across_tenants(self):
         self.assertIsNone(self._find(account_id="client-b"))
 
     def test_does_not_reuse_when_schema_acl_dialect_or_contract_changes(self):
         self.assertIsNone(self._find(selected_schema="OTHER"))
-        self.assertIsNone(self._find(allowed_tables=["PHARMA_LAB.F_INVENTORY_SNAPSHOT"]))
+        self.assertIsNone(self._find(allowed_tables=["PHARMA_LAB.D_DATE"]))
         self.assertIsNone(self._find(db_type="snowflake"))
         self.assertIsNone(self._find(contract_version="contract-v5"))
 

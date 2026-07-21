@@ -1775,8 +1775,11 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                 sql = str(_reused_plan.get("sql_generated") or "")
                 tok_in = tok_out = 0
                 log.info(
-                    "Reused governed SQL plan for %s from trace=%s",
-                    account_id, _reused_plan.get("trace_id"),
+                    "Reused governed SQL plan for %s from trace=%s source=%s rows=%s",
+                    account_id,
+                    _reused_plan.get("trace_id"),
+                    _reused_plan.get("request_source") or "unknown",
+                    _reused_plan.get("query_row_count"),
                 )
             else:
                 sql, tok_in, tok_out = await llm_complete(
@@ -1797,6 +1800,9 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                     "tokens_out": tok_out,
                     "source_trace_id": _reused_plan.get("trace_id") if _reused_plan else None,
                     "source_query_log_id": _reused_plan.get("query_log_id") if _reused_plan else None,
+                    "source_request_source": _reused_plan.get("request_source") if _reused_plan else None,
+                    "source_row_count": _reused_plan.get("query_row_count") if _reused_plan else None,
+                    "authorization_match": "referenced_tables_subset" if _reused_plan else None,
                 },
                 duration_ms=int((time.time() - _llm_gen_t0) * 1000),
             )
@@ -2049,7 +2055,37 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
     else:
         last_reason, last_code = reason, code
 
-    retryable = (not ok and code in ("unknown_table", "unknown_column", "date_key_format", "dialect_mismatch", "production_shape", "period_comparison_shape", "anti_join_shape", "top_n_shape", "graph_plan_mismatch", "field_plan_mismatch", "metric_formula_mismatch", "null_aggregate_diagnostic", "parse", "multi_statement", "not_select")) or (exec_error is not None)
+    # A historically successful plan can become stale as source data, row
+    # policies, or semantic filters change. Do not present an unexplained empty
+    # result merely because the SQL came from the governed plan cache. Route it
+    # through the existing single repair/regeneration path; the regenerated SQL
+    # must still pass the current validator and policy executor.
+    if _reused_plan and ok and exec_error is None and rows is not None and len(rows) == 0:
+        last_code = "reused_plan_empty"
+        last_reason = (
+            "The reused governed SQL plan executed successfully but returned no rows "
+            "under the current data and policy scope. Generate a fresh governed plan."
+        )
+        _trace_step(
+            trace_id,
+            "reused_sql_plan_empty",
+            input_summary=sql,
+            output_summary={
+                "rows": 0,
+                "source_trace_id": _reused_plan.get("trace_id"),
+                "source_query_log_id": _reused_plan.get("query_log_id"),
+            },
+            status="error",
+        )
+        log.warning(
+            "Reusable SQL plan returned zero rows for %s (source_trace=%s); regenerating",
+            account_id,
+            _reused_plan.get("trace_id"),
+        )
+        rows = None
+        ok = False
+
+    retryable = (not ok and (last_code or code) in ("unknown_table", "unknown_column", "date_key_format", "dialect_mismatch", "production_shape", "period_comparison_shape", "anti_join_shape", "top_n_shape", "graph_plan_mismatch", "field_plan_mismatch", "metric_formula_mismatch", "null_aggregate_diagnostic", "parse", "multi_statement", "not_select", "reused_plan_empty")) or (exec_error is not None)
 
     if retryable:
         if exec_error is not None:
@@ -2217,6 +2253,15 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                     "- Include COUNT(metric_column) AS [NonNullMetricRows] for every SUM metric.\n"
                     "- Wrap every SUM metric with COALESCE(SUM(metric_column), 0) so missing values render as 0.\n"
                     "- Keep the user's filter value unchanged.\n"
+                )
+            elif last_code == "reused_plan_empty":
+                validation_repair_note = (
+                    "\nSTALE REUSED-PLAN REGENERATION REQUIRED:\n"
+                    "- The previous governed SQL was valid but returned zero rows under the current scope.\n"
+                    "- Generate a fresh query from the current Knowledge Base, semantic plan, date roles, and entity graph.\n"
+                    "- Preserve the user's metric, date range, and requested grain.\n"
+                    "- Do not repeat the same restrictive predicate or join path unless the current semantic plan explicitly requires it.\n"
+                    "- Use only exact tables, columns, approved metric formulas, and governed joins supplied in this prompt.\n"
                 )
             retry_user = (
                 f"The following SQL failed validation with: {last_reason}\n"
