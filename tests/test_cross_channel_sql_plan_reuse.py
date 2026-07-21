@@ -248,5 +248,74 @@ class UnambiguousColumnRepairTests(unittest.TestCase):
         self.assertEqual(repaired, "")
 
 
+class ReusedPlanStalenessGuardTests(unittest.TestCase):
+    """A cached plan from before a resolver/validator fix (e.g. the fan-out
+    fix that tightened detect_entities()) must not keep being reused forever
+    just because contract_version hasn't changed — contract_version tracks
+    semantic DATA changes, not CODE changes."""
+
+    def setUp(self):
+        self.graph_ctx = {
+            "enabled": True,
+            "detected": ["F_RX_FILL", "D_PHARMACY"],
+            "entities": [
+                {"entity_name": "F_RX_FILL", "table_name": "F_RX_FILL"},
+                {"entity_name": "D_PHARMACY", "table_name": "D_PHARMACY"},
+                {"entity_name": "F_INVENTORY_SNAPSHOT", "table_name": "F_INVENTORY_SNAPSHOT"},
+                {"entity_name": "F_PURCHASE_RECEIPT", "table_name": "F_PURCHASE_RECEIPT"},
+                {"entity_name": "F_RX_ORDER", "table_name": "F_RX_ORDER"},
+            ],
+        }
+
+    def _stale(self, sql, graph_ctx=None):
+        from core.pipeline_helpers import reused_plan_is_stale_for_graph
+        return reused_plan_is_stale_for_graph(
+            sql, graph_ctx if graph_ctx is not None else self.graph_ctx, "azure_sql",
+        )
+
+    def test_cached_fanout_plan_is_stale_when_fresh_detection_narrower(self):
+        # Exactly the live-production case: a plan cached before the fan-out
+        # fix joins 3 extra fact tables the current resolver no longer detects.
+        sql = (
+            "SELECT dph.PHARMACY_NAME, SUM(frx.NET_REVENUE_AMT) AS TOTAL_NET_REVENUE "
+            "FROM PHARMA_LAB.F_RX_FILL frx "
+            "INNER JOIN PHARMA_LAB.D_PHARMACY dph ON frx.PHARMACY_ID = dph.PHARMACY_ID "
+            "INNER JOIN PHARMA_LAB.F_INVENTORY_SNAPSHOT fin ON fin.PHARMACY_ID = dph.PHARMACY_ID "
+            "INNER JOIN PHARMA_LAB.F_PURCHASE_RECEIPT fpu ON fpu.PHARMACY_ID = dph.PHARMACY_ID "
+            "INNER JOIN PHARMA_LAB.F_RX_ORDER frx2 ON frx2.PHARMACY_ID = dph.PHARMACY_ID"
+        )
+        self.assertTrue(self._stale(sql))
+
+    def test_matching_plan_is_not_stale(self):
+        sql = (
+            "SELECT dph.PHARMACY_NAME, SUM(frx.NET_REVENUE_AMT) AS TOTAL_NET_REVENUE "
+            "FROM PHARMA_LAB.F_RX_FILL frx "
+            "INNER JOIN PHARMA_LAB.D_PHARMACY dph ON frx.PHARMACY_ID = dph.PHARMACY_ID"
+        )
+        self.assertFalse(self._stale(sql))
+
+    def test_cte_names_are_never_treated_as_extra_tables(self):
+        # A genuinely fresh, fan-out-guard-produced CTE plan must not be
+        # rejected just because its CTE aliases aren't in the entity list.
+        sql = (
+            "WITH revenue_by_pharmacy AS ("
+            "SELECT dph.PHARMACY_NAME, SUM(frx.NET_REVENUE_AMT) AS TOTAL_REVENUE "
+            "FROM PHARMA_LAB.F_RX_FILL frx "
+            "INNER JOIN PHARMA_LAB.D_PHARMACY dph ON frx.PHARMACY_ID = dph.PHARMACY_ID "
+            "GROUP BY dph.PHARMACY_NAME) "
+            "SELECT * FROM revenue_by_pharmacy"
+        )
+        self.assertFalse(self._stale(sql))
+
+    def test_no_check_when_graph_disabled(self):
+        self.assertFalse(self._stale("SELECT 1 FROM ANYTHING", {"enabled": False}))
+
+    def test_no_check_when_nothing_detected(self):
+        self.assertFalse(self._stale("SELECT 1 FROM ANYTHING", {"enabled": True, "detected": []}))
+
+    def test_malformed_sql_does_not_raise(self):
+        self.assertFalse(self._stale("not even sql {{{"))
+
+
 if __name__ == "__main__":
     unittest.main()

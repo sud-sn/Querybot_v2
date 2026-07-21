@@ -841,3 +841,60 @@ def attempt_field_plan_repair(
         return ""
     log.info("Deterministic field-plan repair applied (no LLM retry needed)")
     return repaired
+
+
+# ── Cross-channel reuse staleness guard ───────────────────────────────────────
+
+def reused_plan_is_stale_for_graph(sql: str, graph_ctx: dict | None, db_type: str) -> bool:
+    """True when a cached SQL plan's referenced tables no longer match what
+    the CURRENT (freshly re-run) entity-graph resolution says this question
+    needs.
+
+    store.find_reusable_validated_sql_plan() only checks question text +
+    schema + tables + contract_version — none of which change when the
+    resolution/validation CODE changes (only compiled semantic DATA bumps
+    contract_version). A plan cached before a resolver/validator fix shipped
+    (e.g. a fan-out join a since-tightened detect_entities() would no longer
+    produce) can otherwise be reused indefinitely, silently bypassing the fix
+    for that exact question forever.
+
+    Conservative by design: only rejects reuse when there's a real, non-empty
+    current detection to compare against, and only flags a table as "extra"
+    when it's a table the graph actually KNOWS about (a real entity) that
+    just isn't in the current detected set — never a CTE alias or subquery
+    name from the cached SQL, which extract_sql_tables does not distinguish
+    from real tables. Any error leaves existing reuse behavior unchanged.
+    """
+    graph_ctx = graph_ctx or {}
+    if not graph_ctx.get("enabled"):
+        return False
+    detected = set(graph_ctx.get("detected") or [])
+    if not detected:
+        return False
+
+    entities = graph_ctx.get("entities") or []
+    entity_tables = {
+        (ent.get("table_name") or "").strip().upper()
+        for ent in entities
+        if ent.get("table_name")
+    }
+    expected_tables = {
+        (ent.get("table_name") or "").strip().upper()
+        for ent in entities
+        if ent.get("entity_name") in detected and ent.get("table_name")
+    }
+    if not expected_tables:
+        return False
+
+    try:
+        actual_tables = {
+            str(t).split(".")[-1].strip().upper()
+            for t in extract_sql_tables(sql, db_type)
+        }
+    except Exception:
+        return False
+
+    # Only tables the graph recognizes as real entities count — this excludes
+    # CTE names and other non-table identifiers extract_sql_tables may return.
+    extra = (actual_tables & entity_tables) - expected_tables
+    return bool(extra)

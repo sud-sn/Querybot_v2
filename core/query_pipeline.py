@@ -50,7 +50,7 @@ from core.pipeline_helpers import (
     _count_tables_for_zero_row, _build_zero_row_message,
     _format_metric_formula_context, _extract_metric_formula_tables,
     _build_row_metric_join_sql, attempt_field_plan_repair,
-    _clamp_kb_doc, _clamp_prompt_context,
+    _clamp_kb_doc, _clamp_prompt_context, reused_plan_is_stale_for_graph,
 )
 from core.pipeline_trace import (
     _log_q, _trace_create, _trace_update, _trace_step, _trace_finish,
@@ -1751,6 +1751,16 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
     except Exception as _plan_exc:
         _reused_plan = None
         log.warning("Governed SQL plan lookup skipped for %s: %s", account_id, _plan_exc)
+    if _reused_plan and reused_plan_is_stale_for_graph(
+        str(_reused_plan.get("sql_generated") or ""), _graph_ctx, db_cfg["db_type"],
+    ):
+        log.info(
+            "Discarding stale reusable SQL plan trace=%s for %s: references tables "
+            "outside the current entity-graph detection (likely cached before a "
+            "resolver/validator fix) — falling through to fresh generation.",
+            _reused_plan.get("trace_id"), account_id,
+        )
+        _reused_plan = None
     try:
         if _reused_plan:
             await _send_live_stage(
