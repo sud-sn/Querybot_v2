@@ -225,6 +225,27 @@ def is_date_role_column(column_name: str) -> bool:
     return detect_date_role(column_name) is not None
 
 
+_DMS_KEY_SUFFIX_RE = re.compile(r"(?:_DT_DMS_KEY|_DATE_DMS_KEY)$", re.IGNORECASE)
+_SURROGATE_KEY_SUFFIX_RE = re.compile(r"(?:_ID|_KEY)$", re.IGNORECASE)
+
+
+def is_plain_surrogate_date_role_column(column_name: str) -> bool:
+    """True for a date-role FK column that is a pure sequential surrogate
+    key (e.g. DISPENSE_DATE_ID) — not the _DT_DMS_KEY/_DATE_DMS_KEY
+    YYYYMMDD-encoded convention (which has its own arithmetic-decode rule
+    elsewhere), and not a plain native DATE/DATETIME column such as
+    ORDER_DATE (no _ID/_KEY suffix at all — YEAR()/MONTH() is perfectly
+    valid directly on those; is_date_role_column() alone matches both
+    shapes since it only checks business-role naming, not this distinction).
+    """
+    col = (column_name or "").strip()
+    if not col or _DMS_KEY_SUFFIX_RE.search(col):
+        return False
+    if not _SURROGATE_KEY_SUFFIX_RE.search(col):
+        return False
+    return is_date_role_column(col)
+
+
 def date_role_terms(role: DateRole) -> list[str]:
     terms = [role.label.lower(), role.key.replace("_", " ")]
     terms.extend(role.synonyms)

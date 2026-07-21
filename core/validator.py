@@ -19,6 +19,8 @@ import re
 from dataclasses import dataclass, field
 from difflib import get_close_matches
 
+from core.date_roles import is_plain_surrogate_date_role_column
+
 log = logging.getLogger("querybot.validator")
 
 try:
@@ -824,8 +826,77 @@ def _period_comparison_shape_errors(tree, semantic_context: dict | None) -> list
     return errors
 
 
+_DATE_MISUSE_FUNC_TYPES = (
+    sg_exp.Year,
+    sg_exp.Month,
+    sg_exp.Day,
+    sg_exp.DateAdd,
+    sg_exp.DateDiff,
+    sg_exp.Convert,
+    sg_exp.Cast,
+)
+
+
+def _is_date_targeting_type_node(node) -> bool:
+    """True when a Convert/Cast node's target type is itself date-like.
+
+    CONVERT(varchar(8), col) and CAST(col AS INT) are not the misuse
+    pattern by themselves — only when the OUTER conversion targets
+    DATE/DATETIME/SMALLDATETIME/TIMESTAMP does treating a surrogate key as
+    a calendar value become the risk. Year/Month/Day/DateAdd/DateDiff need
+    no such check; they are inherently date operations.
+    """
+    if isinstance(node, sg_exp.Convert):
+        type_node = node.this
+    elif isinstance(node, sg_exp.Cast):
+        type_node = node.args.get("to")
+    else:
+        return True
+    type_text = str(type_node or "").upper()
+    return "DATE" in type_text or "TIMESTAMP" in type_text
+
+
+def _surrogate_date_misuse_columns(tree) -> set[str]:
+    """Uppercased column names that are genuine AST descendants of a
+    date-conversion/arithmetic function call anywhere in the parsed tree.
+
+    Scoped by the parsed structure rather than text proximity: a column
+    used only inside an unrelated JOIN's ON clause is never mistaken for
+    an argument of a YEAR()/CONVERT() call elsewhere in the query just
+    because the two happen to sit near each other in the SQL text. This
+    replaces an earlier bounded-distance-regex approach that could not
+    make that distinction (it flagged BOOKED_DATE_ID as misused merely for
+    appearing near an unrelated YEAR(d.CALENDAR_DATE) call).
+    """
+    found: set[str] = set()
+    for node in tree.find_all(*_DATE_MISUSE_FUNC_TYPES):
+        if not _is_date_targeting_type_node(node):
+            continue
+        for col_node in node.find_all(sg_exp.Column):
+            name = (col_node.name or "").upper()
+            if name:
+                found.add(name)
+    return found
+
+
 def _find_surrogate_date_conversion_errors(sql: str, policies: list[dict]) -> list[dict]:
-    """Reject attempts to parse role-playing surrogate IDs as dates."""
+    """Reject attempts to parse role-playing surrogate IDs as dates.
+
+    Deliberately kept on its original text-regex form (not the AST-based
+    _surrogate_date_misuse_columns helper used below): this function's
+    policies conflate two distinct conventions under the same
+    date_key_type=="surrogate_fk" tag whenever a date-dimension FK exists
+    (see classify_date_key/normalize_date_key_type — "a relationship to a
+    date dimension always wins over name-based inference"), including
+    columns that are actually YYYYMMDD-encoded and legitimately
+    TRY_CONVERT-decodable (e.g. *_DT_DMS_KEY). A precise AST-based reject
+    here would also catch that legitimate case, which this function's
+    policy data has no way to exempt. Precision improvements belong in
+    _schema_driven_surrogate_date_misuse_errors instead, which sources
+    columns straight from the schema and can correctly exclude the
+    *_DT_DMS_KEY/*_DATE_DMS_KEY convention via
+    is_plain_surrogate_date_role_column.
+    """
     errors: list[dict] = []
     sql_text = str(sql or "")
     for policy in policies or []:
@@ -858,6 +929,56 @@ def _find_surrogate_date_conversion_errors(sql: str, policies: list[dict]) -> li
             "date_value_column": policy.get("date_value_column", ""),
             "role_alias": policy.get("role_alias", ""),
         })
+    return errors
+
+
+def _schema_driven_surrogate_date_misuse_errors(
+    tree, table_columns: dict[str, dict[str, str]],
+) -> list[dict]:
+    """Reject TRY_CONVERT/CAST/YEAR/MONTH/DATEADD misuse of a plain
+    surrogate date-role FK column, sourced directly from the known schema
+    column names (table_columns) rather than the separate structured
+    semantic model's admin-curated date_key_policies that
+    _find_surrogate_date_conversion_errors depends on.
+
+    Deliberately NOT scoped to graph_context["resolved_edges"]: those only
+    list the edges actually chosen for the join skeleton (e.g. fact->dim
+    for grouping), which for a date FILTER like "for 2026" never includes
+    the date dimension at all unless the model independently adds that
+    join itself — exactly the case this guards. table_columns already
+    carries every known column for the query's tables regardless of
+    whether the join-skeleton builder happened to use it, so it's the
+    complete, correct source here. Client-independent: works even when a
+    client's Entity Graph has never been reviewed and the structured
+    semantic model's date roles have never been configured — the live
+    failure this guards against reproduced on exactly such a client.
+    """
+    errors: list[dict] = []
+    misused_columns = _surrogate_date_misuse_columns(tree)
+    seen: set[str] = set()
+    for cols in (table_columns or {}).values():
+        for col_name in cols or {}:
+            col_name = str(col_name or "").strip()
+            if not col_name or not is_plain_surrogate_date_role_column(col_name):
+                continue
+            key = col_name.upper()
+            if key in seen or key not in misused_columns:
+                continue
+            seen.add(key)
+            errors.append({
+                "code": "surrogate_date_conversion",
+                "message": (
+                    f"{col_name} is a surrogate date-dimension key, not an encoded "
+                    "calendar date. JOIN it to its date dimension (the exact FK is "
+                    "in the entity graph even if this particular skeleton didn't "
+                    "need it for grouping) and filter/group using that dimension's "
+                    "own real calendar column (look up its actual name in the "
+                    "schema context) instead of converting, casting, or comparing "
+                    "the surrogate key directly."
+                ),
+                "column": col_name,
+                "date_key_type": "surrogate_fk",
+            })
     return errors
 
 
@@ -1368,6 +1489,17 @@ def validate_sql_detailed(
                 "\n".join(error["message"] for error in surrogate_date_errors),
                 "surrogate_date_conversion",
                 surrogate_date_errors,
+            )
+
+        schema_surrogate_date_errors = _schema_driven_surrogate_date_misuse_errors(
+            tree, table_columns
+        )
+        if schema_surrogate_date_errors:
+            return SqlValidationResult(
+                False,
+                "\n".join(error["message"] for error in schema_surrogate_date_errors),
+                "surrogate_date_conversion",
+                schema_surrogate_date_errors,
             )
 
         unique_base_keys = [k for k in dict.fromkeys(base_table_keys) if k in table_columns]

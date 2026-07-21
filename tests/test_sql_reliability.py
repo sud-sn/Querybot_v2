@@ -1528,6 +1528,64 @@ class PeriodComparisonSqlTests(unittest.TestCase):
         self.assertTrue(result.ok, result.reason)
 
 
+class SchemaDrivenSurrogateDateMisuseTests(unittest.TestCase):
+    TABLES = {
+        "CHATBOT_DB.PHARMA_LAB.F_RX_FILL": {
+            "DISPENSE_DATE_ID": "int",
+            "BOOKED_DATE_ID": "int",
+            "NET_REVENUE_AMT": "decimal",
+        },
+        "CHATBOT_DB.PHARMA_LAB.D_DATE": {
+            "DATE_ID": "int",
+            "CALENDAR_DATE": "date",
+            "CALENDAR_YEAR": "int",
+        },
+        "CHATBOT_DB.PHARMA_LAB.F_ORDERS": {
+            "ORDER_DATE": "date",
+            "ORDER_AMT": "decimal",
+        },
+    }
+
+    def _validate(self, sql: str):
+        return validate_sql_detailed(
+            sql,
+            set(self.TABLES),
+            "azure_sql",
+            table_columns=self.TABLES,
+            semantic_context={"production_sql": True},
+        )
+
+    def test_rejects_nested_try_convert_year_on_plain_surrogate_key(self):
+        live_bug_sql = """
+        SELECT SUM(f.NET_REVENUE_AMT) AS TOTAL
+        FROM CHATBOT_DB.PHARMA_LAB.F_RX_FILL f
+        WHERE YEAR(TRY_CONVERT(date, CONVERT(varchar(8), f.DISPENSE_DATE_ID), 112)) = 2026
+        """
+        result = self._validate(live_bug_sql)
+        self.assertFalse(result.ok)
+        self.assertEqual(result.code, "surrogate_date_conversion")
+        self.assertIn("DISPENSE_DATE_ID", result.reason)
+
+    def test_accepts_year_on_dimension_column_after_valid_join(self):
+        joined_sql = """
+        SELECT SUM(f.NET_REVENUE_AMT) AS TOTAL
+        FROM CHATBOT_DB.PHARMA_LAB.F_RX_FILL f
+        JOIN CHATBOT_DB.PHARMA_LAB.D_DATE d ON f.BOOKED_DATE_ID = d.DATE_ID
+        WHERE YEAR(d.CALENDAR_DATE) = 2026 AND MONTH(d.CALENDAR_DATE) = 3
+        """
+        result = self._validate(joined_sql)
+        self.assertTrue(result.ok, result.reason)
+
+    def test_accepts_year_on_native_date_column(self):
+        native_sql = """
+        SELECT SUM(o.ORDER_AMT) AS TOTAL
+        FROM CHATBOT_DB.PHARMA_LAB.F_ORDERS o
+        WHERE YEAR(o.ORDER_DATE) = 2026
+        """
+        result = self._validate(native_sql)
+        self.assertTrue(result.ok, result.reason)
+
+
 class ResultTransformationRoutingTests(unittest.TestCase):
     def test_main_chat_routes_flag_followup_to_cached_result(self):
         self.assertTrue(
