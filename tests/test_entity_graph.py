@@ -478,6 +478,156 @@ class TestSQLPromptGraphInjection(unittest.TestCase):
         params = inspect.signature(build_sql_system_prompt).parameters
         self.assertIn("graph_context", params)
 
+    def test_no_fanout_warning_when_risk_list_empty(self):
+        ctx = {"enabled": True, "join_skeleton": "FROM [dbo].[T] t", "detected": [],
+               "fanout_risk_facts": []}
+        p = self._build_prompt(ctx)
+        self.assertNotIn("FAN-OUT WARNING", p)
+
+    def test_fanout_warning_added_when_risk_present(self):
+        ctx = {
+            "enabled": True,
+            "join_skeleton": "FROM [dbo].[F_A] a INNER JOIN [dbo].[F_B] b ON a.[PHARMACY_ID]=b.[PHARMACY_ID]",
+            "detected": ["F_A", "F_B"],
+            "fanout_risk_facts": ["F_B"],
+        }
+        p = self._build_prompt(ctx)
+        self.assertIn("FAN-OUT WARNING", p)
+        self.assertIn("F_B", p)
+        self.assertIn("CTE", p)
+
+    def test_fanout_warning_overrides_no_add_remove_joins(self):
+        ctx = {"enabled": True, "join_skeleton": "FROM [dbo].[T] t", "detected": [],
+               "fanout_risk_facts": ["T2"]}
+        p = self._build_prompt(ctx)
+        # The override must come after (and reference) the blanket no-edit rule,
+        # not silently contradict it with no explanation.
+        self.assertIn("OVERRIDES THE", p)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 10b  Fan-out guard — entity-detection scoring
+# ══════════════════════════════════════════════════════════════════════════════
+class TestFanoutScoringGuard(unittest.TestCase):
+    """A single generic single-word property synonym must not, on its own,
+    qualify a FACT table for inclusion in the join skeleton — that's exactly
+    the mechanism that pulled unrelated fact tables into a fan-out join."""
+
+    ACC = "test_fanout_score_010"
+
+    def setUp(self):
+        store.save_entity(self.ACC, "SalesFact", "F_SALES", schema_name="dbo",
+                           pk_column="SaleID", entity_type="fact")
+        store.save_entity(self.ACC, "InventoryFact", "F_INVENTORY", schema_name="dbo",
+                           pk_column="SnapshotID", entity_type="fact")
+        store.save_entity(self.ACC, "Store", "D_STORE", schema_name="dbo",
+                           pk_column="StoreID", entity_type="dimension")
+        store.save_relationship(self.ACC,
+            from_entity="SalesFact", from_column="StoreID",
+            to_entity="Store", to_column="StoreID",
+            relationship_type="many_to_one", join_type="INNER")
+        store.save_relationship(self.ACC,
+            from_entity="InventoryFact", from_column="StoreID",
+            to_entity="Store", to_column="StoreID",
+            relationship_type="many_to_one", join_type="INNER")
+        # SalesFact's real metric — a specific, multi-word synonym.
+        store.save_entity_property(self.ACC, "SalesFact", "NET_REVENUE_AMT",
+                                    role="metric", display_name="Net Revenue",
+                                    synonyms="net revenue, total sales")
+        # InventoryFact has nothing to do with the question below — its only
+        # overlap is a generic one-word synonym ("total") that many metric
+        # columns across a schema tend to share.
+        store.save_entity_property(self.ACC, "InventoryFact", "ON_HAND_QUANTITY",
+                                    role="metric", display_name="On Hand Quantity",
+                                    synonyms="total, qty")
+        self._graph = store.get_full_graph(self.ACC)
+
+    def _detect(self, q):
+        from core.graph_resolver import detect_entities
+        return detect_entities(q, self._graph)
+
+    def test_generic_single_word_alone_does_not_pull_in_unrelated_fact(self):
+        found = self._detect("what is total net revenue by store for 2026")
+        self.assertIn("SalesFact", found)
+        self.assertIn("Store", found)
+        self.assertNotIn("InventoryFact", found)
+
+    def test_specific_multiword_property_match_still_qualifies_anchor(self):
+        # SalesFact must still be detected via its own specific synonym even
+        # though the match is property-level, not name/table-level.
+        found = self._detect("show net revenue trend")
+        self.assertIn("SalesFact", found)
+
+    def test_fact_with_strong_signal_still_detected(self):
+        # A fact table matched by its own entity/table name is unaffected by
+        # the property-match gate.
+        found = self._detect("show inventory fact data")
+        self.assertIn("InventoryFact", found)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 10c  Fan-out guard — multi-fact join-path risk detector
+# ══════════════════════════════════════════════════════════════════════════════
+class TestMultiFactFanoutRisk(unittest.TestCase):
+
+    def _emap(self, **entity_types):
+        return {name: {"entity_type": etype} for name, etype in entity_types.items()}
+
+    def test_two_facts_via_shared_dim_flagged(self):
+        from core.graph_resolver import _multi_fact_fanout_risk
+        emap = self._emap(F1="fact", F2="fact", D1="dimension")
+        path = [
+            {"from_entity": "F1", "to_entity": "D1"},
+            {"from_entity": "F2", "to_entity": "D1"},
+        ]
+        risk = _multi_fact_fanout_risk(path, emap)
+        self.assertEqual(risk, ["F1", "F2"])
+
+    def test_direct_fact_to_fact_edge_not_flagged(self):
+        from core.graph_resolver import _multi_fact_fanout_risk
+        emap = self._emap(F1="fact", F2="fact", D1="dimension")
+        path = [
+            {"from_entity": "F1", "to_entity": "D1"},
+            {"from_entity": "F1", "to_entity": "F2"},
+        ]
+        risk = _multi_fact_fanout_risk(path, emap)
+        self.assertEqual(risk, [])
+
+    def test_single_fact_not_flagged(self):
+        from core.graph_resolver import _multi_fact_fanout_risk
+        emap = self._emap(F1="fact", D1="dimension", D2="dimension")
+        path = [
+            {"from_entity": "F1", "to_entity": "D1"},
+            {"from_entity": "F1", "to_entity": "D2"},
+        ]
+        risk = _multi_fact_fanout_risk(path, emap)
+        self.assertEqual(risk, [])
+
+    def test_resolve_for_question_surfaces_fanout_risk_facts(self):
+        from core.graph_resolver import resolve_for_question
+        acc = "test_fanout_e2e_011"
+        store.save_entity(acc, "SalesFact", "F_SALES", schema_name="dbo",
+                           pk_column="SaleID", entity_type="fact")
+        store.save_entity(acc, "InventoryFact", "F_INVENTORY", schema_name="dbo",
+                           pk_column="SnapshotID", entity_type="fact")
+        store.save_entity(acc, "Store", "D_STORE", schema_name="dbo",
+                           pk_column="StoreID", entity_type="dimension")
+        store.save_relationship(acc,
+            from_entity="SalesFact", from_column="StoreID",
+            to_entity="Store", to_column="StoreID",
+            relationship_type="many_to_one", join_type="INNER")
+        store.save_relationship(acc,
+            from_entity="InventoryFact", from_column="StoreID",
+            to_entity="Store", to_column="StoreID",
+            relationship_type="many_to_one", join_type="INNER")
+        graph = store.get_full_graph(acc)
+        r = resolve_for_question(
+            "compare sales", acc, "azure_sql", graph=graph,
+            required_entities=["SalesFact", "InventoryFact", "Store"],
+        )
+        self.assertIn("InventoryFact", r.get("fanout_risk_facts", []))
+        self.assertIn("SalesFact", r.get("fanout_risk_facts", []))
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 11  main.py wiring

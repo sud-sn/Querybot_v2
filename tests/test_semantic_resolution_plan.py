@@ -286,6 +286,36 @@ class CompileTimeConflictBridgeTests(unittest.TestCase):
         self.assertGreaterEqual(plan["confidence"], 0.0)
 
 
+class GraphFanoutAdvisoryTests(unittest.TestCase):
+    """graph_resolver flags fact tables joined only through a shared
+    dimension (core.graph_resolver._multi_fact_fanout_risk) — the plan must
+    surface that as a WARNING advisory and dock confidence, reusing the same
+    machinery as compile-time conflicts rather than adding a parallel path."""
+
+    def test_fanout_risk_facts_become_a_warning_advisory(self):
+        plan = build_resolution_plan(
+            account_id="acct1", question="q",
+            graph_ctx={"fanout_risk_facts": ["F_INVENTORY_SNAPSHOT", "F_PURCHASE_RECEIPT"]},
+        )
+        self.assertEqual(len(plan["advisories"]), 1)
+        advisory = plan["advisories"][0]
+        self.assertEqual(advisory["code"], "graph_fanout_risk")
+        self.assertEqual(advisory["severity"], "WARNING")
+        self.assertIn("F_INVENTORY_SNAPSHOT", advisory["message"])
+        self.assertLess(plan["confidence"], 100.0)
+
+    def test_no_fanout_risk_no_advisory(self):
+        plan = build_resolution_plan(
+            account_id="acct1", question="q",
+            graph_ctx={"fanout_risk_facts": []},
+        )
+        self.assertEqual(plan["advisories"], [])
+
+    def test_missing_key_defaults_to_no_advisory(self):
+        plan = build_resolution_plan(account_id="acct1", question="q", graph_ctx={})
+        self.assertEqual(plan["advisories"], [])
+
+
 class ResolutionPlanWiringTests(unittest.TestCase):
     """The plan is only worth anything if it actually gets built during
     real answering. handle_query gets static source assertions, matching

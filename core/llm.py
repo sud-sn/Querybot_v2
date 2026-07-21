@@ -783,6 +783,22 @@ def build_sql_system_prompt(
                 "Keep the LEFT JOINs from the skeleton and add a WHERE right_side_key IS NULL "
                 "predicate for the missing target table. Do not convert these joins back to INNER JOIN."
             )
+        fanout_facts = graph_context.get("fanout_risk_facts") or []
+        fanout_instruction = ""
+        if fanout_facts:
+            fanout_instruction = (
+                "\n\nFAN-OUT WARNING — OVERRIDES THE \"do not add or remove JOINs\" RULE ABOVE "
+                "for these tables only: " + ", ".join(fanout_facts) + " join into this skeleton "
+                "through a shared dimension key only (no direct relationship to the anchor fact "
+                "table) — flattening them into one INNER JOIN chain with the other fact table(s) "
+                "multiplies rows before aggregation and silently inflates SUM()/COUNT()/AVG() by "
+                "orders of magnitude. For each table listed above: pull it into its own CTE that "
+                "aggregates it down to the shared dimension grain FIRST (e.g. "
+                "`SELECT PHARMACY_ID, SUM(...) AS x FROM <table> GROUP BY PHARMACY_ID`), then LEFT "
+                "JOIN that pre-aggregated CTE onto the base query by the shared key instead of "
+                "joining the raw fact rows directly. Never INNER JOIN two raw fact tables together "
+                "through a dimension key."
+            )
         base = base + (
             "\n\n## Entity graph — pre-resolved JOIN structure\n"
             "The following FROM + JOIN structure has been resolved deterministically "
@@ -793,6 +809,7 @@ def build_sql_system_prompt(
             "Detected entities: " + detected + "\n\n"
             "```sql\n" + skeleton + "\n```\n\n"
             + where_instruction + " Do not add or remove JOINs." + anti_join_instruction
+            + fanout_instruction
         )
     if semantic_plan and semantic_plan.get("enabled") and semantic_plan.get("fields"):
         try:

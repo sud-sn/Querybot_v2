@@ -199,10 +199,12 @@ def detect_entities(
     for ent in entities:
         name  = ent["entity_name"]
         score = relationship_role_scores.get(name, 0)
+        strong_score = score   # relationship-label matches are a strong signal
 
         # entity name — check each word of the name appears in question
         if name in required_entity_names:
             score += 100
+            strong_score += 100
 
         norm_name = _normalize(name)
         display_name = _normalize(ent.get("display_name") or name)
@@ -216,21 +218,36 @@ def detect_entities(
         for word in norm_name.split():
             if len(word) >= 3 and _phrase_in_question(word, q_tokens, q):
                 score += 10
+                strong_score += 10
 
         # display name
         if _phrase_in_question(display_name, q_tokens, q):
             score += 8
+            strong_score += 8
 
         # table name substring
         table_name = (ent.get("table_name") or "").upper()
         schema_name = (ent.get("schema_name") or "").upper()
         if table_name in required_table_candidates or f"{schema_name}.{table_name}" in required_table_candidates:
             score += 90
+            strong_score += 90
         tbl = _normalize(table_name)
         for word in tbl.split():
             if len(word) >= 4 and _phrase_in_question(word, q_tokens, q):
                 score += 5
+                strong_score += 5
 
+        # Column/property matches are the weakest signal available: a single
+        # generic one-word synonym ("total", "amount", "cost", "date"…) can
+        # coincidentally match almost any fact table's column list, which is
+        # what pulls unrelated fact tables into a join and produces silent
+        # fan-out (row-count multiplication) once the SQL is generated. A
+        # multi-word phrase ("net revenue", "on hand quantity") is far more
+        # specific and safe to treat as a real match on its own; a lone
+        # single-word hit is not — it only counts once several independent
+        # single-word hits corroborate each other.
+        weak_score = 0
+        has_specific_property_hit = False
         for prop in props_by_entity.get(name, []):
             for field in ("column_name", "display_name", "synonyms", "description"):
                 raw = prop.get(field) or ""
@@ -238,8 +255,31 @@ def detect_entities(
                 if field == "synonyms":
                     phrases = [p.strip() for p in raw.split(",")]
                 for phrase in phrases:
-                    if _phrase_in_question(phrase, q_tokens, q):
-                        score += 3
+                    if not phrase or not _phrase_in_question(phrase, q_tokens, q):
+                        continue
+                    if len(_normalize(phrase).split()) >= 2:
+                        weak_score += 3
+                        has_specific_property_hit = True
+                    else:
+                        weak_score += 1
+        score += weak_score
+
+        # A FACT table must earn its place via a real signal, not purely
+        # coincidental overlap on a generic column-name word — otherwise one
+        # common word pulls unrelated fact tables into the join skeleton and
+        # the SQL generator fans out across them (multiplying row counts
+        # before aggregation, inflating sums/counts by orders of magnitude
+        # with no error). Dimension/bridge tables keep the looser bar since
+        # joining an extra dimension doesn't multiply fact rows.
+        entity_type = (ent.get("entity_type") or "").lower()
+        if (
+            entity_type == "fact"
+            and name not in required_entity_names
+            and strong_score < 3
+            and not has_specific_property_hit
+            and weak_score < 6
+        ):
+            continue
 
         if score >= 3:
             scores[name] = score
@@ -411,6 +451,44 @@ def find_join_path(entity_names: list[str], graph: dict, prefer_fact_anchor: boo
         )
 
     return visited_edges
+
+
+def _multi_fact_fanout_risk(join_path: list[dict], entities_map: dict[str, dict]) -> list[str]:
+    """
+    Return the FACT-table entity names in this join skeleton that are only
+    reachable through a shared dimension key — never a direct fact-to-fact
+    or fact-to-bridge edge.
+
+    This is the classic analytics fan-out antipattern: two unrelated fact
+    tables (e.g. inventory snapshots and purchase receipts) sharing a common
+    dimension key (e.g. PHARMACY_ID) get INNER JOINed together with no other
+    constraint, multiplying rows before any SUM()/COUNT() runs — silently
+    inflating the result by orders of magnitude with no error and no empty
+    result set to signal something went wrong. A single fact table anchoring
+    the query is always safe; risk only exists once 2+ facts are joined in.
+    """
+    fact_names = {
+        name for name, ent in entities_map.items()
+        if (ent.get("entity_type") or "").lower() == "fact"
+    }
+    if len(fact_names) < 2:
+        return []
+
+    joined_facts: set[str] = set()
+    fact_to_fact_linked: set[str] = set()
+    for step in join_path:
+        f, t = step.get("from_entity", ""), step.get("to_entity", "")
+        if f in fact_names:
+            joined_facts.add(f)
+        if t in fact_names:
+            joined_facts.add(t)
+        if f in fact_names and t in fact_names:
+            fact_to_fact_linked.add(f)
+            fact_to_fact_linked.add(t)
+
+    if len(joined_facts) < 2:
+        return []
+    return sorted(joined_facts - fact_to_fact_linked)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -718,6 +796,7 @@ def _resolve_on_graph(
                 break
 
     skeleton = build_join_skeleton(join_path, entities_map, anchor, db_type, anti_join=anti_join)
+    fanout_risk_facts = _multi_fact_fanout_risk(join_path, entities_map)
     resolved_edges = []
     for edge in join_path:
         from_meta = entities_map.get(edge.get("from_entity", ""), {})
@@ -759,6 +838,7 @@ def _resolve_on_graph(
         "entities":      entities,
         "edge_ids":      [edge["id"] for edge in resolved_edges if edge.get("id") is not None],
         "resolved_edges": resolved_edges,
+        "fanout_risk_facts": fanout_risk_facts,
     }
 
 

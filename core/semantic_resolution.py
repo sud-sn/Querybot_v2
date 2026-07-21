@@ -192,6 +192,21 @@ def build_resolution_plan(
     clarifications: list[dict[str, Any]] = []
     advisories: list[dict[str, Any]] = []
 
+    fanout_risk_facts = graph_ctx.get("fanout_risk_facts") or []
+    if fanout_risk_facts:
+        advisories.append({
+            "code": "graph_fanout_risk",
+            "severity": "WARNING",
+            "message": (
+                "Join skeleton connects fact table(s) " + ", ".join(fanout_risk_facts)
+                + " to the anchor only through a shared dimension key — flattening this "
+                "into one join chain multiplies rows before aggregation and can silently "
+                "inflate sums/counts. The SQL prompt was instructed to pre-aggregate these "
+                "via CTEs instead of a flat join."
+            ),
+            "object_id": ", ".join(fanout_risk_facts),
+        })
+
     if date_context_resolution.get("status") == "ambiguous":
         clarifications.append({
             "type": "date_context_ambiguous",
