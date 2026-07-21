@@ -959,6 +959,31 @@ class IntentAndGraphReliabilityTests(unittest.TestCase):
         # Must not also claim the (wrong, for this convention) DMS-key text.
         self.assertNotIn("AZURE SQL DATE-KEY RULE", prompt)
 
+    def test_surrogate_date_key_rule_forbids_try_convert_technique_by_name(self):
+        # Regression for a live failure the first version of this rule didn't
+        # prevent: the model applied the DMS-key rule's TRY_CONVERT/YEAR()
+        # technique to a plain surrogate key anyway, producing NULL for every
+        # row (CONVERT(varchar(8), 116806) is 6 chars, not 8) — zero rows,
+        # no error, indistinguishable from a real "no data" case. The rule
+        # must name and forbid this exact technique, not just describe the
+        # correct alternative.
+        prompt = build_sql_system_prompt(
+            "azure_sql",
+            "Table F_RX_FILL has column DISPENSE_DATE_ID (int, FK to D_DATE)",
+        )
+        self.assertIn("YEAR(TRY_CONVERT(date, CONVERT(varchar(8)", prompt)
+        self.assertIn("silently produces NULL for every row", prompt)
+
+    def test_surrogate_date_key_rule_forbids_inventing_dms_key_suffix(self):
+        # The model also renamed DISPENSE_DATE_ID to DISPENSE_DATE_DMS_KEY to
+        # make the (wrong) technique above look applicable — must be named
+        # and forbidden explicitly too.
+        prompt = build_sql_system_prompt(
+            "azure_sql",
+            "Table F_RX_FILL has column DISPENSE_DATE_ID (int, FK to D_DATE)",
+        )
+        self.assertIn("inventing a column name with a _DMS_KEY", prompt)
+
     def test_surrogate_date_key_rule_absent_for_native_date_column(self):
         # ORDER_DATE has no _ID/_KEY suffix — almost certainly a real
         # DATE/DATETIME column, not a surrogate key. Firing this rule for it
