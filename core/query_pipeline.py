@@ -2095,7 +2095,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
         rows = None
         ok = False
 
-    retryable = (not ok and (last_code or code) in ("unknown_table", "unknown_column", "date_key_format", "dialect_mismatch", "production_shape", "period_comparison_shape", "anti_join_shape", "top_n_shape", "graph_plan_mismatch", "field_plan_mismatch", "metric_formula_mismatch", "null_aggregate_diagnostic", "parse", "multi_statement", "not_select", "reused_plan_empty")) or (exec_error is not None)
+    retryable = (not ok and (last_code or code) in ("unknown_table", "unknown_column", "date_key_format", "dialect_mismatch", "production_shape", "period_comparison_shape", "anti_join_shape", "top_n_shape", "graph_plan_mismatch", "field_plan_mismatch", "metric_formula_mismatch", "null_aggregate_diagnostic", "parse", "multi_statement", "not_select", "reused_plan_empty", "surrogate_date_conversion")) or (exec_error is not None)
 
     if retryable:
         if exec_error is not None:
@@ -2263,6 +2263,16 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                     "- Include COUNT(metric_column) AS [NonNullMetricRows] for every SUM metric.\n"
                     "- Wrap every SUM metric with COALESCE(SUM(metric_column), 0) so missing values render as 0.\n"
                     "- Keep the user's filter value unchanged.\n"
+                )
+            elif last_code == "surrogate_date_conversion":
+                validation_repair_note = (
+                    "\nSURROGATE DATE-KEY REPAIR REQUIRED:\n"
+                    "- The flagged column is a sequential surrogate key, not an encoded calendar date — "
+                    "do NOT wrap it in TRY_CONVERT/CONVERT/CAST, and do NOT pass it to YEAR/MONTH/DAY/"
+                    "DATEPART/DATEADD/DATEDIFF directly.\n"
+                    "- JOIN it to its date dimension table using the exact FK from the entity graph or schema context.\n"
+                    "- Filter and group using the date dimension's own real calendar column (e.g. a CALENDAR_DATE/"
+                    "DATE_KEY_YYYYMMDD-style column), not the surrogate key itself.\n"
                 )
             elif last_code == "reused_plan_empty":
                 validation_repair_note = (
