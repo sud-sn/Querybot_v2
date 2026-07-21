@@ -419,6 +419,35 @@ class TestResolveForQuestion(unittest.TestCase):
         if r["enabled"]:
             self.assertIn("FROM", r["join_skeleton"])
 
+    def test_properties_included_for_multi_entity_result(self):
+        # The metric-column registry (core/llm.py) needs the raw properties
+        # list threaded through resolve_for_question's result, not just the
+        # entity/relationship shape. required_entities forces the multi-entity
+        # path deterministically regardless of how the question happens to
+        # score against the fan-out-guard's scoring rules.
+        from core.graph_resolver import resolve_for_question
+        store.save_entity_property(self.ACC, "Prescription", "REVENUE_AMT",
+                                    role="metric", display_name="Revenue")
+        graph = store.get_full_graph(self.ACC)
+        r = resolve_for_question(
+            "show revenue by customer", self.ACC, "azure_sql", graph=graph,
+            required_entities=["Prescription", "Customer"],
+        )
+        self.assertGreaterEqual(len(r.get("detected", [])), 2)
+        cols = [p["column_name"] for p in r.get("properties", [])
+                if p.get("entity_name") == "Prescription"]
+        self.assertIn("REVENUE_AMT", cols)
+
+    def test_properties_included_for_single_entity_result(self):
+        from core.graph_resolver import resolve_for_question
+        acc = "test_resolve_single_009"
+        store.save_entity(acc, "SalesFact", "F_SALES", entity_type="fact")
+        store.save_entity_property(acc, "SalesFact", "REVENUE_AMT", role="metric")
+        graph = store.get_full_graph(acc)
+        r = resolve_for_question("show revenue trend", acc, "azure_sql", graph=graph)
+        cols = [p["column_name"] for p in r.get("properties", [])]
+        self.assertIn("REVENUE_AMT", cols)
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 10  SQL prompt — graph_context injection
@@ -503,6 +532,65 @@ class TestSQLPromptGraphInjection(unittest.TestCase):
         # The override must come after (and reference) the blanket no-edit rule,
         # not silently contradict it with no explanation.
         self.assertIn("OVERRIDES THE", p)
+
+    def test_metric_column_registry_lists_real_columns_for_relevant_tables(self):
+        ctx = {
+            "enabled": True,
+            "join_skeleton": "FROM [dbo].[F_PURCHASE_RECEIPT] fpu",
+            "detected": ["F_PURCHASE_RECEIPT"],
+            "entities": [{"entity_name": "F_PURCHASE_RECEIPT", "table_name": "F_PURCHASE_RECEIPT"}],
+            "properties": [
+                {"entity_name": "F_PURCHASE_RECEIPT", "column_name": "EXTENDED_COST_AMT", "role": "metric"},
+                {"entity_name": "F_PURCHASE_RECEIPT", "column_name": "UNIT_COST_AMT", "role": "metric"},
+                {"entity_name": "F_PURCHASE_RECEIPT", "column_name": "SUPPLIER_ID", "role": "identifier"},
+            ],
+        }
+        p = self._build_prompt(ctx)
+        self.assertIn("METRIC COLUMNS AVAILABLE", p)
+        self.assertIn("EXTENDED_COST_AMT", p)
+        self.assertIn("UNIT_COST_AMT", p)
+        # Non-metric-role columns must not appear in this list.
+        self.assertNotIn("SUPPLIER_ID", p)
+
+    def test_metric_column_registry_excludes_irrelevant_tables(self):
+        # A metric column on a table NOT touched by this question's join must
+        # not appear — otherwise the registry itself becomes a source of
+        # hallucination bait for unrelated tables.
+        ctx = {
+            "enabled": True,
+            "join_skeleton": "FROM [dbo].[F_RX_FILL] frx",
+            "detected": ["F_RX_FILL"],
+            "entities": [
+                {"entity_name": "F_RX_FILL", "table_name": "F_RX_FILL"},
+                {"entity_name": "F_PURCHASE_RECEIPT", "table_name": "F_PURCHASE_RECEIPT"},
+            ],
+            "properties": [
+                {"entity_name": "F_RX_FILL", "column_name": "NET_REVENUE_AMT", "role": "metric"},
+                {"entity_name": "F_PURCHASE_RECEIPT", "column_name": "EXTENDED_COST_AMT", "role": "metric"},
+            ],
+        }
+        p = self._build_prompt(ctx)
+        self.assertIn("NET_REVENUE_AMT", p)
+        self.assertNotIn("EXTENDED_COST_AMT", p)
+
+    def test_no_metric_registry_when_no_properties(self):
+        ctx = {"enabled": True, "join_skeleton": "FROM [dbo].[T] t", "detected": ["T"]}
+        p = self._build_prompt(ctx)
+        self.assertNotIn("METRIC COLUMNS AVAILABLE", p)
+
+    def test_metric_registry_uses_anchor_when_no_detected_list(self):
+        # Single-entity resolution has no "detected" list — falls back to anchor.
+        ctx = {
+            "enabled": True,
+            "join_skeleton": "FROM [dbo].[F_RX_FILL] frx",
+            "anchor": "F_RX_FILL",
+            "entities": [{"entity_name": "F_RX_FILL", "table_name": "F_RX_FILL"}],
+            "properties": [
+                {"entity_name": "F_RX_FILL", "column_name": "NET_REVENUE_AMT", "role": "metric"},
+            ],
+        }
+        p = self._build_prompt(ctx)
+        self.assertIn("NET_REVENUE_AMT", p)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

@@ -760,6 +760,51 @@ def build_sql_system_prompt(
             )
             base = base + "\n\n" + "\n".join(_registry_lines)
 
+    # Inject a real, enumerated metric-column list per table this question's
+    # join actually touches — sourced from Entity Graph property tagging
+    # (role="metric"), which is harvested automatically per client. When a
+    # business term has no explicit synonym mapping, the LLM otherwise has to
+    # invent a column name from pattern alone (e.g. "purchase cost" ->
+    # PURCHASE_AMT, which doesn't exist on this schema) — a guess that's
+    # non-deterministic across calls and can differ between channels for the
+    # exact same question even though both run the identical pipeline. Giving
+    # it the real options up front turns "invent a plausible name" into
+    # "select from known real columns," for any client/table/term, not just
+    # this one.
+    if graph_context and graph_context.get("properties"):
+        _relevant_entities = set(graph_context.get("detected") or [])
+        if not _relevant_entities and graph_context.get("anchor"):
+            _relevant_entities = {graph_context["anchor"]}
+        _entity_to_table = {
+            e.get("entity_name"): e.get("table_name") or e.get("entity_name")
+            for e in graph_context.get("entities") or []
+        }
+        _metric_cols_by_table: dict[str, list[str]] = {}
+        for _prop in graph_context["properties"]:
+            if _prop.get("role") != "metric":
+                continue
+            _ent_name = _prop.get("entity_name")
+            if _ent_name not in _relevant_entities:
+                continue
+            _col = _prop.get("column_name")
+            if not _col:
+                continue
+            _table = _entity_to_table.get(_ent_name, _ent_name)
+            _metric_cols_by_table.setdefault(_table, []).append(_col)
+        if _metric_cols_by_table:
+            _metric_lines = [
+                "- METRIC COLUMNS AVAILABLE (from the Entity Graph — the ONLY valid "
+                "columns for a computed/aggregate business figure on these tables; "
+                "if a business term below has no exact synonym mapped, pick the "
+                "closest real column from this list by name — never invent a "
+                "column name that isn't listed here):"
+            ]
+            for _table in sorted(_metric_cols_by_table):
+                _metric_lines.append(
+                    f"  {_table}: {', '.join(sorted(_metric_cols_by_table[_table]))}"
+                )
+            base = base + "\n\n" + "\n".join(_metric_lines)
+
     # Inject pre-built JOIN skeleton from entity graph when available.
     # The LLM must use this skeleton and must NOT change table names or JOINs.
     if graph_context and graph_context.get("enabled") and graph_context.get("join_skeleton"):

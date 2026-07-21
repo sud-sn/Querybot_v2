@@ -793,6 +793,7 @@ def _resolve_on_graph(
             "join_skeleton": skeleton, "anchor": detected[0],
             "entity_count": entity_count,
             "entities": entities,
+            "properties": graph.get("properties") or [],
         }
 
     entities_map = {e["entity_name"]: e for e in entities}
@@ -850,6 +851,7 @@ def _resolve_on_graph(
         "edge_ids":      [edge["id"] for edge in resolved_edges if edge.get("id") is not None],
         "resolved_edges": resolved_edges,
         "fanout_risk_facts": fanout_risk_facts,
+        "properties":    graph.get("properties") or [],
     }
 
 
