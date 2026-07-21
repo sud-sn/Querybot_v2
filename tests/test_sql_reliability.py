@@ -944,6 +944,49 @@ class IntentAndGraphReliabilityTests(unittest.TestCase):
         prompt = build_sql_system_prompt("azure_sql", "Table ORDERS has column ORDER_DATE")
         self.assertNotIn("AZURE SQL DATE-KEY RULE", prompt)
 
+    def test_surrogate_date_key_rule_fires_for_date_id_convention(self):
+        # Regression for the live-production bug: DISPENSE_DATE_ID is a pure
+        # sequential surrogate key (not YYYYMMDD-encoded) — comparing it to a
+        # literal like 20260101 always fails silently. The DMS-key rule never
+        # fires for this naming convention, so this needs its own rule.
+        prompt = build_sql_system_prompt(
+            "azure_sql",
+            "Table F_RX_FILL has column DISPENSE_DATE_ID (int, FK to D_DATE)",
+        )
+        self.assertIn("DATE-DIMENSION SURROGATE KEY RULE", prompt)
+        self.assertIn("PURE surrogate key", prompt)
+        self.assertIn("MUST JOIN to the date dimension", prompt)
+        # Must not also claim the (wrong, for this convention) DMS-key text.
+        self.assertNotIn("AZURE SQL DATE-KEY RULE", prompt)
+
+    def test_surrogate_date_key_rule_absent_for_native_date_column(self):
+        # ORDER_DATE has no _ID/_KEY suffix — almost certainly a real
+        # DATE/DATETIME column, not a surrogate key. Firing this rule for it
+        # would wrongly tell the model to avoid YEAR()/MONTH() on a column
+        # that's perfectly fine to use directly.
+        prompt = build_sql_system_prompt("azure_sql", "Table ORDERS has column ORDER_DATE")
+        self.assertNotIn("DATE-DIMENSION SURROGATE KEY RULE", prompt)
+
+    def test_surrogate_date_key_rule_absent_when_only_dms_key_present(self):
+        # A schema using the DMS-key convention should get only that rule,
+        # not both — the two describe different (YYYYMMDD vs pure-surrogate)
+        # encodings and giving both would be confusing/contradictory.
+        prompt = build_sql_system_prompt(
+            "azure_sql",
+            "Table CUS_ORD_IVC_FCT has column CUS_ORD_DT_DMS_KEY",
+        )
+        self.assertIn("AZURE SQL DATE-KEY RULE", prompt)
+        self.assertNotIn("DATE-DIMENSION SURROGATE KEY RULE", prompt)
+
+    def test_find_date_role_tokens_requires_surrogate_suffix(self):
+        from core.llm import _find_date_role_tokens
+        tokens = _find_date_role_tokens(
+            "Columns: DISPENSE_DATE_ID int, ORDER_DATE date, CALENDAR_DATE date"
+        )
+        self.assertIn("DISPENSE_DATE_ID", tokens)
+        self.assertNotIn("ORDER_DATE", tokens)
+        self.assertNotIn("CALENDAR_DATE", tokens)
+
     def test_avg_interval_rule_present_for_all_dialects(self):
         for db_type in ("azure_sql", "oracle", "snowflake"):
             prompt = build_sql_system_prompt(db_type, "Table FNN_FCT")

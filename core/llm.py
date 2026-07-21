@@ -16,11 +16,36 @@ v8 prompt changes:
 """
 
 import logging
+import re
 from typing import Literal
 
+from core.date_roles import is_date_role_column
 from core.llm_audit import record_llm_call
 
 log = logging.getLogger("querybot.llm")
+
+_DMS_KEY_SUFFIX_RE = re.compile(r"(?:_DT_DMS_KEY|_DATE_DMS_KEY)$", re.IGNORECASE)
+_SURROGATE_KEY_SUFFIX_RE = re.compile(r"(?:_ID|_KEY)$", re.IGNORECASE)
+_IDENTIFIER_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9_]{2,}")
+
+
+def _find_date_role_tokens(table_context: str) -> list[str]:
+    """Column-name-shaped tokens in the retrieved KB context that are BOTH a
+    recognized date-role foreign key (core.date_roles) AND end in _ID/_KEY —
+    e.g. DISPENSE_DATE_ID, ORDER_DT_DMS_KEY.
+
+    The _ID/_KEY suffix requirement matters: is_date_role_column() also
+    matches plain names like ORDER_DATE, which is usually a genuine native
+    DATE/DATETIME column, not a surrogate key — telling the model to avoid
+    YEAR()/MONTH() on a real date column would be wrong. Schema-agnostic
+    otherwise: works for whatever surrogate-key convention the client's own
+    schema actually uses, not one hardcoded suffix.
+    """
+    tokens = set(_IDENTIFIER_TOKEN_RE.findall(table_context or ""))
+    return [
+        t for t in tokens
+        if _SURROGATE_KEY_SUFFIX_RE.search(t) and is_date_role_column(t)
+    ]
 
 Provider = Literal["anthropic", "openai", "azure_openai"]
 
@@ -197,6 +222,11 @@ def build_sql_system_prompt(
     """
     label  = _DB_LABELS.get(db_type, db_type)
     syntax = _SQL_SYNTAX.get(db_type, "- Use standard ANSI SQL\n")
+
+    _date_role_tokens = _find_date_role_tokens(table_context)
+    _has_plain_date_role_key = any(
+        not _DMS_KEY_SUFFIX_RE.search(tok) for tok in _date_role_tokens
+    )
 
     # Dialect-correct pattern for the CROSS-TABLE QUERY RULE example.
     # This prevents the generic LIMIT 20 example from overriding the per-dialect
@@ -482,6 +512,27 @@ def build_sql_system_prompt(
             "  (b) derive the period from the integer YYYYMMDD key itself: year = key / 10000 "
             "(integer division), or the TRY_CONVERT pattern above.\n"
             if ("_DT_DMS_KEY" in table_context.upper() or "_DATE_DMS_KEY" in table_context.upper())
+            else ""
+        )
+        + (
+            "- DATE-DIMENSION SURROGATE KEY RULE (a different convention from the "
+            "DMS-key rule above — applies to columns it does NOT cover): a fact-table "
+            "column that is a foreign key to a date dimension (commonly ending in "
+            "_DATE_ID or _DATE_KEY, or any column the entity-graph JOIN skeleton "
+            "connects to a date/calendar dimension table) is a PURE surrogate key — "
+            "it has NO inherent calendar meaning and is NOT YYYYMMDD-encoded. "
+            "Comparing it directly to a literal (e.g. WHERE fact.SOME_DATE_ID BETWEEN "
+            "20260101 AND 20261231) is always wrong — it will silently match the wrong "
+            "rows or none at all. Do NOT apply arithmetic, DATEADD, YEAR(), MONTH(), or "
+            "TRY_CONVERT directly to it either — none of those recover a real date from "
+            "a plain surrogate key. To filter or group by year/month/quarter/date, you "
+            "MUST JOIN to the date dimension (use the exact FK shown in the entity-graph "
+            "JOIN skeleton when one is provided) and filter/group using the DIMENSION "
+            "table's own real calendar columns — look up their actual names in the "
+            "schema context for that table (a year column, month column, quarter "
+            "column, or native date column). Never invent a comparison against the "
+            "fact-side surrogate key itself.\n"
+            if _has_plain_date_role_key
             else ""
         )
         + "- YEAR-OVER-YEAR / PERIOD COMPARISON RULE: When the user asks to compare a metric "
