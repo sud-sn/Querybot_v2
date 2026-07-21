@@ -7,6 +7,7 @@ import json
 import re
 from typing import Any
 
+from core.answer_rca import extract_sql_tables
 from store.db import get_db
 
 
@@ -182,6 +183,62 @@ def _scope_schema(selected_schema: Any, tables: list[str]) -> str:
     return next(iter(schemas)) if len(schemas) == 1 else ""
 
 
+def _table_parts(value: Any) -> list[str]:
+    return [
+        part.strip().strip("[]\"`").upper()
+        for part in str(value or "").split(".")
+        if part.strip().strip("[]\"`")
+    ]
+
+
+def _referenced_tables_are_allowed(
+    sql: str,
+    db_type: str,
+    allowed_tables: list[str],
+    selected_schema: str,
+) -> bool:
+    """Authorize a historical plan by the tables it actually references.
+
+    Comparing complete ACL snapshots split otherwise identical Portal and
+    external-channel plans whenever the users had different unrelated table
+    grants. Reuse instead requires every physical SQL table to be in the
+    current request's effective ACL. Schema-qualified suffix matching permits
+    ``catalog.schema.table`` SQL to match a ``schema.table`` ACL entry without
+    weakening schema isolation.
+    """
+    references = extract_sql_tables(sql, db_type)
+    if not references:
+        return False
+
+    allowed_parts = [_table_parts(table) for table in allowed_tables]
+    expected_schema = str(selected_schema or "").upper().strip()
+    for reference in references:
+        parts = _table_parts(reference)
+        if not parts:
+            return False
+        if expected_schema and len(parts) >= 2 and parts[-2] != expected_schema:
+            return False
+
+        matches = []
+        for candidate in allowed_parts:
+            if not candidate:
+                continue
+            if len(parts) >= 2 and len(candidate) >= 2:
+                matched = candidate[-2:] == parts[-2:]
+            else:
+                matched = candidate[-1] == parts[-1]
+                if matched and expected_schema and len(candidate) >= 2:
+                    matched = candidate[-2] == expected_schema
+            if matched:
+                matches.append(candidate)
+        if not matches:
+            return False
+        # A bare table reference is unsafe when it resolves to multiple schemas.
+        if len(parts) == 1 and len({tuple(match[-2:]) for match in matches}) > 1:
+            return False
+    return True
+
+
 def find_reusable_validated_sql_plan(
     *,
     account_id: str,
@@ -205,7 +262,7 @@ def find_reusable_validated_sql_plan(
         return None
 
     expected_tables = _table_snapshot(allowed_tables)
-    expected_schema = _scope_schema(selected_schema, expected_tables)
+    expected_schema = str(selected_schema or "").upper().strip()
     expected_db = str(db_type or "").lower()
     expected_contract = str(contract_version or "")
 
@@ -216,7 +273,8 @@ def find_reusable_validated_sql_plan(
                    q.question_id, q.created_at,
                    a.id AS trace_id, a.selected_schema,
                    a.allowed_tables_snapshot, a.db_type,
-                   a.contract_version, a.sql_validation_status, a.status
+                   a.contract_version, a.sql_validation_status, a.status,
+                   a.query_row_count, a.request_source
               FROM query_log q
               JOIN answer_trace a
                 ON a.account_id=q.account_id
@@ -225,6 +283,7 @@ def find_reusable_validated_sql_plan(
                AND q.success=1
                AND COALESCE(q.sql_generated, '') <> ''
                AND a.status='success'
+               AND COALESCE(a.query_row_count, 0) > 0
              ORDER BY q.id DESC
              LIMIT ?
             """,
@@ -236,9 +295,15 @@ def find_reusable_validated_sql_plan(
         if _normalized_question(candidate.get("question") or "") != question_key:
             continue
         candidate_tables = _table_snapshot(candidate.get("allowed_tables_snapshot"))
-        if candidate_tables != expected_tables:
+        if not _referenced_tables_are_allowed(
+            str(candidate.get("sql_generated") or ""),
+            expected_db,
+            expected_tables,
+            expected_schema,
+        ):
             continue
-        if _scope_schema(candidate.get("selected_schema"), candidate_tables) != expected_schema:
+        candidate_schema = _scope_schema(candidate.get("selected_schema"), candidate_tables)
+        if expected_schema and candidate_schema and candidate_schema != expected_schema:
             continue
         if str(candidate.get("db_type") or "").lower() != expected_db:
             continue
