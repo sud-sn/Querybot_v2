@@ -540,6 +540,15 @@ class TestFanoutScoringGuard(unittest.TestCase):
         store.save_entity_property(self.ACC, "InventoryFact", "ON_HAND_QUANTITY",
                                     role="metric", display_name="On Hand Quantity",
                                     synonyms="total, qty")
+        # Every fact table shares this FK column name — its literal text
+        # "STORE_ID" normalizes to two raw tokens ("store", "id") but "id" is
+        # too short to count as a real word, so the actual match is just the
+        # bare word "store". This must NOT be treated as a "specific"
+        # multi-word match — that was the exact live-production bug (every
+        # fact table sharing a PHARMACY_ID column matched any question
+        # mentioning "pharmacy", regardless of relevance).
+        store.save_entity_property(self.ACC, "InventoryFact", "STORE_ID",
+                                    role="identifier")
         self._graph = store.get_full_graph(self.ACC)
 
     def _detect(self, q):
@@ -563,6 +572,16 @@ class TestFanoutScoringGuard(unittest.TestCase):
         # the property-match gate.
         found = self._detect("show inventory fact data")
         self.assertIn("InventoryFact", found)
+
+    def test_shared_fk_column_name_does_not_qualify_unrelated_fact(self):
+        # Regression for the live-production bug: "STORE_ID" normalizes to
+        # two raw tokens ("store", "id") but "id" is filtered as too short,
+        # so the real match is the single bare word "store" — this must NOT
+        # be treated as a specific multi-word match just because the raw
+        # split happened to produce two tokens.
+        found = self._detect("how many stores do we have")
+        self.assertIn("Store", found)
+        self.assertNotIn("InventoryFact", found)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

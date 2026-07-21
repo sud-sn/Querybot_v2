@@ -246,6 +246,16 @@ def detect_entities(
         # specific and safe to treat as a real match on its own; a lone
         # single-word hit is not — it only counts once several independent
         # single-word hits corroborate each other.
+        #
+        # "Specific" must be measured the same way _phrase_in_question()
+        # itself measures a match: by SIGNIFICANT (len >= 3) words, not by a
+        # raw split. Every FK/PK identifier column normalizes to two raw
+        # tokens ("PHARMACY_ID" -> "pharmacy id") but the trailing "id" is
+        # too short to count as a real word — the match collapses to the
+        # single bare word "pharmacy", exactly the generic-word case this
+        # gate exists to block. Using the raw split count here let literally
+        # every fact table sharing a dimension FK column match any question
+        # naming that dimension, independent of actual relevance.
         weak_score = 0
         has_specific_property_hit = False
         for prop in props_by_entity.get(name, []):
@@ -257,7 +267,8 @@ def detect_entities(
                 for phrase in phrases:
                     if not phrase or not _phrase_in_question(phrase, q_tokens, q):
                         continue
-                    if len(_normalize(phrase).split()) >= 2:
+                    significant_words = [w for w in _normalize(phrase).split() if len(w) >= 3]
+                    if len(significant_words) >= 2:
                         weak_score += 3
                         has_specific_property_hit = True
                     else:
