@@ -39,6 +39,7 @@ from core.result_planner import (
     is_metadata_result_question,
     strip_result_context,
 )
+from core.query_router import should_route_to_result_cache
 from core.schema import run_query, load_known_tables, load_schema_columns
 from core.knowledge import load_retriever
 from core.validator import validate_sql
@@ -549,20 +550,37 @@ async def ws_chat(websocket: WebSocket, account_id: str):
             column_formats = dict(snapshot.get("column_formats") or {})
             source_question = str(snapshot.get("question") or "Result")
             duration_ms = int(time.time() * 1000) - start_ms
+            operation = str(outcome.operation or snapshot.get("operation") or "")
+
+            render_question = source_question
+            if operation == "keep_top":
+                limit = int((snapshot.get("metadata") or {}).get("limit") or len(rows))
+                order_column = str((snapshot.get("metadata") or {}).get("order_column") or "")
+                suffix = f" by {order_column.replace('_', ' ').lower()}" if order_column else ""
+                render_question = f"Top {limit} rows{suffix} from the prior result"
+            elif operation == "sort":
+                render_question = "Ranked rows from the prior result"
+            elif operation == "exclude":
+                render_question = "Filtered rows from the prior result"
+            elif operation == "contribution":
+                render_question = "Percentage contribution within the prior result"
 
             chart_payload = None
             try:
-                chart_type = detect_chart_type(
-                    safe_rows,
-                    question=source_question,
-                    column_formats=column_formats,
+                chart_type = (
+                    "bar" if operation in {"keep_top", "sort", "contribution"}
+                    else detect_chart_type(
+                        safe_rows,
+                        question=render_question,
+                        column_formats=column_formats,
+                    )
                 )
                 if chart_type:
                     chart_payload = build_chart_payload(
                         safe_rows,
                         chart_type,
                         title="Updated result",
-                        question=source_question,
+                        question=render_question,
                         column_formats=column_formats,
                     )
             except Exception as chart_exc:
@@ -571,12 +589,13 @@ async def ws_chat(websocket: WebSocket, account_id: str):
             from core.response_builder import build_assistant_response
 
             response = build_assistant_response(
-                question=f"{source_question} (locally updated)",
+                question=render_question,
                 rows=safe_rows,
                 sql=str(snapshot.get("sql") or ""),
                 duration_ms=duration_ms,
                 chart=chart_payload,
                 data_source="governed session cache",
+                display_context={"result_operation": operation},
                 column_formats=column_formats,
                 question_id=question_id,
             )
@@ -2248,7 +2267,24 @@ async def ws_chat(websocket: WebSocket, account_id: str):
             # only to choose a constrained operation from column metadata.
             # Cached rows, sample values, source SQL, and locally bound filter
             # literals are never included in that prompt.
+            _cache_snapshot = result_cache.get_snapshot(
+                getattr(adapter, "session_id", "") or "",
+                getattr(adapter, "last_result_id", None),
+            )
+            _cache_columns = [
+                str(column.get("name") or "")
+                for column in (_cache_snapshot or {}).get("schema", [])
+                if isinstance(column, dict) and column.get("name")
+            ]
             if is_metadata_result_question(text):
+                _route_cached_analysis = True
+            else:
+                _route_cached_analysis = should_route_to_result_cache(
+                    text,
+                    bool(_cache_snapshot),
+                    cached_col_names=_cache_columns,
+                )
+            if _route_cached_analysis:
                 if current_query_task and not current_query_task.done():
                     current_query_task.cancel()
                 current_query_task = asyncio.create_task(

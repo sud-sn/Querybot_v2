@@ -498,7 +498,7 @@ def build_answer(
         value_fmt = column_formats.get(value_col)
         ordered = sorted(rows, key=lambda r: _to_float_z(r.get(value_col)), reverse=True)
         labels = [str(r.get(label_col, "")) for r in rows]
-        if _looks_temporal(labels):
+        if _looks_temporal(labels) and scope.get("kind") != "ranking":
             first = rows[0]
             last = rows[-1]
             first_val = _to_float_z(first.get(value_col))
@@ -1366,6 +1366,12 @@ def build_assistant_response(
 ) -> dict:
     from core.insight import compute_data_brief
     ctx = summarize_result_context(rows, question, sql=sql)
+    result_operation = str((display_context or {}).get("result_operation") or "")
+    if result_operation in {"keep_top", "sort", "contribution"} and ctx.get("mode") == "time_series":
+        # Period labels sorted by a measure are a ranking, not a chronology.
+        # Treating them as a series creates false trend claims from sort order.
+        ctx["mode"] = "ranking"
+        ctx["result_scope"] = infer_result_scope(rows, question, sql, mode="ranking")
     resolved_column_formats = build_column_formats(
         rows,
         display_context=display_context,

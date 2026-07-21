@@ -3,9 +3,11 @@ import unittest
 
 from core.result_cache import ResultCache
 from core.result_commands import (
+    ResultCommand,
     execute_result_command,
     parse_result_command,
 )
+from core.response_builder import build_assistant_response
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -34,12 +36,99 @@ class ConversationalResultCacheTests(unittest.TestCase):
         self.assertEqual(parse_result_command("undo that").action, "undo")
         self.assertEqual(parse_result_command("keep top 2").action, "keep_top")
         self.assertEqual(parse_result_command("sort by revenue descending").action, "sort")
+        self.assertEqual(parse_result_command("Undo that change.").action, "undo")
         self.assertIsNone(parse_result_command("What is revenue by doctor?"))
         self.assertEqual(
             parse_result_command(
                 "Using this result, show total revenue by doctor"
             ).action,
             "aggregate",
+        )
+
+    def test_natural_month_exclusion_matches_period_value(self):
+        cache = ResultCache()
+        cache.store(
+            self.session,
+            [
+                {"PERIOD": "2025-06", "TOTAL_NET_REVENUE": 778.0},
+                {"PERIOD": "2025-03", "TOTAL_NET_REVENUE": 580.0},
+                {"PERIOD": "2025-02", "TOTAL_NET_REVENUE": 566.75},
+            ],
+            result_id="period-source",
+        )
+        outcome = execute_result_command(
+            self.session,
+            parse_result_command("Exclude Feb 2025."),
+            cache=cache,
+        )
+        self.assertTrue(outcome.ok, outcome.message)
+        self.assertEqual([row["PERIOD"] for row in outcome.snapshot["rows"]], ["2025-06", "2025-03"])
+
+    def test_keep_top_by_business_metric_sorts_before_limiting(self):
+        cache = ResultCache()
+        cache.store(
+            self.session,
+            [
+                {"PERIOD": "2025-01", "TOTAL_NET_REVENUE": 100.0},
+                {"PERIOD": "2025-02", "TOTAL_NET_REVENUE": 300.0},
+                {"PERIOD": "2025-03", "TOTAL_NET_REVENUE": 200.0},
+            ],
+            result_id="ranking-source",
+        )
+        outcome = execute_result_command(
+            self.session,
+            parse_result_command("Keep the top 2 months by net revenue."),
+            cache=cache,
+        )
+        self.assertTrue(outcome.ok, outcome.message)
+        self.assertEqual(
+            [row["TOTAL_NET_REVENUE"] for row in outcome.snapshot["rows"]],
+            [300.0, 200.0],
+        )
+
+    def test_ranked_period_subset_is_not_described_as_a_time_trend(self):
+        payload = build_assistant_response(
+            question="Top 3 months by net revenue from the prior result",
+            rows=[
+                {"PERIOD": "2025-06", "TOTAL_NET_REVENUE": 778.0},
+                {"PERIOD": "2025-03", "TOTAL_NET_REVENUE": 580.0},
+                {"PERIOD": "2025-02", "TOTAL_NET_REVENUE": 566.75},
+            ],
+            sql='SELECT * FROM result ORDER BY "TOTAL_NET_REVENUE" DESC LIMIT 3',
+            duration_ms=1,
+            display_context={"result_operation": "keep_top"},
+        )
+        self.assertEqual(payload["analysis_contract"]["mode"], "ranking")
+        self.assertNotIn("trended", payload["insight_summary"].lower())
+
+    def test_contribution_uses_only_current_cached_subset(self):
+        cache = ResultCache()
+        cache.store(
+            self.session,
+            [
+                {"PERIOD": "2025-06", "TOTAL_NET_REVENUE": 778.0},
+                {"PERIOD": "2025-03", "TOTAL_NET_REVENUE": 580.0},
+                {"PERIOD": "2025-02", "TOTAL_NET_REVENUE": 566.75},
+            ],
+            result_id="contribution-source",
+        )
+        outcome = execute_result_command(
+            self.session,
+            ResultCommand(
+                "contribution",
+                dimension_text="booked month",
+                metric_text="net revenue",
+            ),
+            cache=cache,
+        )
+        self.assertTrue(outcome.ok, outcome.message)
+        self.assertEqual(len(outcome.snapshot["rows"]), 3)
+        self.assertIn("TOTAL_NET_REVENUE", outcome.snapshot["rows"][0])
+        self.assertNotIn("TOTAL_TOTAL_NET_REVENUE", outcome.snapshot["rows"][0])
+        self.assertAlmostEqual(
+            sum(row["PERCENTAGE_CONTRIBUTION"] for row in outcome.snapshot["rows"]),
+            100.0,
+            places=1,
         )
 
     def test_exclusion_creates_child_and_preserves_source(self):

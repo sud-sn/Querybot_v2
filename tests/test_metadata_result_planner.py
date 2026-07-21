@@ -109,6 +109,30 @@ class MetadataResultPlannerTests(unittest.TestCase):
         self.assertEqual(error, "")
         self.assertEqual(ratio.action, "ratio")
 
+    def test_contribution_plan_resolves_business_names_to_cached_columns(self):
+        snapshot = {
+            "row_count": 3,
+            "schema": [
+                {"name": "PERIOD", "type": "TEXT"},
+                {"name": "TOTAL_NET_REVENUE", "type": "DOUBLE"},
+            ],
+            "rows": [
+                {"PERIOD": "2025-06", "TOTAL_NET_REVENUE": 778.0},
+                {"PERIOD": "2025-03", "TOTAL_NET_REVENUE": 580.0},
+                {"PERIOD": "2025-02", "TOTAL_NET_REVENUE": 566.75},
+            ],
+        }
+        command, error = compile_planner_response(
+            '{"operation":"contribution","dimension":"BOOKED_MONTH",'
+            '"metric":"NET_REVENUE"}',
+            snapshot,
+            {},
+        )
+        self.assertEqual(error, "")
+        self.assertEqual(command.action, "contribution")
+        self.assertEqual(command.dimension_text, "PERIOD")
+        self.assertEqual(command.metric_text, "TOTAL_NET_REVENUE")
+
     def test_route_requires_explicit_result_context(self):
         self.assertTrue(is_metadata_result_question("Group these results by doctor and average revenue"))
         self.assertFalse(is_metadata_result_question("What is average revenue by doctor?"))

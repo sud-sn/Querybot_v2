@@ -60,9 +60,52 @@ _ANALYTIC_TOPN_RE = re.compile(
 
 # Weaker signals — only route if combined with a result-reference context word
 _ANALYTIC_RE = re.compile(
-    r"\b(average|mean|median|sum|total|minimum|maximum|percentile|rank|sort|calculate|compute|derive)\b",
+    r"\b(average|mean|median|sum|total|minimum|maximum|percentile|rank|sort|"
+    r"calculate|compute|derive|percentage|percent|contribution|break\s+down)\b",
     re.IGNORECASE,
 )
+
+_RESULT_COMMAND_RE = re.compile(
+    r"^\s*(?:undo(?:\s+(?:(?:that|this)(?:\s+change)?|last(?:\s+change)?))?|go\s+back|"
+    r"restore\s+(?:the\s+)?(?:previous|original)\s+result|"
+    r"(?:exclude|remove|omit|drop)\s+.+|"
+    r"keep\s+(?:only\s+)?(?:the\s+)?top\s+\d+.+|"
+    r"sort\s+.+\s+by\s+.+)\s*[.!]?\s*$",
+    re.IGNORECASE,
+)
+
+_COLUMN_NOISE = {
+    "total", "sum", "summed", "average", "avg", "mean", "amount",
+    "value", "number", "count", "percentage", "percent", "pct",
+}
+
+
+def _tokens(value: str) -> set[str]:
+    return {
+        token for token in re.findall(r"[a-z0-9]+", str(value or "").casefold())
+        if token not in _COLUMN_NOISE
+    }
+
+
+def question_mentions_cached_column(question: str, columns: list[str] | None) -> bool:
+    """Match result columns using business wording without guessing a new field."""
+    if not columns:
+        return False
+    q_tokens = _tokens(question)
+    q_text = " ".join(re.findall(r"[a-z0-9]+", question.casefold()))
+    for column in columns:
+        natural = " ".join(re.findall(r"[a-z0-9]+", str(column).casefold()))
+        if natural and natural in q_text:
+            return True
+        column_tokens = _tokens(column)
+        if column_tokens and column_tokens.issubset(q_tokens):
+            return True
+        # A generic PERIOD column is commonly presented to users as a
+        # booked/order/invoice month or date. Route only when an analytical
+        # operation is also present (enforced by the caller below).
+        if column_tokens & {"period", "month", "date"} and q_tokens & {"period", "month", "date"}:
+            return True
+    return False
 
 _TRANSFORM_RE = re.compile(
     r"\b("
@@ -108,6 +151,11 @@ def should_route_to_result_cache(
 
     q = question.strip()
 
+    # Deterministic result commands must never be rejected as off-topic or
+    # sent to a fresh source query while a current snapshot exists.
+    if _RESULT_COMMAND_RE.match(q):
+        return True
+
     # Explicit "From these results, ..." prefix (set by the Ask button)
     if _FROM_RESULTS_PREFIX_RE.match(q):
         return True
@@ -132,12 +180,8 @@ def should_route_to_result_cache(
     # Column-name match — analytic question that names a column from the result
     # e.g. "what is the avg of TOTAL_REVENUE?" when TOTAL_REVENUE is in the cache
     if cached_col_names and _ANALYTIC_RE.search(q):
-        q_lower = q.lower()
-        for col in cached_col_names:
-            # Match the column name or a natural-language version of it
-            col_lower = col.lower().replace("_", " ")
-            if col_lower in q_lower or col.lower() in q_lower:
-                return True
+        if question_mentions_cached_column(q, cached_col_names):
+            return True
 
     return False
 

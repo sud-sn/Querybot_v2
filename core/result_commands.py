@@ -9,14 +9,16 @@ SQL, logs, snapshot metadata, or model prompts.
 from __future__ import annotations
 
 import re
+from calendar import month_abbr, month_name
 from dataclasses import dataclass, field
+from datetime import date, datetime
 from typing import Any, Literal
 
 from core.result_cache import ResultCache, result_cache
 
 
 _UNDO_RE = re.compile(
-    r"^\s*(?:undo(?:\s+(?:that|this|last(?:\s+change)?))?|go\s+back|"
+    r"^\s*(?:undo(?:\s+(?:(?:that|this)(?:\s+change)?|last(?:\s+change)?))?|go\s+back|"
     r"restore\s+(?:the\s+)?(?:previous|original)\s+result)\s*[.!]?\s*$",
     re.IGNORECASE,
 )
@@ -29,6 +31,11 @@ _EXCLUDE_RE = re.compile(
 _KEEP_TOP_RE = re.compile(
     r"^\s*(?:keep|show)\s+(?:only\s+)?(?:the\s+)?top\s+(\d{1,4})"
     r"(?:\s+(?:rows?|results?|records?))?\s*[.!]?\s*$",
+    re.IGNORECASE,
+)
+_KEEP_TOP_BY_RE = re.compile(
+    r"^\s*keep\s+(?:only\s+)?(?:the\s+)?top\s+(\d{1,4})"
+    r"(?:\s+[a-z][a-z0-9 _-]*?)?\s+by\s+(.+?)\s*[.!]?\s*$",
     re.IGNORECASE,
 )
 _SORT_RE = re.compile(
@@ -113,6 +120,13 @@ def parse_result_command(text: str) -> ResultCommand | None:
     match = _KEEP_TOP_RE.fullmatch(value)
     if match:
         return ResultCommand("keep_top", limit=max(1, min(int(match.group(1)), 1000)))
+    match = _KEEP_TOP_BY_RE.fullmatch(value)
+    if match:
+        return ResultCommand(
+            "keep_top",
+            limit=max(1, min(int(match.group(1)), 1000)),
+            metric_text=_clean_field_text(match.group(2)),
+        )
     match = _SORT_RE.fullmatch(value)
     if match:
         direction = "asc" if (match.group(2) or "").lower() in {"asc", "ascending"} else "desc"
@@ -323,12 +337,29 @@ def execute_result_command(
             # ``limit`` is locally parsed and clamped to 1..1000. DuckDB does
             # not consistently preserve parameterized LIMIT clauses through
             # the cache validator/fallback path, so emit the safe integer.
-            transform_sql = f"SELECT * FROM result LIMIT {limit}"
+            order_column = ""
+            if command.metric_text:
+                order_column, error = _resolve_column(rows, command.metric_text)
+                if error:
+                    return _command_error(command, source_id, before, error)
+            order_clause = (
+                f" ORDER BY {_quote_identifier(order_column)} DESC NULLS LAST"
+                if order_column else ""
+            )
+            transform_sql = f"SELECT * FROM result{order_clause} LIMIT {limit}"
             transformed = cache.query(
                 session_id, transform_sql, result_id=source_id,
             )
-            if not transformed and rows:
-                transformed = rows[:limit]
+            expected_rows = list(rows)
+            if order_column:
+                populated = [row for row in rows if row.get(order_column) is not None]
+                null_rows = [row for row in rows if row.get(order_column) is None]
+                expected_rows = sorted(
+                    populated, key=lambda row: row.get(order_column), reverse=True,
+                ) + null_rows
+            expected_rows = expected_rows[:limit]
+            if transformed != expected_rows:
+                transformed = expected_rows
             snapshot = cache.derive_snapshot(
                 session_id,
                 source_id,
@@ -336,7 +367,11 @@ def execute_result_command(
                 question=str(source.get("question") or "Result"),
                 operation="keep_top",
                 sql=transform_sql,
-                metadata={"limit": limit, "metadata_contains_raw_values": False},
+                metadata={
+                    "limit": limit,
+                    "order_column": order_column,
+                    "metadata_contains_raw_values": False,
+                },
             )
             return ResultCommandOutcome(
                 handled=True,
@@ -506,7 +541,11 @@ def execute_result_command(
                     command, source_id, before,
                     "That contribution measure is not numeric in the current result.",
                 )
-            total_column = f"TOTAL_{_safe_output_token(metric)}"
+            metric_token = _safe_output_token(metric)
+            total_column = (
+                metric_token if metric_token.startswith("TOTAL_")
+                else f"TOTAL_{metric_token}"
+            )
             percent_column = "PERCENTAGE_CONTRIBUTION"
             transform_sql = (
                 "WITH grouped AS (SELECT "
@@ -937,6 +976,7 @@ def _resolve_exclusions(
 
 def _find_value_matches(rows: list[dict], target: str) -> list[tuple[str, Any]]:
     wanted = _normalise_value(target)
+    wanted_temporal = _temporal_key(target)
     if not wanted or wanted in _MASKED_MARKERS:
         return []
     unique: dict[tuple[str, str], tuple[str, Any]] = {}
@@ -947,7 +987,13 @@ def _find_value_matches(rows: list[dict], target: str) -> list[tuple[str, Any]]:
             actual = _normalise_value(value)
             if not actual:
                 continue
-            if actual == wanted or wanted.endswith(actual) or actual.endswith(wanted):
+            actual_temporal = _temporal_key(value)
+            if (
+                actual == wanted
+                or wanted.endswith(actual)
+                or actual.endswith(wanted)
+                or (wanted_temporal and actual_temporal == wanted_temporal)
+            ):
                 key = (str(column), repr(value))
                 unique[key] = (str(column), value)
     return list(unique.values())
@@ -965,9 +1011,99 @@ def _resolve_column(rows: list[dict], target: str) -> tuple[str, str]:
     ]
     if len(partial) == 1:
         return partial[0], ""
+    semantic = _semantic_column_matches(rows, target, columns)
+    if len(semantic) == 1:
+        return semantic[0], ""
+    if len(semantic) > 1:
+        return "", "That field name is ambiguous. Use the exact result column name."
     if not partial:
         return "", "That field is not present in the current result."
     return "", "That field name is ambiguous. Use the exact result column name."
+
+
+def resolve_result_column(rows: list[dict], target: str) -> tuple[str, str]:
+    """Public, local-only result-column resolver used by governed planners."""
+    if not rows:
+        return "", "The current result has no columns to resolve."
+    return _resolve_column(rows, target)
+
+
+_COLUMN_NOISE = {
+    "total", "sum", "summed", "average", "avg", "mean", "amount",
+    "value", "number", "count", "percentage", "percent", "pct", "each",
+}
+
+
+def _semantic_tokens(value: Any) -> set[str]:
+    return {
+        token for token in re.findall(r"[a-z0-9]+", str(value or "").casefold())
+        if token not in _COLUMN_NOISE
+    }
+
+
+def _semantic_column_matches(
+    rows: list[dict], target: str, columns: list[str],
+) -> list[str]:
+    wanted = _semantic_tokens(target)
+    matches = [
+        column for column in columns
+        if wanted and (
+            wanted.issubset(_semantic_tokens(column))
+            or _semantic_tokens(column).issubset(wanted)
+        )
+    ]
+    if matches:
+        return matches
+
+    if wanted & {"month", "date", "period", "year", "quarter", "week"}:
+        temporal = []
+        for column in columns:
+            column_tokens = _semantic_tokens(column)
+            values = [row.get(column) for row in rows if row.get(column) is not None]
+            if (
+                column_tokens & {"month", "date", "period", "year", "quarter", "week"}
+                or (values and sum(bool(_temporal_key(value)) for value in values[:20]) >= min(2, len(values)))
+            ):
+                temporal.append(column)
+        return temporal
+    return []
+
+
+_MONTHS = {
+    name.casefold(): index
+    for index, name in enumerate(month_name)
+    if index and name
+}
+_MONTHS.update({
+    name.casefold(): index
+    for index, name in enumerate(month_abbr)
+    if index and name
+})
+
+
+def _temporal_key(value: Any) -> str:
+    """Canonicalise common user/display date forms without database access."""
+    if isinstance(value, datetime):
+        return f"day:{value:%Y-%m-%d}"
+    if isinstance(value, date):
+        return f"day:{value:%Y-%m-%d}"
+    text = str(value or "").strip().casefold().rstrip(".")
+    if not text:
+        return ""
+    match = re.fullmatch(r"(\d{4})[-/](\d{1,2})(?:[-/](\d{1,2}))?", text)
+    if match:
+        year, month, day = int(match.group(1)), int(match.group(2)), match.group(3)
+        if 1 <= month <= 12:
+            return (
+                f"day:{year:04d}-{month:02d}-{int(day):02d}"
+                if day else f"month:{year:04d}-{month:02d}"
+            )
+    words = re.findall(r"[a-z]+|\d{4}", text)
+    year = next((int(word) for word in words if word.isdigit() and len(word) == 4), None)
+    month = next((_MONTHS[word] for word in words if word in _MONTHS), None)
+    if year and month:
+        return f"month:{year:04d}-{month:02d}"
+    return ""
 
 
 def _normalise_value(value: Any) -> str:
