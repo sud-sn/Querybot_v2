@@ -38,7 +38,7 @@ from store.config_store import (
 from store.user_store import (
     create_group, list_groups, get_group, update_group, delete_group,
     set_group_tables, get_group_tables,
-    create_user, get_user, get_user_by_email, get_user_by_zoom_id,
+    create_user, get_user, get_user_by_email, get_user_by_zoom_id, get_user_by_platform_id,
     list_users, update_user, change_password, reset_user_password,
     link_zoom_user, verify_password, delete_user,
     set_user_extra_tables, get_user_extra_tables, get_allowed_tables,
@@ -137,7 +137,7 @@ __all__ = [
     "get_llm_trust_summary","RESULT_LLM_COMPONENTS",
     "create_group","list_groups","get_group","update_group","delete_group",
     "set_group_tables","get_group_tables",
-    "create_user","get_user","get_user_by_email","get_user_by_zoom_id",
+    "create_user","get_user","get_user_by_email","get_user_by_zoom_id","get_user_by_platform_id",
     "list_users","update_user","change_password","reset_user_password",
     "link_zoom_user","verify_password","delete_user",
     "set_user_extra_tables","get_user_extra_tables","get_allowed_tables",

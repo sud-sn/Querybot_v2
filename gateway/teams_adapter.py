@@ -33,6 +33,7 @@ from typing import Optional
 import httpx
 
 from gateway.base import PlatformAdapter, PlatformEvent
+from gateway.session_state import GovernedChannelSessionMixin
 
 log = logging.getLogger("gateway.teams")
 
@@ -40,13 +41,14 @@ _TOKEN_URL = "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token"
 _SCOPE     = "https://api.botframework.com/.default"
 
 
-class TeamsAdapter(PlatformAdapter):
+class TeamsAdapter(GovernedChannelSessionMixin, PlatformAdapter):
 
     platform_type    = "teams"
     persistent_typing = True   # re-send typing indicator every 2.5 s during pipeline
 
     def __init__(self, credentials: dict):
         super().__init__(credentials)
+        self._init_governed_session()
         self._app_id       = credentials["app_id"]
         self._app_password = credentials["app_password"]
         self._tenant_id    = credentials.get("tenant_id", "common")

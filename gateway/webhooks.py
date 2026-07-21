@@ -219,6 +219,46 @@ def _load_adapter(platform_type):
     return get_adapter(platform_type, active[0]["credentials"])
 
 
+def _teams_tenant_from_body(body: bytes) -> str:
+    try:
+        payload = json.loads(body)
+    except Exception:
+        return ""
+    channel_data = payload.get("channelData") or {}
+    conversation = payload.get("conversation") or {}
+    return str(
+        (channel_data.get("tenant") or {}).get("id")
+        or conversation.get("tenantId")
+        or ""
+    ).strip()
+
+
+def _load_teams_adapter(body: bytes):
+    """Load the Teams credentials assigned to the inbound tenant's client."""
+    tenant_id = _teams_tenant_from_body(body)
+    client = store.get_client_by_teams_tenant_id(tenant_id) if tenant_id else None
+    platform_id = (client or {}).get("platform_config_id")
+    if platform_id:
+        platform = store.get_platform(int(platform_id))
+        if (
+            platform
+            and platform.get("platform_type") == "teams"
+            and platform.get("is_active")
+        ):
+            log.info(
+                "Teams: selected assigned platform_config_id=%s for client %s",
+                platform_id,
+                client.get("account_id"),
+            )
+            return get_adapter("teams", platform["credentials"])
+        log.warning(
+            "Teams: client %s references an inactive or invalid Teams platform %s",
+            client.get("account_id"),
+            platform_id,
+        )
+    return _load_adapter("teams")
+
+
 @router.post("/webhook/zoom")
 async def webhook_zoom(request: Request, bg: BackgroundTasks):
     body = await request.body()
@@ -251,7 +291,7 @@ async def webhook_zoom(request: Request, bg: BackgroundTasks):
 async def webhook_teams(request: Request, bg: BackgroundTasks):
     body = await request.body()
     headers = dict(request.headers)
-    adapter = _load_adapter("teams")
+    adapter = _load_teams_adapter(body)
     if not await adapter.verify_request(body, headers):
         raise HTTPException(401, detail="Invalid Teams auth")
     event = adapter.parse_event(body, headers)
@@ -285,6 +325,14 @@ async def webhook_teams(request: Request, bg: BackgroundTasks):
                     "cannot auto-map (need exactly 1, or set teams_tenant_id on the client)",
                     tenant_id, len(configured),
                 )
+
+    bind_session = getattr(adapter, "bind_session", None)
+    if callable(bind_session):
+        try:
+            bind_session(event.account_id, event.user_id)
+        except ValueError as exc:
+            log.warning("Teams: could not establish governed session: %s", exc)
+            raise HTTPException(400, detail="Teams activity is missing tenant or user identity")
 
     send_status = getattr(adapter, "send_status", None)
     if callable(send_status):

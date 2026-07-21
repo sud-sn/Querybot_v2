@@ -200,6 +200,25 @@ def get_user_by_zoom_id(zoom_user_id: str) -> Optional[dict]:
     return dict(row) if row else None
 
 
+def get_user_by_platform_id(account_id: str, platform_user_id: str) -> Optional[dict]:
+    """Resolve a webhook identity inside one client account.
+
+    The legacy column is still named ``zoom_user_id``, but it stores the linked
+    external chat identity for Zoom, Teams, and Slack. Scoping the lookup by
+    account prevents identical provider IDs from crossing tenant boundaries.
+    """
+    if not account_id or not platform_user_id:
+        return None
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT u.*, g.name AS group_name FROM portal_user u "
+            "LEFT JOIN user_group g ON g.id = u.group_id "
+            "WHERE u.account_id=? AND u.zoom_user_id=? AND u.is_active=1",
+            (account_id, platform_user_id),
+        ).fetchone()
+    return dict(row) if row else None
+
+
 def list_users(account_id: str) -> list[dict]:
     with get_db() as conn:
         rows = conn.execute(

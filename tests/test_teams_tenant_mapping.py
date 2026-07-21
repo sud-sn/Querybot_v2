@@ -225,10 +225,26 @@ class TeamsWebhookRoutingWiringTests(unittest.TestCase):
 
     def test_explicit_mapping_tried_before_heuristic_fallback(self):
         anchor = "async def webhook_teams("
-        block = self.src[self.src.index(anchor):self.src.index(anchor) + 2500]
+        block = self.src[self.src.index(anchor):self.src.index(anchor) + 3500]
         mapped_pos = block.index("get_client_by_teams_tenant_id")
         heuristic_pos = block.index("configured  = [c for c in all_clients")
         self.assertLess(mapped_pos, heuristic_pos)
+
+    def test_assigned_platform_is_loaded_before_global_fallback(self):
+        anchor = "def _load_teams_adapter("
+        block = self.src[self.src.index(anchor):self.src.index(anchor) + 1800]
+        assigned_pos = block.index('store.get_platform(int(platform_id))')
+        fallback_pos = block.index('return _load_adapter("teams")')
+        self.assertLess(assigned_pos, fallback_pos)
+
+    def test_teams_session_is_bound_after_client_mapping(self):
+        anchor = "async def webhook_teams("
+        block = self.src[self.src.index(anchor):self.src.index(anchor) + 4200]
+        mapping_pos = block.index("get_client_by_teams_tenant_id")
+        bind_pos = block.index("bind_session(event.account_id, event.user_id)")
+        dispatch_pos = block.index("await dispatch(event.account_id")
+        self.assertLess(mapping_pos, bind_pos)
+        self.assertLess(bind_pos, dispatch_pos)
 
     def test_settings_tab_has_teams_integration_dropdown(self):
         src = (ROOT / "admin/templates/client_detail.html").read_text(encoding="utf-8")

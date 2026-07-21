@@ -397,7 +397,7 @@ async def dispatch(
         return
 
     if text.lower() == "whoami":
-        pu = portal_user or (store.get_user_by_zoom_id(event.user_id) if event.user_id else None)
+        pu = portal_user or (store.get_user_by_platform_id(account_id, event.user_id) if event.user_id else None)
         if pu:
             t = store.get_allowed_tables(pu)
             tlist = ", ".join(sorted(t)) if t else "All tables (admin)"
@@ -413,7 +413,7 @@ async def dispatch(
         db_cfg = get_client_db(account_id)
         used   = store.get_monthly_query_count(account_id)
         limit  = client.get("query_limit_monthly", 500)
-        pu     = portal_user or (store.get_user_by_zoom_id(event.user_id) if event.user_id else None)
+        pu     = portal_user or (store.get_user_by_platform_id(account_id, event.user_id) if event.user_id else None)
         await adapter.send_message(event,
             f"*State:* {get_state(account_id)['state']}\n"
             f"*Database:* {db_cfg['name'] if db_cfg else 'not configured'}\n"
@@ -437,9 +437,10 @@ async def dispatch(
     if state == "READY":
         # For web portal sessions the user is already authenticated via
         # the signed cookie — portal_user is passed in directly. For webhook
-        # sessions (Zoom/Teams/Slack) we look up by zoom_user_id as before.
+        # sessions (Zoom/Teams/Slack) resolve the linked external identity
+        # inside this account so roles and table access cannot cross tenants.
         if portal_user is None and event.user_id:
-            portal_user = store.get_user_by_zoom_id(event.user_id)
+            portal_user = store.get_user_by_platform_id(account_id, event.user_id)
             if not portal_user:
                 await handle_unregistered_user(account_id, event.user_id, event, adapter)
                 return
