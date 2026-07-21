@@ -97,6 +97,7 @@
 </div>
 
 {% if saved %}{% from "macros.html" import alert %}{{ alert(message="Settings saved.", type="success", icon_name="check-circle") }}{% endif %}
+{% if request.query_params.get('error') %}{% from "macros.html" import alert %}{{ alert(message=request.query_params.get('error'), type="error", icon_name="alert-triangle") }}{% endif %}
 
 <div class="metrics">
   <div class="metric"><div class="metric-label">Total queries</div><div class="metric-value">{{ stats.total or 0 }}</div></div>
@@ -354,6 +355,26 @@
               <span class="form-switch-description">Users access QueryBot through the internal portal without a Zoom, Teams, or Slack integration.</span>
             </span>
           </label>
+        </div>
+        <div class="form-grid" style="margin-top:.25rem">
+          <div class="form-group">
+            <label>Teams integration — Azure AD tenant ID</label>
+            <input type="text" name="teams_tenant_id" value="{{ client.teams_tenant_id or '' }}"
+                   placeholder="e.g. 79e7ae13-0669-4b20-93f8-308057aef35a"
+                   pattern="[0-9a-fA-F-]*">
+            <p class="form-note">
+              {% if client.teams_tenant_id %}
+                <span class="badge badge-green" style="margin-right:.4rem">Connected</span>
+                Messages from this Azure AD tenant route to this client. Clear the field to disconnect.
+              {% else %}
+                Optional — routes a specific Teams workspace to this client. The Teams bot itself is
+                registered once (Admin → Platforms), so this just tells QueryBot which client a given
+                tenant belongs to; without it, QueryBot only guesses correctly when exactly one client
+                is configured. Find the tenant ID in the bot's activity logs, or in Azure AD →
+                Overview → Tenant ID.
+              {% endif %}
+            </p>
+          </div>
         </div>
         <div class="form-actions" style="align-items:center;gap:.75rem">
           <button type="submit" class="btn btn-primary" id="settingsSaveBtn">Save settings</button>

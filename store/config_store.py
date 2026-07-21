@@ -382,8 +382,14 @@ def update_client_meta(
     enable_feedback_collection: Optional[int] = None,
     graph_use_suggested: Optional[int] = None,
     erp_packs: Optional[str] = None,
+    teams_tenant_id: Optional[str] = None,
 ) -> None:
-    """Update one or more metadata fields on a client row."""
+    """Update one or more metadata fields on a client row.
+
+    Raises ValueError if teams_tenant_id is already claimed by a different
+    client — the partial unique index (store/db.py) is the source of truth,
+    this just turns the raw sqlite3.IntegrityError into a message an admin
+    route can show directly."""
     fields, params = [], []
     if client_name is not None:
         fields.append("client_name = ?"); params.append(client_name)
@@ -411,12 +417,37 @@ def update_client_meta(
         fields.append("graph_use_suggested = ?"); params.append(graph_use_suggested)
     if erp_packs is not None:
         fields.append("erp_packs = ?"); params.append(erp_packs)
+    if teams_tenant_id is not None:
+        fields.append("teams_tenant_id = ?"); params.append(teams_tenant_id)
     if not fields:
         return
     fields.append("updated_at = datetime('now')")
     params.append(account_id)
+    import sqlite3
     with get_db() as conn:
-        conn.execute(f"UPDATE client SET {', '.join(fields)} WHERE account_id = ?", params)
+        try:
+            conn.execute(f"UPDATE client SET {', '.join(fields)} WHERE account_id = ?", params)
+        except sqlite3.IntegrityError as exc:
+            if teams_tenant_id:
+                raise ValueError(
+                    f"Teams tenant ID \"{teams_tenant_id}\" is already assigned to another client."
+                ) from exc
+            raise
+
+
+def get_client_by_teams_tenant_id(tenant_id: str) -> Optional[dict]:
+    """The other half of the client<->Teams mapping: given the Azure AD
+    tenant ID an inbound Bot Framework activity carries, find the ONE client
+    it belongs to. Returns None for an empty tenant_id so a caller can never
+    accidentally match every client sharing the '' default."""
+    tenant_id = (tenant_id or "").strip()
+    if not tenant_id:
+        return None
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM client WHERE teams_tenant_id = ?", (tenant_id,),
+        ).fetchone()
+    return dict(row) if row else None
 
 
 def delete_client(account_id: str) -> None:

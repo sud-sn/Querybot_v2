@@ -909,6 +909,11 @@ def _run_migrations() -> None:
         ("llm_call_log", "response_hash",              "TEXT DEFAULT ''"),
         ("llm_call_log", "response_preview_sanitized", "TEXT DEFAULT ''"),
         ("llm_call_log", "response_chars",             "INTEGER DEFAULT 0"),
+        # v35: per-client Teams tenant mapping — lets the shared Teams bot
+        # registration route an incoming Azure AD tenant to the ONE client it
+        # belongs to, instead of the "exactly one configured client" auto-map
+        # heuristic that breaks as soon as a second client is configured.
+        ("client", "teams_tenant_id", "TEXT NOT NULL DEFAULT ''"),
     ]
     with get_db() as conn:
         _ensure_llm_call_log_table(conn)
@@ -1500,6 +1505,16 @@ def _post_migration_indexes(conn: sqlite3.Connection) -> None:
         )
     except Exception as e:
         log.debug("learning_candidate unique index skipped: %s", e)
+
+    # v35: one Teams tenant maps to exactly one client. Partial index so
+    # every client with an empty teams_tenant_id (the default) is exempt.
+    try:
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_client_teams_tenant_id "
+            "ON client(teams_tenant_id) WHERE teams_tenant_id != ''"
+        )
+    except Exception as e:
+        log.debug("client teams_tenant_id unique index skipped: %s", e)
 
 
 def _ensure_metric_version_table(conn: sqlite3.Connection) -> None:

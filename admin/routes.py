@@ -2025,6 +2025,7 @@ async def client_update(
     token_limit_monthly: str = Form(""),
     enable_llm_audit:    str = Form(""),
     portal_only:         str = Form(""),
+    teams_tenant_id:     str = Form(""),
 ):
     if not _is_auth(request):
         return RedirectResponse("/admin/login", status_code=303)
@@ -2034,20 +2035,26 @@ async def client_update(
     _valid_packs = {m["pack_id"] for m in _list_erp_packs() if m.get("status") != "stub"}
     _pack_ids = [p for p in _pack_ids if p in _valid_packs]
     is_portal_only = 1 if portal_only else 0
-    store.update_client_meta(
-        account_id,
-        client_name         = client_name.strip() or None,
-        db_config_id        = int(db_config_id) if db_config_id else None,
-        llm_provider        = llm_provider or None,
-        llm_model           = llm_model or None,
-        query_limit_monthly = int(query_limit_monthly) if query_limit_monthly else None,
-        token_limit_monthly = int(token_limit_monthly) if token_limit_monthly else 0,
-        enable_llm_audit    = 1 if enable_llm_audit else 0,
-        portal_only         = is_portal_only,
-        # Portal-only clients always have the internal chat UI enabled
-        chat_ui_enabled     = 1 if is_portal_only else None,
-        erp_packs           = json.dumps(_pack_ids),
-    )
+    try:
+        store.update_client_meta(
+            account_id,
+            client_name         = client_name.strip() or None,
+            db_config_id        = int(db_config_id) if db_config_id else None,
+            llm_provider        = llm_provider or None,
+            llm_model           = llm_model or None,
+            query_limit_monthly = int(query_limit_monthly) if query_limit_monthly else None,
+            token_limit_monthly = int(token_limit_monthly) if token_limit_monthly else 0,
+            enable_llm_audit    = 1 if enable_llm_audit else 0,
+            portal_only         = is_portal_only,
+            # Portal-only clients always have the internal chat UI enabled
+            chat_ui_enabled     = 1 if is_portal_only else None,
+            erp_packs           = json.dumps(_pack_ids),
+            teams_tenant_id     = teams_tenant_id.strip(),
+        )
+    except ValueError as exc:
+        return RedirectResponse(
+            f"/admin/clients/{account_id}?error={quote(str(exc))}", status_code=303,
+        )
     return RedirectResponse(f"/admin/clients/{account_id}?saved=1", status_code=303)
 
 

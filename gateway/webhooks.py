@@ -264,22 +264,28 @@ async def webhook_teams(request: Request, bg: BackgroundTasks):
     remember_event(event)
 
     # The Teams tenant ID rarely matches a QueryBot account_id directly.
-    # If no client is found by tenant ID, look for the single configured client
-    # (one with a db_config assigned) and route there automatically.
-    # This works for the common single-tenant deployment with no hardcoding.
+    # Prefer the explicit per-client mapping (client.teams_tenant_id, set on
+    # the client's Settings tab) — it's the only path that still works once
+    # more than one client is configured. Fall back to the single-configured-
+    # client heuristic for deployments that haven't set the mapping yet.
     if not store.get_client(event.account_id):
-        all_clients = store.list_clients()
-        configured  = [c for c in all_clients if c.get("db_config_id")]
-        if len(configured) == 1:
-            tenant_id = event.account_id
-            event.account_id = configured[0]["account_id"]
-            log.info("Teams: auto-mapped tenant %s → client %s", tenant_id, event.account_id)
+        tenant_id = event.account_id
+        mapped = store.get_client_by_teams_tenant_id(tenant_id)
+        if mapped:
+            event.account_id = mapped["account_id"]
+            log.info("Teams: mapped tenant %s → client %s (explicit mapping)", tenant_id, event.account_id)
         else:
-            log.warning(
-                "Teams: tenant %s not registered; %d configured clients found — "
-                "cannot auto-map (need exactly 1)",
-                event.account_id, len(configured),
-            )
+            all_clients = store.list_clients()
+            configured  = [c for c in all_clients if c.get("db_config_id")]
+            if len(configured) == 1:
+                event.account_id = configured[0]["account_id"]
+                log.info("Teams: auto-mapped tenant %s → client %s", tenant_id, event.account_id)
+            else:
+                log.warning(
+                    "Teams: tenant %s not registered; %d configured clients found — "
+                    "cannot auto-map (need exactly 1, or set teams_tenant_id on the client)",
+                    tenant_id, len(configured),
+                )
 
     send_status = getattr(adapter, "send_status", None)
     if callable(send_status):
