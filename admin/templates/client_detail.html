@@ -358,20 +358,27 @@
         </div>
         <div class="form-grid" style="margin-top:.25rem">
           <div class="form-group">
-            <label>Teams integration — Azure AD tenant ID</label>
-            <input type="text" name="teams_tenant_id" value="{{ client.teams_tenant_id or '' }}"
-                   placeholder="e.g. 79e7ae13-0669-4b20-93f8-308057aef35a"
-                   pattern="[0-9a-fA-F-]*">
+            <label>Assigned Teams integration</label>
+            <select name="teams_platform_config_id">
+              <option value="">— not assigned —</option>
+              {% for tp in teams_platforms %}
+              <option value="{{ tp.id }}" {% if tp.id == client.platform_config_id %}selected{% endif %}>
+                {{ tp.name }}{% if tp.credentials.tenant_id %} (tenant {{ tp.credentials.tenant_id[:8] }}…){% endif %}
+              </option>
+              {% endfor %}
+            </select>
             <p class="form-note">
               {% if client.teams_tenant_id %}
                 <span class="badge badge-green" style="margin-right:.4rem">Connected</span>
-                Messages from this Azure AD tenant route to this client. Clear the field to disconnect.
+                Messages from this integration's Azure AD tenant route to this client. Choose
+                "— not assigned —" to disconnect.
               {% else %}
-                Optional — routes a specific Teams workspace to this client. The Teams bot itself is
-                registered once (Admin → Platforms), so this just tells QueryBot which client a given
-                tenant belongs to; without it, QueryBot only guesses correctly when exactly one client
-                is configured. Find the tenant ID in the bot's activity logs, or in Azure AD →
-                Overview → Tenant ID.
+                Picks which already-registered Teams integration (Admin → Platforms) this client
+                receives messages from — the same way "Assigned database" picks a registered
+                database above. Without one assigned, QueryBot only guesses correctly when exactly
+                one client is configured.
+                {% if not teams_platforms %}No Teams integrations are registered yet —
+                <a href="/admin/platforms">add one on the Platforms page</a> first.{% endif %}
               {% endif %}
             </p>
           </div>

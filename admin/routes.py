@@ -1860,6 +1860,7 @@ async def client_detail(request: Request, account_id: str):
         "db_name":         db_name,
         "system_model":    system_model,
         "health_score":    health_score,
+        "teams_platforms": store.list_platforms("teams"),
     })
 
 
@@ -2025,7 +2026,7 @@ async def client_update(
     token_limit_monthly: str = Form(""),
     enable_llm_audit:    str = Form(""),
     portal_only:         str = Form(""),
-    teams_tenant_id:     str = Form(""),
+    teams_platform_config_id: str = Form(""),
 ):
     if not _is_auth(request):
         return RedirectResponse("/admin/login", status_code=303)
@@ -2035,6 +2036,37 @@ async def client_update(
     _valid_packs = {m["pack_id"] for m in _list_erp_packs() if m.get("status") != "stub"}
     _pack_ids = [p for p in _pack_ids if p in _valid_packs]
     is_portal_only = 1 if portal_only else 0
+
+    # Teams integration is assigned by picking an already-registered platform
+    # (Admin -> Platforms), the same way "Assigned database" picks an
+    # already-registered db_config — never a hand-typed tenant ID. The
+    # tenant ID that actually drives webhook routing (client.teams_tenant_id)
+    # is derived from whatever tenant_id was saved on that platform, not
+    # re-entered here.
+    teams_platform_config_id = teams_platform_config_id.strip()
+    _teams_kwargs: dict = {}
+    if teams_platform_config_id:
+        platform = store.get_platform(int(teams_platform_config_id))
+        if not platform or platform.get("platform_type") != "teams":
+            return RedirectResponse(
+                f"/admin/clients/{account_id}?error={quote('Selected Teams integration was not found.')}",
+                status_code=303,
+            )
+        tenant_id = str((platform.get("credentials") or {}).get("tenant_id") or "").strip()
+        if not tenant_id:
+            return RedirectResponse(
+                f"/admin/clients/{account_id}?error="
+                f"{quote(platform.get('name', 'That Teams integration') + ' has no tenant ID set — add one on the Platforms page first.')}",
+                status_code=303,
+            )
+        _teams_kwargs = {
+            "platform_config_id": int(teams_platform_config_id),
+            "teams_tenant_id": tenant_id,
+        }
+    else:
+        # "— not assigned —" selected: clear the mapping.
+        _teams_kwargs = {"teams_tenant_id": ""}
+
     try:
         store.update_client_meta(
             account_id,
@@ -2049,7 +2081,7 @@ async def client_update(
             # Portal-only clients always have the internal chat UI enabled
             chat_ui_enabled     = 1 if is_portal_only else None,
             erp_packs           = json.dumps(_pack_ids),
-            teams_tenant_id     = teams_tenant_id.strip(),
+            **_teams_kwargs,
         )
     except ValueError as exc:
         return RedirectResponse(
