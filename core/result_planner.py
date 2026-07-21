@@ -14,7 +14,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
-from core.result_commands import ResultCommand
+from core.result_commands import ResultCommand, resolve_result_column
 
 
 _RESULT_CONTEXT_RE = re.compile(
@@ -183,7 +183,11 @@ def compile_planner_response(
         value = str(plan.get(key) or "").strip()
         if not value and not required:
             return ""
-        return columns.get(_normalise(value), "")
+        exact = columns.get(_normalise(value), "")
+        if exact:
+            return exact
+        resolved, _ = resolve_result_column(list(snapshot.get("rows") or []), value)
+        return resolved
 
     if operation == "filter":
         target = column("metric") or column("dimension")
@@ -252,7 +256,12 @@ def compile_planner_response(
         limit = int(str(bindings[limit_ref]).replace(",", ""))
     except (TypeError, ValueError):
         return None, "The row limit was not numeric."
-    return ResultCommand("keep_top", limit=max(1, min(limit, 1000))), ""
+    metric = column("metric", required=False)
+    return ResultCommand(
+        "keep_top",
+        limit=max(1, min(limit, 1000)),
+        metric_text=metric,
+    ), ""
 
 
 def _metadata_schema(snapshot: dict) -> list[dict[str, str]]:

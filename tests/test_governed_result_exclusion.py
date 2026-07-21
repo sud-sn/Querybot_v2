@@ -16,7 +16,7 @@ class GovernedResultExclusionTests(unittest.TestCase):
             {"DOCTOR_NAME": "Dr. Kiran Rao", "REVENUE": 900.0},
             {"DOCTOR_NAME": "Dr. Anil Bose", "REVENUE": 700.0},
         ]
-        self.cache.store(
+        self.result_id = self.cache.store(
             self.session_id,
             self.rows,
             question="Revenue by doctor",
@@ -68,6 +68,26 @@ class GovernedResultExclusionTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "stale"):
             self.cache.exclude_rows(other_session, [token])
+
+    def test_excluding_from_named_snapshot_makes_it_current(self):
+        newer_id = self.cache.store(
+            self.session_id,
+            [{"DOCTOR_NAME": "Later", "REVENUE": 99.0}],
+            question="Later result",
+            sql="SELECT later",
+        )
+        self.assertNotEqual(newer_id, self.result_id)
+        tokens = self.cache.get_row_tokens(
+            self.session_id,
+            result_id=self.result_id,
+        )
+        self.cache.exclude_rows(
+            self.session_id,
+            [tokens[0]],
+            result_id=self.result_id,
+        )
+        current = self.cache.get_snapshot(self.session_id)
+        self.assertEqual(current["result_id"], self.result_id)
 
 
 class GovernedResultExclusionWiringTests(unittest.TestCase):

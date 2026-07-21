@@ -174,16 +174,20 @@ class FollowUpSuggestionsRegulatedGateTests(unittest.TestCase):
         self.assertNotIn("result_llm_features_allowed(account_id)", fn)
 
 
-class ResultChatNarrationRegulatedGateTests(unittest.TestCase):
-    def test_gate_wired_into_websocket_handler(self):
+class ResultChatNarrationBoundaryTests(unittest.TestCase):
+    def test_cached_result_rows_are_never_sent_for_narration(self):
         src = _src("gateway/webhooks.py")
-        gate_pos = src.index("if result_llm_features_allowed(account_id):")
-        block = src[gate_pos:gate_pos + 1300]
-        self.assertIn("await _generate_result_narration(", block)
-        # Regulated path must fall back to empty, not raise or hang, and
-        # leave a proof-of-refusal audit row.
-        self.assertIn('_rc_narration = ""', block)
-        self.assertIn("record_llm_blocked(", block)
+        start = src.index('if msg_type == "result_chat":')
+        end = src.index("# The metadata-only cache engine cannot answer", start)
+        block = src[start:end]
+        self.assertIn("run_governed_result_followup(", block)
+        self.assertIn('"trust": _rc_followup.evidence', block)
+        self.assertIn("No result values were sent to the model", block)
+        self.assertNotIn("_generate_result_narration", block)
+
+        governed = _src("core/governed_result_followup.py")
+        self.assertIn('"rows_sent_to_llm": 0', governed)
+        self.assertIn('"sample_values_sent_to_llm": 0', governed)
 
 
 class GenerateAnalysisResponseRegulatedGateTests(unittest.TestCase):

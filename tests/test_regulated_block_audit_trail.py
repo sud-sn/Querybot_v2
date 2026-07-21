@@ -455,35 +455,35 @@ class DuckdbCacheBaaRecheckPolicyTests(unittest.TestCase):
         self.assertEqual(decision.reason_code, "prohibited_llm_data")
 
 
-class DuckdbCacheReCheckWiringTests(unittest.TestCase):
-    """Static assertions that the re-check is wired into the duckdb_cache
-    routing branch, before the LLM call that would embed cached sample
-    values — same reasoning as DuckdbCacheBaaRecheckPolicyTests' docstring."""
+class GovernedCacheWiringTests(unittest.TestCase):
+    """Cached-result planning must not disclose result values to an LLM."""
 
-    def _duckdb_block(self) -> str:
+    def _cache_block(self) -> str:
         src = _src("core/query_pipeline.py")
-        start = src.index("if _session_id and should_route_to_result_cache(")
-        gen_pos = src.index("_duck_sql = await _generate_duckdb_sql(")
-        return src[start:gen_pos]
+        start = src.index("_route_to_cached_result = bool(")
+        end = src.index(
+            "# Unsupported cache requests continue through the governed source-query pipeline.",
+            start,
+        )
+        return src[start:end]
 
-    def test_recheck_gated_on_regulated_mode(self):
-        block = self._duckdb_block()
-        self.assertIn('compliance_profile.get("mode") == "regulated"', block)
+    def test_cache_uses_governed_metadata_planner(self):
+        block = self._cache_block()
+        self.assertIn("run_governed_result_followup(", block)
+        self.assertIn('component="result_metadata_planner"', block)
 
-    def test_recheck_uses_cached_sql_not_broad_effective_scope(self):
-        block = self._duckdb_block()
-        self.assertIn("result_cache.get_sql(_session_id)", block)
-        self.assertIn("analyze_sql(_cached_sql", block)
-        self.assertIn('action="llm_context"', block)
+    def test_cache_planner_has_zero_value_exposure(self):
+        block = self._cache_block()
+        self.assertNotIn("get_stats(", block)
+        self.assertNotIn("build_duckdb_system_prompt", block)
+        self.assertNotIn("_generate_duckdb_sql", block)
+        self.assertIn('"cached_values_forwarded": False', block)
 
-    def test_denial_writes_blocked_audit_row_and_returns(self):
-        block = self._duckdb_block()
-        self.assertIn("record_llm_blocked(", block)
-        self.assertIn('"duckdb_cache"', block)
-        denial_idx = block.index("if not _cache_llm_decision.effective_allowed:")
-        after = block[denial_idx:]
-        self.assertIn("return", after)
-        self.assertIn("blocked by the workspace data policy", after)
+    def test_bound_literal_failure_is_fail_closed(self):
+        block = self._cache_block()
+        self.assertIn('_cache_followup.status == "blocked"', block)
+        self.assertIn("No cached values", block)
+        self.assertIn("return", block)
 
 
 class TemplateRenderingTests(unittest.TestCase):

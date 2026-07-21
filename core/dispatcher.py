@@ -196,7 +196,16 @@ async def _run_query_with_guard(
 
     # Stage 2 — off-topic guard (skipped for clarification replies)
     if not is_clarification:
-        if not await _classify_is_data_question(text, client_row):
+        from core.result_cache import result_cache
+        from core.result_commands import parse_result_command
+
+        _session_id = getattr(adapter, "session_id", "") or ""
+        _is_cached_result_command = bool(
+            _session_id
+            and result_cache.has_result(_session_id)
+            and parse_result_command(text) is not None
+        )
+        if not _is_cached_result_command and not await _classify_is_data_question(text, client_row):
             await adapter.send_message(event, _OFF_TOPIC_REPLY)
             return
 

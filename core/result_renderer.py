@@ -504,6 +504,44 @@ def _build_followup_sql_context(
     return "\n".join(lines)
 
 
+def _build_metadata_followup_context(
+    original_question: str,
+    follow_up_question: str,
+    schema: list[dict],
+) -> str:
+    """Build source-query fallback context without rows, values, or source SQL."""
+    columns = []
+    for item in schema or []:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        if not name:
+            continue
+        columns.append({
+            "name": name,
+            "type": str(item.get("type") or "TEXT").upper(),
+        })
+    lines = [
+        "FOLLOW-UP QUERY CONTEXT (METADATA ONLY):",
+        "The user is asking a follow-up about a previous result.",
+        "Do not assume the previous result rows or source SQL are available.",
+        "Build a fresh governed query from the Knowledge Base, semantic model, and entity graph.",
+    ]
+    if original_question:
+        lines.append(f'Original business question: "{original_question}"')
+    if follow_up_question:
+        lines.append(f'Current follow-up: "{follow_up_question}"')
+    if columns:
+        manifest = ", ".join(
+            f"{item['name']} ({item['type']})" for item in columns
+        )
+        lines.append(f"Previous result column manifest: {manifest}")
+    lines.append(
+        "Only the column manifest was retained for this fallback; no result values or filter literals were provided."
+    )
+    return "\n".join(lines)
+
+
 def _build_aggregate_drilldown_context(
     original_sql: str,
     original_question: str,
@@ -614,7 +652,8 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
                         confidence_context: dict | None = None,
                         display_context: dict | None = None,
                         explicit_column_formats: dict | None = None,
-                        contract_version: str = ""):
+                        contract_version: str = "",
+                        cache_result: bool = True):
     """Send formatted results to the chat platform. Shared by LLM and metric registry paths."""
     if question_id:
         profile = store.get_compliance_profile(account_id)
@@ -650,7 +689,7 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
     # Cache result on adapter for insight follow-ups (WebSocket sessions).
     # Pass question_id so drilldowns can link back to this original question.
     cache_fn = getattr(adapter, "cache_result", None)
-    if callable(cache_fn):
+    if cache_result and callable(cache_fn):
         cache_fn(
             rows, question, sql, db_cfg, rag_context,
             question_id=question_id,

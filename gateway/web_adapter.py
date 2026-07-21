@@ -205,6 +205,28 @@ class WebAdapter(PlatformAdapter):
         except Exception as _ce:
             log.debug("Result cache store failed (non-critical): %s", _ce)
 
+    def adopt_cached_snapshot(
+        self,
+        snapshot: dict,
+        *,
+        question_id: str | None = None,
+    ) -> dict:
+        """Refresh the portal compatibility view from a canonical snapshot."""
+        previous = self.last_result if isinstance(self.last_result, dict) else {}
+        previous.update({
+            "rows": list(snapshot.get("rows") or []),
+            "question": str(snapshot.get("question") or previous.get("question") or ""),
+            "sql": str(snapshot.get("sql") or previous.get("sql") or ""),
+            "column_formats": dict(snapshot.get("column_formats") or {}),
+            "result_id": str(snapshot.get("result_id") or ""),
+            "result_operation": str(snapshot.get("operation") or "source_query"),
+        })
+        self.last_result = previous
+        self.last_result_id = previous["result_id"] or None
+        if question_id:
+            self.last_question_id = question_id
+        return previous
+
     async def verify_request(self, body: bytes, headers: dict) -> bool:
         return True
 

@@ -1477,6 +1477,24 @@ class ResultTransformationRoutingTests(unittest.TestCase):
         self.assertIn("chr(CAST(64 +", prompt)
         self.assertIn("return the original useful columns PLUS the new computed column", prompt)
 
+    def test_implicit_contribution_routes_when_cached_measure_is_named(self):
+        self.assertTrue(
+            should_route_to_result_cache(
+                "Show percentage contribution of net revenue by booked month.",
+                True,
+                ["PERIOD", "TOTAL_NET_REVENUE"],
+            )
+        )
+
+    def test_new_dimension_does_not_route_to_incomplete_cached_result(self):
+        self.assertFalse(
+            should_route_to_result_cache(
+                "Break this down by prescriber specialty.",
+                True,
+                ["PERIOD", "TOTAL_NET_REVENUE"],
+            )
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
