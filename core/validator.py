@@ -439,11 +439,22 @@ def _graph_plan_errors(tree, graph_context: dict | None, alias_to_table: dict[st
     The prompt asks the model to preserve the graph skeleton, but this check is
     the hard boundary before execution. It binds both column names and their
     resolved physical tables, including every pair in a composite constraint.
+
+    Exception: an edge touching a table in graph_context["fanout_risk_facts"]
+    is skipped entirely. The SQL prompt explicitly instructs those tables to
+    be pre-aggregated into a CTE (grouped to the shared dimension key) before
+    joining, specifically to avoid the fan-out this same graph would otherwise
+    produce — the literal table.column = table.column edge legitimately never
+    appears in the outer query in that shape (the join runs against the CTE's
+    alias instead), so requiring it here would reject the exact fix the
+    fan-out guard asks the model to apply.
     """
     graph = graph_context or {}
     expected_edges = graph.get("resolved_edges") or []
     if not graph.get("enabled") or not expected_edges:
         return []
+
+    fanout_risk_entities = set(graph.get("fanout_risk_facts") or [])
 
     actual_conditions: list[dict] = []
     for join in tree.find_all(sg_exp.Join):
@@ -466,6 +477,11 @@ def _graph_plan_errors(tree, graph_context: dict | None, alias_to_table: dict[st
 
     errors: list[dict] = []
     for edge in expected_edges:
+        if (
+            edge.get("from_entity") in fanout_risk_entities
+            or edge.get("to_entity") in fanout_risk_entities
+        ):
+            continue
         from_fqn = ".".join(
             part for part in [edge.get("from_schema", ""), edge.get("from_table", "")] if part
         )

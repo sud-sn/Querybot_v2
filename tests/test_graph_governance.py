@@ -102,6 +102,85 @@ class TestGraphContractValidation(unittest.TestCase):
         self.assertEqual(result.code, "graph_plan_mismatch")
 
 
+class TestFanoutRiskEdgeExemption(unittest.TestCase):
+    """core.llm's fan-out guard tells the model to pre-aggregate a flagged
+    fact table into a CTE before joining, rather than joining it directly —
+    so the literal table.column = table.column edge legitimately never
+    appears in the outer query for that table. The graph-plan validator must
+    not reject that restructuring as a plan violation."""
+
+    def setUp(self):
+        self.known = {"PHARMA_LAB.F_RX_FILL", "PHARMA_LAB.D_PHARMACY"}
+        self.columns = {
+            "PHARMA_LAB.F_RX_FILL": {"PHARMACY_ID": "int", "NET_REVENUE_AMT": "decimal"},
+            "PHARMA_LAB.D_PHARMACY": {"PHARMACY_ID": "int", "PHARMACY_NAME": "varchar"},
+        }
+        self.graph = {
+            "enabled": True,
+            "resolved_edges": [{
+                "id": 7,
+                "relationship_key": "DBFK:FK_RX_FILL_PHARMACY",
+                "from_entity": "F_RX_FILL",
+                "to_entity": "D_PHARMACY",
+                "from_schema": "PHARMA_LAB", "from_table": "F_RX_FILL",
+                "to_schema": "PHARMA_LAB", "to_table": "D_PHARMACY",
+                "conditions": [["PHARMACY_ID", "PHARMACY_ID"]],
+                "join_type": "INNER",
+            }],
+        }
+        self.cte_sql = """
+            WITH rev AS (
+                SELECT PHARMACY_ID, SUM(NET_REVENUE_AMT) AS TOTAL_REVENUE
+                FROM PHARMA_LAB.F_RX_FILL
+                GROUP BY PHARMACY_ID
+            )
+            SELECT dph.PHARMACY_NAME, rev.TOTAL_REVENUE
+            FROM PHARMA_LAB.D_PHARMACY dph
+            JOIN rev ON dph.PHARMACY_ID = rev.PHARMACY_ID
+        """
+
+    def _validate(self, sql, fanout_risk_facts=None):
+        graph = dict(self.graph)
+        if fanout_risk_facts is not None:
+            graph["fanout_risk_facts"] = fanout_risk_facts
+        return validate_sql_detailed(
+            sql, self.known, "azure_sql", self.known, self.columns,
+            {"graph_context": graph},
+        )
+
+    def test_cte_restructuring_blocked_without_exemption(self):
+        # Baseline: without the fanout_risk_facts flag, the CTE-based join
+        # legitimately doesn't contain the literal edge and is (correctly,
+        # pre-fix) rejected — proves the test fixture reproduces the bug.
+        result = self._validate(self.cte_sql)
+        self.assertFalse(result.ok)
+        self.assertEqual(result.code, "graph_plan_mismatch")
+
+    def test_cte_restructuring_passes_when_flagged_as_fanout_risk(self):
+        result = self._validate(self.cte_sql, fanout_risk_facts=["F_RX_FILL"])
+        self.assertTrue(result.ok, result.reason)
+
+    def test_unflagged_table_is_still_enforced(self):
+        # Flagging an unrelated entity must not accidentally exempt this edge.
+        result = self._validate(self.cte_sql, fanout_risk_facts=["SOME_OTHER_FACT"])
+        self.assertFalse(result.ok)
+
+    def test_direct_join_still_passes_when_flagged(self):
+        # Flagging a table doesn't forbid the model from still joining it
+        # directly if it chooses to — the exemption only widens what's
+        # accepted, it doesn't require the CTE shape.
+        result = self._validate(
+            """
+            SELECT dph.PHARMACY_NAME, SUM(f.NET_REVENUE_AMT) AS TOTAL_REVENUE
+            FROM PHARMA_LAB.F_RX_FILL f
+            INNER JOIN PHARMA_LAB.D_PHARMACY dph ON f.PHARMACY_ID = dph.PHARMACY_ID
+            GROUP BY dph.PHARMACY_NAME
+            """,
+            fanout_risk_facts=["F_RX_FILL"],
+        )
+        self.assertTrue(result.ok, result.reason)
+
+
 class TestGovernedGraphResolution(unittest.TestCase):
     def test_weighted_path_prefers_governed_edges(self):
         graph = {
