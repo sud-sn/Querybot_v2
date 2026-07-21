@@ -317,6 +317,34 @@ def _normalize_identifier(name: str) -> str:
     return re.sub(r"[^A-Z0-9]+", "", (name or "").upper())
 
 
+_IDENTIFIER_TOKEN_ALIASES = {
+    "AMT": "AMOUNT",
+    "CD": "CODE",
+    "DESC": "DESCRIPTION",
+    "DSC": "DESCRIPTION",
+    "DT": "DATE",
+    "EXP": "EXPIRY",
+    "EXPIRE": "EXPIRY",
+    "EXPIRATION": "EXPIRY",
+    "KEY": "ID",
+    "NUM": "NUMBER",
+    "NBR": "NUMBER",
+    "QTY": "QUANTITY",
+}
+
+
+def _canonical_identifier(name: str) -> str:
+    """Normalize common ERP abbreviations without guessing business meaning."""
+    tokens = re.findall(r"[A-Z0-9]+", (name or "").upper())
+    canonical: list[str] = []
+    for token in tokens:
+        if token == "DMS":
+            # DMS marks a surrogate-key convention; it is not business meaning.
+            continue
+        canonical.append(_IDENTIFIER_TOKEN_ALIASES.get(token, token))
+    return "".join(canonical)
+
+
 def _strip_identifier(identifier: str) -> str:
     return (identifier or "").strip().strip("[]\"`").upper()
 
@@ -328,6 +356,10 @@ def _column_suggestions(column: str, candidates: set[str]) -> list[str]:
     exact_norm = sorted(c for c in candidates if _normalize_identifier(c) == norm)
     if exact_norm:
         return exact_norm[:5]
+    canonical = _canonical_identifier(column)
+    canonical_matches = sorted(c for c in candidates if _canonical_identifier(c) == canonical)
+    if canonical and canonical_matches:
+        return canonical_matches[:5]
     norm_to_original = {_normalize_identifier(c): c for c in candidates}
     matches = get_close_matches(norm, list(norm_to_original), n=5, cutoff=0.72)
     return [norm_to_original[m] for m in matches]
@@ -1633,6 +1665,47 @@ def validate_sql(
     """
     result = validate_sql_detailed(sql, known_tables, db_type, allowed_tables, table_columns, semantic_context)
     return result.ok, result.reason, result.code
+
+
+def repair_unambiguous_unknown_columns(
+    sql: str,
+    validation: SqlValidationResult,
+    db_type: str = "snowflake",
+) -> str:
+    """Replace unknown columns only when validation offers one candidate."""
+    if not _HAS_SQLGLOT or validation.ok or validation.code != "unknown_column":
+        return ""
+    errors = [error for error in (validation.errors or []) if error.get("code") == "unknown_column"]
+    if not errors:
+        return ""
+
+    replacements: dict[tuple[str, str], str] = {}
+    for error in errors:
+        suggestions = [str(item or "").upper() for item in (error.get("suggestions") or []) if item]
+        if len(suggestions) != 1:
+            return ""
+        alias = str(error.get("alias") or "").upper()
+        column = str(error.get("column") or "").upper()
+        if not column:
+            return ""
+        replacements[(alias, column)] = suggestions[0]
+
+    dialect = _DIALECT.get(db_type, "snowflake")
+    try:
+        tree = sqlglot.parse_one(normalize_generated_sql(sql, db_type), read=dialect)
+    except Exception:
+        return ""
+
+    changed_keys: set[tuple[str, str]] = set()
+    for column_node in tree.find_all(sg_exp.Column):
+        key = ((column_node.table or "").upper(), (column_node.name or "").upper())
+        replacement = replacements.get(key)
+        if replacement:
+            column_node.set("this", sg_exp.to_identifier(replacement))
+            changed_keys.add(key)
+    if changed_keys != set(replacements):
+        return ""
+    return tree.sql(dialect=dialect)
 
 
 def load_known_tables(schema_dir: str) -> set[str]:

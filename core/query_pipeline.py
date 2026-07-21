@@ -292,6 +292,17 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
     # We narrow effective and allowed_tables to only tables in that schema.
     # This scopes RAG retrieval, SQL generation, and validation to that schema.
     schema_hint = (getattr(event, "schema_hint", "") or "").upper().strip()
+    if not schema_hint:
+        # Teams and other chat channels do not expose the portal's schema
+        # selector. Resolve the same scope automatically when the user can
+        # access exactly one schema, keeping RAG and validation channel-neutral.
+        _available_schemas = {
+            parts[-2]
+            for table in effective
+            if len(parts := str(table or "").upper().split(".")) >= 2
+        }
+        if len(_available_schemas) == 1:
+            schema_hint = next(iter(_available_schemas))
     if schema_hint:
         def _in_schema(fqn: str) -> bool:
             """True if the FQN's schema part matches the selected schema."""
@@ -1729,7 +1740,28 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
         semantic_plan=_semantic_plan or None,
     )
     try:
-        await _send_live_stage(adapter, event, "generating_sql", "Generating query", "Translating the business question into SQL.")
+        _reused_plan = store.find_reusable_validated_sql_plan(
+            account_id=account_id,
+            question=question,
+            selected_schema=schema_hint,
+            allowed_tables=sorted(effective),
+            db_type=db_cfg["db_type"],
+            contract_version=_contract_version,
+        )
+    except Exception as _plan_exc:
+        _reused_plan = None
+        log.warning("Governed SQL plan lookup skipped for %s: %s", account_id, _plan_exc)
+    try:
+        if _reused_plan:
+            await _send_live_stage(
+                adapter,
+                event,
+                "reusing_sql",
+                "Using validated query",
+                "Revalidating a successful governed query plan for this workspace.",
+            )
+        else:
+            await _send_live_stage(adapter, event, "generating_sql", "Generating query", "Translating the business question into SQL.")
         _llm_gen_t0 = time.time()
         with llm_audit_scope(
             account_id=account_id,
@@ -1739,10 +1771,18 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
             question_id=audit_request_id,
             component="sql_generation",
         ):
-            sql, tok_in, tok_out = await llm_complete(
-                system, question, provider, model, api_key,
-                temperature=0.0, max_tokens=512, **az_kwargs,
-            )
+            if _reused_plan:
+                sql = str(_reused_plan.get("sql_generated") or "")
+                tok_in = tok_out = 0
+                log.info(
+                    "Reused governed SQL plan for %s from trace=%s",
+                    account_id, _reused_plan.get("trace_id"),
+                )
+            else:
+                sql, tok_in, tok_out = await llm_complete(
+                    system, question, provider, model, api_key,
+                    temperature=0.0, max_tokens=512, **az_kwargs,
+                )
             _trace_update(
                 trace_id,
                 generated_sql=sql,
@@ -1751,8 +1791,13 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
             )
             _trace_step(
                 trace_id,
-                "llm_generate_sql",
-                output_summary={"tokens_in": tok_in, "tokens_out": tok_out},
+                "reuse_validated_sql_plan" if _reused_plan else "llm_generate_sql",
+                output_summary={
+                    "tokens_in": tok_in,
+                    "tokens_out": tok_out,
+                    "source_trace_id": _reused_plan.get("trace_id") if _reused_plan else None,
+                    "source_query_log_id": _reused_plan.get("query_log_id") if _reused_plan else None,
+                },
                 duration_ms=int((time.time() - _llm_gen_t0) * 1000),
             )
             # Sprint 4b — advisory-only: does the generated SQL actually
@@ -1918,6 +1963,34 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
             )
             sql = _repaired_sql
             ok, reason, code = True, "OK", "ok"
+
+    # A single validator suggestion is deterministic schema evidence, not an
+    # LLM guess. Apply it locally and require the complete query to validate
+    # again before execution; ambiguous cases still use the governed retry.
+    if not ok and code == "unknown_column":
+        from core.validator import validate_sql_detailed, repair_unambiguous_unknown_columns
+        _column_validation = validate_sql_detailed(
+            sql, all_known, db_cfg["db_type"], query_scope_tables,
+            all_columns, semantic_context,
+        )
+        _column_repair = repair_unambiguous_unknown_columns(
+            sql, _column_validation, db_cfg["db_type"],
+        )
+        if _column_repair:
+            _repaired_validation = validate_sql_detailed(
+                _column_repair, all_known, db_cfg["db_type"], query_scope_tables,
+                all_columns, semantic_context,
+            )
+            if _repaired_validation.ok:
+                _trace_step(
+                    trace_id,
+                    "unknown_column_repair",
+                    input_summary=sql,
+                    output_summary=_column_repair,
+                    metadata={"mode": "deterministic", "errors": _column_validation.errors},
+                )
+                sql = _column_repair
+                ok, reason, code = True, "OK", "ok"
 
     _trace_update(
         trace_id,
@@ -2299,6 +2372,15 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
            tok_in, tok_out, duration_ms,
            portal_user_id=pu_id, zoom_user_id=zid,
            question_id=audit_request_id)
+    # A repair may have replaced the first draft. Persist only the SQL that
+    # actually executed so another channel can reuse the validated plan.
+    _trace_update(
+        trace_id,
+        generated_sql=sql,
+        sql_validation_status="pass",
+        sql_validation_error="",
+        query_row_count=len(rows),
+    )
 
     # Zero rows — try clarification only if NOT already a clarification reply
     # AND there is some ambiguity signal (Fix #3). Blind LLM ambiguity checks

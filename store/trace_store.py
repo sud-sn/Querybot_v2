@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from typing import Any
 
 from store.db import get_db
@@ -153,6 +154,98 @@ def finish_answer_trace(
 
 def kb_chunk_refs(chunks: list[str] | None) -> list[dict]:
     return _snippet_refs(chunks)
+
+
+def _normalized_question(value: str) -> str:
+    """Stable exact-intent key used for governed cross-channel plan reuse."""
+    return " ".join(re.findall(r"[a-z0-9]+", str(value or "").lower()))
+
+
+def _table_snapshot(value: Any) -> list[str]:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value or "[]")
+        except (TypeError, ValueError):
+            return []
+    return sorted({str(item or "").upper() for item in (value or []) if item})
+
+
+def _scope_schema(selected_schema: Any, tables: list[str]) -> str:
+    explicit = str(selected_schema or "").upper().strip()
+    if explicit:
+        return explicit
+    schemas = {
+        parts[-2]
+        for table in tables
+        if len(parts := str(table or "").upper().split(".")) >= 2
+    }
+    return next(iter(schemas)) if len(schemas) == 1 else ""
+
+
+def find_reusable_validated_sql_plan(
+    *,
+    account_id: str,
+    question: str,
+    selected_schema: str,
+    allowed_tables: Any,
+    db_type: str,
+    contract_version: str,
+    limit: int = 100,
+) -> dict | None:
+    """Find successful SQL reusable under the current governance scope.
+
+    Result rows and conversation state are deliberately excluded. The returned
+    SQL must still pass the current validator and policy executor. Older traces
+    may retain the validation status of an initial failed draft even though the
+    repaired SQL in query_log executed successfully, so execution success is the
+    historical eligibility gate and current validation is the safety gate.
+    """
+    question_key = _normalized_question(question)
+    if not account_id or not question_key:
+        return None
+
+    expected_tables = _table_snapshot(allowed_tables)
+    expected_schema = _scope_schema(selected_schema, expected_tables)
+    expected_db = str(db_type or "").lower()
+    expected_contract = str(contract_version or "")
+
+    with get_db() as conn:
+        rows = conn.execute(
+            """
+            SELECT q.id AS query_log_id, q.question, q.sql_generated,
+                   q.question_id, q.created_at,
+                   a.id AS trace_id, a.selected_schema,
+                   a.allowed_tables_snapshot, a.db_type,
+                   a.contract_version, a.sql_validation_status, a.status
+              FROM query_log q
+              JOIN answer_trace a
+                ON a.account_id=q.account_id
+               AND a.question_id=q.question_id
+             WHERE q.account_id=?
+               AND q.success=1
+               AND COALESCE(q.sql_generated, '') <> ''
+               AND a.status='success'
+             ORDER BY q.id DESC
+             LIMIT ?
+            """,
+            (account_id, max(1, int(limit or 100))),
+        ).fetchall()
+
+    for row in rows:
+        candidate = dict(row)
+        if _normalized_question(candidate.get("question") or "") != question_key:
+            continue
+        candidate_tables = _table_snapshot(candidate.get("allowed_tables_snapshot"))
+        if candidate_tables != expected_tables:
+            continue
+        if _scope_schema(candidate.get("selected_schema"), candidate_tables) != expected_schema:
+            continue
+        if str(candidate.get("db_type") or "").lower() != expected_db:
+            continue
+        if str(candidate.get("contract_version") or "") != expected_contract:
+            continue
+        return candidate
+    return None
 
 
 # Cross-encoder sigmoid scores below this are "borderline" relevance — the

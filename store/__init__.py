@@ -73,6 +73,7 @@ from store.trace_store import (
     get_kb_doc_quality,
     get_answer_trace_by_question_id,
     store_protected_result_rows,
+    find_reusable_validated_sql_plan,
 )
 from store.eval_store import (
     save_eval_run, save_eval_case_result, list_eval_runs,
@@ -165,6 +166,7 @@ __all__ = [
     "get_kb_doc_quality",
     "get_answer_trace_by_question_id",
     "store_protected_result_rows",
+    "find_reusable_validated_sql_plan",
     "save_eval_run","save_eval_case_result","list_eval_runs",
     "get_eval_run","latest_eval_run","previous_eval_run","latest_regressed_run",
     "get_compliance_profile","save_compliance_profile",
