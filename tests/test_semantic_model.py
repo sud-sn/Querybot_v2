@@ -9,6 +9,7 @@ from core.semantic_model import (
     build_semantic_model,
     build_runtime_semantic_context,
     build_runtime_semantic_plan,
+    find_default_date_roles,
     get_model_health,
     load_semantic_model,
     patch_date_role,
@@ -16,9 +17,39 @@ from core.semantic_model import (
     patch_metric_approval,
     patch_relationship,
     semantic_model_fingerprint,
+    set_default_date_role,
     write_semantic_model,
 )
 from core.validator import validate_sql_detailed
+
+
+def _add_raw_date_role(kb_dir: str, fact_table: str, **overrides) -> None:
+    """Directly inject a date_role entry into both the top-level and
+    per-table lists, bypassing patch_date_role's field-existence validation
+    -- used purely to set up multi-role/native-date test fixtures where the
+    extra role's column isn't part of the base schema fixture."""
+    model = load_semantic_model(kb_dir)
+    entry = {
+        "name": "Test Date",
+        "business_role": "test_date",
+        "fact_table": fact_table,
+        "fact_column": "TEST_DATE_COL",
+        "dimension_table": "",
+        "dimension_key": "",
+        "date_value_column": "",
+        "date_key_type": "surrogate_fk",
+        "synonyms": [],
+        "status": "approved",
+        "confidence": 100,
+        "is_default": False,
+    }
+    entry.update(overrides)
+    model.setdefault("date_roles", []).append(dict(entry))
+    for table in model.get("tables", []) or []:
+        if str(table.get("qualified_name") or table.get("table") or "") == fact_table:
+            table.setdefault("date_roles", []).append(dict(entry))
+    kb_path = Path(kb_dir)
+    (kb_path / MODEL_JSON).write_text(json.dumps(model, indent=2, sort_keys=True), encoding="utf-8")
 
 
 def _tmp_dir():
@@ -747,6 +778,219 @@ class SemanticModelTests(unittest.TestCase):
             )
             self.assertTrue(has_date_field,
                             "Plan must include a date_dimension field entry")
+
+    # ── Default date role ────────────────────────────────────────────────────
+
+    def test_default_date_role_matches_generic_temporal_question(self):
+        """A question with temporal intent but no role-name match still
+        surfaces an is_default-flagged role -- the fallback for questions
+        like 'total revenue by year' that name no specific date concept."""
+        with _tmp_dir() as tmp:
+            root = Path(tmp)
+            schema_dir = root / "schema"
+            kb_dir = root / "kb"
+            schema_dir.mkdir()
+            _write_schema(schema_dir)
+            write_semantic_model(schema_dir=str(schema_dir), kb_dir=str(kb_dir))
+
+            patch_date_role(
+                kb_dir=str(kb_dir),
+                fact_table="PROFITABILITY.CUS_ORD_IVC_FCT",
+                fact_column="CUS_IVC_DT_DMS_KEY",
+                dimension_table="PROFITABILITY.DT_DMS",
+                dimension_key="DT_DMS_KEY",
+                business_role="invoice_date",
+                status="approved",
+            )
+            self.assertTrue(set_default_date_role(
+                str(kb_dir), "PROFITABILITY.CUS_ORD_IVC_FCT", "CUS_IVC_DT_DMS_KEY",
+            ))
+
+            # "revenue by year" names no date role -- only the default flag
+            # can surface it.
+            plan = build_runtime_semantic_plan(
+                str(kb_dir),
+                question="show total revenue by year",
+                selected_schema="PROFITABILITY",
+            )
+            self.assertTrue(plan["enabled"], "Default role must enable the plan")
+            self.assertTrue(
+                any("DT_DMS" in str(j.get("to", "")).upper() for j in plan.get("joins", [])),
+                "Default role must still add its dimension join",
+            )
+
+    def test_multiple_date_roles_without_default_stay_disabled_for_generic_question(self):
+        """A fact table with two approved date roles and no default set must
+        not guess for a generic temporal question -- ambiguity is left to
+        the reactive surrogate-date-misuse validator catch instead."""
+        with _tmp_dir() as tmp:
+            root = Path(tmp)
+            schema_dir = root / "schema"
+            kb_dir = root / "kb"
+            schema_dir.mkdir()
+            _write_schema(schema_dir)
+            write_semantic_model(schema_dir=str(schema_dir), kb_dir=str(kb_dir))
+
+            patch_date_role(
+                kb_dir=str(kb_dir),
+                fact_table="PROFITABILITY.CUS_ORD_IVC_FCT",
+                fact_column="CUS_IVC_DT_DMS_KEY",
+                dimension_table="PROFITABILITY.DT_DMS",
+                dimension_key="DT_DMS_KEY",
+                business_role="invoice_date",
+                status="approved",
+            )
+            _add_raw_date_role(
+                str(kb_dir), "PROFITABILITY.CUS_ORD_IVC_FCT",
+                fact_column="TEST_DATE_COL", business_role="test_date",
+                dimension_table="PROFITABILITY.DT_DMS", dimension_key="DT_DMS_KEY",
+                date_value_column="CAL_DT", status="approved",
+            )
+
+            plan = build_runtime_semantic_plan(
+                str(kb_dir),
+                question="show total revenue by year",
+                selected_schema="PROFITABILITY",
+            )
+            self.assertFalse(
+                any(f.get("role") == "date_dimension" for f in plan.get("fields", [])),
+                "Neither ambiguous role should be forced in without a default",
+            )
+
+    def test_native_date_role_included_without_dimension_join(self):
+        """A role marked native_date has no dimension to join to -- the fact
+        column itself is the usable date value. This previously never
+        survived build_runtime_semantic_plan's required-dimension gate."""
+        with _tmp_dir() as tmp:
+            root = Path(tmp)
+            schema_dir = root / "schema"
+            kb_dir = root / "kb"
+            schema_dir.mkdir()
+            _write_schema(schema_dir)
+            write_semantic_model(schema_dir=str(schema_dir), kb_dir=str(kb_dir))
+
+            _add_raw_date_role(
+                str(kb_dir), "PROFITABILITY.CUS_ORD_IVC_FCT",
+                fact_column="NATIVE_ORDER_DATE", name="Order Date",
+                business_role="order_date", dimension_table="",
+                dimension_key="", date_value_column="",
+                date_key_type="native_date", status="approved",
+            )
+
+            plan = build_runtime_semantic_plan(
+                str(kb_dir),
+                question="show revenue by order date",
+                selected_schema="PROFITABILITY",
+            )
+            self.assertTrue(plan["enabled"])
+            native_field = next(
+                (f for f in plan.get("fields", []) if f.get("column") == "NATIVE_ORDER_DATE"),
+                None,
+            )
+            self.assertIsNotNone(native_field, "Native date role must appear as a field")
+            self.assertEqual(native_field["table"], "PROFITABILITY.CUS_ORD_IVC_FCT")
+            self.assertFalse(
+                any(
+                    j.get("conditions") and j["conditions"][0][0] == "NATIVE_ORDER_DATE"
+                    for j in plan.get("joins", [])
+                ),
+                "Native date role must not add a dimension join",
+            )
+            native_policy = next(
+                (p for p in plan.get("date_key_policies", []) if p.get("column") == "NATIVE_ORDER_DATE"),
+                None,
+            )
+            self.assertIsNotNone(native_policy)
+            self.assertEqual(native_policy["date_key_type"], "native_date")
+
+    def test_set_default_date_role_clears_siblings_and_persists(self):
+        with _tmp_dir() as tmp:
+            root = Path(tmp)
+            schema_dir = root / "schema"
+            kb_dir = root / "kb"
+            schema_dir.mkdir()
+            _write_schema(schema_dir)
+            write_semantic_model(schema_dir=str(schema_dir), kb_dir=str(kb_dir))
+
+            patch_date_role(
+                kb_dir=str(kb_dir),
+                fact_table="PROFITABILITY.CUS_ORD_IVC_FCT",
+                fact_column="CUS_IVC_DT_DMS_KEY",
+                dimension_table="PROFITABILITY.DT_DMS",
+                dimension_key="DT_DMS_KEY",
+                business_role="invoice_date",
+                status="approved",
+            )
+            _add_raw_date_role(
+                str(kb_dir), "PROFITABILITY.CUS_ORD_IVC_FCT",
+                fact_column="TEST_DATE_COL", business_role="test_date",
+                dimension_table="PROFITABILITY.DT_DMS", dimension_key="DT_DMS_KEY",
+                date_value_column="CAL_DT", status="approved",
+            )
+
+            self.assertTrue(set_default_date_role(
+                str(kb_dir), "PROFITABILITY.CUS_ORD_IVC_FCT", "CUS_IVC_DT_DMS_KEY",
+            ))
+            model = load_semantic_model(str(kb_dir))
+            by_col = {r["fact_column"]: r for r in model["date_roles"]}
+            self.assertTrue(by_col["CUS_IVC_DT_DMS_KEY"]["is_default"])
+            self.assertFalse(by_col["TEST_DATE_COL"]["is_default"])
+            fact = next(t for t in model["tables"] if t["table"] == "CUS_ORD_IVC_FCT")
+            table_by_col = {r["fact_column"]: r for r in fact["date_roles"]}
+            self.assertTrue(table_by_col["CUS_IVC_DT_DMS_KEY"]["is_default"])
+            self.assertFalse(table_by_col["TEST_DATE_COL"]["is_default"])
+
+            # Switching the default clears the previous one.
+            self.assertTrue(set_default_date_role(
+                str(kb_dir), "PROFITABILITY.CUS_ORD_IVC_FCT", "TEST_DATE_COL",
+            ))
+            model = load_semantic_model(str(kb_dir))
+            by_col = {r["fact_column"]: r for r in model["date_roles"]}
+            self.assertFalse(by_col["CUS_IVC_DT_DMS_KEY"]["is_default"])
+            self.assertTrue(by_col["TEST_DATE_COL"]["is_default"])
+
+            self.assertFalse(set_default_date_role(
+                str(kb_dir), "PROFITABILITY.CUS_ORD_IVC_FCT", "NO_SUCH_COLUMN",
+            ))
+
+    def test_find_default_date_roles_prefers_flag_then_sole_role_then_ambiguous(self):
+        with _tmp_dir() as tmp:
+            root = Path(tmp)
+            schema_dir = root / "schema"
+            kb_dir = root / "kb"
+            schema_dir.mkdir()
+            _write_schema(schema_dir)
+            write_semantic_model(schema_dir=str(schema_dir), kb_dir=str(kb_dir))
+
+            patch_date_role(
+                kb_dir=str(kb_dir),
+                fact_table="PROFITABILITY.CUS_ORD_IVC_FCT",
+                fact_column="CUS_IVC_DT_DMS_KEY",
+                dimension_table="PROFITABILITY.DT_DMS",
+                dimension_key="DT_DMS_KEY",
+                business_role="invoice_date",
+                status="approved",
+            )
+
+            # Exactly one approved role -- it's the implicit default.
+            results = find_default_date_roles(str(kb_dir))
+            self.assertEqual(len(results), 1)
+            self.assertEqual(results[0]["fact_column"], "CUS_IVC_DT_DMS_KEY")
+
+            # A second approved role with neither flagged -- ambiguous, skip.
+            _add_raw_date_role(
+                str(kb_dir), "PROFITABILITY.CUS_ORD_IVC_FCT",
+                fact_column="TEST_DATE_COL", business_role="test_date",
+                dimension_table="PROFITABILITY.DT_DMS", dimension_key="DT_DMS_KEY",
+                date_value_column="CAL_DT", status="approved",
+            )
+            self.assertEqual(find_default_date_roles(str(kb_dir)), [])
+
+            # Flagging one resolves the ambiguity.
+            set_default_date_role(str(kb_dir), "PROFITABILITY.CUS_ORD_IVC_FCT", "TEST_DATE_COL")
+            results = find_default_date_roles(str(kb_dir))
+            self.assertEqual(len(results), 1)
+            self.assertEqual(results[0]["fact_column"], "TEST_DATE_COL")
 
     # ── S2-2: patch_relationship ──────────────────────────────────────────────
 

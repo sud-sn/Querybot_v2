@@ -29,7 +29,7 @@ from core.query_semantics import (
     build_generic_query_hints,
     detect_top_n_intent,
 )
-from core.graph_resolver import resolve_for_question as _graph_resolve
+from core.graph_resolver import resolve_for_question as _graph_resolve, entity_name_for_table
 from core.llm_audit import llm_audit_scope, make_llm_audit_request_id
 from core.result_cache import result_cache
 from core.query_router import should_route_to_result_cache
@@ -37,8 +37,9 @@ from core.governed_result_followup import adopt_cached_snapshot, run_governed_re
 from core.semantic_planner import build_semantic_field_plan
 from core.semantic_model import (
     build_runtime_semantic_context, build_runtime_semantic_plan,
-    build_field_plan_repair_note,
+    build_field_plan_repair_note, find_default_date_roles,
 )
+from core.date_roles import question_has_temporal_intent, normalize_date_key_type
 from core.metric_scope import metric_source_tables, resolve_metric_scope
 from core.answer_rca import extract_sql_tables
 from core.pipeline_context import (
@@ -1106,6 +1107,30 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
             _value_required_entities = _graph_entities_for_verified_values(
                 _resolved_values, _full_graph,
             )
+            # A generic temporal question ("for 2026") names no specific date
+            # concept, so detect_entities() alone would never pull in the
+            # fact table that owns the date column (or its date dimension)
+            # unless the question happens to imply that fact table for some
+            # other reason. Force them in via required_entities whenever an
+            # admin-flagged (or sole) default date role exists — otherwise
+            # the semantic field plan's later "join to the date dimension"
+            # instruction gets built but the LLM is told not to act on it
+            # (see the "do NOT introduce new joins" rule in build_sql_system_
+            # prompt, which defers to the graph skeleton whenever both are
+            # active), so the join never actually lands in the SQL.
+            if question_has_temporal_intent(question):
+                try:
+                    for _default_role in find_default_date_roles(model=_contract_model, kb_dir=state.get("kb_dir", "")):
+                        _fact_entity = entity_name_for_table(_full_graph, str(_default_role.get("fact_table") or ""))
+                        if _fact_entity:
+                            _value_required_entities.add(_fact_entity)
+                        _role_key_type = normalize_date_key_type(str(_default_role.get("date_key_type") or "surrogate_fk"))
+                        if _role_key_type == "surrogate_fk":
+                            _dim_entity = entity_name_for_table(_full_graph, str(_default_role.get("dimension_table") or ""))
+                            if _dim_entity:
+                                _value_required_entities.add(_dim_entity)
+                except Exception as _ddr_exc:
+                    log.debug("Default date role lookup skipped: %s", _ddr_exc)
             _graph_ctx = _graph_resolve(
                 question=question,
                 account_id=account_id,

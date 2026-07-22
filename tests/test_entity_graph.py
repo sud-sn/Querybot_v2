@@ -957,5 +957,48 @@ class TestEntityFilterAutocompleteUI(unittest.TestCase):
         self.assertIn("len(suffix_matches) == 1", routes)
 
 
+class TestEntityNameForTable(unittest.TestCase):
+    """entity_name_for_table maps a date_role's fact_table/dimension_table
+    string (e.g. "PHARMA_LAB.F_RX_FILL") back to its graph entity_name, so a
+    default date role can be forced into required_entities."""
+
+    def setUp(self):
+        self.graph = {
+            "entities": [
+                {"entity_name": "Rx Fill", "table_name": "F_RX_FILL", "schema_name": "PHARMA_LAB"},
+                {"entity_name": "Date", "table_name": "D_DATE", "schema_name": "PHARMA_LAB"},
+                {"entity_name": "Unscoped", "table_name": "UNSCOPED_TBL", "schema_name": ""},
+            ],
+        }
+
+    def test_matches_schema_qualified_name(self):
+        from core.graph_resolver import entity_name_for_table
+        self.assertEqual(
+            entity_name_for_table(self.graph, "PHARMA_LAB.F_RX_FILL"), "Rx Fill",
+        )
+
+    def test_matches_bare_table_name(self):
+        from core.graph_resolver import entity_name_for_table
+        self.assertEqual(entity_name_for_table(self.graph, "D_DATE"), "Date")
+
+    def test_schema_mismatch_does_not_match(self):
+        from core.graph_resolver import entity_name_for_table
+        self.assertEqual(entity_name_for_table(self.graph, "OTHER_SCHEMA.F_RX_FILL"), "")
+
+    def test_entity_without_schema_matches_any_schema_qualifier(self):
+        from core.graph_resolver import entity_name_for_table
+        self.assertEqual(
+            entity_name_for_table(self.graph, "ANY_SCHEMA.UNSCOPED_TBL"), "Unscoped",
+        )
+
+    def test_unknown_table_returns_empty_string(self):
+        from core.graph_resolver import entity_name_for_table
+        self.assertEqual(entity_name_for_table(self.graph, "NO_SUCH_TABLE"), "")
+
+    def test_empty_input_returns_empty_string(self):
+        from core.graph_resolver import entity_name_for_table
+        self.assertEqual(entity_name_for_table(self.graph, ""), "")
+
+
 if __name__ == "__main__":
     unittest.main()

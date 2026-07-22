@@ -244,7 +244,7 @@ class ConsumerRepointingTests(unittest.TestCase):
         self.assertIn("_contract = load_contract(state.get(\"kb_dir\", \"\"))", src)
         self.assertIn("terms=_contract_terms", src)
         self.assertIn("metrics=_contract_metrics", src)
-        self.assertEqual(src.count("model=_contract_model"), 2)  # context + plan
+        self.assertEqual(src.count("model=_contract_model"), 3)  # context + default-date-role lookup + plan
         self.assertIn('_contract.get("graph")', src)
         self.assertIn("contract_version=_contract_version", src)
 

@@ -1561,16 +1561,40 @@ def build_runtime_semantic_plan(
         source_table = str(table.get("qualified_name") or table.get("table") or "")
         for date_role in table.get("date_roles", []) or []:
             fact_col = str(date_role.get("fact_column") or "")
+            if not fact_col:
+                continue
+            date_key_type = normalize_date_key_type(
+                str(date_role.get("date_key_type") or "surrogate_fk")
+            )
             dim_table = str(date_role.get("dimension_table") or "")
             dim_key = str(date_role.get("dimension_key") or "")
             date_value_col = str(date_role.get("date_value_column") or dim_key)
-            if not fact_col or not dim_table or not dim_key or not date_value_col:
-                continue
+            if date_key_type == "surrogate_fk":
+                # A surrogate key has no calendar meaning of its own — a
+                # dimension to resolve it against is mandatory.
+                if not dim_table or not dim_key or not date_value_col:
+                    continue
+            else:
+                # yyyymmdd_integer / native_date / timestamp: the fact
+                # column itself already holds a usable date value (via
+                # arithmetic decode or directly) — there is no separate
+                # dimension to join, and forcing one in would be wrong.
+                dim_table = ""
+                dim_key = ""
+                date_value_col = fact_col
+
             name_dr = str(date_role.get("name") or "")
             biz_role_dr = str(date_role.get("business_role") or "").replace("_", " ")
             synonyms_dr = [str(s) for s in date_role.get("synonyms", []) or []]
             score = _runtime_match_score(q_terms, [name_dr, biz_role_dr, *synonyms_dr])
-            if score <= 0:
+            # A role explicitly flagged as this fact table's default covers
+            # generic temporal questions ("for 2026") that name no specific
+            # date concept and so cannot score against any role's own
+            # name/synonyms — has_temporal_intent is already guaranteed True
+            # here (the outer loop breaks otherwise). Only an approved role
+            # can be a default; set_default_date_role() enforces that.
+            is_default = bool(date_role.get("is_default")) and str(date_role.get("status") or "") == "approved"
+            if score <= 0 and not is_default:
                 continue
 
             enforcement = (
@@ -1581,17 +1605,17 @@ def build_runtime_semantic_plan(
                 r"[^a-z0-9]+", "_", (biz_role_dr or name_dr).lower()
             ).strip("_") or "business_date"
             role_alias = role_alias_base if role_alias_base.endswith("date") else f"{role_alias_base}_date"
-            date_key_type = normalize_date_key_type(
-                str(date_role.get("date_key_type") or "surrogate_fk")
-            )
             # Use the human/business date value for grouping and filtering; the
-            # surrogate key remains confined to the JOIN condition.
-            fk = (dim_table.upper(), date_value_col.upper())
+            # surrogate key remains confined to the JOIN condition. When there
+            # is no dimension (native/yyyymmdd), the fact column is its own
+            # date value.
+            field_table = dim_table or source_table
+            fk = (field_table.upper(), date_value_col.upper())
             if fk not in seen_fields:
                 seen_fields.add(fk)
                 fields.append({
                     "term": name_dr,
-                    "table": dim_table,
+                    "table": field_table,
                     "column": date_value_col,
                     "role": "date_dimension",
                     "display_required": False,
@@ -1605,26 +1629,27 @@ def build_runtime_semantic_plan(
                 })
 
             # Join: optional — the LLM picks which date dim to join based on schema
-            cond_key = ((fact_col.upper(), dim_key.upper()),)
-            jk = (source_table.upper(), dim_table.upper(), cond_key)
-            if jk not in seen_joins:
-                seen_joins.add(jk)
-                joins.append({
-                    "from": source_table,
-                    "to": dim_table,
-                    "conditions": [(fact_col, dim_key)],
-                    "source": "semantic_model_date_role",
-                    "enforcement": enforcement,
-                    "role_playing": True,
-                    "preserve_all": enforcement == "required",
-                    "role_alias": role_alias,
-                    "business_role": name_dr,
-                })
+            if dim_table and dim_key:
+                cond_key = ((fact_col.upper(), dim_key.upper()),)
+                jk = (source_table.upper(), dim_table.upper(), cond_key)
+                if jk not in seen_joins:
+                    seen_joins.add(jk)
+                    joins.append({
+                        "from": source_table,
+                        "to": dim_table,
+                        "conditions": [(fact_col, dim_key)],
+                        "source": "semantic_model_date_role",
+                        "enforcement": enforcement,
+                        "role_playing": True,
+                        "preserve_all": enforcement == "required",
+                        "role_alias": role_alias,
+                        "business_role": name_dr,
+                    })
             date_key_policies.append({
                 "table": source_table,
                 "column": fact_col,
                 "date_key_type": date_key_type,
-                "date_value_table": dim_table,
+                "date_value_table": dim_table or source_table,
                 "date_value_column": date_value_col,
                 "role_alias": role_alias,
                 "business_role": name_dr,
@@ -1996,6 +2021,108 @@ def patch_date_role(
     (kb_path / MODEL_JSON).write_text(json.dumps(model, indent=2, sort_keys=True), encoding="utf-8")
     (kb_path / MODEL_YAML).write_text(_to_yaml(model) + "\n", encoding="utf-8")
     return True
+
+
+def set_default_date_role(kb_dir: str, fact_table: str, fact_column: str) -> bool:
+    """Mark one approved date role as the default for its fact table.
+
+    Used when a fact table has more than one date role (e.g. dispense date
+    and booked date) and an admin wants generic temporal questions ("for
+    2026") that name no specific date to fall back to this one instead of
+    leaving the LLM to guess. Clears is_default on every sibling role for
+    the same fact table first, so at most one default exists at a time —
+    mirrors patch_date_role's dual top-level/per-table write so both
+    build_runtime_semantic_context and build_runtime_semantic_plan see the
+    change immediately.
+
+    Returns True if the target role exists (even if it was already the
+    default and nothing needed to change); False if no matching approved
+    role was found.
+    """
+    model = load_semantic_model(kb_dir)
+    if not model:
+        return False
+
+    fact_table_u = (fact_table or "").upper()
+    fact_col_u = (fact_column or "").upper()
+    if not fact_table_u or not fact_col_u:
+        return False
+
+    changed = False
+    target_found = False
+
+    for dr in model.get("date_roles", []) or []:
+        if str(dr.get("fact_table") or "").upper() != fact_table_u:
+            continue
+        is_target = str(dr.get("fact_column") or "").upper() == fact_col_u
+        if is_target:
+            target_found = True
+        if bool(dr.get("is_default")) != is_target:
+            dr["is_default"] = is_target
+            changed = True
+
+    for table in model.get("tables", []) or []:
+        t_qname_u = str(table.get("qualified_name") or table.get("table") or "").upper()
+        t_bare_u = str(table.get("table") or "").upper()
+        if fact_table_u not in {t_qname_u, t_bare_u}:
+            continue
+        for dr in table.get("date_roles", []) or []:
+            is_target = str(dr.get("fact_column") or "").upper() == fact_col_u
+            if is_target:
+                target_found = True
+            if bool(dr.get("is_default")) != is_target:
+                dr["is_default"] = is_target
+                changed = True
+
+    if not target_found:
+        return False
+
+    if changed:
+        kb_path = Path(kb_dir)
+        (kb_path / MODEL_JSON).write_text(json.dumps(model, indent=2, sort_keys=True), encoding="utf-8")
+        (kb_path / MODEL_YAML).write_text(_to_yaml(model) + "\n", encoding="utf-8")
+    return True
+
+
+def find_default_date_roles(
+    kb_dir: str = "", model: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Return, per fact table, the one approved date role that should be
+    used for a generic temporal question ("for 2026") that names no
+    specific date concept.
+
+    Prefers an admin-flagged is_default role. When a fact table has exactly
+    one approved date role and none is flagged, that sole role is the
+    implicit default — no admin action needed for the common single-date
+    table. When a fact table has two or more approved roles and none is
+    flagged default, returns nothing for that table: guessing which of
+    several genuinely different dates ("dispense date" vs. "booked date")
+    the user means would be wrong, so it is left to the reactive
+    surrogate-date-misuse validator catch instead.
+    """
+    model = model if model is not None else load_semantic_model(kb_dir)
+    if not model:
+        return []
+
+    by_table: dict[str, list[dict[str, Any]]] = {}
+    for date_role in model.get("date_roles", []) or []:
+        if str(date_role.get("status") or "") != "approved":
+            continue
+        fact_table = str(date_role.get("fact_table") or "")
+        if not fact_table:
+            continue
+        by_table.setdefault(fact_table.upper(), []).append(date_role)
+
+    results: list[dict[str, Any]] = []
+    for roles in by_table.values():
+        defaults = [r for r in roles if bool(r.get("is_default"))]
+        if len(defaults) == 1:
+            results.append(defaults[0])
+        elif not defaults and len(roles) == 1:
+            results.append(roles[0])
+        # Zero or 2+ flagged defaults, or 2+ approved roles with none
+        # flagged: genuinely ambiguous — don't guess.
+    return results
 
 
 def patch_metric_approval(

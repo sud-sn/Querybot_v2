@@ -150,6 +150,32 @@ def _table_candidates_from_required(required_tables: list[str] | set[str] | None
     return candidates
 
 
+def entity_name_for_table(graph: dict, table_ref: str) -> str:
+    """Map a qualified ("SCHEMA.TABLE") or bare table name to its graph
+    entity_name, so callers holding a table name from another source (e.g.
+    the structured semantic model's date_roles) can force that table into
+    entity-graph resolution via required_entities.
+
+    Returns "" when no entity matches — callers should treat that as
+    "nothing to force," not an error; a table that hasn't been discovered
+    into the graph yet simply can't be targeted this way.
+    """
+    table_ref = (table_ref or "").strip()
+    if not table_ref:
+        return ""
+    parts = table_ref.split(".")
+    bare = parts[-1].upper()
+    schema = parts[-2].upper() if len(parts) >= 2 else ""
+    for ent in graph.get("entities", []) or []:
+        if (ent.get("table_name") or "").upper() != bare:
+            continue
+        ent_schema = (ent.get("schema_name") or "").upper()
+        if schema and ent_schema and ent_schema != schema:
+            continue
+        return ent.get("entity_name", "")
+    return ""
+
+
 def detect_entities(
     question: str,
     graph: dict,
