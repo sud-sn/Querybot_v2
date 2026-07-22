@@ -9,6 +9,7 @@ from core.semantic_model import (
     build_semantic_model,
     build_runtime_semantic_context,
     build_runtime_semantic_plan,
+    clear_default_date_role,
     find_default_date_roles,
     get_model_health,
     load_semantic_model,
@@ -992,6 +993,77 @@ class SemanticModelTests(unittest.TestCase):
             results = find_default_date_roles(str(kb_dir))
             self.assertEqual(len(results), 1)
             self.assertEqual(results[0]["fact_column"], "TEST_DATE_COL")
+
+    def test_clear_default_date_role_prevents_implicit_fallback_until_reselected(self):
+        with _tmp_dir() as tmp:
+            root = Path(tmp)
+            schema_dir = root / "schema"
+            kb_dir = root / "kb"
+            schema_dir.mkdir()
+            _write_schema(schema_dir)
+            write_semantic_model(schema_dir=str(schema_dir), kb_dir=str(kb_dir))
+
+            patch_date_role(
+                kb_dir=str(kb_dir),
+                fact_table="PROFITABILITY.CUS_ORD_IVC_FCT",
+                fact_column="CUS_IVC_DT_DMS_KEY",
+                dimension_table="PROFITABILITY.DT_DMS",
+                dimension_key="DT_DMS_KEY",
+                business_role="invoice_date",
+                status="approved",
+            )
+            self.assertTrue(set_default_date_role(
+                str(kb_dir), "PROFITABILITY.CUS_ORD_IVC_FCT", "CUS_IVC_DT_DMS_KEY",
+            ))
+            self.assertTrue(clear_default_date_role(
+                str(kb_dir), "PROFITABILITY.CUS_ORD_IVC_FCT", "CUS_IVC_DT_DMS_KEY",
+            ))
+
+            model = load_semantic_model(str(kb_dir))
+            role = next(r for r in model["date_roles"] if r["fact_column"] == "CUS_IVC_DT_DMS_KEY")
+            self.assertFalse(role["is_default"])
+            self.assertTrue(role["default_disabled"])
+            self.assertEqual(find_default_date_roles(str(kb_dir)), [])
+
+            self.assertTrue(set_default_date_role(
+                str(kb_dir), "PROFITABILITY.CUS_ORD_IVC_FCT", "CUS_IVC_DT_DMS_KEY",
+            ))
+            role = find_default_date_roles(str(kb_dir))[0]
+            self.assertEqual(role["fact_column"], "CUS_IVC_DT_DMS_KEY")
+            self.assertNotIn("default_disabled", role)
+
+    def test_setting_unapproved_role_does_not_clear_existing_default(self):
+        with _tmp_dir() as tmp:
+            root = Path(tmp)
+            schema_dir = root / "schema"
+            kb_dir = root / "kb"
+            schema_dir.mkdir()
+            _write_schema(schema_dir)
+            write_semantic_model(schema_dir=str(schema_dir), kb_dir=str(kb_dir))
+
+            patch_date_role(
+                kb_dir=str(kb_dir),
+                fact_table="PROFITABILITY.CUS_ORD_IVC_FCT",
+                fact_column="CUS_IVC_DT_DMS_KEY",
+                dimension_table="PROFITABILITY.DT_DMS",
+                dimension_key="DT_DMS_KEY",
+                business_role="invoice_date",
+                status="approved",
+            )
+            _add_raw_date_role(
+                str(kb_dir), "PROFITABILITY.CUS_ORD_IVC_FCT",
+                fact_column="TEST_DATE_COL", business_role="test_date",
+                status="needs_review",
+            )
+            self.assertTrue(set_default_date_role(
+                str(kb_dir), "PROFITABILITY.CUS_ORD_IVC_FCT", "CUS_IVC_DT_DMS_KEY",
+            ))
+            self.assertFalse(set_default_date_role(
+                str(kb_dir), "PROFITABILITY.CUS_ORD_IVC_FCT", "TEST_DATE_COL",
+            ))
+            defaults = find_default_date_roles(str(kb_dir))
+            self.assertEqual(len(defaults), 1)
+            self.assertEqual(defaults[0]["fact_column"], "CUS_IVC_DT_DMS_KEY")
 
     # ── S2-2: patch_relationship ──────────────────────────────────────────────
 

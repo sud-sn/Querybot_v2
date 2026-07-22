@@ -6468,6 +6468,7 @@ async def date_role_set_default(
     account_id: str,
     fact_table: str = Form(...),
     fact_column: str = Form(...),
+    make_default: str = Form("1"),
 ):
     """Flag one approved date role as its fact table's default — used when a
     question has generic temporal intent ("for 2026") but names no specific
@@ -6478,12 +6479,20 @@ async def date_role_set_default(
     state = store.get_client_state(account_id)
     kb_dir = (state or {}).get("kb_dir") or ""
     try:
-        from core.semantic_model import set_default_date_role
-        changed = set_default_date_role(kb_dir, fact_table.strip(), fact_column.strip())
+        from core.semantic_model import clear_default_date_role, set_default_date_role
+        should_set = str(make_default).strip().lower() not in {"0", "false", "off", "no"}
+        if should_set:
+            changed = set_default_date_role(kb_dir, fact_table.strip(), fact_column.strip())
+        else:
+            changed = clear_default_date_role(kb_dir, fact_table.strip(), fact_column.strip())
         if not changed:
-            raise ValueError("Approve this date role before setting it as the default.")
-        _after_semantic_approval(account_id, f"default date role set on {fact_table.strip()}")
-        return RedirectResponse(f"/admin/clients/{account_id}/date-roles?saved=default", status_code=303)
+            if should_set:
+                raise ValueError("Approve this date role before setting it as the default.")
+            raise ValueError("This date role is not currently the explicit default.")
+        action = "set" if should_set else "removed"
+        _after_semantic_approval(account_id, f"default date role {action} on {fact_table.strip()}")
+        saved = "default" if should_set else "default-removed"
+        return RedirectResponse(f"/admin/clients/{account_id}/date-roles?saved={saved}", status_code=303)
     except Exception as exc:
         return RedirectResponse(
             f"/admin/clients/{account_id}/date-roles?error={quote(str(exc)[:180])}",

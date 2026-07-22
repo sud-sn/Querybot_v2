@@ -98,6 +98,10 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
 {{ alert("Metric date context removed.", "success") }}
 {% elif saved == "role-added" %}
 {{ alert("Date role added, approved, and saved to the semantic model.", "success") }}
+{% elif saved == "default" %}
+{{ alert("Default date role saved. Generic date questions for this fact will use this role.", "success") }}
+{% elif saved == "default-removed" %}
+{{ alert("Default date role removed. Generic date questions will require another governed date choice.", "success") }}
 {% else %}
 {{ alert("Date role approved and saved to the semantic model.", "success") }}
 {% endif %}
@@ -282,10 +286,18 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
             <span class="btn-approve approved"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px"><path d="M4.5 12.75l6 6 9-13.5"/></svg>Approved</span>
             {% if dr.is_default %}
             <span class="status-pill status-approved" title="Used for generic date questions on this fact table that don't name a specific date">Default</span>
+            <form method="post" action="/admin/clients/{{ client.account_id }}/date-roles/set-default" style="display:inline">
+              <input type="hidden" name="fact_table" value="{{ dr.fact_table }}">
+              <input type="hidden" name="fact_column" value="{{ dr.fact_column }}">
+              <input type="hidden" name="make_default" value="0">
+              <button type="submit" class="status-pill" style="cursor:pointer;border:1px solid var(--border);background:var(--surface)"
+                      title="Remove this default without changing the role's approved status">Unset default</button>
+            </form>
             {% else %}
             <form method="post" action="/admin/clients/{{ client.account_id }}/date-roles/set-default" style="display:inline">
               <input type="hidden" name="fact_table"  value="{{ dr.fact_table }}">
               <input type="hidden" name="fact_column" value="{{ dr.fact_column }}">
+              <input type="hidden" name="make_default" value="1">
               <button type="submit" class="status-pill" style="cursor:pointer;border:none"
                       title="Use this date for generic 'for 2026'-style questions on this fact table that don't name a specific date">Set as default</button>
             </form>

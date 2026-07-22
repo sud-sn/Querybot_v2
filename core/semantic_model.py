@@ -2044,39 +2044,84 @@ def set_default_date_role(kb_dir: str, fact_table: str, fact_column: str) -> boo
     if not fact_table_u or not fact_col_u:
         return False
 
-    changed = False
-    target_found = False
-
-    for dr in model.get("date_roles", []) or []:
-        if str(dr.get("fact_table") or "").upper() != fact_table_u:
-            continue
-        is_target = str(dr.get("fact_column") or "").upper() == fact_col_u
-        if is_target:
-            target_found = True
-        if bool(dr.get("is_default")) != is_target:
-            dr["is_default"] = is_target
-            changed = True
-
+    top_level_roles = [
+        dr for dr in (model.get("date_roles", []) or [])
+        if str(dr.get("fact_table") or "").upper() == fact_table_u
+    ]
+    table_roles: list[dict[str, Any]] = []
     for table in model.get("tables", []) or []:
         t_qname_u = str(table.get("qualified_name") or table.get("table") or "").upper()
         t_bare_u = str(table.get("table") or "").upper()
-        if fact_table_u not in {t_qname_u, t_bare_u}:
-            continue
-        for dr in table.get("date_roles", []) or []:
-            is_target = str(dr.get("fact_column") or "").upper() == fact_col_u
-            if is_target:
-                target_found = True
-            if bool(dr.get("is_default")) != is_target:
-                dr["is_default"] = is_target
-                changed = True
+        if fact_table_u in {t_qname_u, t_bare_u}:
+            table_roles.extend(table.get("date_roles", []) or [])
 
-    if not target_found:
+    matching_targets = [
+        dr for dr in [*top_level_roles, *table_roles]
+        if str(dr.get("fact_column") or "").upper() == fact_col_u
+        and str(dr.get("status") or "") == "approved"
+    ]
+    if not matching_targets:
         return False
+
+    changed = False
+    for dr in [*top_level_roles, *table_roles]:
+        is_target = str(dr.get("fact_column") or "").upper() == fact_col_u
+        if bool(dr.get("is_default")) != is_target:
+            dr["is_default"] = is_target
+            changed = True
+        if dr.pop("default_disabled", None) is not None:
+            changed = True
 
     if changed:
         kb_path = Path(kb_dir)
         (kb_path / MODEL_JSON).write_text(json.dumps(model, indent=2, sort_keys=True), encoding="utf-8")
         (kb_path / MODEL_YAML).write_text(_to_yaml(model) + "\n", encoding="utf-8")
+    return True
+
+
+def clear_default_date_role(kb_dir: str, fact_table: str, fact_column: str) -> bool:
+    """Remove an explicit fact-table default without unapproving the role.
+
+    ``default_disabled`` records the administrator's deliberate choice so a
+    fact with one approved date role does not immediately regain that role as
+    an implicit default. Selecting any role as default later clears this flag.
+    """
+    model = load_semantic_model(kb_dir)
+    if not model:
+        return False
+
+    fact_table_u = (fact_table or "").upper()
+    fact_col_u = (fact_column or "").upper()
+    if not fact_table_u or not fact_col_u:
+        return False
+
+    top_level_roles = [
+        dr for dr in (model.get("date_roles", []) or [])
+        if str(dr.get("fact_table") or "").upper() == fact_table_u
+    ]
+    table_roles: list[dict[str, Any]] = []
+    for table in model.get("tables", []) or []:
+        t_qname_u = str(table.get("qualified_name") or table.get("table") or "").upper()
+        t_bare_u = str(table.get("table") or "").upper()
+        if fact_table_u in {t_qname_u, t_bare_u}:
+            table_roles.extend(table.get("date_roles", []) or [])
+
+    roles = [*top_level_roles, *table_roles]
+    target_found = any(
+        str(dr.get("fact_column") or "").upper() == fact_col_u
+        and bool(dr.get("is_default"))
+        for dr in roles
+    )
+    if not target_found:
+        return False
+
+    for dr in roles:
+        dr["is_default"] = False
+        dr["default_disabled"] = True
+
+    kb_path = Path(kb_dir)
+    (kb_path / MODEL_JSON).write_text(json.dumps(model, indent=2, sort_keys=True), encoding="utf-8")
+    (kb_path / MODEL_YAML).write_text(_to_yaml(model) + "\n", encoding="utf-8")
     return True
 
 
@@ -2114,7 +2159,11 @@ def find_default_date_roles(
         defaults = [r for r in roles if bool(r.get("is_default"))]
         if len(defaults) == 1:
             results.append(defaults[0])
-        elif not defaults and len(roles) == 1:
+        elif (
+            not defaults
+            and len(roles) == 1
+            and not any(bool(r.get("default_disabled")) for r in roles)
+        ):
             results.append(roles[0])
         # Zero or 2+ flagged defaults, or 2+ approved roles with none
         # flagged: genuinely ambiguous — don't guess.
