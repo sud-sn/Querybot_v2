@@ -244,11 +244,23 @@ _VALIDATION_REASONS: dict[str, str] = {
     "parse": "The generated query was not valid SQL.",
     "ddl": "The generated query tried an operation that is not allowed — only read-only questions are supported.",
     "cannot_generate": "I could not turn this question into a query using the available data.",
+    "dialect_mismatch": "The generated query used SQL syntax that does not match your database.",
+    "production_shape": "The generated query was not structured safely enough to run (missing explicit columns or an unqualified join).",
+    "top_n_shape": "The generated query did not correctly limit results to the top/bottom values you asked for.",
+    "graph_plan_mismatch": "The generated query did not follow the approved relationships between your tables.",
+    "multi_statement": "The generated query tried to run more than one statement at once.",
+    "not_select": "The generated query was not a read-only SELECT statement.",
+    "reused_plan_empty": "A previously successful query for this question returned no rows under the current data, so I tried to regenerate it.",
+    "surrogate_date_conversion": "The generated query tried to read a date directly from an internal row-ID column instead of joining to the real calendar date.",
 }
 
 _VALIDATION_NEXT_STEPS: dict[str, str] = {
     "access_denied": "Ask your administrator to grant your group access to the table named in the technical details.",
     "cannot_generate": "Try naming the metric and the breakdown explicitly (e.g. 'total revenue by customer'), or add a time range.",
+    "dialect_mismatch": "Try rephrasing the question; if it keeps failing, ask your administrator to check the connected database type.",
+    "graph_plan_mismatch": "Try rephrasing the question; if it keeps failing, ask your administrator to review the Entity Graph relationships for these tables.",
+    "surrogate_date_conversion": "Try rephrasing the question; if it keeps failing, ask your administrator to check the Date Roles setup for this table.",
+    "reused_plan_empty": "Try narrowing the question (a specific date range or filter) — the underlying data may have changed since this question last succeeded.",
 }
 _DEFAULT_VALIDATION_NEXT_STEP = (
     "Try naming the metric and the breakdown explicitly (e.g. 'total revenue by customer'). "

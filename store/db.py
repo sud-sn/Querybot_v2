@@ -914,6 +914,11 @@ def _run_migrations() -> None:
         # belongs to, instead of the "exactly one configured client" auto-map
         # heuristic that breaks as soon as a second client is configured.
         ("client", "teams_tenant_id", "TEXT NOT NULL DEFAULT ''"),
+        # Admin query-log/overview surfacing: the validator/execution failure
+        # classification code, so the admin UI can render the same
+        # business-readable translate_failure() message chat gets instead of
+        # a raw technical string, and tag the failure with its exact scenario.
+        ("query_log", "error_code", "TEXT NOT NULL DEFAULT ''"),
     ]
     with get_db() as conn:
         _ensure_llm_call_log_table(conn)

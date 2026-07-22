@@ -26,7 +26,7 @@ log = logging.getLogger("querybot")
 def _log_q(account_id, question, sql, rows, success, error,
            provider, model, tok_in, tok_out, dur_ms,
            portal_user_id=None, zoom_user_id="",
-           question_id="", parent_question_id=""):
+           question_id="", parent_question_id="", error_code=""):
     store.log_query(
         account_id=account_id, question=question, sql_generated=sql,
         row_count=rows, success=success, error_msg=error,
@@ -34,6 +34,7 @@ def _log_q(account_id, question, sql, rows, success, error,
         tokens_in=tok_in, tokens_out=tok_out, duration_ms=dur_ms,
         portal_user_id=portal_user_id, zoom_user_id=zoom_user_id or "",
         question_id=question_id or "", parent_question_id=parent_question_id or "",
+        error_code=error_code or "",
     )
 
 

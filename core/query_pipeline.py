@@ -1865,7 +1865,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
         _log_q(account_id, question, "", 0, False, str(e), provider, model, 0, 0,
                int(time.time()*1000)-start_ms,
                portal_user_id=pu_id, zoom_user_id=zid,
-               question_id=audit_request_id)
+               question_id=audit_request_id, error_code="llm_error")
         _trace_finish(trace_id, status="error", answer_type="error", error_message=f"AI error: {e}")
         await adapter.send_message(event, f"⚠️ AI error: {e}")
         return
@@ -1885,7 +1885,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
         _log_q(account_id, question, "", 0, False, "CANNOT_GENERATE",
                provider, model, tok_in, tok_out, int(time.time()*1000)-start_ms,
                portal_user_id=pu_id, zoom_user_id=zid,
-               question_id=audit_request_id)
+               question_id=audit_request_id, error_code="cannot_generate")
 
         # Skip ambiguity check when this IS a clarification reply — prevents infinite loop
         if not is_clarification:
@@ -2416,7 +2416,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
         _log_q(account_id, question, sql, 0, False, last_reason, provider, model,
                tok_in, tok_out, int(time.time()*1000) - start_ms,
                portal_user_id=pu_id, zoom_user_id=zid,
-               question_id=audit_request_id)
+               question_id=audit_request_id, error_code=last_code or "")
         _trace_finish(trace_id, status="error", answer_type="error", error_message=last_reason)
         from core.failure_messages import translate_failure, suggest_closest_terms, _VALIDATION_REASONS
         if (last_code or "").lower() in _VALIDATION_REASONS:
@@ -2446,7 +2446,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                provider, model, tok_in, tok_out,
                int(time.time()*1000) - start_ms,
                portal_user_id=pu_id, zoom_user_id=zid,
-               question_id=audit_request_id)
+               question_id=audit_request_id, error_code="execution_error")
         _trace_finish(trace_id, status="error", answer_type="error", error_message=exec_error or "Unknown error")
         from core.failure_messages import translate_failure
         from core.answer_formatter import format_failure_business_response

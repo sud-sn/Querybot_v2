@@ -1777,6 +1777,38 @@ async def client_create(
         status_code=303)
 
 
+_FAILURE_RCA_EXECUTION_KIND_CODES = {"", "execution_error", "llm_error"}
+
+
+def _attach_failure_rca(queries: list[dict]) -> None:
+    """Mutate each failed row in place, adding an "rca" key with the same
+    business-readable {headline, most_likely_reason, suggested_next_step,
+    technical_notes} shape translate_failure() gives chat users, instead of
+    the admin portal only ever showing the raw internal error_msg string.
+
+    error_code distinguishes a validator rejection (looked up by its exact
+    code) from a raw execution/LLM exception (run through the DB-error
+    sanitizer instead); rows logged before error_code existed, or from
+    paths that never set it, fall back to the execution-kind handling,
+    which still produces a readable message from the raw text.
+    """
+    from core.failure_messages import translate_failure
+    for q in queries:
+        if q.get("success"):
+            continue
+        code = (q.get("error_code") or "").strip()
+        if code in _FAILURE_RCA_EXECUTION_KIND_CODES:
+            q["rca"] = translate_failure(
+                kind="execution", exception_text=q.get("error_msg") or "",
+                sql=q.get("sql_generated") or "", question=q.get("question") or "",
+            )
+        else:
+            q["rca"] = translate_failure(
+                kind="validation", code=code, reason=q.get("error_msg") or "",
+                sql=q.get("sql_generated") or "", question=q.get("question") or "",
+            )
+
+
 @router.get("/clients/{account_id}", response_class=HTMLResponse)
 async def client_detail(request: Request, account_id: str):
     if not _is_auth(request):
@@ -1802,7 +1834,10 @@ async def client_detail(request: Request, account_id: str):
     limit_pct     = min(round(monthly_count / limit * 100), 100)
     token_status  = store.get_monthly_token_status(account_id)
 
-    # Failed queries for error panel
+    # Failed queries for error panel — attach the same business-readable RCA
+    # chat users get, instead of only showing the raw internal error_msg.
+    _attach_failure_rca(queries)
+
     failed_queries = [q for q in queries if not q["success"]][:10]
 
     # Top questions frequency map
