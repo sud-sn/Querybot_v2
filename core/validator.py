@@ -932,6 +932,36 @@ def _find_surrogate_date_conversion_errors(sql: str, policies: list[dict]) -> li
     return errors
 
 
+_NATIVE_DATE_TYPE_RE = re.compile(r"\b(?:DATE|DATETIME2?|SMALLDATETIME|TIMESTAMP)\b", re.IGNORECASE)
+
+
+def _find_date_dimension_hint(
+    table_columns: dict[str, dict[str, str]],
+) -> tuple[str, str] | None:
+    """Best-effort identify a single unambiguous table.column pair that
+    holds a genuine, natively-typed calendar value somewhere in the known
+    schema, so the repair instruction can name a concrete replacement
+    instead of telling the model to "look it up" — which, on a retry with
+    only one shot left, it has been observed to satisfy by inventing a
+    plausible-looking column name (e.g. "YR") that doesn't exist.
+
+    Schema-driven, not client-specific: works off table_columns' own
+    declared data types. Deliberately returns None (no hint, fall back to
+    the generic instruction) when zero or more than one table qualifies —
+    a wrong concrete suggestion is worse than none, and this only needs to
+    help the common single-date-dimension case.
+    """
+    candidates: list[tuple[str, str]] = []
+    for table, cols in (table_columns or {}).items():
+        for col_name, col_type in (cols or {}).items():
+            if _NATIVE_DATE_TYPE_RE.search(str(col_type or "")):
+                candidates.append((table, str(col_name)))
+                break
+    if len(candidates) == 1:
+        return candidates[0]
+    return None
+
+
 def _schema_driven_surrogate_date_misuse_errors(
     tree, table_columns: dict[str, dict[str, str]],
 ) -> list[dict]:
@@ -956,6 +986,19 @@ def _schema_driven_surrogate_date_misuse_errors(
     errors: list[dict] = []
     misused_columns = _surrogate_date_misuse_columns(tree)
     seen: set[str] = set()
+    dimension_hint = _find_date_dimension_hint(table_columns)
+    hint_text = (
+        f"JOIN it to {dimension_hint[0]} and filter/group using "
+        f"{dimension_hint[0]}.{dimension_hint[1]} instead of converting, "
+        "casting, or comparing the surrogate key directly."
+        if dimension_hint else
+        "JOIN it to its date dimension (the exact FK is in the entity graph "
+        "even if this particular skeleton didn't need it for grouping) and "
+        "filter/group using that dimension's own real calendar column "
+        "(an exact column name from the schema context, never an invented "
+        "abbreviation) instead of converting, casting, or comparing the "
+        "surrogate key directly."
+    )
     for cols in (table_columns or {}).values():
         for col_name in cols or {}:
             col_name = str(col_name or "").strip()
@@ -969,12 +1012,7 @@ def _schema_driven_surrogate_date_misuse_errors(
                 "code": "surrogate_date_conversion",
                 "message": (
                     f"{col_name} is a surrogate date-dimension key, not an encoded "
-                    "calendar date. JOIN it to its date dimension (the exact FK is "
-                    "in the entity graph even if this particular skeleton didn't "
-                    "need it for grouping) and filter/group using that dimension's "
-                    "own real calendar column (look up its actual name in the "
-                    "schema context) instead of converting, casting, or comparing "
-                    "the surrogate key directly."
+                    f"calendar date. {hint_text}"
                 ),
                 "column": col_name,
                 "date_key_type": "surrogate_fk",

@@ -2270,9 +2270,11 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                     "- The flagged column is a sequential surrogate key, not an encoded calendar date — "
                     "do NOT wrap it in TRY_CONVERT/CONVERT/CAST, and do NOT pass it to YEAR/MONTH/DAY/"
                     "DATEPART/DATEADD/DATEDIFF directly.\n"
-                    "- JOIN it to its date dimension table using the exact FK from the entity graph or schema context.\n"
-                    "- Filter and group using the date dimension's own real calendar column (e.g. a CALENDAR_DATE/"
-                    "DATE_KEY_YYYYMMDD-style column), not the surrogate key itself.\n"
+                    "- The validation error above names the exact table and column to JOIN to and filter/group on "
+                    "— use that EXACT column verbatim.\n"
+                    "- If no exact table/column is named above, find the date dimension's real calendar column "
+                    "verbatim in the schema context (KB documents / table columns in this prompt). "
+                    "Do NOT invent, abbreviate, or guess a column name (e.g. 'YR') that does not appear there.\n"
                 )
             elif last_code == "reused_plan_empty":
                 validation_repair_note = (

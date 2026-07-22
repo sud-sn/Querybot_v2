@@ -1585,6 +1585,51 @@ class SchemaDrivenSurrogateDateMisuseTests(unittest.TestCase):
         result = self._validate(native_sql)
         self.assertTrue(result.ok, result.reason)
 
+    def test_error_names_the_exact_dimension_column_when_unambiguous(self):
+        # A schema with exactly one natively-typed date column anywhere lets
+        # the validator name a concrete JOIN target instead of telling the
+        # model to "look it up" -- which, on a retry with one shot left, has
+        # been observed to produce an invented column name instead.
+        single_dimension_tables = {
+            "CHATBOT_DB.PHARMA_LAB.F_RX_FILL": {
+                "DISPENSE_DATE_ID": "int",
+                "NET_REVENUE_AMT": "decimal",
+            },
+            "CHATBOT_DB.PHARMA_LAB.D_DATE": {
+                "DATE_ID": "int",
+                "CALENDAR_DATE": "date",
+                "CALENDAR_YEAR": "int",
+            },
+        }
+        live_bug_sql = """
+        SELECT SUM(f.NET_REVENUE_AMT) AS TOTAL
+        FROM CHATBOT_DB.PHARMA_LAB.F_RX_FILL f
+        WHERE YEAR(TRY_CONVERT(date, CONVERT(varchar(8), f.DISPENSE_DATE_ID), 112)) = 2026
+        """
+        result = validate_sql_detailed(
+            live_bug_sql,
+            set(single_dimension_tables),
+            "azure_sql",
+            table_columns=single_dimension_tables,
+            semantic_context={"production_sql": True},
+        )
+        self.assertFalse(result.ok)
+        self.assertEqual(result.code, "surrogate_date_conversion")
+        self.assertIn("CHATBOT_DB.PHARMA_LAB.D_DATE.CALENDAR_DATE", result.reason)
+
+    def test_error_falls_back_to_generic_guidance_when_ambiguous(self):
+        # self.TABLES has two natively-typed date columns (D_DATE.CALENDAR_DATE
+        # and F_ORDERS.ORDER_DATE), so no single dimension can be named safely.
+        live_bug_sql = """
+        SELECT SUM(f.NET_REVENUE_AMT) AS TOTAL
+        FROM CHATBOT_DB.PHARMA_LAB.F_RX_FILL f
+        WHERE YEAR(TRY_CONVERT(date, CONVERT(varchar(8), f.DISPENSE_DATE_ID), 112)) = 2026
+        """
+        result = self._validate(live_bug_sql)
+        self.assertFalse(result.ok)
+        self.assertEqual(result.code, "surrogate_date_conversion")
+        self.assertIn("never an invented abbreviation", result.reason)
+
 
 class ResultTransformationRoutingTests(unittest.TestCase):
     def test_main_chat_routes_flag_followup_to_cached_result(self):
