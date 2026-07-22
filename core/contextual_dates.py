@@ -220,7 +220,13 @@ def resolve_contextual_date_binding(
     default. Ambiguous generic temporal questions are returned to the caller so
     it can ask the user to choose.
     """
-    if not question_has_temporal_intent(question):
+    roles = list(date_roles or [])
+    explicit = _governed_explicit_role_matches(question, roles)
+
+    # An approved business synonym is temporal intent even when the phrase is
+    # abbreviated (for example, "inv dt") and contains none of the generic
+    # date words recognized by question_has_temporal_intent().
+    if not question_has_temporal_intent(question) and not explicit:
         return {"status": "none", "reason": "no temporal intent"}
 
     metrics = matched_metrics or []
@@ -234,7 +240,6 @@ def resolve_contextual_date_binding(
     } | metric_tables
     candidates = list(bindings or [])
 
-    explicit = _governed_explicit_role_matches(question, list(date_roles or []))
     if fact_scope:
         scoped = [
             role for role in explicit

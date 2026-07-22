@@ -61,6 +61,9 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
   border:1px solid var(--border);border-radius:4px;background:var(--surface);
   color:var(--text);box-sizing:border-box}
 .dr-edit-form input:focus{outline:none;border-color:var(--primary)}
+.dr-edit-form .dr-role-phrases{margin-top:.4rem}
+.dr-edit-form .dr-field-help{display:block;margin-top:3px;font-size:10px;line-height:1.35;
+  color:var(--text-muted);font-weight:500}
 .btn-approve{background:var(--green);color:#fff;border:none;border-radius:5px;
   padding:4px 12px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap}
 .btn-approve:hover{background:var(--green-dark,var(--green));filter:brightness(.9)}
@@ -337,7 +340,13 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
                 <label>Physical key type</label>
                 <select name="date_key_type" class="dr-key-type"><option value="surrogate_fk" {% if (dr.date_key_type or 'surrogate_fk') == 'surrogate_fk' %}selected{% endif %}>Surrogate FK</option><option value="yyyymmdd_integer" {% if dr.date_key_type == 'yyyymmdd_integer' %}selected{% endif %}>YYYYMMDD integer</option><option value="native_date" {% if dr.date_key_type == 'native_date' %}selected{% endif %}>Native date</option><option value="timestamp" {% if dr.date_key_type == 'timestamp' %}selected{% endif %}>Timestamp</option></select>
                 <input type="hidden" name="name" value="{{ dr.name }}">
-                <input type="hidden" name="synonyms" value="{{ (dr.synonyms or []) | join(', ') }}">
+                <div class="dr-role-phrases">
+                  <label for="synonyms-approved-{{ loop.index }}">Role phrases</label>
+                  <input id="synonyms-approved-{{ loop.index }}" name="synonyms"
+                         value="{{ (dr.synonyms or []) | join(', ') }}"
+                         placeholder="invoice date, invoice month, inv dt">
+                  <span class="dr-field-help">Comma-separated phrases users may use for this date role.</span>
+                </div>
                 <button type="submit" class="btn-approve" style="margin-top:.35rem">Save edits</button>
               </form>
             </details>
@@ -371,7 +380,13 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
                 <label>Physical key type</label>
                 <select name="date_key_type" class="dr-key-type"><option value="surrogate_fk" {% if (dr.date_key_type or 'surrogate_fk') == 'surrogate_fk' %}selected{% endif %}>Surrogate FK</option><option value="yyyymmdd_integer" {% if dr.date_key_type == 'yyyymmdd_integer' %}selected{% endif %}>YYYYMMDD integer</option><option value="native_date" {% if dr.date_key_type == 'native_date' %}selected{% endif %}>Native date</option><option value="timestamp" {% if dr.date_key_type == 'timestamp' %}selected{% endif %}>Timestamp</option></select>
                 <input type="hidden" name="name" value="{{ dr.name }}">
-                <input type="hidden" name="synonyms" value="{{ (dr.synonyms or []) | join(', ') }}">
+                <div class="dr-role-phrases">
+                  <label for="synonyms-generated-{{ loop.index }}">Role phrases</label>
+                  <input id="synonyms-generated-{{ loop.index }}" name="synonyms"
+                         value="{{ (dr.synonyms or []) | join(', ') }}"
+                         placeholder="invoice date, invoice month, inv dt">
+                  <span class="dr-field-help">Comma-separated phrases users may use for this date role.</span>
+                </div>
                 <button type="submit" class="btn-approve" style="margin-top:.35rem">Approve</button>
               </form>
             </details>
