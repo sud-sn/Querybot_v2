@@ -7374,13 +7374,19 @@ async def admin_mask_preview(request: Request, account_id: str, fqn: str = ""):
 
 
 @router.get("/clients/{account_id}/setup/column-sensitivity")
-async def admin_column_sensitivity(request: Request, account_id: str, fqn: str = ""):
+async def admin_column_sensitivity(
+    request: Request,
+    account_id: str,
+    fqn: str = "",
+    refresh: str = "0",
+):
     """
     Return columns for a table plus auto-detected PII fields.
 
     Query param: fqn — fully-qualified table name (DB.SCHEMA.TABLE, upper-cased).
     First tries _schema.json written by discovery; falls back to a live DB query
     so fields are visible in the masking section BEFORE discovery has run.
+    Set refresh=1 to bypass the discovery snapshot and read current DB columns.
     Response: {status, columns:[{name,type}], auto_masked:[colname,...], strategy_map:{}}
     """
     if not _is_auth(request):
@@ -7397,7 +7403,8 @@ async def admin_column_sensitivity(request: Request, account_id: str, fqn: str =
     schema_path = schema_dir / "_schema.json"
     columns: list[dict] = []
 
-    if schema_path.exists():
+    force_refresh = refresh == "1"
+    if schema_path.exists() and not force_refresh:
         try:
             from core.schema import _normalize_schema as _ns2
             schema_data = _ns2(json.loads(schema_path.read_text(encoding="utf-8")))

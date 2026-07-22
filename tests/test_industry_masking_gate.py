@@ -189,6 +189,14 @@ class MaskingReviewGateTests(unittest.TestCase):
         self.assertIn('store.get_compliance_profile(account_id).get("industry"', fn)
         self.assertIn("detect_sensitive_columns(columns, industry=industry)", fn)
 
+    def test_column_sensitivity_refresh_bypasses_discovery_snapshot(self):
+        src = _src("admin/routes.py")
+        fn = src[src.index("async def admin_column_sensitivity("):]
+        fn = fn[:fn.index("\n@router.")]
+        self.assertIn('refresh: str = "0"', fn)
+        self.assertIn('force_refresh = refresh == "1"', fn)
+        self.assertIn("schema_path.exists() and not force_refresh", fn)
+
     def test_do_discover_passes_industry(self):
         src = _src("admin/routes.py")
         self.assertIn("_discover_industry = store.get_compliance_profile(account_id)", src)
@@ -257,6 +265,17 @@ class TemplateGateRenderTests(unittest.TestCase):
         )
         self.assertIn("MASKING_REVIEWED = true", html)
         self.assertIn("reviewed and confirmed", html)
+
+    def test_refresh_uses_live_columns_and_callable_mask_toggle(self):
+        html = self._render(
+            {"mode": "regulated", "industry": "healthcare_pharmacy", "policy_pack_key": "healthcare_pharmacy_v1"},
+            None,
+        )
+        self.assertIn("let _forceLiveColumns = false", html)
+        self.assertIn("_forceLiveColumns = true", html)
+        self.assertIn("&refresh=1", html)
+        self.assertIn("function _toggleMaskItem(fqn)", html)
+        self.assertIn("window._toggleMaskItem = _toggleMaskItem", html)
 
 
 if __name__ == "__main__":
