@@ -1587,14 +1587,10 @@ def build_runtime_semantic_plan(
             biz_role_dr = str(date_role.get("business_role") or "").replace("_", " ")
             synonyms_dr = [str(s) for s in date_role.get("synonyms", []) or []]
             score = _runtime_match_score(q_terms, [name_dr, biz_role_dr, *synonyms_dr])
-            # A role explicitly flagged as this fact table's default covers
-            # generic temporal questions ("for 2026") that name no specific
-            # date concept and so cannot score against any role's own
-            # name/synonyms — has_temporal_intent is already guaranteed True
-            # here (the outer loop breaks otherwise). Only an approved role
-            # can be a default; set_default_date_role() enforces that.
-            is_default = bool(date_role.get("is_default")) and str(date_role.get("status") or "") == "approved"
-            if score <= 0 and not is_default:
+            # This early pass only surfaces explicitly matched date roles.
+            # Generic temporal questions are resolved after metric and graph
+            # resolution, where defaults can be scoped to the relevant fact.
+            if score <= 0:
                 continue
 
             enforcement = (

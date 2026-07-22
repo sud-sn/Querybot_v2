@@ -9,6 +9,7 @@ from unittest.mock import patch
 from core.contextual_dates import (
     build_contextual_date_plan,
     build_contextual_date_plan_many,
+    detect_temporal_window,
     resolve_contextual_date_binding,
 )
 from core.semantic_model import (
@@ -18,6 +19,7 @@ from core.semantic_model import (
     write_semantic_model,
 )
 from core.pipeline_context import _merge_semantic_plans
+from core.query_pipeline import _graph_with_exact_date_edges
 from core.validator import validate_sql_detailed
 
 
@@ -101,12 +103,92 @@ class ContextualDateResolutionTests(unittest.TestCase):
         self.assertEqual(result["binding"]["fact_column"], "DELIVERY_DATE_KEY")
         self.assertEqual(result["binding"]["resolution_source"], "explicit_date_role")
 
+    def test_explicit_booked_month_overrides_default_invoice_date(self):
+        roles = [{
+            "name": "Booked Date",
+            "business_role": "booked_date",
+            "synonyms": ["booking date"],
+            "fact_table": "SALES.FACT_REVENUE",
+            "fact_column": "BOOKED_DT_ID",
+            "dimension_table": "SALES.DIM_DATE",
+            "dimension_key": "DATE_KEY",
+            "date_value_column": "FULL_DATE",
+            "date_key_type": "surrogate_fk",
+            "status": "approved",
+        }]
+        result = resolve_contextual_date_binding(
+            "show net revenue by booked month",
+            matched_metrics=[self.metric],
+            bindings=self.bindings,
+            date_roles=roles,
+            required_fact_tables={"SALES.FACT_REVENUE"},
+        )
+        self.assertEqual(result["status"], "selected")
+        self.assertEqual(result["binding"]["fact_column"], "BOOKED_DT_ID")
+        self.assertEqual(result["binding"]["resolution_source"], "explicit_date_role")
+
+    def test_fact_default_is_scoped_to_resolved_fact(self):
+        roles = [
+            {
+                "name": "Invoice Date", "business_role": "invoice_date",
+                "fact_table": "SALES.FACT_REVENUE", "fact_column": "INVOICE_DATE_KEY",
+                "dimension_table": "SALES.DIM_DATE", "dimension_key": "DATE_KEY",
+                "date_value_column": "FULL_DATE", "date_key_type": "surrogate_fk",
+                "status": "approved", "is_default": True,
+            },
+            {
+                "name": "Fill Date", "business_role": "fill_date",
+                "fact_table": "PHARMACY.FACT_PRESCRIPTION", "fact_column": "FILL_DATE",
+                "dimension_table": "", "dimension_key": "",
+                "date_value_column": "FILL_DATE", "date_key_type": "native_date",
+                "status": "approved", "is_default": True,
+            },
+        ]
+        result = resolve_contextual_date_binding(
+            "how many patients did we fill yesterday",
+            matched_metrics=[],
+            bindings=[],
+            date_roles=roles,
+            required_fact_tables={"PHARMACY.FACT_PRESCRIPTION"},
+        )
+        self.assertEqual(result["status"], "selected")
+        self.assertEqual(result["binding"]["fact_column"], "FILL_DATE")
+        self.assertEqual(result["binding"]["resolution_source"], "fact_default_date_role")
+
     def test_plan_requires_business_date_value_and_join(self):
         plan = build_contextual_date_plan(self.bindings[1])
         self.assertTrue(plan["enabled"])
         self.assertEqual(plan["fields"][0]["column"], "FULL_DATE")
         self.assertEqual(plan["fields"][0]["enforcement"], "required")
         self.assertEqual(plan["joins"][0]["conditions"], [("INVENTORY_DATE_KEY", "DATE_KEY")])
+
+    def test_native_date_plan_needs_no_dimension_join(self):
+        binding = {
+            **_binding("Fill Date", "fill_date", "FILL_DATE"),
+            "fact_table": "PHARMACY.FACT_PRESCRIPTION",
+            "dimension_table": "",
+            "dimension_key": "",
+            "date_value_column": "FILL_DATE",
+            "date_key_type": "native_date",
+        }
+        plan = build_contextual_date_plan(binding, "show patient count yesterday")
+        self.assertTrue(plan["enabled"])
+        self.assertEqual(plan["joins"], [])
+        self.assertEqual(plan["fields"][0]["table"], "PHARMACY.FACT_PRESCRIPTION")
+        self.assertEqual(plan["fields"][0]["column"], "FILL_DATE")
+        self.assertEqual(plan["temporal_policies"][0]["anchor_policy"], "latest_available")
+
+        combined = build_contextual_date_plan_many([binding], "show patient count yesterday")
+        self.assertTrue(combined["enabled"])
+        self.assertEqual(combined["joins"], [])
+
+    def test_relative_window_detection_uses_latest_available_anchor(self):
+        self.assertEqual(detect_temporal_window("show fills today")["kind"], "today")
+        self.assertEqual(detect_temporal_window("show fills yesterday")["kind"], "yesterday")
+        window = detect_temporal_window("show fills in the last 7 days")
+        self.assertEqual(window["amount"], 7)
+        self.assertEqual(window["unit"], "day")
+        self.assertEqual(window["anchor_policy"], "latest_available")
 
     def test_two_explicit_roles_select_two_role_playing_joins(self):
         roles = [
@@ -277,6 +359,101 @@ class ContextualDateResolutionTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertEqual(result.code, "field_plan_mismatch")
         self.assertIn("FULL_DATE", result.reason)
+
+    def test_validator_rejects_server_clock_for_relative_business_date(self):
+        plan = build_contextual_date_plan(self.bindings[0], "what was revenue yesterday")
+        columns = {
+            "SALES.FACT_REVENUE": {"INVOICE_DATE_KEY": "int", "AMOUNT": "decimal"},
+            "SALES.DIM_DATE": {"DATE_KEY": "int", "FULL_DATE": "date"},
+        }
+        sql = (
+            "SELECT SUM(f.AMOUNT) AS Revenue FROM SALES.FACT_REVENUE f "
+            "JOIN SALES.DIM_DATE d ON f.INVOICE_DATE_KEY=d.DATE_KEY "
+            "WHERE d.FULL_DATE=DATEADD(day,-1,CAST(GETDATE() AS date))"
+        )
+        result = validate_sql_detailed(
+            sql, set(columns), "azure_sql", table_columns=columns,
+            semantic_context={"semantic_plan": plan},
+        )
+        self.assertFalse(result.ok)
+        self.assertEqual(result.code, "temporal_anchor_mismatch")
+
+    def test_validator_accepts_latest_data_relative_anchor(self):
+        plan = build_contextual_date_plan(self.bindings[0], "what was revenue yesterday")
+        columns = {
+            "SALES.FACT_REVENUE": {"INVOICE_DATE_KEY": "int", "AMOUNT": "decimal"},
+            "SALES.DIM_DATE": {"DATE_KEY": "int", "FULL_DATE": "date"},
+        }
+        sql = (
+            "SELECT COUNT(*) AS MatchedRows, COUNT(f.AMOUNT) AS NonNullRevenueRows, "
+            "COALESCE(SUM(f.AMOUNT), 0) AS Revenue FROM SALES.FACT_REVENUE f "
+            "JOIN SALES.DIM_DATE d ON f.INVOICE_DATE_KEY=d.DATE_KEY "
+            "WHERE d.FULL_DATE=DATEADD(day,-1,("
+            "SELECT MAX(d2.FULL_DATE) FROM SALES.FACT_REVENUE f2 "
+            "JOIN SALES.DIM_DATE d2 ON f2.INVOICE_DATE_KEY=d2.DATE_KEY))"
+        )
+        result = validate_sql_detailed(
+            sql, set(columns), "azure_sql", table_columns=columns,
+            semantic_context={"semantic_plan": plan},
+        )
+        self.assertTrue(result.ok, result.reason)
+
+    def test_validator_rejects_relative_window_without_latest_data_anchor(self):
+        plan = build_contextual_date_plan(self.bindings[0], "revenue for the last 7 days")
+        columns = {
+            "SALES.FACT_REVENUE": {"INVOICE_DATE_KEY": "int", "AMOUNT": "decimal"},
+            "SALES.DIM_DATE": {"DATE_KEY": "int", "FULL_DATE": "date"},
+        }
+        sql = (
+            "SELECT COUNT(*) AS MatchedRows, COUNT(f.AMOUNT) AS NonNullRevenueRows, "
+            "COALESCE(SUM(f.AMOUNT), 0) AS Revenue FROM SALES.FACT_REVENUE f "
+            "JOIN SALES.DIM_DATE d ON f.INVOICE_DATE_KEY=d.DATE_KEY "
+            "WHERE d.FULL_DATE >= '2025-01-01'"
+        )
+        result = validate_sql_detailed(
+            sql, set(columns), "azure_sql", table_columns=columns,
+            semantic_context={"semantic_plan": plan},
+        )
+        self.assertFalse(result.ok)
+        self.assertEqual(result.code, "temporal_anchor_missing")
+
+    def test_approved_date_role_replaces_competing_graph_edges_for_query(self):
+        graph = {
+            "entities": [
+                {
+                    "entity_name": "Revenue Fact", "entity_type": "fact",
+                    "schema_name": "SALES", "table_name": "FACT_REVENUE",
+                },
+                {
+                    "entity_name": "Date", "entity_type": "dimension",
+                    "schema_name": "SALES", "table_name": "DIM_DATE",
+                },
+            ],
+            "relationships": [
+                {
+                    "from_entity": "Revenue Fact", "to_entity": "Date",
+                    "from_column": "INVOICE_DATE_KEY", "to_column": "DATE_KEY",
+                    "join_type": "INNER",
+                },
+                {
+                    "from_entity": "Revenue Fact", "to_entity": "Date",
+                    "from_column": "ORDER_DATE_KEY", "to_column": "DATE_KEY",
+                    "join_type": "INNER",
+                },
+            ],
+        }
+        binding = {
+            **self.bindings[0],
+            "fact_column": "BOOKED_DATE_KEY",
+            "date_role": "booked_date",
+        }
+        scoped = _graph_with_exact_date_edges(graph, [binding])
+        edges = scoped["relationships"]
+        self.assertEqual(len(edges), 1)
+        self.assertEqual(edges[0]["from_column"], "BOOKED_DATE_KEY")
+        self.assertEqual(edges[0]["to_column"], "DATE_KEY")
+        self.assertEqual(edges[0]["generated_by"], "date_role")
+        self.assertEqual(edges[0]["status"], "confirmed")
 
 
 class DateRoleDiscoveryTests(unittest.TestCase):

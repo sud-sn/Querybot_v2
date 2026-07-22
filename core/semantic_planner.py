@@ -746,4 +746,31 @@ def format_semantic_field_plan(plan: dict, db_type: str = "azure_sql") -> str:
             lines.append(
                 f"- {edge['from']} JOIN {edge['to']}{alias_clause} ON {conds}{role_clause}"
             )
+    temporal_policies = plan.get("temporal_policies") or []
+    if temporal_policies:
+        lines.append("")
+        lines.append("Relative-date anchor policy:")
+        lines.append(
+            "Relative words such as today, yesterday, last N days, this month, "
+            "and this year are relative to the latest available governed business "
+            "date in the data, not the application server clock."
+        )
+        for policy in temporal_policies:
+            date_ref = (
+                f"{policy.get('role_alias')}.{policy.get('date_column')}"
+                if (
+                    policy.get("role_alias")
+                    and str(policy.get("date_key_type") or "") == "surrogate_fk"
+                )
+                else f"{policy.get('date_table')}.{policy.get('date_column')}"
+            )
+            lines.append(
+                f"- {policy.get('business_role') or 'Business date'}: derive the anchor "
+                f"with MAX({date_ref}) over the same governed source rows, then apply "
+                f"the requested {policy.get('kind')} boundary from that anchor."
+            )
+        lines.append(
+            "- Do not use GETDATE(), CURRENT_DATE, CURRENT_TIMESTAMP, SYSDATE, or NOW() "
+            "for these relative periods."
+        )
     return "\n".join(lines)

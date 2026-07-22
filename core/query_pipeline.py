@@ -37,9 +37,15 @@ from core.governed_result_followup import adopt_cached_snapshot, run_governed_re
 from core.semantic_planner import build_semantic_field_plan
 from core.semantic_model import (
     build_runtime_semantic_context, build_runtime_semantic_plan,
-    build_field_plan_repair_note, find_default_date_roles,
+    build_field_plan_repair_note,
 )
 from core.date_roles import question_has_temporal_intent, normalize_date_key_type
+from core.contextual_dates import (
+    build_contextual_date_plan,
+    build_contextual_date_plan_many,
+    find_explicit_date_roles,
+    resolve_contextual_date_binding,
+)
 from core.metric_scope import metric_source_tables, resolve_metric_scope
 from core.answer_rca import extract_sql_tables
 from core.pipeline_context import (
@@ -67,6 +73,110 @@ from core.compliance.models import ResourceRef
 from core.compliance.policy_engine import evaluate as evaluate_policy, resolve_context
 
 log = logging.getLogger("querybot")
+
+
+def _resolved_fact_tables(
+    graph_context: dict,
+    graph: dict,
+    semantic_plan: dict | None = None,
+    metric_tables: set[str] | None = None,
+) -> set[str]:
+    """Collect only physical fact tables already implicated by the question."""
+    detected = set(graph_context.get("detected") or [])
+    if graph_context.get("anchor"):
+        detected.add(str(graph_context.get("anchor")))
+    facts: set[str] = set(metric_tables or set())
+    for entity in graph.get("entities") or []:
+        if entity.get("entity_name") not in detected:
+            continue
+        if str(entity.get("entity_type") or "").lower() != "fact":
+            continue
+        table = str(entity.get("table_name") or "")
+        schema = str(entity.get("schema_name") or "")
+        if table:
+            facts.add(f"{schema}.{table}" if schema else table)
+    for field in (semantic_plan or {}).get("fields") or []:
+        source = str(field.get("source_table") or field.get("table") or "")
+        if source:
+            facts.add(source)
+    return {table for table in facts if table}
+
+
+def _graph_with_exact_date_edges(graph: dict, bindings: list[dict]) -> dict:
+    """Make the configured role-playing edge authoritative for graph planning."""
+    relationships = list(graph.get("relationships") or [])
+    remove_ids: set[int] = set()
+    additions: list[dict] = []
+    for binding in bindings or []:
+        if normalize_date_key_type(binding.get("date_key_type")) != "surrogate_fk":
+            continue
+        fact_entity = entity_name_for_table(graph, str(binding.get("fact_table") or ""))
+        dim_entity = entity_name_for_table(graph, str(binding.get("dimension_table") or ""))
+        fact_col = str(binding.get("fact_column") or "").upper()
+        dim_col = str(binding.get("dimension_key") or "").upper()
+        if not all((fact_entity, dim_entity, fact_col, dim_col)):
+            continue
+        parallel: list[tuple[int, dict]] = []
+        exact_indexes: set[int] = set()
+        for index, edge in enumerate(relationships):
+            left = str(edge.get("from_entity") or "")
+            right = str(edge.get("to_entity") or "")
+            if {left, right} != {fact_entity, dim_entity}:
+                continue
+            parallel.append((index, edge))
+            from_col = str(edge.get("from_column") or "").upper()
+            to_col = str(edge.get("to_column") or "").upper()
+            if (
+                left == fact_entity and from_col == fact_col and to_col == dim_col
+            ) or (
+                right == fact_entity and from_col == dim_col and to_col == fact_col
+            ):
+                exact_indexes.add(index)
+        if exact_indexes:
+            remove_ids.update(index for index, _edge in parallel if index not in exact_indexes)
+            continue
+
+        # An approved date role is stronger evidence than a missing or stale
+        # graph suggestion. Materialize its exact edge for this query only;
+        # the persisted graph remains unchanged and can still be reviewed by
+        # an administrator.
+        if parallel:
+            template = dict(parallel[0][1])
+            forward = str(template.get("from_entity") or "") == fact_entity
+            template.update({
+                "from_entity": fact_entity if forward else dim_entity,
+                "to_entity": dim_entity if forward else fact_entity,
+                "from_column": fact_col if forward else dim_col,
+                "to_column": dim_col if forward else fact_col,
+                "join_type": template.get("join_type") or "LEFT",
+                "generated_by": "date_role",
+                "status": "confirmed",
+                "validation_status": template.get("validation_status") or "untested",
+                "confidence_score": 100,
+            })
+            remove_ids.update(index for index, _edge in parallel)
+            additions.append(template)
+        else:
+            additions.append({
+                "from_entity": fact_entity,
+                "to_entity": dim_entity,
+                "from_column": fact_col,
+                "to_column": dim_col,
+                "join_type": "LEFT",
+                "relationship_type": "many_to_one",
+                "generated_by": "date_role",
+                "status": "confirmed",
+                "validation_status": "untested",
+                "confidence_score": 100,
+            })
+    if not remove_ids and not additions:
+        return graph
+    return {
+        **graph,
+        "relationships": [
+            edge for index, edge in enumerate(relationships) if index not in remove_ids
+        ] + additions,
+    }
 
 
 def _table_matches_policy_scope(table: str, scope: set[str]) -> bool:
@@ -1118,24 +1228,33 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
             # (see the "do NOT introduce new joins" rule in build_sql_system_
             # prompt, which defers to the graph skeleton whenever both are
             # active), so the join never actually lands in the SQL.
-            if question_has_temporal_intent(question):
-                try:
-                    for _default_role in find_default_date_roles(model=_contract_model, kb_dir=state.get("kb_dir", "")):
-                        _fact_entity = entity_name_for_table(_full_graph, str(_default_role.get("fact_table") or ""))
-                        if _fact_entity:
-                            _value_required_entities.add(_fact_entity)
-                        _role_key_type = normalize_date_key_type(str(_default_role.get("date_key_type") or "surrogate_fk"))
-                        if _role_key_type == "surrogate_fk":
-                            _dim_entity = entity_name_for_table(_full_graph, str(_default_role.get("dimension_table") or ""))
-                            if _dim_entity:
-                                _value_required_entities.add(_dim_entity)
-                except Exception as _ddr_exc:
-                    log.debug("Default date role lookup skipped: %s", _ddr_exc)
+            _pregraph_date_roles = find_explicit_date_roles(
+                question,
+                list((_contract_model or {}).get("date_roles") or []),
+            )
+            for _date_role in _pregraph_date_roles:
+                _fact_entity = entity_name_for_table(
+                    _full_graph, str(_date_role.get("fact_table") or "")
+                )
+                if _fact_entity:
+                    _value_required_entities.add(_fact_entity)
+                if normalize_date_key_type(
+                    str(_date_role.get("date_key_type") or "surrogate_fk")
+                ) == "surrogate_fk":
+                    _dim_entity = entity_name_for_table(
+                        _full_graph, str(_date_role.get("dimension_table") or "")
+                    )
+                    if _dim_entity:
+                        _value_required_entities.add(_dim_entity)
+            _resolution_graph = _graph_with_exact_date_edges(
+                _full_graph,
+                _pregraph_date_roles,
+            )
             _graph_ctx = _graph_resolve(
                 question=question,
                 account_id=account_id,
                 db_type=db_cfg.get("db_type", "azure_sql"),
-                graph=_full_graph,
+                graph=_resolution_graph,
                 intent=query_intent,
                 required_entities=_value_required_entities,
                 metric_formula_tables=set(),
@@ -1390,13 +1509,8 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
     # approved role for a different context. The result is compiled into the
     # semantic plan so both generation and validation receive the same rule.
     _date_context_resolution: dict = {"status": "none"}
-    if _matched_metrics:
+    if question_has_temporal_intent(_semantic_plan_question):
         try:
-            from core.contextual_dates import (
-                build_contextual_date_plan,
-                build_contextual_date_plan_many,
-                resolve_contextual_date_binding,
-            )
             _metric_ids = [
                 int(metric.get("id") or 0) for metric in _matched_metrics
                 if int(metric.get("id") or 0) > 0
@@ -1417,11 +1531,18 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                     or str(binding.get("metric_name") or "").strip().casefold() in _metric_names
                 )
             ]
+            _date_fact_scope = _resolved_fact_tables(
+                _graph_ctx,
+                _full_graph,
+                semantic_plan=_semantic_plan,
+                metric_tables=_metric_formula_tables,
+            )
             _date_context_resolution = resolve_contextual_date_binding(
-                question,
+                _semantic_plan_question,
                 matched_metrics=_matched_metrics,
                 bindings=_date_bindings,
                 date_roles=list((_contract_model or {}).get("date_roles") or []),
+                required_fact_tables=_date_fact_scope,
             )
             if _date_context_resolution.get("status") == "ambiguous" and not is_clarification:
                 _date_options = [
@@ -1466,14 +1587,41 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
             if _date_context_resolution.get("status") in {"selected", "selected_many"}:
                 if _date_context_resolution.get("status") == "selected_many":
                     _date_plan = build_contextual_date_plan_many(
-                        _date_context_resolution.get("bindings") or []
+                        _date_context_resolution.get("bindings") or [],
+                        _semantic_plan_question,
                     )
                 else:
                     _date_plan = build_contextual_date_plan(
-                        _date_context_resolution.get("binding") or {}
+                        _date_context_resolution.get("binding") or {},
+                        _semantic_plan_question,
                     )
                 if _date_plan.get("enabled"):
                     _semantic_plan = _merge_semantic_plans(_semantic_plan, _date_plan)
+                    _selected_date_bindings = (
+                        _date_context_resolution.get("bindings")
+                        if _date_context_resolution.get("status") == "selected_many"
+                        else [_date_context_resolution.get("binding") or {}]
+                    )
+                    _date_graph = _graph_with_exact_date_edges(
+                        _full_graph,
+                        _selected_date_bindings,
+                    )
+                    _date_required_entities = set(_graph_ctx.get("detected") or [])
+                    for _date_table in _date_plan.get("required_tables") or []:
+                        _date_entity = entity_name_for_table(_date_graph, str(_date_table))
+                        if _date_entity:
+                            _date_required_entities.add(_date_entity)
+                    _scoped_graph_ctx = _graph_resolve(
+                        question=_semantic_plan_question,
+                        account_id=account_id,
+                        db_type=db_cfg.get("db_type", "azure_sql"),
+                        graph=_date_graph,
+                        intent=query_intent,
+                        required_entities=_date_required_entities,
+                        metric_formula_tables=_metric_formula_tables,
+                    )
+                    if _scoped_graph_ctx.get("enabled"):
+                        _graph_ctx = _scoped_graph_ctx
                     _binding = (
                         _date_context_resolution.get("binding")
                         or ((_date_context_resolution.get("bindings") or [{}])[0])

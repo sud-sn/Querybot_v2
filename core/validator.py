@@ -873,6 +873,21 @@ def _surrogate_date_misuse_columns(tree) -> set[str]:
         if not _is_date_targeting_type_node(node):
             continue
         for col_node in node.find_all(sg_exp.Column):
+            # DATEADD(..., (SELECT MAX(d.FULL_DATE) FROM fact f JOIN dim d
+            # ON f.DATE_ID=d.DATE_ID)) contains an entire scalar subquery as
+            # its date argument. Join keys inside that subquery are structural
+            # inputs to the lookup, not date values being parsed/arithmetic'd.
+            # Do not classify columns below a nested query boundary as direct
+            # operands of the outer date function.
+            parent = col_node.parent
+            nested_query = False
+            while parent is not None and parent is not node:
+                if isinstance(parent, (sg_exp.Subquery, sg_exp.Select)):
+                    nested_query = True
+                    break
+                parent = parent.parent
+            if nested_query:
+                continue
             name = (col_node.name or "").upper()
             if name:
                 found.add(name)
@@ -1252,6 +1267,55 @@ def _top_n_shape_error(tree, semantic_context: dict | None) -> dict | None:
     }
 
 
+def _temporal_anchor_errors(tree, sql: str, policies: list[dict]) -> list[dict]:
+    """Require data-relative anchors for governed relative-date questions."""
+    governed = [
+        policy for policy in policies or []
+        if str(policy.get("anchor_policy") or "") == "latest_available"
+    ]
+    if not governed:
+        return []
+
+    errors: list[dict] = []
+    clock_match = re.search(
+        r"\b(?:GETDATE\s*\(|CURRENT_DATE\b|CURRENT_TIMESTAMP\b|SYSDATE\b|NOW\s*\()",
+        _strip_literals_and_comments(sql),
+        re.IGNORECASE,
+    )
+    if clock_match:
+        errors.append({
+            "code": "temporal_anchor_mismatch",
+            "message": (
+                "Relative business dates must be anchored to the latest available "
+                "date in the selected data, not the database or application clock."
+            ),
+            "forbidden": clock_match.group(0),
+            "required_anchor": "MAX(governed_business_date)",
+        })
+
+    max_columns: set[str] = set()
+    for max_node in tree.find_all(sg_exp.Max):
+        max_columns.update(
+            str(column.name or "").upper()
+            for column in max_node.find_all(sg_exp.Column)
+            if column.name
+        )
+    for policy in governed:
+        date_column = str(policy.get("date_column") or "").upper()
+        if date_column and date_column not in max_columns:
+            errors.append({
+                "code": "temporal_anchor_missing",
+                "message": (
+                    f"Relative period '{policy.get('kind')}' must derive its anchor "
+                    f"from MAX({date_column}) over the governed source rows."
+                ),
+                "table": policy.get("date_table") or "",
+                "column": date_column,
+                "required_anchor": f"MAX({date_column})",
+            })
+    return errors
+
+
 def validate_sql_detailed(
     sql: str,
     known_tables: set[str],
@@ -1473,6 +1537,26 @@ def validate_sql_detailed(
             [top_n_error],
         )
 
+    field_plan = (semantic_context or {}).get("semantic_plan") or {}
+    temporal_anchor_errors = _temporal_anchor_errors(
+        tree,
+        sql,
+        list(field_plan.get("temporal_policies") or []),
+    )
+    if temporal_anchor_errors:
+        return SqlValidationResult(
+            False,
+            (
+                "Generated SQL does not follow the governed relative-date policy. "
+                + " ".join(error["message"] for error in temporal_anchor_errors[:3])
+                + "\n\nDerive the business clock from MAX(the approved date-role value) "
+                  "over the same governed source rows, then calculate the requested "
+                  "relative period from that anchor."
+            ),
+            temporal_anchor_errors[0]["code"],
+            temporal_anchor_errors,
+        )
+
     select_aliases: set[str] = set()
     select_column_names: set[str] = set()
     for alias_node in tree.find_all(sg_exp.Alias):
@@ -1504,7 +1588,6 @@ def validate_sql_detailed(
         )
 
     if table_columns:
-        field_plan = (semantic_context or {}).get("semantic_plan") or {}
         date_policies = list(field_plan.get("date_key_policies") or [])
         surrogate_columns = {
             str(policy.get("column") or "").upper()

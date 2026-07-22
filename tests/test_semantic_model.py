@@ -781,10 +781,10 @@ class SemanticModelTests(unittest.TestCase):
 
     # ── Default date role ────────────────────────────────────────────────────
 
-    def test_default_date_role_matches_generic_temporal_question(self):
-        """A question with temporal intent but no role-name match still
-        surfaces an is_default-flagged role -- the fallback for questions
-        like 'total revenue by year' that name no specific date concept."""
+    def test_runtime_plan_does_not_apply_unscoped_default_date_role(self):
+        """The early semantic pass must not inject a default from an
+        unresolved fact. The central contextual-date resolver applies the
+        default only after metric and graph scope are known."""
         with _tmp_dir() as tmp:
             root = Path(tmp)
             schema_dir = root / "schema"
@@ -806,17 +806,18 @@ class SemanticModelTests(unittest.TestCase):
                 str(kb_dir), "PROFITABILITY.CUS_ORD_IVC_FCT", "CUS_IVC_DT_DMS_KEY",
             ))
 
-            # "revenue by year" names no date role -- only the default flag
-            # can surface it.
             plan = build_runtime_semantic_plan(
                 str(kb_dir),
                 question="show total revenue by year",
                 selected_schema="PROFITABILITY",
             )
-            self.assertTrue(plan["enabled"], "Default role must enable the plan")
-            self.assertTrue(
-                any("DT_DMS" in str(j.get("to", "")).upper() for j in plan.get("joins", [])),
-                "Default role must still add its dimension join",
+            self.assertFalse(
+                any(
+                    "DT_DMS" in str(j.get("to", "")).upper()
+                    and "CUS_IVC_DT_DMS_KEY" in str(j.get("conditions", "")).upper()
+                    for j in plan.get("joins", [])
+                ),
+                "The early pass must not apply a fact default before fact resolution",
             )
 
     def test_multiple_date_roles_without_default_stay_disabled_for_generic_question(self):

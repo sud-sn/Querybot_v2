@@ -70,6 +70,23 @@ def _explicit_role_matches(question: str, date_roles: list[dict]) -> list[dict]:
             start = q.find(phrase) if phrase else -1
             if start >= 0:
                 role_matches.append((start, start + len(phrase), phrase))
+                continue
+
+            # Business users commonly replace the word "date" with the
+            # requested grain: "booked month", "invoice year", "ship week".
+            # Treat those as explicit references to Booked Date, Invoice Date,
+            # and Ship Date rather than falling through to a fact default.
+            tokens = phrase.split()
+            if len(tokens) >= 2 and tokens[-1] in {
+                "date", "day", "month", "week", "quarter", "year",
+            }:
+                stem = " ".join(tokens[:-1]).strip()
+                if stem:
+                    for grain in ("date", "day", "month", "week", "quarter", "year"):
+                        variant = f"{stem} {grain}"
+                        start = q.find(variant)
+                        if start >= 0:
+                            role_matches.append((start, start + len(variant), variant))
         if role_matches:
             start, end, phrase = max(role_matches, key=lambda item: (len(item[2]), -item[0]))
             matches.append((start, end, phrase, role))
@@ -90,6 +107,16 @@ def _explicit_role_matches(question: str, date_roles: list[dict]) -> list[dict]:
     return selected
 
 
+def find_explicit_date_roles(question: str, date_roles: list[dict] | None) -> list[dict]:
+    """Return approved roles explicitly named by the user.
+
+    This small public wrapper lets graph planning pull in only the requested
+    role-playing date before metric scoping, without importing private helpers
+    or injecting unrelated defaults from other facts.
+    """
+    return _explicit_role_matches(question, list(date_roles or []))
+
+
 def _role_as_binding(role: dict, *, source: str) -> dict:
     return {
         "id": 0,
@@ -106,7 +133,7 @@ def _role_as_binding(role: dict, *, source: str) -> dict:
         "date_key_type": normalize_date_key_type(
             role.get("date_key_type") or "surrogate_fk"
         ),
-        "is_default": 0,
+        "is_default": int(bool(role.get("is_default"))),
         "priority": int(role.get("confidence") or 0),
         "resolution_source": source,
     }
@@ -118,6 +145,7 @@ def resolve_contextual_date_binding(
     matched_metrics: list[dict] | None,
     bindings: list[dict] | None,
     date_roles: list[dict] | None,
+    required_fact_tables: set[str] | None = None,
 ) -> dict:
     """Resolve a date binding without letting an LLM guess.
 
@@ -133,13 +161,17 @@ def resolve_contextual_date_binding(
         _table_identity(metric.get("base_table"))[0]
         for metric in metrics if metric.get("base_table")
     }
+    fact_scope = {
+        _table_identity(table)[0]
+        for table in (required_fact_tables or set()) if table
+    } | metric_tables
     candidates = list(bindings or [])
 
     explicit = _explicit_role_matches(question, list(date_roles or []))
-    if metric_tables:
+    if fact_scope:
         scoped = [
             role for role in explicit
-            if any(_same_table(role.get("fact_table"), table) for table in metric_tables)
+            if any(_same_table(role.get("fact_table"), table) for table in fact_scope)
         ]
         explicit = scoped or explicit
     if len(explicit) == 1:
@@ -192,6 +224,38 @@ def resolve_contextual_date_binding(
     if len(defaults) > 1:
         return {"status": "ambiguous", "reason": "multiple metric defaults", "options": defaults}
 
+    # Fact defaults are intentionally considered only after explicit role and
+    # metric-context resolution. Scope them to the facts already implied by
+    # the question/metric so a default on Inventory cannot contaminate a Sales
+    # query merely because both facts exist in the same schema.
+    approved_roles = [
+        role for role in (date_roles or [])
+        if str(role.get("status") or "") == "approved"
+        and bool(role.get("is_default"))
+    ]
+    if fact_scope:
+        approved_roles = [
+            role for role in approved_roles
+            if any(_same_table(role.get("fact_table"), table) for table in fact_scope)
+        ]
+    if len(approved_roles) == 1:
+        return {
+            "status": "selected",
+            "binding": _role_as_binding(
+                approved_roles[0], source="fact_default_date_role"
+            ),
+            "reason": "default date role for resolved fact",
+        }
+    if len(approved_roles) > 1:
+        return {
+            "status": "ambiguous",
+            "reason": "multiple resolved facts have default date roles",
+            "options": [
+                _role_as_binding(role, source="fact_default_date_role")
+                for role in approved_roles
+            ],
+        }
+
     if len(candidates) > 1:
         return {
             "status": "ambiguous",
@@ -205,30 +269,88 @@ def resolve_contextual_date_binding(
     return {"status": "none", "reason": "no governed date context"}
 
 
-def build_contextual_date_plan(binding: dict) -> dict:
+def detect_temporal_window(question: str) -> dict:
+    """Detect relative calendar wording that must use a data-relative anchor."""
+    q = normalize_date_role_text(question)
+    patterns = (
+        (r"\btoday\b", "today", 0, "day"),
+        (r"\byesterday\b", "yesterday", 1, "day"),
+        (r"\b(?:this|current)\s+week\b", "this_week", 0, "week"),
+        (r"\b(?:this|current)\s+month\b", "this_month", 0, "month"),
+        (r"\b(?:this|current)\s+quarter\b", "this_quarter", 0, "quarter"),
+        (r"\b(?:this|current)\s+year\b", "this_year", 0, "year"),
+        (r"\b(?:previous|prior|last)\s+month\b", "previous_month", 1, "month"),
+        (r"\b(?:previous|prior|last)\s+quarter\b", "previous_quarter", 1, "quarter"),
+        (r"\b(?:previous|prior|last)\s+year\b", "previous_year", 1, "year"),
+    )
+    for pattern, kind, amount, unit in patterns:
+        if re.search(pattern, q):
+            return {
+                "kind": kind,
+                "amount": amount,
+                "unit": unit,
+                "anchor_policy": "latest_available",
+            }
+    rolling = re.search(
+        r"\b(?:last|past|previous)\s+(\d+)\s+(day|week|month|quarter|year)s?\b",
+        q,
+    )
+    if rolling:
+        return {
+            "kind": "last_n",
+            "amount": int(rolling.group(1)),
+            "unit": rolling.group(2),
+            "anchor_policy": "latest_available",
+        }
+    return {}
+
+
+def build_contextual_date_plan(binding: dict, question: str = "") -> dict:
     """Compile a selected binding into validator-enforced semantic fields."""
     fact_table = str(binding.get("fact_table") or "")
     fact_column = str(binding.get("fact_column") or "")
     dimension_table = str(binding.get("dimension_table") or "")
     dimension_key = str(binding.get("dimension_key") or "")
     date_value_column = str(binding.get("date_value_column") or "")
-    if not all((fact_table, fact_column, dimension_table, dimension_key, date_value_column)):
-        return {"enabled": False, "fields": [], "joins": [], "required_tables": [], "reason": "incomplete date context"}
-
-    label = str(binding.get("context_name") or binding.get("date_role") or "Business date")
     date_key_type = normalize_date_key_type(
         binding.get("date_key_type") or "surrogate_fk"
     )
+    if not fact_table or not fact_column:
+        return {"enabled": False, "fields": [], "joins": [], "required_tables": [], "reason": "incomplete date context"}
+    if date_key_type == "surrogate_fk" and not all(
+        (dimension_table, dimension_key, date_value_column)
+    ):
+        return {"enabled": False, "fields": [], "joins": [], "required_tables": [], "reason": "incomplete surrogate date context"}
+    if date_key_type != "surrogate_fk":
+        dimension_table = ""
+        dimension_key = ""
+        date_value_column = fact_column
+
+    label = str(binding.get("context_name") or binding.get("date_role") or "Business date")
     alias_base = re.sub(r"[^a-z0-9]+", "_", normalize_date_role_text(label)).strip("_")
     role_alias = alias_base or "business_date"
     if not role_alias.endswith("date"):
         role_alias = f"{role_alias}_date"
-    return {
+    field_table = dimension_table or fact_table
+    joins = []
+    if dimension_table:
+        joins.append({
+            "from": fact_table,
+            "to": dimension_table,
+            "conditions": [(fact_column, dimension_key)],
+            "source": "approved_metric_date_context",
+            "enforcement": "required",
+            "role_playing": True,
+            "preserve_all": True,
+            "role_alias": role_alias,
+            "business_role": label,
+        })
+    plan = {
         "enabled": True,
         "fields": [
             {
                 "term": label,
-                "table": dimension_table,
+                "table": field_table,
                 "column": date_value_column,
                 "role": "contextual_date",
                 # Unlike an ordinary display dimension, the date value must
@@ -245,37 +367,38 @@ def build_contextual_date_plan(binding: dict) -> dict:
                 "role_alias": role_alias,
             }
         ],
-        "joins": [
-            {
-                "from": fact_table,
-                "to": dimension_table,
-                "conditions": [(fact_column, dimension_key)],
-                "source": "approved_metric_date_context",
-                "enforcement": "required",
-                "role_playing": True,
-                "preserve_all": True,
-                "role_alias": role_alias,
-                "business_role": label,
-            }
-        ],
+        "joins": joins,
         "date_key_policies": [{
             "table": fact_table,
             "column": fact_column,
             "date_key_type": date_key_type,
-            "date_value_table": dimension_table,
+            "date_value_table": field_table,
             "date_value_column": date_value_column,
             "role_alias": role_alias,
             "business_role": label,
         }],
-        "required_tables": [fact_table, dimension_table],
+        "required_tables": [table for table in (fact_table, dimension_table) if table],
         "reason": f"governed date context: {label}",
         "resolved_date_context": dict(binding),
     }
+    window = detect_temporal_window(question)
+    if window:
+        plan["temporal_policies"] = [{
+            **window,
+            "fact_table": fact_table,
+            "fact_column": fact_column,
+            "date_table": field_table,
+            "date_column": date_value_column,
+            "role_alias": role_alias,
+            "date_key_type": date_key_type,
+            "business_role": label,
+        }]
+    return plan
 
 
-def build_contextual_date_plan_many(bindings: list[dict]) -> dict:
+def build_contextual_date_plan_many(bindings: list[dict], question: str = "") -> dict:
     """Compile multiple explicit role-playing dates into one exact plan."""
-    plans = [build_contextual_date_plan(binding) for binding in bindings or []]
+    plans = [build_contextual_date_plan(binding, question) for binding in bindings or []]
     plans = [plan for plan in plans if plan.get("enabled")]
     if not plans:
         return {"enabled": False, "fields": [], "joins": [], "required_tables": []}
@@ -284,17 +407,24 @@ def build_contextual_date_plan_many(bindings: list[dict]) -> dict:
     # role alias deterministic and unique without changing physical tables.
     used_aliases: set[str] = set()
     for index, plan in enumerate(plans, start=1):
-        edge = plan["joins"][0]
-        alias = str(edge.get("role_alias") or f"business_date_{index}")
+        edge = (plan.get("joins") or [{}])[0]
+        alias = str(
+            edge.get("role_alias")
+            or plan["fields"][0].get("role_alias")
+            or f"business_date_{index}"
+        )
         base = alias
         suffix = 2
         while alias in used_aliases:
             alias = f"{base}_{suffix}"
             suffix += 1
         used_aliases.add(alias)
-        edge["role_alias"] = alias
+        if plan.get("joins"):
+            plan["joins"][0]["role_alias"] = alias
         plan["fields"][0]["role_alias"] = alias
         plan["date_key_policies"][0]["role_alias"] = alias
+        for policy in plan.get("temporal_policies") or []:
+            policy["role_alias"] = alias
 
     return {
         "enabled": True,
@@ -302,6 +432,9 @@ def build_contextual_date_plan_many(bindings: list[dict]) -> dict:
         "joins": [edge for plan in plans for edge in plan.get("joins", [])],
         "date_key_policies": [
             policy for plan in plans for policy in plan.get("date_key_policies", [])
+        ],
+        "temporal_policies": [
+            policy for plan in plans for policy in plan.get("temporal_policies", [])
         ],
         "required_tables": sorted({
             table for plan in plans for table in plan.get("required_tables", []) if table
