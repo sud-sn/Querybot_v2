@@ -176,6 +176,156 @@ def entity_name_for_table(graph: dict, table_ref: str) -> str:
     return ""
 
 
+def infer_connected_default_date_fact(
+    graph: dict,
+    *,
+    requested_entities: list[str] | set[str] | None,
+    requested_tables: list[str] | set[str] | None,
+    candidate_fact_tables: list[str] | set[str] | None,
+    excluded_tables: list[str] | set[str] | None = None,
+    allow_suggested: bool = True,
+) -> dict:
+    """Infer the uniquely connected fact that owns a default business date.
+
+    This is used only for generic temporal questions whose business wording
+    identifies dimensions but not a fact, for example "patient count by state
+    today". Candidates are restricted to facts with an approved default date
+    role supplied by the caller. The graph remains authoritative: broken and
+    zero-match edges are rejected by the normal risk-weighted pathfinder, and
+    paths that travel through a different fact are rejected to avoid fan-out.
+
+    A close tie is returned as ambiguous rather than guessed.
+    """
+    entities = graph.get("entities") or []
+    by_name = {str(entity.get("entity_name") or ""): entity for entity in entities}
+
+    def table_key(value: str) -> str:
+        parts = [
+            part.strip().strip("[]\"`").upper()
+            for part in str(value or "").split(".")
+            if part.strip().strip("[]\"`")
+        ]
+        return ".".join(parts[-2:]) if len(parts) >= 2 else (parts[-1] if parts else "")
+
+    def entity_table(entity: dict) -> str:
+        table = str(entity.get("table_name") or "")
+        schema = str(entity.get("schema_name") or "")
+        return table_key(f"{schema}.{table}" if schema else table)
+
+    excluded = {table_key(table) for table in (excluded_tables or []) if table}
+    requested = {str(name) for name in (requested_entities or []) if str(name)}
+    for table in requested_tables or []:
+        name = entity_name_for_table(graph, str(table))
+        if name:
+            requested.add(name)
+
+    # Only business dimensions should drive fact inference. Date dimensions
+    # and already detected facts are consequences of temporal planning, not
+    # evidence that a particular business event was requested.
+    targets = {
+        name for name in requested
+        if name in by_name
+        and str(by_name[name].get("entity_type") or "").lower() not in {"fact", "bridge"}
+        and entity_table(by_name[name]) not in excluded
+    }
+    if not targets:
+        return {"status": "none", "reason": "no requested business dimensions"}
+
+    candidate_entities: dict[str, str] = {}
+    for table in candidate_fact_tables or []:
+        name = entity_name_for_table(graph, str(table))
+        entity = by_name.get(name, {})
+        if name and str(entity.get("entity_type") or "").lower() == "fact":
+            candidate_entities[table_key(str(table))] = name
+    if not candidate_entities:
+        return {"status": "none", "reason": "no default-date fact candidates in graph"}
+
+    confirmed = _confirmed_subgraph(graph)
+    graph_variants = [("confirmed", confirmed)]
+    if allow_suggested and (
+        len(confirmed.get("entities") or []) < len(entities)
+        or len(confirmed.get("relationships") or []) < len(graph.get("relationships") or [])
+    ):
+        graph_variants.append(("suggested_fallback", graph))
+
+    ranked: list[dict] = []
+    for fact_table, fact_entity in candidate_entities.items():
+        for graph_scope, candidate_graph in graph_variants:
+            candidate_names = {
+                str(entity.get("entity_name") or "")
+                for entity in candidate_graph.get("entities") or []
+            }
+            if fact_entity not in candidate_names or not targets.issubset(candidate_names):
+                continue
+            path = find_join_path(
+                [fact_entity, *sorted(targets)],
+                candidate_graph,
+                prefer_fact_anchor=True,
+            )
+            path_nodes = {fact_entity}
+            for edge in path:
+                path_nodes.add(str(edge.get("from_entity") or ""))
+                path_nodes.add(str(edge.get("to_entity") or ""))
+            if not targets.issubset(path_nodes):
+                continue
+            traversed_other_facts = {
+                name for name in path_nodes
+                if name != fact_entity
+                and str(by_name.get(name, {}).get("entity_type") or "").lower() == "fact"
+            }
+            if traversed_other_facts:
+                continue
+            unique_edges: dict[object, dict] = {}
+            for edge in path:
+                identity = edge.get("id") or edge.get("relationship_key") or (
+                    edge.get("from_entity"), edge.get("to_entity"),
+                    edge.get("from_column"), edge.get("to_column"),
+                )
+                unique_edges[identity] = edge
+            ranked.append({
+                "fact_table": fact_table,
+                "fact_entity": fact_entity,
+                "graph_scope": graph_scope,
+                "cost": round(sum(_edge_weight(edge) for edge in unique_edges.values()), 4),
+                "hops": len(unique_edges),
+                "target_entities": sorted(targets),
+                "edge_ids": [
+                    edge.get("id") for edge in unique_edges.values()
+                    if edge.get("id") is not None
+                ],
+            })
+            # A confirmed path always wins over a suggested fallback for the
+            # same fact, so there is no reason to evaluate that fact again.
+            break
+
+    if not ranked:
+        return {"status": "none", "reason": "no safe graph path to a default-date fact"}
+
+    ranked.sort(key=lambda item: (
+        0 if item["graph_scope"] == "confirmed" else 1,
+        item["cost"], item["hops"], item["fact_table"],
+    ))
+    best = ranked[0]
+    best_scope = best["graph_scope"]
+    close = [
+        item for item in ranked
+        if item["graph_scope"] == best_scope
+        and abs(float(item["cost"]) - float(best["cost"])) <= 1.0
+        and abs(int(item["hops"]) - int(best["hops"])) <= 1
+    ]
+    if len(close) > 1:
+        return {
+            "status": "ambiguous",
+            "reason": "multiple default-date facts are equally connected",
+            "candidates": close,
+        }
+    return {
+        "status": "selected",
+        "reason": "unique default-date fact connected to requested dimensions",
+        **best,
+    }
+
+
 def detect_entities(
     question: str,
     graph: dict,

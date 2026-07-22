@@ -43,6 +43,42 @@ class GovernedResultFollowupTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.outcome.rows_after, 1)
         self.assertEqual(result.evidence["rows_sent_to_llm"], 0)
 
+    async def test_named_month_subset_executes_without_model_or_database(self):
+        source_result_id = self.cache.store(
+            self.session_id,
+            [
+                {"BOOKED_MONTH": "2025-01", "NET_REVENUE": 100.0},
+                {"BOOKED_MONTH": "2025-02", "NET_REVENUE": 200.0},
+                {"BOOKED_MONTH": "2025-03", "NET_REVENUE": 300.0},
+                {"BOOKED_MONTH": "2025-04", "NET_REVENUE": 400.0},
+            ],
+            "Net revenue by booked month",
+            "SELECT governed source query",
+        )
+        called = False
+
+        async def complete(**_kwargs):
+            nonlocal called
+            called = True
+            return "", 0, 0
+
+        result = await run_governed_result_followup(
+            "give me the data only for feb and april",
+            self.session_id,
+            complete=complete,
+            source_result_id=source_result_id,
+            cache=self.cache,
+        )
+
+        self.assertTrue(result.executed, result.reason)
+        self.assertFalse(called)
+        self.assertEqual(
+            [row["BOOKED_MONTH"] for row in result.outcome.snapshot["rows"]],
+            ["2025-02", "2025-04"],
+        )
+        self.assertEqual(result.evidence["rows_sent_to_llm"], 0)
+        self.assertFalse(result.evidence["database_queried"])
+
     async def test_planner_receives_metadata_not_values_or_sql(self):
         captured = {}
 

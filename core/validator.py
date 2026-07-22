@@ -1316,6 +1316,104 @@ def _temporal_anchor_errors(tree, sql: str, policies: list[dict]) -> list[dict]:
     return errors
 
 
+def _surrogate_date_range_columns(tree) -> set[str]:
+    """Find surrogate-looking columns used as calendar values in ranges.
+
+    Equality remains valid because it is how fact keys join date dimensions.
+    A numeric ``> 0`` key-quality predicate also remains valid. We only flag
+    range predicates that contain a calendar operation, latest-value anchor,
+    or date-shaped literal.
+    """
+    found: set[str] = set()
+    range_types = (sg_exp.GT, sg_exp.GTE, sg_exp.LT, sg_exp.LTE, sg_exp.Between)
+    temporal_types = (
+        sg_exp.DateAdd,
+        sg_exp.DateSub,
+        sg_exp.DateDiff,
+        sg_exp.Max,
+        sg_exp.CurrentDate,
+        sg_exp.CurrentTimestamp,
+    )
+    for predicate in tree.find_all(*range_types):
+        has_temporal_expression = any(
+            predicate.find(node_type) is not None for node_type in temporal_types
+        )
+        if not has_temporal_expression:
+            has_temporal_expression = any(
+                bool(
+                    literal.is_string
+                    and re.search(
+                        r"\b\d{4}[-/]\d{1,2}(?:[-/]\d{1,2})?\b",
+                        str(literal.this or ""),
+                    )
+                )
+                for literal in predicate.find_all(sg_exp.Literal)
+            )
+        if not has_temporal_expression:
+            continue
+
+        subject = predicate.this
+        if isinstance(subject, sg_exp.Column) and subject.name:
+            found.add(str(subject.name).upper())
+        # Handles reversed forms such as DATEADD(...) <= fact.ORDER_DATE_ID.
+        expression = predicate.args.get("expression")
+        if isinstance(expression, sg_exp.Column) and expression.name:
+            found.add(str(expression.name).upper())
+    return found
+
+
+def _find_surrogate_date_predicate_errors(
+    tree,
+    policies: list[dict],
+    table_columns: dict[str, dict[str, str]],
+) -> list[dict]:
+    """Reject date-window filters applied directly to surrogate FKs."""
+    ranged = _surrogate_date_range_columns(tree)
+    if not ranged:
+        return []
+
+    policy_by_column = {
+        str(policy.get("column") or "").upper(): policy
+        for policy in policies or []
+        if str(policy.get("date_key_type") or "") == "surrogate_fk"
+        and policy.get("column")
+    }
+    schema_surrogates = {
+        str(column or "").upper()
+        for columns in (table_columns or {}).values()
+        for column in (columns or {})
+        if is_plain_surrogate_date_role_column(str(column or ""))
+    }
+    dimension_hint = _find_date_dimension_hint(table_columns)
+    errors: list[dict] = []
+    for column in sorted(ranged & (set(policy_by_column) | schema_surrogates)):
+        policy = policy_by_column.get(column, {})
+        date_table = str(policy.get("date_value_table") or "")
+        date_column = str(policy.get("date_value_column") or "")
+        if not date_table and dimension_hint:
+            date_table, date_column = dimension_hint
+        target = (
+            f" Join to {date_table} and apply the range to "
+            f"{policy.get('role_alias') or date_table}.{date_column}."
+            if date_table and date_column
+            else " Join to the governed date dimension and apply the range to its native calendar-date column."
+        )
+        errors.append({
+            "code": "surrogate_date_conversion",
+            "message": (
+                f"{column} is a surrogate date-dimension key and cannot be used "
+                f"as a calendar value in a relative/range predicate.{target}"
+            ),
+            "table": policy.get("table", ""),
+            "column": column,
+            "date_key_type": "surrogate_fk",
+            "date_value_table": date_table,
+            "date_value_column": date_column,
+            "role_alias": policy.get("role_alias", ""),
+        })
+    return errors
+
+
 def validate_sql_detailed(
     sql: str,
     known_tables: set[str],
@@ -1610,6 +1708,17 @@ def validate_sql_detailed(
                 "\n".join(error["message"] for error in surrogate_date_errors),
                 "surrogate_date_conversion",
                 surrogate_date_errors,
+            )
+
+        surrogate_predicate_errors = _find_surrogate_date_predicate_errors(
+            tree, date_policies, table_columns
+        )
+        if surrogate_predicate_errors:
+            return SqlValidationResult(
+                False,
+                "\n".join(error["message"] for error in surrogate_predicate_errors),
+                "surrogate_date_conversion",
+                surrogate_predicate_errors,
             )
 
         schema_surrogate_date_errors = _schema_driven_surrogate_date_misuse_errors(

@@ -7,6 +7,7 @@ from core.result_commands import (
     execute_result_command,
     parse_result_command,
 )
+from core.query_router import should_route_to_result_cache
 from core.response_builder import build_assistant_response
 
 
@@ -63,6 +64,81 @@ class ConversationalResultCacheTests(unittest.TestCase):
         )
         self.assertTrue(outcome.ok, outcome.message)
         self.assertEqual([row["PERIOD"] for row in outcome.snapshot["rows"]], ["2025-06", "2025-03"])
+
+    def test_natural_month_subset_uses_cached_period_values(self):
+        cache = ResultCache()
+        cache.store(
+            self.session,
+            [
+                {"BOOKED_MONTH": "2025-01", "TOTAL_NET_REVENUE": 100.0},
+                {"BOOKED_MONTH": "2025-02", "TOTAL_NET_REVENUE": 200.0},
+                {"BOOKED_MONTH": "2025-03", "TOTAL_NET_REVENUE": 300.0},
+                {"BOOKED_MONTH": "2025-04", "TOTAL_NET_REVENUE": 400.0},
+            ],
+            result_id="booked-month-source",
+        )
+        command = parse_result_command("give me the data only for feb and april")
+        self.assertIsNotNone(command)
+        self.assertEqual(command.action, "keep_values")
+        outcome = execute_result_command(self.session, command, cache=cache)
+        self.assertTrue(outcome.ok, outcome.message)
+        self.assertEqual(
+            [row["BOOKED_MONTH"] for row in outcome.snapshot["rows"]],
+            ["2025-02", "2025-04"],
+        )
+        self.assertIn("?", outcome.snapshot["sql"])
+        self.assertNotIn("2025-02", outcome.snapshot["sql"])
+        self.assertFalse(outcome.snapshot["metadata"]["metadata_contains_raw_values"])
+
+    def test_natural_month_subset_is_routed_to_the_cached_result(self):
+        columns = ["BOOKED_MONTH", "TOTAL_NET_REVENUE"]
+        self.assertTrue(
+            should_route_to_result_cache(
+                "give me the data only for feb and april",
+                True,
+                columns,
+            )
+        )
+        self.assertTrue(
+            should_route_to_result_cache(
+                "show only February and April",
+                True,
+                columns,
+            )
+        )
+        self.assertEqual(
+            parse_result_command("Feb and Apr only").action,
+            "keep_values",
+        )
+        self.assertFalse(
+            should_route_to_result_cache(
+                "give me the data only for feb and april",
+                False,
+                columns,
+            )
+        )
+
+    def test_month_subset_can_match_multiple_years_when_year_is_omitted(self):
+        cache = ResultCache()
+        cache.store(
+            self.session,
+            [
+                {"PERIOD": "2025-02", "REVENUE": 10},
+                {"PERIOD": "2026-02", "REVENUE": 20},
+                {"PERIOD": "2026-04", "REVENUE": 30},
+            ],
+            result_id="multi-year-source",
+        )
+        outcome = execute_result_command(
+            self.session,
+            parse_result_command("show only February and April"),
+            cache=cache,
+        )
+        self.assertTrue(outcome.ok, outcome.message)
+        self.assertEqual(
+            [row["PERIOD"] for row in outcome.snapshot["rows"]],
+            ["2025-02", "2026-02", "2026-04"],
+        )
 
     def test_keep_top_by_business_metric_sorts_before_limiting(self):
         cache = ResultCache()

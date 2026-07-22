@@ -29,7 +29,11 @@ from core.query_semantics import (
     build_generic_query_hints,
     detect_top_n_intent,
 )
-from core.graph_resolver import resolve_for_question as _graph_resolve, entity_name_for_table
+from core.graph_resolver import (
+    resolve_for_question as _graph_resolve,
+    entity_name_for_table,
+    infer_connected_default_date_fact,
+)
 from core.llm_audit import llm_audit_scope, make_llm_audit_request_id
 from core.result_cache import result_cache
 from core.query_router import should_route_to_result_cache
@@ -85,7 +89,26 @@ def _resolved_fact_tables(
     detected = set(graph_context.get("detected") or [])
     if graph_context.get("anchor"):
         detected.add(str(graph_context.get("anchor")))
-    facts: set[str] = set(metric_tables or set())
+    entities_by_name = {
+        str(entity.get("entity_name") or ""): entity
+        for entity in graph.get("entities") or []
+    }
+
+    def add_if_fact(table_ref: str, *, preserve_unknown: bool = False) -> None:
+        if not table_ref:
+            return
+        entity_name = entity_name_for_table(graph, table_ref)
+        entity = entities_by_name.get(entity_name, {})
+        if str(entity.get("entity_type") or "").lower() == "fact":
+            facts.add(table_ref)
+        elif preserve_unknown and not entity_name:
+            # A metric formula may reference a fact not yet represented in an
+            # incomplete graph. Preserve that stronger governed signal.
+            facts.add(table_ref)
+
+    facts: set[str] = set()
+    for table in metric_tables or set():
+        add_if_fact(str(table), preserve_unknown=True)
     for entity in graph.get("entities") or []:
         if entity.get("entity_name") not in detected:
             continue
@@ -97,8 +120,7 @@ def _resolved_fact_tables(
             facts.add(f"{schema}.{table}" if schema else table)
     for field in (semantic_plan or {}).get("fields") or []:
         source = str(field.get("source_table") or field.get("table") or "")
-        if source:
-            facts.add(source)
+        add_if_fact(source)
     return {table for table in facts if table}
 
 
@@ -1537,13 +1559,109 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                 semantic_plan=_semantic_plan,
                 metric_tables=_metric_formula_tables,
             )
+            _date_roles = list((_contract_model or {}).get("date_roles") or [])
+            _explicit_date_roles = find_explicit_date_roles(
+                _semantic_plan_question,
+                _date_roles,
+            )
+            _date_fact_inference: dict = {"status": "not_needed"}
+
+            # A generic temporal question may identify only a dimension, for
+            # example "patient count by state today". In that case the
+            # configured default date belongs to a connected fact, not the
+            # dimension itself. Infer that fact deterministically from the
+            # governed graph, but only when no stronger metric or explicit
+            # role has already established the business event.
+            if (
+                not _date_fact_scope
+                and not _matched_metrics
+                and not _date_bindings
+                and not _explicit_date_roles
+            ):
+                _default_fact_tables = {
+                    str(role.get("fact_table") or "")
+                    for role in _date_roles
+                    if str(role.get("status") or "") == "approved"
+                    and bool(role.get("is_default"))
+                    and role.get("fact_table")
+                }
+                _requested_semantic_tables = {
+                    str(field.get("source_table") or field.get("table") or "")
+                    for field in (_semantic_plan or {}).get("fields") or []
+                    if field.get("source_table") or field.get("table")
+                }
+                _date_dimension_tables = {
+                    str(role.get("dimension_table") or "")
+                    for role in _date_roles
+                    if role.get("dimension_table")
+                }
+                _client = store.get_client(account_id) or {}
+                _suggested_setting = _client.get("graph_use_suggested")
+                if _suggested_setting is None:
+                    _allow_suggested_dates = True
+                elif isinstance(_suggested_setting, str):
+                    _allow_suggested_dates = (
+                        _suggested_setting.strip().casefold()
+                        not in {"0", "false", "off", "no"}
+                    )
+                else:
+                    _allow_suggested_dates = bool(_suggested_setting)
+                _date_fact_inference = infer_connected_default_date_fact(
+                    _full_graph,
+                    requested_entities=set(_graph_ctx.get("detected") or []),
+                    requested_tables=_requested_semantic_tables,
+                    candidate_fact_tables=_default_fact_tables,
+                    excluded_tables=_date_dimension_tables,
+                    allow_suggested=_allow_suggested_dates,
+                )
+                if _date_fact_inference.get("status") == "selected":
+                    _date_fact_scope.add(
+                        str(_date_fact_inference.get("fact_table") or "")
+                    )
+                elif _date_fact_inference.get("status") == "ambiguous":
+                    _date_fact_scope.update(
+                        str(item.get("fact_table") or "")
+                        for item in (_date_fact_inference.get("candidates") or [])
+                        if item.get("fact_table")
+                    )
+                _trace_step(
+                    trace_id,
+                    "default_date_fact_inference",
+                    input_summary={
+                        "entities": sorted(set(_graph_ctx.get("detected") or [])),
+                        "semantic_tables": sorted(_requested_semantic_tables),
+                    },
+                    output_summary={
+                        "status": _date_fact_inference.get("status") or "none",
+                        "fact_table": _date_fact_inference.get("fact_table") or "",
+                        "candidate_facts": [
+                            item.get("fact_table")
+                            for item in (_date_fact_inference.get("candidates") or [])
+                        ],
+                        "reason": _date_fact_inference.get("reason") or "",
+                    },
+                    metadata={
+                        "graph_scope": _date_fact_inference.get("graph_scope") or "",
+                        "edge_ids": _date_fact_inference.get("edge_ids") or [],
+                    },
+                )
             _date_context_resolution = resolve_contextual_date_binding(
                 _semantic_plan_question,
                 matched_metrics=_matched_metrics,
                 bindings=_date_bindings,
-                date_roles=list((_contract_model or {}).get("date_roles") or []),
+                date_roles=_date_roles,
                 required_fact_tables=_date_fact_scope,
             )
+            if (
+                _date_fact_inference.get("status") == "selected"
+                and _date_context_resolution.get("status") == "selected"
+            ):
+                _date_context_resolution["binding"]["resolution_source"] = (
+                    "connected_dimension_default"
+                )
+                _date_context_resolution["reason"] = (
+                    "default date of the uniquely connected fact"
+                )
             if _date_context_resolution.get("status") == "ambiguous" and not is_clarification:
                 _date_options = [
                     {
@@ -1567,10 +1685,16 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                             "source": "metric_date_context",
                         },
                     )
-                _date_question = (
-                    "This metric has more than one valid business date. "
-                    "Which date context should I use?"
-                )
+                if _date_fact_inference.get("status") == "ambiguous":
+                    _date_question = (
+                        "More than one connected business event has a default date. "
+                        "Which date context should I use?"
+                    )
+                else:
+                    _date_question = (
+                        "This metric has more than one valid business date. "
+                        "Which date context should I use?"
+                    )
                 send_prompt = getattr(adapter, "send_clarification_prompt", None)
                 if callable(send_prompt) and _date_options:
                     await send_prompt(event, _date_question, _date_options)
@@ -2268,7 +2392,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
         rows = None
         ok = False
 
-    retryable = (not ok and (last_code or code) in ("unknown_table", "unknown_column", "date_key_format", "dialect_mismatch", "production_shape", "period_comparison_shape", "anti_join_shape", "top_n_shape", "graph_plan_mismatch", "field_plan_mismatch", "metric_formula_mismatch", "null_aggregate_diagnostic", "parse", "multi_statement", "not_select", "reused_plan_empty", "surrogate_date_conversion")) or (exec_error is not None)
+    retryable = (not ok and (last_code or code) in ("unknown_table", "unknown_column", "date_key_format", "dialect_mismatch", "production_shape", "period_comparison_shape", "anti_join_shape", "top_n_shape", "graph_plan_mismatch", "field_plan_mismatch", "metric_formula_mismatch", "null_aggregate_diagnostic", "parse", "multi_statement", "not_select", "reused_plan_empty", "surrogate_date_conversion", "temporal_anchor_missing", "temporal_anchor_mismatch")) or (exec_error is not None)
 
     if retryable:
         if exec_error is not None:
@@ -2448,6 +2572,36 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                     "- If no exact table/column is named above, find the date dimension's real calendar column "
                     "verbatim in the schema context (KB documents / table columns in this prompt). "
                     "Do NOT invent, abbreviate, or guess a column name (e.g. 'YR') that does not appear there.\n"
+                )
+            elif last_code in {"temporal_anchor_missing", "temporal_anchor_mismatch"}:
+                _date_contracts = []
+                for _policy in (_semantic_plan or {}).get("temporal_policies") or []:
+                    _fact_table = str(_policy.get("fact_table") or "")
+                    _fact_column = str(_policy.get("fact_column") or "")
+                    _date_table = str(
+                        _policy.get("dimension_table")
+                        or _policy.get("date_table")
+                        or ""
+                    )
+                    _date_key = str(_policy.get("dimension_key") or "")
+                    _date_column = str(_policy.get("date_column") or "")
+                    if _fact_table and _fact_column and _date_table and _date_column:
+                        _join_rule = (
+                            f"{_fact_table}.{_fact_column} = {_date_table}.{_date_key}"
+                            if _date_key else "native date column (no surrogate join)"
+                        )
+                        _date_contracts.append(
+                            f"- JOIN/FIELD: {_join_rule}; filter and anchor on "
+                            f"{_date_table}.{_date_column}."
+                        )
+                validation_repair_note = (
+                    "\nGOVERNED RELATIVE-DATE REPAIR REQUIRED:\n"
+                    "- Never compare a fact surrogate date ID to DATEADD, a date literal, or MAX(the ID).\n"
+                    "- If the fact exposes a native date, filter that native date directly.\n"
+                    "- Otherwise use the exact fact-key to date-dimension join below, and use the date dimension's native calendar field.\n"
+                    "- Derive the business clock from MAX(the native calendar field) over the same governed source rows.\n"
+                    + ("\n".join(_date_contracts) if _date_contracts else
+                       "- Use the exact date-role JOIN and calendar field supplied in the semantic plan.\n")
                 )
             elif last_code == "reused_plan_empty":
                 validation_repair_note = (

@@ -43,6 +43,19 @@ _SORT_RE = re.compile(
     r"by\s+(.+?)(?:\s+(ascending|asc|descending|desc))?\s*[.!]?\s*$",
     re.IGNORECASE,
 )
+_KEEP_VALUES_RE = re.compile(
+    r"^\s*(?:(?:give|show)(?:\s+me)?\s+)?"
+    r"(?:(?:the\s+)?(?:data|rows|results?|records?)\s+)?"
+    r"(?:only\s+for|for\s+only|only|keep\s+(?:only\s+)?)\s+"
+    r"(.+?)\s*[.!]?\s*$",
+    re.IGNORECASE,
+)
+_KEEP_VALUES_POSTFIX_RE = re.compile(
+    r"^\s*(?:(?:give|show)(?:\s+me)?\s+)?"
+    r"(?:(?:the\s+)?(?:data|rows|results?|records?)\s+)?"
+    r"(?:for\s+)?(.+?)\s+only\s*[.!]?\s*$",
+    re.IGNORECASE,
+)
 _RESULT_CONTEXT_RE = re.compile(
     r"\b(?:this|the|current|previous|cached)\s+"
     r"(?:result|results|data|dataset|rows?|table)\b",
@@ -76,7 +89,7 @@ _AGGREGATIONS = {
 @dataclass(frozen=True)
 class ResultCommand:
     action: Literal[
-        "exclude", "undo", "keep_top", "sort", "filter", "aggregate",
+        "exclude", "undo", "keep_top", "keep_values", "sort", "filter", "aggregate",
         "contribution", "profit_percentage", "ratio",
     ]
     target_text: str = ""
@@ -132,6 +145,16 @@ def parse_result_command(text: str) -> ResultCommand | None:
         direction = "asc" if (match.group(2) or "").lower() in {"asc", "ascending"} else "desc"
         target = _clean_target(match.group(1))
         return ResultCommand("sort", target_text=target, direction=direction) if target else None
+
+    # Month names are resolved against the actual cached period/date values.
+    # Requiring a month reference keeps this deterministic shortcut from
+    # capturing unrelated source-data questions such as "show only revenue".
+    for pattern in (_KEEP_VALUES_RE, _KEEP_VALUES_POSTFIX_RE):
+        match = pattern.fullmatch(value)
+        if match:
+            target = _clean_temporal_subset_target(match.group(1))
+            if target and _contains_month_reference(target):
+                return ResultCommand("keep_values", target_text=target)
 
     # Analytical transforms are intentionally limited to explicit references
     # to the current/cached result. This prevents a new business question from
@@ -384,6 +407,60 @@ def execute_result_command(
                 affected_count=max(0, before - len(transformed)),
                 source_result_id=source_id,
                 derived_result_id=str(snapshot.get("result_id") or ""),
+            )
+
+        if command.action == "keep_values":
+            column, selected_values, error = _resolve_inclusions(
+                rows, command.target_text,
+            )
+            if error:
+                return _command_error(command, source_id, before, error)
+
+            predicates = [
+                f'{_quote_identifier(column)} IS NOT DISTINCT FROM ?'
+                for _ in selected_values
+            ]
+            transform_sql = "SELECT * FROM result WHERE " + " OR ".join(predicates)
+            transformed = cache.query(
+                session_id,
+                transform_sql,
+                result_id=source_id,
+                parameters=selected_values,
+            )
+            expected_rows = [
+                row for row in rows
+                if any(row.get(column) == value for value in selected_values)
+            ]
+            if transformed != expected_rows:
+                transformed = expected_rows
+            if not transformed:
+                return _command_error(
+                    command,
+                    source_id,
+                    before,
+                    "Those periods were not found in the current result.",
+                )
+            snapshot = cache.derive_snapshot(
+                session_id,
+                source_id,
+                transformed,
+                question=str(source.get("question") or "Result"),
+                operation="filter",
+                sql=transform_sql,
+                column_formats=dict(source.get("column_formats") or {}),
+                metadata={
+                    "column": column,
+                    "operator": "in",
+                    "parameter_count": len(selected_values),
+                    "metadata_contains_raw_values": False,
+                },
+            )
+            return _command_success(
+                snapshot,
+                "filter",
+                source_id,
+                before,
+                f"Kept {len(transformed)} matching rows from the cached result.",
             )
 
         if command.action == "sort":
@@ -974,6 +1051,79 @@ def _resolve_exclusions(
     return resolved, ""
 
 
+def _resolve_inclusions(
+    rows: list[dict], target_text: str,
+) -> tuple[str, list[Any], str]:
+    """Resolve natural month names to one cached temporal column locally."""
+    targets = [
+        _clean_temporal_subset_target(part)
+        for part in re.split(r"\s*(?:,|\band\b|&)\s*", target_text, flags=re.IGNORECASE)
+        if _clean_temporal_subset_target(part)
+    ]
+    if not targets:
+        return "", [], "No periods were provided."
+
+    matches_by_target: list[dict[str, list[Any]]] = []
+    for target in targets:
+        matches = _find_temporal_value_matches(rows, target)
+        if not matches:
+            return "", [], f"I could not find {target!r} in the current result."
+        grouped: dict[str, list[Any]] = {}
+        for column, value in matches:
+            if value not in grouped.setdefault(column, []):
+                grouped[column].append(value)
+        matches_by_target.append(grouped)
+
+    common_columns = set(matches_by_target[0])
+    for grouped in matches_by_target[1:]:
+        common_columns &= set(grouped)
+    if not common_columns:
+        return "", [], "Those periods do not resolve to one field in the current result."
+
+    def column_score(column: str) -> tuple[int, int]:
+        tokens = _semantic_tokens(column)
+        semantic = (
+            3 if "month" in tokens
+            else 2 if "period" in tokens
+            else 1 if "date" in tokens
+            else 0
+        )
+        return semantic, -len(column)
+
+    ranked = sorted(common_columns, key=column_score, reverse=True)
+    if len(ranked) > 1 and column_score(ranked[0]) == column_score(ranked[1]):
+        return "", [], "More than one date field matches. Name the result column explicitly."
+    column = ranked[0]
+    selected: list[Any] = []
+    for grouped in matches_by_target:
+        for value in grouped[column]:
+            if value not in selected:
+                selected.append(value)
+    return column, selected, ""
+
+
+def _find_temporal_value_matches(
+    rows: list[dict], target: str,
+) -> list[tuple[str, Any]]:
+    reference = _month_reference(target)
+    if reference is None:
+        return _find_value_matches(rows, target)
+    target_year, target_month = reference
+    unique: dict[tuple[str, str], tuple[str, Any]] = {}
+    for row in rows:
+        for column, value in row.items():
+            actual = _value_year_month(value)
+            if actual is None:
+                continue
+            actual_year, actual_month = actual
+            if actual_month != target_month:
+                continue
+            if target_year is not None and actual_year != target_year:
+                continue
+            unique[(str(column), repr(value))] = (str(column), value)
+    return list(unique.values())
+
+
 def _find_value_matches(rows: list[dict], target: str) -> list[tuple[str, Any]]:
     wanted = _normalise_value(target)
     wanted_temporal = _temporal_key(target)
@@ -1106,6 +1256,30 @@ def _temporal_key(value: Any) -> str:
     return ""
 
 
+def _month_reference(value: Any) -> tuple[int | None, int] | None:
+    text = str(value or "").strip().casefold().rstrip(".")
+    words = re.findall(r"[a-z]+|\d{4}", text)
+    month = next((_MONTHS[word] for word in words if word in _MONTHS), None)
+    if month is None:
+        return None
+    year = next((int(word) for word in words if word.isdigit() and len(word) == 4), None)
+    return year, month
+
+
+def _contains_month_reference(value: Any) -> bool:
+    return _month_reference(value) is not None
+
+
+def _value_year_month(value: Any) -> tuple[int | None, int] | None:
+    if isinstance(value, (date, datetime)):
+        return value.year, value.month
+    temporal = _temporal_key(value)
+    match = re.fullmatch(r"(?:day|month):(\d{4})-(\d{2})(?:-\d{2})?", temporal)
+    if match:
+        return int(match.group(1)), int(match.group(2))
+    return _month_reference(value)
+
+
 def _normalise_value(value: Any) -> str:
     return re.sub(r"[^a-z0-9]+", "", str(value or "").casefold())
 
@@ -1119,6 +1293,24 @@ def _clean_target(value: str) -> str:
         flags=re.IGNORECASE,
     )
     return target.strip().strip("\"'")
+
+
+def _clean_temporal_subset_target(value: str) -> str:
+    target = str(value or "").strip().strip("\"'").rstrip(".?!")
+    target = re.sub(
+        r"^(?:the\s+)?(?:months?|periods?|dates?)\s+(?:of\s+)?",
+        "",
+        target,
+        flags=re.IGNORECASE,
+    )
+    target = re.sub(
+        r"\s+(?:from|in)\s+(?:this|the|current|previous|cached)\s+"
+        r"(?:result|results|data|dataset|rows?|table)$",
+        "",
+        target,
+        flags=re.IGNORECASE,
+    )
+    return target.strip()
 
 
 def _quote_identifier(value: str) -> str:

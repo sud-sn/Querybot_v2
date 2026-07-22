@@ -54,11 +54,36 @@ def _binding_score(question: str, binding: dict) -> int:
     return best + int(binding.get("priority") or 0)
 
 
-def _explicit_role_matches(question: str, date_roles: list[dict]) -> list[dict]:
+def _role_is_complete(role: dict) -> bool:
+    """Return whether a discovered date role is safe enough to compile."""
+    if not role.get("fact_table") or not role.get("fact_column"):
+        return False
+    key_type = normalize_date_key_type(role.get("date_key_type") or "surrogate_fk")
+    if key_type != "surrogate_fk":
+        return True
+    return all(
+        role.get(key)
+        for key in ("dimension_table", "dimension_key", "date_value_column")
+    )
+
+
+def _explicit_role_matches(
+    question: str,
+    date_roles: list[dict],
+    *,
+    statuses: set[str] | None = None,
+    minimum_confidence: int = 0,
+    require_complete: bool = False,
+) -> list[dict]:
     q = normalize_date_role_text(question)
+    allowed_statuses = {item.casefold() for item in (statuses or {"approved"})}
     matches: list[tuple[int, int, str, dict]] = []
     for role in date_roles or []:
-        if str(role.get("status") or "") != "approved":
+        if str(role.get("status") or "").casefold() not in allowed_statuses:
+            continue
+        if int(role.get("confidence") or 0) < minimum_confidence:
+            continue
+        if require_complete and not _role_is_complete(role):
             continue
         phrases = _terms([
             role.get("name", ""),
@@ -87,6 +112,19 @@ def _explicit_role_matches(question: str, date_roles: list[dict]) -> list[dict]:
                         start = q.find(variant)
                         if start >= 0:
                             role_matches.append((start, start + len(variant), variant))
+                    # Event wording often names the business date implicitly:
+                    # "ordered revenue", "booked sales", "invoiced amount".
+                    # Keep this word-boundary based so "order" does not match
+                    # unrelated text such as "reorder".
+                    event_variants = {stem}
+                    if " " not in stem:
+                        event_variants.update({f"{stem}ed", f"{stem}d", f"{stem}ing"})
+                    for variant in sorted(event_variants, key=len, reverse=True):
+                        event_match = re.search(rf"\b{re.escape(variant)}\b", q)
+                        if event_match:
+                            role_matches.append(
+                                (event_match.start(), event_match.end(), variant)
+                            )
         if role_matches:
             start, end, phrase = max(role_matches, key=lambda item: (len(item[2]), -item[0]))
             matches.append((start, end, phrase, role))
@@ -107,14 +145,40 @@ def _explicit_role_matches(question: str, date_roles: list[dict]) -> list[dict]:
     return selected
 
 
-def find_explicit_date_roles(question: str, date_roles: list[dict] | None) -> list[dict]:
-    """Return approved roles explicitly named by the user.
+def _governed_explicit_role_matches(
+    question: str, date_roles: list[dict]
+) -> list[dict]:
+    """Resolve explicit roles with approval-first governance.
 
-    This small public wrapper lets graph planning pull in only the requested
-    role-playing date before metric scoping, without importing private helpers
-    or injecting unrelated defaults from other facts.
+    A generated role is only a fallback when it is physically complete,
+    high-confidence, and explicitly named by the user. It is never used as a
+    generic/default date and can never override an approved role.
     """
-    return _explicit_role_matches(question, list(date_roles or []))
+    approved = _explicit_role_matches(
+        question,
+        date_roles,
+        statuses={"approved"},
+    )
+    if approved:
+        return [{**role, "_selection_status": "approved"} for role in approved]
+    generated = _explicit_role_matches(
+        question,
+        date_roles,
+        statuses={"generated"},
+        minimum_confidence=95,
+        require_complete=True,
+    )
+    return [{**role, "_selection_status": "generated"} for role in generated]
+
+
+def find_explicit_date_roles(question: str, date_roles: list[dict] | None) -> list[dict]:
+    """Return governed roles explicitly named by the user.
+
+    Approved roles always win. A complete generated role with at least 95%
+    confidence may be used as an exact-name fallback so a discovered surrogate
+    relationship is not silently bypassed before an admin reviews it.
+    """
+    return _governed_explicit_role_matches(question, list(date_roles or []))
 
 
 def _role_as_binding(role: dict, *, source: str) -> dict:
@@ -136,6 +200,9 @@ def _role_as_binding(role: dict, *, source: str) -> dict:
         "is_default": int(bool(role.get("is_default"))),
         "priority": int(role.get("confidence") or 0),
         "resolution_source": source,
+        "governance_status": (
+            role.get("_selection_status") or role.get("status") or ""
+        ),
     }
 
 
@@ -167,7 +234,7 @@ def resolve_contextual_date_binding(
     } | metric_tables
     candidates = list(bindings or [])
 
-    explicit = _explicit_role_matches(question, list(date_roles or []))
+    explicit = _governed_explicit_role_matches(question, list(date_roles or []))
     if fact_scope:
         scoped = [
             role for role in explicit
@@ -175,9 +242,14 @@ def resolve_contextual_date_binding(
         ]
         explicit = scoped or explicit
     if len(explicit) == 1:
+        explicit_source = (
+            "explicit_date_role"
+            if explicit[0].get("_selection_status") == "approved"
+            else "explicit_generated_date_role"
+        )
         return {
             "status": "selected",
-            "binding": _role_as_binding(explicit[0], source="explicit_date_role"),
+            "binding": _role_as_binding(explicit[0], source=explicit_source),
             "reason": "explicit date role in question",
         }
     if len(explicit) > 1:
@@ -192,15 +264,32 @@ def resolve_contextual_date_binding(
             return {
                 "status": "selected_many",
                 "bindings": [
-                    _role_as_binding(role, source="explicit_date_role")
+                    _role_as_binding(
+                        role,
+                        source=(
+                            "explicit_date_role"
+                            if role.get("_selection_status") == "approved"
+                            else "explicit_generated_date_role"
+                        ),
+                    )
                     for role in explicit
                 ],
                 "reason": "multiple explicit date roles in question",
             }
         return {
             "status": "ambiguous",
-            "reason": "multiple approved date roles match the question",
-            "options": [_role_as_binding(role, source="explicit_date_role") for role in explicit],
+            "reason": "multiple governed date roles match the question",
+            "options": [
+                _role_as_binding(
+                    role,
+                    source=(
+                        "explicit_date_role"
+                        if role.get("_selection_status") == "approved"
+                        else "explicit_generated_date_role"
+                    ),
+                )
+                for role in explicit
+            ],
         }
 
     scored = [(_binding_score(question, item), item) for item in candidates]
@@ -233,7 +322,7 @@ def resolve_contextual_date_binding(
         if str(role.get("status") or "") == "approved"
         and bool(role.get("is_default"))
     ]
-    if fact_scope:
+    if required_fact_tables is not None:
         approved_roles = [
             role for role in approved_roles
             if any(_same_table(role.get("fact_table"), table) for table in fact_scope)
@@ -376,6 +465,8 @@ def build_contextual_date_plan(binding: dict, question: str = "") -> dict:
             "date_value_column": date_value_column,
             "role_alias": role_alias,
             "business_role": label,
+            "governance_status": binding.get("governance_status") or "",
+            "resolution_source": binding.get("resolution_source") or "",
         }],
         "required_tables": [table for table in (fact_table, dimension_table) if table],
         "reason": f"governed date context: {label}",
@@ -389,9 +480,13 @@ def build_contextual_date_plan(binding: dict, question: str = "") -> dict:
             "fact_column": fact_column,
             "date_table": field_table,
             "date_column": date_value_column,
+            "dimension_table": dimension_table,
+            "dimension_key": dimension_key,
             "role_alias": role_alias,
             "date_key_type": date_key_type,
             "business_role": label,
+            "governance_status": binding.get("governance_status") or "",
+            "resolution_source": binding.get("resolution_source") or "",
         }]
     return plan
 

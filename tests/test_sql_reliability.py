@@ -1585,6 +1585,21 @@ class SchemaDrivenSurrogateDateMisuseTests(unittest.TestCase):
         result = self._validate(native_sql)
         self.assertTrue(result.ok, result.reason)
 
+    def test_rejects_relative_date_range_on_plain_surrogate_key(self):
+        live_bug_sql = """
+        SELECT SUM(f.NET_REVENUE_AMT) AS TOTAL
+        FROM CHATBOT_DB.PHARMA_LAB.F_RX_FILL f
+        WHERE f.BOOKED_DATE_ID >= DATEADD(
+            day, -7,
+            (SELECT MAX(x.BOOKED_DATE_ID)
+             FROM CHATBOT_DB.PHARMA_LAB.F_RX_FILL x)
+        )
+        """
+        result = self._validate(live_bug_sql)
+        self.assertFalse(result.ok)
+        self.assertEqual(result.code, "surrogate_date_conversion")
+        self.assertIn("BOOKED_DATE_ID", result.reason)
+
     def test_error_names_the_exact_dimension_column_when_unambiguous(self):
         # A schema with exactly one natively-typed date column anywhere lets
         # the validator name a concrete JOIN target instead of telling the
