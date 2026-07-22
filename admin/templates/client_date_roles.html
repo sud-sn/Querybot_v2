@@ -85,6 +85,9 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
 .dr-binding:last-child{margin-bottom:0}.dr-binding-top{display:flex;align-items:flex-start;justify-content:space-between;gap:.5rem}
 .dr-binding strong{font-size:12px}.dr-binding-meta{font-size:11px;color:var(--text-muted);margin-top:.25rem;line-height:1.45}
 .dr-danger{border:0;background:transparent;color:var(--red);font-size:11px;font-weight:800;cursor:pointer}
+.dr-mode-help{grid-column:span 2;margin:-.2rem 0 0;padding:.55rem .65rem;border-radius:6px;
+  background:var(--surface-2);color:var(--text-muted);font-size:11px;line-height:1.45}
+.dr-surrogate-only[hidden],.dr-surrogate-edit[hidden]{display:none!important}
 @media(max-width:900px){.dr-workbench{grid-template-columns:1fr}.dr-form-grid{grid-template-columns:1fr}.dr-span-2{grid-column:auto}}
 </style>
 {% endblock %}
@@ -126,9 +129,10 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
   <div class="dr-hero">
     <h1>Date Roles</h1>
     <p>
-      Each fact table FK that joins to the date dimension is listed below.
-      The semantic model uses these mappings at query time to enforce the correct
-      date dimension JOIN and prevent raw integer-key date filters.
+      Governed date columns and surrogate keys are listed below, including physical
+      date/timestamp fields and keys that join to a date dimension.
+      The semantic model uses these mappings at query time to choose the correct
+      physical date or enforce the correct date dimension JOIN.
       Approve auto-detected roles to signal they are correct; edit if the
       dimension table, role, key, or business date value was detected incorrectly.
     </p>
@@ -153,9 +157,10 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
   <!-- Guidance -->
   <div class="guidance-box">
     <strong>How SQL enforcement works:</strong>
-    When an approved date role is relevant to the user's question (e.g. "by invoice month"),
-    the semantic plan requires the SQL to JOIN to the date dimension table using the correct FK.
-    Queries that apply date filters directly on the raw integer key (e.g.
+    When an approved surrogate date role is relevant (e.g. "by invoice month"),
+    the semantic plan requires a JOIN to the date dimension using the correct key.
+    A native date or timestamp is used directly and does not create a graph join.
+    Queries that format a raw integer surrogate as a calendar value (e.g.
     <code>FORMAT(CUS_IVC_DT_DMS_KEY,'yyyy-MM')</code>) will fail validation and be regenerated.
   </div>
 
@@ -220,16 +225,17 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
     <section class="dr-panel">
       <div class="dr-panel-head">
         <h2>Add a missed date role</h2>
-        <p>Auto-discovered roles appear below. Use this only when a valid role-playing date was not recognized.</p>
+        <p>Map an unrecognized physical date, timestamp, encoded date, or surrogate key. Source column names do not need to contain DATE or ID.</p>
       </div>
       <div class="dr-panel-body">
         <form method="post" action="/admin/clients/{{ client.account_id }}/date-roles/add" class="dr-form-grid" id="dateRoleAddForm">
-          <div class="dr-field dr-span-2"><label>Fact table</label><select name="fact_table" id="drFactTable" required><option value="">Select table</option>{% for table in semantic_tables if table.type == 'fact' %}<option value="{{ table.qualified_name }}">{{ table.qualified_name }}</option>{% endfor %}</select></div>
-          <div class="dr-field dr-span-2"><label>Fact date key</label><select name="fact_column" id="drFactColumn" required><option value="">Select fact table first</option></select></div>
-          <div class="dr-field dr-span-2"><label>Date dimension</label><select name="dimension_table" id="drDimensionTable" required><option value="">Select table</option>{% for table in semantic_tables if table.type == 'dimension' %}<option value="{{ table.qualified_name }}">{{ table.qualified_name }}</option>{% endfor %}</select></div>
-          <div class="dr-field"><label>Dimension key</label><select name="dimension_key" id="drDimensionKey" required><option value="">Select dimension</option></select></div>
-          <div class="dr-field"><label>Date value</label><select name="date_value_column" id="drDateValue" required><option value="">Select dimension</option></select></div>
-          <div class="dr-field"><label>Physical key type</label><select name="date_key_type"><option value="surrogate_fk" selected>Surrogate FK (join to date dimension)</option><option value="yyyymmdd_integer">YYYYMMDD integer</option><option value="native_date">Native date</option><option value="timestamp">Timestamp</option></select></div>
+          <div class="dr-field dr-span-2"><label>Source table</label><select name="fact_table" id="drFactTable" required><option value="">Select table</option>{% for table in semantic_tables %}<option value="{{ table.qualified_name }}">{{ table.qualified_name }}</option>{% endfor %}</select></div>
+          <div class="dr-field dr-span-2"><label>Date column or surrogate key</label><select name="fact_column" id="drFactColumn" required><option value="">Select source table first</option></select></div>
+          <div class="dr-field dr-span-2"><label>Storage type</label><select name="date_key_type" id="drDateKeyType"><option value="surrogate_fk" selected>Surrogate key (join to date dimension)</option><option value="yyyymmdd_integer">YYYYMMDD integer on source table</option><option value="native_date">Native date on source table</option><option value="timestamp">Date/time on source table</option></select></div>
+          <p class="dr-mode-help" id="drModeHelp">Choose the date dimension that translates this source key into a calendar date.</p>
+          <div class="dr-field dr-span-2 dr-surrogate-only"><label>Date dimension</label><select name="dimension_table" id="drDimensionTable"><option value="">Select table</option>{% for table in semantic_tables if table.type == 'dimension' %}<option value="{{ table.qualified_name }}">{{ table.qualified_name }}</option>{% endfor %}</select></div>
+          <div class="dr-field dr-surrogate-only"><label>Dimension key</label><select name="dimension_key" id="drDimensionKey"><option value="">Select dimension</option></select></div>
+          <div class="dr-field dr-surrogate-only"><label>Calendar date value</label><select name="date_value_column" id="drDateValue"><option value="">Select dimension</option></select></div>
           <div class="dr-field"><label>Role key</label><input name="business_role" required placeholder="e.g. inventory_sales_date"></div>
           <div class="dr-field"><label>Display name</label><input name="name" placeholder="e.g. Inventory Sales Date"></div>
           <div class="dr-field dr-span-2"><label>Role phrases</label><input name="synonyms" placeholder="inventory sales date, stock movement date"></div>
@@ -249,8 +255,8 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
     <table class="dr-tbl">
       <thead>
         <tr>
-          <th>Fact Table</th>
-          <th>FK Column</th>
+          <th>Source Table</th>
+          <th>Date Column / Key</th>
           <th>Business Role</th>
           <th>Dimension Table</th>
           <th>Dimension Key</th>
@@ -270,9 +276,9 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
             <span style="font-size:12px;font-weight:600">{{ dr.name }}</span>
             {% if dr.business_role %}<br><span class="mono" style="font-size:10px">{{ dr.business_role }}</span>{% endif %}
           </td>
-          <td><span class="mono">{{ dr.dimension_table }}</span></td>
-          <td><span class="mono">{{ dr.dimension_key }}</span></td>
-          <td><span class="mono">{{ dr.date_value_column or "Review required" }}</span></td>
+          <td><span class="mono">{{ dr.dimension_table or "Same table" }}</span></td>
+          <td><span class="mono">{{ dr.dimension_key or "Direct value" }}</span></td>
+          <td><span class="mono">{{ dr.date_value_column or dr.fact_column or "Review required" }}</span></td>
           <td><span class="status-pill">{{ (dr.date_key_type or "surrogate_fk") | replace('_',' ') }}</span></td>
           <td>
             <span class="status-pill status-{{ dr.status }}">{{ dr.status }}</span>
@@ -308,7 +314,7 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
                     class="dr-edit-form">
                 <input type="hidden" name="fact_table"   value="{{ dr.fact_table }}">
                 <input type="hidden" name="fact_column"  value="{{ dr.fact_column }}">
-                <div class="row">
+                <div class="row dr-surrogate-edit">
                   <div>
                     <label>Dimension table</label>
                     <input name="dimension_table" value="{{ dr.dimension_table }}">
@@ -323,13 +329,13 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
                     <label>Business role key</label>
                     <input name="business_role"   value="{{ dr.business_role }}">
                   </div>
-                  <div>
+                  <div class="dr-surrogate-edit">
                     <label>Date value column</label>
                     <input name="date_value_column" value="{{ dr.date_value_column or '' }}">
                   </div>
                 </div>
                 <label>Physical key type</label>
-                <select name="date_key_type"><option value="surrogate_fk" {% if (dr.date_key_type or 'surrogate_fk') == 'surrogate_fk' %}selected{% endif %}>Surrogate FK</option><option value="yyyymmdd_integer" {% if dr.date_key_type == 'yyyymmdd_integer' %}selected{% endif %}>YYYYMMDD integer</option><option value="native_date" {% if dr.date_key_type == 'native_date' %}selected{% endif %}>Native date</option><option value="timestamp" {% if dr.date_key_type == 'timestamp' %}selected{% endif %}>Timestamp</option></select>
+                <select name="date_key_type" class="dr-key-type"><option value="surrogate_fk" {% if (dr.date_key_type or 'surrogate_fk') == 'surrogate_fk' %}selected{% endif %}>Surrogate FK</option><option value="yyyymmdd_integer" {% if dr.date_key_type == 'yyyymmdd_integer' %}selected{% endif %}>YYYYMMDD integer</option><option value="native_date" {% if dr.date_key_type == 'native_date' %}selected{% endif %}>Native date</option><option value="timestamp" {% if dr.date_key_type == 'timestamp' %}selected{% endif %}>Timestamp</option></select>
                 <input type="hidden" name="name" value="{{ dr.name }}">
                 <input type="hidden" name="synonyms" value="{{ (dr.synonyms or []) | join(', ') }}">
                 <button type="submit" class="btn-approve" style="margin-top:.35rem">Save edits</button>
@@ -342,7 +348,7 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
                     class="dr-edit-form">
                 <input type="hidden" name="fact_table"   value="{{ dr.fact_table }}">
                 <input type="hidden" name="fact_column"  value="{{ dr.fact_column }}">
-                <div class="row">
+                <div class="row dr-surrogate-edit">
                   <div>
                     <label>Dimension table</label>
                     <input name="dimension_table" value="{{ dr.dimension_table }}">
@@ -357,13 +363,13 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
                     <label>Business role key</label>
                     <input name="business_role"   value="{{ dr.business_role }}">
                   </div>
-                  <div>
+                  <div class="dr-surrogate-edit">
                     <label>Date value column</label>
                     <input name="date_value_column" value="{{ dr.date_value_column or '' }}">
                   </div>
                 </div>
                 <label>Physical key type</label>
-                <select name="date_key_type"><option value="surrogate_fk" {% if (dr.date_key_type or 'surrogate_fk') == 'surrogate_fk' %}selected{% endif %}>Surrogate FK</option><option value="yyyymmdd_integer" {% if dr.date_key_type == 'yyyymmdd_integer' %}selected{% endif %}>YYYYMMDD integer</option><option value="native_date" {% if dr.date_key_type == 'native_date' %}selected{% endif %}>Native date</option><option value="timestamp" {% if dr.date_key_type == 'timestamp' %}selected{% endif %}>Timestamp</option></select>
+                <select name="date_key_type" class="dr-key-type"><option value="surrogate_fk" {% if (dr.date_key_type or 'surrogate_fk') == 'surrogate_fk' %}selected{% endif %}>Surrogate FK</option><option value="yyyymmdd_integer" {% if dr.date_key_type == 'yyyymmdd_integer' %}selected{% endif %}>YYYYMMDD integer</option><option value="native_date" {% if dr.date_key_type == 'native_date' %}selected{% endif %}>Native date</option><option value="timestamp" {% if dr.date_key_type == 'timestamp' %}selected{% endif %}>Timestamp</option></select>
                 <input type="hidden" name="name" value="{{ dr.name }}">
                 <input type="hidden" name="synonyms" value="{{ (dr.synonyms or []) | join(', ') }}">
                 <button type="submit" class="btn-approve" style="margin-top:.35rem">Approve</button>
@@ -380,7 +386,7 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
   {{ empty_state(
       icon_name="calendar",
       title="No date roles detected",
-      body="Build or rebuild the Knowledge Base to auto-detect date dimension foreign keys in your fact tables. Date roles appear automatically when _DT_DMS_KEY columns are found.",
+      body="Build or rebuild the Knowledge Base to detect native date/time columns and declared foreign keys to date dimensions. Use the manual mapper for encoded or undocumented date keys.",
       action_href="/admin/clients/" ~ client.account_id ~ "/kb",
       action_label="Go to KB Editor"
   ) }}
@@ -393,26 +399,81 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
 (function(){
   const tables = {{ semantic_tables | tojson }};
   const byName = Object.fromEntries(tables.map(t => [String(t.qualified_name || t.table || '').toUpperCase(), t]));
+  function columnName(field){
+    return String(field.column || field.name || '');
+  }
+  function inferredDateType(field){
+    const raw = String(field.data_type || field.type || '').trim().toLowerCase().replace(/\s+/g, ' ');
+    const base = raw.split(/[\s(]/, 1)[0];
+    if(base === 'date') return 'native_date';
+    if(['datetime', 'datetime2', 'smalldatetime', 'datetimeoffset', 'timestamptz'].includes(base)) return 'timestamp';
+    if(raw === 'timestamp with time zone' || raw === 'timestamp without time zone') return 'timestamp';
+    return '';
+  }
   function fill(select, tableName, predicate, placeholder){
     if(!select) return;
     select.innerHTML = '<option value="">' + placeholder + '</option>';
     const table = byName[String(tableName || '').toUpperCase()];
-    (table && table.fields || []).filter(predicate).forEach(field => {
+    (table && table.fields || []).filter(predicate || (() => true)).forEach(field => {
       const option = document.createElement('option');
-      option.value = field.column;
-      option.textContent = field.column + (field.data_type ? ' (' + field.data_type + ')' : '');
+      option.value = columnName(field);
+      option.textContent = columnName(field) + ((field.data_type || field.type) ? ' (' + (field.data_type || field.type) + ')' : '');
+      option.dataset.dateType = inferredDateType(field);
       select.appendChild(option);
+    });
+  }
+  function setGroupEnabled(group, enabled){
+    group.hidden = !enabled;
+    group.querySelectorAll('select,input').forEach(control => {
+      control.disabled = !enabled;
+      control.required = enabled;
     });
   }
   const factTable = document.getElementById('drFactTable');
   const factColumn = document.getElementById('drFactColumn');
+  const dateKeyType = document.getElementById('drDateKeyType');
+  const modeHelp = document.getElementById('drModeHelp');
   const dimTable = document.getElementById('drDimensionTable');
   const dimKey = document.getElementById('drDimensionKey');
   const dateValue = document.getElementById('drDateValue');
-  if(factTable) factTable.addEventListener('change', () => fill(factColumn, factTable.value, f => /(?:DATE|_DT|DT_).*?(?:KEY|ID)|(?:_DT_DMS_KEY)$/i.test(f.column || ''), 'Select date key'));
+
+  function syncAddMode(){
+    const surrogate = !dateKeyType || dateKeyType.value === 'surrogate_fk';
+    document.querySelectorAll('#dateRoleAddForm .dr-surrogate-only').forEach(group => setGroupEnabled(group, surrogate));
+    if(modeHelp){
+      modeHelp.textContent = surrogate
+        ? 'Choose the date dimension that translates this source key into a calendar date.'
+        : 'This source column already carries the governed date value; no date-dimension join will be created.';
+    }
+  }
+  if(factTable) factTable.addEventListener('change', () => {
+    fill(factColumn, factTable.value, () => true, 'Select any source column');
+    if(dateKeyType) dateKeyType.value = 'surrogate_fk';
+    syncAddMode();
+  });
+  if(factColumn) factColumn.addEventListener('change', () => {
+    const inferred = factColumn.selectedOptions[0] && factColumn.selectedOptions[0].dataset.dateType;
+    if(inferred && dateKeyType) dateKeyType.value = inferred;
+    syncAddMode();
+  });
+  if(dateKeyType) dateKeyType.addEventListener('change', syncAddMode);
   if(dimTable) dimTable.addEventListener('change', () => {
-    fill(dimKey, dimTable.value, f => /(?:KEY|ID)$/i.test(f.column || ''), 'Select key');
-    fill(dateValue, dimTable.value, f => !/(?:KEY|ID)$/i.test(f.column || '') && (/(?:DATE|_DT|DT_|DMS_DT)/i.test(f.column || '') || /date|time/i.test(f.data_type || '')), 'Select date value');
+    fill(dimKey, dimTable.value, () => true, 'Select dimension key');
+    fill(dateValue, dimTable.value, () => true, 'Select calendar date value');
+  });
+  syncAddMode();
+
+  document.querySelectorAll('.dr-edit-form').forEach(form => {
+    const typeSelect = form.querySelector('.dr-key-type');
+    const syncEditMode = () => {
+      const surrogate = !typeSelect || typeSelect.value === 'surrogate_fk';
+      form.querySelectorAll('.dr-surrogate-edit').forEach(group => {
+        group.hidden = !surrogate;
+        group.querySelectorAll('input,select').forEach(control => { control.disabled = !surrogate; });
+      });
+    };
+    if(typeSelect) typeSelect.addEventListener('change', syncEditMode);
+    syncEditMode();
   });
 })();
 </script>

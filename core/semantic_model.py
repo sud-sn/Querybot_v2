@@ -23,6 +23,7 @@ from core.date_roles import (
     find_date_value_column,
     is_date_dimension_table,
     normalize_date_key_type,
+    physical_date_key_type,
     question_has_temporal_intent,
 )
 from core.naming_convention import match_column_suffix, match_entity_prefix, match_table_suffix
@@ -400,9 +401,6 @@ def _date_roles(schema: dict[str, Any], table_fqn: str, meta: dict[str, Any]) ->
         if is_date_dimension_table(fqn, m.get("columns", []))
     ]
     date_dims = [(fqn, m, pk, value_col) for fqn, m, pk, value_col in date_dims if pk]
-    if not date_dims:
-        return roles
-
     # The date dimension supplies values; it is not one of its own roles.
     if is_date_dimension_table(table_fqn, meta.get("columns", [])):
         return roles
@@ -410,7 +408,11 @@ def _date_roles(schema: dict[str, Any], table_fqn: str, meta: dict[str, Any]) ->
     table_name = _schema_table_name(table_fqn, meta)
     table_schema = _schema_name(table_fqn, meta)
     declared_fks = schema.get("__db_fk_constraints__", []) or []
-    for col in _column_names(meta):
+    for column_meta in meta.get("columns", []) or []:
+        col = str((column_meta or {}).get("name") or "").strip()
+        if not col:
+            continue
+        data_type = str((column_meta or {}).get("type") or (column_meta or {}).get("data_type") or "")
         chosen = None
         confidence = 70
         # Resolve physical FK evidence first. This supports arbitrary source
@@ -441,7 +443,48 @@ def _date_roles(schema: dict[str, Any], table_fqn: str, meta: dict[str, Any]) ->
         role = detect_date_role(col)
         if not role and chosen:
             role = derive_date_role(col)
-        if not role:
+
+        # A declared FK to a date dimension is the strongest evidence and
+        # supports source columns with arbitrary ERP names (for example
+        # BUSINESS_DAY_REF rather than *_DATE_ID).
+        if chosen:
+            date_fqn, date_meta, date_pk, date_value_col = chosen
+            roles.append({
+                "name": role.label,
+                "business_role": role.key,
+                "fact_table": _qualified_name(table_fqn, meta),
+                "fact_column": col,
+                "dimension_table": _qualified_name(date_fqn, date_meta),
+                "dimension_key": date_pk,
+                "date_value_column": date_value_col,
+                "date_key_type": "surrogate_fk",
+                "synonyms": role.synonyms,
+                "status": "generated",
+                "confidence": confidence,
+            })
+            continue
+
+        # Native date/datetime columns are valid roles on their own. They do
+        # not need a date dimension and must never create a synthetic join.
+        physical_type = physical_date_key_type(data_type)
+        if physical_type:
+            native_role = role or derive_date_role(col)
+            roles.append({
+                "name": native_role.label,
+                "business_role": native_role.key,
+                "fact_table": _qualified_name(table_fqn, meta),
+                "fact_column": col,
+                "dimension_table": "",
+                "dimension_key": "",
+                "date_value_column": col,
+                "date_key_type": physical_type,
+                "synonyms": native_role.synonyms,
+                "status": "generated",
+                "confidence": 98,
+            })
+            continue
+
+        if not role or not date_dims:
             continue
         if not chosen:
             same_key = [item for item in date_dims if item[2].upper() == col.upper()]
@@ -516,6 +559,12 @@ def _relationships(schema: dict[str, Any]) -> list[dict[str, Any]]:
 
     for fqn, meta in _schema_tables(schema):
         for role in _date_roles(schema, fqn, meta):
+            if (
+                normalize_date_key_type(role.get("date_key_type") or "") != "surrogate_fk"
+                or not role.get("dimension_table")
+                or not role.get("dimension_key")
+            ):
+                continue
             rel_id = _relationship_id(
                 role["fact_table"], role["dimension_table"], role["business_role"],
                 role["fact_column"], role["dimension_key"],
@@ -1928,18 +1977,27 @@ def patch_date_role(
 
     def _patch_dr(dr: dict[str, Any]) -> None:
         nonlocal changed
-        if dimension_table:
-            dr["dimension_table"] = dimension_table
-        if dimension_key:
-            dr["dimension_key"] = dimension_key
+        requested_type = normalize_date_key_type(
+            date_key_type or dr.get("date_key_type") or "surrogate_fk"
+        )
+        dr["date_key_type"] = requested_type
+        if requested_type == "surrogate_fk":
+            if dimension_table:
+                dr["dimension_table"] = dimension_table
+            if dimension_key:
+                dr["dimension_key"] = dimension_key
+            if date_value_column:
+                dr["date_value_column"] = date_value_column
+        else:
+            # Direct date values live on the source table. Clear any stale
+            # role-playing dimension mapping left by an earlier edit.
+            dr["dimension_table"] = ""
+            dr["dimension_key"] = ""
+            dr["date_value_column"] = date_value_column or fact_column or dr.get("fact_column", "")
         if business_role:
             dr["business_role"] = business_role
         if name:
             dr["name"] = name
-        if date_value_column:
-            dr["date_value_column"] = date_value_column
-        if date_key_type:
-            dr["date_key_type"] = normalize_date_key_type(date_key_type)
         if synonyms is not None:
             dr["synonyms"] = [str(value).strip() for value in synonyms if str(value).strip()]
         dr["status"] = status
@@ -1974,34 +2032,37 @@ def patch_date_role(
             str(field.get("column") or "").upper()
             for field in ((target_table or {}).get("fields") or [])
         }
+        requested_type = normalize_date_key_type(date_key_type or "surrogate_fk")
         dimension = next((
             table for table in (model.get("tables") or [])
             if str(dimension_table or "").upper() in {
                 str(table.get("qualified_name") or "").upper(),
                 str(table.get("table") or "").upper(),
             }
-        ), None)
+        ), None) if requested_type == "surrogate_fk" else None
         dimension_columns = {
             str(field.get("column") or "").upper()
             for field in ((dimension or {}).get("fields") or [])
         }
-        if (
-            target_table
-            and dimension
-            and fact_col_u in fact_columns
+        source_is_valid = bool(target_table and fact_col_u in fact_columns)
+        dimension_is_valid = bool(
+            dimension
             and str(dimension_key or "").upper() in dimension_columns
             and str(date_value_column or "").upper() in dimension_columns
-        ):
+        )
+        if source_is_valid and (requested_type != "surrogate_fk" or dimension_is_valid):
             role_key = business_role or "business_date"
             entry = {
                 "name": name or role_key.replace("_", " ").title(),
                 "business_role": role_key,
                 "fact_table": target_table.get("qualified_name") or target_table.get("table"),
                 "fact_column": fact_column,
-                "dimension_table": dimension.get("qualified_name") or dimension.get("table"),
-                "dimension_key": dimension_key,
-                "date_value_column": date_value_column,
-                "date_key_type": normalize_date_key_type(date_key_type or "surrogate_fk"),
+                "dimension_table": (
+                    dimension.get("qualified_name") or dimension.get("table")
+                ) if dimension else "",
+                "dimension_key": dimension_key if dimension else "",
+                "date_value_column": date_value_column if dimension else fact_column,
+                "date_key_type": requested_type,
                 "synonyms": [str(value).strip() for value in (synonyms or []) if str(value).strip()],
                 "status": status,
                 "confidence": new_conf,
