@@ -244,7 +244,13 @@ class ConsumerRepointingTests(unittest.TestCase):
         self.assertIn("_contract = load_contract(state.get(\"kb_dir\", \"\"))", src)
         self.assertIn("terms=_contract_terms", src)
         self.assertIn("metrics=_contract_metrics", src)
-        self.assertEqual(src.count("model=_contract_model"), 3)  # context + default-date-role lookup + plan
+        self.assertEqual(src.count("model=_contract_model"), 2)  # context + plan
+        # The default-date-role fact inference used to be a third
+        # model=_contract_model consumer (find_default_date_roles); it's
+        # since been superseded by the graph-native
+        # infer_connected_default_date_fact, which operates on the entity
+        # graph directly rather than the semantic model.
+        self.assertIn("infer_connected_default_date_fact(", src)
         self.assertIn('_contract.get("graph")', src)
         self.assertIn("contract_version=_contract_version", src)
 
