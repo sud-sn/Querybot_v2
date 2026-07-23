@@ -387,12 +387,57 @@ def _is_stale_null_diagnostic_example(sql: str) -> bool:
         return True
 
 
+def _is_stale_surrogate_date_example(sql: str) -> bool:
+    """
+    True if *sql* misuses a plain-surrogate date-role key as if it held
+    calendar semantics — the pattern the validator now deterministically
+    rejects (surrogate_date_conversion / temporal_anchor_missing), e.g.
+    YEAR(TRY_CONVERT(date, CONVERT(varchar(8), DISPENSE_DATE_ID), 112)) or
+    anchoring on MAX() of a surrogate key. Examples harvested/approved
+    before those guards existed can still carry the shape, and a concrete
+    few-shot Q/SQL pair overrides prose rules — one poisoned example keeps
+    re-teaching the deprecated pattern indefinitely. Same choke-point
+    filtering rationale as _is_stale_null_diagnostic_example above; this
+    also covers the version-blind legacy retrieval leg that has no
+    semantic_model_version bookkeeping at all.
+    """
+    text = sql or ""
+    if not text:
+        return False
+    try:
+        import sqlglot as _sqlglot
+        from core.validator import _surrogate_date_misuse_columns
+        from core.date_roles import is_plain_surrogate_date_role_column
+        tree = None
+        # T-SQL first: TRY_CONVERT/CONVERT-style idioms (the exact poison
+        # pattern) don't parse under the generic dialect.
+        for dialect in ("tsql", None):
+            try:
+                tree = _sqlglot.parse_one(text, read=dialect)
+                break
+            except Exception:
+                continue
+        if tree is None:
+            return False
+        misused = _surrogate_date_misuse_columns(tree)
+        return any(is_plain_surrogate_date_role_column(col) for col in misused)
+    except Exception:
+        # Unparseable example — can't prove it's clean, but also can't
+        # prove it's poisoned; keep it (the validator still guards the
+        # generated SQL itself).
+        return False
+
+
 def format_examples_for_prompt(examples: list[dict]) -> str:
     """
     Format validated examples as few-shot context for the SQL generation prompt.
     Returns empty string if no examples.
     """
-    examples = [ex for ex in (examples or []) if not _is_stale_null_diagnostic_example(ex.get("sql", ""))]
+    examples = [
+        ex for ex in (examples or [])
+        if not _is_stale_null_diagnostic_example(ex.get("sql", ""))
+        and not _is_stale_surrogate_date_example(ex.get("sql", ""))
+    ]
     if not examples:
         return ""
 

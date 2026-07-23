@@ -2392,7 +2392,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
         rows = None
         ok = False
 
-    retryable = (not ok and (last_code or code) in ("unknown_table", "unknown_column", "date_key_format", "dialect_mismatch", "production_shape", "period_comparison_shape", "anti_join_shape", "top_n_shape", "graph_plan_mismatch", "field_plan_mismatch", "metric_formula_mismatch", "null_aggregate_diagnostic", "parse", "multi_statement", "not_select", "reused_plan_empty", "surrogate_date_conversion", "temporal_anchor_missing", "temporal_anchor_mismatch")) or (exec_error is not None)
+    retryable = (not ok and (last_code or code) in ("unknown_table", "unknown_column", "date_key_format", "dialect_mismatch", "production_shape", "period_comparison_shape", "anti_join_shape", "top_n_shape", "graph_plan_mismatch", "field_plan_mismatch", "metric_formula_mismatch", "null_aggregate_diagnostic", "parse", "multi_statement", "not_select", "reused_plan_empty", "surrogate_date_conversion", "temporal_anchor_missing", "temporal_anchor_mismatch", "temporal_role_mismatch")) or (exec_error is not None)
 
     if retryable:
         if exec_error is not None:
@@ -2573,7 +2573,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                     "verbatim in the schema context (KB documents / table columns in this prompt). "
                     "Do NOT invent, abbreviate, or guess a column name (e.g. 'YR') that does not appear there.\n"
                 )
-            elif last_code in {"temporal_anchor_missing", "temporal_anchor_mismatch"}:
+            elif last_code in {"temporal_anchor_missing", "temporal_anchor_mismatch", "temporal_role_mismatch"}:
                 _date_contracts = []
                 for _policy in (_semantic_plan or {}).get("temporal_policies") or []:
                     _fact_table = str(_policy.get("fact_table") or "")
@@ -2592,14 +2592,19 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                         )
                         _date_contracts.append(
                             f"- JOIN/FIELD: {_join_rule}; filter and anchor on "
-                            f"{_date_table}.{_date_column}."
+                            f"{_date_table}.{_date_column}.\n"
+                            f"- REQUIRED ANCHOR (copy this exact subquery as the anchor; "
+                            f"do not build your own): "
+                            f"(SELECT MAX({_date_column}) FROM {_date_table})"
                         )
                 validation_repair_note = (
                     "\nGOVERNED RELATIVE-DATE REPAIR REQUIRED:\n"
                     "- Never compare a fact surrogate date ID to DATEADD, a date literal, or MAX(the ID).\n"
                     "- If the fact exposes a native date, filter that native date directly.\n"
                     "- Otherwise use the exact fact-key to date-dimension join below, and use the date dimension's native calendar field.\n"
-                    "- Derive the business clock from MAX(the native calendar field) over the same governed source rows.\n"
+                    "- Derive the business clock from the REQUIRED ANCHOR subquery below — never from "
+                    "MAX(CALENDAR_DATE) over an unrestricted date dimension, which includes future "
+                    "calendar rows with no matching fact records.\n"
                     + ("\n".join(_date_contracts) if _date_contracts else
                        "- Use the exact date-role JOIN and calendar field supplied in the semantic plan.\n")
                 )
@@ -2714,7 +2719,15 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
     # ── Terminal failure handling ────────────────────────────────────────────
     # Raw reasons/errors stay in query_log + answer_trace (audit unchanged);
     # only the chat message is translated to business language with a next step.
-    if not ok:
+    #
+    # exec_error is None here on the validation path: when the FIRST attempt
+    # failed validation and the REPAIRED query then passed validation but
+    # failed at execution (e.g. the database was paused/unreachable),
+    # exec_error holds that real terminal event — reporting the stale
+    # pre-repair validation message instead would hide an infra outage
+    # behind a validator code (live case: 'temporal_anchor_missing' shown
+    # while the actual final failure was "Database 'chatbot_db' unavailable").
+    if not ok and exec_error is None:
         _log_q(account_id, question, sql, 0, False, last_reason, provider, model,
                tok_in, tok_out, int(time.time()*1000) - start_ms,
                portal_user_id=pu_id, zoom_user_id=zid,
@@ -2756,6 +2769,14 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
             kind="execution", exception_text=exec_error or "Unknown error",
             sql=sql, question=question,
         )
+        if not ok and last_code:
+            # A validation failure preceded this: the repaired query passed
+            # validation but died at execution. Keep the history visible so
+            # the two failures aren't conflated.
+            _rca.setdefault("technical_notes", []).append(
+                f"A repaired query passed validation but failed to execute. "
+                f"Original validation failure: {last_code}."
+            )
         await adapter.send_message(event, format_failure_business_response(
             rca=_rca, sql=sql, sql_preview_fn=_sql_preview,
         ))

@@ -769,8 +769,20 @@ def format_semantic_field_plan(plan: dict, db_type: str = "azure_sql") -> str:
                 f"with MAX({date_ref}) over the same governed source rows, then apply "
                 f"the requested {policy.get('kind')} boundary from that anchor."
             )
+            date_table = str(policy.get("date_table") or "")
+            date_column = str(policy.get("date_column") or "")
+            if date_table and date_column:
+                lines.append(
+                    f"  REQUIRED ANCHOR (copy this exact subquery as the anchor; do not "
+                    f"build your own): (SELECT MAX({date_column}) FROM {date_table})"
+                )
         lines.append(
             "- Do not use GETDATE(), CURRENT_DATE, CURRENT_TIMESTAMP, SYSDATE, or NOW() "
             "for these relative periods."
+        )
+        lines.append(
+            "- Never anchor on MAX(CALENDAR_DATE) over an unrestricted date dimension: "
+            "calendar tables include future rows with no matching fact records, which "
+            "silently yields zero results."
         )
     return "\n".join(lines)

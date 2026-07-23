@@ -365,7 +365,14 @@ def retrieve_governed_examples(
                 "governed_store: %d/%d retrieved example(s) stale vs current model version",
                 len(stale), len(parsed),
             )
-        parsed = fresh + stale
+        # When enough fresh examples exist to fill the request, DROP the
+        # stale ones instead of appending them: an example approved under
+        # an older semantic model can carry patterns the current model
+        # forbids (e.g. the old surrogate-date-key idiom), and a concrete
+        # few-shot pair overrides prose rules. Stale examples are only
+        # kept as filler when fresh ones alone can't satisfy n
+        # (retrieval-starvation guard).
+        parsed = fresh + stale if len(fresh) < n else fresh
 
     for r in parsed:
         r.pop("_stored_version", None)

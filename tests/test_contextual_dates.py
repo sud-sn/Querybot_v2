@@ -821,5 +821,134 @@ class DateContextStoreTests(unittest.TestCase):
         conn.close()
 
 
+class TemporalGovernanceHardeningTests(unittest.TestCase):
+    """Live-failure hardening: the LLM substituted DISPENSE_DATE_ID +
+    MAX(CALENDAR_DATE)-over-unrestricted-D_DATE for the governed FILL_DATE
+    policy; the repaired query then failed at execution (DB paused) and
+    that second failure was hidden behind the stale validation message."""
+
+    PHARMA_COLUMNS = {
+        "PHARMA_LAB.F_RX_FILL": {
+            "DISPENSE_DATE_ID": "int", "FILL_DATE": "date",
+            "NET_REVENUE_AMT": "decimal", "PRESCRIBER_ID": "int",
+        },
+        "PHARMA_LAB.D_PRESCRIBER": {"PRESCRIBER_ID": "int", "SPECIALTY_NAME": "varchar"},
+        "PHARMA_LAB.D_DATE": {"DATE_ID": "int", "CALENDAR_DATE": "date"},
+    }
+    FILL_DATE_PLAN = {
+        "enabled": True,
+        # format_semantic_field_plan early-returns on an empty fields list,
+        # so carry the governed date field the real plan would carry.
+        "fields": [{
+            "term": "Fill Date",
+            "table": "PHARMA_LAB.F_RX_FILL",
+            "column": "FILL_DATE",
+            "role": "date_dimension",
+            "enforcement": "optional",
+        }],
+        "joins": [],
+        "required_tables": [],
+        "temporal_policies": [{
+            "kind": "this_month",
+            "anchor_policy": "latest_available",
+            "fact_table": "PHARMA_LAB.F_RX_FILL",
+            "fact_column": "FILL_DATE",
+            "date_table": "PHARMA_LAB.F_RX_FILL",
+            "date_column": "FILL_DATE",
+            "dimension_table": "",
+            "dimension_key": "",
+            "date_key_type": "native_date",
+            "business_role": "fill_date",
+        }],
+    }
+
+    def test_live_bug_sql_flags_alternate_date_role(self):
+        sql = (
+            "SELECT dpr.SPECIALTY_NAME, SUM(frx.NET_REVENUE_AMT) AS TOTAL "
+            "FROM PHARMA_LAB.F_RX_FILL frx "
+            "JOIN PHARMA_LAB.D_PRESCRIBER dpr ON frx.PRESCRIBER_ID = dpr.PRESCRIBER_ID "
+            "WHERE frx.DISPENSE_DATE_ID IN ("
+            "  SELECT DATE_ID FROM PHARMA_LAB.D_DATE "
+            "  WHERE MONTH(CALENDAR_DATE) = MONTH((SELECT MAX(CALENDAR_DATE) FROM PHARMA_LAB.D_DATE))"
+            ") GROUP BY dpr.SPECIALTY_NAME"
+        )
+        result = validate_sql_detailed(
+            sql, set(self.PHARMA_COLUMNS), "azure_sql",
+            table_columns=self.PHARMA_COLUMNS,
+            semantic_context={"semantic_plan": self.FILL_DATE_PLAN},
+        )
+        self.assertFalse(result.ok)
+        codes = {e.get("code") for e in (result.errors or [])}
+        self.assertIn("temporal_role_mismatch", codes)
+        # Both the substituted fact key and the un-governed dimension PK get
+        # flagged — the substituted role key must be among them.
+        role_columns = {
+            e.get("column") for e in result.errors
+            if e.get("code") == "temporal_role_mismatch"
+        }
+        self.assertIn("DISPENSE_DATE_ID", role_columns)
+
+    def test_approved_native_date_anchor_passes(self):
+        sql = (
+            "SELECT dpr.SPECIALTY_NAME, SUM(frx.NET_REVENUE_AMT) AS TOTAL "
+            "FROM PHARMA_LAB.F_RX_FILL frx "
+            "JOIN PHARMA_LAB.D_PRESCRIBER dpr ON frx.PRESCRIBER_ID = dpr.PRESCRIBER_ID "
+            "WHERE frx.FILL_DATE >= DATEADD(day, 1, EOMONTH((SELECT MAX(FILL_DATE) FROM PHARMA_LAB.F_RX_FILL), -1)) "
+            "GROUP BY dpr.SPECIALTY_NAME"
+        )
+        result = validate_sql_detailed(
+            sql, set(self.PHARMA_COLUMNS), "azure_sql",
+            table_columns=self.PHARMA_COLUMNS,
+            semantic_context={"semantic_plan": self.FILL_DATE_PLAN},
+        )
+        self.assertTrue(result.ok, result.reason)
+
+    def test_prompt_block_carries_required_anchor_subquery(self):
+        from core.semantic_planner import format_semantic_field_plan
+        text = format_semantic_field_plan(self.FILL_DATE_PLAN, "azure_sql")
+        self.assertIn("REQUIRED ANCHOR", text)
+        self.assertIn("(SELECT MAX(FILL_DATE) FROM PHARMA_LAB.F_RX_FILL)", text)
+
+    def test_temporal_codes_have_business_failure_messages(self):
+        from core.failure_messages import translate_failure
+        generic = "The generated query did not pass QueryBot's safety and accuracy checks."
+        for code in ("temporal_anchor_missing", "temporal_anchor_mismatch", "temporal_role_mismatch"):
+            with self.subTest(code=code):
+                rca = translate_failure(kind="validation", code=code, reason="x")
+                self.assertNotEqual(rca["most_likely_reason"], generic)
+
+    def test_stale_surrogate_date_example_is_dropped_from_prompt(self):
+        from core.examples import _is_stale_surrogate_date_example, format_examples_for_prompt
+        poisoned = (
+            "SELECT SUM(NET_REVENUE_AMT) FROM PHARMA_LAB.F_RX_FILL "
+            "WHERE YEAR(TRY_CONVERT(date, CONVERT(varchar(8), DISPENSE_DATE_ID), 112)) = 2026"
+        )
+        clean = (
+            "SELECT SUM(NET_REVENUE_AMT) FROM PHARMA_LAB.F_RX_FILL "
+            "WHERE FILL_DATE >= '2026-01-01'"
+        )
+        self.assertTrue(_is_stale_surrogate_date_example(poisoned))
+        self.assertFalse(_is_stale_surrogate_date_example(clean))
+        rendered = format_examples_for_prompt([
+            {"question": "poisoned", "sql": poisoned},
+            {"question": "clean", "sql": clean},
+        ])
+        self.assertNotIn("TRY_CONVERT", rendered)
+        self.assertIn("FILL_DATE", rendered)
+
+    def test_pipeline_reports_retry_execution_failure_honestly(self):
+        # Wiring guards for the hidden-second-failure fix: the validation
+        # terminal branch must yield to a real execution error from the
+        # repaired query, and the history note must be present.
+        src = (Path(__file__).resolve().parents[1] / "core" / "query_pipeline.py").read_text(encoding="utf-8")
+        self.assertIn("if not ok and exec_error is None:", src)
+        self.assertIn("A repaired query passed validation but failed to execute.", src)
+        self.assertIn('"temporal_role_mismatch"', src)
+
+    def test_governed_store_drops_stale_when_fresh_fill_request(self):
+        src = (Path(__file__).resolve().parents[1] / "core" / "governed_store.py").read_text(encoding="utf-8")
+        self.assertIn("parsed = fresh + stale if len(fresh) < n else fresh", src)
+
+
 if __name__ == "__main__":
     unittest.main()

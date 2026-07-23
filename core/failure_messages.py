@@ -252,6 +252,9 @@ _VALIDATION_REASONS: dict[str, str] = {
     "not_select": "The generated query was not a read-only SELECT statement.",
     "reused_plan_empty": "A previously successful query for this question returned no rows under the current data, so I tried to regenerate it.",
     "surrogate_date_conversion": "The generated query tried to read a date directly from an internal row-ID column instead of joining to the real calendar date.",
+    "temporal_anchor_missing": "The generated query did not anchor the relative time period (like 'this month') on the governed business date.",
+    "temporal_anchor_mismatch": "The generated query anchored the relative time period on the wrong date column.",
+    "temporal_role_mismatch": "The generated query used a different date than the approved default date for this data.",
 }
 
 _VALIDATION_NEXT_STEPS: dict[str, str] = {
@@ -261,6 +264,9 @@ _VALIDATION_NEXT_STEPS: dict[str, str] = {
     "graph_plan_mismatch": "Try rephrasing the question; if it keeps failing, ask your administrator to review the Entity Graph relationships for these tables.",
     "surrogate_date_conversion": "Try rephrasing the question; if it keeps failing, ask your administrator to check the Date Roles setup for this table.",
     "reused_plan_empty": "Try narrowing the question (a specific date range or filter) — the underlying data may have changed since this question last succeeded.",
+    "temporal_anchor_missing": "Try asking again; if it keeps failing, ask your administrator to check the Date Roles setup for this table.",
+    "temporal_anchor_mismatch": "Try asking again; if it keeps failing, ask your administrator to check the Date Roles setup for this table.",
+    "temporal_role_mismatch": "Name the date you mean explicitly (e.g. 'by dispense date'), or ask your administrator to change the default date role.",
 }
 _DEFAULT_VALIDATION_NEXT_STEP = (
     "Try naming the metric and the breakdown explicitly (e.g. 'total revenue by customer'). "

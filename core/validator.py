@@ -1313,6 +1313,49 @@ def _temporal_anchor_errors(tree, sql: str, policies: list[dict]) -> list[dict]:
                 "column": date_column,
                 "required_anchor": f"MAX({date_column})",
             })
+
+    # The governed policy names ONE approved date role for this question
+    # (resolve_contextual_date_binding only selects a default when the
+    # question names no specific date, so any other date-role surrogate
+    # key of the same fact appearing in a WHERE predicate is the model
+    # substituting its own date semantics — the live case: policy said
+    # FILL_DATE, the SQL filtered DISPENSE_DATE_ID against the calendar
+    # dimension instead).
+    approved: set[str] = set()
+    for policy in governed:
+        # fact_column: the governed key/date on the fact; date_column: the
+        # calendar value; dimension_key: the date dimension's own PK, which
+        # legitimately appears in the governed JOIN (including joins nested
+        # inside WHERE-clause anchor subqueries) and must not be flagged.
+        for key in ("fact_column", "date_column", "dimension_key"):
+            value = str(policy.get(key) or "").upper()
+            if value:
+                approved.add(value)
+    if approved:
+        from core.date_roles import is_plain_surrogate_date_role_column
+        flagged: set[str] = set()
+        for where_node in tree.find_all(sg_exp.Where):
+            for column in where_node.find_all(sg_exp.Column):
+                name = str(column.name or "").upper()
+                if (
+                    name
+                    and name not in approved
+                    and name not in flagged
+                    and is_plain_surrogate_date_role_column(name)
+                ):
+                    flagged.add(name)
+        for name in sorted(flagged):
+            errors.append({
+                "code": "temporal_role_mismatch",
+                "message": (
+                    f"{name} is a different date role than the approved default for "
+                    f"this question ({', '.join(sorted(approved))}). Filter and anchor "
+                    "on the approved date instead, or the user must name this role "
+                    "explicitly in the question."
+                ),
+                "column": name,
+                "approved_columns": sorted(approved),
+            })
     return errors
 
 
