@@ -365,6 +365,50 @@
       These counters are technical control evidence, not a regulatory certification. Evidence covers
       LLM calls made while audit logging was enabled; the KB egress log and policy decision log are always on.
     </p>
+
+    <details style="margin-top:.75rem">
+      <summary style="cursor:pointer;font-weight:700;font-size:13px;color:var(--text)">
+        Per-table KB egress evidence ({{ egress_rows|length }})
+      </summary>
+      <p style="font-size:11px;color:var(--text-muted);margin:.4rem 0 .6rem">
+        Each row is what the egress log recorded for one table's KB-doc build, linked to the exact
+        LLM Audit entry proving what masked sample data was actually sent in that table's prompt.
+      </p>
+      {% if egress_rows %}
+      <table class="classification-table">
+        <thead><tr><th>Table</th><th>Sample mode</th><th>Masked fields</th><th>LLM Audit evidence</th></tr></thead>
+        <tbody>
+          {% for row in egress_rows %}
+          <tr>
+            <td style="font-family:monospace;font-size:12px">{{ row.table_name }}</td>
+            <td>
+              {% if row.sample_mode == 'real' %}
+              <span class="tag" style="background:var(--red-light);color:var(--red)">real</span>
+              {% elif row.sample_mode == 'masked' %}
+              <span class="tag" style="background:var(--green-light);color:var(--green)">masked</span>
+              {% else %}
+              <span class="tag">{{ row.sample_mode }}</span>
+              {% endif %}
+            </td>
+            <td style="font-size:12px">{{ row.masked_fields }}</td>
+            <td style="font-size:12px">
+              {% if row.llm_audit %}
+              <details>
+                <summary style="cursor:pointer;color:var(--blue)">View sanitized payload ({{ row.llm_audit.created_at }})</summary>
+                <div style="max-width:560px;font-family:monospace;font-size:11px;white-space:pre-wrap;word-break:break-word;max-height:220px;overflow-y:auto;padding:.4rem .5rem;margin-top:.3rem;background:var(--surface-2,#fafafa);border:1px solid var(--border);border-radius:4px">{{ row.llm_audit.payload_preview_sanitized }}</div>
+              </details>
+              {% else %}
+              <span style="color:var(--text-muted)">No linked audit entry (built before this table's tagging, or audit logging was off)</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <p style="font-size:12px;color:var(--text-muted)">No KB-build egress rows recorded yet.</p>
+      {% endif %}
+    </details>
   </div></div>
 </section>
 

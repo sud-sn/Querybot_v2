@@ -866,6 +866,36 @@ def get_recent_llm_calls(
     return result[:limit]
 
 
+def get_kb_table_doc_audit(account_id: str, table_name: str) -> dict | None:
+    """
+    Find the LLM Audit Log row proving what masked sample data was actually
+    sent when a table's KB doc was generated — the evidence behind a
+    kb_data_egress_log row for that same table.
+
+    core/knowledge.py tags each table's Stage-1 KB-doc LLM call with
+    question=table_name (llm_audit_component("kb_table_doc",
+    question=table_name)) specifically so this lookup can find the exact
+    call for one table — the enclosing llm_audit_scope for a whole KB build
+    shares one request_id across every table, so request_id alone can't
+    disambiguate them.
+
+    Returns the most recent matching row, or None if this table's KB doc
+    was built before this tagging existed, or was never built via the LLM
+    path at all.
+    """
+    with get_db() as conn:
+        row = conn.execute(
+            """
+            SELECT * FROM llm_call_log
+             WHERE account_id = ? AND component = 'kb_table_doc' AND question = ?
+             ORDER BY created_at DESC, id DESC
+             LIMIT 1
+            """,
+            (account_id, table_name),
+        ).fetchone()
+    return dict(row) if row else None
+
+
 # Components whose prompts carry result-derived content (built FROM returned
 # rows / result statistics, not just schema + question text). For regulated
 # tenants every one of these is hard-blocked before any prompt is built —

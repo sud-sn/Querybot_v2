@@ -2742,6 +2742,16 @@ async def compliance_page(request: Request, account_id: str):
     from core.compliance.packs import list_packs, get_pack
 
     profile = store.get_compliance_profile(account_id)
+
+    # Per-table KB egress evidence, each linked to the exact LLM Audit row
+    # that proves what masked sample data was actually sent for that table
+    # (core/knowledge.py tags kb_table_doc calls with question=table_name
+    # specifically so this lookup can find the right one).
+    egress_rows = store.list_kb_egress(account_id, operation="kb_build", limit=50)
+    for row in egress_rows:
+        audit = store.get_kb_table_doc_audit(account_id, row.get("table_name", ""))
+        row["llm_audit"] = audit
+
     return _resp(request, "client_compliance.html", {
         "client": client,
         "profile": profile,
@@ -2764,6 +2774,7 @@ async def compliance_page(request: Request, account_id: str):
         "trust": store.get_llm_trust_summary(account_id, days=30),
         "decision_counts": store.get_policy_decision_counts(account_id, days=30),
         "egress_summary": store.get_kb_egress_summary(account_id),
+        "egress_rows": egress_rows,
         "llm_audit_enabled": bool(client.get("enable_llm_audit")),
         "saved": request.query_params.get("saved"),
         "error": request.query_params.get("error"),

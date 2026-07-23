@@ -33,7 +33,7 @@ from store.config_store import (
     search_recent_queries_referencing,
     get_suggestions,
     log_llm_call, get_recent_llm_calls, purge_old_llm_calls,
-    get_llm_trust_summary, RESULT_LLM_COMPONENTS,
+    get_llm_trust_summary, RESULT_LLM_COMPONENTS, get_kb_table_doc_audit,
 )
 from store.user_store import (
     create_group, list_groups, get_group, update_group, delete_group,
@@ -135,7 +135,7 @@ __all__ = [
     "search_recent_queries_referencing",
     "get_suggestions",
     "log_llm_call","get_recent_llm_calls","purge_old_llm_calls",
-    "get_llm_trust_summary","RESULT_LLM_COMPONENTS",
+    "get_llm_trust_summary","RESULT_LLM_COMPONENTS","get_kb_table_doc_audit",
     "create_group","list_groups","get_group","update_group","delete_group",
     "set_group_tables","get_group_tables",
     "create_user","get_user","get_user_by_email","get_user_by_zoom_id","get_user_by_platform_id",

@@ -827,7 +827,11 @@ async def build_kb(
             "or the business description explicitly supports it. "
             "Mark any column whose business rule is unclear with [NEEDS CONTEXT]."
         )
-        with llm_audit_component("kb_table_doc"):
+        # question=table_name makes this call individually identifiable in
+        # llm_call_log — the enclosing llm_audit_scope for the whole KB build
+        # (admin/routes.py) shares one request_id across every table, so that
+        # alone can't disambiguate which table a given audit row belongs to.
+        with llm_audit_component("kb_table_doc", question=table_name):
             kb_text, _, _ = await llm_complete(
                 system, stage1_user, provider, model, api_key,
                 max_tokens=4096, **kw
