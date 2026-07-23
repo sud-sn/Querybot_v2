@@ -834,6 +834,12 @@
   // ── Table field preview (schema browser expand) ────────────────────────────
   const _tblFieldsCache = new Map();
   const _tblFieldsOpen  = new Set();
+  let _forceLiveColumns = false;
+
+  function _columnSensitivityUrl(fqn) {
+    const refresh = _forceLiveColumns ? '&refresh=1' : '';
+    return `/admin/clients/${accountId}/setup/column-sensitivity?fqn=${encodeURIComponent(fqn)}${refresh}`;
+  }
 
   window._toggleTableFields = async function(fqn, btn) {
     const key   = fqn.replace(/[^A-Z0-9_]/g, '_');
@@ -850,10 +856,7 @@
     }
     panel.innerHTML = '<div style="padding:.4rem;font-size:11px;color:var(--text-muted)">Loading columns…</div>';
     try {
-      const resp = await fetch(
-        `/admin/clients/${accountId}/setup/column-sensitivity?fqn=${encodeURIComponent(fqn)}`,
-        {credentials: 'same-origin'}
-      );
+      const resp = await fetch(_columnSensitivityUrl(fqn), {credentials: 'same-origin'});
       const data = await resp.json();
       if (data.status !== 'ok') {
         panel.innerHTML = '<div style="padding:.4rem;font-size:11px;color:var(--amber)">⚠ Could not load columns — run Schema Discovery first or check DB connection.</div>';
@@ -882,10 +885,7 @@
     if (_tblFieldsCache.has(fqn)) { _renderTblFields(fqn, panel, _tblFieldsCache.get(fqn)); return; }
     panel.innerHTML = '<div style="padding:.4rem;font-size:11px;color:var(--text-muted)">Loading columns…</div>';
     try {
-      const resp = await fetch(
-        `/admin/clients/${accountId}/setup/column-sensitivity?fqn=${encodeURIComponent(fqn)}`,
-        {credentials: 'same-origin'}
-      );
+      const resp = await fetch(_columnSensitivityUrl(fqn), {credentials: 'same-origin'});
       const data = await resp.json();
       if (data.status !== 'ok') {
         panel.innerHTML = '<div style="padding:.4rem;font-size:11px;color:var(--amber)">⚠ Could not load columns — check DB connection.</div>';
@@ -1064,6 +1064,17 @@
     loading.style.display = 'block';
     showStatus('', '');
 
+    if (isRefresh) {
+      // A database refresh must not reuse columns loaded from the previous
+      // discovery snapshot. Keep the saved masking choices, but query the
+      // connected database for the current physical column list.
+      _forceLiveColumns = true;
+      _tblFieldsCache.clear();
+      _maskFieldsCache.clear();
+      _maskPanelOpened.clear();
+      document.querySelectorAll('#mask-table-list .mask-item').forEach(item => item.remove());
+    }
+
     // Scroll the panel into view so the user can see the loading indicator
     document.querySelector('.scope-panel')?.scrollIntoView({behavior:'smooth', block:'nearest'});
 
@@ -1180,7 +1191,7 @@
     });
   }
 
-  window._toggleMaskItem = function(fqn) {
+  function _toggleMaskItem(fqn) {
     const key    = fqn.replace(/[^A-Z0-9_]/g, '_');
     const bodyEl = document.getElementById('mask-body-' + key);
     const chevEl = document.getElementById('mask-chev-' + key);
@@ -1192,7 +1203,8 @@
       _maskPanelOpened.add(fqn);
       _loadMaskFields(fqn, bodyEl);
     }
-  };
+  }
+  window._toggleMaskItem = _toggleMaskItem;
 
   async function _loadMaskFields(fqn, bodyEl) {
     if (_maskFieldsCache.has(fqn)) {
@@ -1201,10 +1213,7 @@
     }
     bodyEl.innerHTML = '<div style="padding:.6rem 1rem;font-size:12px;color:var(--text-muted)">Loading fields…</div>';
     try {
-      const resp = await fetch(
-        `/admin/clients/${accountId}/setup/column-sensitivity?fqn=${encodeURIComponent(fqn)}`,
-        {credentials: 'same-origin'}
-      );
+      const resp = await fetch(_columnSensitivityUrl(fqn), {credentials: 'same-origin'});
       const data = await resp.json();
       if (data.status !== 'ok') {
         let msg = '⚠ Could not load fields for this table.';

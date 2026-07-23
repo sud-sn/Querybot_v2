@@ -7,7 +7,7 @@ from pathlib import Path
 from core.date_roles import detect_date_role, find_date_dimension_key, is_date_dimension_table
 from core.graph_resolver import resolve_for_question
 from core.schema import build_entity_graph_from_schema
-from core.semantic_model import build_semantic_model
+from core.semantic_model import build_semantic_model, patch_date_role
 
 
 class DateRoleDetectionTests(unittest.TestCase):
@@ -123,6 +123,117 @@ class DateRoleDetectionTests(unittest.TestCase):
         self.assertEqual(roles["DISPENSE_DATE_ID"]["business_role"], "dispense_date")
         self.assertEqual(roles["DISPENSE_DATE_ID"]["date_value_column"], "CALENDAR_DATE")
         self.assertEqual(roles["DISPENSE_DATE_ID"]["confidence"], 99)
+
+    def test_native_date_type_is_detected_without_date_naming_or_dimension(self):
+        schema = {
+            "OPS.ACTIVITY_LOG": {
+                "schema": "OPS",
+                "table": "ACTIVITY_LOG",
+                "columns": [
+                    {"name": "EVENT_ID", "type": "bigint"},
+                    {"name": "BUSINESS_MOMENT", "type": "datetime2"},
+                    {"name": "AMOUNT", "type": "decimal"},
+                ],
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "_schema.json").write_text(json.dumps(schema), encoding="utf-8")
+            model = build_semantic_model(tmp)
+
+        role = next(role for role in model["date_roles"] if role["fact_column"] == "BUSINESS_MOMENT")
+        self.assertEqual(role["date_key_type"], "timestamp")
+        self.assertEqual(role["date_value_column"], "BUSINESS_MOMENT")
+        self.assertEqual(role["dimension_table"], "")
+        self.assertEqual(role["confidence"], 98)
+        self.assertFalse(any(rel.get("from_column") == "BUSINESS_MOMENT" for rel in model["relationships"]))
+
+    def test_declared_fk_detects_arbitrary_surrogate_column_name(self):
+        schema = {
+            "OPS.F_SALES": {
+                "schema": "OPS",
+                "table": "F_SALES",
+                "columns": [
+                    {"name": "SALE_ID", "type": "bigint"},
+                    {"name": "BUSINESS_DAY_REF", "type": "int"},
+                ],
+            },
+            "OPS.D_DATE": {
+                "schema": "OPS",
+                "table": "D_DATE",
+                "columns": [
+                    {"name": "DATE_ID", "type": "int"},
+                    {"name": "CALENDAR_DATE", "type": "date"},
+                ],
+            },
+            "__db_fk_constraints__": [{
+                "parent_schema": "OPS", "parent_table": "F_SALES",
+                "parent_col": "BUSINESS_DAY_REF", "ref_schema": "OPS",
+                "ref_table": "D_DATE", "ref_col": "DATE_ID",
+            }],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "_schema.json").write_text(json.dumps(schema), encoding="utf-8")
+            model = build_semantic_model(tmp)
+
+        role = next(role for role in model["date_roles"] if role["fact_column"] == "BUSINESS_DAY_REF")
+        self.assertEqual(role["date_key_type"], "surrogate_fk")
+        self.assertEqual(role["dimension_table"], "OPS.D_DATE")
+        self.assertEqual(role["dimension_key"], "DATE_ID")
+        self.assertEqual(role["date_value_column"], "CALENDAR_DATE")
+        self.assertEqual(role["confidence"], 99)
+
+    def test_manual_mapping_accepts_direct_and_arbitrary_surrogate_columns(self):
+        schema = {
+            "OPS.F_EVENT": {
+                "schema": "OPS",
+                "table": "F_EVENT",
+                "columns": [
+                    {"name": "EVENT_ID", "type": "bigint"},
+                    {"name": "LEGACY_PERIOD_REF", "type": "int"},
+                    {"name": "RAW_OCCURRED_ON", "type": "varchar"},
+                ],
+            },
+            "OPS.D_DATE": {
+                "schema": "OPS",
+                "table": "D_DATE",
+                "columns": [
+                    {"name": "DATE_ID", "type": "int"},
+                    {"name": "CALENDAR_DATE", "type": "date"},
+                ],
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "_schema.json").write_text(json.dumps(schema), encoding="utf-8")
+            model = build_semantic_model(tmp)
+            Path(tmp, "_semantic_model.json").write_text(json.dumps(model), encoding="utf-8")
+
+            self.assertTrue(patch_date_role(
+                kb_dir=tmp,
+                fact_table="OPS.F_EVENT",
+                fact_column="RAW_OCCURRED_ON",
+                business_role="service_date",
+                date_key_type="native_date",
+                create_if_missing=True,
+            ))
+            self.assertTrue(patch_date_role(
+                kb_dir=tmp,
+                fact_table="OPS.F_EVENT",
+                fact_column="LEGACY_PERIOD_REF",
+                dimension_table="OPS.D_DATE",
+                dimension_key="DATE_ID",
+                date_value_column="CALENDAR_DATE",
+                business_role="accounting_period",
+                date_key_type="surrogate_fk",
+                create_if_missing=True,
+            ))
+            updated = json.loads(Path(tmp, "_semantic_model.json").read_text(encoding="utf-8"))
+
+        roles = {role["fact_column"]: role for role in updated["date_roles"]}
+        self.assertEqual(roles["RAW_OCCURRED_ON"]["date_key_type"], "native_date")
+        self.assertEqual(roles["RAW_OCCURRED_ON"]["dimension_table"], "")
+        self.assertEqual(roles["RAW_OCCURRED_ON"]["date_value_column"], "RAW_OCCURRED_ON")
+        self.assertEqual(roles["LEGACY_PERIOD_REF"]["dimension_table"], "OPS.D_DATE")
+        self.assertEqual(roles["LEGACY_PERIOD_REF"]["date_value_column"], "CALENDAR_DATE")
 
 
 class DateRoleGraphTests(unittest.TestCase):

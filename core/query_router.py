@@ -74,6 +74,17 @@ _RESULT_COMMAND_RE = re.compile(
     re.IGNORECASE,
 )
 
+_MONTH_WORD = (
+    r"jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|"
+    r"jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|"
+    r"nov(?:ember)?|dec(?:ember)?"
+)
+_TEMPORAL_SUBSET_RE = re.compile(
+    rf"(?:\b(?:only|just|keep)\b.*\b(?:{_MONTH_WORD})\b|"
+    rf"\b(?:{_MONTH_WORD})\b.*\bonly\b)",
+    re.IGNORECASE,
+)
+
 _COLUMN_NOISE = {
     "total", "sum", "summed", "average", "avg", "mean", "amount",
     "value", "number", "count", "percentage", "percent", "pct",
@@ -154,6 +165,13 @@ def should_route_to_result_cache(
     # Deterministic result commands must never be rejected as off-topic or
     # sent to a fresh source query while a current snapshot exists.
     if _RESULT_COMMAND_RE.match(q):
+        return True
+
+    # Natural follow-ups often name displayed months rather than their stored
+    # representation (for example, "only Feb and April" for `2025-02`).
+    # This remains intentionally narrow so an unrelated dated business
+    # question is not silently answered from an incomplete cached slice.
+    if _TEMPORAL_SUBSET_RE.search(q):
         return True
 
     # Explicit "From these results, ..." prefix (set by the Ask button)

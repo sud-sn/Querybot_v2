@@ -6433,9 +6433,9 @@ async def date_role_add(
     account_id: str,
     fact_table: str = Form(...),
     fact_column: str = Form(...),
-    dimension_table: str = Form(...),
-    dimension_key: str = Form(...),
-    date_value_column: str = Form(...),
+    dimension_table: str = Form(""),
+    dimension_key: str = Form(""),
+    date_value_column: str = Form(""),
     business_role: str = Form(...),
     name: str = Form(""),
     synonyms: str = Form(""),
@@ -6479,6 +6479,7 @@ async def date_role_set_default(
     account_id: str,
     fact_table: str = Form(...),
     fact_column: str = Form(...),
+    make_default: str = Form("1"),
 ):
     """Flag one approved date role as its fact table's default — used when a
     question has generic temporal intent ("for 2026") but names no specific
@@ -6489,12 +6490,20 @@ async def date_role_set_default(
     state = store.get_client_state(account_id)
     kb_dir = (state or {}).get("kb_dir") or ""
     try:
-        from core.semantic_model import set_default_date_role
-        changed = set_default_date_role(kb_dir, fact_table.strip(), fact_column.strip())
+        from core.semantic_model import clear_default_date_role, set_default_date_role
+        should_set = str(make_default).strip().lower() not in {"0", "false", "off", "no"}
+        if should_set:
+            changed = set_default_date_role(kb_dir, fact_table.strip(), fact_column.strip())
+        else:
+            changed = clear_default_date_role(kb_dir, fact_table.strip(), fact_column.strip())
         if not changed:
-            raise ValueError("Approve this date role before setting it as the default.")
-        _after_semantic_approval(account_id, f"default date role set on {fact_table.strip()}")
-        return RedirectResponse(f"/admin/clients/{account_id}/date-roles?saved=default", status_code=303)
+            if should_set:
+                raise ValueError("Approve this date role before setting it as the default.")
+            raise ValueError("This date role is not currently the explicit default.")
+        action = "set" if should_set else "removed"
+        _after_semantic_approval(account_id, f"default date role {action} on {fact_table.strip()}")
+        saved = "default" if should_set else "default-removed"
+        return RedirectResponse(f"/admin/clients/{account_id}/date-roles?saved={saved}", status_code=303)
     except Exception as exc:
         return RedirectResponse(
             f"/admin/clients/{account_id}/date-roles?error={quote(str(exc)[:180])}",
@@ -7376,13 +7385,19 @@ async def admin_mask_preview(request: Request, account_id: str, fqn: str = ""):
 
 
 @router.get("/clients/{account_id}/setup/column-sensitivity")
-async def admin_column_sensitivity(request: Request, account_id: str, fqn: str = ""):
+async def admin_column_sensitivity(
+    request: Request,
+    account_id: str,
+    fqn: str = "",
+    refresh: str = "0",
+):
     """
     Return columns for a table plus auto-detected PII fields.
 
     Query param: fqn — fully-qualified table name (DB.SCHEMA.TABLE, upper-cased).
     First tries _schema.json written by discovery; falls back to a live DB query
     so fields are visible in the masking section BEFORE discovery has run.
+    Set refresh=1 to bypass the discovery snapshot and read current DB columns.
     Response: {status, columns:[{name,type}], auto_masked:[colname,...], strategy_map:{}}
     """
     if not _is_auth(request):
@@ -7399,7 +7414,8 @@ async def admin_column_sensitivity(request: Request, account_id: str, fqn: str =
     schema_path = schema_dir / "_schema.json"
     columns: list[dict] = []
 
-    if schema_path.exists():
+    force_refresh = refresh == "1"
+    if schema_path.exists() and not force_refresh:
         try:
             from core.schema import _normalize_schema as _ns2
             schema_data = _ns2(json.loads(schema_path.read_text(encoding="utf-8")))

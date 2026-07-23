@@ -118,6 +118,8 @@ def _merge_semantic_plans(*plans: dict | None) -> dict:
     reasons: list[str] = []
     date_key_policies: list[dict] = []
     seen_date_policies: set[tuple[str, str, str]] = set()
+    temporal_policies: list[dict] = []
+    seen_temporal_policies: set[tuple[str, str, str, str]] = set()
 
     # Pre-pass: union avoid lists across plans so the main loop can drop a
     # superseded column no matter which plan proposed it.  The LLM field
@@ -176,6 +178,16 @@ def _merge_semantic_plans(*plans: dict | None) -> dict:
             if policy_key[0] and policy_key[1] and policy_key not in seen_date_policies:
                 seen_date_policies.add(policy_key)
                 date_key_policies.append(policy)
+        for policy in plan.get("temporal_policies") or []:
+            policy_key = (
+                _semantic_table_identity(policy.get("fact_table") or ""),
+                str(policy.get("fact_column") or "").upper(),
+                str(policy.get("role_alias") or "").lower(),
+                str(policy.get("kind") or "").lower(),
+            )
+            if policy_key[0] and policy_key[1] and policy_key not in seen_temporal_policies:
+                seen_temporal_policies.add(policy_key)
+                temporal_policies.append(policy)
         relevant_joins = _select_relevant_semantic_joins(
             plan.get("joins") or [],
             relevant_tables,
@@ -215,6 +227,7 @@ def _merge_semantic_plans(*plans: dict | None) -> dict:
         "available_dimensions": available_dimensions,
         "avoid_columns": avoid_columns,
         "date_key_policies": date_key_policies,
+        "temporal_policies": temporal_policies,
     }
 
 

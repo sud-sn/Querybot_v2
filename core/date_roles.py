@@ -93,6 +93,26 @@ DATE_KEY_TYPES = (
 )
 
 
+def physical_date_key_type(data_type: str) -> str:
+    """Return the governed type for a physical calendar column, if any.
+
+    SQL Server's bare ``timestamp`` type is a rowversion binary value, not a
+    date, so it is deliberately excluded. PostgreSQL timestamp spellings and
+    the SQL Server datetime family are treated as temporal values.
+    """
+    raw = " ".join(str(data_type or "").strip().lower().split())
+    if not raw:
+        return ""
+    base = re.split(r"[\s(]", raw, maxsplit=1)[0]
+    if base == "date":
+        return "native_date"
+    if base in {"datetime", "datetime2", "smalldatetime", "datetimeoffset", "timestamptz"}:
+        return "timestamp"
+    if raw in {"timestamp with time zone", "timestamp without time zone"}:
+        return "timestamp"
+    return ""
+
+
 def normalize_date_key_type(value: str, *, has_date_dimension_fk: bool = False) -> str:
     """Return one governed date-key type.
 
@@ -128,11 +148,9 @@ def classify_date_key(
         return "surrogate_fk"
     if declared_encoding:
         return normalize_date_key_type(declared_encoding)
-    db_type = str(data_type or "").strip().lower()
-    if any(token in db_type for token in ("timestamp", "datetime", "smalldatetime")):
-        return "timestamp"
-    if db_type == "date" or db_type.endswith(" date"):
-        return "native_date"
+    physical_type = physical_date_key_type(data_type)
+    if physical_type:
+        return physical_type
     # Integer date keys are deliberately not guessed from a *_DT_* name.
     # YYYYMMDD must be declared/profiled; otherwise treating 4067 as a date
     # causes invalid conversions and, worse, plausible but incorrect periods.
