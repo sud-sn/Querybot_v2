@@ -143,7 +143,13 @@ def build_business_rca(
             "technical_notes": technical_notes,
         }
 
-    if row_count == 0 and (graph.get("enabled") or graph.get("detected")):
+    # A join-path explanation is only honest when the SQL actually joins
+    # more than one table. graph_context["enabled"]/["detected"] are true
+    # for a single-table resolution too (e.g. entities=["F_RX_FILL"],
+    # edge_ids=[]) -- blaming "relationship keys"/"join path" there is
+    # flatly wrong: there is no join, the query is just a WHERE clause that
+    # legitimately matched nothing.
+    if row_count == 0 and (graph.get("enabled") or graph.get("detected")) and len(tables) > 1:
         return {
             "headline": "I could not find matching records for this question.",
             "most_likely_reason": "The selected join path did not produce matching records for the current data.",
@@ -152,10 +158,15 @@ def build_business_rca(
         }
 
     if row_count == 0:
+        # Only mention joins when the SQL genuinely has more than one table --
+        # otherwise this is just a single-table WHERE clause that correctly
+        # matched nothing, and saying "joins" implies a problem that isn't
+        # there.
+        clause = "filters, joins, or selected schema" if len(tables) > 1 else "filters"
         if plan.get("enabled"):
-            reason = "The mapped fields were valid, but the filters, joins, or selected schema produced no matching rows."
+            reason = f"The mapped fields were valid, but the {clause} produced no matching rows."
         else:
-            reason = "The filters, joins, or selected schema produced no matching rows."
+            reason = f"The {clause} produced no matching rows."
         return {
             "headline": "I could not find matching records for this question.",
             "most_likely_reason": reason,

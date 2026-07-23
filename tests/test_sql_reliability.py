@@ -1173,6 +1173,36 @@ class BusinessConfidenceRcaTests(unittest.TestCase):
         self.assertIn("no records", rca["most_likely_reason"])
         self.assertIn("PROFITABILITY.OOLINE", rca["most_likely_reason"])
 
+    def test_zero_row_single_table_query_does_not_blame_join_path(self):
+        # graph_context["enabled"]/["detected"] are true even for a
+        # single-entity resolution with zero edges (a plain WHERE-clause
+        # query, no JOIN at all) -- blaming "relationship keys"/"join path"
+        # there is flatly wrong and misleads the user into thinking
+        # something is broken when the query ran correctly and just found
+        # no matching rows.
+        rca = build_business_rca(
+            question="which prescriptions produced positive revenue but negative gross profit",
+            row_count=0,
+            tables_used=["PHARMA_LAB.F_RX_FILL"],
+            validation_code="ok",
+            retry_count=0,
+            graph_context={"enabled": True, "detected": ["F_RX_FILL"]},
+        )
+        self.assertNotIn("join path", rca["most_likely_reason"])
+        self.assertNotIn("relationship keys", rca["suggested_next_step"])
+        self.assertNotIn("join", rca["most_likely_reason"])
+
+    def test_zero_row_multi_table_query_still_blames_join_path(self):
+        rca = build_business_rca(
+            question="revenue by product for orders",
+            row_count=0,
+            tables_used=["dbo.FACT_ORDER", "dbo.DIM_PRODUCT"],
+            validation_code="ok",
+            retry_count=0,
+            graph_context={"enabled": True, "detected": ["Order", "Product"]},
+        )
+        self.assertIn("join path", rca["most_likely_reason"])
+
     def test_successful_query_gets_high_confidence_summary(self):
         confidence = build_answer_confidence(
             validation_code="ok",
