@@ -8,6 +8,34 @@ from pathlib import Path
 import store
 
 
+# Bare "name" is broad enough to false-positive on calendar/catalog dimension
+# attributes that aren't personal data at all — e.g. MONTH_NAME, CATEGORY_NAME,
+# REGION_NAME, PRODUCT_NAME. A live query against MONTH_NAME got every month
+# value replaced with a fake "Person X-XXX" pseudonym (result_guard._digest's
+# "redact" rendering) because this column matched the PII pattern's "name"
+# alternative with no exclusion. This is a curated, deliberately narrow
+# allowlist of well-known non-person "*_NAME" dimension suffixes — anything
+# NOT on this list still gets tagged PII by the bare "name" match (fail
+# toward masking by default); only these specific, unambiguous calendar/
+# catalog attributes are excluded.
+_NON_PERSON_NAME_RE = re.compile(
+    r"^(?:month|day|week|quarter|year|date|weekday|"
+    r"category|product|region|schema|table|column|group|status|type|"
+    r"plan|brand|channel|segment|class|tier|state|country|city|currency)s?[\s_]*name$",
+    re.I,
+)
+# The non-"name" PII alternatives, split out so a column matching the
+# non-person allowlist above can still be tagged PII if it independently
+# matches one of these (e.g. a hypothetical "PATIENT_MONTH_NAME" would still
+# hit "patient" separately — not that such a column is expected to exist,
+# but the exclusion below only suppresses the "name" match specifically).
+_PII_NON_NAME_RE = re.compile(
+    r"(email|phone|mobile|address|ssn|social.?security|passport|national.?id|dob|birth|"
+    r"doctor|physician|"
+    r"account.?(?:number|num|no)\b|routing.?(?:number|num|no)\b|\biban\b|\bacct.?no\b)",
+    re.I,
+)
+
 _PATTERNS = {
     # account/routing/IBAN/acct.no direct-identifier suffixes are deliberately
     # HERE, not just under FINANCIAL below — FINANCIAL isn't in banking's
@@ -82,8 +110,15 @@ def _default_mask_strategy(column_name: str, tags: list[str]) -> str:
 def classify_column(column_name: str, industry: str) -> dict:
     tags = []
     for tag, pattern in _PATTERNS.items():
-        if pattern.search(column_name):
-            tags.append(tag)
+        if not pattern.search(column_name):
+            continue
+        if (
+            tag == "PII"
+            and _NON_PERSON_NAME_RE.match(column_name)
+            and not _PII_NON_NAME_RE.search(column_name)
+        ):
+            continue  # e.g. MONTH_NAME — a calendar attribute, not a person's name
+        tags.append(tag)
     if industry == "banking":
         tags = [tag for tag in tags if tag not in {"PHI", "PRESCRIPTION", "PAYMENT"}]
     elif industry == "healthcare_pharmacy":

@@ -465,6 +465,30 @@ class ClassificationTests(unittest.TestCase):
         self.assertNotIn("PII", result["tags"])
         self.assertIn("FINANCIAL", result["tags"])
 
+    def test_calendar_and_catalog_name_columns_not_swept_into_pii(self):
+        # Regression: bare "name" has no word-boundary/qualifier requirement,
+        # so MONTH_NAME (a calendar dimension attribute, not a person's name)
+        # matched the PII pattern and got the "redact" strategy, which
+        # renders as a fake "Person X-XXX" pseudonym (result_guard._digest) —
+        # a live "revenue by month" query came back with every month value
+        # replaced by a made-up person name. Only a curated set of
+        # well-known non-person "*_NAME" dimension suffixes are excluded;
+        # anything else still gets tagged PII by "name" as before.
+        for col in (
+            "MONTH_NAME", "DAY_NAME", "QUARTER_NAME", "WEEKDAY_NAME",
+            "CATEGORY_NAME", "PRODUCT_NAME", "REGION_NAME", "STATUS_NAME",
+            "SCHEMA_NAME", "TABLE_NAME", "PLAN_NAME", "BRAND_NAME",
+            "COUNTRY_NAME", "CITY_NAME",
+        ):
+            self.assertNotIn("PII", classify_column(col, "healthcare_pharmacy")["tags"], col)
+
+        # The exclusion is narrow and content-based, not a blanket carve-out
+        # for anything ending in "name" — genuine person-name columns must
+        # still be caught even in industries/contexts this allowlist wasn't
+        # designed around.
+        for col in ("PATIENT_NAME", "DOCTOR_NAME", "CUSTOMER_NAME", "FIRST_NAME", "NAME"):
+            self.assertIn("PII", classify_column(col, "healthcare_pharmacy")["tags"], col)
+
 
 if __name__ == "__main__":
     unittest.main()
