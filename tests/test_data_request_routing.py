@@ -21,14 +21,19 @@ class DataRequestRoutingTests(unittest.TestCase):
         self.assertFalse(dispatcher._looks_like_data_request("Tell me a joke about summer."))
 
     def test_data_shaped_request_bypasses_llm_classifier(self):
+        # _generate_analyst_reply replaces _classify_is_data_question.
+        # A data-shaped request must return None (fall through to pipeline)
+        # without touching the LLM — the fast-path check _looks_like_data_request
+        # should short-circuit it before any llm_complete call.
         with patch.object(dispatcher, "llm_complete") as complete:
-            allowed = asyncio.run(
-                dispatcher._classify_is_data_question(
+            result = asyncio.run(
+                dispatcher._generate_analyst_reply(
                     "List patients with prescriptions and include their diagnosis.",
+                    "test-account",
                     {},
                 )
             )
-        self.assertTrue(allowed)
+        self.assertIsNone(result)   # None → fall through to SQL pipeline
         complete.assert_not_called()
 
 

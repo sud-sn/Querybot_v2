@@ -471,9 +471,13 @@ class QuestionScrubWiringTests(unittest.TestCase):
 
         seen = {}
 
-        async def _fake_classifier(text, client_row):
+        # _generate_analyst_reply replaces _classify_is_data_question as the
+        # analyst gate in _run_query_with_guard. It takes (text, account_id,
+        # client_row) and returns None to let the query fall through to the
+        # pipeline. The PII scrub must happen before this gate sees the text.
+        async def _fake_analyst(text, account_id, client_row):
             seen["classifier_text"] = text
-            return True
+            return None  # None = let through to pipeline (same as old True)
 
         async def _fake_hq(account_id, event, adapter, text, portal_user, is_clarification=False):
             seen["pipeline_text"] = text
@@ -482,7 +486,7 @@ class QuestionScrubWiringTests(unittest.TestCase):
         profile = {"mode": "regulated", "industry": "healthcare_pharmacy"}
         with (
             patch.object(dispatcher.store, "get_compliance_profile", return_value=profile),
-            patch.object(dispatcher, "_classify_is_data_question", _fake_classifier),
+            patch.object(dispatcher, "_generate_analyst_reply", _fake_analyst),
             patch("core.query_pipeline.handle_query", _fake_hq),
             patch("core.masking._get_presidio", return_value=_FakeNerAnalyzer()),
         ):

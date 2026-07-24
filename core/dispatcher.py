@@ -104,54 +104,122 @@ def _looks_like_data_request(text: str) -> bool:
 
 # ── Off-topic classifier (LLM-based, dynamic) ────────────────────────────────
 
-async def _classify_is_data_question(text: str, client: dict) -> bool:
+def _build_analyst_context(account_id: str, client_row: dict) -> str:
     """
-    Ask the configured LLM whether `text` is a business-data question.
-    Returns True  → let it through to the query pipeline.
-    Returns False → redirect with _OFF_TOPIC_REPLY.
-    Fails open (True) on any error so a misconfigured LLM never blocks users.
+    Assemble a compact metadata string for the conversational analyst:
+    business description, industry, table summary, and metric list.
+    Never includes real data rows — safe for regulated tenants.
     """
-    # Sensitive database requests must reach governed execution. The
-    # compliance layer, not the off-topic guard, decides whether to mask or
-    # deny fields such as patient names, diagnoses, and member identifiers.
+    parts: list[str] = []
+
+    # Business description (fixed key: business_desc, not business_description)
+    biz = str((client_row or {}).get("business_desc") or "").strip()
+    if biz:
+        parts.append(f"Business: {biz[:600]}")
+
+    # Industry from compliance profile
+    try:
+        profile = store.get_compliance_profile(account_id)
+        industry = str(profile.get("industry") or "").strip()
+        if industry:
+            parts.append(f"Industry: {industry}")
+    except Exception:
+        pass
+
+    # Table summary — schema → count from KB state_data known tables
+    try:
+        from core.pipeline_context import get_state
+        state = get_state(account_id)
+        known_tables = state.get("known_tables") or []
+        if known_tables:
+            schemas: dict[str, int] = {}
+            for fqn in known_tables:
+                p = str(fqn).split(".")
+                schema = p[-2] if len(p) >= 2 else "DEFAULT"
+                schemas[schema] = schemas.get(schema, 0) + 1
+            table_summary = "; ".join(
+                f"{s} ({c} table{'s' if c != 1 else ''})"
+                for s, c in sorted(schemas.items())
+            )
+            parts.append(f"Available schemas: {table_summary}")
+    except Exception:
+        pass
+
+    # Metric list — names + short descriptions, capped at 15
+    try:
+        metric_lines: list[str] = []
+        for metric in store.list_metrics(account_id):
+            if not metric.get("is_active", 1):
+                continue
+            name = str(metric.get("name") or "").strip()
+            desc = str(metric.get("description") or "").strip()
+            if name:
+                metric_lines.append(f"{name}" + (f" — {desc[:80]}" if desc else ""))
+            if len(metric_lines) >= 15:
+                break
+        if metric_lines:
+            parts.append("Defined metrics: " + ", ".join(metric_lines[:15]))
+    except Exception:
+        pass
+
+    return "\n".join(parts)
+
+
+# Sentinel returned by the LLM when the message is a genuine data query
+_PROCEED_TO_QUERY = "PROCEED_TO_QUERY"
+
+
+async def _generate_analyst_reply(text: str, account_id: str, client_row: dict) -> str | None:
+    """
+    Dynamic conversational analyst — replaces the static _ABOUT / _OFF_TOPIC_REPLY blocks.
+
+    Returns:
+      None          — message is a genuine data request; fall through to SQL pipeline.
+      reply string  — a capability/meta/off-topic answer; send this directly.
+
+    Fails open (returns None) on any error so a misconfigured LLM never blocks queries.
+    Wraps the LLM call in llm_audit_scope so audit rows are written (previously missing).
+    Only reasons over metadata (business_desc, industry, table/metric names) — never over
+    real data rows, so it is safe for regulated tenants.
+    """
+    # Fast-path: obvious data requests skip the LLM call entirely
     if _looks_like_data_request(text):
-        return True
+        return None
 
     try:
-        provider, model, api_key, extra = resolve_provider(client, purpose="query")
-        business_context = str(
-            (client or {}).get("business_description")
-            or (client or {}).get("description")
-            or ""
-        ).strip()[:800]
-        context_note = (
-            f"Tenant business context: {business_context}\n\n"
-            if business_context else ""
-        )
+        from core.llm_audit import llm_audit_scope
+        provider, model, api_key, extra = resolve_provider(client_row, purpose="query")
+        context = _build_analyst_context(account_id, client_row)
+        context_block = f"\n\nWorkspace context:\n{context}" if context else ""
+
         system = (
-            "You are a classifier for a business analytics chatbot called QueryBot. "
-            "QueryBot answers questions that retrieve, count, list, compare, or analyze "
-            "records and fields in a connected company database. This includes every "
-            "business domain, including finance, operations, healthcare, pharma, insurance, "
-            "HR, and manufacturing. A request involving sensitive fields is still DATA; "
-            "a separate policy engine decides whether those fields are allowed or masked. "
-            "Never label a database request OFF_TOPIC merely because it mentions patients, "
-            "diagnoses, prescriptions, claims, payments, or members.\n\n"
-            f"{context_note}"
-            "Reply with exactly one word:\n"
-            "  DATA — if the message is asking about business or company data\n"
-            "  OFF_TOPIC — if the message is about anything else "
-            "(weather, news, sports, politics, geopolitics, general knowledge, cooking, etc.)"
+            "You are QueryBot's conversational analyst. You answer questions about "
+            "QueryBot's capabilities and what data this workspace can provide — using "
+            "ONLY the workspace context supplied below. Never invent tables, metrics, or "
+            "data values. Never claim to show real numbers.\n"
+            "If the message is clearly a specific data retrieval request (asking for "
+            "actual figures, records, trends, or comparisons from the database), "
+            f"reply with exactly: {_PROCEED_TO_QUERY}\n"
+            "Otherwise reply in 2-4 sentences: what QueryBot can help with in this "
+            "workspace, referencing the real metrics and schemas listed below."
+            f"{context_block}"
         )
-        reply, _, _ = await llm_complete(
-            system, f'Message: "{text}"',
-            provider, model, api_key,
-            max_tokens=10, temperature=0.0, **extra,
-        )
-        return not reply.strip().upper().startswith("OFF_TOPIC")
+        with llm_audit_scope(
+            account_id=account_id,
+            component="conversational_analyst",
+        ):
+            reply, _, _ = await llm_complete(
+                system, f'User message: "{text}"',
+                provider, model, api_key,
+                max_tokens=200, temperature=0.2, **extra,
+            )
+        reply = reply.strip()
+        if reply.upper().startswith(_PROCEED_TO_QUERY):
+            return None  # genuine data query — fall through to pipeline
+        return reply or None
     except Exception as e:
-        log.debug("Off-topic classifier error, allowing through: %s", e)
-        return True  # fail open — never silently block a legitimate query
+        log.debug("Analyst reply error, falling through to pipeline: %s", e)
+        return None  # fail open
 
 
 # ── Background query task (typing + classification + pipeline) ────────────────
@@ -194,7 +262,10 @@ async def _run_query_with_guard(
     except Exception as e:
         log.debug("question PII scrub skipped: %s", e)
 
-    # Stage 2 — off-topic guard (skipped for clarification replies)
+    # Stage 2 — dynamic analyst gate (skipped for clarification replies)
+    # Replaces the old _classify_is_data_question + static _OFF_TOPIC_REPLY:
+    # _generate_analyst_reply returns None for genuine data requests (fall through)
+    # or a tailored capability/off-topic answer to send directly.
     if not is_clarification:
         from core.result_cache import result_cache
         from core.result_commands import parse_result_command
@@ -205,9 +276,11 @@ async def _run_query_with_guard(
             and result_cache.has_result(_session_id)
             and parse_result_command(text) is not None
         )
-        if not _is_cached_result_command and not await _classify_is_data_question(text, client_row):
-            await adapter.send_message(event, _OFF_TOPIC_REPLY)
-            return
+        if not _is_cached_result_command:
+            _analyst_reply = await _generate_analyst_reply(text, account_id, client_row)
+            if _analyst_reply is not None:
+                await adapter.send_message(event, _analyst_reply)
+                return
 
     # Stage 3 — run query pipeline; Teams needs re-sent typing every 2.5 s
     if getattr(adapter, "persistent_typing", False) and _send:
@@ -380,7 +453,13 @@ async def dispatch(
     if text.lower() == "help":
         await adapter.send_message(event, _HELP); return
 
-    if _ABOUT_RE.search(text):
+    # _ABOUT_RE questions ("what can you do", "what is querybot") are now
+    # handled dynamically by _generate_analyst_reply inside the READY branch
+    # so they get a real business-context-aware answer instead of _ABOUT.
+    # We keep a fast-path for when state is not yet READY (NEW/KB_BUILDING):
+    # in those states client_row exists but the pipeline can't answer data
+    # questions anyway, so the static _ABOUT response is still appropriate.
+    if _ABOUT_RE.search(text) and get_state(account_id).get("state") not in ("READY",):
         await adapter.send_message(event, _ABOUT); return
 
     # ── Behavioral front door (deterministic, no LLM) ─────────────────────────
@@ -390,10 +469,17 @@ async def dispatch(
     # data-aware kinds (data_inventory / opinion / vague) are handled later,
     # inside the READY branch, after the pending-clarification check — a
     # clarification reply must never be hijacked by this classifier.
-    from core.conversational import build_reply, detect_conversational
+    from core.conversational import build_reply, build_reply_split, detect_conversational
     _conv_kind = detect_conversational(text)
     if _conv_kind in ("greeting", "thanks", "goodbye", "frustration"):
-        await adapter.send_message(event, build_reply(_conv_kind, account_id, portal_user))
+        _send_sq = getattr(adapter, "send_suggested_questions", None)
+        if _conv_kind == "greeting" and callable(_send_sq):
+            _intro, _qs = build_reply_split(_conv_kind, account_id, portal_user)
+            await adapter.send_message(event, _intro)
+            if _qs:
+                await _send_sq(event, "Here are some questions to get you started:", _qs)
+        else:
+            await adapter.send_message(event, build_reply(_conv_kind, account_id, portal_user))
         return
 
     if text.lower() == "whoami":
@@ -444,6 +530,28 @@ async def dispatch(
             if not portal_user:
                 await handle_unregistered_user(account_id, event.user_id, event, adapter)
                 return
+
+        # ── Session greeting — fires once per new session, before the query ──
+        # touch_user_activity returns True when last_active_at is NULL (first-ever
+        # message) or when the gap since last activity exceeds 30 minutes.
+        # Sending the greeting here (after all early-return commands, and after
+        # the greeting/thanks/goodbye/frustration conversational checks at the top
+        # of dispatch) means it is an *extra* message prepended to the user's
+        # actual answer — the real question is still processed normally below.
+        # Skipped for clarification replies and DDL — those handle their own flow.
+        if portal_user and not _conv_kind:
+            try:
+                _is_new_session = store.touch_user_activity(portal_user["id"])
+                if _is_new_session:
+                    _first_name = (portal_user.get("name") or "").split()[0] or (portal_user.get("name") or "")
+                    _was_never_active = not portal_user.get("last_active_at")
+                    if _was_never_active:
+                        _greet_msg = f"👋 Welcome, {_first_name}! I'm QueryBot — ask me anything about your business data."
+                    else:
+                        _greet_msg = f"👋 Welcome back, {_first_name}!"
+                    await adapter.send_message(event, _greet_msg)
+            except Exception as _greet_exc:
+                log.debug("Session greeting skipped: %s", _greet_exc)
 
         # ── Clarification reply check — before DDL and before normal routing ──
         if event.user_id:
@@ -539,7 +647,14 @@ async def dispatch(
         # deterministic answers — sending them into SQL generation only
         # produces a confusing failure.
         if _conv_kind in ("data_inventory", "opinion", "vague"):
-            await adapter.send_message(event, build_reply(_conv_kind, account_id, portal_user))
+            _send_sq = getattr(adapter, "send_suggested_questions", None)
+            if _conv_kind in ("data_inventory", "vague") and callable(_send_sq):
+                _intro, _qs = build_reply_split(_conv_kind, account_id, portal_user)
+                await adapter.send_message(event, _intro)
+                if _qs:
+                    await _send_sq(event, "Try one of these:", _qs)
+            else:
+                await adapter.send_message(event, build_reply(_conv_kind, account_id, portal_user))
             return
 
         # DDL check on raw user message before any LLM call
