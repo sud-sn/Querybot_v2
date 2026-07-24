@@ -1788,6 +1788,7 @@ def validate_sql_detailed(
             and all(table_columns.get(k) for k in unique_base_keys)
         )
         unknown_cols_by_key: dict[tuple[str, str], dict] = {}
+        _unresolved_table_refs_logged: set[str] = set()
         for col_node in tree.find_all(sg_exp.Column):
             col_name = (col_node.name or "").upper()
             if not col_name or col_name == "*":
@@ -1799,6 +1800,25 @@ def validate_sql_detailed(
             if table_ref:
                 table_key = alias_to_table.get(table_ref)
                 if not table_key or table_key not in table_columns:
+                    # Every column reference on this table alias goes
+                    # unvalidated for the rest of this query — this is how a
+                    # hallucinated column (e.g. a live incident: LLM invented
+                    # "CLAIM_DATE_DMS_KEY" on F_CLAIM) can sail through
+                    # unchecked when the table's real column list is stale
+                    # or missing from the schema snapshot passed in as
+                    # table_columns. Logged once per table (not per column)
+                    # so a genuinely large query doesn't spam the log, but
+                    # loud enough that "the validator silently didn't catch
+                    # this" is traceable instead of a silent mystery.
+                    if table_ref not in _unresolved_table_refs_logged:
+                        _unresolved_table_refs_logged.add(table_ref)
+                        log.warning(
+                            "unknown_column check skipped for alias %s (resolved "
+                            "table_key=%r not found in table_columns) — its "
+                            "column references will not be validated against "
+                            "the real schema this pass",
+                            table_ref, table_key,
+                        )
                     continue
             else:
                 if col_name in select_aliases:

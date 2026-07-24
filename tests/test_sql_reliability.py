@@ -180,6 +180,35 @@ class StrictColumnValidationTests(unittest.TestCase):
         self.assertIn("Exact column exists on", result.reason)
         self.assertTrue(any("DIM_DIVISION" in t for t in result.errors[0]["candidate_tables"]))
 
+    def test_warns_when_table_columns_missing_for_referenced_alias(self):
+        # Regression: a live incident had the LLM hallucinate
+        # "CLAIM_DATE_DMS_KEY" on F_CLAIM; validate_sql_detailed proved
+        # correct when F_CLAIM's real columns were supplied (it flagged
+        # unknown_column and suggested the real column), so the live miss
+        # traced to F_CLAIM's schema not being present in table_columns at
+        # validation time (stale/incomplete schema snapshot), not a
+        # validator defect. When that happens, every column reference on
+        # that table alias goes unvalidated silently — this pins that a
+        # warning is now logged so the gap is traceable instead of a silent
+        # mystery. A table known to the workspace (passes the table-exists
+        # check) but absent from table_columns entirely reproduces it.
+        known_only_table = {"PHARMA_LAB.F_CLAIM", "F_CLAIM"}
+        # table_columns must be non-empty overall (the whole unknown_column
+        # block is gated on `if table_columns:`) but must have NO entry for
+        # F_CLAIM specifically — an unrelated table's entry keeps the gate
+        # open while reproducing "this one table's schema is missing".
+        other_table_columns = {"PROFITABILITY.OTHER_TABLE": {"COL": "int"}}
+        with self.assertLogs("querybot.validator", level="WARNING") as logs:
+            result = validate_sql_detailed(
+                "SELECT fcl.MADE_UP_COLUMN FROM [PHARMA_LAB].[F_CLAIM] fcl",
+                known_only_table,
+                "azure_sql",
+                None,
+                other_table_columns,
+            )
+        self.assertTrue(result.ok)  # unvalidated, not rejected — matches live behavior
+        self.assertTrue(any("unknown_column check skipped" in m for m in logs.output))
+
     def test_rejects_yoy_hallucinated_year_column(self):
         ok, _, code = validate_sql(
             "SELECT CAST(YEA4 AS INT) AS Year, SUM(PCLA) FROM [PROFITABILITY].[FIFO_BI_SAL_MGP_EXT] GROUP BY CAST(YEA4 AS INT)",
