@@ -462,6 +462,30 @@ async def dispatch(
     if _ABOUT_RE.search(text) and get_state(account_id).get("state") not in ("READY",):
         await adapter.send_message(event, _ABOUT); return
 
+    state = get_state(account_id).get("state", "NEW")
+
+    if state in ("NEW", "SCHEMA_READY"):
+        await adapter.send_message(event,
+            "⚠️ This workspace isn't set up yet.\n\n"
+            "Ask your administrator to finish the *Schema & Knowledge Base Setup* "
+            "in the QueryBot admin panel before sending queries.")
+        return
+    if state == "KB_BUILDING":
+        await adapter.send_message(event,
+            "⏳ Knowledge Base is still being built by the admin — "
+            "try again in a few minutes.")
+        return
+
+    # For web portal sessions the user is already authenticated via
+    # the signed cookie — portal_user is passed in directly. For webhook
+    # sessions (Zoom/Teams/Slack) resolve the linked external identity
+    # inside this account so roles and table access cannot cross tenants.
+    if portal_user is None and event.user_id:
+        portal_user = store.get_user_by_platform_id(account_id, event.user_id)
+        if not portal_user:
+            await handle_unregistered_user(account_id, event.user_id, event, adapter)
+            return
+
     # ── Behavioral front door (deterministic, no LLM) ─────────────────────────
     # Greetings/thanks/goodbye/frustration used to fall through every guard
     # into the SQL pipeline — "thanks" got answered with "I couldn't find the
@@ -507,29 +531,7 @@ async def dispatch(
             f"*User:* {pu['name'] if pu else 'not registered'}")
         return
 
-    state = get_state(account_id).get("state", "NEW")
-
-    if state in ("NEW", "SCHEMA_READY"):
-        await adapter.send_message(event,
-            "⚠️ This workspace isn't set up yet.\n\n"
-            "Ask your administrator to finish the *Schema & Knowledge Base Setup* "
-            "in the QueryBot admin panel before sending queries.")
-        return
-    if state == "KB_BUILDING":
-        await adapter.send_message(event,
-            "⏳ Knowledge Base is still being built by the admin — "
-            "try again in a few minutes.")
-        return
     if state == "READY":
-        # For web portal sessions the user is already authenticated via
-        # the signed cookie — portal_user is passed in directly. For webhook
-        # sessions (Zoom/Teams/Slack) resolve the linked external identity
-        # inside this account so roles and table access cannot cross tenants.
-        if portal_user is None and event.user_id:
-            portal_user = store.get_user_by_platform_id(account_id, event.user_id)
-            if not portal_user:
-                await handle_unregistered_user(account_id, event.user_id, event, adapter)
-                return
 
         # ── Session greeting — fires once per new session, before the query ──
         # touch_user_activity returns True when last_active_at is NULL (first-ever

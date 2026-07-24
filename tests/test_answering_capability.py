@@ -58,10 +58,11 @@ class ConversationalDetectionTests(unittest.TestCase):
     def test_dispatcher_wires_front_door(self):
         src = _src("core/dispatcher.py")
         self.assertIn("detect_conversational", src)
-        # small-talk branch must come before the READY state machine…
+        # State checks and registration MUST come before the small-talk branch,
+        # otherwise unregistered users get a greeting instead of a registration link.
         self.assertLess(
-            src.index('("greeting", "thanks", "goodbye", "frustration")'),
             src.index('state = get_state(account_id).get("state", "NEW")'),
+            src.index('("greeting", "thanks", "goodbye", "frustration")'),
         )
         # …and data-aware kinds inside READY, after the clarification checks.
         self.assertLess(
