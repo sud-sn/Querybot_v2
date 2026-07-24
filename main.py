@@ -107,6 +107,63 @@ async def shutdown() -> None:
     if task:
         task.cancel()
 
+    try:
+        from core.portal_notifications import portal_notification_hub
+        import json
+        
+        # 1. Notify portal users via WebSocket
+        targets = list(portal_notification_hub._meta.keys())
+        if targets:
+            payload = {
+                "type": "system_message", 
+                "message": "👋 QueryBot is signing off for now! Service has been temporarily stopped."
+            }
+            await portal_notification_hub._broadcast(targets, payload)
+            
+        # 2. Notify active Teams users proactively
+        with store.db.get_db() as conn:
+            users = conn.execute(
+                "SELECT account_id, platform_user_id, display_name, conversation_ref "
+                "FROM pending_platform_user WHERE status='approved' AND platform_type='teams'"
+            ).fetchall()
+            
+        if users:
+            teams_platforms = store.list_platforms("teams")
+            active_teams = [p for p in teams_platforms if p.get("is_active")]
+            if active_teams:
+                from gateway.teams_adapter import TeamsAdapter
+                from gateway.base import PlatformEvent
+                adapter = TeamsAdapter(active_teams[0]["credentials"])
+                
+                async def notify_teams_user(user):
+                    try:
+                        conv_ref = json.loads(user["conversation_ref"] or "{}")
+                        if not conv_ref.get("service_url"):
+                            return
+                        name = (user["display_name"] or "").split(" ")[0]
+                        greeting = f"Hey {name}" if name else "Hello"
+                        
+                        event = PlatformEvent(
+                            account_id = user["account_id"],
+                            user_id    = user["platform_user_id"],
+                            channel_id = user["conversation_ref"],
+                            text       = "",
+                            platform   = "teams",
+                        )
+                        await adapter.send_message(
+                            event,
+                            f"👋 {greeting}, I'm signing off for now! The service has been temporarily stopped."
+                        )
+                    except Exception as e:
+                        log.debug("Failed to notify Teams user on shutdown: %s", e)
+                
+                # Run concurrently to avoid delaying shutdown timeout
+                await asyncio.gather(*(notify_teams_user(u) for u in users), return_exceptions=True)
+                
+    except Exception as exc:
+        log.warning("Failed to send shutdown notifications: %s", exc)
+
+
 
 @app.get("/health")
 async def health():

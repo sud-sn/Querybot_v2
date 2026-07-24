@@ -246,6 +246,11 @@
     );
   }
 
+  function handleSystemMessage(msg){
+    if(!msg||msg.type!=='system_message') return;
+    showPortalToast('System Notice', msg.message||'System update', 'warning');
+  }
+
   function handleQueryLimitStatus(status,fromPoll){
     if(!status) return;
     window.dispatchEvent(new CustomEvent('qb-query-limit-status',{detail:status}));
@@ -289,7 +294,13 @@
     var proto=location.protocol==='https:'?'wss':'ws';
     socket=new WebSocket(proto+'://'+location.host+'/portal/ws/notifications');
     socket.onopen=function(){reconnectMs=1000;};
-    socket.onmessage=function(event){try{handleSemanticMessage(JSON.parse(event.data),false);}catch(_){}};
+    socket.onmessage=function(event){
+      try{
+        var msg = JSON.parse(event.data);
+        if(msg.type === 'system_message') handleSystemMessage(msg);
+        else handleSemanticMessage(msg,false);
+      }catch(_){}
+    };
     socket.onclose=function(){window.setTimeout(connectSocket,reconnectMs);reconnectMs=Math.min(Math.round(reconnectMs*1.7),15000);};
     socket.onerror=function(){try{socket.close();}catch(_){}};
   }
