@@ -1,6 +1,6 @@
 import asyncio
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from core import dispatcher
 from core.query_pipeline import _graph_entities_for_verified_values
@@ -35,6 +35,28 @@ class DataRequestRoutingTests(unittest.TestCase):
             )
         self.assertIsNone(result)   # None → fall through to SQL pipeline
         complete.assert_not_called()
+
+    def test_meta_question_reaches_llm_and_returns_its_reply(self):
+        # A non-data-shaped question (e.g. "who are you") must NOT be
+        # fast-pathed — it has to reach the llm_audit_scope + llm_complete
+        # call. This exercises that branch for real (the prior regression
+        # test above only ever exercised the fast-path skip, so it never
+        # touched llm_audit_scope at all and could not have caught a
+        # signature mismatch there — which is exactly what shipped and
+        # made every meta/off-topic question silently fall through to SQL
+        # generation instead of getting an analyst reply).
+        with patch.object(
+            dispatcher, "llm_complete",
+            new=AsyncMock(return_value=("I'm QueryBot, your data analyst.", 10, 5)),
+        ) as complete, patch.object(
+            dispatcher, "resolve_provider",
+            return_value=("openai", "gpt-4o-mini", "sk-test", {}),
+        ):
+            result = asyncio.run(
+                dispatcher._generate_analyst_reply("who are you?", "test-account", {})
+            )
+        complete.assert_called_once()
+        self.assertEqual(result, "I'm QueryBot, your data analyst.")
 
 
 class VerifiedValueGraphTests(unittest.TestCase):

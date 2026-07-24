@@ -206,6 +206,8 @@ async def _generate_analyst_reply(text: str, account_id: str, client_row: dict) 
         )
         with llm_audit_scope(
             account_id=account_id,
+            question=text[:500],
+            enabled=bool(client_row.get("enable_llm_audit")),
             component="conversational_analyst",
         ):
             reply, _, _ = await llm_complete(
@@ -218,7 +220,12 @@ async def _generate_analyst_reply(text: str, account_id: str, client_row: dict) 
             return None  # genuine data query — fall through to pipeline
         return reply or None
     except Exception as e:
-        log.debug("Analyst reply error, falling through to pipeline: %s", e)
+        # warning, not debug: this call silently returning None on every
+        # invocation (e.g. from a signature/argument mismatch) is
+        # indistinguishable from normal fail-open behavior unless logged
+        # loud enough to notice — that exact failure mode shipped to
+        # production unnoticed once already.
+        log.warning("Analyst reply error, falling through to pipeline: %s", e)
         return None  # fail open
 
 
