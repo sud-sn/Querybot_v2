@@ -321,9 +321,10 @@ class TeamsAdapter(GovernedChannelSessionMixin, PlatformAdapter):
                         ),
                     })
 
-            # Post-table: confidence summary + duration
+            # Post-table: confidence summary + duration + data story
             conf_summary = ""
             duration     = ""
+            story_lines  = []
             for line in post_lines:
                 s = line.strip()
                 if not s:
@@ -334,6 +335,15 @@ class TeamsAdapter(GovernedChannelSessionMixin, PlatformAdapter):
                 elif "Confidence:" in s and not conf_summary:
                     m = re.match(r"(Confidence:\s*[\w ]+\(\d+/\d+\))", s)
                     conf_summary = m.group(1) if m else ""
+                else:
+                    # Clean up bolding for adaptive cards, but keep the text
+                    story_lines.append(_clean(s))
+
+            if story_lines:
+                body.append({
+                    "type": "TextBlock", "text": "\n\n".join(story_lines),
+                    "wrap": True, "spacing": "Medium",
+                })
 
             footer = " · ".join(x for x in [conf_summary, duration] if x)
             if footer:

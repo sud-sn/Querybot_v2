@@ -82,8 +82,9 @@ _ABOUT_RE = re.compile(
 )
 
 _DATA_REQUEST_ACTION_RE = re.compile(
-    r"^\s*(?:please\s+)?(?:show|list|find|retrieve|display|give|count|calculate|"
-    r"compute|compare|analy[sz]e|summari[sz]e|rank|identify)\b",
+    r"\b(?:please\s+)?(?:show|list|find|retrieve|display|give|count|calculate|"
+    r"compute|compare|analy[sz]e|summari[sz]e|rank|identify|what|how\s+many|when|who|"
+    r"which|get|pull|tell)\b",
     re.IGNORECASE,
 )
 _DATA_REQUEST_SHAPE_RE = re.compile(
