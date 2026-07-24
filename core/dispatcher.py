@@ -462,6 +462,36 @@ async def dispatch(
     if _ABOUT_RE.search(text) and get_state(account_id).get("state") not in ("READY",):
         await adapter.send_message(event, _ABOUT); return
 
+    # whoami/status are diagnostic commands and must work in every workspace
+    # state (including NEW/SCHEMA_READY/KB_BUILDING) — status's whole purpose
+    # is to show setup progress, so it must not be blocked by the "not ready"
+    # guard below. They resolve portal_user themselves and degrade gracefully
+    # when unregistered, so they don't need the registration gate either.
+    if text.lower() == "whoami":
+        pu = portal_user or (store.get_user_by_platform_id(account_id, event.user_id) if event.user_id else None)
+        if pu:
+            t = store.get_allowed_tables(pu)
+            tlist = ", ".join(sorted(t)) if t else "All tables (admin)"
+            await adapter.send_message(event,
+                f"*{pu['name']}* | {pu['role']} | Group: {pu['group_name'] or 'none'}\n"
+                f"Tables: {tlist}")
+        else:
+            await adapter.send_message(event, "Not registered yet — send any message for your registration link.")
+        return
+
+    if text.lower() == "status":
+        client = store.get_client(account_id) or {}
+        db_cfg = get_client_db(account_id)
+        used   = store.get_monthly_query_count(account_id)
+        limit  = client.get("query_limit_monthly", 500)
+        pu     = portal_user or (store.get_user_by_platform_id(account_id, event.user_id) if event.user_id else None)
+        await adapter.send_message(event,
+            f"*State:* {get_state(account_id)['state']}\n"
+            f"*Database:* {db_cfg['name'] if db_cfg else 'not configured'}\n"
+            f"*Queries this month:* {used}/{limit}\n"
+            f"*User:* {pu['name'] if pu else 'not registered'}")
+        return
+
     state = get_state(account_id).get("state", "NEW")
 
     if state in ("NEW", "SCHEMA_READY"):
@@ -504,31 +534,6 @@ async def dispatch(
                 await _send_sq(event, "Here are some questions to get you started:", _qs)
         else:
             await adapter.send_message(event, build_reply(_conv_kind, account_id, portal_user))
-        return
-
-    if text.lower() == "whoami":
-        pu = portal_user or (store.get_user_by_platform_id(account_id, event.user_id) if event.user_id else None)
-        if pu:
-            t = store.get_allowed_tables(pu)
-            tlist = ", ".join(sorted(t)) if t else "All tables (admin)"
-            await adapter.send_message(event,
-                f"*{pu['name']}* | {pu['role']} | Group: {pu['group_name'] or 'none'}\n"
-                f"Tables: {tlist}")
-        else:
-            await adapter.send_message(event, "Not registered yet — send any message for your registration link.")
-        return
-
-    if text.lower() == "status":
-        client = store.get_client(account_id) or {}
-        db_cfg = get_client_db(account_id)
-        used   = store.get_monthly_query_count(account_id)
-        limit  = client.get("query_limit_monthly", 500)
-        pu     = portal_user or (store.get_user_by_platform_id(account_id, event.user_id) if event.user_id else None)
-        await adapter.send_message(event,
-            f"*State:* {get_state(account_id)['state']}\n"
-            f"*Database:* {db_cfg['name'] if db_cfg else 'not configured'}\n"
-            f"*Queries this month:* {used}/{limit}\n"
-            f"*User:* {pu['name'] if pu else 'not registered'}")
         return
 
     if state == "READY":

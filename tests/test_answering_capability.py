@@ -75,6 +75,23 @@ class ConversationalDetectionTests(unittest.TestCase):
             src.index("if is_ddl_attempt(text):"),
         )
 
+    def test_whoami_and_status_bypass_workspace_state_guard(self):
+        # whoami/status are diagnostic commands — status's whole purpose is
+        # to show setup progress, so both must be reachable in every
+        # workspace state (NEW/SCHEMA_READY/KB_BUILDING/READY), not just
+        # once the workspace is fully READY. A prior fix moved the state
+        # guard above the conversational front door to close a registration
+        # bypass, which had the side effect of also gating whoami/status
+        # behind "workspace not ready yet" — this pins them ahead of it.
+        src = _src("core/dispatcher.py")
+        state_guard_pos = src.index('if state in ("NEW", "SCHEMA_READY"):')
+        self.assertLess(src.index('text.lower() == "whoami"'), state_guard_pos)
+        self.assertLess(src.index('text.lower() == "status"'), state_guard_pos)
+        # Only one definition of each command should remain (no leftover
+        # duplicate further down from before the reorder).
+        self.assertEqual(src.count('text.lower() == "whoami"'), 1)
+        self.assertEqual(src.count('text.lower() == "status"'), 1)
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Phase B1 — relevance floor + weak-retrieval confidence
