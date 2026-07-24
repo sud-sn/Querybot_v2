@@ -42,6 +42,7 @@ from store.user_store import (
     list_users, update_user, change_password, reset_user_password,
     link_zoom_user, verify_password, delete_user,
     set_user_extra_tables, get_user_extra_tables, get_allowed_tables,
+    touch_user_activity,
     create_registration_token, consume_registration_token,
     upsert_pending_user, list_pending_users, get_pending_user_count,
     approve_pending_user, reject_pending_user, get_pending_user,

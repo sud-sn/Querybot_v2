@@ -919,6 +919,10 @@ def _run_migrations() -> None:
         # business-readable translate_failure() message chat gets instead of
         # a raw technical string, and tag the failure with its exact scenario.
         ("query_log", "error_code", "TEXT NOT NULL DEFAULT ''"),
+        # v36: session boundary tracking for personalized greeting.
+        # NULL = user has never sent a message; updated to now() on every active
+        # message. touch_user_activity() compares this to detect a new session.
+        ("portal_user", "last_active_at", "TEXT DEFAULT NULL"),
     ]
     with get_db() as conn:
         _ensure_llm_call_log_table(conn)

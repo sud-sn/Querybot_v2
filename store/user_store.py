@@ -332,6 +332,52 @@ def get_allowed_tables(user: dict) -> Optional[set[str]]:
     return tables if tables else set()  # empty set = no access
 
 
+def touch_user_activity(user_id: int, *, gap_minutes: int = 30) -> bool:
+    """
+    Update last_active_at for the portal user and return whether this message
+    crosses a session boundary (i.e. it is a new session).
+
+    Returns True  — session boundary: last_active_at was NULL (first-ever
+                    message) or the gap since last activity exceeds gap_minutes.
+    Returns False — same session: last activity was within gap_minutes.
+
+    Always updates last_active_at to now, regardless of the return value.
+    Fails silently — a DB error must never block the query pipeline.
+    """
+    try:
+        with get_db() as conn:
+            row = conn.execute(
+                "SELECT last_active_at FROM portal_user WHERE id=?",
+                (user_id,),
+            ).fetchone()
+            if row is None:
+                return False  # user not found — safe no-op
+
+            last = (row["last_active_at"] or "").strip()
+            now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+            is_new_session: bool
+            if not last:
+                # First-ever message
+                is_new_session = True
+            else:
+                try:
+                    last_dt = datetime.fromisoformat(last).replace(tzinfo=timezone.utc)
+                    now_dt = datetime.now(timezone.utc)
+                    is_new_session = (now_dt - last_dt) > timedelta(minutes=gap_minutes)
+                except ValueError:
+                    is_new_session = True  # unparseable timestamp → treat as new
+
+            conn.execute(
+                "UPDATE portal_user SET last_active_at=? WHERE id=?",
+                (now_str, user_id),
+            )
+            return is_new_session
+    except Exception as exc:
+        log.debug("touch_user_activity failed for user %s: %s", user_id, exc)
+        return False
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Registration tokens
 # ══════════════════════════════════════════════════════════════════════════════
