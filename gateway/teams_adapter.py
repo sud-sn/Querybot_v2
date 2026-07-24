@@ -681,6 +681,93 @@ class TeamsAdapter(GovernedChannelSessionMixin, PlatformAdapter):
             resp.raise_for_status()
         log.info("Teams clarification prompt sent (%d options)", len(actions))
 
+    # ── send_suggested_questions ───────────────────────────────────────────────
+    # Renders example questions as tappable Adaptive Card buttons so Teams
+    # users can tap instead of retyping. Each button's data.label round-trips
+    # through parse_event (value.get("label") → text) exactly like clarification
+    # taps — no adapter parsing changes needed. Capped to 5 buttons (Teams
+    # practical limit). Falls back to plain text when questions is empty.
+
+    async def send_suggested_questions(
+        self,
+        event: PlatformEvent,
+        intro_text: str,
+        questions: list[str],
+    ) -> None:
+        if not questions:
+            # Plain-text fallback — never send an empty card
+            await self.send_message(event, intro_text)
+            return
+
+        actions = []
+        for q in questions[:5]:  # Teams practical button cap
+            label = (q or "").strip()
+            if not label:
+                continue
+            actions.append({
+                "type":  "Action.Submit",
+                "title": label[:60],  # card button label truncation, UI only
+                "data":  {"label": label},
+            })
+
+        if not actions:
+            await self.send_message(event, intro_text)
+            return
+
+        channel_info    = json.loads(event.channel_id)
+        service_url     = channel_info["service_url"]
+        conversation_id = channel_info["conversation_id"]
+        reply_url = (
+            f"{service_url.rstrip('/')}/v3/conversations/"
+            f"{conversation_id}/activities"
+        )
+        token = await self._get_token()
+
+        card = {
+            "type":    "AdaptiveCard",
+            "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+            "version": "1.3",
+            "body": [
+                {
+                    "type":   "TextBlock",
+                    "text":   intro_text,
+                    "wrap":   True,
+                    "weight": "Bolder",
+                },
+                {
+                    "type":     "TextBlock",
+                    "text":     "Tap a question to ask it, or type your own.",
+                    "isSubtle": True,
+                    "size":     "Small",
+                    "spacing":  "Small",
+                    "wrap":     True,
+                },
+            ],
+            "actions": actions,
+        }
+        activity = {
+            "type": "message",
+            "attachments": [{
+                "contentType": "application/vnd.microsoft.card.adaptive",
+                "content":     card,
+            }],
+        }
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    reply_url,
+                    headers={"Authorization": f"Bearer {token}"},
+                    json=activity,
+                    timeout=15,
+                )
+                if resp.status_code not in (200, 201):
+                    log.error("Teams send_suggested_questions %s: %s", resp.status_code, resp.text)
+                resp.raise_for_status()
+            log.info("Teams suggested questions sent (%d buttons)", len(actions))
+        except Exception as exc:
+            log.warning("Teams send_suggested_questions failed, falling back to text: %s", exc)
+            await self.send_message(event, intro_text)
+
     # ── send_chart ────────────────────────────────────────────────────────────
     # Matches web_adapter.send_chart. Accepts a chart_payload dict produced by
     # core.chart.build_chart_payload() — the same payload the portal's ECharts

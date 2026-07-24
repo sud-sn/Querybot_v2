@@ -356,3 +356,62 @@ def build_reply(kind: str, account_id: str, portal_user: dict | None = None) -> 
         )
 
     return ""
+
+
+def build_reply_split(
+    kind: str,
+    account_id: str,
+    portal_user: dict | None = None,
+) -> tuple[str, list[str]]:
+    """
+    Sibling to build_reply() for adapters that can render questions as buttons.
+
+    Returns (intro_text, questions_list) for the three kinds that embed example
+    questions (greeting, data_inventory, vague). For all other kinds, returns
+    (build_reply(...), []) so callers can use this uniformly without branching.
+
+    The questions_list contains raw question strings without markdown formatting
+    so the adapter can label buttons directly.
+    """
+    if kind == "greeting":
+        name = (portal_user or {}).get("name") or ""
+        hello = f"Hello{', ' + name.split()[0] if name else ''}! 👋"
+        intro = (
+            f"{hello} I'm QueryBot — ask me anything about your business data.\n\n"
+            "Here are some questions to get you started:"
+        )
+        return intro, _example_questions(account_id)
+
+    if kind == "data_inventory":
+        lines = ["Here's what I can query for you:"]
+        try:
+            import store
+            allowed = store.get_allowed_tables(portal_user) if portal_user else None
+            if allowed:
+                schemas: dict[str, int] = {}
+                for fqn in allowed:
+                    parts = str(fqn).split(".")
+                    schema = parts[-2] if len(parts) >= 2 else "DEFAULT"
+                    schemas[schema] = schemas.get(schema, 0) + 1
+                for schema, count in sorted(schemas.items()):
+                    lines.append(f"  • *{schema}* — {count} table{'s' if count != 1 else ''}")
+            else:
+                lines.append("  • All tables in this workspace (no restrictions on your account)")
+        except Exception as exc:
+            log.debug("conversational: data inventory lookup failed: %s", exc)
+        metrics = _metric_names(account_id)
+        if metrics:
+            lines.append("\n*Defined business metrics:* " + ", ".join(metrics))
+        lines.append("\nTry a question like:")
+        intro = "\n".join(lines)
+        return intro, _example_questions(account_id)
+
+    if kind == "vague":
+        intro = (
+            "Happy to help — I just need to know what to measure. "
+            "Name a metric and (optionally) a breakdown or time range:"
+        )
+        return intro, _example_questions(account_id)
+
+    # All other kinds: delegate to build_reply, no split
+    return build_reply(kind, account_id, portal_user), []
