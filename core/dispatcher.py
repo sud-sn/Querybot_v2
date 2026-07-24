@@ -89,7 +89,8 @@ _DATA_REQUEST_ACTION_RE = re.compile(
 )
 _DATA_REQUEST_SHAPE_RE = re.compile(
     r"\b(?:all|top|bottom|total|count|number|average|trend|records?|rows?|"
-    r"fields?|columns?|include|with|where|whose|who\s+have|by|per|for\s+each|each)\b",
+    r"fields?|columns?|include|with|where|whose|who\s+have|by|per|for\s+each|each|"
+    r"revenue|sales|profit|amount|data|info|value)\b",
     re.IGNORECASE,
 )
 
