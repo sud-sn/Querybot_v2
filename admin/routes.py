@@ -8444,10 +8444,16 @@ async def admin_pending_users_reject(
                     text       = "",
                     platform   = "teams",
                 )
+                was_approved = (pending.get("status") == "approved")
+                bot_msg = (
+                    "Your access has been blocked. "
+                    if was_approved else
+                    "Your access request was not approved. "
+                ) + "Please contact your administrator for assistance."
+                
                 await adapter.send_message(
                     synthetic_event,
-                    "Your access request was not approved. "
-                    "Please contact your administrator for assistance.",
+                    bot_msg,
                 )
     except Exception as exc:
         log.warning("Proactive rejection message failed for pending_id=%d: %s", pending_id, exc)
@@ -8504,6 +8510,42 @@ async def admin_pending_users_toggle_active(request: Request, account_id: str, p
         store.update_user(portal_user["id"], is_active=new_state)
         state_str = "activated" if new_state else "deactivated"
         msg = f"Access {state_str} for {portal_user['name']}."
+
+        # Proactive notification
+        try:
+            import json as _json
+            platform_type = pending.get("platform_type", "teams")
+
+            try:
+                conv_ref = _json.loads(pending.get("conversation_ref") or "{}")
+            except (ValueError, TypeError):
+                conv_ref = {}
+
+            if platform_type == "teams" and conv_ref.get("service_url"):
+                teams_platforms = store.list_platforms("teams")
+                active_teams = [p for p in teams_platforms if p.get("is_active")]
+                if active_teams:
+                    from gateway.teams_adapter import TeamsAdapter
+                    from gateway.base import PlatformEvent
+                    adapter = TeamsAdapter(active_teams[0]["credentials"])
+                    synthetic_event = PlatformEvent(
+                        account_id = account_id,
+                        user_id    = pending["platform_user_id"],
+                        channel_id = pending["conversation_ref"],
+                        text       = "",
+                        platform   = "teams",
+                    )
+                    
+                    bot_msg = (
+                        "Your access has been restored."
+                        if new_state else
+                        "Your access has been temporarily suspended."
+                    )
+                    
+                    await adapter.send_message(synthetic_event, bot_msg)
+        except Exception as exc:
+            log.warning("Proactive toggle message failed for pending_id=%d: %s", pending_id, exc)
+
     else:
         msg = "Underlying user not found."
 
