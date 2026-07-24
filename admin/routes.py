@@ -8416,6 +8416,10 @@ async def admin_pending_users_reject(
         reviewer_note=reviewer_note,
     )
 
+    if pending.get("portal_user_id"):
+        store.update_user(pending["portal_user_id"], is_active=0)
+
+
     # Notify the user they were rejected so they can contact the admin
     try:
         import json as _json
@@ -8450,6 +8454,59 @@ async def admin_pending_users_reject(
 
     name = pending.get("display_name") or pending.get("platform_user_id", "?")
     msg  = f"Access rejected for {name}."
+    return RedirectResponse(
+        f"/admin/clients/{account_id}/pending-users?saved={quote(msg)}",
+        status_code=303,
+    )
+
+
+@router.post("/clients/{account_id}/pending-users/{pending_id}/delete")
+async def admin_pending_users_delete(request: Request, account_id: str, pending_id: int):
+    """Delete a pending platform user entirely (and their portal access if approved)."""
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+
+    pending = store.get_pending_user(pending_id, account_id)
+    if not pending:
+        return RedirectResponse(
+            f"/admin/clients/{account_id}/pending-users?saved={quote('Pending user not found.')}",
+            status_code=303,
+        )
+
+    if pending.get("portal_user_id"):
+        store.delete_user(pending["portal_user_id"])
+    store.delete_pending_user(pending_id, account_id)
+
+    name = pending.get("display_name") or pending.get("platform_user_id", "?")
+    msg  = f"User request and access deleted for {name}."
+    return RedirectResponse(
+        f"/admin/clients/{account_id}/pending-users?saved={quote(msg)}",
+        status_code=303,
+    )
+
+
+@router.post("/clients/{account_id}/pending-users/{pending_id}/toggle-active")
+async def admin_pending_users_toggle_active(request: Request, account_id: str, pending_id: int):
+    """Toggle the active status of an approved user's underlying portal_user."""
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+
+    pending = store.get_pending_user(pending_id, account_id)
+    if not pending or not pending.get("portal_user_id"):
+        return RedirectResponse(
+            f"/admin/clients/{account_id}/pending-users?saved={quote('User not found or not approved.')}",
+            status_code=303,
+        )
+
+    portal_user = store.get_user(pending["portal_user_id"])
+    if portal_user:
+        new_state = 0 if portal_user.get("is_active") else 1
+        store.update_user(portal_user["id"], is_active=new_state)
+        state_str = "activated" if new_state else "deactivated"
+        msg = f"Access {state_str} for {portal_user['name']}."
+    else:
+        msg = "Underlying user not found."
+
     return RedirectResponse(
         f"/admin/clients/{account_id}/pending-users?saved={quote(msg)}",
         status_code=303,

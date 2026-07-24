@@ -166,14 +166,57 @@
           </div>
 
         </div>
-        {% else %}
-        <!-- Already reviewed: show reviewer note -->
-        <div style="font-size:12px;color:var(--text-muted)">
-          {% if u.reviewer_note %}
-          <strong>Reviewer note:</strong> {{ u.reviewer_note }}
-          {% else %}
-          No reviewer note recorded.
-          {% endif %}
+        {% elif u.status == 'approved' %}
+        <div style="display:flex;gap:1.25rem;align-items:flex-start">
+          <div style="flex:1;font-size:12px;color:var(--text-muted)">
+            {% if u.reviewer_note %}
+            <strong>Reviewer note:</strong> {{ u.reviewer_note }}
+            {% else %}
+            No reviewer note recorded.
+            {% endif %}
+          </div>
+          <div style="display:flex;gap:0.5rem">
+            <form method="post" action="/admin/clients/{{ client.account_id }}/pending-users/{{ u.id }}/toggle-active">
+              <button type="submit" class="pu-btn" style="border-color:var(--border);color:var(--text)">
+                {% if u.portal_is_active %}Temporarily Stop Access{% else %}Re-activate Access{% endif %}
+              </button>
+            </form>
+            <form method="post" action="/admin/clients/{{ client.account_id }}/pending-users/{{ u.id }}/reject"
+                  onsubmit="return confirm('Block this user? They will be silently ignored if they message again.')">
+              <button type="submit" class="pu-btn pu-btn-reject">Block User</button>
+            </form>
+            <form method="post" action="/admin/clients/{{ client.account_id }}/pending-users/{{ u.id }}/delete"
+                  onsubmit="return confirm('Delete this user completely? Their portal access will also be removed.')">
+              <button type="submit" class="pu-btn" style="border-color:var(--border);color:#dc2626">Delete</button>
+            </form>
+          </div>
+        </div>
+
+        {% elif u.status == 'rejected' %}
+        <div style="display:flex;gap:1.25rem;align-items:flex-start">
+          <div style="flex:1;font-size:12px;color:var(--text-muted)">
+            {% if u.reviewer_note %}
+            <strong>Reviewer note:</strong> {{ u.reviewer_note }}
+            {% else %}
+            No reviewer note recorded.
+            {% endif %}
+          </div>
+          <div style="display:flex;gap:0.5rem">
+            <!-- Allow re-approving a rejected user -->
+            <form method="post" action="/admin/clients/{{ client.account_id }}/pending-users/{{ u.id }}/approve" style="display:flex;gap:0.5rem">
+              <select name="group_id" class="group-select" required style="margin:0;min-width:140px">
+                <option value="">— select group —</option>
+                {% for g in groups %}
+                <option value="{{ g.id }}">{{ g.name }}</option>
+                {% endfor %}
+              </select>
+              <button type="submit" class="pu-btn pu-btn-approve">Approve</button>
+            </form>
+            <form method="post" action="/admin/clients/{{ client.account_id }}/pending-users/{{ u.id }}/delete"
+                  onsubmit="return confirm('Delete this request completely?')">
+              <button type="submit" class="pu-btn" style="border-color:var(--border);color:#dc2626">Delete Request</button>
+            </form>
+          </div>
         </div>
         {% endif %}
       </div>

@@ -472,8 +472,11 @@ def list_pending_users(account_id: str, status: str = "pending") -> list[dict]:
     """Return pending platform users for this account filtered by status."""
     with get_db() as conn:
         rows = conn.execute(
-            "SELECT * FROM pending_platform_user WHERE account_id=? AND status=? "
-            "ORDER BY created_at DESC",
+            """SELECT p.*, pu.is_active AS portal_is_active 
+               FROM pending_platform_user p
+               LEFT JOIN portal_user pu ON p.portal_user_id = pu.id
+               WHERE p.account_id=? AND p.status=? 
+               ORDER BY p.created_at DESC""",
             (account_id, status),
         ).fetchall()
     return [dict(r) for r in rows]
@@ -589,6 +592,15 @@ def get_pending_user(pending_id: int, account_id: str) -> Optional[dict]:
             (pending_id, account_id),
         ).fetchone()
     return dict(row) if row else None
+
+
+def delete_pending_user(pending_id: int, account_id: str) -> None:
+    """Delete a pending platform user row entirely."""
+    with get_db() as conn:
+        conn.execute(
+            "DELETE FROM pending_platform_user WHERE id=? AND account_id=?",
+            (pending_id, account_id)
+        )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
