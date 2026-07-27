@@ -17,9 +17,108 @@ gate) so reports get the same compliance guarantees alerts already have.
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime
 
 log = logging.getLogger("querybot.report_engine")
+
+# Mirrors core/validator.py's _DIALECT map (kept local rather than importing
+# a private cross-module name for a 3-entry constant).
+_SQLGLOT_DIALECT = {
+    "snowflake": "snowflake",
+    "oracle": "oracle",
+    "azure_sql": "tsql",
+}
+
+# Defense-in-depth before interpolating a resolved fact_table/fact_column
+# into a SQL snippet that gets parsed (not just string-concatenated) --
+# these come from admin-configured date-role metadata, not raw user input,
+# but there's no reason not to guard the identifier shape anyway.
+_SAFE_IDENT_RE = re.compile(r"^[A-Za-z0-9_$]+(\.[A-Za-z0-9_$]+)*$")
+
+
+def _resolve_default_date_filter(account_id: str, metric: dict, state: dict) -> tuple[str, str] | None:
+    """
+    Resolve the single default date column a report metric should be
+    anchored to, using the SAME resolver the live chat pipeline uses
+    (core/contextual_dates.py::resolve_contextual_date_binding) -- but
+    reports have no natural-language question to score phrases against, so
+    a synthetic "today" question is passed. That still triggers
+    question_has_temporal_intent and detect_temporal_window("today"), and
+    with no explicit role phrase to match, the resolver falls straight
+    through to its own default-context precedence chain: the metric's own
+    metric_date_context.is_default row, then the fact table's default
+    approved date_roles entry, then a lone remaining context if exactly
+    one is configured. Returns None (skip filtering, run the metric's SQL
+    unchanged) whenever nothing resolves unambiguously.
+    """
+    base_table = (metric.get("base_table") or "").strip()
+    if not base_table:
+        return None
+
+    import store
+    from core.contextual_dates import resolve_contextual_date_binding
+    from core.semantic_contract import load_contract
+
+    metric_id = int(metric.get("id") or 0)
+    bindings = store.list_metric_date_contexts(account_id, metric_ids=[metric_id]) if metric_id else []
+    contract = load_contract((state or {}).get("kb_dir", ""))
+    date_roles = list(((contract or {}).get("model") or {}).get("date_roles") or [])
+    if not bindings and not date_roles:
+        return None
+
+    resolution = resolve_contextual_date_binding(
+        "today",
+        matched_metrics=[{"id": metric_id, "base_table": base_table, "name": metric.get("name")}],
+        bindings=bindings,
+        date_roles=date_roles,
+        required_fact_tables={base_table},
+    )
+    if resolution.get("status") != "selected":
+        return None
+    binding = resolution.get("binding") or {}
+    fact_table = str(binding.get("fact_table") or "").strip()
+    fact_column = str(binding.get("fact_column") or "").strip()
+    if not fact_table or not fact_column:
+        return None
+    return fact_table, fact_column
+
+
+def _apply_latest_date_filter(sql: str, fact_table: str, fact_column: str, db_type: str) -> str | None:
+    """
+    Anchor `sql` to the latest available date on `fact_column` -- taken from
+    `fact_table` itself, never a joined date dimension (a date dimension
+    commonly carries future calendar rows with no matching fact data, which
+    would silently anchor to a date with zero rows -- the exact pitfall
+    core/semantic_planner.py's prompt guidance warns the SQL-generation LLM
+    away from). Uses sqlglot to parse-mutate-regenerate (the same pattern
+    core/validator.py::repair_unambiguous_unknown_columns already uses)
+    rather than text-level SQL surgery, so existing WHERE/GROUP BY/CTEs are
+    handled correctly. Returns None -- meaning "run the original SQL
+    unchanged" -- on any parse failure, a UNION/INTERSECT/EXCEPT top-level
+    shape (filtering only one branch would be wrong), or an identifier that
+    fails the safety check. Never raises.
+    """
+    if not _SAFE_IDENT_RE.match(fact_table) or not _SAFE_IDENT_RE.match(fact_column):
+        return None
+    try:
+        import sqlglot
+        from sqlglot import exp as sg_exp
+    except ImportError:
+        return None
+
+    dialect = _SQLGLOT_DIALECT.get(db_type, "snowflake")
+    try:
+        tree = sqlglot.parse_one(sql, read=dialect)
+        if not isinstance(tree, sg_exp.Select):
+            return None
+        tree = tree.where(
+            f"{fact_column} = (SELECT MAX({fact_column}) FROM {fact_table})",
+            dialect=dialect,
+        )
+        return tree.sql(dialect=dialect)
+    except Exception:
+        return None
 
 
 def run_metric_for_report(account_id: str, user: dict, metric: dict) -> dict:
@@ -50,12 +149,25 @@ def run_metric_for_report(account_id: str, user: dict, metric: dict) -> dict:
     if not db_cfg:
         return {"ok": False, "reason": "no_database", "metric_name": metric_name}
 
+    state = store.get_client_state(account_id)
+
+    try:
+        date_filter = _resolve_default_date_filter(account_id, metric, state)
+        if date_filter:
+            fact_table, fact_column = date_filter
+            filtered_sql = _apply_latest_date_filter(
+                sql, fact_table, fact_column, db_cfg.get("db_type", "azure_sql"),
+            )
+            if filtered_sql:
+                sql = filtered_sql
+    except Exception as exc:
+        log.debug("run_metric_for_report: latest-date filter skipped for metric %s: %s", metric_name, exc)
+
     try:
         from core.compliance.governed_query import execute_governed_query
         from core.compliance.policy_engine import evaluate, resolve_context
         from core.schema import load_known_tables, load_schema_columns
 
-        state = store.get_client_state(account_id)
         context = resolve_context(
             account_id, user, action="query_execution",
             channel="report", purpose_id="",

@@ -157,6 +157,235 @@ class RunMetricForReportExecutionTests(unittest.TestCase):
         self.assertIsNone(result["chart"])
 
 
+class ApplyLatestDateFilterTests(unittest.TestCase):
+    """core.report_engine._apply_latest_date_filter -- sqlglot parse-mutate-
+    regenerate anchor injection. Mirrors the exact sqlglot cases manually
+    verified during planning (no WHERE, existing WHERE, WHERE+GROUP BY,
+    string-literal-containing-clause-text, CTE, UNION)."""
+
+    def test_no_existing_where_injects_new_clause(self):
+        sql = "SELECT SUM(Revenue) AS Revenue FROM Sales"
+        result = re_engine._apply_latest_date_filter(sql, "Sales", "SnapshotDate", "azure_sql")
+        self.assertIn("WHERE", result.upper())
+        self.assertIn("MAX(SnapshotDate)".upper(), result.upper())
+        self.assertIn("SALES", result.upper())
+
+    def test_existing_where_appends_with_and(self):
+        sql = "SELECT SUM(Revenue) AS Revenue FROM Sales WHERE Region = 'US'"
+        result = re_engine._apply_latest_date_filter(sql, "Sales", "SnapshotDate", "azure_sql")
+        self.assertIn("REGION", result.upper())
+        self.assertIn("AND", result.upper())
+        self.assertIn("MAX(SNAPSHOTDATE)", result.upper())
+
+    def test_where_followed_by_group_by_filter_lands_in_where(self):
+        sql = "SELECT Region, SUM(Revenue) AS Revenue FROM Sales WHERE Region = 'US' GROUP BY Region"
+        result = re_engine._apply_latest_date_filter(sql, "Sales", "SnapshotDate", "azure_sql")
+        # The MAX(...) anchor must land before GROUP BY, not after.
+        where_idx = result.upper().index("WHERE")
+        group_idx = result.upper().index("GROUP BY")
+        max_idx = result.upper().index("MAX(SNAPSHOTDATE)")
+        self.assertTrue(where_idx < max_idx < group_idx)
+
+    def test_string_literal_containing_clause_keywords_not_confused(self):
+        sql = "SELECT x FROM t WHERE status = 'GROUP BY THIS'"
+        result = re_engine._apply_latest_date_filter(sql, "t", "d", "azure_sql")
+        self.assertIn("GROUP BY THIS", result)
+        self.assertIn("MAX(d)".upper(), result.upper())
+
+    def test_cte_gets_filter_on_outer_select(self):
+        sql = "WITH cte AS (SELECT 1 AS x) SELECT SUM(x) FROM cte"
+        result = re_engine._apply_latest_date_filter(sql, "cte", "d", "azure_sql")
+        self.assertIsNotNone(result)
+        self.assertIn("MAX(d)".upper(), result.upper())
+
+    def test_union_returns_none(self):
+        sql = "SELECT a FROM t1 UNION SELECT b FROM t2"
+        result = re_engine._apply_latest_date_filter(sql, "t1", "d", "azure_sql")
+        self.assertIsNone(result)
+
+    def test_unparseable_sql_returns_none(self):
+        sql = "SELECT SELECT FROM WHERE ((("
+        result = re_engine._apply_latest_date_filter(sql, "t", "d", "azure_sql")
+        self.assertIsNone(result)
+
+    def test_unsafe_fact_table_returns_none(self):
+        sql = "SELECT SUM(x) FROM t"
+        result = re_engine._apply_latest_date_filter(sql, "t; DROP TABLE users; --", "d", "azure_sql")
+        self.assertIsNone(result)
+
+    def test_unsafe_fact_column_returns_none(self):
+        sql = "SELECT SUM(x) FROM t"
+        result = re_engine._apply_latest_date_filter(sql, "t", "d) OR (1=1", "azure_sql")
+        self.assertIsNone(result)
+
+    def test_qualified_table_name_allowed(self):
+        sql = "SELECT SUM(x) FROM t"
+        result = re_engine._apply_latest_date_filter(sql, "DB.SCHEMA.TABLE", "d", "azure_sql")
+        self.assertIsNotNone(result)
+
+    def test_all_three_dialects_produce_valid_output(self):
+        sql = "SELECT SUM(x) AS x FROM t"
+        for db_type in ("snowflake", "oracle", "azure_sql"):
+            result = re_engine._apply_latest_date_filter(sql, "t", "d", db_type)
+            self.assertIsNotNone(result, db_type)
+            self.assertIn("MAX(D)", result.upper(), db_type)
+
+
+class ResolveDefaultDateFilterTests(unittest.TestCase):
+    """core.report_engine._resolve_default_date_filter -- reuses
+    resolve_contextual_date_binding with a synthetic 'today' question since
+    reports have no live question text to score phrases against."""
+
+    def test_no_base_table_returns_none_without_any_store_calls(self):
+        metric = {"id": 1, "name": "Revenue", "base_table": ""}
+        with patch("store.list_metric_date_contexts") as mock_list:
+            result = re_engine._resolve_default_date_filter("acct1", metric, {})
+        self.assertIsNone(result)
+        mock_list.assert_not_called()
+
+    def test_no_bindings_and_no_date_roles_returns_none(self):
+        metric = {"id": 1, "name": "Revenue", "base_table": "SALES.REVENUE"}
+        with (
+            patch("store.list_metric_date_contexts", return_value=[]),
+            patch("core.semantic_contract.load_contract", return_value={}),
+        ):
+            result = re_engine._resolve_default_date_filter("acct1", metric, {"kb_dir": "x"})
+        self.assertIsNone(result)
+
+    def test_resolver_status_none_returns_none(self):
+        metric = {"id": 1, "name": "Revenue", "base_table": "SALES.REVENUE"}
+        with (
+            patch("store.list_metric_date_contexts", return_value=[{"is_default": 0}]),
+            patch("core.semantic_contract.load_contract", return_value={"model": {"date_roles": []}}),
+            patch("core.contextual_dates.resolve_contextual_date_binding", return_value={"status": "none"}),
+        ):
+            result = re_engine._resolve_default_date_filter("acct1", metric, {"kb_dir": "x"})
+        self.assertIsNone(result)
+
+    def test_resolver_status_ambiguous_returns_none(self):
+        metric = {"id": 1, "name": "Revenue", "base_table": "SALES.REVENUE"}
+        with (
+            patch("store.list_metric_date_contexts", return_value=[{"is_default": 0}]),
+            patch("core.semantic_contract.load_contract", return_value={"model": {"date_roles": []}}),
+            patch("core.contextual_dates.resolve_contextual_date_binding", return_value={"status": "ambiguous"}),
+        ):
+            result = re_engine._resolve_default_date_filter("acct1", metric, {"kb_dir": "x"})
+        self.assertIsNone(result)
+
+    def test_resolver_status_selected_many_returns_none(self):
+        metric = {"id": 1, "name": "Revenue", "base_table": "SALES.REVENUE"}
+        with (
+            patch("store.list_metric_date_contexts", return_value=[{"is_default": 0}]),
+            patch("core.semantic_contract.load_contract", return_value={"model": {"date_roles": []}}),
+            patch("core.contextual_dates.resolve_contextual_date_binding", return_value={"status": "selected_many"}),
+        ):
+            result = re_engine._resolve_default_date_filter("acct1", metric, {"kb_dir": "x"})
+        self.assertIsNone(result)
+
+    def test_metric_level_default_selected_returns_fact_table_and_column(self):
+        metric = {"id": 1, "name": "Revenue", "base_table": "SALES.REVENUE"}
+        binding = {"fact_table": "SALES.REVENUE", "fact_column": "INVOICE_DATE_ID"}
+        with (
+            patch("store.list_metric_date_contexts", return_value=[{"is_default": 1, **binding}]),
+            patch("core.semantic_contract.load_contract", return_value={"model": {"date_roles": []}}),
+            patch("core.contextual_dates.resolve_contextual_date_binding",
+                  return_value={"status": "selected", "binding": binding}) as mock_resolve,
+        ):
+            result = re_engine._resolve_default_date_filter("acct1", metric, {"kb_dir": "x"})
+        self.assertEqual(result, ("SALES.REVENUE", "INVOICE_DATE_ID"))
+        # Synthetic "today" question drives the resolver -- no live NL question exists for reports.
+        self.assertEqual(mock_resolve.call_args[0][0], "today")
+
+    def test_fact_level_default_role_selected_returns_fact_table_and_column(self):
+        metric = {"id": 1, "name": "Revenue", "base_table": "SALES.REVENUE"}
+        binding = {"fact_table": "SALES.REVENUE", "fact_column": "SHIP_DATE_ID"}
+        with (
+            patch("store.list_metric_date_contexts", return_value=[]),
+            patch("core.semantic_contract.load_contract",
+                  return_value={"model": {"date_roles": [{"is_default": 1, "status": "approved", **binding}]}}),
+            patch("core.contextual_dates.resolve_contextual_date_binding",
+                  return_value={"status": "selected", "binding": binding}),
+        ):
+            result = re_engine._resolve_default_date_filter("acct1", metric, {"kb_dir": "x"})
+        self.assertEqual(result, ("SALES.REVENUE", "SHIP_DATE_ID"))
+
+    def test_selected_binding_missing_fact_column_returns_none(self):
+        metric = {"id": 1, "name": "Revenue", "base_table": "SALES.REVENUE"}
+        with (
+            patch("store.list_metric_date_contexts", return_value=[{"is_default": 1}]),
+            patch("core.semantic_contract.load_contract", return_value={"model": {"date_roles": []}}),
+            patch("core.contextual_dates.resolve_contextual_date_binding",
+                  return_value={"status": "selected", "binding": {"fact_table": "SALES.REVENUE", "fact_column": ""}}),
+        ):
+            result = re_engine._resolve_default_date_filter("acct1", metric, {"kb_dir": "x"})
+        self.assertIsNone(result)
+
+
+class RunMetricForReportDateFilterIntegrationTests(unittest.TestCase):
+    """Verifies the resolved/injected SQL is what actually reaches
+    execute_governed_query -- the real end-to-end wiring, not just the
+    two helpers in isolation."""
+
+    def _run(self, *, date_filter):
+        captured = {}
+
+        def _fake_execute(creds, db_type, sql, **kwargs):
+            captured["sql"] = sql
+            governed = MagicMock()
+            governed.rows = [{"Revenue": 100.0}]
+            governed.analysis.resources = []
+            return governed
+
+        with (
+            patch("store.get_allowed_tables", return_value=None),
+            patch("store.get_client_state", return_value={"kb_dir": "x", "schema_dir": ""}),
+            patch("core.pipeline_context.get_client_db",
+                  return_value={"db_type": "azure_sql", "credentials": {}}),
+            patch("core.report_engine._resolve_default_date_filter", return_value=date_filter),
+            patch("core.compliance.policy_engine.resolve_context", return_value=MagicMock(purpose_id="p1")),
+            patch("core.compliance.governed_query.execute_governed_query", side_effect=_fake_execute),
+            patch("core.compliance.policy_engine.evaluate", return_value=MagicMock(effective_allowed=True)),
+            patch("core.schema.load_known_tables", return_value={}),
+            patch("core.schema.load_schema_columns", return_value={}),
+        ):
+            re_engine.run_metric_for_report("acct1", {"id": 1}, _metric())
+        return captured.get("sql", "")
+
+    def test_resolvable_default_injects_filter_into_executed_sql(self):
+        sql = self._run(date_filter=("SALES.REVENUE", "SNAPSHOT_DATE_ID"))
+        self.assertIn("MAX(SNAPSHOT_DATE_ID)".upper(), sql.upper())
+
+    def test_no_resolvable_default_leaves_sql_byte_for_byte_unchanged(self):
+        sql = self._run(date_filter=None)
+        self.assertEqual(sql, _metric()["sql_template"])
+
+    def test_date_filter_resolution_exception_falls_back_to_original_sql(self):
+        with patch("core.report_engine._resolve_default_date_filter", side_effect=Exception("boom")):
+            captured = {}
+
+            def _fake_execute(creds, db_type, sql, **kwargs):
+                captured["sql"] = sql
+                governed = MagicMock()
+                governed.rows = [{"Revenue": 100.0}]
+                governed.analysis.resources = []
+                return governed
+
+            with (
+                patch("store.get_allowed_tables", return_value=None),
+                patch("store.get_client_state", return_value={"kb_dir": "x", "schema_dir": ""}),
+                patch("core.pipeline_context.get_client_db",
+                      return_value={"db_type": "azure_sql", "credentials": {}}),
+                patch("core.compliance.policy_engine.resolve_context", return_value=MagicMock(purpose_id="p1")),
+                patch("core.compliance.governed_query.execute_governed_query", side_effect=_fake_execute),
+                patch("core.compliance.policy_engine.evaluate", return_value=MagicMock(effective_allowed=True)),
+                patch("core.schema.load_known_tables", return_value={}),
+                patch("core.schema.load_schema_columns", return_value={}),
+            ):
+                result = re_engine.run_metric_for_report("acct1", {"id": 1}, _metric())
+        self.assertTrue(result["ok"])  # must not fail the metric
+        self.assertEqual(captured["sql"], _metric()["sql_template"])
+
+
 class BuildReportResponseTests(unittest.TestCase):
 
     def test_no_metrics_anywhere_in_account(self):
