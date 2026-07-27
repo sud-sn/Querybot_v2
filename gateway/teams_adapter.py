@@ -816,13 +816,24 @@ class TeamsAdapter(GovernedChannelSessionMixin, PlatformAdapter):
                 log.warning("Teams send_chart: native chart card POST failed — falling back to PNG")
 
         try:
-            from core.chart import generate_chart
+            from core.chart import generate_chart, UnsupportedChartTypeError
         except Exception as e:
             log.debug("Teams send_chart: renderer unavailable (%s) — skipping", e)
             return
 
         try:
             png_bytes = generate_chart(rows, chart_type, title)
+        except UnsupportedChartTypeError:
+            # Honest message, not silence and not a wrong-shape substitute --
+            # a prior bug silently rendered these as a plain bar chart
+            # (correct numbers, misleading shape); returning nothing here
+            # would be the same failure mode by a different name.
+            await self.send_message(
+                event,
+                f"📊 This result is best viewed as a {chart_type} chart, which "
+                "isn't available here yet — view the full chart in the portal.",
+            )
+            return
         except Exception as e:
             log.warning("Teams send_chart: render failed: %s", e)
             return
