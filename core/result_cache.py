@@ -489,6 +489,28 @@ class ResultCache:
                 return {}
             return self._snapshot_payload(entry)
 
+    def list_snapshot_summaries(self, session_id: str) -> list[dict]:
+        """Return chronological, row-free metadata for cached result references."""
+        with self._lock:
+            summaries: list[dict] = []
+            for result_id in list(self._session_snapshots.get(session_id, [])):
+                entry = self._snapshots.get(result_id)
+                if entry is None or entry.session_id != session_id:
+                    continue
+                if entry.is_expired():
+                    self._remove_snapshot(result_id)
+                    continue
+                summaries.append(
+                    {
+                        "result_id": entry.result_id,
+                        "parent_result_id": entry.parent_result_id,
+                        "operation": entry.operation,
+                        "row_count": len(entry.rows),
+                        "question": entry.question,
+                    }
+                )
+            return summaries
+
     def restore_parent(self, session_id: str, result_id: str | None = None) -> dict:
         """Make the parent snapshot current and return it without copying rows."""
         with self._lock:

@@ -43,6 +43,25 @@ _SORT_RE = re.compile(
     r"by\s+(.+?)(?:\s+(ascending|asc|descending|desc))?\s*[.!]?\s*$",
     re.IGNORECASE,
 )
+_PRESENTATION_RE = re.compile(
+    r"^\s*(?:show|render|display|change|give)(?:\s+me)?\s+"
+    r"(?:(?:this|the|these|current|previous)\s+)?"
+    r"(?:(?:result|results|data|dataset|chart)\s+)?"
+    r"(?:as|in|into)\s+(?:an?\s+)?"
+    r"(area|bar|line|pie|donut|scatter|table)(?:\s+chart)?\s*[.!]?\s*$",
+    re.IGNORECASE,
+)
+_KEEP_TOP_ONE_RE = re.compile(
+    r"^\s*(?:keep|show)\s+(?:only\s+)?(?:the\s+)?top\s+one"
+    r"(?:\s+(?:row|result|record))?\s*[.!]?\s*$",
+    re.IGNORECASE,
+)
+_POSITIONAL_RE = re.compile(
+    r"^\s*(keep|show|exclude|remove|omit|drop)\s+"
+    r"(?:only\s+)?(?:the\s+)?(first|last|top)\s+"
+    r"(one|\d{1,4})(?:\s+(?:rows?|results?|records?))?\s*[.!]?\s*$",
+    re.IGNORECASE,
+)
 _KEEP_VALUES_RE = re.compile(
     r"^\s*(?:(?:give|show)(?:\s+me)?\s+)?"
     r"(?:(?:the\s+)?(?:data|rows|results?|records?)\s+)?"
@@ -90,7 +109,7 @@ _AGGREGATIONS = {
 class ResultCommand:
     action: Literal[
         "exclude", "undo", "keep_top", "keep_values", "sort", "filter", "aggregate",
-        "contribution", "profit_percentage", "ratio",
+        "contribution", "profit_percentage", "ratio", "presentation",
     ]
     target_text: str = ""
     limit: int | None = None
@@ -102,6 +121,7 @@ class ResultCommand:
     value_text: str = ""
     numerator_text: str = ""
     denominator_text: str = ""
+    presentation_type: str = ""
     fallback_allowed: bool = False
 
 
@@ -117,6 +137,9 @@ class ResultCommandOutcome:
     affected_count: int = 0
     source_result_id: str = ""
     derived_result_id: str = ""
+    clarification_required: bool = False
+    clarification_prompt: str = ""
+    clarification_options: list[dict[str, str]] = field(default_factory=list)
 
 
 def parse_result_command(text: str) -> ResultCommand | None:
@@ -126,6 +149,18 @@ def parse_result_command(text: str) -> ResultCommand | None:
         return None
     if _UNDO_RE.fullmatch(value):
         return ResultCommand("undo")
+    match = _PRESENTATION_RE.fullmatch(value)
+    if match:
+        return ResultCommand("presentation", presentation_type=match.group(1).lower())
+    if _KEEP_TOP_ONE_RE.fullmatch(value):
+        return ResultCommand("keep_top", limit=1)
+    match = _POSITIONAL_RE.fullmatch(value)
+    if match:
+        verb, position, amount = (part.lower() for part in match.groups())
+        limit = 1 if amount == "one" else max(1, min(int(amount), 1000))
+        if verb in {"exclude", "remove", "omit", "drop"}:
+            return ResultCommand("exclude", target_text=f"{position} {limit}")
+        return ResultCommand("keep_top", limit=limit, direction="asc" if position == "last" else "desc")
     match = _EXCLUDE_RE.fullmatch(value)
     if match:
         target = _clean_target(match.group(1))
@@ -286,9 +321,55 @@ def execute_result_command(
                 source_result_id=source_id,
             )
 
+        if command.action == "presentation":
+            presentation_type = str(command.presentation_type or "").lower()
+            metadata = dict(source.get("metadata") or {})
+            metadata.update({
+                "chart_type_override": presentation_type,
+                "presentation_only": True,
+                "metadata_contains_raw_values": False,
+            })
+            snapshot = cache.derive_snapshot(
+                session_id,
+                source_id,
+                rows,
+                question=str(source.get("question") or "Result"),
+                operation="presentation",
+                sql=str(source.get("sql") or ""),
+                column_formats=dict(source.get("column_formats") or {}),
+                metadata=metadata,
+            )
+            label = "table" if presentation_type == "table" else f"{presentation_type} chart"
+            return ResultCommandOutcome(
+                handled=True,
+                ok=True,
+                message=f"Showing the current result as a {label}.",
+                snapshot=snapshot,
+                operation="presentation",
+                rows_before=before,
+                rows_after=before,
+                source_result_id=source_id,
+                derived_result_id=str(snapshot.get("result_id") or ""),
+            )
+
         if command.action == "exclude":
             match_groups, error = _resolve_exclusions(rows, command.target_text)
             if error:
+                clarification = _build_reference_clarification(
+                    rows, command.target_text, action="exclude",
+                )
+                if clarification:
+                    prompt, options = clarification
+                    return ResultCommandOutcome(
+                        handled=True,
+                        message=error,
+                        source_result_id=source_id,
+                        rows_before=before,
+                        rows_after=before,
+                        clarification_required=True,
+                        clarification_prompt=prompt,
+                        clarification_options=options,
+                    )
                 return ResultCommandOutcome(
                     handled=True,
                     message=error,
@@ -365,11 +446,20 @@ def execute_result_command(
                 order_column, error = _resolve_column(rows, command.metric_text)
                 if error:
                     return _command_error(command, source_id, before, error)
-            order_clause = (
-                f" ORDER BY {_quote_identifier(order_column)} DESC NULLS LAST"
-                if order_column else ""
-            )
-            transform_sql = f"SELECT * FROM result{order_clause} LIMIT {limit}"
+            descending = command.direction != "asc"
+            order_keyword = "DESC" if descending else "ASC"
+            if order_column:
+                order_clause = (
+                    f" ORDER BY {_quote_identifier(order_column)} "
+                    f"{order_keyword} NULLS LAST"
+                )
+                transform_sql = f"SELECT * FROM result{order_clause} LIMIT {limit}"
+            elif not descending:
+                transform_sql = (
+                    f"SELECT * FROM result OFFSET {max(0, before - limit)} LIMIT {limit}"
+                )
+            else:
+                transform_sql = f"SELECT * FROM result LIMIT {limit}"
             transformed = cache.query(
                 session_id, transform_sql, result_id=source_id,
             )
@@ -378,9 +468,15 @@ def execute_result_command(
                 populated = [row for row in rows if row.get(order_column) is not None]
                 null_rows = [row for row in rows if row.get(order_column) is None]
                 expected_rows = sorted(
-                    populated, key=lambda row: row.get(order_column), reverse=True,
+                    populated,
+                    key=lambda row: row.get(order_column),
+                    reverse=descending,
                 ) + null_rows
-            expected_rows = expected_rows[:limit]
+                expected_rows = expected_rows[:limit]
+            elif descending:
+                expected_rows = expected_rows[:limit]
+            else:
+                expected_rows = expected_rows[-limit:]
             if transformed != expected_rows:
                 transformed = expected_rows
             snapshot = cache.derive_snapshot(
@@ -393,13 +489,15 @@ def execute_result_command(
                 metadata={
                     "limit": limit,
                     "order_column": order_column,
+                    "direction": command.direction,
                     "metadata_contains_raw_values": False,
                 },
             )
+            position = "last" if not descending and not order_column else "first"
             return ResultCommandOutcome(
                 handled=True,
                 ok=True,
-                message=f"Kept the first {len(transformed)} rows from the current result.",
+                message=f"Kept the {position} {len(transformed)} rows from the current result.",
                 snapshot=snapshot,
                 operation="keep_top",
                 rows_before=before,
@@ -414,6 +512,21 @@ def execute_result_command(
                 rows, command.target_text,
             )
             if error:
+                clarification = _build_reference_clarification(
+                    rows, command.target_text, action="keep",
+                )
+                if clarification:
+                    prompt, options = clarification
+                    return ResultCommandOutcome(
+                        handled=True,
+                        message=error,
+                        source_result_id=source_id,
+                        rows_before=before,
+                        rows_after=before,
+                        clarification_required=True,
+                        clarification_prompt=prompt,
+                        clarification_options=options,
+                    )
                 return _command_error(command, source_id, before, error)
 
             predicates = [
@@ -1018,6 +1131,15 @@ def _resolve_exclusions(
         # do not accidentally remove unrelated records.
         return [list(rows[index].items())], ""
 
+    positional_match = re.fullmatch(
+        r"(first|last|top)\s+(\d+)", target_text.strip(), re.IGNORECASE,
+    )
+    if positional_match:
+        position = positional_match.group(1).lower()
+        count = min(int(positional_match.group(2)), len(rows))
+        selected = rows[-count:] if position == "last" else rows[:count]
+        return [list(row.items()) for row in selected], ""
+
     has_list_separator = bool(re.search(r",|\band\b", target_text, re.IGNORECASE))
     if not has_list_separator:
         whole_matches = _find_value_matches(rows, target_text)
@@ -1049,6 +1171,50 @@ def _resolve_exclusions(
             )
         resolved.append([matches[0]])
     return resolved, ""
+
+
+def _build_reference_clarification(
+    rows: list[dict], target_text: str, *, action: str,
+) -> tuple[str, list[dict[str, str]]] | None:
+    """Build safe, deterministic choices for an ambiguous cached-result reference."""
+    temporal_matches = _find_temporal_value_matches(rows, target_text)
+    if temporal_matches:
+        options: list[dict[str, str]] = []
+        seen: set[tuple[int, int]] = set()
+        for _, value in temporal_matches:
+            year_month = _value_year_month(value)
+            if not year_month or year_month in seen:
+                continue
+            seen.add(year_month)
+            year, month = year_month
+            label = f"{month_name[month]} {year}"
+            options.append({
+                "label": label,
+                "value": label,
+                "resolved_question": f"{action} {label}",
+            })
+        if len(options) > 1:
+            options.sort(key=lambda option: option["label"])
+            return "Which month did you mean?", options
+
+    matches = _find_value_matches(rows, target_text)
+    row_options: list[dict[str, str]] = []
+    seen_rows: set[int] = set()
+    for column, value in matches:
+        for index, row in enumerate(rows):
+            if index in seen_rows or row.get(column) != value:
+                continue
+            seen_rows.add(index)
+            label = f"Row {index + 1} in {column}"
+            row_options.append({
+                "label": label,
+                "value": f"row {index + 1}",
+                "resolved_question": f"{action} row {index + 1}",
+            })
+            break
+    if len(row_options) > 1:
+        return "That reference matches more than one row. Which one did you mean?", row_options
+    return None
 
 
 def _resolve_inclusions(

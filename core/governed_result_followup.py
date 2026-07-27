@@ -7,6 +7,7 @@ plans compile to ``ResultCommand`` and execute against the session-local cache.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Literal
 
@@ -20,7 +21,9 @@ from core.result_commands import (
 from core.result_planner import plan_result_command
 
 
-FollowupStatus = Literal["executed", "unsupported", "blocked", "missing", "error"]
+FollowupStatus = Literal[
+    "executed", "clarification", "unsupported", "blocked", "missing", "error"
+]
 
 
 @dataclass(frozen=True)
@@ -88,6 +91,165 @@ def _evidence(*, planner_used: bool, planner_metadata: dict | None = None) -> di
     }
 
 
+_RESULT_ORDINALS = {
+    "first": 1,
+    "second": 2,
+    "third": 3,
+    "fourth": 4,
+    "fifth": 5,
+    "sixth": 6,
+    "seventh": 7,
+    "eighth": 8,
+    "ninth": 9,
+    "tenth": 10,
+}
+_NUMBERED_RESULT_RE = re.compile(
+    r"\b(?:result|answer|query)\s*(?:number|no\.?|#)?\s*(\d+)\b",
+    re.IGNORECASE,
+)
+_ORDINAL_RESULT_RE = re.compile(
+    rf"\b({'|'.join(_RESULT_ORDINALS)})\s+(?:result|answer|query)\b",
+    re.IGNORECASE,
+)
+_PREVIOUS_RESULT_RE = re.compile(
+    r"\b(?:the\s+)?(?:previous|prior)\s+(?:result|answer|query)\b"
+    r"|\bthe\s+one\s+before\b",
+    re.IGNORECASE,
+)
+_EARLIER_RESULT_RE = re.compile(
+    r"\b(?:the\s+)?earlier\s+(?:result|answer|query)\b",
+    re.IGNORECASE,
+)
+_CURRENT_RESULT_RE = re.compile(
+    r"\b(?:the\s+)?(?:current|latest|last|this|that)\s+"
+    r"(?:result|answer|query)\b",
+    re.IGNORECASE,
+)
+
+
+@dataclass(frozen=True)
+class _ResultReference:
+    question: str
+    result_id: str | None
+    clarification: ResultCommandOutcome | None = None
+
+
+def _short_question(value: str, limit: int = 72) -> str:
+    text = " ".join(str(value or "").split())
+    return text if len(text) <= limit else f"{text[: limit - 3].rstrip()}..."
+
+
+def _reference_clarification(
+    question: str,
+    summaries: list[dict],
+    match: re.Match[str] | None,
+    message: str,
+) -> _ResultReference:
+    options: list[dict[str, str]] = []
+    for index, summary in enumerate(summaries, start=1):
+        reference = f"result {index}"
+        resolved = (
+            f"{question[:match.start()]}{reference}{question[match.end():]}"
+            if match is not None
+            else f"{question} using {reference}"
+        )
+        options.append({
+            "id": reference.replace(" ", "-"),
+            "label": f"Result {index}: {_short_question(summary.get('question', ''))}",
+            "value": reference,
+            "resolved_question": resolved.strip(),
+        })
+    outcome = ResultCommandOutcome(
+        handled=True,
+        ok=False,
+        message=message,
+        clarification_required=True,
+        clarification_prompt=message,
+        clarification_options=options,
+    )
+    return _ResultReference(question=question, result_id=None, clarification=outcome)
+
+
+def _resolve_result_reference(
+    question: str,
+    session_id: str,
+    source_result_id: str | None,
+    cache: ResultCache,
+) -> _ResultReference:
+    """Resolve conversational result references without reading cached values."""
+    summaries = cache.list_snapshot_summaries(session_id)
+    if not summaries:
+        return _ResultReference(question=question, result_id=source_result_id)
+
+    numbered = _NUMBERED_RESULT_RE.search(question)
+    ordinal = _ORDINAL_RESULT_RE.search(question)
+    previous = _PREVIOUS_RESULT_RE.search(question)
+    earlier = _EARLIER_RESULT_RE.search(question)
+    current = _CURRENT_RESULT_RE.search(question)
+    match = numbered or ordinal or previous or earlier or current
+    if match is None:
+        return _ResultReference(
+            question=question,
+            result_id=source_result_id or str(summaries[-1]["result_id"]),
+        )
+
+    index: int | None = None
+    if numbered:
+        index = int(numbered.group(1)) - 1
+    elif ordinal:
+        index = _RESULT_ORDINALS[ordinal.group(1).lower()] - 1
+    elif previous:
+        current_index = len(summaries) - 1
+        if source_result_id:
+            current_index = next(
+                (
+                    idx
+                    for idx, item in enumerate(summaries)
+                    if item["result_id"] == source_result_id
+                ),
+                current_index,
+            )
+        index = current_index - 1
+    elif earlier:
+        candidates = summaries[:-1]
+        if len(candidates) == 1:
+            index = 0
+        else:
+            return _reference_clarification(
+                question,
+                candidates,
+                earlier,
+                "Which earlier result do you mean?",
+            )
+    else:
+        index = len(summaries) - 1
+        if source_result_id and current and current.group(0).lower().strip().startswith(
+            ("this", "that", "the current")
+        ):
+            index = next(
+                (
+                    idx
+                    for idx, item in enumerate(summaries)
+                    if item["result_id"] == source_result_id
+                ),
+                index,
+            )
+
+    if index is None or index < 0 or index >= len(summaries):
+        return _reference_clarification(
+            question,
+            summaries,
+            match,
+            "That result is not available. Which cached result should I use?",
+        )
+
+    normalized = f"{question[:match.start()]}this result{question[match.end():]}".strip()
+    return _ResultReference(
+        question=normalized,
+        result_id=str(summaries[index]["result_id"]),
+    )
+
+
 async def run_governed_result_followup(
     question: str,
     session_id: str,
@@ -97,6 +259,22 @@ async def run_governed_result_followup(
     cache: ResultCache = result_cache,
 ) -> GovernedFollowupResult:
     """Plan and execute one result follow-up without disclosing cached values."""
+    reference = _resolve_result_reference(
+        question,
+        session_id,
+        source_result_id,
+        cache,
+    )
+    if reference.clarification is not None:
+        return GovernedFollowupResult(
+            "clarification",
+            outcome=reference.clarification,
+            reason=reference.clarification.message,
+            evidence=_evidence(planner_used=False),
+        )
+
+    source_result_id = reference.result_id
+    question = reference.question
     snapshot = cache.get_snapshot(session_id, source_result_id)
     if not snapshot:
         return GovernedFollowupResult(
@@ -113,8 +291,13 @@ async def run_governed_result_followup(
             cache=cache,
             source_result_id=str(snapshot.get("result_id") or source_result_id or ""),
         )
+        status: FollowupStatus = (
+            "clarification"
+            if outcome.clarification_required
+            else ("executed" if outcome.ok else "error")
+        )
         return GovernedFollowupResult(
-            "executed" if outcome.ok else "error",
+            status,
             command=command,
             outcome=outcome,
             reason=outcome.message,
@@ -150,8 +333,13 @@ async def run_governed_result_followup(
         cache=cache,
         source_result_id=str(snapshot.get("result_id") or source_result_id or ""),
     )
+    status = (
+        "clarification"
+        if outcome.clarification_required
+        else ("executed" if outcome.ok else "error")
+    )
     return GovernedFollowupResult(
-        "executed" if outcome.ok else "error",
+        status,
         command=planned.command,
         outcome=outcome,
         reason=outcome.message,

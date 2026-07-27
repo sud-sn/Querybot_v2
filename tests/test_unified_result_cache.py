@@ -135,6 +135,114 @@ class GovernedResultFollowupTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.status, "unsupported")
         self.assertFalse(result.evidence["database_queried"])
 
+    async def test_previous_result_presentation_uses_prior_cached_snapshot(self):
+        latest_result_id = self.cache.store(
+            self.session_id,
+            [{"WAREHOUSE": "A", "REVENUE": 10.0}],
+            "Revenue by warehouse",
+            "SELECT governed warehouse query",
+        )
+
+        result = await run_governed_result_followup(
+            "show the previous result as a bar chart",
+            self.session_id,
+            source_result_id=latest_result_id,
+            cache=self.cache,
+        )
+
+        self.assertTrue(result.executed, result.reason)
+        self.assertEqual(result.outcome.snapshot["parent_result_id"], self.result_id)
+        self.assertEqual(
+            result.outcome.snapshot["metadata"]["chart_type_override"],
+            "bar",
+        )
+        self.assertEqual(result.evidence["rows_sent_to_llm"], 0)
+        self.assertFalse(result.evidence["database_queried"])
+
+    async def test_numbered_result_presentation_uses_requested_snapshot(self):
+        latest_result_id = self.cache.store(
+            self.session_id,
+            [{"WAREHOUSE": "A", "REVENUE": 10.0}],
+            "Revenue by warehouse",
+            "SELECT governed warehouse query",
+        )
+
+        result = await run_governed_result_followup(
+            "show result 1 as a line chart",
+            self.session_id,
+            source_result_id=latest_result_id,
+            cache=self.cache,
+        )
+
+        self.assertTrue(result.executed, result.reason)
+        self.assertEqual(result.outcome.snapshot["parent_result_id"], self.result_id)
+        self.assertEqual(
+            result.outcome.snapshot["metadata"]["chart_type_override"],
+            "line",
+        )
+        self.assertEqual(result.evidence["rows_sent_to_llm"], 0)
+        self.assertFalse(result.evidence["database_queried"])
+
+    async def test_ambiguous_earlier_result_requests_clarification(self):
+        self.cache.store(
+            self.session_id,
+            [{"WAREHOUSE": "A", "REVENUE": 10.0}],
+            "Revenue by warehouse",
+            "SELECT governed warehouse query",
+        )
+        latest_result_id = self.cache.store(
+            self.session_id,
+            [{"MONTH": "2025-01", "REVENUE": 20.0}],
+            "Revenue by month",
+            "SELECT governed monthly query",
+        )
+
+        result = await run_governed_result_followup(
+            "show the earlier result as a bar chart",
+            self.session_id,
+            source_result_id=latest_result_id,
+            cache=self.cache,
+        )
+
+        self.assertEqual(result.status, "clarification")
+        self.assertTrue(result.outcome.clarification_required)
+        self.assertEqual(len(result.outcome.clarification_options), 2)
+        self.assertEqual(
+            [item["value"] for item in result.outcome.clarification_options],
+            ["result 1", "result 2"],
+        )
+        self.assertEqual(
+            result.outcome.clarification_options[1]["label"],
+            "Result 2: Revenue by warehouse",
+        )
+        self.assertEqual(result.evidence["rows_sent_to_llm"], 0)
+        self.assertFalse(result.evidence["database_queried"])
+
+    async def test_invalid_result_number_requests_available_result(self):
+        latest_result_id = self.cache.store(
+            self.session_id,
+            [{"WAREHOUSE": "A", "REVENUE": 10.0}],
+            "Revenue by warehouse",
+            "SELECT governed warehouse query",
+        )
+
+        result = await run_governed_result_followup(
+            "show result 99 as a table",
+            self.session_id,
+            source_result_id=latest_result_id,
+            cache=self.cache,
+        )
+
+        self.assertEqual(result.status, "clarification")
+        self.assertTrue(result.outcome.clarification_required)
+        self.assertEqual(len(result.outcome.clarification_options), 2)
+        self.assertIn(
+            "not available",
+            result.outcome.clarification_prompt.lower(),
+        )
+        self.assertEqual(result.evidence["rows_sent_to_llm"], 0)
+        self.assertFalse(result.evidence["database_queried"])
+
 
 class UnifiedCacheWiringTests(unittest.TestCase):
     def test_adapter_view_is_adopted_from_canonical_snapshot(self):

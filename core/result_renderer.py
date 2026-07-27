@@ -718,11 +718,19 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
         weak_retrieval=bool(confidence_context.get("weak_retrieval")),
     )
 
-    chart_type = detect_chart_type(
-        rows,
-        question=question,
-        column_formats=column_formats,
-    )
+    chart_override = str(
+        (display_context or {}).get("chart_type_override") or ""
+    ).strip().lower()
+    if chart_override == "table":
+        chart_type = None
+    elif chart_override in {"area", "bar", "line", "pie", "donut", "scatter"}:
+        chart_type = chart_override
+    else:
+        chart_type = detect_chart_type(
+            rows,
+            question=question,
+            column_formats=column_formats,
+        )
     if chart_type:
         try:
             from core.compliance.policy_engine import evaluate, resolve_context

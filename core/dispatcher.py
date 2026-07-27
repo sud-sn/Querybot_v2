@@ -698,6 +698,44 @@ async def dispatch(
                 opts = cmeta.get("options") or []
                 selected_text = text
                 matched_option_id: str | None = None
+                if cmeta.get("source") == "governed_result_cache" and opts:
+                    match = resolve_option_text(opts, text)
+                    if not match:
+                        if _looks_like_new_query(text, pending["original_q"]):
+                            clear_pending(account_id, event.user_id)
+                            _enqueue_query(
+                                bg, account_id, event, adapter, text,
+                                portal_user, client_row,
+                            )
+                            return
+                        send_prompt = getattr(
+                            adapter, "send_clarification_prompt", None
+                        )
+                        if callable(send_prompt):
+                            await send_prompt(
+                                event,
+                                cmeta.get("question")
+                                or "Please choose one of the available options.",
+                                opts,
+                            )
+                        else:
+                            await adapter.send_message(
+                                event,
+                                "Please choose one of the available options.",
+                            )
+                        return
+                    clear_pending(account_id, event.user_id)
+                    resolved_question = str(
+                        match.get("resolved_question")
+                        or match.get("value")
+                        or match.get("label")
+                        or text
+                    ).strip()
+                    _enqueue_query(
+                        bg, account_id, event, adapter, resolved_question,
+                        portal_user, client_row, is_clarification=True,
+                    )
+                    return
                 # Compound-split replies run the chosen half as a standalone
                 # question — combining it with the original (bundled) text
                 # would re-create the exact multi-intent problem we split.

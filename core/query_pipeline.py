@@ -698,6 +698,45 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
             status="success" if _cache_followup.executed else "error",
         )
 
+        if _cache_followup.status == "clarification" and _cache_followup.outcome is not None:
+            _clarification_outcome = _cache_followup.outcome
+            _clarification_options = list(
+                _clarification_outcome.clarification_options or []
+            )
+            _clarification_prompt = (
+                _clarification_outcome.clarification_prompt
+                or "Which result value did you mean?"
+            )
+            if event.user_id:
+                save_pending(
+                    account_id,
+                    event.user_id,
+                    question,
+                    context,
+                    clarification_meta={
+                        "source": "governed_result_cache",
+                        "options": _clarification_options,
+                        "source_result_id": getattr(adapter, "last_result_id", None),
+                    },
+                )
+            send_prompt = getattr(adapter, "send_clarification_prompt", None)
+            if callable(send_prompt):
+                await send_prompt(
+                    event,
+                    _clarification_prompt,
+                    _clarification_options,
+                )
+            else:
+                option_lines = "\n".join(
+                    f"- {option.get('label', '')}"
+                    for option in _clarification_options
+                )
+                await adapter.send_message(
+                    event,
+                    f"{_clarification_prompt}\n\n{option_lines}",
+                )
+            return
+
         if _cache_followup.executed and _cache_followup.outcome is not None:
             _cache_outcome = _cache_followup.outcome
             _cache_snapshot = _cache_outcome.snapshot
@@ -729,6 +768,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                 account_id,
                 db_cfg,
                 question_id=audit_request_id,
+                display_context=dict(_cache_snapshot.get("metadata") or {}),
                 explicit_column_formats=_cache_formats,
                 contract_version=_contract_version,
                 cache_result=False,
