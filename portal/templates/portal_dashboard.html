@@ -196,13 +196,36 @@
 
 <script>
 // ── Colour palettes (matches portal_chat.html) ──────────────────────────────
+// Mode-aware light/dark hex sets -- see the extensive comment in
+// portal_chat.html's _PALETTES for the validation methodology and the
+// documented limitations on `sunset`/`forest`/`mono`. Kept in sync manually
+// since this file duplicates portal_chat.html's chart-rendering JS rather
+// than sharing a module.
 const _PALETTES = {
-  default:  ['#378ADD','#34d399','#f472b6','#fbbf24','#a78bfa','#fb923c','#22d3ee','#e879f9'],
-  ocean:    ['#0EA5E9','#06B6D4','#0284C7','#38BDF8','#0369A1','#0891B2','#7DD3FC','#BAE6FD'],
-  sunset:   ['#F97316','#EF4444','#EC4899','#F59E0B','#DC2626','#E11D48','#D97706','#B45309'],
-  forest:   ['#10B981','#059669','#047857','#34D399','#065F46','#6EE7B7','#84CC16','#BEF264'],
-  candy:    ['#8B5CF6','#EC4899','#14B8A6','#F97316','#6366F1','#06B6D4','#FACC15','#EF4444'],
-  mono:     ['#334155','#475569','#64748b','#94a3b8','#cbd5e1','#1e293b','#0f172a','#e2e8f0'],
+  default: {
+    light: ['#2a78d6','#eb6834','#1baf7a','#eda100','#e87ba4','#008300','#4a3aa7','#e34948'],
+    dark:  ['#3987e5','#d95926','#199e70','#c98500','#d55181','#008300','#9085e9','#e66767'],
+  },
+  ocean: {
+    light: ['#14B8A6','#1D4ED8','#0EA5E9','#2347B8','#0D9488','#2563EB','#38BDF8','#0369A1'],
+    dark:  ['#0E8E7E','#1D4ED8','#1590C4','#2C55C9','#0D9488','#2563EB','#1E9BDB','#0B6598'],
+  },
+  sunset: {
+    light: ['#F97316','#9A3412','#F59E0B','#DC2626','#EC4899','#C2410C','#A21CAF','#E11D48'],
+    dark:  ['#EA580C','#A8441A','#B8860B','#DC2626','#EC4899','#C2410C','#A21CAF','#E11D48'],
+  },
+  forest: {
+    light: ['#10B981','#00704E','#22C55E','#4D7C0F','#059669','#84CC16','#166534','#2FBF8E'],
+    dark:  ['#0D9668','#00704E','#189A6C','#4D7C0F','#059669','#5CA815','#15803D','#0F9D6D'],
+  },
+  candy: {
+    light: ['#EC4899','#CA8A04','#8B5CF6','#14B8A6','#6366F1','#F97316','#0891B2','#DC2626'],
+    dark:  ['#EC4899','#A8710A','#8B5CF6','#0F9D6D','#6366F1','#EA580C','#0891B2','#DC2626'],
+  },
+  mono: {
+    light: ['#a3acb8','#8a95a3','#69748a','#556173','#3d495c','#293344','#151d2b'],
+    dark:  ['#3f4b5f','#515e73','#657288','#8a95a3','#a3acb8','#bcc5d0','#d5dce4'],
+  },
 };
 const _PAL_GRAD = {
   default:  ['#4A96E8','#1A68C6'],
@@ -279,9 +302,10 @@ function buildDashboardOption(payload){
   const yKeys    = payload.y_keys || [];
   const yKey     = yKeys[0];
   const palName  = payload.color_palette || 'default';
-  const colors   = _PALETTES[palName] || _PALETTES.default;
-  const gradPair = _PAL_GRAD[palName]  || _PAL_GRAD.default;
   const theme    = chartThemeTokens();
+  const palette  = _PALETTES[palName] || _PALETTES.default;
+  const colors   = (theme.dark ? palette.dark : palette.light) || palette.light;
+  const gradPair = _PAL_GRAD[palName]  || _PAL_GRAD.default;
   const reqType  = (payload.chart_type || 'bar').toLowerCase();
   const formatFor = col => _chartFormatFor(payload, col);
   const valueFmt  = (value, col, compact=false) => _fmtChartValue(value, formatFor(col), compact);
@@ -519,10 +543,12 @@ function mountDashChartControls(ctrlRow) {
   const typeHtml = visibleTypes.map(t =>
     `<button class="dctt-btn${ct===t?' dctt-active':''}" data-type="${t}">${t.charAt(0).toUpperCase()+t.slice(1)}</button>`
   ).join('');
-  const palHtml = Object.entries(_PALETTES).map(([n,c]) =>
-    `<button class="dcpt-swatch${pal===n?' dcpt-active':''}" data-palette="${n}" title="${n}"
-       style="background:linear-gradient(90deg,${c[0]} 33%,${c[1]} 33%,${c[1]} 66%,${c[2]} 66%)"></button>`
-  ).join('');
+  const _swatchDark1 = document.documentElement.getAttribute('data-theme') === 'dark';
+  const palHtml = Object.entries(_PALETTES).map(([n,modes]) => {
+    const c = (_swatchDark1 ? modes.dark : modes.light) || modes.light;
+    return `<button class="dcpt-swatch${pal===n?' dcpt-active':''}" data-palette="${n}" title="${n}"
+       style="background:linear-gradient(90deg,${c[0]} 33%,${c[1]} 33%,${c[1]} 66%,${c[2]} 66%)"></button>`;
+  }).join('');
 
   ctrlRow.innerHTML = typeHtml
     + `<span class="dash-ctrl-sep"></span>`
@@ -632,14 +658,16 @@ function openChartModal(cardEl) {
     ? payload.renderable_types
     : (Array.isArray(payload.allowed_types) ? payload.allowed_types : DASH_TYPES);
   const modalTypes = DASH_TYPES.filter(t => modalAllowed.includes(t));
+  const _swatchDark2 = document.documentElement.getAttribute('data-theme') === 'dark';
   ctrlEl.innerHTML = modalTypes.map(t =>
     `<button class="dctt-btn${ct===t?' dctt-active':''}" data-type="${t}">${t.charAt(0).toUpperCase()+t.slice(1)}</button>`
   ).join('')
   + `<span class="dash-ctrl-sep"></span>`
-  + Object.entries(_PALETTES).map(([n,c]) =>
-    `<button class="dcpt-swatch${pal===n?' dcpt-active':''}" data-palette="${n}" title="${n}"
-       style="background:linear-gradient(90deg,${c[0]} 33%,${c[1]} 33%,${c[1]} 66%,${c[2]} 66%)"></button>`
-  ).join('');
+  + Object.entries(_PALETTES).map(([n,modes]) => {
+    const c = (_swatchDark2 ? modes.dark : modes.light) || modes.light;
+    return `<button class="dcpt-swatch${pal===n?' dcpt-active':''}" data-palette="${n}" title="${n}"
+       style="background:linear-gradient(90deg,${c[0]} 33%,${c[1]} 33%,${c[1]} 66%,${c[2]} 66%)"></button>`;
+  }).join('');
 
   const canvas = document.getElementById('chart-modal-canvas');
   const existing = echarts.getInstanceByDom(canvas);

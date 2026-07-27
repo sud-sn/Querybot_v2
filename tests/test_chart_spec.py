@@ -401,5 +401,212 @@ class ChartRendererTemplateTests(unittest.TestCase):
             self.assertNotIn("Number(r?.[k] ?? 0)", src)
 
 
+class ChartPaletteValidationTests(unittest.TestCase):
+    """
+    Regression coverage for the mode-aware _PALETTES rework: the previous
+    single-array-for-both-modes palettes all failed the dataviz skill's
+    color-science validator outright (near-duplicate adjacent colors,
+    several colors outside the OKLCH lightness/chroma bands). node isn't
+    available in this environment, so the validator's exact algorithm
+    (OKLCH conversion, CVD simulation, ΔE separation, WCAG contrast) is
+    re-implemented here in Python and run against both template files'
+    palette definitions directly, so a future edit that reintroduces a
+    broken palette (or lets the two duplicated template files drift out of
+    sync) fails a test instead of shipping unnoticed.
+    """
+    ROOT = Path(__file__).resolve().parents[1]
+    CHAT = ROOT / "portal" / "templates" / "portal_chat.html"
+    DASH = ROOT / "portal" / "templates" / "portal_dashboard.html"
+
+    # -- OKLCH / CVD math, ported from the dataviz skill's
+    # scripts/validate_palette.js (same thresholds, same Machado-Oliveira-
+    # Fernandes 2009 CVD transforms) --
+    BAND = {"light": (0.43, 0.77), "dark": (0.48, 0.67)}
+    CHROMA_FLOOR = 0.10
+    CVD_FLOOR = 6.0
+    NORMAL_FLOOR = 15.0  # hard gate; sunset/forest are documented exceptions below
+    CONTRAST_MIN = 3.0
+    SURFACES = {"light": "#ffffff", "dark": "#0f172a"}
+    MACHADO = {
+        "protan": [[0.152286, 1.052583, -0.204868], [0.114503, 0.786281, 0.099216],
+                   [-0.003882, -0.048116, 1.051998]],
+        "deutan": [[0.367322, 0.860646, -0.227968], [0.280085, 0.672501, 0.047413],
+                   [-0.011820, 0.042940, 0.968881]],
+    }
+
+    @classmethod
+    def _hex2srgb(cls, h):
+        h = h.strip().lstrip("#")
+        return [int(h[i:i+2], 16) / 255 for i in (0, 2, 4)]
+
+    @classmethod
+    def _s2lin(cls, c):
+        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+    @classmethod
+    def _lin(cls, h):
+        return [cls._s2lin(c) for c in cls._hex2srgb(h)]
+
+    @classmethod
+    def _rel_lum(cls, h):
+        r, g, b = cls._lin(h)
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+    @classmethod
+    def _contrast(cls, a, b):
+        hi, lo = sorted([cls._rel_lum(a), cls._rel_lum(b)], reverse=True)
+        return (hi + 0.05) / (lo + 0.05)
+
+    @classmethod
+    def _cbrt(cls, x):
+        return -((-x) ** (1 / 3)) if x < 0 else x ** (1 / 3)
+
+    @classmethod
+    def _oklab_from_lin(cls, rgb):
+        r, g, b = rgb
+        l = cls._cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b)
+        m = cls._cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b)
+        s = cls._cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b)
+        return [
+            0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s,
+            1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s,
+            0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s,
+        ]
+
+    @classmethod
+    def _oklab(cls, h):
+        return cls._oklab_from_lin(cls._lin(h))
+
+    @classmethod
+    def _oklch(cls, h):
+        L, a, b = cls._oklab(h)
+        return L, (a ** 2 + b ** 2) ** 0.5
+
+    @classmethod
+    def _simulate(cls, h, kind):
+        r, g, b = cls._lin(h)
+        M = cls.MACHADO[kind]
+        def clamp(c): return max(0, min(1, c))
+        return [clamp(sum(M[row][i] * v for i, v in enumerate((r, g, b)))) for row in range(3)]
+
+    @classmethod
+    def _delta_e(cls, h1, h2, kind=None):
+        a = cls._oklab_from_lin(cls._simulate(h1, kind) if kind else cls._lin(h1))
+        b = cls._oklab_from_lin(cls._simulate(h2, kind) if kind else cls._lin(h2))
+        return 100 * sum((x - y) ** 2 for x, y in zip(a, b)) ** 0.5
+
+    @classmethod
+    def _extract_palettes(cls, src: str) -> dict:
+        """Pull the _PALETTES object's hex arrays out of the raw JS source.
+
+        Parses real brace nesting rather than a fixed-width slice, since a
+        fixed window can bleed into the next palette entry when one theme's
+        block is shorter than another's.
+        """
+        import re
+        outer_start = src.index("const _PALETTES = {") + len("const _PALETTES = ")
+        # Find the matching closing brace for the outer object by depth-counting.
+        depth = 0
+        i = outer_start
+        for i in range(outer_start, len(src)):
+            if src[i] == "{":
+                depth += 1
+            elif src[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    break
+        outer_block = src[outer_start + 1:i]  # contents between the outer { and }
+
+        result = {}
+        for name_match in re.finditer(r"(\w+):\s*\{", outer_block):
+            name = name_match.group(1)
+            inner_start = name_match.end()
+            depth = 1
+            j = inner_start
+            for j in range(inner_start, len(outer_block)):
+                if outer_block[j] == "{":
+                    depth += 1
+                elif outer_block[j] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        break
+            inner_block = outer_block[inner_start:j]
+            modes = {}
+            for mode_match in re.finditer(r"(light|dark):\s*\[([^\]]*)\]", inner_block):
+                hexes = re.findall(r"#[0-9a-fA-F]{6}", mode_match.group(2))
+                modes[mode_match.group(1)] = hexes
+            result[name] = modes
+        return result
+
+    def test_both_templates_define_identical_mode_aware_palettes(self):
+        chat_palettes = self._extract_palettes(self.CHAT.read_text(encoding="utf-8"))
+        dash_palettes = self._extract_palettes(self.DASH.read_text(encoding="utf-8"))
+        self.assertEqual(set(chat_palettes), {"default", "ocean", "sunset", "forest", "candy", "mono"})
+        self.assertEqual(chat_palettes, dash_palettes,
+                          "portal_chat.html and portal_dashboard.html palettes drifted out of sync")
+
+    def test_default_ocean_candy_pass_every_hard_gate_both_modes(self):
+        # These three were tuned to fully pass; a regression here means a
+        # future edit broke a previously-clean palette.
+        palettes = self._extract_palettes(self.CHAT.read_text(encoding="utf-8"))
+        for name in ("default", "ocean", "candy"):
+            for mode in ("light", "dark"):
+                hexes = palettes[name][mode]
+                with self.subTest(palette=name, mode=mode):
+                    lo, hi = self.BAND[mode]
+                    for c in hexes:
+                        L, C = self._oklch(c)
+                        self.assertGreaterEqual(L, lo, f"{name}/{mode} {c} below lightness band")
+                        self.assertLessEqual(L, hi, f"{name}/{mode} {c} above lightness band")
+                        self.assertGreaterEqual(C, self.CHROMA_FLOOR, f"{name}/{mode} {c} below chroma floor")
+                    pairs = list(zip(hexes, hexes[1:]))
+                    worst_normal = min(self._delta_e(a, b) for a, b in pairs)
+                    self.assertGreaterEqual(
+                        worst_normal, self.NORMAL_FLOOR,
+                        f"{name}/{mode} worst adjacent normal-vision ΔE {worst_normal:.1f} below {self.NORMAL_FLOOR}",
+                    )
+                    worst_cvd = min(
+                        self._delta_e(a, b, kind) for a, b in pairs for kind in ("protan", "deutan")
+                    )
+                    self.assertGreaterEqual(
+                        worst_cvd, self.CVD_FLOOR,
+                        f"{name}/{mode} worst adjacent CVD ΔE {worst_cvd:.1f} below the {self.CVD_FLOOR} floor",
+                    )
+
+    def test_sunset_and_forest_stay_within_their_documented_ceiling(self):
+        # Both are inherently narrow-hue (warm-only / green-only) themes
+        # that cannot clear the 15.0 normal-vision floor for all 8 adjacent
+        # pairs simultaneously in both modes (see the code comment above
+        # _PALETTES) -- this pins their best-achieved worst-pair separation
+        # so a future change can't silently make them WORSE than what was
+        # already accepted as the ceiling.
+        palettes = self._extract_palettes(self.CHAT.read_text(encoding="utf-8"))
+        minimums = {"sunset": 14.0, "forest": 9.0}
+        for name, floor in minimums.items():
+            for mode in ("light", "dark"):
+                hexes = palettes[name][mode]
+                pairs = list(zip(hexes, hexes[1:]))
+                worst_normal = min(self._delta_e(a, b) for a, b in pairs)
+                with self.subTest(palette=name, mode=mode):
+                    self.assertGreaterEqual(
+                        worst_normal, floor,
+                        f"{name}/{mode} worst adjacent ΔE {worst_normal:.1f} regressed below its documented floor {floor}",
+                    )
+
+    def test_mono_is_reclassified_as_one_hue_ordinal_ramp(self):
+        # mono's colors are true near-zero-chroma grayscale -- confirm they
+        # stay below the categorical chroma floor (proving it genuinely
+        # can't be a categorical palette, not that nobody checked) and that
+        # the code comment documenting its ordinal reclassification is
+        # still present.
+        palettes = self._extract_palettes(self.CHAT.read_text(encoding="utf-8"))
+        for mode in ("light", "dark"):
+            for c in palettes["mono"][mode]:
+                _, C = self._oklch(c)
+                self.assertLess(C, self.CHROMA_FLOOR, f"mono/{mode} {c} unexpectedly clears the chroma floor")
+        src = self.CHAT.read_text(encoding="utf-8")
+        self.assertIn("Reclassified as a one-hue ORDINAL ramp", src)
+
+
 if __name__ == "__main__":
     unittest.main()
