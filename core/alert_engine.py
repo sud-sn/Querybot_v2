@@ -11,8 +11,12 @@ Design principles
   connection strings are written to disk.
 • check_alert_now() is the single point that touches the live database;
   all other functions are pure JSON CRUD.
-• Scheduling and push-notification are intentionally out of scope here.
-  An external scheduler would call check_alert_now() on a cron.
+• run_due_alert_checks() is called on a schedule by
+  core/notification_scheduler.py::scheduled_notification_loop (wired into
+  main.py startup/shutdown) — it re-checks every active alert whose
+  check_interval_minutes has elapsed and delivers via core/notify.py on
+  trigger. This closes the gap this module used to leave to "an external
+  scheduler."
 
 Supported conditions
 ────────────────────
@@ -27,6 +31,7 @@ Public API
   get_alert(alert_id) → dict | None
   delete_alert(alert_id) → bool
   check_alert_now(alert_id, db_cfg) → dict
+  run_due_alert_checks() → None
 """
 
 from __future__ import annotations
@@ -35,6 +40,7 @@ import json
 import logging
 import time
 import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -79,6 +85,7 @@ def create_alert(
     *,
     condition: str = "change_pct",
     threshold: float = 10.0,
+    check_interval_minutes: int = 60,
     db_cfg: dict | None = None,
     account_id: str = "",
     user_id: str = "",
@@ -97,6 +104,9 @@ def create_alert(
     threshold      : interpretation depends on condition:
                        • change_pct → minimum % change to trigger (default 10)
                        • above/below → absolute cutoff value
+    check_interval_minutes : how often run_due_alert_checks() re-checks this
+                       alert (default 60, floored to a minimum of 15 so a
+                       misconfigured alert can't hammer the live DB).
     db_cfg         : DB config — only ``db_type`` is persisted (no secrets)
 
     Returns
@@ -118,6 +128,7 @@ def create_alert(
         "baseline_value": round(float(baseline_value), 4),
         "condition": condition,
         "threshold": float(threshold),
+        "check_interval_minutes": max(int(check_interval_minutes or 60), 15),
         # Non-secret DB hint — needed to route check_alert_now() calls
         "db_type": str((db_cfg or {}).get("db_type", "azure_sql")),
         "account_id": account_id,
@@ -319,3 +330,69 @@ def check_alert_now(alert_id: str, db_cfg: dict) -> dict:
         "message":        message,
         "checked_at":     checked_at,
     }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Scheduled due-checks — the piece the module docstring originally left out
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _alert_due(alert: dict, now: datetime) -> bool:
+    """
+    True when `alert` hasn't been checked yet, or its check_interval_minutes
+    has elapsed since last_checked. Timestamps are naive local time (matching
+    create_alert's/check_alert_now's own time.strftime(...) format), so
+    comparison stays naive too.
+    """
+    last_checked = alert.get("last_checked")
+    if not last_checked:
+        return True
+    interval = max(int(alert.get("check_interval_minutes") or 60), 15)
+    try:
+        last_dt = datetime.strptime(last_checked, "%Y-%m-%dT%H:%M:%S")
+    except (TypeError, ValueError):
+        return True
+    return (now - last_dt).total_seconds() >= interval * 60
+
+
+def run_due_alert_checks() -> None:
+    """
+    Re-check every active alert whose interval has elapsed, and proactively
+    deliver a notification when triggered. One alert's failure is logged and
+    skipped — it never blocks the rest. Synchronous by design (called via
+    asyncio.to_thread from core/notification_scheduler.py), but delivery
+    itself is async, so each alert's delivery is run to completion inline.
+    """
+    import asyncio
+
+    from core.pipeline_context import get_client_db
+    from core.notify import send_proactive_notification
+
+    now = datetime.now()
+    for alert in list_alerts():
+        if alert.get("status") != "active":
+            continue
+        if not _alert_due(alert, now):
+            continue
+
+        try:
+            db_cfg = get_client_db(alert.get("account_id") or "")
+            if not db_cfg:
+                log.debug("run_due_alert_checks: no db_cfg for alert %s, skipping", alert.get("id"))
+                continue
+            result = check_alert_now(alert["id"], db_cfg)
+        except Exception as exc:
+            log.warning("run_due_alert_checks: check failed for alert %s: %s", alert.get("id"), exc)
+            continue
+
+        if not result.get("ok") or not result.get("triggered"):
+            continue
+
+        account_id = alert.get("account_id") or ""
+        user_id = alert.get("user_id") or ""
+        if not account_id or not user_id:
+            log.debug("run_due_alert_checks: alert %s triggered but has no account_id/user_id for delivery", alert.get("id"))
+            continue
+        try:
+            asyncio.run(send_proactive_notification(account_id, int(user_id), result["message"]))
+        except Exception as exc:
+            log.warning("run_due_alert_checks: delivery failed for alert %s: %s", alert.get("id"), exc)

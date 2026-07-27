@@ -171,6 +171,26 @@ class CreateAlertTests(unittest.TestCase):
             )
         self.assertEqual(len(self._store), 3)
 
+    def test_default_check_interval_is_60(self):
+        a = self._make_create(
+            question="q", sql="SELECT 1", metric_col="X", baseline_value=100.0,
+        )
+        self.assertEqual(a["check_interval_minutes"], 60)
+
+    def test_check_interval_floored_at_15(self):
+        a = self._make_create(
+            question="q", sql="SELECT 1", metric_col="X", baseline_value=100.0,
+            check_interval_minutes=5,
+        )
+        self.assertEqual(a["check_interval_minutes"], 15)
+
+    def test_check_interval_custom_value_preserved(self):
+        a = self._make_create(
+            question="q", sql="SELECT 1", metric_col="X", baseline_value=100.0,
+            check_interval_minutes=120,
+        )
+        self.assertEqual(a["check_interval_minutes"], 120)
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # list_alerts / get_alert / delete_alert
@@ -406,6 +426,161 @@ class InvalidConditionTests(unittest.TestCase):
                     baseline_value=100.0, condition=cond,
                 )
             self.assertEqual(a["condition"], cond, f"condition {cond!r} not preserved")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# _alert_due — cadence math
+# ══════════════════════════════════════════════════════════════════════════════
+
+class AlertDueTests(unittest.TestCase):
+
+    def test_never_checked_is_due(self):
+        alert = _make_alert(last_checked=None, check_interval_minutes=60)
+        from datetime import datetime
+        self.assertTrue(ae._alert_due(alert, datetime(2026, 7, 27, 12, 0, 0)))
+
+    def test_not_yet_due_within_interval(self):
+        alert = _make_alert(last_checked="2026-07-27T11:50:00", check_interval_minutes=60)
+        from datetime import datetime
+        self.assertFalse(ae._alert_due(alert, datetime(2026, 7, 27, 12, 0, 0)))
+
+    def test_due_once_interval_elapsed(self):
+        alert = _make_alert(last_checked="2026-07-27T11:00:00", check_interval_minutes=60)
+        from datetime import datetime
+        self.assertTrue(ae._alert_due(alert, datetime(2026, 7, 27, 12, 0, 0)))
+
+    def test_due_exactly_at_interval_boundary(self):
+        alert = _make_alert(last_checked="2026-07-27T11:00:00", check_interval_minutes=60)
+        from datetime import datetime
+        self.assertTrue(ae._alert_due(alert, datetime(2026, 7, 27, 12, 0, 0)))
+
+    def test_malformed_last_checked_treated_as_due(self):
+        alert = _make_alert(last_checked="not-a-timestamp", check_interval_minutes=60)
+        from datetime import datetime
+        self.assertTrue(ae._alert_due(alert, datetime(2026, 7, 27, 12, 0, 0)))
+
+    def test_missing_interval_defaults_to_60(self):
+        alert = _make_alert(last_checked="2026-07-27T11:30:00")
+        alert.pop("check_interval_minutes", None)
+        from datetime import datetime
+        self.assertFalse(ae._alert_due(alert, datetime(2026, 7, 27, 12, 0, 0)))
+        self.assertTrue(ae._alert_due(alert, datetime(2026, 7, 27, 12, 31, 0)))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# run_due_alert_checks — scheduling + delivery
+# ══════════════════════════════════════════════════════════════════════════════
+
+_UNSET = object()
+
+
+class RunDueAlertChecksTests(unittest.TestCase):
+
+    def _run(self, alerts: list[dict], check_result: dict, *, db_cfg=_UNSET):
+        """Run run_due_alert_checks() with list_alerts/check_alert_now/
+        get_client_db/send_proactive_notification all mocked, and return the
+        captured send_proactive_notification call args (or None if not called).
+        db_cfg defaults to a valid config; pass db_cfg=None explicitly to
+        simulate get_client_db finding no configured database."""
+        captured = {}
+        resolved_db_cfg = {"db_type": "azure_sql"} if db_cfg is _UNSET else db_cfg
+
+        async def _fake_notify(account_id, user_id, message, chart=None):
+            captured["account_id"] = account_id
+            captured["user_id"] = user_id
+            captured["message"] = message
+            captured["chart"] = chart
+
+        with (
+            patch.object(ae, "list_alerts", return_value=alerts),
+            patch.object(ae, "check_alert_now", return_value=check_result) as mock_check,
+            patch("core.pipeline_context.get_client_db", return_value=resolved_db_cfg),
+            patch("core.notify.send_proactive_notification", side_effect=_fake_notify),
+        ):
+            ae.run_due_alert_checks()
+        return captured, mock_check
+
+    def test_inactive_alert_skipped_entirely(self):
+        alert = _make_alert(status="paused", account_id="acct1", user_id="7")
+        captured, mock_check = self._run([alert], {"ok": True, "triggered": True, "message": "x"})
+        mock_check.assert_not_called()
+        self.assertEqual(captured, {})
+
+    def test_not_due_alert_skipped(self):
+        alert = _make_alert(
+            status="active", account_id="acct1", user_id="7",
+            last_checked="2026-07-27T11:59:00", check_interval_minutes=60,
+        )
+        with patch("core.alert_engine.datetime") as mock_dt:
+            from datetime import datetime as real_datetime
+            mock_dt.now.return_value = real_datetime(2026, 7, 27, 12, 0, 0)
+            mock_dt.strptime = real_datetime.strptime
+            captured, mock_check = self._run([alert], {"ok": True, "triggered": True, "message": "x"})
+        mock_check.assert_not_called()
+
+    def test_triggered_alert_delivers_notification(self):
+        alert = _make_alert(status="active", account_id="acct1", user_id="7", last_checked=None)
+        captured, mock_check = self._run(
+            [alert], {"ok": True, "triggered": True, "message": "Revenue dropped 20%"},
+        )
+        mock_check.assert_called_once()
+        self.assertEqual(captured["account_id"], "acct1")
+        self.assertEqual(captured["user_id"], 7)
+        self.assertEqual(captured["message"], "Revenue dropped 20%")
+
+    def test_not_triggered_alert_skips_delivery(self):
+        alert = _make_alert(status="active", account_id="acct1", user_id="7", last_checked=None)
+        captured, mock_check = self._run(
+            [alert], {"ok": True, "triggered": False, "message": "still fine"},
+        )
+        mock_check.assert_called_once()
+        self.assertEqual(captured, {})
+
+    def test_check_failure_ok_false_skips_delivery(self):
+        alert = _make_alert(status="active", account_id="acct1", user_id="7", last_checked=None)
+        captured, mock_check = self._run(
+            [alert], {"ok": False, "reason": "no_rows"},
+        )
+        self.assertEqual(captured, {})
+
+    def test_missing_account_or_user_skips_delivery_without_raising(self):
+        alert = _make_alert(status="active", account_id="", user_id="", last_checked=None)
+        captured, mock_check = self._run(
+            [alert], {"ok": True, "triggered": True, "message": "x"},
+        )
+        self.assertEqual(captured, {})
+
+    def test_no_db_cfg_skips_check_without_raising(self):
+        alert = _make_alert(status="active", account_id="acct1", user_id="7", last_checked=None)
+        captured, mock_check = self._run(
+            [alert], {"ok": True, "triggered": True, "message": "x"}, db_cfg=None,
+        )
+        mock_check.assert_not_called()
+        self.assertEqual(captured, {})
+
+    def test_one_alert_exception_does_not_block_others(self):
+        alert_bad = _make_alert(id="bad", status="active", account_id="acct1", user_id="7", last_checked=None)
+        alert_ok  = _make_alert(id="ok",  status="active", account_id="acct1", user_id="7", last_checked=None)
+
+        captured = {}
+
+        async def _fake_notify(account_id, user_id, message, chart=None):
+            captured["message"] = message
+
+        def _check_side_effect(alert_id, db_cfg):
+            if alert_id == "bad":
+                raise Exception("boom")
+            return {"ok": True, "triggered": True, "message": "ok alert fired"}
+
+        with (
+            patch.object(ae, "list_alerts", return_value=[alert_bad, alert_ok]),
+            patch.object(ae, "check_alert_now", side_effect=_check_side_effect),
+            patch("core.pipeline_context.get_client_db", return_value={"db_type": "azure_sql"}),
+            patch("core.notify.send_proactive_notification", side_effect=_fake_notify),
+        ):
+            ae.run_due_alert_checks()  # must not raise
+
+        self.assertEqual(captured["message"], "ok alert fired")
 
 
 if __name__ == "__main__":
