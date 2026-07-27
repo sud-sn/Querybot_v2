@@ -519,6 +519,57 @@ class ChartRendererTemplateTests(unittest.TestCase):
             self.assertNotIn("Number(r?.[k] ?? 0)", src)
 
 
+class ChartClickToDrillTests(unittest.TestCase):
+    """
+    Part D (click-to-drill): clicking a bar/line/area chart mark on the
+    portal fires a natural-language follow-up through the exact same
+    prefillComposer/sendMessage path sendSuggestion already uses, so it's
+    picked up by core/conversation_state.py's refinement classifier
+    (matches on the literal substring "break this down") instead of being
+    treated as a fresh, unrelated question.
+
+    Source-text wiring guards only -- no headless browser/echarts runtime
+    available in this suite, matching the convention already established
+    for the annotation and mark-spec tests above.
+    """
+
+    ROOT = Path(__file__).resolve().parents[1]
+    CHAT = ROOT / "portal" / "templates" / "portal_chat.html"
+
+    def _read(self) -> str:
+        return self.CHAT.read_text(encoding="utf-8")
+
+    def test_send_chart_drill_helper_reuses_existing_send_path(self):
+        src = self._read()
+        self.assertIn("function sendChartDrill(text)", src)
+        self.assertIn("prefillComposer(text)", src)
+
+    def test_wire_click_handler_restricted_to_bar_line_area(self):
+        src = self._read()
+        self.assertIn("function _wireChartDrillClick(chart, payload)", src)
+        self.assertIn("['bar', 'line', 'area'].includes(drillType)", src)
+        self.assertIn("chart.on('click'", src)
+        self.assertIn("params.componentType !== 'series'", src)
+
+    def test_click_phrasing_matches_refinement_classifier_pattern(self):
+        src = self._read()
+        # Literal substring the conversation_state refinement regex
+        # (\bbreak\s+(?:it|this|these|that)\s+down\b) matches on.
+        self.assertIn("Break this down for ${label}", src)
+
+    def test_render_chart_into_wires_click_on_initial_render_and_theme_change(self):
+        src = self._read()
+        start = src.index("function renderChartInto(chartEl, payload)")
+        end = src.index("\nfunction ", start + 1)
+        block = src[start:end]
+        occurrences = block.count("_wireChartDrillClick(")
+        # Once for the initial chart instance, once for the fresh instance
+        # created inside the qb-theme-change listener (dispose + re-init
+        # drops any handler bound to the old instance).
+        self.assertEqual(occurrences, 2, block)
+        self.assertIn("qb-theme-change", block)
+
+
 class ChartPaletteValidationTests(unittest.TestCase):
     """
     Regression coverage for the mode-aware _PALETTES rework: the previous

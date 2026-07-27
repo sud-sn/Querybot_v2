@@ -31,7 +31,7 @@ if str(ROOT) not in sys.path:
 
 from gateway.base import PlatformEvent
 from gateway.teams_adapter import TeamsAdapter
-from gateway.teams_chart_card import build_teams_chart_card, is_native_teams_chart_type
+from gateway.teams_chart_card import build_teams_chart_card, is_native_teams_chart_type, build_drill_actions
 
 
 def _run(coro):
@@ -213,7 +213,93 @@ class BuilderEdgeCaseTests(unittest.TestCase):
                     ],
                 },
             ],
+            "actions": [
+                {"type": "Action.Submit", "title": "Drill into North",
+                 "data": {"label": "Break this down for North"}},
+                {"type": "Action.Submit", "title": "Drill into South",
+                 "data": {"label": "Break this down for South"}},
+            ],
         })
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Drill-into-X actions (Part D) — pre-computed since Teams has no
+# arbitrary click-on-a-chart-mark interaction like the portal's ECharts
+# click handler.
+# ──────────────────────────────────────────────────────────────────────────
+class DrillActionTests(unittest.TestCase):
+
+    def test_bar_chart_gets_top_rows_ranked_by_value(self):
+        rows = [
+            {"WHS_NM": "North", "REVENUE": 500.0},
+            {"WHS_NM": "South", "REVENUE": 1200.0},
+            {"WHS_NM": "East", "REVENUE": 300.0},
+        ]
+        actions = build_drill_actions(_payload("bar", rows=rows))
+        self.assertEqual(actions, [
+            {"type": "Action.Submit", "title": "Drill into South",
+             "data": {"label": "Break this down for South"}},
+            {"type": "Action.Submit", "title": "Drill into North",
+             "data": {"label": "Break this down for North"}},
+            {"type": "Action.Submit", "title": "Drill into East",
+             "data": {"label": "Break this down for East"}},
+        ])
+
+    def test_capped_at_three_buttons(self):
+        rows = [{"WHS_NM": f"W{i}", "REVENUE": float(i)} for i in range(10)]
+        actions = build_drill_actions(_payload("bar", rows=rows))
+        self.assertEqual(len(actions), 3)
+        # Highest values (W9, W8, W7) win the ranking.
+        self.assertEqual([a["data"]["label"] for a in actions],
+                          ["Break this down for W9", "Break this down for W8", "Break this down for W7"])
+
+    def test_line_and_area_are_drillable(self):
+        for t in ("line", "area"):
+            actions = build_drill_actions(_payload(t))
+            self.assertTrue(actions, t)
+
+    def test_pie_donut_forecast_scatter_not_drillable(self):
+        for t in ("pie", "donut", "forecast", "scatter", "waterfall", "funnel"):
+            self.assertEqual(build_drill_actions(_payload(t)), [], t)
+
+    def test_no_rows_or_missing_x_key_returns_empty(self):
+        self.assertEqual(build_drill_actions(_payload("bar", rows=[])), [])
+        p = _payload("bar")
+        p["x_key"] = ""
+        self.assertEqual(build_drill_actions(p), [])
+
+    def test_none_payload_returns_empty(self):
+        self.assertEqual(build_drill_actions(None), [])
+        self.assertEqual(build_drill_actions({}), [])
+
+    def test_duplicate_labels_deduped(self):
+        rows = [
+            {"WHS_NM": "North", "REVENUE": 100.0},
+            {"WHS_NM": "North", "REVENUE": 200.0},
+            {"WHS_NM": "South", "REVENUE": 50.0},
+        ]
+        actions = build_drill_actions(_payload("bar", rows=rows))
+        labels = [a["data"]["label"] for a in actions]
+        self.assertEqual(labels, ["Break this down for North", "Break this down for South"])
+
+    def test_non_numeric_measure_falls_back_to_row_order(self):
+        rows = [
+            {"WHS_NM": "North", "REVENUE": "n/a"},
+            {"WHS_NM": "South", "REVENUE": "n/a"},
+        ]
+        actions = build_drill_actions(_payload("bar", rows=rows))
+        self.assertEqual([a["data"]["label"] for a in actions],
+                          ["Break this down for North", "Break this down for South"])
+
+    def test_native_card_carries_actions_as_sibling_of_body(self):
+        card = build_teams_chart_card(_payload("bar"))
+        self.assertIn("actions", card)
+        self.assertEqual(card["actions"], build_drill_actions(_payload("bar")))
+
+    def test_unmappable_chart_type_native_card_is_none_actions_moot(self):
+        # Non-native types never reach build_teams_chart_card's actions
+        # attachment at all -- the whole card build returns None first.
+        self.assertIsNone(build_teams_chart_card(_payload("waterfall")))
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -304,6 +390,40 @@ class SendChartNativeCardTests(unittest.TestCase):
         _run(adapter.send_chart(_make_event(), {"rows": [], "chart_type": "bar", "title": "x"}))
         adapter._post_chart_card.assert_not_called()
         adapter.upload_file.assert_not_called()
+
+    def test_png_fallback_still_carries_drill_actions(self):
+        # Native card POST fails -> PNG fallback -> upload_file must still
+        # get the same "Drill into X" buttons a successful native card
+        # would have carried, so drill-down isn't lost when the tenant's
+        # Teams client is too old to render Chart.* elements.
+        adapter = _make_adapter()
+        adapter.upload_file = AsyncMock()
+        captured, fake_post = self._post_capture(500)
+
+        with patch.dict(os.environ, {"TEAMS_NATIVE_CHARTS": "1"}), \
+             patch.object(adapter, "_get_token", new=AsyncMock(return_value="t")), \
+             patch("gateway.teams_adapter.httpx.AsyncClient") as FakeClient, \
+             patch("core.chart.generate_chart", return_value=b"fake-png"):
+            instance = FakeClient.return_value.__aenter__.return_value
+            instance.post = AsyncMock(side_effect=fake_post)
+            _run(adapter.send_chart(_make_event(), _payload("bar")))
+
+        adapter.upload_file.assert_called_once()
+        _, kwargs = adapter.upload_file.call_args
+        self.assertEqual(kwargs["actions"], build_drill_actions(_payload("bar")))
+
+    def test_png_fallback_for_non_drillable_type_carries_no_actions(self):
+        adapter = _make_adapter()
+        adapter.upload_file = AsyncMock()
+        adapter._post_chart_card = AsyncMock()
+
+        with patch.dict(os.environ, {"TEAMS_NATIVE_CHARTS": "1"}), \
+             patch("core.chart.generate_chart", return_value=b"fake-png"):
+            _run(adapter.send_chart(_make_event(), _payload("scatter")))
+
+        adapter.upload_file.assert_called_once()
+        _, kwargs = adapter.upload_file.call_args
+        self.assertEqual(kwargs["actions"], [])
 
 
 if __name__ == "__main__":
