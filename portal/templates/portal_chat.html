@@ -1962,7 +1962,7 @@ function buildChartOption(payload) {
     },
     xAxis: horizontal ? {
       type: 'value', axisLabel: { color: axisColor, formatter: v => valueFmt(v, yKey, true) },
-      splitLine: { show: true, lineStyle: { color: gridColor } },
+      splitLine: { show: true, lineStyle: { color: gridColor, type: 'solid', width: 1 } },
       axisTick: { show: false }, axisLine: { show: false },
     } : {
       type: 'category', data: labels,
@@ -1976,7 +1976,7 @@ function buildChartOption(payload) {
     } : {
       type: 'value',
       axisLabel: { color: axisColor, formatter: v => valueFmt(v, yKey, true), fontSize: 11 },
-      splitLine: { show: true, lineStyle: { color: gridColor } },
+      splitLine: { show: true, lineStyle: { color: gridColor, type: 'solid', width: 1 } },
       axisTick: { show: false }, axisLine: { show: false },
     },
     series: [],
@@ -2009,14 +2009,17 @@ function buildChartOption(payload) {
     option.series = yKeys.map((k, i) => ({
       name: k, type: 'line', smooth: true,
       data: rows.map(r => _chartNumber(r?.[k])),
-      symbolSize: rows.length <= 20 ? 6 : 0,
-      lineStyle: { width: 2.5, color: colors[i % colors.length] },
+      // >=8px marker (r>=4) per the mark spec -- 6px read as a pinpoint,
+      // both to look at and as a hover/hit target.
+      symbolSize: rows.length <= 20 ? 8 : 0,
+      // 2px, round join/cap -- a wash, not a heavier drawn line.
+      lineStyle: { width: 2, cap: 'round', join: 'round', color: colors[i % colors.length] },
       itemStyle: { color: colors[i % colors.length] },
-      areaStyle: isArea
-        ? { color: new echarts.graphic.LinearGradient(0,0,0,1,[{offset:0,color:colors[i%colors.length]+'55'},{offset:1,color:colors[i%colors.length]+'08'}]) }
-        : yKeys.length === 1
-          ? { color: new echarts.graphic.LinearGradient(0,0,0,1,[{offset:0,color:colors[0]+'28'},{offset:1,color:colors[0]+'05'}]) }
-          : undefined,
+      // Area fill is a ~10% wash of the series hue, never a saturated
+      // block or a dramatic top-to-bottom gradient competing with the line.
+      areaStyle: (isArea || yKeys.length === 1)
+        ? { color: colors[i % colors.length] + '1A', opacity: 1 }
+        : undefined,
     }));
     return option;
   }
@@ -2043,9 +2046,12 @@ function buildChartOption(payload) {
     return {
       name: k, type: 'bar',
       data: rows.map(r => _chartNumber(r?.[k])),
-      barMaxWidth: horizontal ? 20 : (isMulti ? 28 : 50),
+      // <=24px thick per the mark spec -- never fill the category slot;
+      // let the band's leftover be air.
+      barMaxWidth: 24,
       itemStyle: {
-        borderRadius: horizontal ? [0, 8, 8, 0] : [8, 8, 0, 0],
+        // 4px rounded data-end, square at the baseline.
+        borderRadius: horizontal ? [0, 4, 4, 0] : [4, 4, 0, 0],
         color: isMulti ? c : grad,
       },
       emphasis: { itemStyle: { opacity: 0.85 } },

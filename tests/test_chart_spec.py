@@ -593,6 +593,21 @@ class ChartPaletteValidationTests(unittest.TestCase):
                         f"{name}/{mode} worst adjacent ΔE {worst_normal:.1f} regressed below its documented floor {floor}",
                     )
 
+    def test_bar_and_line_mark_specs_match_dataviz_skill(self):
+        # Pins the concrete mark-spec fixes made to buildChartOption's
+        # main bar/line/area path: bars capped at 24px (was 50px for a
+        # single series -- more than double the spec's ceiling) with 4px
+        # rounded ends (was 8px), lines at 2px with round caps/joins,
+        # markers >=8px (was 6px, a hover-target regression too), and a
+        # flat ~10% area wash instead of a steep top-to-bottom gradient.
+        src = self.CHAT.read_text(encoding="utf-8")
+        self.assertIn("barMaxWidth: 24", src)
+        self.assertIn("borderRadius: horizontal ? [0, 4, 4, 0] : [4, 4, 0, 0]", src)
+        self.assertIn("lineStyle: { width: 2, cap: 'round', join: 'round'", src)
+        self.assertIn("symbolSize: rows.length <= 20 ? 8 : 0", src)
+        self.assertIn("+ '1A', opacity: 1 }", src)
+        self.assertNotIn("barMaxWidth: horizontal ? 20 : (isMulti ? 28 : 50)", src)
+
     def test_mono_is_reclassified_as_one_hue_ordinal_ramp(self):
         # mono's colors are true near-zero-chroma grayscale -- confirm they
         # stay below the categorical chroma floor (proving it genuinely
