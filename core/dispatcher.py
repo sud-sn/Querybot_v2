@@ -13,6 +13,7 @@ Covers:
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import re
 
@@ -21,6 +22,14 @@ from gateway import PlatformEvent
 from fastapi import BackgroundTasks
 from core.pipeline_context import get_state, get_client_db, get_portal_base
 from core.pipeline_helpers import _looks_like_new_query
+from core.conversation_state import (
+    TurnDecision,
+    TurnIntent,
+    bypass_analyst_gate,
+    classify_turn,
+    conversation_state_store,
+    should_route_as_governed_follow_up,
+)
 from core.clarification import (
     get_pending, clear_pending, combine_with_clarification,
     resolve_option_text, was_recently_expired, acknowledge_recently_expired,
@@ -233,6 +242,36 @@ async def _generate_analyst_reply(text: str, account_id: str, client_row: dict) 
 
 # ── Background query task (typing + classification + pipeline) ────────────────
 
+def _conversation_session_id(account_id, event, adapter) -> str:
+    """Return the channel-scoped session key shared with the result cache."""
+    session_id = str(getattr(adapter, "session_id", "") or "").strip()
+    if session_id:
+        return session_id
+    platform = str(getattr(event, "platform", "") or "unknown").strip()
+    user_id = str(getattr(event, "user_id", "") or "").strip()
+    channel_id = str(getattr(event, "channel_id", "") or "").strip()
+    return ":".join((str(account_id), platform, user_id or channel_id or "anonymous"))
+
+
+def _conversation_user_id(event, portal_user) -> str:
+    """Resolve a stable user id without persisting the full user record."""
+    if isinstance(portal_user, dict):
+        candidate = portal_user.get("id") or portal_user.get("user_id")
+    else:
+        candidate = (
+            getattr(portal_user, "id", None)
+            or getattr(portal_user, "user_id", None)
+        )
+    return str(candidate or getattr(event, "user_id", "") or "").strip()
+
+
+async def _maybe_await(value):
+    """Await adapter hooks that may be synchronous or asynchronous."""
+    if inspect.isawaitable(value):
+        return await value
+    return value
+
+
 async def _run_query_with_guard(
     account_id, event, adapter, text, portal_user, client_row, *, is_clarification=False
 ):
@@ -248,6 +287,8 @@ async def _run_query_with_guard(
     """
     import asyncio
     from core.query_pipeline import handle_query as _hq
+    from core.result_cache import result_cache
+    from core.result_commands import parse_result_command
 
     _send = getattr(adapter, "send_status", None)
 
@@ -271,27 +312,109 @@ async def _run_query_with_guard(
     except Exception as e:
         log.debug("question PII scrub skipped: %s", e)
 
-    # Stage 2 — dynamic analyst gate (skipped for clarification replies)
-    # Replaces the old _classify_is_data_question + static _OFF_TOPIC_REPLY:
-    # _generate_analyst_reply returns None for genuine data requests (fall through)
-    # or a tailored capability/off-topic answer to send directly.
-    if not is_clarification:
-        from core.result_cache import result_cache
-        from core.result_commands import parse_result_command
+    # Stage 2 - classify the turn before the analyst gate. Conversation state
+    # contains identifiers and schema metadata only; result rows stay in the
+    # governed result cache.
+    _session_id = _conversation_session_id(account_id, event, adapter)
+    _user_id = _conversation_user_id(event, portal_user)
+    _channel = str(getattr(event, "platform", "") or "").strip()
+    _prior_state = conversation_state_store.get(account_id, _session_id)
+    _cached_snapshot = result_cache.get_snapshot(_session_id) if _session_id else {}
 
-        _session_id = getattr(adapter, "session_id", "") or ""
-        _is_cached_result_command = bool(
-            _session_id
-            and result_cache.has_result(_session_id)
-            and parse_result_command(text) is not None
+    # Existing sessions may predate the conversation-state layer. Restore only
+    # the safe anchor metadata already held by the governed result cache.
+    if _prior_state is None and _cached_snapshot:
+        _cached_metadata = _cached_snapshot.get("metadata") or {}
+        _prior_state = conversation_state_store.record(
+            account_id,
+            _session_id,
+            user_id=_user_id,
+            channel=_channel,
+            question=str(_cached_snapshot.get("question") or ""),
+            decision=TurnDecision(
+                TurnIntent.NEW_DATA_QUERY,
+                1.0,
+                "restored from governed result cache",
+            ),
+            result_id=str(_cached_snapshot.get("result_id") or ""),
+            trace_id=str(_cached_metadata.get("trace_id") or ""),
+            result_schema=_cached_snapshot.get("schema") or (),
+            result_metadata=_cached_metadata,
         )
-        if not _is_cached_result_command:
-            _analyst_reply = await _generate_analyst_reply(text, account_id, client_row)
-            if _analyst_reply is not None:
-                await adapter.send_message(event, _analyst_reply)
-                return
 
-    # Stage 3 — run query pipeline; Teams needs re-sent typing every 2.5 s
+    _direct_result_command = (
+        parse_result_command(text) if _cached_snapshot else None
+    )
+    _decision = classify_turn(
+        text,
+        state=_prior_state,
+        has_cached_result=bool(_cached_snapshot),
+        direct_result_command=_direct_result_command is not None,
+        is_clarification=is_clarification,
+        looks_like_data=_looks_like_new_query(
+            text,
+            _prior_state.previous_question if _prior_state else "",
+        ),
+    )
+
+    if _decision.intent is TurnIntent.RESET_CONTEXT:
+        conversation_state_store.clear(account_id, _session_id)
+        result_cache.clear(_session_id)
+        clear_history = getattr(adapter, "clear_history", None)
+        if clear_history:
+            try:
+                await _maybe_await(clear_history())
+            except Exception as e:
+                log.debug("conversation history reset skipped: %s", e)
+        if hasattr(adapter, "last_result_id"):
+            adapter.last_result_id = None
+        await adapter.send_message(
+            event,
+            "Context cleared. Your next question will start a new analysis.",
+        )
+        return
+
+    # The analyst gate remains dynamic for greetings, safe off-topic turns, and
+    # fresh questions. Governed result follow-ups bypass it and are handled by
+    # the result/query pipeline instead.
+    if not bypass_analyst_gate(_decision):
+        _analyst_reply = await _generate_analyst_reply(text, account_id, client_row)
+        if _analyst_reply is not None:
+            await adapter.send_message(event, _analyst_reply)
+            return
+
+    _previous_result_id = str(_cached_snapshot.get("result_id") or "")
+
+    async def _run_pipeline_and_record():
+        await _hq(
+            account_id,
+            event,
+            adapter,
+            text,
+            portal_user,
+            is_clarification=is_clarification,
+        )
+        latest = result_cache.get_snapshot(_session_id) if _session_id else {}
+        latest_result_id = str(latest.get("result_id") or "")
+        if not latest_result_id:
+            return
+        if latest_result_id == _previous_result_id and not _decision.uses_prior_result:
+            return
+        latest_metadata = latest.get("metadata") or {}
+        conversation_state_store.record(
+            account_id,
+            _session_id,
+            user_id=_user_id,
+            channel=_channel,
+            question=text,
+            decision=_decision,
+            result_id=latest_result_id,
+            trace_id=str(latest_metadata.get("trace_id") or ""),
+            result_schema=latest.get("schema") or (),
+            result_metadata=latest_metadata,
+        )
+
+    # Stage 3 - run query pipeline; Teams needs re-sent typing every 2.5 s.
     if getattr(adapter, "persistent_typing", False) and _send:
         stop = asyncio.Event()
 
@@ -308,8 +431,7 @@ async def _run_query_with_guard(
 
         task = asyncio.create_task(_loop())
         try:
-            await _hq(account_id, event, adapter, text, portal_user,
-                      is_clarification=is_clarification)
+            await _run_pipeline_and_record()
         finally:
             stop.set()
             task.cancel()
@@ -318,8 +440,7 @@ async def _run_query_with_guard(
             except asyncio.CancelledError:
                 pass
     else:
-        await _hq(account_id, event, adapter, text, portal_user,
-                  is_clarification=is_clarification)
+        await _run_pipeline_and_record()
 
 
 def _enqueue_query(bg, account_id, event, adapter, text, portal_user, client_row, *, is_clarification=False):
@@ -662,7 +783,38 @@ async def dispatch(
         # reply always wins) and before the DDL/LLM path. These have real
         # deterministic answers — sending them into SQL generation only
         # produces a confusing failure.
+        _route_legacy_to_query = False
         if _conv_kind in ("data_inventory", "opinion", "vague"):
+            try:
+                from core.result_cache import result_cache
+
+                _frontdoor_session_id = _conversation_session_id(
+                    account_id,
+                    event,
+                    adapter,
+                )
+                _frontdoor_state = conversation_state_store.get(
+                    account_id,
+                    _frontdoor_session_id,
+                )
+                _frontdoor_snapshot = result_cache.get_snapshot(
+                    _frontdoor_session_id,
+                )
+                _route_legacy_to_query = should_route_as_governed_follow_up(
+                    text,
+                    state=_frontdoor_state,
+                    has_cached_result=bool(_frontdoor_snapshot),
+                )
+            except Exception as exc:
+                log.debug(
+                    "Conversation follow-up front-door check failed: %s",
+                    exc,
+                )
+
+        if (
+            _conv_kind in ("data_inventory", "opinion", "vague")
+            and not _route_legacy_to_query
+        ):
             _send_sq = getattr(adapter, "send_suggested_questions", None)
             if _conv_kind in ("data_inventory", "vague") and callable(_send_sq):
                 _intro, _qs = build_reply_split(_conv_kind, account_id, portal_user)
