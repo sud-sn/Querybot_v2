@@ -354,6 +354,124 @@ class ExplicitChartTypeRequestTests(unittest.TestCase):
         self.assertEqual(payload["y_keys"], ["Sales"])
 
 
+class ChartAnnotationTests(unittest.TestCase):
+    """
+    core/insight.py's already-computed biggest_period_drop/biggest_period_gain
+    reaching the chart payload as an `annotations` field -- previously these
+    stayed completely separate from the chart (text-only callouts below it,
+    per core/response_builder.py's _build_anomaly_callouts), never anchored
+    to an actual point on the chart itself.
+    """
+    ROOT = Path(__file__).resolve().parents[1]
+    CHAT = ROOT / "portal" / "templates" / "portal_chat.html"
+
+    MONTHLY_ROWS = [
+        {"Month": "2025-01", "Revenue": 1000.0},
+        {"Month": "2025-02", "Revenue": 615.0},   # biggest drop lands here
+        {"Month": "2025-03", "Revenue": 1200.0},  # biggest gain lands here
+        {"Month": "2025-04", "Revenue": 1150.0},
+    ]
+    ANNOTATIONS = {
+        "biggest_period_drop": {
+            "from_period": "2025-01", "to_period": "2025-02",
+            "absolute_change": -385.0, "pct_change": -38.5,
+        },
+        "biggest_period_gain": {
+            "from_period": "2025-02", "to_period": "2025-03",
+            "absolute_change": 585.0, "pct_change": 95.1,
+        },
+    }
+
+    def test_annotations_attach_for_bar_and_line_with_matching_period(self):
+        for chart_type in ("bar", "line"):
+            with self.subTest(chart_type=chart_type):
+                payload = build_chart_payload(
+                    self.MONTHLY_ROWS, chart_type, question="revenue by month",
+                    annotations=self.ANNOTATIONS,
+                )
+                self.assertIn("annotations", payload)
+                self.assertEqual(payload["annotations"]["biggest_period_drop"]["period"], "2025-02")
+                self.assertEqual(payload["annotations"]["biggest_period_drop"]["absolute_change"], -385.0)
+                self.assertEqual(payload["annotations"]["biggest_period_gain"]["period"], "2025-03")
+
+    def test_annotations_omitted_when_none_given(self):
+        payload = build_chart_payload(self.MONTHLY_ROWS, "line", question="revenue by month")
+        self.assertNotIn("annotations", payload)
+
+    def test_annotations_omitted_for_non_annotatable_chart_types(self):
+        # pie/donut/scatter etc. have no single per-period x-axis position
+        # to anchor a drop/gain marker to. Non-temporal share-of-total data
+        # (not the monthly trend rows above, which the spec correctly
+        # re-routes away from pie) so the effective type actually stays pie.
+        share_rows = [
+            {"Region": "North", "Revenue": 400.0},
+            {"Region": "South", "Revenue": 300.0},
+            {"Region": "East", "Revenue": 200.0},
+            {"Region": "West", "Revenue": 100.0},
+        ]
+        payload = build_chart_payload(
+            share_rows, "pie", question="revenue share by region as a pie chart",
+            annotations=self.ANNOTATIONS,
+        )
+        self.assertEqual(payload["chart_type"], "pie")
+        self.assertNotIn("annotations", payload)
+
+    def test_annotation_dropped_when_referenced_period_not_in_rendered_rows(self):
+        # Defensive case: an annotation naming a period that isn't actually
+        # in this chart's rows (e.g. a stale/mismatched brief) must never be
+        # sent to the frontend to draw a dangling marker.
+        stale_annotations = {
+            "biggest_period_drop": {
+                "from_period": "2024-11", "to_period": "2024-12",
+                "absolute_change": -100.0, "pct_change": -10.0,
+            },
+        }
+        payload = build_chart_payload(
+            self.MONTHLY_ROWS, "line", question="revenue by month",
+            annotations=stale_annotations,
+        )
+        self.assertNotIn("annotations", payload)
+
+    def test_only_biggest_gain_present_still_attaches(self):
+        payload = build_chart_payload(
+            self.MONTHLY_ROWS, "line", question="revenue by month",
+            annotations={"biggest_period_gain": self.ANNOTATIONS["biggest_period_gain"]},
+        )
+        self.assertIn("annotations", payload)
+        self.assertNotIn("biggest_period_drop", payload["annotations"])
+        self.assertIn("biggest_period_gain", payload["annotations"])
+
+    def test_result_renderer_threads_brief_into_chart_payload(self):
+        # Wiring guard: core/result_renderer.py must compute the brief
+        # BEFORE calling build_chart_payload (not reuse a later-computed
+        # one, since build_assistant_response's own brief computation
+        # happens after this call site) and pass its time_series dict
+        # through as the annotations kwarg -- source-text check since
+        # exercising _send_results directly needs a full adapter/event/
+        # db_cfg live-query context disproportionate to what's being
+        # verified here (a two-line call-order fact).
+        renderer_src = (self.ROOT / "core" / "result_renderer.py").read_text(encoding="utf-8")
+        self.assertIn("from core.insight import generate_followup_suggestions, compute_data_brief", renderer_src)
+        brief_call_pos = renderer_src.index("brief = compute_data_brief(rows, question)")
+        payload_call_pos = renderer_src.index("chart_payload = build_chart_payload(")
+        self.assertLess(brief_call_pos, payload_call_pos)
+        self.assertIn("annotations=chart_annotations,", renderer_src)
+
+    def test_portal_chat_renders_annotations_as_mark_points(self):
+        # Wiring guard: the frontend must read payload.annotations and
+        # anchor the marker at the series' OWN value at that index (not a
+        # derived delta value, which would misplace the marker vertically)
+        # -- both the bar and line series attach markPoint using the same
+        # helper, only on the first/sole series.
+        src = self.CHAT.read_text(encoding="utf-8")
+        self.assertIn("function _buildAnnotationMarkPoints(payload, labels, values)", src)
+        self.assertIn("coord: [idx, values[idx]]", src)
+        self.assertEqual(
+            src.count("markPoint: "), 2,
+            "expected exactly one markPoint wiring each in the line/area and bar series builders",
+        )
+
+
 class ChartRendererTemplateTests(unittest.TestCase):
     ROOT = Path(__file__).resolve().parents[1]
     CHAT = ROOT / "portal" / "templates" / "portal_chat.html"

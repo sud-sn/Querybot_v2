@@ -1394,6 +1394,49 @@ function renderChartWarnings(payload) {
     `<div class="chart-warning">${escHtml(String(w))}</div>`).join('')}</div>`;
 }
 
+// Status colors are reserved and distinct from the categorical series
+// palette (dataviz skill: "a status color never impersonates a series") --
+// used only for the biggest-drop/biggest-gain markers below, never as a
+// series color choice.
+const _STATUS_GOOD = '#0ca30c';
+const _STATUS_CRITICAL = '#d03b3b';
+
+// Turns core/insight.py's already-computed biggest_period_drop/gain
+// (reused as-is, not recomputed) into ECharts markPoint entries anchored
+// at the actual x-axis position AND actual series value of that period --
+// sparing and selective per the mark spec ("label the extreme... never a
+// number on every point"), so the insight text below the chart has a
+// literal point on the chart it's talking about. `values` is the same
+// series data array the chart itself renders, so the marker sits exactly
+// on the line/bar, not at some derived y-position.
+function _buildAnnotationMarkPoints(payload, labels, values) {
+  const ann = payload?.annotations;
+  if (!ann) return [];
+  const points = [];
+  const push = (entry, kind) => {
+    if (!entry) return;
+    const idx = labels.indexOf(String(entry.period ?? ''));
+    if (idx < 0 || values[idx] == null) return;
+    const isDrop = kind === 'drop';
+    points.push({
+      name: isDrop ? 'Biggest drop' : 'Biggest gain',
+      coord: [idx, values[idx]],
+      value: entry.pct_change != null ? `${entry.pct_change > 0 ? '+' : ''}${entry.pct_change.toFixed(1)}%` : '',
+      symbol: isDrop ? 'pin' : 'triangle',
+      symbolSize: isDrop ? 32 : 14,
+      symbolRotate: isDrop ? 180 : 0,
+      itemStyle: { color: isDrop ? _STATUS_CRITICAL : _STATUS_GOOD },
+      label: {
+        show: true, position: isDrop ? 'bottom' : 'top', fontSize: 10, fontWeight: 700,
+        color: isDrop ? _STATUS_CRITICAL : _STATUS_GOOD,
+      },
+    });
+  };
+  push(ann.biggest_period_drop, 'drop');
+  push(ann.biggest_period_gain, 'gain');
+  return points;
+}
+
 function buildChartOption(payload) {
   const rows        = Array.isArray(payload?.rows) ? payload.rows : [];
   const xKey        = payload?.x_key;
@@ -2006,21 +2049,27 @@ function buildChartOption(payload) {
           const lbl = p?.axisValueLabel || p?.name || '';
           return `<div style="font-weight:700;margin-bottom:4px">${escHtml(String(lbl))}</div>${escHtml(String(yKey||'Value'))}: <strong>${valueFmt(p?.value, yKey)}</strong>`;
         };
-    option.series = yKeys.map((k, i) => ({
-      name: k, type: 'line', smooth: true,
-      data: rows.map(r => _chartNumber(r?.[k])),
-      // >=8px marker (r>=4) per the mark spec -- 6px read as a pinpoint,
-      // both to look at and as a hover/hit target.
-      symbolSize: rows.length <= 20 ? 8 : 0,
-      // 2px, round join/cap -- a wash, not a heavier drawn line.
-      lineStyle: { width: 2, cap: 'round', join: 'round', color: colors[i % colors.length] },
-      itemStyle: { color: colors[i % colors.length] },
-      // Area fill is a ~10% wash of the series hue, never a saturated
-      // block or a dramatic top-to-bottom gradient competing with the line.
-      areaStyle: (isArea || yKeys.length === 1)
-        ? { color: colors[i % colors.length] + '1A', opacity: 1 }
-        : undefined,
-    }));
+    option.series = yKeys.map((k, i) => {
+      const values = rows.map(r => _chartNumber(r?.[k]));
+      return {
+        name: k, type: 'line', smooth: true,
+        data: values,
+        // >=8px marker (r>=4) per the mark spec -- 6px read as a pinpoint,
+        // both to look at and as a hover/hit target.
+        symbolSize: rows.length <= 20 ? 8 : 0,
+        // 2px, round join/cap -- a wash, not a heavier drawn line.
+        lineStyle: { width: 2, cap: 'round', join: 'round', color: colors[i % colors.length] },
+        itemStyle: { color: colors[i % colors.length] },
+        // Area fill is a ~10% wash of the series hue, never a saturated
+        // block or a dramatic top-to-bottom gradient competing with the line.
+        areaStyle: (isArea || yKeys.length === 1)
+          ? { color: colors[i % colors.length] + '1A', opacity: 1 }
+          : undefined,
+        // Only the first (or sole) series carries the biggest-drop/gain
+        // annotation -- it refers to one measure's trend, not every series.
+        markPoint: i === 0 ? { symbol: 'circle', data: _buildAnnotationMarkPoints(payload, labels, values) } : undefined,
+      };
+    });
     return option;
   }
 
@@ -2043,9 +2092,10 @@ function buildChartOption(payload) {
       ? new echarts.graphic.LinearGradient(...(horizontal ? [1,0,0,0] : [0,0,0,1]),
           [{offset:0,color:gradPair[0]},{offset:1,color:gradPair[1]}])
       : c;
+    const values = rows.map(r => _chartNumber(r?.[k]));
     return {
       name: k, type: 'bar',
-      data: rows.map(r => _chartNumber(r?.[k])),
+      data: values,
       // <=24px thick per the mark spec -- never fill the category slot;
       // let the band's leftover be air.
       barMaxWidth: 24,
@@ -2055,6 +2105,13 @@ function buildChartOption(payload) {
         color: isMulti ? c : grad,
       },
       emphasis: { itemStyle: { opacity: 0.85 } },
+      // Only the first series, and only when the vertical [category, value]
+      // axis layout applies -- annotations are a time-series concept and
+      // horizontal bars are never used for temporal data (see `horizontal`
+      // above), but guard explicitly rather than assume that holds forever.
+      markPoint: (i === 0 && !horizontal)
+        ? { symbol: 'circle', data: _buildAnnotationMarkPoints(payload, labels, values) }
+        : undefined,
     };
   });
   return option;

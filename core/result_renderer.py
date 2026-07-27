@@ -35,7 +35,7 @@ import store
 from core.llm import llm_complete, resolve_provider
 from core.chart import detect_chart_type, build_chart_payload
 from core.response_builder import build_assistant_response, build_column_formats, detect_null_metric_issue
-from core.insight import generate_followup_suggestions
+from core.insight import generate_followup_suggestions, compute_data_brief
 from core.answer_confidence import build_answer_confidence
 from core.answer_formatter import format_success_confidence_text
 from core.answer_rca import extract_sql_tables
@@ -767,12 +767,31 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
             db_config_id=db_cfg["id"],
         )
     if chart_type:
+        # Reuse the same statistical brief build_assistant_response computes
+        # just below (never a second real computation of the same trend
+        # math, just a lightweight extra call) to anchor the biggest
+        # period-over-period drop/gain directly on the chart, not only as
+        # separate text underneath it. Best-effort: any shape mismatch or
+        # non-time-series result simply yields no annotation, not an error.
+        chart_annotations = None
+        try:
+            brief = compute_data_brief(rows, question)
+            time_series = brief.get("time_series") or {}
+            if time_series.get("biggest_period_drop") or time_series.get("biggest_period_gain"):
+                chart_annotations = {
+                    "biggest_period_drop": time_series.get("biggest_period_drop"),
+                    "biggest_period_gain": time_series.get("biggest_period_gain"),
+                }
+        except Exception as exc:
+            log.debug("Chart annotation brief skipped: %s", exc)
+
         chart_payload = build_chart_payload(
             rows,
             chart_type,
             title=question,
             question=question,
             column_formats=column_formats,
+            annotations=chart_annotations,
         )
         if chart_payload:
             if pin_token:

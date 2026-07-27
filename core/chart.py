@@ -343,14 +343,29 @@ def _render(rows: list[dict], chart_type: str, title: str, plt) -> bytes:
     return buf.read()
 
 
+_ANNOTATABLE_TYPES = {"bar", "line", "area"}
+
+
 def build_chart_payload(
     rows: list[dict],
     chart_type: str | None,
     title: str = "Results",
     question: str = "",
     column_formats: dict | None = None,
+    annotations: dict | None = None,
 ) -> Optional[dict]:
-    """Return a frontend-friendly interactive chart payload."""
+    """
+    Return a frontend-friendly interactive chart payload.
+
+    annotations, when given, is the time-series brief's already-computed
+    biggest_period_drop/biggest_period_gain (core/insight.py's
+    _compute_time_series_brief shape: {"to_period", "absolute_change",
+    "pct_change", ...}) -- reused as-is, never recomputed here. Only
+    attached for bar/line/area (the chart types with a genuine per-point
+    x-axis position to anchor an annotation to) and only when the
+    referenced period actually appears in the rendered rows, so a stale
+    or mismatched annotation never gets sent to the frontend to draw.
+    """
     if not rows:
         return None
     headers = list(rows[0].keys())
@@ -414,7 +429,7 @@ def build_chart_payload(
                     item[key] = "" if val is None else str(val)
             clean_rows.append(item)
 
-    return {
+    payload = {
         "title": title,
         "chart_type": effective_type,
         "requested_chart_type": requested or None,
@@ -431,6 +446,26 @@ def build_chart_payload(
         "chart_confidence": spec.get("confidence"),
         "column_formats": column_formats or {},
     }
+
+    if annotations and effective_type in _ANNOTATABLE_TYPES:
+        known_periods = {str(r.get(x_key, "")) for r in clean_rows}
+        chart_annotations = {}
+        for kind in ("biggest_period_drop", "biggest_period_gain"):
+            entry = annotations.get(kind)
+            if not entry:
+                continue
+            period = str(entry.get("to_period", ""))
+            if period not in known_periods:
+                continue
+            chart_annotations[kind] = {
+                "period": period,
+                "absolute_change": entry.get("absolute_change"),
+                "pct_change": entry.get("pct_change"),
+            }
+        if chart_annotations:
+            payload["annotations"] = chart_annotations
+
+    return payload
 
 
 async def upload_chart_to_zoom(
