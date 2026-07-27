@@ -17,6 +17,7 @@ gate) so reports get the same compliance guarantees alerts already have.
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 
 log = logging.getLogger("querybot.report_engine")
 
@@ -154,3 +155,88 @@ def build_report_response(account_id: str, user: dict, report: dict) -> dict:
         })
 
     return {"ok": True, "message": f"**{report_name}**", "items": items}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Scheduled digests — report_subscription due-checks + delivery
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _subscription_due(sub: dict, now) -> bool:
+    """
+    True once `now.hour` reaches the subscription's configured hour AND
+    (for weekly cadence) today is the configured day_of_week, AND it hasn't
+    already been sent today. Mirrors core/log_export.py::_is_due's
+    hour-gate + date-string-comparison shape (naive local time, matching
+    this module's and alert_engine's own timestamp convention).
+    """
+    hour = int(sub.get("hour") if sub.get("hour") is not None else 8)
+    if now.hour < hour:
+        return False
+    if sub.get("cadence") == "weekly":
+        day_of_week = int(sub.get("day_of_week") if sub.get("day_of_week") is not None else 0)
+        if now.weekday() != day_of_week:
+            return False
+    last_sent = sub.get("last_sent")
+    if not last_sent:
+        return True
+    return str(last_sent)[:10] != now.date().isoformat()
+
+
+async def _deliver_report_response(account_id: str, user_id: int, response: dict) -> None:
+    """Send a report response through the shared proactive-delivery
+    channel (portal WebSocket + Teams) — used by digests, which run
+    outside any live request/response cycle and so have no adapter/event
+    in hand the way the dispatcher's live chat ask does."""
+    from core.notify import send_proactive_notification
+
+    await send_proactive_notification(account_id, user_id, response["message"])
+    if not response.get("ok"):
+        return
+    for item in response.get("items", []):
+        await send_proactive_notification(account_id, user_id, item["text"], chart=item.get("chart"))
+
+
+def run_due_report_digests() -> None:
+    """
+    Re-check every active report_subscription whose scheduled time has
+    arrived, and deliver a digest when due. One subscription's failure is
+    logged and skipped — it never blocks the rest. Synchronous by design
+    (called via asyncio.to_thread from core/notification_scheduler.py);
+    delivery itself is async and run to completion inline per subscription,
+    mirroring alert_engine.run_due_alert_checks.
+    """
+    import asyncio
+
+    import store
+    from store import report_store
+
+    now = datetime.now()
+    for sub in report_store.list_subscriptions():
+        if sub.get("status") != "active":
+            continue
+        if not _subscription_due(sub, now):
+            continue
+
+        try:
+            report = report_store.get_report(sub["report_id"], sub["account_id"])
+            if not report:
+                log.debug("run_due_report_digests: report %s missing for subscription %s",
+                          sub.get("report_id"), sub.get("id"))
+                continue
+            user = store.get_user(int(sub["user_id"]))
+            if not user:
+                log.debug("run_due_report_digests: user %s missing for subscription %s",
+                          sub.get("user_id"), sub.get("id"))
+                continue
+            response = build_report_response(sub["account_id"], user, report)
+        except Exception as exc:
+            log.warning("run_due_report_digests: build failed for subscription %s: %s", sub.get("id"), exc)
+            continue
+
+        try:
+            asyncio.run(_deliver_report_response(sub["account_id"], int(sub["user_id"]), response))
+        except Exception as exc:
+            log.warning("run_due_report_digests: delivery failed for subscription %s: %s", sub.get("id"), exc)
+            continue
+
+        report_store.update_subscription(sub["id"], {"last_sent": now.strftime("%Y-%m-%d %H:%M:%S")})

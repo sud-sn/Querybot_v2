@@ -1,6 +1,6 @@
 """
 core/notification_scheduler.py — background loop driving due alert checks
-(and, once wired in Part C, due report digests). Modeled on
+and due report digests. Modeled on
 core/log_export.py::scheduled_log_export_loop; these tests mirror the same
 shape without actually sleeping (loop is cancelled after one iteration).
 """
@@ -15,13 +15,36 @@ import core.notification_scheduler as ns
 class RunDueNotificationsOnceTests(unittest.TestCase):
 
     def test_calls_run_due_alert_checks(self):
-        with patch("core.alert_engine.run_due_alert_checks") as mock_alerts:
+        with (
+            patch("core.alert_engine.run_due_alert_checks") as mock_alerts,
+            patch("core.report_engine.run_due_report_digests"),
+        ):
             ns.run_due_notifications_once()
         mock_alerts.assert_called_once()
 
+    def test_calls_run_due_report_digests(self):
+        with (
+            patch("core.alert_engine.run_due_alert_checks"),
+            patch("core.report_engine.run_due_report_digests") as mock_digests,
+        ):
+            ns.run_due_notifications_once()
+        mock_digests.assert_called_once()
+
     def test_alert_check_exception_does_not_propagate(self):
-        with patch("core.alert_engine.run_due_alert_checks", side_effect=Exception("boom")):
+        with (
+            patch("core.alert_engine.run_due_alert_checks", side_effect=Exception("boom")),
+            patch("core.report_engine.run_due_report_digests") as mock_digests,
+        ):
             ns.run_due_notifications_once()  # must not raise
+        mock_digests.assert_called_once()  # alert failure must not block digests
+
+    def test_report_digest_exception_does_not_propagate(self):
+        with (
+            patch("core.alert_engine.run_due_alert_checks") as mock_alerts,
+            patch("core.report_engine.run_due_report_digests", side_effect=Exception("boom")),
+        ):
+            ns.run_due_notifications_once()  # must not raise
+        mock_alerts.assert_called_once()
 
 
 class ScheduledNotificationLoopTests(unittest.TestCase):
