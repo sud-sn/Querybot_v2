@@ -6769,6 +6769,127 @@ async def metrics_harvest(request: Request, account_id: str):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# Reports — named, multi-metric groups askable live in chat or subscribable
+# on a schedule (core/report_engine.py, store/report_store.py).
+# ══════════════════════════════════════════════════════════════════════════════
+
+@router.get("/clients/{account_id}/reports", response_class=HTMLResponse)
+async def reports_page(request: Request, account_id: str):
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    client = store.get_client(account_id)
+    if not client:
+        return RedirectResponse("/admin/clients", status_code=303)
+    from store import report_store
+
+    reports = report_store.list_reports(account_id, active_only=False)
+    for r in reports:
+        r["metrics"] = report_store.list_report_metrics(r["id"])
+    all_metrics = store.list_metrics(account_id, active_only=True)
+    return _resp(request, "client_reports.html", {
+        "client": client,
+        "reports": reports,
+        "all_metrics": all_metrics,
+        "saved": request.query_params.get("saved"),
+        "error": request.query_params.get("error"),
+    })
+
+
+@router.post("/clients/{account_id}/reports/create")
+async def report_create(
+    request: Request,
+    account_id: str,
+    name: str = Form(...),
+    description: str = Form(""),
+    is_default: str = Form("0"),
+):
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    from urllib.parse import quote
+    from store import report_store
+
+    if not name.strip():
+        return RedirectResponse(
+            f"/admin/clients/{account_id}/reports?error={quote('Report name is required')}",
+            status_code=303)
+    try:
+        report_store.create_report(
+            account_id, name.strip(), description.strip(), is_default=(is_default == "1"),
+        )
+    except Exception as e:
+        return RedirectResponse(
+            f"/admin/clients/{account_id}/reports?error={quote(str(e)[:100])}",
+            status_code=303)
+    return RedirectResponse(f"/admin/clients/{account_id}/reports?saved=1", status_code=303)
+
+
+@router.post("/clients/{account_id}/reports/{report_id}/update")
+async def report_update(
+    request: Request,
+    account_id: str,
+    report_id: int,
+    name: str = Form(...),
+    description: str = Form(""),
+    is_default: str = Form("0"),
+    is_active: str = Form("1"),
+):
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    from store import report_store
+
+    report_store.update_report(report_id, account_id, {
+        "name": name.strip(),
+        "description": description.strip(),
+        "is_default": is_default == "1",
+        "is_active": is_active == "1",
+    })
+    return RedirectResponse(f"/admin/clients/{account_id}/reports?saved=1", status_code=303)
+
+
+@router.post("/clients/{account_id}/reports/{report_id}/delete")
+async def report_delete(request: Request, account_id: str, report_id: int):
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    from store import report_store
+
+    report_store.delete_report(report_id, account_id)
+    return RedirectResponse(f"/admin/clients/{account_id}/reports", status_code=303)
+
+
+@router.post("/clients/{account_id}/reports/{report_id}/metrics/add")
+async def report_metric_add(
+    request: Request,
+    account_id: str,
+    report_id: int,
+    metric_id: int = Form(...),
+    sort_order: int = Form(0),
+):
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    from store import report_store
+
+    # Metric must belong to this account — ownership check before linking.
+    metric = store.get_metric(metric_id)
+    if not metric or metric.get("account_id") != account_id:
+        from urllib.parse import quote
+        return RedirectResponse(
+            f"/admin/clients/{account_id}/reports?error={quote('Metric not found for this client')}",
+            status_code=303)
+    report_store.add_metric_to_report(report_id, metric_id, sort_order)
+    return RedirectResponse(f"/admin/clients/{account_id}/reports?saved=1", status_code=303)
+
+
+@router.post("/clients/{account_id}/reports/{report_id}/metrics/{metric_id}/remove")
+async def report_metric_remove(request: Request, account_id: str, report_id: int, metric_id: int):
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    from store import report_store
+
+    report_store.remove_metric_from_report(report_id, metric_id)
+    return RedirectResponse(f"/admin/clients/{account_id}/reports?saved=1", status_code=303)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Internal chat UI toggle — per client
 # ══════════════════════════════════════════════════════════════════════════════
 

@@ -1,0 +1,103 @@
+{% extends "portal_base.html" %}
+{% block title %}My Notifications — QueryBot Portal{% endblock %}
+{% block content %}
+<div style="max-width:760px;margin:0 auto">
+  <div class="page-header">
+    <h1>My Notifications</h1>
+    <p>Alerts you've set up on results, and reports you can subscribe to for a scheduled digest.</p>
+  </div>
+
+  {% if saved %}<div class="alert alert-success">Saved.</div>{% endif %}
+  {% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+
+  <div class="card" style="margin-bottom:1.5rem">
+    <div class="card-header"><h2 style="font-size:15px;margin:0">Your alerts</h2></div>
+    <div class="card-body" style="padding:1rem">
+      {% if alerts %}
+        {% for a in alerts %}
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:.75rem;
+            padding:.6rem 0;border-bottom:1px solid var(--border)">
+            <div>
+              <div style="font-size:13px;font-weight:600">{{ a.question }}</div>
+              <div style="font-size:11px;color:var(--gray-500)">
+                {{ a.metric_col }} {{ a.condition }} {{ a.threshold }}
+                {% if a.condition == 'change_pct' %}%{% endif %}
+                &middot; checks every {{ a.check_interval_minutes or 60 }} min
+                &middot; {% if a.status == 'active' %}active{% else %}paused{% endif %}
+                {% if a.last_checked %}&middot; last checked {{ a.last_checked }}{% endif %}
+              </div>
+            </div>
+            <form method="post" action="/portal/notifications/alerts/{{ a.id }}/delete"
+              style="display:inline" id="del-alert-{{ a.id }}">
+              <button type="button" class="btn btn-secondary btn-sm"
+                onclick="qbConfirm({title:'Delete alert?',body:'This cannot be undone.',confirm:'Delete',onConfirm:()=>document.getElementById('del-alert-{{ a.id }}').submit()})">Delete</button>
+            </form>
+          </div>
+        {% endfor %}
+      {% else %}
+        <div style="font-size:12px;color:var(--gray-500)">
+          No alerts set up yet — ask a question in Chat, then use "Alert me on changes" on the result.
+        </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><h2 style="font-size:15px;margin:0">Report subscriptions</h2></div>
+    <div class="card-body" style="padding:1rem">
+      {% if reports %}
+        {% for r in reports %}
+          {% set sub = subscriptions.get(r.id) %}
+          <div style="padding:.75rem 0;border-bottom:1px solid var(--border)">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:.75rem;flex-wrap:wrap">
+              <div>
+                <div style="font-size:13px;font-weight:600">{{ r.name }}</div>
+                {% if r.description %}<div style="font-size:11px;color:var(--gray-500)">{{ r.description }}</div>{% endif %}
+              </div>
+              {% if sub %}
+                <form method="post" action="/portal/notifications/unsubscribe" style="display:inline">
+                  <input type="hidden" name="subscription_id" value="{{ sub.id }}">
+                  <button type="submit" class="btn btn-secondary btn-sm">Unsubscribe</button>
+                </form>
+              {% endif %}
+            </div>
+            {% if sub %}
+              <div style="font-size:11px;color:var(--gray-500);margin-top:.3rem">
+                Subscribed &middot; {{ sub.cadence }}
+                {% if sub.cadence == 'weekly' %}(day {{ sub.day_of_week }}){% endif %}
+                at {{ sub.hour }}:00
+                {% if sub.status != 'active' %}&middot; paused{% endif %}
+                {% if sub.last_sent %}&middot; last sent {{ sub.last_sent }}{% endif %}
+              </div>
+            {% else %}
+              <form method="post" action="/portal/notifications/subscribe"
+                style="display:flex;gap:.5rem;align-items:center;margin-top:.5rem;flex-wrap:wrap">
+                <input type="hidden" name="report_id" value="{{ r.id }}">
+                <select name="cadence" style="width:auto">
+                  <option value="daily">Daily</option>
+                  <option value="weekly">Weekly</option>
+                </select>
+                <select name="day_of_week" style="width:auto" title="Day (weekly only)">
+                  <option value="0">Mon</option><option value="1">Tue</option><option value="2">Wed</option>
+                  <option value="3">Thu</option><option value="4">Fri</option><option value="5">Sat</option>
+                  <option value="6">Sun</option>
+                </select>
+                <select name="hour" style="width:auto" title="Hour (server local time)">
+                  {% for h in range(24) %}
+                    <option value="{{ h }}" {% if h == 8 %}selected{% endif %}>{{ '%02d'|format(h) }}:00</option>
+                  {% endfor %}
+                </select>
+                <button type="submit" class="btn btn-primary btn-sm">Subscribe</button>
+              </form>
+            {% endif %}
+          </div>
+        {% endfor %}
+      {% else %}
+        <div style="font-size:12px;color:var(--gray-500)">
+          No reports have been set up for this account yet — ask your admin to create one.
+        </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}
