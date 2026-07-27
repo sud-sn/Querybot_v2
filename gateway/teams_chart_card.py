@@ -66,6 +66,68 @@ def is_native_teams_chart_type(chart_type: str) -> bool:
     return (chart_type or "").lower().strip() in _NATIVE_TYPES
 
 
+# Chart types where a single clicked category/period maps onto a
+# meaningful "break this down for X" follow-up. Mirrors the portal's
+# click-to-drill restriction (portal_chat.html's _wireChartDrillClick) so
+# both surfaces offer drill-down on the exact same chart shapes.
+_DRILLABLE_TYPES = frozenset({"bar", "line", "area"})
+_MAX_DRILL_BUTTONS = 3
+
+
+def build_drill_actions(chart_payload: dict, limit: int = _MAX_DRILL_BUTTONS) -> list[dict]:
+    """
+    Pre-computed "Drill into X" Action.Submit buttons for the top rows of a
+    chart result. Teams has no arbitrary click-on-a-chart-mark interaction
+    (unlike the portal's ECharts click handler), so instead we offer a
+    small, fixed set of buttons for the most prominent categories/periods.
+
+    Each button's `data.label` is phrased identically to the portal's
+    click-to-drill follow-up ("Break this down for X") so it round-trips
+    through the same parse_event -> dispatcher path as any other Action.Submit
+    tap, and core/conversation_state.py's refinement regex (which matches on
+    the literal substring "break this down") classifies it as a refinement
+    against the active cached result rather than a fresh question.
+    """
+    payload = chart_payload or {}
+    chart_type = (payload.get("chart_type") or "").lower().strip()
+    if chart_type not in _DRILLABLE_TYPES:
+        return []
+
+    rows = payload.get("rows") or []
+    x_key = payload.get("x_key") or ""
+    y_keys = [k for k in (payload.get("y_keys") or []) if k]
+    if not rows or not x_key:
+        return []
+    primary_y = y_keys[0] if y_keys else None
+
+    seen: set[str] = set()
+    scored: list[tuple[str, float]] = []
+    for r in rows:
+        label = str(r.get(x_key) or "").strip()
+        if not label or label in seen:
+            continue
+        seen.add(label)
+        value = _to_number(r.get(primary_y)) if primary_y else None
+        scored.append((label, value if value is not None else float("-inf")))
+
+    if not scored:
+        return []
+
+    # Rank by value when the rows carry a usable measure; otherwise keep the
+    # rows' original (already-meaningful, e.g. chronological) order.
+    if any(v != float("-inf") for _, v in scored):
+        scored.sort(key=lambda pair: pair[1], reverse=True)
+
+    actions = []
+    for label, _ in scored[:limit]:
+        actions.append({
+            "type":  "Action.Submit",
+            "title": f"Drill into {label}"[:60],
+            "data":  {"label": f"Break this down for {label}"},
+        })
+    return actions
+
+
 def build_teams_chart_card(chart_payload: dict) -> dict | None:
     """
     Build an Adaptive Card v1.5 with a native chart element from the
@@ -99,7 +161,7 @@ def build_teams_chart_card(chart_payload: dict) -> dict | None:
     if element is None:
         return None
 
-    return {
+    card: dict[str, Any] = {
         "type": "AdaptiveCard",
         "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
         "version": "1.5",
@@ -114,6 +176,10 @@ def build_teams_chart_card(chart_payload: dict) -> dict | None:
             element,
         ],
     }
+    actions = build_drill_actions(payload)
+    if actions:
+        card["actions"] = actions
+    return card
 
 
 def _pie_element(chart_type: str, rows: list[dict], x_key: str, y_key: str, title: str) -> dict | None:

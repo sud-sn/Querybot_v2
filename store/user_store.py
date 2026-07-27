@@ -603,6 +603,25 @@ def delete_pending_user(pending_id: int, account_id: str) -> None:
         )
 
 
+def get_conversation_ref_for_user(account_id: str, portal_user_id: int) -> Optional[dict]:
+    """
+    Return the most recent approved pending_platform_user row for this portal
+    user, or None if they never registered via a proactive-capable platform
+    (e.g. Teams) or their registration wasn't approved. Used by proactive
+    notification delivery (alerts, report digests) to find a conversation_ref
+    to send through — mirrors the lookup admin/routes.py's approval-notice
+    proactive send already does inline.
+    """
+    with get_db() as conn:
+        row = conn.execute(
+            """SELECT * FROM pending_platform_user
+               WHERE account_id=? AND portal_user_id=? AND status='approved'
+               ORDER BY id DESC LIMIT 1""",
+            (account_id, portal_user_id),
+        ).fetchone()
+    return dict(row) if row else None
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Pinned charts
 # ══════════════════════════════════════════════════════════════════════════════

@@ -435,6 +435,7 @@ class TeamsAdapter(GovernedChannelSessionMixin, PlatformAdapter):
         file_bytes: bytes,
         filename: str,
         mime_type: str = "image/png",
+        actions: list[dict] | None = None,
     ) -> None:
         """
         Teams bot file upload requires either:
@@ -443,6 +444,11 @@ class TeamsAdapter(GovernedChannelSessionMixin, PlatformAdapter):
 
         We use option (a) — embed the chart as a base64 image in a card.
         This works without any extra Azure AD permissions.
+
+        `actions`, when given, is attached as a sibling of `body` — the same
+        shape already proven by send_clarification_prompt/send_suggested_questions
+        — so PNG-fallback charts can still offer "Drill into X" buttons even
+        though the chart itself is a flat image with no clickable marks.
         """
         import base64
         channel_info    = json.loads(event.channel_id)
@@ -467,6 +473,8 @@ class TeamsAdapter(GovernedChannelSessionMixin, PlatformAdapter):
                 "size":  "stretch",
             }],
         }
+        if actions:
+            card["actions"] = actions
         activity = {
             "type": "message",
             "attachments": [{
@@ -842,7 +850,12 @@ class TeamsAdapter(GovernedChannelSessionMixin, PlatformAdapter):
 
         filename = "".join(c if c.isalnum() or c in "-_" else "_"
                            for c in title)[:40] + ".png"
-        await self.upload_file(event, png_bytes, filename, "image/png")
+        try:
+            from gateway.teams_chart_card import build_drill_actions
+            drill_actions = build_drill_actions(chart)
+        except Exception:
+            drill_actions = []
+        await self.upload_file(event, png_bytes, filename, "image/png", actions=drill_actions)
 
     async def _post_chart_card(self, event: PlatformEvent, card: dict) -> bool:
         """POST a native chart Adaptive Card. Returns True on 200/201 so the

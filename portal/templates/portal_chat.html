@@ -2117,6 +2117,26 @@ function buildChartOption(payload) {
   return option;
 }
 
+// Click-to-drill: bar/line/area only -- the chart types with a single
+// clicked category/period that "break this down for X" meaningfully
+// refers to. The click sends a real follow-up question through the
+// normal chat path, which core/conversation_state.py classifies as a
+// refinement against the still-active cached result (not a fresh,
+// unrelated question), so it drills into what was just shown rather
+// than starting a new analysis. Shared by the initial render and the
+// theme-change re-init, which creates a fresh chart instance needing its
+// own click binding.
+function _wireChartDrillClick(chart, payload) {
+  const drillType = (payload?.chart_type || '').toLowerCase();
+  if (!['bar', 'line', 'area'].includes(drillType)) return;
+  chart.on('click', (params) => {
+    if (!params || params.componentType !== 'series') return;
+    const label = String(params.name ?? '').trim();
+    if (!label) return;
+    sendChartDrill(`Break this down for ${label}`);
+  });
+}
+
 function renderChartInto(chartEl, payload){
   if (!chartEl || !payload) return;
   if (!window.echarts) {
@@ -2128,6 +2148,7 @@ function renderChartInto(chartEl, payload){
     if (existing) existing.dispose();
     const chart = echarts.init(chartEl, document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : null, { renderer: 'canvas' });
     chart.setOption(buildChartOption(payload), true);
+    _wireChartDrillClick(chart, payload);
     window.__qbCharts = window.__qbCharts || [];
     window.__qbCharts.push(chart);
     // ResizeObserver fires when the element's box changes (CSS transition,
@@ -2144,6 +2165,7 @@ function renderChartInto(chartEl, payload){
         chart.dispose();
         const next = echarts.init(chartEl, document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : null, { renderer: 'canvas' });
         next.setOption(buildChartOption(payload), true);
+        _wireChartDrillClick(next, payload);
         window.__qbCharts = window.__qbCharts || [];
         window.__qbCharts.push(next);
       } catch {}
@@ -3265,6 +3287,15 @@ function sendSuggestion(btn){
   // ─────────────────────────────────────────────────────────────────────
   prefillComposer(q);
   sendMessage(fqn || undefined);
+}
+// Click-to-drill: a chart mark click sends a follow-up question through
+// this same prefill+send path, no new send mechanism -- but the text
+// itself is a raw string (a clicked bar has no button element), not a
+// button's textContent, hence a separate entry point from sendSuggestion.
+function sendChartDrill(text){
+  if (!text || !wsReady || processingActive) return;
+  prefillComposer(text);
+  sendMessage();
 }
 function shuffleSuggestions(){
   const wrap = document.getElementById('suggestions');

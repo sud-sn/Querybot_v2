@@ -887,6 +887,91 @@ async def change_pw_submit(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# My Notifications — view fired alerts, manage report subscriptions
+# ══════════════════════════════════════════════════════════════════════════════
+
+@router.get("/notifications", response_class=HTMLResponse)
+async def notifications_page(request: Request):
+    user = _get_portal_user(request)
+    if not user:
+        return _login_redirect()
+
+    from core.alert_engine import list_alerts
+    from store import report_store
+
+    account_id = user["account_id"]
+    my_alerts = [
+        a for a in list_alerts()
+        if a.get("account_id") == account_id and a.get("user_id") == str(user["id"])
+    ]
+    reports = report_store.list_reports(account_id)
+    my_subscriptions = {
+        s["report_id"]: s for s in report_store.list_subscriptions(user_id=user["id"])
+    }
+    return _resp(request, "portal_notifications.html", {
+        "user": user,
+        "alerts": my_alerts,
+        "reports": reports,
+        "subscriptions": my_subscriptions,
+        "saved": request.query_params.get("saved"),
+        "error": request.query_params.get("error"),
+    })
+
+
+@router.post("/notifications/alerts/{alert_id}/delete")
+async def notifications_delete_alert(request: Request, alert_id: str):
+    user = _get_portal_user(request)
+    if not user:
+        return _login_redirect()
+
+    from core.alert_engine import get_alert, delete_alert
+
+    alert = get_alert(alert_id)
+    if alert and alert.get("user_id") == str(user["id"]) and alert.get("account_id") == user["account_id"]:
+        delete_alert(alert_id)
+    return RedirectResponse("/portal/notifications?saved=1", status_code=303)
+
+
+@router.post("/notifications/subscribe")
+async def notifications_subscribe(
+    request: Request,
+    report_id: int = Form(...),
+    cadence: str = Form("daily"),
+    day_of_week: int = Form(0),
+    hour: int = Form(8),
+):
+    user = _get_portal_user(request)
+    if not user:
+        return _login_redirect()
+
+    from store import report_store
+
+    account_id = user["account_id"]
+    report = report_store.get_report(report_id, account_id)
+    if not report:
+        from urllib.parse import quote
+        return RedirectResponse(
+            f"/portal/notifications?error={quote('Report not found')}", status_code=303)
+    report_store.create_subscription(
+        account_id, user["id"], report_id,
+        cadence=cadence, day_of_week=day_of_week, hour=hour,
+    )
+    return RedirectResponse("/portal/notifications?saved=1", status_code=303)
+
+
+@router.post("/notifications/unsubscribe")
+async def notifications_unsubscribe(request: Request, subscription_id: int = Form(...)):
+    user = _get_portal_user(request)
+    if not user:
+        return _login_redirect()
+
+    from store import report_store
+
+    report_store.delete_subscription(subscription_id, user["id"])
+    return RedirectResponse("/portal/notifications?saved=1", status_code=303)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Pin chart
 # ══════════════════════════════════════════════════════════════════════════════
 

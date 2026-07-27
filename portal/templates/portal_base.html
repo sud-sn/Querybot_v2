@@ -68,6 +68,10 @@
       <a href="/portal/chat" title="Chat" class="{% if '/chat' in request.url.path %}active{% endif %}">
         {{ ic("chat", 17) }} <span>Chat</span>
       </a>
+      <a href="/portal/notifications" title="Notifications" class="{% if '/notifications' in request.url.path %}active{% endif %}">
+        <svg xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
+        <span>Notifications</span>
+      </a>
     </nav>
 
     <div class="portal-sidebar-spacer"></div>
@@ -115,6 +119,10 @@
       </a>
       <a href="/portal/chat" class="{% if '/chat' in request.url.path %}active{% endif %}">
         {{ ic("chat", 20) }}<span>Chat</span>
+      </a>
+      <a href="/portal/notifications" class="{% if '/notifications' in request.url.path %}active{% endif %}">
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
+        <span>Notifications</span>
       </a>
     </nav>
 {% endif %}

@@ -2,7 +2,7 @@
 {% set _p = request.url.path %}
 {% set _b = "/admin/clients/" ~ client.account_id %}
 {% set _is_overview = (_p == _b or _p == _b ~ "/") %}
-{% set _is_model = ('/setup' in _p or ('/kb' in _p and '/billing' not in _p) or '/graph' in _p or '/date-roles' in _p or '/metrics' in _p or '/glossary' in _p) %}
+{% set _is_model = ('/setup' in _p or ('/kb' in _p and '/billing' not in _p) or '/graph' in _p or '/date-roles' in _p or '/metrics' in _p or '/glossary' in _p or '/reports' in _p) %}
 {% set _is_quality = ('/model-health' in _p or '/evals' in _p or '/traces' in _p or '/learning-queue' in _p) %}
 {% set _is_access = ('/users' in _p or '/groups' in _p or '/pending-users' in _p) %}
 {% set _is_governance = ('/compliance' in _p or '/billing' in _p) %}
@@ -34,6 +34,7 @@
     <a href="{{ _b }}/graph" class="{% if '/graph' in _p %}active{% endif %}">Entity Graph</a>
     <a href="{{ _b }}/date-roles" class="{% if '/date-roles' in _p %}active{% endif %}">Date Roles</a>
     <a href="{{ _b }}/metrics" class="{% if '/metrics' in _p %}active{% endif %}">Metrics</a>
+    <a href="{{ _b }}/reports" class="{% if '/reports' in _p %}active{% endif %}">Reports</a>
     <a href="{{ _b }}/glossary" class="{% if '/glossary' in _p %}active{% endif %}">Glossary</a>
   </nav>
   {% elif _is_quality %}

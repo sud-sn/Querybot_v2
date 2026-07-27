@@ -84,6 +84,13 @@ async def startup() -> None:
     except Exception as e:
         log.warning("External log export scheduler failed to start: %s", e)
 
+    try:
+        from core.notification_scheduler import scheduled_notification_loop
+        app.state.notification_task = asyncio.create_task(scheduled_notification_loop())
+        log.info("Notification scheduler started")
+    except Exception as e:
+        log.warning("Notification scheduler failed to start: %s", e)
+
     # Pre-warm vector store singletons so the first user query is not slow.
     # SentenceTransformer (~90 MB) + CrossEncoder (~22 MB) + Qdrant TCP connect
     # all lazy-load on the first query — moving them here eliminates that spike.
@@ -106,6 +113,10 @@ async def shutdown() -> None:
     task = getattr(app.state, "log_export_task", None)
     if task:
         task.cancel()
+
+    notification_task = getattr(app.state, "notification_task", None)
+    if notification_task:
+        notification_task.cancel()
 
     try:
         from core.portal_notifications import portal_notification_hub
