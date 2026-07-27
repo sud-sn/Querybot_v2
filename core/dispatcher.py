@@ -90,6 +90,23 @@ _ABOUT_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Matches ONLY when the entire (trimmed) message is a report ask — e.g.
+# "report", "my report", "today's report", "show me the ops report" —
+# never a substring match, so an analytical question that merely mentions
+# the word "report" ("give me a report of sales by region") is never
+# hijacked into the named-report feature. `name` captures free text before
+# "report" for store.report_store.get_report_by_name's fuzzy match; empty
+# when no name was given (falls back to single-report/default resolution).
+_REPORT_ASK_RE = re.compile(
+    r"^(?:hi|hey|hello)?[,!]?\s*"
+    r"(?:can\s+you\s+|could\s+you\s+|please\s+)?"
+    r"(?:show|get|give|send|pull\s+up)?\s*"
+    r"(?:me\s+)?(?:what'?s?\s+)?"
+    r"(?:my\s+|the\s+|today'?s\s+|todays\s+)?"
+    r"(?P<name>[a-z0-9 ]{0,40}?)\s*report\b\s*\??$",
+    re.IGNORECASE,
+)
+
 _DATA_REQUEST_ACTION_RE = re.compile(
     r"\b(?:please\s+)?(?:show|list|find|retrieve|display|give|count|calculate|"
     r"compute|compare|analy[sz]e|summari[sz]e|rank|identify|what|how\s+many|when|who|"
@@ -558,6 +575,71 @@ async def _run_log_harvest(account_id: str, chroma_dir: str) -> None:
         log.error("Log harvest failed for %s: %s", account_id, e)
 
 
+# Stopwords stripped from _REPORT_ASK_RE's captured `name` group before
+# treating it as a real report-name attempt — the regex only anchors the
+# *shape* of the message ("... report" as the whole trimmed text), so
+# polite filler ("can i get my report") ends up captured as name="can i get
+# my" even though the user gave no real name. Filtering these out first
+# means that phrasing falls through to the "no name given" resolution
+# (single report / default / ask-to-pick) instead of a confusing "couldn't
+# find report 'can i get my'" message.
+_REPORT_NAME_FILLER = frozenset({
+    "can", "could", "i", "you", "we", "get", "me", "my", "the", "a", "an",
+    "show", "give", "send", "please", "today", "todays", "of", "for",
+    "report", "reports",
+})
+
+
+def _clean_report_name(raw_name: str) -> str:
+    tokens = [t for t in re.split(r"\s+", raw_name.strip()) if t]
+    kept = [t for t in tokens if t.lower() not in _REPORT_NAME_FILLER]
+    return " ".join(kept)
+
+
+async def _handle_report_ask(account_id: str, portal_user: dict, text: str, event, adapter) -> None:
+    """Resolve and deliver a named-report ask (core/report_engine.py). Called
+    from the report front door in dispatch() once _REPORT_ASK_RE matches."""
+    from store import report_store
+    from core.report_engine import build_report_response
+
+    match = _REPORT_ASK_RE.match(text.strip())
+    report_name = _clean_report_name(match.group("name") or "") if match else ""
+
+    reports = report_store.list_reports(account_id)
+    if not reports:
+        await adapter.send_message(event,
+            "There's no report set up for this account yet — ask your admin to create one.")
+        return
+
+    report = None
+    if report_name:
+        report = report_store.get_report_by_name(account_id, report_name)
+        if report is None:
+            names = ", ".join(f'"{r["name"]}"' for r in reports)
+            await adapter.send_message(event,
+                f"I couldn't find a report called \"{report_name}\". Available reports: {names}.")
+            return
+    elif len(reports) == 1:
+        report = reports[0]
+    else:
+        report = next((r for r in reports if r.get("is_default")), None)
+        if report is None:
+            names = ", ".join(f'"{r["name"]}"' for r in reports)
+            await adapter.send_message(event,
+                f"Which report would you like? Available reports: {names}.")
+            return
+
+    response = build_report_response(account_id, portal_user, report)
+    await adapter.send_message(event, response["message"])
+    if not response["ok"]:
+        return
+    send_chart = getattr(adapter, "send_chart", None)
+    for item in response["items"]:
+        await adapter.send_message(event, item["text"])
+        if item["chart"] and callable(send_chart):
+            await send_chart(event, item["chart"])
+
+
 # ── Message dispatcher ────────────────────────────────────────────────────────
 
 async def dispatch(
@@ -664,6 +746,16 @@ async def dispatch(
                 await _send_sq(event, "Here are some questions to get you started:", _qs)
         else:
             await adapter.send_message(event, build_reply(_conv_kind, account_id, portal_user))
+        return
+
+    # ── Report front door (deterministic, no LLM) ─────────────────────────────
+    # "what's today's report", "my report", "the ops report" — resolved here,
+    # before any SQL/LLM path, since a report is a pre-defined group of
+    # metrics (store/report_store.py) to run and render, not a question for
+    # the LLM to answer. Zero overhead for accounts with no reports set up —
+    # bails immediately if list_reports() is empty.
+    if portal_user and _REPORT_ASK_RE.match(text.strip()):
+        await _handle_report_ask(account_id, portal_user, text, event, adapter)
         return
 
     if state == "READY":

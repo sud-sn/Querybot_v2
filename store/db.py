@@ -403,6 +403,54 @@ CREATE TABLE IF NOT EXISTS metric_date_context (
     UNIQUE(account_id, metric_id, context_name)
 );
 
+-- ── Reports (named, multi-metric, admin-defined) ──────────────────────────────
+-- A report is an admin-defined named group of metric_registry entries a user
+-- can ask about live in chat ("what's today's report?") or subscribe to on a
+-- schedule. Access to each metric is still checked per-user at run time via
+-- metric_registry.base_table + store.get_allowed_tables() — the report itself
+-- grants no extra access.
+CREATE TABLE IF NOT EXISTS report (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id  TEXT    NOT NULL REFERENCES client(account_id) ON DELETE CASCADE,
+    name        TEXT    NOT NULL,
+    description TEXT    DEFAULT '',
+    is_default  INTEGER NOT NULL DEFAULT 0,
+    is_active   INTEGER NOT NULL DEFAULT 1,
+    created_at  TEXT    DEFAULT (datetime('now')),
+    updated_at  TEXT    DEFAULT (datetime('now')),
+    UNIQUE(account_id, name)
+);
+
+-- Many-to-many: which metrics belong to a report, and in what display order.
+CREATE TABLE IF NOT EXISTS report_metric (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    report_id   INTEGER NOT NULL REFERENCES report(id) ON DELETE CASCADE,
+    metric_id   INTEGER NOT NULL REFERENCES metric_registry(id) ON DELETE CASCADE,
+    sort_order  INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(report_id, metric_id)
+);
+
+-- A user's subscription to a report's scheduled digest.
+-- cadence: 'daily' | 'weekly'. day_of_week: 0=Monday..6=Sunday, only used
+-- for 'weekly'. hour: 0-23, server local time (matches log_export's own
+-- server-local time convention).
+CREATE TABLE IF NOT EXISTS report_subscription (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id   TEXT    NOT NULL REFERENCES client(account_id) ON DELETE CASCADE,
+    user_id      INTEGER NOT NULL REFERENCES portal_user(id) ON DELETE CASCADE,
+    report_id    INTEGER NOT NULL REFERENCES report(id) ON DELETE CASCADE,
+    cadence      TEXT    NOT NULL DEFAULT 'daily' CHECK(cadence IN ('daily','weekly')),
+    day_of_week  INTEGER NOT NULL DEFAULT 0,
+    hour         INTEGER NOT NULL DEFAULT 8,
+    last_sent    TEXT    DEFAULT NULL,
+    status       TEXT    NOT NULL DEFAULT 'active' CHECK(status IN ('active','paused')),
+    created_at   TEXT    DEFAULT (datetime('now')),
+    UNIQUE(user_id, report_id)
+);
+CREATE INDEX IF NOT EXISTS idx_report_account ON report(account_id);
+CREATE INDEX IF NOT EXISTS idx_report_metric_report ON report_metric(report_id);
+CREATE INDEX IF NOT EXISTS idx_report_subscription_account ON report_subscription(account_id, status);
+
 -- ── Validated examples (proven question→SQL pairs for few-shot) ──────────────
 CREATE TABLE IF NOT EXISTS validated_examples (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
