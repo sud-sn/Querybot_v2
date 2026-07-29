@@ -950,38 +950,88 @@ def build_field_plan_repair_note(semantic_plan: dict[str, Any]) -> str:
         for a in (semantic_plan.get("avoid_columns") or [])
     )
 
-    required = [
+    display_required = [
         f for f in (semantic_plan.get("fields") or [])
         if f.get("display_required") and f.get("table") and f.get("column")
     ]
-    if not required:
+    if display_required:
+        field_lines = "\n".join(
+            "  - '{term}': SELECT {dim_table}.{display_col}"
+            "  —  requires LEFT JOIN {dim_table} ON {src_table}.{join_key} = {dim_table}.{join_key}".format(
+                term=f.get("term") or f.get("column", ""),
+                dim_table=f.get("table", ""),
+                display_col=f.get("column", ""),
+                src_table=f.get("source_table", ""),
+                join_key=f.get("source_key_column", ""),
+            )
+            for f in display_required
+        )
         return (
-            "\nSEMANTIC FIELD PLAN REPAIR RULE:\n"
-            "- The SQL ignored one or more deterministic field-source mappings.\n"
-            "- Use the exact table.column pairs and required joins from the Semantic field-source plan.\n"
-            + avoid_lines +
-            "- Do not move mapped fields to another table and do not remove underscores from column names.\n"
+            "\nSEMANTIC DISPLAY FIELD REPAIR RULE:\n"
+            "- The SQL returned a raw _DMS_KEY column as a business label instead of the required display field.\n"
+            "- Fix ALL of the following — the _DMS_KEY must ONLY appear in the JOIN ON clause:\n"
+            f"{field_lines}\n"
+            "- Never use a _DMS_KEY in SELECT or GROUP BY as a label. Always JOIN to the dimension table and SELECT its display column.\n"
+            "- Keep all other query structure (date filters, WHERE clauses, metrics) unchanged.\n"
         )
 
-    field_lines = "\n".join(
-        "  - '{term}': SELECT {dim_table}.{display_col}"
-        "  —  requires LEFT JOIN {dim_table} ON {src_table}.{join_key} = {dim_table}.{join_key}".format(
-            term=f.get("term") or f.get("column", ""),
-            dim_table=f.get("table", ""),
-            display_col=f.get("column", ""),
-            src_table=f.get("source_table", ""),
-            join_key=f.get("source_key_column", ""),
+    # Governed date-role fields (role="contextual_date") are not display
+    # fields, so the branch above never covers them — but they fail the
+    # same field_plan_mismatch check whenever the SQL anchors on a
+    # different date role instead (e.g. plan says FILL_DATE, the SQL used
+    # DISPENSE_DATE_ID against the calendar dimension). The generic
+    # fallback below never names the wrong/right column, so a retry keeps
+    # repeating the same mistake — this branch makes the fix mechanical.
+    date_required = [
+        f for f in (semantic_plan.get("fields") or [])
+        if f.get("role") == "contextual_date"
+        and f.get("enforcement") != "optional"
+        and f.get("table") and f.get("column")
+    ]
+    if date_required:
+        date_lines = "\n".join(_format_date_field_repair_line(f) for f in date_required)
+        return (
+            "\nSEMANTIC DATE FIELD REPAIR RULE:\n"
+            "- The SQL did not anchor its date filter/join on the approved governed date "
+            "column below — it used a different date-role column instead.\n"
+            f"{date_lines}\n"
+            "- A different date column for this fact (even one that looks equivalent, like "
+            "a dispense/ship/order date surrogate key) answers a different business question "
+            "than the one asked. Remove that filter/join and use the approved column instead.\n"
+            "- Keep all other query structure (metrics, other filters, GROUP BY) unchanged.\n"
         )
-        for f in required
-    )
 
     return (
-        "\nSEMANTIC DISPLAY FIELD REPAIR RULE:\n"
-        "- The SQL returned a raw _DMS_KEY column as a business label instead of the required display field.\n"
-        "- Fix ALL of the following — the _DMS_KEY must ONLY appear in the JOIN ON clause:\n"
-        f"{field_lines}\n"
-        "- Never use a _DMS_KEY in SELECT or GROUP BY as a label. Always JOIN to the dimension table and SELECT its display column.\n"
-        "- Keep all other query structure (date filters, WHERE clauses, metrics) unchanged.\n"
+        "\nSEMANTIC FIELD PLAN REPAIR RULE:\n"
+        "- The SQL ignored one or more deterministic field-source mappings.\n"
+        "- Use the exact table.column pairs and required joins from the Semantic field-source plan.\n"
+        + avoid_lines +
+        "- Do not move mapped fields to another table and do not remove underscores from column names.\n"
+    )
+
+
+def _format_date_field_repair_line(field: dict[str, Any]) -> str:
+    table = field.get("table", "")
+    column = field.get("column", "")
+    source_table = field.get("source_table", "")
+    source_key = field.get("source_key_column", "")
+    term = field.get("term") or column
+
+    same_table = (
+        not source_table
+        or not table
+        or str(source_table).strip().split(".")[-1].upper()
+        == str(table).strip().split(".")[-1].upper()
+    )
+    if same_table or not source_key:
+        return (
+            f"  - '{term}': filter/anchor directly on {table}.{column} — this column already "
+            "lives on the fact table being queried; no join is needed for this date."
+        )
+    return (
+        f"  - '{term}': filter/anchor on {table}.{column}, reached from {source_table} via "
+        f"{source_table}.{source_key} — do not substitute a different date-role surrogate key "
+        f"on {source_table} for this join."
     )
 
 

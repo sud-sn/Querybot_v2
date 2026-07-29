@@ -369,6 +369,32 @@ class ContextualDateResolutionTests(unittest.TestCase):
         self.assertEqual(window["unit"], "day")
         self.assertEqual(window["anchor_policy"], "latest_available")
 
+    def test_rolling_window_recognizes_latest_as_synonym_for_last(self):
+        # Regression: "in the latest 7 days" (a natural, common phrasing)
+        # was silently NOT recognized as relative-date wording -- only
+        # "last/past/previous N days" was. That meant temporal_policies
+        # never got populated for a question phrased with "latest", which
+        # in turn meant the temporal_anchor_missing/temporal_role_mismatch
+        # governance checks in core/validator.py never ran at all for that
+        # question, letting SQL that used the wrong date-role column slip
+        # past to a vague field_plan_mismatch instead of the specific,
+        # actionable temporal check.
+        window = detect_temporal_window(
+            "Which pharmacies had the most prescription fills in the latest 7 days?"
+        )
+        self.assertEqual(window["kind"], "last_n")
+        self.assertEqual(window["amount"], 7)
+        self.assertEqual(window["unit"], "day")
+        self.assertEqual(window["anchor_policy"], "latest_available")
+
+    def test_rolling_window_recognizes_latest_across_units(self):
+        for unit in ("day", "week", "month", "quarter", "year"):
+            with self.subTest(unit=unit):
+                window = detect_temporal_window(f"show revenue for the latest 3 {unit}s")
+                self.assertEqual(window["kind"], "last_n")
+                self.assertEqual(window["amount"], 3)
+                self.assertEqual(window["unit"], unit)
+
     def test_two_explicit_roles_select_two_role_playing_joins(self):
         roles = [
             {
@@ -887,6 +913,75 @@ class TemporalGovernanceHardeningTests(unittest.TestCase):
             if e.get("code") == "temporal_role_mismatch"
         }
         self.assertIn("DISPENSE_DATE_ID", role_columns)
+
+    def test_live_bug_reproduced_end_to_end_via_latest_n_days_phrasing(self):
+        """
+        Full regression for the actual live failure: "...in the latest 7
+        days?" was never recognized as relative-date wording by
+        detect_temporal_window() (only "last/past/previous N days" was),
+        so temporal_policies never got compiled for this question and the
+        specific temporal_anchor_missing/temporal_role_mismatch governance
+        check in core/validator.py never ran -- letting SQL anchored on
+        DISPENSE_DATE_ID/D_DATE instead of the approved FILL_DATE fall
+        through to a vague, unhelpful field_plan_mismatch instead.
+
+        Builds the plan through the REAL pipeline (detect_temporal_window +
+        build_contextual_date_plan from the actual question text), unlike
+        FILL_DATE_PLAN above which hand-constructs temporal_policies and so
+        never exercised the question-parsing step that actually broke.
+        """
+        question = "Which pharmacies had the most prescription fills in the latest 7 days?"
+        binding = {
+            "fact_table": "PHARMA_LAB.F_RX_FILL",
+            "fact_column": "FILL_DATE",
+            "dimension_table": "",
+            "dimension_key": "",
+            "date_value_column": "",
+            "date_key_type": "native_date",
+            "context_name": "Fill Date",
+            "date_role": "fill_date",
+            "is_default": 1,
+            "resolution_source": "metric_default",
+            "governance_status": "",
+        }
+        plan = build_contextual_date_plan(binding, question)
+        self.assertTrue(plan.get("temporal_policies"), "latest N days must compile a temporal policy")
+
+        bad_sql = (
+            "WITH latest_date AS ("
+            "  SELECT MAX(dd.CALENDAR_DATE) AS MAX_DATE FROM PHARMA_LAB.D_DATE dd"
+            "), recent_fills AS ("
+            "  SELECT frx.PHARMACY_ID, COUNT(frx.RX_FILL_ID) AS TOTAL_FILLS"
+            "  FROM PHARMA_LAB.F_RX_FILL frx"
+            "  INNER JOIN PHARMA_LAB.D_DATE dd ON frx.DISPENSE_DATE_ID = dd.DATE_ID"
+            "  WHERE dd.CALENDAR_DATE >= DATEADD(DAY, -7, (SELECT MAX_DATE FROM latest_date))"
+            "    AND dd.CALENDAR_DATE <= (SELECT MAX_DATE FROM latest_date)"
+            "  GROUP BY frx.PHARMACY_ID"
+            ") SELECT dp.PHARMACY_NAME, rf.TOTAL_FILLS FROM recent_fills rf "
+            "JOIN PHARMA_LAB.D_PHARMACY dp ON rf.PHARMACY_ID = dp.PHARMACY_ID "
+            "ORDER BY rf.TOTAL_FILLS DESC"
+        )
+        table_columns = dict(self.PHARMA_COLUMNS)
+        table_columns["PHARMA_LAB.D_PHARMACY"] = {"PHARMACY_ID": "int", "PHARMACY_NAME": "varchar"}
+        table_columns["PHARMA_LAB.F_RX_FILL"] = {
+            **self.PHARMA_COLUMNS["PHARMA_LAB.F_RX_FILL"],
+            "PHARMACY_ID": "int", "RX_FILL_ID": "int",
+        }
+
+        result = validate_sql_detailed(
+            bad_sql, set(table_columns), "azure_sql",
+            table_columns=table_columns,
+            semantic_context={"semantic_plan": plan},
+        )
+        self.assertFalse(result.ok)
+        # Must be caught by the specific temporal check, not silently pass
+        # and not fall through to the generic field_plan_mismatch path.
+        self.assertIn(result.code, ("temporal_anchor_missing", "temporal_role_mismatch"))
+
+        from core.semantic_model import build_field_plan_repair_note
+        note = build_field_plan_repair_note(plan)
+        self.assertIn("FILL_DATE", note)
+        self.assertIn("PHARMA_LAB.F_RX_FILL", note)
 
     def test_approved_native_date_anchor_passes(self):
         sql = (
