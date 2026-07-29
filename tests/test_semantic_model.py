@@ -20,6 +20,7 @@ from core.semantic_model import (
     semantic_model_fingerprint,
     set_default_date_role,
     write_semantic_model,
+    build_field_plan_repair_note,
 )
 from core.validator import validate_sql_detailed
 
@@ -1503,6 +1504,117 @@ class SemanticModelFingerprintTests(unittest.TestCase):
             )
             after = semantic_model_fingerprint(str(kb_dir))
         self.assertNotEqual(before, after)
+
+
+class FieldPlanRepairNoteTests(unittest.TestCase):
+    """build_field_plan_repair_note -- the LLM retry instruction for a
+    field_plan_mismatch failure. Display-field mismatches already got a
+    specific, mechanical instruction; contextual_date (governed date-role)
+    mismatches used to fall through to a vague generic message, which is
+    exactly why a live retry kept repeating the same wrong-date-column
+    mistake instead of correcting it."""
+
+    def test_display_field_mismatch_still_gets_specific_join_instruction(self):
+        plan = {
+            "fields": [{
+                "term": "Customer",
+                "table": "SALES.CUS_DMS",
+                "column": "CUS_NM",
+                "display_required": True,
+                "source_table": "SALES.FACT_REVENUE",
+                "source_key_column": "CUS_DMS_KEY",
+            }],
+        }
+        note = build_field_plan_repair_note(plan)
+        self.assertIn("SEMANTIC DISPLAY FIELD REPAIR RULE", note)
+        self.assertIn("SALES.CUS_DMS.CUS_NM", note)
+        self.assertIn("CUS_DMS_KEY", note)
+
+    def test_native_date_field_mismatch_names_exact_column_no_join_needed(self):
+        plan = {
+            "fields": [{
+                "term": "Fill Date",
+                "table": "PHARMA_LAB.F_RX_FILL",
+                "column": "FILL_DATE",
+                "role": "contextual_date",
+                "display_required": False,
+                "enforcement": "required",
+                "source_table": "PHARMA_LAB.F_RX_FILL",
+                "source_key_column": "FILL_DATE",
+            }],
+        }
+        note = build_field_plan_repair_note(plan)
+        self.assertIn("SEMANTIC DATE FIELD REPAIR RULE", note)
+        self.assertIn("PHARMA_LAB.F_RX_FILL.FILL_DATE", note)
+        self.assertIn("no join is needed", note)
+        # Must not silently fall back to the vague generic message.
+        self.assertNotIn("SEMANTIC FIELD PLAN REPAIR RULE", note)
+
+    def test_surrogate_date_field_mismatch_names_join_path(self):
+        plan = {
+            "fields": [{
+                "term": "Booked Date",
+                "table": "SALES.DIM_DATE",
+                "column": "FULL_DATE",
+                "role": "contextual_date",
+                "display_required": False,
+                "enforcement": "required",
+                "source_table": "SALES.FACT_REVENUE",
+                "source_key_column": "BOOKED_DT_ID",
+            }],
+        }
+        note = build_field_plan_repair_note(plan)
+        self.assertIn("SEMANTIC DATE FIELD REPAIR RULE", note)
+        self.assertIn("SALES.DIM_DATE.FULL_DATE", note)
+        self.assertIn("SALES.FACT_REVENUE.BOOKED_DT_ID", note)
+
+    def test_optional_date_field_does_not_trigger_date_branch(self):
+        plan = {
+            "fields": [{
+                "term": "Fill Date",
+                "table": "PHARMA_LAB.F_RX_FILL",
+                "column": "FILL_DATE",
+                "role": "contextual_date",
+                "display_required": False,
+                "enforcement": "optional",
+                "source_table": "PHARMA_LAB.F_RX_FILL",
+                "source_key_column": "FILL_DATE",
+            }],
+        }
+        note = build_field_plan_repair_note(plan)
+        self.assertIn("SEMANTIC FIELD PLAN REPAIR RULE", note)
+        self.assertNotIn("SEMANTIC DATE FIELD REPAIR RULE", note)
+
+    def test_no_matching_fields_falls_back_to_generic_message(self):
+        plan = {"fields": [], "avoid_columns": []}
+        note = build_field_plan_repair_note(plan)
+        self.assertIn("SEMANTIC FIELD PLAN REPAIR RULE", note)
+
+    def test_display_field_takes_priority_over_date_field(self):
+        plan = {
+            "fields": [
+                {
+                    "term": "Customer",
+                    "table": "SALES.CUS_DMS",
+                    "column": "CUS_NM",
+                    "display_required": True,
+                    "source_table": "SALES.FACT_REVENUE",
+                    "source_key_column": "CUS_DMS_KEY",
+                },
+                {
+                    "term": "Fill Date",
+                    "table": "PHARMA_LAB.F_RX_FILL",
+                    "column": "FILL_DATE",
+                    "role": "contextual_date",
+                    "display_required": False,
+                    "enforcement": "required",
+                    "source_table": "PHARMA_LAB.F_RX_FILL",
+                    "source_key_column": "FILL_DATE",
+                },
+            ],
+        }
+        note = build_field_plan_repair_note(plan)
+        self.assertIn("SEMANTIC DISPLAY FIELD REPAIR RULE", note)
 
 
 if __name__ == "__main__":

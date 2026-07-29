@@ -386,7 +386,7 @@ def detect_temporal_window(question: str) -> dict:
                 "anchor_policy": "latest_available",
             }
     rolling = re.search(
-        r"\b(?:last|past|previous)\s+(\d+)\s+(day|week|month|quarter|year)s?\b",
+        r"\b(?:last|past|previous|latest)\s+(\d+)\s+(day|week|month|quarter|year)s?\b",
         q,
     )
     if rolling:
