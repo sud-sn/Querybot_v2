@@ -1590,6 +1590,64 @@ class FieldPlanRepairNoteTests(unittest.TestCase):
         note = build_field_plan_repair_note(plan)
         self.assertIn("SEMANTIC FIELD PLAN REPAIR RULE", note)
 
+    def test_surrogate_date_field_mismatch_includes_the_required_anchor_subquery(self):
+        # Live bug: naming the target column alone ("join to reach
+        # D_DATE.CALENDAR_DATE") wasn't enough for the LLM to independently
+        # derive a correctly fact-scoped anchor -- the retry kept repeating
+        # a surrogate-key-only filter that never touched the calendar
+        # column. This mirrors a real build_contextual_date_plan() output
+        # (fields + joins together, linked by role_alias) rather than a
+        # hand-trimmed fixture, so the join lookup is exercised for real.
+        plan = {
+            "fields": [{
+                "term": "Snapshot Date",
+                "table": "PHARMA_LAB.D_DATE",
+                "column": "CALENDAR_DATE",
+                "role": "contextual_date",
+                "display_required": False,
+                "enforcement": "required",
+                "source_table": "PHARMA_LAB.F_INVENTORY_SNAPSHOT",
+                "source_key_column": "SNAPSHOT_DATE_ID",
+                "date_key_type": "surrogate_fk",
+                "role_alias": "snapshot_date",
+            }],
+            "joins": [{
+                "from": "PHARMA_LAB.F_INVENTORY_SNAPSHOT",
+                "to": "PHARMA_LAB.D_DATE",
+                "conditions": [("SNAPSHOT_DATE_ID", "DATE_ID")],
+                "role_alias": "snapshot_date",
+            }],
+        }
+        note = build_field_plan_repair_note(plan)
+        self.assertIn("REQUIRED ANCHOR", note)
+        self.assertIn(
+            "(SELECT MAX(PHARMA_LAB.D_DATE.CALENDAR_DATE) FROM PHARMA_LAB.D_DATE "
+            "JOIN PHARMA_LAB.F_INVENTORY_SNAPSHOT ON PHARMA_LAB.F_INVENTORY_SNAPSHOT.SNAPSHOT_DATE_ID "
+            "= PHARMA_LAB.D_DATE.DATE_ID)",
+            note,
+        )
+        # Never the raw anti-pattern (unscoped dimension-only MAX).
+        self.assertNotIn("FROM PHARMA_LAB.D_DATE)", note)
+
+    def test_surrogate_date_field_without_join_info_omits_anchor_gracefully(self):
+        # No matching `joins` entry (e.g. an older/hand-built plan) -- must
+        # not crash, just fall back to the base instruction with no anchor.
+        plan = {
+            "fields": [{
+                "term": "Booked Date",
+                "table": "SALES.DIM_DATE",
+                "column": "FULL_DATE",
+                "role": "contextual_date",
+                "display_required": False,
+                "enforcement": "required",
+                "source_table": "SALES.FACT_REVENUE",
+                "source_key_column": "BOOKED_DT_ID",
+            }],
+        }
+        note = build_field_plan_repair_note(plan)
+        self.assertIn("SALES.DIM_DATE.FULL_DATE", note)
+        self.assertNotIn("REQUIRED ANCHOR", note)
+
     def test_display_field_takes_priority_over_date_field(self):
         plan = {
             "fields": [

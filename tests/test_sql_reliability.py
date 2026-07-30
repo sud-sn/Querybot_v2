@@ -320,6 +320,25 @@ class StrictColumnValidationTests(unittest.TestCase):
         self.assertFalse(has_identity_filter(""))
         self.assertFalse(has_identity_filter("not valid sql ((("))
 
+    def test_surrogate_date_role_id_column_is_not_an_identity_filter(self):
+        # Live bug: a surrogate date-role FK like SNAPSHOT_DATE_ID/
+        # DISPENSE_DATE_ID ends in _ID, not _DATE, so the regex-only check
+        # missed it -- a plain "total X during the last snapshot date"
+        # aggregate (exactly the time-bounded shape this function's own
+        # docstring says should NOT need null-aware wrapping) was
+        # misclassified as an identity/category lookup like "customer_id =
+        # 123", forcing an unnecessary MatchedRows/COALESCE requirement
+        # onto a query that ran (and returned real data) just fine.
+        self.assertFalse(has_identity_filter(
+            "SELECT SUM(INVENTORY_VALUE_AMT) AS T FROM PHARMA_LAB.F_INVENTORY_SNAPSHOT "
+            "WHERE SNAPSHOT_DATE_ID = (SELECT MAX(SNAPSHOT_DATE_ID) FROM PHARMA_LAB.F_INVENTORY_SNAPSHOT)"
+        ))
+        # A genuine identity filter on an _ID column with no date-role
+        # naming must still be caught.
+        self.assertTrue(has_identity_filter(
+            "SELECT SUM(x) AS T FROM TBL WHERE CUSTOMER_ID = 123"
+        ))
+
     def test_accepts_filtered_sum_with_null_diagnostics(self):
         result = validate_sql_detailed(
             "SELECT COUNT_BIG(*) AS [MatchedRows], "

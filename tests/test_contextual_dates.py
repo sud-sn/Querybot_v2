@@ -1235,6 +1235,16 @@ class TemporalAnchorScopeValidatorTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertEqual(result.code, "temporal_anchor_unscoped")
 
+    def test_temporal_anchor_unscoped_gets_a_repair_retry(self):
+        # A query rejected by this new check must get the same one repair
+        # attempt every other temporal_anchor_* code already gets -- found
+        # missing from query_pipeline.py's retryable-codes set while
+        # investigating a live "why no answer" report (the query would
+        # otherwise go straight to a terminal failure with zero retries).
+        src = (Path(__file__).resolve().parents[1] / "core" / "query_pipeline.py").read_text(encoding="utf-8")
+        retryable_line = next(line for line in src.splitlines() if line.strip().startswith("retryable ="))
+        self.assertIn('"temporal_anchor_unscoped"', retryable_line)
+
 
 if __name__ == "__main__":
     unittest.main()

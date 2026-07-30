@@ -1056,7 +1056,20 @@ def _where_has_identity_filter(where) -> bool:
     `f.id = d.id` inside `(SELECT MAX(d.col) FROM dim d JOIN fact f ON ...)`)
     is internal machinery for computing a scalar the outer query compares
     against, not an identity filter on the outer query's own rows.
+
+    _DATE_FILTER_COLUMN_RE alone misses surrogate date-role FK columns like
+    SNAPSHOT_DATE_ID/DISPENSE_DATE_ID/BOOKED_DATE_ID -- they end in _ID, not
+    _DATE, so a live "total X during the last snapshot date" question with
+    `WHERE SNAPSHOT_DATE_ID = (SELECT MAX(SNAPSHOT_DATE_ID) FROM ...)` (a
+    pure time-bounded aggregate, exactly the shape this function's own
+    docstring says should NOT trigger the null-aware-aggregate requirement)
+    was misclassified as an identity filter. core.date_roles's
+    is_date_role_column is the canonical, already-governed check for "is
+    this column a recognized business date role" -- reuse it rather than
+    extending this regex a second time.
     """
+    from core.date_roles import is_date_role_column
+
     owning_select = where.parent
     for cond in where.find_all(sg_exp.EQ, sg_exp.In):
         if cond.find_ancestor(sg_exp.Select) is not owning_select:
@@ -1064,8 +1077,10 @@ def _where_has_identity_filter(where) -> bool:
         col_node = cond.this if isinstance(cond.this, sg_exp.Column) else None
         if col_node is None:
             continue
-        if not _DATE_FILTER_COLUMN_RE.search(col_node.name or ""):
-            return True
+        name = col_node.name or ""
+        if _DATE_FILTER_COLUMN_RE.search(name) or is_date_role_column(name):
+            continue
+        return True
     return False
 
 

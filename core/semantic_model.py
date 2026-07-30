@@ -989,11 +989,14 @@ def build_field_plan_repair_note(semantic_plan: dict[str, Any]) -> str:
         and f.get("table") and f.get("column")
     ]
     if date_required:
-        date_lines = "\n".join(_format_date_field_repair_line(f) for f in date_required)
+        date_lines = "\n".join(
+            _format_date_field_repair_line(f, semantic_plan) for f in date_required
+        )
         return (
             "\nSEMANTIC DATE FIELD REPAIR RULE:\n"
             "- The SQL did not anchor its date filter/join on the approved governed date "
-            "column below — it used a different date-role column instead.\n"
+            "column below — it used a different date-role column instead, or filtered only "
+            "on the fact table's own surrogate key without joining to reach the real date.\n"
             f"{date_lines}\n"
             "- A different date column for this fact (even one that looks equivalent, like "
             "a dispense/ship/order date surrogate key) answers a different business question "
@@ -1010,7 +1013,7 @@ def build_field_plan_repair_note(semantic_plan: dict[str, Any]) -> str:
     )
 
 
-def _format_date_field_repair_line(field: dict[str, Any]) -> str:
+def _format_date_field_repair_line(field: dict[str, Any], semantic_plan: dict[str, Any] | None = None) -> str:
     table = field.get("table", "")
     column = field.get("column", "")
     source_table = field.get("source_table", "")
@@ -1028,11 +1031,53 @@ def _format_date_field_repair_line(field: dict[str, Any]) -> str:
             f"  - '{term}': filter/anchor directly on {table}.{column} — this column already "
             "lives on the fact table being queried; no join is needed for this date."
         )
-    return (
+
+    # Surrogate-FK role: naming the target column alone ("join to reach
+    # D_DATE.CALENDAR_DATE") isn't enough for the LLM to independently
+    # derive a correctly fact-scoped anchor subquery -- that's exactly the
+    # class of mistake this whole date-role system exists to prevent.
+    # Reuse the SAME anchor text format_semantic_field_plan already hands
+    # the LLM for temporal_anchor_* failures, so a field_plan_mismatch on a
+    # contextual_date field gets the identical copy-pasteable guidance
+    # instead of a weaker, prose-only instruction.
+    anchor_text = ""
+    join_edge = next(
+        (
+            j for j in ((semantic_plan or {}).get("joins") or [])
+            if j.get("role_alias") and j.get("role_alias") == field.get("role_alias")
+        ),
+        None,
+    )
+    dimension_key = ""
+    if join_edge and join_edge.get("conditions"):
+        try:
+            _, dimension_key = join_edge["conditions"][0]
+        except (ValueError, TypeError, IndexError):
+            dimension_key = ""
+    if dimension_key:
+        from core.contextual_dates import format_required_anchor
+
+        anchor_text = format_required_anchor({
+            "anchor_table": source_table,
+            "anchor_column": source_key,
+            "dimension_table": table,
+            "dimension_key": dimension_key,
+            "date_column": column,
+            "date_key_type": field.get("date_key_type") or "surrogate_fk",
+        })
+
+    base = (
         f"  - '{term}': filter/anchor on {table}.{column}, reached from {source_table} via "
         f"{source_table}.{source_key} — do not substitute a different date-role surrogate key "
-        f"on {source_table} for this join."
+        f"on {source_table} for this join, and do not filter on {source_table}.{source_key} alone "
+        f"without joining to reach {table}.{column}."
     )
+    if anchor_text:
+        base += (
+            f"\n    REQUIRED ANCHOR (copy this exact subquery as the anchor; do not build "
+            f"your own): {anchor_text}"
+        )
+    return base
 
 
 def _terms_for_text(text: str) -> set[str]:
