@@ -99,6 +99,7 @@ details[open].edit-panel summary{background:var(--gray-100)}
           <span class="report-title">{{ r.name }}</span>
           {% if r.is_default %}<span class="default-badge">default</span>{% endif %}
           {% if not r.is_active %}<span class="inactive-badge">inactive</span>{% endif %}
+          <div class="report-sub">Created by {{ r.creator_label }}</div>
           {% if r.description %}<div class="report-sub">{{ r.description }}</div>{% endif %}
         </div>
         <div class="action-btns">

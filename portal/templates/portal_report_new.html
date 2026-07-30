@@ -1,0 +1,59 @@
+{% extends "portal_base.html" %}
+{% block title %}New Report — QueryBot Portal{% endblock %}
+{% block content %}
+<div style="max-width:760px;margin:0 auto">
+  <div class="page-header">
+    <h1>New report</h1>
+    <p>Group a few metrics you check often into a named report you can ask for
+      later ("what's my {name} report?") or subscribe to for a scheduled
+      digest. Each metric still respects your own table access.</p>
+  </div>
+
+  {% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+
+  <div class="card">
+    <div class="card-body" style="padding:1rem">
+      <form method="post" action="/portal/reports/create">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:.75rem">
+          <div>
+            <label style="font-size:12px;font-weight:600;color:var(--gray-600)">Report name</label>
+            <input name="name" type="text" required placeholder="e.g. My Territory Snapshot" style="width:100%">
+          </div>
+          <div>
+            <label style="font-size:12px;font-weight:600;color:var(--gray-600)">Description</label>
+            <input name="description" type="text" placeholder="What this report covers" style="width:100%">
+          </div>
+        </div>
+
+        <div style="margin-top:1rem">
+          <div style="font-size:11px;font-weight:700;color:var(--gray-500);
+            text-transform:uppercase;letter-spacing:.04em;margin-bottom:.5rem">
+            Metrics to include
+          </div>
+          {% if all_metrics %}
+            {% for m in all_metrics %}
+              <label style="display:flex;align-items:center;gap:.5rem;padding:.4rem 0;
+                border-bottom:1px solid var(--border);font-size:13px">
+                <input type="checkbox" name="metric_ids" value="{{ m.id }}">
+                <span style="font-weight:600">{{ m.name }}</span>
+                {% if m.base_table %}<span style="color:var(--gray-500);font-family:Consolas,monospace;
+                  font-size:11px"> — {{ m.base_table }}</span>{% endif %}
+              </label>
+            {% endfor %}
+          {% else %}
+            <div style="font-size:12px;color:var(--gray-500)">
+              No metrics are available to you yet — ask your admin to grant table access
+              or add metrics to the registry.
+            </div>
+          {% endif %}
+        </div>
+
+        <div style="margin-top:1rem;display:flex;gap:.5rem">
+          <button type="submit" class="btn btn-primary btn-sm">Create report</button>
+          <a href="/portal/notifications" class="btn btn-secondary btn-sm">Cancel</a>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

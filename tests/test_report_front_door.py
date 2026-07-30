@@ -207,5 +207,211 @@ class HandleReportAskTests(unittest.TestCase):
         adapter.send_chart.assert_not_called()
 
 
+class OfferLoginReportPromptTests(unittest.TestCase):
+    """core.dispatcher._offer_login_report_prompt -- the proactive "want
+    today's reports?" prompt fired on a genuinely new session (portal
+    WS-connect, or the reactive Teams/Zoom/Slack session greeting)."""
+
+    def _make_event_adapter(self, user_id="zoom-1"):
+        event = MagicMock()
+        event.user_id = user_id
+        adapter = MagicMock()
+        adapter.send_message = AsyncMock()
+        adapter.send_clarification_prompt = AsyncMock()
+        return event, adapter
+
+    def test_no_promptable_reports_is_a_silent_no_op(self):
+        event, adapter = self._make_event_adapter()
+        with (
+            patch("core.report_engine.list_promptable_reports", return_value=[]),
+            patch("core.dispatcher.save_pending") as mock_save,
+        ):
+            _arun(dispatcher._offer_login_report_prompt("acct1", {"id": 1}, event, adapter))
+        adapter.send_message.assert_not_called()
+        adapter.send_clarification_prompt.assert_not_called()
+        mock_save.assert_not_called()
+
+    def test_no_op_when_event_has_no_user_id(self):
+        event, adapter = self._make_event_adapter(user_id="")
+        with patch("core.report_engine.list_promptable_reports") as mock_list:
+            _arun(dispatcher._offer_login_report_prompt("acct1", {"id": 1}, event, adapter))
+        mock_list.assert_not_called()
+
+    def test_single_report_sends_yes_no_message_and_saves_pending(self):
+        event, adapter = self._make_event_adapter()
+        report = {"id": 5, "name": "Ops Report"}
+        with (
+            patch("core.report_engine.list_promptable_reports", return_value=[report]),
+            patch("core.dispatcher.save_pending") as mock_save,
+        ):
+            _arun(dispatcher._offer_login_report_prompt("acct1", {"id": 1}, event, adapter))
+
+        adapter.send_message.assert_called_once()
+        msg = adapter.send_message.call_args[0][1]
+        self.assertIn("Ops Report", msg)
+        adapter.send_clarification_prompt.assert_not_called()
+        mock_save.assert_called_once()
+        meta = mock_save.call_args.kwargs.get("clarification_meta")
+        self.assertEqual(meta["source"], "login_report_prompt")
+        self.assertEqual(meta["mode"], "single")
+        self.assertEqual(meta["report_id"], 5)
+
+    def test_multiple_reports_uses_clarification_prompt_with_no_thanks_option(self):
+        event, adapter = self._make_event_adapter()
+        reports = [{"id": 1, "name": "Ops Report"}, {"id": 2, "name": "Sales Report"}]
+        with (
+            patch("core.report_engine.list_promptable_reports", return_value=reports),
+            patch("core.dispatcher.save_pending") as mock_save,
+        ):
+            _arun(dispatcher._offer_login_report_prompt("acct1", {"id": 1}, event, adapter))
+
+        adapter.send_clarification_prompt.assert_called_once()
+        options = adapter.send_clarification_prompt.call_args[0][2]
+        labels = {o["label"] for o in options}
+        self.assertEqual(labels, {"Ops Report", "Sales Report", "No thanks"})
+        meta = mock_save.call_args.kwargs.get("clarification_meta")
+        self.assertEqual(meta["mode"], "multi")
+
+    def test_multiple_reports_falls_back_to_plain_message_without_chip_support(self):
+        event, adapter = self._make_event_adapter()
+        del adapter.send_clarification_prompt  # simulate an adapter without chip support
+        reports = [{"id": 1, "name": "Ops Report"}, {"id": 2, "name": "Sales Report"}]
+        with (
+            patch("core.report_engine.list_promptable_reports", return_value=reports),
+            patch("core.dispatcher.save_pending"),
+        ):
+            _arun(dispatcher._offer_login_report_prompt("acct1", {"id": 1}, event, adapter))
+        msg = adapter.send_message.call_args[0][1]
+        self.assertIn("Ops Report", msg)
+        self.assertIn("Sales Report", msg)
+
+
+class HandleLoginReportPromptReplyTests(unittest.TestCase):
+    """core.dispatcher._handle_login_report_prompt_reply -- resolving the
+    user's answer to the proactive prompt (yes/no for a single offer,
+    report name/chip pick or "no thanks" for a multi-report offer)."""
+
+    def _make_event_adapter(self, user_id="zoom-1"):
+        event = MagicMock()
+        event.user_id = user_id
+        adapter = MagicMock()
+        adapter.send_message = AsyncMock()
+        adapter.send_chart = AsyncMock()
+        return event, adapter
+
+    def _single_pending(self, report_id=5):
+        return {"clarification_meta": {"source": "login_report_prompt", "mode": "single", "report_id": report_id}}
+
+    def _multi_pending(self, options):
+        return {"clarification_meta": {"source": "login_report_prompt", "mode": "multi", "options": options}}
+
+    def test_single_mode_yes_delivers_the_report(self):
+        event, adapter = self._make_event_adapter()
+        report = {"id": 5, "name": "Ops Report"}
+        with (
+            patch("core.dispatcher.clear_pending") as mock_clear,
+            patch("store.report_store.get_report", return_value=report),
+            patch("core.report_engine.build_report_response",
+                  return_value={"ok": True, "message": "**Ops Report**", "items": []}) as mock_build,
+        ):
+            handled = _arun(dispatcher._handle_login_report_prompt_reply(
+                "acct1", {"id": 1}, "yes", event, adapter, self._single_pending()))
+        self.assertTrue(handled)
+        mock_clear.assert_called_once_with("acct1", "zoom-1")
+        mock_build.assert_called_once_with("acct1", {"id": 1}, report)
+
+    def test_single_mode_no_thanks_declines_silently(self):
+        event, adapter = self._make_event_adapter()
+        with (
+            patch("core.dispatcher.clear_pending"),
+            patch("core.report_engine.build_report_response") as mock_build,
+        ):
+            handled = _arun(dispatcher._handle_login_report_prompt_reply(
+                "acct1", {"id": 1}, "no thanks", event, adapter, self._single_pending()))
+        self.assertTrue(handled)
+        adapter.send_message.assert_not_called()
+        mock_build.assert_not_called()
+
+    def test_single_mode_unclear_reply_is_not_handled(self):
+        event, adapter = self._make_event_adapter()
+        with patch("core.dispatcher.clear_pending") as mock_clear:
+            handled = _arun(dispatcher._handle_login_report_prompt_reply(
+                "acct1", {"id": 1}, "what is total revenue by region", event, adapter, self._single_pending()))
+        self.assertFalse(handled)
+        # Pending is still cleared even when not "handled" -- the prompt
+        # opportunity has passed once a real message arrives.
+        mock_clear.assert_called_once_with("acct1", "zoom-1")
+
+    def test_multi_mode_picks_report_by_chip_value(self):
+        event, adapter = self._make_event_adapter()
+        options = [{"id": "1", "label": "Ops Report", "value": "1"},
+                   {"id": "2", "label": "Sales Report", "value": "2"},
+                   {"id": "no_thanks", "label": "No thanks", "value": "no_thanks"}]
+        reports = [{"id": 1, "name": "Ops Report"}, {"id": 2, "name": "Sales Report"}]
+        with (
+            patch("core.dispatcher.clear_pending"),
+            patch("core.report_engine.list_promptable_reports", return_value=reports),
+            patch("core.report_engine.build_report_response",
+                  return_value={"ok": True, "message": "**Sales Report**", "items": []}) as mock_build,
+        ):
+            handled = _arun(dispatcher._handle_login_report_prompt_reply(
+                "acct1", {"id": 1}, "Sales Report", event, adapter, self._multi_pending(options)))
+        self.assertTrue(handled)
+        mock_build.assert_called_once_with("acct1", {"id": 1}, reports[1])
+
+    def test_multi_mode_no_thanks_declines_silently(self):
+        event, adapter = self._make_event_adapter()
+        options = [{"id": "1", "label": "Ops Report", "value": "1"},
+                   {"id": "no_thanks", "label": "No thanks", "value": "no_thanks"}]
+        with (
+            patch("core.dispatcher.clear_pending"),
+            patch("core.report_engine.build_report_response") as mock_build,
+        ):
+            handled = _arun(dispatcher._handle_login_report_prompt_reply(
+                "acct1", {"id": 1}, "no thanks", event, adapter, self._multi_pending(options)))
+        self.assertTrue(handled)
+        mock_build.assert_not_called()
+
+    def test_multi_mode_unrecognized_reply_is_not_handled(self):
+        event, adapter = self._make_event_adapter()
+        options = [{"id": "1", "label": "Ops Report", "value": "1"}]
+        with (
+            patch("core.dispatcher.clear_pending"),
+            patch("core.report_engine.list_promptable_reports", return_value=[{"id": 1, "name": "Ops Report"}]),
+        ):
+            handled = _arun(dispatcher._handle_login_report_prompt_reply(
+                "acct1", {"id": 1}, "what's the weather", event, adapter, self._multi_pending(options)))
+        self.assertFalse(handled)
+
+
+class LoginReportPromptDispatchWiringTests(unittest.TestCase):
+    """Marker tests confirming the early pending-check in dispatch() runs
+    BEFORE the conversational and report-ask front doors -- otherwise a
+    "no thanks" reply gets misclassified as the `thanks` conversational
+    kind, or a report-name reply gets hijacked by _REPORT_ASK_RE, before
+    either gets a chance to see it's actually answering our own prompt."""
+
+    @classmethod
+    def setUpClass(cls):
+        import inspect
+        cls.src = inspect.getsource(dispatcher.dispatch)
+
+    def test_login_prompt_check_precedes_conversational_front_door(self):
+        login_idx = self.src.index("_handle_login_report_prompt_reply")
+        conv_idx = self.src.index('_conv_kind in ("greeting", "thanks", "goodbye", "frustration")')
+        self.assertLess(login_idx, conv_idx)
+
+    def test_login_prompt_check_precedes_report_front_door(self):
+        login_idx = self.src.index("_handle_login_report_prompt_reply")
+        report_idx = self.src.index("_handle_report_ask(account_id, portal_user, text, event, adapter)")
+        self.assertLess(login_idx, report_idx)
+
+    def test_unhandled_reply_falls_through_instead_of_returning(self):
+        anchor = self.src.index("_handle_login_report_prompt_reply")
+        block = self.src[anchor:anchor + 400]
+        self.assertIn("if _handled:", block)
+        self.assertIn("return", block)
+
+
 if __name__ == "__main__":
     unittest.main()

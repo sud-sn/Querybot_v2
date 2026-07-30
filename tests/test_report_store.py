@@ -242,5 +242,88 @@ class SubscriptionTests(ReportStoreTestsBase):
         self.assertEqual(subs[0]["user_id"], user_id)
 
 
+class SelfServiceReportTests(ReportStoreTestsBase):
+    """Users can create their own reports too, not just admins --
+    created_by_user_id is attribution only (shown to admins) and does not
+    restrict who can ask for/subscribe to the report; only editing/deleting
+    is scoped to the creator via update_own_report/delete_own_report."""
+
+    def _make_user(self) -> int:
+        user_id, _ = store.create_user(self.account_id, "Test User", f"{uuid.uuid4().hex[:8]}@test.com")
+        return user_id
+
+    def test_admin_created_report_has_no_creator(self):
+        r = report_store.create_report(self.account_id, "Admin Report")
+        self.assertIsNone(r["created_by_user_id"])
+
+    def test_self_service_report_records_creator(self):
+        user_id = self._make_user()
+        r = report_store.create_report(self.account_id, "My Report", created_by_user_id=user_id)
+        self.assertEqual(r["created_by_user_id"], user_id)
+
+    def test_self_service_report_is_visible_in_the_shared_pool(self):
+        # Shared-pool decision: a user-created report is listed and
+        # name-resolvable the same as an admin-created one.
+        user_id = self._make_user()
+        report_store.create_report(self.account_id, "Shared Report", created_by_user_id=user_id)
+
+        names = {r["name"] for r in report_store.list_reports(self.account_id)}
+        self.assertIn("Shared Report", names)
+        self.assertIsNotNone(report_store.get_report_by_name(self.account_id, "Shared Report"))
+
+    def test_update_own_report_scoped_to_creator(self):
+        user_id = self._make_user()
+        other_user_id = self._make_user()
+        r = report_store.create_report(self.account_id, "Mine", created_by_user_id=user_id)
+
+        self.assertFalse(
+            report_store.update_own_report(r["id"], self.account_id, other_user_id, {"name": "Hijacked"})
+        )
+        self.assertTrue(
+            report_store.update_own_report(r["id"], self.account_id, user_id, {"name": "Renamed"})
+        )
+        self.assertEqual(report_store.get_report(r["id"], self.account_id)["name"], "Renamed")
+
+    def test_update_own_report_cannot_flip_default_or_active(self):
+        # is_default/is_active are account-wide policy knobs, not exposed
+        # to a non-admin creator via this self-service path.
+        user_id = self._make_user()
+        r = report_store.create_report(self.account_id, "Mine", created_by_user_id=user_id)
+
+        report_store.update_own_report(r["id"], self.account_id, user_id, {
+            "name": "Still Mine", "is_default": True, "is_active": False,
+        })
+        fetched = report_store.get_report(r["id"], self.account_id)
+        self.assertEqual(fetched["name"], "Still Mine")
+        self.assertEqual(fetched["is_default"], 0)
+        self.assertEqual(fetched["is_active"], 1)
+
+    def test_admin_created_report_not_editable_via_update_own_report(self):
+        # created_by_user_id is NULL -- no user_id can match it.
+        user_id = self._make_user()
+        r = report_store.create_report(self.account_id, "Admin's")
+
+        self.assertFalse(
+            report_store.update_own_report(r["id"], self.account_id, user_id, {"name": "Stolen"})
+        )
+
+    def test_delete_own_report_scoped_to_creator(self):
+        user_id = self._make_user()
+        other_user_id = self._make_user()
+        r = report_store.create_report(self.account_id, "Mine", created_by_user_id=user_id)
+
+        self.assertFalse(report_store.delete_own_report(r["id"], self.account_id, other_user_id))
+        self.assertIsNotNone(report_store.get_report(r["id"], self.account_id))
+        self.assertTrue(report_store.delete_own_report(r["id"], self.account_id, user_id))
+        self.assertIsNone(report_store.get_report(r["id"], self.account_id))
+
+    def test_admin_created_report_not_deletable_via_delete_own_report(self):
+        user_id = self._make_user()
+        r = report_store.create_report(self.account_id, "Admin's")
+
+        self.assertFalse(report_store.delete_own_report(r["id"], self.account_id, user_id))
+        self.assertIsNotNone(report_store.get_report(r["id"], self.account_id))
+
+
 if __name__ == "__main__":
     unittest.main()

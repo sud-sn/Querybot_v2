@@ -42,6 +42,36 @@
     </div>
   </div>
 
+  <div class="card" style="margin-bottom:1.5rem">
+    <div class="card-header" style="display:flex;align-items:center;justify-content:space-between">
+      <h2 style="font-size:15px;margin:0">My reports</h2>
+      <a href="/portal/reports/new" class="btn btn-primary btn-sm">+ New report</a>
+    </div>
+    <div class="card-body" style="padding:1rem">
+      {% if my_reports %}
+        {% for r in my_reports %}
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:.75rem;
+            padding:.5rem 0;border-bottom:1px solid var(--border)">
+            <div>
+              <div style="font-size:13px;font-weight:600">{{ r.name }}</div>
+              {% if r.description %}<div style="font-size:11px;color:var(--gray-500)">{{ r.description }}</div>{% endif %}
+            </div>
+            <form method="post" action="/portal/reports/{{ r.id }}/delete" style="display:inline"
+              id="del-my-report-{{ r.id }}">
+              <button type="button" class="btn btn-secondary btn-sm"
+                onclick="qbConfirm({title:'Delete report?',body:'This cannot be undone. Subscriptions to it will stop.',confirm:'Delete',onConfirm:()=>document.getElementById('del-my-report-{{ r.id }}').submit()})">Delete</button>
+            </form>
+          </div>
+        {% endfor %}
+      {% else %}
+        <div style="font-size:12px;color:var(--gray-500)">
+          You haven't created any reports yet — group a few metrics you check
+          often into one you can ask for or subscribe to.
+        </div>
+      {% endif %}
+    </div>
+  </div>
+
   <div class="card">
     <div class="card-header"><h2 style="font-size:15px;margin:0">Report subscriptions</h2></div>
     <div class="card-body" style="padding:1rem">

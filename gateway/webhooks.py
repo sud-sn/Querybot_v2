@@ -460,6 +460,11 @@ async def ws_chat(websocket: WebSocket, account_id: str):
             "role":    "assistant",
             "content": build_reply("greeting", account_id, portal_user),
         })
+        try:
+            from core.dispatcher import _offer_login_report_prompt
+            await _offer_login_report_prompt(account_id, portal_user, adapter.make_event(""), adapter)
+        except Exception as _report_prompt_exc:
+            log.debug("Login report prompt skipped: %s", _report_prompt_exc)
     else:
         await websocket.send_json({
             "type":    "system",
@@ -1785,6 +1790,34 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     await websocket.send_json({"type": "error", "content": "That clarification is no longer active. Please ask the question again."})
                     continue
                 cmeta = pending.get("clarification_meta") or {}
+
+                # Login-time report prompt reply (chip click) -- resolved
+                # separately from the generic clarification flow below since
+                # this isn't refining a data question; picking a report (or
+                # declining) delivers it directly instead of feeding into
+                # combine_with_clarification + handle_query.
+                if cmeta.get("source") == "login_report_prompt":
+                    from core.dispatcher import _deliver_report_via_adapter
+                    from core.report_engine import list_promptable_reports
+
+                    selected_id = str(data.get("option_id") or "").strip()
+                    free_text = _ws_text_value(data.get("text"), "text", "question", "value", "label")
+                    opts = cmeta.get("options") or []
+                    selected = next((o for o in opts if str(o.get("id") or "") == selected_id), None)
+                    if not selected and free_text:
+                        selected = resolve_option_text(opts, free_text)
+                    clear_pending(account_id, zoom_user_id)
+
+                    report = None
+                    if selected and selected.get("id") != "no_thanks":
+                        reports = list_promptable_reports(account_id, portal_user)
+                        report = next((r for r in reports if str(r["id"]) == str(selected.get("value"))), None)
+                    if report:
+                        await _deliver_report_via_adapter(account_id, portal_user, report, adapter.make_event(""), adapter)
+                    else:
+                        await websocket.send_json({"type": "system", "content": "No worries — skipping today's reports."})
+                    continue
+
                 opts = cmeta.get("options") or []
                 selected_id = str(data.get("option_id") or "").strip()
                 free_text = _ws_text_value(

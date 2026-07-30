@@ -270,6 +270,66 @@ def build_report_response(account_id: str, user: dict, report: dict) -> dict:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# Login-time report prompt — shared resolution helpers used by both the
+# reactive "my report" ask (core/dispatcher.py::_handle_report_ask, via
+# store/report_store.py's account-wide list_reports/get_report_by_name,
+# unchanged) and the new proactive prompt fired on a genuinely new session
+# (see dispatcher.py's session-greeting block and webhooks.py's WS-connect
+# hook). The proactive prompt must not offer a report the user has no
+# visible data for, so it needs an ACL-filtered candidate list instead of
+# the reactive ask's unfiltered account-wide pool.
+# ══════════════════════════════════════════════════════════════════════════════
+
+def list_promptable_reports(account_id: str, user: dict) -> list[dict]:
+    """Active reports with at least one metric the user's ACL can see --
+    the candidate list for the proactive login-time report prompt. Admin
+    (get_allowed_tables returns None) sees every active report, matching
+    _handle_report_ask's existing unrestricted behavior for admins. A
+    metric with no base_table (formula-only) has nothing to ACL-check
+    against, so it's treated as visible by default. Offering a report
+    where only SOME metrics are visible is intentional, not a gap -- the
+    existing report-ask flow already renders a 🔒 line per denied metric
+    (_format_metric_line) rather than hiding the whole report, so this
+    mirrors that same partial-access tolerance instead of being stricter."""
+    import store
+    from store import report_store
+
+    allowed = store.get_allowed_tables(user)  # None = admin, unrestricted
+    reports = report_store.list_reports(account_id, active_only=True)
+    if allowed is None:
+        return reports
+
+    visible = []
+    for r in reports:
+        metrics = report_store.list_report_metrics(r["id"])
+        if not metrics:
+            continue
+        if any(
+            not (m.get("base_table") or "").strip() or m["base_table"].upper() in allowed
+            for m in metrics
+        ):
+            visible.append(r)
+    return visible
+
+
+def match_report_by_name(reports: list[dict], name: str) -> dict | None:
+    """In-memory case-insensitive exact-then-unambiguous-substring match
+    against an already-filtered candidate list (e.g. from
+    list_promptable_reports) -- mirrors store/report_store.py's
+    get_report_by_name matching semantics, but scoped to `reports` instead
+    of re-querying the whole account, since a login-prompt reply must only
+    resolve against the reports actually offered."""
+    name = (name or "").strip().lower()
+    if not name:
+        return None
+    for r in reports:
+        if (r.get("name") or "").strip().lower() == name:
+            return r
+    matches = [r for r in reports if name in (r.get("name") or "").strip().lower()]
+    return matches[0] if len(matches) == 1 else None
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Scheduled digests — report_subscription due-checks + delivery
 # ══════════════════════════════════════════════════════════════════════════════
 

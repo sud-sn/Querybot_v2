@@ -31,7 +31,7 @@ from core.conversation_state import (
     should_route_as_governed_follow_up,
 )
 from core.clarification import (
-    get_pending, clear_pending, combine_with_clarification,
+    get_pending, save_pending, clear_pending, combine_with_clarification,
     resolve_option_text, was_recently_expired, acknowledge_recently_expired,
 )
 from core.llm import is_ddl_attempt, _DDL_USER_MESSAGE, llm_complete, resolve_provider
@@ -596,11 +596,30 @@ def _clean_report_name(raw_name: str) -> str:
     return " ".join(kept)
 
 
+async def _deliver_report_via_adapter(account_id: str, user: dict, report: dict, event, adapter) -> None:
+    """Send a report's current data through `adapter` -- one message plus an
+    optional chart per metric. Calls build_report_response() fresh right
+    here (never a cached/earlier-computed render) so the numbers reflect the
+    moment of delivery. Shared by the reactive "my report" ask
+    (_handle_report_ask) and the proactive login-time prompt reply
+    (_handle_login_report_prompt_reply)."""
+    from core.report_engine import build_report_response
+
+    response = build_report_response(account_id, user, report)
+    await adapter.send_message(event, response["message"])
+    if not response["ok"]:
+        return
+    send_chart = getattr(adapter, "send_chart", None)
+    for item in response["items"]:
+        await adapter.send_message(event, item["text"])
+        if item["chart"] and callable(send_chart):
+            await send_chart(event, item["chart"])
+
+
 async def _handle_report_ask(account_id: str, portal_user: dict, text: str, event, adapter) -> None:
     """Resolve and deliver a named-report ask (core/report_engine.py). Called
     from the report front door in dispatch() once _REPORT_ASK_RE matches."""
     from store import report_store
-    from core.report_engine import build_report_response
 
     match = _REPORT_ASK_RE.match(text.strip())
     report_name = _clean_report_name(match.group("name") or "") if match else ""
@@ -629,15 +648,120 @@ async def _handle_report_ask(account_id: str, portal_user: dict, text: str, even
                 f"Which report would you like? Available reports: {names}.")
             return
 
-    response = build_report_response(account_id, portal_user, report)
-    await adapter.send_message(event, response["message"])
-    if not response["ok"]:
+    await _deliver_report_via_adapter(account_id, portal_user, report, event, adapter)
+
+
+# ── Login-time report prompt — proactive "want today's reports?" ──────────────
+# Fired on a genuinely new session (see the session-greeting block below and
+# gateway/webhooks.py's ws_chat WS-connect hook), not on every message. The
+# reply is captured via the same pending_clarification mechanism data-question
+# clarifications use, tagged with source="login_report_prompt" so it's
+# resolved here rather than falling into the generic combine_with_
+# clarification + re-query path meant for refining a data question.
+_NO_THANKS_RE = re.compile(
+    r"^\s*(?:no(?:\s+thanks?)?|not\s+now|skip|later|nah|nope|no\s+thanks)[\s.!]*$", re.I,
+)
+_YES_RE = re.compile(
+    r"^\s*(?:y|yes|yeah|yep|sure|ok(?:ay)?|please|show\s+me)[\s.!]*$", re.I,
+)
+
+
+async def _handle_login_report_prompt_reply(
+    account_id: str, portal_user: dict, text: str, event, adapter, pending: dict,
+) -> bool:
+    """Resolve a reply to the proactive login-time report prompt.
+
+    Returns True if this turn was fully handled (a report was delivered, or
+    the user declined) -- dispatch() must return immediately. Returns False
+    if the reply doesn't look like an answer to the prompt at all (the
+    pending is still cleared either way, matching the existing stale-
+    clarification behavior elsewhere in this module) -- dispatch() should
+    keep routing `text` normally as a fresh message, not as a clarification
+    reply, since this isn't a data question being refined."""
+    from core.report_engine import list_promptable_reports, match_report_by_name
+    from store import report_store
+
+    cmeta = pending.get("clarification_meta") or {}
+    stripped = text.strip()
+    clear_pending(account_id, event.user_id)
+
+    if cmeta.get("mode") == "single":
+        if _NO_THANKS_RE.match(stripped):
+            return True
+        if not _YES_RE.match(stripped):
+            return False
+        report = report_store.get_report(int(cmeta.get("report_id") or 0), account_id)
+        if report:
+            await _deliver_report_via_adapter(account_id, portal_user, report, event, adapter)
+        return True
+
+    # mode == "multi"
+    if _NO_THANKS_RE.match(stripped):
+        return True
+    opts = cmeta.get("options") or []
+    match = resolve_option_text(opts, text)
+    if match and match.get("id") == "no_thanks":
+        return True
+
+    reports = list_promptable_reports(account_id, portal_user)
+    report = None
+    if match and match.get("id") != "no_thanks":
+        report = next((r for r in reports if str(r["id"]) == str(match.get("value"))), None)
+    if not report:
+        report = match_report_by_name(reports, text)
+    if not report:
+        return False
+    await _deliver_report_via_adapter(account_id, portal_user, report, event, adapter)
+    return True
+
+
+async def _offer_login_report_prompt(account_id: str, portal_user: dict, event, adapter) -> None:
+    """Proactively ask the user if they want to start the day with their
+    reports -- called once per new session (see call sites below), right
+    after the session greeting. A no-op if the account has no report the
+    user's ACL can see anything of (core/report_engine.py::
+    list_promptable_reports) -- zero overhead for accounts without reports."""
+    from core.report_engine import list_promptable_reports
+
+    if not event.user_id:
         return
-    send_chart = getattr(adapter, "send_chart", None)
-    for item in response["items"]:
-        await adapter.send_message(event, item["text"])
-        if item["chart"] and callable(send_chart):
-            await send_chart(event, item["chart"])
+    try:
+        reports = list_promptable_reports(account_id, portal_user)
+    except Exception as exc:
+        log.debug("Login report prompt skipped: %s", exc)
+        return
+    if not reports:
+        return
+
+    if len(reports) == 1:
+        report = reports[0]
+        save_pending(
+            account_id, event.user_id, "__login_report_prompt__",
+            clarification_meta={"source": "login_report_prompt", "mode": "single",
+                                 "report_id": report["id"]},
+        )
+        await adapter.send_message(
+            event,
+            f"📊 Want to start the day with your **{report['name']}** report? "
+            "Reply **yes** to see it, or **no thanks** to skip.",
+        )
+        return
+
+    options = [{"id": str(r["id"]), "label": r["name"], "value": str(r["id"])} for r in reports]
+    options.append({"id": "no_thanks", "label": "No thanks", "value": "no_thanks"})
+    save_pending(
+        account_id, event.user_id, "__login_report_prompt__",
+        clarification_meta={"source": "login_report_prompt", "mode": "multi", "options": options},
+    )
+    prompt = "📊 Want to start the day with one of your reports?"
+    send_prompt = getattr(adapter, "send_clarification_prompt", None)
+    if callable(send_prompt):
+        await send_prompt(event, prompt, options)
+    else:
+        names = "\n".join(f"  • {r['name']}" for r in reports)
+        await adapter.send_message(
+            event, f"{prompt}\n{names}\n\nReply with a report name, or \"no thanks\" to skip.",
+        )
 
 
 # ── Message dispatcher ────────────────────────────────────────────────────────
@@ -728,6 +852,23 @@ async def dispatch(
             await handle_unregistered_user(account_id, event.user_id, event, adapter)
             return
 
+    # ── Login-time report prompt reply — checked before EVERY other front
+    # door (conversational, report-ask) so a "no thanks" isn't misclassified
+    # as the `thanks` conversational kind, and a report-name reply isn't
+    # hijacked by the report-ask front door before either gets a chance to
+    # see it's actually answering our own proactive prompt. See
+    # _offer_login_report_prompt for where this pending gets created.
+    if portal_user and event.user_id:
+        _login_pending = get_pending(account_id, event.user_id)
+        if _login_pending and (_login_pending.get("clarification_meta") or {}).get("source") == "login_report_prompt":
+            _handled = await _handle_login_report_prompt_reply(
+                account_id, portal_user, text, event, adapter, _login_pending,
+            )
+            if _handled:
+                return
+            # Else: not a recognizable answer to the prompt -- pending is
+            # already cleared, fall through and route `text` normally below.
+
     # ── Behavioral front door (deterministic, no LLM) ─────────────────────────
     # Greetings/thanks/goodbye/frustration used to fall through every guard
     # into the SQL pipeline — "thanks" got answered with "I couldn't find the
@@ -783,6 +924,7 @@ async def dispatch(
                     else:
                         _greet_msg = f"👋 Welcome back, {_first_name}!"
                     await adapter.send_message(event, _greet_msg)
+                    await _offer_login_report_prompt(account_id, portal_user, event, adapter)
             except Exception as _greet_exc:
                 log.debug("Session greeting skipped: %s", _greet_exc)
 

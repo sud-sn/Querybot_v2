@@ -63,6 +63,27 @@ class PortalLoginGreetingWiringTests(unittest.TestCase):
         self.assertIn("try:", body)
         self.assertIn("except Exception as _touch_exc:", body)
 
+    def test_new_session_also_offers_the_login_report_prompt(self):
+        # The report prompt is a follow-up to the greeting, inside the same
+        # "genuinely new session" branch -- never on a plain reconnect.
+        anchor = self.src.index("_is_new_portal_session = store.touch_user_activity")
+        body = self.src[anchor:anchor + 900]
+        self.assertIn("_offer_login_report_prompt", body)
+        self.assertIn("except Exception as _report_prompt_exc:", body)
+
+    def test_clarification_response_handles_login_report_prompt_source(self):
+        anchor = self.src.index('if msg_type == "clarification_response":')
+        body = self.src[anchor:anchor + 3000]
+        self.assertIn('cmeta.get("source") == "login_report_prompt"', body)
+        self.assertIn("_deliver_report_via_adapter", body)
+        self.assertIn("list_promptable_reports", body)
+        # Declining (or resolving nothing) must not fall into the generic
+        # combine_with_clarification + handle_query path built for refining
+        # a data question.
+        login_branch_end = body.index("continue", body.index('"login_report_prompt"'))
+        login_branch = body[:login_branch_end]
+        self.assertNotIn("combine_with_clarification(", login_branch)
+
 
 class DispatcherSkipsWebPlatformSessionGreetingTests(unittest.TestCase):
     @classmethod

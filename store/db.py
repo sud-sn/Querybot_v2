@@ -971,6 +971,11 @@ def _run_migrations() -> None:
         # NULL = user has never sent a message; updated to now() on every active
         # message. touch_user_activity() compares this to detect a new session.
         ("portal_user", "last_active_at", "TEXT DEFAULT NULL"),
+        # v37: self-service reports — nullable creator FK. NULL = admin-created
+        # (existing rows unaffected). Attribution/edit-scoping only -- does not
+        # gate visibility; user-created reports join the same account-wide pool
+        # as admin-created ones (askable/subscribable by anyone in the account).
+        ("report", "created_by_user_id", "INTEGER DEFAULT NULL"),
     ]
     with get_db() as conn:
         _ensure_llm_call_log_table(conn)

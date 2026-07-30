@@ -437,6 +437,115 @@ class BuildReportResponseTests(unittest.TestCase):
         self.assertNotIn("HR.PAYROLL", item_text)
 
 
+class ListPromptableReportsTests(unittest.TestCase):
+    """The ACL-filtered candidate list for the proactive login-time report
+    prompt -- unlike the reactive "my report" ask's account-wide, unfiltered
+    store.report_store.list_reports/get_report_by_name (unchanged), this
+    must never offer a report the asking user has no visible data for."""
+
+    def test_admin_sees_every_active_report_unfiltered(self):
+        reports = [{"id": 1, "name": "R1"}, {"id": 2, "name": "R2"}]
+        with (
+            patch("store.get_allowed_tables", return_value=None),
+            patch("store.report_store.list_reports", return_value=reports),
+            patch("store.report_store.list_report_metrics") as mock_metrics,
+        ):
+            result = re_engine.list_promptable_reports("acct1", {"id": 1, "role": "admin"})
+        self.assertEqual(result, reports)
+        mock_metrics.assert_not_called()
+
+    def test_report_with_a_visible_metric_is_included(self):
+        report = {"id": 1, "name": "Ops Report"}
+        with (
+            patch("store.get_allowed_tables", return_value={"SALES.REVENUE"}),
+            patch("store.report_store.list_reports", return_value=[report]),
+            patch("store.report_store.list_report_metrics",
+                  return_value=[_metric(base_table="SALES.REVENUE")]),
+        ):
+            result = re_engine.list_promptable_reports("acct1", {"id": 2, "role": "analyst"})
+        self.assertEqual(result, [report])
+
+    def test_report_with_no_visible_metrics_is_excluded(self):
+        report = {"id": 1, "name": "Payroll Report"}
+        with (
+            patch("store.get_allowed_tables", return_value={"SALES.REVENUE"}),
+            patch("store.report_store.list_reports", return_value=[report]),
+            patch("store.report_store.list_report_metrics",
+                  return_value=[_metric(base_table="HR.PAYROLL")]),
+        ):
+            result = re_engine.list_promptable_reports("acct1", {"id": 2, "role": "analyst"})
+        self.assertEqual(result, [])
+
+    def test_report_with_no_metrics_assigned_is_excluded(self):
+        report = {"id": 1, "name": "Empty Report"}
+        with (
+            patch("store.get_allowed_tables", return_value={"SALES.REVENUE"}),
+            patch("store.report_store.list_reports", return_value=[report]),
+            patch("store.report_store.list_report_metrics", return_value=[]),
+        ):
+            result = re_engine.list_promptable_reports("acct1", {"id": 2, "role": "analyst"})
+        self.assertEqual(result, [])
+
+    def test_formula_only_metric_with_no_base_table_is_visible_by_default(self):
+        report = {"id": 1, "name": "Formula Report"}
+        with (
+            patch("store.get_allowed_tables", return_value={"SOME.OTHER_TABLE"}),
+            patch("store.report_store.list_reports", return_value=[report]),
+            patch("store.report_store.list_report_metrics",
+                  return_value=[_metric(base_table="")]),
+        ):
+            result = re_engine.list_promptable_reports("acct1", {"id": 2, "role": "analyst"})
+        self.assertEqual(result, [report])
+
+    def test_partial_access_still_includes_the_report(self):
+        # One visible + one denied metric -- still offered, matching
+        # _format_metric_line's existing partial-access tolerance (a
+        # denied metric renders a lock icon, the report isn't hidden).
+        report = {"id": 1, "name": "Mixed Report"}
+        with (
+            patch("store.get_allowed_tables", return_value={"SALES.REVENUE"}),
+            patch("store.report_store.list_reports", return_value=[report]),
+            patch("store.report_store.list_report_metrics", return_value=[
+                _metric(id=1, base_table="SALES.REVENUE"),
+                _metric(id=2, base_table="HR.PAYROLL"),
+            ]),
+        ):
+            result = re_engine.list_promptable_reports("acct1", {"id": 2, "role": "analyst"})
+        self.assertEqual(result, [report])
+
+
+class MatchReportByNameTests(unittest.TestCase):
+
+    def _reports(self):
+        return [{"id": 1, "name": "Ops Report"}, {"id": 2, "name": "Sales Report"}]
+
+    def test_exact_match_case_insensitive(self):
+        result = re_engine.match_report_by_name(self._reports(), "SALES REPORT".title())
+        self.assertEqual(result["id"], 2)
+
+    def test_substring_match_when_unambiguous(self):
+        result = re_engine.match_report_by_name(self._reports(), "sales")
+        self.assertEqual(result["id"], 2)
+
+    def test_ambiguous_substring_returns_none(self):
+        result = re_engine.match_report_by_name(self._reports(), "report")
+        self.assertIsNone(result)
+
+    def test_no_match_returns_none(self):
+        result = re_engine.match_report_by_name(self._reports(), "nonexistent")
+        self.assertIsNone(result)
+
+    def test_empty_name_returns_none(self):
+        self.assertIsNone(re_engine.match_report_by_name(self._reports(), ""))
+
+    def test_scoped_to_the_given_list_not_the_whole_account(self):
+        # A report that exists in the account but isn't in the candidate
+        # list passed in must not match -- the login prompt can only
+        # resolve against reports it actually offered.
+        result = re_engine.match_report_by_name([self._reports()[0]], "Sales Report")
+        self.assertIsNone(result)
+
+
 class FormatMetricLineTests(unittest.TestCase):
 
     def test_scalar_single_row_single_col(self):

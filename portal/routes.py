@@ -905,6 +905,7 @@ async def notifications_page(request: Request):
         if a.get("account_id") == account_id and a.get("user_id") == str(user["id"])
     ]
     reports = report_store.list_reports(account_id)
+    my_reports = [r for r in reports if r.get("created_by_user_id") == user["id"]]
     my_subscriptions = {
         s["report_id"]: s for s in report_store.list_subscriptions(user_id=user["id"])
     }
@@ -912,6 +913,7 @@ async def notifications_page(request: Request):
         "user": user,
         "alerts": my_alerts,
         "reports": reports,
+        "my_reports": my_reports,
         "subscriptions": my_subscriptions,
         "saved": request.query_params.get("saved"),
         "error": request.query_params.get("error"),
@@ -968,6 +970,103 @@ async def notifications_unsubscribe(request: Request, subscription_id: int = For
     from store import report_store
 
     report_store.delete_subscription(subscription_id, user["id"])
+    return RedirectResponse("/portal/notifications?saved=1", status_code=303)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Self-service reports — any user can build their own, not just admins.
+# Joins the same account-wide pool as admin-created reports (askable/
+# subscribable by anyone) -- created_by_user_id is attribution only.
+# ══════════════════════════════════════════════════════════════════════════════
+
+@router.get("/reports/new", response_class=HTMLResponse)
+async def report_new_page(request: Request):
+    user = _get_portal_user(request)
+    if not user:
+        return _login_redirect()
+
+    account_id = user["account_id"]
+    allowed = store.get_allowed_tables(user)  # None = admin, unrestricted
+    all_metrics = store.list_metrics(account_id, active_only=True)
+    if allowed is not None:
+        all_metrics = [
+            m for m in all_metrics
+            if not m.get("base_table") or m["base_table"].upper() in allowed
+        ]
+    return _resp(request, "portal_report_new.html", {
+        "user": user,
+        "all_metrics": all_metrics,
+        "error": request.query_params.get("error"),
+    })
+
+
+@router.post("/reports/create")
+async def report_create(
+    request: Request,
+    name: str = Form(...),
+    description: str = Form(""),
+    metric_ids: list[int] = Form(default=[]),
+):
+    user = _get_portal_user(request)
+    if not user:
+        return _login_redirect()
+
+    from urllib.parse import quote
+    from store import report_store
+
+    account_id = user["account_id"]
+    if not name.strip():
+        return RedirectResponse(
+            f"/portal/reports/new?error={quote('Report name is required')}", status_code=303)
+
+    # Re-check ACL server-side -- the picker on report_new_page already
+    # filters, but a submitted metric_id must be re-validated, not trusted.
+    allowed = store.get_allowed_tables(user)
+    try:
+        report = report_store.create_report(
+            account_id, name.strip(), description.strip(), created_by_user_id=user["id"],
+        )
+    except Exception as e:
+        return RedirectResponse(
+            f"/portal/reports/new?error={quote(str(e)[:100])}", status_code=303)
+
+    for i, metric_id in enumerate(metric_ids):
+        metric = store.get_metric(metric_id)
+        if not metric or metric.get("account_id") != account_id:
+            continue
+        if allowed is not None and metric.get("base_table") and metric["base_table"].upper() not in allowed:
+            continue
+        report_store.add_metric_to_report(report["id"], metric_id, i)
+
+    return RedirectResponse("/portal/notifications?saved=1", status_code=303)
+
+
+@router.post("/reports/{report_id}/update")
+async def report_update_own(
+    request: Request, report_id: int,
+    name: str = Form(...), description: str = Form(""),
+):
+    user = _get_portal_user(request)
+    if not user:
+        return _login_redirect()
+
+    from store import report_store
+
+    report_store.update_own_report(report_id, user["account_id"], user["id"], {
+        "name": name.strip(), "description": description.strip(),
+    })
+    return RedirectResponse("/portal/notifications?saved=1", status_code=303)
+
+
+@router.post("/reports/{report_id}/delete")
+async def report_delete_own(request: Request, report_id: int):
+    user = _get_portal_user(request)
+    if not user:
+        return _login_redirect()
+
+    from store import report_store
+
+    report_store.delete_own_report(report_id, user["account_id"], user["id"])
     return RedirectResponse("/portal/notifications?saved=1", status_code=303)
 
 

@@ -25,9 +25,14 @@ def create_report(
     description: str = "",
     *,
     is_default: bool = False,
+    created_by_user_id: int | None = None,
 ) -> dict:
     """Create a new report. Raises sqlite3.IntegrityError if the name is
-    already taken for this account (UNIQUE(account_id, name))."""
+    already taken for this account (UNIQUE(account_id, name)).
+
+    created_by_user_id is None for admin-created reports (unchanged default)
+    or a portal_user id for self-service reports -- attribution only, shown
+    to admins; it does not restrict who can ask for/subscribe to the report."""
     name = (name or "").strip()
     with get_db() as conn:
         if is_default:
@@ -35,9 +40,9 @@ def create_report(
                 "UPDATE report SET is_default=0 WHERE account_id=?", (account_id,)
             )
         cur = conn.execute(
-            """INSERT INTO report (account_id, name, description, is_default)
-               VALUES (?, ?, ?, ?)""",
-            (account_id, name, description or "", 1 if is_default else 0),
+            """INSERT INTO report (account_id, name, description, is_default, created_by_user_id)
+               VALUES (?, ?, ?, ?, ?)""",
+            (account_id, name, description or "", 1 if is_default else 0, created_by_user_id),
         )
         report_id = int(cur.lastrowid)
         row = conn.execute("SELECT * FROM report WHERE id=?", (report_id,)).fetchone()
@@ -116,6 +121,34 @@ def delete_report(report_id: int, account_id: str) -> bool:
     with get_db() as conn:
         cur = conn.execute(
             "DELETE FROM report WHERE id=? AND account_id=?", (report_id, account_id)
+        )
+        return bool(cur.rowcount)
+
+
+def update_own_report(report_id: int, account_id: str, user_id: int, updates: dict) -> bool:
+    """Self-service edit, scoped to reports the caller created. Only
+    name/description are editable this way -- is_default/is_active are
+    account-wide policy knobs reserved for admin's own update_report."""
+    allowed = {"name", "description"}
+    fields = {k: v for k, v in (updates or {}).items() if k in allowed}
+    if not fields:
+        return False
+    with get_db() as conn:
+        set_clause = ", ".join(f"{k}=?" for k in fields)
+        cur = conn.execute(
+            f"UPDATE report SET {set_clause}, updated_at=datetime('now') "
+            f"WHERE id=? AND account_id=? AND created_by_user_id=?",
+            (*fields.values(), report_id, account_id, user_id),
+        )
+        return bool(cur.rowcount)
+
+
+def delete_own_report(report_id: int, account_id: str, user_id: int) -> bool:
+    """user_id-scoped so a user can only delete a report they created."""
+    with get_db() as conn:
+        cur = conn.execute(
+            "DELETE FROM report WHERE id=? AND account_id=? AND created_by_user_id=?",
+            (report_id, account_id, user_id),
         )
         return bool(cur.rowcount)
 
