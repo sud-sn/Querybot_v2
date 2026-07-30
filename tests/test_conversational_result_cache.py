@@ -118,7 +118,23 @@ class ConversationalResultCacheTests(unittest.TestCase):
             )
         )
 
-    def test_month_subset_can_match_multiple_years_when_year_is_omitted(self):
+    def test_keep_only_phrasing_parses(self):
+        # _KEEP_VALUES_RE regex bug: "keep\s+(?:only\s+)?" consumed its own
+        # trailing whitespace inside the optional group, leaving nothing for
+        # the mandatory \s+ right after the alternation to match -- "keep
+        # only February and April" / "keep February and April" both
+        # returned None while "Feb and Apr only" / "show only ..." worked.
+        for text in ("keep only February and April", "keep February and April"):
+            with self.subTest(text=text):
+                command = parse_result_command(text)
+                self.assertIsNotNone(command, f"{text!r} should parse")
+                self.assertEqual(command.action, "keep_values")
+                self.assertEqual(command.target_text, "February and April")
+
+    def test_month_spanning_multiple_years_asks_which_year_instead_of_guessing(self):
+        # Previously this silently included both years with no warning --
+        # per spec, a bare month with no explicit year that matches more
+        # than one year in the cached result must ask which year, not guess.
         cache = ResultCache()
         cache.store(
             self.session,
@@ -134,11 +150,74 @@ class ConversationalResultCacheTests(unittest.TestCase):
             parse_result_command("show only February and April"),
             cache=cache,
         )
+        self.assertFalse(outcome.ok)
+        self.assertTrue(outcome.clarification_required)
+        self.assertIn("more than one year", outcome.message)
+        labels = {opt["label"] for opt in outcome.clarification_options}
+        self.assertEqual(labels, {"February 2025", "February 2026"})
+
+    def test_month_with_explicit_year_is_unambiguous_even_when_other_years_exist(self):
+        cache = ResultCache()
+        cache.store(
+            self.session,
+            [
+                {"PERIOD": "2025-02", "REVENUE": 10},
+                {"PERIOD": "2026-02", "REVENUE": 20},
+                {"PERIOD": "2026-04", "REVENUE": 30},
+            ],
+            result_id="multi-year-source",
+        )
+        outcome = execute_result_command(
+            self.session,
+            parse_result_command("show only February 2025 and April 2026"),
+            cache=cache,
+        )
         self.assertTrue(outcome.ok, outcome.message)
         self.assertEqual(
             [row["PERIOD"] for row in outcome.snapshot["rows"]],
-            ["2025-02", "2026-02", "2026-04"],
+            ["2025-02", "2026-04"],
         )
+
+    def test_exclude_bare_month_matching_one_year_works(self):
+        # exclude previously used a matcher requiring an explicit year, so a
+        # bare month name like "February" matched nothing at all.
+        cache = ResultCache()
+        cache.store(
+            self.session,
+            [
+                {"PERIOD": "2025-02", "REVENUE": 10},
+                {"PERIOD": "2025-03", "REVENUE": 15},
+                {"PERIOD": "2025-04", "REVENUE": 30},
+            ],
+            result_id="single-year-source",
+        )
+        outcome = execute_result_command(
+            self.session, parse_result_command("exclude February"), cache=cache,
+        )
+        self.assertTrue(outcome.ok, outcome.message)
+        self.assertEqual(
+            [row["PERIOD"] for row in outcome.snapshot["rows"]],
+            ["2025-03", "2025-04"],
+        )
+
+    def test_exclude_bare_month_spanning_multiple_years_asks_which_year(self):
+        cache = ResultCache()
+        cache.store(
+            self.session,
+            [
+                {"PERIOD": "2025-02", "REVENUE": 10},
+                {"PERIOD": "2026-02", "REVENUE": 20},
+                {"PERIOD": "2026-04", "REVENUE": 30},
+            ],
+            result_id="multi-year-exclude-source",
+        )
+        outcome = execute_result_command(
+            self.session, parse_result_command("exclude February"), cache=cache,
+        )
+        self.assertFalse(outcome.ok)
+        self.assertTrue(outcome.clarification_required)
+        labels = {opt["label"] for opt in outcome.clarification_options}
+        self.assertEqual(labels, {"February 2025", "February 2026"})
 
     def test_keep_top_by_business_metric_sorts_before_limiting(self):
         cache = ResultCache()

@@ -65,7 +65,13 @@ _POSITIONAL_RE = re.compile(
 _KEEP_VALUES_RE = re.compile(
     r"^\s*(?:(?:give|show)(?:\s+me)?\s+)?"
     r"(?:(?:the\s+)?(?:data|rows|results?|records?)\s+)?"
-    r"(?:only\s+for|for\s+only|only|keep\s+(?:only\s+)?)\s+"
+    # "keep(?:\s+only)?" -- NOT "keep\s+(?:only\s+)?" -- keeps the
+    # whitespace inside the optional clause so "keep X" and "keep only X"
+    # both leave exactly one \s+ boundary for the mandatory \s+ right
+    # after this group to consume. The old ordering made "keep\s+" always
+    # consume its own trailing space, leaving nothing for the group's own
+    # \s+ to match -- "keep only February" / "keep February" never parsed.
+    r"(?:only\s+for|for\s+only|only|keep(?:\s+only)?)\s+"
     r"(.+?)\s*[.!]?\s*$",
     re.IGNORECASE,
 )
@@ -1119,6 +1125,32 @@ def _ratio_rows(
     return output
 
 
+def _distinct_years(values: list[Any]) -> set[int]:
+    """Distinct calendar years among cached temporal values (e.g. "2025-02",
+    "2026-02" -> {2025, 2026}). Values with no resolvable year are ignored."""
+    years: set[int] = set()
+    for value in values:
+        year_month = _value_year_month(value)
+        if year_month and year_month[0] is not None:
+            years.add(year_month[0])
+    return years
+
+
+def _bare_month_multi_year_error(target: str, matches: list[tuple[str, Any]]) -> str:
+    """If `target` names a month with no explicit year and the matched
+    values span more than one year, return a clear ambiguity message;
+    otherwise "". A non-empty return here always has a matching
+    _build_reference_clarification "Which month did you mean?" available
+    at the call site, since that function independently re-derives the
+    same year-spread signal via _find_temporal_value_matches."""
+    reference = _month_reference(target)
+    if reference is None or reference[0] is not None:
+        return ""
+    if len(_distinct_years([value for _, value in matches])) > 1:
+        return "That month matches more than one year in the current result."
+    return ""
+
+
 def _resolve_exclusions(
     rows: list[dict], target_text: str,
 ) -> tuple[list[list[tuple[str, Any]]], str]:
@@ -1142,7 +1174,15 @@ def _resolve_exclusions(
 
     has_list_separator = bool(re.search(r",|\band\b", target_text, re.IGNORECASE))
     if not has_list_separator:
-        whole_matches = _find_value_matches(rows, target_text)
+        # _find_temporal_value_matches (not _find_value_matches) so a bare
+        # month name ("February"/"Feb") matches stored YYYY-MM values the
+        # same way _resolve_inclusions already does -- previously this used
+        # a matcher requiring an explicit year, so "exclude February" found
+        # nothing at all.
+        whole_matches = _find_temporal_value_matches(rows, target_text)
+        multi_year_error = _bare_month_multi_year_error(target_text, whole_matches)
+        if multi_year_error:
+            return [], multi_year_error
         if len(whole_matches) == 1:
             return [[whole_matches[0]]], ""
         if len(whole_matches) > 1:
@@ -1161,9 +1201,12 @@ def _resolve_exclusions(
 
     resolved: list[list[tuple[str, Any]]] = []
     for target in targets:
-        matches = _find_value_matches(rows, target)
+        matches = _find_temporal_value_matches(rows, target)
         if not matches:
             return [], "One of those values was not found in the current result."
+        multi_year_error = _bare_month_multi_year_error(target, matches)
+        if multi_year_error:
+            return [], multi_year_error
         if len(matches) > 1:
             return [], (
                 "One of those values appears in more than one field. "
@@ -1261,7 +1304,17 @@ def _resolve_inclusions(
         return "", [], "More than one date field matches. Name the result column explicitly."
     column = ranked[0]
     selected: list[Any] = []
-    for grouped in matches_by_target:
+    for target, grouped in zip(targets, matches_by_target):
+        # A bare month name with no year, spanning more than one year in the
+        # cached result, must ask which year rather than silently including
+        # all of them -- the caller (execute_result_command) already turns
+        # a non-empty error here into a "Which month did you mean?"
+        # clarification via _build_reference_clarification.
+        multi_year_error = _bare_month_multi_year_error(target, [
+            (column, value) for value in grouped[column]
+        ])
+        if multi_year_error:
+            return "", [], multi_year_error
         for value in grouped[column]:
             if value not in selected:
                 selected.append(value)
