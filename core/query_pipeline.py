@@ -2618,7 +2618,21 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                     "- Preserve the exact governed date-role JOIN and use a native date value directly when the date dimension exposes one.\n"
                 )
             elif last_code == "field_plan_mismatch":
-                validation_repair_note = build_field_plan_repair_note(_semantic_plan or {})
+                # Narrow the note to the field(s) that ACTUALLY failed --
+                # without this, a plan defining both a display field (e.g.
+                # Supplier Name, already satisfied) and a governed date
+                # field (e.g. Snapshot Date, actually broken) always
+                # returned display-field guidance and never once reached
+                # the date branch, no matter which field the validator
+                # flagged.
+                from core.validator import validate_sql_detailed as _vsd_for_field_repair
+
+                _field_violated_errors = _vsd_for_field_repair(
+                    sql, all_known, db_cfg["db_type"], query_scope_tables, all_columns, semantic_context,
+                ).errors
+                validation_repair_note = build_field_plan_repair_note(
+                    _semantic_plan or {}, _field_violated_errors,
+                )
             elif last_code == "graph_plan_mismatch":
                 validation_repair_note = (
                     "\nENTITY-GRAPH REPAIR REQUIRED:\n"

@@ -1674,6 +1674,110 @@ class FieldPlanRepairNoteTests(unittest.TestCase):
         note = build_field_plan_repair_note(plan)
         self.assertIn("SEMANTIC DISPLAY FIELD REPAIR RULE", note)
 
+    def test_violated_errors_narrows_note_to_the_field_that_actually_failed(self):
+        # Live-bug reproduction: a plan with an already-satisfied display
+        # field (Supplier) and an actually-broken date field (Snapshot Date)
+        # must repair the DATE field when that's what the validator flagged
+        # -- passing violated_errors is what makes that possible. Without
+        # it (the previous behavior, still exercised by
+        # test_display_field_takes_priority_over_date_field above), the
+        # display field silently wins every time regardless of which field
+        # the validator actually flagged, so the LLM's one retry attempt
+        # never even sees the date guidance.
+        plan = {
+            "fields": [
+                {
+                    "term": "Supplier",
+                    "table": "PHARMA_LAB.D_SUPPLIER",
+                    "column": "SUPPLIER_NAME",
+                    "display_required": True,
+                    "source_table": "PHARMA_LAB.F_INVENTORY_SNAPSHOT",
+                    "source_key_column": "SUPPLIER_ID",
+                },
+                {
+                    "term": "Snapshot Date",
+                    "table": "PHARMA_LAB.D_DATE",
+                    "column": "CALENDAR_DATE",
+                    "role": "contextual_date",
+                    "display_required": False,
+                    "enforcement": "required",
+                    "source_table": "PHARMA_LAB.F_INVENTORY_SNAPSHOT",
+                    "source_key_column": "SNAPSHOT_DATE_ID",
+                    "date_key_type": "surrogate_fk",
+                    "role_alias": "snapshot_date",
+                },
+            ],
+            "joins": [{
+                "from": "PHARMA_LAB.F_INVENTORY_SNAPSHOT", "to": "PHARMA_LAB.D_DATE",
+                "conditions": [("SNAPSHOT_DATE_ID", "DATE_ID")], "role_alias": "snapshot_date",
+            }],
+        }
+        violated_errors = [{
+            "code": "field_plan_mismatch",
+            "message": "SQL did not use required semantic field Snapshot Date: PHARMA_LAB.D_DATE.CALENDAR_DATE.",
+            "table": "PHARMA_LAB.D_DATE",
+            "column": "CALENDAR_DATE",
+            "term": "Snapshot Date",
+        }]
+        note = build_field_plan_repair_note(plan, violated_errors)
+        self.assertIn("SEMANTIC DATE FIELD REPAIR RULE", note)
+        self.assertNotIn("SEMANTIC DISPLAY FIELD REPAIR RULE", note)
+        self.assertIn("REQUIRED ANCHOR", note)
+
+    def test_violated_errors_narrows_note_to_display_field_when_that_is_what_failed(self):
+        # Symmetric case: the date field is satisfied, only the display
+        # field actually failed -- the note must name the display field,
+        # not silently include unrelated date guidance.
+        plan = {
+            "fields": [
+                {
+                    "term": "Supplier",
+                    "table": "PHARMA_LAB.D_SUPPLIER",
+                    "column": "SUPPLIER_NAME",
+                    "display_required": True,
+                    "source_table": "PHARMA_LAB.F_INVENTORY_SNAPSHOT",
+                    "source_key_column": "SUPPLIER_ID",
+                },
+                {
+                    "term": "Snapshot Date",
+                    "table": "PHARMA_LAB.D_DATE",
+                    "column": "CALENDAR_DATE",
+                    "role": "contextual_date",
+                    "display_required": False,
+                    "enforcement": "required",
+                    "source_table": "PHARMA_LAB.F_INVENTORY_SNAPSHOT",
+                    "source_key_column": "SNAPSHOT_DATE_ID",
+                },
+            ],
+        }
+        violated_errors = [{
+            "code": "field_plan_mismatch",
+            "message": "SQL did not use required semantic field Supplier: PHARMA_LAB.D_SUPPLIER.SUPPLIER_NAME.",
+            "table": "PHARMA_LAB.D_SUPPLIER",
+            "column": "SUPPLIER_NAME",
+            "term": "Supplier",
+        }]
+        note = build_field_plan_repair_note(plan, violated_errors)
+        self.assertIn("SEMANTIC DISPLAY FIELD REPAIR RULE", note)
+        self.assertNotIn("SEMANTIC DATE FIELD REPAIR RULE", note)
+
+    def test_no_violated_field_plan_mismatch_errors_falls_back_to_generic_message(self):
+        # If the caller passes violated_errors but none carry
+        # code=="field_plan_mismatch" (e.g. only a field_plan_join_missing),
+        # neither branch should fire -- falling to the generic message
+        # (which still carries any avoid_columns guidance) rather than
+        # guessing at an unrelated field.
+        plan = {
+            "fields": [{
+                "term": "Supplier", "table": "PHARMA_LAB.D_SUPPLIER", "column": "SUPPLIER_NAME",
+                "display_required": True,
+                "source_table": "PHARMA_LAB.F_INVENTORY_SNAPSHOT", "source_key_column": "SUPPLIER_ID",
+            }],
+        }
+        note = build_field_plan_repair_note(plan, [])
+        self.assertIn("SEMANTIC FIELD PLAN REPAIR RULE", note)
+        self.assertNotIn("SEMANTIC DISPLAY FIELD REPAIR RULE", note)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -931,12 +931,26 @@ def preserve_approvals(
     return new_model, drift
 
 
-def build_field_plan_repair_note(semantic_plan: dict[str, Any]) -> str:
+def build_field_plan_repair_note(
+    semantic_plan: dict[str, Any],
+    violated_errors: list[dict[str, Any]] | None = None,
+) -> str:
     """Return a specific LLM repair instruction for a ``field_plan_mismatch`` error.
 
     Unlike the generic "use the semantic plan" message, this injects the exact
     display field name, dimension table, and join key so the LLM knows precisely
     what to change without having to search the prompt context.
+
+    ``violated_errors`` (validate_sql_detailed's structured errors for the SQL
+    that just failed) narrows which plan field(s) the note is built for. Without
+    it, this scanned every ``display_required`` field in the WHOLE plan and
+    returned display-field guidance whenever ANY existed -- even one the SQL
+    already satisfies -- permanently starving the date-field branch below
+    whenever the plan happens to define both a display field (e.g. Supplier
+    Name) and a governed date-role field (e.g. Snapshot Date): a real
+    field_plan_mismatch on the date field got told to fix an unrelated,
+    already-correct display join instead, so the actual defect was never
+    named and the LLM's one retry attempt changed nothing.
     """
     avoid_lines = "".join(
         "- Replace {table}.{column} with {use_table}.{use_column} — the admin-approved "
@@ -950,9 +964,22 @@ def build_field_plan_repair_note(semantic_plan: dict[str, Any]) -> str:
         for a in (semantic_plan.get("avoid_columns") or [])
     )
 
+    violated_keys: set[tuple[str, str]] | None = None
+    if violated_errors is not None:
+        violated_keys = {
+            (str(e.get("table") or "").upper(), str(e.get("column") or "").upper())
+            for e in violated_errors
+            if e.get("code") == "field_plan_mismatch"
+        }
+
+    def _is_violated(f: dict[str, Any]) -> bool:
+        if violated_keys is None:
+            return True
+        return (str(f.get("table") or "").upper(), str(f.get("column") or "").upper()) in violated_keys
+
     display_required = [
         f for f in (semantic_plan.get("fields") or [])
-        if f.get("display_required") and f.get("table") and f.get("column")
+        if f.get("display_required") and f.get("table") and f.get("column") and _is_violated(f)
     ]
     if display_required:
         field_lines = "\n".join(
@@ -987,6 +1014,7 @@ def build_field_plan_repair_note(semantic_plan: dict[str, Any]) -> str:
         if f.get("role") == "contextual_date"
         and f.get("enforcement") != "optional"
         and f.get("table") and f.get("column")
+        and _is_violated(f)
     ]
     if date_required:
         date_lines = "\n".join(
