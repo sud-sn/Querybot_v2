@@ -105,6 +105,54 @@ async def startup() -> None:
             log.warning("Vector store warm-up failed (non-fatal): %s", exc)
 
     asyncio.create_task(_warmup())
+
+    # Notify active Teams users the service is back up — symmetric to the
+    # "signing off" notification in the shutdown handler below.
+    try:
+        import json
+
+        with store.db.get_db() as conn:
+            startup_users = conn.execute(
+                "SELECT account_id, platform_user_id, display_name, conversation_ref "
+                "FROM pending_platform_user WHERE status='approved' AND platform_type='teams'"
+            ).fetchall()
+
+        if startup_users:
+            teams_platforms = store.list_platforms("teams")
+            active_teams = [p for p in teams_platforms if p.get("is_active")]
+            if active_teams:
+                from gateway.teams_adapter import TeamsAdapter
+                from gateway.base import PlatformEvent
+                adapter = TeamsAdapter(active_teams[0]["credentials"])
+
+                async def notify_teams_user_startup(user):
+                    try:
+                        conv_ref = json.loads(user["conversation_ref"] or "{}")
+                        if not conv_ref.get("service_url"):
+                            return
+                        name = (user["display_name"] or "").split(" ")[0]
+                        greeting = f"Hey {name}" if name else "Hello"
+
+                        event = PlatformEvent(
+                            account_id = user["account_id"],
+                            user_id    = user["platform_user_id"],
+                            channel_id = user["conversation_ref"],
+                            text       = "",
+                            platform   = "teams",
+                        )
+                        await adapter.send_message(
+                            event,
+                            f"🤖 {greeting}, I'm up and running — ready to analyze your data!"
+                        )
+                    except Exception as e:
+                        log.debug("Failed to notify Teams user on startup: %s", e)
+
+                # Run concurrently — don't let one slow/broken conversation_ref
+                # delay the rest or block server startup.
+                await asyncio.gather(*(notify_teams_user_startup(u) for u in startup_users), return_exceptions=True)
+    except Exception as exc:
+        log.warning("Failed to send startup notifications: %s", exc)
+
     log.info("QueryBot v2 started — database ready")
 
 

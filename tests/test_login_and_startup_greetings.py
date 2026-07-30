@@ -1,0 +1,128 @@
+"""
+tests/test_login_and_startup_greetings.py
+
+Two proactive-greeting features, replacing/complementing the reactive
+"session greeting" that used to fire only after the user's first message:
+
+  1. Portal: gateway/webhooks.py's ws_chat now sends the QueryBot greeting
+     at WS-connect time (login), gated by store.touch_user_activity's
+     session-boundary signal, instead of waiting for the user's first
+     non-conversational message to reach core/dispatcher.py's reactive
+     block. core/dispatcher.py's reactive block is correspondingly skipped
+     for the "web" platform to avoid double-greeting a portal user.
+  2. Teams: main.py's startup handler proactively notifies every approved
+     Teams user that the service is back up, symmetric to the existing
+     shutdown handler's "signing off" notification.
+
+Marker/wiring tests — same convention as WebhooksWiringTests in
+tests/test_stop_query.py — since dispatch()/app-startup pull in the full
+LLM/DB/adapter stack and aren't practically unit-testable in isolation.
+"""
+
+import sys
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+
+class PortalLoginGreetingWiringTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.src = (ROOT / "gateway" / "webhooks.py").read_text(encoding="utf-8")
+
+    def test_touches_session_activity_on_connect(self):
+        anchor = self.src.index('async def ws_chat(')
+        body = self.src[anchor:anchor + 3500]
+        self.assertIn("await websocket.accept()", body)
+        self.assertIn("store.touch_user_activity(user_id)", body)
+        # The touch must happen after accept() -- it's the login moment.
+        self.assertLess(body.index("await websocket.accept()"), body.index("store.touch_user_activity(user_id)"))
+
+    def test_new_session_gets_full_greeting_as_a_chat_message(self):
+        anchor = self.src.index("_is_new_portal_session = store.touch_user_activity")
+        body = self.src[anchor:anchor + 700]
+        self.assertIn("if _is_new_portal_session:", body)
+        self.assertIn("from core.conversational import build_reply", body)
+        self.assertIn('build_reply("greeting", account_id, portal_user)', body)
+        # Rendered as a normal bot chat bubble (type "message"), matching
+        # the exact same rendering as the typed "Hi" greeting reply.
+        self.assertIn('"type":    "message"', body)
+
+    def test_reconnect_within_session_keeps_plain_connected_line(self):
+        anchor = self.src.index("_is_new_portal_session = store.touch_user_activity")
+        body = self.src[anchor:anchor + 900]
+        self.assertIn("else:", body)
+        self.assertIn("Connected as {portal_user.get(", body)
+
+    def test_touch_failure_does_not_crash_the_connection(self):
+        anchor = self.src.index("_is_new_portal_session = False")
+        body = self.src[anchor:anchor + 300]
+        self.assertIn("try:", body)
+        self.assertIn("except Exception as _touch_exc:", body)
+
+
+class DispatcherSkipsWebPlatformSessionGreetingTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.src = (ROOT / "core" / "dispatcher.py").read_text(encoding="utf-8")
+
+    def test_session_greeting_gate_excludes_web_platform(self):
+        self.assertIn(
+            'if portal_user and not _conv_kind and event.platform != "web":',
+            self.src,
+        )
+
+    def test_gate_change_is_explained_for_future_readers(self):
+        anchor = self.src.index('if portal_user and not _conv_kind and event.platform != "web":')
+        head = self.src[max(0, anchor - 700):anchor]
+        self.assertIn("ws_chat now sends this greeting proactively at WS-connect time", head)
+
+
+class TeamsStartupNotificationWiringTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.src = (ROOT / "main.py").read_text(encoding="utf-8")
+
+    def test_startup_handler_notifies_approved_teams_users(self):
+        start_anchor = self.src.index('@app.on_event("startup")')
+        shutdown_anchor = self.src.index('@app.on_event("shutdown")')
+        body = self.src[start_anchor:shutdown_anchor]
+
+        self.assertIn(
+            "FROM pending_platform_user WHERE status='approved' AND platform_type='teams'",
+            body,
+        )
+        self.assertIn("TeamsAdapter", body)
+        self.assertIn("up and running", body)
+
+    def test_startup_notification_never_blocks_or_crashes_startup(self):
+        start_anchor = self.src.index('@app.on_event("startup")')
+        shutdown_anchor = self.src.index('@app.on_event("shutdown")')
+        body = self.src[start_anchor:shutdown_anchor]
+
+        anchor = body.index("Notify active Teams users the service is back up")
+        block = body[anchor:anchor + 2400]
+        self.assertIn("try:", block)
+        self.assertIn("except Exception as exc:", block)
+        self.assertIn("asyncio.gather(", block)
+        self.assertIn("return_exceptions=True", block)
+
+    def test_startup_and_shutdown_use_the_same_query_shape(self):
+        # Symmetric feature -- confirm both handlers query the identical
+        # approved-Teams-user set, so "who gets notified" can't silently
+        # drift between the two lifecycle events.
+        start_anchor = self.src.index('@app.on_event("startup")')
+        shutdown_anchor = self.src.index('@app.on_event("shutdown")')
+        startup_body = self.src[start_anchor:shutdown_anchor]
+        shutdown_body = self.src[shutdown_anchor:]
+
+        query = "FROM pending_platform_user WHERE status='approved' AND platform_type='teams'"
+        self.assertIn(query, startup_body)
+        self.assertIn(query, shutdown_body)
+
+
+if __name__ == "__main__":
+    unittest.main()

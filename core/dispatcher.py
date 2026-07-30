@@ -768,7 +768,11 @@ async def dispatch(
         # of dispatch) means it is an *extra* message prepended to the user's
         # actual answer — the real question is still processed normally below.
         # Skipped for clarification replies and DDL — those handle their own flow.
-        if portal_user and not _conv_kind:
+        # Skipped for the "web" (portal) platform entirely -- gateway/webhooks.py's
+        # ws_chat now sends this greeting proactively at WS-connect time (login),
+        # so a portal user sees it immediately rather than after their first
+        # real question; handling it twice would double-greet them.
+        if portal_user and not _conv_kind and event.platform != "web":
             try:
                 _is_new_session = store.touch_user_activity(portal_user["id"])
                 if _is_new_session:

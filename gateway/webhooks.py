@@ -443,11 +443,28 @@ async def ws_chat(websocket: WebSocket, account_id: str):
     # Cleared automatically when a new main query replaces the result card.
     _result_chat_histories: dict[str, list[dict]] = {}
 
-    # Send welcome message with user name
-    await websocket.send_json({
-        "type":    "system",
-        "content": f"Connected as {portal_user.get('name', portal_user.get('id', 'user'))}. Ask me anything about your data.",
-    })
+    # Greet on login instead of waiting for the user's first message --
+    # touch_user_activity returns True only once per session gap (>30 min
+    # or first-ever connect), so quick reconnects/refreshes within the same
+    # session still get the plain "Connected" line, not a repeated greeting.
+    _is_new_portal_session = False
+    try:
+        _is_new_portal_session = store.touch_user_activity(user_id)
+    except Exception as _touch_exc:
+        log.debug("Portal session touch skipped: %s", _touch_exc)
+
+    if _is_new_portal_session:
+        from core.conversational import build_reply
+        await websocket.send_json({
+            "type":    "message",
+            "role":    "assistant",
+            "content": build_reply("greeting", account_id, portal_user),
+        })
+    else:
+        await websocket.send_json({
+            "type":    "system",
+            "content": f"Connected as {portal_user.get('name', portal_user.get('id', 'user'))}. Ask me anything about your data.",
+        })
 
     log.info("WebSocket chat connected: user=%d account=%s", user_id, account_id)
     # History is NOT cleared on reconnect — the browser will send a
