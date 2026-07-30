@@ -830,6 +830,26 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 await websocket.send_json({"type": "typing", "active": False})
             return
 
+        # An uncertain interpretation (low planner confidence, or an
+        # ambiguous "which cached result" reference) must be confirmed, not
+        # silently executed or silently discarded into an unrelated fresh
+        # query. Reuses the same clarification_prompt message shape and
+        # adapter method the metric-ambiguity flow already sends over this
+        # socket (gateway/web_adapter.py::send_clarification_prompt) rather
+        # than hand-building a new JSON shape the frontend may not recognize.
+        if followup.status == "clarification" and followup.outcome is not None:
+            _cf_options = list(followup.outcome.clarification_options or [])
+            _cf_prompt = followup.outcome.clarification_prompt or "Which result value did you mean?"
+            if _cf_options:
+                _cf_event = adapter.make_event(text)
+                await adapter.send_clarification_prompt(_cf_event, _cf_prompt, _cf_options)
+            else:
+                async with adapter.send_lock:
+                    await websocket.send_json({"type": "message", "content": _cf_prompt})
+            async with adapter.send_lock:
+                await websocket.send_json({"type": "typing", "active": False})
+            return
+
         # Non-value-bearing analytical requests may use the existing governed
         # source-query pipeline when the cached schema cannot answer them.
         await _run_main_question(strip_result_context(text), table_hint, schema_hint)
@@ -1275,6 +1295,31 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                             status="error",
                             answer_type="cache_transform_error",
                             error_message=_rc_followup.reason,
+                        )
+                        continue
+
+                    # An uncertain interpretation must be confirmed, not
+                    # silently executed or silently discarded into an
+                    # unrelated fresh query. This inline result-chat panel
+                    # has no clickable-option UI (result_chat_response/
+                    # _error/_typing only), so surface the plain-English
+                    # confirmation question as an informational message
+                    # rather than guessing or staying silent.
+                    if _rc_followup.status == "clarification" and _rc_followup.outcome is not None:
+                        await websocket.send_json({
+                            "type": "result_chat_error",
+                            "result_id": rc_result_id,
+                            "content": (
+                                _rc_followup.outcome.clarification_prompt
+                                or "Which result value did you mean?"
+                            ),
+                            "detail": "Rephrase or repeat the request to confirm.",
+                        })
+                        _trace_finish(
+                            _rc_trace_id,
+                            status="success",
+                            answer_type="cache_transform_clarification",
+                            final_answer_summary="Asked for confirmation instead of guessing.",
                         )
                         continue
 

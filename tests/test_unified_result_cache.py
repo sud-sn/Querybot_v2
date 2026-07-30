@@ -106,6 +106,98 @@ class GovernedResultFollowupTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.evidence["sample_values_sent_to_llm"], 0)
         self.assertFalse(result.evidence["source_sql_sent_to_llm"])
 
+    async def test_low_confidence_plan_requests_confirmation_instead_of_executing(self):
+        async def complete(**_kwargs):
+            return (
+                '{"operation":"contribution","dimension":"DOCTOR_NAME",'
+                '"metric":"REVENUE","confidence":0.4}',
+                20,
+                10,
+            )
+
+        result = await run_governed_result_followup(
+            "Show percentage contribution in this result",
+            self.session_id,
+            complete=complete,
+            source_result_id=self.result_id,
+            cache=self.cache,
+        )
+        self.assertEqual(result.status, "clarification")
+        self.assertFalse(result.executed)
+        self.assertTrue(result.outcome.clarification_required)
+        self.assertIn("DOCTOR_NAME", result.outcome.clarification_prompt)
+        self.assertIn("REVENUE", result.outcome.clarification_prompt)
+        self.assertEqual(result.evidence["planner_confidence"], 0.4)
+        # The one confirmation option must resolve back to the exact
+        # original question so a confirm reply can be replayed with
+        # is_clarification=True.
+        self.assertEqual(len(result.outcome.clarification_options), 1)
+        self.assertEqual(
+            result.outcome.clarification_options[0]["resolved_question"],
+            "Show percentage contribution in this result",
+        )
+
+    async def test_high_confidence_plan_executes_normally(self):
+        async def complete(**_kwargs):
+            return (
+                '{"operation":"contribution","dimension":"DOCTOR_NAME",'
+                '"metric":"REVENUE","confidence":0.95}',
+                20,
+                10,
+            )
+
+        result = await run_governed_result_followup(
+            "Show percentage contribution in this result",
+            self.session_id,
+            complete=complete,
+            source_result_id=self.result_id,
+            cache=self.cache,
+        )
+        self.assertTrue(result.executed, result.reason)
+
+    async def test_missing_confidence_field_defaults_high_and_executes(self):
+        # Matches the pre-confidence-field wire shape -- a model that
+        # doesn't emit "confidence" at all must not regress into
+        # unnecessary clarification friction.
+        async def complete(**_kwargs):
+            return (
+                '{"operation":"contribution","dimension":"DOCTOR_NAME",'
+                '"metric":"REVENUE"}',
+                20,
+                10,
+            )
+
+        result = await run_governed_result_followup(
+            "Show percentage contribution in this result",
+            self.session_id,
+            complete=complete,
+            source_result_id=self.result_id,
+            cache=self.cache,
+        )
+        self.assertTrue(result.executed, result.reason)
+
+    async def test_confirmed_clarification_reply_skips_confidence_gate(self):
+        # A confirmed clarification reply must execute even at the same
+        # low confidence -- re-litigating a choice the user just made
+        # would create an infinite "did you mean" loop.
+        async def complete(**_kwargs):
+            return (
+                '{"operation":"contribution","dimension":"DOCTOR_NAME",'
+                '"metric":"REVENUE","confidence":0.2}',
+                20,
+                10,
+            )
+
+        result = await run_governed_result_followup(
+            "Show percentage contribution in this result",
+            self.session_id,
+            complete=complete,
+            source_result_id=self.result_id,
+            cache=self.cache,
+            is_clarification=True,
+        )
+        self.assertTrue(result.executed, result.reason)
+
     async def test_bound_literal_planner_failure_is_blocked(self):
         async def complete(**_kwargs):
             return '{"operation":"unsupported"}', 5, 5

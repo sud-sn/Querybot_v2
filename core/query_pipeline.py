@@ -36,7 +36,7 @@ from core.graph_resolver import (
 )
 from core.llm_audit import llm_audit_scope, make_llm_audit_request_id
 from core.result_cache import result_cache
-from core.query_router import should_route_to_result_cache
+from core.query_router import should_route_to_result_cache, should_attempt_cache_followup
 from core.governed_result_followup import adopt_cached_snapshot, run_governed_result_followup
 from core.semantic_planner import build_semantic_field_plan
 from core.semantic_model import (
@@ -640,17 +640,33 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                     "regulated_cache_read",
                     output_summary={"reason": cache_decision.reason_code},
                 )
-    _route_to_cached_result = bool(
+    _has_cached_result = bool(_session_id and result_cache.has_result(_session_id))
+    _regex_routes_to_cache = bool(
         _session_id
         and should_route_to_result_cache(
             question,
-            result_cache.has_result(_session_id),
+            _has_cached_result,
             cached_col_names=_cached_cols,
+        )
+    )
+    # should_attempt_cache_followup (core/query_router.py) additionally gives
+    # the metadata-only LLM planner a second opinion for phrasings the regex
+    # gate above misses ("drill into North") whenever a cached result is
+    # active -- see its docstring for why this is safe to widen (never
+    # fires on a fresh session; the planner's own "unsupported" fallback is
+    # unchanged for genuinely new questions).
+    _route_to_cached_result = bool(
+        _session_id
+        and should_attempt_cache_followup(
+            question, _has_cached_result, cached_col_names=_cached_cols,
         )
     )
     if _route_to_cached_result:
         _trace_update(trace_id, route="governed_result_cache")
-        _trace_step(trace_id, "route", output_summary="governed_result_cache")
+        _trace_step(
+            trace_id, "route",
+            output_summary="governed_result_cache" if _regex_routes_to_cache else "governed_result_cache_second_opinion",
+        )
         await _send_live_stage(
             adapter,
             event,
@@ -686,6 +702,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                 _session_id,
                 complete=_complete_cache_plan,
                 source_result_id=getattr(adapter, "last_result_id", None),
+                is_clarification=is_clarification,
             )
 
         _trace_step(

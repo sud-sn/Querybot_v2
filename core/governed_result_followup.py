@@ -25,6 +25,10 @@ FollowupStatus = Literal[
     "executed", "clarification", "unsupported", "blocked", "missing", "error"
 ]
 
+# Below this, a compiled-but-uncertain planner interpretation is confirmed
+# with the user instead of executed silently. Adjustable; start conservative.
+_CONFIDENCE_THRESHOLD = 0.7
+
 
 @dataclass(frozen=True)
 class GovernedFollowupResult:
@@ -170,6 +174,54 @@ def _reference_clarification(
     return _ResultReference(question=question, result_id=None, clarification=outcome)
 
 
+def _describe_command(command: ResultCommand) -> str:
+    """Plain-English restatement of a compiled command for a confirmation
+    prompt -- column names and an already-locally-resolved filter value are
+    safe to show back to the same user who is about to confirm them; this
+    never leaves the process."""
+    if command.action == "filter":
+        return f"filter to rows where {command.target_text} {command.operator} {command.value_text}"
+    if command.action == "aggregate":
+        return f"{command.aggregation} of {command.metric_text} grouped by {command.dimension_text}"
+    if command.action == "contribution":
+        return f"show each {command.dimension_text}'s contribution to {command.metric_text}"
+    if command.action == "ratio":
+        return f"{command.numerator_text} divided by {command.denominator_text}"
+    if command.action == "profit_percentage":
+        return "compute profit percentage"
+    if command.action == "sort":
+        return f"sort by {command.target_text} ({command.direction})"
+    if command.action == "keep_top":
+        suffix = f" by {command.metric_text}" if command.metric_text else ""
+        return f"keep the top {command.limit} rows{suffix}"
+    return command.action
+
+
+def _confidence_clarification(question: str, command: ResultCommand) -> ResultCommandOutcome:
+    """Confirm an uncertain planner interpretation instead of executing it
+    silently. The single option's resolved_question is the ORIGINAL question
+    text unchanged -- on confirm, the dispatcher's clarification-reply path
+    re-submits it with is_clarification=True, which skips this gate on that
+    retry (see run_governed_result_followup) rather than risking an
+    infinite low-confidence loop on a near-deterministic (temperature=0.0)
+    re-plan of the identical text."""
+    description = _describe_command(command)
+    prompt = f"Did you mean: {description}?"
+    return ResultCommandOutcome(
+        handled=True,
+        ok=False,
+        message=prompt,
+        clarification_required=True,
+        clarification_prompt=prompt,
+        clarification_options=[{
+            "id": "confirm",
+            "label": f"Yes — {description}",
+            "value": "confirm",
+            "resolved_question": question,
+        }],
+    )
+
+
 def _resolve_result_reference(
     question: str,
     session_id: str,
@@ -257,6 +309,7 @@ async def run_governed_result_followup(
     complete: Callable[..., Awaitable[tuple[str, int, int]]] | None = None,
     source_result_id: str | None = None,
     cache: ResultCache = result_cache,
+    is_clarification: bool = False,
 ) -> GovernedFollowupResult:
     """Plan and execute one result follow-up without disclosing cached values."""
     reference = _resolve_result_reference(
@@ -323,6 +376,22 @@ async def run_governed_result_followup(
         return GovernedFollowupResult(
             status,
             reason=planned.reason,
+            planner_used=True,
+            evidence=evidence,
+        )
+
+    # A clarification reply confirming this exact interpretation already
+    # went through this gate once; the confidence check exists to catch
+    # guesses before they execute, not to re-litigate a choice the user
+    # just made.
+    if not is_clarification and planned.confidence < _CONFIDENCE_THRESHOLD:
+        clarification_outcome = _confidence_clarification(question, planned.command)
+        evidence["planner_confidence"] = planned.confidence
+        return GovernedFollowupResult(
+            "clarification",
+            command=planned.command,
+            outcome=clarification_outcome,
+            reason=clarification_outcome.message,
             planner_used=True,
             evidence=evidence,
         )

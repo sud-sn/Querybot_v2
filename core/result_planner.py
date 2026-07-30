@@ -40,7 +40,11 @@ _ALLOWED_DIRECTIONS = {"asc", "desc"}
 _PLAN_KEYS = {
     "operation", "dimension", "metric", "aggregation", "operator",
     "value_ref", "numerator", "denominator", "direction", "limit_ref",
+    "confidence",
 }
+_DEFAULT_CONFIDENCE = 1.0
+_MIN_CONFIDENCE = 0.0
+_MAX_CONFIDENCE = 1.0
 _EMAIL_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.I)
 _GUID_RE = re.compile(
     r"\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b",
@@ -65,6 +69,13 @@ class PlannerResult:
     reason: str = ""
     binding_count: int = 0
     metadata: dict[str, Any] = field(default_factory=dict)
+    # Model's own self-reported confidence in the compiled interpretation
+    # (0.0-1.0). Defaults to _DEFAULT_CONFIDENCE when the model omits the
+    # field or returns something unparseable -- an optional-looking field
+    # a model skips shouldn't itself become a reason to add clarification
+    # friction; the existing grounding/validation checks are the primary
+    # safety layer regardless of confidence.
+    confidence: float = _DEFAULT_CONFIDENCE
 
 
 def is_metadata_result_question(text: str) -> bool:
@@ -95,13 +106,18 @@ def build_planner_input(question: str, snapshot: dict) -> PlannerInput:
         "Allowed operation values: filter, aggregate, contribution, ratio, "
         "profit_percentage, sort, keep_top.\n"
         "Allowed keys: operation, dimension, metric, aggregation, operator, value_ref, "
-        "numerator, denominator, direction, limit_ref.\n"
+        "numerator, denominator, direction, limit_ref, confidence.\n"
         "Use exact column names from the manifest. aggregation must be sum, avg, count, min, "
         "or max. operator must be eq, ne, gt, gte, lt, lte, contains, starts_with, or "
         "ends_with. direction must be asc or desc. A filter literal must be represented only "
         "by a VALUE_REF_n token already present in the request. A keep_top limit must use a "
         "VALUE_REF_n token. Do not output a raw value or a numeric limit. If the request cannot "
-        "be expressed exactly, return {\"operation\":\"unsupported\"}."
+        "be expressed exactly, return {\"operation\":\"unsupported\"}.\n\n"
+        "Always include \"confidence\": a number from 0.0 to 1.0 rating how certain you are "
+        "this operation is what the user actually wants, given only the request and the "
+        "column manifest. Use a high value (0.9-1.0) only when the operation and target "
+        "column(s) are unambiguous. Use a lower value when the request is vague, could "
+        "plausibly map to more than one column, or you are guessing at intent."
     )
     user_prompt = json.dumps(
         {"request": sanitized, "result_metadata": manifest},
@@ -157,7 +173,29 @@ async def plan_result_command(
         reason=reason,
         binding_count=len(planner_input.bindings),
         metadata=planner_input.metadata,
+        confidence=_extract_confidence(raw),
     )
+
+
+def _extract_confidence(raw_response: str) -> float:
+    """Pull and clamp the model's self-reported confidence, independent of
+    whether the rest of the plan compiled -- kept as a small, separate
+    parse (rather than threading a new return value through every branch
+    of compile_planner_response) to keep that function's existing,
+    already-tested control flow untouched."""
+    plan = _parse_json_object(raw_response)
+    if not isinstance(plan, dict):
+        return _DEFAULT_CONFIDENCE
+    raw_value = plan.get("confidence")
+    if raw_value is None:
+        return _DEFAULT_CONFIDENCE
+    try:
+        value = float(raw_value)
+    except (TypeError, ValueError):
+        return _DEFAULT_CONFIDENCE
+    if value != value:  # NaN guard
+        return _DEFAULT_CONFIDENCE
+    return max(_MIN_CONFIDENCE, min(_MAX_CONFIDENCE, value))
 
 
 def compile_planner_response(

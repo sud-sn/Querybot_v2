@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import re
 
+from core.pipeline_helpers import _looks_like_new_query
+
 # ── Pattern matching ──────────────────────────────────────────────────────────
 
 # Strong signals: user is explicitly referring to the current result set
@@ -202,6 +204,38 @@ def should_route_to_result_cache(
             return True
 
     return False
+
+
+def should_attempt_cache_followup(
+    question: str,
+    has_cached_result: bool,
+    *,
+    cached_col_names: list[str] | None = None,
+) -> bool:
+    """
+    Return True when the metadata-only LLM planner (run_governed_result_
+    followup / plan_result_command) should get a chance to interpret this
+    question, even when should_route_to_result_cache's phrase matching
+    above says no.
+
+    That regex gate is deliberately narrow -- it only recognizes a fixed
+    vocabulary of trigger words/phrases, so real follow-ups outside that
+    vocabulary ("drill into North") never reach the LLM planner at all and
+    silently become a fresh, unrelated SQL query instead. This widens the
+    net to a second opinion: attempt the planner whenever there's an
+    active cached result and the message doesn't already look like a
+    self-contained new question (via the same short-message/starter-word
+    heuristic used elsewhere for clarification replies) -- never on a
+    fresh session (has_cached_result=False), so a normal new question
+    costs nothing extra. The planner itself remains the safety layer: an
+    actually-new question still compiles to "unsupported" and falls
+    through to normal SQL generation exactly as before.
+    """
+    if should_route_to_result_cache(question, has_cached_result, cached_col_names=cached_col_names):
+        return True
+    if not has_cached_result:
+        return False
+    return not _looks_like_new_query(question)
 
 
 # ── DuckDB system prompt ──────────────────────────────────────────────────────

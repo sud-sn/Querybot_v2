@@ -6,6 +6,7 @@ from core.result_planner import (
     compile_planner_response,
     is_metadata_result_question,
     plan_result_command,
+    _extract_confidence,
 )
 
 
@@ -139,6 +140,30 @@ class MetadataResultPlannerTests(unittest.TestCase):
         self.assertFalse(is_metadata_result_question("Explain this result"))
 
 
+class ExtractConfidenceTests(unittest.TestCase):
+
+    def test_normal_value_passes_through(self):
+        self.assertEqual(_extract_confidence('{"operation":"sort","confidence":0.85}'), 0.85)
+
+    def test_missing_field_defaults_high(self):
+        self.assertEqual(_extract_confidence('{"operation":"sort"}'), 1.0)
+
+    def test_non_numeric_defaults_high(self):
+        self.assertEqual(_extract_confidence('{"operation":"sort","confidence":"high"}'), 1.0)
+
+    def test_out_of_range_high_is_clamped(self):
+        self.assertEqual(_extract_confidence('{"operation":"sort","confidence":1.5}'), 1.0)
+
+    def test_out_of_range_low_is_clamped(self):
+        self.assertEqual(_extract_confidence('{"operation":"sort","confidence":-0.3}'), 0.0)
+
+    def test_malformed_json_defaults_high(self):
+        self.assertEqual(_extract_confidence("not json"), 1.0)
+
+    def test_integer_confidence_accepted(self):
+        self.assertEqual(_extract_confidence('{"operation":"sort","confidence":1}'), 1.0)
+
+
 class MetadataResultPlannerAsyncTests(unittest.IsolatedAsyncioTestCase):
     async def test_model_receives_only_metadata_and_sanitized_refs(self):
         snapshot = {
@@ -180,6 +205,29 @@ class MetadataResultPlannerWiringTests(unittest.TestCase):
         planner_position = source.index("if is_metadata_result_question(text):")
         insight_position = source.index("from core.insight import is_insight_question", planner_position)
         self.assertLess(planner_position, insight_position)
+
+    def test_metadata_planner_handles_clarification_status(self):
+        # Regression guard: run_governed_result_followup can return
+        # status="clarification" (low planner confidence, or an ambiguous
+        # "which cached result" reference) -- before this fix, this WS
+        # handler had no branch for it and silently fell through to a
+        # fresh, unrelated query instead of asking the user to confirm.
+        source = (ROOT / "gateway" / "webhooks.py").read_text(encoding="utf-8")
+        start = source.index("async def _run_metadata_result_planner")
+        end = source.index("\n    try:\n        while True:", start)
+        block = source[start:end]
+        self.assertIn('followup.status == "clarification"', block)
+        self.assertIn("send_clarification_prompt", block)
+        # The clarification branch must come before the unconditional
+        # fresh-query fallback at the end of the function.
+        self.assertLess(
+            block.index('followup.status == "clarification"'),
+            block.rindex("_run_main_question(strip_result_context(text)"),
+        )
+
+    def test_result_chat_handles_clarification_status(self):
+        source = (ROOT / "gateway" / "webhooks.py").read_text(encoding="utf-8")
+        self.assertIn('_rc_followup.status == "clarification"', source)
 
     def test_planner_handler_records_zero_row_exposure(self):
         source = (ROOT / "gateway" / "webhooks.py").read_text(encoding="utf-8")
