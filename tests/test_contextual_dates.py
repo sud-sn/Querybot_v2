@@ -1246,5 +1246,119 @@ class TemporalAnchorScopeValidatorTests(unittest.TestCase):
         self.assertIn('"temporal_anchor_unscoped"', retryable_line)
 
 
+class GraphPlanMismatchBeatsFieldPlanMismatchTests(unittest.TestCase):
+    """Live-bug reproduction: for a surrogate-FK date role that is ALSO an
+    entity-graph edge, validate_sql_detailed's check order means
+    _graph_plan_errors fires (code=graph_plan_mismatch) before the
+    field_plan_mismatch check ever runs. The temporal_anchor_* and
+    field_plan_mismatch repair notes built in query_pipeline.py were never
+    reached for this exact shape -- the LLM only got the generic
+    "copy the FROM/JOIN skeleton" entity-graph note, regressed to the
+    fact-only surrogate-key anti-pattern on retry, and then failed a SECOND,
+    non-retryable-again check. Confirmed by reproducing the user's reported
+    SQL/scenario directly (not a synthetic simplification)."""
+
+    def _semantic_context(self):
+        temporal_policy = {
+            "fact_table": "PHARMA_LAB.F_INVENTORY_SNAPSHOT",
+            "fact_column": "SNAPSHOT_DATE_ID",
+            "dimension_table": "PHARMA_LAB.D_DATE",
+            "dimension_key": "DATE_ID",
+            "date_column": "CALENDAR_DATE",
+            "date_key_type": "surrogate_fk",
+            "anchor_table": "PHARMA_LAB.F_INVENTORY_SNAPSHOT",
+            "anchor_column": "SNAPSHOT_DATE_ID",
+        }
+        semantic_plan = {
+            "enabled": True,
+            "fields": [{
+                "term": "Snapshot Date", "table": "PHARMA_LAB.D_DATE", "column": "CALENDAR_DATE",
+                "role": "contextual_date", "display_required": False,
+                "source_table": "PHARMA_LAB.F_INVENTORY_SNAPSHOT", "source_key_column": "SNAPSHOT_DATE_ID",
+                "enforcement": "required", "date_key_type": "surrogate_fk", "role_alias": "snapshot_date",
+            }],
+            "joins": [{
+                "from": "PHARMA_LAB.F_INVENTORY_SNAPSHOT", "to": "PHARMA_LAB.D_DATE",
+                "conditions": [("SNAPSHOT_DATE_ID", "DATE_ID")], "role_alias": "snapshot_date",
+            }],
+            "temporal_policies": [temporal_policy],
+        }
+        graph_context = {
+            "enabled": True,
+            "resolved_edges": [{
+                "from_schema": "PHARMA_LAB", "from_table": "F_INVENTORY_SNAPSHOT",
+                "to_schema": "PHARMA_LAB", "to_table": "D_DATE",
+                "conditions": [("SNAPSHOT_DATE_ID", "DATE_ID")],
+                "join_type": "INNER", "id": "edge1", "relationship_key": "snap-date",
+            }],
+        }
+        return {"semantic_plan": semantic_plan, "graph_context": graph_context}, semantic_plan
+
+    def test_naive_anchor_fails_as_graph_plan_mismatch_not_field_plan_mismatch(self):
+        sql = (
+            "SELECT SUM(INVENTORY_VALUE_AMT) AS TOTAL_INVENTORY_VALUE\n"
+            "FROM PHARMA_LAB.F_INVENTORY_SNAPSHOT\n"
+            "WHERE SNAPSHOT_DATE_ID = (SELECT MAX(SNAPSHOT_DATE_ID) FROM PHARMA_LAB.F_INVENTORY_SNAPSHOT);"
+        )
+        table_columns = {
+            "PHARMA_LAB.F_INVENTORY_SNAPSHOT": {"SNAPSHOT_DATE_ID": "int", "INVENTORY_VALUE_AMT": "decimal"},
+            "PHARMA_LAB.D_DATE": {"DATE_ID": "int", "CALENDAR_DATE": "date"},
+        }
+        semantic_context, _ = self._semantic_context()
+        result = validate_sql_detailed(
+            sql, set(table_columns), "azure_sql", None, table_columns, semantic_context,
+        )
+        self.assertFalse(result.ok)
+        self.assertEqual(result.code, "graph_plan_mismatch")
+        self.assertIn("PHARMA_LAB.D_DATE", result.reason)
+
+    def test_graph_plan_mismatch_branch_appends_date_anchor_when_edge_is_the_date_role(self):
+        # query_pipeline.py's graph_plan_mismatch repair note must detect that
+        # a missing edge names the governed date dimension and append the
+        # same copy-pasteable REQUIRED ANCHOR guidance the temporal_anchor_*
+        # path uses -- otherwise this exact case gets zero anchor guidance
+        # on its only retry attempt.
+        src = (Path(__file__).resolve().parents[1] / "core" / "query_pipeline.py").read_text(encoding="utf-8")
+        graph_branch_start = src.index('elif last_code == "graph_plan_mismatch":')
+        next_branch_start = src.index("elif last_code ==", graph_branch_start + 10)
+        graph_branch = src[graph_branch_start:next_branch_start]
+        self.assertIn("_governed_date_anchor_repair_lines", graph_branch)
+        self.assertIn("REQUIRED ANCHOR", str(
+            __import__("core.query_pipeline", fromlist=["_governed_date_anchor_repair_lines"])
+            ._governed_date_anchor_repair_lines(self._semantic_context()[1])
+        ))
+
+
+class GovernedDateAnchorRepairLinesTests(unittest.TestCase):
+    """core.query_pipeline._governed_date_anchor_repair_lines -- the shared
+    anchor-guidance builder now reused by both the temporal_anchor_* repair
+    path and the graph_plan_mismatch repair path."""
+
+    def test_surrogate_fk_policy_produces_join_scoped_anchor(self):
+        from core.query_pipeline import _governed_date_anchor_repair_lines
+
+        plan = {"temporal_policies": [{
+            "fact_table": "PHARMA_LAB.F_INVENTORY_SNAPSHOT",
+            "fact_column": "SNAPSHOT_DATE_ID",
+            "dimension_table": "PHARMA_LAB.D_DATE",
+            "dimension_key": "DATE_ID",
+            "date_column": "CALENDAR_DATE",
+            "date_key_type": "surrogate_fk",
+        }]}
+        lines = _governed_date_anchor_repair_lines(plan)
+        self.assertIn("REQUIRED ANCHOR", lines)
+        self.assertIn(
+            "(SELECT MAX(PHARMA_LAB.D_DATE.CALENDAR_DATE) FROM PHARMA_LAB.D_DATE "
+            "JOIN PHARMA_LAB.F_INVENTORY_SNAPSHOT ON "
+            "PHARMA_LAB.F_INVENTORY_SNAPSHOT.SNAPSHOT_DATE_ID = PHARMA_LAB.D_DATE.DATE_ID)",
+            lines,
+        )
+
+    def test_no_temporal_policies_returns_empty_string(self):
+        from core.query_pipeline import _governed_date_anchor_repair_lines
+        self.assertEqual(_governed_date_anchor_repair_lines({}), "")
+        self.assertEqual(_governed_date_anchor_repair_lines({"temporal_policies": []}), "")
+
+
 if __name__ == "__main__":
     unittest.main()

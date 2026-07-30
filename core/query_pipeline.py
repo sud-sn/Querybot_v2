@@ -337,6 +337,38 @@ async def _send_why_insight(
 # Query pipeline — table-aware
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _governed_date_anchor_repair_lines(semantic_plan: dict) -> str:
+    """Build the "REQUIRED ANCHOR" guidance shared by every repair path that
+    can surface a broken governed date-role join -- temporal_anchor_* directly,
+    and graph_plan_mismatch when the missing entity-graph edge IS the date-role
+    join (naming the target column/edge alone isn't enough for the LLM to
+    independently derive a correctly fact-scoped anchor subquery; that's the
+    exact class of mistake this whole date-role system exists to prevent).
+    """
+    from core.contextual_dates import format_required_anchor
+
+    lines = []
+    for policy in (semantic_plan or {}).get("temporal_policies") or []:
+        fact_table = str(policy.get("fact_table") or "")
+        fact_column = str(policy.get("fact_column") or "")
+        date_table = str(policy.get("dimension_table") or policy.get("date_table") or "")
+        date_key = str(policy.get("dimension_key") or "")
+        date_column = str(policy.get("date_column") or "")
+        if not (fact_table and fact_column and date_table and date_column):
+            continue
+        join_rule = (
+            f"{fact_table}.{fact_column} = {date_table}.{date_key}"
+            if date_key else "native date column (no surrogate join)"
+        )
+        lines.append(
+            f"- JOIN/FIELD: {join_rule}; filter and anchor on "
+            f"{date_table}.{date_column}.\n"
+            f"- REQUIRED ANCHOR (copy this exact subquery as the anchor; "
+            f"do not build your own): {format_required_anchor(policy)}"
+        )
+    return "\n".join(lines)
+
+
 async def handle_query(account_id, event, adapter, question, portal_user, is_clarification=False):
     start_ms = int(time.time() * 1000)
     state    = get_state(account_id)
@@ -2595,6 +2627,30 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                     "- Preserve LEFT JOIN where the graph marks the relationship optional.\n"
                     "- Do not substitute a nearby key or invent an alternative join path.\n"
                 )
+                # A missing entity-graph edge to the governed date-role
+                # dimension is checked BEFORE field_plan_mismatch in the
+                # validator, so it fires first and this generic "add the
+                # join" note is all the LLM gets on retry. Without the exact
+                # anchor subquery, it reliably regresses to the fact-only
+                # surrogate-key anti-pattern, which then fails a SECOND,
+                # different check (field_plan_mismatch) with no further
+                # retry available. Detect that the missing edge IS the
+                # date-role join (its dimension table is named in the
+                # validator's own error text) and append the same
+                # copy-pasteable anchor the temporal_anchor_* path uses.
+                _date_contract_lines = _governed_date_anchor_repair_lines(_semantic_plan or {})
+                _date_dim_names = {
+                    str(_p.get("dimension_table") or _p.get("date_table") or "")
+                    for _p in (_semantic_plan or {}).get("temporal_policies") or []
+                    if (_p.get("dimension_table") or _p.get("date_table"))
+                }
+                if _date_contract_lines and any(
+                    name and name in (last_reason or "") for name in _date_dim_names
+                ):
+                    validation_repair_note += (
+                        "\nGOVERNED DATE-ROLE JOIN REQUIRED (this is one of the missing "
+                        "entity-graph edges above):\n" + _date_contract_lines
+                    )
             elif last_code == "metric_formula_mismatch":
                 # Inject the EXACT approved formula(s) verbatim — do not rely on
                 # the LLM finding them in the KB context, which can be overridden.
@@ -2641,30 +2697,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                     "Do NOT invent, abbreviate, or guess a column name (e.g. 'YR') that does not appear there.\n"
                 )
             elif last_code in {"temporal_anchor_missing", "temporal_anchor_mismatch", "temporal_role_mismatch", "temporal_anchor_unscoped"}:
-                from core.contextual_dates import format_required_anchor
-
-                _date_contracts = []
-                for _policy in (_semantic_plan or {}).get("temporal_policies") or []:
-                    _fact_table = str(_policy.get("fact_table") or "")
-                    _fact_column = str(_policy.get("fact_column") or "")
-                    _date_table = str(
-                        _policy.get("dimension_table")
-                        or _policy.get("date_table")
-                        or ""
-                    )
-                    _date_key = str(_policy.get("dimension_key") or "")
-                    _date_column = str(_policy.get("date_column") or "")
-                    if _fact_table and _fact_column and _date_table and _date_column:
-                        _join_rule = (
-                            f"{_fact_table}.{_fact_column} = {_date_table}.{_date_key}"
-                            if _date_key else "native date column (no surrogate join)"
-                        )
-                        _date_contracts.append(
-                            f"- JOIN/FIELD: {_join_rule}; filter and anchor on "
-                            f"{_date_table}.{_date_column}.\n"
-                            f"- REQUIRED ANCHOR (copy this exact subquery as the anchor; "
-                            f"do not build your own): {format_required_anchor(_policy)}"
-                        )
+                _date_contract_lines = _governed_date_anchor_repair_lines(_semantic_plan or {})
                 validation_repair_note = (
                     "\nGOVERNED RELATIVE-DATE REPAIR REQUIRED:\n"
                     "- Never compare a fact surrogate date ID to DATEADD, a date literal, or MAX(the ID).\n"
@@ -2673,7 +2706,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                     "- Derive the business clock from the REQUIRED ANCHOR subquery below — never from "
                     "MAX(CALENDAR_DATE) over an unrestricted date dimension, which includes future "
                     "calendar rows with no matching fact records.\n"
-                    + ("\n".join(_date_contracts) if _date_contracts else
+                    + (_date_contract_lines if _date_contract_lines else
                        "- Use the exact date-role JOIN and calendar field supplied in the semantic plan.\n")
                 )
             elif last_code == "reused_plan_empty":
