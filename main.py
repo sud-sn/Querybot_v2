@@ -142,7 +142,7 @@ async def startup() -> None:
                         )
                         await adapter.send_message(
                             event,
-                            f"🤖 {greeting}, I'm up and running — ready to analyze your data!"
+                            f"👋 {greeting}, I'm up and running — ready to analyze your data!"
                         )
                     except Exception as e:
                         log.debug("Failed to notify Teams user on startup: %s", e)
