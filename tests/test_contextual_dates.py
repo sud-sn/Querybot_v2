@@ -1070,6 +1070,54 @@ class TemporalGovernanceHardeningTests(unittest.TestCase):
         self.assertNotIn("TRY_CONVERT", rendered)
         self.assertIn("FILL_DATE", rendered)
 
+    def test_bare_max_surrogate_anchor_example_is_also_dropped_from_prompt(self):
+        # Live-bug reproduction: a harvested/approved example carrying the
+        # "SNAPSHOT_DATE_ID = (SELECT MAX(SNAPSHOT_DATE_ID) FROM fact)"
+        # anti-pattern -- no YEAR/CONVERT/CAST/DATEADD/DATEDIFF wrapping at
+        # all, so _surrogate_date_misuse_columns (which only looks inside
+        # those function calls) never caught it. Two independent
+        # repair-note fixes for this exact live case had zero effect on
+        # the regenerated SQL because a poisoned few-shot example was
+        # still being injected into both the first-pass and retry prompts,
+        # outweighing the text guidance every time.
+        from core.examples import _is_stale_surrogate_date_example, format_examples_for_prompt
+        poisoned = (
+            "SELECT dsu.SUPPLIER_NAME, SUM(fin.AVAILABLE_QUANTITY) AS TOTAL_AVAILABLE "
+            "FROM PHARMA_LAB.F_INVENTORY_SNAPSHOT fin "
+            "INNER JOIN PHARMA_LAB.D_SUPPLIER dsu ON fin.SUPPLIER_ID = dsu.SUPPLIER_ID "
+            "WHERE fin.SNAPSHOT_DATE_ID = (SELECT MAX(SNAPSHOT_DATE_ID) FROM PHARMA_LAB.F_INVENTORY_SNAPSHOT) "
+            "GROUP BY dsu.SUPPLIER_NAME"
+        )
+        correct = (
+            "SELECT dsu.SUPPLIER_NAME, SUM(fin.AVAILABLE_QUANTITY) AS TOTAL_AVAILABLE "
+            "FROM PHARMA_LAB.F_INVENTORY_SNAPSHOT fin "
+            "INNER JOIN PHARMA_LAB.D_SUPPLIER dsu ON fin.SUPPLIER_ID = dsu.SUPPLIER_ID "
+            "INNER JOIN PHARMA_LAB.D_DATE dt ON fin.SNAPSHOT_DATE_ID = dt.DATE_ID "
+            "WHERE dt.CALENDAR_DATE = (SELECT MAX(d2.CALENDAR_DATE) FROM PHARMA_LAB.D_DATE d2 "
+            "JOIN PHARMA_LAB.F_INVENTORY_SNAPSHOT f2 ON f2.SNAPSHOT_DATE_ID = d2.DATE_ID) "
+            "GROUP BY dsu.SUPPLIER_NAME"
+        )
+        self.assertTrue(_is_stale_surrogate_date_example(poisoned))
+        self.assertFalse(_is_stale_surrogate_date_example(correct))
+        rendered = format_examples_for_prompt([
+            {"question": "poisoned bare-max", "sql": poisoned},
+            {"question": "correct join-scoped", "sql": correct},
+        ])
+        self.assertNotIn("poisoned bare-max", rendered)
+        self.assertIn("correct join-scoped", rendered)
+
+    def test_bare_max_on_native_date_column_is_not_flagged(self):
+        # A plain native calendar column (no _ID/_KEY suffix) anchored via
+        # MAX() with no JOIN is the CORRECT pattern for that shape (mirrors
+        # core/report_engine.py's own _apply_latest_date_filter) -- must
+        # not be caught by the new surrogate-only check.
+        from core.examples import _is_stale_surrogate_date_example
+        native = (
+            "SELECT SUM(NET_REVENUE_AMT) FROM PHARMA_LAB.F_RX_FILL "
+            "WHERE FILL_DATE = (SELECT MAX(FILL_DATE) FROM PHARMA_LAB.F_RX_FILL)"
+        )
+        self.assertFalse(_is_stale_surrogate_date_example(native))
+
     def test_pipeline_reports_retry_execution_failure_honestly(self):
         # Wiring guards for the hidden-second-failure fix: the validation
         # terminal branch must yield to a real execution error from the

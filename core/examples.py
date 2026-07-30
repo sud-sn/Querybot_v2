@@ -406,6 +406,7 @@ def _is_stale_surrogate_date_example(sql: str) -> bool:
         return False
     try:
         import sqlglot as _sqlglot
+        from sqlglot import exp as sg_exp
         from core.validator import _surrogate_date_misuse_columns
         from core.date_roles import is_plain_surrogate_date_role_column
         tree = None
@@ -420,7 +421,27 @@ def _is_stale_surrogate_date_example(sql: str) -> bool:
         if tree is None:
             return False
         misused = _surrogate_date_misuse_columns(tree)
-        return any(is_plain_surrogate_date_role_column(col) for col in misused)
+        if any(is_plain_surrogate_date_role_column(col) for col in misused):
+            return True
+        # Bare MAX()-anchor misuse: a plain surrogate date-role column
+        # compared against MAX() of itself with the enclosing SELECT
+        # containing no JOIN at all -- the "SNAPSHOT_DATE_ID = (SELECT
+        # MAX(SNAPSHOT_DATE_ID) FROM fact)" anti-pattern the temporal
+        # anchor validator rejects at query time. _surrogate_date_misuse_columns
+        # above only catches YEAR/CONVERT/CAST/DATEADD/DATEDIFF wrapping --
+        # this shape wraps the column in no date-conversion function at
+        # all, so it slipped through undetected and kept re-teaching the
+        # exact anti-pattern the temporal-anchor fixes exist to prevent.
+        for max_node in tree.find_all(sg_exp.Max):
+            col_node = max_node.this if isinstance(max_node.this, sg_exp.Column) else None
+            if col_node is None:
+                continue
+            if not is_plain_surrogate_date_role_column(col_node.name or ""):
+                continue
+            owning_select = max_node.find_ancestor(sg_exp.Select)
+            if owning_select is not None and owning_select.find(sg_exp.Join) is None:
+                return True
+        return False
     except Exception:
         # Unparseable example — can't prove it's clean, but also can't
         # prove it's poisoned; keep it (the validator still guards the
