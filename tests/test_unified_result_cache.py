@@ -86,7 +86,7 @@ class GovernedResultFollowupTests(unittest.IsolatedAsyncioTestCase):
             captured.update(kwargs)
             return (
                 '{"operation":"contribution","dimension":"DOCTOR_NAME",'
-                '"metric":"REVENUE"}',
+                '"metric":"REVENUE","confidence":0.95}',
                 20,
                 10,
             )
@@ -155,10 +155,11 @@ class GovernedResultFollowupTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertTrue(result.executed, result.reason)
 
-    async def test_missing_confidence_field_defaults_high_and_executes(self):
-        # Matches the pre-confidence-field wire shape -- a model that
-        # doesn't emit "confidence" at all must not regress into
-        # unnecessary clarification friction.
+    async def test_missing_confidence_field_defaults_low_and_asks_for_confirmation(self):
+        # Fail closed: a model that doesn't follow the schema and emit
+        # "confidence" at all is not evidence of a trustworthy response --
+        # it must default BELOW the clarification threshold, not above it,
+        # so a non-compliant response is confirmed rather than trusted.
         async def complete(**_kwargs):
             return (
                 '{"operation":"contribution","dimension":"DOCTOR_NAME",'
@@ -174,7 +175,9 @@ class GovernedResultFollowupTests(unittest.IsolatedAsyncioTestCase):
             source_result_id=self.result_id,
             cache=self.cache,
         )
-        self.assertTrue(result.executed, result.reason)
+        self.assertEqual(result.status, "clarification")
+        self.assertFalse(result.executed)
+        self.assertEqual(result.evidence["planner_confidence"], 0.0)
 
     async def test_confirmed_clarification_reply_skips_confidence_gate(self):
         # A confirmed clarification reply must execute even at the same

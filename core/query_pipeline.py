@@ -652,13 +652,23 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
     # should_attempt_cache_followup (core/query_router.py) additionally gives
     # the metadata-only LLM planner a second opinion for phrasings the regex
     # gate above misses ("drill into North") whenever a cached result is
-    # active -- see its docstring for why this is safe to widen (never
-    # fires on a fresh session; the planner's own "unsupported" fallback is
-    # unchanged for genuinely new questions).
+    # active AND the question shows a positive sign of naming something
+    # already on screen -- see its docstring for why this is safe to widen
+    # (never fires on a fresh session; the planner's own "unsupported"
+    # fallback is unchanged for genuinely new questions). Cached rows are
+    # only fetched lazily, when the regex gate didn't already resolve this,
+    # to avoid the extra snapshot read on the common fast path.
+    _cached_rows_for_gate = (
+        list(result_cache.get_snapshot(_session_id).get("rows") or [])
+        if (_has_cached_result and not _regex_routes_to_cache)
+        else None
+    )
     _route_to_cached_result = bool(
         _session_id
         and should_attempt_cache_followup(
-            question, _has_cached_result, cached_col_names=_cached_cols,
+            question, _has_cached_result,
+            cached_col_names=_cached_cols,
+            cached_rows=_cached_rows_for_gate,
         )
     )
     if _route_to_cached_result:

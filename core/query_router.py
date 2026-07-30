@@ -100,6 +100,46 @@ def _tokens(value: str) -> set[str]:
     }
 
 
+_DEICTIC_RE = re.compile(
+    r"\b(?:this|that|these|those|it|them|the\s+result|the\s+rows|above|previous)\b",
+    re.IGNORECASE,
+)
+
+
+def _question_references_cached_value(question: str, rows: list[dict] | None) -> bool:
+    """
+    Cheap, local signal that a short/plain question names something already
+    on screen (e.g. "drill into North" naming a cached region value) rather
+    than a genuinely new topic that merely happens to be short. Column-name
+    overlap (question_mentions_cached_column) can't catch this -- "North"
+    is a cell VALUE, not a column name. Only scans already-cached rows
+    already resident in this process; never touches the source database or
+    sends anything to a model.
+    """
+    if not rows:
+        return False
+    q_norm = re.sub(r"[^a-z0-9]+", "", question.casefold())
+    if not q_norm:
+        return False
+    seen: set[str] = set()
+    for row in rows[:50]:  # cap scan cost for very large cached results
+        if not isinstance(row, dict):
+            continue
+        for value in row.values():
+            if value is None or isinstance(value, (dict, list, tuple, set, bool)):
+                continue
+            display = str(value).strip()
+            if len(display) < 2:
+                continue
+            norm = re.sub(r"[^a-z0-9]+", "", display.casefold())
+            if not norm or norm in seen:
+                continue
+            seen.add(norm)
+            if norm in q_norm:
+                return True
+    return False
+
+
 def question_mentions_cached_column(question: str, columns: list[str] | None) -> bool:
     """Match result columns using business wording without guessing a new field."""
     if not columns:
@@ -211,6 +251,7 @@ def should_attempt_cache_followup(
     has_cached_result: bool,
     *,
     cached_col_names: list[str] | None = None,
+    cached_rows: list[dict] | None = None,
 ) -> bool:
     """
     Return True when the metadata-only LLM planner (run_governed_result_
@@ -221,21 +262,40 @@ def should_attempt_cache_followup(
     That regex gate is deliberately narrow -- it only recognizes a fixed
     vocabulary of trigger words/phrases, so real follow-ups outside that
     vocabulary ("drill into North") never reach the LLM planner at all and
-    silently become a fresh, unrelated SQL query instead. This widens the
-    net to a second opinion: attempt the planner whenever there's an
-    active cached result and the message doesn't already look like a
-    self-contained new question (via the same short-message/starter-word
-    heuristic used elsewhere for clarification replies) -- never on a
-    fresh session (has_cached_result=False), so a normal new question
-    costs nothing extra. The planner itself remains the safety layer: an
-    actually-new question still compiles to "unsupported" and falls
-    through to normal SQL generation exactly as before.
+    silently become a fresh, unrelated SQL query instead.
+
+    Widening this net on message length/starter-word alone is NOT enough:
+    a short, non-starter-worded question ("Revenue yesterday?", "Profit by
+    warehouse") is exactly as short and exactly as un-starter-worded as a
+    genuine elliptical follow-up ("drill into North") -- word count and
+    starter words cannot tell them apart. What actually distinguishes them
+    is content: a real follow-up either names something already on screen
+    (a deictic word, a cached column, or a cached row VALUE) or it doesn't.
+    So this requires a positive signal before attempting the followup path:
+      - a deictic reference ("this", "that", "the result", ...), or
+      - the question names a cached column (question_mentions_cached_column), or
+      - the question names an actual cached VALUE (_question_references_
+        cached_value -- column-name overlap alone can't catch "North"
+        naming a cached region value, since that's a cell value, not a
+        column name).
+    Never fires with no cached result, so a fresh session pays zero extra
+    latency. The planner itself remains the safety layer regardless: an
+    actually-new question that slips past this gate still compiles to
+    "unsupported" and falls through to normal SQL generation, and a
+    low-confidence interpretation now asks for confirmation rather than
+    executing silently (core/governed_result_followup.py).
     """
     if should_route_to_result_cache(question, has_cached_result, cached_col_names=cached_col_names):
         return True
     if not has_cached_result:
         return False
-    return not _looks_like_new_query(question)
+    if _looks_like_new_query(question):
+        return False
+    if _DEICTIC_RE.search(question):
+        return True
+    if question_mentions_cached_column(question, cached_col_names):
+        return True
+    return _question_references_cached_value(question, cached_rows)
 
 
 # ── DuckDB system prompt ──────────────────────────────────────────────────────

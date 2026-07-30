@@ -42,9 +42,15 @@ _PLAN_KEYS = {
     "value_ref", "numerator", "denominator", "direction", "limit_ref",
     "confidence",
 }
-_DEFAULT_CONFIDENCE = 1.0
 _MIN_CONFIDENCE = 0.0
 _MAX_CONFIDENCE = 1.0
+# Fail closed, not open: a response missing or malformed on the confidence
+# field is itself evidence the model didn't follow the schema, and treating
+# that as "fully confident" would silently bypass the clarification gate
+# exactly when the response is least trustworthy. Defaulting below the
+# governed_result_followup.py clarification threshold means a non-compliant
+# response always asks for confirmation instead of executing on trust.
+_DEFAULT_CONFIDENCE = _MIN_CONFIDENCE
 _EMAIL_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.I)
 _GUID_RE = re.compile(
     r"\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b",
@@ -70,11 +76,11 @@ class PlannerResult:
     binding_count: int = 0
     metadata: dict[str, Any] = field(default_factory=dict)
     # Model's own self-reported confidence in the compiled interpretation
-    # (0.0-1.0). Defaults to _DEFAULT_CONFIDENCE when the model omits the
-    # field or returns something unparseable -- an optional-looking field
-    # a model skips shouldn't itself become a reason to add clarification
-    # friction; the existing grounding/validation checks are the primary
-    # safety layer regardless of confidence.
+    # (0.0-1.0). Defaults to _DEFAULT_CONFIDENCE (the minimum) when the
+    # model omits the field or returns something unparseable -- a response
+    # that didn't follow the schema is not evidence of high confidence, so
+    # it must not silently bypass the clarification gate in
+    # governed_result_followup.py. Fail closed, not open.
     confidence: float = _DEFAULT_CONFIDENCE
 
 

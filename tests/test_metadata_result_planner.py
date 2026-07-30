@@ -145,11 +145,14 @@ class ExtractConfidenceTests(unittest.TestCase):
     def test_normal_value_passes_through(self):
         self.assertEqual(_extract_confidence('{"operation":"sort","confidence":0.85}'), 0.85)
 
-    def test_missing_field_defaults_high(self):
-        self.assertEqual(_extract_confidence('{"operation":"sort"}'), 1.0)
+    def test_missing_field_defaults_low(self):
+        # Fail closed: a response that didn't follow the schema is not
+        # evidence of high confidence -- it must not silently bypass the
+        # clarification gate in governed_result_followup.py.
+        self.assertEqual(_extract_confidence('{"operation":"sort"}'), 0.0)
 
-    def test_non_numeric_defaults_high(self):
-        self.assertEqual(_extract_confidence('{"operation":"sort","confidence":"high"}'), 1.0)
+    def test_non_numeric_defaults_low(self):
+        self.assertEqual(_extract_confidence('{"operation":"sort","confidence":"high"}'), 0.0)
 
     def test_out_of_range_high_is_clamped(self):
         self.assertEqual(_extract_confidence('{"operation":"sort","confidence":1.5}'), 1.0)
@@ -157,8 +160,8 @@ class ExtractConfidenceTests(unittest.TestCase):
     def test_out_of_range_low_is_clamped(self):
         self.assertEqual(_extract_confidence('{"operation":"sort","confidence":-0.3}'), 0.0)
 
-    def test_malformed_json_defaults_high(self):
-        self.assertEqual(_extract_confidence("not json"), 1.0)
+    def test_malformed_json_defaults_low(self):
+        self.assertEqual(_extract_confidence("not json"), 0.0)
 
     def test_integer_confidence_accepted(self):
         self.assertEqual(_extract_confidence('{"operation":"sort","confidence":1}'), 1.0)
