@@ -695,6 +695,8 @@ def build_semantic_field_plan(
 
 
 def format_semantic_field_plan(plan: dict, db_type: str = "azure_sql") -> str:
+    from core.contextual_dates import format_required_anchor
+
     if not plan or not plan.get("enabled") or not plan.get("fields"):
         return ""
     lines = [
@@ -769,12 +771,11 @@ def format_semantic_field_plan(plan: dict, db_type: str = "azure_sql") -> str:
                 f"with MAX({date_ref}) over the same governed source rows, then apply "
                 f"the requested {policy.get('kind')} boundary from that anchor."
             )
-            date_table = str(policy.get("date_table") or "")
-            date_column = str(policy.get("date_column") or "")
-            if date_table and date_column:
+            _anchor = format_required_anchor(policy)
+            if _anchor:
                 lines.append(
                     f"  REQUIRED ANCHOR (copy this exact subquery as the anchor; do not "
-                    f"build your own): (SELECT MAX({date_column}) FROM {date_table})"
+                    f"build your own): {_anchor}"
                 )
         lines.append(
             "- Do not use GETDATE(), CURRENT_DATE, CURRENT_TIMESTAMP, SYSDATE, or NOW() "

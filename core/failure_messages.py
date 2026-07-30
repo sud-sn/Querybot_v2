@@ -255,6 +255,7 @@ _VALIDATION_REASONS: dict[str, str] = {
     "temporal_anchor_missing": "The generated query did not anchor the relative time period (like 'this month') on the governed business date.",
     "temporal_anchor_mismatch": "The generated query anchored the relative time period on the wrong date column.",
     "temporal_role_mismatch": "The generated query used a different date than the approved default date for this data.",
+    "temporal_anchor_unscoped": "The generated query calculated the relative time period from the full date calendar instead of your actual data, which can include dates with no records yet.",
 }
 
 _VALIDATION_NEXT_STEPS: dict[str, str] = {
@@ -267,6 +268,7 @@ _VALIDATION_NEXT_STEPS: dict[str, str] = {
     "temporal_anchor_missing": "Try asking again; if it keeps failing, ask your administrator to check the Date Roles setup for this table.",
     "temporal_anchor_mismatch": "Try asking again; if it keeps failing, ask your administrator to check the Date Roles setup for this table.",
     "temporal_role_mismatch": "Name the date you mean explicitly (e.g. 'by dispense date'), or ask your administrator to change the default date role.",
+    "temporal_anchor_unscoped": "Try asking again; if it keeps failing, ask your administrator to check the Date Roles setup for this table.",
 }
 _DEFAULT_VALIDATION_NEXT_STEP = (
     "Try naming the metric and the breakdown explicitly (e.g. 'total revenue by customer'). "

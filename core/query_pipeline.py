@@ -2640,7 +2640,9 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                     "verbatim in the schema context (KB documents / table columns in this prompt). "
                     "Do NOT invent, abbreviate, or guess a column name (e.g. 'YR') that does not appear there.\n"
                 )
-            elif last_code in {"temporal_anchor_missing", "temporal_anchor_mismatch", "temporal_role_mismatch"}:
+            elif last_code in {"temporal_anchor_missing", "temporal_anchor_mismatch", "temporal_role_mismatch", "temporal_anchor_unscoped"}:
+                from core.contextual_dates import format_required_anchor
+
                 _date_contracts = []
                 for _policy in (_semantic_plan or {}).get("temporal_policies") or []:
                     _fact_table = str(_policy.get("fact_table") or "")
@@ -2661,8 +2663,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                             f"- JOIN/FIELD: {_join_rule}; filter and anchor on "
                             f"{_date_table}.{_date_column}.\n"
                             f"- REQUIRED ANCHOR (copy this exact subquery as the anchor; "
-                            f"do not build your own): "
-                            f"(SELECT MAX({_date_column}) FROM {_date_table})"
+                            f"do not build your own): {format_required_anchor(_policy)}"
                         )
                 validation_repair_note = (
                     "\nGOVERNED RELATIVE-DATE REPAIR REQUIRED:\n"

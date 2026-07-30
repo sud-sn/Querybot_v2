@@ -11,6 +11,7 @@ from core.contextual_dates import (
     build_contextual_date_plan_many,
     detect_temporal_window,
     find_explicit_date_roles,
+    format_required_anchor,
     resolve_contextual_date_binding,
 )
 from core.semantic_model import (
@@ -520,7 +521,11 @@ class ContextualDateResolutionTests(unittest.TestCase):
             {"temporal_anchor_missing", "surrogate_date_conversion"},
         )
 
-    def test_validator_accepts_relative_window_on_dimension_calendar_date(self):
+    def test_validator_rejects_relative_window_anchored_on_unjoined_dimension(self):
+        # A calendar dimension commonly carries future rows with no matching
+        # fact data -- MAX() over SALES.DIM_DATE alone (no join back to the
+        # fact table) can anchor to a date with zero fact rows. This is the
+        # exact anti-pattern _temporal_anchor_scope_errors now rejects.
         plan = build_contextual_date_plan(
             _binding("Order Date", "order_date", "ORDER_DATE_ID"),
             "last 7 days",
@@ -535,6 +540,37 @@ class ContextualDateResolutionTests(unittest.TestCase):
             "ON f.ORDER_DATE_ID=order_date.DATE_KEY "
             "WHERE order_date.FULL_DATE >= DATEADD(day, -7, "
             "(SELECT MAX(d2.FULL_DATE) FROM SALES.DIM_DATE d2))"
+        )
+        result = validate_sql_detailed(
+            sql,
+            set(columns),
+            "azure_sql",
+            table_columns=columns,
+            semantic_context={"semantic_plan": plan},
+        )
+        self.assertFalse(result.ok)
+        self.assertEqual(result.code, "temporal_anchor_unscoped")
+
+    def test_validator_accepts_relative_window_anchored_on_joined_dimension(self):
+        # Corrected version of the query above: the anchor subquery now
+        # joins back to the fact table (mirroring what
+        # format_required_anchor produces for a surrogate_fk role), so the
+        # calendar value is real but scoped to rows with an actual match.
+        plan = build_contextual_date_plan(
+            _binding("Order Date", "order_date", "ORDER_DATE_ID"),
+            "last 7 days",
+        )
+        columns = {
+            "SALES.FACT_REVENUE": {"ORDER_DATE_ID": "int", "AMOUNT": "decimal"},
+            "SALES.DIM_DATE": {"DATE_KEY": "int", "FULL_DATE": "date"},
+        }
+        sql = (
+            "SELECT SUM(f.AMOUNT) AS Revenue FROM SALES.FACT_REVENUE f "
+            "LEFT JOIN SALES.DIM_DATE order_date "
+            "ON f.ORDER_DATE_ID=order_date.DATE_KEY "
+            "WHERE order_date.FULL_DATE >= DATEADD(day, -7, "
+            "(SELECT MAX(d2.FULL_DATE) FROM SALES.DIM_DATE d2 "
+            "JOIN SALES.FACT_REVENUE f2 ON f2.ORDER_DATE_ID = d2.DATE_KEY))"
         )
         result = validate_sql_detailed(
             sql,
@@ -1007,7 +1043,10 @@ class TemporalGovernanceHardeningTests(unittest.TestCase):
     def test_temporal_codes_have_business_failure_messages(self):
         from core.failure_messages import translate_failure
         generic = "The generated query did not pass QueryBot's safety and accuracy checks."
-        for code in ("temporal_anchor_missing", "temporal_anchor_mismatch", "temporal_role_mismatch"):
+        for code in (
+            "temporal_anchor_missing", "temporal_anchor_mismatch",
+            "temporal_role_mismatch", "temporal_anchor_unscoped",
+        ):
             with self.subTest(code=code):
                 rca = translate_failure(kind="validation", code=code, reason="x")
                 self.assertNotEqual(rca["most_likely_reason"], generic)
@@ -1043,6 +1082,158 @@ class TemporalGovernanceHardeningTests(unittest.TestCase):
     def test_governed_store_drops_stale_when_fresh_fill_request(self):
         src = (Path(__file__).resolve().parents[1] / "core" / "governed_store.py").read_text(encoding="utf-8")
         self.assertIn("parsed = fresh + stale if len(fresh) < n else fresh", src)
+
+
+class SurrogateFkAnchorSourceTests(unittest.TestCase):
+    """
+    The actual root cause of "revenue yesterday" returning nothing for a
+    role-playing (surrogate-FK) date: build_contextual_date_plan compiled
+    the anchor against the raw, unrestricted date DIMENSION table (e.g.
+    D_DATE) instead of the governed FACT table (e.g. F_RX_FILL) -- a
+    calendar dimension commonly carries future rows with no matching fact
+    data, so anchoring there silently yields a date with zero rows. Native
+    dates were never affected (no dimension involved); every existing
+    TemporalGovernanceHardeningTests fixture is native, which is why this
+    shipped unnoticed.
+    """
+
+    SURROGATE_BINDING = {
+        "fact_table": "PHARMA_LAB.F_RX_FILL",
+        "fact_column": "DISPENSE_DATE_ID",
+        "dimension_table": "PHARMA_LAB.D_DATE",
+        "dimension_key": "DATE_ID",
+        "date_value_column": "CALENDAR_DATE",
+        "date_key_type": "surrogate_fk",
+        "context_name": "Dispense Date",
+        "date_role": "dispense_date",
+        "is_default": 1,
+    }
+
+    def test_surrogate_fk_plan_carries_fact_scoped_anchor_fields(self):
+        plan = build_contextual_date_plan(self.SURROGATE_BINDING, "what were fills yesterday")
+        policy = plan["temporal_policies"][0]
+        self.assertEqual(policy["anchor_table"], "PHARMA_LAB.F_RX_FILL")
+        self.assertEqual(policy["anchor_column"], "DISPENSE_DATE_ID")
+        # date_table/date_column stay dimension-side -- still needed for the
+        # filter clause, which needs a real calendar value -- only the
+        # anchor derivation changes.
+        self.assertEqual(policy["date_table"], "PHARMA_LAB.D_DATE")
+
+    def test_format_required_anchor_joins_fact_to_dimension_for_surrogate_fk(self):
+        plan = build_contextual_date_plan(self.SURROGATE_BINDING, "what were fills yesterday")
+        anchor = format_required_anchor(plan["temporal_policies"][0])
+        self.assertIn("MAX(PHARMA_LAB.D_DATE.CALENDAR_DATE)", anchor)
+        self.assertIn("JOIN PHARMA_LAB.F_RX_FILL", anchor)
+        self.assertIn(
+            "PHARMA_LAB.F_RX_FILL.DISPENSE_DATE_ID = PHARMA_LAB.D_DATE.DATE_ID", anchor,
+        )
+        # The literal reported anti-pattern must never appear.
+        self.assertNotIn("FROM PHARMA_LAB.D_DATE)", anchor)
+
+    def test_format_required_anchor_native_date_unchanged(self):
+        native_plan = build_contextual_date_plan({
+            "fact_table": "PHARMA_LAB.F_RX_FILL", "fact_column": "FILL_DATE",
+            "dimension_table": "", "dimension_key": "", "date_value_column": "",
+            "date_key_type": "native_date", "context_name": "Fill Date",
+            "date_role": "fill_date", "is_default": 1,
+        }, "what was revenue yesterday")
+        anchor = format_required_anchor(native_plan["temporal_policies"][0])
+        self.assertEqual(anchor, "(SELECT MAX(FILL_DATE) FROM PHARMA_LAB.F_RX_FILL)")
+
+    def test_prompt_uses_fact_scoped_anchor_for_surrogate_fk(self):
+        from core.semantic_planner import format_semantic_field_plan
+
+        plan = build_contextual_date_plan(self.SURROGATE_BINDING, "what were fills yesterday")
+        plan["fields"] = [{
+            "term": "Dispense Date", "table": "PHARMA_LAB.D_DATE", "column": "CALENDAR_DATE",
+            "role": "date_dimension", "enforcement": "optional",
+        }]
+        text = format_semantic_field_plan(plan, "azure_sql")
+        self.assertIn("JOIN PHARMA_LAB.F_RX_FILL", text)
+        self.assertNotIn("FROM PHARMA_LAB.D_DATE)", text)
+
+
+class TemporalAnchorScopeValidatorTests(unittest.TestCase):
+    """core.validator._temporal_anchor_scope_errors -- closes the gap where
+    _temporal_anchor_errors only checked that the approved column NAME
+    appeared under some MAX() node anywhere in the tree, never which table
+    that MAX was scoped to."""
+
+    POLICIES = [{
+        "anchor_policy": "latest_available",
+        "date_column": "CALENDAR_DATE",
+        "anchor_table": "PHARMA_LAB.F_RX_FILL",
+        "fact_table": "PHARMA_LAB.F_RX_FILL",
+    }]
+
+    def _errors(self, sql: str):
+        import sqlglot
+        from core.validator import _temporal_anchor_scope_errors
+        tree = sqlglot.parse_one(sql, read="tsql")
+        return _temporal_anchor_scope_errors(tree, self.POLICIES)
+
+    def test_unscoped_dimension_anchor_is_rejected(self):
+        errors = self._errors(
+            "SELECT COUNT(*) FROM PHARMA_LAB.F_RX_FILL f "
+            "JOIN PHARMA_LAB.D_DATE d ON f.DISPENSE_DATE_ID = d.DATE_ID "
+            "WHERE d.CALENDAR_DATE = (SELECT MAX(CALENDAR_DATE) FROM PHARMA_LAB.D_DATE)"
+        )
+        codes = {e["code"] for e in errors}
+        self.assertIn("temporal_anchor_unscoped", codes)
+
+    def test_join_scoped_anchor_passes(self):
+        errors = self._errors(
+            "SELECT COUNT(*) FROM PHARMA_LAB.F_RX_FILL f WHERE f.FILL_DATE = "
+            "(SELECT MAX(d2.CALENDAR_DATE) FROM PHARMA_LAB.D_DATE d2 "
+            "JOIN PHARMA_LAB.F_RX_FILL f2 ON f2.DISPENSE_DATE_ID = d2.DATE_ID)"
+        )
+        self.assertEqual(errors, [])
+
+    def test_cte_governed_anchor_shape_resolves_through_alias(self):
+        # Matches the user's own reported-correct query shape: a `governed`
+        # CTE filters fact rows, an `anchor` CTE takes MAX over `governed`
+        # (a CTE alias, not a literal table) -- must resolve back to the
+        # real fact table, not be flagged as unscoped.
+        errors = self._errors(
+            "WITH governed AS ("
+            "  SELECT CALENDAR_DATE FROM PHARMA_LAB.F_RX_FILL WHERE CALENDAR_DATE IS NOT NULL"
+            "), anchor AS ("
+            "  SELECT MAX(CALENDAR_DATE) AS as_of_date FROM governed"
+            ") SELECT * FROM governed CROSS JOIN anchor"
+        )
+        self.assertEqual(errors, [])
+
+    def test_no_governed_policy_returns_no_errors(self):
+        from core.validator import _temporal_anchor_scope_errors
+        import sqlglot
+        tree = sqlglot.parse_one("SELECT MAX(CALENDAR_DATE) FROM PHARMA_LAB.D_DATE", read="tsql")
+        self.assertEqual(_temporal_anchor_scope_errors(tree, []), [])
+
+    def test_wired_into_validate_sql_detailed(self):
+        sql = (
+            "SELECT COUNT(*) FROM PHARMA_LAB.F_RX_FILL f "
+            "JOIN PHARMA_LAB.D_DATE d ON f.DISPENSE_DATE_ID = d.DATE_ID "
+            "WHERE d.CALENDAR_DATE = (SELECT MAX(CALENDAR_DATE) FROM PHARMA_LAB.D_DATE)"
+        )
+        plan = {
+            "enabled": True,
+            "fields": [{"term": "Dispense Date", "table": "PHARMA_LAB.D_DATE",
+                        "column": "CALENDAR_DATE", "role": "date_dimension",
+                        "enforcement": "optional"}],
+            "joins": [], "required_tables": [],
+            "temporal_policies": self.POLICIES,
+        }
+        table_columns = {
+            "PHARMA_LAB.F_RX_FILL": {"DISPENSE_DATE_ID": "int"},
+            "PHARMA_LAB.D_DATE": {"DATE_ID": "int", "CALENDAR_DATE": "date"},
+        }
+        result = validate_sql_detailed(
+            sql, set(table_columns), "azure_sql",
+            table_columns=table_columns,
+            semantic_context={"semantic_plan": plan},
+        )
+        self.assertFalse(result.ok)
+        self.assertEqual(result.code, "temporal_anchor_unscoped")
 
 
 if __name__ == "__main__":

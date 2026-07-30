@@ -487,6 +487,16 @@ def build_contextual_date_plan(binding: dict, question: str = "") -> dict:
             "date_column": date_value_column,
             "dimension_table": dimension_table,
             "dimension_key": dimension_key,
+            # The anchor for a relative period must always be derived from
+            # the governed FACT rows, never the raw dimension -- date_table/
+            # date_column above point at the dimension for surrogate_fk
+            # roles (needed for the filter clause, which needs a real
+            # calendar value), but anchor_table/anchor_column always point
+            # at the fact table itself. format_required_anchor() is the
+            # single place that turns these into the anchor subquery text;
+            # nothing else should build that string by hand.
+            "anchor_table": fact_table,
+            "anchor_column": fact_column,
             "role_alias": role_alias,
             "date_key_type": date_key_type,
             "business_role": label,
@@ -494,6 +504,45 @@ def build_contextual_date_plan(binding: dict, question: str = "") -> dict:
             "resolution_source": binding.get("resolution_source") or "",
         }]
     return plan
+
+
+def format_required_anchor(policy: dict) -> str:
+    """
+    Build the "copy this exact subquery" anchor text for a temporal policy.
+
+    Native date (date_key_type != surrogate_fk): MAX over the fact table's
+    own column -- mirrors core/report_engine.py::_apply_latest_date_filter's
+    already-correct pattern.
+
+    Surrogate FK (a date stored as an ID joining to a date dimension): MAX
+    must still be scoped to fact rows that actually exist, not the raw
+    dimension -- an unrestricted dimension table commonly carries future
+    calendar rows with no matching fact data, which silently anchors to a
+    date with zero rows. JOINing to the fact table before taking MAX keeps
+    the result a real calendar value while excluding rows with no match.
+    """
+    fact_table = str(policy.get("anchor_table") or policy.get("fact_table") or "")
+    fact_column = str(policy.get("anchor_column") or policy.get("fact_column") or "")
+    if str(policy.get("date_key_type") or "") != "surrogate_fk":
+        date_table = str(policy.get("date_table") or fact_table)
+        date_column = str(policy.get("date_column") or fact_column)
+        return f"(SELECT MAX({date_column}) FROM {date_table})"
+
+    dimension_table = str(policy.get("dimension_table") or policy.get("date_table") or "")
+    dimension_key = str(policy.get("dimension_key") or "")
+    date_value_column = str(policy.get("date_column") or "")
+    if not (fact_table and fact_column and dimension_table and dimension_key and date_value_column):
+        # Incomplete policy -- fall back to the plain (still fact-scoped
+        # where possible) form rather than raising; callers already treat a
+        # missing/blank anchor as "nothing to render."
+        date_table = dimension_table or fact_table
+        date_column = date_value_column or fact_column
+        return f"(SELECT MAX({date_column}) FROM {date_table})" if date_table and date_column else ""
+
+    return (
+        f"(SELECT MAX({dimension_table}.{date_value_column}) FROM {dimension_table} "
+        f"JOIN {fact_table} ON {fact_table}.{fact_column} = {dimension_table}.{dimension_key})"
+    )
 
 
 def build_contextual_date_plan_many(bindings: list[dict], question: str = "") -> dict:

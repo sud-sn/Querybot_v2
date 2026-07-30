@@ -1049,8 +1049,18 @@ def _where_has_identity_filter(where) -> bool:
     validator (below) and by example-filtering (core/examples.py), so a
     stored few-shot example is held to the exact same rule a freshly
     generated query is.
+
+    Only equality/IN conditions belonging to THIS WHERE's own query count --
+    a condition nested inside a subquery embedded in the WHERE clause (e.g.
+    a relative-date anchor's own fact/dimension JOIN, such as
+    `f.id = d.id` inside `(SELECT MAX(d.col) FROM dim d JOIN fact f ON ...)`)
+    is internal machinery for computing a scalar the outer query compares
+    against, not an identity filter on the outer query's own rows.
     """
+    owning_select = where.parent
     for cond in where.find_all(sg_exp.EQ, sg_exp.In):
+        if cond.find_ancestor(sg_exp.Select) is not owning_select:
+            continue
         col_node = cond.this if isinstance(cond.this, sg_exp.Column) else None
         if col_node is None:
             continue
@@ -1356,6 +1366,93 @@ def _temporal_anchor_errors(tree, sql: str, policies: list[dict]) -> list[dict]:
                 "column": name,
                 "approved_columns": sorted(approved),
             })
+    return errors
+
+
+def _temporal_anchor_scope_errors(tree, policies: list[dict]) -> list[dict]:
+    """
+    The MAX() used to anchor a relative-date question must be scoped to the
+    approved fact table's own rows (directly, via a JOIN, or via a CTE built
+    from them) -- never the raw, unfiltered date dimension. A calendar
+    dimension commonly carries future rows with no matching fact data, so
+    anchoring MAX() there silently yields a date with zero rows.
+
+    _temporal_anchor_errors above only checks that the approved column NAME
+    appears as an argument to *some* MAX() node anywhere in the tree -- it
+    never checks which table that MAX is actually scoped to, so
+    `(SELECT MAX(CALENDAR_DATE) FROM D_DATE)` (no fact join, no filter)
+    passes it. This check closes that gap.
+    """
+    governed = [
+        policy for policy in policies or []
+        if str(policy.get("anchor_policy") or "") == "latest_available"
+    ]
+    if not governed:
+        return []
+
+    ctes = {
+        _normalize_identifier(cte.alias_or_name): cte.this
+        for cte in tree.find_all(sg_exp.CTE)
+        if cte.alias_or_name
+    }
+
+    def _resolve_tables(node, seen: set[str] | None = None) -> set[str]:
+        """Table names actually scanned by `node`, resolving CTE aliases
+        back to the query that defines them (so a `WITH governed AS (...)
+        anchor AS (SELECT MAX(...) FROM governed)` shape is followed back
+        to the real fact table, not treated as an opaque "governed" table)."""
+        seen = seen if seen is not None else set()
+        names: set[str] = set()
+        for table in node.find_all(sg_exp.Table):
+            raw = str(table.name or "")
+            if not raw:
+                continue
+            norm = _normalize_identifier(raw)
+            if not table.args.get("db") and not table.args.get("catalog") and norm in ctes and norm not in seen:
+                seen.add(norm)
+                names |= _resolve_tables(ctes[norm], seen)
+                continue
+            qualified = ".".join(
+                part for part in (
+                    str(table.args.get("catalog") or ""),
+                    str(table.args.get("db") or ""),
+                    raw,
+                ) if part
+            )
+            names.add(qualified or raw)
+        return names
+
+    errors: list[dict] = []
+    for policy in governed:
+        date_column = str(policy.get("date_column") or "").upper()
+        anchor_table = str(policy.get("anchor_table") or policy.get("fact_table") or "")
+        if not date_column or not anchor_table:
+            continue
+        for max_node in tree.find_all(sg_exp.Max):
+            max_cols = {
+                str(column.name or "").upper()
+                for column in max_node.find_all(sg_exp.Column)
+                if column.name
+            }
+            if date_column not in max_cols:
+                continue
+            select = max_node.find_ancestor(sg_exp.Select)
+            if select is None:
+                continue
+            scoped_tables = _resolve_tables(select)
+            if not any(_table_matches(anchor_table, table) for table in scoped_tables):
+                errors.append({
+                    "code": "temporal_anchor_unscoped",
+                    "message": (
+                        f"MAX({date_column}) was computed without scoping to the "
+                        f"governed fact table ({anchor_table}) -- an unrestricted date "
+                        f"dimension can contain rows with no matching fact data, which "
+                        f"silently anchors to a date with zero results. JOIN to or filter "
+                        f"from {anchor_table} before taking MAX({date_column})."
+                    ),
+                    "table": anchor_table,
+                    "column": date_column,
+                })
     return errors
 
 
@@ -1679,11 +1776,12 @@ def validate_sql_detailed(
         )
 
     field_plan = (semantic_context or {}).get("semantic_plan") or {}
+    _temporal_policies = list(field_plan.get("temporal_policies") or [])
     temporal_anchor_errors = _temporal_anchor_errors(
         tree,
         sql,
-        list(field_plan.get("temporal_policies") or []),
-    )
+        _temporal_policies,
+    ) + _temporal_anchor_scope_errors(tree, _temporal_policies)
     if temporal_anchor_errors:
         return SqlValidationResult(
             False,
