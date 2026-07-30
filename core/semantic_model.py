@@ -1094,16 +1094,30 @@ def _format_date_field_repair_line(field: dict[str, Any], semantic_plan: dict[st
             "date_key_type": field.get("date_key_type") or "surrogate_fk",
         })
 
+    # Spelled out as three separate, mechanical directives (join / filter
+    # shape / anchor value) rather than one prose sentence -- a prior
+    # phrasing here ("do not filter on the surrogate key alone without
+    # joining") was read by the LLM as "add the join, keep the old filter":
+    # confirmed live when a retry correctly added
+    # `JOIN {table} ON {source_table}.{source_key} = {table}.{dimension_key}`
+    # but left the WHERE clause unchanged as
+    # `{source_table}.{source_key} = (SELECT MAX({source_key}) FROM {source_table})`,
+    # satisfying the entity-graph edge while still failing this exact check.
+    join_condition = (
+        f"{source_table}.{source_key} = {table}.{dimension_key}" if dimension_key else ""
+    )
     base = (
-        f"  - '{term}': filter/anchor on {table}.{column}, reached from {source_table} via "
-        f"{source_table}.{source_key} — do not substitute a different date-role surrogate key "
-        f"on {source_table} for this join, and do not filter on {source_table}.{source_key} alone "
-        f"without joining to reach {table}.{column}."
+        f"  - '{term}': REQUIRED JOIN: {join_condition or f'{source_table}.{source_key} to {table}'}.\n"
+        f"    REQUIRED FILTER SHAPE: the WHERE/filter comparison's LEFT SIDE must be "
+        f"{table}.{column} (the dimension's real calendar value) — NEVER "
+        f"{source_table}.{source_key} (the fact's own surrogate key), even after the join "
+        f"above is present. Do not substitute a different date-role surrogate key on "
+        f"{source_table} for this join."
     )
     if anchor_text:
         base += (
-            f"\n    REQUIRED ANCHOR (copy this exact subquery as the anchor; do not build "
-            f"your own): {anchor_text}"
+            f"\n    REQUIRED ANCHOR (copy this exact subquery as the RIGHT SIDE of that "
+            f"comparison; do not build your own): {anchor_text}"
         )
     return base
 

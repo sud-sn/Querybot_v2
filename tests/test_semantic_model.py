@@ -1629,6 +1629,39 @@ class FieldPlanRepairNoteTests(unittest.TestCase):
         # Never the raw anti-pattern (unscoped dimension-only MAX).
         self.assertNotIn("FROM PHARMA_LAB.D_DATE)", note)
 
+    def test_surrogate_date_field_note_states_join_and_filter_shape_unambiguously(self):
+        # Live-bug reproduction: a retry correctly added
+        # `JOIN PHARMA_LAB.D_DATE dda ON fin.SNAPSHOT_DATE_ID = dda.DATE_ID`
+        # but left the WHERE clause unchanged as
+        # `fin.SNAPSHOT_DATE_ID = (SELECT MAX(SNAPSHOT_DATE_ID) FROM fact)`
+        # -- satisfying the entity-graph edge while still failing
+        # field_plan_mismatch, because the prior prose ("do not filter on
+        # the surrogate key alone without joining") reads as "add the join,
+        # the old filter is fine." The note must now state the required
+        # JOIN condition and the required filter's left-hand column as
+        # separate, explicit directives -- not one blended sentence.
+        plan = {
+            "fields": [{
+                "term": "Snapshot Date", "table": "PHARMA_LAB.D_DATE", "column": "CALENDAR_DATE",
+                "role": "contextual_date", "display_required": False,
+                "source_table": "PHARMA_LAB.F_INVENTORY_SNAPSHOT", "source_key_column": "SNAPSHOT_DATE_ID",
+                "enforcement": "required", "date_key_type": "surrogate_fk", "role_alias": "snapshot_date",
+            }],
+            "joins": [{
+                "from": "PHARMA_LAB.F_INVENTORY_SNAPSHOT", "to": "PHARMA_LAB.D_DATE",
+                "conditions": [("SNAPSHOT_DATE_ID", "DATE_ID")], "role_alias": "snapshot_date",
+            }],
+        }
+        note = build_field_plan_repair_note(plan)
+        self.assertIn(
+            "REQUIRED JOIN: PHARMA_LAB.F_INVENTORY_SNAPSHOT.SNAPSHOT_DATE_ID = PHARMA_LAB.D_DATE.DATE_ID",
+            note,
+        )
+        self.assertIn("REQUIRED FILTER SHAPE", note)
+        self.assertIn("LEFT SIDE must be PHARMA_LAB.D_DATE.CALENDAR_DATE", note)
+        self.assertIn("NEVER PHARMA_LAB.F_INVENTORY_SNAPSHOT.SNAPSHOT_DATE_ID", note)
+        self.assertIn("RIGHT SIDE of that comparison", note)
+
     def test_surrogate_date_field_without_join_info_omits_anchor_gracefully(self):
         # No matching `joins` entry (e.g. an older/hand-built plan) -- must
         # not crash, just fall back to the base instruction with no anchor.
