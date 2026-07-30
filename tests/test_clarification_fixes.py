@@ -36,6 +36,7 @@ from core.clarification import (
 from core.webhook_dedup import (
     is_duplicate_event,
     remember_event,
+    get_user_serialization_lock,
     _reset_for_tests,
 )
 from gateway.base import PlatformEvent
@@ -225,6 +226,90 @@ class WebhookDedupTests(unittest.TestCase):
             text="same text", platform="zoom", raw={"payload": {}},
         )
         self.assertTrue(is_duplicate_event(ev2))
+
+
+class UserSerializationLockTests(unittest.TestCase):
+    """core.webhook_dedup.get_user_serialization_lock -- Teams/Slack deliver
+    each webhook POST to its own independent request coroutine with no
+    ordering guarantee between distinct messages from the same user, which
+    could otherwise let a second message's answer arrive before the first
+    message's session greeting finishes sending."""
+
+    def setUp(self):
+        _reset_for_tests()
+
+    def _event(self, platform="teams", account_id="acct1", user_id="u1"):
+        return PlatformEvent(
+            account_id=account_id, user_id=user_id, channel_id="c1",
+            text="hi", platform=platform,
+        )
+
+    def test_same_user_gets_the_same_lock_instance(self):
+        lock1 = get_user_serialization_lock(self._event())
+        lock2 = get_user_serialization_lock(self._event())
+        self.assertIs(lock1, lock2)
+
+    def test_different_user_gets_a_different_lock(self):
+        lock1 = get_user_serialization_lock(self._event(user_id="u1"))
+        lock2 = get_user_serialization_lock(self._event(user_id="u2"))
+        self.assertIsNot(lock1, lock2)
+
+    def test_different_platform_gets_a_different_lock(self):
+        lock1 = get_user_serialization_lock(self._event(platform="teams"))
+        lock2 = get_user_serialization_lock(self._event(platform="slack"))
+        self.assertIsNot(lock1, lock2)
+
+    def test_concurrent_same_user_calls_serialize(self):
+        order: list[str] = []
+
+        async def worker(name: str, hold_ms: int):
+            async with get_user_serialization_lock(self._event()):
+                order.append(f"{name}-start")
+                await asyncio.sleep(hold_ms / 1000)
+                order.append(f"{name}-end")
+
+        async def main():
+            await asyncio.gather(worker("A", 30), worker("B", 5))
+
+        asyncio.run(main())
+        # A must fully finish before B starts -- no interleaving regardless
+        # of which one held the shorter/longer sleep.
+        self.assertEqual(order, ["A-start", "A-end", "B-start", "B-end"])
+
+    def test_concurrent_different_user_calls_do_not_serialize(self):
+        order: list[str] = []
+
+        async def worker(name: str, user_id: str, hold_ms: int):
+            async with get_user_serialization_lock(self._event(user_id=user_id)):
+                order.append(f"{name}-start")
+                await asyncio.sleep(hold_ms / 1000)
+                order.append(f"{name}-end")
+
+        async def main():
+            await asyncio.gather(
+                worker("C", "u1", 30),
+                worker("D", "u2", 5),
+            )
+
+        asyncio.run(main())
+        # D (shorter hold, different user) finishes while C is still
+        # holding its own lock -- proves the two users didn't serialize.
+        self.assertEqual(order, ["C-start", "D-start", "D-end", "C-end"])
+
+    def test_teams_and_slack_webhooks_acquire_the_lock_around_dispatch(self):
+        src = (Path(__file__).resolve().parents[1] / "gateway" / "webhooks.py").read_text(encoding="utf-8")
+        for anchor in ("async def webhook_teams", "async def webhook_slack"):
+            start = src.index(anchor)
+            body = src[start:start + 4000]
+            self.assertIn("async with get_user_serialization_lock(event):", body)
+            self.assertIn("await dispatch(event.account_id, event, adapter, bg)", body)
+
+    def test_run_query_with_guard_acquires_the_lock_around_the_locked_stage(self):
+        src = (Path(__file__).resolve().parents[1] / "core" / "dispatcher.py").read_text(encoding="utf-8")
+        start = src.index("async def _run_query_with_guard(")
+        body = src[start:start + 2500]
+        self.assertIn("async with get_user_serialization_lock(event):", body)
+        self.assertIn("await _run_query_with_guard_locked(", body)
 
 
 # ──────────────────────────────────────────────────────────────────────────────

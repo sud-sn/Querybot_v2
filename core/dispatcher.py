@@ -301,20 +301,44 @@ async def _run_query_with_guard(
          clarification replies which have already been through the pipeline.
       3. Query pipeline wrapped in a persistent typing loop for adapters like
          Teams that drop the indicator after ~4 s (re-sent every 2.5 s).
+
+    Stages 2-3 run under a per-(platform, account, user) lock
+    (core.webhook_dedup.get_user_serialization_lock) -- Starlette runs
+    BackgroundTasks after the HTTP response, in the request's own asyncio
+    task, so two near-simultaneous webhook deliveries for the same user
+    (Teams/Slack have no other serialization) could otherwise interleave
+    their actual answer-sends out of order, e.g. a second message's answer
+    arriving before the first message's session greeting finishes sending.
+    The stage-1 typing indicator fires BEFORE the lock so a queued second
+    message still gets instant "..." feedback.
     """
+    from core.webhook_dedup import get_user_serialization_lock
+
+    _send = getattr(adapter, "send_status", None)
+    if _send:
+        try:
+            await _send(event, "processing", "Working on it")
+        except Exception:
+            pass
+
+    async with get_user_serialization_lock(event):
+        await _run_query_with_guard_locked(
+            account_id, event, adapter, text, portal_user, client_row,
+            is_clarification=is_clarification,
+        )
+
+
+async def _run_query_with_guard_locked(
+    account_id, event, adapter, text, portal_user, client_row, *, is_clarification=False
+):
+    """Stages 2-3 of _run_query_with_guard -- see that function's docstring.
+    Called under the per-user serialization lock."""
     import asyncio
     from core.query_pipeline import handle_query as _hq
     from core.result_cache import result_cache
     from core.result_commands import parse_result_command
 
     _send = getattr(adapter, "send_status", None)
-
-    # Stage 1 — immediate typing so the user has instant feedback
-    if _send:
-        try:
-            await _send(event, "processing", "Working on it")
-        except Exception:
-            pass
 
     # Regulated tenants: scrub user-typed PII from the question BEFORE the
     # off-topic classifier below sends the raw text to the LLM. handle_query

@@ -19,7 +19,7 @@ from fastapi import APIRouter, Request, HTTPException, BackgroundTasks, WebSocke
 from fastapi.responses import JSONResponse, Response
 
 from gateway import get_adapter, PlatformEvent
-from core.webhook_dedup import is_duplicate_event, remember_event
+from core.webhook_dedup import is_duplicate_event, remember_event, get_user_serialization_lock
 from core.dispatcher import dispatch
 from core.query_pipeline import handle_query
 from core.pipeline_context import get_state, get_client_db
@@ -341,7 +341,14 @@ async def webhook_teams(request: Request, bg: BackgroundTasks):
         except Exception as exc:
             log.debug("Teams initial typing indicator failed: %s", exc)
 
-    await dispatch(event.account_id, event, adapter, bg)
+    # Serialize dispatch() per (platform, account, user) -- Teams has no
+    # other ordering guarantee between two near-simultaneous messages from
+    # the same user (each webhook POST is its own independent request
+    # coroutine). See core/webhook_dedup.py::get_user_serialization_lock
+    # and core/dispatcher.py::_run_query_with_guard (the same lock also
+    # serializes the backgrounded answer-sending work this call enqueues).
+    async with get_user_serialization_lock(event):
+        await dispatch(event.account_id, event, adapter, bg)
     return Response(status_code=200)
 
 
@@ -366,7 +373,10 @@ async def webhook_slack(request: Request, bg: BackgroundTasks):
     if is_duplicate_event(event):
         return {"status": "duplicate"}
     remember_event(event)
-    await dispatch(event.account_id, event, adapter, bg)
+    # Serialize dispatch() per (platform, account, user) -- see the
+    # matching comment in webhook_teams above.
+    async with get_user_serialization_lock(event):
+        await dispatch(event.account_id, event, adapter, bg)
     return {"status": "ok"}
 
 

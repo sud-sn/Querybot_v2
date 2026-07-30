@@ -18,6 +18,7 @@ deployments move to Redis.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import Optional
@@ -133,3 +134,50 @@ def forget_event(event) -> None:
 
 def _reset_for_tests() -> None:
     _SEEN.clear()
+    _LOCKS.clear()
+
+
+# ── Per-user serialization lock ────────────────────────────────────────────
+#
+# Teams/Slack deliver each webhook POST to its own independent request
+# coroutine with no ordering guarantee between distinct messages. Starlette
+# runs BackgroundTasks (where the real answer is actually computed and sent
+# -- see core/dispatcher.py::_run_query_with_guard) AFTER the HTTP response,
+# in that request's own asyncio task. So if a user sends two messages in
+# quick succession, their two background tasks can interleave and send
+# answers out of order (e.g. a second message's answer arriving before the
+# first message's session greeting finishes sending). Portal (WebSocket) is
+# not affected -- one connection, one sequential await chain.
+#
+# In-process only, same caveat as the dedup cache above: fine for a single
+# worker, move to a distributed lock for multi-worker deployments.
+_LOCKS: dict[str, asyncio.Lock] = {}
+_LOCKS_MAX_ENTRIES = 10_000
+
+
+def _lock_key(event) -> str:
+    platform = getattr(event, "platform", "unknown")
+    account = getattr(event, "account_id", "") or ""
+    user = getattr(event, "user_id", "") or ""
+    return f"{platform}:{account}:{user}"
+
+
+def get_user_serialization_lock(event) -> asyncio.Lock:
+    """Return the asyncio.Lock serializing background query processing for
+    this (platform, account, user) -- the SAME key derivation _key() uses
+    above, minus the per-message-id suffix, since this lock is meant to
+    span multiple distinct messages from the same user, not just retries
+    of one. Call sites: gateway/webhooks.py's webhook_teams/webhook_slack
+    (around the dispatch() call) and core/dispatcher.py's
+    _run_query_with_guard (around the actual answer-sending work)."""
+    key = _lock_key(event)
+    lock = _LOCKS.get(key)
+    if lock is None:
+        if len(_LOCKS) >= _LOCKS_MAX_ENTRIES:
+            # Opportunistic GC: only entries with no one currently waiting
+            # can be dropped safely.
+            for stale_key in [k for k, v in _LOCKS.items() if not v.locked()][:1000]:
+                _LOCKS.pop(stale_key, None)
+        lock = asyncio.Lock()
+        _LOCKS[key] = lock
+    return lock
