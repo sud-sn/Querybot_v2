@@ -290,6 +290,46 @@ def _find_header_by_norm(headers: list[str], norm: str) -> str:
     return ""
 
 
+_MATCHED_ROWS_HEADER_KEYS = {"matchedrows", "rowcount", "matchcount", "matchedrecords"}
+
+
+def _find_matched_rows_header(headers: list[str]) -> str:
+    """The header name of a diagnostic match-count column (e.g. MatchedRows),
+    if this row shape carries one. Shared by detect_null_metric_issue and
+    detect_zero_match_result -- the two checks are mutually exclusive by
+    construction (matched_rows > 0 vs <= 0), never both true for the same row."""
+    return next(
+        (h for h in headers if _normalise_key(h) in _MATCHED_ROWS_HEADER_KEYS),
+        "",
+    )
+
+
+def detect_zero_match_result(rows: list[dict]) -> bool:
+    """
+    True for a single-row diagnostic aggregate whose match-count column is
+    itself zero (or negative) -- e.g. [{"MatchedRows": 0, "Revenue": 0}].
+
+    A query like `SELECT COUNT(*) AS MatchedRows, SUM(x) AS Total FROM ...
+    WHERE <date filter>` always returns exactly one physical row even when
+    nothing matched, so the ordinary "not rows" empty-result check never
+    fires -- the answer layer would otherwise present the zero as if it
+    were a real, successful single-value answer ("Returned 1 rows").
+
+    Deliberately narrower than "all numeric columns are zero/null": that
+    would misfire on a legitimately-zero real answer (e.g. actual $0 profit
+    this month). Only fires when the row carries one of the same explicit
+    match-count column names detect_null_metric_issue already trusts.
+    """
+    if len(rows) != 1 or not rows[0]:
+        return False
+    row = rows[0]
+    matched_header = _find_matched_rows_header(list(row.keys()))
+    if not matched_header:
+        return False
+    matched_rows = _to_float(row.get(matched_header))
+    return matched_rows is not None and matched_rows <= 0
+
+
 def detect_null_metric_issue(rows: list[dict]) -> dict[str, Any] | None:
     """
     Detect diagnostic rows where records matched, but a requested metric was
@@ -299,13 +339,7 @@ def detect_null_metric_issue(rows: list[dict]) -> dict[str, Any] | None:
         return None
     row = rows[0]
     headers = list(row.keys())
-    matched_header = next(
-        (
-            h for h in headers
-            if _normalise_key(h) in {"matchedrows", "rowcount", "matchcount", "matchedrecords"}
-        ),
-        "",
-    )
+    matched_header = _find_matched_rows_header(headers)
     matched_rows = _to_float(row.get(matched_header)) if matched_header else None
     if matched_rows is None or matched_rows <= 0:
         return None
@@ -449,7 +483,7 @@ def build_answer(
 ) -> dict:
     scope = result_scope or infer_result_scope(rows, question)
     column_formats = column_formats or {}
-    if not rows:
+    if not rows or detect_zero_match_result(rows):
         return {
             "headline": "No matching data was found for this question.",
             "short_value": "0 rows",
@@ -854,6 +888,9 @@ def _build_insight_summary(rows: list[dict], ctx: dict, brief: dict) -> str:
     """
     mode = ctx.get("mode", "table")
     row_count = len(rows)
+
+    if detect_zero_match_result(rows):
+        return "No matching data was found for this question."
 
     null_issue = detect_null_metric_issue(rows)
     if null_issue:

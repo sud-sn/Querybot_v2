@@ -31,15 +31,26 @@ def build_answer_confidence(
     null_metric_issue: bool = False,
     derived_metric_gap: str = "",
     weak_retrieval: bool = False,
+    zero_match_result: bool = False,
 ) -> dict[str, Any]:
     """
     Convert technical query signals into a compact business-facing confidence score.
 
     The score is intentionally simple and deterministic. It is not a truth
     guarantee; it tells the user how much friction the answer encountered.
+
+    zero_match_result: True for a single-row diagnostic aggregate whose own
+    match-count column is zero (see response_builder.detect_zero_match_result)
+    -- a real physical row exists, but it represents no matching data, not a
+    successful single-value answer. Scored as if row_count were 0 regardless
+    of the physical count passed in, and mutually exclusive with
+    null_metric_issue (a real, non-zero match count with a missing metric).
     """
     validation = (validation_code or "ok").lower()
     rows = 0 if row_count is None else max(int(row_count), 0)
+    if zero_match_result:
+        rows = 0
+        null_metric_issue = False
     retries = max(int(retry_count or 0), 0)
     used_tables = [str(t) for t in (tables_used or []) if str(t).strip()]
     empty = [str(t) for t in (empty_tables or []) if str(t).strip()]

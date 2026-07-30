@@ -1268,6 +1268,44 @@ class BusinessConfidenceRcaTests(unittest.TestCase):
         self.assertIn("64 matching records", payload["answer"]["comparison"])
         self.assertIn("64 records matched", payload["insight_summary"])
 
+    def test_zero_matched_rows_reports_no_matching_data_not_one_row(self):
+        # A diagnostic aggregate (COUNT/SUM shape) always returns exactly
+        # one physical row even when nothing matched -- MatchedRows=0 must
+        # not be presented as a successful single-value answer.
+        from core.response_builder import detect_zero_match_result
+
+        rows = [{"MatchedRows": 0, "NonNullRevenueRows": 0, "Revenue": 0}]
+        self.assertTrue(detect_zero_match_result(rows))
+        payload = build_assistant_response(
+            question="what was revenue yesterday",
+            rows=rows,
+            sql="SELECT COUNT_BIG(*) AS [MatchedRows], COUNT(NET_REVENUE_AMT) AS [NonNullRevenueRows], COALESCE(SUM(NET_REVENUE_AMT), 0) AS [Revenue] FROM PHARMA_LAB.F_RX_FILL WHERE FILL_DATE = '2026-07-29'",
+            duration_ms=20,
+        )
+        self.assertEqual(
+            payload["answer"]["headline"], "No matching data was found for this question.",
+        )
+        self.assertNotIn("Returned 1 row", payload["answer"]["headline"])
+
+    def test_zero_matched_rows_does_not_misfire_on_a_legitimate_zero_answer(self):
+        from core.response_builder import detect_zero_match_result
+
+        # No match-count-shaped column present -- a real, single-column
+        # answer that happens to be zero must not be treated as "no data."
+        rows = [{"Profit": 0}]
+        self.assertFalse(detect_zero_match_result(rows))
+
+    def test_zero_match_result_does_not_get_phantom_row_returned_boost(self):
+        confidence = build_answer_confidence(
+            validation_code="ok",
+            row_count=1,
+            retry_count=0,
+            tables_used=["PHARMA_LAB.F_RX_FILL"],
+            zero_match_result=True,
+        )
+        self.assertFalse(any("returned 1 row" in r.lower() for r in confidence["reasons"]))
+        self.assertTrue(any("returned no rows" in w for w in confidence["warnings"]))
+
     def test_extract_sql_tables_preserves_schema_names(self):
         sql = (
             "SELECT o.DIVI, c.ITM_GRP_DMS_KEY "

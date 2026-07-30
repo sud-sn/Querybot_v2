@@ -34,7 +34,10 @@ import re
 import store
 from core.llm import llm_complete, resolve_provider
 from core.chart import detect_chart_type, build_chart_payload
-from core.response_builder import build_assistant_response, build_column_formats, detect_null_metric_issue
+from core.response_builder import (
+    build_assistant_response, build_column_formats,
+    detect_null_metric_issue, detect_zero_match_result,
+)
 from core.insight import generate_followup_suggestions, compute_data_brief
 from core.answer_confidence import build_answer_confidence
 from core.answer_formatter import format_success_confidence_text
@@ -705,6 +708,7 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
     _has_confidence_context = bool(confidence_context)
     confidence_context = confidence_context or {}
     null_metric_issue = detect_null_metric_issue(rows)
+    zero_match_result = detect_zero_match_result(rows)
     confidence = build_answer_confidence(
         validation_code=confidence_context.get("validation_code") or "ok",
         row_count=len(rows),
@@ -716,6 +720,7 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
         null_metric_issue=bool(null_metric_issue),
         derived_metric_gap=str(confidence_context.get("derived_metric_gap") or ""),
         weak_retrieval=bool(confidence_context.get("weak_retrieval")),
+        zero_match_result=zero_match_result,
     )
 
     chart_override = str(
