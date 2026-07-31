@@ -53,6 +53,7 @@ from core.examples import retrieve_similar_examples, format_examples_for_prompt
 from core.clarification import (
     get_pending, clear_pending, combine_with_clarification, resolve_option_text,
 )
+from core.plan_preview import build_plan_preview, pending_plan_previews
 
 log = logging.getLogger("querybot")
 
@@ -64,6 +65,23 @@ router = APIRouter()
 # Available to every portal user, not gated by role.
 _REPORT_BUILDER_INTENT_RE = re.compile(
     r"\b(?:build|create|make|set\s*up|start|schedule)\s+(?:me\s+)?(?:a|an|my)?\s*report\b",
+    re.IGNORECASE,
+)
+
+# Opt-in "explain your plan first" preview -- explicitly user-invoked, never
+# a default gate on every question. Matches a trigger phrase optionally
+# followed by the actual question after a colon/dash/comma, e.g.
+# "explain your plan: what was net revenue for last 7 days".
+_PLAN_PREVIEW_INTENT_RE = re.compile(
+    r"^\s*(?:explain\s+(?:your\s+)?plan|show\s+(?:me\s+)?(?:your\s+)?plan|"
+    r"tell\s+me\s+(?:your\s+plan|how\s+you(?:'d| would)\s+(?:answer|do)\s+this))"
+    r"(?:\s+(?:before\s+running|before\s+you\s+run|first))?"
+    r"\s*[:\-,]?\s*(?P<question>.*)$",
+    re.IGNORECASE,
+)
+_PLAN_PREVIEW_CONFIRM_RE = re.compile(
+    r"^\s*(?:go\s+ahead|yes|yep|yeah|sure|ok(?:ay)?|proceed|continue|"
+    r"run\s+it|do\s+it|sounds\s+good|confirm(?:ed)?)\s*[.!]?\s*$",
     re.IGNORECASE,
 )
 
@@ -2543,6 +2561,56 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     "type": "assistant_error",
                     "role": "assistant",
                     "content": "I could not read that question. Please type it again.",
+                })
+                await websocket.send_json({"type": "typing", "active": False})
+                continue
+
+            # Opt-in "explain your plan first" preview -- checked before
+            # every other intent so a pending preview's confirm/correct
+            # reply is never swallowed by the report-builder or
+            # result-command gates below. A pending preview means the
+            # PREVIOUS turn asked to preview a plan; this turn is either a
+            # confirmation ("go ahead") -> run the original question, or
+            # anything else -> treated as a correction, run the original
+            # question enriched with this reply (same proven pattern as
+            # every other correction/fallback path in this file).
+            _pp_session_id = getattr(adapter, "session_id", "") or ""
+            _pending_preview = pending_plan_previews.get(account_id, _pp_session_id)
+            if _pending_preview is not None:
+                pending_plan_previews.clear(account_id, _pp_session_id)
+                _pp_question = (
+                    _pending_preview.question if _PLAN_PREVIEW_CONFIRM_RE.match(text)
+                    else f"{_pending_preview.question} -- {text}"
+                )
+                if current_query_task and not current_query_task.done():
+                    current_query_task.cancel()
+                current_query_task = asyncio.create_task(
+                    _run_main_question(_pp_question, table_hint, schema_hint)
+                )
+                continue
+
+            _pp_match = _PLAN_PREVIEW_INTENT_RE.match(text)
+            if _pp_match:
+                _pp_question = (_pp_match.group("question") or "").strip()
+                if not _pp_question:
+                    await websocket.send_json({
+                        "type": "message",
+                        "content": (
+                            "Sure -- ask me a question and I'll explain my plan before "
+                            'running it, e.g. "explain your plan: what was net revenue '
+                            'for last 7 days".'
+                        ),
+                    })
+                    await websocket.send_json({"type": "typing", "active": False})
+                    continue
+                _pp_db_cfg = get_client_db(account_id) or {}
+                _preview = build_plan_preview(
+                    _pp_question, account_id, _pp_db_cfg.get("db_type", "azure_sql"),
+                )
+                pending_plan_previews.set(account_id, _pp_session_id, _preview)
+                await websocket.send_json({
+                    "type": "message",
+                    "content": f'{_preview.summary} Say "go ahead" to run it, or tell me what to change.',
                 })
                 await websocket.send_json({"type": "typing", "active": False})
                 continue
