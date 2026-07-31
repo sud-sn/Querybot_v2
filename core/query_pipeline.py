@@ -1751,6 +1751,26 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                 date_roles=_date_roles,
                 required_fact_tables=_date_fact_scope,
             )
+            # Diagnostic: the "selected"/"selected_many" branch below already
+            # logs a resolved binding, but a "none" or "ambiguous" outcome was
+            # previously silent -- there was no way to tell, from the logs
+            # alone, whether an admin-configured default date role failed to
+            # engage because the fact scope came back empty, because no
+            # approved default exists for that fact, or because resolution
+            # landed on a completely different branch. Always log the status/
+            # reason and the inputs that drove it so a "no answer" report can
+            # be diagnosed from logs instead of re-deriving this trace by hand.
+            log.info(
+                "Date-role resolution for %s: status=%s reason=%s fact_scope=%s "
+                "matched_metrics=%s date_bindings=%d date_roles=%d",
+                account_id,
+                _date_context_resolution.get("status") or "",
+                _date_context_resolution.get("reason") or "",
+                sorted(_date_fact_scope),
+                [m.get("name") for m in _matched_metrics if m.get("name")],
+                len(_date_bindings),
+                len(_date_roles),
+            )
             if (
                 _date_fact_inference.get("status") == "selected"
                 and _date_context_resolution.get("status") == "selected"
