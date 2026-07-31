@@ -813,6 +813,91 @@ body:has(.chat-page) .portal-sidebar-collapsed .portal-side-actions { grid-templ
 .send-btn:hover { background: var(--primary-hover); box-shadow: none; }
 .chat-workspace-main .composer-footer { width: min(100%, 1040px); margin-inline: auto; }
 
+/* Conversational message state and recovery controls. */
+.user-message-footer {
+  min-height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 3px 2px 0;
+}
+.message-delivery { color: var(--text-muted); font-size: 10px; font-weight: 650; }
+.message-delivery:empty { display: none; }
+.message-delivery[data-state="working"],
+.message-delivery[data-state="sending"] { color: var(--primary); }
+.message-delivery[data-state="working"]::before,
+.message-delivery[data-state="sending"]::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: status-pulse 1.25s ease-in-out infinite;
+}
+.message-delivery[data-state="failed"],
+.message-delivery[data-state="interrupted"] { color: var(--danger); }
+.message-delivery[data-state="stopped"] { color: var(--warning); }
+.user-message-actions { display: inline-flex; gap: 4px; opacity: 0; transition: opacity .15s ease; }
+.msg-user:hover .user-message-actions,
+.msg-user:focus-within .user-message-actions,
+.msg-user[data-delivery-state="failed"] .user-message-actions,
+.msg-user[data-delivery-state="interrupted"] .user-message-actions,
+.msg-user[data-delivery-state="stopped"] .user-message-actions { opacity: 1; }
+.message-action {
+  padding: 2px 5px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.message-action:hover { background: var(--surface-2); color: var(--primary); }
+.message-retry { display: none; }
+.msg-user[data-delivery-state="failed"] .message-retry,
+.msg-user[data-delivery-state="interrupted"] .message-retry,
+.msg-user[data-delivery-state="stopped"] .message-retry { display: inline-flex; }
+.composer-state { color: var(--text-muted); font-size: 10px; font-weight: 650; }
+.composer-state:empty { display: none; }
+.composer-state[data-tone="success"] { color: var(--success); }
+.composer-state[data-tone="warning"] { color: var(--warning); }
+
+.clarification-freeform { display: grid; gap: 7px; }
+.clarification-freeform label { color: var(--text-soft); font-size: 11px; font-weight: 750; }
+.clarification-input-row { display: flex; align-items: flex-end; gap: 8px; }
+.clarification-input-row textarea {
+  width: 100%;
+  min-height: 54px;
+  max-height: 140px;
+  resize: vertical;
+  padding: 10px 11px;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  line-height: 1.45;
+}
+.clarification-input-row textarea:focus { outline: none; border-color: var(--primary); box-shadow: var(--focus-ring); }
+.clarification-submit {
+  min-height: 38px;
+  padding: 8px 13px;
+  border: 1px solid var(--primary);
+  border-radius: 7px;
+  background: var(--primary);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 750;
+  cursor: pointer;
+}
+.clarification-submit:hover { background: var(--primary-hover); border-color: var(--primary-hover); }
+.clarification-freeform :disabled { opacity: .58; cursor: not-allowed; }
+.clarification-help { color: var(--text-muted); font-size: 10px; }
+
 .chat-inner:has(#welcomeState:not([style*="display: none"])) .suggestions-wrap {
   order: 3;
   width: min(100%, 720px);
@@ -937,6 +1022,9 @@ body:has(.chat-page) .portal-sidebar-collapsed .portal-side-actions { grid-templ
   .data-table-filter { max-width: none; }
   .chart-canvas,
   .chart-canvas.compact { height: 250px; }
+  .clarification-input-row { align-items: stretch; flex-direction: column; }
+  .clarification-submit { align-self: flex-end; }
+  .user-message-actions { opacity: 1; }
 }
 
 @media (prefers-reduced-motion: reduce) {

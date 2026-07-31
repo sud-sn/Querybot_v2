@@ -331,6 +331,7 @@ def detect_entities(
     graph: dict,
     required_tables: list[str] | set[str] | None = None,
     required_entities: list[str] | set[str] | None = None,
+    authoritative_fact_tables: list[str] | set[str] | None = None,
 ) -> list[str]:
     """
     Score each entity against the question and return those that match.
@@ -350,6 +351,7 @@ def detect_entities(
 
     entities   = graph.get("entities", [])
     required_table_candidates = _table_candidates_from_required(required_tables)
+    authoritative_fact_candidates = _table_candidates_from_required(authoritative_fact_tables)
     required_entity_names = {str(e) for e in (required_entities or [])}
 
     props_by_entity: dict[str, list[dict]] = {}
@@ -459,6 +461,16 @@ def detect_entities(
         # with no error). Dimension/bridge tables keep the looser bar since
         # joining an extra dimension doesn't multiply fact rows.
         entity_type = (ent.get("entity_type") or "").lower()
+        if (
+            entity_type == "fact"
+            and authoritative_fact_candidates
+            and table_name not in authoritative_fact_candidates
+            and f"{schema_name}.{table_name}" not in authoritative_fact_candidates
+        ):
+            # The final pre-generation pass may carry an approved semantic,
+            # metric, or date-role fact scope. Do not let a weaker lexical
+            # hit introduce another fact and force a contradictory join path.
+            continue
         if (
             entity_type == "fact"
             and name not in required_entity_names
@@ -921,6 +933,7 @@ def _resolve_on_graph(
     intent: Optional[dict],
     required_entities,
     metric_formula_tables,
+    authoritative_fact_tables,
 ) -> dict:
     """Run detection + pathfinding + skeleton build against one graph snapshot."""
     entities     = graph.get("entities", [])
@@ -940,6 +953,7 @@ def _resolve_on_graph(
         graph,
         required_tables=metric_formula_tables,
         required_entities=required_entities,
+        authoritative_fact_tables=authoritative_fact_tables,
     )
     log.debug("Graph: question=%r detected=%s", question[:60], detected)
 
@@ -1039,6 +1053,7 @@ def resolve_for_question(
     intent: Optional[dict] = None,
     required_entities: Optional[list[str] | set[str]] = None,
     metric_formula_tables: Optional[list[str] | set[str]] = None,
+    authoritative_fact_tables: Optional[list[str] | set[str]] = None,
     use_suggested: Optional[bool] = None,
 ) -> dict:
     """
@@ -1090,7 +1105,7 @@ def resolve_for_question(
     if confirmed["entities"]:
         confirmed_result = _resolve_on_graph(
             question, db_type, confirmed, intent,
-            required_entities, metric_formula_tables,
+            required_entities, metric_formula_tables, authoritative_fact_tables,
         )
         # A confirmed multi-entity join — or a graph with nothing suggested —
         # is final. A single-entity anchor may just be the weak fact fallback,
@@ -1107,7 +1122,7 @@ def resolve_for_question(
         if allow:
             full_result = _resolve_on_graph(
                 question, db_type, graph, intent,
-                required_entities, metric_formula_tables,
+                required_entities, metric_formula_tables, authoritative_fact_tables,
             )
             # Prefer the suggested-inclusive result only when it adds value
             # (a join the confirmed graph could not produce).

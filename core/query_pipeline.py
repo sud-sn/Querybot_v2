@@ -65,7 +65,7 @@ from core.pipeline_helpers import (
 )
 from core.pipeline_trace import (
     _log_q, _trace_create, _trace_update, _trace_step, _trace_finish,
-    _create_learning_candidate,
+    _trace_finish_unclosed, _create_learning_candidate,
 )
 from core.result_renderer import (
     _send_results, _inject_distinct_if_needed,
@@ -376,7 +376,7 @@ def _governed_date_anchor_repair_lines(semantic_plan: dict) -> str:
     return "\n".join(lines)
 
 
-async def handle_query(account_id, event, adapter, question, portal_user, is_clarification=False):
+async def _handle_query_impl(account_id, event, adapter, question, portal_user, is_clarification=False):
     start_ms = int(time.time() * 1000)
     state    = get_state(account_id)
     db_cfg   = get_client_db(account_id)
@@ -491,6 +491,12 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
             allowed_tables = {t for t in allowed_tables if _in_schema(t)}
 
         if not effective:
+            _trace_finish(
+                trace_id,
+                status="error",
+                answer_type="error",
+                error_message=f"No tables available in selected schema {schema_hint}",
+            )
             await adapter.send_message(event,
                 f"⚠️ No tables from the **{schema_hint}** schema are available to you. "
                 f"Switch to a different schema or ask your administrator to grant access.")
@@ -801,6 +807,13 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                     event,
                     f"{_clarification_prompt}\n\n{option_lines}",
                 )
+            _trace_finish(
+                trace_id,
+                status="success",
+                answer_type="clarification",
+                final_answer_summary="Requested clarification for a cached-result operation",
+                duration_ms=int(time.time() * 1000) - start_ms,
+            )
             return
 
         if _cache_followup.executed and _cache_followup.outcome is not None:
@@ -1287,6 +1300,13 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                     f"❓ {clarifying_q}\n\n{option_lines}\n\n"
                     "_Reply with one of the options above._",
                 )
+            _trace_finish(
+                trace_id,
+                status="success",
+                answer_type="clarification",
+                final_answer_summary="Requested clarification for an ambiguous filter value",
+                duration_ms=int(time.time() * 1000) - start_ms,
+            )
             return
 
     try:
@@ -1625,6 +1645,13 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                 f"❓ {clarifying_q}\n\n{option_lines}\n\n"
                 "_Reply with one of the options above._",
             )
+        _trace_finish(
+            trace_id,
+            status="success",
+            answer_type="clarification",
+            final_answer_summary="Requested clarification for an ambiguous metric definition",
+            duration_ms=int(time.time() * 1000) - start_ms,
+        )
         return
 
     _matched_metrics = _metric_scope.metrics
@@ -1648,6 +1675,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
     # approved role for a different context. The result is compiled into the
     # semantic plan so both generation and validation receive the same rule.
     _date_context_resolution: dict = {"status": "none"}
+    _selected_date_bindings: list[dict] = []
     if question_has_temporal_intent(_semantic_plan_question):
         try:
             _metric_ids = [
@@ -1844,6 +1872,13 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                         f"{_date_question}\n\n{option_lines}\n\n"
                         "_Reply with one of the options above._",
                     )
+                _trace_finish(
+                    trace_id,
+                    status="success",
+                    answer_type="clarification",
+                    final_answer_summary="Requested clarification for an ambiguous business date",
+                    duration_ms=int(time.time() * 1000) - start_ms,
+                )
                 return
             if _date_context_resolution.get("status") in {"selected", "selected_many"}:
                 if _date_context_resolution.get("status") == "selected_many":
@@ -1962,6 +1997,80 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
     # row-calculated and the graph resolver has produced a join skeleton, append
     # the required joins so the LLM treats them as hard constraints (part of the
     # "MUST use this exact structure" block) rather than optional instructions.
+    # Final planner reconciliation. The earlier graph pass is intentionally
+    # broad so it can help metric scoping. Before SQL generation, compile the
+    # now-known semantic fields, metric formulas, and date role into one
+    # authoritative fact scope and resolve the graph again. The resulting
+    # graph is the exact object shared by the prompt and validator.
+    _planner_alignment: dict = {}
+    try:
+        from core.semantic_resolution import build_planner_alignment
+        _planner_alignment = build_planner_alignment(
+            graph=_full_graph,
+            graph_ctx=_graph_ctx,
+            semantic_plan=_semantic_plan,
+            metric_formula_tables=_metric_formula_tables,
+            date_context_resolution=_date_context_resolution,
+        )
+        if _full_graph.get("entities") and _planner_alignment.get("enabled"):
+            _aligned_graph = _graph_with_exact_date_edges(
+                _full_graph, _selected_date_bindings,
+            )
+            _aligned_graph_ctx = _graph_resolve(
+                question=_semantic_plan_question,
+                account_id=account_id,
+                db_type=db_cfg.get("db_type", "azure_sql"),
+                graph=_aligned_graph,
+                intent=query_intent,
+                required_entities=set(_planner_alignment.get("required_entities") or []),
+                metric_formula_tables=_metric_formula_tables,
+                authoritative_fact_tables=set(
+                    _planner_alignment.get("authoritative_fact_tables") or []
+                ),
+            )
+            if _aligned_graph_ctx.get("enabled"):
+                _graph_ctx = _aligned_graph_ctx
+
+        _trace_step(
+            trace_id,
+            "planner_reconciliation",
+            input_summary={
+                "previous_anchor": _planner_alignment.get("previous_anchor") or "",
+                "required_tables": _planner_alignment.get("required_tables") or [],
+            },
+            output_summary={
+                "anchor": _graph_ctx.get("anchor") or "",
+                "entities": _graph_ctx.get("detected") or [],
+                "dropped_fact_entities": (
+                    _planner_alignment.get("dropped_fact_entities") or []
+                ),
+            },
+            metadata={
+                **_planner_alignment,
+                "resolved_edges": _graph_ctx.get("resolved_edges") or [],
+                "join_skeleton": _graph_ctx.get("join_skeleton") or "",
+            },
+        )
+
+        # The authoritative pass can introduce a table that the broad first
+        # pass did not request. Guarantee its KB document before the prompt is
+        # clamped and sent to the model.
+        from core.table_coverage import guarantee_table_coverage
+        _alignment_gap_docs = guarantee_table_coverage(
+            account_id=account_id,
+            required_fqns=set(_planner_alignment.get("required_tables") or []),
+            retrieved_docs=relevant_kbs,
+            rag_filter=rag_filter,
+            max_fill=4,
+        )
+        if _alignment_gap_docs:
+            context_with_terms += "\n\n---\n\n" + "\n\n---\n\n".join(_alignment_gap_docs)
+    except Exception as _align_exc:
+        log.warning(
+            "Pre-generation planner reconciliation skipped for %s: %s",
+            account_id, _align_exc,
+        )
+
     if _graph_ctx.get("enabled") and _matched_metrics:
         try:
             _row_joins = _build_row_metric_join_sql(
@@ -2117,6 +2226,7 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
             schema_hint=schema_hint,
             allowed_tables=query_scope_tables,
             open_conflicts=_open_conflicts,
+            planner_alignment=_planner_alignment,
         )
         _trace_step(
             trace_id, "resolution_plan",
@@ -2288,6 +2398,91 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
     sql = _inject_distinct_if_needed(sql, question)
     sql = normalize_generated_sql(sql, db_cfg["db_type"])
 
+    # A sentinel is not accepted as the final result when the deterministic
+    # planners produced enough structure to try a constrained recovery. This
+    # is deliberately one attempt (never a loop) and it reuses the exact final
+    # graph/semantic plan that validation will enforce below.
+    if "CANNOT_GENERATE" in sql.upper() and not _reused_plan:
+        try:
+            from core.semantic_resolution import build_cannot_generate_recovery_prompt
+            _recovery_user = build_cannot_generate_recovery_prompt(
+                question=question,
+                resolution_plan=_resolution_plan,
+                graph_ctx=_graph_ctx,
+                semantic_plan=_semantic_plan,
+            )
+            await _send_live_stage(
+                adapter,
+                event,
+                "recovering_sql",
+                "Resolving query plan",
+                "Retrying once with the approved tables, fields, dates, and joins.",
+            )
+            _recovery_t0 = time.time()
+            with llm_audit_scope(
+                account_id=account_id,
+                question=question,
+                enabled=audit_enabled,
+                request_id=audit_request_id,
+                question_id=audit_request_id,
+                component="sql_cannot_generate_recovery",
+            ):
+                _recovered_sql, _recovery_tok_in, _recovery_tok_out = await llm_complete(
+                    system,
+                    _recovery_user,
+                    provider,
+                    model,
+                    api_key,
+                    temperature=0.0,
+                    max_tokens=768,
+                    **az_kwargs,
+                )
+            tok_in += _recovery_tok_in
+            tok_out += _recovery_tok_out
+            if _recovered_sql.startswith("```"):
+                _recovered_sql = "\n".join(
+                    _recovered_sql.split("\n")[1:]
+                ).rsplit("```", 1)[0].strip()
+            _recovered_sql = _inject_distinct_if_needed(_recovered_sql, question)
+            _recovered_sql = normalize_generated_sql(_recovered_sql, db_cfg["db_type"])
+            _recovery_succeeded = (
+                "CANNOT_GENERATE" not in _recovered_sql.upper()
+                and len(_recovered_sql) > 10
+            )
+            _trace_step(
+                trace_id,
+                "llm_generate_sql",
+                output_summary={
+                    "tokens_in": _recovery_tok_in,
+                    "tokens_out": _recovery_tok_out,
+                    "recovered": _recovery_succeeded,
+                },
+                status="success" if _recovery_succeeded else "error",
+                metadata={"retry": True, "reason": "cannot_generate"},
+                duration_ms=int((time.time() - _recovery_t0) * 1000),
+            )
+            if _recovery_succeeded:
+                sql = _recovered_sql
+                _trace_update(
+                    trace_id,
+                    generated_sql=sql,
+                    prompt_tokens=tok_in,
+                    completion_tokens=tok_out,
+                    sql_validation_status="recovered_pending_validation",
+                )
+        except Exception as _recovery_exc:
+            log.warning(
+                "CANNOT_GENERATE recovery failed for %s: %s",
+                account_id, str(_recovery_exc)[:160],
+            )
+            _trace_step(
+                trace_id,
+                "llm_generate_sql",
+                output_summary=str(_recovery_exc),
+                status="error",
+                metadata={"retry": True, "reason": "cannot_generate"},
+            )
+
     # CANNOT_GENERATE — try clarification before giving up (Approach B)
     if "CANNOT_GENERATE" in sql.upper():
         _trace_update(trace_id, generated_sql=sql, sql_validation_status="cannot_generate")
@@ -2295,6 +2490,16 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                provider, model, tok_in, tok_out, int(time.time()*1000)-start_ms,
                portal_user_id=pu_id, zoom_user_id=zid,
                question_id=audit_request_id, error_code="cannot_generate")
+        # Finalize before the optional clarification call. Even if that
+        # secondary provider call fails, the answer trace cannot remain
+        # indefinitely in its initial "started" state.
+        _trace_finish(
+            trace_id,
+            status="error",
+            answer_type="cannot_generate",
+            error_message="CANNOT_GENERATE after constrained recovery",
+            duration_ms=int(time.time() * 1000) - start_ms,
+        )
 
         # Skip ambiguity check when this IS a clarification reply — prevents infinite loop
         if not is_clarification:
@@ -2340,6 +2545,16 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                         f"{clarifying_q}\n\n"
                         f"_Reply in plain language and I'll continue with your original question._"
                     )
+                _trace_finish(
+                    trace_id,
+                    status="success",
+                    answer_type="clarification",
+                    final_answer_summary=(
+                        "Requested clarification after constrained SQL recovery failed"
+                    ),
+                    duration_ms=int(time.time() * 1000) - start_ms,
+                )
+                _trace_update(trace_id, error_message="")
                 return
         from core.failure_messages import suggest_closest_terms
         _closest = suggest_closest_terms(question, account_id, state.get("kb_dir", ""))
@@ -2382,6 +2597,8 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
         "graph_context": _graph_ctx,
         "semantic_plan": _semantic_plan,
         "metric_formulas": _matched_metrics,
+        "resolution_plan": _resolution_plan,
+        "planner_alignment": _planner_alignment,
     }
     _validate_t0 = time.time()
     ok, reason, code = validate_sql(
@@ -3056,6 +3273,14 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                     f"❓ {clarifying_q}\n\n"
                     f"_Reply in plain language and I'll continue with your original question._"
                 )
+            _trace_finish(
+                trace_id,
+                status="success",
+                answer_type="clarification",
+                row_count=0,
+                duration_ms=duration_ms,
+                final_answer_summary="Query returned no rows; requested clarification",
+            )
             return
 
     await _send_live_stage(adapter, event, "formatting_results", "Preparing results", "Formatting the answer and any chart for display.")
@@ -3227,6 +3452,37 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
             schema_scope      = schema_hint,
             kb_dir            = state.get("kb_dir", ""),
             schema_dir        = state.get("schema_dir", ""),
+        )
+
+
+async def handle_query(
+    account_id, event, adapter, question, portal_user, is_clarification=False,
+):
+    """Run the governed pipeline with a terminal answer-trace guarantee."""
+    try:
+        return await _handle_query_impl(
+            account_id,
+            event,
+            adapter,
+            question,
+            portal_user,
+            is_clarification=is_clarification,
+        )
+    except Exception as exc:
+        _trace_finish_unclosed(
+            status="error",
+            answer_type="error",
+            error_message=f"Unhandled query pipeline error: {exc}",
+        )
+        raise
+    finally:
+        # Every expected return calls _trace_finish explicitly. This final
+        # guard catches future early-return regressions without changing the
+        # user-facing response or swallowing an exception.
+        _trace_finish_unclosed(
+            status="error",
+            answer_type="error",
+            error_message="Query pipeline ended without a terminal outcome",
         )
 
 

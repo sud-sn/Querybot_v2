@@ -14,11 +14,15 @@ from __future__ import annotations
 
 import logging
 import secrets
+from contextvars import ContextVar
 
 import store
 from store.db import get_db
 
 log = logging.getLogger("querybot")
+_current_trace_id: ContextVar[int | None] = ContextVar(
+    "querybot_current_answer_trace_id", default=None,
+)
 
 
 # ── Query log ─────────────────────────────────────────────────────────────────
@@ -44,7 +48,9 @@ def _trace_create(**kwargs) -> int | None:
     try:
         if "question" in kwargs and "question_text" not in kwargs:
             kwargs["question_text"] = kwargs.pop("question")
-        return store.create_answer_trace(**kwargs)
+        trace_id = store.create_answer_trace(**kwargs)
+        _current_trace_id.set(trace_id)
+        return trace_id
     except Exception as exc:
         log.debug("answer trace create failed: %s", exc)
         return None
@@ -67,8 +73,17 @@ def _trace_step(trace_id: int | None, step_name: str, **kwargs) -> None:
 def _trace_finish(trace_id: int | None, **kwargs) -> None:
     try:
         store.finish_answer_trace(trace_id, **kwargs)
+        if trace_id and _current_trace_id.get() == trace_id:
+            _current_trace_id.set(None)
     except Exception as exc:
         log.debug("answer trace finish failed: %s", exc)
+
+
+def _trace_finish_unclosed(**kwargs) -> None:
+    """Finalize the trace owned by the current async request, if still open."""
+    trace_id = _current_trace_id.get()
+    if trace_id:
+        _trace_finish(trace_id, **kwargs)
 
 
 # ── Query duration breakdown (Snowflake-style phase bars) ───────────────────

@@ -1,0 +1,441 @@
+# Curated from the PHARMA_LAB DDL and deterministic seed scripts in
+# Qlik/outputs. Run with both Generate SQL and Execute SQL enabled.
+#
+# Business convention used by revenue cases:
+#   completed fill = DELETED_RECORD_FLAG = 0, REVERSAL_FLAG = 0, and
+#                    FILL_STATUS IN ('DISPENSED', 'PICKED_UP')
+# Relative periods must anchor to the latest approved business date in the
+# governed fact rows, never GETDATE()/CURRENT_TIMESTAMP.
+
+cases:
+  # -----------------------------------------------------------------------
+  # Tier 1: foundation and deterministic ground truth
+  # -----------------------------------------------------------------------
+  - id: pharma_total_orders
+    category: foundation
+    tier: smoke
+    question: "How many prescription orders are in the database? Return one value named TOTAL_ORDERS."
+    expected_tables: [PHARMA_LAB.F_RX_ORDER]
+    expected_columns: [RX_ORDER_ID]
+    expected_rows:
+      - TOTAL_ORDERS: 360
+    min_score: 0.85
+
+  - id: pharma_order_status_mix
+    category: foundation
+    tier: smoke
+    question: "Show the number of prescription orders by order status, including every status."
+    expected_tables: [PHARMA_LAB.F_RX_ORDER]
+    expected_columns: [ORDER_STATUS, RX_ORDER_ID]
+    expected_row_count: 4
+    min_score: 0.85
+
+  - id: pharma_fill_status_mix
+    category: foundation
+    tier: smoke
+    question: "Show the prescription fill count by fill status."
+    expected_tables: [PHARMA_LAB.F_RX_FILL]
+    expected_columns: [FILL_STATUS, RX_FILL_ID]
+    expected_row_count: 5
+    min_score: 0.85
+
+  - id: pharma_claim_status_mix
+    category: foundation
+    tier: smoke
+    question: "Show the claim count by claim status."
+    expected_tables: [PHARMA_LAB.F_CLAIM]
+    expected_columns: [CLAIM_STATUS, CLAIM_ID]
+    expected_row_count: 5
+    min_score: 0.85
+
+  - id: pharma_payment_status_mix
+    category: foundation
+    tier: smoke
+    question: "Show the payment count by payment status."
+    expected_tables: [PHARMA_LAB.F_PAYMENT]
+    expected_columns: [PAYMENT_STATUS, PAYMENT_ID]
+    expected_row_count: 5
+    min_score: 0.85
+
+  - id: pharma_purchase_status_mix
+    category: foundation
+    tier: smoke
+    question: "Show the purchase receipt line count by receipt status."
+    expected_tables: [PHARMA_LAB.F_PURCHASE_RECEIPT]
+    expected_columns: [RECEIPT_STATUS, PURCHASE_RECEIPT_ID]
+    expected_row_count: 4
+    min_score: 0.85
+
+  # -----------------------------------------------------------------------
+  # Tier 2: governed measures, ratios, dimensions, and ranking
+  # -----------------------------------------------------------------------
+  - id: pharma_completed_fill_financials
+    category: revenue
+    tier: regression
+    question: "For completed, non-reversed prescription fills, return total gross revenue, discount, net revenue, acquisition cost, and gross profit."
+    expected_tables: [PHARMA_LAB.F_RX_FILL]
+    expected_columns: [GROSS_REVENUE_AMT, DISCOUNT_AMT, NET_REVENUE_AMT, ACQUISITION_COST_AMT, GROSS_PROFIT_AMT, FILL_STATUS, REVERSAL_FLAG]
+    expected_row_count: 1
+    min_score: 0.85
+
+  - id: pharma_total_net_revenue_anchor
+    category: revenue
+    tier: smoke
+    question: "What is total net revenue from completed, non-reversed fills? Return one value named TOTAL_NET_REVENUE."
+    expected_tables: [PHARMA_LAB.F_RX_FILL]
+    expected_columns: [NET_REVENUE_AMT, FILL_STATUS, REVERSAL_FLAG]
+    expected_result:
+      rows:
+        - TOTAL_NET_REVENUE: 50592.00
+      numeric_tolerance: 0.01
+    min_score: 0.85
+
+  - id: pharma_net_revenue_by_pharmacy
+    category: revenue
+    tier: regression
+    question: "Show completed-fill net revenue by pharmacy, highest revenue first."
+    expected_tables: [PHARMA_LAB.F_RX_FILL, PHARMA_LAB.D_PHARMACY]
+    expected_columns: [NET_REVENUE_AMT, PHARMACY_NAME, FILL_STATUS, REVERSAL_FLAG]
+    expected_join_types: [INNER JOIN]
+    expected_row_count: 5
+    min_score: 0.85
+
+  - id: pharma_top_five_drugs_by_net_revenue
+    category: revenue
+    tier: regression
+    question: "Which five drugs generated the highest completed-fill net revenue? Show generic name and net revenue."
+    expected_tables: [PHARMA_LAB.F_RX_FILL, PHARMA_LAB.D_DRUG]
+    expected_columns: [NET_REVENUE_AMT, GENERIC_NAME, DRUG_ID]
+    expected_row_count: 5
+    min_score: 0.85
+
+  - id: pharma_profitability_by_therapeutic_class
+    category: profitability
+    tier: regression
+    question: "For completed fills, show net revenue, acquisition cost, gross profit, and gross-profit percentage by therapeutic class."
+    expected_tables: [PHARMA_LAB.F_RX_FILL, PHARMA_LAB.D_DRUG]
+    expected_columns: [NET_REVENUE_AMT, ACQUISITION_COST_AMT, GROSS_PROFIT_AMT, THERAPEUTIC_CLASS]
+    required_sql_patterns: [NULLIF]
+    expected_row_count: 12
+    min_score: 0.85
+
+  - id: pharma_funding_mix_by_payer
+    category: revenue
+    tier: regression
+    question: "For completed fills, show net revenue, patient copay, and third-party paid amount by payer."
+    expected_tables: [PHARMA_LAB.F_RX_FILL, PHARMA_LAB.D_PAYER]
+    expected_columns: [NET_REVENUE_AMT, PATIENT_COPAY_AMT, THIRD_PARTY_PAID_AMT, PAYER_NAME]
+    expected_row_count: 6
+    min_score: 0.85
+
+  - id: pharma_claim_financials_by_status
+    category: claims
+    tier: regression
+    question: "Show claim count, billed amount, allowed amount, payer-paid amount, and patient responsibility by claim status."
+    expected_tables: [PHARMA_LAB.F_CLAIM]
+    expected_columns: [CLAIM_STATUS, BILLED_AMT, ALLOWED_AMT, PAYER_PAID_AMT, PATIENT_RESPONSIBILITY_AMT]
+    expected_row_count: 5
+    min_score: 0.85
+
+  - id: pharma_payment_financial_summary
+    category: payments
+    tier: smoke
+    question: "Return total invoice amount, paid amount, outstanding amount, and write-off amount across all payments."
+    expected_tables: [PHARMA_LAB.F_PAYMENT]
+    expected_columns: [INVOICE_AMT, PAID_AMT, OUTSTANDING_AMT, WRITE_OFF_AMT]
+    expected_row_count: 1
+    min_score: 0.85
+
+  - id: pharma_outstanding_balance_anchor
+    category: payments
+    tier: smoke
+    question: "What is the total outstanding payment balance? Return one value named TOTAL_OUTSTANDING."
+    expected_tables: [PHARMA_LAB.F_PAYMENT]
+    expected_columns: [OUTSTANDING_AMT]
+    expected_result:
+      rows:
+        - TOTAL_OUTSTANDING: 12095.04
+      numeric_tolerance: 0.01
+    min_score: 0.85
+
+  # -----------------------------------------------------------------------
+  # Tier 2: time intelligence and explicit date-role selection
+  # -----------------------------------------------------------------------
+  - id: pharma_net_revenue_by_booked_month_2025
+    category: time_intelligence
+    tier: regression
+    question: "Show completed-fill net revenue by booked month in 2025. Use the booked date, not the order or dispense date."
+    expected_tables: [PHARMA_LAB.F_RX_FILL, PHARMA_LAB.D_DATE]
+    expected_columns: [BOOKED_DATE_ID, DATE_ID, CALENDAR_DATE, NET_REVENUE_AMT]
+    forbidden_sql_contains: [GETDATE, CURRENT_TIMESTAMP]
+    expected_row_count: 12
+    min_score: 0.85
+
+  - id: pharma_net_revenue_by_order_month_2025
+    category: time_intelligence
+    tier: regression
+    question: "Show completed-fill net revenue by order month in 2025. Use the fill record's order date role."
+    expected_tables: [PHARMA_LAB.F_RX_FILL, PHARMA_LAB.D_DATE]
+    expected_columns: [ORDER_DATE_ID, DATE_ID, CALENDAR_DATE, NET_REVENUE_AMT]
+    forbidden_sql_contains: [GETDATE, CURRENT_TIMESTAMP]
+    expected_row_count: 12
+    min_score: 0.85
+
+  - id: pharma_net_revenue_by_dispense_month_2025
+    category: time_intelligence
+    tier: regression
+    question: "Show completed-fill net revenue by dispense month in 2025. Use the dispense date role."
+    expected_tables: [PHARMA_LAB.F_RX_FILL, PHARMA_LAB.D_DATE]
+    expected_columns: [DISPENSE_DATE_ID, DATE_ID, CALENDAR_DATE, NET_REVENUE_AMT]
+    forbidden_sql_contains: [GETDATE, CURRENT_TIMESTAMP]
+    expected_row_count: 12
+    min_score: 0.85
+
+  - id: pharma_claims_by_submit_month_2025
+    category: time_intelligence
+    tier: regression
+    question: "Show claim count and allowed amount by claim submit month in 2025."
+    expected_tables: [PHARMA_LAB.F_CLAIM, PHARMA_LAB.D_DATE]
+    expected_columns: [SUBMIT_DATE_ID, DATE_ID, CALENDAR_DATE, CLAIM_ID, ALLOWED_AMT]
+    expected_row_count: 12
+    min_score: 0.85
+
+  - id: pharma_net_revenue_year_comparison
+    category: time_intelligence
+    tier: regression
+    question: "Compare completed-fill net revenue by dispense year for 2025 and 2026."
+    expected_tables: [PHARMA_LAB.F_RX_FILL, PHARMA_LAB.D_DATE]
+    expected_columns: [DISPENSE_DATE_ID, CALENDAR_YEAR, NET_REVENUE_AMT]
+    expected_row_count: 2
+    min_score: 0.85
+
+  - id: pharma_ordered_revenue_last_seven_days
+    category: relative_time
+    tier: smoke
+    question: "What was completed-fill net revenue for the last 7 days by order date, anchored to the latest order date available in the fill data?"
+    expected_tables: [PHARMA_LAB.F_RX_FILL, PHARMA_LAB.D_DATE]
+    expected_columns: [ORDER_DATE_ID, DATE_ID, CALENDAR_DATE, NET_REVENUE_AMT]
+    forbidden_sql_contains: [GETDATE, CURRENT_TIMESTAMP]
+    expected_row_count: 1
+    min_score: 0.85
+
+  - id: pharma_dispensed_revenue_last_thirty_days
+    category: relative_time
+    tier: regression
+    question: "What was completed-fill net revenue for the last 30 days by dispense date, anchored to the latest dispense date with completed fills?"
+    expected_tables: [PHARMA_LAB.F_RX_FILL, PHARMA_LAB.D_DATE]
+    expected_columns: [DISPENSE_DATE_ID, DATE_ID, CALENDAR_DATE, NET_REVENUE_AMT]
+    forbidden_sql_contains: [GETDATE, CURRENT_TIMESTAMP]
+    expected_row_count: 1
+    min_score: 0.85
+
+  - id: pharma_orders_by_fiscal_year
+    category: fiscal_time
+    tier: regression
+    question: "Show prescription order count by fiscal year using the order date and the fiscal calendar in D_DATE."
+    expected_tables: [PHARMA_LAB.F_RX_ORDER, PHARMA_LAB.D_DATE]
+    expected_columns: [ORDER_DATE_ID, DATE_ID, FISCAL_YEAR, RX_ORDER_ID]
+    expected_row_count: 3
+    min_score: 0.85
+
+  # -----------------------------------------------------------------------
+  # Tier 2/3: inventory, purchasing, claims, and payments operations
+  # -----------------------------------------------------------------------
+  - id: pharma_latest_inventory_summary
+    category: inventory
+    tier: smoke
+    question: "At the latest available inventory snapshot, return total on-hand quantity, allocated quantity, available quantity, expired quantity, and inventory value."
+    expected_tables: [PHARMA_LAB.F_INVENTORY_SNAPSHOT]
+    expected_columns: [SNAPSHOT_DATE_ID, ON_HAND_QUANTITY, ALLOCATED_QUANTITY, AVAILABLE_QUANTITY, EXPIRED_QUANTITY, INVENTORY_VALUE_AMT]
+    forbidden_sql_contains: [GETDATE, CURRENT_TIMESTAMP]
+    expected_row_count: 1
+    min_score: 0.85
+
+  - id: pharma_latest_inventory_value_anchor
+    category: inventory
+    tier: smoke
+    question: "What is total inventory value at the latest available snapshot? Return one value named TOTAL_INVENTORY_VALUE."
+    expected_tables: [PHARMA_LAB.F_INVENTORY_SNAPSHOT]
+    expected_columns: [SNAPSHOT_DATE_ID, INVENTORY_VALUE_AMT]
+    expected_result:
+      rows:
+        - TOTAL_INVENTORY_VALUE: 315896.00
+      numeric_tolerance: 0.01
+    min_score: 0.85
+
+  - id: pharma_latest_inventory_by_pharmacy
+    category: inventory
+    tier: regression
+    question: "At the latest available inventory snapshot, show available quantity and inventory value by pharmacy."
+    expected_tables: [PHARMA_LAB.F_INVENTORY_SNAPSHOT, PHARMA_LAB.D_PHARMACY]
+    expected_columns: [SNAPSHOT_DATE_ID, AVAILABLE_QUANTITY, INVENTORY_VALUE_AMT, PHARMACY_NAME]
+    expected_row_count: 5
+    min_score: 0.85
+
+  - id: pharma_below_reorder_latest_snapshot
+    category: inventory
+    tier: regression
+    question: "At the latest inventory snapshot, list pharmacy and drug combinations where available quantity is below the reorder point."
+    expected_tables: [PHARMA_LAB.F_INVENTORY_SNAPSHOT, PHARMA_LAB.D_PHARMACY, PHARMA_LAB.D_DRUG]
+    expected_columns: [AVAILABLE_QUANTITY, REORDER_POINT_QUANTITY, PHARMACY_NAME, GENERIC_NAME, SNAPSHOT_DATE_ID]
+    expected_row_count: 12
+    min_score: 0.85
+
+  - id: pharma_expiry_risk_latest_snapshot
+    category: inventory
+    tier: stress
+    question: "At the latest inventory snapshot, show each drug's inventory value at risk from lots expiring within 365 days of that snapshot."
+    expected_tables: [PHARMA_LAB.F_INVENTORY_SNAPSHOT, PHARMA_LAB.D_DRUG, PHARMA_LAB.D_DATE]
+    expected_columns: [SNAPSHOT_DATE_ID, EXPIRY_DATE_ID, DATE_ID, INVENTORY_VALUE_AMT, GENERIC_NAME]
+    expected_row_count: 12
+    min_score: 0.85
+
+  - id: pharma_purchase_performance_by_supplier
+    category: purchasing
+    tier: regression
+    question: "Show ordered quantity, received quantity, rejected quantity, and extended receipt cost by supplier."
+    expected_tables: [PHARMA_LAB.F_PURCHASE_RECEIPT, PHARMA_LAB.D_SUPPLIER]
+    expected_columns: [ORDERED_QUANTITY, RECEIVED_QUANTITY, REJECTED_QUANTITY, EXTENDED_COST_AMT, SUPPLIER_NAME]
+    expected_row_count: 4
+    min_score: 0.85
+
+  - id: pharma_temperature_exception_count
+    category: purchasing
+    tier: regression
+    question: "How many purchase receipt lines had a temperature exception? Return one value named TEMPERATURE_EXCEPTION_LINES."
+    expected_tables: [PHARMA_LAB.F_PURCHASE_RECEIPT]
+    expected_columns: [TEMPERATURE_EXCEPTION_FLAG, PURCHASE_RECEIPT_ID]
+    expected_rows:
+      - TEMPERATURE_EXCEPTION_LINES: 13
+    min_score: 0.85
+
+  - id: pharma_claim_denial_rate
+    category: claims
+    tier: regression
+    question: "What percentage of claims were denied? Return claim count, denied count, and denial percentage."
+    expected_tables: [PHARMA_LAB.F_CLAIM]
+    expected_columns: [CLAIM_ID, CLAIM_STATUS]
+    required_sql_patterns: [NULLIF]
+    expected_row_count: 1
+    min_score: 0.85
+
+  - id: pharma_denials_by_rejection_code
+    category: claims
+    tier: regression
+    question: "Show denied claim count and billed amount by rejection code."
+    expected_tables: [PHARMA_LAB.F_CLAIM]
+    expected_columns: [CLAIM_STATUS, REJECTION_CODE, CLAIM_ID, BILLED_AMT]
+    expected_row_count: 2
+    min_score: 0.85
+
+  - id: pharma_overdue_outstanding_by_payer
+    category: payments
+    tier: regression
+    question: "Show overdue outstanding balance by payer, highest balance first."
+    expected_tables: [PHARMA_LAB.F_PAYMENT, PHARMA_LAB.D_PAYER]
+    expected_columns: [PAYMENT_STATUS, OUTSTANDING_AMT, PAYER_NAME]
+    expected_row_count: 4
+    min_score: 0.85
+
+  # -----------------------------------------------------------------------
+  # Tier 3: multi-hop joins, anti-joins, bridges, cohorts, and funnels
+  # -----------------------------------------------------------------------
+  - id: pharma_orders_without_fill
+    category: completeness
+    tier: stress
+    question: "How many prescription orders have no fill record? Return one value named ORDERS_WITHOUT_FILL."
+    expected_tables: [PHARMA_LAB.F_RX_ORDER, PHARMA_LAB.F_RX_FILL]
+    expected_columns: [RX_ORDER_ID]
+    expected_join_types: [LEFT JOIN]
+    expected_rows:
+      - ORDERS_WITHOUT_FILL: 21
+    min_score: 0.85
+
+  - id: pharma_fills_without_claim
+    category: completeness
+    tier: stress
+    question: "How many fill records have no claim? Return one value named FILLS_WITHOUT_CLAIM."
+    expected_tables: [PHARMA_LAB.F_RX_FILL, PHARMA_LAB.F_CLAIM]
+    expected_columns: [RX_FILL_ID]
+    expected_join_types: [LEFT JOIN]
+    expected_rows:
+      - FILLS_WITHOUT_CLAIM: 42
+    min_score: 0.85
+
+  - id: pharma_claims_without_payment
+    category: completeness
+    tier: stress
+    question: "How many claims have no payment record? Return one value named CLAIMS_WITHOUT_PAYMENT."
+    expected_tables: [PHARMA_LAB.F_CLAIM, PHARMA_LAB.F_PAYMENT]
+    expected_columns: [CLAIM_ID]
+    expected_join_types: [LEFT JOIN]
+    expected_rows:
+      - CLAIMS_WITHOUT_PAYMENT: 0
+    allow_zero_rows: true
+    min_score: 0.85
+
+  - id: pharma_orders_with_multiple_diagnoses
+    category: bridge
+    tier: stress
+    question: "How many prescription orders have more than one diagnosis? Return one value named MULTI_DIAGNOSIS_ORDERS."
+    expected_tables: [PHARMA_LAB.BR_RX_DIAGNOSIS]
+    expected_columns: [RX_ORDER_ID, DIAGNOSIS_ID]
+    expected_rows:
+      - MULTI_DIAGNOSIS_ORDERS: 90
+    min_score: 0.85
+
+  - id: pharma_orders_by_primary_diagnosis
+    category: bridge
+    tier: stress
+    question: "Show prescription order count by primary diagnosis, including ICD-10 code and diagnosis description."
+    expected_tables: [PHARMA_LAB.BR_RX_DIAGNOSIS, PHARMA_LAB.D_DIAGNOSIS]
+    expected_columns: [PRIMARY_DIAGNOSIS_FLAG, RX_ORDER_ID, ICD10_CODE, DIAGNOSIS_DESCRIPTION]
+    expected_row_count: 8
+    min_score: 0.85
+
+  - id: pharma_controlled_orders_by_drug
+    category: controlled_substances
+    tier: stress
+    question: "Show prescription order count for controlled substances by drug, including controlled schedule."
+    expected_tables: [PHARMA_LAB.F_RX_ORDER, PHARMA_LAB.D_DRUG]
+    expected_columns: [CONTROLLED_SUBSTANCE_FLAG, RX_ORDER_ID, GENERIC_NAME, CONTROLLED_SCHEDULE]
+    expected_row_count: 2
+    min_score: 0.85
+
+  - id: pharma_prior_auth_rate_by_payer
+    category: prior_authorization
+    tier: stress
+    question: "Show prescription order count, prior-authorization-required count, and prior-authorization rate by payer."
+    expected_tables: [PHARMA_LAB.F_RX_ORDER, PHARMA_LAB.D_PAYER]
+    expected_columns: [PRIOR_AUTH_REQUIRED_FLAG, RX_ORDER_ID, PAYER_NAME]
+    required_sql_patterns: [NULLIF]
+    expected_row_count: 6
+    min_score: 0.85
+
+  - id: pharma_patients_with_multiple_prescribers
+    category: patient_cohort
+    tier: stress
+    question: "Which patients had completed fills from more than one distinct prescriber? Show patient MRN and prescriber count."
+    expected_tables: [PHARMA_LAB.F_RX_FILL, PHARMA_LAB.D_PATIENT]
+    expected_columns: [PATIENT_ID, PATIENT_MRN, PRESCRIBER_ID, FILL_STATUS, REVERSAL_FLAG]
+    expected_row_count: 20
+    min_score: 0.85
+
+  - id: pharma_top_patients_by_net_revenue
+    category: patient_cohort
+    tier: stress
+    question: "Show the top 10 patients by completed-fill net revenue, including patient MRN, fill count, and net revenue."
+    expected_tables: [PHARMA_LAB.F_RX_FILL, PHARMA_LAB.D_PATIENT]
+    expected_columns: [PATIENT_MRN, RX_FILL_ID, NET_REVENUE_AMT, FILL_STATUS, REVERSAL_FLAG]
+    expected_row_count: 10
+    min_score: 0.85
+
+  - id: pharma_safe_activity_by_consent_status
+    category: governance_aggregate
+    tier: stress
+    question: "Without listing patient names, contact details, dates of birth, or MRNs, show completed fill count and net revenue by patient consent status."
+    expected_tables: [PHARMA_LAB.F_RX_FILL, PHARMA_LAB.D_PATIENT]
+    expected_columns: [CONSENT_STATUS, RX_FILL_ID, NET_REVENUE_AMT]
+    forbidden_sensitive_terms: [FIRST_NAME, LAST_NAME, EMAIL_ADDRESS, PHONE_NUMBER, DATE_OF_BIRTH_DATE_ID, PATIENT_MRN]
+    expected_row_count: 3
+    min_score: 0.85

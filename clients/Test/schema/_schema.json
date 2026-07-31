@@ -1,0 +1,2586 @@
+{
+  "CHATBOT_DB.PHARMA_LAB.BR_RX_DIAGNOSIS": {
+    "columns": [
+      {
+        "name": "RX_ORDER_ID",
+        "type": "bigint",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "DIAGNOSIS_ID",
+        "type": "int",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "DIAGNOSIS_SEQUENCE",
+        "type": "tinyint",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "PRIMARY_DIAGNOSIS_FLAG",
+        "type": "bit",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "IS_SYNTHETIC",
+        "type": "bit",
+        "nullable": false,
+        "comment": ""
+      }
+    ],
+    "pk_columns": [
+      "RX_ORDER_ID",
+      "DIAGNOSIS_ID"
+    ],
+    "row_count": 450,
+    "comment": "",
+    "schema": "PHARMA_LAB",
+    "database": "CHATBOT_DB",
+    "fields_sent": [
+      "RX_ORDER_ID",
+      "DIAGNOSIS_ID",
+      "DIAGNOSIS_SEQUENCE",
+      "PRIMARY_DIAGNOSIS_FLAG",
+      "IS_SYNTHETIC"
+    ],
+    "row_count_sent": 5,
+    "masked_fields": [],
+    "mask_mode": "auto",
+    "mask_replacement_map": {},
+    "synthetic_used": false
+  },
+  "CHATBOT_DB.PHARMA_LAB.D_DATE": {
+    "columns": [
+      {
+        "name": "DATE_ID",
+        "type": "int",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "CALENDAR_DATE",
+        "type": "date",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "DATE_KEY_YYYYMMDD",
+        "type": "int",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "DAY_OF_WEEK_NUMBER",
+        "type": "tinyint",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "DAY_NAME",
+        "type": "varchar",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "DAY_OF_MONTH",
+        "type": "tinyint",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "DAY_OF_YEAR",
+        "type": "smallint",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "WEEK_OF_YEAR",
+        "type": "tinyint",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "MONTH_NUMBER",
+        "type": "tinyint",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "MONTH_NAME",
+        "type": "varchar",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "MONTH_START_DATE",
+        "type": "date",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "QUARTER_NUMBER",
+        "type": "tinyint",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "QUARTER_NAME",
+        "type": "char",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "CALENDAR_YEAR",
+        "type": "smallint",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "FISCAL_MONTH_NUMBER",
+        "type": "tinyint",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "FISCAL_QUARTER_NUMBER",
+        "type": "tinyint",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "FISCAL_YEAR",
+        "type": "smallint",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "IS_WEEKEND",
+        "type": "bit",
+        "nullable": false,
+        "comment": ""
+      }
+    ],
+    "pk_columns": [
+      "DATE_ID"
+    ],
+    "row_count": 28489,
+    "comment": "",
+    "schema": "PHARMA_LAB",
+    "database": "CHATBOT_DB",
+    "fields_sent": [
+      "DATE_ID",
+      "CALENDAR_DATE",
+      "DATE_KEY_YYYYMMDD",
+      "DAY_OF_WEEK_NUMBER",
+      "DAY_NAME",
+      "DAY_OF_MONTH",
+      "DAY_OF_YEAR",
+      "WEEK_OF_YEAR",
+      "MONTH_NUMBER",
+      "MONTH_NAME",
+      "MONTH_START_DATE",
+      "QUARTER_NUMBER",
+      "QUARTER_NAME",
+      "CALENDAR_YEAR",
+      "FISCAL_MONTH_NUMBER",
+      "FISCAL_QUARTER_NUMBER",
+      "FISCAL_YEAR",
+      "IS_WEEKEND"
+    ],
+    "row_count_sent": 5,
+    "masked_fields": [
+      "DAY_NAME",
+      "MONTH_NAME",
+      "QUARTER_NAME"
+    ],
+    "mask_mode": "auto",
+    "mask_replacement_map": {
+      "QUARTER_NAME": "name",
+      "MONTH_NAME": "name",
+      "DAY_NAME": "name"
+    },
+    "synthetic_used": false
+  },
+  "CHATBOT_DB.PHARMA_LAB.D_DIAGNOSIS": {
+    "columns": [
+      {
+        "name": "DIAGNOSIS_ID",
+        "type": "int",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "ICD10_CODE",
+        "type": "varchar",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "DIAGNOSIS_DESCRIPTION",
+        "type": "nvarchar",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "DIAGNOSIS_CATEGORY",
+        "type": "nvarchar",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "SENSITIVE_CATEGORY_FLAG",
+        "type": "bit",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "ACTIVE_FLAG",
+        "type": "bit",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "IS_SYNTHETIC",
+        "type": "bit",
+        "nullable": false,
+        "comment": ""
+      }
+    ],
+    "pk_columns": [
+      "DIAGNOSIS_ID"
+    ],
+    "row_count": 8,
+    "comment": "",
+    "schema": "PHARMA_LAB",
+    "database": "CHATBOT_DB",
+    "fields_sent": [
+      "DIAGNOSIS_ID",
+      "ICD10_CODE",
+      "DIAGNOSIS_DESCRIPTION",
+      "DIAGNOSIS_CATEGORY",
+      "SENSITIVE_CATEGORY_FLAG",
+      "ACTIVE_FLAG",
+      "IS_SYNTHETIC"
+    ],
+    "row_count_sent": 5,
+    "masked_fields": [
+      "DIAGNOSIS_DESCRIPTION"
+    ],
+    "mask_mode": "auto",
+    "mask_replacement_map": {
+      "DIAGNOSIS_DESCRIPTION": "free_text"
+    },
+    "synthetic_used": false
+  },
+  "CHATBOT_DB.PHARMA_LAB.D_DRUG": {
+    "columns": [
+      {
+        "name": "DRUG_ID",
+        "type": "int",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "NDC_11_CODE",
+        "type": "char",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "GENERIC_NAME",
+        "type": "nvarchar",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "BRAND_NAME",
+        "type": "nvarchar",
+        "nullable": true,
+        "comment": ""
+      },
+      {
+        "name": "THERAPEUTIC_CLASS",
+        "type": "nvarchar",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "DOSAGE_FORM",
+        "type": "varchar",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "STRENGTH_TEXT",
+        "type": "varchar",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "CONTROLLED_SCHEDULE",
+        "type": "varchar",
+        "nullable": true,
+        "comment": ""
+      },
+      {
+        "name": "PACKAGE_SIZE",
+        "type": "decimal",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "UOM_CODE",
+        "type": "varchar",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "ACTIVE_FLAG",
+        "type": "bit",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "IS_SYNTHETIC",
+        "type": "bit",
+        "nullable": false,
+        "comment": ""
+      }
+    ],
+    "pk_columns": [
+      "DRUG_ID"
+    ],
+    "row_count": 12,
+    "comment": "",
+    "schema": "PHARMA_LAB",
+    "database": "CHATBOT_DB",
+    "fields_sent": [
+      "DRUG_ID",
+      "NDC_11_CODE",
+      "GENERIC_NAME",
+      "BRAND_NAME",
+      "THERAPEUTIC_CLASS",
+      "DOSAGE_FORM",
+      "STRENGTH_TEXT",
+      "CONTROLLED_SCHEDULE",
+      "PACKAGE_SIZE",
+      "UOM_CODE",
+      "ACTIVE_FLAG",
+      "IS_SYNTHETIC"
+    ],
+    "row_count_sent": 5,
+    "masked_fields": [
+      "BRAND_NAME",
+      "GENERIC_NAME",
+      "NDC_11_CODE"
+    ],
+    "mask_mode": "auto",
+    "mask_replacement_map": {
+      "NDC_11_CODE": "phone",
+      "GENERIC_NAME": "drug_name",
+      "BRAND_NAME": "name"
+    },
+    "synthetic_used": false
+  },
+  "CHATBOT_DB.PHARMA_LAB.D_PATIENT": {
+    "columns": [
+      {
+        "name": "PATIENT_ID",
+        "type": "bigint",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "PATIENT_MRN",
+        "type": "varchar",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "FIRST_NAME",
+        "type": "nvarchar",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "LAST_NAME",
+        "type": "nvarchar",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "DATE_OF_BIRTH_DATE_ID",
+        "type": "int",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "SEX_AT_BIRTH_CODE",
+        "type": "varchar",
+        "nullable": true,
+        "comment": ""
+      },
+      {
+        "name": "GENDER_IDENTITY",
+        "type": "varchar",
+        "nullable": true,
+        "comment": ""
+      },
+      {
+        "name": "EMAIL_ADDRESS",
+        "type": "varchar",
+        "nullable": true,
+        "comment": ""
+      },
+      {
+        "name": "PHONE_NUMBER",
+        "type": "varchar",
+        "nullable": true,
+        "comment": ""
+      },
+      {
+        "name": "ADDRESS_LINE_1",
+        "type": "nvarchar",
+        "nullable": true,
+        "comment": ""
+      },
+      {
+        "name": "CITY_NAME",
+        "type": "nvarchar",
+        "nullable": true,
+        "comment": ""
+      },
+      {
+        "name": "STATE_CODE",
+        "type": "char",
+        "nullable": true,
+        "comment": ""
+      },
+      {
+        "name": "POSTAL_CODE",
+        "type": "varchar",
+        "nullable": true,
+        "comment": ""
+      },
+      {
+        "name": "CONSENT_STATUS",
+        "type": "varchar",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "DECEASED_FLAG",
+        "type": "bit",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "ACTIVE_FLAG",
+        "type": "bit",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "IS_SYNTHETIC",
+        "type": "bit",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "SOURCE_SYSTEM_CODE",
+        "type": "varchar",
+        "nullable": false,
+        "comment": ""
+      }
+    ],
+    "pk_columns": [
+      "PATIENT_ID"
+    ],
+    "row_count": 20,
+    "comment": "",
+    "schema": "PHARMA_LAB",
+    "database": "CHATBOT_DB",
+    "fields_sent": [
+      "PATIENT_ID",
+      "PATIENT_MRN",
+      "FIRST_NAME",
+      "LAST_NAME",
+      "DATE_OF_BIRTH_DATE_ID",
+      "SEX_AT_BIRTH_CODE",
+      "GENDER_IDENTITY",
+      "EMAIL_ADDRESS",
+      "PHONE_NUMBER",
+      "ADDRESS_LINE_1",
+      "CITY_NAME",
+      "STATE_CODE",
+      "POSTAL_CODE",
+      "CONSENT_STATUS",
+      "DECEASED_FLAG",
+      "ACTIVE_FLAG",
+      "IS_SYNTHETIC",
+      "SOURCE_SYSTEM_CODE"
+    ],
+    "row_count_sent": 5,
+    "masked_fields": [
+      "ADDRESS_LINE_1",
+      "CITY_NAME",
+      "DATE_OF_BIRTH_DATE_ID",
+      "EMAIL_ADDRESS",
+      "FIRST_NAME",
+      "LAST_NAME",
+      "PHONE_NUMBER",
+      "POSTAL_CODE",
+      "STATE_CODE"
+    ],
+    "mask_mode": "auto",
+    "mask_replacement_map": {
+      "CITY_NAME": "name",
+      "EMAIL_ADDRESS": "email",
+      "STATE_CODE": "state",
+      "POSTAL_CODE": "zip",
+      "FIRST_NAME": "first_name",
+      "PHONE_NUMBER": "phone",
+      "LAST_NAME": "last_name",
+      "ADDRESS_LINE_1": "address",
+      "DATE_OF_BIRTH_DATE_ID": "birthdate"
+    },
+    "synthetic_used": false
+  },
+  "CHATBOT_DB.PHARMA_LAB.D_PAYER": {
+    "columns": [
+      {
+        "name": "PAYER_ID",
+        "type": "int",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "PAYER_CODE",
+        "type": "varchar",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "PAYER_NAME",
+        "type": "nvarchar",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "PAYER_TYPE",
+        "type": "varchar",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "PLAN_NAME",
+        "type": "nvarchar",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "BIN_NUMBER",
+        "type": "char",
+        "nullable": true,
+        "comment": ""
+      },
+      {
+        "name": "PCN_CODE",
+        "type": "varchar",
+        "nullable": true,
+        "comment": ""
+      },
+      {
+        "name": "ACTIVE_FLAG",
+        "type": "bit",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "IS_SYNTHETIC",
+        "type": "bit",
+        "nullable": false,
+        "comment": ""
+      }
+    ],
+    "pk_columns": [
+      "PAYER_ID"
+    ],
+    "row_count": 6,
+    "comment": "",
+    "schema": "PHARMA_LAB",
+    "database": "CHATBOT_DB",
+    "fields_sent": [
+      "PAYER_ID",
+      "PAYER_CODE",
+      "PAYER_NAME",
+      "PAYER_TYPE",
+      "PLAN_NAME",
+      "BIN_NUMBER",
+      "PCN_CODE",
+      "ACTIVE_FLAG",
+      "IS_SYNTHETIC"
+    ],
+    "row_count_sent": 5,
+    "masked_fields": [
+      "PAYER_NAME",
+      "PLAN_NAME"
+    ],
+    "mask_mode": "auto",
+    "mask_replacement_map": {
+      "PAYER_NAME": "name",
+      "PLAN_NAME": "name"
+    },
+    "synthetic_used": false
+  },
+  "CHATBOT_DB.PHARMA_LAB.D_PHARMACY": {
+    "columns": [
+      {
+        "name": "PHARMACY_ID",
+        "type": "int",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "PHARMACY_CODE",
+        "type": "varchar",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "PHARMACY_NAME",
+        "type": "nvarchar",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "NCPDP_ID",
+        "type": "varchar",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "DEA_REGISTRATION_NUMBER",
+        "type": "varchar",
+        "nullable": true,
+        "comment": ""
+      },
+      {
+        "name": "PHARMACY_TYPE",
+        "type": "varchar",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "CITY_NAME",
+        "type": "nvarchar",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "STATE_CODE",
+        "type": "char",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "REGION_NAME",
+        "type": "nvarchar",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "ACTIVE_FLAG",
+        "type": "bit",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "IS_SYNTHETIC",
+        "type": "bit",
+        "nullable": false,
+        "comment": ""
+      }
+    ],
+    "pk_columns": [
+      "PHARMACY_ID"
+    ],
+    "row_count": 5,
+    "comment": "",
+    "schema": "PHARMA_LAB",
+    "database": "CHATBOT_DB",
+    "fields_sent": [
+      "PHARMACY_ID",
+      "PHARMACY_CODE",
+      "PHARMACY_NAME",
+      "NCPDP_ID",
+      "DEA_REGISTRATION_NUMBER",
+      "PHARMACY_TYPE",
+      "CITY_NAME",
+      "STATE_CODE",
+      "REGION_NAME",
+      "ACTIVE_FLAG",
+      "IS_SYNTHETIC"
+    ],
+    "row_count_sent": 5,
+    "masked_fields": [
+      "CITY_NAME",
+      "NCPDP_ID",
+      "PHARMACY_NAME",
+      "REGION_NAME",
+      "STATE_CODE"
+    ],
+    "mask_mode": "auto",
+    "mask_replacement_map": {
+      "CITY_NAME": "name",
+      "STATE_CODE": "state",
+      "NCPDP_ID": "phone",
+      "PHARMACY_NAME": "name",
+      "REGION_NAME": "name"
+    },
+    "synthetic_used": false
+  },
+  "CHATBOT_DB.PHARMA_LAB.D_PRESCRIBER": {
+    "columns": [
+      {
+        "name": "PRESCRIBER_ID",
+        "type": "bigint",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "NPI_NUMBER",
+        "type": "char",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "DEA_REGISTRATION_NUMBER",
+        "type": "varchar",
+        "nullable": true,
+        "comment": ""
+      },
+      {
+        "name": "STATE_LICENSE_NUMBER",
+        "type": "varchar",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "PRESCRIBER_FULL_NAME",
+        "type": "nvarchar",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "SPECIALTY_NAME",
+        "type": "nvarchar",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "PRACTICE_NAME",
+        "type": "nvarchar",
+        "nullable": true,
+        "comment": ""
+      },
+      {
+        "name": "PHONE_NUMBER",
+        "type": "varchar",
+        "nullable": true,
+        "comment": ""
+      },
+      {
+        "name": "EMAIL_ADDRESS",
+        "type": "varchar",
+        "nullable": true,
+        "comment": ""
+      },
+      {
+        "name": "ACTIVE_FLAG",
+        "type": "bit",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "IS_SYNTHETIC",
+        "type": "bit",
+        "nullable": false,
+        "comment": ""
+      }
+    ],
+    "pk_columns": [
+      "PRESCRIBER_ID"
+    ],
+    "row_count": 8,
+    "comment": "",
+    "schema": "PHARMA_LAB",
+    "database": "CHATBOT_DB",
+    "fields_sent": [
+      "PRESCRIBER_ID",
+      "NPI_NUMBER",
+      "DEA_REGISTRATION_NUMBER",
+      "STATE_LICENSE_NUMBER",
+      "PRESCRIBER_FULL_NAME",
+      "SPECIALTY_NAME",
+      "PRACTICE_NAME",
+      "PHONE_NUMBER",
+      "EMAIL_ADDRESS",
+      "ACTIVE_FLAG",
+      "IS_SYNTHETIC"
+    ],
+    "row_count_sent": 5,
+    "masked_fields": [
+      "EMAIL_ADDRESS",
+      "NPI_NUMBER",
+      "PHONE_NUMBER",
+      "PRACTICE_NAME",
+      "PRESCRIBER_FULL_NAME",
+      "SPECIALTY_NAME",
+      "STATE_LICENSE_NUMBER"
+    ],
+    "mask_mode": "auto",
+    "mask_replacement_map": {
+      "NPI_NUMBER": "phone",
+      "EMAIL_ADDRESS": "email",
+      "SPECIALTY_NAME": "name",
+      "PRESCRIBER_FULL_NAME": "name",
+      "PHONE_NUMBER": "phone",
+      "PRACTICE_NAME": "name",
+      "STATE_LICENSE_NUMBER": "ssn"
+    },
+    "synthetic_used": false
+  },
+  "CHATBOT_DB.PHARMA_LAB.D_SUPPLIER": {
+    "columns": [
+      {
+        "name": "SUPPLIER_ID",
+        "type": "int",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "SUPPLIER_CODE",
+        "type": "varchar",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "SUPPLIER_NAME",
+        "type": "nvarchar",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "DEA_REGISTRATION_NUMBER",
+        "type": "varchar",
+        "nullable": true,
+        "comment": ""
+      },
+      {
+        "name": "CONTACT_NAME",
+        "type": "nvarchar",
+        "nullable": true,
+        "comment": ""
+      },
+      {
+        "name": "CONTACT_EMAIL",
+        "type": "varchar",
+        "nullable": true,
+        "comment": ""
+      },
+      {
+        "name": "ACTIVE_FLAG",
+        "type": "bit",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "IS_SYNTHETIC",
+        "type": "bit",
+        "nullable": false,
+        "comment": ""
+      }
+    ],
+    "pk_columns": [
+      "SUPPLIER_ID"
+    ],
+    "row_count": 4,
+    "comment": "",
+    "schema": "PHARMA_LAB",
+    "database": "CHATBOT_DB",
+    "fields_sent": [
+      "SUPPLIER_ID",
+      "SUPPLIER_CODE",
+      "SUPPLIER_NAME",
+      "DEA_REGISTRATION_NUMBER",
+      "CONTACT_NAME",
+      "CONTACT_EMAIL",
+      "ACTIVE_FLAG",
+      "IS_SYNTHETIC"
+    ],
+    "row_count_sent": 4,
+    "masked_fields": [
+      "CONTACT_EMAIL",
+      "CONTACT_NAME",
+      "SUPPLIER_NAME"
+    ],
+    "mask_mode": "auto",
+    "mask_replacement_map": {
+      "CONTACT_NAME": "name",
+      "SUPPLIER_NAME": "name",
+      "CONTACT_EMAIL": "email"
+    },
+    "synthetic_used": false
+  },
+  "CHATBOT_DB.PHARMA_LAB.F_CLAIM": {
+    "columns": [
+      {
+        "name": "CLAIM_ID",
+        "type": "bigint",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "CLAIM_CONTROL_NUMBER",
+        "type": "varchar",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "RX_FILL_ID",
+        "type": "bigint",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "PATIENT_ID",
+        "type": "bigint",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "PHARMACY_ID",
+        "type": "int",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "PAYER_ID",
+        "type": "int",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "SUBMIT_DATE_ID",
+        "type": "int",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "ADJUDICATION_DATE_ID",
+        "type": "int",
+        "nullable": true,
+        "comment": ""
+      },
+      {
+        "name": "PAID_DATE_ID",
+        "type": "int",
+        "nullable": true,
+        "comment": ""
+      },
+      {
+        "name": "DENIAL_DATE_ID",
+        "type": "int",
+        "nullable": true,
+        "comment": ""
+      },
+      {
+        "name": "MEMBER_IDENTIFIER",
+        "type": "varchar",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "CLAIM_STATUS",
+        "type": "varchar",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "REJECTION_CODE",
+        "type": "varchar",
+        "nullable": true,
+        "comment": ""
+      },
+      {
+        "name": "BILLED_AMT",
+        "type": "decimal",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "ALLOWED_AMT",
+        "type": "decimal",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "PAYER_PAID_AMT",
+        "type": "decimal",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "PATIENT_RESPONSIBILITY_AMT",
+        "type": "decimal",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "DISPENSING_FEE_AMT",
+        "type": "decimal",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "DELETED_RECORD_FLAG",
+        "type": "bit",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "IS_SYNTHETIC",
+        "type": "bit",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "CREATED_AT_UTC",
+        "type": "datetime2",
+        "nullable": false,
+        "comment": ""
+      }
+    ],
+    "pk_columns": [
+      "CLAIM_ID"
+    ],
+    "row_count": 297,
+    "comment": "",
+    "schema": "PHARMA_LAB",
+    "database": "CHATBOT_DB",
+    "fields_sent": [
+      "CLAIM_ID",
+      "CLAIM_CONTROL_NUMBER",
+      "RX_FILL_ID",
+      "PATIENT_ID",
+      "PHARMACY_ID",
+      "PAYER_ID",
+      "SUBMIT_DATE_ID",
+      "ADJUDICATION_DATE_ID",
+      "PAID_DATE_ID",
+      "DENIAL_DATE_ID",
+      "MEMBER_IDENTIFIER",
+      "CLAIM_STATUS",
+      "REJECTION_CODE",
+      "BILLED_AMT",
+      "ALLOWED_AMT",
+      "PAYER_PAID_AMT",
+      "PATIENT_RESPONSIBILITY_AMT",
+      "DISPENSING_FEE_AMT",
+      "DELETED_RECORD_FLAG",
+      "IS_SYNTHETIC",
+      "CREATED_AT_UTC"
+    ],
+    "row_count_sent": 5,
+    "masked_fields": [
+      "MEMBER_IDENTIFIER"
+    ],
+    "mask_mode": "auto",
+    "mask_replacement_map": {
+      "MEMBER_IDENTIFIER": "ssn"
+    },
+    "synthetic_used": false
+  },
+  "CHATBOT_DB.PHARMA_LAB.F_INVENTORY_SNAPSHOT": {
+    "columns": [
+      {
+        "name": "INVENTORY_SNAPSHOT_ID",
+        "type": "bigint",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "PHARMACY_ID",
+        "type": "int",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "DRUG_ID",
+        "type": "int",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "SUPPLIER_ID",
+        "type": "int",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "SNAPSHOT_DATE_ID",
+        "type": "int",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "EXPIRY_DATE_ID",
+        "type": "int",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "LAST_RECEIPT_DATE_ID",
+        "type": "int",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "LOT_NUMBER",
+        "type": "varchar",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "ON_HAND_QUANTITY",
+        "type": "decimal",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "ALLOCATED_QUANTITY",
+        "type": "decimal",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "AVAILABLE_QUANTITY",
+        "type": "decimal",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "REORDER_POINT_QUANTITY",
+        "type": "decimal",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "EXPIRED_QUANTITY",
+        "type": "decimal",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "UNIT_COST_AMT",
+        "type": "decimal",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "INVENTORY_VALUE_AMT",
+        "type": "decimal",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "IS_SYNTHETIC",
+        "type": "bit",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "CREATED_AT_UTC",
+        "type": "datetime2",
+        "nullable": false,
+        "comment": ""
+      }
+    ],
+    "pk_columns": [
+      "INVENTORY_SNAPSHOT_ID"
+    ],
+    "row_count": 1440,
+    "comment": "",
+    "schema": "PHARMA_LAB",
+    "database": "CHATBOT_DB",
+    "fields_sent": [
+      "INVENTORY_SNAPSHOT_ID",
+      "PHARMACY_ID",
+      "DRUG_ID",
+      "SUPPLIER_ID",
+      "SNAPSHOT_DATE_ID",
+      "EXPIRY_DATE_ID",
+      "LAST_RECEIPT_DATE_ID",
+      "LOT_NUMBER",
+      "ON_HAND_QUANTITY",
+      "ALLOCATED_QUANTITY",
+      "AVAILABLE_QUANTITY",
+      "REORDER_POINT_QUANTITY",
+      "EXPIRED_QUANTITY",
+      "UNIT_COST_AMT",
+      "INVENTORY_VALUE_AMT",
+      "IS_SYNTHETIC",
+      "CREATED_AT_UTC"
+    ],
+    "row_count_sent": 5,
+    "masked_fields": [],
+    "mask_mode": "auto",
+    "mask_replacement_map": {},
+    "synthetic_used": false
+  },
+  "CHATBOT_DB.PHARMA_LAB.F_PAYMENT": {
+    "columns": [
+      {
+        "name": "PAYMENT_ID",
+        "type": "bigint",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "CLAIM_ID",
+        "type": "bigint",
+        "nullable": true,
+        "comment": ""
+      },
+      {
+        "name": "RX_FILL_ID",
+        "type": "bigint",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "PATIENT_ID",
+        "type": "bigint",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "PAYER_ID",
+        "type": "int",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "INVOICE_DATE_ID",
+        "type": "int",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "DUE_DATE_ID",
+        "type": "int",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "PAYMENT_DATE_ID",
+        "type": "int",
+        "nullable": true,
+        "comment": ""
+      },
+      {
+        "name": "POST_DATE_ID",
+        "type": "int",
+        "nullable": true,
+        "comment": ""
+      },
+      {
+        "name": "PAYMENT_REFERENCE",
+        "type": "varchar",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "PAYMENT_STATUS",
+        "type": "varchar",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "PAYMENT_METHOD",
+        "type": "varchar",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "INVOICE_AMT",
+        "type": "decimal",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "PAID_AMT",
+        "type": "decimal",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "OUTSTANDING_AMT",
+        "type": "decimal",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "WRITE_OFF_AMT",
+        "type": "decimal",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "IS_SYNTHETIC",
+        "type": "bit",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "CREATED_AT_UTC",
+        "type": "datetime2",
+        "nullable": false,
+        "comment": ""
+      }
+    ],
+    "pk_columns": [
+      "PAYMENT_ID"
+    ],
+    "row_count": 297,
+    "comment": "",
+    "schema": "PHARMA_LAB",
+    "database": "CHATBOT_DB",
+    "fields_sent": [
+      "PAYMENT_ID",
+      "CLAIM_ID",
+      "RX_FILL_ID",
+      "PATIENT_ID",
+      "PAYER_ID",
+      "INVOICE_DATE_ID",
+      "DUE_DATE_ID",
+      "PAYMENT_DATE_ID",
+      "POST_DATE_ID",
+      "PAYMENT_REFERENCE",
+      "PAYMENT_STATUS",
+      "PAYMENT_METHOD",
+      "INVOICE_AMT",
+      "PAID_AMT",
+      "OUTSTANDING_AMT",
+      "WRITE_OFF_AMT",
+      "IS_SYNTHETIC",
+      "CREATED_AT_UTC"
+    ],
+    "row_count_sent": 5,
+    "masked_fields": [],
+    "mask_mode": "auto",
+    "mask_replacement_map": {},
+    "synthetic_used": false
+  },
+  "CHATBOT_DB.PHARMA_LAB.F_PURCHASE_RECEIPT": {
+    "columns": [
+      {
+        "name": "PURCHASE_RECEIPT_ID",
+        "type": "bigint",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "PURCHASE_ORDER_NUMBER",
+        "type": "varchar",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "RECEIPT_LINE_NUMBER",
+        "type": "smallint",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "PHARMACY_ID",
+        "type": "int",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "DRUG_ID",
+        "type": "int",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "SUPPLIER_ID",
+        "type": "int",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "PO_DATE_ID",
+        "type": "int",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "EXPECTED_DELIVERY_DATE_ID",
+        "type": "int",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "RECEIPT_DATE_ID",
+        "type": "int",
+        "nullable": true,
+        "comment": ""
+      },
+      {
+        "name": "EXPIRY_DATE_ID",
+        "type": "int",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "LOT_NUMBER",
+        "type": "varchar",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "ORDERED_QUANTITY",
+        "type": "decimal",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "RECEIVED_QUANTITY",
+        "type": "decimal",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "REJECTED_QUANTITY",
+        "type": "decimal",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "UNIT_COST_AMT",
+        "type": "decimal",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "EXTENDED_COST_AMT",
+        "type": "decimal",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "RECEIPT_STATUS",
+        "type": "varchar",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "TEMPERATURE_EXCEPTION_FLAG",
+        "type": "bit",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "IS_SYNTHETIC",
+        "type": "bit",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "CREATED_AT_UTC",
+        "type": "datetime2",
+        "nullable": false,
+        "comment": ""
+      }
+    ],
+    "pk_columns": [
+      "PURCHASE_RECEIPT_ID"
+    ],
+    "row_count": 240,
+    "comment": "",
+    "schema": "PHARMA_LAB",
+    "database": "CHATBOT_DB",
+    "fields_sent": [
+      "PURCHASE_RECEIPT_ID",
+      "PURCHASE_ORDER_NUMBER",
+      "RECEIPT_LINE_NUMBER",
+      "PHARMACY_ID",
+      "DRUG_ID",
+      "SUPPLIER_ID",
+      "PO_DATE_ID",
+      "EXPECTED_DELIVERY_DATE_ID",
+      "RECEIPT_DATE_ID",
+      "EXPIRY_DATE_ID",
+      "LOT_NUMBER",
+      "ORDERED_QUANTITY",
+      "RECEIVED_QUANTITY",
+      "REJECTED_QUANTITY",
+      "UNIT_COST_AMT",
+      "EXTENDED_COST_AMT",
+      "RECEIPT_STATUS",
+      "TEMPERATURE_EXCEPTION_FLAG",
+      "IS_SYNTHETIC",
+      "CREATED_AT_UTC"
+    ],
+    "row_count_sent": 5,
+    "masked_fields": [],
+    "mask_mode": "auto",
+    "mask_replacement_map": {},
+    "synthetic_used": false
+  },
+  "CHATBOT_DB.PHARMA_LAB.F_RX_FILL": {
+    "columns": [
+      {
+        "name": "RX_FILL_ID",
+        "type": "bigint",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "RX_ORDER_ID",
+        "type": "bigint",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "PATIENT_ID",
+        "type": "bigint",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "PRESCRIBER_ID",
+        "type": "bigint",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "PHARMACY_ID",
+        "type": "int",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "DRUG_ID",
+        "type": "int",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "PAYER_ID",
+        "type": "int",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "ORDER_DATE_ID",
+        "type": "int",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "BOOKED_DATE_ID",
+        "type": "int",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "SCHEDULED_FILL_DATE_ID",
+        "type": "int",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "DISPENSE_DATE_ID",
+        "type": "int",
+        "nullable": true,
+        "comment": ""
+      },
+      {
+        "name": "PICKUP_DATE_ID",
+        "type": "int",
+        "nullable": true,
+        "comment": ""
+      },
+      {
+        "name": "REVERSAL_DATE_ID",
+        "type": "int",
+        "nullable": true,
+        "comment": ""
+      },
+      {
+        "name": "FILL_SEQUENCE_NUMBER",
+        "type": "tinyint",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "DISPENSED_QUANTITY",
+        "type": "decimal",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "DAYS_SUPPLY",
+        "type": "smallint",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "GROSS_REVENUE_AMT",
+        "type": "decimal",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "DISCOUNT_AMT",
+        "type": "decimal",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "NET_REVENUE_AMT",
+        "type": "decimal",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "ACQUISITION_COST_AMT",
+        "type": "decimal",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "GROSS_PROFIT_AMT",
+        "type": "decimal",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "PATIENT_COPAY_AMT",
+        "type": "decimal",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "THIRD_PARTY_PAID_AMT",
+        "type": "decimal",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "TAX_AMT",
+        "type": "decimal",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "FILL_STATUS",
+        "type": "varchar",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "REVERSAL_FLAG",
+        "type": "bit",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "DELETED_RECORD_FLAG",
+        "type": "bit",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "IS_SYNTHETIC",
+        "type": "bit",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "CREATED_AT_UTC",
+        "type": "datetime2",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "FILL_DATE",
+        "type": "date",
+        "nullable": true,
+        "comment": ""
+      }
+    ],
+    "pk_columns": [
+      "RX_FILL_ID"
+    ],
+    "row_count": 339,
+    "comment": "",
+    "schema": "PHARMA_LAB",
+    "database": "CHATBOT_DB",
+    "fields_sent": [
+      "RX_FILL_ID",
+      "RX_ORDER_ID",
+      "PATIENT_ID",
+      "PRESCRIBER_ID",
+      "PHARMACY_ID",
+      "DRUG_ID",
+      "PAYER_ID",
+      "ORDER_DATE_ID",
+      "BOOKED_DATE_ID",
+      "SCHEDULED_FILL_DATE_ID",
+      "DISPENSE_DATE_ID",
+      "PICKUP_DATE_ID",
+      "REVERSAL_DATE_ID",
+      "FILL_SEQUENCE_NUMBER",
+      "DISPENSED_QUANTITY",
+      "DAYS_SUPPLY",
+      "GROSS_REVENUE_AMT",
+      "DISCOUNT_AMT",
+      "NET_REVENUE_AMT",
+      "ACQUISITION_COST_AMT",
+      "GROSS_PROFIT_AMT",
+      "PATIENT_COPAY_AMT",
+      "THIRD_PARTY_PAID_AMT",
+      "TAX_AMT",
+      "FILL_STATUS",
+      "REVERSAL_FLAG",
+      "DELETED_RECORD_FLAG",
+      "IS_SYNTHETIC",
+      "CREATED_AT_UTC",
+      "FILL_DATE"
+    ],
+    "row_count_sent": 5,
+    "masked_fields": [],
+    "mask_mode": "auto",
+    "mask_replacement_map": {},
+    "synthetic_used": false
+  },
+  "CHATBOT_DB.PHARMA_LAB.F_RX_ORDER": {
+    "columns": [
+      {
+        "name": "RX_ORDER_ID",
+        "type": "bigint",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "RX_NUMBER",
+        "type": "varchar",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "PATIENT_ID",
+        "type": "bigint",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "PRESCRIBER_ID",
+        "type": "bigint",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "PHARMACY_ID",
+        "type": "int",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "DRUG_ID",
+        "type": "int",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "PAYER_ID",
+        "type": "int",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "WRITTEN_DATE_ID",
+        "type": "int",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "ORDER_DATE_ID",
+        "type": "int",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "THERAPY_START_DATE_ID",
+        "type": "int",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "THERAPY_END_DATE_ID",
+        "type": "int",
+        "nullable": true,
+        "comment": ""
+      },
+      {
+        "name": "ORDERED_QUANTITY",
+        "type": "decimal",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "DAYS_SUPPLY",
+        "type": "smallint",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "REFILLS_AUTHORIZED",
+        "type": "tinyint",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "ROUTE_CODE",
+        "type": "varchar",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "SIG_INSTRUCTIONS",
+        "type": "nvarchar",
+        "nullable": true,
+        "comment": ""
+      },
+      {
+        "name": "ORDER_STATUS",
+        "type": "varchar",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "PRIOR_AUTH_REQUIRED_FLAG",
+        "type": "bit",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "CONTROLLED_SUBSTANCE_FLAG",
+        "type": "bit",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "DELETED_RECORD_FLAG",
+        "type": "bit",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "IS_SYNTHETIC",
+        "type": "bit",
+        "nullable": false,
+        "comment": ""
+      },
+      {
+        "name": "CREATED_AT_UTC",
+        "type": "datetime2",
+        "nullable": false,
+        "comment": ""
+      }
+    ],
+    "pk_columns": [
+      "RX_ORDER_ID"
+    ],
+    "row_count": 360,
+    "comment": "",
+    "schema": "PHARMA_LAB",
+    "database": "CHATBOT_DB",
+    "fields_sent": [
+      "RX_ORDER_ID",
+      "RX_NUMBER",
+      "PATIENT_ID",
+      "PRESCRIBER_ID",
+      "PHARMACY_ID",
+      "DRUG_ID",
+      "PAYER_ID",
+      "WRITTEN_DATE_ID",
+      "ORDER_DATE_ID",
+      "THERAPY_START_DATE_ID",
+      "THERAPY_END_DATE_ID",
+      "ORDERED_QUANTITY",
+      "DAYS_SUPPLY",
+      "REFILLS_AUTHORIZED",
+      "ROUTE_CODE",
+      "SIG_INSTRUCTIONS",
+      "ORDER_STATUS",
+      "PRIOR_AUTH_REQUIRED_FLAG",
+      "CONTROLLED_SUBSTANCE_FLAG",
+      "DELETED_RECORD_FLAG",
+      "IS_SYNTHETIC",
+      "CREATED_AT_UTC"
+    ],
+    "row_count_sent": 5,
+    "masked_fields": [],
+    "mask_mode": "auto",
+    "mask_replacement_map": {},
+    "synthetic_used": false
+  },
+  "__db_fk_constraints__": [
+    {
+      "constraint_name": "FK_BR_RX_DIAGNOSIS_DIAGNOSIS",
+      "parent_schema": "PHARMA_LAB",
+      "parent_table": "BR_RX_DIAGNOSIS",
+      "parent_col": "DIAGNOSIS_ID",
+      "ref_schema": "PHARMA_LAB",
+      "ref_table": "D_DIAGNOSIS",
+      "ref_col": "DIAGNOSIS_ID",
+      "ordinal": 1,
+      "enforced": true,
+      "source": "azure_sql"
+    },
+    {
+      "constraint_name": "FK_BR_RX_DIAGNOSIS_ORDER",
+      "parent_schema": "PHARMA_LAB",
+      "parent_table": "BR_RX_DIAGNOSIS",
+      "parent_col": "RX_ORDER_ID",
+      "ref_schema": "PHARMA_LAB",
+      "ref_table": "F_RX_ORDER",
+      "ref_col": "RX_ORDER_ID",
+      "ordinal": 1,
+      "enforced": true,
+      "source": "azure_sql"
+    },
+    {
+      "constraint_name": "FK_D_PATIENT_BIRTH_DATE",
+      "parent_schema": "PHARMA_LAB",
+      "parent_table": "D_PATIENT",
+      "parent_col": "DATE_OF_BIRTH_DATE_ID",
+      "ref_schema": "PHARMA_LAB",
+      "ref_table": "D_DATE",
+      "ref_col": "DATE_ID",
+      "ordinal": 1,
+      "enforced": true,
+      "source": "azure_sql"
+    },
+    {
+      "constraint_name": "FK_F_CLAIM_ADJUDICATION_DATE",
+      "parent_schema": "PHARMA_LAB",
+      "parent_table": "F_CLAIM",
+      "parent_col": "ADJUDICATION_DATE_ID",
+      "ref_schema": "PHARMA_LAB",
+      "ref_table": "D_DATE",
+      "ref_col": "DATE_ID",
+      "ordinal": 1,
+      "enforced": true,
+      "source": "azure_sql"
+    },
+    {
+      "constraint_name": "FK_F_CLAIM_DENIAL_DATE",
+      "parent_schema": "PHARMA_LAB",
+      "parent_table": "F_CLAIM",
+      "parent_col": "DENIAL_DATE_ID",
+      "ref_schema": "PHARMA_LAB",
+      "ref_table": "D_DATE",
+      "ref_col": "DATE_ID",
+      "ordinal": 1,
+      "enforced": true,
+      "source": "azure_sql"
+    },
+    {
+      "constraint_name": "FK_F_CLAIM_FILL",
+      "parent_schema": "PHARMA_LAB",
+      "parent_table": "F_CLAIM",
+      "parent_col": "RX_FILL_ID",
+      "ref_schema": "PHARMA_LAB",
+      "ref_table": "F_RX_FILL",
+      "ref_col": "RX_FILL_ID",
+      "ordinal": 1,
+      "enforced": true,
+      "source": "azure_sql"
+    },
+    {
+      "constraint_name": "FK_F_CLAIM_PAID_DATE",
+      "parent_schema": "PHARMA_LAB",
+      "parent_table": "F_CLAIM",
+      "parent_col": "PAID_DATE_ID",
+      "ref_schema": "PHARMA_LAB",
+      "ref_table": "D_DATE",
+      "ref_col": "DATE_ID",
+      "ordinal": 1,
+      "enforced": true,
+      "source": "azure_sql"
+    },
+    {
+      "constraint_name": "FK_F_CLAIM_PATIENT",
+      "parent_schema": "PHARMA_LAB",
+      "parent_table": "F_CLAIM",
+      "parent_col": "PATIENT_ID",
+      "ref_schema": "PHARMA_LAB",
+      "ref_table": "D_PATIENT",
+      "ref_col": "PATIENT_ID",
+      "ordinal": 1,
+      "enforced": true,
+      "source": "azure_sql"
+    },
+    {
+      "constraint_name": "FK_F_CLAIM_PAYER",
+      "parent_schema": "PHARMA_LAB",
+      "parent_table": "F_CLAIM",
+      "parent_col": "PAYER_ID",
+      "ref_schema": "PHARMA_LAB",
+      "ref_table": "D_PAYER",
+      "ref_col": "PAYER_ID",
+      "ordinal": 1,
+      "enforced": true,
+      "source": "azure_sql"
+    },
+    {
+      "constraint_name": "FK_F_CLAIM_PHARMACY",
+      "parent_schema": "PHARMA_LAB",
+      "parent_table": "F_CLAIM",
+      "parent_col": "PHARMACY_ID",
+      "ref_schema": "PHARMA_LAB",
+      "ref_table": "D_PHARMACY",
+      "ref_col": "PHARMACY_ID",
+      "ordinal": 1,
+      "enforced": true,
+      "source": "azure_sql"
+    },
+    {
+      "constraint_name": "FK_F_CLAIM_SUBMIT_DATE",
+      "parent_schema": "PHARMA_LAB",
+      "parent_table": "F_CLAIM",
+      "parent_col": "SUBMIT_DATE_ID",
+      "ref_schema": "PHARMA_LAB",
+      "ref_table": "D_DATE",
+      "ref_col": "DATE_ID",
+      "ordinal": 1,
+      "enforced": true,
+      "source": "azure_sql"
+    },
+    {
+      "constraint_name": "FK_F_INVENTORY_DRUG",
+      "parent_schema": "PHARMA_LAB",
+      "parent_table": "F_INVENTORY_SNAPSHOT",
+      "parent_col": "DRUG_ID",
+      "ref_schema": "PHARMA_LAB",
+      "ref_table": "D_DRUG",
+      "ref_col": "DRUG_ID",
+      "ordinal": 1,
+      "enforced": true,
+      "source": "azure_sql"
+    },
+    {
+      "constraint_name": "FK_F_INVENTORY_EXPIRY_DATE",
+      "parent_schema": "PHARMA_LAB",
+      "parent_table": "F_INVENTORY_SNAPSHOT",
+      "parent_col": "EXPIRY_DATE_ID",
+      "ref_schema": "PHARMA_LAB",
+      "ref_table": "D_DATE",
+      "ref_col": "DATE_ID",
+      "ordinal": 1,
+      "enforced": true,
+      "source": "azure_sql"
+    },
+    {
+      "constraint_name": "FK_F_INVENTORY_LAST_RECEIPT_DATE",
+      "parent_schema": "PHARMA_LAB",
+      "parent_table": "F_INVENTORY_SNAPSHOT",
+      "parent_col": "LAST_RECEIPT_DATE_ID",
+      "ref_schema": "PHARMA_LAB",
+      "ref_table": "D_DATE",
+      "ref_col": "DATE_ID",
+      "ordinal": 1,
+      "enforced": true,
+      "source": "azure_sql"
+    },
+    {
+      "constraint_name": "FK_F_INVENTORY_PHARMACY",
+      "parent_schema": "PHARMA_LAB",
+      "parent_table": "F_INVENTORY_SNAPSHOT",
+      "parent_col": "PHARMACY_ID",
+      "ref_schema": "PHARMA_LAB",
+      "ref_table": "D_PHARMACY",
+      "ref_col": "PHARMACY_ID",
+      "ordinal": 1,
+      "enforced": true,
+      "source": "azure_sql"
+    },
+    {
+      "constraint_name": "FK_F_INVENTORY_SNAPSHOT_DATE",
+      "parent_schema": "PHARMA_LAB",
+      "parent_table": "F_INVENTORY_SNAPSHOT",
+      "parent_col": "SNAPSHOT_DATE_ID",
+      "ref_schema": "PHARMA_LAB",
+      "ref_table": "D_DATE",
+      "ref_col": "DATE_ID",
+      "ordinal": 1,
+      "enforced": true,
+      "source": "azure_sql"
+    },
+    {
+      "constraint_name": "FK_F_INVENTORY_SUPPLIER",
+      "parent_schema": "PHARMA_LAB",
+      "parent_table": "F_INVENTORY_SNAPSHOT",
+      "parent_col": "SUPPLIER_ID",
+      "ref_schema": "PHARMA_LAB",
+      "ref_table": "D_SUPPLIER",
+      "ref_col": "SUPPLIER_ID",
+      "ordinal": 1,
+      "enforced": true,
+      "source": "azure_sql"
+    },
+    {
+      "constraint_name": "FK_F_PAYMENT_CLAIM",
+      "parent_schema": "PHARMA_LAB",
+      "parent_table": "F_PAYMENT",
+      "parent_col": "CLAIM_ID",
+      "ref_schema": "PHARMA_LAB",
+      "ref_table": "F_CLAIM",
+      "ref_col": "CLAIM_ID",
+      "ordinal": 1,
+      "enforced": true,
+      "source": "azure_sql"
+    },
+    {
+      "constraint_name": "FK_F_PAYMENT_DUE_DATE",
+      "parent_schema": "PHARMA_LAB",
+      "parent_table": "F_PAYMENT",
+      "parent_col": "DUE_DATE_ID",
+      "ref_schema": "PHARMA_LAB",
+      "ref_table": "D_DATE",
+      "ref_col": "DATE_ID",
+      "ordinal": 1,
+      "enforced": true,
+      "source": "azure_sql"
+    },
+    {
+      "constraint_name": "FK_F_PAYMENT_FILL",
+      "parent_schema": "PHARMA_LAB",
+      "parent_table": "F_PAYMENT",
+      "parent_col": "RX_FILL_ID",
+      "ref_schema": "PHARMA_LAB",
+      "ref_table": "F_RX_FILL",
+      "ref_col": "RX_FILL_ID",
+      "ordinal": 1,
+      "enforced": true,
+      "source": "azure_sql"
+    },
+    {
+      "constraint_name": "FK_F_PAYMENT_INVOICE_DATE",
+      "parent_schema": "PHARMA_LAB",
+      "parent_table": "F_PAYMENT",
+      "parent_col": "INVOICE_DATE_ID",
+      "ref_schema": "PHARMA_LAB",
+      "ref_table": "D_DATE",
+      "ref_col": "DATE_ID",
+      "ordinal": 1,
+      "enforced": true,
+      "source": "azure_sql"
+    },
+    {
+      "constraint_name": "FK_F_PAYMENT_PATIENT",
+      "parent_schema": "PHARMA_LAB",
+      "parent_table": "F_PAYMENT",
+      "parent_col": "PATIENT_ID",
+      "ref_schema": "PHARMA_LAB",
+      "ref_table": "D_PATIENT",
+      "ref_col": "PATIENT_ID",
+      "ordinal": 1,
+      "enforced": true,
+      "source": "azure_sql"
+    },
+    {
+      "constraint_name": "FK_F_PAYMENT_PAYER",
+      "parent_schema": "PHARMA_LAB",
+      "parent_table": "F_PAYMENT",
+      "parent_col": "PAYER_ID",
+      "ref_schema": "PHARMA_LAB",
+      "ref_table": "D_PAYER",
+      "ref_col": "PAYER_ID",
+      "ordinal": 1,
+      "enforced": true,
+      "source": "azure_sql"
+    },
+    {
+      "constraint_name": "FK_F_PAYMENT_PAYMENT_DATE",
+      "parent_schema": "PHARMA_LAB",
+      "parent_table": "F_PAYMENT",
+      "parent_col": "PAYMENT_DATE_ID",
+      "ref_schema": "PHARMA_LAB",
+      "ref_table": "D_DATE",
+      "ref_col": "DATE_ID",
+      "ordinal": 1,
+      "enforced": true,
+      "source": "azure_sql"
+    },
+    {
+      "constraint_name": "FK_F_PAYMENT_POST_DATE",
+      "parent_schema": "PHARMA_LAB",
+      "parent_table": "F_PAYMENT",
+      "parent_col": "POST_DATE_ID",
+      "ref_schema": "PHARMA_LAB",
+      "ref_table": "D_DATE",
+      "ref_col": "DATE_ID",
+      "ordinal": 1,
+      "enforced": true,
+      "source": "azure_sql"
+    },
+    {
+      "constraint_name": "FK_F_PURCHASE_DRUG",
+      "parent_schema": "PHARMA_LAB",
+      "parent_table": "F_PURCHASE_RECEIPT",
+      "parent_col": "DRUG_ID",
+      "ref_schema": "PHARMA_LAB",
+      "ref_table": "D_DRUG",
+      "ref_col": "DRUG_ID",
+      "ordinal": 1,
+      "enforced": true,
+      "source": "azure_sql"
+    },
+    {
+      "constraint_name": "FK_F_PURCHASE_EXPECTED_DATE",
+      "parent_schema": "PHARMA_LAB",
+      "parent_table": "F_PURCHASE_RECEIPT",
+      "parent_col": "EXPECTED_DELIVERY_DATE_ID",
+      "ref_schema": "PHARMA_LAB",
+      "ref_table": "D_DATE",
+      "ref_col": "DATE_ID",
+      "ordinal": 1,
+      "enforced": true,
+      "source": "azure_sql"
+    },
+    {
+      "constraint_name": "FK_F_PURCHASE_EXPIRY_DATE",
+      "parent_schema": "PHARMA_LAB",
+      "parent_table": "F_PURCHASE_RECEIPT",
+      "parent_col": "EXPIRY_DATE_ID",
+      "ref_schema": "PHARMA_LAB",
+      "ref_table": "D_DATE",
+      "ref_col": "DATE_ID",
+      "ordinal": 1,
+      "enforced": true,
+      "source": "azure_sql"
+    },
+    {
+      "constraint_name": "FK_F_PURCHASE_PHARMACY",
+      "parent_schema": "PHARMA_LAB",
+      "parent_table": "F_PURCHASE_RECEIPT",
+      "parent_col": "PHARMACY_ID",
+      "ref_schema": "PHARMA_LAB",
+      "ref_table": "D_PHARMACY",
+      "ref_col": "PHARMACY_ID",
+      "ordinal": 1,
+      "enforced": true,
+      "source": "azure_sql"
+    },
+    {
+      "constraint_name": "FK_F_PURCHASE_PO_DATE",
+      "parent_schema": "PHARMA_LAB",
+      "parent_table": "F_PURCHASE_RECEIPT",
+      "parent_col": "PO_DATE_ID",
+      "ref_schema": "PHARMA_LAB",
+      "ref_table": "D_DATE",
+      "ref_col": "DATE_ID",
+      "ordinal": 1,
+      "enforced": true,
+      "source": "azure_sql"
+    },
+    {
+      "constraint_name": "FK_F_PURCHASE_RECEIPT_DATE",
+      "parent_schema": "PHARMA_LAB",
+      "parent_table": "F_PURCHASE_RECEIPT",
+      "parent_col": "RECEIPT_DATE_ID",
+      "ref_schema": "PHARMA_LAB",
+      "ref_table": "D_DATE",
+      "ref_col": "DATE_ID",
+      "ordinal": 1,
+      "enforced": true,
+      "source": "azure_sql"
+    },
+    {
+      "constraint_name": "FK_F_PURCHASE_SUPPLIER",
+      "parent_schema": "PHARMA_LAB",
+      "parent_table": "F_PURCHASE_RECEIPT",
+      "parent_col": "SUPPLIER_ID",
+      "ref_schema": "PHARMA_LAB",
+      "ref_table": "D_SUPPLIER",
+      "ref_col": "SUPPLIER_ID",
+      "ordinal": 1,
+      "enforced": true,
+      "source": "azure_sql"
+    },
+    {
+      "constraint_name": "FK_F_RX_FILL_BOOKED_DATE",
+      "parent_schema": "PHARMA_LAB",
+      "parent_table": "F_RX_FILL",
+      "parent_col": "BOOKED_DATE_ID",
+      "ref_schema": "PHARMA_LAB",
+      "ref_table": "D_DATE",
+      "ref_col": "DATE_ID",
+      "ordinal": 1,
+      "enforced": true,
+      "source": "azure_sql"
+    },
+    {
+      "constraint_name": "FK_F_RX_FILL_DISPENSE_DATE",
+      "parent_schema": "PHARMA_LAB",
+      "parent_table": "F_RX_FILL",
+      "parent_col": "DISPENSE_DATE_ID",
+      "ref_schema": "PHARMA_LAB",
+      "ref_table": "D_DATE",
+      "ref_col": "DATE_ID",
+      "ordinal": 1,
+      "enforced": true,
+      "source": "azure_sql"
+    },
+    {
+      "constraint_name": "FK_F_RX_FILL_DRUG",
+      "parent_schema": "PHARMA_LAB",
+      "parent_table": "F_RX_FILL",
+      "parent_col": "DRUG_ID",
+      "ref_schema": "PHARMA_LAB",
+      "ref_table": "D_DRUG",
+      "ref_col": "DRUG_ID",
+      "ordinal": 1,
+      "enforced": true,
+      "source": "azure_sql"
+    },
+    {
+      "constraint_name": "FK_F_RX_FILL_ORDER",
+      "parent_schema": "PHARMA_LAB",
+      "parent_table": "F_RX_FILL",
+      "parent_col": "RX_ORDER_ID",
+      "ref_schema": "PHARMA_LAB",
+      "ref_table": "F_RX_ORDER",
+      "ref_col": "RX_ORDER_ID",
+      "ordinal": 1,
+      "enforced": true,
+      "source": "azure_sql"
+    },
+    {
+      "constraint_name": "FK_F_RX_FILL_ORDER_DATE",
+      "parent_schema": "PHARMA_LAB",
+      "parent_table": "F_RX_FILL",
+      "parent_col": "ORDER_DATE_ID",
+      "ref_schema": "PHARMA_LAB",
+      "ref_table": "D_DATE",
+      "ref_col": "DATE_ID",
+      "ordinal": 1,
+      "enforced": true,
+      "source": "azure_sql"
+    },
+    {
+      "constraint_name": "FK_F_RX_FILL_PATIENT",
+      "parent_schema": "PHARMA_LAB",
+      "parent_table": "F_RX_FILL",
+      "parent_col": "PATIENT_ID",
+      "ref_schema": "PHARMA_LAB",
+      "ref_table": "D_PATIENT",
+      "ref_col": "PATIENT_ID",
+      "ordinal": 1,
+      "enforced": true,
+      "source": "azure_sql"
+    },
+    {
+      "constraint_name": "FK_F_RX_FILL_PAYER",
+      "parent_schema": "PHARMA_LAB",
+      "parent_table": "F_RX_FILL",
+      "parent_col": "PAYER_ID",
+      "ref_schema": "PHARMA_LAB",
+      "ref_table": "D_PAYER",
+      "ref_col": "PAYER_ID",
+      "ordinal": 1,
+      "enforced": true,
+      "source": "azure_sql"
+    },
+    {
+      "constraint_name": "FK_F_RX_FILL_PHARMACY",
+      "parent_schema": "PHARMA_LAB",
+      "parent_table": "F_RX_FILL",
+      "parent_col": "PHARMACY_ID",
+      "ref_schema": "PHARMA_LAB",
+      "ref_table": "D_PHARMACY",
+      "ref_col": "PHARMACY_ID",
+      "ordinal": 1,
+      "enforced": true,
+      "source": "azure_sql"
+    },
+    {
+      "constraint_name": "FK_F_RX_FILL_PICKUP_DATE",
+      "parent_schema": "PHARMA_LAB",
+      "parent_table": "F_RX_FILL",
+      "parent_col": "PICKUP_DATE_ID",
+      "ref_schema": "PHARMA_LAB",
+      "ref_table": "D_DATE",
+      "ref_col": "DATE_ID",
+      "ordinal": 1,
+      "enforced": true,
+      "source": "azure_sql"
+    },
+    {
+      "constraint_name": "FK_F_RX_FILL_PRESCRIBER",
+      "parent_schema": "PHARMA_LAB",
+      "parent_table": "F_RX_FILL",
+      "parent_col": "PRESCRIBER_ID",
+      "ref_schema": "PHARMA_LAB",
+      "ref_table": "D_PRESCRIBER",
+      "ref_col": "PRESCRIBER_ID",
+      "ordinal": 1,
+      "enforced": true,
+      "source": "azure_sql"
+    },
+    {
+      "constraint_name": "FK_F_RX_FILL_REVERSAL_DATE",
+      "parent_schema": "PHARMA_LAB",
+      "parent_table": "F_RX_FILL",
+      "parent_col": "REVERSAL_DATE_ID",
+      "ref_schema": "PHARMA_LAB",
+      "ref_table": "D_DATE",
+      "ref_col": "DATE_ID",
+      "ordinal": 1,
+      "enforced": true,
+      "source": "azure_sql"
+    },
+    {
+      "constraint_name": "FK_F_RX_FILL_SCHEDULED_DATE",
+      "parent_schema": "PHARMA_LAB",
+      "parent_table": "F_RX_FILL",
+      "parent_col": "SCHEDULED_FILL_DATE_ID",
+      "ref_schema": "PHARMA_LAB",
+      "ref_table": "D_DATE",
+      "ref_col": "DATE_ID",
+      "ordinal": 1,
+      "enforced": true,
+      "source": "azure_sql"
+    },
+    {
+      "constraint_name": "FK_F_RX_ORDER_DRUG",
+      "parent_schema": "PHARMA_LAB",
+      "parent_table": "F_RX_ORDER",
+      "parent_col": "DRUG_ID",
+      "ref_schema": "PHARMA_LAB",
+      "ref_table": "D_DRUG",
+      "ref_col": "DRUG_ID",
+      "ordinal": 1,
+      "enforced": true,
+      "source": "azure_sql"
+    },
+    {
+      "constraint_name": "FK_F_RX_ORDER_END_DATE",
+      "parent_schema": "PHARMA_LAB",
+      "parent_table": "F_RX_ORDER",
+      "parent_col": "THERAPY_END_DATE_ID",
+      "ref_schema": "PHARMA_LAB",
+      "ref_table": "D_DATE",
+      "ref_col": "DATE_ID",
+      "ordinal": 1,
+      "enforced": true,
+      "source": "azure_sql"
+    },
+    {
+      "constraint_name": "FK_F_RX_ORDER_ORDER_DATE",
+      "parent_schema": "PHARMA_LAB",
+      "parent_table": "F_RX_ORDER",
+      "parent_col": "ORDER_DATE_ID",
+      "ref_schema": "PHARMA_LAB",
+      "ref_table": "D_DATE",
+      "ref_col": "DATE_ID",
+      "ordinal": 1,
+      "enforced": true,
+      "source": "azure_sql"
+    },
+    {
+      "constraint_name": "FK_F_RX_ORDER_PATIENT",
+      "parent_schema": "PHARMA_LAB",
+      "parent_table": "F_RX_ORDER",
+      "parent_col": "PATIENT_ID",
+      "ref_schema": "PHARMA_LAB",
+      "ref_table": "D_PATIENT",
+      "ref_col": "PATIENT_ID",
+      "ordinal": 1,
+      "enforced": true,
+      "source": "azure_sql"
+    },
+    {
+      "constraint_name": "FK_F_RX_ORDER_PAYER",
+      "parent_schema": "PHARMA_LAB",
+      "parent_table": "F_RX_ORDER",
+      "parent_col": "PAYER_ID",
+      "ref_schema": "PHARMA_LAB",
+      "ref_table": "D_PAYER",
+      "ref_col": "PAYER_ID",
+      "ordinal": 1,
+      "enforced": true,
+      "source": "azure_sql"
+    },
+    {
+      "constraint_name": "FK_F_RX_ORDER_PHARMACY",
+      "parent_schema": "PHARMA_LAB",
+      "parent_table": "F_RX_ORDER",
+      "parent_col": "PHARMACY_ID",
+      "ref_schema": "PHARMA_LAB",
+      "ref_table": "D_PHARMACY",
+      "ref_col": "PHARMACY_ID",
+      "ordinal": 1,
+      "enforced": true,
+      "source": "azure_sql"
+    },
+    {
+      "constraint_name": "FK_F_RX_ORDER_PRESCRIBER",
+      "parent_schema": "PHARMA_LAB",
+      "parent_table": "F_RX_ORDER",
+      "parent_col": "PRESCRIBER_ID",
+      "ref_schema": "PHARMA_LAB",
+      "ref_table": "D_PRESCRIBER",
+      "ref_col": "PRESCRIBER_ID",
+      "ordinal": 1,
+      "enforced": true,
+      "source": "azure_sql"
+    },
+    {
+      "constraint_name": "FK_F_RX_ORDER_START_DATE",
+      "parent_schema": "PHARMA_LAB",
+      "parent_table": "F_RX_ORDER",
+      "parent_col": "THERAPY_START_DATE_ID",
+      "ref_schema": "PHARMA_LAB",
+      "ref_table": "D_DATE",
+      "ref_col": "DATE_ID",
+      "ordinal": 1,
+      "enforced": true,
+      "source": "azure_sql"
+    },
+    {
+      "constraint_name": "FK_F_RX_ORDER_WRITTEN_DATE",
+      "parent_schema": "PHARMA_LAB",
+      "parent_table": "F_RX_ORDER",
+      "parent_col": "WRITTEN_DATE_ID",
+      "ref_schema": "PHARMA_LAB",
+      "ref_table": "D_DATE",
+      "ref_col": "DATE_ID",
+      "ordinal": 1,
+      "enforced": true,
+      "source": "azure_sql"
+    }
+  ]
+}

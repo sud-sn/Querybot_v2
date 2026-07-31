@@ -51,6 +51,158 @@ from typing import Any
 from core.semantic_ids import date_role_id, field_id, join_id, metric_id
 
 
+def _table_key(value: Any) -> str:
+    """Return a stable SCHEMA.TABLE-style key for loose FQN matching."""
+    parts = [
+        part.strip().strip('[]"`').upper()
+        for part in str(value or "").split(".")
+        if part.strip().strip('[]"`')
+    ]
+    return ".".join(parts[-2:]) if len(parts) >= 2 else (parts[-1] if parts else "")
+
+
+def _date_bindings(date_context_resolution: dict[str, Any] | None) -> list[dict[str, Any]]:
+    resolution = date_context_resolution or {}
+    if resolution.get("status") == "selected_many":
+        return [item for item in resolution.get("bindings") or [] if isinstance(item, dict)]
+    if resolution.get("status") == "selected" and isinstance(resolution.get("binding"), dict):
+        return [resolution["binding"]]
+    return []
+
+
+def build_planner_alignment(
+    *,
+    graph: dict[str, Any] | None,
+    graph_ctx: dict[str, Any] | None,
+    semantic_plan: dict[str, Any] | None,
+    metric_formula_tables: set[str] | list[str] | None = None,
+    date_context_resolution: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Compile the independent planners into authoritative graph inputs.
+
+    Approved semantic fields, metric formulas, and selected date roles are
+    stronger evidence of the business fact than a lexical graph match.  When
+    one or more of those sources names a fact table, unrelated fact entities
+    from the earlier question-only graph pass are dropped.  Detected
+    dimensions are retained, as are all governed facts for a real multi-fact
+    comparison.
+
+    This function is pure: it describes the inputs for the final graph pass;
+    the caller performs the resolution and supplies that same result to the
+    SQL prompt and validator.
+    """
+    graph = graph or {}
+    graph_ctx = graph_ctx or {}
+    semantic_plan = semantic_plan or {}
+
+    required_tables: set[str] = {
+        _table_key(table) for table in metric_formula_tables or [] if _table_key(table)
+    }
+    for table in semantic_plan.get("required_tables") or []:
+        if _table_key(table):
+            required_tables.add(_table_key(table))
+    for field in semantic_plan.get("fields") or []:
+        if not isinstance(field, dict):
+            continue
+        for key in ("table", "source_table", "date_value_table"):
+            if _table_key(field.get(key)):
+                required_tables.add(_table_key(field.get(key)))
+    for join in semantic_plan.get("joins") or []:
+        if not isinstance(join, dict):
+            continue
+        for key in ("from", "to", "from_table", "to_table"):
+            if _table_key(join.get(key)):
+                required_tables.add(_table_key(join.get(key)))
+    for binding in _date_bindings(date_context_resolution):
+        for key in ("fact_table", "dimension_table", "date_table"):
+            if _table_key(binding.get(key)):
+                required_tables.add(_table_key(binding.get(key)))
+
+    entities_by_name = {
+        str(entity.get("entity_name") or ""): entity
+        for entity in graph.get("entities") or []
+        if entity.get("entity_name")
+    }
+    table_to_entity: dict[str, str] = {}
+    for name, entity in entities_by_name.items():
+        table = _table_key(
+            f"{entity.get('schema_name')}.{entity.get('table_name')}"
+            if entity.get("schema_name") else entity.get("table_name")
+        )
+        if table:
+            table_to_entity[table] = name
+            table_to_entity.setdefault(table.split(".")[-1], name)
+
+    required_entities = {
+        table_to_entity[table]
+        for table in required_tables
+        if table in table_to_entity
+    }
+    authoritative_fact_entities = {
+        name for name in required_entities
+        if str(entities_by_name.get(name, {}).get("entity_type") or "").lower() == "fact"
+    }
+    authoritative_fact_tables = {
+        table for table in required_tables
+        if table_to_entity.get(table) in authoritative_fact_entities
+    }
+
+    detected = {str(name) for name in graph_ctx.get("detected") or [] if str(name)}
+    dropped_fact_entities: set[str] = set()
+    if authoritative_fact_entities:
+        for name in detected:
+            entity_type = str(entities_by_name.get(name, {}).get("entity_type") or "").lower()
+            if entity_type == "fact" and name not in authoritative_fact_entities:
+                dropped_fact_entities.add(name)
+                continue
+            required_entities.add(name)
+    else:
+        required_entities.update(detected)
+
+    previous_anchor = str(graph_ctx.get("anchor") or "")
+    return {
+        "enabled": bool(required_tables or detected),
+        "required_tables": sorted(required_tables),
+        "required_entities": sorted(required_entities),
+        "authoritative_fact_tables": sorted(authoritative_fact_tables),
+        "authoritative_fact_entities": sorted(authoritative_fact_entities),
+        "dropped_fact_entities": sorted(dropped_fact_entities),
+        "previous_anchor": previous_anchor,
+        "changed": bool(dropped_fact_entities) or not required_entities.issubset(detected),
+    }
+
+
+def build_cannot_generate_recovery_prompt(
+    *,
+    question: str,
+    resolution_plan: dict[str, Any] | None,
+    graph_ctx: dict[str, Any] | None,
+    semantic_plan: dict[str, Any] | None,
+) -> str:
+    """Build the single bounded recovery request for a sentinel response."""
+    plan = resolution_plan or {}
+    graph_ctx = graph_ctx or {}
+    semantic_plan = semantic_plan or {}
+    fields = [
+        f"{field.get('term') or 'field'}={field.get('table')}.{field.get('column')}"
+        for field in semantic_plan.get("fields") or []
+        if isinstance(field, dict) and field.get("table") and field.get("column")
+    ]
+    required_tables = plan.get("required_tables") or semantic_plan.get("required_tables") or []
+    return (
+        "The first attempt returned CANNOT_GENERATE. Perform one constrained recovery using "
+        "the authoritative plan below. Do not reconsider or replace approved tables, fields, "
+        "date roles, or joins. Generate the simplest valid SQL that answers the question.\n\n"
+        f"Original question: {question}\n"
+        f"Required tables: {', '.join(map(str, required_tables)) or 'none resolved'}\n"
+        f"Required fields: {', '.join(fields) or 'none resolved'}\n"
+        f"Authoritative FROM/JOIN skeleton:\n{graph_ctx.get('join_skeleton') or 'none resolved'}\n\n"
+        "Return only SQL. Return CANNOT_GENERATE only when the required data is genuinely absent "
+        "from the supplied Knowledge Base; do not return it because another planner suggested a "
+        "different table."
+    )
+
+
 def _touched_canonical_ids(
     *,
     matched_metrics: list[dict[str, Any]] | None,
@@ -109,6 +261,7 @@ def build_resolution_plan(
     schema_hint: str = "",
     allowed_tables: set[str] | None = None,
     open_conflicts: list[dict[str, Any]] | None = None,
+    planner_alignment: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
     Assemble the structured resolution plan for one question from whatever
@@ -131,6 +284,7 @@ def build_resolution_plan(
     date_context_resolution = date_context_resolution or {}
     open_conflicts = open_conflicts or []
     matched_metrics = matched_metrics or []
+    planner_alignment = planner_alignment or {}
 
     date_binding: dict[str, Any] | None = None
     if date_context_resolution.get("status") in {"selected", "selected_many"}:
@@ -250,6 +404,8 @@ def build_resolution_plan(
         "dimensions": dimensions,
         "date_roles": date_roles,
         "graph_path": graph_path,
+        "required_tables": list(planner_alignment.get("required_tables") or []),
+        "planner_alignment": planner_alignment,
         "access_scope": {
             "schema_hint": schema_hint or "",
             "allowed_tables": sorted(allowed_tables) if allowed_tables is not None else None,
@@ -286,6 +442,7 @@ def check_sql_plan_coverage(
         sql_variants |= _table_fqn_variants(table)
 
     expected_tables: set[str] = set()
+    expected_tables.update(str(table) for table in plan.get("required_tables") or [] if table)
     for dim in plan.get("dimensions") or []:
         table = dim.get("table")
         if table:

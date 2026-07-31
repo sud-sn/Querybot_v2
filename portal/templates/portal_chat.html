@@ -814,6 +814,7 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
         <div class="composer-footer">
           <div style="display:flex;align-items:center;gap:.75rem;flex-wrap:wrap">
             <div class="composer-hint" id="schemaComposerHint">{% if available_schemas and available_schemas|length > 1 %}All schemas active. Select a schema when you want a stricter answer.{% else %}Press Enter to send · Shift + Enter for a new line{% endif %}</div>
+            <div class="composer-state" id="composerState" role="status" aria-live="polite"></div>
             <div id="memoryBadge" style="display:none;align-items:center;gap:.35rem;font-size:11px;font-weight:700;padding:3px 9px;border-radius:999px;background:var(--surface-2);border:1px solid var(--border);color:var(--text-soft);cursor:default" title=""></div>
           </div>
           {% if suggestions %}
@@ -854,6 +855,7 @@ const THREAD_ID = _requestedNewThread
 try { localStorage.setItem(THREAD_STORAGE_KEY, THREAD_ID); } catch (_) {}
 const CHAT_CACHE_LIMIT = 80;
 const CHAT_CACHE_KEY = `qb_chat_cache:${ACCOUNT_ID}:${USER_EMAIL || USER_NAME}:${THREAD_ID}`;
+const DRAFT_STORAGE_KEY = `querybot.draft:${ACCOUNT_ID}:${USER_EMAIL || USER_NAME}:${THREAD_ID}`;
 // Multi-turn memory — localStorage key for persisting up to 3 history turns
 const HISTORY_STORAGE_KEY = `querybot.history:${ACCOUNT_ID}:${USER_EMAIL || USER_NAME}:${THREAD_ID}`;
 try { localStorage.removeItem(`querybot.history:${ACCOUNT_ID}:${USER_EMAIL || USER_NAME}`); } catch (_) {}
@@ -914,6 +916,9 @@ const STATUS_FALLBACK = {
   generating_sql: ['Generating query', 'Translating the business question into SQL.'],
   validating_sql: ['Checking query safety', 'Verifying access, structure, and execution safety.'],
   repairing_query: ['Repairing query', 'Fixing a validation or execution issue before retrying.'],
+  recovering_sql: ['Recovering query', 'Applying a governed repair using the latest validation feedback.'],
+  reusing_sql: ['Reusing trusted context', 'Applying your follow-up to the previous governed result.'],
+  retrying_query: ['Retrying query', 'Running the validated repair against your connected database.'],
   executing_query: ['Running query', 'Executing the query against your connected database.'],
   formatting_results: ['Preparing results', 'Formatting the answer for chat.'],
   chart_ready: ['Building chart', 'Rendering an interactive chart from the result set.']
@@ -929,6 +934,7 @@ let processingElapsedTimer = null;
 let lastAssistantText = '';
 let chartCounter = 0;
 let _pendingThreadHistory = [];
+let _activeOutboundMessage = null;
 
 function thread(){ return document.getElementById('thread'); }
 function scrollBottom(){ const t = thread(); t.scrollTop = t.scrollHeight; }
@@ -942,6 +948,38 @@ function hideWelcome(){
 }
 function toast(msg){ const el = document.getElementById('toast'); el.textContent = msg; el.classList.add('show'); clearTimeout(window.__toastTimer); window.__toastTimer = setTimeout(() => el.classList.remove('show'), 1400); }
 function toastLong(msg){ const el = document.getElementById('toast'); el.textContent = msg; el.classList.add('show'); clearTimeout(window.__toastTimer); window.__toastTimer = setTimeout(() => el.classList.remove('show'), 5200); }
+function _setComposerState(message, tone = ''){
+  const el = document.getElementById('composerState');
+  if (!el) return;
+  el.textContent = message || '';
+  el.dataset.tone = tone;
+}
+function _saveComposerDraft(){
+  const input = document.getElementById('input');
+  if (!input) return;
+  const draft = input.value || '';
+  try {
+    if (draft.trim()) sessionStorage.setItem(DRAFT_STORAGE_KEY, draft);
+    else sessionStorage.removeItem(DRAFT_STORAGE_KEY);
+  } catch (_) {}
+  _setComposerState(draft.trim() ? (wsReady ? 'Draft saved' : 'Draft kept while offline') : '', wsReady ? '' : 'warning');
+}
+function _clearComposerDraft(){
+  try { sessionStorage.removeItem(DRAFT_STORAGE_KEY); } catch (_) {}
+  _setComposerState('');
+}
+function _restoreComposerDraft(){
+  const input = document.getElementById('input');
+  if (!input || input.value) return;
+  let draft = '';
+  try { draft = sessionStorage.getItem(DRAFT_STORAGE_KEY) || ''; } catch (_) {}
+  if (!draft) return;
+  input.value = draft;
+  input.style.height = 'auto';
+  input.style.height = Math.min(input.scrollHeight, 140) + 'px';
+  updateCharCount();
+  _setComposerState('Draft restored', 'success');
+}
 function updateQueryLimitKpi(status, opts = {}){
   if (!status) return;
   const kpi = document.getElementById('queryLimitKpi');
@@ -1085,6 +1123,7 @@ function _setSendButtonMode(isStop){
 function stopQuery(){
   if (!wsReady) return;
   ws.send(JSON.stringify({ type: 'cancel' }));
+  _markActiveOutbound('stopped', 'Stopped');
   // Optimistically reset the composer instead of waiting for the server's
   // round trip — the server-side "Query stopped." message + typing:false
   // will arrive right behind this and are idempotent with it.
@@ -1242,10 +1281,71 @@ function appendUser(text, opts = {}){
   const timestamp = timeLabel(opts.timestamp);
   const div = document.createElement('div');
   div.className = 'msg msg-user';
-  div.innerHTML = `<div class="msg-avatar">${USER_INIT}</div><div class="msg-content"><div class="msg-meta"><span class="msg-name">You</span><span>•</span><span>${timestamp}</span></div><div class="msg-bubble">${escHtml(text)}</div></div>`;
+  div.innerHTML = `<div class="msg-avatar">${USER_INIT}</div><div class="msg-content"><div class="msg-meta"><span class="msg-name">You</span><span>•</span><span>${timestamp}</span></div><div class="msg-bubble">${escHtml(text)}</div><div class="user-message-footer"><span class="message-delivery" role="status"></span><span class="user-message-actions"><button type="button" class="message-action message-edit">Edit</button><button type="button" class="message-action message-retry">Retry</button></span></div></div>`;
+  div._querybotOutbound = {
+    text,
+    tableHint: opts.tableHint || '',
+    schemaHint: opts.schemaHint || '',
+    payload: opts.payload || null,
+  };
+  div.querySelector('.message-edit')?.addEventListener('click', () => _editUserMessage(div));
+  div.querySelector('.message-retry')?.addEventListener('click', () => _retryUserMessage(div));
   thread().appendChild(div);
   if (opts.persist !== false) pushChatCache({ kind:'user', text, timestamp });
+  if (opts.deliveryState) _setUserMessageState(div, opts.deliveryState, opts.deliveryLabel);
   scrollBottom();
+  return div;
+}
+function _setUserMessageState(message, state, label = ''){
+  if (!message) return;
+  const delivery = message.querySelector('.message-delivery');
+  if (!delivery) return;
+  const labels = {
+    sending: 'Sending', working: 'Working', complete: 'Answered', stopped: 'Stopped',
+    interrupted: 'Interrupted', failed: 'Needs attention'
+  };
+  delivery.textContent = label || labels[state] || '';
+  delivery.dataset.state = state || '';
+  message.dataset.deliveryState = state || '';
+}
+function _markActiveOutbound(state, label = ''){
+  if (!_activeOutboundMessage) return;
+  _setUserMessageState(_activeOutboundMessage, state, label);
+  if (state === 'complete') _activeOutboundMessage = null;
+}
+function _editUserMessage(message){
+  const outbound = message?._querybotOutbound;
+  if (!outbound?.text) return;
+  const input = document.getElementById('input');
+  input.value = outbound.text;
+  input.dispatchEvent(new Event('input'));
+  input.focus();
+  toast('Message copied to composer');
+}
+function _retryUserMessage(message){
+  if (processingActive) {
+    toast('Stop the current answer before retrying');
+    return;
+  }
+  if (!wsReady) {
+    _setUserMessageState(message, 'interrupted', 'Waiting for connection');
+    toastLong('The message is ready to retry when the live connection returns.');
+    return;
+  }
+  const outbound = message?._querybotOutbound;
+  if (!outbound?.text) return;
+  const payload = outbound.payload ? Object.assign({}, outbound.payload) : { text: outbound.text };
+  if (!outbound.payload && outbound.tableHint) payload.table_hint = outbound.tableHint;
+  if (!outbound.payload && outbound.schemaHint) payload.schema_hint = outbound.schemaHint;
+  try {
+    ws.send(JSON.stringify(payload));
+    _activeOutboundMessage = message;
+    _setUserMessageState(message, 'working', 'Retrying');
+    updateProcessing('authorization', 'Retrying analysis', 'Resending your request through the governed query pipeline.');
+  } catch (_) {
+    _setUserMessageState(message, 'interrupted', 'Retry when connected');
+    toastLong('The message could not be sent. Your request is still available to retry.');
+  }
 }
 function appendBot(rawText, opts = {}){
   hideWelcome();
@@ -3188,29 +3288,71 @@ function renderClarificationPrompt(data, opts = {}){
   const timestamp = timeLabel(opts.timestamp);
   const div = document.createElement('div');
   div.className = 'msg msg-bot';
-  const question = data.question || 'Please choose one option so I can continue.';
   const options = Array.isArray(data.options) ? data.options : [];
+  const question = data.question || (options.length
+    ? 'Please choose one option so I can continue.'
+    : 'Please add the detail I need so I can continue.');
   div.innerHTML = `<div class="msg-avatar"><img src="/static/img/logo-mark.svg" alt="" class="qb-logo-mark"></div><div class="msg-content"><div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timestamp}</span></div><div class="clarification-card"><div class="clarification-question">${escHtml(question)}</div><div class="clarification-options"></div></div></div>`;
   const wrap = div.querySelector('.clarification-options');
+  const card = div.querySelector('.clarification-card');
+  _markActiveOutbound('complete', 'Clarification requested');
   options.forEach((opt) => {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'clarification-option';
     btn.textContent = opt.label || opt.value || 'Choose';
     btn.addEventListener('click', () => {
-      if (btn.dataset.clicked === '1' || !wsReady) return;
-      btn.dataset.clicked = '1';
-      wrap.querySelectorAll('button').forEach((b) => b.disabled = true);
-      appendUser(btn.textContent);
-      setProcessing(true);
-      updateProcessing('authorization', 'Resolving clarification', 'Applying your selected clarification and rerunning the query.');
-      ws.send(JSON.stringify({ type:'clarification_response', pending_id: data.pending_id || '', option_id: opt.id }));
+      if (btn.disabled) return;
+      _submitClarification(data, btn.textContent, opt.id, card);
     });
     wrap.appendChild(btn);
   });
+  if (!options.length) {
+    const form = document.createElement('div');
+    form.className = 'clarification-freeform';
+    const fieldId = `clarification-${String(data.pending_id || 'reply').replace(/[^A-Za-z0-9_-]/g, '')}`;
+    form.innerHTML = `<label for="${fieldId}">Your answer</label><div class="clarification-input-row"><textarea id="${fieldId}" rows="2" maxlength="500" placeholder="Add the detail QueryBot needs to continue"></textarea><button type="button" class="clarification-submit">Continue</button></div><div class="clarification-help">Press Enter to continue · Shift + Enter for a new line</div>`;
+    const input = form.querySelector('textarea');
+    const submit = form.querySelector('.clarification-submit');
+    submit.addEventListener('click', () => _submitClarification(data, input.value, '', card));
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        _submitClarification(data, input.value, '', card);
+      }
+    });
+    card.appendChild(form);
+    setTimeout(() => input.focus(), 0);
+  }
   thread().appendChild(div);
   if (opts.persist !== false) pushChatCache({ kind:'clarification_prompt', payload: data, timestamp });
   scrollBottom();
+}
+function _submitClarification(data, answer, optionId, card){
+  const text = String(answer || '').trim();
+  if (!text) {
+    toast('Add an answer so QueryBot can continue');
+    return;
+  }
+  if (!wsReady) {
+    toastLong('Connection lost. Your clarification is still here; send it after reconnection.');
+    return;
+  }
+  if (processingActive) return;
+  card?.querySelectorAll('button, textarea').forEach((control) => control.disabled = true);
+  const payload = { type:'clarification_response', pending_id: data.pending_id || '' };
+  if (optionId) payload.option_id = optionId;
+  else payload.text = text;
+  const userMessage = appendUser(text, { deliveryState:'working', payload });
+  _activeOutboundMessage = userMessage;
+  updateProcessing('authorization', 'Resolving clarification', 'Applying your clarification and continuing the governed query.');
+  try {
+    ws.send(JSON.stringify(payload));
+  } catch (_) {
+    _setUserMessageState(userMessage, 'interrupted', 'Answer again when connected');
+    card?.querySelectorAll('button, textarea').forEach((control) => control.disabled = false);
+    setProcessing(false);
+  }
 }
 // ── Schema selector ──────────────────────────────────────────────────────────
 let _activeSchema = "";   // "" = All schemas
@@ -3306,7 +3448,22 @@ function sendMessage(tableHint){
   // While a question is in flight the button is in Stop mode, but Enter or
   // a suggestion click can still reach here directly — don't let a second
   // question overlap the first; the user has Stop for that.
-  if (!text || !wsReady || processingActive) return;
+  if (!text) return;
+  if (processingActive) {
+    toast('Stop the current answer before sending another message');
+    return;
+  }
+  if (!wsReady) {
+    _saveComposerDraft();
+    toastLong('You are offline. Your message is saved and ready to send after reconnection.');
+    return;
+  }
+  const normalizedTableHint = typeof tableHint === 'string'
+    ? tableHint.trim()
+    : String(tableHint?.fqn || tableHint?.table_hint || tableHint?.table || '').trim();
+  const payload = { text };
+  if (normalizedTableHint) payload.table_hint = normalizedTableHint;
+  if (_activeSchema) payload.schema_hint = _activeSchema;
   // ── Genie: if user typed manually (no pending chip), dismiss visible chips ─
   if (!_pendingSuggestion) {
     _visibleSuggestionTexts().forEach(t => _genieEvent('dismissed', t));
@@ -3326,17 +3483,25 @@ function sendMessage(tableHint){
   }
   // Reset composer mascot error state
   if (window._composerMascotReset) window._composerMascotReset();
-  appendUser(text);
+  const userMessage = appendUser(text, {
+    deliveryState: 'sending',
+    tableHint: normalizedTableHint,
+    schemaHint: _activeSchema,
+    payload,
+  });
+  _activeOutboundMessage = userMessage;
   _collapseHero();   // auto-collapse hero on first message send
-  const payload = { text };
-  const normalizedTableHint = typeof tableHint === 'string'
-    ? tableHint.trim()
-    : String(tableHint?.fqn || tableHint?.table_hint || tableHint?.table || '').trim();
-  if (normalizedTableHint) payload.table_hint = normalizedTableHint;
-  if (_activeSchema) payload.schema_hint = _activeSchema;
-  ws.send(JSON.stringify(payload));
+  try {
+    ws.send(JSON.stringify(payload));
+    _setUserMessageState(userMessage, 'working');
+  } catch (_) {
+    _setUserMessageState(userMessage, 'interrupted', 'Retry when connected');
+    toastLong('The message could not be sent. Use Retry when the connection returns.');
+    return;
+  }
   inp.value = '';
   inp.style.height = 'auto';
+  _clearComposerDraft();
   updateCharCount();
   updateProcessing('authorization', 'Starting analysis', 'Sending your request to the backend.');
   const sug = document.getElementById('suggestionsWrap'); if (sug) sug.style.display = 'none';
@@ -3818,6 +3983,8 @@ function connect(){
     reconnectAttempts = 0;
     document.getElementById('sendBtn').disabled = false;
     setConnectionState('Connected', 'Live session active');
+    const draftInput = document.getElementById('input');
+    if (draftInput?.value.trim()) _setComposerState('Draft ready to send', 'success');
     // Display-only memory metadata comes from localStorage. Governed SQL
     // context is restored server-side from this user-owned thread's traces.
     _localHistory = _loadStoredHistory();
@@ -3834,8 +4001,10 @@ function connect(){
     } else if (msg.type === 'status') {
       updateProcessing(msg.stage, msg.label, msg.detail);
     } else if (msg.type === 'system') {
+      if (/^Query stopped\.?$/i.test(msg.content || '')) _markActiveOutbound('stopped', 'Stopped');
       appendSystem(msg.content, { persist: !/^Connected as /i.test(msg.content || '') });
     } else if (msg.type === 'clarification_prompt') {
+      setProcessing(false);
       showMascotClarify();
       setTimeout(() => renderClarificationPrompt(msg), 500);
     } else if (msg.type === 'message') {
@@ -3849,6 +4018,7 @@ function connect(){
       // Detect failure messages — show error mascot briefly before rendering
       if (msgContent.startsWith('❌') || msgContent.startsWith('❓')) {
         if (msgContent.startsWith('❌')) {
+          _markActiveOutbound('failed', 'Needs attention');
           showMascotError();
           // Show contextual error on the composer mascot
           const isDbPause = msgContent.includes('40613') || msgContent.includes('not currently available');
@@ -3859,6 +4029,8 @@ function connect(){
               ? 'Connection issue — please try again'
               : 'Something went wrong — try rephrasing or retry';
           if (window._composerMascotError) window._composerMascotError(errMsg);
+        } else {
+          _markActiveOutbound('complete', 'Clarification requested');
         }
         // Keep mascot visible, render error after brief reaction
         setTimeout(() => {
@@ -3866,6 +4038,7 @@ function connect(){
           refreshQueryLimitStatus({toast:true});
         }, 400);
       } else {
+        _markActiveOutbound('complete');
         // Success text result — small delay so mascot celebration is seen
         _setMascotState('chart_ready');
         // ── Genie: text answers count as executed (and successful) ──────────
@@ -3883,6 +4056,7 @@ function connect(){
         return;
       }
     } else if (msg.type === 'assistant_response') {
+      _markActiveOutbound('complete');
       // Show celebration state briefly so the user sees it before result renders
       _setMascotState('chart_ready');
       const row = document.getElementById('processingRow');
@@ -3911,11 +4085,13 @@ function connect(){
       // The typing indicator is cleared by the server's separate typing:false message.
       // We still need to surface the error so the user knows what happened.
       const errDetail = msg.detail ? ` (${msg.detail})` : '';
+      _markActiveOutbound('failed', 'Action failed');
       appendSystem(`⚠ ${msg.content || 'Action could not be completed.'}${errDetail}`);
     } else if (msg.type === 'error') {
       _pendingSuggestion = null;  // clear stale pending chip on WS-level error
       showMascotError();
       if (window._composerMascotError) window._composerMascotError('Something went wrong — please retry');
+      _markActiveOutbound('failed', 'Needs attention');
       appendSystem(msg.content);
     } else if (msg.type === 'result_chat_typing') {
       _rcPanels[msg.result_id]?.onTyping(!!msg.active);
@@ -3928,8 +4104,10 @@ function connect(){
     }
   };
   ws.onclose = (evt) => {
+    const queryWasActive = processingActive;
     wsReady = false;
     document.getElementById('sendBtn').disabled = true;
+    if (queryWasActive) _markActiveOutbound('interrupted', 'Interrupted · Retry when connected');
     setProcessing(false);
     if ([4001, 4003, 4004].includes(evt.code)) {
       const note = evt.code === 4004 ? 'Chat is not enabled for this workspace.' : 'Your session is invalid or no longer authorized.';
@@ -3940,6 +4118,7 @@ function connect(){
     reconnectAttempts += 1;
     const delay = Math.min(8000, 1000 * reconnectAttempts);
     setConnectionState('Reconnecting…', `Connection lost. Retrying in ${Math.round(delay / 1000)}s`);
+    if (document.getElementById('input')?.value.trim()) _setComposerState('Draft kept while reconnecting', 'warning');
     setTimeout(connect, delay);
   };
   ws.onerror = () => setConnectionState('Connection issue', 'Trying to recover live session');
@@ -4353,7 +4532,8 @@ document.addEventListener('DOMContentLoaded', () => {
   loadHistory();
   window.addEventListener('qb-query-limit-status', (event) => updateQueryLimitKpi(event.detail, {toast:false}));
   const inp = document.getElementById('input');
-  inp.addEventListener('input', () => { inp.style.height = 'auto'; inp.style.height = Math.min(inp.scrollHeight, 140) + 'px'; updateCharCount(); });
+  _restoreComposerDraft();
+  inp.addEventListener('input', () => { inp.style.height = 'auto'; inp.style.height = Math.min(inp.scrollHeight, 140) + 'px'; updateCharCount(); _saveComposerDraft(); });
   inp.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
   // Attach autocomplete to the main composer input
   new AutoSuggest(inp);
