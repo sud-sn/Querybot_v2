@@ -113,8 +113,11 @@ async def startup() -> None:
 
         with store.db.get_db() as conn:
             startup_users = conn.execute(
-                "SELECT account_id, platform_user_id, display_name, conversation_ref "
-                "FROM pending_platform_user WHERE status='approved' AND platform_type='teams'"
+                "SELECT p.account_id, p.platform_user_id, p.display_name, p.conversation_ref "
+                "FROM pending_platform_user p "
+                "LEFT JOIN portal_user pu ON p.portal_user_id = pu.id "
+                "WHERE p.status='approved' AND p.platform_type='teams' "
+                "AND COALESCE(pu.is_active, 1) = 1"
             ).fetchall()
 
         if startup_users:
@@ -182,8 +185,11 @@ async def shutdown() -> None:
         # 2. Notify active Teams users proactively
         with store.db.get_db() as conn:
             users = conn.execute(
-                "SELECT account_id, platform_user_id, display_name, conversation_ref "
-                "FROM pending_platform_user WHERE status='approved' AND platform_type='teams'"
+                "SELECT p.account_id, p.platform_user_id, p.display_name, p.conversation_ref "
+                "FROM pending_platform_user p "
+                "LEFT JOIN portal_user pu ON p.portal_user_id = pu.id "
+                "WHERE p.status='approved' AND p.platform_type='teams' "
+                "AND COALESCE(pu.is_active, 1) = 1"
             ).fetchall()
             
         if users:

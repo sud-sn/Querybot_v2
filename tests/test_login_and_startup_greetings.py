@@ -113,11 +113,27 @@ class TeamsStartupNotificationWiringTests(unittest.TestCase):
         body = self.src[start_anchor:shutdown_anchor]
 
         self.assertIn(
-            "FROM pending_platform_user WHERE status='approved' AND platform_type='teams'",
+            "WHERE p.status='approved' AND p.platform_type='teams'",
             body,
         )
         self.assertIn("TeamsAdapter", body)
         self.assertIn("up and running", body)
+
+    def test_startup_and_shutdown_exclude_temporarily_stopped_users(self):
+        # A user with "Temporarily Stop Access" toggled (portal_user.is_active
+        # = 0, admin/routes.py's toggle-active route) must not get proactive
+        # startup/shutdown pings -- confirmed live: status stays 'approved'
+        # the whole time (that's a separate reject/block flow), so the old
+        # query (status='approved' only) kept notifying a user an admin had
+        # explicitly, if temporarily, silenced.
+        start_anchor = self.src.index('@app.on_event("startup")')
+        shutdown_anchor = self.src.index('@app.on_event("shutdown")')
+        startup_body = self.src[start_anchor:shutdown_anchor]
+        shutdown_body = self.src[shutdown_anchor:]
+
+        for body in (startup_body, shutdown_body):
+            self.assertIn("LEFT JOIN portal_user pu ON p.portal_user_id = pu.id", body)
+            self.assertIn("COALESCE(pu.is_active, 1) = 1", body)
 
     def test_startup_notification_never_blocks_or_crashes_startup(self):
         start_anchor = self.src.index('@app.on_event("startup")')
@@ -140,9 +156,20 @@ class TeamsStartupNotificationWiringTests(unittest.TestCase):
         startup_body = self.src[start_anchor:shutdown_anchor]
         shutdown_body = self.src[shutdown_anchor:]
 
-        query = "FROM pending_platform_user WHERE status='approved' AND platform_type='teams'"
-        self.assertIn(query, startup_body)
-        self.assertIn(query, shutdown_body)
+        # Each fragment below is one complete Python string-literal line in
+        # main.py (adjacent literals spanning multiple lines) -- asserted
+        # individually rather than as one joined string, since the raw
+        # source text (unlike the runtime-concatenated SQL) has a quote/
+        # newline/indent break between each fragment.
+        query_fragments = (
+            "FROM pending_platform_user p ",
+            "LEFT JOIN portal_user pu ON p.portal_user_id = pu.id ",
+            "WHERE p.status='approved' AND p.platform_type='teams' ",
+            "AND COALESCE(pu.is_active, 1) = 1",
+        )
+        for fragment in query_fragments:
+            self.assertIn(fragment, startup_body)
+            self.assertIn(fragment, shutdown_body)
 
 
 if __name__ == "__main__":
