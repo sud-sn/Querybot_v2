@@ -91,7 +91,16 @@ def _set_portal_cookie(resp: RedirectResponse, request: Request, user_id: int) -
 
 
 def _get_portal_user(request: Request) -> dict | None:
-    """Return portal user from signed session cookie, or None."""
+    """Return portal user from signed session cookie, or None.
+
+    Re-checks is_active on every call rather than trusting the session was
+    valid when it was issued -- an admin's "Temporarily Stop Access" toggle
+    (store.update_user(is_active=0)) only ever blocked fresh logins
+    (get_user_by_email filters is_active=1); a session cookie issued before
+    the toggle kept resolving successfully via the unfiltered store.get_user
+    lookup, so a deactivated user's already-open browser tab kept working
+    until the cookie itself expired.
+    """
     raw = request.cookies.get(_COOKIE)
     if not raw:
         return None
@@ -99,9 +108,12 @@ def _get_portal_user(request: Request) -> dict | None:
     if not user_id:
         return None
     try:
-        return store.get_user(int(user_id))
+        user = store.get_user(int(user_id))
     except Exception:
         return None
+    if not user or not user.get("is_active"):
+        return None
+    return user
 
 
 def _resp(request, name, ctx=None):
@@ -113,6 +125,7 @@ def _login_redirect():
 
 
 def _get_portal_user_from_socket(websocket: WebSocket) -> dict | None:
+    # Same is_active re-check as _get_portal_user above, same rationale.
     raw = websocket.cookies.get(_COOKIE)
     if not raw:
         return None
@@ -120,9 +133,12 @@ def _get_portal_user_from_socket(websocket: WebSocket) -> dict | None:
     if not user_id:
         return None
     try:
-        return store.get_user(int(user_id))
+        user = store.get_user(int(user_id))
     except Exception:
         return None
+    if not user or not user.get("is_active"):
+        return None
+    return user
 
 
 @router.websocket("/ws/notifications")

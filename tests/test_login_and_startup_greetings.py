@@ -35,7 +35,7 @@ class PortalLoginGreetingWiringTests(unittest.TestCase):
 
     def test_touches_session_activity_on_connect(self):
         anchor = self.src.index('async def ws_chat(')
-        body = self.src[anchor:anchor + 3500]
+        body = self.src[anchor:anchor + 3800]
         self.assertIn("await websocket.accept()", body)
         self.assertIn("store.touch_user_activity(user_id)", body)
         # The touch must happen after accept() -- it's the login moment.

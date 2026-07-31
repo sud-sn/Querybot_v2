@@ -401,7 +401,15 @@ async def ws_chat(websocket: WebSocket, account_id: str):
         return
 
     portal_user = store.get_user(user_id)
-    if not portal_user or portal_user.get("account_id") != account_id:
+    if (
+        not portal_user
+        or portal_user.get("account_id") != account_id
+        or not portal_user.get("is_active")
+    ):
+        # is_active re-check: an admin's "Temporarily Stop Access" toggle
+        # only blocks fresh logins (store.get_user_by_email filters
+        # is_active=1) -- a cookie issued before the toggle would otherwise
+        # keep this chat socket open indefinitely.
         await websocket.close(code=4003)
         return
 
