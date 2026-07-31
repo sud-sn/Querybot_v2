@@ -1423,17 +1423,22 @@ def _temporal_anchor_scope_errors(tree, policies: list[dict]) -> list[dict]:
             if not raw:
                 continue
             norm = _normalize_identifier(raw)
-            if not table.args.get("db") and not table.args.get("catalog") and norm in ctes and norm not in seen:
+            # .db/.catalog (properties) return the plain identifier text;
+            # str(table.args.get("db")) instead stringifies the raw AST
+            # Identifier node, which re-renders it AS SQL -- for a quoted
+            # bracket identifier (T-SQL's [PHARMA_LAB], the format every
+            # real LLM-generated Azure SQL query in this system uses) that
+            # produces '"PHARMA_LAB"' (with embedded quote characters), so
+            # the qualified name below never matched the approved policy's
+            # plain "PHARMA_LAB.F_RX_FILL" and every correctly-scoped anchor
+            # over a bracketed table was rejected as unscoped.
+            db = table.db or ""
+            catalog = table.catalog or ""
+            if not db and not catalog and norm in ctes and norm not in seen:
                 seen.add(norm)
                 names |= _resolve_tables(ctes[norm], seen)
                 continue
-            qualified = ".".join(
-                part for part in (
-                    str(table.args.get("catalog") or ""),
-                    str(table.args.get("db") or ""),
-                    raw,
-                ) if part
-            )
+            qualified = ".".join(part for part in (catalog, db, raw) if part)
             names.add(qualified or raw)
         return names
 

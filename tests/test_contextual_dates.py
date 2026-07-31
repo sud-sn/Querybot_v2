@@ -1351,6 +1351,40 @@ class TemporalAnchorScopeValidatorTests(unittest.TestCase):
         retryable_line = next(line for line in src.splitlines() if line.strip().startswith("retryable ="))
         self.assertIn('"temporal_anchor_unscoped"', retryable_line)
 
+    def test_bracketed_tsql_identifiers_do_not_false_positive_as_unscoped(self):
+        # Live-bug reproduction: real Azure SQL output from the LLM always
+        # uses bracketed T-SQL identifiers ([PHARMA_LAB].[F_RX_FILL]), which
+        # sqlglot parses as a quoted Identifier. _resolve_tables previously
+        # built the qualified name via str(table.args.get("db")), which
+        # stringifies that raw AST node by re-rendering it AS SQL --
+        # '"PHARMA_LAB"' (with embedded quote characters) -- instead of the
+        # plain 'PHARMA_LAB' the .db property returns. That quoted form
+        # never matched the approved policy's plain anchor_table string, so
+        # EVERY correctly JOIN-scoped anchor over a bracketed table was
+        # rejected as unscoped. Unbracketed fixtures elsewhere in this class
+        # never exercised this path, which is why it shipped unnoticed.
+        errors = self._errors(
+            "SELECT SUM(frx.NET_REVENUE_AMT) AS Booked_Revenue "
+            "FROM [PHARMA_LAB].[F_RX_FILL] frx "
+            "INNER JOIN [PHARMA_LAB].[D_DATE] dda ON frx.DISPENSE_DATE_ID = dda.DATE_ID "
+            "WHERE dda.CALENDAR_DATE >= DATEADD(day, -7, (SELECT MAX(dda.CALENDAR_DATE) "
+            "FROM [PHARMA_LAB].[D_DATE] dda "
+            "INNER JOIN [PHARMA_LAB].[F_RX_FILL] frx ON frx.DISPENSE_DATE_ID = dda.DATE_ID))"
+        )
+        self.assertEqual(errors, [])
+
+    def test_bracketed_tsql_still_rejects_a_truly_unscoped_anchor(self):
+        # Negative control for the fix above -- bracketed identifiers must
+        # not make the check permissive; a genuinely unscoped MAX() over
+        # the raw dimension is still rejected.
+        errors = self._errors(
+            "SELECT COUNT(*) FROM [PHARMA_LAB].[F_RX_FILL] f "
+            "JOIN [PHARMA_LAB].[D_DATE] d ON f.DISPENSE_DATE_ID = d.DATE_ID "
+            "WHERE d.CALENDAR_DATE = (SELECT MAX(CALENDAR_DATE) FROM [PHARMA_LAB].[D_DATE])"
+        )
+        codes = {e["code"] for e in errors}
+        self.assertIn("temporal_anchor_unscoped", codes)
+
 
 class GraphPlanMismatchBeatsFieldPlanMismatchTests(unittest.TestCase):
     """Live-bug reproduction: for a surrogate-FK date role that is ALSO an
