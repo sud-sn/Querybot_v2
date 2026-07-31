@@ -60,20 +60,43 @@ def _load_cases(path: Path) -> list[dict]:
     return data
 
 
-def _contains_all(sql_upper: str, expected: list[str], label: str, failures: list[str]) -> int:
+def _identifier_match_text(value: str) -> str:
+    """Normalize common SQL identifier quoting for expectation matching."""
+    return str(value or "").upper().replace("[", "").replace("]", "").replace('"', "")
+
+
+def _contains_all(
+    sql_upper: str,
+    expected: list[str],
+    label: str,
+    failures: list[str],
+    *,
+    identifiers: bool = False,
+) -> int:
+    haystack = _identifier_match_text(sql_upper) if identifiers else sql_upper
     matched = 0
     for item in expected or []:
-        if str(item).upper() in sql_upper:
+        needle = _identifier_match_text(item) if identifiers else str(item).upper()
+        if needle in haystack:
             matched += 1
         else:
             failures.append(f"missing {label}: {item}")
     return matched
 
 
-def _contains_none(sql_upper: str, forbidden: list[str], label: str, failures: list[str]) -> int:
+def _contains_none(
+    sql_upper: str,
+    forbidden: list[str],
+    label: str,
+    failures: list[str],
+    *,
+    identifiers: bool = False,
+) -> int:
+    haystack = _identifier_match_text(sql_upper) if identifiers else sql_upper
     clean = 0
     for item in forbidden or []:
-        if str(item).upper() in sql_upper:
+        needle = _identifier_match_text(item) if identifiers else str(item).upper()
+        if needle in haystack:
             failures.append(f"forbidden {label}: {item}")
         else:
             clean += 1
@@ -123,11 +146,17 @@ def _score_sql(
     expectation_score = 40
     if total_expectations:
         matched = 0
-        matched += _contains_all(sql_upper, expected_tables, "table", failures)
-        matched += _contains_all(sql_upper, expected_columns, "column", failures)
+        matched += _contains_all(
+            sql_upper, expected_tables, "table", failures, identifiers=True,
+        )
+        matched += _contains_all(
+            sql_upper, expected_columns, "column", failures, identifiers=True,
+        )
         matched += _contains_all(sql_upper, expected_contains, "SQL pattern", failures)
         matched += _contains_none(sql_upper, forbidden_contains, "SQL pattern", failures)
-        matched += _contains_none(sql_upper, forbidden_columns, "column", failures)
+        matched += _contains_none(
+            sql_upper, forbidden_columns, "column", failures, identifiers=True,
+        )
         matched += _contains_all(sql_upper, expected_join_types, "join type", failures)
         expectation_score = 40 * (matched / total_expectations)
 
@@ -159,7 +188,15 @@ def _score_sql(
             privacy_score = 0
             failures.append(f"sensitive term surfaced: {sensitive}")
 
-    score = round(validation_points + expectation_score + execution_score + result_score + privacy_score, 2)
+    earned_points = validation_points + expectation_score + execution_score + result_score + privacy_score
+    # Divide by the checks that actually ran. Without execution, a perfect
+    # offline case has 75 available points and should still score 100%.
+    available_points = 75
+    if execute_result is not None:
+        available_points += 10 if result_comparison is not None else 25
+    if result_comparison is not None:
+        available_points += 15
+    score = round(100 * earned_points / available_points, 2)
     min_score = float(case.get("min_score", 0.85)) * 100
     passed = (
         score >= min_score
@@ -279,8 +316,9 @@ async def run_eval_suite(
 
     `trigger` names the semantic approval that caused this run (e.g.
     "metric 'Gross Margin' updated") — stored on the run so a pass-rate
-    regression can point at what changed. Cases that carry `generated_sql`
-    always score offline (no LLM), regardless of `generate`.
+    regression can point at what changed. When `generate` is true, every case
+    is regenerated from the current KB even if it contains historical
+    `generated_sql`; when false, stored SQL is used for offline scoring.
     """
     store.init_db()
     client = store.get_client(account_id) or {}
@@ -293,10 +331,12 @@ async def run_eval_suite(
     results: list[EvalCaseResult] = []
 
     for case in cases:
-        sql = (case.get("generated_sql") or "").strip()
+        # Generate mode benchmarks the current model and KB. Stored SQL is the
+        # deterministic offline fallback when generation is disabled.
+        sql = "" if generate else (case.get("generated_sql") or "").strip()
         allowed = set(case.get("allowed_tables") or known_tables)
         production_result = None
-        if not sql and generate and execute:
+        if generate and execute:
             from core.query_service import run_production_query
 
             production_result = await run_production_query(
@@ -305,7 +345,7 @@ async def run_eval_suite(
                 schema_hint="" if schema in {"", "default"} else schema,
             )
             sql = production_result.sql
-        elif not sql and generate:
+        elif generate:
             sql = await _generate_sql(account_id, case["question"], db_type, allowed)
 
         execute_result = None

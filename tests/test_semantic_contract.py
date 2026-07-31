@@ -393,10 +393,12 @@ class GoldenSeedTests(unittest.TestCase):
 
 
 class OfflineEvalTests(unittest.TestCase):
-    def test_cases_with_sql_never_call_llm(self):
-        # run_eval_suite only generates when a case has no generated_sql
+    def test_generate_mode_refreshes_stored_sql(self):
+        # A checked Generate option must benchmark the current model/KB, not
+        # silently reuse the historical SQL stored by the seeder.
         src = _src("evals/run.py")
-        self.assertIn("if not sql and generate:", src)
+        self.assertIn('sql = "" if generate else', src)
+        self.assertIn("if generate and execute:", src)
 
 
 if __name__ == "__main__":

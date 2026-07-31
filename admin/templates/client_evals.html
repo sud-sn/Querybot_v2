@@ -52,7 +52,7 @@
       </div>
       <div class="form-group">
         <label><input type="checkbox" name="generate" value="1" checked style="width:auto"> Generate SQL with configured LLM</label>
-        <p class="form-note">Turn off only when cases include generated_sql for offline scoring.</p>
+        <p class="form-note">When enabled, regenerate every case from the current KB. Turn off to revalidate stored generated_sql without an LLM call.</p>
       </div>
       <div class="form-group">
         <label><input type="checkbox" name="execute" value="1" style="width:auto"> Execute SQL against DB</label>
