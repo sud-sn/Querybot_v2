@@ -2529,7 +2529,39 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
         rows = None
         ok = False
 
-    retryable = (not ok and (last_code or code) in ("unknown_table", "unknown_column", "date_key_format", "dialect_mismatch", "production_shape", "period_comparison_shape", "anti_join_shape", "top_n_shape", "graph_plan_mismatch", "field_plan_mismatch", "metric_formula_mismatch", "null_aggregate_diagnostic", "parse", "multi_statement", "not_select", "reused_plan_empty", "surrogate_date_conversion", "temporal_anchor_missing", "temporal_anchor_mismatch", "temporal_role_mismatch", "temporal_anchor_unscoped")) or (exec_error is not None)
+    # A freshly generated (not reused-cache) query with an active date-role
+    # temporal filter that comes back with zero rows is much more likely to
+    # be a wrong anchor/offset than a genuine business zero -- unlike a
+    # non-date-filtered zero (e.g. "how many orders did X cancel today"),
+    # which is very often a legitimate answer and must NOT be retried away
+    # into a fabricated non-zero result. Scoped narrowly to date-filtered
+    # questions only, mirroring the reused_plan_empty repair path above but
+    # for SQL that was never cached in the first place.
+    elif (
+        not _reused_plan and ok and exec_error is None and rows is not None
+        and len(rows) == 0 and (_semantic_plan or {}).get("temporal_policies")
+    ):
+        last_code = "zero_row_fresh"
+        last_reason = (
+            "The generated SQL executed successfully but returned no rows for a "
+            "date-filtered question. Generate a fresh query -- try a different "
+            "table, join, or date anchor; do not repeat the same restrictive filter."
+        )
+        _trace_step(
+            trace_id,
+            "zero_row_fresh_date_filtered",
+            input_summary=sql,
+            output_summary={"rows": 0},
+            status="error",
+        )
+        log.info(
+            "Fresh date-filtered query returned zero rows for %s; regenerating",
+            account_id,
+        )
+        rows = None
+        ok = False
+
+    retryable = (not ok and (last_code or code) in ("unknown_table", "unknown_column", "date_key_format", "dialect_mismatch", "production_shape", "period_comparison_shape", "anti_join_shape", "top_n_shape", "graph_plan_mismatch", "field_plan_mismatch", "metric_formula_mismatch", "null_aggregate_diagnostic", "parse", "multi_statement", "not_select", "reused_plan_empty", "zero_row_fresh", "surrogate_date_conversion", "temporal_anchor_missing", "temporal_anchor_mismatch", "temporal_role_mismatch", "temporal_anchor_unscoped")) or (exec_error is not None)
 
     if retryable:
         if exec_error is not None:
@@ -2769,6 +2801,17 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
                     "- Preserve the user's metric, date range, and requested grain.\n"
                     "- Do not repeat the same restrictive predicate or join path unless the current semantic plan explicitly requires it.\n"
                     "- Use only exact tables, columns, approved metric formulas, and governed joins supplied in this prompt.\n"
+                )
+            elif last_code == "zero_row_fresh":
+                _date_contract_lines = _governed_date_anchor_repair_lines(_semantic_plan or {})
+                validation_repair_note = (
+                    "\nZERO-ROW DATE-FILTERED QUERY — REGENERATION REQUIRED:\n"
+                    "- Your SQL was valid and executed successfully but returned zero rows for "
+                    "a question with a date filter.\n"
+                    "- Try a different table, join path, or date anchor — do not repeat the "
+                    "same restrictive filter unless the semantic plan explicitly requires it.\n"
+                    "- Preserve the user's metric, date range, and requested grain.\n"
+                    + (_date_contract_lines if _date_contract_lines else "")
                 )
             retry_user = (
                 f"The following SQL failed validation with: {last_reason}\n"
