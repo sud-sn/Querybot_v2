@@ -8,7 +8,7 @@
 <link rel="icon" type="image/svg+xml" href="/static/img/logo-mark.svg">
 <link rel="stylesheet" href="/static/css/tokens.css">
 <link rel="stylesheet" href="/static/css/base.css">
-<link rel="stylesheet" href="/static/css/portal.css?v=20260531-portal-shell-2">
+<link rel="stylesheet" href="/static/css/portal.css?v=20260731-portal-shell-3">
 {# Prevent flash of unstyled content #}
 <script>
 (function(){
@@ -52,55 +52,79 @@
 
 {% if user %}
 <div class="portal-app-shell">
-  <aside class="portal-sidebar" aria-label="Portal navigation">
-    <a href="/portal/dashboard" class="portal-brand" aria-label="QueryBot dashboard">
-      <span class="portal-brand-mark"><img src="/static/img/logo-mark.svg" alt="" class="qb-logo-mark"></span>
-      <span class="portal-brand-word">Query<span>Bot</span></span>
-    </a>
+  <aside class="portal-sidebar" id="portalSidebar" aria-label="Portal navigation">
+    <div class="portal-sidebar-head">
+      <a href="/portal/dashboard" class="portal-brand" aria-label="QueryBot dashboard">
+        <span class="portal-brand-mark"><img src="/static/img/logo-mark.svg" alt="" class="qb-logo-mark"></span>
+        <span class="portal-brand-word">Query<span>Bot</span></span>
+      </a>
+      <button type="button" class="portal-sidebar-toggle" onclick="window.__qbToggleSidebar()" aria-label="Collapse sidebar" title="Collapse sidebar">
+        <span aria-hidden="true">&#8249;</span>
+      </button>
+    </div>
 
-    <nav class="portal-nav">
+    {% if '/chat' in request.url.path %}
+    <button type="button" class="portal-new-thread" onclick="startNewChat()" aria-label="New Thread" title="New Thread">
+      <span class="portal-new-thread-icon" aria-hidden="true">+</span>
+      <span>New Thread</span>
+    </button>
+    {% else %}
+    <a href="/portal/chat?new=1" class="portal-new-thread" aria-label="New Thread" title="New Thread">
+      <span class="portal-new-thread-icon" aria-hidden="true">+</span>
+      <span>New Thread</span>
+    </a>
+    {% endif %}
+
+    <nav class="portal-nav" aria-label="Primary">
+      <a href="/portal/chat" title="Chat" class="{% if '/chat' in request.url.path %}active{% endif %}">
+        {{ ic("chat", 17) }} <span>Chat</span>
+      </a>
       <a href="/portal/dashboard" title="Dashboard" class="{% if 'dashboard' in request.url.path %}active{% endif %}">
         {{ ic("dashboard", 17) }} <span>Dashboard</span>
       </a>
       <a href="/portal/kb" title="Semantic Layer" class="{% if '/kb' in request.url.path %}active{% endif %}">
         {{ ic("database", 17) }} <span>Semantic Layer</span>
       </a>
-      <a href="/portal/chat" title="Chat" class="{% if '/chat' in request.url.path %}active{% endif %}">
-        {{ ic("chat", 17) }} <span>Chat</span>
-      </a>
-      <a href="/portal/notifications" title="Notifications" class="{% if '/notifications' in request.url.path %}active{% endif %}">
-        <svg xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
-        <span>Notifications</span>
-      </a>
     </nav>
+
+    {% block portal_sidebar_context %}{% endblock %}
 
     <div class="portal-sidebar-spacer"></div>
 
-    <button type="button" class="theme-toggle portal-theme-toggle" data-theme-toggle onclick="window.__qbToggleTheme()">
-      <span class="ti-moon">{{ ic("moon", 16) }}</span>
-      <span class="ti-sun">{{ ic("sun", 16) }}</span>
-      <span class="theme-label">Dark mode</span>
-    </button>
+    <a href="/portal/notifications" title="Notifications" class="portal-sidebar-notifications {% if '/notifications' in request.url.path %}active{% endif %}">
+      <svg xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
+      <span>Notifications</span>
+    </a>
 
-    <div class="portal-user-card">
-      <div class="avatar" aria-hidden="true">{{ (user.name or 'U')[0].upper() }}</div>
-      <div class="portal-user-meta">
-        <div class="topbar-user-name">{{ user.name }}</div>
-        <div class="topbar-user-role">{{ user.group_name or 'No group' }} &middot; {{ user.role }}</div>
+    <footer class="portal-sidebar-footer">
+      <div class="portal-user-card">
+        <div class="avatar" aria-hidden="true">{{ (user.name or 'U')[0].upper() }}</div>
+        <div class="portal-user-meta">
+          <div class="topbar-user-name">{{ user.name }}</div>
+          <div class="topbar-user-role">{{ user.group_name or 'No group' }} &middot; {{ user.role }}</div>
+        </div>
       </div>
-    </div>
-
-    <div class="portal-side-actions">
-      <a href="/portal/change-password" class="btn btn-secondary btn-sm" title="Settings">{{ ic("settings", 14) }} <span>Settings</span></a>
-      <a href="/portal/logout" class="btn btn-secondary btn-sm" title="Logout"><span class="portal-logout-icon" aria-hidden="true">&#8594;</span><span>Logout</span></a>
-    </div>
+      <div class="portal-side-actions" aria-label="Account actions">
+        <button type="button" class="theme-toggle" data-theme-toggle onclick="window.__qbToggleTheme()">
+          <span class="ti-moon">{{ ic("moon", 16) }}</span>
+          <span class="ti-sun">{{ ic("sun", 16) }}</span>
+          <span class="theme-label">Dark mode</span>
+        </button>
+        <a href="/portal/change-password" title="Settings">{{ ic("settings", 16) }} <span>Settings</span></a>
+        <a href="/portal/logout" title="Logout"><span class="portal-logout-icon" aria-hidden="true">&#8594;</span><span>Logout</span></a>
+      </div>
+    </footer>
   </aside>
+  <button type="button" class="portal-drawer-backdrop" onclick="window.__qbToggleSidebar(false)" aria-label="Close navigation"></button>
 
   <div class="portal-app-main">
     <header class="portal-mobile-bar">
-      <a href="/portal/dashboard" class="portal-brand">
-        <span class="portal-brand-mark">Q</span>
-        <span>Query<span>Bot</span></span>
+      <button type="button" class="portal-mobile-menu" onclick="window.__qbToggleSidebar(true)" aria-label="Open navigation">
+        {{ ic("menu", 20) }}
+      </button>
+      <a href="/portal/dashboard" class="portal-brand" aria-label="QueryBot dashboard">
+        <span class="portal-brand-mark"><img src="/static/img/logo-mark.svg" alt="" class="qb-logo-mark"></span>
+        <span class="portal-brand-word">Query<span>Bot</span></span>
       </a>
       <div class="portal-mobile-actions">
         <button type="button" class="theme-toggle btn btn-secondary btn-sm" data-theme-toggle onclick="window.__qbToggleTheme()">
@@ -110,21 +134,6 @@
         <a href="/portal/change-password" class="icon-btn" aria-label="Settings" title="Settings">{{ ic("settings", 16) }}</a>
       </div>
     </header>
-    <nav class="portal-bottom-nav" aria-label="Mobile navigation">
-      <a href="/portal/dashboard" class="{% if 'dashboard' in request.url.path %}active{% endif %}">
-        {{ ic("dashboard", 20) }}<span>Dashboard</span>
-      </a>
-      <a href="/portal/kb" class="{% if '/kb' in request.url.path %}active{% endif %}">
-        {{ ic("database", 20) }}<span>Semantic Layer</span>
-      </a>
-      <a href="/portal/chat" class="{% if '/chat' in request.url.path %}active{% endif %}">
-        {{ ic("chat", 20) }}<span>Chat</span>
-      </a>
-      <a href="/portal/notifications" class="{% if '/notifications' in request.url.path %}active{% endif %}">
-        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
-        <span>Notifications</span>
-      </a>
-    </nav>
 {% endif %}
 
 <div class="main">
@@ -136,6 +145,73 @@
 {% if user %}
   </div>
 </div>
+{% endif %}
+
+{% if user %}
+<script>
+(function(){
+  var shell = document.querySelector('.portal-app-shell');
+  var sidebar = document.getElementById('portalSidebar');
+  var storageKey = 'qb-portal-sidebar-collapsed';
+  if (!shell || !sidebar) return;
+
+  function isMobile(){ return window.matchMedia('(max-width: 1100px)').matches; }
+  function syncToggleLabel(){
+    var collapsed = shell.classList.contains('portal-sidebar-collapsed');
+    var button = sidebar.querySelector('.portal-sidebar-toggle');
+    if (!button) return;
+    button.setAttribute('aria-label', collapsed ? 'Expand sidebar' : 'Collapse sidebar');
+    button.setAttribute('title', collapsed ? 'Expand sidebar' : 'Collapse sidebar');
+  }
+
+  window.__qbToggleSidebar = function(forceOpen){
+    if (isMobile()) {
+      var open = typeof forceOpen === 'boolean' ? forceOpen : !shell.classList.contains('portal-drawer-open');
+      shell.classList.toggle('portal-drawer-open', open);
+      document.body.classList.toggle('portal-drawer-visible', open);
+      if (open) setTimeout(function(){ sidebar.querySelector('a,button')?.focus(); }, 30);
+      return;
+    }
+    var collapsed = typeof forceOpen === 'boolean'
+      ? !forceOpen
+      : !shell.classList.contains('portal-sidebar-collapsed');
+    shell.classList.toggle('portal-sidebar-collapsed', collapsed);
+    try { localStorage.setItem(storageKey, collapsed ? '1' : '0'); } catch (_) {}
+    syncToggleLabel();
+    window.dispatchEvent(new Event('resize'));
+  };
+
+  try {
+    if (!isMobile() && localStorage.getItem(storageKey) === '1') {
+      shell.classList.add('portal-sidebar-collapsed');
+    }
+  } catch (_) {}
+  syncToggleLabel();
+
+  sidebar.querySelectorAll('a').forEach(function(link){
+    link.addEventListener('click', function(){
+      if (isMobile()) window.__qbToggleSidebar(false);
+    });
+  });
+  document.addEventListener('keydown', function(event){
+    if (event.key === 'Escape' && shell.classList.contains('portal-drawer-open')) {
+      window.__qbToggleSidebar(false);
+    }
+  });
+  window.addEventListener('resize', function(){
+    if (isMobile()) {
+      shell.classList.remove('portal-sidebar-collapsed');
+    } else {
+      shell.classList.remove('portal-drawer-open');
+      document.body.classList.remove('portal-drawer-visible');
+      try {
+        shell.classList.toggle('portal-sidebar-collapsed', localStorage.getItem(storageKey) === '1');
+      } catch (_) {}
+      syncToggleLabel();
+    }
+  });
+})();
+</script>
 {% endif %}
 
 <div id="qbDialogBackdrop" class="qb-dialog-backdrop" style="display:none" role="dialog" aria-modal="true" aria-labelledby="qbDialogTitle">

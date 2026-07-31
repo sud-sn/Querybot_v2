@@ -5,7 +5,7 @@
 {% block breadcrumb %}{% endblock %}
 {% block head %}
 <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
-<link rel="stylesheet" href="/static/css/chat_workspace.css?v=20260715-1">
+<link rel="stylesheet" href="/static/css/chat_workspace.css?v=20260731-2">
 <style>
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap');
 /* Full-viewport constraints — chat page only */
@@ -511,6 +511,39 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 </style>
 {% endblock %}
 
+{% block portal_sidebar_context %}
+<div class="portal-sidebar-context">
+  <section class="portal-thread-panel" aria-label="Recent threads">
+    <div class="portal-thread-heading">
+      <span>Recent Threads</span>
+      <button type="button" onclick="refreshHistory()" title="Refresh threads" aria-label="Refresh threads">&#8635;</button>
+    </div>
+    <div class="hp-search-wrap">
+      {{ ic("search", 15, "hp-search-icon") }}
+      <input type="search" id="historySearch" class="hp-search-input"
+             placeholder="Search threads" autocomplete="off" spellcheck="false"
+             aria-label="Search recent threads" oninput="filterHistory(this.value)">
+      <button type="button" id="historySearchClear" class="hp-search-clear" style="display:none"
+              onclick="document.getElementById('historySearch').value='';filterHistory('');this.style.display='none'"
+              aria-label="Clear thread search">&times;</button>
+    </div>
+    <div class="history-panel open" id="historyPanel" aria-label="Recent query history" role="complementary" data-state="loading">
+      <div class="hp-header">
+        <span class="hp-title">Your conversations</span>
+        <button type="button" class="hp-close" onclick="toggleHistoryPanel(false)" aria-label="Close navigation">&times;</button>
+      </div>
+      <div class="hp-list" id="historyList">
+        <div class="hp-empty hp-loading" id="historyEmpty"><span class="hp-state-dot" aria-hidden="true"></span>Loading recent threads...</div>
+      </div>
+    </div>
+    <div class="portal-thread-workspace" title="Current workspace">
+      <span class="portal-thread-workspace-dot" aria-hidden="true"></span>
+      <span><small>Workspace</small><strong>{{ client.client_name or 'Your workspace' }}</strong></span>
+    </div>
+  </section>
+</div>
+{% endblock %}
+
 {% block content %}
 {% if not enabled %}
 <div style="max-width:500px;margin:4rem auto;text-align:center">
@@ -550,48 +583,7 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
   </section>
 
   <div class="chat-workspace">
-    <aside class="chat-conversation-rail" id="chatConversationRail" aria-label="Conversation history">
-      <div class="chat-rail-heading">
-        <div>
-          <span class="chat-rail-eyebrow">Conversations</span>
-          <h2>Chats</h2>
-        </div>
-        <div class="chat-rail-heading-actions">
-          <button type="button" class="chat-rail-icon-btn chat-new-btn" onclick="startNewChat()" title="New chat" aria-label="Start a new chat">+</button>
-          <button type="button" class="chat-rail-icon-btn chat-collapse-btn" onclick="toggleConversationRail()" title="Collapse chats" aria-label="Collapse chats">&#8249;</button>
-        </div>
-      </div>
-
-      <div class="history-panel" id="historyPanel" aria-label="Recent query history" role="complementary">
-        <div class="hp-header">
-          <span class="hp-title">Recent queries</span>
-          <button type="button" class="hp-close" onclick="toggleHistoryPanel()" aria-label="Close history panel">&times;</button>
-        </div>
-        <div class="hp-search-wrap">
-          {{ ic("search", 16, "hp-search-icon") }}
-          <input type="text" id="historySearch" class="hp-search-input"
-                 placeholder="Search chats..." autocomplete="off" spellcheck="false"
-                 oninput="filterHistory(this.value)">
-          <button type="button" id="historySearchClear" class="hp-search-clear" style="display:none"
-                  onclick="document.getElementById('historySearch').value='';filterHistory('');this.style.display='none'">&times;</button>
-        </div>
-        <div class="hp-list" id="historyList">
-          <div class="hp-empty" id="historyEmpty">Loading recent queries...</div>
-        </div>
-      </div>
-
-      <div class="chat-rail-footer" title="Current workspace">
-        <span class="chat-rail-workspace-dot" aria-hidden="true"></span>
-        <span class="chat-rail-footer-copy"><small>Workspace</small><strong>{{ client.client_name or 'Your workspace' }}</strong></span>
-        <button type="button" class="chat-rail-refresh" onclick="refreshHistory()" title="Refresh chats" aria-label="Refresh chats">&#8635;</button>
-      </div>
-
-    </aside>
-
-    <button type="button" class="chat-rail-backdrop" onclick="toggleHistoryPanel()" aria-label="Close chat history"></button>
-
     <main class="chat-workspace-main">
-      <button type="button" class="chat-rail-expand" id="chatRailExpand" onclick="toggleConversationRail(false)" title="Show chats" aria-label="Show chats">&#8250;</button>
   <section class="chat-shell">
     <div class="chat-shell-header">
       <div class="chat-shell-title">
@@ -642,7 +634,11 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
       <div class="chat-wrap">
         <div class="chat-thread" id="thread">
           <div class="msg-system">QueryBot Internal Chat · {{ client.client_name or 'Your workspace' }}</div>
-          <div class="empty-state" id="welcomeState">Start with a business question such as revenue trends, overdue balances, customer performance, or period-over-period comparisons.</div>
+          <div class="empty-state" id="welcomeState">
+            <span class="welcome-kicker">{{ client.client_name or 'Your workspace' }}</span>
+            <h1>How can I help you today?</h1>
+            <p>Ask a business question in plain English and QueryBot will turn your governed data into a clear, traceable answer.</p>
+          </div>
         </div>
 
         <div class="processing-row" id="processingRow" aria-live="polite">
@@ -783,13 +779,20 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 
         {% if suggestions %}
         <div class="suggestions-wrap" id="suggestionsWrap">
-          <span class="suggestions-label" style="flex-shrink:0;margin-bottom:0">Try:</span>
+          <div class="suggestions-heading">
+            <span class="suggestions-label">Start with a workspace question</span>
+            <button type="button" class="suggestions-shuffle" onclick="shuffleSuggestions()" title="Show different suggestions">&#8635; Refresh</button>
+          </div>
           <div class="suggestions" id="suggestions">
-            {% for s in suggestions %}
+            {% for s in suggestions[:4] %}
             <button class="suggestion-chip" type="button"
                     onclick="sendSuggestion(this)"
                     data-fqn="{{ s.fqn | default('') }}"
-                    title="{{ s.question }}">{{ s.question }}</button>
+                    data-question="{{ s.question }}"
+                    title="{{ s.question }}">
+              <span class="suggestion-card-icon">{{ ic("sparkles", 16) }}</span>
+              <span class="suggestion-card-copy"><small>Workspace insight</small><strong>{{ s.question }}</strong></span>
+            </button>
             {% endfor %}
           </div>
           <button type="button" onclick="shuffleSuggestions()" style="font-size:11px;font-weight:700;padding:4px 10px;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-muted);cursor:pointer;flex-shrink:0" title="Show different suggestions">↻</button>
@@ -888,7 +891,7 @@ function _genieEvent(eventType, suggestionText) {
 function _visibleSuggestionTexts() {
   return Array.from(
     document.querySelectorAll('#suggestionsWrap .suggestion-chip')
-  ).map(c => c.textContent.trim()).filter(Boolean);
+  ).map(c => (c.dataset.question || c.textContent).trim()).filter(Boolean);
 }
 const STATUS_FALLBACK = {
   authorization: ['Checking access', 'Verifying workspace access and available data.'],
@@ -916,7 +919,12 @@ function thread(){ return document.getElementById('thread'); }
 function scrollBottom(){ const t = thread(); t.scrollTop = t.scrollHeight; }
 function nowLabel(){ return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
 function timeLabel(ts){ return ts || nowLabel(); }
-function hideWelcome(){ const el = document.getElementById('welcomeState'); if (el) el.style.display = 'none'; }
+function hideWelcome(){
+  const el = document.getElementById('welcomeState');
+  const suggestions = document.getElementById('suggestionsWrap');
+  if (el) el.style.display = 'none';
+  if (suggestions) suggestions.style.display = 'none';
+}
 function toast(msg){ const el = document.getElementById('toast'); el.textContent = msg; el.classList.add('show'); clearTimeout(window.__toastTimer); window.__toastTimer = setTimeout(() => el.classList.remove('show'), 1400); }
 function toastLong(msg){ const el = document.getElementById('toast'); el.textContent = msg; el.classList.add('show'); clearTimeout(window.__toastTimer); window.__toastTimer = setTimeout(() => el.classList.remove('show'), 5200); }
 function updateQueryLimitKpi(status, opts = {}){
@@ -954,7 +962,14 @@ async function refreshQueryLimitStatus(opts = {}){
 }
 function setConnectionState(state, note){
   const badge = document.getElementById('connBadge');
-  badge.classList.toggle('offline', state !== 'Connected');
+  const normalized = String(state || '').toLowerCase();
+  const visualState = normalized.includes('reconnect') ? 'reconnecting'
+    : normalized.includes('connect') && normalized !== 'connected' ? 'connecting'
+    : normalized === 'connected' ? 'connected'
+    : normalized.includes('unavailable') ? 'unavailable'
+    : 'offline';
+  badge.dataset.state = visualState;
+  badge.classList.toggle('offline', visualState === 'offline' || visualState === 'unavailable');
   document.getElementById('connText').textContent = state;
   document.getElementById('connNote').textContent = note;
 }
@@ -3305,7 +3320,7 @@ function sendMessage(tableHint){
   const sug = document.getElementById('suggestionsWrap'); if (sug) sug.style.display = 'none';
 }
 function sendSuggestion(btn){
-  const q   = btn.textContent.trim();
+  const q   = (btn.dataset.question || btn.textContent).trim();
   const fqn = btn.dataset.fqn || '';
   // ── Genie: record click + dismiss others ──────────────────────────────
   _pendingSuggestion = q;
@@ -3912,13 +3927,9 @@ let _historyLoaded = false;
 const CHAT_RAIL_STORAGE_KEY = `querybot.chatRailCollapsed:${ACCOUNT_ID}`;
 
 function toggleConversationRail(forceCollapsed) {
-  const workspace = document.querySelector('.chat-workspace');
-  if (!workspace || window.matchMedia('(max-width: 1080px)').matches) return;
-  const collapsed = typeof forceCollapsed === 'boolean'
-    ? forceCollapsed
-    : !workspace.classList.contains('rail-collapsed');
-  workspace.classList.toggle('rail-collapsed', collapsed);
-  try { localStorage.setItem(CHAT_RAIL_STORAGE_KEY, collapsed ? '1' : '0'); } catch (_) {}
+  if (typeof window.__qbToggleSidebar === 'function') {
+    window.__qbToggleSidebar(typeof forceCollapsed === 'boolean' ? !forceCollapsed : undefined);
+  }
 }
 
 function startNewChat() {
@@ -3929,7 +3940,8 @@ function startNewChat() {
   clearChatCache();
   _localHistory = [];
   _saveHistory([]);
-  location.reload();
+  const cleanUrl = location.pathname;
+  location.replace(cleanUrl);
 }
 
 function _historyDate(item) {
@@ -3956,38 +3968,58 @@ function _historyTime(item) {
   return date ? date.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '';
 }
 
-function toggleHistoryPanel() {
+function toggleHistoryPanel(forceOpen) {
   const panel = document.getElementById('historyPanel');
   const btn   = document.getElementById('historyToggleBtn');
-  const page  = document.querySelector('.chat-page');
   if (!panel) return;
-  const opening = !panel.classList.contains('open');
-  panel.classList.toggle('open', opening);
-  page && page.classList.toggle('history-open', opening);
-  btn && btn.classList.toggle('active', opening);
-  btn && btn.setAttribute('aria-expanded', opening ? 'true' : 'false');
-  if (opening && !_historyLoaded) loadHistory();
+  const compact = window.matchMedia('(max-width: 1100px)').matches;
+  if (compact && typeof window.__qbToggleSidebar === 'function') {
+    const shell = document.querySelector('.portal-app-shell');
+    const opening = typeof forceOpen === 'boolean' ? forceOpen : !shell?.classList.contains('portal-drawer-open');
+    window.__qbToggleSidebar(opening);
+    btn && btn.classList.toggle('active', opening);
+    btn && btn.setAttribute('aria-expanded', opening ? 'true' : 'false');
+    if (opening && !_historyLoaded) loadHistory();
+    return;
+  }
+  panel.classList.add('open');
+  btn && btn.classList.add('active');
+  btn && btn.setAttribute('aria-expanded', 'true');
+  document.getElementById('historySearch')?.focus();
+  if (!_historyLoaded) loadHistory();
 }
 
 function refreshHistory() {
   const listEl = document.getElementById('historyList');
-  if (listEl) listEl.innerHTML = '<div class="hp-empty" id="historyEmpty">Refreshing recent queries...</div>';
+  const panel = document.getElementById('historyPanel');
+  panel && (panel.dataset.state = 'loading');
+  if (listEl) listEl.innerHTML = '<div class="hp-empty hp-loading" id="historyEmpty"><span class="hp-state-dot" aria-hidden="true"></span>Refreshing threads...</div>';
   _historyLoaded = false;
   loadHistory();
 }
 
 async function loadHistory() {
   const listEl  = document.getElementById('historyList');
-  const emptyEl = document.getElementById('historyEmpty');
+  let emptyEl = document.getElementById('historyEmpty');
+  const panel = document.getElementById('historyPanel');
   if (!listEl) return;
+  panel && (panel.dataset.state = 'loading');
   try {
     const resp = await fetch('/portal/api/history', { credentials: 'same-origin' });
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     const data = await resp.json();
     const items = Array.isArray(data.items) ? data.items : (Array.isArray(data.history) ? data.history : (Array.isArray(data) ? data : []));
     _historyLoaded = true;
+    panel && (panel.dataset.state = items.length ? 'ready' : 'empty');
     if (!items.length) {
-      if (emptyEl) emptyEl.innerHTML = 'No queries yet.<br><span style="font-size:11px">Your recent queries will appear here.</span>';
+      if (!emptyEl) {
+        emptyEl = document.createElement('div');
+        emptyEl.className = 'hp-empty';
+        emptyEl.id = 'historyEmpty';
+        listEl.appendChild(emptyEl);
+      }
+      emptyEl.classList.remove('hp-loading');
+      emptyEl.innerHTML = 'No threads yet.<br><span style="font-size:10px">Your recent questions will appear here.</span>';
       return;
     }
     if (emptyEl) emptyEl.remove();
@@ -4011,7 +4043,8 @@ async function loadHistory() {
       </div>`;
     }).join('');
   } catch(e) {
-    if (emptyEl) emptyEl.textContent = 'Could not load history.';
+    panel && (panel.dataset.state = 'error');
+    listEl.innerHTML = '<div class="hp-empty">Could not load threads.<br><button type="button" class="hp-retry" onclick="refreshHistory()">Try again</button></div>';
     console.warn('History load failed:', e);
   }
 }
@@ -4021,7 +4054,7 @@ function sendHistoryQuestion(question, itemEl) {
   if (!decoded || !wsReady) { toast('Live session not ready'); return; }
   document.querySelectorAll('#historyList .hp-item.active').forEach(el => el.classList.remove('active'));
   itemEl && itemEl.classList.add('active');
-  if (window.matchMedia('(max-width: 900px)').matches) toggleHistoryPanel();
+  if (window.matchMedia('(max-width: 1100px)').matches) toggleHistoryPanel(false);
   const inp = document.getElementById('input');
   if (inp) { inp.value = decoded; inp.dispatchEvent(new Event('input')); }
   setTimeout(() => sendMessage(), 80);
@@ -4251,19 +4284,16 @@ document.addEventListener('DOMContentLoaded', () => {
   _initComposerMascot();
   _updateMascotTheme();
   _initHeroCollapse();
+  const requestedNewThread = new URLSearchParams(location.search).get('new') === '1';
+  if (requestedNewThread) {
+    clearChatCache();
+    _saveHistory([]);
+    history.replaceState({}, '', location.pathname);
+  }
   // Restore conversation history badge on page load
-  _localHistory = _loadStoredHistory();
+  _localHistory = requestedNewThread ? [] : _loadStoredHistory();
   _updateMemoryBadge();
   loadHistory();
-  if (!window.matchMedia('(max-width: 1080px)').matches) {
-    try { toggleConversationRail(localStorage.getItem(CHAT_RAIL_STORAGE_KEY) === '1'); } catch (_) {}
-  }
-  document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape' && window.matchMedia('(max-width: 900px)').matches) {
-      const panel = document.getElementById('historyPanel');
-      if (panel && panel.classList.contains('open')) toggleHistoryPanel();
-    }
-  });
   window.addEventListener('qb-query-limit-status', (event) => updateQueryLimitKpi(event.detail, {toast:false}));
   const inp = document.getElementById('input');
   inp.addEventListener('input', () => { inp.style.height = 'auto'; inp.style.height = Math.min(inp.scrollHeight, 140) + 'px'; updateCharCount(); });
