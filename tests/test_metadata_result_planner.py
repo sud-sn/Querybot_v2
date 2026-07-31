@@ -222,10 +222,13 @@ class MetadataResultPlannerWiringTests(unittest.TestCase):
         self.assertIn('followup.status == "clarification"', block)
         self.assertIn("send_clarification_prompt", block)
         # The clarification branch must come before the unconditional
-        # fresh-query fallback at the end of the function.
+        # fresh-query fallback at the end of the function. (Not the
+        # early-return "no cached snapshot at all" fallback near the top of
+        # the function, which also calls strip_result_context(text) --
+        # that one is unconditional by design and comes before everything.)
         self.assertLess(
             block.index('followup.status == "clarification"'),
-            block.rindex("_run_main_question(strip_result_context(text)"),
+            block.rindex("_retry_question or strip_result_context(text)"),
         )
 
     def test_result_chat_handles_clarification_status(self):

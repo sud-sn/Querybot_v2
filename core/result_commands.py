@@ -146,6 +146,7 @@ class ResultCommandOutcome:
     clarification_required: bool = False
     clarification_prompt: str = ""
     clarification_options: list[dict[str, str]] = field(default_factory=list)
+    retry_question: str = ""
 
 
 def parse_result_command(text: str) -> ResultCommand | None:
@@ -157,7 +158,14 @@ def parse_result_command(text: str) -> ResultCommand | None:
         return ResultCommand("undo")
     match = _PRESENTATION_RE.fullmatch(value)
     if match:
-        return ResultCommand("presentation", presentation_type=match.group(1).lower())
+        # fallback_allowed: a chart request against a shape that can't
+        # support it (e.g. "line chart" on a single aggregate row with no
+        # day breakdown) must be able to fall through to a fresh query
+        # instead of silently re-labeling stale data -- see
+        # execute_result_command's presentation branch below.
+        return ResultCommand(
+            "presentation", presentation_type=match.group(1).lower(), fallback_allowed=True,
+        )
     if _KEEP_TOP_ONE_RE.fullmatch(value):
         return ResultCommand("keep_top", limit=1)
     match = _POSITIONAL_RE.fullmatch(value)
@@ -329,6 +337,26 @@ def execute_result_command(
 
         if command.action == "presentation":
             presentation_type = str(command.presentation_type or "").lower()
+            # A series-shaped chart (a trend/comparison across multiple
+            # points) is meaningless re-labeling a single cached row --
+            # e.g. "line chart" on a one-row aggregate like "net revenue
+            # for last 7 days" has no day axis to plot at all. Only "table"
+            # is presentation-neutral and always valid regardless of row
+            # count. Route this back to a fresh query (via
+            # fallback_allowed, now set on every presentation command)
+            # instead of silently re-labeling stale data as a chart.
+            if presentation_type in {"line", "area", "bar", "scatter", "pie", "donut"} and len(rows) < 2:
+                return ResultCommandOutcome(
+                    handled=False,
+                    ok=False,
+                    message=(
+                        f"The current result has only {len(rows)} row(s) -- not enough "
+                        f"to show as a {presentation_type} chart. Regenerating the query "
+                        f"with a breakdown."
+                    ),
+                    source_result_id=source_id,
+                    retry_question=f"{str(source.get('question') or '').strip()}, broken down by day",
+                )
             metadata = dict(source.get("metadata") or {})
             metadata.update({
                 "chart_type_override": presentation_type,

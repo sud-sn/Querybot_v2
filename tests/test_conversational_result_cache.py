@@ -486,6 +486,71 @@ class ConversationalResultCacheTests(unittest.TestCase):
         self.assertFalse(outcome.handled)
         self.assertTrue(command.fallback_allowed)
 
+    def test_presentation_command_has_fallback_allowed(self):
+        # Symmetric with the other analytical command types above -- a
+        # chart request that turns out not to fit the cached shape must be
+        # able to fall through to a fresh query, not just fail outright.
+        command = parse_result_command("show as a line chart")
+        self.assertEqual(command.action, "presentation")
+        self.assertTrue(command.fallback_allowed)
+
+    def test_series_chart_on_single_row_falls_back_with_retry_question(self):
+        # Live-bug reproduction: "net revenue for last 7 days" (a single
+        # aggregate row) followed by "show as a line chart" must not
+        # silently re-label that one row as a chart -- there's no day axis
+        # to plot at all. Must route to a fresh query, carrying the
+        # ORIGINAL question's metric/window forward via retry_question
+        # (the new message alone, "show as a line chart", has neither).
+        cache = ResultCache()
+        cache.store(
+            self.session,
+            [{"MatchedRows": 3, "NonNullMetricRows": 3, "Total_Net_Revenue": 390.75}],
+            question="what was net revenue for last 7 days",
+            result_id="single-agg-source",
+        )
+        command = parse_result_command("show as a line chart")
+        outcome = execute_result_command(self.session, command, cache=cache)
+        self.assertFalse(outcome.ok)
+        self.assertFalse(outcome.handled)
+        self.assertEqual(
+            outcome.retry_question,
+            "what was net revenue for last 7 days, broken down by day",
+        )
+
+    def test_table_presentation_on_single_row_still_succeeds(self):
+        # "table" is presentation-neutral -- a single row renders fine as a
+        # table regardless of row count, so it must not be caught by the
+        # series-chart shape check above.
+        cache = ResultCache()
+        cache.store(
+            self.session,
+            [{"MatchedRows": 3, "NonNullMetricRows": 3, "Total_Net_Revenue": 390.75}],
+            question="what was net revenue for last 7 days",
+            result_id="single-agg-source-table",
+        )
+        command = parse_result_command("show as a table")
+        outcome = execute_result_command(self.session, command, cache=cache)
+        self.assertTrue(outcome.ok, outcome.message)
+
+    def test_series_chart_on_multi_row_result_still_succeeds_unconditionally(self):
+        # The common case (already multi-row) must be completely unaffected
+        # -- e.g. "revenue by supplier" (4 rows) then "show as a bar chart"
+        # still just re-labels those rows instantly, no re-query needed.
+        cache = ResultCache()
+        cache.store(
+            self.session,
+            [
+                {"SUPPLIER": "A", "REVENUE": 10.0},
+                {"SUPPLIER": "B", "REVENUE": 20.0},
+            ],
+            question="revenue by supplier",
+            result_id="multi-row-source",
+        )
+        command = parse_result_command("show as a bar chart")
+        outcome = execute_result_command(self.session, command, cache=cache)
+        self.assertTrue(outcome.ok, outcome.message)
+        self.assertEqual(outcome.snapshot["metadata"]["chart_type_override"], "bar")
+
 
 class ConversationalResultCacheWiringTests(unittest.TestCase):
     def test_chat_command_route_precedes_insight_and_main_dispatch(self):
@@ -514,7 +579,11 @@ class ConversationalResultCacheWiringTests(unittest.TestCase):
         end = source.index("\n    async def _run_metadata_result_planner", start)
         block = source[start:end]
         self.assertIn("command, \"fallback_allowed\"", block)
-        self.assertIn("await _run_main_question(text, table_hint, schema_hint)", block)
+        # outcome.retry_question lets a presentation/chart command that
+        # couldn't be satisfied locally carry the ORIGINAL question's
+        # metric/window forward into the regenerated query, instead of
+        # just the bare follow-up text ("show as a line chart" alone).
+        self.assertIn("outcome.retry_question or text", block)
 
     def test_portal_uses_chat_commands_not_row_checkboxes(self):
         template = (ROOT / "portal" / "templates" / "portal_chat.html").read_text(

@@ -620,7 +620,9 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                             "Cached result lacked required columns; routed to governed query pipeline"
                         ),
                     )
-                    await _run_main_question(text, table_hint, schema_hint)
+                    await _run_main_question(
+                        outcome.retry_question or text, table_hint, schema_hint,
+                    )
                     return
                 _trace_finish(
                     trace_id,
@@ -892,7 +894,14 @@ async def ws_chat(websocket: WebSocket, account_id: str):
 
         # Non-value-bearing analytical requests may use the existing governed
         # source-query pipeline when the cached schema cannot answer them.
-        await _run_main_question(strip_result_context(text), table_hint, schema_hint)
+        # Symmetric with _run_local_result_command's fallback above: if the
+        # planned command's outcome carries a retry_question (e.g. a
+        # presentation/chart request that needs a fresh breakdown), use
+        # that instead of the literal follow-up text.
+        _retry_question = (followup.outcome.retry_question if followup.outcome else "") or ""
+        await _run_main_question(
+            _retry_question or strip_result_context(text), table_hint, schema_hint,
+        )
 
     try:
         while True:
