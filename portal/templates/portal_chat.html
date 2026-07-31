@@ -3034,7 +3034,16 @@ function appendAnalysisResponse(msg, opts = {}){
   const bullets = Array.isArray(msg.bullets) ? msg.bullets : [];
   const resultScope = msg.result_scope || {};
   const metaHtml = resultScope.badge ? `<div class="analysis-meta">Based on: ${escHtml(resultScope.badge)}${resultScope.note ? ` • ${escHtml(resultScope.note)}` : ''}</div>` : '';
-  div.innerHTML = `<div class="msg-avatar"><img src="/static/img/logo-mark.svg" alt="" class="qb-logo-mark"></div><div class="msg-content"><div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timestamp}</span></div><div class="analysis-card"><div class="section-label">${escHtml(msg.action || 'analysis')}</div><div class="analysis-title">${escHtml(msg.title || 'Analysis')}</div><div class="analysis-body">${escHtml(msg.body || '')}</div>${msg.secondary ? `<div class="analysis-secondary">${escHtml(msg.secondary)}</div>` : ''}${bullets.length ? `<ul class="analysis-list">${bullets.map(b => `<li>${escHtml(b)}</li>`).join('')}</ul>` : ''}${msg.next_step ? `<div class="analysis-next"><span class="analysis-next-label">Next step</span>${escHtml(msg.next_step)}</div>` : ''}<div class="msg-actions" style="margin-top:.85rem"><button class="msg-action" type="button" data-copy="analysis">Copy analysis</button></div></div></div>`;
+  // Reconcile-style analysis cards (and any future analysis type) can offer
+  // clickable next-step hypotheses -- reuses the exact same chip markup and
+  // click-to-send wiring as the normal result follow-up chips.
+  const analysisFollowUps = Array.isArray(msg.follow_up_suggestions) ? msg.follow_up_suggestions : [];
+  const followUpHtml = analysisFollowUps.length
+    ? `<div class="suggestions follow-up-chips" style="margin-top:.6rem">
+        ${analysisFollowUps.map(q => `<button class="suggestion-chip follow-up-chip" type="button">${escHtml(q)}</button>`).join('')}
+      </div>`
+    : '';
+  div.innerHTML = `<div class="msg-avatar"><img src="/static/img/logo-mark.svg" alt="" class="qb-logo-mark"></div><div class="msg-content"><div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timestamp}</span></div><div class="analysis-card"><div class="section-label">${escHtml(msg.action || 'analysis')}</div><div class="analysis-title">${escHtml(msg.title || 'Analysis')}</div><div class="analysis-body">${escHtml(msg.body || '')}</div>${msg.secondary ? `<div class="analysis-secondary">${escHtml(msg.secondary)}</div>` : ''}${bullets.length ? `<ul class="analysis-list">${bullets.map(b => `<li>${escHtml(b)}</li>`).join('')}</ul>` : ''}${msg.next_step ? `<div class="analysis-next"><span class="analysis-next-label">Next step</span>${escHtml(msg.next_step)}</div>` : ''}${followUpHtml}<div class="msg-actions" style="margin-top:.85rem"><button class="msg-action" type="button" data-copy="analysis">Copy analysis</button></div></div></div>`;
   thread().appendChild(div);
   if (metaHtml) {
     div.querySelector('.analysis-body')?.insertAdjacentHTML('afterend', metaHtml);
@@ -3046,6 +3055,11 @@ function appendAnalysisResponse(msg, opts = {}){
     e.currentTarget.textContent = ok ? 'Copied!' : 'Copy failed';
     setTimeout(() => e.currentTarget.textContent = prev, 1400);
     toast(ok ? 'Analysis copied' : 'Copy failed');
+  });
+  div.querySelectorAll('.follow-up-chip').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (wsReady) sendSuggestion(btn);
+    });
   });
   if (opts.persist !== false) pushChatCache({ kind:'assistant_analysis', payload: msg, timestamp });
   scrollBottom();

@@ -85,6 +85,21 @@ _PLAN_PREVIEW_CONFIRM_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Reconcile-against-a-known-number intent -- "the real number is X, why is
+# yours Y" style phrasing against the active cached result. QueryBot cannot
+# see the methodology behind an externally-known number, so this is a
+# guided-comparison tool (restate the exact definition + offer testable
+# hypotheses), never a promise to "explain the gap".
+_RECONCILE_INTENT_RE = re.compile(
+    r"\b(?:real|actual|correct|right)\s+number\s+is\b|"
+    r"\b(?:my|our)\s+(?:dashboard|report|spreadsheet|system)\s+shows\b|"
+    r"\bdoesn'?t\s+match\b|"
+    r"\byours?\s+(?:says?|shows?|gives?)\b.{0,20}\bbut\b|"
+    r"\bshould\s+be\s+\S.{0,40}\bnot\b|"
+    r"\bwalk\s+me\s+through\s+how\s+you\s+calculated\b",
+    re.IGNORECASE,
+)
+
 
 def _ws_text_value(value, *preferred_keys: str) -> str:
     """Return a safe text value from a WebSocket payload field.
@@ -1042,6 +1057,43 @@ async def ws_chat(websocket: WebSocket, account_id: str):
             })
         finally:
             await websocket.send_json({"type": "typing", "active": False})
+
+    async def _run_reconcile_chat(snapshot: dict) -> None:
+        """"the real number is X, why is yours Y" -- QueryBot cannot see the
+        methodology behind an externally-known number, so this must NOT
+        promise to explain the gap. It restates its own answer's exact
+        definition (the real SQL that ran -- not vague language) and offers
+        1-2 concrete, clickable hypotheses that re-run via the normal
+        pipeline, exactly like every other correction/fallback path in this
+        file. A guided-comparison tool, not automated root-cause magic.
+        """
+        question = str(snapshot.get("question") or "this result")
+        sql = str(snapshot.get("sql") or "")
+        rows = snapshot.get("rows") or []
+
+        bullets = [f"Question asked: {question}", f"Rows returned: {len(rows)}"]
+        if len(rows) == 1 and len(rows[0]) == 1:
+            from core.response_builder import _safe_cell
+            value = next(iter(rows[0].values()))
+            bullets.insert(0, f"My value: {_safe_cell(value)}")
+
+        await websocket.send_json({
+            "type": "assistant_analysis",
+            "action": "reconcile",
+            "title": "Here's exactly what I ran",
+            "body": (
+                "I can't see how your number was calculated, so I can't explain the "
+                "gap directly -- but here's my exact definition. Try one of these to "
+                "see if it closes the difference:"
+            ),
+            "bullets": bullets,
+            "secondary": sql,
+            "follow_up_suggestions": [
+                f"{question}, excluding internal or administrative records",
+                f"{question}, using last calendar month instead",
+            ],
+        })
+        await websocket.send_json({"type": "typing", "active": False})
 
     try:
         while True:
@@ -2652,6 +2704,12 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 for column in (_cache_snapshot or {}).get("schema", [])
                 if isinstance(column, dict) and column.get("name")
             ]
+            if _RECONCILE_INTENT_RE.search(text) and _cache_snapshot and _cache_snapshot.get("sql"):
+                if current_query_task and not current_query_task.done():
+                    current_query_task.cancel()
+                current_query_task = asyncio.create_task(_run_reconcile_chat(_cache_snapshot))
+                continue
+
             if is_metadata_result_question(text):
                 _route_cached_analysis = True
             else:
