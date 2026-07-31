@@ -1,0 +1,127 @@
+import unittest
+from unittest.mock import patch
+
+from core.date_coverage import check_date_coverage, _window_to_days, _parse_date_value
+
+
+class WindowToDaysTests(unittest.TestCase):
+    def test_days_weeks_months(self):
+        self.assertEqual(_window_to_days(7, "day"), 7)
+        self.assertEqual(_window_to_days(2, "week"), 14)
+        self.assertEqual(_window_to_days(1, "month"), 30)
+
+    def test_zero_or_missing_amount_is_zero(self):
+        self.assertEqual(_window_to_days(0, "day"), 0)
+        self.assertEqual(_window_to_days(None, "day"), 0)
+
+    def test_unknown_unit_is_zero(self):
+        self.assertEqual(_window_to_days(5, "fortnight"), 0)
+
+
+class ParseDateValueTests(unittest.TestCase):
+    def test_parses_iso_date_string(self):
+        self.assertEqual(_parse_date_value("2026-07-20").isoformat(), "2026-07-20")
+
+    def test_parses_datetime_string(self):
+        self.assertEqual(_parse_date_value("2026-07-20 10:30:00").isoformat(), "2026-07-20")
+
+    def test_none_and_empty_return_none(self):
+        self.assertIsNone(_parse_date_value(None))
+        self.assertIsNone(_parse_date_value(""))
+
+    def test_garbage_returns_none(self):
+        self.assertIsNone(_parse_date_value("not-a-date"))
+
+
+class CheckDateCoverageTests(unittest.TestCase):
+    def setUp(self):
+        self.db_cfg = {"credentials": {}}
+        self.native_policy = {
+            "amount": 7, "unit": "day",
+            "fact_table": "DBO.F_ORDERS", "fact_column": "ORDER_DATE",
+            "date_table": "DBO.F_ORDERS", "date_column": "ORDER_DATE",
+            "date_key_type": "native",
+        }
+        self.surrogate_policy = {
+            "amount": 7, "unit": "day",
+            "fact_table": "DBO.F_RX_FILL", "fact_column": "FILL_DATE_ID",
+            "dimension_table": "DBO.DIM_DATE", "dimension_key": "DATE_ID",
+            "date_column": "CALENDAR_DATE",
+            "date_key_type": "surrogate_fk",
+        }
+
+    def test_full_coverage_returns_none(self):
+        with patch("core.contextual_dates.format_required_anchor", return_value="(SELECT MAX(ORDER_DATE) FROM DBO.F_ORDERS)"), \
+             patch("core.date_coverage.run_query", side_effect=[
+                 [{"AnchorDate": "2026-07-20"}],
+                 [{"DaysWithData": 7}],
+             ]):
+            gap = check_date_coverage(self.db_cfg, self.native_policy, "azure_sql")
+        self.assertIsNone(gap)
+
+    def test_partial_coverage_returns_gap(self):
+        with patch("core.contextual_dates.format_required_anchor", return_value="(SELECT MAX(ORDER_DATE) FROM DBO.F_ORDERS)"), \
+             patch("core.date_coverage.run_query", side_effect=[
+                 [{"AnchorDate": "2026-07-20"}],
+                 [{"DaysWithData": 3}],
+             ]):
+            gap = check_date_coverage(self.db_cfg, self.native_policy, "azure_sql")
+        self.assertIsNotNone(gap)
+        self.assertEqual(gap.requested_days, 7)
+        self.assertEqual(gap.actual_days, 3)
+        self.assertIn("3 days out of the 7 days", gap.message)
+
+    def test_off_by_one_tolerance_does_not_flag(self):
+        with patch("core.contextual_dates.format_required_anchor", return_value="(SELECT MAX(ORDER_DATE) FROM DBO.F_ORDERS)"), \
+             patch("core.date_coverage.run_query", side_effect=[
+                 [{"AnchorDate": "2026-07-20"}],
+                 [{"DaysWithData": 6}],
+             ]):
+            gap = check_date_coverage(self.db_cfg, self.native_policy, "azure_sql")
+        self.assertIsNone(gap)
+
+    def test_surrogate_fk_uses_join(self):
+        with patch("core.contextual_dates.format_required_anchor",
+                   return_value="(SELECT MAX(DIM_DATE.CALENDAR_DATE) FROM DBO.DIM_DATE JOIN DBO.F_RX_FILL ON DBO.F_RX_FILL.FILL_DATE_ID = DBO.DIM_DATE.DATE_ID)"), \
+             patch("core.date_coverage.run_query", side_effect=[
+                 [{"AnchorDate": "2026-07-20"}],
+                 [{"DaysWithData": 2}],
+             ]) as mock_run:
+            gap = check_date_coverage(self.db_cfg, self.surrogate_policy, "azure_sql")
+        self.assertIsNotNone(gap)
+        self.assertEqual(gap.actual_days, 2)
+        coverage_sql = mock_run.call_args_list[1].args[2]
+        self.assertIn("JOIN", coverage_sql)
+        self.assertIn("DATE_ID", coverage_sql)
+
+    def test_no_temporal_window_returns_none(self):
+        policy = dict(self.native_policy)
+        policy["amount"] = 0
+        gap = check_date_coverage(self.db_cfg, policy, "azure_sql")
+        self.assertIsNone(gap)
+
+    def test_missing_fact_fields_returns_none_not_raise(self):
+        policy = {"amount": 7, "unit": "day"}
+        gap = check_date_coverage(self.db_cfg, policy, "azure_sql")
+        self.assertIsNone(gap)
+
+    def test_query_failure_returns_none_not_raise(self):
+        with patch("core.contextual_dates.format_required_anchor", return_value="(SELECT MAX(ORDER_DATE) FROM DBO.F_ORDERS)"), \
+             patch("core.date_coverage.run_query", side_effect=RuntimeError("db down")):
+            gap = check_date_coverage(self.db_cfg, self.native_policy, "azure_sql")
+        self.assertIsNone(gap)
+
+    def test_no_anchor_expression_returns_none(self):
+        with patch("core.contextual_dates.format_required_anchor", return_value=""):
+            gap = check_date_coverage(self.db_cfg, self.native_policy, "azure_sql")
+        self.assertIsNone(gap)
+
+    def test_unsafe_identifier_returns_none_not_raise(self):
+        policy = dict(self.native_policy)
+        policy["fact_table"] = "DBO.F_ORDERS; DROP TABLE x"
+        gap = check_date_coverage(self.db_cfg, policy, "azure_sql")
+        self.assertIsNone(gap)
+
+
+if __name__ == "__main__":
+    unittest.main()

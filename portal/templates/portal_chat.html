@@ -2761,6 +2761,13 @@ function appendAssistantResponse(msg, opts = {}){
       + `<span class="ds-icon">${dsIcon}</span><span>${escHtml(ds.line)}</span></div>`
     : '';
 
+  // ── Coverage caveat — "I found data for 3 of the 7 days you asked about"
+  // (core/date_coverage.py; zero LLM, exact date arithmetic) ────────────────
+  const coverageCaveatHtml = msg.coverage_caveat
+    ? `<div class="decision-signal watch">`
+      + `<span class="ds-icon">⚠</span><span>${escHtml(msg.coverage_caveat)}</span></div>`
+    : '';
+
   // ── Decision actions — incl. diagnose and other result chips ────────────
   const nextActions = Array.isArray(msg.next_actions) ? msg.next_actions : [];
   const nextActionsHtml = nextActions.length
@@ -2851,6 +2858,7 @@ function appendAssistantResponse(msg, opts = {}){
           <div style="display:flex;flex-direction:column;gap:.45rem;align-items:flex-end">${scopeBadgeHtml}${chipHtml}</div>
         </div>
         ${insightSummaryHtml}
+        ${coverageCaveatHtml}
         ${decisionSignalHtml}
         ${localOperationProofHtml}
         ${confidenceHtml}
