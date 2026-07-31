@@ -119,8 +119,15 @@ def _resolved_fact_tables(
         if table:
             facts.add(f"{schema}.{table}" if schema else table)
     for field in (semantic_plan or {}).get("fields") or []:
+        # A business-term field mapping (e.g. "revenue" -> F_RX_FILL.
+        # NET_REVENUE_AMT) is just as strong a governed signal as a metric
+        # formula's base table above -- same preserve_unknown rationale:
+        # the current graph-resolution pass may have anchored on a
+        # different table entirely (e.g. via unrelated KB-retrieval
+        # scoring), which must not silently drop this table from the
+        # fact-scope used for admin-approved default date-role lookup.
         source = str(field.get("source_table") or field.get("table") or "")
-        add_if_fact(source)
+        add_if_fact(source, preserve_unknown=True)
     return {table for table in facts if table}
 
 

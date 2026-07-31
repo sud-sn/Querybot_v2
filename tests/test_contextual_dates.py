@@ -308,6 +308,64 @@ class ContextualDateResolutionTests(unittest.TestCase):
         )
         self.assertEqual(facts, set())
 
+    def test_business_term_field_on_unrelated_graph_anchor_still_resolves_fact(self):
+        # Live-bug reproduction: "revenue" is mapped as a Business Term field
+        # to F_RX_FILL.NET_REVENUE_AMT (not a Metric), but the graph anchored
+        # on an unrelated table (F_CLAIM, from KB-retrieval scoring on the
+        # phrase "revenue trend" -- unrelated to the business-term mapping).
+        # F_RX_FILL never appeared in the graph's "detected" set for THIS
+        # resolution pass, so the field-loop's add_if_fact(source) (without
+        # preserve_unknown=True) silently dropped it -- fact_scope ended up
+        # {F_CLAIM} only, the admin-approved default role on F_RX_FILL never
+        # got a chance to apply, and the whole query ran fully ungoverned.
+        graph = _default_date_graph(include_claim=True)
+        facts = _resolved_fact_tables(
+            {"detected": ["Claim"], "anchor": "Claim"},
+            graph,
+            semantic_plan={
+                "fields": [{
+                    "term": "revenue", "table": "PHARMACY.F_RX_FILL",
+                    "column": "NET_REVENUE_AMT", "source_table": "PHARMACY.F_RX_FILL",
+                }],
+            },
+        )
+        self.assertIn("PHARMACY.F_RX_FILL", facts)
+
+    def test_business_term_field_fact_default_selected_despite_unrelated_graph_anchor(self):
+        # End-to-end version of the same live bug: with the fact-scope fix,
+        # resolve_contextual_date_binding must select the business-term
+        # field's fact's admin-approved default role, not fall through to
+        # "no governed date context" just because the graph anchored
+        # elsewhere and no metric matched at all.
+        roles = [{
+            "name": "Fill Date", "business_role": "fill_date",
+            "fact_table": "PHARMACY.F_RX_FILL", "fact_column": "FILL_DATE",
+            "dimension_table": "", "dimension_key": "",
+            "date_value_column": "FILL_DATE", "date_key_type": "native_date",
+            "status": "approved", "is_default": True,
+        }]
+        graph = _default_date_graph(include_claim=True)
+        fact_scope = _resolved_fact_tables(
+            {"detected": ["Claim"], "anchor": "Claim"},
+            graph,
+            semantic_plan={
+                "fields": [{
+                    "term": "revenue", "table": "PHARMACY.F_RX_FILL",
+                    "column": "NET_REVENUE_AMT", "source_table": "PHARMACY.F_RX_FILL",
+                }],
+            },
+        )
+        result = resolve_contextual_date_binding(
+            "show my revenue trend for the last 7 days",
+            matched_metrics=[],
+            bindings=[],
+            date_roles=roles,
+            required_fact_tables=fact_scope,
+        )
+        self.assertEqual(result["status"], "selected")
+        self.assertEqual(result["binding"]["fact_column"], "FILL_DATE")
+        self.assertEqual(result["reason"], "default date role for resolved fact")
+
     def test_graph_infers_unique_default_date_fact_for_dimension(self):
         result = infer_connected_default_date_fact(
             _default_date_graph(),
