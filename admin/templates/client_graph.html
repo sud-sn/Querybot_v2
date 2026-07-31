@@ -155,6 +155,21 @@ body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-seri
 /* ── Review queue panel ─────────────────────────────────────────────────────── */
 #review-panel{position:absolute;top:0;right:0;bottom:0;width:360px;max-width:85vw;background:var(--surface);border-left:1px solid var(--border);box-shadow:-6px 0 18px rgba(0,0,0,.08);display:flex;flex-direction:column;transform:translateX(101%);transition:transform .2s ease;z-index:30}
 #review-panel.open{transform:translateX(0)}
+
+/* ── Graph chat panel (slides from the left, mirrors #review-panel) ─────────── */
+#chat-panel{position:absolute;top:0;left:0;bottom:0;width:340px;max-width:85vw;background:var(--surface);border-right:1px solid var(--border);box-shadow:6px 0 18px rgba(0,0,0,.08);display:flex;flex-direction:column;transform:translateX(-101%);transition:transform .2s ease;z-index:30}
+#chat-panel.open{transform:translateX(0)}
+#chat-head{padding:.7rem .9rem;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+#chat-title{font-size:13px;font-weight:900}
+#chat-log{flex:1;overflow-y:auto;padding:.6rem;display:flex;flex-direction:column;gap:.5rem}
+.chat-msg{font-size:12px;line-height:1.4;padding:.5rem .65rem;border-radius:8px;max-width:100%;word-break:break-word}
+.chat-msg-bot{background:var(--surface-2);color:var(--text)}
+.chat-msg-user{background:var(--primary-soft,#EFF6FF);color:var(--primary);align-self:flex-end}
+.chat-msg-error{background:#FFFBEB;color:#92400E;border:1px solid #FDE68A}
+.chat-msg-actions{margin-top:.4rem;display:flex;gap:.35rem;flex-wrap:wrap}
+#chat-input-row{padding:.6rem;border-top:1px solid var(--border);display:flex;gap:.4rem}
+#chat-input{flex:1;min-width:0;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:12px;padding:6px 9px}
+#chat-send-btn:disabled{opacity:.6;cursor:default}
 #rv-head{padding:.7rem .9rem;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:.45rem}
 #rv-title-row{display:flex;align-items:center;justify-content:space-between}
 #rv-title{font-size:13px;font-weight:900}
@@ -449,6 +464,7 @@ body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-seri
     <button class="tb-btn" id="review-btn" onclick="toggleReviewPanel()" title="Review LLM/heuristic suggestions before they steer SQL joins">
       ⚑ Review <span id="review-badge" class="review-badge" style="display:none">0</span>
     </button>
+    <button class="tb-btn" id="chat-btn" onclick="toggleChatPanel()" title="Describe a table mapping or join in plain language">💬 Chat</button>
     <button class="tb-btn" onclick="openResolverModal()" title="Type a sample question and see exactly which JOIN path the resolver picks">🧪 Test resolver</button>
     <div style="flex:1;min-width:0"></div>
     <button class="tb-btn" onclick="autoLayout()" title="Re-arrange the canvas (fact-centric left-to-right) and save positions">▦ Layout</button>
@@ -502,6 +518,26 @@ body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-seri
         ✓ Accept all ≥ 85%
       </button>
       <span style="font-size:11px;color:var(--text-muted)">Joins steer SQL — review low-confidence ones individually.</span>
+    </div>
+  </aside>
+
+  <!-- ══ CHAT PANEL ════════════════════════════════════════════════════════ -->
+  <aside id="chat-panel" aria-label="Describe a mapping or join in chat">
+    <div id="chat-head">
+      <span id="chat-title">Describe a mapping or join</span>
+      <button class="tb-btn sm" onclick="toggleChatPanel()" title="Close">✕</button>
+    </div>
+    <div id="chat-log">
+      <div class="chat-msg chat-msg-bot">
+        Tell me about a table mapping or a join, e.g. <em>"map the customer table"</em>
+        or <em>"join orders to customer on customer id"</em>. I'll suggest it here —
+        nothing goes live until you confirm it in the review queue.
+      </div>
+    </div>
+    <div id="chat-input-row">
+      <input type="text" id="chat-input" placeholder="Describe a mapping or join…"
+             onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendGraphChatMessage();}">
+      <button class="tb-btn primary sm" id="chat-send-btn" onclick="sendGraphChatMessage()">Send</button>
     </div>
   </aside>
 
@@ -1657,6 +1693,56 @@ function toggleReviewPanel() {
   const panel = document.getElementById('review-panel');
   panel.classList.toggle('open');
   if (panel.classList.contains('open')) renderReviewPanel();
+}
+
+// ── Graph chat panel ─────────────────────────────────────────────────────────
+function toggleChatPanel() {
+  document.getElementById('chat-panel').classList.toggle('open');
+}
+
+function _appendChatMsg(html, cls) {
+  const log = document.getElementById('chat-log');
+  const div = document.createElement('div');
+  div.className = `chat-msg ${cls}`;
+  div.innerHTML = html;
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+}
+
+async function sendGraphChatMessage() {
+  const input = document.getElementById('chat-input');
+  const message = input.value.trim();
+  if (!message) return;
+  const sendBtn = document.getElementById('chat-send-btn');
+
+  _appendChatMsg(_esc(message), 'chat-msg-user');
+  input.value = '';
+  input.disabled = true;
+  sendBtn.disabled = true;
+
+  try {
+    const res = await fetch(`${API_BASE}/chat`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({message}),
+    });
+    const body = await res.json();
+    if (body.status === 'ok') {
+      _appendChatMsg(
+        `${_esc(body.message)}<div class="chat-msg-actions">` +
+        `<button class="tb-btn sm" onclick="location.reload()">↻ Refresh to review</button></div>`,
+        'chat-msg-bot',
+      );
+    } else {
+      _appendChatMsg(_esc(body.message || "I couldn't understand that."), 'chat-msg-error');
+    }
+  } catch (e) {
+    _appendChatMsg("Something went wrong sending that — try again.", 'chat-msg-error');
+  } finally {
+    input.disabled = false;
+    sendBtn.disabled = false;
+    input.focus();
+  }
 }
 
 function _srcChip(generatedBy) {

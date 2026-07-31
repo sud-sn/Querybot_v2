@@ -12,6 +12,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 
 import store
@@ -56,6 +57,15 @@ from core.clarification import (
 log = logging.getLogger("querybot")
 
 router = APIRouter()
+
+# Conversational report/playbook builder intent -- deliberately simple
+# keyword/regex fast path (mirrors core/result_commands.py's style), not an
+# LLM classification, so it never adds a round-trip to ordinary questions.
+# Available to every portal user, not gated by role.
+_REPORT_BUILDER_INTENT_RE = re.compile(
+    r"\b(?:build|create|make|set\s*up|start|schedule)\s+(?:me\s+)?(?:a|an|my)?\s*report\b",
+    re.IGNORECASE,
+)
 
 
 def _ws_text_value(value, *preferred_keys: str) -> str:
@@ -902,6 +912,118 @@ async def ws_chat(websocket: WebSocket, account_id: str):
         await _run_main_question(
             _retry_question or strip_result_context(text), table_hint, schema_hint,
         )
+
+    async def _run_report_builder_chat(text: str) -> None:
+        """Turn a plain-language report request ("build me a report with net
+        revenue and top customers, scheduled every Monday at 9am") into a
+        real report + subscription, using the exact same store calls the
+        checkbox report-creation form already uses (report_store.
+        create_report/add_metric_to_report/create_subscription). Available
+        to every portal user, not gated by role. The LLM sees only this
+        user's own ACL-filtered metric names/descriptions
+        (core/report_planner.py), never row data.
+        """
+        await websocket.send_json({"type": "typing", "active": True})
+        try:
+            all_metrics = store.list_metrics(account_id)
+            allowed = store.get_allowed_tables(portal_user)
+            if allowed is not None:
+                all_metrics = [
+                    m for m in all_metrics
+                    if not m.get("base_table") or m["base_table"].upper() in allowed
+                ]
+            if not all_metrics:
+                await websocket.send_json({
+                    "type": "assistant_error",
+                    "action": "define_report",
+                    "content": (
+                        "There are no metrics available to you yet -- ask your "
+                        "admin to add some to the metric registry first."
+                    ),
+                })
+                return
+
+            provider, model, api_key, az_kwargs = resolve_provider(client, purpose="query")
+
+            async def _complete_report_plan(**kwargs):
+                return await llm_complete(
+                    provider=provider, model=model, api_key=api_key, **kwargs, **az_kwargs,
+                )
+
+            from core.report_planner import parse_report_plan
+
+            request_id = make_llm_audit_request_id()
+            with llm_audit_scope(
+                account_id=account_id,
+                question="Plan a report from chat",
+                enabled=bool(client.get("enable_llm_audit")),
+                request_id=request_id,
+                question_id=getattr(adapter, "last_question_id", None) or "",
+                component="report_builder_chat",
+            ):
+                plan, plan_error = await parse_report_plan(text, all_metrics, _complete_report_plan)
+
+            if plan is None:
+                await websocket.send_json({
+                    "type": "assistant_error",
+                    "action": "define_report",
+                    "content": (
+                        plan_error
+                        or "Could not build a report from that -- try naming the metrics explicitly."
+                    ),
+                })
+                return
+
+            from store import report_store
+
+            report = report_store.create_report(
+                account_id, plan.name, created_by_user_id=portal_user.get("id"),
+            )
+            metrics_by_id = {m["id"]: m for m in all_metrics}
+            metric_names: list[str] = []
+            for sort_order, metric_id in enumerate(plan.metric_ids):
+                report_store.add_metric_to_report(report["id"], metric_id, sort_order)
+                metric = metrics_by_id.get(metric_id)
+                metric_names.append((metric or {}).get("name") or str(metric_id))
+
+            bullets = [f"Metrics: {', '.join(metric_names)}"]
+            schedule_line = ""
+            if plan.cadence:
+                report_store.create_subscription(
+                    account_id, portal_user.get("id"), report["id"],
+                    cadence=plan.cadence, day_of_week=plan.day_of_week, hour=plan.hour,
+                )
+                if plan.cadence == "weekly":
+                    day_name = (
+                        "Monday Tuesday Wednesday Thursday Friday Saturday Sunday"
+                    ).split()[plan.day_of_week]
+                    schedule_line = f"Delivered every {day_name} at {plan.hour:02d}:00."
+                else:
+                    schedule_line = f"Delivered daily at {plan.hour:02d}:00."
+                bullets.append(schedule_line)
+
+            metric_word = "metric" if len(metric_names) == 1 else "metrics"
+            await websocket.send_json({
+                "type": "assistant_analysis",
+                "action": "define_report",
+                "title": f'Report "{plan.name}" created',
+                "body": (
+                    f"I've created **{plan.name}** with {len(metric_names)} {metric_word}."
+                    + (f" {schedule_line}" if schedule_line
+                       else " No schedule was requested -- ask any time to add one.")
+                ),
+                "bullets": bullets,
+                "report_id": report["id"],
+            })
+        except Exception as exc:
+            log.warning("report builder chat failed for %s: %s", account_id, exc)
+            await websocket.send_json({
+                "type": "assistant_error",
+                "action": "define_report",
+                "content": "Could not build that report right now.",
+            })
+        finally:
+            await websocket.send_json({"type": "typing", "active": False})
 
     try:
         while True:
@@ -2423,6 +2545,16 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     "content": "I could not read that question. Please type it again.",
                 })
                 await websocket.send_json({"type": "typing", "active": False})
+                continue
+
+            # Conversational report/playbook building -- available to every
+            # portal user (no role gate). Detected before any result-cache
+            # command since "build a report" has nothing to do with a cached
+            # result.
+            if _REPORT_BUILDER_INTENT_RE.search(text):
+                if current_query_task and not current_query_task.done():
+                    current_query_task.cancel()
+                current_query_task = asyncio.create_task(_run_report_builder_chat(text))
                 continue
 
             # Conversational result operations run before every insight/LLM

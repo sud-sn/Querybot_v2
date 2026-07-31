@@ -4098,6 +4098,179 @@ async def graph_api_columns(request: Request, account_id: str):
     return JSONResponse(cols)
 
 
+@router.post("/clients/{account_id}/graph/api/chat")
+async def graph_api_chat(request: Request, account_id: str):
+    """
+    Conversational front door onto the entity graph. Translates a plain-
+    language table-mapping or join description into a suggested entity or
+    relationship row (status='suggested', generated_by='chat') that lands
+    in the existing review queue -- never writes status='confirmed'
+    directly the way the canvas does. The LLM sees only table/column
+    names (core/graph_commands.py's schema manifest), never row data.
+    Does NOT call _after_semantic_approval itself -- that only fires when
+    a human actually confirms via the existing graph_confirm_entity/
+    graph_confirm_rel routes, unchanged.
+    """
+    if not _is_auth(request):
+        raise HTTPException(status_code=401)
+    client = store.get_client(account_id)
+    if not client:
+        raise HTTPException(status_code=404)
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    message = str(body.get("message") or "").strip()
+    if not message:
+        return JSONResponse({"status": "clarify", "message": "Say what you'd like to map or join."})
+
+    state      = store.get_client_state(account_id)
+    schema_dir = (state or {}).get("schema_dir") or ""
+
+    from pathlib import Path as _Path
+    schema_path = _Path(schema_dir) / "_schema.json" if schema_dir else None
+    if not schema_path or not schema_path.exists():
+        return JSONResponse({
+            "status": "clarify",
+            "message": "No schema has been discovered for this client yet -- run Discover first.",
+        })
+
+    from core.schema import _normalize_schema as _ns
+    master = _ns(json.loads(schema_path.read_text(encoding="utf-8")))
+    schema_manifest = {
+        fqn: [c.get("name", "") for c in info.get("columns", []) if c.get("name")]
+        for fqn, info in master.items()
+    }
+
+    from core.graph_commands import parse_graph_command
+    from core.llm import llm_complete, resolve_provider
+    from core.llm_audit import llm_audit_scope, make_llm_audit_request_id
+
+    provider, model_name, api_key, az_kw = resolve_provider(client)
+
+    async def _complete(**kwargs):
+        return await llm_complete(
+            provider=provider, model=model_name, api_key=api_key, **kwargs, **az_kw,
+        )
+
+    request_id = make_llm_audit_request_id()
+    with llm_audit_scope(
+        account_id=account_id,
+        question=f"Entity Graph chat command for {account_id}",
+        enabled=bool(client.get("enable_llm_audit")),
+        request_id=request_id,
+        question_id=request_id,
+        component="graph_chat_command",
+    ):
+        try:
+            command, error = await parse_graph_command(message, schema_manifest, _complete)
+        except Exception as exc:
+            log.warning("graph_api_chat: parse failed for %s: %s", account_id, exc)
+            return JSONResponse({"status": "clarify", "message": "Could not process that mapping right now."})
+
+    if command is None:
+        return JSONResponse({
+            "status": "clarify",
+            "message": error or "Could not understand that mapping -- try naming the table and column explicitly.",
+        })
+
+    conf_pct = max(0, min(100, int(round(command.confidence * 100))))
+    review_queue_url = f"/clients/{account_id}/graph#review"
+
+    if command.action == "register_entity":
+        parts = command.table_name.split(".")
+        table_only  = parts[-1]
+        schema_only = command.schema_name or (parts[-2] if len(parts) >= 2 else "")
+        store.save_entity(
+            account_id,
+            entity_name=command.entity_name,
+            table_name=table_only,
+            schema_name=schema_only,
+            status="suggested",
+            confidence_score=conf_pct,
+            generated_by="chat",
+            reason=f'Suggested from chat: "{message[:200]}"',
+        )
+        return JSONResponse({
+            "status": "ok",
+            "message": (
+                f"I've suggested **{command.entity_name}** (mapped to {command.table_name}) "
+                "— it's waiting in the review queue for you to confirm."
+            ),
+            "review_queue_url": review_queue_url,
+        })
+
+    # create_join / update_join — relationships are always stored between
+    # entity_graph rows, never raw table names, so resolve (or auto-suggest)
+    # an entity for each side first.
+    def _resolve_entity(table_fqn: str) -> str:
+        parts = table_fqn.split(".")
+        table_name  = parts[-1]
+        schema_name = parts[-2] if len(parts) >= 2 else ""
+        for ent in store.list_entities(account_id, active_only=False):
+            if (ent.get("table_name") or "").upper() != table_name.upper():
+                continue
+            if schema_name and (ent.get("schema_name") or "").upper() != schema_name.upper():
+                continue
+            return ent["entity_name"]
+        store.save_entity(
+            account_id,
+            entity_name=table_name,
+            table_name=table_name,
+            schema_name=schema_name,
+            status="suggested",
+            confidence_score=conf_pct,
+            generated_by="chat",
+            reason=f'Auto-registered from chat join: "{message[:200]}"',
+        )
+        return table_name
+
+    from_entity = _resolve_entity(command.from_table)
+    to_entity   = _resolve_entity(command.to_table)
+
+    rel_id = store.save_relationship(
+        account_id,
+        from_entity=from_entity,
+        to_entity=to_entity,
+        from_column=command.from_column,
+        to_column=command.to_column,
+        relationship_type=command.relationship_type,
+        join_type=command.join_type,
+        where_clause=command.where_clause,
+        status="suggested",
+        confidence_score=conf_pct,
+        generated_by="chat",
+        reason=f'Suggested from chat: "{message[:200]}"',
+    )
+
+    from core.relationship_validator import validate_relationship
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(
+        None, lambda: validate_relationship(account_id, rel_id, execute=False),
+    )
+    store.update_relationship_validation(
+        account_id, rel_id, result.status,
+        row_count_estimate=result.row_count_estimate,
+        join_multiplicity=result.join_multiplicity,
+        match_rate=result.match_rate,
+        orphan_rate=result.orphan_rate,
+        null_fk_rate=result.null_fk_rate,
+        fanout_ratio=result.fanout_ratio,
+    )
+
+    return JSONResponse({
+        "status": "ok",
+        "message": (
+            f"I've suggested a {command.join_type} join from **{from_entity}.{command.from_column}** "
+            f"to **{to_entity}.{command.to_column}** (validation: {result.status}) — "
+            "it's waiting in the review queue for you to confirm."
+        ),
+        "review_queue_url": review_queue_url,
+        "validation_status": result.status,
+    })
+
+
 @router.get("/clients/{account_id}/graph/api/health")
 async def graph_health_api(request: Request, account_id: str):
     """
