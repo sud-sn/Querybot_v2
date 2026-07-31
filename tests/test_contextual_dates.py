@@ -1272,11 +1272,11 @@ class TemporalAnchorScopeValidatorTests(unittest.TestCase):
         "fact_table": "PHARMA_LAB.F_RX_FILL",
     }]
 
-    def _errors(self, sql: str):
+    def _errors(self, sql: str, policies=None):
         import sqlglot
         from core.validator import _temporal_anchor_scope_errors
         tree = sqlglot.parse_one(sql, read="tsql")
-        return _temporal_anchor_scope_errors(tree, self.POLICIES)
+        return _temporal_anchor_scope_errors(tree, policies if policies is not None else self.POLICIES)
 
     def test_unscoped_dimension_anchor_is_rejected(self):
         errors = self._errors(
@@ -1292,6 +1292,62 @@ class TemporalAnchorScopeValidatorTests(unittest.TestCase):
             "SELECT COUNT(*) FROM PHARMA_LAB.F_RX_FILL f WHERE f.FILL_DATE = "
             "(SELECT MAX(d2.CALENDAR_DATE) FROM PHARMA_LAB.D_DATE d2 "
             "JOIN PHARMA_LAB.F_RX_FILL f2 ON f2.DISPENSE_DATE_ID = d2.DATE_ID)"
+        )
+        self.assertEqual(errors, [])
+
+    FILL_DATE_POLICIES = [{
+        "anchor_policy": "latest_available",
+        "date_column": "FILL_DATE",
+        "anchor_table": "PHARMA_LAB.F_RX_FILL",
+        "fact_table": "PHARMA_LAB.F_RX_FILL",
+    }]
+
+    def test_correlated_alias_reference_is_rejected_even_though_table_name_matches(self):
+        # Live-bug reproduction, and worse than a false rejection: my own
+        # fix for the bracket-quoting bug (which only checked whether the
+        # anchor TABLE NAME appears anywhere in the subquery) made this
+        # exact SQL pass validation, but it's semantically broken. The
+        # subquery's FROM has no alias, so `frx` in `MAX(frx.FILL_DATE)`
+        # is undeclared there -- it can only resolve by correlating to the
+        # OUTER query's own `frx` row, which degenerates MAX() to that
+        # row's own date and makes `date >= date - N months` a tautology
+        # that silently returns every row ever, not just the requested
+        # window. Confirmed via sqlglot's build_scope: the subquery's
+        # `sources` dict keys on the bare table name, never on `frx`.
+        errors = self._errors(
+            "SELECT COUNT(DISTINCT frx.PRESCRIBER_ID) AS PrescriberCount "
+            "FROM PHARMA_LAB.F_RX_FILL frx "
+            "WHERE frx.FILL_DATE >= DATEADD(month, -2, "
+            "(SELECT MAX(frx.FILL_DATE) FROM PHARMA_LAB.F_RX_FILL)) "
+            "AND frx.DELETED_RECORD_FLAG = 0",
+            policies=self.FILL_DATE_POLICIES,
+        )
+        codes = {e["code"] for e in errors}
+        self.assertIn("temporal_anchor_unscoped", codes)
+        self.assertTrue(any("correlating to the OUTER query" in e["message"] for e in errors))
+
+    def test_unaliased_single_table_anchor_still_passes(self):
+        # The correct native-date form (mirrors report_engine.py's own
+        # _apply_latest_date_filter): no alias on either the fact table or
+        # the MAX() column -- must not be caught by the correlation check
+        # above (there's no alias at all to be "undeclared").
+        errors = self._errors(
+            "SELECT COUNT(*) FROM PHARMA_LAB.F_RX_FILL frx "
+            "WHERE frx.FILL_DATE >= DATEADD(month, -2, "
+            "(SELECT MAX(FILL_DATE) FROM PHARMA_LAB.F_RX_FILL))",
+            policies=self.FILL_DATE_POLICIES,
+        )
+        self.assertEqual(errors, [])
+
+    def test_reused_alias_declared_inside_subquery_still_passes(self):
+        # The same alias name as the outer query is fine as long as the
+        # subquery declares its OWN copy of it -- only an undeclared
+        # (implicitly correlated) alias is the problem.
+        errors = self._errors(
+            "SELECT COUNT(*) FROM PHARMA_LAB.F_RX_FILL frx "
+            "WHERE frx.FILL_DATE >= DATEADD(month, -2, "
+            "(SELECT MAX(frx.FILL_DATE) FROM PHARMA_LAB.F_RX_FILL frx))",
+            policies=self.FILL_DATE_POLICIES,
         )
         self.assertEqual(errors, [])
 

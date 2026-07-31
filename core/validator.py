@@ -1442,6 +1442,26 @@ def _temporal_anchor_scope_errors(tree, policies: list[dict]) -> list[dict]:
             names.add(qualified or raw)
         return names
 
+    def _local_aliases(select) -> set[str]:
+        """Aliases (or bare names, when unaliased) of every Table node this
+        select's own subtree scans -- used to catch a correlated reference
+        masquerading as a properly-scoped one. `(SELECT MAX(frx.FILL_DATE)
+        FROM F_RX_FILL)` (no alias on the FROM) touches the right physical
+        table, so the plain table-name check above passes it -- but `frx`
+        is not declared anywhere in this scope, so SQL Server can only
+        resolve it by correlating to the OUTER query's own `frx` row. For
+        every outer row that degenerates MAX() to that row's own date,
+        turning the whole relative-window filter into a tautology
+        (date >= date - N) that silently returns every row ever, not just
+        the requested window. Confirmed via sqlglot's own scope resolver
+        (build_scope): the subquery's `sources` dict keys on the bare table
+        name, never on `frx`."""
+        return {
+            str(t.alias_or_name or "").upper()
+            for t in select.find_all(sg_exp.Table)
+            if t.alias_or_name
+        }
+
     errors: list[dict] = []
     for policy in governed:
         date_column = str(policy.get("date_column") or "").upper()
@@ -1449,27 +1469,48 @@ def _temporal_anchor_scope_errors(tree, policies: list[dict]) -> list[dict]:
         if not date_column or not anchor_table:
             continue
         for max_node in tree.find_all(sg_exp.Max):
-            max_cols = {
-                str(column.name or "").upper()
-                for column in max_node.find_all(sg_exp.Column)
-                if column.name
-            }
+            max_columns = [c for c in max_node.find_all(sg_exp.Column) if c.name]
+            max_cols = {str(c.name or "").upper() for c in max_columns}
             if date_column not in max_cols:
                 continue
             select = max_node.find_ancestor(sg_exp.Select)
             if select is None:
                 continue
             scoped_tables = _resolve_tables(select)
-            if not any(_table_matches(anchor_table, table) for table in scoped_tables):
-                errors.append({
-                    "code": "temporal_anchor_unscoped",
-                    "message": (
+            unscoped = not any(_table_matches(anchor_table, table) for table in scoped_tables)
+            local_aliases = _local_aliases(select)
+            correlated_column = next(
+                (
+                    c for c in max_columns
+                    if str(c.name or "").upper() == date_column
+                    and c.table
+                    and str(c.table).upper() not in local_aliases
+                ),
+                None,
+            )
+            correlated = correlated_column is not None
+            if unscoped or correlated:
+                message = (
+                    (
+                        f"MAX({date_column}) references {correlated_column.table}."
+                        f"{date_column}, but '{correlated_column.table}' is not declared "
+                        f"anywhere in this subquery -- it can only resolve by correlating "
+                        f"to the OUTER query's own row, which degenerates MAX() to that "
+                        f"row's own date and makes the relative-window filter always true. "
+                        f"Give this subquery its own FROM/JOIN to {anchor_table} and take "
+                        f"MAX({date_column}) over that, not a reference back to the outer "
+                        f"query's alias."
+                    ) if correlated and not unscoped else (
                         f"MAX({date_column}) was computed without scoping to the "
                         f"governed fact table ({anchor_table}) -- an unrestricted date "
                         f"dimension can contain rows with no matching fact data, which "
                         f"silently anchors to a date with zero results. JOIN to or filter "
                         f"from {anchor_table} before taking MAX({date_column})."
-                    ),
+                    )
+                )
+                errors.append({
+                    "code": "temporal_anchor_unscoped",
+                    "message": message,
                     "table": anchor_table,
                     "column": date_column,
                 })
