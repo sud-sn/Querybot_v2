@@ -1503,16 +1503,27 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
             model=_contract_model,
         )
         if _semantic_model_plan.get("enabled"):
+            _smp_field_summary = [
+                f"{f.get('term')}={f.get('table')}.{f.get('column')}"
+                for f in _semantic_model_plan.get("fields", [])
+            ]
             _trace_step(
                 trace_id,
                 "semantic_model_plan",
                 output_summary={
-                    "fields": [
-                        f"{f.get('term')}={f.get('table')}.{f.get('column')}"
-                        for f in _semantic_model_plan.get("fields", [])
-                    ],
+                    "fields": _smp_field_summary,
                     "joins": len(_semantic_model_plan.get("joins") or []),
                 },
+            )
+            # Only _trace_step recorded this (silent to console) -- the
+            # sibling build_semantic_field_plan block above already logs to
+            # console on a match; this one didn't, so a "business term never
+            # matched at all" report was indistinguishable in the logs from
+            # "matched fine, just got dropped downstream" (the fact-scope
+            # bug fixed earlier this session).
+            log.info(
+                "Structured semantic model plan for %s: fields=%s joins=%d",
+                account_id, _smp_field_summary, len(_semantic_model_plan.get("joins") or []),
             )
     except Exception as _smp_exc:
         _semantic_model_plan = {}
