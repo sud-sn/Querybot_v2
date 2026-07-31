@@ -121,7 +121,57 @@ def save_feedback(
             question_id, exc,
         )
 
+    # A "wrong_join" downvote is the strongest available signal that the
+    # entity graph steered this answer's SQL to the wrong tables -- flag
+    # the specific relationship(s) actually used for re-review, landing
+    # them in the same Entity Graph review queue as any other suggestion
+    # (mirrors the existing correction-flag call this store already makes
+    # elsewhere for admin-corrected SQL). Previously reason_code was stored
+    # but never read anywhere, so wrong_join was indistinguishable from any
+    # other downvote.
+    if rating == -1 and reason_code == "wrong_join" and sql_text:
+        try:
+            from store.config_store import flag_relationships_needing_review
+            tables = _extract_table_names(sql_text)
+            if tables:
+                flag_relationships_needing_review(account_id, tables)
+        except Exception as exc:
+            log.warning(
+                "learning_store: wrong_join re-flag failed for %s: %s",
+                question_id, exc,
+            )
+
     return result
+
+
+def _extract_table_names(sql_text: str) -> set[str]:
+    """Best-effort table-name extraction from stored feedback SQL, used only
+    to decide which joins a 'wrong_join' downvote should flag for review.
+    Never raises -- a parse failure just means no join gets flagged, which
+    is the safe failure mode here (this is a corrective SIGNAL, not the
+    feedback save itself)."""
+    if not sql_text:
+        return set()
+    try:
+        import sqlglot
+        from sqlglot import exp as sg_exp
+    except ImportError:
+        return set()
+    for dialect in (None, "tsql", "snowflake"):
+        try:
+            tree = sqlglot.parse_one(sql_text, read=dialect)
+        except Exception:
+            continue
+        if tree is None:
+            continue
+        names = {
+            ".".join(part for part in (t.db, t.name) if part).upper()
+            for t in tree.find_all(sg_exp.Table)
+            if t.name
+        }
+        if names:
+            return names
+    return set()
 
 
 def get_feedback(question_id: str, user_id: int) -> dict | None:

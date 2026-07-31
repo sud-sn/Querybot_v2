@@ -8904,6 +8904,7 @@ async def admin_learning_queue(request: Request, account_id: str):
 
     # Parse evidence JSON for each candidate so the template can iterate it
     import json as _json
+    from store.learning_store import list_feedback as _list_feedback
     for c in candidates:
         raw_ev = c.get("evidence")
         if isinstance(raw_ev, str):
@@ -8913,6 +8914,18 @@ async def admin_learning_queue(request: Request, account_id: str):
                 c["evidence"] = {}
         elif not isinstance(raw_ev, dict):
             c["evidence"] = {}
+        # Surface WHY an answer was downvoted (not just that it was) --
+        # answer_feedback.reason_code was previously captured and stored but
+        # never rendered anywhere admins could see it.
+        try:
+            feedback_rows = _list_feedback(c.get("origin_question_id") or "")
+            c["feedback_reasons"] = sorted({
+                str(f.get("reason_code") or "").strip()
+                for f in feedback_rows
+                if f.get("rating") == -1 and f.get("reason_code")
+            })
+        except Exception:
+            c["feedback_reasons"] = []
 
     return _resp(request, "client_learning_queue.html", {
         "client":          client,

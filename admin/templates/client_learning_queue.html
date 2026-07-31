@@ -166,6 +166,15 @@
     </td>
     <td>
       <div class="question-cell" title="{{ c.question_text }}">{{ c.question_text[:80] }}</div>
+      {% if c.feedback_reasons %}
+      <div class="feedback-reason-badges" style="margin-top:.25rem;display:flex;gap:.25rem;flex-wrap:wrap">
+        {% for reason in c.feedback_reasons %}
+        <span class="feedback-reason-badge"
+          style="font-size:9px;font-weight:800;padding:1px 6px;border-radius:8px;border:1px solid var(--border);color:var(--text-muted);background:var(--surface-2)"
+          title="A user downvoted this answer and flagged: {{ reason.replace('_',' ') }}">{{ reason.replace('_', ' ') }}</span>
+        {% endfor %}
+      </div>
+      {% endif %}
     </td>
     <td>
       <span class="type-{{ c.candidate_type }}">{{ c.candidate_type }}</span>
