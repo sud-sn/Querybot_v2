@@ -12,7 +12,7 @@ from core.validator import (
     repair_unambiguous_unknown_columns,
     validate_sql_detailed,
 )
-from store.trace_store import find_reusable_validated_sql_plan
+import store.trace_store as trace_store
 
 
 @contextmanager
@@ -71,8 +71,13 @@ class CrossChannelSqlPlanReuseTests(unittest.TestCase):
                        'azure_sql', 'contract-v4', 'fail', 'success', 12, 'portal')""",
             ('["PHARMA_LAB.D_DATE", "PHARMA_LAB.F_INVENTORY_SNAPSHOT"]',),
         )
-        self.db_patch = patch(
-            "store.trace_store.get_db",
+        # Patch the exact module object imported by this test. Several legacy
+        # suites delete and re-import ``store.*`` during collection; a string
+        # patch would then target the replacement module while this test's
+        # imported function still reads globals from the original module.
+        self.db_patch = patch.object(
+            trace_store,
+            "get_db",
             side_effect=lambda: _db_context(self.conn),
         )
         self.db_patch.start()
@@ -94,7 +99,7 @@ class CrossChannelSqlPlanReuseTests(unittest.TestCase):
             "contract_version": "contract-v4",
         }
         args.update(overrides)
-        return find_reusable_validated_sql_plan(**args)
+        return trace_store.find_reusable_validated_sql_plan(**args)
 
     def test_reuses_successful_portal_plan_for_same_governance_scope(self):
         # Legacy Portal traces may not record selected_schema; the sole schema

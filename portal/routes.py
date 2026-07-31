@@ -1363,23 +1363,109 @@ async def portal_query_limit_status(request: Request):
 
 @router.get("/api/history")
 async def portal_query_history(request: Request):
-    """Return the last 40 successful query traces for the current user's account."""
+    """Return recent server-backed threads owned by the signed-in user."""
     user = _get_portal_user(request)
     if not user:
         return JSONResponse({"ok": False, "error": "Authentication required."}, status_code=401)
-    traces = store.list_answer_traces(user["account_id"], limit=40)
-    items = []
+    traces = store.list_answer_traces(
+        user["account_id"],
+        limit=200,
+        portal_user_id=int(user["id"]),
+    )
+    grouped: dict[str, dict] = {}
     for t in traces:
-        items.append({
-            "id":         t.get("id"),
-            "question":   t.get("question_text_sanitized") or t.get("question") or "",
-            "sql":        t.get("generated_sql") or t.get("sql") or "",
-            "row_count":  t.get("query_row_count") or t.get("row_count") or 0,
-            "duration_ms":t.get("query_duration_ms") or t.get("duration_ms") or 0,
-            "created_at": (t.get("created_at") or "")[:16].replace("T", " "),
-            "success":    bool(t.get("generated_sql") or t.get("sql")),
+        if t.get("status") != "success" or not t.get("generated_sql"):
+            continue
+        session_id = str(t.get("session_id") or "")
+        if ":thread:" in session_id:
+            thread_id = session_id.rsplit(":thread:", 1)[-1]
+        else:
+            # Pre-thread traces remain individually accessible without being
+            # merged into one misleading account-wide conversation.
+            thread_id = f"legacy-{int(t.get('id') or 0)}"
+        question = t.get("question_text_sanitized") or "Untitled thread"
+        if thread_id not in grouped:
+            grouped[thread_id] = {
+                "id": thread_id,
+                "thread_id": thread_id,
+                "question": question,
+                "last_question": question,
+                "turn_count": 1,
+                "row_count": int(t.get("query_row_count") or 0),
+                "duration_ms": int(t.get("query_duration_ms") or 0),
+                "created_at": (t.get("created_at") or "")[:16].replace("T", " "),
+                "success": True,
+            }
+        else:
+            grouped[thread_id]["question"] = question
+            grouped[thread_id]["turn_count"] += 1
+    return JSONResponse({"ok": True, "items": list(grouped.values())[:40]})
+
+
+@router.get("/api/history/{thread_id}")
+async def portal_query_thread(request: Request, thread_id: str):
+    """Return renderable turns for one thread owned by the signed-in user."""
+    user = _get_portal_user(request)
+    if not user:
+        return JSONResponse({"ok": False, "error": "Authentication required."}, status_code=401)
+    thread_id = str(thread_id or "").strip()
+    if not re.fullmatch(r"(?:[A-Za-z0-9_-]{1,80}|legacy-[0-9]+)", thread_id):
+        return JSONResponse({"ok": False, "error": "Invalid thread id."}, status_code=400)
+
+    traces = store.list_answer_traces(
+        user["account_id"],
+        limit=200,
+        portal_user_id=int(user["id"]),
+        oldest_first=True,
+    )
+    if thread_id.startswith("legacy-"):
+        trace_id = int(thread_id.removeprefix("legacy-") or 0)
+        traces = [trace for trace in traces if int(trace.get("id") or 0) == trace_id]
+    else:
+        marker = f":thread:{thread_id}"
+        traces = [
+            trace for trace in traces
+            if str(trace.get("session_id") or "").endswith(marker)
+        ]
+    if not traces:
+        return JSONResponse({"ok": False, "error": "Thread not found."}, status_code=404)
+
+    import json as _json
+    from core.chart import build_chart_payload, detect_chart_type
+    from core.response_builder import build_assistant_response
+
+    turns = []
+    for trace in traces:
+        if trace.get("status") != "success" or not trace.get("generated_sql"):
+            continue
+        raw_rows = trace.get("result_rows") or "[]"
+        if isinstance(raw_rows, str):
+            try:
+                raw_rows = _json.loads(raw_rows)
+            except (TypeError, ValueError):
+                raw_rows = []
+        rows = raw_rows if isinstance(raw_rows, list) else []
+        question = str(trace.get("question_text_sanitized") or "")
+        chart_type = detect_chart_type(rows, question=question) if rows else None
+        chart = (
+            build_chart_payload(rows, chart_type, title=question, question=question)
+            if chart_type else None
+        )
+        payload = build_assistant_response(
+            question=question,
+            rows=rows,
+            sql=str(trace.get("generated_sql") or ""),
+            duration_ms=int(trace.get("query_duration_ms") or 0),
+            chart=chart,
+            data_source=str(trace.get("db_type") or ""),
+            question_id=str(trace.get("question_id") or ""),
+        )
+        turns.append({
+            "question": question,
+            "payload": payload,
+            "created_at": str(trace.get("created_at") or ""),
         })
-    return JSONResponse({"ok": True, "items": items})
+    return JSONResponse({"ok": True, "thread_id": thread_id, "turns": turns})
 
 
 @router.get("/api/export-csv")
@@ -1396,12 +1482,18 @@ async def portal_export_csv(request: Request, trace_id: int | None = None):
     trace = None
     if trace_id:
         trace = store.get_answer_trace(trace_id)
-        # verify it belongs to this account
-        if trace and trace.get("account_id") != user["account_id"]:
+        # Verify tenant and user ownership. Account-only authorization exposed
+        # one portal user's trace rows to every other user in the tenant.
+        if trace and (
+            trace.get("account_id") != user["account_id"]
+            or int(trace.get("portal_user_id") or 0) != int(user["id"])
+        ):
             trace = None
     if not trace:
         # fallback: most recent
-        traces = store.list_answer_traces(user["account_id"], limit=1)
+        traces = store.list_answer_traces(
+            user["account_id"], limit=1, portal_user_id=int(user["id"])
+        )
         trace  = traces[0] if traces else None
 
     if not trace:

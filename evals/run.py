@@ -24,6 +24,7 @@ from core.knowledge import load_retriever
 from core.llm import build_sql_system_prompt, llm_complete, resolve_provider
 from core.schema import load_known_tables, load_schema_columns, run_query
 from core.validator import validate_sql
+from evals.result_compare import ResultComparison, compare_result_rows
 
 
 @dataclass
@@ -37,6 +38,8 @@ class EvalCaseResult:
     validation_error: str = ""
     execution_status: str = "skipped"
     row_count: int = 0
+    result_match_status: str = "not_configured"
+    result_match_error: str = ""
     failures: list[str] | None = None
 
 
@@ -84,6 +87,7 @@ def _score_sql(
     table_columns: dict[str, dict[str, str]],
     db_type: str,
     execute_result: tuple[str, int, str] | None,
+    result_comparison: ResultComparison | None = None,
 ) -> EvalCaseResult:
     failures: list[str] = []
     sql = (sql or "").strip()
@@ -132,12 +136,22 @@ def _score_sql(
     row_count = 0
     if execute_result:
         execution_status, row_count, exec_err = execute_result
-        execution_score = 25 if execution_status == "passed" else 0
+        execution_score = (10 if result_comparison is not None else 25) if execution_status == "passed" else 0
         if exec_err:
             failures.append(f"execution failed: {exec_err}")
         if row_count == 0 and not bool(case.get("allow_zero_rows", True)):
             failures.append("execution returned zero rows")
             execution_score = 0
+
+    result_score = 0
+    result_match_status = "not_configured"
+    result_match_error = ""
+    if result_comparison is not None:
+        result_match_status = result_comparison.status
+        result_match_error = result_comparison.detail
+        result_score = 15 if result_comparison.matched else 0
+        if not result_comparison.matched:
+            failures.append(f"result mismatch: {result_comparison.detail or result_comparison.status}")
 
     privacy_score = 10
     for sensitive in case.get("forbidden_sensitive_terms") or []:
@@ -145,9 +159,13 @@ def _score_sql(
             privacy_score = 0
             failures.append(f"sensitive term surfaced: {sensitive}")
 
-    score = round(validation_points + expectation_score + execution_score + privacy_score, 2)
+    score = round(validation_points + expectation_score + execution_score + result_score + privacy_score, 2)
     min_score = float(case.get("min_score", 0.85)) * 100
-    passed = score >= min_score and not any(f.startswith("validator failed") for f in failures)
+    passed = (
+        score >= min_score
+        and not any(f.startswith("validator failed") for f in failures)
+        and (result_comparison is None or result_comparison.matched)
+    )
     return EvalCaseResult(
         id=str(case.get("id", "")),
         question=str(case.get("question", "")),
@@ -158,6 +176,8 @@ def _score_sql(
         validation_error="" if ok else reason,
         execution_status=execution_status,
         row_count=row_count,
+        result_match_status=result_match_status,
+        result_match_error=result_match_error,
         failures=failures,
     )
 
@@ -222,8 +242,8 @@ async def _amain() -> int:
     parser.add_argument("--client", required=True, help="Client/account id")
     parser.add_argument("--schema", default="", help="Schema name for report grouping")
     parser.add_argument("--cases", required=True, help="YAML/JSON golden question file")
-    parser.add_argument("--generate", action="store_true", help="Generate SQL using configured LLM when case.generated_sql is absent")
-    parser.add_argument("--execute", action="store_true", help="Execute generated SQL against the configured DB")
+    parser.add_argument("--generate", action="store_true", help="Generate SQL when case.generated_sql is absent")
+    parser.add_argument("--execute", action="store_true", help="Execute SQL; with --generate this uses the full production pipeline")
     parser.add_argument("--out", default="", help="Output report directory")
     args = parser.parse_args()
 
@@ -275,18 +295,44 @@ async def run_eval_suite(
     for case in cases:
         sql = (case.get("generated_sql") or "").strip()
         allowed = set(case.get("allowed_tables") or known_tables)
-        if not sql and generate:
+        production_result = None
+        if not sql and generate and execute:
+            from core.query_service import run_production_query
+
+            production_result = await run_production_query(
+                account_id,
+                case["question"],
+                schema_hint="" if schema in {"", "default"} else schema,
+            )
+            sql = production_result.sql
+        elif not sql and generate:
             sql = await _generate_sql(account_id, case["question"], db_type, allowed)
 
         execute_result = None
-        if execute and sql:
+        actual_rows: list[dict[str, Any]] = []
+        if production_result is not None:
+            actual_rows = production_result.rows
+            if production_result.completed:
+                execute_result = ("passed", production_result.row_count, "")
+            else:
+                execute_result = ("failed", 0, production_result.error_message[:500])
+        elif execute and sql:
             try:
-                rows = run_query(db_cfg["credentials"], db_type, sql)
-                execute_result = ("passed", len(rows), "")
+                actual_rows = run_query(db_cfg["credentials"], db_type, sql)
+                execute_result = ("passed", len(actual_rows), "")
             except Exception as exc:
                 execute_result = ("failed", 0, str(exc)[:500])
 
-        results.append(_score_sql(case, sql, known_tables, table_columns, db_type, execute_result))
+        result_comparison = compare_result_rows(case, actual_rows) if execute else None
+        results.append(_score_sql(
+            case,
+            sql,
+            known_tables,
+            table_columns,
+            db_type,
+            execute_result,
+            result_comparison,
+        ))
 
     if out_dir is None:
         stamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")

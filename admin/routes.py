@@ -8460,7 +8460,86 @@ async def admin_build_kb(
 
             # Step 2: Validate examples + Step 4: Harvest
             db_for_val = {"credentials": creds, "db_type": db_type, "id": db_cfg_id}
-            await _run_example_validation(account_id, kb_dir, chroma_dir, db_for_val)
+            validation_result = await _run_example_validation(
+                account_id, kb_dir, chroma_dir, db_for_val
+            )
+            building_state["kb_example_validation"] = validation_result
+            if validation_result.get("status") != "passed":
+                failed_count = int(validation_result.get("failed") or 0)
+                total_count = int(validation_result.get("total") or 0)
+                validation_progress = {
+                    "status": "failed",
+                    "phase": "validation_failed",
+                    "step": (
+                        "Generated SQL validation failed "
+                        f"({failed_count}/{total_count} patterns did not pass). "
+                        "The Knowledge Base was not activated."
+                    ),
+                    "current": int(validation_result.get("validated") or 0),
+                    "total": total_count,
+                    "percent": 100,
+                    "current_table": "",
+                }
+                blocked_state = dict(building_state)
+                blocked_state["kb_progress"] = validation_progress
+                save_state(account_id, "SCHEMA_READY", blocked_state)
+                await notify_kb_build_changed(
+                    account_id=account_id,
+                    status="failed",
+                    progress=validation_progress,
+                )
+                log.error(
+                    "KB activation blocked for %s: generated example validation=%s",
+                    account_id,
+                    validation_result,
+                )
+                _kb_stop_events.pop(account_id, None)
+                return
+
+            # Critical deterministic KB-quality findings are activation gates,
+            # not informational warnings. This prevents an incomplete semantic
+            # model from being advertised as production-ready.
+            from core.kb_quality import load_kb_quality_report
+            quality_result = load_kb_quality_report(kb_dir)
+            building_state["kb_quality_gate"] = {
+                "status": quality_result.get("status") or "missing",
+                "score": quality_result.get("score"),
+                "summary": quality_result.get("summary") or {},
+            }
+            if quality_result.get("status") not in {"ready", "needs_review"}:
+                critical_count = int(
+                    (quality_result.get("summary") or {}).get("critical") or 0
+                )
+                quality_progress = {
+                    "status": "failed",
+                    "phase": "quality_blocked",
+                    "step": (
+                        (
+                            f"Knowledge Base quality checks found {critical_count} critical issue(s). "
+                            "Resolve them before activation."
+                        )
+                        if quality_result.get("status") == "blocked"
+                        else "Knowledge Base quality evidence is missing or invalid. Rebuild before activation."
+                    ),
+                    "current": count,
+                    "total": count,
+                    "percent": 100,
+                    "current_table": "",
+                }
+                blocked_state = dict(building_state)
+                blocked_state["kb_progress"] = quality_progress
+                save_state(account_id, "SCHEMA_READY", blocked_state)
+                await notify_kb_build_changed(
+                    account_id=account_id,
+                    status="failed",
+                    progress=quality_progress,
+                )
+                log.error(
+                    "KB activation blocked for %s by deterministic quality gate",
+                    account_id,
+                )
+                _kb_stop_events.pop(account_id, None)
+                return
             harvesting_progress = {
                 "status": "building",
                 "phase": "harvesting",

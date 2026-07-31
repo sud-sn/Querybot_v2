@@ -477,15 +477,29 @@ def get_answer_trace_by_question_id(account_id: str, question_id: str) -> dict |
     return get_answer_trace(int(row[0]))
 
 
-def list_answer_traces(account_id: str, limit: int = 50) -> list[dict]:
+def list_answer_traces(
+    account_id: str,
+    limit: int = 50,
+    *,
+    portal_user_id: int | None = None,
+    session_id: str | None = None,
+    oldest_first: bool = False,
+) -> list[dict]:
+    """List traces with optional portal-user and thread isolation."""
+    where = ["account_id=?"]
+    params: list[Any] = [account_id]
+    if portal_user_id is not None:
+        where.append("portal_user_id=?")
+        params.append(int(portal_user_id))
+    if session_id is not None:
+        where.append("session_id=?")
+        params.append(str(session_id))
+    params.append(int(limit))
+    order = "ASC" if oldest_first else "DESC"
     with get_db() as conn:
         rows = conn.execute(
-            """
-            SELECT * FROM answer_trace
-             WHERE account_id=?
-             ORDER BY created_at DESC, id DESC
-             LIMIT ?
-            """,
-            (account_id, int(limit)),
+            f"SELECT * FROM answer_trace WHERE {' AND '.join(where)} "
+            f"ORDER BY created_at {order}, id {order} LIMIT ?",
+            params,
         ).fetchall()
     return [dict(r) for r in rows]

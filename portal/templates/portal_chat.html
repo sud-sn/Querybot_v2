@@ -839,10 +839,24 @@ const ACCOUNT_ID = {{ user.account_id|tojson }};
 const USER_NAME = {{ user.name|tojson }};
 const USER_INIT = (USER_NAME[0] || 'U').toUpperCase();
 const USER_EMAIL = {{ user.email|default('', true)|tojson }};
+const THREAD_STORAGE_KEY = `querybot.activeThread:${ACCOUNT_ID}:${USER_EMAIL || USER_NAME}`;
+function _createThreadId() {
+  return (typeof crypto !== 'undefined' && crypto.randomUUID)
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+const _threadFromUrl = new URLSearchParams(location.search).get('thread') || '';
+const _requestedNewThread = new URLSearchParams(location.search).get('new') === '1';
+const _validThreadId = value => /^[A-Za-z0-9_-]{1,80}$/.test(value || '');
+const THREAD_ID = _requestedNewThread
+  ? _createThreadId()
+  : (_validThreadId(_threadFromUrl) ? _threadFromUrl : (localStorage.getItem(THREAD_STORAGE_KEY) || _createThreadId()));
+try { localStorage.setItem(THREAD_STORAGE_KEY, THREAD_ID); } catch (_) {}
 const CHAT_CACHE_LIMIT = 80;
-const CHAT_CACHE_KEY = `qb_chat_cache:${ACCOUNT_ID}:${USER_EMAIL || USER_NAME}`;
+const CHAT_CACHE_KEY = `qb_chat_cache:${ACCOUNT_ID}:${USER_EMAIL || USER_NAME}:${THREAD_ID}`;
 // Multi-turn memory — localStorage key for persisting up to 3 history turns
-const HISTORY_STORAGE_KEY = `querybot.history:${ACCOUNT_ID}:${USER_EMAIL || USER_NAME}`;
+const HISTORY_STORAGE_KEY = `querybot.history:${ACCOUNT_ID}:${USER_EMAIL || USER_NAME}:${THREAD_ID}`;
+try { localStorage.removeItem(`querybot.history:${ACCOUNT_ID}:${USER_EMAIL || USER_NAME}`); } catch (_) {}
 const HISTORY_MAX_TURNS = 3;
 // In-memory mirror of the last N successful turns (synced with localStorage)
 let _localHistory = [];
@@ -914,6 +928,7 @@ let processingStartedAt = 0;
 let processingElapsedTimer = null;
 let lastAssistantText = '';
 let chartCounter = 0;
+let _pendingThreadHistory = [];
 
 function thread(){ return document.getElementById('thread'); }
 function scrollBottom(){ const t = thread(); t.scrollTop = t.scrollHeight; }
@@ -1269,7 +1284,14 @@ function _loadStoredHistory() {
   } catch { return []; }
 }
 function _saveHistory(turns) {
-  try { localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(turns)); } catch {}
+  // Browser storage keeps display metadata only. SQL is restored from
+  // user-scoped server traces and never persisted in localStorage.
+  const safeTurns = (turns || []).map(turn => ({
+    question: turn.question || '',
+    columns: Array.isArray(turn.columns) ? turn.columns : [],
+    row_count: Number(turn.row_count || 0),
+  }));
+  try { localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(safeTurns)); } catch {}
 }
 function _pushHistory(turn) {
   // Append a new turn and keep only the last HISTORY_MAX_TURNS entries
@@ -3790,19 +3812,19 @@ function _initHeroCollapse() {
 function connect(){
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   setConnectionState(reconnectAttempts ? 'Reconnecting…' : 'Connecting…', reconnectAttempts ? 'Restoring live session' : 'Waiting for live session');
-  ws = new WebSocket(`${proto}//${location.host}/ws/chat/${ACCOUNT_ID}`);
+  ws = new WebSocket(`${proto}//${location.host}/ws/chat/${ACCOUNT_ID}?thread_id=${encodeURIComponent(THREAD_ID)}`);
   ws.onopen = () => {
     wsReady = true;
     reconnectAttempts = 0;
     document.getElementById('sendBtn').disabled = false;
     setConnectionState('Connected', 'Live session active');
-    // Restore history from localStorage and sync with server
+    // Display-only memory metadata comes from localStorage. Governed SQL
+    // context is restored server-side from this user-owned thread's traces.
     _localHistory = _loadStoredHistory();
     _updateMemoryBadge();
-    if (_localHistory.length > 0) {
-      try {
-        ws.send(JSON.stringify({ type: 'history_sync', history: _localHistory }));
-      } catch {}
+    if (_pendingThreadHistory.length) {
+      try { ws.send(JSON.stringify({ type:'history_sync', history:_pendingThreadHistory })); } catch (_) {}
+      _pendingThreadHistory = [];
     }
   };
   ws.onmessage = (evt) => {
@@ -3940,6 +3962,7 @@ function startNewChat() {
   clearChatCache();
   _localHistory = [];
   _saveHistory([]);
+  try { localStorage.setItem(THREAD_STORAGE_KEY, _createThreadId()); } catch (_) {}
   const cleanUrl = location.pathname;
   location.replace(cleanUrl);
 }
@@ -4031,12 +4054,15 @@ async function loadHistory() {
       const ts   = _historyTime(item);
       const rows = item.row_count != null ? item.row_count.toLocaleString() + ' rows' : '';
       const dur  = item.duration_ms ? Math.round(item.duration_ms) + ' ms' : '';
-      return `${groupHeader}<div class="hp-item" role="button" tabindex="0" data-question="${encodeURIComponent(item.question || '')}"
-                   onclick="sendHistoryQuestion(decodeURIComponent(this.dataset.question), this)"
-                   onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();sendHistoryQuestion(decodeURIComponent(this.dataset.question),this)}">
+      const turns = item.turn_count > 1 ? item.turn_count + ' turns' : '';
+      const active = item.thread_id === THREAD_ID ? ' active' : '';
+      return `${groupHeader}<div class="hp-item${active}" role="button" tabindex="0" data-thread-id="${escHtml(item.thread_id || '')}"
+                   onclick="openHistoryThread(this.dataset.threadId, this)"
+                   onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openHistoryThread(this.dataset.threadId,this)}">
         <div class="hp-q">${escHtml(item.question || '—')}</div>
         <div class="hp-meta">
           ${ts ? `<span class="hp-badge">${ts}</span>` : ''}
+          ${turns ? `<span class="hp-badge">${turns}</span>` : ''}
           ${rows ? `<span class="hp-badge ok">${rows}</span>` : ''}
           ${dur  ? `<span class="hp-badge">${dur}</span>` : ''}
         </div>
@@ -4049,15 +4075,46 @@ async function loadHistory() {
   }
 }
 
-function sendHistoryQuestion(question, itemEl) {
-  const decoded = question.replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"');
-  if (!decoded || !wsReady) { toast('Live session not ready'); return; }
+function openHistoryThread(threadId, itemEl) {
+  if (!_validThreadId(threadId)) { toast('Thread is unavailable'); return; }
   document.querySelectorAll('#historyList .hp-item.active').forEach(el => el.classList.remove('active'));
   itemEl && itemEl.classList.add('active');
-  if (window.matchMedia('(max-width: 1100px)').matches) toggleHistoryPanel(false);
-  const inp = document.getElementById('input');
-  if (inp) { inp.value = decoded; inp.dispatchEvent(new Event('input')); }
-  setTimeout(() => sendMessage(), 80);
+  try { localStorage.setItem(THREAD_STORAGE_KEY, threadId); } catch (_) {}
+  location.assign(`${location.pathname}?thread=${encodeURIComponent(threadId)}`);
+}
+
+async function restoreServerThread(threadId) {
+  if (!_validThreadId(threadId)) return false;
+  try {
+    const resp = await fetch(`/portal/api/history/${encodeURIComponent(threadId)}`, { credentials:'same-origin' });
+    if (!resp.ok) return false;
+    const data = await resp.json();
+    const turns = Array.isArray(data.turns) ? data.turns : [];
+    if (!turns.length) return false;
+    thread().innerHTML = '';
+    clearChatCache();
+    _localHistory = [];
+    const serverHistory = turns.map(turn => ({
+      question: turn.question || '',
+      sql: turn.payload?.trust?.sql || '',
+      columns: Array.isArray(turn.payload?.data?.headers) ? turn.payload.data.headers : [],
+      row_count: Number(turn.payload?.trust?.row_count || 0),
+    })).filter(turn => turn.question && turn.sql).slice(-HISTORY_MAX_TURNS);
+    if (wsReady && serverHistory.length) {
+      try { ws.send(JSON.stringify({ type:'history_sync', history:serverHistory })); } catch (_) {}
+    } else {
+      _pendingThreadHistory = serverHistory;
+    }
+    turns.forEach(turn => {
+      appendUser(turn.question || '', { persist:true, timestamp:turn.created_at });
+      appendAssistantResponse(turn.payload || {}, { persist:true, timestamp:turn.created_at });
+    });
+    scrollBottom();
+    return true;
+  } catch (error) {
+    console.warn('Thread restore failed:', error);
+    return false;
+  }
 }
 
 // ── History search filter ────────────────────────────────────────────────────
@@ -4284,7 +4341,7 @@ document.addEventListener('DOMContentLoaded', () => {
   _initComposerMascot();
   _updateMascotTheme();
   _initHeroCollapse();
-  const requestedNewThread = new URLSearchParams(location.search).get('new') === '1';
+  const requestedNewThread = _requestedNewThread;
   if (requestedNewThread) {
     clearChatCache();
     _saveHistory([]);
@@ -4308,7 +4365,13 @@ document.addEventListener('DOMContentLoaded', () => {
   initSchemaSelector();
   refreshQueryLimitStatus({toast:false});
   window.setInterval(() => refreshQueryLimitStatus({toast:false}), 60000);
-  restoreChatCache();
+  if (_validThreadId(_threadFromUrl)) {
+    restoreServerThread(THREAD_ID).then(restored => { if (!restored) restoreChatCache(); });
+  } else {
+    // Restore the active server thread first; session cache remains a fallback
+    // for transient messages that were never part of a successful trace.
+    restoreServerThread(THREAD_ID).then(restored => { if (!restored) restoreChatCache(); });
+  }
   connect();
 });
 </script>

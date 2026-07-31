@@ -465,7 +465,63 @@ async def ws_chat(websocket: WebSocket, account_id: str):
     await websocket.accept()
 
     zoom_user_id = portal_user.get("zoom_user_id") or f"web_{user_id}"
-    adapter      = WebAdapter(websocket, account_id, zoom_user_id)
+    thread_id = _ws_text_value(
+        websocket.query_params.get("thread_id"), "thread_id", "value"
+    )
+    adapter = WebAdapter(websocket, account_id, zoom_user_id, thread_id=thread_id)
+
+    # Evaluate session liveness before restoring the selected thread.
+    _is_new_portal_session = False
+    try:
+        _is_new_portal_session = store.touch_user_activity(user_id)
+    except Exception as _touch_exc:
+        log.debug("Portal session touch skipped: %s", _touch_exc)
+
+    if _is_new_portal_session:
+        from core.conversational import build_reply
+        await websocket.send_json({
+            "type":    "message",
+            "role":    "assistant",
+            "content": build_reply("greeting", account_id, portal_user),
+        })
+        try:
+            from core.dispatcher import _offer_login_report_prompt
+            await _offer_login_report_prompt(account_id, portal_user, adapter.make_event(""), adapter)
+        except Exception as _report_prompt_exc:
+            log.debug("Login report prompt skipped: %s", _report_prompt_exc)
+    else:
+        await websocket.send_json({
+            "type":    "system",
+            "content": f"Connected as {portal_user.get('name', portal_user.get('id', 'user'))}. Ask me anything about your data.",
+        })
+
+    # Restore structural multi-turn context from governed server traces. Raw
+    # SQL no longer needs to be persisted in browser localStorage.
+    try:
+        recent_turns = list(reversed(store.list_answer_traces(
+            account_id,
+            limit=3,
+            portal_user_id=int(portal_user["id"]),
+            session_id=adapter.session_id,
+        )))
+        history = []
+        for trace in recent_turns:
+            raw_rows = trace.get("result_rows") or "[]"
+            if isinstance(raw_rows, str):
+                try:
+                    raw_rows = json.loads(raw_rows)
+                except (TypeError, ValueError):
+                    raw_rows = []
+            columns = list(raw_rows[0]) if isinstance(raw_rows, list) and raw_rows else []
+            history.append({
+                "question": trace.get("question_text_sanitized") or "",
+                "sql": trace.get("generated_sql") or "",
+                "columns": columns,
+                "row_count": int(trace.get("query_row_count") or 0),
+            })
+        adapter.load_history(history)
+    except Exception as history_exc:
+        log.debug("Server thread history restore skipped: %s", history_exc)
 
     # The currently in-flight main-question task, if any — lets the receive
     # loop below cancel it when the user clicks Stop. Question handling runs
@@ -504,38 +560,8 @@ async def ws_chat(websocket: WebSocket, account_id: str):
     # Cleared automatically when a new main query replaces the result card.
     _result_chat_histories: dict[str, list[dict]] = {}
 
-    # Greet on login instead of waiting for the user's first message --
-    # touch_user_activity returns True only once per session gap (>30 min
-    # or first-ever connect), so quick reconnects/refreshes within the same
-    # session still get the plain "Connected" line, not a repeated greeting.
-    _is_new_portal_session = False
-    try:
-        _is_new_portal_session = store.touch_user_activity(user_id)
-    except Exception as _touch_exc:
-        log.debug("Portal session touch skipped: %s", _touch_exc)
-
-    if _is_new_portal_session:
-        from core.conversational import build_reply
-        await websocket.send_json({
-            "type":    "message",
-            "role":    "assistant",
-            "content": build_reply("greeting", account_id, portal_user),
-        })
-        try:
-            from core.dispatcher import _offer_login_report_prompt
-            await _offer_login_report_prompt(account_id, portal_user, adapter.make_event(""), adapter)
-        except Exception as _report_prompt_exc:
-            log.debug("Login report prompt skipped: %s", _report_prompt_exc)
-    else:
-        await websocket.send_json({
-            "type":    "system",
-            "content": f"Connected as {portal_user.get('name', portal_user.get('id', 'user'))}. Ask me anything about your data.",
-        })
-
     log.info("WebSocket chat connected: user=%d account=%s", user_id, account_id)
-    # History is NOT cleared on reconnect — the browser will send a
-    # `history_sync` message immediately after opening the socket with
-    # turns persisted in localStorage so multi-turn memory survives refreshes.
+    # History is restored from this user's server-side thread traces above.
 
     async def _run_main_question(text: str, table_hint: str, schema_hint: str) -> None:
         """Answers one question. Runs as a background task (see the send

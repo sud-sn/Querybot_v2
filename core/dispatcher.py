@@ -545,7 +545,7 @@ async def handle_unregistered_user(account_id, zoom_user_id, event, adapter):
 
 async def _run_example_validation(
     account_id: str, kb_dir: str, chroma_dir: str, db_cfg: dict
-) -> None:
+) -> dict:
     """Step 2 — Validate Stage 2 SQL patterns against real DB in background.
 
     validate_and_store_examples() is synchronous and runs up to ~200 blocking
@@ -557,7 +557,8 @@ async def _run_example_validation(
     in case that somehow doesn't fire (e.g. a hung network read).
     """
     try:
-        from core.examples import validate_and_store_examples
+        from core.examples import count_query_pairs, validate_and_store_examples
+        total = count_query_pairs(kb_dir)
         loop = asyncio.get_running_loop()
         count = await asyncio.wait_for(
             loop.run_in_executor(
@@ -569,10 +570,24 @@ async def _run_example_validation(
         )
         log.info("Example validation complete: %d validated examples for %s",
                  count, account_id)
+        return {
+            "status": "passed" if count == total else "failed",
+            "total": total,
+            "validated": count,
+            "failed": max(total - count, 0),
+        }
     except asyncio.TimeoutError:
         log.error("Example validation timed out after 20 min for %s", account_id)
+        return {"status": "timeout", "total": 0, "validated": 0, "failed": 0}
     except Exception as e:
         log.error("Example validation failed for %s: %s", account_id, e)
+        return {
+            "status": "error",
+            "total": 0,
+            "validated": 0,
+            "failed": 0,
+            "error": str(e)[:500],
+        }
 
 
 async def _run_log_harvest(account_id: str, chroma_dir: str) -> None:

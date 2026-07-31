@@ -14,6 +14,7 @@ with an interactive library such as ECharts.
 
 import asyncio
 import logging
+import re
 from collections import deque
 from typing import Optional
 
@@ -32,11 +33,21 @@ class WebAdapter(PlatformAdapter):
 
     platform_type = "web"
 
-    def __init__(self, websocket: WebSocket, account_id: str, user_id: str):
+    def __init__(
+        self,
+        websocket: WebSocket,
+        account_id: str,
+        user_id: str,
+        thread_id: str = "",
+    ):
         super().__init__(credentials={})
         self.ws = websocket
         self._account = account_id
         self._user_id = user_id
+        # A browser thread scopes conversation memory and governed result
+        # cache independently from every other thread owned by this user.
+        cleaned_thread = re.sub(r"[^a-zA-Z0-9_-]", "", str(thread_id or ""))[:80]
+        self._thread_id = cleaned_thread or "default"
         # Per-session result cache for action buttons and "why" follow-ups
         self.last_result: dict | None = None
         self.last_question_id: str | None = None   # stable ID linking a question to all its follow-ups
@@ -147,8 +158,8 @@ class WebAdapter(PlatformAdapter):
 
     @property
     def session_id(self) -> str:
-        """Stable session key for the result cache (user-scoped)."""
-        return f"{self._account}:{self._user_id}"
+        """Stable result-cache key scoped by account, user, and chat thread."""
+        return f"{self._account}:{self._user_id}:thread:{self._thread_id}"
 
     def cache_result(
         self,

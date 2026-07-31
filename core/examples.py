@@ -55,6 +55,20 @@ def _table_name_for_query_file(qfile: Path) -> str:
     return bare_name
 
 
+def count_query_pairs(queries_dir: str) -> int:
+    """Return the number of generated Stage-2 question/SQL pairs."""
+    path = Path(queries_dir)
+    if not path.exists():
+        return 0
+    total = 0
+    for qfile in sorted(path.glob("*_queries.md")):
+        try:
+            total += len(_parse_query_pairs(qfile.read_text(encoding="utf-8", errors="replace")))
+        except OSError:
+            continue
+    return total
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Validate Stage 2 patterns against real DB
 # ══════════════════════════════════════════════════════════════════════════════

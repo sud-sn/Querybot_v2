@@ -7,13 +7,13 @@ and validated examples for all clients.  Multi-tenant isolation, multi-schema
 ACL filtering, and concurrent writes are all handled correctly.
 
 Collection: querybot_kb
-  Each point represents one chunk (KB section, query pattern, or example) and
+  Each point represents one governed KB section, global document, or validated example and
   carries a full payload:
 
     account_id   str   — tenant key
     fqn          str   — fully-qualified table name  DB.SCHEMA.TABLE  (upper)
                           "_global" for join-map / business-vocab docs
-    doc_type     str   — "kb" | "queries" | "example" | "global"
+    doc_type     str   — "kb" | "example" | "global"
     section_type str   — section slug for KB chunks; "full" for whole-doc points
                           one of: overview | key_metrics | always_exclude |
                           columns | patterns | join_keys | synonyms | full
@@ -30,7 +30,6 @@ Chunking strategy (KB docs only):
                         Each section has its own embedding vector so BM25
                         and dense search find the right *part* of the KB,
                         not just the right table.
-  doc_type="queries" → whole-doc embedding (SQL pattern docs already focused)
   doc_type="global"  → whole-doc (join-map / business-vocab — cross-table)
   doc_type="example" → one point per validated example (question embedded)
 
@@ -725,8 +724,16 @@ def upsert_kb_file(
     doc_type="kb"  → section-level chunking: one point per ## section.
                      Point IDs are deterministic per (account, fqn, section)
                      so running a KB build twice is idempotent.
-    doc_type="queries" / "global" → single whole-doc point (unchanged).
+    doc_type="global" → single whole-doc point.
     """
+    # Stage-2 *_queries.md files are LLM drafts until every individual SQL
+    # statement has executed successfully. Valid patterns enter retrieval via
+    # upsert_examples(doc_type="example") only; embedding the raw document here
+    # would let one invalid SQL pattern poison production generation.
+    if doc_type == "queries":
+        log.warning("Skipped unvalidated query-pattern document: %s", source_file or fqn)
+        return
+
     if not content.strip():
         return
 
@@ -755,7 +762,7 @@ def upsert_kb_directory(
 
     File naming convention (matches existing KB build output):
       TABLENAME_kb.md      → doc_type "kb"
-      TABLENAME_queries.md → doc_type "queries"
+      TABLENAME_queries.md → skipped until pairs are validated separately
       _join_map.md         → doc_type "global", fqn "_global"
       _business_vocab.md   → doc_type "global", fqn "_global"
 
@@ -789,9 +796,8 @@ def upsert_kb_directory(
             fqn      = "_global"
             doc_type = "global"
         elif stem.endswith("_queries"):
-            raw_name = stem[:-len("_queries")]
-            fqn      = _fqn_from_md_header(content) or raw_name.upper()
-            doc_type = "queries"
+            log.info("Skipping unvalidated query-pattern file during KB indexing: %s", md_file.name)
+            continue
         elif stem.endswith("_kb"):
             raw_name = stem[:-len("_kb")]
             fqn      = _fqn_from_md_header(content) or raw_name.upper()
@@ -891,7 +897,12 @@ def re_embed_single_file(
     elif stem.endswith("_queries"):
         raw      = stem[:-len("_queries")]
         fqn      = _fqn_from_md_header(content) or raw.upper()
-        doc_type = "queries"
+        # Remove a legacy raw-pattern point if one exists. Validated pairs are
+        # indexed separately as doc_type="example" by core.examples.
+        _delete_points_for_fqn_doctype(account_id, fqn, "queries")
+        _invalidate_bm25_cache(account_id)
+        log.info("Removed legacy raw query-pattern index for %s", filename)
+        return
     else:
         raw      = stem[:-len("_kb")] if stem.endswith("_kb") else stem
         fqn      = _fqn_from_md_header(content) or raw.upper()
@@ -1207,9 +1218,11 @@ class QdrantKBRetriever:
         n: int = 2,
         allowed_tables: set[str] | None = None,
     ) -> list[str]:
-        """
-        Retrieve Stage-2 query-pattern docs that contain JOIN examples.
-        Used when the question has grouping/aggregation keywords.
+        """Retrieve governed global JOIN guidance for aggregation questions.
+
+        Raw Stage-2 query-pattern documents are intentionally excluded. Their
+        successfully executed pairs are available through the separate
+        validated-example retriever.
         """
         allowed_fqns = (
             [t.upper() for t in allowed_tables]
@@ -1218,14 +1231,13 @@ class QdrantKBRetriever:
         # Bias the query toward join/aggregation patterns
         fact_query = f"{question} join aggregation group by"
         hits = self._hybrid_search(
-            fact_query, n * 3, allowed_fqns, doc_types=["queries", "global"]
+            fact_query, n * 3, allowed_fqns, doc_types=["global"]
         )
         fact_docs = []
         for h in hits:
             content = h.get("content", "")
             has_join = "JOIN" in content.upper()
-            is_query_doc = h.get("doc_type") == "queries"
-            if (has_join or is_query_doc) and len(fact_docs) < n:
+            if has_join and len(fact_docs) < n:
                 fact_docs.append(content)
         return fact_docs
 

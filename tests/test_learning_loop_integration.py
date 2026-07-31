@@ -672,7 +672,9 @@ class TestStagedRolloutVerification(unittest.TestCase):
 
         with (
             patch("portal.routes._get_portal_user", return_value=user),
-            patch("store.get_client", return_value=client_on),
+            # Patch the module object used by the already-imported route.
+            # Some legacy suites re-import ``store`` during collection.
+            patch("portal.routes.store.get_client", return_value=client_on),
             patch("store.learning_store.save_feedback", return_value={"id": 1}),
             patch("store.learning_store.get_feedback", return_value=None),
         ):
