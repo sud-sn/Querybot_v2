@@ -33,11 +33,11 @@ class ResultRendererCoverageWiringTests(unittest.TestCase):
         self.assertIn("try:", block)
         self.assertIn("except Exception", block)
 
-    def test_rich_response_gets_coverage_caveat_field(self):
+    def test_rich_response_gets_coverage_caveats_field(self):
         start = self.source.index('rich_sender = getattr(adapter, "send_assistant_response"')
         end = self.source.index("await rich_sender(event, response_payload)")
         block = self.source[start:end]
-        self.assertIn('response_payload["coverage_caveat"] = coverage_caveat', block)
+        self.assertIn('response_payload["coverage_caveats"] = coverage_caveats', block)
 
     def test_plaintext_reply_prepends_coverage_line_in_both_shapes(self):
         start = self.source.index("conf_text = format_success_confidence_text")
@@ -62,8 +62,8 @@ class FrontendCoverageCaveatWiringTests(unittest.TestCase):
     def setUp(self):
         self.source = (ROOT / "portal" / "templates" / "portal_chat.html").read_text(encoding="utf-8")
 
-    def test_coverage_caveat_rendered_from_message_field(self):
-        self.assertIn("msg.coverage_caveat", self.source)
+    def test_coverage_caveats_rendered_from_message_field(self):
+        self.assertIn("msg.coverage_caveats", self.source)
         self.assertIn("coverageCaveatHtml", self.source)
 
     def test_coverage_caveat_slotted_into_the_message_template(self):

@@ -813,12 +813,17 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
             chart_payload["duration_label"] = dur_label
             chart_payload["row_count"] = len(rows)
 
-    # Date-range coverage-gap check: compare the requested "last N days"-style
+    # "Silent gap" caveats -- the answer looks complete but something got
+    # quietly excluded. A growing, ordered list rather than a single field
+    # since more scenarios follow the same shape (see core/date_coverage.py's
+    # and core/join_coverage.py's docstrings); best-effort throughout, any
+    # failure is silent and never blocks or alters the main answer.
+    coverage_caveats: list[str] = []
+
+    # 1. Date-range coverage gap: compare the requested "last N days"-style
     # window against how much data actually exists in it -- catches the case
     # a single-aggregate answer hides completely (no date column in the
-    # output rows to inspect at all). Best-effort: any failure is silent,
-    # never blocks or alters the main answer. See core/date_coverage.py.
-    coverage_caveat: str | None = None
+    # output rows to inspect at all).
     _temporal_policies = (confidence_context.get("semantic_plan") or {}).get("temporal_policies") or []
     if _temporal_policies:
         try:
@@ -827,9 +832,22 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
                 db_cfg, _temporal_policies[0], str(db_cfg.get("db_type", "azure_sql")),
             )
             if _gap:
-                coverage_caveat = _gap.message
+                coverage_caveats.append(_gap.message)
         except Exception as exc:
             log.debug("Coverage-gap check skipped: %s", exc)
+
+    # 2. Lossy-join caveat: the question's JOIN path used an entity-graph
+    # relationship that admin-time validation already found excludes a
+    # meaningful fraction of rows (no matching dimension row). No new query
+    # here -- reads the already-persisted orphan_rate on the relationship
+    # row(s) already resolved during graph resolution (confidence_context["graph_edges"]).
+    _graph_edges = confidence_context.get("graph_edges") or []
+    if _graph_edges:
+        try:
+            from core.join_coverage import check_join_coverage
+            coverage_caveats.extend(check_join_coverage(account_id, _graph_edges))
+        except Exception as exc:
+            log.debug("Join-coverage check skipped: %s", exc)
 
     rich_sender = getattr(adapter, "send_assistant_response", None)
     if callable(rich_sender):
@@ -854,8 +872,8 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
             f"{selected_schema} schema" if selected_schema else "All allowed schemas"
         )
         response_payload["trust"]["schema_mode"] = "selected" if selected_schema else "all"
-        if coverage_caveat:
-            response_payload["coverage_caveat"] = coverage_caveat
+        if coverage_caveats:
+            response_payload["coverage_caveats"] = coverage_caveats
         # Generate suggestions from the statistical brief already computed
         # inside build_assistant_response — no extra DB call or raw row exposure.
         # Uses a lightweight 160-token LLM call; failures are silent.
@@ -887,7 +905,9 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
     # query-level confidence signals, so we omit the block rather than show
     # misleading default values.
     conf_text = format_success_confidence_text(confidence) + "\n\n" if _has_confidence_context else ""
-    coverage_line = f"⚠️ {coverage_caveat}\n\n" if coverage_caveat else ""
+    coverage_line = (
+        "".join(f"⚠️ {c}\n" for c in coverage_caveats) + "\n" if coverage_caveats else ""
+    )
     if len(rows) == 1 and len(rows[0]) == 1:
         col_name = list(rows[0].keys())[0]
         value = _format_value(

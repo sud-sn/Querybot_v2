@@ -3088,6 +3088,11 @@ async def handle_query(account_id, event, adapter, question, portal_user, is_cla
         "weak_retrieval": _weak_retrieval,
         # Carried through to cache_result so compare_prior can read them.
         "semantic_plan": _semantic_plan or {},
+        # The exact entity_relationships rows this question's JOIN path
+        # resolved to (core.graph_resolver.resolve_for_question's own
+        # "resolved_edges") -- lets _send_results check for a known-lossy
+        # join (core/join_coverage.py) without re-parsing the generated SQL.
+        "graph_edges": (_graph_ctx or {}).get("resolved_edges") or [],
     }
 
     # ── Post-processing: apply contribution / anomaly analytics ──────────────

@@ -2761,11 +2761,16 @@ function appendAssistantResponse(msg, opts = {}){
       + `<span class="ds-icon">${dsIcon}</span><span>${escHtml(ds.line)}</span></div>`
     : '';
 
-  // ── Coverage caveat — "I found data for 3 of the 7 days you asked about"
-  // (core/date_coverage.py; zero LLM, exact date arithmetic) ────────────────
-  const coverageCaveatHtml = msg.coverage_caveat
-    ? `<div class="decision-signal watch">`
-      + `<span class="ds-icon">⚠</span><span>${escHtml(msg.coverage_caveat)}</span></div>`
+  // ── Coverage caveats — "the answer looks complete but something got
+  // silently excluded" (core/date_coverage.py, core/join_coverage.py; zero
+  // LLM, deterministic checks). A growing list, not a single field, since
+  // more scenarios follow this same shape — stacks cleanly in this slot. ──
+  const coverageCaveats = Array.isArray(msg.coverage_caveats) ? msg.coverage_caveats : [];
+  const coverageCaveatHtml = coverageCaveats.length
+    ? coverageCaveats.map(c =>
+        `<div class="decision-signal watch">`
+        + `<span class="ds-icon">⚠</span><span>${escHtml(c)}</span></div>`
+      ).join('')
     : '';
 
   // ── Decision actions — incl. diagnose and other result chips ────────────
