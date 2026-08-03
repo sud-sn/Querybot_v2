@@ -315,6 +315,188 @@ def _production_shape_errors(tree, semantic_context: dict | None) -> list[dict]:
     return errors
 
 
+def _is_negated(node) -> bool:
+    """Return True when an expression is wrapped by SQL NOT."""
+    parent = getattr(node, "parent", None)
+    while parent is not None and isinstance(parent, (sg_exp.Paren,)):
+        parent = getattr(parent, "parent", None)
+    return isinstance(parent, sg_exp.Not)
+
+
+def _has_correlated_not_exists(tree) -> bool:
+    """Return True only for a NOT EXISTS correlated to an outer row."""
+    for exists in tree.find_all(sg_exp.Exists):
+        if not isinstance(getattr(exists, "parent", None), sg_exp.Not):
+            continue
+        inner_aliases = {
+            str(table.alias_or_name or table.name or "").upper()
+            for table in exists.find_all(sg_exp.Table)
+            if str(table.alias_or_name or table.name or "").strip()
+        }
+        for equality in exists.find_all(sg_exp.EQ):
+            left = equality.left
+            right = equality.right
+            if not isinstance(left, sg_exp.Column) or not isinstance(right, sg_exp.Column):
+                continue
+            left_alias = str(left.table or "").upper()
+            right_alias = str(right.table or "").upper()
+            if (
+                left_alias
+                and right_alias
+                and left_alias != right_alias
+                and ((left_alias in inner_aliases) != (right_alias in inner_aliases))
+            ):
+                return True
+    return False
+
+
+def _anti_join_shape_error(tree, alias_to_table: dict[str, str]) -> dict | None:
+    """Validate the retained and missing sides of a missing-record query.
+
+    Merely finding *a* LEFT JOIN and *an* IS NULL predicate is insufficient:
+    ``FROM child LEFT JOIN parent ... WHERE child.id IS NULL`` passes that
+    superficial test but can never return a normal child row. A valid anti-join
+    either uses NOT EXISTS or null-tests a key from the right side of a LEFT
+    JOIN. The key is derived from that join's ON clause, so this remains fully
+    tenant and schema agnostic.
+    """
+    if _has_correlated_not_exists(tree):
+        return None
+
+    right_alias_keys: dict[str, set[str]] = {}
+    for join in tree.find_all(sg_exp.Join):
+        if str(join.args.get("side") or "").upper() != "LEFT":
+            continue
+        relation = join.this
+        alias = str(getattr(relation, "alias_or_name", "") or "").upper()
+        if not alias:
+            continue
+        keys: set[str] = set()
+        for equality in join.find_all(sg_exp.EQ):
+            for side in (equality.left, equality.right):
+                if isinstance(side, sg_exp.Column) and str(side.table or "").upper() == alias:
+                    keys.add(str(side.name or "").upper())
+        right_alias_keys[alias] = keys
+
+    null_tests: list[tuple[str, str]] = []
+    for is_node in tree.find_all(sg_exp.Is):
+        if _is_negated(is_node) or not isinstance(is_node.expression, sg_exp.Null):
+            continue
+        column = is_node.this
+        if isinstance(column, sg_exp.Column):
+            null_tests.append((str(column.table or "").upper(), str(column.name or "").upper()))
+
+    for alias, column in null_tests:
+        if alias in right_alias_keys and (not right_alias_keys[alias] or column in right_alias_keys[alias]):
+            return None
+
+    right_tables = sorted({alias_to_table.get(alias, alias) for alias in right_alias_keys})
+    tested = [f"{alias}.{column}" if alias else column for alias, column in null_tests]
+    return {
+        "code": "anti_join_shape",
+        "message": (
+            "The missing-record predicate does not test a join key from the right side "
+            "of a LEFT JOIN. Anchor on the source table containing the records being retained, then use NOT EXISTS "
+            "or filter the missing-side join key with IS NULL."
+        ),
+        "right_side_tables": right_tables,
+        "null_tested_columns": tested,
+        "requires_right_side_key_null": True,
+    }
+
+
+def _aggregate_is_distinct(aggregate) -> bool:
+    target = getattr(aggregate, "this", None)
+    return isinstance(target, sg_exp.Distinct) or bool(aggregate.args.get("distinct"))
+
+
+def _fanout_aggregate_errors(
+    tree,
+    graph_context: dict | None,
+    alias_to_table: dict[str, str],
+) -> list[dict]:
+    """Reject raw parent-grain aggregates across known fan-out edges."""
+    graph = graph_context or {}
+    if not graph.get("enabled"):
+        return []
+    entities = {
+        str(entity.get("entity_name") or ""): entity
+        for entity in graph.get("entities") or []
+    }
+    anchor_name = str(graph.get("anchor") or "")
+    anchor_meta = entities.get(anchor_name, {})
+    anchor_fqn = ".".join(
+        part for part in (
+            str(anchor_meta.get("schema_name") or ""),
+            str(anchor_meta.get("table_name") or ""),
+        ) if part
+    )
+    risky_edges: list[dict] = []
+    for edge in graph.get("resolved_edges") or []:
+        cardinality = str(edge.get("cardinality") or "").lower().replace("-", "_")
+        direction = str(edge.get("direction") or "forward").lower()
+        try:
+            fanout_ratio = float(edge.get("fanout_ratio") or 0)
+        except (TypeError, ValueError):
+            fanout_ratio = 0.0
+        if (
+            edge.get("many_to_many")
+            or (direction == "forward" and fanout_ratio > 1.01)
+            or (
+                direction == "forward"
+                and cardinality in {"one_to_many", "one_to_many_or_many_to_many"}
+            )
+            or cardinality == "many_to_many"
+        ):
+            risky_edges.append(edge)
+    if not risky_edges and not graph.get("fanout_risk_facts"):
+        return []
+
+    anchor_aliases = {
+        alias for alias, table in alias_to_table.items()
+        if anchor_fqn and _table_matches(table, anchor_fqn)
+    }
+    if not anchor_aliases:
+        return []
+
+    unsafe: list[str] = []
+    aggregate_types = tuple(
+        aggregate_type for aggregate_type in (
+            getattr(sg_exp, "Count", None),
+            getattr(sg_exp, "Sum", None),
+            getattr(sg_exp, "Avg", None),
+        ) if aggregate_type is not None
+    )
+    for aggregate in tree.find_all(*aggregate_types):
+        if _aggregate_is_distinct(aggregate):
+            continue
+        columns = list(aggregate.find_all(sg_exp.Column))
+        is_count_star = isinstance(aggregate, sg_exp.Count) and bool(
+            aggregate.find(sg_exp.Star)
+        )
+        if is_count_star or any(
+            str(column.table or "").upper() in anchor_aliases for column in columns
+        ):
+            unsafe.append(aggregate.sql())
+    if not unsafe:
+        return []
+    return [{
+        "code": "fanout_aggregate",
+        "message": (
+            f"Raw aggregate(s) over anchor entity {anchor_name or anchor_fqn} cross a "
+            "relationship that can multiply its grain. Aggregate the child first, use "
+            "EXISTS, or count a distinct governed anchor key."
+        ),
+        "anchor_entity": anchor_name,
+        "anchor_table": anchor_fqn,
+        "aggregates": unsafe[:5],
+        "risky_relationships": [
+            str(edge.get("relationship_key") or edge.get("id") or "")
+            for edge in risky_edges[:5]
+        ],
+    }]
+
+
 def _normalize_identifier(name: str) -> str:
     return re.sub(r"[^A-Z0-9]+", "", (name or "").upper())
 
@@ -1788,33 +1970,13 @@ def validate_sql_detailed(
 
     intent = (semantic_context or {}).get("intent") or {}
     if intent.get("wants_missing_records"):
-        left_join_exists = any(
-            (join.args.get("side") or "").upper() == "LEFT"
-            for join in tree.find_all(sg_exp.Join)
-        )
-        null_test_exists = any(
-            isinstance(is_node.expression, sg_exp.Null)
-            for is_node in tree.find_all(sg_exp.Is)
-        )
-        if not left_join_exists or not null_test_exists:
-            error = {
-                "code": "anti_join_shape",
-                "message": (
-                    "Missing-record questions must use a source/parent table LEFT JOINed "
-                    "to the missing-side table, with a right-side key IS NULL predicate. "
-                    "A single-table NULL filter on the missing-side table is not enough."
-                ),
-                "requires_left_join": True,
-                "requires_is_null": True,
-            }
+        error = _anti_join_shape_error(tree, alias_to_table)
+        if error:
             return SqlValidationResult(
                 False,
                 (
                     "Anti-join shape is required for this missing-record question.\n\n"
-                    "Use the source table containing the records to list, LEFT JOIN the "
-                    "possibly-missing table, and filter with right_side_key IS NULL. "
-                    "Do not answer this by querying only the missing-side table or only "
-                    "checking a measure column for NULL."
+                    + error["message"]
                 ),
                 "anti_join_shape",
                 [error],
@@ -1885,6 +2047,20 @@ def validate_sql_detailed(
             ),
             "graph_plan_mismatch",
             graph_plan_errors,
+        )
+
+    fanout_errors = _fanout_aggregate_errors(
+        tree,
+        (semantic_context or {}).get("graph_context"),
+        alias_to_table,
+    )
+    if fanout_errors:
+        return SqlValidationResult(
+            False,
+            "Generated SQL can multiply the governed anchor grain before aggregation. "
+            + " ".join(error["message"] for error in fanout_errors[:3]),
+            "fanout_aggregate",
+            fanout_errors,
         )
 
     if table_columns:

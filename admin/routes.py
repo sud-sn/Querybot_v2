@@ -187,7 +187,18 @@ def _eval_case_files(account_id: str) -> list[Path]:
     root = Path("evals") / "clients" / account_id
     if not root.exists():
         return []
-    return sorted(root.glob("**/golden_questions.y*ml")) + sorted(root.glob("**/golden_questions.json"))
+    # A client can maintain several purpose-specific suites. Discovery is
+    # filename-based and tenant-neutral; runtime code never knows a client's
+    # schema, tables, or business vocabulary.
+    allowed = re.compile(
+        r"^(?:golden_questions|eval_suite|.+_(?:questions|cases))\.(?:ya?ml|json)$",
+        re.IGNORECASE,
+    )
+    return sorted(
+        path
+        for path in root.rglob("*")
+        if path.is_file() and allowed.fullmatch(path.name)
+    )
 
 
 async def _run_default_evals_async(

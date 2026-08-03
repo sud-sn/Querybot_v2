@@ -244,6 +244,11 @@ class TestCreateCandidate(_LearningStoreBase):
         c = self._create(score=90)
         self.assertEqual(c["candidate_type"], "positive")
 
+    def test_quarantined_high_score_requires_admin_review(self):
+        c = self._create(score=95, force_review=True)
+        self.assertEqual(c["candidate_type"], "review")
+        self.assertEqual(c["status"], "pending_review")
+
     def test_mid_score_classified_review(self):
         c = self._create(score=70)
         self.assertEqual(c["candidate_type"], "review")

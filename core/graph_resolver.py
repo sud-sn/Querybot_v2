@@ -916,14 +916,51 @@ def _confirmed_subgraph(graph: dict) -> dict:
 
 def _client_allows_suggested(account_id: str) -> bool:
     """Per-client toggle: may unreviewed (suggested) graph rows feed SQL generation?
-    Defaults to True (existing behaviour) when the client row is unavailable."""
+    Defaults to False. Unreviewed relationships are useful onboarding evidence,
+    but they must not silently become executable join plans for a new tenant.
+    Clients can still opt in explicitly while their graph is being curated."""
     try:
         import store
         client = store.get_client(account_id) or {}
         val = client.get("graph_use_suggested")
-        return True if val is None else bool(int(val))
+        return False if val is None else bool(int(val))
     except Exception:
-        return True
+        return False
+
+
+def _anti_join_anchor(question: str, detected: list[str], entities_map: dict[str, dict]) -> str:
+    """Choose the records being retained for a missing-record question.
+
+    For wording such as ``orders without fills`` or ``customers with no
+    invoices`` the left side is the business entity before the missing marker.
+    This lexical choice is tenant agnostic and only ranks entities already
+    grounded by the client's entity graph.
+    """
+    normalized = _normalize(question)
+    marker = re.search(
+        r"\b(?:without|with no|have no|has no|having no|missing|not matched|unmatched)\b",
+        normalized,
+    )
+    prefix = normalized[: marker.start()] if marker else normalized
+    prefix_tokens = _tokens(prefix)
+    ranked: list[tuple[int, int, str]] = []
+    for index, name in enumerate(detected):
+        entity = entities_map.get(name, {})
+        phrases = [
+            str(entity.get("display_name") or ""),
+            str(name or ""),
+            str(entity.get("table_name") or ""),
+        ]
+        score = 0
+        for phrase in phrases:
+            words = [word for word in _normalize(phrase).split() if len(word) >= 3]
+            if not words:
+                continue
+            matched = sum(1 for word in words if word in prefix_tokens)
+            score = max(score, matched * 10 + (5 if matched == len(words) else 0))
+        ranked.append((score, -index, name))
+    ranked.sort(reverse=True)
+    return ranked[0][2] if ranked else (detected[0] if detected else "")
 
 
 def _resolve_on_graph(
@@ -991,7 +1028,9 @@ def _resolve_on_graph(
 
     # Determine anchor (fact table if possible)
     anchor = detected[0]
-    if not anti_join:
+    if anti_join:
+        anchor = _anti_join_anchor(question, detected, entities_map)
+    else:
         for name in detected:
             if entities_map.get(name, {}).get("entity_type") == "fact":
                 anchor = name
@@ -1027,6 +1066,12 @@ def _resolve_on_graph(
             "join_type": "LEFT" if anti_join else (edge.get("join_type") or "INNER").upper(),
             "provenance": edge.get("generated_by", ""),
             "validation_status": edge.get("validation_status", "untested"),
+            "status": edge.get("status", ""),
+            "cardinality": edge.get("cardinality", ""),
+            "fanout_ratio": edge.get("fanout_ratio"),
+            "orphan_rate": edge.get("orphan_rate"),
+            "many_to_many": bool(edge.get("many_to_many")),
+            "direction": edge.get("_direction", "forward"),
             "weight": round(_edge_weight(edge), 3),
         })
 
@@ -1061,8 +1106,8 @@ def resolve_for_question(
 
     Resolution order:
       1. Admin-confirmed entities/relationships only (status != 'suggested').
-      2. If that yields nothing useful AND the client allows it
-         (client.graph_use_suggested, default on), fall back to the full
+      2. If that yields nothing useful AND the client explicitly allows it
+         (client.graph_use_suggested, default off), fall back to the full
          graph including unreviewed suggestions — logged when it happens.
 
     use_suggested: override the per-client toggle (None = read client row).
@@ -1108,8 +1153,8 @@ def resolve_for_question(
             required_entities, metric_formula_tables, authoritative_fact_tables,
         )
         # A confirmed multi-entity join — or a graph with nothing suggested —
-        # is final. A single-entity anchor may just be the weak fact fallback,
-        # so give suggested content a chance to produce a real join below.
+        # is final. A confirmed single-entity anchor is retained below unless
+        # graph-review tooling explicitly forces suggested relationships.
         if confirmed_result.get("enabled") and (
             len(confirmed_result.get("detected", [])) >= 2 or not has_suggested
         ):
@@ -1119,7 +1164,13 @@ def resolve_for_question(
 
     if has_suggested:
         allow = use_suggested if use_suggested is not None else _client_allows_suggested(account_id)
-        if allow:
+        # A confirmed anchor is an executable governed plan. Do not replace it
+        # merely because suggested rows can produce a larger join: "more
+        # detected entities" is not evidence that the extra tables are needed,
+        # and was the source of silent aggregate fan-out. The explicit function
+        # override remains available to graph-review tooling.
+        force_suggested = use_suggested is True
+        if allow and (force_suggested or not confirmed_result.get("enabled")):
             full_result = _resolve_on_graph(
                 question, db_type, graph, intent,
                 required_entities, metric_formula_tables, authoritative_fact_tables,

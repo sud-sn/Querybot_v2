@@ -32,6 +32,8 @@ def build_answer_confidence(
     derived_metric_gap: str = "",
     weak_retrieval: bool = False,
     zero_match_result: bool = False,
+    graph_scope: str = "",
+    fanout_risk: bool = False,
 ) -> dict[str, Any]:
     """
     Convert technical query signals into a compact business-facing confidence score.
@@ -114,8 +116,26 @@ def build_answer_confidence(
         reasons.append("Business terms were mapped through the semantic layer.")
 
     if has_graph_context:
-        score += 5
-        reasons.append("Configured entity relationships were used.")
+        if str(graph_scope or "").lower() == "suggested_fallback":
+            score -= 35
+            warnings.append(
+                "The query used unreviewed relationship suggestions; its joins require administrator review."
+            )
+        else:
+            score += 5
+            reasons.append("Configured entity relationships were used.")
+
+    if fanout_risk:
+        score -= 35
+        warnings.append(
+            "One or more relationships can multiply the requested result grain."
+        )
+
+    # A repaired query may be usable, but compilation and execution alone do
+    # not prove business correctness. Never present a repaired result as high
+    # confidence until it is covered by deterministic result assertions.
+    if retries:
+        score = min(score, 75)
 
     score = max(0, min(100, score))
     level = _level(score)

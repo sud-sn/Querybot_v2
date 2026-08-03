@@ -87,6 +87,36 @@ class ResultDisplayCommandTests(unittest.TestCase):
             "INR",
         )
 
+    def test_multiple_format_changes_are_applied_to_one_derived_result(self):
+        outcome = self.execute(
+            "Format OrderMonth as MMM-YY and Revenue as USD currency "
+            "with zero decimal places"
+        )
+        self.assertTrue(outcome.ok, outcome.message)
+        formats = outcome.snapshot["metadata"]["display_formats"]
+        self.assertEqual(
+            formats["OrderMonth"],
+            {"type": "date", "style": "month_year_short"},
+        )
+        self.assertEqual(formats["Revenue"]["currency_code"], "USD")
+        self.assertEqual(formats["Revenue"]["fraction_digits"], 0)
+        self.assertEqual(outcome.snapshot["rows"][0]["Revenue"], 1234.5)
+
+    def test_to_wording_splits_independent_format_targets(self):
+        command = parse_result_command(
+            "change OrderMonth to month and year and Revenue to INR with 2 decimals"
+        )
+        self.assertIsNotNone(command)
+        self.assertEqual(len(command.format_spec["batch"]), 2)
+        self.assertEqual(command.format_spec["batch"][0]["target_text"], "OrderMonth")
+        self.assertEqual(command.format_spec["batch"][1]["target_text"], "Revenue")
+
+    def test_main_local_result_response_forwards_display_metadata(self):
+        source = (
+            Path(__file__).resolve().parents[1] / "gateway" / "webhooks.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("display_formats=display_formats", source)
+
 
 class KpiPresentationTests(unittest.TestCase):
     def test_single_metric_is_kpi_not_diagnostic_table(self):

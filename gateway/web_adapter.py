@@ -39,11 +39,22 @@ class WebAdapter(PlatformAdapter):
         account_id: str,
         user_id: str,
         thread_id: str = "",
+        *,
+        portal_user_id: int | None = None,
     ):
         super().__init__(credentials={})
         self.ws = websocket
         self._account = account_id
         self._user_id = user_id
+        # Channel identities can be synthetic (for example ``web_42``),
+        # while dashboard ownership must always use the authenticated portal
+        # user's numeric ID. Keep those two identities separate.
+        if portal_user_id is not None:
+            self._portal_user_id = int(portal_user_id)
+        elif str(user_id).isdigit():
+            self._portal_user_id = int(user_id)
+        else:
+            self._portal_user_id = None
         # A browser thread scopes conversation memory and governed result
         # cache independently from every other thread owned by this user.
         cleaned_thread = re.sub(r"[^a-zA-Z0-9_-]", "", str(thread_id or ""))[:80]
@@ -428,7 +439,11 @@ class WebAdapter(PlatformAdapter):
 
         from store import dashboard_store, user_store
 
-        user_id = int(self._user_id)
+        if self._portal_user_id is None:
+            raise ValueError(
+                "Authenticated portal user identity is unavailable for this dashboard action."
+            )
+        user_id = self._portal_user_id
         dashboard = None
         if dashboard_id:
             dashboard = dashboard_store.get_dashboard(

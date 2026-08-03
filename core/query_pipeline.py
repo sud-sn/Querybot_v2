@@ -2778,7 +2778,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         rows = None
         ok = False
 
-    retryable = (not ok and (last_code or code) in ("unknown_table", "unknown_column", "date_key_format", "dialect_mismatch", "production_shape", "period_comparison_shape", "anti_join_shape", "top_n_shape", "graph_plan_mismatch", "field_plan_mismatch", "metric_formula_mismatch", "null_aggregate_diagnostic", "parse", "multi_statement", "not_select", "reused_plan_empty", "zero_row_fresh", "surrogate_date_conversion", "temporal_anchor_missing", "temporal_anchor_mismatch", "temporal_role_mismatch", "temporal_anchor_unscoped")) or (exec_error is not None)
+    retryable = (not ok and (last_code or code) in ("unknown_table", "unknown_column", "date_key_format", "dialect_mismatch", "production_shape", "period_comparison_shape", "anti_join_shape", "fanout_aggregate", "top_n_shape", "graph_plan_mismatch", "field_plan_mismatch", "metric_formula_mismatch", "null_aggregate_diagnostic", "parse", "multi_statement", "not_select", "reused_plan_empty", "zero_row_fresh", "surrogate_date_conversion", "temporal_anchor_missing", "temporal_anchor_mismatch", "temporal_role_mismatch", "temporal_anchor_unscoped")) or (exec_error is not None)
 
     if retryable:
         if exec_error is not None:
@@ -2848,9 +2848,17 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             elif last_code == "anti_join_shape":
                 validation_repair_note = (
                     "\nANTI-JOIN REPAIR RULE:\n"
-                    "- The question asks for missing records/data, so use LEFT JOIN ... WHERE right_key IS NULL.\n"
+                    "- Prefer source rows WHERE NOT EXISTS (SELECT 1 FROM missing_side WHERE governed_key_match).\n"
+                    "- If using LEFT JOIN, WHERE must test a join key from the RIGHT/missing side with IS NULL.\n"
                     "- The FROM table must be the source/parent table containing the records to list.\n"
-                    "- Do not answer with a single-table WHERE measure IS NULL query.\n"
+                    "- Never null-test the FROM table's own key; that can make the result impossible.\n"
+                )
+            elif last_code == "fanout_aggregate":
+                validation_repair_note = (
+                    "\nGRAIN-PRESERVING AGGREGATE REPAIR RULE:\n"
+                    "- Do not SUM/AVG/COUNT a parent-grain value after a one-to-many or many-to-many join.\n"
+                    "- Remove tables not required by the requested outputs or filters.\n"
+                    "- Otherwise pre-aggregate the child to the governed join key, use EXISTS, or COUNT(DISTINCT approved_parent_key).\n"
                 )
             elif last_code == "date_key_format":
                 validation_repair_note = (
@@ -3294,6 +3302,17 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             row_count=len(rows),
         )
     from core.metric_semantics import detect_derived_metric_gap
+    _resolved_graph_edges = (_graph_ctx or {}).get("resolved_edges") or []
+    _graph_fanout_risk = bool((_graph_ctx or {}).get("fanout_risk_facts"))
+    if not _graph_fanout_risk:
+        for _edge in _resolved_graph_edges:
+            try:
+                _edge_fanout = float(_edge.get("fanout_ratio") or 0)
+            except (TypeError, ValueError):
+                _edge_fanout = 0.0
+            if _edge.get("many_to_many") or _edge_fanout > 1.01:
+                _graph_fanout_risk = True
+                break
     _confidence_context = {
         "validation_code": last_code or code or "ok",
         "retry_count": retry_count,
@@ -3311,6 +3330,8 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         # Everything above the relevance floor was dropped — the KB context
         # the SQL was built on matched this question only weakly.
         "weak_retrieval": _weak_retrieval,
+        "graph_scope": str((_graph_ctx or {}).get("graph_scope") or ""),
+        "fanout_risk": _graph_fanout_risk,
         # Carried through to cache_result so compare_prior can read them.
         "semantic_plan": _semantic_plan or {},
         # The exact entity_relationships rows this question's JOIN path

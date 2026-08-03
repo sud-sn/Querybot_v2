@@ -720,6 +720,8 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
         null_metric_issue=bool(null_metric_issue),
         derived_metric_gap=str(confidence_context.get("derived_metric_gap") or ""),
         weak_retrieval=bool(confidence_context.get("weak_retrieval")),
+        graph_scope=str(confidence_context.get("graph_scope") or ""),
+        fanout_risk=bool(confidence_context.get("fanout_risk")),
         zero_match_result=zero_match_result,
     )
 

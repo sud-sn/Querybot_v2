@@ -111,6 +111,42 @@ def test_materialize_dashboard_reuses_governed_sql_without_rows():
     assert "rows" not in kwargs["display_config"]
 
 
+def test_materialize_dashboard_uses_authenticated_portal_identity():
+    adapter = WebAdapter(
+        AsyncMock(), "tenant-a", "web_7", "thread-1", portal_user_id=7
+    )
+    adapter.last_result = {
+        "rows": [{"revenue": 1250}],
+        "question": "Revenue",
+        "sql": "SELECT SUM(revenue) AS revenue FROM sales",
+        "db_cfg": {"id": 11},
+    }
+    created = {"id": 31, "name": "Revenue", "status": "draft", "version": 1}
+    with (
+        patch("store.dashboard_store.create_dashboard", return_value=created) as create,
+        patch("store.dashboard_store.create_data_source", return_value={"id": 52}),
+        patch("store.dashboard_store.add_chart", return_value=True),
+        patch("store.dashboard_store.get_dashboard", return_value=created),
+        patch("store.user_store.pin_chart", return_value=44) as pin,
+    ):
+        adapter.materialize_dashboard(name="Revenue")
+
+    assert create.call_args.args[1] == 7
+    assert pin.call_args.kwargs["user_id"] == 7
+
+
+def test_dashboard_rejects_synthetic_identity_without_authenticated_owner():
+    adapter = WebAdapter(AsyncMock(), "tenant-a", "web_7", "thread-1")
+    adapter.last_result = {
+        "rows": [{"revenue": 1250}],
+        "question": "Revenue",
+        "sql": "SELECT SUM(revenue) AS revenue FROM sales",
+        "db_cfg": {"id": 11},
+    }
+    with pytest.raises(ValueError, match="Authenticated portal user identity"):
+        adapter.materialize_dashboard(name="Revenue")
+
+
 def test_materialize_requires_a_real_executed_result():
     adapter = _adapter()
     adapter.last_result = None

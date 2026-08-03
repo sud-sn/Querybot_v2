@@ -1195,6 +1195,103 @@ class DiagnosticRenderingReliabilityTests(unittest.TestCase):
         self.assertNotIn("h = h.replace(/_([^_\\n]+)_/g", template)
 
 
+class TenantNeutralJoinSafetyTests(unittest.TestCase):
+    known_tables = {"ANALYTICS.PARENT", "ANALYTICS.CHILD"}
+    table_columns = {
+        "ANALYTICS.PARENT": {"ID": "int", "AMOUNT": "decimal"},
+        "ANALYTICS.CHILD": {"ID": "int", "PARENT_ID": "int"},
+    }
+
+    def _validate(self, sql, semantic_context):
+        from core.validator import validate_sql_detailed
+
+        return validate_sql_detailed(
+            sql,
+            self.known_tables,
+            "azure_sql",
+            table_columns=self.table_columns,
+            semantic_context=semantic_context,
+        )
+
+    def test_missing_record_query_rejects_null_check_on_retained_table(self):
+        result = self._validate(
+            "SELECT COUNT(*) FROM ANALYTICS.PARENT p "
+            "LEFT JOIN ANALYTICS.CHILD c ON p.ID=c.PARENT_ID "
+            "WHERE p.ID IS NULL",
+            {"intent": {"wants_missing_records": True}},
+        )
+        self.assertFalse(result.ok)
+        self.assertEqual(result.code, "anti_join_shape")
+
+    def test_missing_record_query_accepts_right_key_or_not_exists(self):
+        context = {"intent": {"wants_missing_records": True}}
+        left_join = self._validate(
+            "SELECT COUNT(*) FROM ANALYTICS.PARENT p "
+            "LEFT JOIN ANALYTICS.CHILD c ON p.ID=c.PARENT_ID "
+            "WHERE c.PARENT_ID IS NULL",
+            context,
+        )
+        not_exists = self._validate(
+            "SELECT COUNT(*) FROM ANALYTICS.PARENT p WHERE NOT EXISTS "
+            "(SELECT 1 FROM ANALYTICS.CHILD c WHERE c.PARENT_ID=p.ID)",
+            context,
+        )
+        self.assertTrue(left_join.ok, left_join.reason)
+        self.assertTrue(not_exists.ok, not_exists.reason)
+
+    def test_missing_record_query_rejects_uncorrelated_not_exists(self):
+        result = self._validate(
+            "SELECT COUNT(*) FROM ANALYTICS.PARENT p WHERE NOT EXISTS "
+            "(SELECT 1 FROM ANALYTICS.CHILD c WHERE c.ID > 0)",
+            {"intent": {"wants_missing_records": True}},
+        )
+        self.assertFalse(result.ok)
+        self.assertEqual(result.code, "anti_join_shape")
+
+    def test_raw_parent_aggregate_is_rejected_across_known_fanout(self):
+        graph = {
+            "enabled": True,
+            "anchor": "Parent",
+            "entities": [
+                {"entity_name": "Parent", "schema_name": "ANALYTICS", "table_name": "PARENT"},
+                {"entity_name": "Child", "schema_name": "ANALYTICS", "table_name": "CHILD"},
+            ],
+            "resolved_edges": [],
+            "fanout_risk_facts": ["Parent can have multiple children."],
+        }
+        unsafe = self._validate(
+            "SELECT SUM(p.AMOUNT) FROM ANALYTICS.PARENT p "
+            "JOIN ANALYTICS.CHILD c ON p.ID=c.PARENT_ID",
+            {"graph_context": graph},
+        )
+        distinct = self._validate(
+            "SELECT COUNT(DISTINCT p.ID) FROM ANALYTICS.PARENT p "
+            "JOIN ANALYTICS.CHILD c ON p.ID=c.PARENT_ID",
+            {"graph_context": graph},
+        )
+        self.assertFalse(unsafe.ok)
+        self.assertEqual(unsafe.code, "fanout_aggregate")
+        self.assertTrue(distinct.ok, distinct.reason)
+
+    def test_count_star_is_rejected_across_known_fanout(self):
+        graph = {
+            "enabled": True,
+            "anchor": "Parent",
+            "entities": [
+                {"entity_name": "Parent", "schema_name": "ANALYTICS", "table_name": "PARENT"},
+                {"entity_name": "Child", "schema_name": "ANALYTICS", "table_name": "CHILD"},
+            ],
+            "resolved_edges": [{"direction": "forward", "fanout_ratio": 2.5}],
+        }
+        result = self._validate(
+            "SELECT COUNT(*) FROM ANALYTICS.PARENT p "
+            "JOIN ANALYTICS.CHILD c ON p.ID=c.PARENT_ID",
+            {"graph_context": graph},
+        )
+        self.assertFalse(result.ok)
+        self.assertEqual(result.code, "fanout_aggregate")
+
+
 class BusinessConfidenceRcaTests(unittest.TestCase):
     def test_zero_row_empty_table_lowers_confidence(self):
         confidence = build_answer_confidence(
@@ -1262,6 +1359,30 @@ class BusinessConfidenceRcaTests(unittest.TestCase):
         )
         self.assertEqual(confidence["level"], "high")
         self.assertGreaterEqual(confidence["score"], 80)
+
+    def test_repaired_query_cannot_be_presented_as_high_confidence(self):
+        confidence = build_answer_confidence(
+            validation_code="ok",
+            row_count=42,
+            retry_count=1,
+            has_semantic_plan=True,
+            tables_used=["ANALYTICS.FACT_ORDER"],
+        )
+        self.assertLessEqual(confidence["score"], 75)
+        self.assertNotEqual(confidence["level"], "high")
+
+    def test_suggested_graph_and_fanout_are_visible_confidence_risks(self):
+        confidence = build_answer_confidence(
+            validation_code="ok",
+            row_count=42,
+            has_graph_context=True,
+            graph_scope="suggested_fallback",
+            fanout_risk=True,
+            tables_used=["ANALYTICS.FACT_ORDER", "ANALYTICS.FACT_EVENT"],
+        )
+        self.assertEqual(confidence["level"], "low")
+        self.assertTrue(any("unreviewed relationship" in item for item in confidence["warnings"]))
+        self.assertTrue(any("multiply" in item for item in confidence["warnings"]))
 
     def test_null_metric_issue_lowers_confidence(self):
         confidence = build_answer_confidence(

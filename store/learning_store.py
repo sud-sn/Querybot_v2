@@ -213,6 +213,7 @@ def create_candidate(
     contract_version: str = "",
     candidate_type: str = "review",
     source: str = "auto",
+    force_review: bool = False,
 ) -> dict[str, Any]:
     """
     Insert a new learning_candidate row.
@@ -226,7 +227,13 @@ def create_candidate(
 
     cid  = uuid.uuid4().hex[:12]
     now  = time.strftime("%Y-%m-%dT%H:%M:%S")
-    ctype = classify_score(technical_score) if candidate_type == "review" else candidate_type
+    ctype = (
+        "review"
+        if force_review
+        else classify_score(technical_score)
+        if candidate_type == "review"
+        else candidate_type
+    )
 
     import sqlite3 as _sqlite3
     try:

@@ -574,7 +574,13 @@ async def ws_chat(websocket: WebSocket, account_id: str):
     thread_id = _ws_text_value(
         websocket.query_params.get("thread_id"), "thread_id", "value"
     )
-    adapter = WebAdapter(websocket, account_id, zoom_user_id, thread_id=thread_id)
+    adapter = WebAdapter(
+        websocket,
+        account_id,
+        zoom_user_id,
+        thread_id=thread_id,
+        portal_user_id=int(user_id),
+    )
     selected_dashboard_id = 0
     selected_dashboard_read_only = False
     raw_dashboard_id = str(websocket.query_params.get("dashboard_id") or "")
@@ -871,6 +877,9 @@ async def ws_chat(websocket: WebSocket, account_id: str):
             rows = list(snapshot.get("rows") or [])
             safe_rows = _sanitize_rows(rows)
             column_formats = dict(snapshot.get("column_formats") or {})
+            display_formats = dict(
+                (snapshot.get("metadata") or {}).get("display_formats") or {}
+            )
             source_question = str(snapshot.get("question") or "Result")
             duration_ms = int(time.time() * 1000) - start_ms
             operation = str(outcome.operation or snapshot.get("operation") or "")
@@ -920,6 +929,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 data_source="governed session cache",
                 display_context={"result_operation": operation},
                 column_formats=column_formats,
+                display_formats=display_formats,
                 question_id=question_id,
             )
             response["result_command"] = {
@@ -2679,7 +2689,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                     )
                                     # One repair attempt when validation fails
                                     # (unknown_table or parse error — same as main pipeline)
-                                    if not _fb_ok and _fb_code in ("unknown_table", "unknown_column", "date_key_format", "anti_join_shape", "parse"):
+                                    if not _fb_ok and _fb_code in ("unknown_table", "unknown_column", "date_key_format", "anti_join_shape", "fanout_aggregate", "parse"):
                                         log.info(
                                             "result_chat fallback SQL failed validation (%s): %s — retrying",
                                             _fb_code, _fb_reason,

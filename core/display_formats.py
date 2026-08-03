@@ -138,6 +138,39 @@ def parse_format_request(text: str) -> dict[str, Any] | None:
     return {"spec": spec, "target_text": target}
 
 
+def parse_format_requests(text: str) -> list[dict[str, Any]]:
+    """Parse one or more independently targeted format instructions.
+
+    Natural follow-ups commonly combine presentation changes, for example
+    ``format month as MMM-YY and revenue as USD currency with no decimals``.
+    Each clause retains its own target and allow-listed format contract.
+    """
+    value = " ".join(str(text or "").strip().split())
+    if not value:
+        return []
+    # Protect conjunctions that are part of a single format name before
+    # splitting independently targeted clauses.
+    protected = re.sub(r"\bmonth\s+and\s+year\b", "month __QB_AND__ year", value, flags=re.I)
+    clauses = re.split(
+        r"\s*(?:;|,?\s+and)\s+(?=(?:(?:format|display|show|give|change|convert|round|use|make)\b|(?:the\s+)?[A-Za-z_][A-Za-z0-9_ ]{0,60}\s+(?:as|to|in|with)\s+(?:USD|INR|EUR|GBP|CAD|AUD|JPY|currency|percent|percentage|number|MMM|YYYY|DD)))",
+        protected,
+        flags=re.I,
+    )
+    parsed: list[dict[str, Any]] = []
+    for clause in clauses:
+        clause = clause.replace("__QB_AND__", "and")
+        candidate = clause
+        if not re.match(r"^(?:format|display|show|give|change|convert|round|use|make)\b", candidate, re.I):
+            candidate = f"format {candidate}"
+        request = parse_format_request(candidate)
+        if request:
+            parsed.append(request)
+    if len(parsed) > 1:
+        return parsed
+    single = parse_format_request(value)
+    return [single] if single else []
+
+
 def _extract_target(text: str) -> str:
     patterns = (
         r"\b(?:format|change|display|show|give|convert|round|make)\s+(?:the\s+)?(.+?)\s+(?:as|to|in|with|into)\s+",

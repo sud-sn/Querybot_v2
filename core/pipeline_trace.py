@@ -242,7 +242,27 @@ def _create_learning_candidate(
             feedback_delta           = 0,   # no feedback yet at creation time
         )
 
+        quarantine_reasons: list[str] = []
+        if had_repair:
+            quarantine_reasons.append("sql_repair_used")
+        if str(confidence_ctx.get("graph_scope") or "").lower() == "suggested_fallback":
+            quarantine_reasons.append("unreviewed_graph")
+        if confidence_ctx.get("fanout_risk"):
+            quarantine_reasons.append("fanout_risk")
+        if confidence_ctx.get("weak_retrieval"):
+            quarantine_reasons.append("weak_retrieval")
+        validation_code = str(confidence_ctx.get("validation_code") or "ok").lower()
+        if validation_code not in {"ok", "pass", "trusted_metric"}:
+            quarantine_reasons.append(f"validation_{validation_code}")
+        if quarantine_reasons:
+            evidence["learning_gate"] = "admin_review_required"
+            evidence["quarantine_reasons"] = quarantine_reasons
+
         versions = compute_learning_versions(account_id, kb_dir=kb_dir, schema_dir=schema_dir)
+        semantic_model_version = versions["semantic_model_version"]
+        metric_version         = versions["metric_version"]
+        schema_version         = versions["schema_version"]
+        contract_version       = versions["contract_version"]
 
         create_candidate(
             origin_question_id = question_id,
@@ -252,10 +272,11 @@ def _create_learning_candidate(
             technical_score    = score,
             evidence           = evidence,
             schema_scope       = schema_scope,
-            semantic_model_version = versions["semantic_model_version"],
-            metric_version         = versions["metric_version"],
-            schema_version         = versions["schema_version"],
-            contract_version       = versions["contract_version"],
+            semantic_model_version = semantic_model_version,
+            metric_version         = metric_version,
+            schema_version         = schema_version,
+            contract_version       = contract_version,
+            force_review           = bool(quarantine_reasons),
         )
     except Exception as exc:
         log.debug("_create_learning_candidate failed (non-fatal): %s", exc)

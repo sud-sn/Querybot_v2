@@ -18,7 +18,7 @@ from core.display_formats import (
     candidate_columns,
     coarse_format,
     normalize_display_format,
-    parse_format_request,
+    parse_format_requests,
 )
 from core.result_cache import ResultCache, result_cache
 
@@ -164,8 +164,14 @@ def parse_result_command(text: str) -> ResultCommand | None:
         return None
     if _UNDO_RE.fullmatch(value):
         return ResultCommand("undo")
-    format_request = parse_format_request(value)
-    if format_request:
+    format_requests = parse_format_requests(value)
+    if format_requests:
+        if len(format_requests) > 1:
+            return ResultCommand(
+                "format",
+                format_spec={"batch": format_requests},
+            )
+        format_request = format_requests[0]
         return ResultCommand(
             "format",
             target_text=str(format_request.get("target_text") or ""),
@@ -926,6 +932,44 @@ def _execute_format_command(
     source_id = str(source.get("result_id") or "")
     before = len(rows)
     requested = dict(command.format_spec or {})
+    batch = requested.get("batch")
+    if isinstance(batch, list) and batch:
+        current = source
+        messages: list[str] = []
+        original_source_id = source_id
+        for item in batch:
+            if not isinstance(item, dict):
+                return _command_error(
+                    command, original_source_id, before,
+                    "One of the requested display formats was not valid.",
+                )
+            nested = ResultCommand(
+                "format",
+                target_text=str(item.get("target_text") or ""),
+                format_spec=dict(item.get("spec") or {}),
+            )
+            nested_outcome = _execute_format_command(
+                session_id,
+                current,
+                nested,
+                cache=cache,
+            )
+            if not nested_outcome.ok:
+                return nested_outcome
+            messages.append(nested_outcome.message)
+            current = nested_outcome.snapshot
+        return ResultCommandOutcome(
+            handled=True,
+            ok=True,
+            message=" ".join(messages),
+            snapshot=current,
+            operation="format",
+            rows_before=before,
+            rows_after=len(current.get("rows") or []),
+            affected_count=len(batch),
+            source_result_id=original_source_id,
+            derived_result_id=str(current.get("result_id") or ""),
+        )
     kind = str(requested.get("type") or "").lower()
     if not kind:
         return _format_clarification(
