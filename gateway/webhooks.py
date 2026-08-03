@@ -210,6 +210,36 @@ _CUSTOM_PYTHON_INTENT_RE = re.compile(
 )
 
 
+def _analysis_artifact_answer(
+    operation: str,
+    summary: str,
+    derived_row_count: int,
+    input_row_count: int,
+) -> dict:
+    """Build an honest headline for a worker-produced analysis table.
+
+    Profile/outlier tables contain administrative columns such as ``count``
+    and ``mean``. Passing them through the generic ranking summarizer can emit
+    nonsense like "TOTAL_ORDERS leads at 1". The isolated worker's summary is
+    already deterministic and audited, so it is the authoritative narrative.
+    """
+    label = {
+        "profile": "profile row",
+        "outliers": "potential outlier",
+        "correlation": "correlation pair",
+        "trend": "trend row",
+        "python": "derived row",
+    }.get(operation, "analysis row")
+    plural = "" if derived_row_count == 1 else "s"
+    return {
+        "headline": summary or f"{operation.title()} analysis completed.",
+        "short_value": f"{derived_row_count} {label}{plural}",
+        "comparison": f"Based on {input_row_count} returned row{'s' if input_row_count != 1 else ''}",
+        "scope_badge": "Returned result only",
+        "scope_note": "Calculated in an isolated worker without a new database query.",
+    }
+
+
 def _ws_text_value(value, *preferred_keys: str) -> str:
     """Return a safe text value from a WebSocket payload field.
 
@@ -1909,6 +1939,17 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 data_source="Isolated Python worker",
                 display_context={"result_operation": "analysis_work"},
             )
+            response["answer"] = _analysis_artifact_answer(
+                operation,
+                chosen.summary,
+                len(chosen.rows),
+                int(chosen.metadata.get("input_rows") or len(rows)),
+            )
+            # The worker summary above is authoritative. Suppress the generic
+            # table insight, which reasons about the analysis-output schema as
+            # if it were a business ranking.
+            response["insight_summary"] = ""
+            response["decision_signal"] = {}
             response["trust"].update({
                 "operation": (
                     "Governed Python analysis" if custom_python else "Bounded result analysis"

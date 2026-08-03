@@ -502,6 +502,37 @@ class ContextualDateResolutionTests(unittest.TestCase):
         self.assertEqual(len(merged["joins"]), 2)
         self.assertEqual(len(merged["date_key_policies"]), 2)
 
+    def test_explicit_booked_month_outranks_incidental_completed_fill_noun(self):
+        roles = [
+            {
+                "name": "Booked Date", "business_role": "booked_date",
+                "fact_table": "PHARMA_LAB.F_RX_FILL", "fact_column": "BOOKED_DATE_ID",
+                "dimension_table": "PHARMA_LAB.D_DATE", "dimension_key": "DATE_ID",
+                "date_value_column": "CALENDAR_DATE", "date_key_type": "surrogate_fk",
+                "status": "approved",
+            },
+            {
+                "name": "Fill Date", "business_role": "fill_date",
+                "fact_table": "PHARMA_LAB.F_RX_FILL", "fact_column": "FILL_DATE",
+                "date_value_column": "FILL_DATE", "date_key_type": "native_date",
+                "status": "approved",
+            },
+        ]
+        question = "Show completed-fill net revenue grouped by booked month for 2025."
+        explicit = find_explicit_date_roles(question, roles)
+        self.assertEqual(len(explicit), 1)
+        self.assertEqual(explicit[0]["business_role"], "booked_date")
+
+        result = resolve_contextual_date_binding(
+            question,
+            matched_metrics=[],
+            bindings=[],
+            date_roles=roles,
+            required_fact_tables={"PHARMA_LAB.F_RX_FILL"},
+        )
+        self.assertEqual(result["status"], "selected")
+        self.assertEqual(result["binding"]["date_role"], "booked_date")
+
     def test_validator_accepts_same_date_dimension_joined_twice(self):
         plan = build_contextual_date_plan_many([
             _binding("Booked", "booked_date", "BOOKED_DT_ID"),

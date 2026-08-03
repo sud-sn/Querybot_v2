@@ -2,7 +2,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 from admin.routes import _client_health_score
-from gateway.webhooks import _ANALYSIS_WORK_INTENT_RE, _CUSTOM_PYTHON_INTENT_RE
+from gateway.webhooks import (
+    _ANALYSIS_WORK_INTENT_RE,
+    _CUSTOM_PYTHON_INTENT_RE,
+    _analysis_artifact_answer,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -24,6 +28,15 @@ def test_natural_latest_successful_result_phrasing_routes_to_analysis():
         "Analyze the latest successful result deeply for outliers and profile the numeric distribution."
     )
     assert _ANALYSIS_WORK_INTENT_RE.search("profile my previous result")
+
+
+def test_analysis_artifact_uses_worker_summary_not_generic_ranking_claim():
+    answer = _analysis_artifact_answer(
+        "profile", "Profiled 1 numeric columns across 1 rows.", 1, 1,
+    )
+    assert answer["headline"] == "Profiled 1 numeric columns across 1 rows."
+    assert answer["short_value"] == "1 profile row"
+    assert answer["comparison"] == "Based on 1 returned row"
 
 
 def test_admin_and_portal_governed_python_proof_is_wired():

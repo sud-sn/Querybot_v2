@@ -90,11 +90,16 @@ def _explicit_role_matches(
             str(role.get("business_role") or "").replace("_", " "),
             *_terms(role.get("synonyms", [])),
         ])
-        role_matches = []
+        # quality 2 = the role/grain was named explicitly ("booked month");
+        # quality 1 = event wording only ("ordered revenue", "fill count").
+        # Event wording is useful when it is the only date-role signal, but it
+        # must not add a second role beside an explicit role merely because a
+        # fact/entity noun appears elsewhere in the question.
+        role_matches: list[tuple[int, int, str, int]] = []
         for phrase in phrases:
             start = q.find(phrase) if phrase else -1
             if start >= 0:
-                role_matches.append((start, start + len(phrase), phrase))
+                role_matches.append((start, start + len(phrase), phrase, 2))
                 continue
 
             # Business users commonly replace the word "date" with the
@@ -111,7 +116,7 @@ def _explicit_role_matches(
                         variant = f"{stem} {grain}"
                         start = q.find(variant)
                         if start >= 0:
-                            role_matches.append((start, start + len(variant), variant))
+                            role_matches.append((start, start + len(variant), variant, 2))
                     # Event wording often names the business date implicitly:
                     # "ordered revenue", "booked sales", "invoiced amount".
                     # Keep this word-boundary based so "order" does not match
@@ -123,22 +128,32 @@ def _explicit_role_matches(
                         event_match = re.search(rf"\b{re.escape(variant)}\b", q)
                         if event_match:
                             role_matches.append(
-                                (event_match.start(), event_match.end(), variant)
+                                (event_match.start(), event_match.end(), variant, 1)
                             )
         if role_matches:
-            start, end, phrase = max(role_matches, key=lambda item: (len(item[2]), -item[0]))
-            matches.append((start, end, phrase, role))
+            start, end, phrase, quality = max(
+                role_matches,
+                key=lambda item: (item[3], len(item[2]), -item[0]),
+            )
+            matches.append((start, end, phrase, quality, role))
     if not matches:
         return []
+
+    # An explicit role/grain outranks incidental event wording globally. Live
+    # example: "completed-fill net revenue by booked month" explicitly asks
+    # for Booked Date; the noun "fill" describes the metric population and
+    # must not also require Fill Date.
+    if any(quality == 2 for _start, _end, _phrase, quality, _role in matches):
+        matches = [item for item in matches if item[3] == 2]
 
     # "cancelled order date" also contains "order date". Keep the most
     # specific role for overlapping text, while preserving separate phrases
     # such as "booked date and order date" as two intentional roles.
     selected: list[dict] = []
-    for start, end, phrase, role in matches:
+    for start, end, phrase, _quality, role in matches:
         shadowed = any(
             other_start <= start and other_end >= end and len(other_phrase) > len(phrase)
-            for other_start, other_end, other_phrase, _other_role in matches
+            for other_start, other_end, other_phrase, _other_quality, _other_role in matches
         )
         if not shadowed:
             selected.append({**role, "_matched_phrase": phrase})
