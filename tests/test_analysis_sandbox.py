@@ -36,6 +36,16 @@ def test_profile_correlation_outlier_and_trend_math():
     assert trend["rows"][-1]["change"] == 90.0
 
 
+def test_single_value_kpi_and_currency_strings_remain_numeric_for_profile():
+    plain = _analyze([{"Total Orders": 360}], "profile")
+    formatted = _analyze([{"Total Orders": "₹360"}], "profile")
+    accounting = _analyze([{"Revenue": "(INR 1,250.50)"}], "profile")
+
+    assert plain["rows"][0]["mean"] == 360.0
+    assert formatted["rows"][0]["mean"] == 360.0
+    assert accounting["rows"][0]["mean"] == -1250.5
+
+
 def test_isolated_worker_returns_json_shaped_result():
     result = run_isolated_analysis(ROWS, "correlation", timeout_seconds=5)
     assert result.operation == "correlation"

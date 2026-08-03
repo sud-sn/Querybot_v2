@@ -167,6 +167,7 @@ class KpiPresentationTests(unittest.TestCase):
         self.assertEqual(payload["kpi"]["display_format"]["fraction_digits"], 0)
         self.assertEqual(payload["answer"]["headline"], "Revenue: ₹52,677")
         self.assertEqual(payload["answer"]["short_value"], "₹52,677")
+        self.assertEqual(payload["insight_summary"], "Revenue: ₹52,677.")
 
     def test_answer_text_uses_requested_percentage_scale_and_date_style(self):
         percentage = build_assistant_response(

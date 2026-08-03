@@ -484,10 +484,11 @@ def _bounded_rows(rows: list[dict]) -> list[dict]:
 
 def _numeric_columns(rows: list[dict]) -> dict[str, list[float]]:
     result: dict[str, list[float]] = {}
+    required = 1 if len(rows) == 1 else max(2, math.ceil(len(rows) / 2))
     for column in rows[0]:
         values = [_number(row.get(column)) for row in rows]
         numeric = [value for value in values if value is not None]
-        if len(numeric) >= max(2, len(rows) // 2):
+        if len(numeric) >= required:
             result[column] = numeric
     return result
 
@@ -496,7 +497,13 @@ def _number(value: Any) -> float | None:
     if value is None or isinstance(value, bool):
         return None
     try:
-        number = float(str(value).replace(",", "").replace("$", "").replace("%", "").strip())
+        text = str(value).strip()
+        accounting = text.startswith("(") and text.endswith(")")
+        text = re.sub(r"(?i)\b(?:USD|INR|EUR|GBP|CAD|AUD|JPY)\b", "", text)
+        text = text.translate(str.maketrans("", "", ",$₹€£¥%()"))
+        number = float(text.strip())
+        if accounting:
+            number = -abs(number)
         return number if math.isfinite(number) else None
     except (TypeError, ValueError):
         return None

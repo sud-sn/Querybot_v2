@@ -81,6 +81,24 @@ def parse_explicit_graph_commands(
         exact = table_by_norm.get(_normalise(cleaned), "")
         if exact:
             return exact
+        # Discovered manifests can be catalog.schema.table while an admin
+        # naturally pastes schema.table. Resolve any unambiguous trailing
+        # qualification, just as the SQL validator and ACL layer do.
+        wanted_parts = [
+            part.strip().strip("[]`\"").casefold()
+            for part in cleaned.split(".") if part.strip()
+        ]
+        qualified_matches = []
+        if len(wanted_parts) >= 2:
+            for table in schema_manifest:
+                table_parts = [
+                    part.strip().strip("[]`\"").casefold()
+                    for part in str(table).split(".") if part.strip()
+                ]
+                if len(table_parts) >= len(wanted_parts) and table_parts[-len(wanted_parts):] == wanted_parts:
+                    qualified_matches.append(table)
+        if len(qualified_matches) == 1:
+            return qualified_matches[0]
         matches = bare_tables.get(_normalise(cleaned), [])
         return matches[0] if len(matches) == 1 else ""
 

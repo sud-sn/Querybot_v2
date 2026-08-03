@@ -4,6 +4,7 @@ import unittest
 from core.graph_commands import (
     build_graph_command_input,
     compile_graph_command_response,
+    parse_explicit_graph_commands,
     parse_graph_command,
 )
 
@@ -145,6 +146,19 @@ class GraphCommandCompileTests(unittest.TestCase):
             self.manifest,
         )
         self.assertEqual(command.confidence, 1.0)
+
+    def test_explicit_mapping_accepts_unambiguous_schema_suffix(self):
+        manifest = {
+            "CHATBOT_DB.PHARMA_LAB.BR_RX_DIAGNOSIS": ["RX_ORDER_ID", "DIAGNOSIS_ID"],
+        }
+        commands, error = parse_explicit_graph_commands(
+            "Change PHARMA_LAB.BR_RX_DIAGNOSIS from dimension to bridge",
+            manifest,
+        )
+        self.assertEqual(error, "")
+        self.assertEqual(len(commands), 1)
+        self.assertEqual(commands[0].table_name, "CHATBOT_DB.PHARMA_LAB.BR_RX_DIAGNOSIS")
+        self.assertEqual(commands[0].entity_name, "BR_RX_DIAGNOSIS")
 
 
 class GraphCommandPromptTests(unittest.TestCase):

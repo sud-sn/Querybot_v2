@@ -3350,7 +3350,7 @@ function appendAssistantResponse(msg, opts = {}){
   _mountResultChat(div, rcId);
   // Record this turn in frontend history for localStorage persistence
   // (fires for chart AND data-table responses so follow-ups always have context)
-  if (msg.trust?.sql && msg.question) {
+  if (msg.trust?.sql && msg.question && !msg.result_command && !msg.result_exclusion && !msg.trust?.operation) {
     const cols = (msg.data?.rows?.length ? Object.keys(msg.data.rows[0]) : []);
     _pushHistory({
       question: msg.question,
@@ -4430,16 +4430,6 @@ function toggleConversationRail(forceCollapsed) {
   if (typeof window.__qbToggleSidebar === 'function') {
     window.__qbToggleSidebar(typeof forceCollapsed === 'boolean' ? !forceCollapsed : undefined);
   }
-}
-
-function startNewChat(event) {
-  if (event) event.preventDefault();
-  clearChatCache();
-  _localHistory = [];
-  _saveHistory([]);
-  try { localStorage.setItem(THREAD_STORAGE_KEY, _createThreadId()); } catch (_) {}
-  location.assign('/portal/chat?new=1');
-  return false;
 }
 
 function _historyDate(item) {

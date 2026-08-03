@@ -1035,7 +1035,13 @@ def _dynamic_actions(ctx: dict) -> list[dict]:
 
 # ── Insight Layer helpers — pure statistics, no LLM call ─────────────────────
 
-def _build_insight_summary(rows: list[dict], ctx: dict, brief: dict) -> str:
+def _build_insight_summary(
+    rows: list[dict],
+    ctx: dict,
+    brief: dict,
+    column_formats: dict | None = None,
+    display_formats: dict | None = None,
+) -> str:
     """
     Generate a one-sentence plain-English summary from the data brief.
 
@@ -1044,6 +1050,15 @@ def _build_insight_summary(rows: list[dict], ctx: dict, brief: dict) -> str:
     """
     mode = ctx.get("mode", "table")
     row_count = len(rows)
+    column_formats = column_formats or {}
+    display_formats = display_formats or {}
+
+    def format_value(value: Any, column: str = "") -> str:
+        return _format_display_value(
+            value,
+            column_formats.get(column),
+            display_formats.get(column),
+        )
 
     if detect_zero_match_result(rows):
         return "No matching data was found for this question."
@@ -1058,9 +1073,10 @@ def _build_insight_summary(rows: list[dict], ctx: dict, brief: dict) -> str:
         )
 
     if mode == "single_value":
-        col = (brief.get("value_column") or "").replace("_", " ").title()
+        raw_col = brief.get("value_column") or ""
+        col = raw_col.replace("_", " ").title()
         val = brief.get("value", "")
-        return f"{col}: {_format_number(val)}." if col else ""
+        return f"{col}: {format_value(val, raw_col)}." if col else ""
 
     if mode == "time_series":
         ts = brief.get("time_series") or {}
@@ -1068,7 +1084,8 @@ def _build_insight_summary(rows: list[dict], ctx: dict, brief: dict) -> str:
         pct = ts.get("overall_pct_change")
         first = ts.get("first_period", "")
         last_ = ts.get("last_period", "")
-        value_col = (ctx.get("value_col") or "").replace("_", " ").title()
+        raw_value_col = ctx.get("value_col") or ""
+        value_col = raw_value_col.replace("_", " ").title()
         dir_word = {"increasing": "up", "decreasing": "down", "stable": "flat"}.get(direction, direction)
         if pct is not None:
             base = f"{value_col} trended {dir_word} {abs(pct):.1f}% from {first} to {last_}."
@@ -1076,7 +1093,7 @@ def _build_insight_summary(rows: list[dict], ctx: dict, brief: dict) -> str:
             base = f"{value_col} remained {dir_word} between {first} and {last_}."
         peak = ts.get("peak") or {}
         if peak and direction in ("increasing", "decreasing"):
-            base += f" Peak: {_format_number(peak.get('value', 0))} in {peak.get('period', '')}."
+            base += f" Peak: {format_value(peak.get('value', 0), raw_value_col)} in {peak.get('period', '')}."
         return base
 
     if mode == "ranking":
@@ -1089,7 +1106,7 @@ def _build_insight_summary(rows: list[dict], ctx: dict, brief: dict) -> str:
             count = cat.get("category_count", row_count)
             share_str = f" ({leader_share}% of total)" if leader_share else ""
             return (
-                f"{leader['label']} leads at {_format_number(leader['value'])}{share_str}"
+                f"{leader['label']} leads at {format_value(leader['value'], ctx.get('value_col') or '')}{share_str}"
                 f" across {count} {label_col or 'entries'}."
             )
 
@@ -1100,7 +1117,9 @@ def _build_insight_summary(rows: list[dict], ctx: dict, brief: dict) -> str:
         avg = ctx.get("avg_value", 0)
         return (
             f"{row_count} records — {value_col} ranges "
-            f"{_format_number(mn)} to {_format_number(mx)}, avg {_format_number(avg)}."
+            f"{format_value(mn, ctx.get('value_col') or '')} to "
+            f"{format_value(mx, ctx.get('value_col') or '')}, avg "
+            f"{format_value(avg, ctx.get('value_col') or '')}."
         )
 
     return ""
@@ -1599,7 +1618,13 @@ def build_assistant_response(
     # ── Insight Layer — pure-stats, zero-latency ─────────────────────────────
     # Generate a summary sentence and anomaly callouts from the data brief.
     # These are computed entirely from statistics — no LLM call, no extra latency.
-    insight_summary  = _build_insight_summary(raw_rows, ctx, brief)
+    insight_summary = _build_insight_summary(
+        raw_rows,
+        ctx,
+        brief,
+        resolved_column_formats,
+        resolved_display_formats,
+    )
     anomaly_callouts = _build_anomaly_callouts(brief)
     decision_signal  = _build_decision_signal(ctx, brief, anomaly_callouts)
 

@@ -288,8 +288,9 @@ class GraphChatTemplateWiringTests(unittest.TestCase):
 
     def test_new_thread_is_a_real_navigation_fallback(self):
         base = (ROOT / "portal" / "templates" / "portal_base.html").read_text(encoding="utf-8")
-        self.assertIn('href="/portal/chat?new=1"', base)
-        self.assertNotIn("return startNewChat(event)", base)
+        self.assertIn('<form action="/portal/chat" method="get"', base)
+        self.assertIn('type="submit" name="new" value="1"', base)
+        self.assertNotIn("startNewChat", base)
 
 
 if __name__ == "__main__":

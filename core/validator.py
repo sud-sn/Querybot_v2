@@ -2327,7 +2327,32 @@ def validate_sql_detailed(
                 # the formula is the authoritative source — skip this check.
                 if plan_col in _metric_formula_cols:
                     continue
-                if not any(_table_matches(used_table, plan_table) and used_col == plan_col for used_table, used_col in used_columns):
+                field_visible = any(
+                    _table_matches(used_table, plan_table) and used_col == plan_col
+                    for used_table, used_col in used_columns
+                )
+                if not field_visible:
+                    # Defensive physical-AST proof. Production catalogs can
+                    # keep database.schema.table while SQL uses schema.table;
+                    # an alias directly bound to the planned physical table is
+                    # sufficient evidence even if the catalog key was not.
+                    for col_node in tree.find_all(sg_exp.Column):
+                        if (col_node.name or "").upper() != plan_col:
+                            continue
+                        table_ref = (col_node.table or "").upper()
+                        for table_node in tree.find_all(sg_exp.Table):
+                            alias = (table_node.alias_or_name or table_node.name or "").upper()
+                            if table_ref and alias != table_ref:
+                                continue
+                            if any(
+                                _table_matches(variant, plan_table)
+                                for variant in _table_variants(table_node)
+                            ):
+                                field_visible = True
+                                break
+                        if field_visible:
+                            break
+                if not field_visible:
                     missing_plan_fields.append({
                         "code": "field_plan_mismatch",
                         "message": f"SQL did not use required semantic field {_format_plan_field(field)}.",
@@ -2369,16 +2394,20 @@ def validate_sql_detailed(
             # JOIN ... ON equality condition via AST — more precise than raw substring
             # matching which would false-pass if a column name appears only in SELECT.
             join_eq_pairs: set[tuple[str, str]] = set()
-            for join_node in tree.find_all(sg_exp.Join):
-                for eq_node in join_node.find_all(sg_exp.EQ):
-                    left_expr = eq_node.left
-                    right_expr = eq_node.right
-                    if isinstance(left_expr, sg_exp.Column) and isinstance(right_expr, sg_exp.Column):
-                        lc = (left_expr.name or "").upper()
-                        rc = (right_expr.name or "").upper()
-                        if lc and rc:
-                            join_eq_pairs.add((lc, rc))
-                            join_eq_pairs.add((rc, lc))  # symmetric
+            for eq_node in tree.find_all(sg_exp.EQ):
+                left_expr = eq_node.left
+                right_expr = eq_node.right
+                if isinstance(left_expr, sg_exp.Column) and isinstance(right_expr, sg_exp.Column):
+                    lc = (left_expr.name or "").upper()
+                    rc = (right_expr.name or "").upper()
+                    if lc and rc:
+                        join_eq_pairs.add((lc, rc))
+                        join_eq_pairs.add((rc, lc))  # symmetric
+
+            # Keep a conservative identifier-only fallback for dialect AST
+            # rewrites: it proves the real columns are directly equated and
+            # never reasons from literals or row values.
+            normalized_sql = re.sub(r"[\[\]`\"]", "", sql.upper())
 
             required_join_errors: list[dict] = []
             for edge in field_plan.get("joins") or []:
@@ -2387,7 +2416,16 @@ def validate_sql_detailed(
                 for left_col, right_col in edge.get("conditions") or []:
                     left_col_u = str(left_col).upper()
                     right_col_u = str(right_col).upper()
-                    if (left_col_u, right_col_u) not in join_eq_pairs:
+                    direct_pair = (left_col_u, right_col_u) in join_eq_pairs
+                    if not direct_pair:
+                        direct_pair = bool(re.search(
+                            rf"(?:\b[A-Z][A-Z0-9_]*\.)?{re.escape(left_col_u)}\s*=\s*"
+                            rf"(?:\b[A-Z][A-Z0-9_]*\.)?{re.escape(right_col_u)}\b|"
+                            rf"(?:\b[A-Z][A-Z0-9_]*\.)?{re.escape(right_col_u)}\s*=\s*"
+                            rf"(?:\b[A-Z][A-Z0-9_]*\.)?{re.escape(left_col_u)}\b",
+                            normalized_sql,
+                        ))
+                    if not direct_pair:
                         required_join_errors.append({
                             "code": "field_plan_join_missing",
                             "message": (
@@ -2403,6 +2441,11 @@ def validate_sql_detailed(
 
             if missing_plan_fields or required_join_errors:
                 errors = missing_plan_fields + required_join_errors
+                log.warning(
+                    "semantic field-plan proof failed: aliases=%s used_columns=%s "
+                    "join_pairs=%s errors=%s",
+                    alias_to_table, sorted(used_columns), sorted(join_eq_pairs), errors[:5],
+                )
                 expected = "; ".join(e["message"] for e in errors[:5])
                 return SqlValidationResult(
                     False,
