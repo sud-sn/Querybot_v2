@@ -1,0 +1,151 @@
+import json
+import tempfile
+import unittest
+from pathlib import Path
+
+from core.response_builder import build_assistant_response
+from core.result_cache import ResultCache
+from core.result_commands import execute_result_command, parse_result_command
+from core.semantic_model import build_semantic_model
+
+
+class ResultDisplayCommandTests(unittest.TestCase):
+    def setUp(self):
+        self.cache = ResultCache()
+        self.cache.store(
+            "session",
+            [
+                {"OrderMonth": "2026-01", "Revenue": 1234.5, "MarginPct": 0.25},
+                {"OrderMonth": "2026-02", "Revenue": 900.0, "MarginPct": 0.4},
+            ],
+            question="revenue by month",
+            sql="SELECT OrderMonth, Revenue, MarginPct FROM result",
+            result_id="source",
+        )
+
+    def execute(self, question):
+        command = parse_result_command(question)
+        self.assertIsNotNone(command)
+        return execute_result_command(
+            "session", command, cache=self.cache, source_result_id="source",
+        )
+
+    def test_month_and_year_wording_creates_presentation_only_snapshot(self):
+        outcome = self.execute("give it in just month and year")
+        self.assertTrue(outcome.ok, outcome.message)
+        self.assertEqual(outcome.snapshot["rows"][0]["OrderMonth"], "2026-01")
+        self.assertEqual(outcome.snapshot["column_formats"]["OrderMonth"], "date")
+        self.assertEqual(
+            outcome.snapshot["metadata"]["display_formats"]["OrderMonth"],
+            {"type": "date", "style": "month_year_short"},
+        )
+        self.assertTrue(outcome.snapshot["metadata"]["presentation_only"])
+
+    def test_currency_without_code_asks_instead_of_guessing(self):
+        outcome = self.execute("format Revenue as currency")
+        self.assertFalse(outcome.ok)
+        self.assertTrue(outcome.clarification_required)
+        self.assertIn("Which currency", outcome.clarification_prompt)
+        self.assertEqual([item["label"] for item in outcome.clarification_options], ["USD", "INR", "EUR", "GBP"])
+
+    def test_explicit_currency_and_decimal_precision_are_governed(self):
+        outcome = self.execute("format Revenue as INR currency with 0 decimal places")
+        self.assertTrue(outcome.ok, outcome.message)
+        spec = outcome.snapshot["metadata"]["display_formats"]["Revenue"]
+        self.assertEqual(spec["currency_code"], "INR")
+        self.assertEqual(spec["fraction_digits"], 0)
+
+    def test_percentage_scale_is_inferred_from_fraction_values(self):
+        outcome = self.execute("show MarginPct as percentage")
+        self.assertTrue(outcome.ok, outcome.message)
+        spec = outcome.snapshot["metadata"]["display_formats"]["MarginPct"]
+        self.assertEqual(spec["scale"], "fraction")
+
+    def test_multiple_temporal_columns_require_target_clarification(self):
+        cache = ResultCache()
+        cache.store(
+            "s", [{"OrderDate": "2026-01-02", "ShipDate": "2026-01-03"}],
+            result_id="r",
+        )
+        outcome = execute_result_command(
+            "s", parse_result_command("give it in month and year"),
+            cache=cache, source_result_id="r",
+        )
+        self.assertTrue(outcome.clarification_required)
+        self.assertIn("Which column", outcome.clarification_prompt)
+        self.assertEqual(len(outcome.clarification_options), 2)
+
+    def test_format_metadata_survives_later_local_transform(self):
+        formatted = self.execute("format Revenue as INR currency")
+        keep = execute_result_command(
+            "session", parse_result_command("keep top 1"), cache=self.cache,
+            source_result_id=formatted.derived_result_id,
+        )
+        self.assertTrue(keep.ok)
+        self.assertEqual(
+            keep.snapshot["metadata"]["display_formats"]["Revenue"]["currency_code"],
+            "INR",
+        )
+
+
+class KpiPresentationTests(unittest.TestCase):
+    def test_single_metric_is_kpi_not_diagnostic_table(self):
+        payload = build_assistant_response(
+            question="what is revenue",
+            rows=[{"MatchedRows": 64, "NonNullRevenueRows": 64, "Revenue": 52677.25}],
+            sql="SELECT diagnostics and revenue",
+            duration_ms=20,
+            column_formats={"Revenue": "currency"},
+        )
+        self.assertEqual(payload["data"]["headers"], ["Revenue"])
+        self.assertEqual(payload["kpi"]["label"], "Revenue")
+        self.assertEqual(payload["kpi"]["state"], "ready")
+        self.assertEqual(payload["data"]["diagnostics"]["matched_rows"], 64)
+        self.assertNotIn("MatchedRows", payload["data"]["rows"][0])
+
+    def test_null_metric_is_missing_kpi_and_keeps_explanation(self):
+        payload = build_assistant_response(
+            question="what is revenue",
+            rows=[{"MatchedRows": 64, "NonNullRevenueRows": 0, "Revenue": 0}],
+            sql="SELECT diagnostics and revenue",
+            duration_ms=20,
+        )
+        self.assertEqual(payload["kpi"]["state"], "missing")
+        self.assertIn("all matched values are missing", payload["answer"]["headline"])
+
+    def test_zero_match_does_not_render_false_zero_kpi(self):
+        payload = build_assistant_response(
+            question="what is revenue",
+            rows=[{"MatchedRows": 0, "NonNullRevenueRows": 0, "Revenue": 0}],
+            sql="SELECT diagnostics and revenue",
+            duration_ms=20,
+        )
+        self.assertIsNone(payload["kpi"])
+        self.assertIn("No matching data", payload["answer"]["headline"])
+
+
+class DateRoleCoverageTests(unittest.TestCase):
+    def test_native_dates_are_covered_and_encoded_candidates_are_reported(self):
+        schema = {
+            "OPS.F_EVENT": {
+                "schema": "OPS", "table": "F_EVENT",
+                "columns": [
+                    {"name": "EVENT_ID", "type": "bigint"},
+                    {"name": "OCCURRED_AT", "type": "datetime2"},
+                    {"name": "LEGACY_PERIOD", "type": "varchar"},
+                    {"name": "ETL_LOAD_DATE", "type": "varchar"},
+                ],
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "_schema.json").write_text(json.dumps(schema), encoding="utf-8")
+            model = build_semantic_model(tmp)
+        coverage = model["date_role_coverage"]
+        self.assertEqual(coverage["native_roles"], 1)
+        self.assertEqual(coverage["review_candidate_count"], 1)
+        self.assertEqual(coverage["review_candidates"][0]["column"], "LEGACY_PERIOD")
+        self.assertEqual(coverage["technical_date_count"], 1)
+
+
+if __name__ == "__main__":
+    unittest.main()

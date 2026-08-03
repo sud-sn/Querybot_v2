@@ -959,13 +959,14 @@ body:has(.chat-page) .portal-sidebar-collapsed .portal-side-actions { grid-templ
 
 @media (max-width: 1100px) and (min-width: 721px) {
   body:has(.chat-page) .portal-app-shell { grid-template-columns: 68px minmax(0, 1fr); }
-  body:has(.chat-page) .portal-sidebar { padding-inline: 9px; }
+  body:has(.chat-page) .portal-sidebar { display: flex; padding-inline: 9px; }
   body:has(.chat-page) .portal-brand-word,
   body:has(.chat-page) .portal-new-thread > span:last-child,
   body:has(.chat-page) .portal-nav a > span,
   body:has(.chat-page) .portal-sidebar-notifications > span,
   body:has(.chat-page) .portal-user-meta,
-  body:has(.chat-page) .portal-side-actions span:last-child,
+  body:has(.chat-page) .portal-side-actions a > span:last-child,
+  body:has(.chat-page) .portal-side-actions button > span:last-child,
   body:has(.chat-page) .portal-sidebar-context { display: none; }
   body:has(.chat-page) .portal-sidebar-head { flex-direction: column; }
   body:has(.chat-page) .portal-sidebar-head .portal-brand { justify-content: center; padding-inline: 0; }

@@ -1470,6 +1470,9 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                         _rc_rows = _sanitize_rows(list(_derived.get("rows") or []))
                         _rc_sql = str(_derived.get("sql") or "")
                         _rc_formats = dict(_derived.get("column_formats") or {})
+                        _rc_display_formats = dict(
+                            (_derived.get("metadata") or {}).get("display_formats") or {}
+                        )
                         _rc_currency = [
                             name for name, value in _rc_formats.items()
                             if str(value).lower() == "currency"
@@ -1500,6 +1503,20 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                             question_id=_rc_question_id,
                         )
 
+                        _rc_display_payload = build_assistant_response(
+                            question=rc_question,
+                            rows=_rc_rows,
+                            sql=_rc_sql,
+                            duration_ms=_rc_dur_ms,
+                            chart=_rc_chart,
+                            data_source="governed_cache",
+                            column_formats=_rc_formats,
+                            display_formats=_rc_display_formats,
+                            display_context={"result_operation": _rc_outcome.operation},
+                            question_id=_rc_question_id,
+                        )
+                        _rc_display_data = dict(_rc_display_payload.get("data") or {})
+
                         _rc_history.append({
                             "question": rc_question,
                             "row_count": len(_rc_rows),
@@ -1515,11 +1532,12 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                         )
                         await websocket.send_json({
                             "type": "result_chat_response",
-                            "result_id": _rc_outcome.derived_result_id,
+                            "result_id": rc_result_id,
+                            "derived_result_id": _rc_outcome.derived_result_id,
                             "parent_result_id": _rc_outcome.source_result_id,
                             "question": rc_question,
                             "sql": _rc_sql,
-                            "rows": _rc_rows,
+                            "rows": list(_rc_display_data.get("rows") or []),
                             "row_count": len(_rc_rows),
                             "source": "governed_cache",
                             "source_note": (
@@ -1528,6 +1546,9 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                             ),
                             "currency_columns": _rc_currency,
                             "column_formats": _rc_formats,
+                            "display_formats": _rc_display_formats,
+                            "diagnostics": dict(_rc_display_data.get("diagnostics") or {}),
+                            "kpi": _rc_display_payload.get("kpi"),
                             "chart": _rc_chart,
                             "narration": _rc_outcome.message or None,
                             "trust": _rc_followup.evidence,
@@ -1565,22 +1586,15 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                         )
                         continue
 
-                    # An uncertain interpretation must be confirmed, not
-                    # silently executed or silently discarded into an
-                    # unrelated fresh query. This inline result-chat panel
-                    # has no clickable-option UI (result_chat_response/
-                    # _error/_typing only), so surface the plain-English
-                    # confirmation question as an informational message
-                    # rather than guessing or staying silent.
                     if _rc_followup.status == "clarification" and _rc_followup.outcome is not None:
                         await websocket.send_json({
-                            "type": "result_chat_error",
+                            "type": "result_chat_clarification",
                             "result_id": rc_result_id,
-                            "content": (
+                            "prompt": (
                                 _rc_followup.outcome.clarification_prompt
                                 or "Which result value did you mean?"
                             ),
-                            "detail": "Rephrase or repeat the request to confirm.",
+                            "options": list(_rc_followup.outcome.clarification_options or []),
                         })
                         _trace_finish(
                             _rc_trace_id,
@@ -1965,17 +1979,29 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                 "row_count": len(_fb_rows),
                             })
                             _result_chat_histories[rc_result_id] = _rc_history[-5:]
+                            _fb_display_payload = build_assistant_response(
+                                question=rc_question,
+                                rows=_fb_rows,
+                                sql=_fb_sql,
+                                duration_ms=_fb_dur,
+                                data_source="database",
+                                question_id=_rc_question_id,
+                            )
+                            _fb_display_data = dict(_fb_display_payload.get("data") or {})
                             await websocket.send_json({
                                 "type":             "result_chat_response",
                                 "result_id":        rc_result_id,
                                 "question":         rc_question,
                                 "sql":              _fb_sql,
-                                "rows":             _fb_rows,
+                                "rows":             list(_fb_display_data.get("rows") or []),
                                 "row_count":        len(_fb_rows),
                                 "source":           "database",
                                 "source_note":      "Answer required a full database query.",
-                                "currency_columns": _rc_currency,
-                                "column_formats":   _rc_formats,
+                                "currency_columns": list(_fb_display_data.get("currency_columns") or []),
+                                "column_formats":   dict(_fb_display_data.get("column_formats") or {}),
+                                "display_formats":  dict(_fb_display_data.get("display_formats") or {}),
+                                "diagnostics":      dict(_fb_display_data.get("diagnostics") or {}),
+                                "kpi":              _fb_display_payload.get("kpi"),
                             })
                             _trace_update(
                                 _rc_trace_id,

@@ -515,6 +515,90 @@ def _date_roles(schema: dict[str, Any], table_fqn: str, meta: dict[str, Any]) ->
     return roles
 
 
+_DATE_CANDIDATE_RE = re.compile(
+    r"(?:^|_)(?:date|dt|day|month|period|year|week|quarter)(?:_|$)", re.I,
+)
+_TECHNICAL_DATE_RE = re.compile(
+    r"(?:load|loaded|etl|audit|created|updated|modified|inserted|ingest|sync|batch|row).*"
+    r"(?:date|time|timestamp|_dt)|(?:date|time|timestamp|_dt).*"
+    r"(?:load|etl|audit|created|updated|modified|ingest|sync|batch)", re.I,
+)
+
+
+def _date_role_coverage(
+    schema: dict[str, Any], date_roles: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Audit schema-level date discovery without profiling customer values.
+
+    Native date/time types and governed FK roles are covered automatically.
+    Integer/text columns whose names look temporal but lack sufficient
+    relationship evidence are reported for admin review instead of guessed.
+    """
+    role_keys = {
+        (str(role.get("fact_table") or "").upper(), str(role.get("fact_column") or "").upper())
+        for role in date_roles
+    }
+    candidates: list[dict[str, Any]] = []
+    technical: list[dict[str, Any]] = []
+    calendar_columns = 0
+    native_roles = 0
+    relationship_roles = 0
+    encoded_roles = 0
+
+    for role in date_roles:
+        key_type = str(role.get("date_key_type") or "")
+        if key_type in {"native_date", "timestamp"}:
+            native_roles += 1
+        elif key_type == "surrogate_fk":
+            relationship_roles += 1
+        else:
+            encoded_roles += 1
+
+    for fqn, meta in _schema_tables(schema):
+        qualified = _qualified_name(fqn, meta)
+        if is_date_dimension_table(fqn, meta.get("columns", [])):
+            calendar_columns += len(meta.get("columns", []) or [])
+            continue
+        for raw in meta.get("columns", []) or []:
+            column = str((raw or {}).get("name") or "").strip()
+            dtype = str((raw or {}).get("type") or (raw or {}).get("data_type") or "").strip()
+            if not column or (qualified.upper(), column.upper()) in role_keys:
+                continue
+            date_named = bool(_DATE_CANDIDATE_RE.search(column)) or detect_date_role(column) is not None
+            if not date_named:
+                continue
+            item = {
+                "table": qualified,
+                "column": column,
+                "data_type": dtype or "unknown",
+                "reason": (
+                    "Temporal name found, but no native date type, declared date-dimension FK, "
+                    "or unambiguous date-key mapping was available."
+                ),
+            }
+            if _TECHNICAL_DATE_RE.search(column):
+                item["reason"] = "Likely technical/audit timestamp; excluded from business date roles."
+                technical.append(item)
+            else:
+                candidates.append(item)
+
+    governed = len(date_roles)
+    denominator = governed + len(candidates)
+    return {
+        "governed_roles": governed,
+        "native_roles": native_roles,
+        "relationship_roles": relationship_roles,
+        "encoded_roles": encoded_roles,
+        "review_candidate_count": len(candidates),
+        "review_candidates": candidates,
+        "technical_date_count": len(technical),
+        "technical_dates": technical,
+        "calendar_dimension_column_count": calendar_columns,
+        "coverage_pct": round((governed / denominator) * 100, 1) if denominator else 100.0,
+        "scope_note": "Schema metadata only; string/integer values are not sampled automatically.",
+    }
+
+
 def _relationships(schema: dict[str, Any]) -> list[dict[str, Any]]:
     relationships: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -632,6 +716,7 @@ def build_semantic_model(schema_dir: str, *, business_desc: str = "", account_id
         "tables": tables,
         "relationships": _relationships(schema),
         "date_roles": all_date_roles,
+        "date_role_coverage": _date_role_coverage(schema, all_date_roles),
         "status": "generated",
     }
     return model
@@ -701,6 +786,9 @@ def write_semantic_model(
     if old_model:
         model, drift = preserve_approvals(old_model, model)
         _log_drift(drift)
+        model["date_role_coverage"] = _date_role_coverage(
+            _read_schema(schema_dir), list(model.get("date_roles") or []),
+        )
 
     # Persist drift report for the Model Health dashboard (S4-2).
     # Always written so the dashboard shows the last-checked timestamp even

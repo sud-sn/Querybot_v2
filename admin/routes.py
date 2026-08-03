@@ -6497,6 +6497,7 @@ async def date_roles_page(request: Request, account_id: str):
     semantic_tables: list[dict] = []
     metrics: list[dict] = []
     context_bindings: list[dict] = []
+    date_role_coverage: dict = {}
     has_model = False
 
     if kb_dir:
@@ -6509,6 +6510,7 @@ async def date_roles_page(request: Request, account_id: str):
                 # Use top-level date_roles for the canonical list — it aggregates
                 # across all fact tables and deduplicates by fact_table+fact_column.
                 date_roles = [dict(dr) for dr in (model.get("date_roles") or [])]
+                date_role_coverage = dict(model.get("date_role_coverage") or {})
                 # Sort: unapproved first (need attention), then by fact_table + name
                 date_roles.sort(key=lambda r: (
                     0 if r.get("status") != "approved" else 1,
@@ -6531,6 +6533,7 @@ async def date_roles_page(request: Request, account_id: str):
         "semantic_tables": semantic_tables,
         "metrics": metrics,
         "context_bindings": context_bindings,
+        "date_role_coverage": date_role_coverage,
         "saved":      request.query_params.get("saved"),
         "error":      request.query_params.get("error"),
     })

@@ -5,7 +5,7 @@
 {% block breadcrumb %}{% endblock %}
 {% block head %}
 <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
-<link rel="stylesheet" href="/static/css/chat_workspace.css?v=20260731-2">
+<link rel="stylesheet" href="/static/css/chat_workspace.css?v=20260803-4">
 <style>
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap');
 /* Full-viewport constraints — chat page only */
@@ -340,6 +340,18 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .rc-send:hover{opacity:.88}
 .rc-send:disabled{opacity:.45;cursor:default}
 .rc-hint{padding:.55rem .9rem;font-size:11px;color:var(--text-muted);border-top:1px solid var(--border);background:color-mix(in srgb,var(--surface-2) 40%, transparent);line-height:1.55}
+.rc-clarification{align-self:flex-start;max-width:94%;padding:.7rem .8rem;border:1px solid var(--border);background:var(--surface);border-radius:8px}
+.rc-clarification-prompt{font-size:12.5px;font-weight:700;color:var(--text);margin-bottom:.55rem}
+.rc-clarification-options{display:flex;gap:.4rem;flex-wrap:wrap}
+.rc-clarification-option{padding:5px 9px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);color:var(--text-soft);font-size:11.5px;font-weight:700;cursor:pointer}
+.rc-clarification-option:hover{border-color:var(--primary);color:var(--primary)}
+.result-kpi{display:flex;flex-direction:column;justify-content:center;min-height:150px;padding:1.15rem 1.25rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface-2)}
+.result-kpi.missing{border-color:color-mix(in srgb,var(--warning,#f59e0b) 55%,var(--border))}
+.result-kpi-label{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.055em;color:var(--text-muted);margin-bottom:.45rem}
+.result-kpi-value{font-size:clamp(30px,5vw,48px);line-height:1.05;font-weight:800;letter-spacing:-.035em;color:var(--text);font-variant-numeric:tabular-nums}
+.result-kpi-note{font-size:11.5px;color:var(--text-muted);margin-top:.55rem}
+.rc-kpi{min-width:220px;min-height:105px;padding:.85rem 1rem}
+.rc-kpi .result-kpi-value{font-size:30px}
 .rc-scope-strip{display:flex;gap:.45rem;flex-wrap:wrap;padding:.6rem .9rem .15rem;background:color-mix(in srgb,var(--surface-2) 40%,transparent);border-top:1px solid var(--border)}
 .rc-scope-chip{display:inline-flex;align-items:center;gap:.35rem;padding:4px 8px;border-radius:999px;border:1px solid var(--border);background:var(--surface);font-size:10.5px;font-weight:800;color:var(--text-soft)}
 .action-row{display:flex;gap:.5rem;flex-wrap:wrap;margin-top:.2rem}.analysis-card{background:linear-gradient(180deg,color-mix(in srgb,var(--surface) 98%, var(--primary-soft) 2%),var(--surface));border:1px solid var(--border);border-radius:var(--radius);padding:1rem;box-shadow:var(--shadow)}.analysis-title{font-size:15px;font-weight:850;color:var(--text);margin-bottom:.4rem}.analysis-body{font-size:13px;line-height:1.7;color:var(--text)}.analysis-secondary{margin-top:.7rem;padding:.8rem .9rem;border-radius:var(--radius);background:var(--surface-2);border:1px solid var(--border);font-size:12px;line-height:1.65;color:var(--text-soft)}.analysis-list{margin:.8rem 0 0 1rem;color:var(--text);font-size:12px;line-height:1.7}.analysis-list li+li{margin-top:.35rem}.analysis-meta{margin-top:.45rem;font-size:11px;color:var(--text-muted)}.analysis-next{margin-top:.8rem;padding:.7rem .85rem;border-radius:var(--radius);background:color-mix(in srgb,var(--primary-soft) 14%,var(--surface));border-left:3px solid var(--primary);font-size:12.5px;line-height:1.6;color:var(--text)}.analysis-next-label{display:block;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:var(--primary);margin-bottom:.2rem}
@@ -2410,20 +2422,58 @@ function _parseDisplayNumber(v) {
   if (!cleaned) return NaN;
   return Number(cleaned);
 }
-function _formatDisplayValue(value, fmt) {
+function _displayFormatSpec(data, column) {
+  const specs = data?.display_formats || {};
+  const wanted = _normaliseColumnKey(column);
+  const key = Object.keys(specs).find(name => _normaliseColumnKey(name) === wanted);
+  return key ? (specs[key] || {}) : {};
+}
+function _parseDisplayDate(value) {
+  const raw = String(value ?? '').trim();
+  let m = raw.match(/^(\d{4})[-/](\d{1,2})(?:[-/](\d{1,2}))?/);
+  if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3] || 1));
+  const parsed = new Date(raw);
+  return isNaN(parsed.getTime()) ? null : parsed;
+}
+function _formatDisplayValue(value, fmt, spec = {}) {
   if (value === null || value === undefined || value === '') return '';
   const raw = String(value);
+  const digits = Math.max(0, Math.min(6, Number(spec.fraction_digits ?? 2)));
+  const numberOpts = {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+    useGrouping: spec.grouping !== false,
+    notation: spec.style === 'compact' ? 'compact' : 'standard'
+  };
+  if (fmt === 'date' || spec.type === 'date') {
+    const dt = _parseDisplayDate(value);
+    if (dt) {
+      const style = spec.style || 'iso';
+      if (style === 'month_year_short') return dt.toLocaleDateString('en-US', {month:'short', year:'2-digit'}).replace(' ', '-');
+      if (style === 'month_year_long') return dt.toLocaleDateString('en-US', {month:'long', year:'numeric'});
+      if (style === 'day_month_year') return `${String(dt.getDate()).padStart(2,'0')}-${String(dt.getMonth()+1).padStart(2,'0')}-${dt.getFullYear()}`;
+      if (style === 'month_day_year') return `${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}-${dt.getFullYear()}`;
+      if (style === 'day_month_name_year') return `${String(dt.getDate()).padStart(2,'0')}-${dt.toLocaleDateString('en-US',{month:'short'})}-${dt.getFullYear()}`;
+      if (style === 'year') return String(dt.getFullYear());
+      if (style === 'month_name') return dt.toLocaleDateString('en-US', {month:'long'});
+      return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}`;
+    }
+  }
   if (fmt === 'currency') {
     const n = _parseDisplayNumber(raw);
-    if (!isNaN(n)) return '$' + n.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+    if (!isNaN(n)) {
+      const code = spec.currency_code || 'USD';
+      const formatted = n.toLocaleString('en-US', {...numberOpts, style:'currency', currency:code, currencySign:spec.accounting ? 'accounting' : 'standard'});
+      return formatted;
+    }
   }
   if (fmt === 'percentage') {
     const n = _parseDisplayNumber(raw);
-    if (!isNaN(n)) return n.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + '%';
+    if (!isNaN(n)) return (spec.scale === 'fraction' ? n * 100 : n).toLocaleString('en-US', numberOpts) + '%';
   }
   if (fmt === 'number') {
     const n = _parseDisplayNumber(raw);
-    if (!isNaN(n)) return n.toLocaleString('en-US', {maximumFractionDigits: 2});
+    if (!isNaN(n)) return n.toLocaleString('en-US', numberOpts);
   }
   // Fallback: auto-format plain numeric strings with thousand separators (max 2 dp)
   // Matches SQL DECIMAL/FLOAT columns not yet classified by column_formats.
@@ -2451,7 +2501,7 @@ function renderDataTable(data, { question = '', trace_id = '' } = {}) {
   const bodyHtml = data.rows.map((r, rowIndex) =>
     '<tr>' + headers.map(h => {
       const fmt = colFormats.get(_normaliseColumnKey(h));
-      return `<td>${escHtml(_formatDisplayValue(r[h], fmt))}</td>`;
+      return `<td>${escHtml(_formatDisplayValue(r[h], fmt, _displayFormatSpec(data, h)))}</td>`;
     }).join('') + '</tr>'
   ).join('');
 
@@ -2636,6 +2686,7 @@ function _mountResultChat(cardEl, rcId) {
   const input     = cardEl.querySelector(`#${rcId}-input`);
   const sendBtn   = cardEl.querySelector(`#${rcId}-send`);
   if (!toggleBtn || !panel || !thread || !input || !sendBtn) return;
+  let currentResultId = rcId;
 
   // Toggle panel open/close
   toggleBtn.addEventListener('click', () => {
@@ -2683,7 +2734,7 @@ function _mountResultChat(cardEl, rcId) {
     thread.scrollTop = thread.scrollHeight;
 
     // Send to server
-    ws.send(JSON.stringify({ type: 'result_chat', result_id: rcId, question: q }));
+    ws.send(JSON.stringify({ type: 'result_chat', result_id: currentResultId, question: q }));
   }
 
   function _rcAppend(role, content) {
@@ -2699,7 +2750,7 @@ function _mountResultChat(cardEl, rcId) {
     thread.scrollTop = thread.scrollHeight;
   }
 
-  function _rcRenderTable(rows, columnFormats, currencyCols) {
+  function _rcRenderTable(rows, columnFormats, currencyCols, displayFormats) {
     if (!rows || !rows.length) return null;
     const fmtMap = _columnFormatMap({
       column_formats: columnFormats || {},
@@ -2709,7 +2760,7 @@ function _mountResultChat(cardEl, rcId) {
 
     function _fmtCell(h, val) {
       if (val === null || val === undefined || val === '') return '';
-      return escHtml(_formatDisplayValue(val, fmtMap.get(_normaliseColumnKey(h))));
+      return escHtml(_formatDisplayValue(val, fmtMap.get(_normaliseColumnKey(h)), _displayFormatSpec({display_formats:displayFormats || {}}, h)));
     }
 
     const headHtml = headers.map(h => `<th>${escHtml(h)}</th>`).join('');
@@ -2765,6 +2816,10 @@ function _mountResultChat(cardEl, rcId) {
       }
     },
     onResponse(msg) {
+      if (msg.derived_result_id) {
+        currentResultId = msg.derived_result_id;
+        _rcPanels[currentResultId] = _rcPanels[rcId];
+      }
       const rows = msg.rows || [];
       const currencyCols = msg.currency_columns || [];
       const columnFormats = msg.column_formats || {};
@@ -2796,7 +2851,18 @@ function _mountResultChat(cardEl, rcId) {
         return;
       }
 
-      const tableEl = _rcRenderTable(rows, columnFormats, currencyCols);
+      let tableEl = null;
+      if (msg.kpi) {
+        const kpi = msg.kpi || {};
+        const kpiEl = document.createElement('div');
+        kpiEl.className = `result-kpi rc-kpi ${kpi.state === 'missing' ? 'missing' : ''}`;
+        kpiEl.innerHTML = `<div class="result-kpi-label">${escHtml(kpi.label || 'Value')}</div>`
+          + `<div class="result-kpi-value">${escHtml(kpi.state === 'missing' ? 'N/A' : _formatDisplayValue(kpi.value, kpi.format, kpi.display_format || {}))}</div>`
+          + `<div class="result-kpi-note">${escHtml(kpi.note || '')}</div>`;
+        tableEl = kpiEl;
+      } else {
+        tableEl = _rcRenderTable(rows, columnFormats, currencyCols, msg.display_formats || {});
+      }
       if (tableEl) {
         const bubble = document.createElement('div');
         bubble.className = 'rc-bubble bot';
@@ -2819,6 +2885,29 @@ function _mountResultChat(cardEl, rcId) {
       div.textContent = content;
       thread.appendChild(div);
       thread.scrollTop = thread.scrollHeight;
+    },
+    onClarification(msg) {
+      const wrap = document.createElement('div');
+      wrap.className = 'rc-clarification';
+      const options = Array.isArray(msg.options) ? msg.options : [];
+      wrap.innerHTML = `<div class="rc-clarification-prompt">${escHtml(msg.prompt || 'Please clarify the format.')}</div>`
+        + `<div class="rc-clarification-options">${options.map((option, index) =>
+          `<button type="button" class="rc-clarification-option" data-rc-option="${index}">${escHtml(option.label || option.value || 'Select')}</button>`
+        ).join('')}</div>`;
+      wrap.querySelectorAll('[data-rc-option]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const option = options[Number(btn.dataset.rcOption)];
+          if (!option?.resolved_question || !wsReady) return;
+          wrap.querySelectorAll('button').forEach(item => item.disabled = true);
+          _rcAppend('user', option.label || option.value || 'Selected');
+          sendBtn.disabled = true;
+          ws.send(JSON.stringify({type:'result_chat', result_id:currentResultId, question:option.resolved_question}));
+        });
+      });
+      thread.appendChild(wrap);
+      thread.scrollTop = thread.scrollHeight;
+      sendBtn.disabled = false;
+      input.focus();
     },
   };
 }
@@ -2865,7 +2954,17 @@ function appendAssistantResponse(msg, opts = {}){
   const msgTraceId = String(msg.trace_id || msg.trust?.trace_id || msg.trust?.question_id || '');
   // Body: prefer chart when present, otherwise the data table, otherwise the question echo
   let bodyHtml = '';
-  if (hasChart) {
+  if (msg.kpi) {
+    const kpi = msg.kpi || {};
+    const renderedValue = kpi.state === 'missing'
+      ? 'N/A'
+      : _formatDisplayValue(kpi.value, kpi.format, kpi.display_format || {});
+    bodyHtml = `<div class="result-kpi ${kpi.state === 'missing' ? 'missing' : ''}">
+      <div class="result-kpi-label">${escHtml(kpi.label || 'Value')}</div>
+      <div class="result-kpi-value">${escHtml(renderedValue)}</div>
+      <div class="result-kpi-note">${escHtml(kpi.note || 'Single-value result')}</div>
+    </div>`;
+  } else if (hasChart) {
     bodyHtml = `<div class="result-chart-wrap"><div id="${chartId}" class="chart-canvas compact"></div>${renderChartWarnings(msg.chart)}</div>`;
     if (hasData) bodyHtml += renderDataTable(msg.data, { question: msg.question || '', trace_id: msgTraceId });
   } else if (hasData) {
@@ -4098,6 +4197,9 @@ function connect(){
     } else if (msg.type === 'result_chat_response') {
       _rcPanels[msg.result_id]?.onTyping(false);
       _rcPanels[msg.result_id]?.onResponse(msg);
+    } else if (msg.type === 'result_chat_clarification') {
+      _rcPanels[msg.result_id]?.onTyping(false);
+      _rcPanels[msg.result_id]?.onClarification(msg);
     } else if (msg.type === 'result_chat_error') {
       _rcPanels[msg.result_id]?.onTyping(false);
       _rcPanels[msg.result_id]?.onError(msg);

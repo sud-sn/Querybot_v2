@@ -17,7 +17,7 @@
   box-shadow:var(--shadow)}
 .dr-hero h1{font-size:20px;font-weight:900;margin:0}
 .dr-hero p{font-size:13px;color:var(--text-muted);max-width:780px;line-height:1.6;margin:.4rem 0 0}
-.dr-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.75rem}
+.dr-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.75rem}
 .dr-stat{border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);
   padding:.75rem .9rem;box-shadow:var(--shadow-sm)}
 .dr-stat span{display:block;font-size:10px;font-weight:900;letter-spacing:.08em;
@@ -91,7 +91,7 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
 .dr-mode-help{grid-column:span 2;margin:-.2rem 0 0;padding:.55rem .65rem;border-radius:6px;
   background:var(--surface-2);color:var(--text-muted);font-size:11px;line-height:1.45}
 .dr-surrogate-only[hidden],.dr-surrogate-edit[hidden]{display:none!important}
-@media(max-width:900px){.dr-workbench{grid-template-columns:1fr}.dr-form-grid{grid-template-columns:1fr}.dr-span-2{grid-column:auto}}
+@media(max-width:900px){.dr-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.dr-workbench{grid-template-columns:1fr}.dr-form-grid{grid-template-columns:1fr}.dr-span-2{grid-column:auto}}
 </style>
 {% endblock %}
 {% block content %}
@@ -155,6 +155,10 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
       <span>Pending review</span>
       <strong style="color:var(--amber)">{{ date_roles | rejectattr("status","eq","approved") | list | length }}</strong>
     </div>
+    <div class="dr-stat">
+      <span>Discovery coverage</span>
+      <strong>{{ date_role_coverage.coverage_pct if date_role_coverage else 100 }}%</strong>
+    </div>
   </div>
 
   <!-- Guidance -->
@@ -166,6 +170,28 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
     Queries that format a raw integer surrogate as a calendar value (e.g.
     <code>FORMAT(CUS_IVC_DT_DMS_KEY,'yyyy-MM')</code>) will fail validation and be regenerated.
   </div>
+
+  {% if date_role_coverage and date_role_coverage.review_candidates %}
+  <div class="dr-table-wrap">
+    <div class="dr-table-header">
+      <div><h2>Date-like columns needing review</h2><span style="font-size:11px;color:var(--text-muted)">Schema metadata found these candidates but did not guess a business date role.</span></div>
+      <span class="status-pill status-needs_review">{{ date_role_coverage.review_candidate_count }} review</span>
+    </div>
+    <table class="dr-tbl">
+      <thead><tr><th>Source Table</th><th>Column</th><th>Data Type</th><th>Why it is not automatic</th></tr></thead>
+      <tbody>
+      {% for candidate in date_role_coverage.review_candidates %}
+        <tr>
+          <td><span class="mono">{{ candidate.table }}</span></td>
+          <td><span class="mono">{{ candidate.column }}</span></td>
+          <td>{{ candidate.data_type }}</td>
+          <td style="color:var(--text-muted);font-size:12px">{{ candidate.reason }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
 
   <div class="dr-workbench">
     <section class="dr-panel">

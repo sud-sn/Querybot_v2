@@ -304,6 +304,77 @@ def _find_matched_rows_header(headers: list[str]) -> str:
     )
 
 
+def result_diagnostic_headers(rows: list[dict]) -> list[str]:
+    """Return support columns used to validate aggregate result quality.
+
+    These values remain available to answer/confidence logic but are not
+    business measures and therefore should not be rendered as table columns
+    or KPI values.
+    """
+    if len(rows) != 1 or not rows[0]:
+        return []
+    output: list[str] = []
+    for header in rows[0].keys():
+        norm = _normalise_key(header)
+        if norm in _MATCHED_ROWS_HEADER_KEYS or (
+            norm.startswith("nonnull") and norm.endswith("rows")
+        ):
+            output.append(header)
+    return output
+
+
+def visible_result_rows(rows: list[dict]) -> list[dict]:
+    hidden = set(result_diagnostic_headers(rows))
+    if not hidden:
+        return list(rows)
+    return [
+        {header: value for header, value in row.items() if header not in hidden}
+        for row in rows
+    ]
+
+
+def _result_diagnostics(rows: list[dict]) -> dict[str, Any]:
+    headers = result_diagnostic_headers(rows)
+    if not headers:
+        return {}
+    row = rows[0]
+    matched = _find_matched_rows_header(headers)
+    return {
+        "matched_rows": int(_to_float(row.get(matched)) or 0) if matched else None,
+        "non_null_counts": {
+            header: int(_to_float(row.get(header)) or 0)
+            for header in headers
+            if _normalise_key(header).startswith("nonnull")
+        },
+        "hidden_columns": headers,
+    }
+
+
+def _build_kpi_payload(
+    rows: list[dict],
+    column_formats: dict[str, str],
+    display_formats: dict[str, dict],
+    *,
+    zero_match: bool,
+    null_issue: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if zero_match or len(rows) != 1 or len(rows[0]) != 1:
+        return None
+    column = next(iter(rows[0]))
+    value = rows[0].get(column)
+    return {
+        "label": _display_label(column),
+        "value": _safe_cell(value),
+        "format": column_formats.get(column, "number"),
+        "display_format": dict(display_formats.get(column) or {}),
+        "state": "missing" if null_issue else "ready",
+        "note": (
+            "Matching records were found, but this metric has no non-null values."
+            if null_issue else "Single-value result"
+        ),
+    }
+
+
 def detect_zero_match_result(rows: list[dict]) -> bool:
     """
     True for a single-row diagnostic aggregate whose match-count column is
@@ -1398,30 +1469,36 @@ def build_assistant_response(
     confidence: dict | None = None,
     display_context: dict | None = None,
     column_formats: dict | None = None,
+    display_formats: dict | None = None,
     semantic_plan: dict | None = None,
     question_id: str = "",
 ) -> dict:
     from core.insight import compute_data_brief
-    ctx = summarize_result_context(rows, question, sql=sql)
+    raw_rows = list(rows)
+    zero_match = detect_zero_match_result(raw_rows)
+    null_issue = detect_null_metric_issue(raw_rows)
+    visible_rows = visible_result_rows(raw_rows)
+    ctx = summarize_result_context(visible_rows, question, sql=sql)
     result_operation = str((display_context or {}).get("result_operation") or "")
     if result_operation in {"keep_top", "sort", "contribution"} and ctx.get("mode") == "time_series":
         # Period labels sorted by a measure are a ranking, not a chronology.
         # Treating them as a series creates false trend claims from sort order.
         ctx["mode"] = "ranking"
-        ctx["result_scope"] = infer_result_scope(rows, question, sql, mode="ranking")
+        ctx["result_scope"] = infer_result_scope(visible_rows, question, sql, mode="ranking")
     resolved_column_formats = build_column_formats(
-        rows,
+        visible_rows,
         display_context=display_context,
         explicit_formats=column_formats,
     )
+    answer_rows = raw_rows if (zero_match or null_issue) else visible_rows
     answer = build_answer(
-        rows,
+        answer_rows,
         question,
         ctx.get("result_scope"),
         column_formats=resolved_column_formats,
     )
     brief = compute_data_brief(
-        rows,
+        visible_rows,
         question,
         result_scope=ctx.get("result_scope"),
         context=ctx,
@@ -1430,7 +1507,7 @@ def build_assistant_response(
     # ── Insight Layer — pure-stats, zero-latency ─────────────────────────────
     # Generate a summary sentence and anomaly callouts from the data brief.
     # These are computed entirely from statistics — no LLM call, no extra latency.
-    insight_summary  = _build_insight_summary(rows, ctx, brief)
+    insight_summary  = _build_insight_summary(raw_rows, ctx, brief)
     anomaly_callouts = _build_anomaly_callouts(brief)
     decision_signal  = _build_decision_signal(ctx, brief, anomaly_callouts)
 
@@ -1440,17 +1517,31 @@ def build_assistant_response(
     # limited by run_query(max_rows=200).
     headers: list[str] = []
     display_rows: list[dict] = []
-    if rows:
-        headers = list(rows[0].keys())
+    if visible_rows:
+        headers = list(visible_rows[0].keys())
         # Send formatted string values for reliable frontend display
-        for r in rows[:_PREVIEW_ROW_CAP]:
+        for r in visible_rows[:_PREVIEW_ROW_CAP]:
             display_rows.append({h: _safe_cell(r.get(h)) for h in headers})
+
+    resolved_display_formats = {
+        header: dict(spec)
+        for header, spec in (display_formats or {}).items()
+        if header in headers and isinstance(spec, dict)
+    }
+    kpi = _build_kpi_payload(
+        visible_rows,
+        resolved_column_formats,
+        resolved_display_formats,
+        zero_match=zero_match,
+        null_issue=null_issue,
+    )
 
     return {
         "type": "assistant_response",
         "question": question,
         "answer": answer,
         "chart": chart,
+        "kpi": kpi,
         "insight_summary": insight_summary,
         "anomaly_callouts": anomaly_callouts,
         "decision_signal": decision_signal,
@@ -1462,9 +1553,11 @@ def build_assistant_response(
         "data": {
             "headers": headers,
             "rows": display_rows,
-            "total_rows": len(rows),
-            "truncated": len(rows) > _PREVIEW_ROW_CAP,
+            "total_rows": len(visible_rows),
+            "truncated": len(visible_rows) > _PREVIEW_ROW_CAP,
             "column_formats": resolved_column_formats,
+            "display_formats": resolved_display_formats,
+            "diagnostics": _result_diagnostics(raw_rows),
             "currency_columns": [
                 col for col, fmt in resolved_column_formats.items()
                 if fmt == "currency"
@@ -1472,7 +1565,7 @@ def build_assistant_response(
         },
         "trust": {
             "sql": sql,
-            "row_count": len(rows),
+            "row_count": len(raw_rows),
             "duration_label": f"{duration_ms}ms" if duration_ms < 1000 else f"{duration_ms/1000:.1f}s",
             "data_source": data_source or "",
             "scope_badge": ctx.get("result_scope", {}).get("badge", ""),

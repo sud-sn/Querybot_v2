@@ -467,6 +467,13 @@ class ResultCache:
                 if column_formats is None
                 else dict(column_formats)
             )
+            resolved_metadata = dict(metadata or {})
+            # Display contracts are presentation state and should survive a
+            # later sort/filter child. Other metadata (contract versions,
+            # execution evidence, operation details) deliberately does not
+            # inherit unless the caller passes it explicitly.
+            if "display_formats" not in resolved_metadata and source.metadata.get("display_formats"):
+                resolved_metadata["display_formats"] = dict(source.metadata["display_formats"])
             child = _CacheEntry(
                 list(rows),
                 question or source.question,
@@ -477,7 +484,7 @@ class ResultCache:
                 parent_result_id=source.result_id,
                 operation=operation,
                 schema=resolved_schema,
-                metadata=metadata,
+                metadata=resolved_metadata,
             )
             self._register_snapshot(child)
             return self._snapshot_payload(child)

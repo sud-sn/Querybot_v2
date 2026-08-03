@@ -14,6 +14,12 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Any, Literal
 
+from core.display_formats import (
+    candidate_columns,
+    coarse_format,
+    normalize_display_format,
+    parse_format_request,
+)
 from core.result_cache import ResultCache, result_cache
 
 
@@ -116,6 +122,7 @@ class ResultCommand:
     action: Literal[
         "exclude", "undo", "keep_top", "keep_values", "sort", "filter", "aggregate",
         "contribution", "profit_percentage", "ratio", "presentation",
+        "format",
     ]
     target_text: str = ""
     limit: int | None = None
@@ -128,6 +135,7 @@ class ResultCommand:
     numerator_text: str = ""
     denominator_text: str = ""
     presentation_type: str = ""
+    format_spec: dict[str, Any] = field(default_factory=dict)
     fallback_allowed: bool = False
 
 
@@ -156,6 +164,13 @@ def parse_result_command(text: str) -> ResultCommand | None:
         return None
     if _UNDO_RE.fullmatch(value):
         return ResultCommand("undo")
+    format_request = parse_format_request(value)
+    if format_request:
+        return ResultCommand(
+            "format",
+            target_text=str(format_request.get("target_text") or ""),
+            format_spec=dict(format_request.get("spec") or {}),
+        )
     match = _PRESENTATION_RE.fullmatch(value)
     if match:
         # fallback_allowed: a chart request against a shape that can't
@@ -333,6 +348,11 @@ def execute_result_command(
                 handled=not command.fallback_allowed,
                 message="The current result has no rows to transform.",
                 source_result_id=source_id,
+            )
+
+        if command.action == "format":
+            return _execute_format_command(
+                session_id, source, command, cache=cache,
             )
 
         if command.action == "presentation":
@@ -892,6 +912,183 @@ def execute_result_command(
         )
 
     return ResultCommandOutcome(handled=False)
+
+
+def _execute_format_command(
+    session_id: str,
+    source: dict,
+    command: ResultCommand,
+    *,
+    cache: ResultCache,
+) -> ResultCommandOutcome:
+    """Apply validated display metadata while leaving every raw value intact."""
+    rows = list(source.get("rows") or [])
+    source_id = str(source.get("result_id") or "")
+    before = len(rows)
+    requested = dict(command.format_spec or {})
+    kind = str(requested.get("type") or "").lower()
+    if not kind:
+        return _format_clarification(
+            source_id, before, "Which format should I use?", [
+                ("Month and year (Jan-26)", "format this result as MMM-YY"),
+                ("Currency", "format this result as USD currency"),
+                ("Percentage", "format this result as percentage, values are already 0 to 100"),
+                ("Number", "format this result as a number with 2 decimal places"),
+            ],
+        )
+
+    candidates = candidate_columns(rows, kind)
+    diagnostic = {
+        h for h in (rows[0].keys() if rows else [])
+        if _normalise_value(h) in {"matchedrows", "rowcount", "matchcount", "matchedrecords"}
+        or (_normalise_value(h).startswith("nonnull") and _normalise_value(h).endswith("rows"))
+    }
+    candidates = [column for column in candidates if column not in diagnostic]
+    column = ""
+    if command.target_text and _normalise_value(command.target_text) not in {
+        "it", "this", "result", "thisresult", "data", "thedata",
+    }:
+        column, error = _resolve_column(rows, command.target_text)
+        if error:
+            return _command_error(command, source_id, before, error)
+        if column not in candidates and kind != "text":
+            return _command_error(
+                command, source_id, before,
+                f"{column} does not contain values compatible with the requested {kind} format.",
+            )
+    elif len(candidates) == 1:
+        column = candidates[0]
+    elif len(candidates) > 1:
+        suffix = _format_instruction(requested)
+        return _format_clarification(
+            source_id,
+            before,
+            f"Which column should I format as {kind}?",
+            [(candidate, f"format {candidate} as {suffix}") for candidate in candidates[:8]],
+        )
+    else:
+        return _command_error(
+            command, source_id, before,
+            f"I could not find a column compatible with the requested {kind} format.",
+        )
+
+    if kind == "date" and not requested.get("style"):
+        return _format_clarification(
+            source_id, before, f"Which date format should I use for {column}?", [
+                ("Jan-26", f"format {column} as MMM-YY"),
+                ("January 2026", f"format {column} as full month and year"),
+                ("2026-01", f"format {column} as YYYY-MM"),
+                ("31-Jan-2026", f"format {column} as DD-MMM-YYYY"),
+            ],
+        )
+    if kind == "currency" and not requested.get("currency_code"):
+        return _format_clarification(
+            source_id, before, f"Which currency should I use for {column}?", [
+                (code, f"format {column} as {code} currency")
+                for code in ("USD", "INR", "EUR", "GBP")
+            ],
+        )
+    if kind == "percentage" and not requested.get("scale"):
+        numeric = []
+        for row in rows[:50]:
+            try:
+                numeric.append(abs(float(str(row.get(column)).replace(",", ""))))
+            except (TypeError, ValueError):
+                continue
+        if numeric and max(numeric) <= 1:
+            requested["scale"] = "fraction"
+        elif numeric and min(numeric) > 1:
+            requested["scale"] = "as_is"
+        else:
+            return _format_clarification(
+                source_id, before, f"How are the percentage values in {column} stored?", [
+                    ("Fractions (0.25 = 25%)", f"format {column} as percentage, values are fractions 0 to 1"),
+                    ("Percent values (25 = 25%)", f"format {column} as percentage, values are already 0 to 100"),
+                ],
+            )
+
+    spec = normalize_display_format(requested)
+    if not spec:
+        return _command_error(command, source_id, before, "That display format is not supported.")
+    formats = dict(source.get("column_formats") or {})
+    formats[column] = coarse_format(spec)
+    metadata = dict(source.get("metadata") or {})
+    display_formats = dict(metadata.get("display_formats") or {})
+    display_formats[column] = spec
+    metadata.update({
+        "display_formats": display_formats,
+        "formatted_column": column,
+        "presentation_only": True,
+        "metadata_contains_raw_values": False,
+    })
+    snapshot = cache.derive_snapshot(
+        session_id,
+        source_id,
+        rows,
+        question=str(source.get("question") or "Result"),
+        operation="format",
+        sql=str(source.get("sql") or ""),
+        column_formats=formats,
+        metadata=metadata,
+    )
+    return ResultCommandOutcome(
+        handled=True,
+        ok=True,
+        message=f"Formatted {column} as {_format_label(spec)}. Raw values are unchanged.",
+        snapshot=snapshot,
+        operation="format",
+        rows_before=before,
+        rows_after=before,
+        source_result_id=source_id,
+        derived_result_id=str(snapshot.get("result_id") or ""),
+    )
+
+
+def _format_clarification(
+    source_id: str,
+    row_count: int,
+    prompt: str,
+    choices: list[tuple[str, str]],
+) -> ResultCommandOutcome:
+    return ResultCommandOutcome(
+        handled=True,
+        message=prompt,
+        source_result_id=source_id,
+        rows_before=row_count,
+        rows_after=row_count,
+        clarification_required=True,
+        clarification_prompt=prompt,
+        clarification_options=[
+            {"id": f"format-{index}", "label": label, "value": label, "resolved_question": question}
+            for index, (label, question) in enumerate(choices, start=1)
+        ],
+    )
+
+
+def _format_instruction(spec: dict) -> str:
+    kind = str(spec.get("type") or "number")
+    if kind == "date":
+        return {
+            "month_year_short": "MMM-YY", "month_year_long": "full month and year",
+            "iso": "YYYY-MM", "day_month_year": "DD-MM-YYYY",
+            "month_day_year": "MM-DD-YYYY", "day_month_name_year": "DD-MMM-YYYY",
+        }.get(str(spec.get("style") or ""), "date format")
+    if kind == "currency":
+        return f"{spec.get('currency_code') or ''} currency".strip()
+    if kind == "percentage":
+        scale = "values are fractions 0 to 1" if spec.get("scale") == "fraction" else "values are already 0 to 100"
+        return f"percentage, {scale}"
+    return f"a number with {int(spec.get('fraction_digits', 2))} decimal places"
+
+
+def _format_label(spec: dict) -> str:
+    if spec.get("type") == "date":
+        return _format_instruction(spec)
+    if spec.get("type") == "currency":
+        return f"{spec.get('currency_code', '')} currency".strip()
+    if spec.get("type") == "percentage":
+        return "percentage"
+    return f"a number with {spec.get('fraction_digits', 2)} decimal places"
 
 
 def _command_error(
