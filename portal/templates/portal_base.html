@@ -63,13 +63,10 @@
       </button>
     </div>
 
-    <form action="/portal/chat" method="get" class="portal-new-thread-form">
-      <button type="submit" name="new" value="1" class="portal-new-thread" aria-label="New Thread" title="New Thread"
-              onclick="window.location.assign('/portal/chat?new=1'); return false;">
-        <span class="portal-new-thread-icon" aria-hidden="true">+</span>
-        <span>New Thread</span>
-      </button>
-    </form>
+    <a href="/portal/chat?new=1" class="portal-new-thread" aria-label="New Thread" title="New Thread">
+      <span class="portal-new-thread-icon" aria-hidden="true">+</span>
+      <span>New Thread</span>
+    </a>
 
     <nav class="portal-nav" aria-label="Primary">
       <a href="/portal/chat" title="Chat" class="{% if '/chat' in request.url.path %}active{% endif %}">
