@@ -217,6 +217,39 @@ class GraphCommandCompileTests(unittest.TestCase):
         self.assertEqual(commands[0].table_name, "CHATBOT_DB.PHARMA_LAB.BR_RX_DIAGNOSIS")
         self.assertEqual(commands[0].entity_name, "BR_RX_DIAGNOSIS")
 
+    def test_llm_plan_accepts_unambiguous_schema_suffix(self):
+        manifest = {
+            "CHATBOT_DB.PHARMA_LAB.F_RX_FILL": ["RX_ORDER_ID"],
+            "CHATBOT_DB.PHARMA_LAB.F_RX_ORDER": ["RX_ORDER_ID"],
+        }
+        command, error = compile_graph_command_response(self._raw(
+            action="update_join",
+            from_table="PHARMA_LAB.F_RX_FILL",
+            to_table="PHARMA_LAB.F_RX_ORDER",
+            from_column="RX_ORDER_ID",
+            to_column="RX_ORDER_ID",
+            join_type="INNER",
+        ), manifest)
+        self.assertEqual(error, "")
+        self.assertEqual(command.from_table, "CHATBOT_DB.PHARMA_LAB.F_RX_FILL")
+        self.assertEqual(command.to_table, "CHATBOT_DB.PHARMA_LAB.F_RX_ORDER")
+
+    def test_llm_plan_rejects_ambiguous_bare_table_suffix(self):
+        manifest = {
+            "CHATBOT_DB.PHARMA_LAB.F_RX_FILL": ["RX_ORDER_ID"],
+            "CHATBOT_DB.ARCHIVE.F_RX_FILL": ["RX_ORDER_ID"],
+            "CHATBOT_DB.PHARMA_LAB.F_RX_ORDER": ["RX_ORDER_ID"],
+        }
+        command, error = compile_graph_command_response(self._raw(
+            action="update_join",
+            from_table="F_RX_FILL",
+            to_table="F_RX_ORDER",
+            from_column="RX_ORDER_ID",
+            to_column="RX_ORDER_ID",
+        ), manifest)
+        self.assertIsNone(command)
+        self.assertIn("not found", error)
+
 
 class GraphCommandPromptTests(unittest.TestCase):
     def test_prompt_never_contains_row_data_only_schema_manifest(self):

@@ -370,6 +370,11 @@ class GraphChatTemplateWiringTests(unittest.TestCase):
         self.assertIn("sendGraphChatMessage", self.source)
         self.assertIn("${API_BASE}/chat", self.source)
 
+    def test_chat_uses_multiline_textarea_for_pasted_mapping_batches(self):
+        self.assertIn('<textarea id="chat-input"', self.source)
+        self.assertIn('aria-label="Describe graph mappings or joins"', self.source)
+        self.assertNotIn('<input type="text" id="chat-input"', self.source)
+
     def test_success_reply_does_not_auto_reload_only_offers_a_manual_refresh(self):
         # A chat-created suggestion never goes live automatically -- the user
         # must explicitly choose to jump to the review queue, matching how

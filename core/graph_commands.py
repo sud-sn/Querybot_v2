@@ -315,7 +315,27 @@ def _compile_graph_command_plan(
 
     def resolve_table(key: str) -> str:
         value = str(plan.get(key) or "").strip()
-        return table_lookup.get(_normalise(value), "")
+        exact = table_lookup.get(_normalise(value), "")
+        if exact:
+            return exact
+        wanted_parts = [
+            part.strip().strip("[]`\"").casefold()
+            for part in value.split(".") if part.strip()
+        ]
+        if not wanted_parts:
+            return ""
+        suffix_matches = []
+        for table in schema_manifest:
+            table_parts = [
+                part.strip().strip("[]`\"").casefold()
+                for part in str(table).split(".") if part.strip()
+            ]
+            if (
+                len(table_parts) >= len(wanted_parts)
+                and table_parts[-len(wanted_parts):] == wanted_parts
+            ):
+                suffix_matches.append(table)
+        return suffix_matches[0] if len(suffix_matches) == 1 else ""
 
     def resolve_column(table: str, key: str) -> str:
         value = str(plan.get(key) or "").strip()
