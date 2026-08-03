@@ -232,6 +232,7 @@ def suggest_closest_terms(
 
 _VALIDATION_REASONS: dict[str, str] = {
     "field_plan_mismatch": "The generated query did not use the approved business field mapping for one of the terms in your question.",
+    "entity_field_unavailable": "The requested field is not available for the business entity named in your question.",
     "unknown_column": "The generated query used a column that does not exist in your data.",
     "unknown_table": "The generated query used a table that does not exist in your data.",
     "access_denied": "Your account does not have access to one of the tables this question needs.",
@@ -263,6 +264,7 @@ _VALIDATION_NEXT_STEPS: dict[str, str] = {
     "cannot_generate": "Try naming the metric and the breakdown explicitly (e.g. 'total revenue by customer'), or add a time range.",
     "dialect_mismatch": "Try rephrasing the question; if it keeps failing, ask your administrator to check the connected database type.",
     "graph_plan_mismatch": "Try rephrasing the question; if it keeps failing, ask your administrator to review the Entity Graph relationships for these tables.",
+    "entity_field_unavailable": "Choose one of the available entity alternatives listed above, or ask your administrator to add or map this field for the requested entity in the Semantic Layer.",
     "surrogate_date_conversion": "Try rephrasing the question; if it keeps failing, ask your administrator to check the Date Roles setup for this table.",
     "reused_plan_empty": "Try narrowing the question (a specific date range or filter) — the underlying data may have changed since this question last succeeded.",
     "temporal_anchor_missing": "Try asking again; if it keeps failing, ask your administrator to check the Date Roles setup for this table.",
@@ -307,14 +309,19 @@ def translate_failure(
 
         if kind == "validation":
             code_key = (code or "").strip().lower()
-            plain = _VALIDATION_REASONS.get(
-                code_key,
-                "The generated query did not pass QueryBot's safety and accuracy checks.",
-            )
+            if code_key == "entity_field_unavailable" and reason:
+                # This guarded failure contains safe, schema-derived entity
+                # alternatives and is more useful than a generic translation.
+                plain = (reason or "").strip()[:_MAX_TECH_CHARS]
+            else:
+                plain = _VALIDATION_REASONS.get(
+                    code_key,
+                    "The generated query did not pass QueryBot's safety and accuracy checks.",
+                )
             technical = []
             if code_key:
                 technical.append(f"Validation: {code_key}")
-            if reason:
+            if reason and code_key != "entity_field_unavailable":
                 technical.append((reason or "").strip()[:_MAX_TECH_CHARS])
             next_step = _VALIDATION_NEXT_STEPS.get(code_key, _DEFAULT_VALIDATION_NEXT_STEP)
             if suggestions:

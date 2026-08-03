@@ -94,6 +94,56 @@ def _unknown_column_is_cross_schema(reason: str, schema_hint: str) -> bool:
     return bool(marker) and schema_hint.casefold() not in suffix[:120]
 
 
+def _entity_field_unavailable_reason(errors: list[dict] | None) -> str:
+    """Explain when a missing qualified field exists only on other entities.
+
+    Moving an exact column from one table to another is not a spelling repair:
+    it can change the requested business entity (for example, prescriber state
+    into pharmacy state).  Return a business-readable terminal explanation so
+    the pipeline asks for a choice instead of executing a semantically different
+    query. Unqualified columns and same-table spelling suggestions remain
+    eligible for the existing repair paths.
+    """
+
+    def _bare_table(value: str) -> str:
+        return str(value or "").strip().strip("[]\"`").split(".")[-1].upper()
+
+    def _business_name(table: str) -> str:
+        name = _bare_table(table)
+        for prefix in ("FACT_", "DIM_", "BRIDGE_", "F_", "D_", "BR_"):
+            if name.startswith(prefix):
+                name = name[len(prefix):]
+                break
+        return name.replace("_", " ").strip().lower() or "requested table"
+
+    conflicts: list[str] = []
+    for error in errors or []:
+        if str(error.get("code") or "") != "unknown_column":
+            continue
+        source = _bare_table(error.get("table") or "")
+        column = str(error.get("column") or "").strip().upper()
+        suggestions = [item for item in (error.get("suggestions") or []) if item]
+        if not source or not column or suggestions:
+            continue
+        candidates: list[str] = []
+        for candidate in error.get("candidate_tables") or []:
+            bare = _bare_table(candidate)
+            if bare and bare != source and bare not in candidates:
+                candidates.append(bare)
+        if not candidates:
+            continue
+        alternatives = ", ".join(
+            f"{_business_name(candidate)} ({candidate})"
+            for candidate in candidates[:4]
+        )
+        conflicts.append(
+            f"The field {column} is not available for {_business_name(source)} "
+            f"({source}). It is available for {alternatives}. I did not substitute "
+            "one of those entities because that would change the meaning of your question."
+        )
+    return " ".join(conflicts[:3])
+
+
 def _resolved_fact_tables(
     graph_context: dict,
     graph: dict,
@@ -2673,6 +2723,16 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 )
                 sql = _column_repair
                 ok, reason, code = True, "OK", "ok"
+        else:
+            _entity_field_reason = _entity_field_unavailable_reason(
+                _column_validation.errors
+            )
+            if _entity_field_reason:
+                # A cross-table substitution is a change of business meaning,
+                # not a safe SQL repair. Stop before the LLM retry and explain
+                # which entities actually expose the requested field.
+                reason = _entity_field_reason
+                code = "entity_field_unavailable"
 
     _trace_update(
         trace_id,

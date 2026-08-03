@@ -90,6 +90,20 @@ class TranslateFailureTests(unittest.TestCase):
         rca = translate_failure(kind="validation", code="something_new", reason="raw text")
         self.assertIn("safety and accuracy checks", rca["most_likely_reason"])
 
+    def test_entity_field_unavailable_surfaces_schema_derived_explanation(self):
+        reason = (
+            "The field STATE_CODE is not available for prescriber (D_PRESCRIBER). "
+            "It is available for pharmacy (D_PHARMACY). I did not substitute it "
+            "because that would change the meaning of your question."
+        )
+        rca = translate_failure(
+            kind="validation", code="entity_field_unavailable", reason=reason,
+        )
+
+        self.assertEqual(rca["most_likely_reason"], reason)
+        self.assertIn("Choose one of the available entity alternatives", rca["suggested_next_step"])
+        self.assertFalse(any(reason in note for note in rca["technical_notes"]))
+
     def test_execution_kind_uses_sanitizer(self):
         rca = translate_failure(
             kind="execution",

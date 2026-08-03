@@ -2239,7 +2239,8 @@ def validate_sql_detailed(
                     "Column(s) not found in the connected database schema: "
                     + " ".join(parts)
                     + "\n\nUse exact column names from the Knowledge Base; do not remove underscores or invent aliases as source columns. "
-                    "If a requested column exists on another table, change the source table or join to that table instead of reusing the same invalid table alias."
+                    "A matching column on another table is evidence, not permission to change the requested business entity. "
+                    "Only change or join another table when that preserves the meaning of the user's question; otherwise request clarification."
                 ),
                 "unknown_column",
                 unknown_cols,
