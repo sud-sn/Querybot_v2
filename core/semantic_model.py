@@ -2650,6 +2650,46 @@ def patch_relationship(
     return True
 
 
+def remove_relationship(
+    *,
+    kb_dir: str,
+    from_table: str,
+    to_table: str,
+    from_column: str = "",
+    to_column: str = "",
+) -> bool:
+    """Remove one approved relationship from the structured model."""
+    model = load_semantic_model(kb_dir)
+    if not model:
+        return False
+    from_u, to_u = str(from_table).upper(), str(to_table).upper()
+    from_col_u, to_col_u = str(from_column).upper(), str(to_column).upper()
+    kept = []
+    changed = False
+    for rel in model.get("relationships", []) or []:
+        matches = (
+            str(rel.get("from_table") or "").upper() == from_u
+            and str(rel.get("to_table") or "").upper() == to_u
+        )
+        if matches and from_col_u and to_col_u:
+            pairs = {
+                (str(c.get("from_column") or "").upper(), str(c.get("to_column") or "").upper())
+                for c in (rel.get("conditions") or []) if isinstance(c, dict)
+            }
+            matches = (from_col_u, to_col_u) in pairs
+        if matches:
+            changed = True
+        else:
+            kept.append(rel)
+    if not changed:
+        return False
+    model["relationships"] = kept
+    kb_path = Path(kb_dir)
+    (kb_path / MODEL_JSON).write_text(json.dumps(model, indent=2, sort_keys=True), encoding="utf-8")
+    (kb_path / MODEL_YAML).write_text(_to_yaml(model) + "\n", encoding="utf-8")
+    return True
+
+
 def patch_field_approval(
     *,
     kb_dir: str,

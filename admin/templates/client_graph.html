@@ -710,6 +710,7 @@ let graphData = {
   entities:      {{ entities      | tojson | safe }},
   relationships: {{ relationships | tojson | safe }},
   properties:    [],
+  change_proposals: [],
 };
 
 const TYPE_COLORS = { fact:'#D97706', dimension:'#2563EB', bridge:'#7C3AED' };
@@ -1652,7 +1653,11 @@ async function saveEntityPosition(name, x, y) {
 async function loadProperties() {
   try {
     const r = await fetch(`${API_BASE}/graph.json`);
-    if (r.ok) { const d = await r.json(); graphData.properties = d.properties || []; }
+    if (r.ok) {
+      const d = await r.json();
+      graphData.properties = d.properties || [];
+      graphData.change_proposals = d.change_proposals || [];
+    }
   } catch(e) {}
 }
 
@@ -1664,6 +1669,9 @@ async function loadProperties() {
 // answer that crosses it; a wrong entity mostly just sits unused.
 
 function _pendingItems() {
+  const proposals = (graphData.change_proposals || [])
+    .filter(p => p.status === 'pending')
+    .map(p => ({kind: 'proposal', conf: p.confidence_score ?? 0, raw: p}));
   const rels = (graphData.relationships || [])
     .filter(r => r.status === 'suggested' || r.validation_status === 'needs_review')
     .map(r => ({
@@ -1679,7 +1687,7 @@ function _pendingItems() {
     .filter(p => p.status === 'suggested')
     .map(p => ({kind: 'prop', conf: p.confidence_score ?? 0, raw: p}));
   const byConf = (a, b) => b.conf - a.conf;
-  return [...rels.sort(byConf), ...ents.sort(byConf), ...props.sort(byConf)];
+  return [...proposals.sort(byConf), ...rels.sort(byConf), ...ents.sort(byConf), ...props.sort(byConf)];
 }
 
 function updateReviewBadge() {
@@ -1709,13 +1717,17 @@ function _appendChatMsg(html, cls) {
   log.scrollTop = log.scrollHeight;
 }
 
+const graphChatHistory = [];
+
 async function sendGraphChatMessage() {
   const input = document.getElementById('chat-input');
   const message = input.value.trim();
   if (!message) return;
   const sendBtn = document.getElementById('chat-send-btn');
 
+  const priorHistory = graphChatHistory.slice(-8);
   _appendChatMsg(_esc(message), 'chat-msg-user');
+  graphChatHistory.push({role:'user', content:message});
   input.value = '';
   input.disabled = true;
   sendBtn.disabled = true;
@@ -1724,16 +1736,18 @@ async function sendGraphChatMessage() {
     const res = await fetch(`${API_BASE}/chat`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({message}),
+      body: JSON.stringify({message, history:priorHistory}),
     });
     const body = await res.json();
     if (body.status === 'ok') {
+      graphChatHistory.push({role:'assistant', content:String(body.message || '')});
       _appendChatMsg(
         `${_esc(body.message)}<div class="chat-msg-actions">` +
         `<button class="tb-btn sm" onclick="location.reload()">↻ Refresh to review</button></div>`,
         'chat-msg-bot',
       );
     } else {
+      graphChatHistory.push({role:'assistant', content:String(body.message || "I couldn't understand that.")});
       _appendChatMsg(_esc(body.message || "I couldn't understand that."), 'chat-msg-error');
     }
   } catch (e) {
@@ -1768,6 +1782,19 @@ function _rvItemHtml(item, idx) {
     kindLabel = 'JOIN';
     title = `<code>${_esc(r.from_entity)}</code> → <code>${_esc(r.to_entity)}</code>` +
             (fc && tc ? `<br><span style="font-weight:400;color:var(--text-muted)">${_esc(fc)} = ${_esc(tc)}</span>` : '');
+  } else if (item.kind === 'proposal') {
+    kindLabel = 'CHANGE';
+    const before = r.before || {};
+    const after = r.payload || {};
+    const target = r.target_kind === 'relationship'
+      ? `${before.from_entity || ''} -> ${before.to_entity || ''}`
+      : (before.entity_name || r.target_id || 'Entity');
+    const change = r.action === 'delete_join'
+      ? 'Remove join'
+      : r.action.includes('filter')
+        ? `Filter: ${before.where_clause || before.entity_filter || 'none'} -> ${after.where_clause || after.entity_filter || 'none'}`
+        : `Join: ${before.join_type || ''} ${before.from_column || ''}=${before.to_column || ''} -> ${after.join_type || ''} ${after.from_column || ''}=${after.to_column || ''}`;
+    title = `<code>${_esc(target)}</code><br><span style="font-weight:400;color:var(--text-muted)">${_esc(change)}</span>`;
   } else if (item.kind === 'entity') {
     kindLabel = (r.entity_type || 'entity').toUpperCase();
     title = `<code>${_esc(r.entity_name)}</code>`;
@@ -1791,7 +1818,7 @@ function _rvItemHtml(item, idx) {
       ${reason}
       <div class="rv-actions" onclick="event.stopPropagation()">
         <button class="tb-btn sm rv-accept" onclick="reviewDecide(${idx}, 'accept')">${acceptLabel}</button>
-        ${item.kind !== 'prop'
+        ${item.kind !== 'prop' && item.kind !== 'proposal'
           ? `<button class="tb-btn sm" onclick="reviewEdit(${idx})">✎ Edit</button>` : ''}
         <button class="tb-btn sm rv-reject" onclick="reviewDecide(${idx}, 'reject')">✕ Reject</button>
       </div>
@@ -1842,13 +1869,16 @@ function renderReviewPanel() {
   const total =
     (graphData.entities || []).length +
     (graphData.relationships || []).length +
-    (graphData.properties || []).length;
+    (graphData.properties || []).length +
+    (graphData.change_proposals || []).length;
   const reviewed = total - pending;
   const pct = total ? Math.round((reviewed / total) * 100) : 100;
   document.getElementById('rv-progress-fill').style.width = pct + '%';
   document.getElementById('rv-progress-label').textContent =
     pending ? `${reviewed} of ${total} reviewed · ${pending} pending` : 'All caught up — every item is admin-reviewed.';
-  document.getElementById('rv-bulk-btn').disabled = !allItems.some(i => i.conf >= 85 && i.kind !== 'prop');
+  document.getElementById('rv-bulk-btn').disabled = !allItems.some(
+    i => i.conf >= 85 && i.kind !== 'prop' && i.kind !== 'proposal'
+  );
   document.getElementById('rv-bulk-btn').style.display = _rvKind === 'prop' ? 'none' : '';
   const fieldBulkVisible = _rvKind === 'prop';
   document.getElementById('rv-accept-visible').style.display = fieldBulkVisible ? '' : 'none';
@@ -1864,9 +1894,14 @@ function renderReviewPanel() {
 function focusReviewItem(idx) {
   const item = _rvItems[idx];
   if (!item || !cy) return;
-  const el = item.kind === 'rel'
-    ? cy.getElementById(`rel-${item.raw.id}`)
-    : cy.getElementById(item.raw.entity_name);
+  let elementId;
+  if (item.kind === 'rel') elementId = `rel-${item.raw.id}`;
+  else if (item.kind === 'proposal' && item.raw.target_kind === 'relationship') {
+    elementId = `rel-${item.raw.target_id}`;
+  } else if (item.kind === 'proposal') {
+    elementId = item.raw.before?.entity_name || item.raw.target_id;
+  } else elementId = item.raw.entity_name;
+  const el = cy.getElementById(elementId);
   if (el && el.length) {
     cy.animate({center: {eles: el}, zoom: Math.max(cy.zoom(), 1)}, {duration: 250});
     cy.elements().unselect();
@@ -1890,6 +1925,8 @@ async function reviewDecide(idx, decision) {
     // "Keep join" on a correction-flagged (already-confirmed) join just
     // clears the re-review flag — nothing else about the join changes.
     url = `${API_BASE}/relationships/${r.id}/clear-review-flag`;
+  } else if (item.kind === 'proposal') {
+    url = `${API_BASE}/proposals/${r.id}/${decision === 'accept' ? 'accept' : 'reject'}`;
   } else if (item.kind === 'rel') {
     url = `${API_BASE}/${decision === 'accept' ? 'confirm' : 'reject'}/relationship/${r.id}`;
   } else if (item.kind === 'entity') {
@@ -1901,7 +1938,8 @@ async function reviewDecide(idx, decision) {
   }
   try {
     const resp = await fetch(url, opts);
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const body = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(body.message || body.detail || `HTTP ${resp.status}`);
     await _reloadGraphData();
   } catch (e) {
     alert(`Could not ${decision}: ${e.message}`);
@@ -1952,6 +1990,7 @@ async function _reloadGraphData() {
   graphData.entities      = gd.entities || [];
   graphData.relationships = gd.relationships || [];
   graphData.properties    = gd.properties || [];
+  graphData.change_proposals = gd.change_proposals || [];
   // Positions come from the data, so rebuilding keeps the current layout.
   cy.elements().remove();
   cy.add(buildElements());

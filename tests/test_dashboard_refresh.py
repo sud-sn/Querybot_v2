@@ -1,8 +1,10 @@
 from datetime import date
 from decimal import Decimal
 from types import SimpleNamespace
+import uuid
 
 import core.dashboard_refresh as refresh
+import store
 
 
 SOURCE = {
@@ -88,3 +90,58 @@ def test_owner_decimal_and_date_rows_are_json_safe_before_cache(monkeypatch):
     result = refresh.execute_dashboard_source(SOURCE, OWNER)
     assert result.rows == [{"period": "2026-01-01", "revenue": 52677.25}]
     assert captured["rows"] == result.rows
+
+
+def test_dashboard_runs_real_policy_engine_and_masks_before_release(monkeypatch):
+    """Only the external DB call is stubbed; policy, lineage and masking are real."""
+    store.init_db()
+    account_id = f"dashboard-policy-{uuid.uuid4().hex[:10]}"
+    store.upsert_client(account_id, "portal")
+    store.save_compliance_profile(
+        account_id,
+        mode="regulated",
+        industry="healthcare_pharmacy",
+        policy_pack_key="healthcare_pharmacy_v1",
+        enforcement_mode="enforce",
+        active_policy_version=1,
+    )
+    store.save_classification(
+        account_id, "DBO.CUSTOMERS", "CUSTOMER_NAME",
+        sensitivity="RESTRICTED", identifiability="DIRECT",
+        tags=["PII"], mask_strategy="redact", reviewed=True,
+    )
+    store.replace_policy_rules(account_id, 1, [
+        {
+            "name": f"Mask PII on {action}", "subject_type": "role",
+            "subject_id": "analyst", "resource_type": "classification",
+            "resource_pattern": "PII", "action": action, "effect": "mask",
+            "mask_strategy": "redact", "cache_ttl_seconds": 0,
+        }
+        for action in ("query_execution", "result_release")
+    ])
+    store.replace_purposes(account_id, [{
+        "purpose_key": "analytics", "name": "Analytics",
+        "default_for_roles": ["analyst"],
+        "permissions": {"PII": ["query_execution", "result_release"]},
+    }])
+    source = {
+        **SOURCE, "account_id": account_id,
+        "sql_query": "SELECT CUSTOMER_NAME FROM DBO.CUSTOMERS",
+    }
+    viewer = {"id": 424242, "account_id": account_id, "role": "analyst", "is_active": 1}
+    monkeypatch.setattr(refresh.store, "get_db_config", lambda _id: {"db_type": "azure_sql", "credentials": {}})
+    monkeypatch.setattr(refresh.store, "get_client_state", lambda _account: {"schema_dir": "test-schema"})
+    monkeypatch.setattr(refresh.store, "get_allowed_tables", lambda _viewer: {"DBO.CUSTOMERS"})
+    monkeypatch.setattr("core.schema.load_known_tables", lambda _path: {"DBO.CUSTOMERS"})
+    monkeypatch.setattr("core.schema.load_schema_columns", lambda _path: {"DBO.CUSTOMERS": {"CUSTOMER_NAME": "varchar"}})
+    monkeypatch.setattr(
+        "core.compliance.governed_query.run_query",
+        lambda *_args, **_kwargs: [{"CUSTOMER_NAME": "Alice Smith"}],
+    )
+    try:
+        result = refresh.execute_dashboard_source(source, viewer, allow_cache=False)
+        assert result.rows[0]["CUSTOMER_NAME"] != "Alice Smith"
+        assert "REDACT" in result.rows[0]["CUSTOMER_NAME"].upper()
+    finally:
+        with store.get_db() as conn:
+            conn.execute("DELETE FROM client WHERE account_id=?", (account_id,))

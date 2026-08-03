@@ -83,7 +83,10 @@ class GraphChatRouteTests(unittest.TestCase):
         self._resolve_provider_patch.stop()
         self._tmp.cleanup()
         with store.get_db() as conn:
-            for table in ("entity_properties", "entity_relationships", "entity_graph"):
+            for table in (
+                "graph_change_proposal", "entity_properties",
+                "entity_relationships", "entity_graph",
+            ):
                 conn.execute(f"DELETE FROM {table} WHERE account_id=?", (self.account_id,))
             conn.execute("DELETE FROM client WHERE account_id=?", (self.account_id,))
 
@@ -261,6 +264,97 @@ class GraphChatRouteTests(unittest.TestCase):
         self.assertEqual(entity["status"], "confirmed")
         self.assertEqual(entity["entity_type"], "fact")
         self.assertIn("left unchanged", body["message"])
+
+    def _confirmed_join(self, *, join_type="LEFT", where_clause=""):
+        store.save_entity(
+            self.account_id, "Orders", "F_ORDERS", schema_name="DBO",
+            entity_type="fact", status="confirmed", generated_by="manual",
+        )
+        store.save_entity(
+            self.account_id, "Customer", "DIM_CUSTOMER", schema_name="DBO",
+            entity_type="dimension", status="confirmed", generated_by="manual",
+        )
+        return store.save_relationship(
+            self.account_id, "Orders", "Customer", "CUSTOMER_ID", "CUSTOMER_ID",
+            join_type=join_type, where_clause=where_clause,
+            status="confirmed", generated_by="manual",
+        )
+
+    def test_confirmed_join_update_is_proposed_without_mutating_live_graph(self):
+        rel_id = self._confirmed_join(join_type="LEFT")
+        with patch.object(routes, "_is_auth", return_value=True), self._mock_llm({
+            "action": "update_join",
+            "from_table": "DBO.F_ORDERS",
+            "to_table": "DBO.DIM_CUSTOMER",
+            "from_column": "CUSTOMER_ID",
+            "to_column": "CUSTOMER_ID",
+            "join_type": "INNER",
+            "relationship_type": "many_to_one",
+            "confidence": 0.93,
+        }):
+            resp = _arun(routes.graph_api_chat(
+                _fake_request("change the customer join to inner"), self.account_id,
+            ))
+        body = json.loads(bytes(resp.body))
+        self.assertEqual(body["staged"]["proposals"], 1)
+        self.assertEqual(store.get_relationship(self.account_id, rel_id)["join_type"], "LEFT")
+        proposal = store.list_graph_change_proposals(self.account_id)[0]
+        self.assertEqual(proposal["action"], "update_join")
+        self.assertEqual(proposal["before"]["join_type"], "LEFT")
+        self.assertEqual(proposal["payload"]["join_type"], "INNER")
+
+    def test_accept_proposal_applies_change_and_creates_snapshot(self):
+        rel_id = self._confirmed_join(join_type="LEFT")
+        before = store.get_relationship(self.account_id, rel_id)
+        proposal_id = store.create_graph_change_proposal(
+            self.account_id, "update_join", "relationship", str(rel_id),
+            before, {**before, "join_type": "INNER"}, confidence_score=95,
+        )
+        with patch.object(routes, "_is_auth", return_value=True), patch.object(
+            routes, "_after_semantic_approval",
+        ) as recompile:
+            resp = _arun(routes.graph_accept_change_proposal(
+                MagicMock(), self.account_id, proposal_id,
+            ))
+        self.assertEqual(json.loads(bytes(resp.body))["status"], "ok")
+        self.assertEqual(store.get_relationship(self.account_id, rel_id)["join_type"], "INNER")
+        self.assertEqual(store.get_graph_change_proposal(self.account_id, proposal_id)["status"], "accepted")
+        self.assertTrue(store.list_graph_versions(self.account_id))
+        recompile.assert_called_once()
+
+    def test_reject_proposal_preserves_live_change(self):
+        rel_id = self._confirmed_join(join_type="LEFT")
+        before = store.get_relationship(self.account_id, rel_id)
+        proposal_id = store.create_graph_change_proposal(
+            self.account_id, "delete_join", "relationship", str(rel_id),
+            before, before, confidence_score=90,
+        )
+        with patch.object(routes, "_is_auth", return_value=True):
+            resp = _arun(routes.graph_reject_change_proposal(
+                MagicMock(), self.account_id, proposal_id,
+            ))
+        self.assertEqual(json.loads(bytes(resp.body))["status"], "ok")
+        self.assertIsNotNone(store.get_relationship(self.account_id, rel_id))
+        self.assertEqual(store.get_graph_change_proposal(self.account_id, proposal_id)["status"], "rejected")
+
+    def test_stale_proposal_conflicts_instead_of_overwriting_newer_admin_edit(self):
+        rel_id = self._confirmed_join(join_type="LEFT")
+        before = store.get_relationship(self.account_id, rel_id)
+        proposal_id = store.create_graph_change_proposal(
+            self.account_id, "update_join", "relationship", str(rel_id),
+            before, {**before, "join_type": "INNER"}, confidence_score=95,
+        )
+        store.save_relationship(
+            self.account_id, "Orders", "Customer", "CUSTOMER_ID", "CUSTOMER_ID",
+            join_type="RIGHT", rel_id=rel_id,
+        )
+        with patch.object(routes, "_is_auth", return_value=True):
+            resp = _arun(routes.graph_accept_change_proposal(
+                MagicMock(), self.account_id, proposal_id,
+            ))
+        self.assertEqual(resp.status_code, 409)
+        self.assertEqual(store.get_relationship(self.account_id, rel_id)["join_type"], "RIGHT")
+        self.assertEqual(store.get_graph_change_proposal(self.account_id, proposal_id)["status"], "pending")
 
 
 class GraphChatTemplateWiringTests(unittest.TestCase):

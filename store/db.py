@@ -748,6 +748,27 @@ CREATE TABLE IF NOT EXISTS graph_version (
     created_at    TEXT    DEFAULT (datetime('now'))
 );
 
+-- Conversational graph mutations that must not alter confirmed semantics
+-- until an administrator reviews the before/after diff.
+CREATE TABLE IF NOT EXISTS graph_change_proposal (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id      TEXT    NOT NULL REFERENCES client(account_id) ON DELETE CASCADE,
+    action          TEXT    NOT NULL,
+    target_kind     TEXT    NOT NULL,
+    target_id       TEXT    NOT NULL DEFAULT '',
+    before_json     TEXT    NOT NULL DEFAULT '{}',
+    payload_json    TEXT    NOT NULL DEFAULT '{}',
+    status          TEXT    NOT NULL DEFAULT 'pending',
+    confidence_score INTEGER NOT NULL DEFAULT 0,
+    generated_by    TEXT    NOT NULL DEFAULT 'chat',
+    reason          TEXT    NOT NULL DEFAULT '',
+    reviewed_by     TEXT    NOT NULL DEFAULT '',
+    reviewed_at     TEXT    DEFAULT NULL,
+    created_at      TEXT    DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_graph_change_proposal_account
+    ON graph_change_proposal(account_id, status, created_at);
+
 -- =============================================================================
 -- Learning loop tables (v30)
 -- =============================================================================
@@ -1074,6 +1095,7 @@ def _run_migrations() -> None:
         _ensure_llm_call_log_table(conn)
         _ensure_answer_trace_tables(conn)
         _ensure_agent_runtime_tables(conn)
+        _ensure_graph_change_proposal_table(conn)
         _ensure_eval_tables(conn)
         _ensure_external_log_export_state_table(conn)
         _ensure_semantic_field_feedback_table(conn)
@@ -1117,6 +1139,32 @@ def _run_migrations() -> None:
                 )
         except Exception as e:
             log.debug("llm_pricing seed skipped: %s", e)
+
+
+def _ensure_graph_change_proposal_table(conn: sqlite3.Connection) -> None:
+    """Create the review-first queue used by conversational graph edits."""
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS graph_change_proposal (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_id       TEXT NOT NULL REFERENCES client(account_id) ON DELETE CASCADE,
+            action           TEXT NOT NULL,
+            target_kind      TEXT NOT NULL,
+            target_id        TEXT NOT NULL DEFAULT '',
+            before_json      TEXT NOT NULL DEFAULT '{}',
+            payload_json     TEXT NOT NULL DEFAULT '{}',
+            status           TEXT NOT NULL DEFAULT 'pending',
+            confidence_score INTEGER NOT NULL DEFAULT 0,
+            generated_by     TEXT NOT NULL DEFAULT 'chat',
+            reason           TEXT NOT NULL DEFAULT '',
+            reviewed_by      TEXT NOT NULL DEFAULT '',
+            reviewed_at      TEXT DEFAULT NULL,
+            created_at       TEXT DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_graph_change_proposal_account
+            ON graph_change_proposal(account_id, status, created_at);
+        """
+    )
 
 
 def _ensure_semantic_compiler_tables(conn: sqlite3.Connection) -> None:

@@ -4,6 +4,7 @@ import unittest
 from core.graph_commands import (
     build_graph_command_input,
     compile_graph_command_response,
+    compile_graph_commands_response,
     parse_explicit_graph_commands,
     parse_graph_command,
 )
@@ -86,6 +87,62 @@ class GraphCommandCompileTests(unittest.TestCase):
             self.manifest,
         )
         self.assertIsNone(command)
+        self.assertIn("not found", error)
+
+    def test_batch_compiles_governed_join_and_filter_operations(self):
+        commands, error = compile_graph_commands_response(json.dumps({
+            "operations": [
+                {
+                    "action": "update_join",
+                    "from_table": "DBO.F_ORDERS",
+                    "to_table": "DBO.DIM_CUSTOMER",
+                    "from_column": "CUSTOMER_ID",
+                    "to_column": "CUSTOMER_ID",
+                    "join_type": "INNER",
+                    "confidence": 0.91,
+                },
+                {
+                    "action": "set_entity_filter",
+                    "table_name": "DBO.DIM_CUSTOMER",
+                    "filter_column": "REGION",
+                    "filter_operator": "=",
+                    "filter_value": "North",
+                    "confidence": 0.94,
+                },
+            ]
+        }), self.manifest)
+        self.assertEqual(error, "")
+        self.assertEqual([item.action for item in commands], ["update_join", "set_entity_filter"])
+        self.assertEqual(commands[0].join_type, "INNER")
+        self.assertEqual(commands[1].where_clause, "REGION = 'North'")
+
+    def test_structured_filter_escapes_literals_and_rejects_raw_sql(self):
+        command, error = compile_graph_command_response(self._raw(
+            action="set_entity_filter",
+            table_name="DBO.DIM_CUSTOMER",
+            filter_column="REGION",
+            filter_operator="=",
+            filter_value="O'Reilly",
+        ), self.manifest)
+        self.assertEqual(error, "")
+        self.assertEqual(command.where_clause, "REGION = 'O''Reilly'")
+
+        command, error = compile_graph_command_response(self._raw(
+            action="set_entity_filter",
+            table_name="DBO.DIM_CUSTOMER",
+            where_clause="1=1; DROP TABLE customers",
+        ), self.manifest)
+        self.assertIsNone(command)
+        self.assertIn("filter column", error)
+
+    def test_batch_fails_closed_when_any_operation_is_invalid(self):
+        commands, error = compile_graph_commands_response(json.dumps({
+            "operations": [
+                {"action": "register_entity", "table_name": "DBO.DIM_CUSTOMER"},
+                {"action": "delete_join", "from_table": "DBO.NOT_REAL", "to_table": "DBO.F_ORDERS"},
+            ]
+        }), self.manifest)
+        self.assertEqual(commands, [])
         self.assertIn("not found", error)
 
     def test_invalid_join_type_falls_back_to_left(self):

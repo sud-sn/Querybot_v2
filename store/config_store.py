@@ -2457,7 +2457,95 @@ def get_full_graph(account_id: str) -> dict:
         "entities":      list_entities(account_id, active_only=True),
         "relationships": list_relationships(account_id, active_only=True),
         "properties":    list_all_entity_properties(account_id),
+        "change_proposals": list_graph_change_proposals(account_id),
     }
+
+
+def create_graph_change_proposal(
+    account_id: str,
+    action: str,
+    target_kind: str,
+    target_id: str,
+    before: dict,
+    payload: dict,
+    *,
+    confidence_score: int = 0,
+    generated_by: str = "chat",
+    reason: str = "",
+) -> int:
+    """Stage a semantic mutation without changing the live graph."""
+    with get_db() as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO graph_change_proposal
+                (account_id, action, target_kind, target_id, before_json,
+                 payload_json, status, confidence_score, generated_by, reason)
+            VALUES (?,?,?,?,?,?,'pending',?,?,?)
+            """,
+            (
+                account_id, action, target_kind, str(target_id or ""),
+                json.dumps(before or {}, default=str),
+                json.dumps(payload or {}, default=str),
+                max(0, min(100, int(confidence_score))), generated_by, reason,
+            ),
+        )
+        return int(cur.lastrowid)
+
+
+def list_graph_change_proposals(account_id: str, status: str = "pending") -> list[dict]:
+    where = "WHERE account_id=?"
+    params: list = [account_id]
+    if status:
+        where += " AND status=?"
+        params.append(status)
+    with get_db() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM graph_change_proposal {where} ORDER BY id DESC", params
+        ).fetchall()
+    result = []
+    for row in rows:
+        item = dict(row)
+        for source, target in (("before_json", "before"), ("payload_json", "payload")):
+            try:
+                item[target] = json.loads(item.pop(source) or "{}")
+            except (TypeError, ValueError):
+                item[target] = {}
+        result.append(item)
+    return result
+
+
+def get_graph_change_proposal(account_id: str, proposal_id: int) -> dict | None:
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM graph_change_proposal WHERE id=? AND account_id=?",
+            (int(proposal_id), account_id),
+        ).fetchone()
+    if not row:
+        return None
+    item = dict(row)
+    for source, target in (("before_json", "before"), ("payload_json", "payload")):
+        try:
+            item[target] = json.loads(item.pop(source) or "{}")
+        except (TypeError, ValueError):
+            item[target] = {}
+    return item
+
+
+def review_graph_change_proposal(
+    account_id: str, proposal_id: int, status: str, reviewed_by: str = "admin"
+) -> bool:
+    if status not in {"accepted", "rejected"}:
+        raise ValueError("Unsupported graph proposal review status.")
+    with get_db() as conn:
+        cur = conn.execute(
+            """
+            UPDATE graph_change_proposal
+               SET status=?, reviewed_by=?, reviewed_at=datetime('now')
+             WHERE id=? AND account_id=? AND status='pending'
+            """,
+            (status, reviewed_by, int(proposal_id), account_id),
+        )
+        return cur.rowcount > 0
 
 
 def save_graph_version(account_id: str, label: str = "", created_by: str = "admin") -> int:
@@ -2645,7 +2733,11 @@ def count_pending_graph_reviews(account_id: str) -> int:
             "WHERE account_id=? AND status='suggested'",
             (account_id,),
         ).fetchone()[0]
-    return int(ents) + int(rels) + int(props)
+        proposals = conn.execute(
+            "SELECT COUNT(*) FROM graph_change_proposal WHERE account_id=? AND status='pending'",
+            (account_id,),
+        ).fetchone()[0]
+    return int(ents) + int(rels) + int(props) + int(proposals)
 
 
 def count_pending_structural_graph_reviews(account_id: str) -> int:
@@ -2666,4 +2758,8 @@ def count_pending_structural_graph_reviews(account_id: str) -> int:
             "(status='suggested' OR validation_status='needs_review')",
             (account_id,),
         ).fetchone()[0]
-    return int(ents) + int(rels)
+        proposals = conn.execute(
+            "SELECT COUNT(*) FROM graph_change_proposal WHERE account_id=? AND status='pending'",
+            (account_id,),
+        ).fetchone()[0]
+    return int(ents) + int(rels) + int(proposals)

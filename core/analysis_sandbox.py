@@ -13,6 +13,7 @@ import hashlib
 import json
 import math
 import multiprocessing
+import platform
 import re
 import statistics
 from dataclasses import dataclass
@@ -242,6 +243,7 @@ def run_isolated_analysis(
 
 def _worker_entry(connection, rows: list[dict], operation: str) -> None:
     try:
+        _apply_worker_limits()
         result = _analyze(rows, operation)
         connection.send({"ok": True, **result})
     except Exception as exc:
@@ -291,18 +293,100 @@ def _python_worker_entry(connection, rows: list[dict], code: str) -> None:
         connection.close()
 
 
+_WINDOWS_JOB_HANDLE = None
+
+
 def _apply_worker_limits() -> None:
-    """Apply OS resource caps when the host supports POSIX rlimits."""
+    """Apply hard process limits on POSIX and Windows; fail closed."""
+    if platform.system() == "Windows":
+        _apply_windows_job_limits()
+        return
     try:
         import resource
         resource.setrlimit(resource.RLIMIT_CPU, (4, 4))
         memory = 512 * 1024 * 1024
         resource.setrlimit(resource.RLIMIT_AS, (memory, memory))
         resource.setrlimit(resource.RLIMIT_NOFILE, (16, 16))
-    except (ImportError, AttributeError, OSError, ValueError):
-        # Windows is still protected by process isolation, bounded input/output,
-        # the restricted AST/global namespace, and the parent's hard timeout.
-        pass
+    except (ImportError, AttributeError, OSError, ValueError) as exc:
+        raise RuntimeError("Analysis worker resource limits could not be established.") from exc
+
+
+def _apply_windows_job_limits() -> None:
+    """Put the current worker in a memory/CPU/process-bounded Windows Job."""
+    import ctypes
+    from ctypes import wintypes
+
+    class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+        _fields_ = [
+            ("PerProcessUserTimeLimit", ctypes.c_longlong),
+            ("PerJobUserTimeLimit", ctypes.c_longlong),
+            ("LimitFlags", wintypes.DWORD),
+            ("MinimumWorkingSetSize", ctypes.c_size_t),
+            ("MaximumWorkingSetSize", ctypes.c_size_t),
+            ("ActiveProcessLimit", wintypes.DWORD),
+            ("Affinity", ctypes.c_size_t),
+            ("PriorityClass", wintypes.DWORD),
+            ("SchedulingClass", wintypes.DWORD),
+        ]
+
+    class IO_COUNTERS(ctypes.Structure):
+        _fields_ = [
+            ("ReadOperationCount", ctypes.c_ulonglong),
+            ("WriteOperationCount", ctypes.c_ulonglong),
+            ("OtherOperationCount", ctypes.c_ulonglong),
+            ("ReadTransferCount", ctypes.c_ulonglong),
+            ("WriteTransferCount", ctypes.c_ulonglong),
+            ("OtherTransferCount", ctypes.c_ulonglong),
+        ]
+
+    class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+        _fields_ = [
+            ("BasicLimitInformation", JOBOBJECT_BASIC_LIMIT_INFORMATION),
+            ("IoInfo", IO_COUNTERS),
+            ("ProcessMemoryLimit", ctypes.c_size_t),
+            ("JobMemoryLimit", ctypes.c_size_t),
+            ("PeakProcessMemoryUsed", ctypes.c_size_t),
+            ("PeakJobMemoryUsed", ctypes.c_size_t),
+        ]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
+    kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+    kernel32.SetInformationJobObject.argtypes = [
+        wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD,
+    ]
+    kernel32.SetInformationJobObject.restype = wintypes.BOOL
+    kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+    kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
+    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+
+    job = kernel32.CreateJobObjectW(None, None)
+    if not job:
+        raise OSError(ctypes.get_last_error(), "CreateJobObjectW failed")
+    limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+    limits.BasicLimitInformation.PerProcessUserTimeLimit = 4 * 10_000_000
+    limits.BasicLimitInformation.ActiveProcessLimit = 1
+    limits.ProcessMemoryLimit = 512 * 1024 * 1024
+    limits.BasicLimitInformation.LimitFlags = (
+        0x00000002  # JOB_OBJECT_LIMIT_PROCESS_TIME
+        | 0x00000008  # JOB_OBJECT_LIMIT_ACTIVE_PROCESS
+        | 0x00000100  # JOB_OBJECT_LIMIT_PROCESS_MEMORY
+        | 0x00002000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+    )
+    if not kernel32.SetInformationJobObject(
+        job, 9, ctypes.byref(limits), ctypes.sizeof(limits),
+    ):
+        error = ctypes.get_last_error()
+        kernel32.CloseHandle(job)
+        raise OSError(error, "SetInformationJobObject failed")
+    if not kernel32.AssignProcessToJobObject(job, kernel32.GetCurrentProcess()):
+        error = ctypes.get_last_error()
+        kernel32.CloseHandle(job)
+        raise OSError(error, "AssignProcessToJobObject failed")
+    global _WINDOWS_JOB_HANDLE
+    _WINDOWS_JOB_HANDLE = job
 
 
 def _python_environment(rows: list[dict]) -> dict[str, Any]:

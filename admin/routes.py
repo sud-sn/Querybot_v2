@@ -4173,6 +4173,7 @@ async def graph_api_chat(request: Request, account_id: str):
     except Exception:
         body = {}
     message = str(body.get("message") or "").strip()
+    history = body.get("history") if isinstance(body.get("history"), list) else []
     if not message:
         return JSONResponse({"status": "clarify", "message": "Say what you'd like to map or join."})
 
@@ -4204,7 +4205,7 @@ async def graph_api_chat(request: Request, account_id: str):
         if isinstance(info, dict) and not str(fqn).startswith("__")
     }
 
-    from core.graph_commands import parse_explicit_graph_commands, parse_graph_command
+    from core.graph_commands import parse_explicit_graph_commands, parse_graph_commands
     commands, error = parse_explicit_graph_commands(message, schema_manifest)
     if not commands and not error:
         from core.llm import llm_complete, resolve_provider
@@ -4227,8 +4228,9 @@ async def graph_api_chat(request: Request, account_id: str):
             component="graph_chat_command",
         ):
             try:
-                command, error = await parse_graph_command(message, schema_manifest, _complete)
-                commands = [command] if command else []
+                commands, error = await parse_graph_commands(
+                    message, schema_manifest, _complete, history=history,
+                )
             except Exception as exc:
                 log.warning("graph_api_chat: parse failed for %s: %s", account_id, exc)
                 return JSONResponse({"status": "clarify", "message": "Could not process that mapping right now."})
@@ -4296,13 +4298,81 @@ async def graph_api_chat(request: Request, account_id: str):
             )
             return {"kind": "entity", "status": "suggested"}
 
-        from_entity = _ensure_entity(command.from_table)
-        to_entity = _ensure_entity(command.to_table)
-        existing_rel = next((
+        if command.action in {"set_entity_filter", "clear_entity_filter"}:
+            existing = _find_entity(command.table_name)
+            proposed_filter = command.where_clause if command.action == "set_entity_filter" else ""
+            if not existing:
+                if command.action == "clear_entity_filter":
+                    raise ValueError("That table is not registered in the Entity Graph yet.")
+                parts = command.table_name.split(".")
+                store.save_entity(
+                    account_id, entity_name=parts[-1], table_name=parts[-1],
+                    schema_name=parts[-2] if len(parts) >= 2 else "",
+                    entity_filter=proposed_filter, status="suggested",
+                    confidence_score=conf_pct, generated_by="chat",
+                    reason=f'Suggested with filter from chat: "{message[:200]}"',
+                )
+                return {"kind": "entity", "status": "suggested"}
+            before = dict(existing)
+            payload = {**before, "entity_filter": proposed_filter}
+            proposal_id = store.create_graph_change_proposal(
+                account_id, command.action, "entity", existing["entity_name"],
+                before, payload, confidence_score=conf_pct,
+                reason=f'Graph Chat: "{message[:200]}"',
+            )
+            return {"kind": "proposal", "status": "pending", "id": proposal_id}
+
+        if command.action == "create_join":
+            from_entity = _ensure_entity(command.from_table)
+            to_entity = _ensure_entity(command.to_table)
+        else:
+            from_row = _find_entity(command.from_table)
+            to_row = _find_entity(command.to_table)
+            if not from_row or not to_row:
+                raise ValueError("Both tables must already be registered before changing their join.")
+            from_entity = from_row["entity_name"]
+            to_entity = to_row["entity_name"]
+        pair_relationships = [
             rel for rel in store.list_relationships(account_id, active_only=False)
             if rel.get("from_entity") == from_entity and rel.get("to_entity") == to_entity
-            and (rel.get("from_column") or "").upper() == command.from_column.upper()
-            and (rel.get("to_column") or "").upper() == command.to_column.upper()
+        ]
+        exact_relationships = [
+            rel for rel in pair_relationships
+            if (not command.from_column or (rel.get("from_column") or "").upper() == command.from_column.upper())
+            and (not command.to_column or (rel.get("to_column") or "").upper() == command.to_column.upper())
+        ]
+
+        if command.action in {
+            "update_join", "delete_join", "set_join_filter", "clear_join_filter",
+        }:
+            candidates = exact_relationships or (pair_relationships if len(pair_relationships) == 1 else [])
+            if len(candidates) != 1:
+                if not candidates:
+                    raise ValueError("I could not find one existing join between those tables to change.")
+                raise ValueError("More than one join matches those tables. Name both join columns so I can target one safely.")
+            existing_rel = candidates[0]
+            before = dict(existing_rel)
+            payload = dict(before)
+            if command.action == "update_join":
+                payload.update({
+                    "from_column": command.from_column or before.get("from_column", ""),
+                    "to_column": command.to_column or before.get("to_column", ""),
+                    "join_type": command.join_type,
+                    "relationship_type": command.relationship_type,
+                })
+            elif command.action == "set_join_filter":
+                payload["where_clause"] = command.where_clause
+            elif command.action == "clear_join_filter":
+                payload["where_clause"] = ""
+            proposal_id = store.create_graph_change_proposal(
+                account_id, command.action, "relationship", str(existing_rel["id"]),
+                before, payload, confidence_score=conf_pct,
+                reason=f'Graph Chat: "{message[:200]}"',
+            )
+            return {"kind": "proposal", "status": "pending", "id": proposal_id}
+
+        existing_rel = next((
+            rel for rel in exact_relationships
         ), None)
         if existing_rel and (existing_rel.get("status") or "confirmed") != "suggested":
             return {"kind": "relationship", "status": "confirmed_unchanged"}
@@ -4336,21 +4406,29 @@ async def graph_api_chat(request: Request, account_id: str):
             log.warning("graph_api_chat: relationship %s validation deferred: %s", rel_id, exc)
         return {"kind": "relationship", "status": validation_status}
 
-    staged = [await _stage(item) for item in commands]
+    try:
+        staged = [await _stage(item) for item in commands]
+    except ValueError as exc:
+        return JSONResponse({"status": "clarify", "message": str(exc)})
     entity_count = sum(item["kind"] == "entity" and item["status"] == "suggested" for item in staged)
     relationship_count = sum(item["kind"] == "relationship" and item["status"] != "confirmed_unchanged" for item in staged)
     unchanged_count = sum(item["status"] == "confirmed_unchanged" for item in staged)
+    proposal_count = sum(item["kind"] == "proposal" for item in staged)
+    staged_summary = {"entities": entity_count, "relationships": relationship_count}
+    if proposal_count:
+        staged_summary["proposals"] = proposal_count
     return JSONResponse({
         "status": "ok",
         "message": (
             f"Staged {entity_count} entity mapping(s) and {relationship_count} relationship(s) "
-            "for review. Nothing affects SQL until an administrator confirms it."
+            f"and {proposal_count} governed change proposal(s) for review. "
+            "Nothing affects SQL until an administrator confirms it."
             + (f" {unchanged_count} confirmed graph mapping(s) were left unchanged." if unchanged_count else "")
         ),
         "review_queue_url": f"/clients/{account_id}/graph#review",
         "validation_status": next((item["status"] for item in reversed(staged) if item["kind"] == "relationship"), "untested"),
         "validation_statuses": [item["status"] for item in staged if item["kind"] == "relationship"],
-        "staged": {"entities": entity_count, "relationships": relationship_count},
+        "staged": staged_summary,
     })
 
     # Legacy single-command implementation retained below only for source
@@ -4897,6 +4975,117 @@ async def graph_confirm_rel(request: Request, account_id: str, rel_id: int):
             (rel_id, account_id)
         )
     _after_semantic_approval(account_id, "relationship confirmed")
+    return JSONResponse({"status": "ok"})
+
+
+@router.post("/clients/{account_id}/graph/api/proposals/{proposal_id}/accept")
+async def graph_accept_change_proposal(
+    request: Request, account_id: str, proposal_id: int,
+):
+    """Atomically apply one reviewed Graph Chat mutation and recompile semantics."""
+    if not _is_auth(request):
+        raise HTTPException(status_code=401)
+    proposal = store.get_graph_change_proposal(account_id, proposal_id)
+    if not proposal or proposal.get("status") != "pending":
+        raise HTTPException(status_code=404, detail="Pending graph proposal not found")
+    action = str(proposal.get("action") or "")
+    before = dict(proposal.get("before") or {})
+    payload = dict(proposal.get("payload") or {})
+
+    if proposal.get("target_kind") == "entity":
+        entity_name = str(proposal.get("target_id") or "")
+        current = store.get_entity(account_id, entity_name)
+        if not current:
+            return JSONResponse({"status": "conflict", "message": "The target entity no longer exists."}, status_code=409)
+        if str(current.get("entity_filter") or "") != str(before.get("entity_filter") or ""):
+            return JSONResponse({"status": "conflict", "message": "The entity filter changed after this proposal was created. Review it again."}, status_code=409)
+        store.save_graph_version(account_id, label=f"before Graph Chat proposal {proposal_id}", created_by="graph_chat")
+        with _get_db() as conn:
+            conn.execute(
+                "UPDATE entity_graph SET entity_filter=? WHERE account_id=? AND entity_name=?",
+                (str(payload.get("entity_filter") or ""), account_id, entity_name),
+            )
+    elif proposal.get("target_kind") == "relationship":
+        rel_id = int(proposal.get("target_id") or 0)
+        current = store.get_relationship(account_id, rel_id)
+        if not current:
+            return JSONResponse({"status": "conflict", "message": "The target relationship no longer exists."}, status_code=409)
+        guarded_keys = (
+            "from_entity", "to_entity", "from_column", "to_column",
+            "join_type", "relationship_type", "where_clause", "join_conditions",
+        )
+        if any(str(current.get(key) or "") != str(before.get(key) or "") for key in guarded_keys):
+            return JSONResponse({"status": "conflict", "message": "The relationship changed after this proposal was created. Review it again."}, status_code=409)
+        store.save_graph_version(account_id, label=f"before Graph Chat proposal {proposal_id}", created_by="graph_chat")
+        if action == "delete_join":
+            store.delete_relationship(account_id, rel_id)
+        else:
+            raw_conditions = payload.get("join_conditions") or []
+            if isinstance(raw_conditions, str):
+                try:
+                    raw_conditions = json.loads(raw_conditions)
+                except (TypeError, ValueError):
+                    raw_conditions = []
+            store.save_relationship(
+                account_id=account_id, rel_id=rel_id,
+                from_entity=str(payload.get("from_entity") or ""),
+                to_entity=str(payload.get("to_entity") or ""),
+                from_column=str(payload.get("from_column") or ""),
+                to_column=str(payload.get("to_column") or ""),
+                relationship_type=str(payload.get("relationship_type") or "many_to_one"),
+                join_type=str(payload.get("join_type") or "LEFT"),
+                label=str(payload.get("label") or ""),
+                join_conditions=raw_conditions,
+                where_clause=str(payload.get("where_clause") or ""),
+            )
+        try:
+            state = store.get_client_state(account_id) or {}
+            kb_dir = str(state.get("kb_dir") or "")
+            from core.semantic_model import patch_relationship, remove_relationship
+
+            def _table(entity_name: str) -> str:
+                entity = store.get_entity(account_id, entity_name) or {}
+                schema = str(entity.get("schema_name") or "")
+                table = str(entity.get("table_name") or "")
+                return f"{schema}.{table}" if schema else table
+
+            if kb_dir:
+                remove_relationship(
+                    kb_dir=kb_dir,
+                    from_table=_table(str(before.get("from_entity") or "")),
+                    to_table=_table(str(before.get("to_entity") or "")),
+                    from_column=str(before.get("from_column") or ""),
+                    to_column=str(before.get("to_column") or ""),
+                )
+                if action != "delete_join":
+                    patch_relationship(
+                        kb_dir=kb_dir,
+                        from_table=_table(str(payload.get("from_entity") or "")),
+                        to_table=_table(str(payload.get("to_entity") or "")),
+                        from_column=str(payload.get("from_column") or ""),
+                        to_column=str(payload.get("to_column") or ""),
+                        join_type=str(payload.get("join_type") or "LEFT"),
+                        display_column=str(payload.get("label") or ""),
+                        status="approved",
+                    )
+        except Exception as exc:
+            log.warning("Graph Chat semantic-model sync deferred: %s", exc)
+    else:
+        raise HTTPException(status_code=400, detail="Unsupported graph proposal target")
+
+    store.review_graph_change_proposal(account_id, proposal_id, "accepted")
+    _after_semantic_approval(account_id, f"Graph Chat proposal {proposal_id} accepted ({action})")
+    return JSONResponse({"status": "ok", "action": action})
+
+
+@router.post("/clients/{account_id}/graph/api/proposals/{proposal_id}/reject")
+async def graph_reject_change_proposal(
+    request: Request, account_id: str, proposal_id: int,
+):
+    if not _is_auth(request):
+        raise HTTPException(status_code=401)
+    if not store.review_graph_change_proposal(account_id, proposal_id, "rejected"):
+        raise HTTPException(status_code=404, detail="Pending graph proposal not found")
     return JSONResponse({"status": "ok"})
 
 @router.post("/clients/{account_id}/graph/api/reject/entity/{entity_name:path}")

@@ -20,13 +20,22 @@ import re
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
-_ALLOWED_ACTIONS = {"register_entity", "create_join", "update_join"}
+_ALLOWED_ACTIONS = {
+    "register_entity", "create_join", "update_join", "delete_join",
+    "set_entity_filter", "clear_entity_filter",
+    "set_join_filter", "clear_join_filter",
+}
 _ALLOWED_JOIN_TYPES = {"INNER", "LEFT", "RIGHT", "FULL"}
 _ALLOWED_REL_TYPES = {"one_to_one", "one_to_many", "many_to_one", "many_to_many"}
+_ALLOWED_FILTER_OPERATORS = {
+    "=", "!=", "<>", ">", ">=", "<", "<=", "LIKE", "NOT LIKE",
+    "IN", "NOT IN", "IS NULL", "IS NOT NULL",
+}
 _PLAN_KEYS = {
     "action", "table_name", "schema_name", "entity_name",
     "from_table", "to_table", "from_column", "to_column",
     "join_type", "relationship_type", "where_clause", "confidence",
+    "filter_column", "filter_operator", "filter_value",
 }
 _MIN_CONFIDENCE = 0.0
 _MAX_CONFIDENCE = 1.0
@@ -49,6 +58,9 @@ class GraphEditCommand:
     join_type: str = "LEFT"
     relationship_type: str = "many_to_one"
     where_clause: str = ""
+    filter_column: str = ""
+    filter_operator: str = ""
+    filter_value: Any = None
     confidence: float = _DEFAULT_CONFIDENCE
 
 
@@ -161,6 +173,7 @@ def parse_explicit_graph_commands(
 def build_graph_command_input(
     text: str,
     schema_manifest: dict[str, list[str]],
+    history: list[dict] | None = None,
 ) -> GraphCommandInput:
     """schema_manifest: {table_fqn: [column_name, ...]} -- table/column
     names only, sourced from the same _schema.json the read-only
@@ -172,20 +185,25 @@ def build_graph_command_input(
     manifest_text = "\n".join(manifest_lines)[:6000]
 
     system_prompt = (
-        "You translate a plain-language description of a table mapping or a join "
-        "into exactly one JSON object describing a graph edit. Return JSON only, "
+        "You translate plain-language Entity Graph edits into one JSON object. "
+        "Return either one operation object or {\"operations\":[...]} for a batch. Return JSON only, "
         "no markdown, no explanation. You receive ONLY table and column names -- "
         "never row data. Use exact table and column names from the schema manifest "
         "below; never invent one.\n\n"
-        "Allowed action values: register_entity, create_join, update_join.\n"
+        "Allowed action values: register_entity, create_join, update_join, delete_join, "
+        "set_entity_filter, clear_entity_filter, set_join_filter, clear_join_filter.\n"
         "Allowed keys: action, table_name, schema_name, entity_name, from_table, "
         "to_table, from_column, to_column, join_type, relationship_type, "
-        "where_clause, confidence.\n"
+        "where_clause, filter_column, filter_operator, filter_value, confidence.\n"
         "register_entity requires table_name (optionally schema_name, "
         "entity_name). create_join/update_join require from_table, to_table, "
         "from_column, to_column. join_type must be INNER, LEFT, RIGHT, or FULL "
         "(default LEFT). relationship_type must be one_to_one, one_to_many, "
-        "many_to_one, or many_to_many (default many_to_one). "
+        "many_to_one, or many_to_many (default many_to_one). For filters, never emit raw "
+        "SQL in where_clause. Use an exact table, exact filter_column, filter_operator and "
+        "a JSON scalar/list filter_value. Allowed filter operators: =, !=, <>, >, >=, <, <=, "
+        "LIKE, NOT LIKE, IN, NOT IN, IS NULL, IS NOT NULL. delete_join and join-filter "
+        "actions require the table pair and should include join columns when known. "
         "If the request cannot be expressed exactly against the schema below, "
         "return {\"action\":\"unsupported\"}.\n\n"
         "Always include \"confidence\": a number from 0.0 to 1.0 rating how "
@@ -194,8 +212,16 @@ def build_graph_command_input(
         "every table/column reference is unambiguous.\n\n"
         f"Schema manifest (table: columns):\n{manifest_text}"
     )
+    safe_history = []
+    for item in list(history or [])[-8:]:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role") or "").lower()
+        content = re.sub(r"\s+", " ", str(item.get("content") or "")).strip()[:500]
+        if role in {"user", "assistant"} and content:
+            safe_history.append({"role": role, "content": content})
     user_prompt = json.dumps(
-        {"request": str(text or "").strip()},
+        {"request": str(text or "").strip(), "recent_graph_chat": safe_history},
         ensure_ascii=True,
         separators=(",", ":"),
     )
@@ -206,19 +232,54 @@ async def parse_graph_command(
     text: str,
     schema_manifest: dict[str, list[str]],
     complete: Callable[..., Awaitable[tuple[str, int, int]]],
+    history: list[dict] | None = None,
 ) -> tuple[GraphEditCommand | None, str]:
-    """Ask a model for a constrained AST, then compile+validate it locally."""
-    command_input = build_graph_command_input(text, schema_manifest)
+    """Backward-compatible single-command wrapper."""
+    commands, error = await parse_graph_commands(
+        text, schema_manifest, complete, history=history,
+    )
+    return (commands[0] if commands else None), error
+
+
+async def parse_graph_commands(
+    text: str,
+    schema_manifest: dict[str, list[str]],
+    complete: Callable[..., Awaitable[tuple[str, int, int]]],
+    history: list[dict] | None = None,
+) -> tuple[list[GraphEditCommand], str]:
+    """Ask a model for a constrained, locally validated batch AST."""
+    command_input = build_graph_command_input(text, schema_manifest, history=history)
     try:
         raw, _, _ = await complete(
             system=command_input.system_prompt,
             user=command_input.user_prompt,
             temperature=0.0,
-            max_tokens=300,
+            max_tokens=1500,
         )
     except Exception:
-        return None, "The graph command parser was unavailable."
-    return compile_graph_command_response(raw, schema_manifest)
+        return [], "The graph command parser was unavailable."
+    return compile_graph_commands_response(raw, schema_manifest)
+
+
+def compile_graph_commands_response(
+    raw_response: str,
+    schema_manifest: dict[str, list[str]],
+) -> tuple[list[GraphEditCommand], str]:
+    payload = _parse_json_object(raw_response)
+    if payload is None:
+        return [], "The graph command parser did not return valid JSON."
+    operations = payload.get("operations") if set(payload) == {"operations"} else [payload]
+    if not isinstance(operations, list) or not operations or len(operations) > 20:
+        return [], "The graph command parser returned an invalid operation batch."
+    result: list[GraphEditCommand] = []
+    for operation in operations:
+        if not isinstance(operation, dict):
+            return [], "The graph command parser returned an invalid operation."
+        command, error = _compile_graph_command_plan(operation, schema_manifest)
+        if not command:
+            return [], error
+        result.append(command)
+    return result, ""
 
 
 def compile_graph_command_response(
@@ -228,9 +289,14 @@ def compile_graph_command_response(
     """Validate a model JSON plan against the real schema manifest and
     compile it into a local command. Never trusts a table/column name the
     model returns unless it matches the manifest exactly."""
-    plan = _parse_json_object(raw_response)
-    if plan is None:
-        return None, "The graph command parser did not return valid JSON."
+    commands, error = compile_graph_commands_response(raw_response, schema_manifest)
+    return (commands[0] if commands else None), error
+
+
+def _compile_graph_command_plan(
+    plan: dict,
+    schema_manifest: dict[str, list[str]],
+) -> tuple[GraphEditCommand | None, str]:
     if set(plan) - _PLAN_KEYS:
         return None, "The graph command parser returned unsupported fields."
 
@@ -256,28 +322,52 @@ def compile_graph_command_response(
         cols = column_lookup.get(_normalise(table), {})
         return cols.get(_normalise(value), "")
 
-    if action == "register_entity":
+    if action in {"register_entity", "set_entity_filter", "clear_entity_filter"}:
         table = resolve_table("table_name")
         if not table:
             return None, "The table named was not found in the current schema."
         entity_name = str(plan.get("entity_name") or "").strip() or table.split(".")[-1]
         schema_name = str(plan.get("schema_name") or "").strip()
+        if action == "register_entity":
+            return GraphEditCommand(
+                action=action, table_name=table, schema_name=schema_name,
+                entity_name=entity_name, confidence=confidence,
+            ), ""
+        where_clause = ""
+        filter_column = ""
+        filter_operator = ""
+        filter_value = None
+        if action == "set_entity_filter":
+            filter_column = resolve_column(table, "filter_column")
+            if not filter_column:
+                return None, "The filter column was not found on the table."
+            filter_operator = _normalise_filter_operator(plan.get("filter_operator"))
+            if not filter_operator:
+                return None, "The graph command parser returned an unsupported filter operator."
+            filter_value = plan.get("filter_value")
+            try:
+                where_clause = compile_filter_condition(
+                    filter_column, filter_operator, filter_value,
+                )
+            except ValueError as exc:
+                return None, str(exc)
         return GraphEditCommand(
-            action="register_entity",
-            table_name=table,
-            schema_name=schema_name,
-            entity_name=entity_name,
-            confidence=confidence,
+            action=action, table_name=table, schema_name=schema_name,
+            entity_name=entity_name, where_clause=where_clause,
+            filter_column=filter_column, filter_operator=filter_operator,
+            filter_value=filter_value, confidence=confidence,
         ), ""
 
-    # create_join / update_join
+    # Relationship create/update/delete/filter operations.
     from_table = resolve_table("from_table")
     to_table = resolve_table("to_table")
     if not from_table or not to_table:
         return None, "One or both tables in the join were not found in the current schema."
-    from_column = resolve_column(from_table, "from_column")
-    to_column = resolve_column(to_table, "to_column")
-    if not from_column or not to_column:
+    from_column = resolve_column(from_table, "from_column") if plan.get("from_column") else ""
+    to_column = resolve_column(to_table, "to_column") if plan.get("to_column") else ""
+    if action in {"create_join", "update_join"} and (not from_column or not to_column):
+        return None, "One or both join columns were not found on their tables."
+    if plan.get("from_column") and not from_column or plan.get("to_column") and not to_column:
         return None, "One or both join columns were not found on their tables."
     join_type = str(plan.get("join_type") or "LEFT").strip().upper()
     if join_type not in _ALLOWED_JOIN_TYPES:
@@ -285,7 +375,29 @@ def compile_graph_command_response(
     relationship_type = str(plan.get("relationship_type") or "many_to_one").strip().lower()
     if relationship_type not in _ALLOWED_REL_TYPES:
         relationship_type = "many_to_one"
-    where_clause = str(plan.get("where_clause") or "").strip()
+    where_clause = ""
+    filter_column = ""
+    filter_operator = ""
+    filter_value = None
+    if action in {"set_join_filter"}:
+        filter_table = from_table if plan.get("table_name") in {None, "", plan.get("from_table")} else to_table
+        explicit_filter_table = resolve_table("table_name") if plan.get("table_name") else filter_table
+        if not explicit_filter_table or explicit_filter_table not in {from_table, to_table}:
+            return None, "A join filter must target one of the two joined tables."
+        filter_column = resolve_column(explicit_filter_table, "filter_column")
+        if not filter_column:
+            return None, "The filter column was not found on the joined table."
+        filter_operator = _normalise_filter_operator(plan.get("filter_operator"))
+        if not filter_operator:
+            return None, "The graph command parser returned an unsupported filter operator."
+        filter_value = plan.get("filter_value")
+        try:
+            where_clause = compile_filter_condition(
+                f"{explicit_filter_table.split('.')[-1]}.{filter_column}",
+                filter_operator, filter_value,
+            )
+        except ValueError as exc:
+            return None, str(exc)
     return GraphEditCommand(
         action=action,
         from_table=from_table,
@@ -295,8 +407,48 @@ def compile_graph_command_response(
         join_type=join_type,
         relationship_type=relationship_type,
         where_clause=where_clause,
+        filter_column=filter_column,
+        filter_operator=filter_operator,
+        filter_value=filter_value,
         confidence=confidence,
     ), ""
+
+
+def _normalise_filter_operator(value: Any) -> str:
+    operator = re.sub(r"\s+", " ", str(value or "=").strip().upper())
+    return operator if operator in _ALLOWED_FILTER_OPERATORS else ""
+
+
+def compile_filter_condition(column: str, operator: str, value: Any) -> str:
+    """Compile one schema-validated scalar condition; never accepts raw SQL."""
+    column = str(column or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_.]+", column):
+        raise ValueError("The filter column is invalid.")
+    operator = _normalise_filter_operator(operator)
+    if not operator:
+        raise ValueError("The filter operator is unsupported.")
+    if operator in {"IS NULL", "IS NOT NULL"}:
+        return f"{column} {operator}"
+    if operator in {"IN", "NOT IN"}:
+        if not isinstance(value, list) or not value or len(value) > 100:
+            raise ValueError(f"{operator} requires a non-empty value list of at most 100 items.")
+        return f"{column} {operator} ({', '.join(_sql_literal(item) for item in value)})"
+    if isinstance(value, (dict, list)) or value is None:
+        raise ValueError("The filter requires one scalar value.")
+    return f"{column} {operator} {_sql_literal(value)}"
+
+
+def _sql_literal(value: Any) -> str:
+    if isinstance(value, bool):
+        return "1" if value else "0"
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if isinstance(value, float) and (value != value or value in {float("inf"), float("-inf")}):
+            raise ValueError("The filter value must be finite.")
+        return str(value)
+    text = str(value)
+    if len(text) > 1000:
+        raise ValueError("The filter value is too long.")
+    return "'" + text.replace("'", "''") + "'"
 
 
 def _extract_confidence(plan: dict) -> float:
