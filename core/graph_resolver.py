@@ -891,27 +891,52 @@ def build_join_skeleton(
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _is_confirmed_row(row: dict) -> bool:
-    """Legacy rows have status='' or no status column — treat those as confirmed.
-    Only explicit status='suggested' marks an unreviewed auto-generated row."""
-    return (row.get("status") or "confirmed") != "suggested"
+    """Return whether a row is executable governance.
+
+    Legacy rows have no status and pre-date graph review, so they remain
+    executable for backwards compatibility. Every explicit non-confirmed
+    state (including ``suggested`` and ``rejected``) is non-executable.
+    """
+    return str(row.get("status") or "").strip().lower() in {"", "confirmed"}
 
 
-def _confirmed_subgraph(graph: dict) -> dict:
-    """Filter a full graph down to admin-confirmed entities and relationships.
-    Relationships survive only when both endpoints are confirmed entities."""
-    ents  = [e for e in graph.get("entities", []) if _is_confirmed_row(e)]
+def _is_reviewable_row(row: dict) -> bool:
+    """Return whether a row may appear in an explicit admin preview.
+
+    Rejected rows must never re-enter planning, even when an administrator
+    explicitly previews suggested graph content.
+    """
+    return str(row.get("status") or "").strip().lower() in {
+        "", "confirmed", "suggested",
+    }
+
+
+def _filter_subgraph(graph: dict, predicate) -> dict:
+    """Filter graph rows and enforce endpoint/property ownership integrity."""
+    ents = [e for e in graph.get("entities", []) if predicate(e)]
     names = {e["entity_name"] for e in ents}
-    rels  = [
+    rels = [
         r for r in graph.get("relationships", [])
-        if _is_confirmed_row(r)
+        if predicate(r)
         and r.get("from_entity") in names
         and r.get("to_entity") in names
     ]
     props = [
         p for p in graph.get("properties", []) or []
-        if p.get("entity_name") in names
+        if predicate(p) and p.get("entity_name") in names
     ]
     return {"entities": ents, "relationships": rels, "properties": props}
+
+
+def _confirmed_subgraph(graph: dict) -> dict:
+    """Filter a full graph down to admin-confirmed entities and relationships.
+    Relationships survive only when both endpoints are confirmed entities."""
+    return _filter_subgraph(graph, _is_confirmed_row)
+
+
+def _reviewable_subgraph(graph: dict) -> dict:
+    """Filter rejected rows out of the admin suggested-content preview."""
+    return _filter_subgraph(graph, _is_reviewable_row)
 
 
 def _client_allows_suggested(account_id: str) -> bool:
@@ -1001,7 +1026,7 @@ def _resolve_on_graph(
     if not detected:
         return empty
 
-    if len(detected) < 2 or not rels:
+    if len(detected) < 2:
         # Single entity — still useful: tells the LLM which table to anchor on
         ent = {e["entity_name"]: e for e in entities}.get(detected[0], {})
         _single_tbl_name = (ent.get("table_name") or "").strip()
@@ -1026,6 +1051,12 @@ def _resolve_on_graph(
             "entities": entities,
             "properties": graph.get("properties") or [],
         }
+
+    if not rels:
+        # Multiple governed entities were requested, but no governed
+        # relationship connects them. A single-table fallback would silently
+        # discard part of the question and falsely report a resolved plan.
+        return {**empty, "detected": detected}
 
     entities_map = {e["entity_name"]: e for e in entities}
     join_path    = find_join_path(detected, graph, prefer_fact_anchor=not anti_join)
@@ -1109,10 +1140,9 @@ def resolve_for_question(
     Main entry point called before SQL generation.
 
     Resolution order:
-      1. Admin-confirmed entities/relationships only (status != 'suggested').
-      2. If that yields nothing useful AND the client explicitly allows it
-         (client.graph_use_suggested, default off), fall back to the full
-         graph including unreviewed suggestions — logged when it happens.
+      1. Admin-confirmed (or legacy status-less) rows only.
+      2. Admin diagnostics may explicitly preview suggested rows. Rejected
+         rows never participate in either normal or diagnostic planning.
 
     use_suggested: override the per-client toggle (None = read client row).
 
@@ -1145,9 +1175,13 @@ def resolve_for_question(
         return empty
 
     confirmed = _confirmed_subgraph(graph)
-    has_suggested = (
-        len(confirmed["entities"]) < entity_count
-        or len(confirmed["relationships"]) < len(graph.get("relationships", []))
+    reviewable = _reviewable_subgraph(graph)
+    has_suggested = any(
+        str(row.get("status") or "").strip().lower() == "suggested"
+        for row in [
+            *(reviewable.get("entities") or []),
+            *(reviewable.get("relationships") or []),
+        ]
     )
 
     confirmed_result: dict = {}
@@ -1179,7 +1213,7 @@ def resolve_for_question(
         force_suggested = use_suggested is True
         if allow and (force_suggested or not confirmed_result.get("enabled")):
             full_result = _resolve_on_graph(
-                question, db_type, graph, intent,
+                question, db_type, reviewable, intent,
                 required_entities, metric_formula_tables, authoritative_fact_tables,
             )
             # Prefer the suggested-inclusive result only when it adds value

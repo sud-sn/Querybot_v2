@@ -121,6 +121,43 @@ class GraphReviewEndpointTests(unittest.TestCase):
         self.assertEqual(statuses[("FACT_SALES", "NET_AMT")], "confirmed")
         self.assertEqual(statuses[("FACT_OTHER", "NET_AMT")], "suggested")
 
+    def test_unified_bulk_reject_deactivates_entities_and_relationships(self):
+        import admin.routes as routes
+
+        for entity in ("FACT_SALES", "DIM_PRODUCT"):
+            self.store.save_entity(
+                self.account_id, entity, entity,
+                status="suggested", confidence_score=90,
+            )
+        self.store.save_relationship(
+            self.account_id, "FACT_SALES", "DIM_PRODUCT", "PRODUCT_ID", "PRODUCT_ID",
+            status="suggested", confidence_score=90,
+        )
+        req = _JsonRequest({
+            "action": "reject", "kinds": ["entity", "rel"],
+            "min_confidence": 85,
+        })
+
+        with patch.object(routes, "_is_auth", return_value=True):
+            resp = _arun(routes.graph_bulk_review(req, self.account_id))
+
+        body = json.loads(resp.body)
+        self.assertEqual(body["entities"], 2)
+        self.assertEqual(body["relationships"], 1)
+        with self.store.get_db() as conn:
+            entities = conn.execute(
+                "SELECT status, is_active FROM entity_graph WHERE account_id=?",
+                (self.account_id,),
+            ).fetchall()
+            relationships = conn.execute(
+                "SELECT status, is_active FROM entity_relationships WHERE account_id=?",
+                (self.account_id,),
+            ).fetchall()
+        self.assertTrue(all(row["status"] == "rejected" for row in entities))
+        self.assertTrue(all(row["is_active"] == 0 for row in entities))
+        self.assertTrue(all(row["status"] == "rejected" for row in relationships))
+        self.assertTrue(all(row["is_active"] == 0 for row in relationships))
+
 
 class GraphReviewUiWiringTests(unittest.TestCase):
     SRC = (ROOT / "admin/templates/client_graph.html").read_text(encoding="utf-8")

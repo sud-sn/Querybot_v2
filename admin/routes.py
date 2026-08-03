@@ -5248,9 +5248,14 @@ async def graph_bulk_review(request: Request, account_id: str):
                 status = "confirmed" if action == "accept" else "rejected"
                 for row in rows:
                     conn.execute(
-                        "UPDATE entity_graph SET status=?, confidence_score=? "
+                        "UPDATE entity_graph SET status=?, confidence_score=?, "
+                        "is_active=? "
                         "WHERE account_id=? AND entity_name=? AND status='suggested'",
-                        (status, 100 if action == "accept" else 0, account_id, row["entity_name"]),
+                        (
+                            status, 100 if action == "accept" else 0,
+                            1 if action == "accept" else 0,
+                            account_id, row["entity_name"],
+                        ),
                     )
                 counts["entities"] = len(rows)
         if "rel" in kinds:
@@ -5272,7 +5277,8 @@ async def graph_bulk_review(request: Request, account_id: str):
                         )
                     else:
                         conn.execute(
-                            "UPDATE entity_relationships SET status='rejected', confidence_score=0 "
+                            "UPDATE entity_relationships SET status='rejected', "
+                            "confidence_score=0, is_active=0 "
                             "WHERE account_id=? AND id=?",
                             (account_id, row["id"]),
                         )
