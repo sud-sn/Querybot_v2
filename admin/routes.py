@@ -4189,9 +4189,19 @@ async def graph_api_chat(request: Request, account_id: str):
 
     from core.schema import _normalize_schema as _ns
     master = _ns(json.loads(schema_path.read_text(encoding="utf-8")))
+    # Normalized schema snapshots may also contain top-level ``__*`` metadata
+    # arrays (foreign keys, discovery diagnostics, and similar catalog data).
+    # Graph Chat only accepts physical table manifests; treating a metadata
+    # list as a table previously raised ``AttributeError`` before a command
+    # could even be parsed.
     schema_manifest = {
-        fqn: [c.get("name", "") for c in info.get("columns", []) if c.get("name")]
+        fqn: [
+            str(column.get("name") or "")
+            for column in info.get("columns", [])
+            if isinstance(column, dict) and column.get("name")
+        ]
         for fqn, info in master.items()
+        if isinstance(info, dict) and not str(fqn).startswith("__")
     }
 
     from core.graph_commands import parse_explicit_graph_commands, parse_graph_command

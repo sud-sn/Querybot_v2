@@ -214,6 +214,25 @@ class GraphChatRouteTests(unittest.TestCase):
         self.assertEqual(store.get_entity(self.account_id, "F_ORDERS")["entity_type"], "fact")
         self.assertEqual(store.get_entity(self.account_id, "DIM_CUSTOMER")["entity_type"], "dimension")
 
+    def test_schema_metadata_arrays_are_not_treated_as_graph_tables(self):
+        schema_path = self.schema_dir / "_schema.json"
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        schema["__foreign_keys"] = [{
+            "parent_table": "F_ORDERS", "parent_column": "CUSTOMER_ID",
+            "referenced_table": "DIM_CUSTOMER", "referenced_column": "CUSTOMER_ID",
+        }]
+        schema_path.write_text(json.dumps(schema), encoding="utf-8")
+
+        with patch.object(routes, "_is_auth", return_value=True), patch(
+            "core.llm.llm_complete", new=AsyncMock(side_effect=AssertionError("LLM must not run")),
+        ):
+            resp = _arun(routes.graph_api_chat(
+                _fake_request("Change F_ORDERS from fact to bridge"), self.account_id,
+            ))
+        body = json.loads(bytes(resp.body))
+        self.assertEqual(body["status"], "ok")
+        self.assertEqual(store.get_entity(self.account_id, "F_ORDERS")["entity_type"], "bridge")
+
     def test_validator_failure_defers_validation_instead_of_returning_http_500(self):
         with patch.object(routes, "_is_auth", return_value=True), patch(
             "core.relationship_validator.validate_relationship",
@@ -270,7 +289,7 @@ class GraphChatTemplateWiringTests(unittest.TestCase):
     def test_new_thread_is_a_real_navigation_fallback(self):
         base = (ROOT / "portal" / "templates" / "portal_base.html").read_text(encoding="utf-8")
         self.assertIn('href="/portal/chat?new=1"', base)
-        self.assertIn("return startNewChat(event)", base)
+        self.assertNotIn("return startNewChat(event)", base)
 
 
 if __name__ == "__main__":

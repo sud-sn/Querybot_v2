@@ -3,8 +3,11 @@ from __future__ import annotations
 import logging
 import math
 import re
+from datetime import date, datetime
 from statistics import mean, median, stdev
 from typing import Any
+
+from core.display_formats import normalize_display_format
 
 log = logging.getLogger("querybot.response_builder")
 
@@ -38,21 +41,93 @@ _FORMAT_STOP_TOKENS = {
 }
 
 
-def _format_number(value: Any, fmt: str | None = None) -> str:
+_CURRENCY_SYMBOLS = {
+    "USD": "$", "INR": "₹", "EUR": "€", "GBP": "£",
+    "CAD": "CA$", "AUD": "A$", "JPY": "¥",
+}
+
+
+def _format_number(
+    value: Any,
+    fmt: str | None = None,
+    display_format: dict | None = None,
+) -> str:
     try:
         num = float(value)
     except (TypeError, ValueError):
         return str(value)
     if not math.isfinite(num):
         return str(value)
-    fmt = _normalise_result_format(fmt)
+    spec = normalize_display_format(display_format)
+    fmt = _normalise_result_format(spec.get("type") or fmt)
+    grouping = spec.get("grouping", True)
+    group_flag = "," if grouping else ""
+    digits = spec.get("fraction_digits")
+    if spec.get("style") == "compact" and abs(num) >= 1000:
+        for divisor, suffix in ((1_000_000_000, "B"), (1_000_000, "M"), (1_000, "K")):
+            if abs(num) >= divisor:
+                compact_digits = 1 if digits is None else digits
+                compact = f"{num / divisor:.{compact_digits}f}".rstrip("0").rstrip(".")
+                return f"{compact}{suffix}"
     if fmt == "currency":
-        return f"${num:,.2f}"
+        digits = 2 if digits is None else digits
+        code = str(spec.get("currency_code") or "USD")
+        symbol = _CURRENCY_SYMBOLS.get(code, f"{code} ")
+        absolute = f"{abs(num):{group_flag}.{digits}f}"
+        if num < 0 and spec.get("accounting"):
+            return f"({symbol}{absolute})"
+        return f"{'-' if num < 0 else ''}{symbol}{absolute}"
     if fmt == "percentage":
-        return f"{num:,.2f}%".replace(".00%", "%")
+        if spec.get("scale") == "fraction":
+            num *= 100
+        digits = 2 if digits is None else digits
+        rendered = f"{num:{group_flag}.{digits}f}"
+        return f"{rendered}%"
+    if digits is not None:
+        return f"{num:{group_flag}.{digits}f}"
     if abs(num) >= 1000:
         return f"{num:,.0f}" if num.is_integer() else f"{num:,.2f}"
     return f"{num:.0f}" if num.is_integer() else f"{num:.2f}"
+
+
+def _format_display_value(
+    value: Any,
+    fmt: str | None = None,
+    display_format: dict | None = None,
+) -> str:
+    spec = normalize_display_format(display_format)
+    if spec.get("type") == "date" or _normalise_result_format(fmt) == "date":
+        parsed: date | None = None
+        if isinstance(value, datetime):
+            parsed = value.date()
+        elif isinstance(value, date):
+            parsed = value
+        else:
+            text = str(value or "").strip()
+            match = re.match(r"^(\d{4})[-/](\d{1,2})(?:[-/](\d{1,2}))?", text)
+            if match:
+                try:
+                    parsed = date(int(match.group(1)), int(match.group(2)), int(match.group(3) or 1))
+                except ValueError:
+                    parsed = None
+        if parsed:
+            style = spec.get("style") or "iso"
+            if style == "month_year_short":
+                return parsed.strftime("%b-%y")
+            if style == "month_year_long":
+                return parsed.strftime("%B %Y")
+            if style == "day_month_year":
+                return parsed.strftime("%d-%m-%Y")
+            if style == "month_day_year":
+                return parsed.strftime("%m-%d-%Y")
+            if style == "day_month_name_year":
+                return parsed.strftime("%d-%b-%Y")
+            if style == "year":
+                return parsed.strftime("%Y")
+            if style == "month_name":
+                return parsed.strftime("%B")
+            return parsed.strftime("%Y-%m")
+    return _format_number(value, fmt, spec)
 
 
 def _numeric_cols(rows: list[dict]) -> list[str]:
@@ -551,9 +626,18 @@ def build_answer(
     question: str,
     result_scope: dict | None = None,
     column_formats: dict | None = None,
+    display_formats: dict | None = None,
 ) -> dict:
     scope = result_scope or infer_result_scope(rows, question)
     column_formats = column_formats or {}
+    display_formats = display_formats or {}
+
+    def format_value(value: Any, column: str) -> str:
+        return _format_display_value(
+            value,
+            column_formats.get(column),
+            display_formats.get(column),
+        )
     if not rows or detect_zero_match_result(rows):
         return {
             "headline": "No matching data was found for this question.",
@@ -568,7 +652,7 @@ def build_answer(
         issue = null_issue["issues"][0]
         metric_col = issue["metric_column"]
         fmt = column_formats.get(metric_col)
-        value = _format_number(_to_float(rows[0].get(metric_col)) or 0, fmt)
+        value = format_value(_to_float(rows[0].get(metric_col)) or 0, metric_col)
         metric_label = _display_label(metric_col)
         matched = null_issue["matched_rows"]
         return {
@@ -590,8 +674,8 @@ def build_answer(
         val = rows[0][col]
         fmt = column_formats.get(col)
         return {
-            "headline": f"{col.replace('_', ' ').title()}: {_format_number(val, fmt)}",
-            "short_value": _format_number(val, fmt),
+            "headline": f"{col.replace('_', ' ').title()}: {format_value(val, col)}",
+            "short_value": format_value(val, col),
             "comparison": scope.get("badge") or "Single-value result",
             "scope_badge": scope.get("badge", ""),
             "scope_note": scope.get("note", ""),
@@ -609,11 +693,12 @@ def build_answer(
             first_val = _to_float_z(first.get(value_col))
             last_val = _to_float_z(last.get(value_col))
             direction = "up" if last_val > first_val else "down" if last_val < first_val else "flat"
-            headline = f"{str(last.get(label_col, 'Latest period'))} closed at {_format_number(last_val, value_fmt)}."
-            comparison = scope.get("badge") or f"Trend is {direction} versus {_format_number(first_val, value_fmt)} at the start"
+            last_label = format_value(last.get(label_col, 'Latest period'), label_col)
+            headline = f"{last_label} closed at {format_value(last_val, value_col)}."
+            comparison = scope.get("badge") or f"Trend is {direction} versus {format_value(first_val, value_col)} at the start"
             return {
                 "headline": headline,
-                "short_value": _format_number(last_val, value_fmt),
+                "short_value": format_value(last_val, value_col),
                 "comparison": comparison,
                 "scope_badge": scope.get("badge", ""),
                 "scope_note": scope.get("note", ""),
@@ -623,18 +708,18 @@ def build_answer(
         best_value = _to_float_z(best.get(value_col))
         comparison = scope.get("badge") or f"Across {len(rows)} results"
         if scope.get("is_top_n") and (scope.get("n") or 0) == 1:
-            headline = f"Top-ranked result: {best_label} at {_format_number(best_value, value_fmt)}."
+            headline = f"Top-ranked result: {best_label} at {format_value(best_value, value_col)}."
             comparison = "This card shows only the leading row"
         else:
-            headline = f"{best_label} leads at {_format_number(best_value, value_fmt)}."
+            headline = f"{best_label} leads at {format_value(best_value, value_col)}."
         if len(ordered) > 1 and not scope.get("is_top_n"):
             second = ordered[1]
             second_value = _to_float_z(second.get(value_col))
             delta = best_value - second_value
-            comparison = f"{_format_number(delta, value_fmt)} above the next result"
+            comparison = f"{format_value(delta, value_col)} above the next result"
         return {
             "headline": headline,
-            "short_value": _format_number(best_value, value_fmt),
+            "short_value": format_value(best_value, value_col),
             "comparison": comparison,
             "scope_badge": scope.get("badge", ""),
             "scope_note": scope.get("note", ""),
@@ -646,8 +731,8 @@ def build_answer(
         values = [_to_float_z(r.get(col)) for r in rows]
         return {
             "headline": f"Returned {len(rows)} rows for {question.strip().rstrip('?') or 'this query'}.",
-            "short_value": _format_number(values[0], value_fmt),
-            "comparison": scope.get("badge") or f"Range {_format_number(min(values), value_fmt)} to {_format_number(max(values), value_fmt)}",
+            "short_value": format_value(values[0], col),
+            "comparison": scope.get("badge") or f"Range {format_value(min(values), col)} to {format_value(max(values), col)}",
             "scope_badge": scope.get("badge", ""),
             "scope_note": scope.get("note", ""),
         }
@@ -1490,12 +1575,19 @@ def build_assistant_response(
         display_context=display_context,
         explicit_formats=column_formats,
     )
+    headers: list[str] = list(visible_rows[0].keys()) if visible_rows else []
+    resolved_display_formats = {
+        header: dict(spec)
+        for header, spec in (display_formats or {}).items()
+        if header in headers and isinstance(spec, dict)
+    }
     answer_rows = raw_rows if (zero_match or null_issue) else visible_rows
     answer = build_answer(
         answer_rows,
         question,
         ctx.get("result_scope"),
         column_formats=resolved_column_formats,
+        display_formats=resolved_display_formats,
     )
     brief = compute_data_brief(
         visible_rows,
@@ -1515,19 +1607,11 @@ def build_assistant_response(
     # Frontend is the ONLY consumer of raw rows — LLM insight path never sees these.
     # We cap at 200 rows to keep WebSocket payload reasonable; full set is already
     # limited by run_query(max_rows=200).
-    headers: list[str] = []
     display_rows: list[dict] = []
     if visible_rows:
-        headers = list(visible_rows[0].keys())
         # Send formatted string values for reliable frontend display
         for r in visible_rows[:_PREVIEW_ROW_CAP]:
             display_rows.append({h: _safe_cell(r.get(h)) for h in headers})
-
-    resolved_display_formats = {
-        header: dict(spec)
-        for header, spec in (display_formats or {}).items()
-        if header in headers and isinstance(spec, dict)
-    }
     kpi = _build_kpi_payload(
         visible_rows,
         resolved_column_formats,

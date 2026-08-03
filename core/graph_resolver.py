@@ -1207,4 +1207,15 @@ def resolve_for_question(
         confirmed_result["graph_scope"] = "confirmed"
         return confirmed_result
 
-    return {**empty, "entity_count": entity_count}
+    result = {**empty, "entity_count": entity_count}
+    if has_suggested:
+        # Preserve enough current graph state for consumers to distinguish
+        # "there is no graph" from "the graph exists but is still review-only".
+        # In particular, cached SQL created before governance was tightened
+        # must not be reused merely because executable detection is empty.
+        result.update({
+            "entities": entities,
+            "graph_scope": "review_only",
+            "review_only": True,
+        })
+    return result

@@ -25,6 +25,45 @@ from core.semantic_model import (
 from core.validator import validate_sql_detailed
 
 
+class CatalogQualifiedFieldPlanValidationTests(unittest.TestCase):
+    def test_schema_qualified_sql_resolves_database_qualified_catalog_metadata(self):
+        tables = {
+            "CHATBOT_DB.PHARMA_LAB.F_RX_FILL": {
+                "BOOKED_DATE_ID": "int", "NET_REVENUE_AMT": "decimal",
+                "DELETED_RECORD_FLAG": "int", "REVERSAL_FLAG": "int", "FILL_STATUS": "varchar",
+            },
+            "CHATBOT_DB.PHARMA_LAB.D_DATE": {
+                "DATE_ID": "int", "CALENDAR_DATE": "date", "CALENDAR_YEAR": "int",
+            },
+        }
+        sql = """
+        SELECT FORMAT(d.CALENDAR_DATE, 'yyyy-MM') AS BOOKED_MONTH,
+               SUM(f.NET_REVENUE_AMT) AS NET_REVENUE
+        FROM PHARMA_LAB.F_RX_FILL f
+        JOIN PHARMA_LAB.D_DATE d ON f.BOOKED_DATE_ID = d.DATE_ID
+        WHERE d.CALENDAR_YEAR = 2025
+          AND f.DELETED_RECORD_FLAG = 0 AND f.REVERSAL_FLAG = 0
+          AND f.FILL_STATUS = 'DISPENSED'
+        GROUP BY FORMAT(d.CALENDAR_DATE, 'yyyy-MM')
+        """
+        semantic_plan = {
+            "enabled": True,
+            "fields": [
+                {"term": "Booked Date", "table": "PHARMA_LAB.D_DATE", "column": "CALENDAR_DATE"},
+                {"term": "net revenue", "table": "PHARMA_LAB.F_RX_FILL", "column": "NET_REVENUE_AMT"},
+            ],
+            "joins": [{
+                "from": "PHARMA_LAB.F_RX_FILL", "to": "PHARMA_LAB.D_DATE",
+                "conditions": [["BOOKED_DATE_ID", "DATE_ID"]],
+            }],
+        }
+        result = validate_sql_detailed(
+            sql, set(tables), "azure_sql", set(tables), tables,
+            {"semantic_plan": semantic_plan},
+        )
+        self.assertTrue(result.ok, result.reason)
+
+
 def _add_raw_date_role(kb_dir: str, fact_table: str, **overrides) -> None:
     """Directly inject a date_role entry into both the top-level and
     per-table lists, bypassing patch_date_role's field-existence validation

@@ -165,6 +165,28 @@ class KpiPresentationTests(unittest.TestCase):
         )
         self.assertEqual(payload["kpi"]["display_format"]["currency_code"], "INR")
         self.assertEqual(payload["kpi"]["display_format"]["fraction_digits"], 0)
+        self.assertEqual(payload["answer"]["headline"], "Revenue: ₹52,677")
+        self.assertEqual(payload["answer"]["short_value"], "₹52,677")
+
+    def test_answer_text_uses_requested_percentage_scale_and_date_style(self):
+        percentage = build_assistant_response(
+            question="what is margin", rows=[{"Margin": 0.126}],
+            sql="SELECT margin", duration_ms=20,
+            column_formats={"Margin": "percentage"},
+            display_formats={"Margin": {
+                "type": "percentage", "scale": "fraction",
+                "fraction_digits": 1, "grouping": True,
+            }},
+        )
+        self.assertEqual(percentage["answer"]["short_value"], "12.6%")
+
+        period = build_assistant_response(
+            question="show the period", rows=[{"Period": "2026-08"}],
+            sql="SELECT period", duration_ms=20,
+            column_formats={"Period": "date"},
+            display_formats={"Period": {"type": "date", "style": "month_year_short"}},
+        )
+        self.assertEqual(period["answer"]["short_value"], "Aug-26")
 
 
 class DateRoleCoverageTests(unittest.TestCase):

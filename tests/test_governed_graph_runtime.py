@@ -25,6 +25,9 @@ def test_suggested_graph_is_review_only_for_normal_sql_generation():
         graph=_graph("suggested"), intent={"wants_missing_records": True},
     )
     assert result["enabled"] is False
+    assert result["review_only"] is True
+    assert result["graph_scope"] == "review_only"
+    assert len(result["entities"]) == 2
 
 
 def test_admin_diagnostic_can_explicitly_preview_suggested_graph():

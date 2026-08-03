@@ -63,17 +63,10 @@
       </button>
     </div>
 
-    {% if '/chat' in request.url.path %}
-    <a href="/portal/chat?new=1" class="portal-new-thread" onclick="return startNewChat(event)" aria-label="New Thread" title="New Thread">
-      <span class="portal-new-thread-icon" aria-hidden="true">+</span>
-      <span>New Thread</span>
-    </a>
-    {% else %}
     <a href="/portal/chat?new=1" class="portal-new-thread" aria-label="New Thread" title="New Thread">
       <span class="portal-new-thread-icon" aria-hidden="true">+</span>
       <span>New Thread</span>
     </a>
-    {% endif %}
 
     <nav class="portal-nav" aria-label="Primary">
       <a href="/portal/chat" title="Chat" class="{% if '/chat' in request.url.path %}active{% endif %}">

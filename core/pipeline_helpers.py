@@ -866,6 +866,12 @@ def reused_plan_is_stale_for_graph(sql: str, graph_ctx: dict | None, db_type: st
     from real tables. Any error leaves existing reuse behavior unchanged.
     """
     graph_ctx = graph_ctx or {}
+    if graph_ctx.get("review_only"):
+        # No unreviewed edge may become executable indirectly through an old
+        # cached plan. Fresh generation can still use the governed KB and
+        # semantic model, but it must do so without inheriting historical graph
+        # joins that the current resolver deliberately excluded.
+        return True
     if not graph_ctx.get("enabled"):
         return False
     detected = set(graph_ctx.get("detected") or [])

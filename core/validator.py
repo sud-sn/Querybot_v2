@@ -602,6 +602,19 @@ def _pick_table_key(variants: list[str], table_columns: dict[str, dict[str, str]
     for variant in variants:
         if variant in table_columns:
             return variant
+    # A client catalog may retain database-qualified keys while generated SQL
+    # intentionally uses schema.table (or vice versa). Authorization already
+    # treats those as the same physical table via suffix matching; column and
+    # semantic-plan validation must resolve aliases with the identical rule.
+    # Prefer the most-qualified unique catalog entry so downstream lookups use
+    # the real discovered column metadata instead of an unresolved bare name.
+    suffix_matches = {
+        table_key
+        for table_key in table_columns
+        if any(_table_matches(table_key, variant) for variant in variants)
+    }
+    if len(suffix_matches) == 1:
+        return next(iter(suffix_matches))
     return variants[-1] if variants else ""
 
 

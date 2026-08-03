@@ -315,6 +315,13 @@ class ReusedPlanStalenessGuardTests(unittest.TestCase):
     def test_no_check_when_graph_disabled(self):
         self.assertFalse(self._stale("SELECT 1 FROM ANYTHING", {"enabled": False}))
 
+    def test_review_only_graph_always_invalidates_historical_plan(self):
+        self.assertTrue(self._stale(
+            "SELECT COUNT(*) FROM PHARMA_LAB.F_RX_ORDER o "
+            "JOIN PHARMA_LAB.BR_RX_DIAGNOSIS b ON b.RX_ORDER_ID = o.RX_ORDER_ID",
+            {"enabled": False, "review_only": True, "entities": self.graph_ctx["entities"]},
+        ))
+
     def test_no_check_when_nothing_detected(self):
         self.assertFalse(self._stale("SELECT 1 FROM ANYTHING", {"enabled": True, "detected": []}))
 
