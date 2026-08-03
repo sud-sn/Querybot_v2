@@ -245,6 +245,9 @@ def _is_sensitive_field(name: str) -> bool:
         catches: CamelCase without separators: FirstName, PatientID, PostalCode
     """
     _norm     = re.sub(r"[^a-z0-9]+", "_", (name or "").lower())
+    from core.compliance.classifier import is_non_person_catalog_name
+    if is_non_person_catalog_name(_norm):
+        return False
     _bare     = _norm.replace("_", "")        # "postalcode", "medicalrecordnumber"
     keywords  = [
         # Personal names

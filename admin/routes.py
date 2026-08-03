@@ -4194,38 +4194,158 @@ async def graph_api_chat(request: Request, account_id: str):
         for fqn, info in master.items()
     }
 
-    from core.graph_commands import parse_graph_command
-    from core.llm import llm_complete, resolve_provider
-    from core.llm_audit import llm_audit_scope, make_llm_audit_request_id
+    from core.graph_commands import parse_explicit_graph_commands, parse_graph_command
+    commands, error = parse_explicit_graph_commands(message, schema_manifest)
+    if not commands and not error:
+        from core.llm import llm_complete, resolve_provider
+        from core.llm_audit import llm_audit_scope, make_llm_audit_request_id
 
-    provider, model_name, api_key, az_kw = resolve_provider(client)
+        provider, model_name, api_key, az_kw = resolve_provider(client)
 
-    async def _complete(**kwargs):
-        return await llm_complete(
-            provider=provider, model=model_name, api_key=api_key, **kwargs, **az_kw,
-        )
+        async def _complete(**kwargs):
+            return await llm_complete(
+                provider=provider, model=model_name, api_key=api_key, **kwargs, **az_kw,
+            )
 
-    request_id = make_llm_audit_request_id()
-    with llm_audit_scope(
-        account_id=account_id,
-        question=f"Entity Graph chat command for {account_id}",
-        enabled=bool(client.get("enable_llm_audit")),
-        request_id=request_id,
-        question_id=request_id,
-        component="graph_chat_command",
-    ):
-        try:
-            command, error = await parse_graph_command(message, schema_manifest, _complete)
-        except Exception as exc:
-            log.warning("graph_api_chat: parse failed for %s: %s", account_id, exc)
-            return JSONResponse({"status": "clarify", "message": "Could not process that mapping right now."})
+        request_id = make_llm_audit_request_id()
+        with llm_audit_scope(
+            account_id=account_id,
+            question=f"Entity Graph chat command for {account_id}",
+            enabled=bool(client.get("enable_llm_audit")),
+            request_id=request_id,
+            question_id=request_id,
+            component="graph_chat_command",
+        ):
+            try:
+                command, error = await parse_graph_command(message, schema_manifest, _complete)
+                commands = [command] if command else []
+            except Exception as exc:
+                log.warning("graph_api_chat: parse failed for %s: %s", account_id, exc)
+                return JSONResponse({"status": "clarify", "message": "Could not process that mapping right now."})
 
-    if command is None:
+    if not commands:
         return JSONResponse({
             "status": "clarify",
             "message": error or "Could not understand that mapping -- try naming the table and column explicitly.",
         })
 
+    async def _stage(command):
+        conf_pct = max(0, min(100, int(round(command.confidence * 100))))
+
+        def _find_entity(table_fqn: str):
+            parts = table_fqn.split(".")
+            table_name = parts[-1]
+            schema_name = parts[-2] if len(parts) >= 2 else ""
+            return next((
+                ent for ent in store.list_entities(account_id, active_only=False)
+                if (ent.get("table_name") or "").upper() == table_name.upper()
+                and (not schema_name or (ent.get("schema_name") or "").upper() == schema_name.upper())
+            ), None)
+
+        def _ensure_entity(table_fqn: str) -> str:
+            existing = _find_entity(table_fqn)
+            if existing:
+                return existing["entity_name"]
+            parts = table_fqn.split(".")
+            table_name = parts[-1]
+            schema_name = parts[-2] if len(parts) >= 2 else ""
+            store.save_entity(
+                account_id, entity_name=table_name, table_name=table_name,
+                schema_name=schema_name, status="suggested",
+                confidence_score=conf_pct, generated_by="chat",
+                reason=f'Auto-registered from chat: "{message[:200]}"',
+            )
+            return table_name
+
+        if command.action == "register_entity":
+            parts = command.table_name.split(".")
+            table_name = parts[-1]
+            schema_name = command.schema_name or (parts[-2] if len(parts) >= 2 else "")
+            entity_type = (
+                command.where_clause.split(":", 1)[1]
+                if command.where_clause.startswith("entity_type:") else "dimension"
+            )
+            existing = _find_entity(command.table_name)
+            if existing and (existing.get("status") or "confirmed") != "suggested":
+                return {"kind": "entity", "status": "confirmed_unchanged"}
+            store.save_entity(
+                account_id,
+                entity_name=(existing or {}).get("entity_name") or command.entity_name,
+                table_name=table_name, schema_name=schema_name,
+                pk_column=(existing or {}).get("pk_column") or "",
+                display_name=(existing or {}).get("display_name") or "",
+                description=(existing or {}).get("description") or "",
+                entity_type=entity_type,
+                is_active=int((existing or {}).get("is_active", 1)),
+                pos_x=float((existing or {}).get("pos_x") or 120),
+                pos_y=float((existing or {}).get("pos_y") or 120),
+                color=(existing or {}).get("color") or "#4F86C6",
+                status="suggested", confidence_score=conf_pct,
+                entity_filter=(existing or {}).get("entity_filter") or "",
+                generated_by="chat", reason=f'Suggested from chat: "{message[:200]}"',
+            )
+            return {"kind": "entity", "status": "suggested"}
+
+        from_entity = _ensure_entity(command.from_table)
+        to_entity = _ensure_entity(command.to_table)
+        existing_rel = next((
+            rel for rel in store.list_relationships(account_id, active_only=False)
+            if rel.get("from_entity") == from_entity and rel.get("to_entity") == to_entity
+            and (rel.get("from_column") or "").upper() == command.from_column.upper()
+            and (rel.get("to_column") or "").upper() == command.to_column.upper()
+        ), None)
+        if existing_rel and (existing_rel.get("status") or "confirmed") != "suggested":
+            return {"kind": "relationship", "status": "confirmed_unchanged"}
+        rel_id = store.save_relationship(
+            account_id, from_entity=from_entity, to_entity=to_entity,
+            from_column=command.from_column, to_column=command.to_column,
+            relationship_type=command.relationship_type, join_type=command.join_type,
+            where_clause=command.where_clause, status="suggested",
+            confidence_score=conf_pct, generated_by="chat",
+            reason=f'Suggested from chat: "{message[:200]}"',
+            rel_id=int((existing_rel or {}).get("id") or 0),
+        )
+        validation_status = "untested"
+        try:
+            from core.relationship_validator import validate_relationship
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(
+                None, lambda: validate_relationship(account_id, rel_id, execute=False),
+            )
+            validation_status = result.status
+            store.update_relationship_validation(
+                account_id, rel_id, result.status,
+                row_count_estimate=result.row_count_estimate,
+                join_multiplicity=result.join_multiplicity, match_rate=result.match_rate,
+                orphan_rate=result.orphan_rate, null_fk_rate=result.null_fk_rate,
+                fanout_ratio=result.fanout_ratio,
+            )
+        except Exception as exc:
+            # Staging metadata must remain available for human review even when
+            # the optional validator cannot reach the tenant database.
+            log.warning("graph_api_chat: relationship %s validation deferred: %s", rel_id, exc)
+        return {"kind": "relationship", "status": validation_status}
+
+    staged = [await _stage(item) for item in commands]
+    entity_count = sum(item["kind"] == "entity" and item["status"] == "suggested" for item in staged)
+    relationship_count = sum(item["kind"] == "relationship" and item["status"] != "confirmed_unchanged" for item in staged)
+    unchanged_count = sum(item["status"] == "confirmed_unchanged" for item in staged)
+    return JSONResponse({
+        "status": "ok",
+        "message": (
+            f"Staged {entity_count} entity mapping(s) and {relationship_count} relationship(s) "
+            "for review. Nothing affects SQL until an administrator confirms it."
+            + (f" {unchanged_count} confirmed graph mapping(s) were left unchanged." if unchanged_count else "")
+        ),
+        "review_queue_url": f"/clients/{account_id}/graph#review",
+        "validation_status": next((item["status"] for item in reversed(staged) if item["kind"] == "relationship"), "untested"),
+        "validation_statuses": [item["status"] for item in staged if item["kind"] == "relationship"],
+        "staged": {"entities": entity_count, "relationships": relationship_count},
+    })
+
+    # Legacy single-command implementation retained below only for source
+    # compatibility; all commands now return through the batch-safe path above.
+    command = commands[0]
     conf_pct = max(0, min(100, int(round(command.confidence * 100))))
     review_queue_url = f"/clients/{account_id}/graph#review"
 

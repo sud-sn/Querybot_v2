@@ -478,9 +478,13 @@ class ClassificationTests(unittest.TestCase):
             "MONTH_NAME", "DAY_NAME", "QUARTER_NAME", "WEEKDAY_NAME",
             "CATEGORY_NAME", "PRODUCT_NAME", "REGION_NAME", "STATUS_NAME",
             "SCHEMA_NAME", "TABLE_NAME", "PLAN_NAME", "BRAND_NAME",
-            "COUNTRY_NAME", "CITY_NAME",
+            "COUNTRY_NAME", "CITY_NAME", "GENERIC_NAME", "DRUG_NAME",
+            "MEDICATION_NAME", "INGREDIENT_NAME", "THERAPEUTIC_CLASS_NAME",
         ):
-            self.assertNotIn("PII", classify_column(col, "healthcare_pharmacy")["tags"], col)
+            result = classify_column(col, "healthcare_pharmacy")
+            self.assertNotIn("PII", result["tags"], col)
+            if col in {"GENERIC_NAME", "DRUG_NAME", "MEDICATION_NAME", "INGREDIENT_NAME"}:
+                self.assertNotIn("PRESCRIPTION", result["tags"], col)
 
         # The exclusion is narrow and content-based, not a blanket carve-out
         # for anything ending in "name" — genuine person-name columns must

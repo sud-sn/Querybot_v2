@@ -153,6 +153,19 @@ class KpiPresentationTests(unittest.TestCase):
         self.assertIsNone(payload["kpi"])
         self.assertIn("No matching data", payload["answer"]["headline"])
 
+    def test_kpi_carries_currency_override_and_precision(self):
+        payload = build_assistant_response(
+            question="what is revenue", rows=[{"Revenue": 52677.25}],
+            sql="SELECT revenue", duration_ms=20,
+            column_formats={"Revenue": "currency"},
+            display_formats={"Revenue": {
+                "type": "currency", "currency_code": "INR",
+                "fraction_digits": 0, "grouping": True,
+            }},
+        )
+        self.assertEqual(payload["kpi"]["display_format"]["currency_code"], "INR")
+        self.assertEqual(payload["kpi"]["display_format"]["fraction_digits"], 0)
+
 
 class DateRoleCoverageTests(unittest.TestCase):
     def test_native_dates_are_covered_and_encoded_candidates_are_reported(self):

@@ -943,6 +943,7 @@ def _anti_join_anchor(question: str, detected: list[str], entities_map: dict[str
     )
     prefix = normalized[: marker.start()] if marker else normalized
     prefix_tokens = _tokens(prefix)
+    generic = {"fact", "dim", "dimension", "bridge", "table", "data", "rx"}
     ranked: list[tuple[int, int, str]] = []
     for index, name in enumerate(detected):
         entity = entities_map.get(name, {})
@@ -953,7 +954,10 @@ def _anti_join_anchor(question: str, detected: list[str], entities_map: dict[str
         ]
         score = 0
         for phrase in phrases:
-            words = [word for word in _normalize(phrase).split() if len(word) >= 3]
+            words = [
+                word for word in _tokens(phrase)
+                if len(word) >= 3 and word not in generic
+            ]
             if not words:
                 continue
             matched = sum(1 for word in words if word in prefix_tokens)
@@ -1163,7 +1167,10 @@ def resolve_for_question(
             return confirmed_result
 
     if has_suggested:
-        allow = use_suggested if use_suggested is not None else _client_allows_suggested(account_id)
+        # Suggested rows are review evidence, not executable governance.  The
+        # explicit override is reserved for admin diagnostics and previews;
+        # normal SQL generation passes None and can use confirmed rows only.
+        allow = use_suggested is True
         # A confirmed anchor is an executable governed plan. Do not replace it
         # merely because suggested rows can produce a larger join: "more
         # detected entities" is not evidence that the extra tables are needed,
@@ -1192,7 +1199,7 @@ def resolve_for_question(
         else:
             log.info(
                 "Graph resolver: suggested-only graph content skipped for %r "
-                "(client.graph_use_suggested=0)", question[:60],
+                "(review-only; no explicit diagnostic override)", question[:60],
             )
 
     if confirmed_result.get("enabled"):

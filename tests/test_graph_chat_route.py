@@ -198,6 +198,51 @@ class GraphChatRouteTests(unittest.TestCase):
         self.assertEqual(body["status"], "clarify")
         self.assertIn("Discover", body["message"])
 
+    def test_batch_explicit_mapping_is_schema_validated_and_staged_without_llm(self):
+        message = "\n".join([
+            "F_ORDERS is a fact",
+            "DIM_CUSTOMER is a dimension",
+            "F_ORDERS.CUSTOMER_ID -> DIM_CUSTOMER.CUSTOMER_ID many-to-one",
+        ])
+        with patch.object(routes, "_is_auth", return_value=True), patch(
+            "core.llm.llm_complete", new=AsyncMock(side_effect=AssertionError("LLM must not run")),
+        ):
+            resp = _arun(routes.graph_api_chat(_fake_request(message), self.account_id))
+        body = json.loads(bytes(resp.body))
+        self.assertEqual(body["status"], "ok")
+        self.assertEqual(body["staged"], {"entities": 2, "relationships": 1})
+        self.assertEqual(store.get_entity(self.account_id, "F_ORDERS")["entity_type"], "fact")
+        self.assertEqual(store.get_entity(self.account_id, "DIM_CUSTOMER")["entity_type"], "dimension")
+
+    def test_validator_failure_defers_validation_instead_of_returning_http_500(self):
+        with patch.object(routes, "_is_auth", return_value=True), patch(
+            "core.relationship_validator.validate_relationship",
+            side_effect=RuntimeError("database temporarily unavailable"),
+        ):
+            resp = _arun(routes.graph_api_chat(
+                _fake_request("F_ORDERS.CUSTOMER_ID -> DIM_CUSTOMER.CUSTOMER_ID"),
+                self.account_id,
+            ))
+        body = json.loads(bytes(resp.body))
+        self.assertEqual(body["status"], "ok")
+        self.assertEqual(body["validation_status"], "untested")
+        self.assertEqual(len(store.list_relationships(self.account_id, active_only=False)), 1)
+
+    def test_chat_never_downgrades_a_confirmed_entity(self):
+        store.save_entity(
+            self.account_id, "Orders", "F_ORDERS", schema_name="DBO",
+            entity_type="fact", status="confirmed", generated_by="manual",
+        )
+        with patch.object(routes, "_is_auth", return_value=True):
+            resp = _arun(routes.graph_api_chat(
+                _fake_request("Change F_ORDERS from fact to bridge"), self.account_id,
+            ))
+        body = json.loads(bytes(resp.body))
+        entity = store.get_entity(self.account_id, "Orders")
+        self.assertEqual(entity["status"], "confirmed")
+        self.assertEqual(entity["entity_type"], "fact")
+        self.assertIn("left unchanged", body["message"])
+
 
 class GraphChatTemplateWiringTests(unittest.TestCase):
     def setUp(self):
@@ -221,6 +266,11 @@ class GraphChatTemplateWiringTests(unittest.TestCase):
         block = self.source[start:end]
         self.assertIn("Refresh to review", block)
         self.assertNotIn("location.reload()\n", block.split("Refresh to review")[0])
+
+    def test_new_thread_is_a_real_navigation_fallback(self):
+        base = (ROOT / "portal" / "templates" / "portal_base.html").read_text(encoding="utf-8")
+        self.assertIn('href="/portal/chat?new=1"', base)
+        self.assertIn("return startNewChat(event)", base)
 
 
 if __name__ == "__main__":

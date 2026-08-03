@@ -931,6 +931,8 @@ def _refresh_chart(
             or bool(required_aggregate - aggregate_sources)
         ):
             raise PermissionError(chart_decision.explanation or "Chart blocked by data policy.")
+        from core.result_renderer import _sanitize_rows
+        rows = _sanitize_rows(rows)
         result["row_count"] = len(rows)
         if rows:
             try:

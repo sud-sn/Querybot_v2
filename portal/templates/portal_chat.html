@@ -4432,17 +4432,14 @@ function toggleConversationRail(forceCollapsed) {
   }
 }
 
-function startNewChat() {
-  if (processingActive) {
-    toast('Stop the current query before starting a new chat');
-    return;
-  }
+function startNewChat(event) {
+  if (event) event.preventDefault();
   clearChatCache();
   _localHistory = [];
   _saveHistory([]);
   try { localStorage.setItem(THREAD_STORAGE_KEY, _createThreadId()); } catch (_) {}
-  const cleanUrl = location.pathname;
-  location.replace(cleanUrl);
+  location.assign('/portal/chat?new=1');
+  return false;
 }
 
 function _historyDate(item) {

@@ -89,17 +89,22 @@ def execute_dashboard_source(
         table_columns=table_columns,
         allowed_tables=store.get_allowed_tables(viewer),
     )
+    # pyodbc returns Decimal/date values for common aggregates. Dashboard
+    # sources cross a JSON boundary both when cached and when rendered, so
+    # normalize once here instead of letting driver-specific values leak.
+    from core.result_renderer import _sanitize_rows
+    safe_rows = _sanitize_rows(list(governed.rows or []))
     if is_owner and not active_values:
         ttl = int(getattr(governed.decision, "cache_ttl_seconds", 0) or 600)
         store.save_source_cache(
             source,
-            governed.rows,
+            safe_rows,
             policy_version=policy_version,
             contract_version=contract_version,
             ttl_seconds=ttl,
         )
     return DashboardSourceResult(
-        rows=list(governed.rows or []),
+        rows=safe_rows,
         sql=str(governed.sql or compiled.sql),
         applied_filters=compiled.applied,
         ignored_filters=compiled.ignored,

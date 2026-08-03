@@ -1,3 +1,5 @@
+from datetime import date
+from decimal import Decimal
 from types import SimpleNamespace
 
 import core.dashboard_refresh as refresh
@@ -65,3 +67,24 @@ def test_team_viewer_executes_live_under_their_acl_and_filters(monkeypatch):
     assert result.applied_filters == ("region",)
     assert "qb_dashboard_source" in calls["sql"]
     assert calls["allowed_tables"] == {"sales"}
+
+
+def test_owner_decimal_and_date_rows_are_json_safe_before_cache(monkeypatch):
+    _common_mocks(monkeypatch)
+    monkeypatch.setattr(refresh.store, "get_source_cache", lambda *args: None)
+    captured = {}
+
+    def governed(*args, **kwargs):
+        return SimpleNamespace(
+            rows=[{"period": date(2026, 1, 1), "revenue": Decimal("52677.25")}],
+            sql=args[2], decision=SimpleNamespace(cache_ttl_seconds=600),
+        )
+
+    monkeypatch.setattr("core.compliance.governed_query.execute_governed_query", governed)
+    monkeypatch.setattr(
+        refresh.store, "save_source_cache",
+        lambda source, rows, **kwargs: captured.setdefault("rows", rows),
+    )
+    result = refresh.execute_dashboard_source(SOURCE, OWNER)
+    assert result.rows == [{"period": "2026-01-01", "revenue": 52677.25}]
+    assert captured["rows"] == result.rows

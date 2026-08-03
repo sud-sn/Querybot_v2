@@ -58,6 +58,88 @@ class GraphCommandInput:
     user_prompt: str
 
 
+def parse_explicit_graph_commands(
+    text: str,
+    schema_manifest: dict[str, list[str]],
+) -> tuple[list[GraphEditCommand], str]:
+    """Parse schema-validated, paste-friendly graph mappings without an LLM.
+
+    Supports multiple lines such as ``F_ORDER is a fact`` and
+    ``F_ORDER.CUSTOMER_ID -> D_CUSTOMER.CUSTOMER_ID``. Unqualified table
+    names are accepted only when unique in the discovered schema.
+    """
+    raw = str(text or "").strip()
+    if not raw:
+        return [], ""
+    table_by_norm = {_normalise(table): table for table in schema_manifest}
+    bare_tables: dict[str, list[str]] = {}
+    for table in schema_manifest:
+        bare_tables.setdefault(_normalise(table.split(".")[-1]), []).append(table)
+
+    def resolve_table(value: str) -> str:
+        cleaned = str(value or "").strip().strip("[]`\"")
+        exact = table_by_norm.get(_normalise(cleaned), "")
+        if exact:
+            return exact
+        matches = bare_tables.get(_normalise(cleaned), [])
+        return matches[0] if len(matches) == 1 else ""
+
+    def split_field(value: str) -> tuple[str, str]:
+        parts = [part.strip().strip("[]`\"") for part in value.strip().split(".")]
+        if len(parts) < 2:
+            return "", ""
+        table = resolve_table(".".join(parts[:-1])) or resolve_table(parts[-2])
+        columns = {_normalise(col): col for col in schema_manifest.get(table, [])}
+        return table, columns.get(_normalise(parts[-1]), "")
+
+    commands: list[GraphEditCommand] = []
+    explicit_seen = False
+    chunks = [part.strip(" \t-*\u2022") for part in re.split(r"[\r\n;]+", raw) if part.strip()]
+    for chunk in chunks:
+        join_match = re.search(
+            r"([\[\]`\"A-Za-z0-9_.]+)\s*(?:->|=>|=|\bjoins?\s+(?:to\s+)?|\bmaps?\s+(?:to\s+)?)\s*"
+            r"([\[\]`\"A-Za-z0-9_.]+)", chunk, flags=re.I,
+        )
+        if join_match and "." in join_match.group(1) and "." in join_match.group(2):
+            explicit_seen = True
+            from_table, from_column = split_field(join_match.group(1))
+            to_table, to_column = split_field(join_match.group(2))
+            if not all((from_table, from_column, to_table, to_column)):
+                return [], f'Could not match this mapping to the discovered schema: "{chunk}".'
+            join_type_match = re.search(r"\b(inner|left|right|full)\b", chunk, re.I)
+            rel_match = re.search(
+                r"\b(one[_ -]to[_ -]one|one[_ -]to[_ -]many|many[_ -]to[_ -]one|many[_ -]to[_ -]many)\b",
+                chunk, re.I,
+            )
+            commands.append(GraphEditCommand(
+                action="create_join", from_table=from_table, to_table=to_table,
+                from_column=from_column, to_column=to_column,
+                join_type=join_type_match.group(1).upper() if join_type_match else "LEFT",
+                relationship_type=(re.sub(r"[ -]", "_", rel_match.group(1).lower()) if rel_match else "many_to_one"),
+                confidence=1.0,
+            ))
+            continue
+
+        type_match = re.search(
+            r"(?:change\s+)?([\[\]`\"A-Za-z0-9_.]+)\s+(?:from\s+\w+\s+)?(?:is|as|to|=)\s+(?:an?\s+)?"
+            r"(fact|dimension|bridge|date(?:[_ -]?role)?)\b",
+            chunk, flags=re.I,
+        )
+        if type_match:
+            explicit_seen = True
+            table = resolve_table(type_match.group(1))
+            if not table:
+                return [], f'Could not find table "{type_match.group(1)}" in the discovered schema.'
+            entity_type = type_match.group(2).lower().replace(" ", "_").replace("-", "_")
+            commands.append(GraphEditCommand(
+                action="register_entity", table_name=table,
+                entity_name=table.split(".")[-1],
+                where_clause=f"entity_type:{entity_type}", confidence=1.0,
+            ))
+
+    return (commands, "") if commands else ([], "" if not explicit_seen else "No valid graph mappings were found.")
+
+
 def build_graph_command_input(
     text: str,
     schema_manifest: dict[str, list[str]],

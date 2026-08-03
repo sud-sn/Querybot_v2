@@ -2994,6 +2994,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     "- Keep the user's filter value unchanged.\n"
                 )
             elif last_code == "surrogate_date_conversion":
+                _date_contract_lines = _governed_date_anchor_repair_lines(_semantic_plan or {})
                 validation_repair_note = (
                     "\nSURROGATE DATE-KEY REPAIR REQUIRED:\n"
                     "- The flagged column is a sequential surrogate key, not an encoded calendar date — "
@@ -3004,6 +3005,8 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     "- If no exact table/column is named above, find the date dimension's real calendar column "
                     "verbatim in the schema context (KB documents / table columns in this prompt). "
                     "Do NOT invent, abbreviate, or guess a column name (e.g. 'YR') that does not appear there.\n"
+                    + ("- Copy this governed date-role contract exactly:\n" + _date_contract_lines
+                       if _date_contract_lines else "")
                 )
             elif last_code in {"temporal_anchor_missing", "temporal_anchor_mismatch", "temporal_role_mismatch", "temporal_anchor_unscoped"}:
                 _date_contract_lines = _governed_date_anchor_repair_lines(_semantic_plan or {})

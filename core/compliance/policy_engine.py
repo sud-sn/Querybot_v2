@@ -91,6 +91,10 @@ def _classification_for_resource(
     resource_key = resource.key.upper()
     direct = classification_map.get(resource_key)
     if direct:
+        if not direct.get("reviewed"):
+            from core.compliance.classifier import classify_column, is_non_person_catalog_name
+            if is_non_person_catalog_name(resource.column):
+                return classify_column(resource.column, "healthcare_pharmacy")
         return direct
     table_parts = resource.table.upper().split(".")
     for key, value in classification_map.items():
@@ -99,8 +103,16 @@ def _classification_for_resource(
             continue
         classified_table = key_parts[:-1]
         if classified_table[-len(table_parts):] == table_parts:
+            if not value.get("reviewed"):
+                from core.compliance.classifier import classify_column, is_non_person_catalog_name
+                if is_non_person_catalog_name(resource.column):
+                    return classify_column(resource.column, "healthcare_pharmacy")
             return value
         if table_parts[-len(classified_table):] == classified_table:
+            if not value.get("reviewed"):
+                from core.compliance.classifier import classify_column, is_non_person_catalog_name
+                if is_non_person_catalog_name(resource.column):
+                    return classify_column(resource.column, "healthcare_pharmacy")
             return value
     return None
 

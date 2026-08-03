@@ -21,9 +21,15 @@ import store
 _NON_PERSON_NAME_RE = re.compile(
     r"^(?:month|day|week|quarter|year|date|weekday|"
     r"category|product|region|schema|table|column|group|status|type|"
-    r"plan|brand|channel|segment|class|tier|state|country|city|currency)s?[\s_]*name$",
+    r"plan|brand|generic|drug|medication|medicine|ingredient|compound|therapeutic|therapeutic[_\s]*class|"
+    r"channel|segment|class|tier|state|country|city|currency)s?[\s_]*name$",
     re.I,
 )
+
+
+def is_non_person_catalog_name(column_name: str) -> bool:
+    """True for an unambiguous catalog/calendar label, never a person name."""
+    return bool(_NON_PERSON_NAME_RE.match(str(column_name or "")))
 # The non-"name" PII alternatives, split out so a column matching the
 # non-person allowlist above can still be tagged PII if it independently
 # matches one of these (e.g. a hypothetical "PATIENT_MONTH_NAME" would still
@@ -119,6 +125,10 @@ def classify_column(column_name: str, industry: str) -> dict:
         ):
             continue  # e.g. MONTH_NAME — a calendar attribute, not a person's name
         tags.append(tag)
+    if is_non_person_catalog_name(column_name):
+        # A drug/product label is business catalog data, not a prescription or
+        # identity merely because its column contains "drug" or "name".
+        tags = [tag for tag in tags if tag not in {"PII", "PRESCRIPTION"}]
     if industry == "banking":
         tags = [tag for tag in tags if tag not in {"PHI", "PRESCRIPTION", "PAYMENT"}]
     elif industry == "healthcare_pharmacy":
