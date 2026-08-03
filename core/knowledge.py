@@ -57,7 +57,7 @@ def _inject_deterministic_synonyms(kb_text: str, table_cols: list[str], vocab=No
 
     # ── Step 1: find which columns already have synonym rows ─────────────────
     in_synonyms = False
-    covered_cols: set[str] = set()
+    covered_terms: dict[str, set[str]] = {}
     for line in lines:
         stripped = line.strip()
         if stripped.startswith("## "):
@@ -70,20 +70,38 @@ def _inject_deterministic_synonyms(kb_text: str, table_cols: list[str], vocab=No
             if len(cells) >= 2:
                 col = cells[1].strip("` ").upper()
                 if col:
-                    covered_cols.add(col)
+                    term = re.sub(r"\s+", " ", cells[0].strip("` ").lower())
+                    covered_terms.setdefault(col, set()).add(term)
 
     # ── Step 2: build missing rows ────────────────────────────────────────────
     missing_rows: list[str] = []
     for col in table_cols:
         col_upper = col.upper()
-        if col_upper in covered_cols:
-            continue
+        from core.identifier_intelligence import analyze_identifier
+        from core.date_roles import detect_date_role, generated_date_role_synonyms
+        analysis = analyze_identifier(col, vocab=vocab)
+        aliases: list[str] = list(analysis.aliases) if analysis.confidence >= 70 else []
         entry = column_dict.get(col_upper)
-        if not entry:
-            continue
-        label, synonyms = entry
-        for syn in synonyms[:4]:            # top 4 synonyms per column
-            missing_rows.append(f"| {syn} | `{col}` | ERP code — {label} |")
+        note = (
+            f"Terminology pack — {entry[0]}"
+            if entry else
+            f"Naming intelligence — {analysis.expanded_name} ({analysis.confidence}% confidence)"
+        )
+        role = detect_date_role(col, vocab=vocab)
+        if role:
+            aliases.extend(generated_date_role_synonyms(role, col, vocab=vocab))
+            note = f"Date role — {role.label}"
+        seen_for_col = covered_terms.get(col_upper, set())
+        added = 0
+        for synonym in aliases:
+            normalized = re.sub(r"\s+", " ", str(synonym or "").strip().lower())
+            if not normalized or normalized in seen_for_col:
+                continue
+            missing_rows.append(f"| {normalized} | `{col}` | {note} |")
+            seen_for_col.add(normalized)
+            added += 1
+            if added >= 10:
+                break
 
     if not missing_rows:
         return kb_text                      # nothing to add
@@ -342,20 +360,74 @@ async def build_kb(
         format_schema_intelligence,
     )
     from core.semantic_model import patch_field_approval, write_semantic_model
-    from core.vocab_packs import vocab_for_account, activate_vocab, deactivate_vocab
+    from core.identifier_intelligence import detect_naming_profile
+    from core.vocab_packs import (
+        vocab_for_account, activate_vocab, deactivate_vocab,
+        save_detected_naming_profile,
+    )
 
     import hashlib as _hashlib
     import json as _json
 
-    # Client terminology packs merge over the builtin vocabulary for the whole
-    # build (ContextVar covers deep call sites; explicit vocab= covers the
-    # direct ones). Default = builtins, so clients with no packs are unchanged.
-    _vocab = vocab_for_account(account_id) if account_id else None
-    _vocab_token = activate_vocab(_vocab) if _vocab is not None else None
-
     schema_path = Path(schema_dir)
     kb_path     = Path(kb_dir)
     kb_path.mkdir(parents=True, exist_ok=True)
+
+    # Detect the physical naming convention before choosing the effective
+    # vocabulary. A high-confidence, uniquely-supported vendor pack is reused
+    # at runtime; ambiguous detections remain recommendations only.
+    _detected_columns: list[str] = []
+    _detected_tables: list[str] = []
+    _detected_schema_json = schema_path / "_schema.json"
+    if _detected_schema_json.is_file():
+        try:
+            _detected_payload = _json.loads(_detected_schema_json.read_text(encoding="utf-8"))
+            for _fqn, _meta in (_detected_payload or {}).items():
+                if str(_fqn).startswith("__") or not isinstance(_meta, dict):
+                    continue
+                _detected_tables.append(str(_fqn))
+                _detected_columns.extend(
+                    str(_column.get("name") or "")
+                    for _column in (_meta.get("columns") or [])
+                    if isinstance(_column, dict) and _column.get("name")
+                )
+        except Exception as _profile_error:
+            log.warning("KB naming detector could not parse _schema.json: %s", _profile_error)
+    if not _detected_tables:
+        for _schema_file in sorted(schema_path.glob("*.md")):
+            if _schema_file.name.startswith("_"):
+                continue
+            _detected_tables.append(_schema_file.stem)
+            try:
+                _detected_columns.extend(
+                    match.group(1)
+                    for match in re.finditer(
+                        r"(?m)^\|\s*`([^`]+)`\s*\|",
+                        _schema_file.read_text(encoding="utf-8"),
+                    )
+                )
+            except OSError:
+                continue
+    _naming_profile = detect_naming_profile(_detected_columns, _detected_tables)
+    (kb_path / "_naming_profile.json").write_text(
+        _json.dumps(_naming_profile, indent=2, sort_keys=True), encoding="utf-8"
+    )
+    if account_id:
+        save_detected_naming_profile(account_id, _naming_profile)
+    log.info(
+        "Naming profile: style=%s confidence=%s coverage=%s auto_packs=%s",
+        _naming_profile.get("primary_style"),
+        _naming_profile.get("style_confidence"),
+        _naming_profile.get("vocabulary_coverage_pct"),
+        _naming_profile.get("auto_applied_packs") or [],
+    )
+
+    # Client terminology packs merge over the builtin vocabulary for the whole
+    # build (ContextVar covers deep call sites; explicit vocab= covers the
+    # direct ones). Default = builtins; a safely auto-detected pack is applied
+    # only when the admin has not explicitly selected one.
+    _vocab = vocab_for_account(account_id) if account_id else None
+    _vocab_token = activate_vocab(_vocab) if _vocab is not None else None
 
     # Load persisted schema hashes for partial-rebuild skipping
     _hash_file = kb_path / "_kb_hashes.json"
@@ -545,7 +617,7 @@ async def build_kb(
         for line in schema_md.splitlines():
             stripped = line.strip()
             if stripped.startswith("| `"):
-                m = re.search(r"\| `([A-Za-z0-9_]+)`", stripped)
+                m = re.search(r"\|\s*`([^`]+)`", stripped)
                 if m:
                     cols.append(m.group(1))
         if cols:
@@ -607,7 +679,7 @@ async def build_kb(
         for line in schema_md.splitlines():
             stripped = line.strip()
             if stripped.startswith("| `"):
-                m = re.search(r"\| `([A-Za-z0-9_]+)`", stripped)
+                m = re.search(r"\|\s*`([^`]+)`", stripped)
                 if m:
                     table_cols.append(m.group(1))
         col_list = ", ".join(table_cols)
@@ -765,6 +837,8 @@ async def build_kb(
             "approved_metrics": approved_metrics_block,
             "db_type": db_type,
             "entity_type": entity_type,
+            "naming_profile": _naming_profile,
+            "vocab_source_packs": list(getattr(_vocab, "source_packs", []) or []),
         }
         _build_hash = _hashlib.sha256(
             _json.dumps(

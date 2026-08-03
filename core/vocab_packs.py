@@ -37,6 +37,7 @@ log = logging.getLogger("querybot.vocab_packs")
 
 _PACKS_DIR = Path(__file__).resolve().parents[1] / "packs"
 _CLIENTS_DIR = Path(__file__).resolve().parents[1] / "clients"
+_NAMING_PROFILE_FILE = "naming_profile.json"
 
 
 @dataclass
@@ -308,16 +309,63 @@ def _client_pack_ids(account_id: str) -> list[str]:
         return []
 
 
+def _profile_path(account_id: str) -> Path | None:
+    safe_id = re.sub(r"[^A-Za-z0-9_.-]", "", str(account_id or ""))
+    if not safe_id or safe_id != str(account_id or ""):
+        return None
+    return _CLIENTS_DIR / safe_id / _NAMING_PROFILE_FILE
+
+
+def load_detected_naming_profile(account_id: str) -> dict[str, Any]:
+    path = _profile_path(account_id)
+    if path is None or not path.is_file():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        return payload if isinstance(payload, dict) else {}
+    except Exception as exc:
+        log.warning("Naming profile for %s is invalid: %s", account_id, exc)
+        return {}
+
+
+def save_detected_naming_profile(account_id: str, profile: dict[str, Any]) -> Path | None:
+    """Atomically persist the build-time detector result for runtime reuse."""
+    path = _profile_path(account_id)
+    if path is None:
+        return None
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(profile or {}, indent=2, sort_keys=True), encoding="utf-8")
+    tmp.replace(path)
+    _account_cache.pop(account_id, None)
+    return path
+
+
+def _detected_pack_ids(account_id: str) -> list[str]:
+    profile = load_detected_naming_profile(account_id)
+    values = profile.get("auto_applied_packs") or []
+    return [str(value) for value in values if str(value).strip()] if isinstance(values, list) else []
+
+
 def vocab_for_account(account_id: str) -> MergedVocab:
-    """Builtin + the client's selected packs (in order) + clients/<id>/vocab.json."""
-    pack_ids = _client_pack_ids(account_id)
+    """Builtin + detected/selected packs + clients/<id>/vocab.json.
+
+    Explicit admin selection always wins. Automatic detection is used only
+    when no pack was selected, and only contains the detector's high-confidence
+    winner. The client overlay remains the final authority.
+    """
+    explicit_pack_ids = _client_pack_ids(account_id)
+    detected_pack_ids = [] if explicit_pack_ids else _detected_pack_ids(account_id)
+    pack_ids = [*detected_pack_ids, *explicit_pack_ids]
     overlay_path = _CLIENTS_DIR / (account_id or "") / "vocab.json"
+    profile_path = _profile_path(account_id)
     overlay_mtime = overlay_path.stat().st_mtime if overlay_path.is_file() else 0.0
+    profile_mtime = profile_path.stat().st_mtime if profile_path and profile_path.is_file() else 0.0
     pack_mtimes = tuple(
         (_PACKS_DIR / f"{p}.json").stat().st_mtime if (_PACKS_DIR / f"{p}.json").is_file() else 0.0
         for p in pack_ids
     )
-    cache_key = (tuple(pack_ids), pack_mtimes, overlay_mtime)
+    cache_key = (tuple(pack_ids), pack_mtimes, overlay_mtime, profile_mtime)
     cached = _account_cache.get(account_id)
     if cached and cached[0] == cache_key:
         return cached[1]

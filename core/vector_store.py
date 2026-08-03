@@ -361,10 +361,18 @@ def _delete_points_for_fqn_doctype(account_id: str, fqn: str, doc_type: str) -> 
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _bm25_tokenize(text: str) -> list[str]:
-    """Lowercase, strip non-alphanumeric chars, split on whitespace."""
-    text = text.lower()
-    text = re.sub(r"[^a-z0-9_\s]", " ", text)
-    return [t for t in text.split() if t]
+    """Tokenize text while preserving and splitting physical identifiers.
+
+    ``NDC_CODE`` remains an exact token for existing technical searches, and
+    also contributes ``ndc`` + ``code`` so human shorthand such as ``ord dt``
+    can match an indexed ``ORD_DT`` field.
+    """
+    raw = re.sub(r"[^A-Za-z0-9_\s]", " ", str(text or ""))
+    raw_tokens = [token.lower() for token in raw.split() if token]
+    split_text = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", raw)
+    split_text = split_text.replace("_", " ").lower()
+    split_tokens = [token for token in split_text.split() if token]
+    return list(dict.fromkeys([*raw_tokens, *split_tokens]))
 
 
 def _invalidate_bm25_cache(account_id: str) -> None:
@@ -1072,6 +1080,8 @@ class QdrantKBRetriever:
 
         Each step gracefully degrades to the previous step's output on failure.
         """
+        from core.identifier_intelligence import expand_question_for_retrieval
+        query = expand_question_for_retrieval(query)
         pool = max(n * 4, _RERANK_POOL)
 
         # Step 1 — dense HNSW

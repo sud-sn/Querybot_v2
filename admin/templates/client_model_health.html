@@ -384,6 +384,58 @@ table.mh-tbl tr:hover td{background:color-mix(in srgb,var(--primary) 4%,var(--su
   </div>
 
   <!-- ── Columns needing context ── -->
+  <!-- Naming intelligence -->
+  {% if health.kb_quality and health.kb_quality.naming_intelligence %}
+  {% set naming = health.kb_quality.naming_intelligence %}
+  <div class="mh-card">
+    <div class="mh-card-header">
+      <h2>Naming Intelligence</h2>
+      <span style="font-size:12px;color:var(--text-muted)">
+        {{ naming.primary_style | replace('_', ' ') | title }} · {{ naming.style_confidence }}% style confidence
+      </span>
+    </div>
+    <div class="mh-card-body">
+      <p style="margin:0 0 .7rem;font-size:13px;color:var(--text-soft)">
+        QueryBot inspected {{ naming.field_count }} physical fields and confidently expanded
+        {{ naming.vocabulary_coverage_pct }}%. High-confidence vendor detection is applied only
+        when no terminology pack was selected manually; ambiguous matches remain review-only.
+      </p>
+      {% if naming.auto_applied_packs %}
+      <div class="alert alert-success" style="margin:.45rem 0">
+        Automatically applied terminology pack:
+        <strong>{{ naming.auto_applied_packs | join(', ') }}</strong>
+      </div>
+      {% elif naming.pack_recommendations %}
+      <div class="alert alert-warning" style="margin:.45rem 0">
+        Suggested terminology pack:
+        <strong>{{ naming.pack_recommendations[0].erp_name }}</strong>
+        ({{ naming.pack_recommendations[0].confidence }}% match confidence).
+        Review it in <a href="/admin/clients/{{ client.account_id }}#settings">client settings</a> before rebuilding.
+      </div>
+      {% endif %}
+      {% if naming.pack_recommendations %}
+      <div style="overflow-x:auto;margin-top:.7rem">
+        <table class="data-table" style="font-size:12px">
+          <thead><tr><th>Pack</th><th>Confidence</th><th>Exact fields</th><th>Exact tables</th><th>Unique evidence</th></tr></thead>
+          <tbody>
+          {% for pack in naming.pack_recommendations[:3] %}
+          <tr>
+            <td>{{ pack.erp_name }}</td>
+            <td>{{ pack.confidence }}%</td>
+            <td>{{ pack.exact_column_matches | join(', ') if pack.exact_column_matches else '—' }}</td>
+            <td>{{ pack.exact_table_matches | join(', ') if pack.exact_table_matches else '—' }}</td>
+            <td>{{ pack.unique_evidence }}</td>
+          </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Columns needing context -->
   {% if health.kb_quality and health.kb_quality.vocabulary_coverage and health.kb_quality.vocabulary_coverage.uncovered %}
   <div class="mh-card">
     <div class="mh-card-header">

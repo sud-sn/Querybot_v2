@@ -21,12 +21,13 @@ from core.date_roles import (
     detect_date_role,
     find_date_dimension_key,
     find_date_value_column,
+    generated_date_role_synonyms,
     is_date_dimension_table,
     normalize_date_key_type,
     physical_date_key_type,
     question_has_temporal_intent,
 )
-from core.naming_convention import match_column_suffix, match_entity_prefix, match_table_suffix
+from core.naming_convention import match_audit_prefix, match_column_suffix, match_entity_prefix, match_table_suffix
 from core.schema_enrichment import EnrichedColumn, enrich_columns
 
 log = logging.getLogger(__name__)
@@ -413,6 +414,14 @@ def _date_roles(schema: dict[str, Any], table_fqn: str, meta: dict[str, Any]) ->
         if not col:
             continue
         data_type = str((column_meta or {}).get("type") or (column_meta or {}).get("data_type") or "")
+        # ETL/CDC/system timestamps describe pipeline processing, not the
+        # business event requested by users. Keep them visible in field
+        # metadata but never promote them to a governed business date role.
+        if match_audit_prefix(col) or (
+            re.search(r"(?:^|_)(?:ETL|LOAD|INGEST|BATCH|SYNC|CDC|DW)(?:_|$)", col, re.I)
+            and physical_date_key_type(data_type)
+        ):
+            continue
         chosen = None
         confidence = 70
         # Resolve physical FK evidence first. This supports arbitrary source
@@ -458,7 +467,7 @@ def _date_roles(schema: dict[str, Any], table_fqn: str, meta: dict[str, Any]) ->
                 "dimension_key": date_pk,
                 "date_value_column": date_value_col,
                 "date_key_type": "surrogate_fk",
-                "synonyms": role.synonyms,
+                "synonyms": generated_date_role_synonyms(role, col),
                 "status": "generated",
                 "confidence": confidence,
             })
@@ -478,7 +487,7 @@ def _date_roles(schema: dict[str, Any], table_fqn: str, meta: dict[str, Any]) ->
                 "dimension_key": "",
                 "date_value_column": col,
                 "date_key_type": physical_type,
-                "synonyms": native_role.synonyms,
+                "synonyms": generated_date_role_synonyms(native_role, col),
                 "status": "generated",
                 "confidence": 98,
             })
@@ -508,7 +517,7 @@ def _date_roles(schema: dict[str, Any], table_fqn: str, meta: dict[str, Any]) ->
             # This column reaches a role-playing date dimension, so values such
             # as 4067 are surrogate IDs. They must never be parsed as YYYYMMDD.
             "date_key_type": classify_date_key(col, has_date_dimension_fk=True),
-            "synonyms": role.synonyms,
+            "synonyms": generated_date_role_synonyms(role, col),
             "status": "generated" if confidence >= 85 else "needs_review",
             "confidence": confidence,
         })

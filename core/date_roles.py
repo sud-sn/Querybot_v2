@@ -206,22 +206,24 @@ def detect_date_role(column_name: str, vocab=None) -> DateRole | None:
     if vocab is None:
         from core.vocab_packs import get_active_vocab
         vocab = get_active_vocab()
-    # Plain warehouse names often spell DATE where ERP models use DT. Run the
-    # same governed patterns against both forms so ORDER_DATE_ID and
-    # ORDER_DT_DMS_KEY resolve to the same business role.
-    canonical = re.sub(r"(^|_)DATE(?=_|$)", r"\1DT", col)
-    candidates = (col,) if canonical == col else (col, canonical)
+    # Plain warehouse names often spell DATE where ERP models use DT. The
+    # shared canonicalizer also exposes camel/Pascal/compact forms, so
+    # OrderDate, ORDERDATE, ORD_DT and ORDDT can resolve through one rule set.
+    from core.identifier_intelligence import canonical_identifier
+    segmented = canonical_identifier(column_name, vocab=vocab) or col
+    canonical = re.sub(r"(^|_)DATE(?=_|$)", r"\1DT", segmented)
+    candidates = tuple(dict.fromkeys((col, segmented, canonical)))
     for pattern, role_key in getattr(vocab, "date_role_patterns", ()):
         if any(pattern.search(candidate) for candidate in candidates) and role_key in _ROLE_BY_KEY:
             return _ROLE_BY_KEY[role_key]
     # Preserve modifiers in descriptive warehouse names. For example,
     # LAST_RECEIPT_DATE_ID is a distinct role from RECEIPT_DATE_ID.
-    if _PLAIN_DATE_KEY_RE.search(col):
+    if any(_PLAIN_DATE_KEY_RE.search(candidate) for candidate in candidates):
         return derive_date_role(column_name)
     for pattern, role_key in _COLUMN_PATTERNS:
         if any(pattern.search(candidate) for candidate in candidates):
             return _ROLE_BY_KEY[role_key]
-    if _GENERIC_DATE_KEY_RE.search(col):
+    if any(_GENERIC_DATE_KEY_RE.search(candidate) for candidate in candidates):
         return derive_date_role(column_name)
     return None
 
@@ -275,6 +277,47 @@ def date_role_terms(role: DateRole) -> list[str]:
             seen.add(norm)
             out.append(norm)
     return out
+
+
+_EVENT_DATE_VARIANTS: dict[str, tuple[str, ...]] = {
+    "booked_date": ("booking date", "when booked"),
+    "invoice_date": ("invoiced date", "billed date", "when invoiced"),
+    "order_date": ("ordered date", "date ordered", "when ordered"),
+    "cancelled_order_date": ("canceled order date", "when cancelled"),
+    "requested_delivery_date": ("requested ship date", "delivery requested date"),
+    "confirmed_delivery_date": ("confirmed ship date", "delivery confirmed date"),
+    "planned_delivery_date": ("planned ship date",),
+    "delivery_date": ("delivered date", "shipped date", "when delivered", "when shipped"),
+    "due_date": ("payment due date", "when due"),
+    "payment_date": ("paid date", "when paid"),
+    "receipt_date": ("received date", "when received"),
+    "accounting_date": ("posting date", "gl date", "ledger date"),
+    "creation_date": ("created date", "date created", "when created"),
+    "registration_date": ("registered date", "when registered"),
+    "modified_date": ("updated date", "last updated date", "when updated"),
+}
+
+
+def generated_date_role_synonyms(role: DateRole, column_name: str = "", vocab=None) -> tuple[str, ...]:
+    """Return governed business and physical-language variants for a role."""
+    values: list[str] = [*date_role_terms(role)]
+    if column_name:
+        from core.identifier_intelligence import analyze_identifier
+        values.extend(analyze_identifier(column_name, vocab=vocab).aliases)
+    values.extend(_EVENT_DATE_VARIANTS.get(role.key, ()))
+    stem = normalize_date_role_text(role.label)
+    if stem.endswith(" date"):
+        stem = stem[:-5].strip()
+    if stem:
+        values.extend(f"{stem} {grain}" for grain in ("day", "week", "month", "quarter", "year"))
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        normalized = normalize_date_role_text(value)
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            result.append(normalized)
+    return tuple(result)
 
 
 def relationship_matches_date_role(question: str, label: str = "", description: str = "") -> bool:
@@ -359,7 +402,8 @@ def _column_name(col: dict | str) -> str:
 
 
 def _label_from_column(column: str) -> str:
-    text = (column or "").strip().strip('"`[]').upper()
+    original = (column or "").strip().strip('"`[]')
+    text = original.upper()
     text = re.sub(
         r"_(?:DATE|DT)(?:_DMS)?_(?:KEY|ID)$",
         "",
@@ -368,6 +412,17 @@ def _label_from_column(column: str) -> str:
     text = re.sub(r"_?DMS_KEY$", "", text)
     text = re.sub(r"_(?:KEY|ID)$", "", text)
     text = re.sub(r"_?(?:DATE|DT)$", "", text)
+    from core.identifier_intelligence import analyze_identifier
+    analysis = analyze_identifier(original)
+    semantic_parts = [
+        part for part in analysis.expanded_name.split()
+        if part not in {"date", "datetime", "timestamp", "dimension", "key", "id"}
+    ]
+    if semantic_parts:
+        label = " ".join(semantic_parts).title().strip()
+        if "Date" not in label:
+            label = (label + " Date").strip()
+        return label or "Business Date"
     parts = [p for p in text.split("_") if p and p not in {"CUS", "PCH", "SLR"}]
     expanded = []
     mini = {

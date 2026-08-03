@@ -58,6 +58,34 @@ def evaluate_kb_quality(
     tables = model.get("tables") or []
     relationships = model.get("relationships") or []
     issues: list[dict[str, str]] = []
+    naming_intelligence: dict[str, Any] = {}
+    if kb_dir:
+        naming_path = Path(kb_dir) / "_naming_profile.json"
+        if naming_path.is_file():
+            try:
+                loaded = json.loads(naming_path.read_text(encoding="utf-8"))
+                naming_intelligence = loaded if isinstance(loaded, dict) else {}
+            except (OSError, ValueError, TypeError):
+                naming_intelligence = {}
+    if naming_intelligence:
+        coverage = float(naming_intelligence.get("vocabulary_coverage_pct") or 0)
+        unresolved = int(naming_intelligence.get("unresolved_count") or 0)
+        recommendations = naming_intelligence.get("pack_recommendations") or []
+        auto_packs = naming_intelligence.get("auto_applied_packs") or []
+        if unresolved and coverage < 70:
+            issues.append(_issue(
+                "warning",
+                "low_naming_coverage",
+                f"Only {coverage:.1f}% of physical field names have a governed expansion.",
+                action="Review unresolved fields or approve the recommended client terminology pack before production evaluation.",
+            ))
+        if recommendations and not auto_packs and float(recommendations[0].get("confidence") or 0) >= 55:
+            issues.append(_issue(
+                "info",
+                "terminology_pack_needs_review",
+                f"The detector found a possible {recommendations[0].get('erp_name') or recommendations[0].get('pack_id')} naming convention.",
+                action="Review the pack recommendation in Model Health; ambiguous packs are never applied automatically.",
+            ))
 
     if account_id:
         try:
@@ -242,7 +270,9 @@ def evaluate_kb_quality(
             "critical": critical_count,
             "warnings": warning_count,
             "info": info_count,
+            "unresolved_naming_fields": int(naming_intelligence.get("unresolved_count") or 0),
         },
+        "naming_intelligence": naming_intelligence,
         "vocabulary_coverage": vocabulary_coverage,
         "issues": issues,
     }

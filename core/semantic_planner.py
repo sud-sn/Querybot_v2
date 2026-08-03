@@ -34,6 +34,7 @@ _ABBREVIATIONS = {
     "NUM": "number",
     "ORD": "order",
     "PCH": "purchase",
+    "PO": "purchase order",
     "PFT": "profit",
     "PRD": "period",
     "QTY": "quantity",
@@ -172,7 +173,8 @@ def _planner_vocab(vocab=None):
 def _column_words(column: str, vocab=None) -> list[str]:
     abbreviations = _planner_vocab(vocab).planner_abbreviations
     words: list[str] = []
-    for token in re.split(r"[_\W]+", (column or "").upper()):
+    from core.identifier_intelligence import tokenize_identifier
+    for token in tokenize_identifier(column, vocab=_planner_vocab(vocab)):
         if not token:
             continue
         word = abbreviations.get(token, token.lower())
@@ -329,7 +331,9 @@ def _find_candidates(
                 continue
         for col, col_type in (cols or {}).items():
             col_u = str(col).upper()
-            aliases = _aliases_for_column(col_u, vocab=vocab)
+            # Preserve the original casing for camel/Pascal tokenization while
+            # the emitted physical column remains canonical uppercase.
+            aliases = _aliases_for_column(str(col), vocab=vocab)
             matched, term = _column_matches_question(col_u, aliases, qn, qc)
             if not matched:
                 continue

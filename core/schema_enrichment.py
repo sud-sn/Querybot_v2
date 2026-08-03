@@ -15,6 +15,7 @@ import re
 
 from core.date_roles import date_role_terms, detect_date_role
 from core.erp_column_dict import ERP_COLUMN_DICT
+from core.identifier_intelligence import analyze_identifier, tokenize_identifier
 
 
 ABBREVIATIONS: dict[str, str] = {
@@ -107,6 +108,7 @@ ABBREVIATIONS: dict[str, str] = {
     "PIK": "pick",
     "PLD": "planned",
     "PLU": "plus",
+    "PO": "purchase order",
     "PRD": "period",
     "PRL": "profile",
     "PRM": "promotion",
@@ -212,7 +214,7 @@ _NUMBERED_SERIES: list[tuple[re.Pattern, str, str]] = [
 ]
 
 # ── Infrastructure / platform field patterns ────────────────────────────────
-_INFRA_PREFIXES = ("AZ_",)
+_INFRA_PREFIXES = ("AZ_", "ETL_", "DW_", "SYS_", "META_", "STG_", "CDC_")
 _INFRA_CAMEL    = {"accountingEntity", "variationNumber", "timestamp", "deleted", "archived"}
 
 KNOWN_JOIN_EQUIVALENTS: dict[str, list[str]] = {
@@ -249,8 +251,7 @@ def _clean_identifier(name: str) -> str:
 
 
 def _tokens(column: str) -> list[str]:
-    raw = _clean_identifier(column).upper()
-    return [t for t in re.split(r"[_\W]+", raw) if t]
+    return tokenize_identifier(_clean_identifier(column))
 
 
 def _human_join(parts: list[str]) -> str:
@@ -286,17 +287,10 @@ def _expand_column(column: str, vocab=None) -> tuple[str, list[str]]:
             label = label_tpl.format(m.group(1))
             return label, ["numbered series pattern"]
 
-    # 4. Token-by-token abbreviation expansion
-    parts: list[str] = []
-    evidence: list[str] = []
-    for token in _tokens(col):
-        expanded = v.abbreviations.get(token)
-        if expanded:
-            evidence.append(f"abbreviation {token}={expanded}")
-            parts.append(expanded)
-        else:
-            parts.append(token.lower())
-    return _human_join(parts), evidence
+    # 4. Shared identifier intelligence handles snake/camel/Pascal case and
+    # safely segments compact codes only when every segment is governed.
+    analysis = analyze_identifier(raw, vocab=v)
+    return analysis.expanded_name, list(analysis.evidence)
 
 
 def _metric_candidates(column: str, expanded: str, role: str, vocab=None) -> list[str]:
@@ -323,6 +317,11 @@ def _metric_candidates(column: str, expanded: str, role: str, vocab=None) -> lis
         candidates.append(expanded)
     elif role == "status_filter":
         candidates.append(expanded)
+
+    # Physical shorthand (``ord dt``), mixed expansion (``order dt``), and
+    # camel/Pascal-case variants come from the same engine used at retrieval
+    # time. This keeps KB aliases symmetric with user-question normalization.
+    candidates.extend(analyze_identifier(column, vocab=v).aliases)
 
     seen: set[str] = set()
     deduped: list[str] = []
@@ -402,6 +401,10 @@ def _confidence(column: str, role: str, evidence: list[str], expanded_name: str,
         score = 80          # well-understood, just not a business column
     elif any(e.startswith("abbreviation") for e in evidence):
         score = 70
+    elif "governed compact-token segmentation" in evidence:
+        score = 76
+    elif "readable identifier tokens" in evidence:
+        score = 72
 
     if role in {"measure", "date_key", "dimension_key", "status_filter", "surrogate_key"}:
         score += 10
@@ -415,7 +418,13 @@ def _confidence(column: str, role: str, evidence: list[str], expanded_name: str,
     # words, so an ERP-dictionary hit whose label happens to equal the column
     # name (INVOICEDATE -> "invoice date") is a confident match, not a miss —
     # exempt dictionary hits from this penalty.
-    if expanded_name.replace(" ", "") == col.lower() and "erp dictionary" not in evidence:
+    governed_name_evidence = {
+        "erp dictionary",
+        "terminology-pack exact column match",
+        "governed compact-token segmentation",
+        "readable identifier tokens",
+    }
+    if expanded_name.replace(" ", "") == col.lower() and not governed_name_evidence.intersection(evidence):
         score = min(score, 45)          # no expansion found at all
     return max(10, min(score, 95))
 
