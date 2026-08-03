@@ -189,7 +189,10 @@ _RECONCILE_INTENT_RE = re.compile(
 # never queries the database. Prebuilt operations and administrator-enabled
 # governed Python both receive only bounded copies of released result rows.
 _ANALYSIS_WORK_INTENT_RE = re.compile(
-    r"\b(?:analyse|analyze|profile|inspect)\s+(?:this|the|these|my)?\s*"
+    r"\b(?:analyse|analyze|profile|inspect)\s+"
+    r"(?:(?:this|these)\s+|(?:(?:my|the)\s+)?"
+    r"(?:(?:latest|last|previous|most\s+recent)\s+)?)"
+    r"(?:successful\s+)?"
     r"(?:result|results|data|answer|rows)(?:\s+(?:deeply|thoroughly|in\s+depth))?\b|"
     r"\b(?:find|show|check|identify)\s+(?:the\s+)?(?:correlations?|relationships?|"
     r"outliers?|anomalies|trends?)\s+(?:in|within|from)\s+(?:this|the|these)?\s*"

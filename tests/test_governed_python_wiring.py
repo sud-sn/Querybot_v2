@@ -2,7 +2,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from admin.routes import _client_health_score
-from gateway.webhooks import _CUSTOM_PYTHON_INTENT_RE
+from gateway.webhooks import _ANALYSIS_WORK_INTENT_RE, _CUSTOM_PYTHON_INTENT_RE
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -17,6 +17,13 @@ def test_custom_python_intents_do_not_fall_through_to_sql_generation():
     dispatch = webhooks[webhooks.index("if _ANALYSIS_WORK_INTENT_RE.search"):]
     assert "_CUSTOM_PYTHON_INTENT_RE.search(text)" in dispatch[:300]
     assert "_run_analysis_work(text)" in dispatch[:500]
+
+
+def test_natural_latest_successful_result_phrasing_routes_to_analysis():
+    assert _ANALYSIS_WORK_INTENT_RE.search(
+        "Analyze the latest successful result deeply for outliers and profile the numeric distribution."
+    )
+    assert _ANALYSIS_WORK_INTENT_RE.search("profile my previous result")
 
 
 def test_admin_and_portal_governed_python_proof_is_wired():
