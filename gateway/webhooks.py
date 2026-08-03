@@ -54,6 +54,7 @@ from core.clarification import (
     get_pending, clear_pending, combine_with_clarification, resolve_option_text,
 )
 from core.plan_preview import build_plan_preview, pending_plan_previews
+from core.agent_runtime import AgentRunSession, activate_agent_run
 
 log = logging.getLogger("querybot")
 
@@ -67,6 +68,90 @@ _REPORT_BUILDER_INTENT_RE = re.compile(
     r"\b(?:build|create|make|set\s*up|start|schedule)\s+(?:me\s+)?(?:a|an|my)?\s*report\b",
     re.IGNORECASE,
 )
+
+# Conversational dashboard artifacts. These routes never generate or execute
+# SQL themselves: they attach only an already-governed result, or queue the
+# normal governed question pipeline and materialize its successful answer.
+_DASHBOARD_CREATE_INTENT_RE = re.compile(
+    r"\b(?:build|create|make|start|set\s*up)\s+(?:me\s+)?(?:a|an|my)?\s*dashboard\b",
+    re.IGNORECASE,
+)
+_DASHBOARD_ADD_INTENT_RE = re.compile(
+    r"\badd\s+(?:this|it|that|the\s+(?:result|chart|table|kpi))\s+to\s+(?:this|the|my)?\s*dashboard\b",
+    re.IGNORECASE,
+)
+_DASHBOARD_ADD_QUERY_RE = re.compile(
+    r"\badd\s+(?:a\s+)?(?:chart|visual|table|kpi|view)\s+"
+    r"(?:showing|for|of|with)?\s*(?P<question>.+?)\s+to\s+"
+    r"(?:this|the|my)?\s*dashboard\b",
+    re.IGNORECASE,
+)
+_DASHBOARD_CHART_TYPE_RE = re.compile(
+    r"\b(?:change|switch|make|set)\s+(?:this|the|my)?\s*dashboard(?:'s)?\s+"
+    r"(?:chart|visual)(?:\s+type)?\s+(?:to|as)\s+"
+    r"(?P<chart_type>bar|line|area|pie|donut|scatter)\b",
+    re.IGNORECASE,
+)
+_DASHBOARD_RENAME_INTENT_RE = re.compile(
+    r"\brename\s+(?:this|the|my)?\s*dashboard\s+to\s+(?P<name>.+)$",
+    re.IGNORECASE,
+)
+_DASHBOARD_PUBLISH_INTENT_RE = re.compile(
+    r"\bpublish\s+(?:this|the|my)?\s*dashboard\b",
+    re.IGNORECASE,
+)
+_DASHBOARD_FILTER_INTENT_RE = re.compile(
+    r"\badd\s+(?:a\s+)?filter\s+(?:for|on|by)\s+(?P<field>[A-Za-z0-9_. -]{1,120}?)"
+    r"(?:\s+to\s+(?:this|the|my)?\s*dashboard)?\s*$",
+    re.IGNORECASE,
+)
+_DASHBOARD_TAB_INTENT_RE = re.compile(
+    r"\badd\s+(?:a\s+)?tab(?:\s+(?:called|named|for))?\s+(?P<tab>[A-Za-z0-9 _.-]{1,60}?)"
+    r"(?:\s+to\s+(?:this|the|my)?\s*dashboard)?\s*$",
+    re.IGNORECASE,
+)
+_DASHBOARD_SCHEDULE_INTENT_RE = re.compile(
+    r"\b(?:refresh|schedule|update)\s+(?:this|the|my)?\s*dashboard\s+"
+    r"(?P<schedule>manually|manual|hourly|daily|weekly)\b",
+    re.IGNORECASE,
+)
+_DASHBOARD_SHARE_INTENT_RE = re.compile(
+    r"\b(?:share|publish)\s+(?:this|the|my)?\s*dashboard\s+(?:with|to)\s+(?:the\s+)?team\b",
+    re.IGNORECASE,
+)
+_DASHBOARD_ROLLBACK_INTENT_RE = re.compile(
+    r"\b(?:rollback|roll\s+back|restore)\s+(?:this|the|my)?\s*dashboard\s+"
+    r"(?:to\s+)?version\s+(?P<version>\d+)\b",
+    re.IGNORECASE,
+)
+
+
+def _dashboard_request_tail(text: str) -> str:
+    match = _DASHBOARD_CREATE_INTENT_RE.search(text or "")
+    if not match:
+        return ""
+    tail = (text[match.end():] or "").strip(" .,:;-")
+    tail = re.sub(
+        r"^(?:that\s+is\s+)?(?:showing|show|with|for|of|tracking|about)\s+",
+        "",
+        tail,
+        flags=re.IGNORECASE,
+    ).strip()
+    if re.fullmatch(
+        r"(?:from\s+)?(?:this|that)(?:\s+(?:result|answer|chart))?|"
+        r"(?:from\s+)?the\s+(?:result|answer|chart)",
+        tail,
+        re.I,
+    ):
+        return ""
+    return tail
+
+
+def _dashboard_name(question: str) -> str:
+    cleaned = re.sub(r"\s+", " ", str(question or "")).strip(" .")
+    if not cleaned:
+        return "Analysis dashboard"
+    return (cleaned[:72].rstrip() + " dashboard")[:120]
 
 # Opt-in "explain your plan first" preview -- explicitly user-invoked, never
 # a default gate on every question. Matches a trigger phrase optionally
@@ -97,6 +182,27 @@ _RECONCILE_INTENT_RE = re.compile(
     r"\byours?\s+(?:says?|shows?|gives?)\b.{0,20}\bbut\b|"
     r"\bshould\s+be\s+\S.{0,40}\bnot\b|"
     r"\bwalk\s+me\s+through\s+how\s+you\s+calculated\b",
+    re.IGNORECASE,
+)
+
+# Explicit deep-work follow-ups over an already governed result.  This route
+# never queries the database. Prebuilt operations and administrator-enabled
+# governed Python both receive only bounded copies of released result rows.
+_ANALYSIS_WORK_INTENT_RE = re.compile(
+    r"\b(?:analyse|analyze|profile|inspect)\s+(?:this|the|these|my)?\s*"
+    r"(?:result|results|data|answer|rows)(?:\s+(?:deeply|thoroughly|in\s+depth))?\b|"
+    r"\b(?:find|show|check|identify)\s+(?:the\s+)?(?:correlations?|relationships?|"
+    r"outliers?|anomalies|trends?)\s+(?:in|within|from)\s+(?:this|the|these)?\s*"
+    r"(?:result|results|data|answer|rows)\b|"
+    r"\b(?:use|run)\s+python\s+(?:to\s+)?(?:analyse|analyze|profile|inspect)\b",
+    re.IGNORECASE,
+)
+_CUSTOM_PYTHON_INTENT_RE = re.compile(
+    r"```(?:python|py)?\s*\n|"
+    r"\b(?:run|execute)\s+(?:this\s+)?python\s*:|"
+    r"\b(?:use|using|with|in)\s+python\s+(?:to\s+)?(?:calculate|compute|derive|"
+    r"transform|rank|normalize|analyse|analyze|build|create|find|show)|"
+    r"\bpython\s+(?:analysis|calculation|transform)\b",
     re.IGNORECASE,
 )
 
@@ -469,6 +575,16 @@ async def ws_chat(websocket: WebSocket, account_id: str):
         websocket.query_params.get("thread_id"), "thread_id", "value"
     )
     adapter = WebAdapter(websocket, account_id, zoom_user_id, thread_id=thread_id)
+    selected_dashboard_id = 0
+    selected_dashboard_read_only = False
+    raw_dashboard_id = str(websocket.query_params.get("dashboard_id") or "")
+    if raw_dashboard_id.isdigit():
+        selected = store.get_dashboard_for_view(
+            int(raw_dashboard_id), int(user_id), account_id
+        )
+        if selected:
+            selected_dashboard_id = int(selected["id"])
+            selected_dashboard_read_only = not bool(selected.get("can_edit"))
 
     # Evaluate session liveness before restoring the selected thread.
     _is_new_portal_session = False
@@ -580,6 +696,24 @@ async def ws_chat(websocket: WebSocket, account_id: str):
             event.table_hint = table_hint
         if schema_hint:
             event.schema_hint = schema_hint
+        agent_run = None
+        try:
+            agent_run = AgentRunSession.start(
+                account_id=account_id,
+                portal_user=portal_user,
+                external_thread_id=adapter.thread_id,
+                objective=text,
+                selected_schema=schema_hint,
+                purpose_id=str(getattr(event, "purpose_id", "") or ""),
+            )
+            await adapter.send_agent_event(agent_run.event("agent_run_started"))
+        except Exception as exc:
+            # Runtime observability fails open; the established governed query
+            # path remains available if audit persistence is unavailable.
+            log.warning("Agent run could not be started; continuing query: %s", exc)
+        agent_context = activate_agent_run(agent_run)
+        agent_context.__enter__()
+        background_failure = None
         try:
             await dispatch(account_id, event, adapter, bg, portal_user=portal_user)
 
@@ -590,6 +724,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:
+                    background_failure = e
                     log.error("WS bg task error: %s", e)
                     # Defect class: a crash while generating/sending the
                     # answer used to end in total silence — the query ran,
@@ -608,14 +743,35 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     except Exception:
                         pass
 
+            if agent_run:
+                try:
+                    if background_failure:
+                        agent_run.fail(background_failure)
+                    else:
+                        agent_run.complete_if_running()
+                    await adapter.send_agent_event(agent_run.event("agent_run_finished"))
+                except Exception as exc:
+                    log.debug("Agent run finalization failed: %s", exc)
             async with adapter.send_lock:
                 await websocket.send_json({"type": "typing", "active": False})
         except asyncio.CancelledError:
             # User clicked Stop — the "cancel" branch below already sent a
             # user-facing message, nothing more to do here.
+            if agent_run:
+                try:
+                    agent_run.cancel()
+                    await adapter.send_agent_event(agent_run.event("agent_run_finished"))
+                except Exception as exc:
+                    log.debug("Agent cancellation audit failed: %s", exc)
             raise
         except Exception as e:
             log.error("Main question task failed: %s", e)
+            if agent_run:
+                try:
+                    agent_run.fail(e)
+                    await adapter.send_agent_event(agent_run.event("agent_run_finished"))
+                except Exception as exc:
+                    log.debug("Agent failure audit failed: %s", exc)
             try:
                 async with adapter.send_lock:
                     await websocket.send_json({
@@ -629,6 +785,8 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     await websocket.send_json({"type": "typing", "active": False})
             except Exception:
                 pass
+        finally:
+            agent_context.__exit__(None, None, None)
 
     async def _run_local_result_command(
         text: str, command, table_hint: str = "", schema_hint: str = "",
@@ -1084,6 +1242,369 @@ async def ws_chat(websocket: WebSocket, account_id: str):
         finally:
             await websocket.send_json({"type": "typing", "active": False})
 
+    async def _run_dashboard_chat(text: str) -> None:
+        """Create and refine user-owned dashboards from governed results."""
+        await websocket.send_json({"type": "typing", "active": True})
+        try:
+            user_id = int(portal_user.get("id") or 0)
+            latest = (
+                store.get_dashboard_for_view(selected_dashboard_id, user_id, account_id)
+                if selected_dashboard_id
+                else store.latest_dashboard_for_thread(
+                    account_id, user_id, getattr(adapter, "thread_id", "default")
+                )
+            )
+            if latest and selected_dashboard_read_only:
+                await websocket.send_json({
+                    "type": "assistant_error",
+                    "action": "dashboard",
+                    "content": (
+                        "This is a published team dashboard owned by another user, so it is read-only. "
+                        "You can ask questions about the data, but only the owner can change the artifact."
+                    ),
+                })
+                return
+
+            rollback_match = _DASHBOARD_ROLLBACK_INTENT_RE.search(text)
+            if rollback_match:
+                if not latest:
+                    await websocket.send_json({"type": "assistant_error", "action": "dashboard", "content": "There is no dashboard here to restore yet."})
+                    return
+                target_version = int(rollback_match.group("version"))
+                updated = store.rollback_dashboard(latest["id"], user_id, account_id, target_version)
+                if not updated:
+                    await websocket.send_json({"type": "assistant_error", "action": "dashboard", "content": f"Version {target_version} is not available for this dashboard."})
+                    return
+                await websocket.send_json({
+                    "type": "assistant_dashboard", "action": "restored",
+                    "title": f'Restored "{updated["name"]}" from version {target_version}',
+                    "body": "The restore created a new draft checkpoint, so the full history is still available.",
+                    "dashboard": {"id": updated["id"], "name": updated["name"], "status": updated["status"], "version": updated["version"], "url": f'/portal/dashboard?dashboard_id={updated["id"]}'},
+                })
+                return
+
+            schedule_match = _DASHBOARD_SCHEDULE_INTENT_RE.search(text)
+            if schedule_match:
+                if not latest:
+                    await websocket.send_json({"type": "assistant_error", "action": "dashboard", "content": "Create a dashboard before setting its refresh schedule."})
+                    return
+                schedule = schedule_match.group("schedule").lower().replace("manually", "manual")
+                updated = store.update_dashboard_controls(
+                    latest["id"], user_id, account_id,
+                    refresh_schedule=schedule,
+                    change_summary=f"Refresh set to {schedule}",
+                )
+                await websocket.send_json({
+                    "type": "assistant_dashboard", "action": "schedule_changed",
+                    "title": f'{updated["name"]} will refresh {schedule}',
+                    "body": "Scheduled refreshes run as the dashboard owner through current ACL, semantic, validation, and compliance controls. Released rows are encrypted and expire at the policy cache TTL.",
+                    "dashboard": {"id": updated["id"], "name": updated["name"], "status": updated["status"], "version": updated["version"], "url": f'/portal/dashboard?dashboard_id={updated["id"]}'},
+                })
+                return
+
+            filter_match = _DASHBOARD_FILTER_INTENT_RE.search(text)
+            if filter_match:
+                if not latest:
+                    await websocket.send_json({"type": "assistant_error", "action": "dashboard", "content": "Create a dashboard before adding filters."})
+                    return
+                field = filter_match.group("field").strip(" .")
+                try:
+                    filters = json.loads(latest.get("filters_json") or "[]")
+                except (TypeError, ValueError):
+                    filters = []
+                if not any(str(item.get("field") or "").lower() == field.lower() for item in filters if isinstance(item, dict)):
+                    filters.append({"field": field, "label": field, "type": "text"})
+                updated = store.update_dashboard_controls(
+                    latest["id"], user_id, account_id, filters=filters,
+                    change_summary=f"Filter added: {field}",
+                )
+                await websocket.send_json({
+                    "type": "assistant_dashboard", "action": "filter_added",
+                    "title": f'Added a {field} filter to "{updated["name"]}"',
+                    "body": "The control is applied only to dashboard sources that return a matching field.",
+                    "dashboard": {"id": updated["id"], "name": updated["name"], "status": updated["status"], "version": updated["version"], "url": f'/portal/dashboard?dashboard_id={updated["id"]}'},
+                })
+                return
+
+            tab_match = _DASHBOARD_TAB_INTENT_RE.search(text)
+            if tab_match:
+                if not latest:
+                    await websocket.send_json({"type": "assistant_error", "action": "dashboard", "content": "Create a dashboard before adding tabs."})
+                    return
+                tab = tab_match.group("tab").strip(" .")
+                try:
+                    tabs = json.loads(latest.get("tabs_json") or '["Overview"]')
+                except (TypeError, ValueError):
+                    tabs = ["Overview"]
+                if tab.lower() not in {str(value).lower() for value in tabs}:
+                    tabs.append(tab)
+                updated = store.update_dashboard_controls(
+                    latest["id"], user_id, account_id, tabs=tabs,
+                    change_summary=f"Tab added: {tab}",
+                )
+                await websocket.send_json({
+                    "type": "assistant_dashboard", "action": "tab_added",
+                    "title": f'Added the {tab} tab to "{updated["name"]}"',
+                    "body": "Ask me to add a new visual to this dashboard and name the tab to place it there.",
+                    "dashboard": {"id": updated["id"], "name": updated["name"], "status": updated["status"], "version": updated["version"], "url": f'/portal/dashboard?dashboard_id={updated["id"]}'},
+                })
+                return
+
+            if _DASHBOARD_SHARE_INTENT_RE.search(text):
+                if not latest:
+                    await websocket.send_json({"type": "assistant_error", "action": "dashboard", "content": "Create a dashboard before sharing it."})
+                    return
+                updated = store.update_dashboard_controls(
+                    latest["id"], user_id, account_id, visibility="team",
+                    change_summary="Shared with team",
+                )
+                updated = store.publish_dashboard(updated["id"], user_id, account_id) or updated
+                await websocket.send_json({
+                    "type": "assistant_dashboard", "action": "shared",
+                    "title": f'Published "{updated["name"]}" to your workspace team',
+                    "body": "Workspace users can view and filter it under their own current data access. Only the owner can edit or restore the artifact.",
+                    "dashboard": {"id": updated["id"], "name": updated["name"], "status": updated["status"], "version": updated["version"], "url": f'/portal/dashboard?dashboard_id={updated["id"]}'},
+                })
+                return
+
+            rename_match = _DASHBOARD_RENAME_INTENT_RE.search(text)
+            if rename_match:
+                if not latest:
+                    await websocket.send_json({
+                        "type": "assistant_error",
+                        "action": "dashboard",
+                        "content": "There is no dashboard in this thread to rename yet.",
+                    })
+                    return
+                updated = store.rename_dashboard(
+                    latest["id"], user_id, account_id, rename_match.group("name")
+                )
+                await websocket.send_json({
+                    "type": "assistant_dashboard",
+                    "action": "renamed",
+                    "title": f'Dashboard renamed to "{updated["name"]}"',
+                    "dashboard": {
+                        "id": updated["id"], "name": updated["name"],
+                        "status": updated["status"], "version": updated["version"],
+                        "url": f'/portal/dashboard?dashboard_id={updated["id"]}',
+                    },
+                })
+                return
+
+            if _DASHBOARD_PUBLISH_INTENT_RE.search(text):
+                if not latest:
+                    await websocket.send_json({
+                        "type": "assistant_error",
+                        "action": "dashboard",
+                        "content": "There is no dashboard in this thread to publish yet.",
+                    })
+                    return
+                updated = store.publish_dashboard(latest["id"], user_id, account_id)
+                await websocket.send_json({
+                    "type": "assistant_dashboard",
+                    "action": "published",
+                    "title": f'Dashboard "{updated["name"]}" published',
+                    "dashboard": {
+                        "id": updated["id"], "name": updated["name"],
+                        "status": updated["status"], "version": updated["version"],
+                        "url": f'/portal/dashboard?dashboard_id={updated["id"]}',
+                    },
+                })
+                return
+
+            chart_type_match = _DASHBOARD_CHART_TYPE_RE.search(text)
+            if chart_type_match:
+                if not latest:
+                    await websocket.send_json({
+                        "type": "assistant_error", "action": "dashboard",
+                        "content": "There is no dashboard in this thread to update yet.",
+                    })
+                    return
+                charts = store.list_dashboard_charts(latest["id"], user_id)
+                if not charts:
+                    await websocket.send_json({
+                        "type": "assistant_error", "action": "dashboard",
+                        "content": "That dashboard does not have a visual to update yet.",
+                    })
+                    return
+                chart = charts[-1]
+                chart_type = chart_type_match.group("chart_type").lower()
+                store.update_pinned_chart(
+                    chart["id"], user_id, chart_type=chart_type
+                )
+                latest = store.mark_dashboard_draft(
+                    latest["id"], user_id, account_id
+                ) or latest
+                await websocket.send_json({
+                    "type": "assistant_dashboard", "action": "chart_type_changed",
+                    "title": f'Changed the latest visual in "{latest["name"]}" to {chart_type}',
+                    "dashboard": {
+                        "id": latest["id"], "name": latest["name"],
+                        "status": "draft", "version": latest["version"],
+                        "url": f'/portal/dashboard?dashboard_id={latest["id"]}',
+                    },
+                })
+                return
+
+            add_query_match = _DASHBOARD_ADD_QUERY_RE.search(text)
+            if add_query_match:
+                if not latest:
+                    await websocket.send_json({
+                        "type": "assistant_error", "action": "dashboard",
+                        "content": "Create a dashboard first, then I can add new governed visuals to it.",
+                    })
+                    return
+                question = add_query_match.group("question").strip(" .,:;-")
+                adapter.queue_dashboard(latest["name"], dashboard_id=int(latest["id"]))
+                await websocket.send_json({"type": "typing", "active": False})
+                await _run_main_question(question, "", "")
+                return
+
+            if _DASHBOARD_ADD_INTENT_RE.search(text):
+                if not latest:
+                    await websocket.send_json({
+                        "type": "assistant_error",
+                        "action": "dashboard",
+                        "content": (
+                            "There is no dashboard in this thread yet. Say "
+                            '"create a dashboard from this result" first.'
+                        ),
+                    })
+                    return
+                artifact = adapter.materialize_dashboard(
+                    name=latest["name"], dashboard_id=int(latest["id"])
+                )
+                await websocket.send_json({
+                    "type": "assistant_dashboard",
+                    "action": "item_added",
+                    "title": f'Added this result to "{artifact["name"]}"',
+                    "dashboard": artifact,
+                })
+                return
+
+            tail = _dashboard_request_tail(text)
+            has_result = bool(
+                getattr(adapter, "last_result", None)
+                and (adapter.last_result or {}).get("rows")
+            )
+            name = _dashboard_name(tail or (adapter.last_result or {}).get("question", ""))
+            if tail:
+                from core.dashboard_planner import looks_like_multi_widget_request
+
+                if looks_like_multi_widget_request(tail):
+                    all_metrics = store.list_metrics(account_id)
+                    allowed = store.get_allowed_tables(portal_user)
+                    if allowed is not None:
+                        all_metrics = [
+                            metric for metric in all_metrics
+                            if not metric.get("base_table") or str(metric["base_table"]).upper() in allowed
+                        ]
+                    provider, model, api_key, az_kwargs = resolve_provider(client, purpose="query")
+
+                    async def _complete_dashboard_plan(**kwargs):
+                        return await llm_complete(
+                            provider=provider, model=model, api_key=api_key,
+                            **kwargs, **az_kwargs,
+                        )
+
+                    from core.dashboard_planner import parse_dashboard_plan
+
+                    request_id = make_llm_audit_request_id()
+                    with llm_audit_scope(
+                        account_id=account_id,
+                        question="Plan dashboard work from chat",
+                        enabled=bool(client.get("enable_llm_audit")),
+                        request_id=request_id,
+                        question_id=getattr(adapter, "last_question_id", None) or "",
+                        component="dashboard_builder_chat",
+                    ):
+                        plan, plan_error = await parse_dashboard_plan(text, all_metrics, _complete_dashboard_plan)
+                    if plan is None or plan.confidence < 0.60:
+                        await adapter.send_clarification_prompt(
+                            adapter.make_event(text),
+                            plan_error or "I can build that dashboard, but I need the exact visuals, time range, and grouping you want before I run several queries.",
+                            [],
+                        )
+                        return
+                    dashboard = store.create_dashboard(
+                        account_id, user_id, adapter.thread_id, plan.name,
+                        description="Created by QueryBot's governed dashboard work planner.",
+                    )
+                    dashboard = store.update_dashboard_controls(
+                        dashboard["id"], user_id, account_id,
+                        visibility=plan.visibility,
+                        refresh_schedule=plan.refresh_schedule,
+                        tabs=list(plan.tabs),
+                        change_summary="Dashboard work plan created",
+                    ) or dashboard
+                    await websocket.send_json({
+                        "type": "assistant_analysis", "action": "dashboard_plan",
+                        "title": f'Building "{dashboard["name"]}"',
+                        "body": f"I’ll run {len(plan.widgets)} governed data tasks and assemble the successful results in the artifact pane.",
+                        "bullets": [f"{index + 1}. {widget.title or widget.question}" for index, widget in enumerate(plan.widgets)],
+                    })
+                    completed = 0
+                    for index, widget in enumerate(plan.widgets):
+                        await websocket.send_json({
+                            "type": "status", "stage": "dashboard_work",
+                            "label": f"Building visual {index + 1} of {len(plan.widgets)}",
+                            "detail": widget.title or widget.question,
+                        })
+                        adapter.queue_dashboard(
+                            dashboard["name"], dashboard_id=int(dashboard["id"]),
+                            tab=widget.tab, chart_type=widget.chart_type, title=widget.title,
+                        )
+                        await _run_main_question(widget.question, "", "")
+                        if adapter.pending_dashboard is None:
+                            completed += 1
+                        else:
+                            adapter.pending_dashboard = None
+                    final_dashboard = store.get_dashboard(dashboard["id"], user_id, account_id) or dashboard
+                    await websocket.send_json({
+                        "type": "assistant_dashboard", "action": "created",
+                        "title": f'Built {completed} of {len(plan.widgets)} visuals for "{final_dashboard["name"]}"',
+                        "body": "Open the artifact to review the live charts, data sources, controls, and revision history.",
+                        "dashboard": {"id": final_dashboard["id"], "name": final_dashboard["name"], "status": final_dashboard["status"], "version": final_dashboard["version"], "url": f'/portal/dashboard?dashboard_id={final_dashboard["id"]}'},
+                    })
+                    return
+                # The request includes a business question. Run it through the
+                # standard guarded pipeline, then materialize only its success.
+                adapter.queue_dashboard(name)
+                await websocket.send_json({"type": "typing", "active": False})
+                await _run_main_question(tail, "", "")
+                return
+            if not has_result:
+                await websocket.send_json({
+                    "type": "message",
+                    "content": (
+                        "What should the dashboard track? For example, say "
+                        '"create a dashboard showing monthly revenue by region".'
+                    ),
+                })
+                return
+            artifact = adapter.materialize_dashboard(name=name)
+            await websocket.send_json({
+                "type": "assistant_dashboard",
+                "action": "created",
+                "title": f'Dashboard "{artifact["name"]}" created',
+                "dashboard": artifact,
+            })
+        except ValueError as exc:
+            await websocket.send_json({
+                "type": "assistant_error",
+                "action": "dashboard",
+                "content": str(exc),
+            })
+        except Exception as exc:
+            log.exception("dashboard chat failed for %s: %s", account_id, exc)
+            await websocket.send_json({
+                "type": "assistant_error",
+                "action": "dashboard",
+                "content": "I could not update that dashboard right now.",
+            })
+        finally:
+            await websocket.send_json({"type": "typing", "active": False})
+
     async def _run_reconcile_chat(snapshot: dict) -> None:
         """"the real number is X, why is yours Y" -- QueryBot cannot see the
         methodology behind an externally-known number, so this must NOT
@@ -1120,6 +1641,313 @@ async def ws_chat(websocket: WebSocket, account_id: str):
             ],
         })
         await websocket.send_json({"type": "typing", "active": False})
+
+    async def _run_analysis_work(text: str) -> None:
+        """Run auditable prebuilt or governed-Python work over released rows."""
+        cached = getattr(adapter, "last_result", None) or {}
+        rows = list(cached.get("rows") or [])
+        if not rows:
+            await websocket.send_json({
+                "type": "assistant_error",
+                "action": "analyze_result",
+                "content": "Run a data question first, then ask me to analyze that result.",
+            })
+            await websocket.send_json({"type": "typing", "active": False})
+            return
+
+        from core.analysis_code_planner import (
+            extract_user_python, parse_python_analysis_plan,
+        )
+        from core.analysis_sandbox import (
+            plan_analysis_operations, run_governed_python_analysis,
+            run_isolated_analysis, validate_python_analysis,
+        )
+        from core.response_builder import build_assistant_response
+
+        user_code = extract_user_python(text)
+        custom_python = bool(user_code or _CUSTOM_PYTHON_INTENT_RE.search(text))
+        python_code = ""
+        code_source = ""
+        analysis_title = "Analysis work"
+        plan_explanation = ""
+        planner_used = False
+        validation = None
+
+        if custom_python:
+            if not int(client.get("enable_python_analysis") or 0):
+                await websocket.send_json({
+                    "type": "assistant_error",
+                    "action": "python_analysis",
+                    "content": (
+                        "Governed Python analysis is disabled for this workspace. "
+                        "An administrator can enable it in Client settings → Agent Analysis."
+                    ),
+                })
+                await websocket.send_json({"type": "typing", "active": False})
+                return
+            if user_code:
+                if not int(client.get("allow_user_python") or 0):
+                    await websocket.send_json({
+                        "type": "assistant_error",
+                        "action": "python_analysis",
+                        "content": (
+                            "This workspace allows governed Python plans but not pasted source. "
+                            "Ask for the calculation in plain English, or have an administrator "
+                            "enable user-submitted Python."
+                        ),
+                    })
+                    await websocket.send_json({"type": "typing", "active": False})
+                    return
+                python_code = user_code
+                code_source = "user_submitted"
+                analysis_title = "Custom Python analysis"
+            else:
+                provider, model, api_key, az_kwargs = resolve_provider(client, purpose="query")
+
+                async def _complete_python_plan(**kwargs):
+                    return await llm_complete(
+                        provider=provider, model=model, api_key=api_key,
+                        **kwargs, **az_kwargs,
+                    )
+
+                with llm_audit_scope(
+                    account_id=account_id,
+                    question="Plan governed Python analysis from result metadata",
+                    enabled=bool(client.get("enable_llm_audit")),
+                    request_id=make_llm_audit_request_id(),
+                    question_id=getattr(adapter, "last_question_id", None) or "",
+                    component="analysis_code_planner",
+                ):
+                    plan, plan_error = await parse_python_analysis_plan(
+                        text, rows, _complete_python_plan,
+                    )
+                if plan is None or plan.confidence < 0.65:
+                    await websocket.send_json({
+                        "type": "assistant_error",
+                        "action": "python_analysis",
+                        "content": plan_error or (
+                            "I need a more precise calculation and output shape before I run Python."
+                        ),
+                    })
+                    await websocket.send_json({"type": "typing", "active": False})
+                    return
+                python_code = plan.code
+                code_source = "metadata_only_planner"
+                analysis_title = plan.title
+                plan_explanation = plan.explanation
+                planner_used = True
+            validation = validate_python_analysis(python_code)
+            operations = ["python"]
+        else:
+            operations = plan_analysis_operations(text, rows)
+
+        agent_run = None
+        subtasks: list[dict] = []
+        results: list[tuple[str, object]] = []
+        try:
+            agent_run = AgentRunSession.start(
+                account_id=account_id,
+                portal_user=portal_user,
+                external_thread_id=adapter.thread_id,
+                objective=text,
+                max_tool_calls=1,
+                initial_tool="analyze_result",
+                initial_label="Analyzing the governed result",
+                initial_detail=(
+                    f"Running {len(operations)} bounded child task(s) in isolated workers"
+                ),
+                initial_metadata={
+                    "database_queried": False,
+                    "rows_sent_to_llm": 0,
+                    "custom_python": custom_python,
+                    "code_source": code_source,
+                    "code_hash": validation.code_hash if validation else "",
+                    "source_result_id": getattr(adapter, "last_result_id", None) or "",
+                    "operations": operations,
+                },
+            )
+            await adapter.send_agent_event(agent_run.event("agent_run_started"))
+            for operation in operations:
+                subtasks.append(store.create_agent_subtask(
+                    parent_run_id=agent_run.run_id,
+                    account_id=account_id,
+                    portal_user_id=int(portal_user["id"]),
+                    objective_sanitized=f"{operation.title()} analysis of released result",
+                    tool_name=f"analysis_{operation}",
+                    metadata={
+                        "source_result_id": getattr(adapter, "last_result_id", None) or "",
+                        "input_row_count": min(len(rows), 5000),
+                        "database_queried": False,
+                        "rows_sent_to_llm": 0,
+                        "code_source": code_source,
+                        "code_hash": validation.code_hash if validation else "",
+                        "ast_nodes": validation.ast_nodes if validation else 0,
+                        "helper_calls": list(validation.helper_calls) if validation else [],
+                    },
+                ))
+            await adapter.send_agent_event(agent_run.record_stage(
+                "analysis_work",
+                "Running isolated analysis tasks",
+                ", ".join(operation.title() for operation in operations),
+            ))
+
+            outcomes = await asyncio.gather(*[
+                asyncio.to_thread(run_governed_python_analysis, rows, python_code)
+                if operation == "python"
+                else asyncio.to_thread(run_isolated_analysis, rows, operation)
+                for operation in operations
+            ], return_exceptions=True)
+            for operation, subtask, outcome in zip(operations, subtasks, outcomes):
+                if isinstance(outcome, BaseException):
+                    store.finish_agent_subtask(
+                        subtask_id=subtask["id"], parent_run_id=agent_run.run_id,
+                        account_id=account_id, portal_user_id=int(portal_user["id"]),
+                        status="failed", result_summary=str(outcome),
+                        metadata={
+                            "operation": operation,
+                            "error_type": type(outcome).__name__,
+                            "input_row_count": min(len(rows), 5000),
+                            "database_queried": False,
+                            "code_source": code_source,
+                            "code_hash": validation.code_hash if validation else "",
+                            "ast_nodes": validation.ast_nodes if validation else 0,
+                            "rows_sent_to_llm": 0,
+                        },
+                    )
+                    results.append((operation, outcome))
+                    continue
+                store.finish_agent_subtask(
+                    subtask_id=subtask["id"], parent_run_id=agent_run.run_id,
+                    account_id=account_id, portal_user_id=int(portal_user["id"]),
+                    status="completed", result_summary=outcome.summary,
+                    metadata={
+                        "operation": operation,
+                        "source_result_id": getattr(adapter, "last_result_id", None) or "",
+                        "input_row_count": min(len(rows), 5000),
+                        "database_queried": False,
+                        "rows_sent_to_llm": 0,
+                        "code_source": code_source,
+                        **outcome.metadata,
+                    },
+                )
+                results.append((operation, outcome))
+
+            completed = [(operation, result) for operation, result in results
+                         if not isinstance(result, BaseException)]
+            failed = [(operation, result) for operation, result in results
+                      if isinstance(result, BaseException)]
+            if not completed:
+                raise RuntimeError("All isolated analysis tasks failed.")
+
+            bullets = [result.summary for _, result in completed]
+            if planner_used and plan_explanation:
+                bullets.insert(0, plan_explanation)
+            if failed:
+                bullets.append(
+                    "Could not complete: " + ", ".join(operation for operation, _ in failed)
+                )
+            await websocket.send_json({
+                "type": "assistant_analysis",
+                "action": "python_analysis" if custom_python else "analyze_result",
+                "title": f"{analysis_title} completed",
+                "body": (
+                    "I analyzed only the governed rows already returned to this conversation. "
+                    + (
+                        "A metadata-only planner produced the validated calculation; zero result "
+                        "rows or sample values were sent to the model."
+                        if planner_used else
+                        "No database query or model call was made for these calculations."
+                    )
+                ),
+                "bullets": bullets,
+                "secondary": (
+                    f"{len(completed)} of {len(operations)} child tasks completed in isolated, "
+                    "time-bounded workers."
+                ),
+                "result_scope": {
+                    "badge": "Returned result only",
+                    "note": f"Based on {min(len(rows), 5000)} released rows.",
+                },
+            })
+
+            # Prefer the most decision-useful non-empty derived table in the
+            # artifact pane; the chat keeps the concise explanation.
+            priority = {"python": 0, "correlation": 1, "outliers": 2, "trend": 3, "profile": 4}
+            candidates = sorted(completed, key=lambda item: priority.get(item[0], 9))
+            operation, chosen = next(
+                ((op, result) for op, result in candidates if result.rows), candidates[0]
+            )
+            chart_type = detect_chart_type(chosen.rows, f"{operation} analysis")
+            chart = build_chart_payload(
+                chosen.rows, chart_type,
+                title=analysis_title if operation == "python" else f"{operation.title()} analysis",
+                question=text,
+            ) if chart_type else None
+            response = build_assistant_response(
+                question=(
+                    analysis_title
+                    if operation == "python"
+                    else f"{operation.title()} analysis of the returned result"
+                ),
+                rows=chosen.rows,
+                sql="",
+                duration_ms=0,
+                chart=chart,
+                data_source="Isolated Python worker",
+                display_context={"result_operation": "analysis_work"},
+            )
+            response["trust"].update({
+                "operation": (
+                    "Governed Python analysis" if custom_python else "Bounded result analysis"
+                ),
+                "database_queried": False,
+                "rows_sent_to_llm": 0,
+                "source_result_id": getattr(adapter, "last_result_id", None) or "",
+                "worker_isolation": "spawned process with hard timeout",
+                "code_source": code_source,
+                "code_hash": validation.code_hash if validation else "",
+                "ast_nodes": validation.ast_nodes if validation else 0,
+                "planner_input": "column metadata only" if planner_used else "none",
+                "child_tasks": [
+                    {
+                        "id": task["id"],
+                        "operation": operation_name,
+                        "status": "failed" if isinstance(result, BaseException) else "completed",
+                    }
+                    for task, (operation_name, result) in zip(subtasks, results)
+                ],
+            })
+            response["analysis_artifact"] = True
+            await adapter.send_assistant_response(adapter.make_event(text), response)
+            if agent_run:
+                agent_run.record_assistant_message(
+                    "; ".join(bullets),
+                    message_type="analysis_summary",
+                    metadata={
+                        "source_result_id": getattr(adapter, "last_result_id", None) or "",
+                        "child_task_count": len(subtasks),
+                    },
+                )
+                agent_run.complete_if_running()
+                await adapter.send_agent_event(agent_run.event("agent_run_finished"))
+        except asyncio.CancelledError:
+            if agent_run:
+                agent_run.cancel()
+                await adapter.send_agent_event(agent_run.event("agent_run_finished"))
+            raise
+        except Exception as exc:
+            log.warning("isolated analysis work failed: %s", exc)
+            if agent_run:
+                agent_run.fail(exc)
+                await adapter.send_agent_event(agent_run.event("agent_run_finished"))
+            await websocket.send_json({
+                "type": "assistant_error",
+                "action": "python_analysis" if custom_python else "analyze_result",
+                "content": "I could not complete the governed result analysis.",
+                "detail": str(exc)[:240],
+            })
+        finally:
+            await websocket.send_json({"type": "typing", "active": False})
 
     try:
         while True:
@@ -2146,17 +2974,48 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     "WS clarification resolved for '%s' with reply '%s'",
                     pending["original_q"][:80], log_label[:80],
                 )
+                clarification_run = None
                 try:
-                    await handle_query(
-                        account_id,
-                        adapter.make_event(combined),
-                        adapter,
-                        combined,
-                        portal_user,
-                        is_clarification=True,
-                    )
+                    try:
+                        clarification_run = AgentRunSession.resume(
+                            account_id=account_id,
+                            portal_user_id=int(portal_user["id"]),
+                            external_thread_id=adapter.thread_id,
+                            reply=log_label,
+                        )
+                    except Exception as audit_exc:
+                        log.warning(
+                            "Clarification agent resume unavailable; continuing query: %s",
+                            audit_exc,
+                        )
+                    if clarification_run:
+                        await adapter.send_agent_event(
+                            clarification_run.event("agent_run_started")
+                        )
+                    with activate_agent_run(clarification_run):
+                        await handle_query(
+                            account_id,
+                            adapter.make_event(combined),
+                            adapter,
+                            combined,
+                            portal_user,
+                            is_clarification=True,
+                        )
+                    if clarification_run:
+                        clarification_run.complete_if_running()
+                        await adapter.send_agent_event(
+                            clarification_run.event("agent_run_finished")
+                        )
                 except Exception as e:
                     log.error("WS clarification handle_query error: %s", e)
+                    if clarification_run:
+                        try:
+                            clarification_run.fail(e)
+                            await adapter.send_agent_event(
+                                clarification_run.event("agent_run_finished")
+                            )
+                        except Exception as audit_exc:
+                            log.debug("Clarification agent audit failed: %s", audit_exc)
                     await websocket.send_json({"type": "error", "content": "I hit an error while applying that clarification. Please try again."})
                 finally:
                     await websocket.send_json({"type": "typing", "active": False})
@@ -2719,6 +3578,27 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 await websocket.send_json({"type": "typing", "active": False})
                 continue
 
+            # Ana-style dashboard creation/refinement. This is detected before
+            # cached-result transforms because "add this to my dashboard" is
+            # an artifact action, not a data operation.
+            if (
+                _DASHBOARD_CREATE_INTENT_RE.search(text)
+                or _DASHBOARD_ADD_INTENT_RE.search(text)
+                or _DASHBOARD_ADD_QUERY_RE.search(text)
+                or _DASHBOARD_CHART_TYPE_RE.search(text)
+                or _DASHBOARD_RENAME_INTENT_RE.search(text)
+                or _DASHBOARD_PUBLISH_INTENT_RE.search(text)
+                or _DASHBOARD_FILTER_INTENT_RE.search(text)
+                or _DASHBOARD_TAB_INTENT_RE.search(text)
+                or _DASHBOARD_SCHEDULE_INTENT_RE.search(text)
+                or _DASHBOARD_SHARE_INTENT_RE.search(text)
+                or _DASHBOARD_ROLLBACK_INTENT_RE.search(text)
+            ):
+                if current_query_task and not current_query_task.done():
+                    current_query_task.cancel()
+                current_query_task = asyncio.create_task(_run_dashboard_chat(text))
+                continue
+
             # Conversational report/playbook building -- available to every
             # portal user (no role gate). Detected before any result-cache
             # command since "build a report" has nothing to do with a cached
@@ -2727,6 +3607,16 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 if current_query_task and not current_query_task.done():
                     current_query_task.cancel()
                 current_query_task = asyncio.create_task(_run_report_builder_chat(text))
+                continue
+
+            # Deep analysis is explicit and operates only on the most recent
+            # governed result. Detect it before general cached-result routing
+            # so phrases such as "find outliers in this result" create an
+            # auditable work run and artifact instead of a one-line transform.
+            if _ANALYSIS_WORK_INTENT_RE.search(text) or _CUSTOM_PYTHON_INTENT_RE.search(text):
+                if current_query_task and not current_query_task.done():
+                    current_query_task.cancel()
+                current_query_task = asyncio.create_task(_run_analysis_work(text))
                 continue
 
             # Conversational result operations run before every insight/LLM

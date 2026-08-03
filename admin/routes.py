@@ -388,7 +388,7 @@ def _client_health_score(account_id: str, client: dict | None = None) -> dict:
     2.  Tables selected       10 pts
     3.  Masking reviewed      10 pts  (optional; credit given once state_data contains the key)
     4.  KB ready              20 pts  (10 partial while KB_BUILDING)
-    5.  Eval baseline passed  20 pts
+    5.  SQL eval target met   20 pts
     6.  Users assigned        10 pts
     7.  Feedback queue clear  10 pts
     8.  Query success ≥80 %   10 pts
@@ -445,13 +445,22 @@ def _client_health_score(account_id: str, client: dict | None = None) -> dict:
         "hint": "Run 'Generate Knowledge Base' in Schema & KB Setup." if not kb_ok else "",
     })
 
-    # 5 — Eval baseline
-    eval_run  = store.latest_eval_run(account_id)
-    eval_ok   = bool(eval_run and (eval_run.get("passed_cases") or 0) > 0)
+    # 5 — The latest completed golden suite must meet this tenant's configured
+    # SQL-accuracy target. One passing case is not a meaningful baseline.
+    eval_run = store.latest_eval_run(account_id)
+    eval_total = int(eval_run.get("total_cases") or 0) if eval_run else 0
+    eval_passed = int(eval_run.get("passed_cases") or 0) if eval_run else 0
+    eval_rate = (eval_passed / eval_total * 100) if eval_total else None
+    eval_target = max(50, min(int(client.get("sql_accuracy_target_pct") or 85), 100))
+    eval_ok = bool(eval_rate is not None and eval_rate >= eval_target)
     components.append({
-        "key": "evals", "label": "Eval baseline passed", "points": 20,
+        "key": "evals", "label": f"SQL accuracy ≥{eval_target}%", "points": 20,
         "earned": 20 if eval_ok else 0, "ok": eval_ok,
-        "hint": "Run an eval suite from the Evals tab." if not eval_ok else "",
+        "hint": (
+            "Run a golden eval suite from the Evals tab."
+            if eval_rate is None else
+            f"Latest golden pass rate is {eval_rate:.1f}%; target is {eval_target}%."
+        ) if not eval_ok else "",
     })
 
     # 6 — Users assigned
@@ -1863,6 +1872,15 @@ async def client_detail(request: Request, account_id: str):
     system_model = store.get_system("default_llm_model", "claude-sonnet-4-6")
 
     health_score = _client_health_score(account_id, client)
+    analysis_subtasks = store.list_agent_subtasks_for_account(account_id, limit=100)
+    latest_sql_eval = store.latest_eval_run(account_id) or {}
+    latest_sql_pass_rate = None
+    if int(latest_sql_eval.get("total_cases") or 0) > 0:
+        latest_sql_pass_rate = round(
+            int(latest_sql_eval.get("passed_cases") or 0)
+            / int(latest_sql_eval["total_cases"]) * 100,
+            1,
+        )
 
     try:
         _client_erp_packs = json.loads(client.get("erp_packs") or "[]")
@@ -1895,6 +1913,9 @@ async def client_detail(request: Request, account_id: str):
         "db_name":         db_name,
         "system_model":    system_model,
         "health_score":    health_score,
+        "analysis_subtasks": analysis_subtasks,
+        "latest_sql_eval": latest_sql_eval,
+        "latest_sql_pass_rate": latest_sql_pass_rate,
         "teams_platforms": store.list_platforms("teams"),
     })
 
@@ -2060,11 +2081,25 @@ async def client_update(
     query_limit_monthly: str = Form(""),
     token_limit_monthly: str = Form(""),
     enable_llm_audit:    str = Form(""),
+    enable_python_analysis: str = Form(""),
+    allow_user_python:   str = Form(""),
+    sql_accuracy_target_pct: str = Form("85"),
     portal_only:         str = Form(""),
     teams_platform_config_id: str = Form(""),
 ):
     if not _is_auth(request):
         return RedirectResponse("/admin/login", status_code=303)
+    # Keep direct handler calls used by route tests equivalent to FastAPI's
+    # form binding, where these values are always plain strings.
+    enable_python_analysis = (
+        enable_python_analysis if isinstance(enable_python_analysis, str) else ""
+    )
+    allow_user_python = allow_user_python if isinstance(allow_user_python, str) else ""
+    sql_accuracy_target_pct = (
+        sql_accuracy_target_pct
+        if isinstance(sql_accuracy_target_pct, (str, int, float))
+        else "85"
+    )
     # Multi-checkbox field — read from the raw form (FastAPI Form() only binds scalars)
     form = await request.form()
     _pack_ids = [str(p).strip() for p in form.getlist("erp_packs") if str(p).strip()]
@@ -2112,6 +2147,11 @@ async def client_update(
             query_limit_monthly = int(query_limit_monthly) if query_limit_monthly else None,
             token_limit_monthly = int(token_limit_monthly) if token_limit_monthly else 0,
             enable_llm_audit    = 1 if enable_llm_audit else 0,
+            enable_python_analysis = 1 if enable_python_analysis else 0,
+            # Pasted source is a stricter child capability and cannot remain
+            # active while governed Python itself is disabled.
+            allow_user_python   = 1 if enable_python_analysis and allow_user_python else 0,
+            sql_accuracy_target_pct = int(sql_accuracy_target_pct or 85),
             portal_only         = is_portal_only,
             # Portal-only clients always have the internal chat UI enabled
             chat_ui_enabled     = 1 if is_portal_only else None,

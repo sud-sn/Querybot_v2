@@ -872,6 +872,20 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
             f"{selected_schema} schema" if selected_schema else "All allowed schemas"
         )
         response_payload["trust"]["schema_mode"] = "selected" if selected_schema else "all"
+        tables_used = list(
+            confidence_context.get("tables_used")
+            or extract_sql_tables(sql, db_cfg.get("db_type", "azure_sql"))
+        )
+        response_payload["trust"]["tables_used"] = tables_used
+        response_payload["trust"]["semantic_contract_version"] = str(contract_version or "")
+        response_payload["citations"] = [
+            {"type": "table", "label": str(table)} for table in tables_used[:8]
+        ]
+        if contract_version:
+            response_payload["citations"].append({
+                "type": "semantic_contract",
+                "label": f"Semantic contract {contract_version}",
+            })
         if coverage_caveats:
             response_payload["coverage_caveats"] = coverage_caveats
         # Generate suggestions from the statistical brief already computed

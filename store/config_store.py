@@ -380,6 +380,9 @@ def update_client_meta(
     enable_llm_audit: Optional[int] = None,
     portal_only: Optional[int] = None,
     enable_feedback_collection: Optional[int] = None,
+    enable_python_analysis: Optional[int] = None,
+    allow_user_python: Optional[int] = None,
+    sql_accuracy_target_pct: Optional[int] = None,
     graph_use_suggested: Optional[int] = None,
     erp_packs: Optional[str] = None,
     teams_tenant_id: Optional[str] = None,
@@ -413,6 +416,13 @@ def update_client_meta(
         fields.append("portal_only = ?"); params.append(portal_only)
     if enable_feedback_collection is not None:
         fields.append("enable_feedback_collection = ?"); params.append(enable_feedback_collection)
+    if enable_python_analysis is not None:
+        fields.append("enable_python_analysis = ?"); params.append(1 if enable_python_analysis else 0)
+    if allow_user_python is not None:
+        fields.append("allow_user_python = ?"); params.append(1 if allow_user_python else 0)
+    if sql_accuracy_target_pct is not None:
+        target = max(50, min(int(sql_accuracy_target_pct), 100))
+        fields.append("sql_accuracy_target_pct = ?"); params.append(target)
     if graph_use_suggested is not None:
         fields.append("graph_use_suggested = ?"); params.append(graph_use_suggested)
     if erp_packs is not None:

@@ -12,6 +12,16 @@
 .dashboard-page{min-height:100%;display:flex;flex-direction:column;gap:1rem}
 .dashboard-page .page-header{margin-bottom:.25rem}
 .dashboard-page .metrics{grid-template-columns:repeat(auto-fit,minmax(180px,1fr));margin-bottom:.5rem}
+.dashboard-library{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:.75rem;margin:0 0 1rem}
+.dashboard-library-item{display:block;padding:.9rem 1rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);color:inherit;text-decoration:none}
+.dashboard-library-item:hover{border-color:var(--primary);box-shadow:0 3px 12px rgba(15,23,42,.06)}
+.dashboard-controls{display:flex;align-items:end;gap:.65rem;flex-wrap:wrap;padding:.75rem 1rem;margin:-.35rem 0 1rem;border:1px solid var(--border);background:var(--surface);border-radius:var(--radius)}
+.dashboard-filter{display:grid;gap:.3rem;min-width:170px}.dashboard-filter label{font-size:11px;font-weight:750;color:var(--text-muted)}
+.dashboard-filter input{height:34px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);padding:0 .65rem}
+.dashboard-tabs{display:flex;gap:.25rem;overflow:auto;margin:0 0 .8rem;border-bottom:1px solid var(--border)}
+.dashboard-tab{padding:.55rem .75rem;border-bottom:2px solid transparent;color:var(--text-muted);font-size:12px;font-weight:700;text-decoration:none;white-space:nowrap}.dashboard-tab.active{color:var(--primary);border-bottom-color:var(--primary)}
+.artifact-details{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.75rem;margin:0 0 1rem}.artifact-detail{border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);padding:.8rem 1rem}.artifact-detail summary{cursor:pointer;font-size:12px;font-weight:800}.artifact-detail-list{display:grid;gap:.5rem;margin-top:.7rem}.artifact-detail-row{display:flex;justify-content:space-between;gap:.75rem;font-size:12px;color:var(--text-muted)}
+@media(max-width:720px){.artifact-details{grid-template-columns:1fr}.dashboard-filter{min-width:min(100%,220px)}}
 .chart-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(420px,100%),1fr));grid-auto-flow:dense;gap:1rem;margin-bottom:1.5rem;align-items:stretch}
 .chart-grid.is-gridstack{display:block;min-height:460px}
 .chart-card{min-height:420px}
@@ -125,6 +135,37 @@
 <div class="alert alert-amber">You haven't been assigned to a group yet. Contact your administrator to get table access.</div>
 {% endif %}
 
+{% if dashboard_artifact %}
+<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;margin-bottom:1rem;padding:.85rem 1rem;border:1px solid var(--border);background:var(--surface);border-radius:var(--radius)">
+  <div>
+    <div style="font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--primary)">Dashboard artifact</div>
+    <h2 style="font-size:18px;font-weight:800;margin:.2rem 0">{{ dashboard_artifact.name }}</h2>
+    <div style="font-size:12px;color:var(--text-muted)">{{ dashboard_artifact.status|capitalize }} · Version {{ dashboard_artifact.version }} · {{ dashboard_artifact.visibility|capitalize }} · {{ dashboard_artifact.refresh_schedule|capitalize }} refresh{% if not dashboard_artifact.can_edit %} · Read only{% endif %}</div>
+  </div>
+  <a href="/portal/chat?thread={{ dashboard_artifact.thread_id }}&dashboard={{ dashboard_artifact.id }}" class="btn btn-secondary">Chat with dashboard</a>
+</div>
+
+{% if dashboard_tabs|length > 1 %}<nav class="dashboard-tabs" aria-label="Dashboard tabs">{% for tab in dashboard_tabs %}<a class="dashboard-tab{% if tab == selected_tab %} active{% endif %}" href="/portal/dashboard?dashboard_id={{ dashboard_artifact.id }}&tab={{ tab|urlencode }}">{{ tab }}</a>{% endfor %}</nav>{% endif %}
+
+{% if dashboard_filters %}
+<form class="dashboard-controls" method="get" action="/portal/dashboard">
+  <input type="hidden" name="dashboard_id" value="{{ dashboard_artifact.id }}"><input type="hidden" name="tab" value="{{ selected_tab }}">
+  {% for filter in dashboard_filters %}<div class="dashboard-filter"><label for="dashboard-filter-{{ loop.index0 }}">{{ filter.label or filter.field }}</label><input id="dashboard-filter-{{ loop.index0 }}" name="filter_{{ loop.index0 }}" value="{{ request.query_params.get('filter_' ~ loop.index0) or '' }}" placeholder="Filter {{ filter.field }}"></div>{% endfor %}
+  <button class="btn btn-primary" type="submit">Apply filters</button><a class="btn btn-secondary" href="/portal/dashboard?dashboard_id={{ dashboard_artifact.id }}&tab={{ selected_tab|urlencode }}">Clear</a>
+</form>
+{% endif %}
+
+<div class="artifact-details">
+  <details class="artifact-detail"><summary>Data sources · {{ dashboard_sources|length }}</summary><div class="artifact-detail-list">{% for source in dashboard_sources %}<div class="artifact-detail-row"><span>{{ source.name }}</span><span>{{ source.source_type|replace('_',' ')|capitalize }}{% if source.semantic_contract_version %} · {{ source.semantic_contract_version }}{% endif %}</span></div>{% else %}<div class="artifact-detail-row"><span>No reusable sources yet</span></div>{% endfor %}</div></details>
+  {% if dashboard_artifact.can_edit %}<details class="artifact-detail"><summary>Revision history · {{ dashboard_versions|length }}</summary><div class="artifact-detail-list">{% for item in dashboard_versions[:8] %}<div class="artifact-detail-row"><span>v{{ item.version }} · {{ item.change_summary }}</span>{% if item.version != dashboard_artifact.version %}<form method="post" action="/portal/dashboard/{{ dashboard_artifact.id }}/rollback"><input type="hidden" name="version" value="{{ item.version }}"><button class="btn btn-xs btn-secondary" type="submit">Restore</button></form>{% else %}<span>Current</span>{% endif %}</div>{% endfor %}</div></details>{% else %}<div class="artifact-detail"><div style="font-size:12px;font-weight:800">Published team dashboard</div><div style="font-size:12px;color:var(--text-muted);margin-top:.45rem">You can view and filter this dashboard. Only its owner can edit or restore it.</div></div>{% endif %}
+</div>
+{% endif %}
+
+{% if not dashboard_artifact and dashboards %}
+<div style="display:flex;align-items:center;justify-content:space-between;margin:.25rem 0 .7rem"><h2 style="font-size:15px;font-weight:800">Your dashboard artifacts</h2><span style="font-size:12px;color:var(--text-muted)">{{ dashboards|length }} saved</span></div>
+<div class="dashboard-library">{% for item in dashboards %}<a class="dashboard-library-item" href="/portal/dashboard?dashboard_id={{ item.id }}"><div style="font-size:13px;font-weight:800">{{ item.name }}</div><div style="font-size:11px;color:var(--text-muted);margin-top:.35rem">{% if not item.can_edit %}Shared with team · {% endif %}{{ item.status|capitalize }} · v{{ item.version }} · {{ item.chart_count }} visual{% if item.chart_count != 1 %}s{% endif %}</div></a>{% endfor %}</div>
+{% endif %}
+
 {% if charts %}
 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;gap:1rem;flex-wrap:wrap">
   <h2 style="font-size:15px;font-weight:700">Pinned charts</h2>
@@ -142,35 +183,50 @@
       <div style="flex:1;min-width:0">
         <div class="chart-card-title"
              title="Double-click to rename"
-             ondblclick="startRenameChart(this, {{ chart.id }})"
+             {% if dashboard_artifact is not defined or not dashboard_artifact or dashboard_artifact.can_edit %}ondblclick="startRenameChart(this, {{ chart.id }})"{% endif %}
              id="chart-title-{{ chart.id }}">{{ chart.title }}</div>
-        <div class="chart-card-sub">{{ chart.row_count }} rows · {{ chart.last_refreshed[:16] if chart.last_refreshed else 'Just now' }}</div>
+        <div class="chart-card-sub">{{ chart.row_count }} rows · {% if chart.from_cache %}Protected cache {{ chart.cache_refreshed_at[:16] if chart.cache_refreshed_at else '' }}{% else %}Live governed refresh{% endif %}</div>
       </div>
       <div style="display:flex;gap:.5rem;flex-shrink:0;align-items:center">
-        <button type="button" class="chart-drag-handle" draggable="false" title="Drag to reorder or resize from the card corner" aria-label="Drag chart to reorder">⋮⋮</button>
+        {% if not dashboard_artifact or dashboard_artifact.can_edit %}<button type="button" class="chart-drag-handle" draggable="false" title="Drag to reorder or resize from the card corner" aria-label="Drag chart to reorder">⋮⋮</button>{% endif %}
         <button type="button" class="btn btn-xs btn-secondary"
           onclick="openChartModal(this.closest('.chart-card'))"
           title="Expand chart" style="font-size:12px;padding:4px 8px">⤢ Expand</button>
         <form method="post" action="/portal/unpin" style="margin:0;display:none" id="unpin-{{ chart.id }}">
           <input type="hidden" name="chart_id" value="{{ chart.id }}">
         </form>
-        <button type="button" class="btn btn-xs btn-secondary" style="color:var(--text-muted)"
+        {% if not dashboard_artifact or dashboard_artifact.can_edit %}<button type="button" class="btn btn-xs btn-secondary" style="color:var(--text-muted)"
           onclick="unpinChart({{ chart.id }}, this.closest('.chart-card'))"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:3px"><path d="M6 18L18 6M6 6l12 12"/></svg>Unpin</button>
+        {% endif %}
       </div>
     </div>
     <div class="chart-card-body">
       {% if chart.error %}
       <div class="chart-error"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--warning)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom:.5rem"><path d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/></svg><div style="font-weight:600;margin-bottom:4px">Chart could not refresh</div><div style="font-size:11px">{{ chart.error }}</div></div>
+      {% elif chart.kpi %}
+      <div style="height:100%;min-height:180px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:1rem">
+        <div style="font-size:12px;font-weight:700;color:var(--text-muted);margin-bottom:.45rem">{{ chart.kpi.label or chart.title }}</div>
+        <div style="font-size:clamp(30px,4vw,52px);font-weight:850;letter-spacing:-.04em;color:var(--text)">{{ chart.kpi_display or chart.kpi.value }}</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:.45rem">{{ chart.kpi.note or 'Single-value result' }}</div>
+      </div>
+      {% elif chart.table_rows %}
+      <div style="width:100%;height:100%;overflow:auto;border:1px solid var(--border);border-radius:var(--radius-sm)">
+        <table style="width:100%;border-collapse:collapse;font-size:12px;white-space:nowrap">
+          <thead><tr>{% for col in chart.table_columns %}<th style="position:sticky;top:0;background:var(--surface-2);padding:.55rem .65rem;text-align:left;border-bottom:1px solid var(--border)">{% if chart.sort_enabled %}<button type="button" onclick="sortDashboardTable(this, {{ loop.index0 }})" style="all:unset;cursor:pointer;font-weight:750">{{ col }} ↕</button>{% else %}{{ col }}{% endif %}</th>{% endfor %}</tr></thead>
+          <tbody>{% for row in chart.table_rows %}<tr>{% for col in chart.table_columns %}<td style="padding:.5rem .65rem;border-bottom:1px solid var(--border)">{{ row[col] }}</td>{% endfor %}</tr>{% endfor %}</tbody>
+        </table>
+      </div>
       {% elif chart.chart_json %}
       <div class="chart-canvas" id="dashboard-chart-{{ chart.id }}" data-chart='{{ chart.chart_json|safe }}'><div class="skeleton skeleton-chart" data-chart-skeleton></div></div>
       {% else %}
       <div class="chart-error">No data returned for this query.</div>
       {% endif %}
+      {% for warning in chart.filter_warnings or [] %}<div class="chart-warning">{{ warning }}</div>{% endfor %}
       <div class="chart-meta">
         <span title="{{ chart.question }}" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ chart.question[:70] }}{% if chart.question|length > 70 %}…{% endif %}</span>
         <span id="chart-type-badge-{{ chart.id }}" style="font-weight:700;color:var(--primary);flex-shrink:0">{{ (chart.chart_type or 'bar')|upper }}</span>
       </div>
-      {% if chart.chart_json %}
+      {% if chart.chart_json and (not dashboard_artifact or dashboard_artifact.can_edit) %}
       <div class="dash-ctrl-row" id="chart-ctrl-{{ chart.id }}" data-chart-id="{{ chart.id }}">
         <!-- type toggles and palette swatches injected by JS -->
       </div>
@@ -195,6 +251,29 @@
 </div>
 
 <script>
+const CAN_EDIT_DASHBOARD = {{ (dashboard_artifact.can_edit if dashboard_artifact else true)|tojson }};
+function sortDashboardTable(button, columnIndex){
+  const table = button?.closest('table');
+  const body = table?.tBodies?.[0];
+  if (!body) return;
+  const ascending = button.dataset.sortDirection !== 'asc';
+  const rows = Array.from(body.rows);
+  rows.sort((left, right) => {
+    const a = (left.cells[columnIndex]?.textContent || '').trim();
+    const b = (right.cells[columnIndex]?.textContent || '').trim();
+    const an = Number(a.replace(/[$,%\s,]/g, ''));
+    const bn = Number(b.replace(/[$,%\s,]/g, ''));
+    const comparison = Number.isFinite(an) && Number.isFinite(bn)
+      ? an - bn : a.localeCompare(b, undefined, {numeric:true, sensitivity:'base'});
+    return ascending ? comparison : -comparison;
+  });
+  rows.forEach(row => body.appendChild(row));
+  table.querySelectorAll('thead button').forEach(control => {
+    if (control !== button) delete control.dataset.sortDirection;
+  });
+  button.dataset.sortDirection = ascending ? 'asc' : 'desc';
+  button.textContent = button.textContent.replace(/[ ↕↑↓]+$/, '') + (ascending ? ' ↑' : ' ↓');
+}
 // ── Colour palettes (matches portal_chat.html) ──────────────────────────────
 // Mode-aware light/dark hex sets -- see the extensive comment in
 // portal_chat.html's _PALETTES for the validation methodology and the
@@ -472,7 +551,7 @@ function collectDashboardLayout() {
 }
 
 function saveDashboardLayoutSoon() {
-  if (!dashboardGrid) return;
+  if (!dashboardGrid || !CAN_EDIT_DASHBOARD) return;
   clearTimeout(layoutSaveTimer);
   layoutSaveTimer = setTimeout(async () => {
     const layouts = collectDashboardLayout();
@@ -501,6 +580,7 @@ function initDashboardGrid() {
       cellHeight: 92,
       margin: 12,
       float: false,
+      staticGrid: !CAN_EDIT_DASHBOARD,
       handle: '.chart-drag-handle',
       disableOneColumnMode: false,
       draggable: { handle: '.chart-drag-handle' },

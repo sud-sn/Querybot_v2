@@ -89,6 +89,7 @@
 .health-refresh-btn{font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:999px;background:var(--surface);cursor:pointer;color:var(--gray-600);margin-left:.35rem;transition:background .12s}
 .health-refresh-btn:hover{background:var(--gray-50);color:var(--gray-900)}
 @media(max-width:900px){.health-score-layout{grid-template-columns:1fr}.health-donut-wrap{margin:0 auto}}
+@media(max-width:640px){.agent-analysis-grid{grid-template-columns:1fr}}
 </style>
 {% endblock %}
 {% block content %}
@@ -140,6 +141,7 @@
   <button class="tab-btn" onclick="showTab('schema-browser',this)" id="tab-schema-btn">Schema browser</button>
   <button class="tab-btn" onclick="showTab('queries',this)">Query Log</button>
   <button class="tab-btn" onclick="showTab('audit',this)">LLM Audit</button>
+  <button class="tab-btn" onclick="showTab('agent-analysis',this)">Agent Analysis</button>
   <button class="tab-btn" onclick="showTab('danger',this)">Danger Zone</button>
 </div>
 
@@ -355,6 +357,33 @@
             <span class="form-switch-copy">
               <span class="form-switch-title">Enable per-query LLM audit logging</span>
               <span class="form-switch-description">Stores a sanitized preview of each prompt sent to the LLM, grouped by request ID and component.</span>
+            </span>
+          </label>
+        </div>
+        <div class="form-grid" style="margin-top:.25rem">
+          <div class="form-group">
+            <label>SQL accuracy target</label>
+            <input type="number" name="sql_accuracy_target_pct" value="{{ client.sql_accuracy_target_pct or 85 }}" min="50" max="100">
+            <p class="form-note">Golden evaluation runs are compared with this target. Use at least 85% before production rollout.</p>
+          </div>
+        </div>
+        <div class="form-group" style="margin-top:.25rem">
+          <label class="form-switch">
+            <input type="checkbox" name="enable_python_analysis" value="1" {% if client.enable_python_analysis %}checked{% endif %}>
+            <span class="form-switch-track" aria-hidden="true"></span>
+            <span class="form-switch-copy">
+              <span class="form-switch-title">Enable governed Python analysis</span>
+              <span class="form-switch-description">Allows metadata-planned custom calculations over rows already released by the governed SQL pipeline. No database, filesystem, network, or unrestricted imports.</span>
+            </span>
+          </label>
+        </div>
+        <div class="form-group" style="margin-top:.25rem">
+          <label class="form-switch">
+            <input type="checkbox" name="allow_user_python" value="1" {% if client.allow_user_python %}checked{% endif %}>
+            <span class="form-switch-track" aria-hidden="true"></span>
+            <span class="form-switch-copy">
+              <span class="form-switch-title">Allow users to submit governed Python source</span>
+              <span class="form-switch-description">Pasted code still passes strict validation, process isolation, timeout, and release limits. Keep disabled unless analysts need code-level control.</span>
             </span>
           </label>
         </div>
@@ -1124,6 +1153,55 @@
   </div>
 </div>
 
+<!-- AGENT ANALYSIS TAB -->
+<div id="tab-agent-analysis" class="tab-pane">
+  <div class="overview-grid agent-analysis-grid">
+    <div class="overview-card">
+      <h3>Governed Python policy</h3>
+      <div style="display:grid;gap:.55rem;font-size:12px">
+        <div><span class="badge {% if client.enable_python_analysis %}badge-green{% else %}badge-gray{% endif %}">{{ 'Enabled' if client.enable_python_analysis else 'Disabled' }}</span> Metadata-planned custom analysis</div>
+        <div><span class="badge {% if client.allow_user_python %}badge-amber{% else %}badge-gray{% endif %}">{{ 'Enabled' if client.allow_user_python else 'Disabled' }}</span> User-submitted source</div>
+        <div style="color:var(--text-muted)">Hard limits: 5,000 input rows, 64 columns, 8 seconds, 2,000 output rows, and 2 MB output. Imports, attributes, files, network, dynamic execution, functions, classes, and while loops are rejected.</div>
+      </div>
+    </div>
+    <div class="overview-card">
+      <h3>SQL quality gate</h3>
+      {% set _target = client.sql_accuracy_target_pct or 85 %}
+      {% if latest_sql_pass_rate is not none %}
+      <div style="font-size:28px;font-weight:900;color:{% if latest_sql_pass_rate >= _target %}var(--success){% else %}var(--warning){% endif %}">{{ latest_sql_pass_rate }}%</div>
+      <p style="font-size:12px;color:var(--text-muted);margin:.35rem 0">Latest golden evaluation · target {{ _target }}% · {{ latest_sql_eval.passed_cases }}/{{ latest_sql_eval.total_cases }} passed</p>
+      {% else %}
+      <div style="font-size:18px;font-weight:800;color:var(--warning)">Baseline required</div>
+      <p style="font-size:12px;color:var(--text-muted);margin:.35rem 0">No completed golden evaluation is available. SQL quality cannot be claimed until the workspace suite has run.</p>
+      {% endif %}
+      <a class="btn btn-secondary btn-sm" href="/admin/clients/{{ client.account_id }}/evals">Open evaluations</a>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-header"><h2>Recent analysis tasks</h2></div>
+    <div class="card-body" style="padding:0;overflow:auto">
+      {% if analysis_subtasks %}
+      <table class="qb-table">
+        <thead><tr><th>Created</th><th>User</th><th>Tool</th><th>Status</th><th>Input / output</th><th>Validation proof</th><th>Summary</th></tr></thead>
+        <tbody>
+        {% for task in analysis_subtasks %}
+          <tr>
+            <td style="white-space:nowrap">{{ task.created_at[:16] }}</td>
+            <td>{{ task.user_name or task.user_email or task.portal_user_id }}</td>
+            <td><code>{{ task.tool_name }}</code></td>
+            <td><span class="badge {% if task.status == 'completed' %}badge-green{% elif task.status == 'failed' %}badge-red{% else %}badge-amber{% endif %}">{{ task.status }}</span></td>
+            <td>{{ task.metadata.input_row_count or task.metadata.input_rows or 0 }} / {{ task.metadata.output_rows if task.metadata.output_rows is defined else '—' }}</td>
+            <td style="font-size:11px"><div>Hash: <code>{{ (task.metadata.code_hash or 'prebuilt')[:12] }}</code></div><div>{{ task.metadata.ast_nodes or 0 }} AST nodes · {{ task.metadata.rows_sent_to_llm or 0 }} rows to LLM</div></td>
+            <td style="max-width:360px">{{ task.result_summary or task.objective_sanitized }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}<div style="padding:1rem;color:var(--text-muted)">No analysis tasks have run for this workspace yet.</div>{% endif %}
+    </div>
+  </div>
+</div>
+
 <!-- DANGER ZONE TAB -->
 <div id="tab-danger" class="tab-pane">
   <div class="danger-zone">
@@ -1177,7 +1255,7 @@ function showTab(name, btn) {
 /* Restore tab from URL hash on load */
 document.addEventListener('DOMContentLoaded', function() {
   var hash = location.hash.replace('#', '');
-  var validTabs = ['overview', 'settings', 'schema-browser', 'queries', 'audit', 'danger'];
+  var validTabs = ['overview', 'settings', 'schema-browser', 'queries', 'audit', 'agent-analysis', 'danger'];
   if (hash && validTabs.indexOf(hash) !== -1) {
     var pane = document.getElementById('tab-' + hash);
     var btns = document.querySelectorAll('.tab-btn');

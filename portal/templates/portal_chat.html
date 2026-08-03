@@ -49,6 +49,33 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .status-badge.offline .status-led{background:var(--danger)}
 .status-note{font-size:12px;color:var(--text-muted)}
 .chat-inner{flex:1;display:flex;flex-direction:column;overflow:hidden;padding:0;min-height:0}
+.chat-workspace{flex:1;display:flex;min-height:0;overflow:hidden}
+.chat-workspace-main{flex:1;min-width:0;display:flex;min-height:0;transition:flex-basis .2s ease}
+.artifact-pane{width:0;min-width:0;display:flex;flex-direction:column;overflow:hidden;background:var(--surface);border-left:0 solid var(--border);transition:width .22s ease,border-width .22s ease;position:relative}
+.chat-workspace.artifact-open .artifact-pane{width:min(47vw,720px);border-left-width:1px}
+.artifact-head{height:56px;display:flex;align-items:center;justify-content:space-between;gap:.75rem;padding:.65rem .8rem;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--surface)}
+.artifact-heading{min-width:0;display:flex;align-items:center;gap:.65rem}
+.artifact-icon{width:30px;height:30px;border-radius:7px;display:grid;place-items:center;background:var(--primary-soft);color:var(--primary);flex-shrink:0}
+.artifact-heading-copy{min-width:0}.artifact-kicker{font-size:10px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:var(--primary)}
+.artifact-title{font-size:13px;font-weight:800;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:440px}
+.artifact-head-actions{display:flex;align-items:center;gap:.35rem;flex-shrink:0}
+.artifact-head-btn{border:1px solid var(--border);background:var(--surface-2);color:var(--text-soft);border-radius:6px;padding:5px 8px;font-size:11px;font-weight:750;cursor:pointer}
+.artifact-head-btn:hover{border-color:var(--primary);color:var(--primary)}
+.artifact-body{flex:1;min-height:0;overflow:auto;padding:.85rem;background:var(--surface-2)}
+.artifact-empty{height:100%;display:grid;place-items:center;text-align:center;color:var(--text-muted);font-size:12px;line-height:1.6;padding:2rem}
+.artifact-surface{min-height:100%;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+.artifact-summary{padding:.85rem 1rem;border-bottom:1px solid var(--border)}
+.artifact-summary h3{font-size:14px;font-weight:800;color:var(--text);margin:0 0 .2rem}.artifact-summary p{font-size:11px;color:var(--text-muted);margin:0}
+.artifact-tabs{display:flex;align-items:center;gap:.2rem;padding:.45rem .65rem;border-bottom:1px solid var(--border);background:var(--surface)}
+.artifact-tab{border:0;background:transparent;color:var(--text-muted);padding:6px 9px;border-radius:5px;font-size:11px;font-weight:750;cursor:pointer}.artifact-tab.active{background:var(--primary-soft);color:var(--primary)}
+.artifact-panel{display:none;padding:.85rem}.artifact-panel.active{display:block}.artifact-chart{height:clamp(320px,52vh,590px);width:100%}
+.artifact-panel .data-table-wrap{max-height:none}.artifact-query{margin:0;white-space:pre-wrap;word-break:break-word;font:11px/1.65 'JetBrains Mono',monospace;color:var(--text-soft);background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:.8rem}
+.artifact-actions{display:flex;gap:.45rem;flex-wrap:wrap;padding:.7rem .85rem;border-top:1px solid var(--border);background:var(--surface)}
+.artifact-open-btn{display:inline-flex;align-items:center;gap:.35rem}
+.dashboard-confirm{display:flex;align-items:center;justify-content:space-between;gap:.75rem;padding:.65rem .75rem;margin:.65rem 0 0;border:1px solid color-mix(in srgb,var(--success) 30%,var(--border));background:var(--success-soft);border-radius:7px;color:var(--text);font-size:11px}.dashboard-confirm strong{display:block;font-size:12px}.dashboard-confirm a{color:var(--primary);font-weight:800;white-space:nowrap}
+@media(max-width:1100px){.chat-workspace.artifact-open .artifact-pane{width:min(52vw,620px)}}
+@media(max-width:820px){.artifact-pane{position:fixed;z-index:1200;inset:0 0 0 auto;width:min(92vw,680px)!important;transform:translateX(100%);transition:transform .22s ease;border-left:1px solid var(--border)!important;box-shadow:-18px 0 50px rgba(15,23,42,.18)}.chat-workspace.artifact-open .artifact-pane{transform:translateX(0)}.artifact-title{max-width:50vw}}
+@media(max-width:520px){.artifact-pane{width:100vw!important}.artifact-body{padding:.45rem}.artifact-chart{height:48vh}.artifact-head-btn[data-artifact-dashboard]{display:none}}
 .chat-wrap{flex:1;display:flex;flex-direction:column;overflow:hidden;min-height:0}
 .chat-thread{flex:1;overflow-y:auto;padding:1.1rem clamp(1rem,3vw,3.5rem);display:flex;flex-direction:column;gap:1rem;scroll-behavior:smooth;min-height:0}
 .msg-system{align-self:center;max-width:80%;text-align:center;font-size:11px;color:var(--text-muted);padding:.45rem .7rem;border-radius:999px;background:var(--surface-2);border:1px solid var(--border)}
@@ -89,6 +116,18 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .answer-progress-detail{display:block;margin-top:2px;font-size:11px;color:var(--text-muted);line-height:1.35}
 .answer-progress-elapsed{display:none;flex-shrink:0;font-size:10px;font-weight:700;color:var(--text-muted);font-variant-numeric:tabular-nums}
 .answer-progress-elapsed.visible{display:inline-flex}
+.agent-run-meta{display:flex;align-items:center;gap:.55rem;margin:-.25rem 0 .75rem;padding-bottom:.7rem;border-bottom:1px solid var(--border);font-size:10px;color:var(--text-muted);min-width:0}
+.agent-run-meta[hidden]{display:none}
+.agent-run-governed{display:inline-flex;align-items:center;gap:.3rem;font-weight:750;color:var(--primary)}
+.agent-run-governed::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--primary)}
+.agent-run-tool{font-family:'JetBrains Mono',monospace;color:var(--text-soft);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.agent-run-id{margin-left:auto;font-family:'JetBrains Mono',monospace;color:var(--text-muted);white-space:nowrap}
+.agent-run-meta[data-status="completed"] .agent-run-governed{color:var(--green)}
+.agent-run-meta[data-status="completed"] .agent-run-governed::before{background:var(--green)}
+.agent-run-meta[data-status="blocked"] .agent-run-governed,.agent-run-meta[data-status="waiting_for_user"] .agent-run-governed{color:var(--amber)}
+.agent-run-meta[data-status="blocked"] .agent-run-governed::before,.agent-run-meta[data-status="waiting_for_user"] .agent-run-governed::before{background:var(--amber)}
+.agent-run-meta[data-status="failed"] .agent-run-governed,.agent-run-meta[data-status="cancelled"] .agent-run-governed{color:var(--red)}
+.agent-run-meta[data-status="failed"] .agent-run-governed::before,.agent-run-meta[data-status="cancelled"] .agent-run-governed::before{background:var(--red)}
 .answer-progress-skeleton{display:grid;gap:7px}
 .answer-progress-skeleton .skeleton{margin:0}
 /* ============================================================================
@@ -387,6 +426,7 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .trust-item{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius);padding:.75rem}
 .trust-k{font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted);margin-bottom:.25rem}
 .trust-v{font-size:12px;color:var(--text);line-height:1.55;word-break:break-word}
+.citation-strip{display:flex;align-items:center;gap:.4rem;flex-wrap:wrap;margin:.75rem 0 0}.citation-label{font-size:10px;font-weight:850;letter-spacing:.07em;text-transform:uppercase;color:var(--text-muted)}.citation-chip{font-size:11px;color:var(--text-soft);border-bottom:1px dotted var(--text-muted);padding:.12rem .18rem}
 .confidence-card{margin:.75rem 0;padding:.75rem .85rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface-2);display:flex;flex-direction:column;gap:.45rem}
 .confidence-top{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap}
 .confidence-badge{font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:.06em;border-radius:999px;padding:.25rem .55rem;border:1px solid var(--border)}
@@ -843,6 +883,19 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
     </div>
   </section>
     </main>
+    <aside class="artifact-pane" id="artifactPane" aria-label="Analysis artifact" aria-hidden="true">
+      <header class="artifact-head">
+        <div class="artifact-heading">
+          <span class="artifact-icon" aria-hidden="true">{{ ic("dashboard", 16) }}</span>
+          <span class="artifact-heading-copy"><span class="artifact-kicker" id="artifactKicker">Analysis artifact</span><span class="artifact-title" id="artifactTitle">Result preview</span></span>
+        </div>
+        <div class="artifact-head-actions">
+          <button type="button" class="artifact-head-btn" data-artifact-dashboard onclick="addArtifactToDashboard()">Add to dashboard</button>
+          <button type="button" class="artifact-head-btn" onclick="closeArtifactPane()" aria-label="Close artifact">Close</button>
+        </div>
+      </header>
+      <div class="artifact-body" id="artifactBody"><div class="artifact-empty">Charts, KPI values, and result tables open here while the explanation stays in the conversation.</div></div>
+    </aside>
   </div>
 </div>
 <div class="toast" id="toast"></div>
@@ -852,6 +905,7 @@ const ACCOUNT_ID = {{ user.account_id|tojson }};
 const USER_NAME = {{ user.name|tojson }};
 const USER_INIT = (USER_NAME[0] || 'U').toUpperCase();
 const USER_EMAIL = {{ user.email|default('', true)|tojson }};
+const DASHBOARD_ID = {{ (selected_dashboard.id if selected_dashboard else 0)|int|tojson }};
 const THREAD_STORAGE_KEY = `querybot.activeThread:${ACCOUNT_ID}:${USER_EMAIL || USER_NAME}`;
 function _createThreadId() {
   return (typeof crypto !== 'undefined' && crypto.randomUUID)
@@ -1053,6 +1107,10 @@ function _showSkeletonBubble(){
     + '<span class="answer-progress-copy"><span class="answer-progress-label" id="answerStageLabel">Understanding your question</span>'
     + '<span class="answer-progress-detail" id="answerStageDetail">Checking access to your workspace and data.</span></span>'
     + '</div><span class="answer-progress-elapsed" id="answerProgressElapsed"></span></div>'
+    + '<div class="agent-run-meta" id="agentRunMeta" hidden data-status="running">'
+    + '<span class="agent-run-governed" id="agentRunState">Governed agent</span>'
+    + '<span class="agent-run-tool" id="agentRunTool">query_data &middot; read only</span>'
+    + '<span class="agent-run-id" id="agentRunId"></span></div>'
     + '<div class="answer-progress-skeleton"><span class="skeleton skeleton-text sk-60"></span>'
     + '<span class="skeleton skeleton-text"></span><span class="skeleton skeleton-text sk-40"></span></div>'
     + '</div></div>';
@@ -2912,6 +2970,111 @@ function _mountResultChat(cardEl, rcId) {
   };
 }
 
+let _activeArtifactPayload = null;
+let _activeArtifactChartId = '';
+
+function _setArtifactUrl(resultId){
+  try {
+    const url = new URL(location.href);
+    if (resultId) url.searchParams.set('artifact', resultId);
+    else url.searchParams.delete('artifact');
+    history.replaceState({}, '', url);
+  } catch (_) {}
+}
+function closeArtifactPane(){
+  document.querySelector('.chat-workspace')?.classList.remove('artifact-open');
+  document.getElementById('artifactPane')?.setAttribute('aria-hidden', 'true');
+  _setArtifactUrl('');
+  setTimeout(() => window.dispatchEvent(new Event('resize')), 240);
+}
+function openArtifactPane(){
+  if (!_activeArtifactPayload) return;
+  document.querySelector('.chat-workspace')?.classList.add('artifact-open');
+  document.getElementById('artifactPane')?.setAttribute('aria-hidden', 'false');
+  _setArtifactUrl(_activeArtifactPayload.data?.result_id || _activeArtifactPayload.trust?.result_id || 'latest');
+  setTimeout(() => window.dispatchEvent(new Event('resize')), 240);
+}
+function _activateArtifactTab(root, tabName){
+  root.querySelectorAll('.artifact-tab').forEach(btn => btn.classList.toggle('active', btn.dataset.artifactTab === tabName));
+  root.querySelectorAll('.artifact-panel').forEach(panel => panel.classList.toggle('active', panel.dataset.artifactPanel === tabName));
+  if (tabName === 'visual' && _activeArtifactChartId) {
+    const node = document.getElementById(_activeArtifactChartId);
+    const instance = node && window.echarts ? echarts.getInstanceByDom(node) : null;
+    setTimeout(() => instance?.resize(), 10);
+  }
+}
+function renderArtifactPreview(msg){
+  const hasChart = !!msg.chart;
+  const hasKpi = !!msg.kpi;
+  const hasData = !!(msg.data && Array.isArray(msg.data.rows) && msg.data.rows.length);
+  if (!hasChart && !hasKpi && !hasData) return;
+  _activeArtifactPayload = msg;
+  chartCounter += 1;
+  const artifactChartId = `artifact-chart-${chartCounter}`;
+  _activeArtifactChartId = hasChart ? artifactChartId : '';
+  const title = msg.chart?.title || msg.answer?.headline || msg.question || 'Analysis result';
+  document.getElementById('artifactTitle').textContent = title;
+  const dashboard = msg.dashboard_artifact || null;
+  document.getElementById('artifactKicker').textContent = dashboard
+    ? `${dashboard.name} · ${dashboard.status}`
+    : (msg.analysis_artifact ? 'Isolated result analysis' : 'Analysis artifact');
+  const tabs = [];
+  const panels = [];
+  if (hasChart || hasKpi) {
+    tabs.push('<button type="button" class="artifact-tab active" data-artifact-tab="visual">Visual</button>');
+    let visual = '';
+    if (hasKpi) {
+      const kpi = msg.kpi || {};
+      const value = kpi.state === 'missing' ? 'N/A' : _formatDisplayValue(kpi.value, kpi.format, kpi.display_format || {});
+      visual = `<div class="result-kpi ${kpi.state === 'missing' ? 'missing' : ''}" style="min-height:360px;display:flex;flex-direction:column;justify-content:center"><div class="result-kpi-label">${escHtml(kpi.label || 'Value')}</div><div class="result-kpi-value">${escHtml(value)}</div><div class="result-kpi-note">${escHtml(kpi.note || 'Single-value result')}</div></div>`;
+    } else {
+      visual = `<div id="${artifactChartId}" class="artifact-chart"></div>${renderChartWarnings(msg.chart)}`;
+    }
+    panels.push(`<div class="artifact-panel active" data-artifact-panel="visual">${visual}</div>`);
+  }
+  if (hasData) {
+    const active = !hasChart && !hasKpi;
+    tabs.push(`<button type="button" class="artifact-tab${active ? ' active' : ''}" data-artifact-tab="data">Data</button>`);
+    panels.push(`<div class="artifact-panel${active ? ' active' : ''}" data-artifact-panel="data">${renderDataTable(msg.data, { question: msg.question || '', trace_id: msg.trace_id || '' })}</div>`);
+  }
+  if (msg.trust?.sql) {
+    tabs.push('<button type="button" class="artifact-tab" data-artifact-tab="query">Query</button>');
+    panels.push(`<div class="artifact-panel" data-artifact-panel="query"><pre class="artifact-query">${escHtml(msg.trust.sql)}</pre></div>`);
+  }
+  const dashboardAction = dashboard
+    ? `<a class="artifact-head-btn" href="${escHtml(dashboard.url || '/portal/dashboard')}">Open ${escHtml(dashboard.name)}</a>`
+    : (msg.analysis_artifact ? '' : '<button type="button" class="artifact-head-btn" onclick="addArtifactToDashboard()">Create dashboard from this</button>');
+  const root = document.getElementById('artifactBody');
+  root.innerHTML = `<section class="artifact-surface"><div class="artifact-summary"><h3>${escHtml(title)}</h3><p>${escHtml(msg.answer?.scope_note || msg.result_scope?.note || 'Governed result from the current conversation')}</p></div><div class="artifact-tabs">${tabs.join('')}</div>${panels.join('')}<div class="artifact-actions">${dashboardAction}</div></section>`;
+  root.querySelectorAll('.artifact-tab').forEach(btn => btn.addEventListener('click', () => _activateArtifactTab(root, btn.dataset.artifactTab)));
+  root.querySelectorAll('.data-table-wrap').forEach(wrap => _mountDataTableControls(wrap, msg.question || ''));
+  if (hasChart) {
+    window._chartPayloads[artifactChartId] = Object.assign({}, msg.chart);
+    const node = document.getElementById(artifactChartId);
+    renderChartInto(node, msg.chart);
+    _mountChartControls(node?.parentElement, artifactChartId, updated => renderChartInto(node, updated));
+  }
+  openArtifactPane();
+}
+function addArtifactToDashboard(){
+  if (!_activeArtifactPayload) return;
+  const existing = _activeArtifactPayload.dashboard_artifact;
+  if (existing?.url) { location.href = existing.url; return; }
+  const input = document.getElementById('input');
+  if (!input || !wsReady) { toast('Reconnect to update the dashboard'); return; }
+  input.value = 'Create a dashboard from this result';
+  sendMessage();
+}
+function appendDashboardEvent(msg){
+  hideWelcome();
+  const dashboard = msg.dashboard || {};
+  const div = document.createElement('div');
+  div.className = 'msg msg-bot';
+  div.innerHTML = `<div class="msg-avatar"><img src="/static/img/logo-mark.svg" alt="" class="qb-logo-mark"></div><div class="msg-content"><div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timeLabel()}</span></div><div class="msg-bubble"><strong>${escHtml(msg.title || 'Dashboard updated')}</strong><div style="margin-top:.35rem;color:var(--text-muted)">${escHtml(msg.body || 'This artifact uses saved governed SQL and refreshes through your existing access policies.')}</div><div class="msg-actions" style="margin-top:.65rem"><a class="msg-action" href="${escHtml(dashboard.url || '/portal/dashboard')}">Open dashboard</a></div></div></div>`;
+  thread().appendChild(div);
+  scrollBottom();
+}
+
 // Registry of active inline chat panels keyed by rcId
 const _rcPanels = {};
 
@@ -2952,23 +3115,11 @@ function appendAssistantResponse(msg, opts = {}){
     : '';
 
   const msgTraceId = String(msg.trace_id || msg.trust?.trace_id || msg.trust?.question_id || '');
-  // Body: prefer chart when present, otherwise the data table, otherwise the question echo
+  // Ana-style split: narrative and trust stay in chat while the result
+  // artifact renders in the right workspace.
   let bodyHtml = '';
-  if (msg.kpi) {
-    const kpi = msg.kpi || {};
-    const renderedValue = kpi.state === 'missing'
-      ? 'N/A'
-      : _formatDisplayValue(kpi.value, kpi.format, kpi.display_format || {});
-    bodyHtml = `<div class="result-kpi ${kpi.state === 'missing' ? 'missing' : ''}">
-      <div class="result-kpi-label">${escHtml(kpi.label || 'Value')}</div>
-      <div class="result-kpi-value">${escHtml(renderedValue)}</div>
-      <div class="result-kpi-note">${escHtml(kpi.note || 'Single-value result')}</div>
-    </div>`;
-  } else if (hasChart) {
-    bodyHtml = `<div class="result-chart-wrap"><div id="${chartId}" class="chart-canvas compact"></div>${renderChartWarnings(msg.chart)}</div>`;
-    if (hasData) bodyHtml += renderDataTable(msg.data, { question: msg.question || '', trace_id: msgTraceId });
-  } else if (hasData) {
-    bodyHtml = renderDataTable(msg.data, { question: msg.question || '', trace_id: msgTraceId });
+  if (msg.kpi || hasChart || hasData) {
+    bodyHtml = `<button type="button" class="msg-action artifact-open-btn" data-open-artifact>Open ${msg.kpi ? 'KPI' : (hasChart ? 'visual' : 'data')} in workspace <span aria-hidden="true">→</span></button>`;
   } else {
     bodyHtml = `<div class="msg-bubble">${formatBotText(msg.question || '')}</div>`;
   }
@@ -3065,6 +3216,10 @@ function appendAssistantResponse(msg, opts = {}){
     : '';
 
   const trustSchema = trust.schema || (_activeSchema ? `${_activeSchema} schema` : 'All allowed schemas');
+  const dashboardArtifact = msg.dashboard_artifact || null;
+  const dashboardConfirmHtml = dashboardArtifact
+    ? `<div class="dashboard-confirm"><span><strong>${escHtml(dashboardArtifact.name || 'Dashboard')} updated</strong>Saved as a governed ${escHtml(dashboardArtifact.item_type || 'visual')} · ${escHtml(dashboardArtifact.status || 'draft')}</span><a href="${escHtml(dashboardArtifact.url || '/portal/dashboard')}">Open dashboard</a></div>`
+    : '';
   const localOperation = msg.result_command || msg.result_exclusion || {};
   const plannerUsed = localOperation.llm_input_mode === 'metadata_only';
   const plannerProofTitle = plannerUsed ? 'Metadata-only planner' : 'No LLM call';
@@ -3078,7 +3233,23 @@ function appendAssistantResponse(msg, opts = {}){
         <div><strong>No database query</strong><span>Executed in the governed DuckDB session cache</span></div>
       </div>`
     : '';
-  const trustHtml = `<details class="trust-box"><summary>How this answer was produced</summary><div class="trust-grid"><div class="trust-item"><div class="trust-k">Rows</div><div class="trust-v">${escHtml(String(trust.row_count ?? ''))}</div></div><div class="trust-item"><div class="trust-k">Runtime</div><div class="trust-v">${escHtml(trust.duration_label || '')}</div></div><div class="trust-item"><div class="trust-k">Data source</div><div class="trust-v">${escHtml((trust.data_source || '').toUpperCase())}</div></div><div class="trust-item"><div class="trust-k">Schema mode</div><div class="trust-v">${escHtml(trustSchema)}</div></div><div class="trust-item"><div class="trust-k">Result scope</div><div class="trust-v">${escHtml(trust.scope_badge || resultScope.badge || '')}</div></div></div><div class="trust-sql-label"><span>SQL used</span>${trust.sql ? '<button class="sql-copy-btn" onclick="copySqlBox(this)">Copy</button>' : ''}</div><div class="sql-box">${escHtml(trust.sql || '')}</div></details>`;
+  const citations = Array.isArray(msg.citations) ? msg.citations : [];
+  const citationsHtml = citations.length
+    ? `<div class="citation-strip"><span class="citation-label">Sources</span>${citations.map(c => `<span class="citation-chip" title="${escHtml(c.type || 'source')}">${escHtml(c.label || '')}</span>`).join('')}</div>`
+    : '';
+  const childTasks = Array.isArray(trust.child_tasks) ? trust.child_tasks : [];
+  const analysisProofHtml = trust.operation
+    ? `<div class="result-exclusion-proof">
+        <div><strong>${escHtml(trust.operation)}</strong><span>${escHtml(trust.worker_isolation || 'Bounded execution')}</span></div>
+        <div><strong>No database query</strong><span>Worked only from result ${escHtml(trust.source_result_id || '')}</span></div>
+        <div><strong>${childTasks.length} child task${childTasks.length === 1 ? '' : 's'}</strong><span>${childTasks.map(task => `${task.operation}: ${task.status}`).join(' · ')}</span></div>
+        ${trust.code_hash ? `<div><strong>Validated code ${escHtml(String(trust.code_hash).slice(0, 12))}</strong><span>${escHtml(String(trust.ast_nodes || 0))} AST nodes · planner input: ${escHtml(trust.planner_input || 'none')}</span></div>` : ''}
+      </div>`
+    : '';
+  const sqlProofHtml = trust.sql
+    ? `<div class="trust-sql-label"><span>SQL used</span><button class="sql-copy-btn" onclick="copySqlBox(this)">Copy</button></div><div class="sql-box">${escHtml(trust.sql)}</div>`
+    : `<div class="trust-sql-label"><span>Execution</span></div><div class="sql-box">${escHtml(trust.operation || 'No SQL query was executed for this result.')}</div>`;
+  const trustHtml = `<details class="trust-box"><summary>How this answer was produced</summary><div class="trust-grid"><div class="trust-item"><div class="trust-k">Rows</div><div class="trust-v">${escHtml(String(trust.row_count ?? ''))}</div></div><div class="trust-item"><div class="trust-k">Runtime</div><div class="trust-v">${escHtml(trust.duration_label || '')}</div></div><div class="trust-item"><div class="trust-k">Data source</div><div class="trust-v">${escHtml((trust.data_source || '').toUpperCase())}</div></div><div class="trust-item"><div class="trust-k">Schema mode</div><div class="trust-v">${escHtml(trustSchema)}</div></div><div class="trust-item"><div class="trust-k">Result scope</div><div class="trust-v">${escHtml(trust.scope_badge || resultScope.badge || '')}</div></div></div>${analysisProofHtml}${sqlProofHtml}</details>`;
 
   // Each result card gets a unique ID for the inline chat
   const rcId = `rc-${chartCounter}`;
@@ -3103,6 +3274,7 @@ function appendAssistantResponse(msg, opts = {}){
         ${decisionSignalHtml}
         ${localOperationProofHtml}
         ${confidenceHtml}
+        ${dashboardConfirmHtml}
         <div class="result-layout">
           ${anomalyCalloutsHtml}
           ${bodyHtml}
@@ -3112,6 +3284,7 @@ function appendAssistantResponse(msg, opts = {}){
             ${pinBtnHtml}
             <button class="rc-toggle" type="button" data-rc-toggle="${rcId}">Ask about this result</button>
           </div>
+          ${citationsHtml}
           ${trustHtml}
         </div>
       </div>
@@ -3138,6 +3311,7 @@ function appendAssistantResponse(msg, opts = {}){
     rcHintEl.insertAdjacentHTML('beforebegin', '<div class="rc-scope-strip"><span class="rc-scope-chip">Returned rows first</span><span class="rc-scope-chip">Database fallback if needed</span></div>');
     rcHintEl.textContent = 'Ask about the result above. If your follow-up needs a metric or dimension missing from these rows, QueryBot can fall back to the database using the original answer context.';
   }
+  div.querySelector('[data-open-artifact]')?.addEventListener('click', () => renderArtifactPreview(msg));
   const copyBtn = div.querySelector('[data-copy="result"]');
   copyBtn?.addEventListener('click', async (e) => {
     const copyPayload = [answer.headline || '', trust.sql ? ('SQL\n' + trust.sql) : ''].filter(Boolean).join('\n\n');
@@ -3171,19 +3345,7 @@ function appendAssistantResponse(msg, opts = {}){
       toast('Unable to pin chart');
     }
   });
-  if (hasChart) {
-    window._chartPayloads[chartId] = Object.assign({}, msg.chart);
-    renderChartInto(div.querySelector(`#${chartId}`), msg.chart);
-    // Mount type-toggle + palette-switcher
-    const chartWrap = div.querySelector('.result-chart-wrap');
-    _mountChartControls(chartWrap, chartId, updated => {
-      renderChartInto(div.querySelector(`#${chartId}`), updated);
-    });
-  }
-  // Mount Tier-1 table controls (sort, filter, ask button) on every data table
-  div.querySelectorAll('.data-table-wrap').forEach(wrap => {
-    _mountDataTableControls(wrap, msg.question || '');
-  });
+  renderArtifactPreview(msg);
   // Wire inline result card chat
   _mountResultChat(div, rcId);
   // Record this turn in frontend history for localStorage persistence
@@ -3860,6 +4022,28 @@ function _updateStageSteps(stage, label, detail) {
   if (answerDetail) answerDetail.textContent = detailLabel;
 }
 
+function _applyAgentRunEvent(msg) {
+  const meta = document.getElementById('agentRunMeta');
+  if (!meta) return;
+  const status = String(msg.run_status || 'running');
+  const stateLabels = {
+    running: 'Governed agent', completed: 'Governed answer',
+    waiting_for_user: 'Waiting for your input', blocked: 'Blocked by policy',
+    failed: 'Run failed', cancelled: 'Run cancelled'
+  };
+  meta.hidden = false;
+  meta.dataset.status = status;
+  const state = document.getElementById('agentRunState');
+  const tool = document.getElementById('agentRunTool');
+  const runId = document.getElementById('agentRunId');
+  if (state) state.textContent = stateLabels[status] || 'Governed agent';
+  if (tool) tool.textContent = (msg.tool || 'query_data') + (msg.read_only ? ' \u00b7 read only' : '');
+  if (runId) runId.textContent = msg.run_id ? '#' + String(msg.run_id).slice(0, 8) : '';
+  if (msg.stage || msg.tool_label || msg.detail) {
+    _updateStageSteps(msg.stage, msg.tool_label, msg.detail);
+  }
+}
+
 function _resetStageSteps() {
   _completedStages = [];
   _currentStage = null;
@@ -4076,7 +4260,8 @@ function _initHeroCollapse() {
 function connect(){
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   setConnectionState(reconnectAttempts ? 'Reconnecting…' : 'Connecting…', reconnectAttempts ? 'Restoring live session' : 'Waiting for live session');
-  ws = new WebSocket(`${proto}//${location.host}/ws/chat/${ACCOUNT_ID}?thread_id=${encodeURIComponent(THREAD_ID)}`);
+  const dashboardScope = DASHBOARD_ID ? `&dashboard_id=${encodeURIComponent(DASHBOARD_ID)}` : '';
+  ws = new WebSocket(`${proto}//${location.host}/ws/chat/${ACCOUNT_ID}?thread_id=${encodeURIComponent(THREAD_ID)}${dashboardScope}`);
   ws.onopen = () => {
     wsReady = true;
     reconnectAttempts = 0;
@@ -4097,6 +4282,11 @@ function connect(){
     const msg = safeJsonParse(evt.data); if (!msg) return;
     if (msg.type === 'typing') {
       setProcessing(!!msg.active);
+    } else if (msg.type === 'agent_run_started') {
+      setProcessing(true);
+      _applyAgentRunEvent(msg);
+    } else if (msg.type === 'agent_run_progress' || msg.type === 'agent_run_finished') {
+      _applyAgentRunEvent(msg);
     } else if (msg.type === 'status') {
       updateProcessing(msg.stage, msg.label, msg.detail);
     } else if (msg.type === 'system') {
@@ -4175,6 +4365,10 @@ function connect(){
         window.dispatchEvent(new CustomEvent('qb-query-success'));
       }, 900);
       return; // prevent falling through to setProcessing(false) in 'typing' event
+    } else if (msg.type === 'assistant_dashboard') {
+      _markActiveOutbound('complete');
+      setProcessing(false);
+      appendDashboardEvent(msg);
     } else if (msg.type === 'assistant_analysis') {
       appendAnalysisResponse(msg);
     } else if (msg.type === 'chart') {
@@ -4647,7 +4841,12 @@ document.addEventListener('DOMContentLoaded', () => {
   initSchemaSelector();
   refreshQueryLimitStatus({toast:false});
   window.setInterval(() => refreshQueryLimitStatus({toast:false}), 60000);
-  if (_validThreadId(_threadFromUrl)) {
+  if (_requestedNewThread) {
+    // A brand-new UUID cannot have a server trace yet. Avoid an expected 404
+    // in the browser console and keep the empty-thread state purely local
+    // until the first governed answer is persisted.
+    restoreChatCache();
+  } else if (_validThreadId(_threadFromUrl)) {
     restoreServerThread(THREAD_ID).then(restored => { if (!restored) restoreChatCache(); });
   } else {
     // Restore the active server thread first; session cache remains a fallback

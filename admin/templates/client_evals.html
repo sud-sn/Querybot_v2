@@ -3,6 +3,7 @@
 {% block head %}
 <style>
 .eval-grid{display:grid;grid-template-columns:360px 1fr;gap:1rem}
+.eval-grid>div{min-width:0}
 .eval-list{max-height:720px;overflow:auto}
 .eval-item{display:block;padding:.75rem;border-bottom:1px solid var(--border);color:var(--text);text-decoration:none}
 .eval-item:hover{background:var(--row-hover);text-decoration:none}
@@ -12,6 +13,12 @@
 .eval-table th{padding:.6rem;background:var(--surface-2);border-bottom:1px solid var(--border);text-align:left}
 .eval-table td{padding:.65rem;border-bottom:1px solid var(--border);vertical-align:top}
 .eval-sql{white-space:pre-wrap;word-break:break-word;max-width:420px;font-family:Consolas,monospace;font-size:11px}
+.eval-table-wrap{max-width:100%;overflow:auto}
+@media(max-width:800px){
+  .eval-grid{grid-template-columns:minmax(0,1fr)}
+  .eval-list{max-height:320px}
+  .eval-table{min-width:720px}
+}
 </style>
 {% endblock %}
 {% block content %}
@@ -25,6 +32,17 @@
 {% endif %}
 {% if error %}
 <div class="alert alert-error" role="alert">{{ error }}</div>
+{% endif %}
+
+{% set quality_target = client.sql_accuracy_target_pct or 85 %}
+{% if latest and latest.total_cases %}
+{% set latest_rate = (latest.passed_cases / latest.total_cases * 100)|round(1) %}
+<div class="alert {% if latest_rate >= quality_target %}alert-success{% else %}alert-warning{% endif %}" role="status">
+  <strong>SQL accuracy gate: {{ latest_rate }}%</strong> · target {{ quality_target }}% ·
+  {% if latest_rate >= quality_target %}latest golden suite meets the configured target{% else %}latest suite is below target; review failed cases before production{% endif %}.
+</div>
+{% else %}
+<div class="alert alert-warning" role="status"><strong>SQL accuracy baseline required.</strong> Target is {{ quality_target }}%; run the golden suite before making a production-quality claim.</div>
 {% endif %}
 
 <div class="card">
@@ -91,6 +109,7 @@
           {{ selected.passed_cases }}/{{ selected.total_cases }} passed. Average score {{ selected.avg_score }}.
           {% if selected.report_path %}<br>Report: <code>{{ selected.report_path }}</code>{% endif %}
         </p>
+        <div class="eval-table-wrap">
         <table class="eval-table">
           <thead><tr><th>Status</th><th>Case</th><th>Question</th><th>Score</th><th>SQL</th><th>Failures</th></tr></thead>
           <tbody>
@@ -106,6 +125,7 @@
           {% endfor %}
           </tbody>
         </table>
+        </div>
       </div>
     </div>
     {% else %}

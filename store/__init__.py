@@ -52,6 +52,16 @@ from store.user_store import (
     update_pinned_chart_layouts,
     generate_temp_password,
 )
+from store.dashboard_store import (
+    create_dashboard, get_dashboard, get_dashboard_for_view, latest_dashboard_for_thread,
+    list_dashboards, create_data_source, list_data_sources, list_data_sources_for_view,
+    get_data_source, add_chart as add_chart_to_dashboard,
+    list_dashboard_charts, list_dashboard_charts_for_view,
+    rename_dashboard, publish_dashboard, mark_dashboard_draft,
+    update_dashboard_controls, list_dashboard_versions, rollback_dashboard,
+    save_source_cache, mark_source_cache_error, get_source_cache,
+    list_due_dashboard_sources,
+)
 from store.semantic_store import (
     save_term, get_term, list_terms, delete_term, set_term_active,
     match_terms_in_question, find_ambiguous_term,
@@ -76,6 +86,13 @@ from store.trace_store import (
     get_answer_trace_by_question_id,
     store_protected_result_rows,
     find_reusable_validated_sql_plan,
+)
+from store.agent_store import (
+    ensure_agent_thread, create_agent_run, get_agent_run,
+    get_waiting_agent_run, add_agent_message, create_agent_step,
+    update_agent_step, update_agent_run, list_agent_steps,
+    create_agent_subtask, finish_agent_subtask, list_agent_subtasks,
+    list_agent_subtasks_for_account,
 )
 from store.eval_store import (
     save_eval_run, save_eval_case_result, list_eval_runs,
@@ -151,6 +168,14 @@ __all__ = [
     "pin_chart","list_pinned_charts","delete_pinned_chart",
     "update_pinned_chart_title","update_pinned_chart","update_chart_refreshed",
     "update_pinned_chart_layouts",
+    "create_dashboard","get_dashboard","get_dashboard_for_view","latest_dashboard_for_thread",
+    "list_dashboards","create_data_source","list_data_sources","list_data_sources_for_view",
+    "get_data_source","add_chart_to_dashboard","list_dashboard_charts",
+    "list_dashboard_charts_for_view","rename_dashboard",
+    "publish_dashboard","mark_dashboard_draft","update_dashboard_controls",
+    "list_dashboard_versions","rollback_dashboard",
+    "save_source_cache","mark_source_cache_error","get_source_cache",
+    "list_due_dashboard_sources",
     "generate_temp_password",
     # Business semantic layer
     "save_term","get_term","list_terms","delete_term","set_term_active",
@@ -170,6 +195,11 @@ __all__ = [
     "get_answer_trace_by_question_id",
     "store_protected_result_rows",
     "find_reusable_validated_sql_plan",
+    "ensure_agent_thread","create_agent_run","get_agent_run",
+    "get_waiting_agent_run","add_agent_message","create_agent_step",
+    "update_agent_step","update_agent_run","list_agent_steps",
+    "create_agent_subtask","finish_agent_subtask","list_agent_subtasks",
+    "list_agent_subtasks_for_account",
     "save_eval_run","save_eval_case_result","list_eval_runs",
     "get_eval_run","latest_eval_run","previous_eval_run","latest_regressed_run",
     "get_compliance_profile","save_compliance_profile",

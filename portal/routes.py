@@ -745,7 +745,49 @@ async def portal_dashboard(request: Request):
     if not user:
         return _login_redirect()
 
-    charts        = store.list_pinned_charts(user["id"])
+    requested_dashboard = None
+    dashboard_id = request.query_params.get("dashboard_id")
+    if dashboard_id and str(dashboard_id).isdigit():
+        requested_dashboard = store.get_dashboard_for_view(
+            int(dashboard_id), user["id"], user["account_id"]
+        )
+    all_dashboard_charts = (
+        store.list_dashboard_charts_for_view(
+            requested_dashboard["id"], user["id"], user["account_id"]
+        )
+        if requested_dashboard
+        else store.list_pinned_charts(user["id"])
+    )
+    dashboards = store.list_dashboards(user["account_id"], user["id"])
+    dashboard_sources = []
+    dashboard_versions = []
+    dashboard_filters = []
+    dashboard_tabs = ["Overview"]
+    selected_tab = str(request.query_params.get("tab") or "").strip()
+    if requested_dashboard:
+        dashboard_sources = store.list_data_sources_for_view(
+            requested_dashboard["id"], user["id"], user["account_id"]
+        )
+        if requested_dashboard.get("can_edit"):
+            dashboard_versions = store.list_dashboard_versions(
+                requested_dashboard["id"], user["id"], user["account_id"]
+            )
+        try:
+            dashboard_filters = json.loads(requested_dashboard.get("filters_json") or "[]")
+        except (TypeError, ValueError):
+            dashboard_filters = []
+        try:
+            dashboard_tabs = json.loads(requested_dashboard.get("tabs_json") or '["Overview"]')
+        except (TypeError, ValueError):
+            dashboard_tabs = ["Overview"]
+        dashboard_tabs = [str(tab) for tab in dashboard_tabs if str(tab).strip()] or ["Overview"]
+        selected_tab = selected_tab if selected_tab in dashboard_tabs else dashboard_tabs[0]
+        charts = [
+            chart for chart in all_dashboard_charts
+            if str(chart.get("dashboard_tab") or "Overview") == selected_tab
+        ]
+    else:
+        charts = all_dashboard_charts
     allowed       = store.get_allowed_tables(user)
     client        = store.get_client(user["account_id"]) or {}
     group_tables  = store.get_group_tables(user["group_id"]) if user.get("group_id") else []
@@ -767,7 +809,15 @@ async def portal_dashboard(request: Request):
 
     for chart in charts:
         chart_db = store.get_db_config(chart["db_config_id"]) if chart.get("db_config_id") else db_cfg
-        chart_data = _refresh_chart(chart, chart_db, user)
+        chart_data = _refresh_chart(
+            chart, chart_db, user,
+            filters=dashboard_filters,
+            filter_values={
+                str(item.get("field") or ""): str(request.query_params.get(f"filter_{index}") or "")
+                for index, item in enumerate(dashboard_filters)
+                if isinstance(item, dict)
+            },
+        )
         rendered_charts.append(chart_data)
 
     return _resp(request, "portal_dashboard.html", {
@@ -779,16 +829,35 @@ async def portal_dashboard(request: Request):
         "monthly_count": monthly_count,
         "query_status":  query_status,
         "token_status":  token_status,
+        "dashboard_artifact": requested_dashboard,
+        "dashboards":     dashboards,
+        "dashboard_sources": dashboard_sources,
+        "dashboard_versions": dashboard_versions,
+        "dashboard_filters": dashboard_filters,
+        "dashboard_tabs": dashboard_tabs,
+        "selected_tab": selected_tab,
         "welcome":       request.query_params.get("welcome") == "1",
     })
 
 
-def _refresh_chart(chart: dict, db_cfg: dict | None, user: dict) -> dict:
+def _refresh_chart(
+    chart: dict,
+    db_cfg: dict | None,
+    user: dict,
+    *,
+    filters: list[dict] | None = None,
+    filter_values: dict[str, str] | None = None,
+) -> dict:
     """Re-execute stored SQL and prepare interactive chart data."""
     result = dict(chart)
     result["chart_json"] = None
     result["error"] = None
     result["row_count"] = 0
+    result["kpi"] = None
+    result["table_columns"] = []
+    result["table_rows"] = []
+    result["from_cache"] = False
+    result["filter_warnings"] = []
 
     if not db_cfg:
         result["error"] = "Database not configured"
@@ -797,6 +866,7 @@ def _refresh_chart(chart: dict, db_cfg: dict | None, user: dict) -> dict:
     try:
         from core.compliance.governed_query import execute_governed_query
         from core.compliance.policy_engine import evaluate, resolve_context
+        from core.compliance.sql_guard import analyze_sql
         from core.schema import load_known_tables, load_schema_columns
 
         state = store.get_client_state(user["account_id"])
@@ -805,21 +875,52 @@ def _refresh_chart(chart: dict, db_cfg: dict | None, user: dict) -> dict:
         query_context = resolve_context(
             user["account_id"], user, action="query_execution", channel="portal"
         )
-        governed = execute_governed_query(
-            db_cfg["credentials"], db_cfg["db_type"], chart["sql_query"],
-            context=query_context, known_tables=known_tables,
-            table_columns=table_columns,
-            allowed_tables=store.get_allowed_tables(user),
-        )
+        analysis = None
+        executed_sql = str(chart.get("sql_query") or "")
+        rows = []
+        source = None
+        if chart.get("data_source_id"):
+            source = store.get_data_source(
+                int(chart["data_source_id"]), int(chart.get("user_id") or user["id"]),
+                user["account_id"],
+            )
+        if source:
+            from core.dashboard_refresh import execute_dashboard_source
+
+            executed = execute_dashboard_source(
+                source, user, filters=filters, filter_values=filter_values,
+            )
+            rows = executed.rows
+            executed_sql = executed.sql
+            result["from_cache"] = executed.from_cache
+            result["cache_refreshed_at"] = executed.refreshed_at
+            result["applied_filters"] = list(executed.applied_filters)
+            result["filter_warnings"] = [
+                f'Filter "{field}" was not applied because it is not returned by this source.'
+                for field in executed.ignored_filters
+            ]
+            analysis = analyze_sql(executed_sql, db_cfg["db_type"])
+        else:
+            governed = execute_governed_query(
+                db_cfg["credentials"], db_cfg["db_type"], executed_sql,
+                context=query_context, known_tables=known_tables,
+                table_columns=table_columns,
+                allowed_tables=store.get_allowed_tables(user),
+            )
+            rows = _apply_dashboard_filters(
+                governed.rows, filters or [], filter_values or {}
+            )
+            executed_sql = governed.sql
+            analysis = governed.analysis
         chart_context = resolve_context(
             user["account_id"], user, action="chart", channel="portal",
             purpose_id=query_context.purpose_id,
         )
-        chart_decision = evaluate(chart_context, governed.analysis.resources)
+        chart_decision = evaluate(chart_context, analysis.resources)
         aggregate_sources = {
             source
-            for output, sources in governed.analysis.lineage.items()
-            if output in governed.analysis.aggregate_outputs
+            for output, sources in analysis.lineage.items()
+            if output in analysis.aggregate_outputs
             for source in sources
         }
         required_aggregate = {
@@ -830,26 +931,99 @@ def _refresh_chart(chart: dict, db_cfg: dict | None, user: dict) -> dict:
             or bool(required_aggregate - aggregate_sources)
         ):
             raise PermissionError(chart_decision.explanation or "Chart blocked by data policy.")
-        rows = governed.rows
         result["row_count"] = len(rows)
         if rows:
+            try:
+                display_config = json.loads(chart.get("display_config") or "{}")
+            except (TypeError, ValueError):
+                display_config = {}
             chart_type = chart.get("chart_type") or detect_chart_type(rows, question=chart.get("question", ""))
-            payload = build_chart_payload(
-                rows,
-                chart_type,
-                title=chart["title"],
-                question=chart.get("question", ""),
-            ) if chart_type else None
-            if payload:
-                payload["color_palette"] = chart.get("color_palette") or "default"
-                payload["chart_id"] = chart["id"]   # lets dashboard JS call update-chart
-                result["chart_json"] = json.dumps(payload)
+            if chart_type == "kpi":
+                from core.response_builder import build_assistant_response, _format_number
+                response = build_assistant_response(
+                    question=chart.get("question", ""), rows=rows,
+                    sql=executed_sql, duration_ms=0,
+                    data_source=str(db_cfg.get("db_type") or ""),
+                    column_formats=display_config.get("column_formats") or {},
+                    display_formats=display_config.get("display_formats") or {},
+                )
+                result["kpi"] = response.get("kpi")
+                stored_kpi = display_config.get("kpi") or {}
+                if result["kpi"]:
+                    for key in ("label", "format", "display_format"):
+                        if stored_kpi.get(key) is not None:
+                            result["kpi"][key] = stored_kpi[key]
+                if result["kpi"]:
+                    result["kpi_display"] = _format_number(
+                        result["kpi"].get("value"), result["kpi"].get("format")
+                    )
+            elif chart_type == "table":
+                result["table_columns"] = list(rows[0].keys())
+                result["table_rows"] = rows[:50]
+            else:
+                payload = build_chart_payload(
+                    rows,
+                    chart_type,
+                    title=chart["title"],
+                    question=chart.get("question", ""),
+                ) if chart_type else None
+                if payload:
+                    payload["color_palette"] = chart.get("color_palette") or "default"
+                    payload["chart_id"] = chart["id"]   # lets dashboard JS call update-chart
+                    result["chart_json"] = json.dumps(payload)
         store.update_chart_refreshed(chart["id"])
     except Exception as e:
         result["error"] = str(e)[:120]
         log.warning("Chart refresh failed for chart %d: %s", chart["id"], e)
 
     return result
+
+
+def _apply_dashboard_filters(
+    rows: list[dict], filters: list[dict], values: dict[str, str]
+) -> list[dict]:
+    """Apply presentation filters to governed rows without rewriting SQL."""
+    filtered = list(rows or [])
+    for item in filters:
+        if not isinstance(item, dict):
+            continue
+        field = str(item.get("field") or "").strip()
+        expected = str(values.get(field) or "").strip()
+        if not field or not expected:
+            continue
+        normalized = re.sub(r"[^a-z0-9]", "", field.lower())
+        matching_key = next(
+            (
+                key for row in filtered[:1] for key in row
+                if re.sub(r"[^a-z0-9]", "", str(key).lower()) == normalized
+            ),
+            None,
+        )
+        if matching_key is None:
+            continue
+        needle = expected.casefold()
+        filtered = [
+            row for row in filtered
+            if needle in str(row.get(matching_key) if row.get(matching_key) is not None else "").casefold()
+        ]
+    return filtered
+
+
+@router.post("/dashboard/{dashboard_id}/rollback")
+async def portal_dashboard_rollback(
+    request: Request, dashboard_id: int, version: int = Form(...)
+):
+    user = _get_portal_user(request)
+    if not user:
+        return _login_redirect()
+    restored = store.rollback_dashboard(
+        dashboard_id, user["id"], user["account_id"], version
+    )
+    if not restored:
+        raise HTTPException(status_code=404, detail="Dashboard version not found")
+    return RedirectResponse(
+        f"/portal/dashboard?dashboard_id={dashboard_id}", status_code=303
+    )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1418,6 +1592,7 @@ async def portal_query_thread(request: Request, thread_id: str):
         portal_user_id=int(user["id"]),
         oldest_first=True,
     )
+    owned_trace_count = len(traces)
     if thread_id.startswith("legacy-"):
         trace_id = int(thread_id.removeprefix("legacy-") or 0)
         traces = [trace for trace in traces if int(trace.get("id") or 0) == trace_id]
@@ -1427,6 +1602,12 @@ async def portal_query_thread(request: Request, thread_id: str):
             trace for trace in traces
             if str(trace.get("session_id") or "").endswith(marker)
         ]
+    if not traces and owned_trace_count == 0:
+        # A valid newly-created thread has no durable answer trace yet. An
+        # empty 200 response is the expected state and avoids a noisy browser
+        # console 404 while still returning 404 when this user owns traces but
+        # the requested thread does not match any of them.
+        return JSONResponse({"ok": True, "thread_id": thread_id, "turns": []})
     if not traces:
         return JSONResponse({"ok": False, "error": "Thread not found."}, status_code=404)
 
@@ -1750,6 +1931,12 @@ async def portal_chat(request: Request):
     token_usage["total_label"] = _compact_number(token_usage.get("total_tokens"))
     token_usage["input_label"] = _compact_number(token_usage.get("tokens_in"))
     token_usage["output_label"] = _compact_number(token_usage.get("tokens_out"))
+    selected_dashboard = None
+    dashboard_id = str(request.query_params.get("dashboard") or "")
+    if dashboard_id.isdigit():
+        selected_dashboard = _store.get_dashboard_for_view(
+            int(dashboard_id), user["id"], user["account_id"]
+        )
 
     return _resp(request, "portal_chat.html", {
         "user":               user,
@@ -1759,6 +1946,7 @@ async def portal_chat(request: Request):
         "available_schemas":  available_schemas,
         "query_status":       query_status,
         "token_usage":        token_usage,
+        "selected_dashboard": selected_dashboard,
     })
 
 

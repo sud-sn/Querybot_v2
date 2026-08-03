@@ -7,6 +7,7 @@ All password handling uses SHA-256 (same as admin panel).
 
 import hashlib
 import hmac
+import json
 import logging
 import os
 import secrets
@@ -635,6 +636,8 @@ def pin_chart(
     chart_type: str,
     db_config_id: int,
     color_palette: str = "default",
+    dashboard_id: int | None = None,
+    display_config: dict | None = None,
 ) -> int:
     with get_db() as conn:
         # Get next position
@@ -650,10 +653,12 @@ def pin_chart(
         cur = conn.execute("""
             INSERT INTO pinned_chart
                 (user_id, account_id, title, question, sql_query, chart_type,
-                 db_config_id, position, color_palette, grid_x, grid_y, grid_w, grid_h)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                 db_config_id, position, color_palette, grid_x, grid_y, grid_w, grid_h,
+                 dashboard_id, display_config)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, (user_id, account_id, title, question, sql_query, chart_type,
-               db_config_id, pos, color_palette, grid_x, grid_y, grid_w, grid_h))
+               db_config_id, pos, color_palette, grid_x, grid_y, grid_w, grid_h,
+               dashboard_id, json.dumps(display_config or {})))
         cid = cur.lastrowid
     log.info("Pinned chart %d for user %d", cid, user_id)
     return cid

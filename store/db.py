@@ -91,6 +91,9 @@ CREATE TABLE IF NOT EXISTS client (
     token_limit_monthly INTEGER DEFAULT 0,
     chat_ui_enabled     INTEGER NOT NULL DEFAULT 0,
     enable_llm_audit    INTEGER NOT NULL DEFAULT 0,
+    enable_python_analysis INTEGER NOT NULL DEFAULT 0,
+    allow_user_python   INTEGER NOT NULL DEFAULT 0,
+    sql_accuracy_target_pct INTEGER NOT NULL DEFAULT 85,
     created_at          TEXT    DEFAULT (datetime('now')),
     updated_at          TEXT    DEFAULT (datetime('now'))
 );
@@ -325,11 +328,85 @@ CREATE TABLE IF NOT EXISTS pinned_chart (
     last_refreshed TEXT  DEFAULT (datetime('now'))
 );
 
+-- Named dashboard drafts created conversationally in the portal. Result rows
+-- are never stored here; items reference governed pinned SQL instead.
+CREATE TABLE IF NOT EXISTS dashboard_artifact (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id   TEXT    NOT NULL,
+    user_id      INTEGER NOT NULL REFERENCES portal_user(id) ON DELETE CASCADE,
+    thread_id    TEXT    NOT NULL DEFAULT 'default',
+    name         TEXT    NOT NULL,
+    description  TEXT    NOT NULL DEFAULT '',
+    status       TEXT    NOT NULL DEFAULT 'draft',
+    visibility   TEXT    NOT NULL DEFAULT 'personal',
+    refresh_schedule TEXT NOT NULL DEFAULT 'manual',
+    filters_json TEXT    NOT NULL DEFAULT '[]',
+    tabs_json    TEXT    NOT NULL DEFAULT '["Overview"]',
+    version      INTEGER NOT NULL DEFAULT 1,
+    created_at   TEXT    DEFAULT (datetime('now')),
+    updated_at   TEXT    DEFAULT (datetime('now')),
+    published_at TEXT    DEFAULT NULL
+);
+
+-- Reusable governed dashboard sources. SQL is retained for live refresh, but
+-- result rows and database credentials are deliberately never stored here.
+CREATE TABLE IF NOT EXISTS dashboard_data_source (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    dashboard_id INTEGER NOT NULL REFERENCES dashboard_artifact(id) ON DELETE CASCADE,
+    account_id   TEXT    NOT NULL,
+    user_id      INTEGER NOT NULL REFERENCES portal_user(id) ON DELETE CASCADE,
+    name         TEXT    NOT NULL,
+    source_type  TEXT    NOT NULL DEFAULT 'governed_sql',
+    question     TEXT    NOT NULL DEFAULT '',
+    sql_query    TEXT    NOT NULL,
+    db_config_id INTEGER REFERENCES db_config(id) ON DELETE SET NULL,
+    semantic_contract_version TEXT NOT NULL DEFAULT '',
+    created_at   TEXT    DEFAULT (datetime('now')),
+    updated_at   TEXT    DEFAULT (datetime('now'))
+);
+
+-- Encrypted, policy-scoped materialization for scheduled dashboard refresh.
+-- The token contains only rows already released through governed_query for
+-- this exact user. Credentials and unprotected source rows are never cached.
+CREATE TABLE IF NOT EXISTS dashboard_source_cache (
+    source_id     INTEGER PRIMARY KEY REFERENCES dashboard_data_source(id) ON DELETE CASCADE,
+    dashboard_id  INTEGER NOT NULL REFERENCES dashboard_artifact(id) ON DELETE CASCADE,
+    account_id    TEXT    NOT NULL,
+    user_id       INTEGER NOT NULL REFERENCES portal_user(id) ON DELETE CASCADE,
+    rows_encrypted TEXT   NOT NULL,
+    row_count     INTEGER NOT NULL DEFAULT 0,
+    policy_version INTEGER NOT NULL DEFAULT 0,
+    contract_version TEXT NOT NULL DEFAULT '',
+    status        TEXT    NOT NULL DEFAULT 'ready',
+    error_message TEXT    NOT NULL DEFAULT '',
+    refreshed_at  TEXT    DEFAULT (datetime('now')),
+    expires_at    TEXT    NOT NULL
+);
+
+-- Presentation-only checkpoints. Snapshots contain dashboard controls and
+-- chart/source references, never rows or credentials.
+CREATE TABLE IF NOT EXISTS dashboard_artifact_version (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    dashboard_id INTEGER NOT NULL REFERENCES dashboard_artifact(id) ON DELETE CASCADE,
+    account_id   TEXT    NOT NULL,
+    user_id      INTEGER NOT NULL REFERENCES portal_user(id) ON DELETE CASCADE,
+    version      INTEGER NOT NULL,
+    change_summary TEXT  NOT NULL DEFAULT '',
+    snapshot_json TEXT   NOT NULL DEFAULT '{}',
+    created_at   TEXT    DEFAULT (datetime('now')),
+    UNIQUE(dashboard_id, version)
+);
+
 CREATE INDEX IF NOT EXISTS idx_portal_user_account  ON portal_user(account_id);
 CREATE INDEX IF NOT EXISTS idx_portal_user_zoom     ON portal_user(zoom_user_id);
 CREATE INDEX IF NOT EXISTS idx_group_account        ON user_group(account_id);
 CREATE INDEX IF NOT EXISTS idx_reg_token            ON registration_token(token);
 CREATE INDEX IF NOT EXISTS idx_pinned_user          ON pinned_chart(user_id);
+CREATE INDEX IF NOT EXISTS idx_dashboard_owner      ON dashboard_artifact(account_id, user_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_dashboard_thread     ON dashboard_artifact(account_id, user_id, thread_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_dashboard_source     ON dashboard_data_source(dashboard_id, user_id);
+CREATE INDEX IF NOT EXISTS idx_dashboard_cache_due  ON dashboard_source_cache(account_id, expires_at);
+CREATE INDEX IF NOT EXISTS idx_dashboard_version    ON dashboard_artifact_version(dashboard_id, version DESC);
 
 CREATE INDEX IF NOT EXISTS idx_query_log_account ON query_log(account_id);
 CREATE INDEX IF NOT EXISTS idx_query_log_created ON query_log(created_at);
@@ -862,6 +939,17 @@ def _run_migrations() -> None:
         ("pinned_chart", "grid_y", "INTEGER NOT NULL DEFAULT 0"),
         ("pinned_chart", "grid_w", "INTEGER NOT NULL DEFAULT 6"),
         ("pinned_chart", "grid_h", "INTEGER NOT NULL DEFAULT 5"),
+        ("pinned_chart", "dashboard_id", "INTEGER DEFAULT NULL"),
+        ("pinned_chart", "display_config", "TEXT NOT NULL DEFAULT '{}'"),
+        # v41: Ana-style reusable dashboard artifacts and presentation controls.
+        ("pinned_chart", "data_source_id", "INTEGER DEFAULT NULL"),
+        ("pinned_chart", "dashboard_tab", "TEXT NOT NULL DEFAULT 'Overview'"),
+        ("pinned_chart", "sort_enabled", "INTEGER NOT NULL DEFAULT 1"),
+        ("dashboard_artifact", "visibility", "TEXT NOT NULL DEFAULT 'personal'"),
+        ("dashboard_artifact", "refresh_schedule", "TEXT NOT NULL DEFAULT 'manual'"),
+        ("dashboard_artifact", "filters_json", "TEXT NOT NULL DEFAULT '[]'"),
+        ("dashboard_artifact", "tabs_json", "TEXT NOT NULL DEFAULT '[\"Overview\"]'"),
+        ("dashboard_artifact", "last_refreshed_at", "TEXT DEFAULT NULL"),
         # v26: link drill-down result_chat queries to their parent main query
         ("query_log", "question_id",        "TEXT DEFAULT ''"),
         ("query_log", "parent_question_id", "TEXT DEFAULT ''"),
@@ -924,6 +1012,11 @@ def _run_migrations() -> None:
         ("client", "enable_feedback_collection", "INTEGER NOT NULL DEFAULT 0"),
         ("client", "enable_learned_retrieval",   "INTEGER NOT NULL DEFAULT 0"),
         ("client", "enable_genie_suggestions",   "INTEGER NOT NULL DEFAULT 0"),
+        # Governed custom Python is opt-in per tenant. Pasted source is a
+        # separate, stricter permission from metadata-only generated plans.
+        ("client", "enable_python_analysis", "INTEGER NOT NULL DEFAULT 0"),
+        ("client", "allow_user_python",       "INTEGER NOT NULL DEFAULT 0"),
+        ("client", "sql_accuracy_target_pct", "INTEGER NOT NULL DEFAULT 85"),
         # v31: entity graph — allow unreviewed (status='suggested') entities and
         # joins to feed SQL generation. Default 1 preserves existing behaviour;
         # set 0 to enforce admin review before the graph affects queries.
@@ -980,6 +1073,7 @@ def _run_migrations() -> None:
     with get_db() as conn:
         _ensure_llm_call_log_table(conn)
         _ensure_answer_trace_tables(conn)
+        _ensure_agent_runtime_tables(conn)
         _ensure_eval_tables(conn)
         _ensure_external_log_export_state_table(conn)
         _ensure_semantic_field_feedback_table(conn)
@@ -1367,6 +1461,117 @@ def _ensure_llm_call_log_table(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_llm_call_log_question ON llm_call_log(question_id);
         CREATE INDEX IF NOT EXISTS idx_llm_call_log_request  ON llm_call_log(request_id);
         CREATE INDEX IF NOT EXISTS idx_llm_call_log_created  ON llm_call_log(created_at);
+        """
+    )
+
+
+def _ensure_agent_runtime_tables(conn: sqlite3.Connection) -> None:
+    """Create the durable, tenant-scoped read-only agent runtime tables.
+
+    The agent layer records orchestration state only. SQL, semantic resolution,
+    validation, compliance decisions, and execution continue to live in the
+    existing governed query pipeline and answer-trace tables.
+    """
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS agent_thread (
+            id                 TEXT PRIMARY KEY,
+            account_id         TEXT NOT NULL REFERENCES client(account_id) ON DELETE CASCADE,
+            portal_user_id     INTEGER NOT NULL REFERENCES portal_user(id) ON DELETE CASCADE,
+            external_thread_id TEXT NOT NULL,
+            title              TEXT NOT NULL DEFAULT '',
+            status             TEXT NOT NULL DEFAULT 'active',
+            created_at         TEXT DEFAULT (datetime('now')),
+            updated_at         TEXT DEFAULT (datetime('now')),
+            UNIQUE(account_id, portal_user_id, external_thread_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS agent_run (
+            id                      TEXT PRIMARY KEY,
+            thread_id               TEXT NOT NULL REFERENCES agent_thread(id) ON DELETE CASCADE,
+            account_id              TEXT NOT NULL REFERENCES client(account_id) ON DELETE CASCADE,
+            portal_user_id          INTEGER NOT NULL REFERENCES portal_user(id) ON DELETE CASCADE,
+            objective_sanitized     TEXT NOT NULL DEFAULT '',
+            status                  TEXT NOT NULL DEFAULT 'queued',
+            current_stage           TEXT NOT NULL DEFAULT '',
+            max_tool_calls          INTEGER NOT NULL DEFAULT 5,
+            tool_calls_used         INTEGER NOT NULL DEFAULT 0,
+            selected_schema         TEXT NOT NULL DEFAULT '',
+            purpose_id              TEXT NOT NULL DEFAULT '',
+            allowed_tables_snapshot TEXT NOT NULL DEFAULT '[]',
+            policy_version          INTEGER NOT NULL DEFAULT 0,
+            contract_version        TEXT NOT NULL DEFAULT '',
+            answer_trace_id         INTEGER REFERENCES answer_trace(id) ON DELETE SET NULL,
+            outcome_type            TEXT NOT NULL DEFAULT '',
+            error_code              TEXT NOT NULL DEFAULT '',
+            error_message           TEXT NOT NULL DEFAULT '',
+            started_at              TEXT DEFAULT NULL,
+            completed_at            TEXT DEFAULT NULL,
+            created_at              TEXT DEFAULT (datetime('now')),
+            updated_at              TEXT DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS agent_message (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            thread_id         TEXT NOT NULL REFERENCES agent_thread(id) ON DELETE CASCADE,
+            run_id            TEXT REFERENCES agent_run(id) ON DELETE SET NULL,
+            account_id        TEXT NOT NULL REFERENCES client(account_id) ON DELETE CASCADE,
+            portal_user_id    INTEGER NOT NULL REFERENCES portal_user(id) ON DELETE CASCADE,
+            role              TEXT NOT NULL,
+            message_type      TEXT NOT NULL DEFAULT 'text',
+            content_sanitized TEXT NOT NULL DEFAULT '',
+            metadata_json     TEXT NOT NULL DEFAULT '{}',
+            created_at        TEXT DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS agent_step (
+            id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id             TEXT NOT NULL REFERENCES agent_run(id) ON DELETE CASCADE,
+            account_id         TEXT NOT NULL REFERENCES client(account_id) ON DELETE CASCADE,
+            portal_user_id     INTEGER NOT NULL REFERENCES portal_user(id) ON DELETE CASCADE,
+            step_index         INTEGER NOT NULL,
+            tool_name          TEXT NOT NULL,
+            label              TEXT NOT NULL DEFAULT '',
+            detail             TEXT NOT NULL DEFAULT '',
+            status             TEXT NOT NULL DEFAULT 'pending',
+            answer_trace_id    INTEGER REFERENCES answer_trace(id) ON DELETE SET NULL,
+            policy_reason_code TEXT NOT NULL DEFAULT '',
+            metadata_json      TEXT NOT NULL DEFAULT '{}',
+            started_at         TEXT DEFAULT NULL,
+            completed_at       TEXT DEFAULT NULL,
+            created_at         TEXT DEFAULT (datetime('now')),
+            updated_at         TEXT DEFAULT (datetime('now')),
+            UNIQUE(run_id, step_index)
+        );
+
+        CREATE TABLE IF NOT EXISTS agent_subtask (
+            id                 TEXT PRIMARY KEY,
+            parent_run_id      TEXT NOT NULL REFERENCES agent_run(id) ON DELETE CASCADE,
+            account_id         TEXT NOT NULL REFERENCES client(account_id) ON DELETE CASCADE,
+            portal_user_id     INTEGER NOT NULL REFERENCES portal_user(id) ON DELETE CASCADE,
+            objective_sanitized TEXT NOT NULL DEFAULT '',
+            tool_name          TEXT NOT NULL DEFAULT '',
+            status             TEXT NOT NULL DEFAULT 'queued',
+            result_summary     TEXT NOT NULL DEFAULT '',
+            metadata_json      TEXT NOT NULL DEFAULT '{}',
+            started_at         TEXT DEFAULT NULL,
+            completed_at       TEXT DEFAULT NULL,
+            created_at         TEXT DEFAULT (datetime('now')),
+            updated_at         TEXT DEFAULT (datetime('now'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_agent_thread_owner
+            ON agent_thread(account_id, portal_user_id, updated_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_agent_run_owner
+            ON agent_run(account_id, portal_user_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_agent_run_thread
+            ON agent_run(thread_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_agent_message_thread
+            ON agent_message(thread_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_agent_step_run
+            ON agent_step(run_id, step_index);
+        CREATE INDEX IF NOT EXISTS idx_agent_subtask_run
+            ON agent_subtask(parent_run_id, status, created_at);
         """
     )
 

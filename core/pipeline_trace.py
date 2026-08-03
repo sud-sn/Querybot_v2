@@ -50,6 +50,13 @@ def _trace_create(**kwargs) -> int | None:
             kwargs["question_text"] = kwargs.pop("question")
         trace_id = store.create_answer_trace(**kwargs)
         _current_trace_id.set(trace_id)
+        try:
+            from core.agent_runtime import get_active_agent_run
+            agent_run = get_active_agent_run()
+            if agent_run and trace_id:
+                agent_run.link_trace(trace_id)
+        except Exception as exc:
+            log.debug("agent run trace link failed: %s", exc)
         return trace_id
     except Exception as exc:
         log.debug("answer trace create failed: %s", exc)
@@ -77,6 +84,13 @@ def _trace_finish(trace_id: int | None, **kwargs) -> None:
             _current_trace_id.set(None)
     except Exception as exc:
         log.debug("answer trace finish failed: %s", exc)
+    try:
+        from core.agent_runtime import get_active_agent_run
+        agent_run = get_active_agent_run()
+        if agent_run:
+            agent_run.record_trace_outcome(trace_id, **kwargs)
+    except Exception as exc:
+        log.debug("agent run trace finish failed: %s", exc)
 
 
 def _trace_finish_unclosed(**kwargs) -> None:

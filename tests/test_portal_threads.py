@@ -119,6 +119,18 @@ def test_thread_detail_does_not_match_another_session():
     assert response.status_code == 404
 
 
+def test_new_valid_thread_without_any_owned_traces_is_an_empty_success():
+    user = {"id": 7, "account_id": "acct"}
+    with patch("portal.routes._get_portal_user", return_value=user), patch(
+        "portal.routes.store.list_answer_traces", return_value=[]
+    ):
+        response = asyncio.run(portal_query_thread(object(), "new-thread"))
+
+    payload = _response_json(response)
+    assert response.status_code == 200
+    assert payload == {"ok": True, "thread_id": "new-thread", "turns": []}
+
+
 def test_portal_javascript_opens_history_without_rerunning_question():
     source = open("portal/templates/portal_chat.html", encoding="utf-8").read()
 
@@ -127,3 +139,9 @@ def test_portal_javascript_opens_history_without_rerunning_question():
     assert "/portal/api/history/" in history_block
     assert "thread_id=${encodeURIComponent(THREAD_ID)}" in source
     assert "SQL is restored from" in source
+    assert "if (_requestedNewThread)" in source
+    new_thread_block = source[
+        source.index("if (_requestedNewThread)"):
+        source.index("} else if (_validThreadId(_threadFromUrl))")
+    ]
+    assert "restoreServerThread" not in new_thread_block
