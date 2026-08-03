@@ -79,6 +79,21 @@ from core.compliance.policy_engine import evaluate as evaluate_policy, resolve_c
 log = logging.getLogger("querybot")
 
 
+def _unknown_column_is_cross_schema(reason: str, schema_hint: str) -> bool:
+    """Return whether an unknown column exists only outside the locked schema.
+
+    Validator messages preserve human-readable casing. Keep parsing
+    case-insensitive without mixing an uppercased value with a mixed-case
+    delimiter, which previously raised ``IndexError`` in the SQL repair path.
+    """
+    if not schema_hint:
+        return False
+    _prefix, marker, suffix = (reason or "").casefold().partition(
+        "exact column exists on"
+    )
+    return bool(marker) and schema_hint.casefold() not in suffix[:120]
+
+
 def _resolved_fact_tables(
     graph_context: dict,
     graph: dict,
@@ -2816,12 +2831,8 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 # When a schema is locked, "switch to the table where the column exists" is
                 # wrong if that table lives in a different schema — detect this and override
                 # the repair instruction so the LLM stays in the selected schema.
-                _cross_schema = (
-                    schema_hint
-                    and "Exact column exists on" in last_reason
-                    and schema_hint.upper() not in last_reason.upper().split(
-                        "Exact column exists on"
-                    )[1][:120]   # check the first 120 chars of the "exists on" suffix
+                _cross_schema = _unknown_column_is_cross_schema(
+                    last_reason, schema_hint,
                 )
                 if _cross_schema:
                     validation_repair_note = (
