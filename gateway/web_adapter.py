@@ -520,7 +520,7 @@ class WebAdapter(PlatformAdapter):
             chart_type=item_type,
             db_config_id=db_config_id,
             color_palette=str(chart.get("color_palette") or "default"),
-            dashboard_id=None,
+            dashboard_id=int(dashboard["id"]),
             display_config=display_config,
         )
         dashboard_store.add_chart(

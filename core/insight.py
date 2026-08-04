@@ -125,10 +125,16 @@ def detect_analytical_intents(question: str) -> dict:
     from core.distribution_analysis import detect_histogram_intent, detect_boxplot_intent
     from core.whatif import detect_whatif_intent
 
+    contribution = detect_contribution_intent(question)
+    # Composition and histogram are mutually exclusive.  Without this guard,
+    # "distribution of revenue by state" was converted into row-level bins,
+    # discarding the requested state grain before chart selection.
+    histogram = detect_histogram_intent(question) and not contribution
+
     return {
         "window":           detect_window_intent(question),
         "relative_date":    detect_relative_date_question(question),
-        "contribution":     detect_contribution_intent(question),
+        "contribution":     contribution,
         "anomaly":          detect_anomaly_intent(question),
         "multi_period":     detect_multi_period_intent(question),
         "budget_vs_actual": detect_bva_intent(question),
@@ -138,7 +144,7 @@ def detect_analytical_intents(question: str) -> dict:
         "funnel":           detect_funnel_intent(question),
         "forecast":         detect_forecast_intent(question),
         "fiscal":           detect_fiscal_intent(question),
-        "histogram":        detect_histogram_intent(question),
+        "histogram":        histogram,
         "boxplot":          detect_boxplot_intent(question),
         "whatif":           detect_whatif_intent(question),
     }

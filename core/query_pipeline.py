@@ -2159,13 +2159,34 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     # from the question and appends precise SQL construction hints so the LLM
     # emits the correct syntax without needing general training on window funcs.
     _analytic_hints: list[str] = []
+    _analysis_contract: dict = {"enabled": False, "mode": "none"}
     try:
         from core.insight import detect_analytical_intents
         from core.window_analytics import build_window_sql_hint
         from core.anomaly_detection import build_anomaly_sql_hint
         from core.contribution_analysis import build_contribution_sql_hint
+        from core.analysis_contract import (
+            build_analysis_contract,
+            format_analysis_contract,
+        )
 
         _intents = detect_analytical_intents(question)
+        _analysis_contract = build_analysis_contract(
+            question,
+            analytical_intents=_intents,
+            semantic_plan=_semantic_plan,
+            metric_formulas=_matched_metrics,
+        )
+        _analysis_contract_hint = format_analysis_contract(_analysis_contract)
+        if _analysis_contract_hint:
+            _analytic_hints.append(_analysis_contract_hint)
+            log.info(
+                "analysis_contract: mode=%s measure_source=%s measures=%d dimensions=%d",
+                _analysis_contract.get("mode"),
+                _analysis_contract.get("measure_source"),
+                len(_analysis_contract.get("measures") or []),
+                len(_analysis_contract.get("dimensions") or []),
+            )
 
         if _intents.get("window"):
             _analytic_hints.append(
@@ -2257,6 +2278,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     except Exception as _ai_exc:
         log.debug("Analytical intent detection skipped: %s", _ai_exc)
         _intents = {}
+        _analysis_contract = {"enabled": False, "mode": "none"}
 
     if _analytic_hints:
         context_with_terms = (
@@ -2662,6 +2684,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         "graph_context": _graph_ctx,
         "semantic_plan": _semantic_plan,
         "metric_formulas": _matched_metrics,
+        "analysis_contract": _analysis_contract,
         "resolution_plan": _resolution_plan,
         "planner_alignment": _planner_alignment,
     }
@@ -2853,7 +2876,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         rows = None
         ok = False
 
-    retryable = (not ok and (last_code or code) in ("unknown_table", "unknown_column", "date_key_format", "dialect_mismatch", "production_shape", "period_comparison_shape", "anti_join_shape", "fanout_aggregate", "top_n_shape", "graph_plan_mismatch", "field_plan_mismatch", "metric_formula_mismatch", "null_aggregate_diagnostic", "parse", "multi_statement", "not_select", "reused_plan_empty", "zero_row_fresh", "surrogate_date_conversion", "temporal_anchor_missing", "temporal_anchor_mismatch", "temporal_role_mismatch", "temporal_anchor_unscoped")) or (exec_error is not None)
+    retryable = (not ok and (last_code or code) in ("unknown_table", "unknown_column", "date_key_format", "dialect_mismatch", "production_shape", "period_comparison_shape", "composition_shape", "anti_join_shape", "fanout_aggregate", "top_n_shape", "graph_plan_mismatch", "field_plan_mismatch", "metric_formula_mismatch", "null_aggregate_diagnostic", "parse", "multi_statement", "not_select", "reused_plan_empty", "zero_row_fresh", "surrogate_date_conversion", "temporal_anchor_missing", "temporal_anchor_mismatch", "temporal_role_mismatch", "temporal_anchor_unscoped")) or (exec_error is not None)
 
     if retryable:
         if exec_error is not None:
@@ -2923,6 +2946,16 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     "- If using LEFT JOIN, WHERE must test a join key from the RIGHT/missing side with IS NULL.\n"
                     "- The FROM table must be the source/parent table containing the records to list.\n"
                     "- Never null-test the FROM table's own key; that can make the result impossible.\n"
+                )
+            elif last_code == "composition_shape":
+                validation_repair_note = (
+                    "\nCOMPOSITION QUERY-SHAPE REPAIR REQUIRED:\n"
+                    "- This is a category composition/share request, not a histogram.\n"
+                    "- Return exactly one row per requested category.\n"
+                    "- SELECT the requested category plus the governed aggregate measure.\n"
+                    "- GROUP BY the requested category and preserve the governed join path and filters.\n"
+                    "- Do not return individual measure rows for bins, ranges, or frequency analysis.\n"
+                    "- If the measure is not additive and no approved formula is available, return CANNOT_GENERATE rather than summing it.\n"
                 )
             elif last_code == "fanout_aggregate":
                 validation_repair_note = (

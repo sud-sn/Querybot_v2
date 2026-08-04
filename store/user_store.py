@@ -640,16 +640,25 @@ def pin_chart(
     display_config: dict | None = None,
 ) -> int:
     with get_db() as conn:
-        # Get next position
-        row = conn.execute(
-            "SELECT COALESCE(MAX(position),0)+1 AS next FROM pinned_chart WHERE user_id=?",
-            (user_id,)
-        ).fetchone()
+        # Positions belong to one dashboard, never to the user's global chart list.
+        if dashboard_id:
+            row = conn.execute(
+                """SELECT COALESCE(MAX(position),0)+1 AS next FROM pinned_chart
+                    WHERE user_id=? AND dashboard_id=?""",
+                (user_id, int(dashboard_id)),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                """SELECT COALESCE(MAX(position),0)+1 AS next FROM pinned_chart
+                    WHERE user_id=? AND dashboard_id IS NULL""",
+                (user_id,),
+            ).fetchone()
         pos = row["next"] if row else 1
-        grid_w = 6
-        grid_h = 5
-        grid_x = ((pos - 1) % 2) * grid_w
-        grid_y = ((pos - 1) // 2) * grid_h
+        kind = str(chart_type or "bar").lower()
+        grid_w, grid_h = ((3, 3) if kind == "kpi" else ((12, 6) if kind == "table" else (6, 5)))
+        columns = max(1, 12 // grid_w)
+        grid_x = ((pos - 1) % columns) * grid_w
+        grid_y = ((pos - 1) // columns) * grid_h
         cur = conn.execute("""
             INSERT INTO pinned_chart
                 (user_id, account_id, title, question, sql_query, chart_type,
@@ -743,7 +752,7 @@ def update_pinned_chart_layouts(user_id: int, layouts: list[dict]) -> None:
             conn.execute(
                 """
                 UPDATE pinned_chart
-                   SET grid_x=?, grid_y=?, grid_w=?, grid_h=?, position=?
+                   SET grid_x=?, grid_y=?, grid_w=?, grid_h=?, position=?, layout_locked=1
                  WHERE id=? AND user_id=?
                 """,
                 (x, y, w, h, position, chart_id, user_id),

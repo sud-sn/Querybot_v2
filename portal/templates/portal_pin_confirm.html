@@ -1,10 +1,10 @@
 {% extends "portal_base.html" %}
-{% block title %}Pin Chart — QueryBot Portal{% endblock %}
+{% block title %}Add to dashboard — QueryBot Portal{% endblock %}
 {% block content %}
 <div style="max-width:500px;margin:2rem auto">
   <div class="page-header">
-    <h1>Pin chart to dashboard</h1>
-    <p>Give it a title and it will refresh with live data every time you log in.</p>
+    <h1>Add chart to a dashboard</h1>
+    <p>Choose a named dashboard or create one for this live, governed result.</p>
   </div>
   <div class="card">
     <div class="card-body" style="padding:1.5rem">
@@ -16,6 +16,22 @@
           <label>Chart title</label>
           <input type="text" name="title" value="{{ question[:60] }}" autofocus required
             placeholder="e.g. Total revenue this month">
+        </div>
+
+        {% if dashboards %}
+        <div class="form-group">
+          <label>Existing dashboard</label>
+          <select name="dashboard_id">
+            <option value="">Create a new dashboard</option>
+            {% for dashboard in dashboards %}
+            <option value="{{ dashboard.id }}">{{ dashboard.name }} · {{ dashboard.chart_count }} visual{% if dashboard.chart_count != 1 %}s{% endif %}</option>
+            {% endfor %}
+          </select>
+        </div>
+        {% endif %}
+        <div class="form-group">
+          <label>New dashboard name{% if dashboards %} (only when creating new){% endif %}</label>
+          <input type="text" name="new_dashboard_name" value="{% if not dashboards %}My Dashboard{% endif %}" placeholder="e.g. Pharmacy performance">
         </div>
 
         <div style="background:var(--gray-50);border-radius:8px;padding:.875rem;margin-bottom:1rem">
@@ -31,7 +47,7 @@
         </div>
 
         <div style="display:flex;gap:.75rem">
-          <button type="submit" class="btn btn-primary">Pin to dashboard</button>
+          <button type="submit" class="btn btn-primary">Add to dashboard</button>
           <a href="/portal/dashboard" class="btn btn-secondary">Cancel</a>
         </div>
       </form>

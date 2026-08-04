@@ -1472,10 +1472,11 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     return
                 chart = charts[-1]
                 chart_type = chart_type_match.group("chart_type").lower()
-                store.update_pinned_chart(
-                    chart["id"], user_id, chart_type=chart_type
+                store.update_dashboard_chart(
+                    latest["id"], chart["id"], user_id, account_id,
+                    chart_type=chart_type,
                 )
-                latest = store.mark_dashboard_draft(
+                latest = store.get_dashboard(
                     latest["id"], user_id, account_id
                 ) or latest
                 await websocket.send_json({
@@ -1504,6 +1505,33 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 return
 
             if _DASHBOARD_ADD_INTENT_RE.search(text):
+                if not selected_dashboard_id:
+                    response = getattr(adapter, "last_response_payload", None) or {}
+                    chart = response.get("chart") if isinstance(response.get("chart"), dict) else {}
+                    token = str(response.get("pin_token") or chart.get("pin_token") or "")
+                    if not token:
+                        await websocket.send_json({
+                            "type": "assistant_error",
+                            "action": "dashboard",
+                            "content": "Run the result again so I can open the dashboard chooser for it.",
+                        })
+                        return
+                    kpi = response.get("kpi") if isinstance(response.get("kpi"), dict) else {}
+                    await websocket.send_json({
+                        "type": "dashboard_selection_required",
+                        "pin_token": token,
+                        "title": str(
+                            chart.get("title") or kpi.get("label")
+                            or response.get("question") or "Dashboard visual"
+                        )[:120],
+                        "chart_type": str(
+                            chart.get("chart_type")
+                            or response.get("dashboard_item_type")
+                            or ("kpi" if kpi else "table")
+                        ),
+                        "color_palette": str(chart.get("color_palette") or "default"),
+                    })
+                    return
                 if not latest:
                     await websocket.send_json({
                         "type": "assistant_error",

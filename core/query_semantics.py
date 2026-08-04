@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from dataclasses import asdict, dataclass
 
+from core.contribution_analysis import detect_composition_intent
+
 
 _NUMBER_WORDS = {
     "one": 1,
@@ -222,9 +224,11 @@ def analyze_query_intent(question: str) -> dict[str, bool]:
         )),
 
         # ── Percentage / share of total ──────────────────────────────────────
-        # Added distribution, ratio, makeup, out of total, as a percentage of.
-        "wants_share": bool(re.search(
-            r"\b(percent(age)?|proportion|share|contribution|distribution"
+        # ``distribution`` alone is not enough: it can mean a row-level
+        # histogram.  The shared composition resolver handles only grouped
+        # additive-measure phrasing such as "distribution of revenue by state".
+        "wants_share": detect_composition_intent(question) or bool(re.search(
+            r"\b(percent(age)?|proportion|share|contribution"
             r"|ratio|weighting?\b|makeup"
             r"|what\s+.{0,15}(percent|share|part|fraction|portion)\b"
             r"|how\s+much\s+.{0,15}(contribut|make\s+up|account|of\s+total)"

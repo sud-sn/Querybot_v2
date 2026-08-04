@@ -88,7 +88,7 @@
 </div>
 
 <div class="metrics">
-  <div class="metric"><div class="metric-label">Pinned charts</div><div class="metric-value">{{ charts|length }}</div></div>
+  <div class="metric"><div class="metric-label">Dashboard visuals</div><div class="metric-value">{{ charts|length }}</div></div>
   <div class="metric"><div class="metric-label">Queries this month</div><div class="metric-value" style="color:var(--blue)">{{ monthly_count }}</div></div>
   <div class="metric">
     <div class="metric-label">Query limit</div>
@@ -142,7 +142,20 @@
     <h2 style="font-size:18px;font-weight:800;margin:.2rem 0">{{ dashboard_artifact.name }}</h2>
     <div style="font-size:12px;color:var(--text-muted)">{{ dashboard_artifact.status|capitalize }} · Version {{ dashboard_artifact.version }} · {{ dashboard_artifact.visibility|capitalize }} · {{ dashboard_artifact.refresh_schedule|capitalize }} refresh{% if not dashboard_artifact.can_edit %} · Read only{% endif %}</div>
   </div>
-  <a href="/portal/chat?thread={{ dashboard_artifact.thread_id }}&dashboard={{ dashboard_artifact.id }}" class="btn btn-secondary">Chat with dashboard</a>
+  <div style="display:flex;align-items:center;gap:.55rem;flex-wrap:wrap;justify-content:flex-end">
+    {% if dashboard_subscription %}
+    <form method="post" action="/portal/dashboard/{{ dashboard_artifact.id }}/unsubscribe" style="margin:0">
+      <button class="btn btn-secondary" type="submit" title="Stop following this dashboard">Following · {{ dashboard_subscription.cadence|capitalize }}</button>
+    </form>
+    {% else %}
+    <form method="post" action="/portal/dashboard/{{ dashboard_artifact.id }}/subscribe" style="margin:0;display:flex;gap:.4rem">
+      <select name="cadence" aria-label="Dashboard subscription cadence" style="min-width:92px;padding:.45rem .55rem"><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select>
+      <input type="hidden" name="channel" value="in_app">
+      <button class="btn btn-secondary" type="submit">Subscribe</button>
+    </form>
+    {% endif %}
+    <a href="/portal/chat?thread={{ dashboard_artifact.thread_id }}&dashboard={{ dashboard_artifact.id }}" class="btn btn-secondary">Chat with dashboard</a>
+  </div>
 </div>
 
 {% if dashboard_tabs|length > 1 %}<nav class="dashboard-tabs" aria-label="Dashboard tabs">{% for tab in dashboard_tabs %}<a class="dashboard-tab{% if tab == selected_tab %} active{% endif %}" href="/portal/dashboard?dashboard_id={{ dashboard_artifact.id }}&tab={{ tab|urlencode }}">{{ tab }}</a>{% endfor %}</nav>{% endif %}
@@ -168,8 +181,8 @@
 
 {% if charts %}
 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;gap:1rem;flex-wrap:wrap">
-  <h2 style="font-size:15px;font-weight:700">Pinned charts</h2>
-  <span style="font-size:12px;color:var(--gray-500)">Interactive charts refreshed with live data on login</span>
+  <h2 style="font-size:15px;font-weight:700">{{ selected_tab }} visuals</h2>
+  <span style="font-size:12px;color:var(--gray-500)">{% if dashboard_artifact.can_edit %}Drag or resize to edit placement · {% endif %}Live governed data</span>
 </div>
 <div class="chart-grid">
   {% for chart in charts %}
@@ -194,9 +207,10 @@
           title="Expand chart" style="font-size:12px;padding:4px 8px">⤢ Expand</button>
         <form method="post" action="/portal/unpin" style="margin:0;display:none" id="unpin-{{ chart.id }}">
           <input type="hidden" name="chart_id" value="{{ chart.id }}">
+          <input type="hidden" name="dashboard_id" value="{{ dashboard_artifact.id if dashboard_artifact else 0 }}">
         </form>
         {% if not dashboard_artifact or dashboard_artifact.can_edit %}<button type="button" class="btn btn-xs btn-secondary" style="color:var(--text-muted)"
-          onclick="unpinChart({{ chart.id }}, this.closest('.chart-card'))"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:3px"><path d="M6 18L18 6M6 6l12 12"/></svg>Unpin</button>
+          onclick="unpinChart({{ chart.id }}, this.closest('.chart-card'))"><svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:3px"><path d="M6 18L18 6M6 6l12 12"/></svg>Remove</button>
         {% endif %}
       </div>
     </div>
@@ -236,22 +250,25 @@
   </div>
   {% endfor %}
 </div>
-{% else %}
+{% elif dashboard_artifact %}
 <div class="empty-state">
   <div class="empty-state-icon"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18M7 14l4-4 3 3 5-6"/></svg></div>
-  <h3 class="empty-state-title">No pinned charts yet</h3>
-  <p class="empty-state-body">When chat returns a chart, use <strong>Pin to dashboard</strong> to save it here as a live interactive chart.</p>
+  <h3 class="empty-state-title">No visuals in this dashboard yet</h3>
+  <p class="empty-state-body">Ask QueryBot for an analysis, then use <strong>Add to dashboard</strong> and select this dashboard.</p>
   <div class="empty-state-actions">
     <a href="/portal/kb" class="btn btn-secondary">Browse Semantic Layer</a>
     <a href="/portal/chat" class="btn btn-primary">Open Chat</a>
   </div>
 </div>
+{% elif not dashboards %}
+<div class="empty-state"><h3 class="empty-state-title">No dashboards yet</h3><p class="empty-state-body">Create an analysis in Chat and add the resulting KPI, chart, or table to a new named dashboard.</p><div class="empty-state-actions"><a href="/portal/chat" class="btn btn-primary">Open Chat</a></div></div>
 {% endif %}
 
 </div>
 
 <script>
 const CAN_EDIT_DASHBOARD = {{ (dashboard_artifact.can_edit if dashboard_artifact else true)|tojson }};
+const ACTIVE_DASHBOARD_ID = {{ (dashboard_artifact.id if dashboard_artifact else 0)|tojson }};
 function sortDashboardTable(button, columnIndex){
   const table = button?.closest('table');
   const body = table?.tBodies?.[0];
@@ -560,7 +577,7 @@ function saveDashboardLayoutSoon() {
       await fetch('/portal/api/update-chart-layout', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ layouts }),
+        body: JSON.stringify({ dashboard_id: ACTIVE_DASHBOARD_ID, layouts }),
       });
     } catch (_) {}
   }, 450);
@@ -670,7 +687,7 @@ async function _updateChart(chartId, fields) {
   try {
     await fetch('/portal/api/update-chart', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ chart_id: chartId, ...fields }),
+      body: JSON.stringify({ dashboard_id: ACTIVE_DASHBOARD_ID, chart_id: chartId, ...fields }),
     });
   } catch {}
 }

@@ -514,6 +514,28 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .composer-actions{display:flex;gap:.45rem;flex-wrap:wrap}
 .toast{position:fixed;right:20px;bottom:20px;padding:.75rem .95rem;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-lg);font-size:12px;color:var(--text);opacity:0;transform:translateY(8px);pointer-events:none;transition:all .18s;z-index:1200}
 .toast.show{opacity:1;transform:translateY(0)}
+.dashboard-picker-backdrop{position:fixed;inset:0;z-index:9100;background:rgba(15,23,42,.54);display:none;align-items:center;justify-content:center;padding:1rem;backdrop-filter:blur(3px)}
+.dashboard-picker-backdrop.open{display:flex}
+.dashboard-picker{width:min(560px,100%);max-height:min(720px,92vh);overflow:hidden;display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);box-shadow:0 24px 70px rgba(15,23,42,.28)}
+.dashboard-picker-head{display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;padding:1rem 1.1rem;border-bottom:1px solid var(--border)}
+.dashboard-picker-title{font-size:16px;font-weight:800;color:var(--text)}
+.dashboard-picker-copy{font-size:12px;color:var(--text-muted);margin-top:.25rem;line-height:1.45}
+.dashboard-picker-close{border:0;background:transparent;color:var(--text-muted);font-size:20px;cursor:pointer;padding:0 .25rem}
+.dashboard-picker-body{padding:1rem 1.1rem;overflow:auto}
+.dashboard-picker-switch{display:flex;gap:.45rem;margin-bottom:.8rem}
+.dashboard-picker-switch button{flex:1;border:1px solid var(--border);background:var(--surface-2);color:var(--text-soft);padding:.55rem .7rem;border-radius:var(--radius-sm);font-size:12px;font-weight:750;cursor:pointer}
+.dashboard-picker-switch button.active{border-color:var(--primary);background:var(--primary-soft);color:var(--primary)}
+.dashboard-picker-search{width:100%;margin-bottom:.65rem}
+.dashboard-picker-list{display:flex;flex-direction:column;gap:.4rem;max-height:285px;overflow:auto}
+.dashboard-picker-option{width:100%;display:flex;align-items:center;justify-content:space-between;gap:1rem;text-align:left;border:1px solid var(--border);background:var(--surface);padding:.7rem .75rem;border-radius:var(--radius-sm);cursor:pointer;color:var(--text)}
+.dashboard-picker-option:hover,.dashboard-picker-option.selected{border-color:var(--primary);background:color-mix(in srgb,var(--primary-soft) 52%,var(--surface))}
+.dashboard-picker-option strong{display:block;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dashboard-picker-option span{font-size:11px;color:var(--text-muted);white-space:nowrap}
+.dashboard-picker-empty{padding:1.3rem;text-align:center;color:var(--text-muted);font-size:12px;border:1px dashed var(--border);border-radius:var(--radius-sm)}
+.dashboard-picker-new{display:grid;gap:.75rem}.dashboard-picker-new label{display:grid;gap:.3rem;font-size:12px;font-weight:700;color:var(--text-soft)}
+.dashboard-picker-new input,.dashboard-picker-new select{width:100%}
+.dashboard-picker-footer{display:flex;align-items:center;justify-content:flex-end;gap:.55rem;padding:.85rem 1.1rem;border-top:1px solid var(--border);background:var(--surface-2)}
+@media(max-width:560px){.dashboard-picker-backdrop{padding:0;align-items:flex-end}.dashboard-picker{width:100%;max-height:92vh;border-radius:var(--radius-lg) var(--radius-lg) 0 0}.dashboard-picker-head,.dashboard-picker-body,.dashboard-picker-footer{padding-left:.9rem;padding-right:.9rem}}
 .clarification-card{padding:1rem 1.05rem;border-radius:var(--radius-lg);background:var(--surface);color:var(--text);border:1px solid var(--border);border-bottom-left-radius:6px;box-shadow:var(--shadow);display:flex;flex-direction:column;gap:.8rem}
 .clarification-question{line-height:1.6;color:var(--text)}
 .clarification-options{display:flex;gap:.55rem;flex-wrap:wrap}
@@ -899,6 +921,17 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
   </div>
 </div>
 <div class="toast" id="toast"></div>
+<div class="dashboard-picker-backdrop" id="dashboardPickerBackdrop" role="dialog" aria-modal="true" aria-labelledby="dashboardPickerTitle" onclick="if(event.target===this)closeDashboardPicker()">
+  <section class="dashboard-picker">
+    <header class="dashboard-picker-head"><div><div class="dashboard-picker-title" id="dashboardPickerTitle">Add to dashboard</div><div class="dashboard-picker-copy">Choose where this live, governed result should appear.</div></div><button type="button" class="dashboard-picker-close" onclick="closeDashboardPicker()" aria-label="Close">×</button></header>
+    <div class="dashboard-picker-body">
+      <div class="dashboard-picker-switch"><button type="button" id="dashboardExistingMode" onclick="setDashboardPickerMode('existing')">Existing dashboard</button><button type="button" id="dashboardNewMode" onclick="setDashboardPickerMode('new')">Create new</button></div>
+      <div id="dashboardExistingPanel"><input class="dashboard-picker-search" id="dashboardPickerSearch" type="search" placeholder="Search your dashboards" oninput="renderDashboardPickerOptions(this.value)"><div class="dashboard-picker-list" id="dashboardPickerList"><div class="dashboard-picker-empty">Loading dashboards…</div></div></div>
+      <div class="dashboard-picker-new" id="dashboardNewPanel" hidden><label>Dashboard name<input id="dashboardNewName" maxlength="120" placeholder="e.g. Pharmacy performance"></label><label>Description <span style="font-weight:500;color:var(--text-muted)">(optional)</span><input id="dashboardNewDescription" maxlength="500" placeholder="What this dashboard is used for"></label><label>Visibility<select id="dashboardNewVisibility"><option value="personal">Personal</option><option value="team">Team draft</option></select></label></div>
+    </div>
+    <footer class="dashboard-picker-footer"><button type="button" class="btn btn-secondary" onclick="closeDashboardPicker()">Cancel</button><button type="button" class="btn btn-primary" id="dashboardPickerSubmit" onclick="submitDashboardPicker()">Add chart</button></footer>
+  </section>
+</div>
 
 <script>
 const ACCOUNT_ID = {{ user.account_id|tojson }};
@@ -1014,6 +1047,117 @@ function hideWelcome(){
 }
 function toast(msg){ const el = document.getElementById('toast'); el.textContent = msg; el.classList.add('show'); clearTimeout(window.__toastTimer); window.__toastTimer = setTimeout(() => el.classList.remove('show'), 1400); }
 function toastLong(msg){ const el = document.getElementById('toast'); el.textContent = msg; el.classList.add('show'); clearTimeout(window.__toastTimer); window.__toastTimer = setTimeout(() => el.classList.remove('show'), 5200); }
+let _dashboardAddContext = null;
+let _dashboardPickerItems = [];
+let _dashboardPickerMode = 'existing';
+let _dashboardPickerSelected = 0;
+
+function closeDashboardPicker(){
+  document.getElementById('dashboardPickerBackdrop')?.classList.remove('open');
+}
+
+function setDashboardPickerMode(mode){
+  _dashboardPickerMode = mode === 'new' ? 'new' : 'existing';
+  document.getElementById('dashboardExistingMode')?.classList.toggle('active', _dashboardPickerMode === 'existing');
+  document.getElementById('dashboardNewMode')?.classList.toggle('active', _dashboardPickerMode === 'new');
+  const existing = document.getElementById('dashboardExistingPanel');
+  const fresh = document.getElementById('dashboardNewPanel');
+  if (existing) existing.hidden = _dashboardPickerMode !== 'existing';
+  if (fresh) fresh.hidden = _dashboardPickerMode !== 'new';
+  const submit = document.getElementById('dashboardPickerSubmit');
+  if (submit) submit.textContent = _dashboardPickerMode === 'new' ? 'Create and add' : 'Add to dashboard';
+  if (_dashboardPickerMode === 'new') setTimeout(() => document.getElementById('dashboardNewName')?.focus(), 30);
+}
+
+function selectDashboardPickerOption(id){
+  _dashboardPickerSelected = Number(id) || 0;
+  document.querySelectorAll('.dashboard-picker-option').forEach(option => {
+    option.classList.toggle('selected', Number(option.dataset.dashboardId) === _dashboardPickerSelected);
+  });
+}
+
+function renderDashboardPickerOptions(query = ''){
+  const list = document.getElementById('dashboardPickerList');
+  if (!list) return;
+  const needle = String(query || '').trim().toLowerCase();
+  const visible = _dashboardPickerItems.filter(item => !needle || String(item.name || '').toLowerCase().includes(needle));
+  if (!visible.length) {
+    list.innerHTML = `<div class="dashboard-picker-empty">${_dashboardPickerItems.length ? 'No dashboards match that search.' : 'No dashboards yet. Create one for this result.'}</div>`;
+    return;
+  }
+  list.innerHTML = visible.map(item => `<button type="button" class="dashboard-picker-option${Number(item.id)===_dashboardPickerSelected?' selected':''}" data-dashboard-id="${Number(item.id)}" onclick="selectDashboardPickerOption(${Number(item.id)})"><strong>${escHtml(item.name || 'Untitled dashboard')}</strong><span>${Number(item.chart_count || 0)} visual${Number(item.chart_count || 0)===1?'':'s'} · ${escHtml(item.status || 'draft')}</span></button>`).join('');
+}
+
+async function openDashboardPicker(context = {}){
+  const token = context.token || context.pin_token || '';
+  if (!token) {
+    toast('Run the result again before adding it to a dashboard');
+    return;
+  }
+  _dashboardAddContext = {...context, token};
+  _dashboardPickerItems = [];
+  _dashboardPickerSelected = 0;
+  document.getElementById('dashboardPickerSearch').value = '';
+  document.getElementById('dashboardNewName').value = '';
+  document.getElementById('dashboardNewDescription').value = '';
+  document.getElementById('dashboardPickerList').innerHTML = '<div class="dashboard-picker-empty">Loading dashboards…</div>';
+  document.getElementById('dashboardPickerBackdrop')?.classList.add('open');
+  try {
+    const response = await fetch('/portal/api/dashboards');
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || 'Could not load dashboards');
+    _dashboardPickerItems = Array.isArray(data.dashboards) ? data.dashboards : [];
+    const preferred = Number(context.dashboard_id || DASHBOARD_ID || 0);
+    _dashboardPickerSelected = _dashboardPickerItems.some(item => Number(item.id) === preferred)
+      ? preferred
+      : Number(_dashboardPickerItems[0]?.id || 0);
+    renderDashboardPickerOptions('');
+    setDashboardPickerMode(_dashboardPickerItems.length ? 'existing' : 'new');
+  } catch (error) {
+    closeDashboardPicker();
+    toast(error.message || 'Could not load dashboards');
+  }
+}
+
+async function submitDashboardPicker(){
+  if (!_dashboardAddContext) return;
+  const submit = document.getElementById('dashboardPickerSubmit');
+  const payload = {
+    token: _dashboardAddContext.token,
+    title: _dashboardAddContext.title || 'Dashboard visual',
+    chart_type: _dashboardAddContext.chart_type || 'auto',
+    color_palette: _dashboardAddContext.color_palette || 'default',
+    thread_id: THREAD_ID,
+  };
+  if (_dashboardPickerMode === 'existing') {
+    if (!_dashboardPickerSelected) { toast('Select a dashboard'); return; }
+    payload.dashboard_id = _dashboardPickerSelected;
+  } else {
+    payload.new_dashboard_name = document.getElementById('dashboardNewName')?.value.trim() || '';
+    payload.new_dashboard_description = document.getElementById('dashboardNewDescription')?.value.trim() || '';
+    payload.visibility = document.getElementById('dashboardNewVisibility')?.value || 'personal';
+    if (!payload.new_dashboard_name) { toast('Enter a dashboard name'); document.getElementById('dashboardNewName')?.focus(); return; }
+  }
+  if (submit) { submit.disabled = true; submit.textContent = 'Adding…'; }
+  try {
+    const response = await fetch('/portal/api/pin-chart', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload),
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || 'Could not add this result');
+    closeDashboardPicker();
+    toast(`Added to ${data.dashboard?.name || 'dashboard'}`);
+    _dashboardAddContext = null;
+  } catch (error) {
+    toast(error.message || 'Could not add this result');
+  } finally {
+    if (submit) { submit.disabled = false; submit.textContent = _dashboardPickerMode === 'new' ? 'Create and add' : 'Add to dashboard'; }
+  }
+}
+
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && document.getElementById('dashboardPickerBackdrop')?.classList.contains('open')) closeDashboardPicker();
+});
 function _setComposerState(message, tone = ''){
   const el = document.getElementById('composerState');
   if (!el) return;
@@ -3043,7 +3187,7 @@ function renderArtifactPreview(msg){
   }
   const dashboardAction = dashboard
     ? `<a class="artifact-head-btn" href="${escHtml(dashboard.url || '/portal/dashboard')}">Open ${escHtml(dashboard.name)}</a>`
-    : (msg.analysis_artifact ? '' : '<button type="button" class="artifact-head-btn" onclick="addArtifactToDashboard()">Create dashboard from this</button>');
+    : (msg.analysis_artifact ? '' : '<button type="button" class="artifact-head-btn" onclick="addArtifactToDashboard()">Add to dashboard</button>');
   const root = document.getElementById('artifactBody');
   root.innerHTML = `<section class="artifact-surface"><div class="artifact-summary"><h3>${escHtml(title)}</h3><p>${escHtml(msg.answer?.scope_note || msg.result_scope?.note || 'Governed result from the current conversation')}</p></div><div class="artifact-tabs">${tabs.join('')}</div>${panels.join('')}<div class="artifact-actions">${dashboardAction}</div></section>`;
   root.querySelectorAll('.artifact-tab').forEach(btn => btn.addEventListener('click', () => _activateArtifactTab(root, btn.dataset.artifactTab)));
@@ -3060,10 +3204,14 @@ function addArtifactToDashboard(){
   if (!_activeArtifactPayload) return;
   const existing = _activeArtifactPayload.dashboard_artifact;
   if (existing?.url) { location.href = existing.url; return; }
-  const input = document.getElementById('input');
-  if (!input || !wsReady) { toast('Reconnect to update the dashboard'); return; }
-  input.value = 'Create a dashboard from this result';
-  sendMessage();
+  const chart = _activeArtifactPayload.chart || {};
+  openDashboardPicker({
+    token: _activeArtifactPayload.pin_token || chart.pin_token,
+    title: chart.title || _activeArtifactPayload.kpi?.label || _activeArtifactPayload.question || 'Dashboard visual',
+    chart_type: chart.chart_type || (_activeArtifactPayload.kpi ? 'kpi' : 'table'),
+    color_palette: chart.color_palette || 'default',
+    dashboard_id: DASHBOARD_ID,
+  });
 }
 function appendDashboardEvent(msg){
   hideWelcome();
@@ -3173,8 +3321,9 @@ function appendAssistantResponse(msg, opts = {}){
       }).join('')
     : '';
 
-  const pinBtnHtml = (hasChart && msg.chart.pin_token)
-    ? '<button class="msg-action" type="button" data-pin="chart"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px"><path d="M3 3v18h18M7 14l4-4 3 3 5-6"/></svg>Pin to dashboard</button>'
+  const dashboardToken = msg.pin_token || msg.chart?.pin_token || '';
+  const pinBtnHtml = (dashboardToken && (hasChart || msg.kpi || hasData))
+    ? '<button class="msg-action" type="button" data-pin="chart"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px"><path d="M3 3v18h18M7 14l4-4 3 3 5-6"/></svg>Add to dashboard</button>'
     : '';
 
   // Follow-up suggestions — result-aware chips generated from the data brief
@@ -3322,28 +3471,15 @@ function appendAssistantResponse(msg, opts = {}){
     toast(ok ? 'Result copied' : 'Copy failed');
   });
   const pinBtn = div.querySelector('[data-pin="chart"]');
-  pinBtn?.addEventListener('click', async () => {
-    pinBtn.disabled = true;
-    try {
-      // Use the *live* payload (reflects any type/palette toggle the user did)
-      const live = window._chartPayloads[chartId] || msg.chart || {};
-      const res = await fetch('/portal/api/pin-chart', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          token:         msg.chart.pin_token,
-          title:         live.title || msg.chart?.title || msg.question || 'Pinned chart',
-          chart_type:    live.chart_type,
-          color_palette: live.color_palette || 'default',
-        }),
-      });
-      const data = await res.json();
-      pinBtn.textContent = data.ok ? 'Pinned to dashboard' : 'Pin failed';
-      toast(data.ok ? 'Chart added to dashboard' : (data.error || 'Unable to pin chart'));
-    } catch {
-      pinBtn.textContent = 'Pin failed';
-      toast('Unable to pin chart');
-    }
+  pinBtn?.addEventListener('click', () => {
+    const live = window._chartPayloads[chartId] || msg.chart || {};
+    openDashboardPicker({
+      token: dashboardToken,
+      title: live.title || msg.kpi?.label || msg.question || 'Dashboard visual',
+      chart_type: live.chart_type || (msg.kpi ? 'kpi' : 'table'),
+      color_palette: live.color_palette || 'default',
+      dashboard_id: DASHBOARD_ID,
+    });
   });
   renderArtifactPreview(msg);
   // Wire inline result card chat
@@ -3484,33 +3620,21 @@ function appendChart(payload, opts = {}){
   const div = document.createElement('div');
   div.className = 'msg msg-bot';
   const _chartTitle = escHtml(payload.title || payload.question || 'Chart result');
-  div.innerHTML = `<div class="msg-avatar"><img src="/static/img/logo-mark.svg" alt="" class="qb-logo-mark"></div><div class="msg-content"><div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timestamp}</span></div><div class="chart-card"><div class="chart-header"><div><div class="chart-title">${_chartTitle}</div><div class="chart-subtitle">${rows.length} rows · ${escHtml(payload.duration_label || '')}</div></div><div class="chart-toolbar"><button type="button" class="chart-btn" data-action="pin">📌 Pin to dashboard</button><button type="button" class="chart-btn" data-action="copy">Copy summary</button><button type="button" class="chart-btn" data-action="expand" title="Expand chart" style="padding:5px 8px">⛶</button></div></div><div id="${chartId}" class="chart-canvas"></div>${renderChartWarnings(payload)}<div class="chart-footer"><span>${escHtml(payload.question || '')}</span><span>${escHtml((payload.chart_type || 'chart').toUpperCase())}</span></div></div></div>`;
+  div.innerHTML = `<div class="msg-avatar"><img src="/static/img/logo-mark.svg" alt="" class="qb-logo-mark"></div><div class="msg-content"><div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timestamp}</span></div><div class="chart-card"><div class="chart-header"><div><div class="chart-title">${_chartTitle}</div><div class="chart-subtitle">${rows.length} rows · ${escHtml(payload.duration_label || '')}</div></div><div class="chart-toolbar"><button type="button" class="chart-btn" data-action="pin">Add to dashboard</button><button type="button" class="chart-btn" data-action="copy">Copy summary</button><button type="button" class="chart-btn" data-action="expand" title="Expand chart" style="padding:5px 8px">⛶</button></div></div><div id="${chartId}" class="chart-canvas"></div>${renderChartWarnings(payload)}<div class="chart-footer"><span>${escHtml(payload.question || '')}</span><span>${escHtml((payload.chart_type || 'chart').toUpperCase())}</span></div></div></div>`;
   thread().appendChild(div);
   const [pinBtn, copyBtn, expandBtn] = div.querySelectorAll('.chart-btn');
   if (!payload.pin_token) {
     pinBtn.style.display = 'none';
   } else {
-    pinBtn.addEventListener('click', async () => {
-      pinBtn.disabled = true;
-      try {
-        const live = window._chartPayloads[chartId] || payload;
-        const res = await fetch('/portal/api/pin-chart', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            token:         payload.pin_token,
-            title:         live.title || payload.question || 'Pinned chart',
-            chart_type:    live.chart_type,
-            color_palette: live.color_palette || 'default',
-          }),
-        });
-        const data = await res.json();
-        pinBtn.textContent = data.ok ? 'Pinned to dashboard' : 'Pin failed';
-        toast(data.ok ? 'Chart added to dashboard' : (data.error || 'Unable to pin chart'));
-      } catch {
-        pinBtn.textContent = 'Pin failed';
-        toast('Unable to pin chart');
-      }
+    pinBtn.addEventListener('click', () => {
+      const live = window._chartPayloads[chartId] || payload;
+      openDashboardPicker({
+        token: payload.pin_token,
+        title: live.title || payload.question || 'Dashboard visual',
+        chart_type: live.chart_type || payload.chart_type || 'bar',
+        color_palette: live.color_palette || 'default',
+        dashboard_id: DASHBOARD_ID,
+      });
     });
   }
   copyBtn?.addEventListener('click', async (e) => {
@@ -4369,6 +4493,15 @@ function connect(){
       _markActiveOutbound('complete');
       setProcessing(false);
       appendDashboardEvent(msg);
+    } else if (msg.type === 'dashboard_selection_required') {
+      _markActiveOutbound('complete');
+      setProcessing(false);
+      openDashboardPicker({
+        token: msg.pin_token,
+        title: msg.title || 'Dashboard visual',
+        chart_type: msg.chart_type || 'auto',
+        color_palette: msg.color_palette || 'default',
+      });
     } else if (msg.type === 'assistant_analysis') {
       appendAnalysisResponse(msg);
     } else if (msg.type === 'chart') {

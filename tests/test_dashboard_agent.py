@@ -107,7 +107,7 @@ def test_materialize_dashboard_reuses_governed_sql_without_rows():
     assert kwargs["sql_query"].startswith("SELECT month")
     assert "rows" not in kwargs
     assert "credentials" not in kwargs
-    assert kwargs["dashboard_id"] is None
+    assert kwargs["dashboard_id"] == 31
     assert "rows" not in kwargs["display_config"]
 
 
@@ -159,7 +159,9 @@ def test_portal_has_ana_style_split_workspace_contract():
     assert 'id="artifactPane"' in chat
     assert "renderArtifactPreview(msg)" in chat
     assert "data-open-artifact" in chat
-    assert "Create dashboard from this" in chat
+    assert "Add to dashboard" in chat
+    assert "dashboardPickerBackdrop" in chat
+    assert "/portal/api/dashboards" in chat
     assert "assistant_dashboard" in chat
     assert "DASHBOARD_ID" in chat
     assert "citation-strip" in chat

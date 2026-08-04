@@ -20,7 +20,7 @@ class ChartSpecTests(unittest.TestCase):
         self.assertEqual(detect_chart_type(rows, "total revenue by warehouse"), "bar")
         self.assertNotIn("pie", spec["allowed_types"])
 
-    def test_share_question_allows_donut_for_small_composition(self):
+    def test_share_question_defaults_to_pie_for_small_composition(self):
         rows = [
             {"ItemGroup": "A", "RevenueShare": 40},
             {"ItemGroup": "B", "RevenueShare": 35},
@@ -28,7 +28,8 @@ class ChartSpecTests(unittest.TestCase):
         ]
         spec = infer_chart_spec(rows, "show percentage contribution by item group")
         self.assertEqual(spec["intent"], "composition")
-        self.assertEqual(spec["recommended_type"], "donut")
+        self.assertEqual(spec["recommended_type"], "pie")
+        self.assertIn("donut", spec["allowed_types"])
         self.assertIn("bar", spec["allowed_types"])
 
     def test_temporal_result_prefers_trend_chart(self):

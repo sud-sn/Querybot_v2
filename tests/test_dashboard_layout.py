@@ -27,7 +27,8 @@ class TestDashboardLayoutContract(unittest.TestCase):
     def test_portal_exposes_dashboard_layout_api(self):
         text = self._read("portal/routes.py")
         self.assertIn('@router.post("/api/update-chart-layout")', text)
-        self.assertIn("store.update_pinned_chart_layouts", text)
+        self.assertIn("store.update_dashboard_layouts", text)
+        self.assertIn("dashboard_id required", text)
 
     def test_dashboard_template_uses_gridstack_with_fallback(self):
         text = self._read("portal/templates/portal_dashboard.html")

@@ -87,6 +87,11 @@ _EXPLICIT_CHART_MAP = {
     "scatter": "scatter",
 }
 
+_AUXILIARY_SHARE_MEASURE_RE = re.compile(
+    r"(?i)(?:contribution|share|percent|percentage|pct)(?:_of_total)?$|"
+    r"(?:contribution|share|percent|percentage|pct)_"
+)
+
 
 def _norm(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", str(s or "").lower())
@@ -239,6 +244,29 @@ def _rank_measures_for_question(measures: list[str], question: str) -> list[str]
     return [col for _, col in indexed]
 
 
+def _composition_measures(measures: list[str]) -> list[str]:
+    """Prefer the business value over an auxiliary calculated share column."""
+    primary = [
+        col for col in measures
+        if not _AUXILIARY_SHARE_MEASURE_RE.search(str(col or ""))
+    ]
+    return primary or measures
+
+
+def _pie_incompatibility(rows: list[dict], measure: str | None) -> str:
+    """Return why a pie is misleading, or an empty string when it is safe."""
+    if not measure:
+        return "A pie chart needs one numeric measure."
+    values = _numeric_values(rows, measure)
+    if not values:
+        return "A pie chart needs numeric values."
+    if any(value < 0 for value in values):
+        return "Pie charts cannot represent negative values reliably; using a bar chart instead."
+    if sum(values) <= 0:
+        return "Pie charts need a positive total; using a bar chart instead."
+    return ""
+
+
 def _primary_dimension(dimensions: list[str], roles: dict[str, dict]) -> str | None:
     if not dimensions:
         return None
@@ -338,6 +366,7 @@ def infer_chart_spec(
     roles = _column_roles(rows, column_formats)
     measures = [c for c in headers if roles[c]["role"] == "measure"]
     measures = _rank_measures_for_question(measures, question or title)
+    composition_measures = _composition_measures(measures)
     temporals = [c for c in headers if roles[c]["role"] == "temporal"]
     dimensions = [c for c in headers if roles[c]["role"] in {"dimension", "identifier"}]
 
@@ -377,18 +406,30 @@ def infer_chart_spec(
         y_cols = measures[:4]
         if dimensions:
             series_col = _first([c for c in dimensions if c != x_col])
-    elif share_q and measures and dimensions and len(rows) <= 6 and len(measures) == 1:
-        intent = "composition"
-        recommended = "donut"
-        allowed = ["donut", "bar", "table"]
+    elif share_q and composition_measures and dimensions and len(rows) <= 6 and len(composition_measures) == 1:
         x_col = _primary_dimension(dimensions, roles)
-        y_cols = measures[:1]
+        y_cols = composition_measures[:1]
+        pie_problem = _pie_incompatibility(rows, y_cols[0])
+        if pie_problem:
+            intent = "breakdown"
+            recommended = "bar"
+            allowed = ["bar", "table"]
+            warnings.append(pie_problem)
+        else:
+            intent = "composition"
+            recommended = "pie"
+            allowed = ["pie", "donut", "bar", "table"]
     elif dimensions and measures:
         intent = "ranking" if ranking_q or len(rows) <= 50 else "breakdown"
         recommended = "bar"
         allowed = ["bar", "table"]
-        if len(rows) <= 10 and share_q and len(measures) == 1:
-            allowed.insert(1, "donut")
+        if (
+            len(rows) <= 10
+            and share_q
+            and len(composition_measures) == 1
+            and not _pie_incompatibility(rows, composition_measures[0])
+        ):
+            allowed[1:1] = ["pie", "donut"]
         if len(measures) >= 2:
             allowed.append("scatter")
         x_col = _primary_dimension(dimensions, roles)
@@ -416,10 +457,15 @@ def infer_chart_spec(
 
     if requested_type and measures:
         if requested_type in {"pie", "donut"} and x_col:
-            intent = "composition"
-            recommended = requested_type
-            y_cols = measures[:1]
-            allowed = [requested_type] + [t for t in allowed if t != requested_type]
+            requested_measure = _first(composition_measures)
+            pie_problem = _pie_incompatibility(rows, requested_measure)
+            if pie_problem:
+                warnings.append(pie_problem)
+            else:
+                intent = "composition"
+                recommended = requested_type
+                y_cols = [requested_measure]
+                allowed = [requested_type] + [t for t in allowed if t != requested_type]
         elif requested_type == "scatter":
             if len(measures) >= 2:
                 intent = "correlation"

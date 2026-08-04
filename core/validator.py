@@ -238,6 +238,65 @@ def _select_is_provably_scalar(select) -> bool:
     return has_aggregate
 
 
+def _composition_shape_error(tree, semantic_context: dict | None) -> dict | None:
+    """Require grouped aggregate rows for categorical composition requests.
+
+    A chart renderer cannot repair the semantic grain after execution.  This
+    blocks the specific failure where "distribution of revenue by state" was
+    treated as row-level histogram input and the requested state grouping was
+    lost.  Exact fields and joins remain governed by the existing schema,
+    semantic-plan, metric-formula, and entity-graph validators.
+    """
+    contract = (semantic_context or {}).get("analysis_contract") or {}
+    if not contract.get("enabled") or contract.get("mode") != "composition":
+        return None
+    if tree.find(sg_exp.Group) is None:
+        return {
+            "code": "composition_shape",
+            "message": (
+                "A composition request must group by the requested business "
+                "category and return one aggregate row per category."
+            ),
+            "missing": "group_by",
+        }
+    if tree.find(sg_exp.AggFunc) is None:
+        return {
+            "code": "composition_shape",
+            "message": (
+                "A composition request must aggregate its governed measure; "
+                "raw row-level values cannot represent category shares."
+            ),
+            "missing": "aggregate_measure",
+        }
+    non_additive_columns = {
+        str(measure.get("column") or "").upper()
+        for measure in contract.get("measures") or []
+        if str(measure.get("classification") or "").lower() == "non_additive"
+        and measure.get("column")
+        and measure.get("source") != "approved_metric"
+    }
+    if non_additive_columns:
+        for aggregate in tree.find_all(sg_exp.AggFunc):
+            used = {
+                str(column.name or "").upper()
+                for column in aggregate.find_all(sg_exp.Column)
+                if column.name
+            }
+            invalid = sorted(used & non_additive_columns)
+            if invalid:
+                return {
+                    "code": "composition_shape",
+                    "message": (
+                        "A non-additive rate/ratio cannot be aggregated directly "
+                        f"({', '.join(invalid)}); derive it from governed component "
+                        "measures or use an approved metric formula."
+                    ),
+                    "invalid_columns": invalid,
+                    "violation": "non_additive_aggregate",
+                }
+    return None
+
+
 def _is_provably_scalar_relation(relation, ctes: dict[str, object], seen=None) -> bool:
     """Prove that a CROSS JOIN relation cannot multiply its left input."""
     seen = set(seen or ())
@@ -1982,6 +2041,17 @@ def validate_sql_detailed(
         )
 
     intent = (semantic_context or {}).get("intent") or {}
+    composition_error = _composition_shape_error(tree, semantic_context)
+    if composition_error:
+        return SqlValidationResult(
+            False,
+            (
+                "Generated SQL does not preserve the requested composition grain. "
+                + composition_error["message"]
+            ),
+            "composition_shape",
+            [composition_error],
+        )
     if intent.get("wants_missing_records"):
         error = _anti_join_shape_error(tree, alias_to_table)
         if error:

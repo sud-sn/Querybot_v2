@@ -51,21 +51,95 @@ _CONTRIBUTION_PATTERNS = [
     re.compile(r"\bpareto\b", re.I),
 ]
 
+# ``distribution`` has two materially different analytical meanings:
+#
+# * composition â€” "distribution of revenue by state" (one aggregate per
+#   category, suitable for pie/bar), and
+# * statistical distribution â€” "distribution of transaction amounts"
+#   (row-level values binned into a histogram).
+#
+# Keep the composition vocabulary intentionally limited to measures that are
+# normally additive.  Schema/metric governance still decides the exact formula;
+# this detector only prevents the histogram route from changing the requested
+# grain.  Explicit statistical wording always wins.
+_COMPOSITION_MEASURE = (
+    r"revenue|sales|cost|spend|profit|income|expense|headcount|count|"
+    r"quantity|qty|volume|units?|orders?|claims?|payments?|balance|"
+    r"inventory(?:\s+value)?|(?:gross|net|billed|paid|outstanding)\s+amount"
+)
+_STATISTICAL_DISTRIBUTION_RE = re.compile(
+    r"\b(histogram|frequency|bins?|buckets?|ranges?|quartiles?|median|"
+    r"percentiles?|outliers?|box\s*(?:plot|chart))\b",
+    re.I,
+)
+_COMPOSITION_DISTRIBUTION_PATTERNS = [
+    re.compile(
+        rf"\bdistribution\s+of\s+(?:the\s+)?(?:{_COMPOSITION_MEASURE})\b"
+        r".{0,50}\b(?:by|per|across|grouped\s+by|split\s+by)\b",
+        re.I,
+    ),
+    re.compile(
+        rf"\b(?:{_COMPOSITION_MEASURE})\s+distribution\b"
+        r".{0,50}\b(?:by|per|across|grouped\s+by|split\s+by)\b",
+        re.I,
+    ),
+]
+
+
+def detect_composition_intent(question: str) -> bool:
+    """Return True for category share/mix requests, not histograms.
+
+    This is schema-independent and deliberately conservative.  An explicit
+    histogram/bin/range/box-plot phrase keeps the request on the statistical
+    distribution route even when an additive measure word is present.
+    """
+    if _STATISTICAL_DISTRIBUTION_RE.search(question or ""):
+        return False
+    return any(
+        pattern.search(question or "")
+        for pattern in _COMPOSITION_DISTRIBUTION_PATTERNS
+    )
+
 
 def detect_contribution_intent(question: str) -> bool:
     """Return True if the question asks for contribution / share / mix analysis."""
-    return any(p.search(question) for p in _CONTRIBUTION_PATTERNS)
+    return detect_composition_intent(question) or any(
+        p.search(question) for p in _CONTRIBUTION_PATTERNS
+    )
 
 
 def infer_numeric_col(rows: list[dict]) -> str:
-    """Return the first column that looks like a numeric metric, or ''."""
+    """Return the best numeric business measure, avoiding numeric IDs."""
     if not rows:
         return ""
+    candidates: list[str] = []
     for col in rows[0].keys():
         hits = sum(1 for r in rows[:10] if _to_float(r.get(col)) is not None)
         if hits >= min(len(rows), 10) * 0.75:
-            return col
-    return ""
+            candidates.append(col)
+    if not candidates:
+        return ""
+
+    metric_words = re.compile(
+        r"(?:revenue|sales|amount|amt|cost|spend|profit|income|expense|"
+        r"headcount|count|cnt|quantity|qty|volume|units|value|balance|total)",
+        re.I,
+    )
+    identifier = re.compile(
+        r"(?:^|_)(?:id|key|code|num|no|nbr|seq|rank)$",
+        re.I,
+    )
+
+    def score(column: str) -> tuple[int, int]:
+        value = 0
+        if metric_words.search(column):
+            value += 20
+        if identifier.search(column):
+            value -= 30
+        # Stable result-column order remains the final tie-breaker.
+        return value, -candidates.index(column)
+
+    return max(candidates, key=score)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

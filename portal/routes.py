@@ -745,18 +745,23 @@ async def portal_dashboard(request: Request):
     if not user:
         return _login_redirect()
 
+    legacy_dashboard = store.migrate_legacy_charts(user["account_id"], user["id"])
     requested_dashboard = None
     dashboard_id = request.query_params.get("dashboard_id")
     if dashboard_id and str(dashboard_id).isdigit():
         requested_dashboard = store.get_dashboard_for_view(
             int(dashboard_id), user["id"], user["account_id"]
         )
+    elif legacy_dashboard:
+        requested_dashboard = store.get_dashboard_for_view(
+            int(legacy_dashboard["id"]), user["id"], user["account_id"]
+        )
     all_dashboard_charts = (
         store.list_dashboard_charts_for_view(
             requested_dashboard["id"], user["id"], user["account_id"]
         )
         if requested_dashboard
-        else store.list_pinned_charts(user["id"])
+        else []
     )
     dashboards = store.list_dashboards(user["account_id"], user["id"])
     dashboard_sources = []
@@ -764,7 +769,11 @@ async def portal_dashboard(request: Request):
     dashboard_filters = []
     dashboard_tabs = ["Overview"]
     selected_tab = str(request.query_params.get("tab") or "").strip()
+    dashboard_subscription = None
     if requested_dashboard:
+        dashboard_subscription = store.get_dashboard_subscription(
+            requested_dashboard["id"], user["id"], user["account_id"]
+        )
         dashboard_sources = store.list_data_sources_for_view(
             requested_dashboard["id"], user["id"], user["account_id"]
         )
@@ -836,6 +845,7 @@ async def portal_dashboard(request: Request):
         "dashboard_filters": dashboard_filters,
         "dashboard_tabs": dashboard_tabs,
         "selected_tab": selected_tab,
+        "dashboard_subscription": dashboard_subscription,
         "welcome":       request.query_params.get("welcome") == "1",
     })
 
@@ -1025,6 +1035,39 @@ async def portal_dashboard_rollback(
         raise HTTPException(status_code=404, detail="Dashboard version not found")
     return RedirectResponse(
         f"/portal/dashboard?dashboard_id={dashboard_id}", status_code=303
+    )
+
+
+@router.post("/dashboard/{dashboard_id}/subscribe")
+async def portal_dashboard_subscribe(
+    request: Request,
+    dashboard_id: int,
+    cadence: str = Form("daily"),
+    channel: str = Form("in_app"),
+):
+    user = _get_portal_user(request)
+    if not user:
+        return _login_redirect()
+    try:
+        store.subscribe_dashboard(
+            dashboard_id, user["id"], user["account_id"],
+            cadence=cadence, channel=channel,
+        )
+    except PermissionError:
+        raise HTTPException(status_code=404, detail="Dashboard not found")
+    return RedirectResponse(
+        f"/portal/dashboard?dashboard_id={dashboard_id}&subscribed=1", status_code=303
+    )
+
+
+@router.post("/dashboard/{dashboard_id}/unsubscribe")
+async def portal_dashboard_unsubscribe(request: Request, dashboard_id: int):
+    user = _get_portal_user(request)
+    if not user:
+        return _login_redirect()
+    store.unsubscribe_dashboard(dashboard_id, user["id"], user["account_id"])
+    return RedirectResponse(
+        f"/portal/dashboard?dashboard_id={dashboard_id}&unsubscribed=1", status_code=303
     )
 
 
@@ -1334,6 +1377,7 @@ async def pin_confirm_page(request: Request, token: str = ""):
         "sql":      pin_data["sql_query"],
         "ct":       pin_data["chart_type"],
         "dbid":     pin_data["db_config_id"],
+        "dashboards": store.list_editable_dashboards(user["account_id"], user["id"]),
         "error":    "",
     })
 
@@ -1343,29 +1387,117 @@ async def pin_confirm_submit(
     request:  Request,
     token:    str = Form(...),
     title:    str = Form(...),
+    dashboard_id: str = Form(""),
+    new_dashboard_name: str = Form(""),
 ):
     user = _get_portal_user(request)
     if not user:
         return _login_redirect()
 
-    pin_data = _consume_pin_token(token)
+    pin_data = _peek_pin_token(token)
     if not pin_data or pin_data["user_id"] != user["id"]:
         return _resp(request, "portal_pin_confirm.html", {
             "user": user,
             "error": "This pin link is invalid or has expired.",
             "token": "", "uid": "", "aid": "", "question": "", "sql": "", "ct": "bar", "dbid": "",
         })
+    if pin_data["account_id"] != user["account_id"]:
+        raise HTTPException(status_code=403, detail="This result belongs to another workspace.")
 
-    store.pin_chart(
+    target = None
+    if str(dashboard_id).isdigit():
+        target = store.get_dashboard(int(dashboard_id), user["id"], user["account_id"])
+    elif new_dashboard_name.strip():
+        target = store.create_dashboard(
+            user["account_id"], user["id"], "portal",
+            new_dashboard_name.strip(),
+        )
+    if not target:
+        return _resp(request, "portal_pin_confirm.html", {
+            "user": user, "error": "Choose a dashboard or enter a new dashboard name.",
+            "token": token, "question": pin_data["question"], "sql": pin_data["sql_query"],
+            "dashboards": store.list_editable_dashboards(user["account_id"], user["id"]),
+        })
+    if not _consume_pin_token(token):
+        return RedirectResponse("/portal/dashboard?error=expired", status_code=303)
+    item_title = title.strip() or pin_data["question"][:50]
+    source = store.create_data_source(
+        target["id"], user["id"], user["account_id"], name=item_title,
+        question=pin_data["question"], sql_query=pin_data["sql_query"],
+        db_config_id=pin_data["db_config_id"],
+    )
+    chart_id = store.pin_chart(
         user_id=user["id"],
         account_id=pin_data["account_id"],
-        title=title.strip() or pin_data["question"][:50],
+        title=item_title,
         question=pin_data["question"],
         sql_query=pin_data["sql_query"],
         chart_type=pin_data["chart_type"],
         db_config_id=pin_data["db_config_id"],
+        dashboard_id=int(target["id"]),
     )
-    return RedirectResponse("/portal/dashboard?pinned=1", status_code=303)
+    store.add_chart_to_dashboard(
+        target["id"], chart_id, user["id"], user["account_id"],
+        data_source_id=source["id"],
+    )
+    return RedirectResponse(
+        f'/portal/dashboard?dashboard_id={int(target["id"])}&added=1', status_code=303
+    )
+
+
+@router.get("/api/dashboards")
+async def list_dashboards_api(request: Request):
+    """Return only dashboards the signed-in user can add content to."""
+    user = _get_portal_user(request)
+    if not user:
+        return JSONResponse({"ok": False, "error": "Authentication required."}, status_code=401)
+    store.migrate_legacy_charts(user["account_id"], user["id"])
+    dashboards = store.list_editable_dashboards(user["account_id"], user["id"])
+    return JSONResponse({
+        "ok": True,
+        "dashboards": [
+            {
+                "id": int(item["id"]),
+                "name": item["name"],
+                "description": item.get("description") or "",
+                "visibility": item.get("visibility") or "personal",
+                "status": item.get("status") or "draft",
+                "chart_count": int(item.get("chart_count") or 0),
+                "updated_at": item.get("updated_at") or "",
+            }
+            for item in dashboards
+        ],
+    })
+
+
+@router.post("/api/dashboards")
+async def create_dashboard_api(request: Request):
+    user = _get_portal_user(request)
+    if not user:
+        return JSONResponse({"ok": False, "error": "Authentication required."}, status_code=401)
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    name = str(payload.get("name") or "").strip()
+    if not name:
+        return JSONResponse({"ok": False, "error": "Dashboard name is required."}, status_code=400)
+    dashboard = store.create_dashboard(
+        user["account_id"],
+        user["id"],
+        str(payload.get("thread_id") or "portal")[:80],
+        name,
+        description=str(payload.get("description") or ""),
+        visibility=str(payload.get("visibility") or "personal"),
+    )
+    return JSONResponse({
+        "ok": True,
+        "dashboard": {
+            "id": int(dashboard["id"]),
+            "name": dashboard["name"],
+            "url": f'/portal/dashboard?dashboard_id={int(dashboard["id"])}',
+        },
+    })
 
 
 @router.post("/api/pin-chart")
@@ -1387,22 +1519,76 @@ async def pin_chart_api(request: Request):
     palette_override = str(payload.get("color_palette") or "default").strip()
     if not token:
         return JSONResponse({"ok": False, "error": "Missing pin token."}, status_code=400)
-
-    pin_data = _consume_pin_token(token)
+    pin_data = _peek_pin_token(token)
     if not pin_data or pin_data["user_id"] != user["id"]:
         return JSONResponse({"ok": False, "error": "This pin request is invalid or has expired."}, status_code=400)
+    if pin_data["account_id"] != user["account_id"]:
+        return JSONResponse({"ok": False, "error": "This result belongs to another workspace."}, status_code=403)
 
-    store.pin_chart(
+    dashboard_id = int(payload.get("dashboard_id") or 0)
+    new_name = str(payload.get("new_dashboard_name") or "").strip()
+    if dashboard_id:
+        dashboard = store.get_dashboard(dashboard_id, user["id"], user["account_id"])
+        if not dashboard:
+            return JSONResponse({"ok": False, "error": "Select a dashboard you can edit."}, status_code=403)
+    elif new_name:
+        dashboard = store.create_dashboard(
+            user["account_id"], user["id"],
+            str(payload.get("thread_id") or "portal")[:80],
+            new_name,
+            description=str(payload.get("new_dashboard_description") or ""),
+            visibility=str(payload.get("visibility") or "personal"),
+        )
+        dashboard_id = int(dashboard["id"])
+    else:
+        return JSONResponse({
+            "ok": False,
+            "error": "Choose an existing dashboard or create a new one.",
+        }, status_code=400)
+
+    # Consume only after the target has been authorized so a recoverable UI
+    # validation error never destroys the one-time result token.
+    consumed = _consume_pin_token(token)
+    if not consumed:
+        return JSONResponse({"ok": False, "error": "This result has expired. Run it again."}, status_code=400)
+    item_title = title or pin_data["question"][:50]
+    source = store.create_data_source(
+        dashboard_id,
+        user["id"],
+        user["account_id"],
+        name=item_title,
+        question=pin_data["question"],
+        sql_query=pin_data["sql_query"],
+        db_config_id=pin_data["db_config_id"],
+    )
+    chart_id = store.pin_chart(
         user_id=user["id"],
         account_id=pin_data["account_id"],
-        title=title or pin_data["question"][:50],
+        title=item_title,
         question=pin_data["question"],
         sql_query=pin_data["sql_query"],
         chart_type=type_override or pin_data["chart_type"],
         db_config_id=pin_data["db_config_id"],
         color_palette=palette_override,
+        dashboard_id=dashboard_id,
     )
-    return JSONResponse({"ok": True})
+    if not store.add_chart_to_dashboard(
+        dashboard_id,
+        chart_id,
+        user["id"],
+        user["account_id"],
+        data_source_id=int(source["id"]),
+        tab=str(payload.get("tab") or "Overview"),
+    ):
+        return JSONResponse({"ok": False, "error": "The chart could not be added."}, status_code=409)
+    return JSONResponse({
+        "ok": True,
+        "dashboard": {
+            "id": dashboard_id,
+            "name": dashboard["name"],
+            "url": f"/portal/dashboard?dashboard_id={dashboard_id}",
+        },
+    })
 
 
 @router.post("/api/update-chart")
@@ -1416,15 +1602,21 @@ async def update_chart_api(request: Request):
     except Exception:
         payload = {}
     chart_id = int(payload.get("chart_id") or 0)
+    dashboard_id = int(payload.get("dashboard_id") or 0)
     if not chart_id:
         return JSONResponse({"ok": False, "error": "chart_id required."}, status_code=400)
-    store.update_pinned_chart(
-        chart_id=chart_id,
-        user_id=user["id"],
-        title=str(payload["title"]).strip() if "title" in payload else None,
-        chart_type=str(payload["chart_type"]).strip() if "chart_type" in payload else None,
-        color_palette=str(payload["color_palette"]).strip() if "color_palette" in payload else None,
-    )
+    updates = {
+        "title": str(payload["title"]).strip() if "title" in payload else None,
+        "chart_type": str(payload["chart_type"]).strip() if "chart_type" in payload else None,
+        "color_palette": str(payload["color_palette"]).strip() if "color_palette" in payload else None,
+    }
+    if dashboard_id:
+        if not store.update_dashboard_chart(
+            dashboard_id, chart_id, user["id"], user["account_id"], **updates
+        ):
+            return JSONResponse({"ok": False, "error": "Dashboard visual was not updated."}, status_code=403)
+    else:
+        store.update_pinned_chart(chart_id=chart_id, user_id=user["id"], **updates)
     return JSONResponse({"ok": True})
 
 
@@ -1439,17 +1631,32 @@ async def update_chart_layout_api(request: Request):
     except Exception:
         payload = {}
     layouts = payload.get("layouts") if isinstance(payload, dict) else None
+    dashboard_id = int(payload.get("dashboard_id") or 0) if isinstance(payload, dict) else 0
     if not isinstance(layouts, list):
         return JSONResponse({"ok": False, "error": "layouts array required."}, status_code=400)
-    store.update_pinned_chart_layouts(user["id"], layouts)
+    if not dashboard_id:
+        return JSONResponse({"ok": False, "error": "dashboard_id required."}, status_code=400)
+    if not store.update_dashboard_layouts(
+        dashboard_id, user["id"], user["account_id"], layouts
+    ):
+        return JSONResponse({"ok": False, "error": "Dashboard layout was not updated."}, status_code=403)
     return JSONResponse({"ok": True})
 
 
 @router.post("/unpin")
-async def unpin_chart(request: Request, chart_id: int = Form(...)):
+async def unpin_chart(
+    request: Request, chart_id: int = Form(...), dashboard_id: int = Form(0)
+):
     user = _get_portal_user(request)
     if not user:
         return _login_redirect()
+    if dashboard_id:
+        store.remove_chart_from_dashboard(
+            dashboard_id, chart_id, user["id"], user["account_id"]
+        )
+        return RedirectResponse(
+            f"/portal/dashboard?dashboard_id={dashboard_id}", status_code=303
+        )
     store.delete_pinned_chart(chart_id, user["id"])
     return RedirectResponse("/portal/dashboard", status_code=303)
 

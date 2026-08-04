@@ -397,6 +397,26 @@ CREATE TABLE IF NOT EXISTS dashboard_artifact_version (
     UNIQUE(dashboard_id, version)
 );
 
+-- Users follow named dashboards, not individual charts.  A subscription is
+-- deliberately separate from refresh_schedule: refresh controls when the
+-- live dashboard data is recomputed, while this row records who follows the
+-- artifact and how they want to be notified.
+CREATE TABLE IF NOT EXISTS dashboard_subscription (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    dashboard_id INTEGER NOT NULL REFERENCES dashboard_artifact(id) ON DELETE CASCADE,
+    account_id   TEXT    NOT NULL REFERENCES client(account_id) ON DELETE CASCADE,
+    user_id      INTEGER NOT NULL REFERENCES portal_user(id) ON DELETE CASCADE,
+    cadence      TEXT    NOT NULL DEFAULT 'daily'
+                         CHECK(cadence IN ('daily','weekly','monthly')),
+    channel      TEXT    NOT NULL DEFAULT 'in_app'
+                         CHECK(channel IN ('in_app','email')),
+    status       TEXT    NOT NULL DEFAULT 'active'
+                         CHECK(status IN ('active','paused')),
+    created_at   TEXT    DEFAULT (datetime('now')),
+    updated_at   TEXT    DEFAULT (datetime('now')),
+    UNIQUE(dashboard_id, user_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_portal_user_account  ON portal_user(account_id);
 CREATE INDEX IF NOT EXISTS idx_portal_user_zoom     ON portal_user(zoom_user_id);
 CREATE INDEX IF NOT EXISTS idx_group_account        ON user_group(account_id);
@@ -407,6 +427,7 @@ CREATE INDEX IF NOT EXISTS idx_dashboard_thread     ON dashboard_artifact(accoun
 CREATE INDEX IF NOT EXISTS idx_dashboard_source     ON dashboard_data_source(dashboard_id, user_id);
 CREATE INDEX IF NOT EXISTS idx_dashboard_cache_due  ON dashboard_source_cache(account_id, expires_at);
 CREATE INDEX IF NOT EXISTS idx_dashboard_version    ON dashboard_artifact_version(dashboard_id, version DESC);
+CREATE INDEX IF NOT EXISTS idx_dashboard_subscription ON dashboard_subscription(account_id, user_id, status);
 
 CREATE INDEX IF NOT EXISTS idx_query_log_account ON query_log(account_id);
 CREATE INDEX IF NOT EXISTS idx_query_log_created ON query_log(created_at);
@@ -966,6 +987,7 @@ def _run_migrations() -> None:
         ("pinned_chart", "data_source_id", "INTEGER DEFAULT NULL"),
         ("pinned_chart", "dashboard_tab", "TEXT NOT NULL DEFAULT 'Overview'"),
         ("pinned_chart", "sort_enabled", "INTEGER NOT NULL DEFAULT 1"),
+        ("pinned_chart", "layout_locked", "INTEGER NOT NULL DEFAULT 0"),
         ("dashboard_artifact", "visibility", "TEXT NOT NULL DEFAULT 'personal'"),
         ("dashboard_artifact", "refresh_schedule", "TEXT NOT NULL DEFAULT 'manual'"),
         ("dashboard_artifact", "filters_json", "TEXT NOT NULL DEFAULT '[]'"),
