@@ -664,7 +664,7 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
         <div class="chat-shell-badge"><img src="/static/img/logo-mark.svg" alt="" class="qb-logo-mark"></div>
         <div>
           <h2>QueryBot live analyst</h2>
-          <p>Interactive answers, chart previews, and direct pinning from chat.</p>
+          <p>Interactive answers, chart previews, and governed dashboard workflows.</p>
         </div>
       </div>
       <div class="status-wrap">
@@ -1725,6 +1725,16 @@ function _chartFormatFor(payload, col) {
   if (/revenue|sales|amount|amt|charge|cost|cogs|price|profit|salary|usd|balance/i.test(String(col))) return 'currency';
   return 'number';
 }
+function _chartColumnLabel(payload, col) {
+  const key = _chartNormKey(col);
+  const roles = payload?.column_roles || payload?.chart_spec?.column_roles || {};
+  for (const [raw, meta] of Object.entries(roles)) {
+    if (_chartNormKey(raw) === key && meta?.label) return String(meta.label);
+  }
+  return String(col || 'Value')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\b\w/g, ch => ch.toUpperCase());
+}
 function _fmtChartValue(v, fmt, compact = false) {
   if (v === null || v === undefined || v === '') return '—';
   const n = Number(v);
@@ -1801,6 +1811,8 @@ function buildChartOption(payload) {
   const labels      = rows.map(r => String((xKey && r?.[xKey]) ?? ''));
   const formatFor   = col => _chartFormatFor(payload, col);
   const valueFmt    = (value, col, compact=false) => _fmtChartValue(value, formatFor(col), compact);
+  const xLabel      = _chartColumnLabel(payload, xKey || 'Category');
+  const yLabel      = _chartColumnLabel(payload, yKey || 'Value');
   const axisColor   = dark ? '#94a3b8' : '#64748b';
   const gridColor   = dark ? 'rgba(148,163,184,.14)' : 'rgba(100,116,139,.14)';
   const surface     = dark ? 'rgba(15,23,42,.97)' : 'rgba(255,255,255,.98)';
@@ -1843,19 +1855,23 @@ function buildChartOption(payload) {
   const multiTooltipFmt = (params) => {
     const arr = Array.isArray(params) ? params : [params];
     const lbl = arr[0]?.axisValueLabel || arr[0]?.name || '';
-    return `<div style="font-weight:700;margin-bottom:4px">${escHtml(String(lbl))}</div>`
+    return `<div style="font-weight:700;margin-bottom:4px">${escHtml(xLabel)}: ${escHtml(String(lbl))}</div>`
       + arr.map(p => `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${p.color};margin-right:5px"></span>`
-        + `${escHtml(String(p.seriesName||''))}: <strong>${valueFmt(p.value, p.seriesName)}</strong>`).join('<br/>');
+        + `${escHtml(_chartColumnLabel(payload, p.seriesName||''))}: <strong>${valueFmt(p.value, p.seriesName)}</strong>`).join('<br/>');
   };
 
   // ── Pie / Donut ───────────────────────────────────────────────────────────
   if (type === 'pie' || type === 'donut') {
     const pieData = rows.map(r => ({
-      name:  String((xKey && r?.[xKey]) ?? ''),
+      name:  String((xKey && r?.[xKey]) ?? 'Unspecified'),
       value: _chartNumber(yKey ? r?.[yKey] : null),
     }));
+    const pieTotal = pieData.reduce((sum, item) => sum + (Number(item.value) || 0), 0);
+    const pieShare = value => pieTotal > 0 ? ((Number(value) || 0) / pieTotal * 100) : 0;
+    const pieLegend = new Map(pieData.map(item => [item.name, pieShare(item.value)]));
+    const compactPie = window.innerWidth <= 900;
     const innerR = type === 'donut' ? '42%' : '0%';
-    const outerR = '70%';
+    const outerR = compactPie ? '58%' : '70%';
     return {
       backgroundColor: 'transparent',
       animationDuration: 500,
@@ -1864,21 +1880,27 @@ function buildChartOption(payload) {
       tooltip: {
         ...tooltipStyle,
         trigger: 'item',
-        formatter: p => `<strong>${escHtml(String(p.name??''))}</strong><br/>`
-          + `${escHtml(String(yKey||'Value'))}: <strong>${valueFmt(p.value, yKey)}</strong><br/>`
-          + `<span style="opacity:.7">${p.percent?.toFixed(1)}%</span>`,
+        formatter: p => `<strong>${escHtml(xLabel)}: ${escHtml(String(p.name??'Unspecified'))}</strong><br/>`
+          + `${escHtml(yLabel)}: <strong>${valueFmt(p.value, yKey)}</strong><br/>`
+          + `<span style="opacity:.7">Share of total: ${Number(p.percent ?? pieShare(p.value)).toFixed(1)}%</span>`,
       },
       legend: {
-        orient: 'vertical', right: 10, top: 'middle',
+        orient: compactPie ? 'horizontal' : 'vertical',
+        ...(compactPie ? { left:'center', bottom:0 } : { right:10, top:'middle' }),
         textStyle: { color: axisColor, fontSize: 11 },
-        formatter: name => name.length > 18 ? name.slice(0,17)+'…' : name,
+        formatter: name => `${name.length > 16 ? name.slice(0,15)+'…' : name} · ${(pieLegend.get(name) || 0).toFixed(1)}%`,
       },
       series: [{
         type: 'pie',
         radius: [innerR, outerR],
-        center: ['40%', '50%'],
+        center: compactPie ? ['50%', '40%'] : ['40%', '50%'],
         data: pieData,
-        label: { show: labels.length <= 8, formatter: '{d}%', color: axisColor, fontSize: 11 },
+        label: {
+          show: labels.length <= 8,
+          formatter: p => `${String(p.name || 'Unspecified').slice(0,16)}\n${Number(p.percent ?? pieShare(p.value)).toFixed(1)}%`,
+          color: axisColor,
+          fontSize: 11,
+        },
         labelLine: { show: labels.length <= 8, length: 8, length2: 6 },
         itemStyle: { borderRadius: 6, borderColor: dark ? '#0f172a' : '#fff', borderWidth: 2 },
         emphasis: { itemStyle: { shadowBlur: 14, shadowColor: 'rgba(0,0,0,.2)' }, scale: true, scaleSize: 6 },
@@ -2382,7 +2404,7 @@ function buildChartOption(payload) {
     option.xAxis = { type:'value', name: yKey, nameTextStyle:{color:axisColor}, axisLabel:{color:axisColor,formatter:v=>valueFmt(v,yKey,true)}, splitLine:{show:true,lineStyle:{color:gridColor}}, axisTick:{show:false}, axisLine:{show:false} };
     option.yAxis = { type:'value', name: y2,  nameTextStyle:{color:axisColor}, axisLabel:{color:axisColor,formatter:v=>valueFmt(v,y2,true)}, splitLine:{show:true,lineStyle:{color:gridColor}}, axisTick:{show:false}, axisLine:{show:false} };
     option.series = [{ type:'scatter', symbolSize:12, data: rows.map(r=>[_chartNumber(r?.[yKey]),_chartNumber(r?.[y2]),String(xKey ? (r?.[xKey]??'') : '')]), itemStyle:{color:colors[0], opacity:.8} }];
-    option.tooltip.formatter = p => `<strong>${escHtml(String(p.value?.[2]??''))}</strong><br/>${escHtml(String(yKey||'X'))}: <strong>${valueFmt(p.value?.[0], yKey)}</strong><br/>${escHtml(String(y2||'Y'))}: <strong>${valueFmt(p.value?.[1], y2)}</strong>`;
+    option.tooltip.formatter = p => `<strong>${escHtml(xLabel)}: ${escHtml(String(p.value?.[2]??'Unspecified'))}</strong><br/>${escHtml(_chartColumnLabel(payload,yKey||'X'))}: <strong>${valueFmt(p.value?.[0], yKey)}</strong><br/>${escHtml(_chartColumnLabel(payload,y2||'Y'))}: <strong>${valueFmt(p.value?.[1], y2)}</strong>`;
     return option;
   }
 
@@ -2398,7 +2420,7 @@ function buildChartOption(payload) {
       : params => {
           const p = Array.isArray(params) ? params[0] : params;
           const lbl = p?.axisValueLabel || p?.name || '';
-          return `<div style="font-weight:700;margin-bottom:4px">${escHtml(String(lbl))}</div>${escHtml(String(yKey||'Value'))}: <strong>${valueFmt(p?.value, yKey)}</strong>`;
+          return `<div style="font-weight:700;margin-bottom:4px">${escHtml(xLabel)}: ${escHtml(String(lbl))}</div>${escHtml(yLabel)}: <strong>${valueFmt(p?.value, yKey)}</strong>`;
         };
     option.series = yKeys.map((k, i) => {
       const values = rows.map(r => _chartNumber(r?.[k]));
@@ -2434,7 +2456,7 @@ function buildChartOption(payload) {
   else {
     option.tooltip.formatter = p => {
       const lbl = horizontal ? (p.name||'') : (p.name||p.axisValueLabel||'');
-      return `<strong>${escHtml(String(lbl))}</strong><br/>${escHtml(String(yKey||'Value'))}: <strong>${valueFmt(p.value, yKey)}</strong>`;
+      return `<strong>${escHtml(xLabel)}: ${escHtml(String(lbl))}</strong><br/>${escHtml(yLabel)}: <strong>${valueFmt(p.value, yKey)}</strong>`;
     };
   }
   option.series = yKeys.map((k, i) => {

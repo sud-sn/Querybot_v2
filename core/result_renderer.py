@@ -868,11 +868,27 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
             semantic_plan=confidence_context.get("semantic_plan") or None,
             question_id=question_id,   # exposed in trust block for feedback API
         )
+        dashboard_item_type = chart_type or (
+            "kpi" if response_payload.get("kpi") else "table"
+        )
+        if (
+            not pin_token
+            and portal_user
+            and portal_user.get("id") is not None
+        ):
+            pin_token = _create_pin_token(
+                user_id=portal_user["id"],
+                account_id=account_id,
+                question=question,
+                sql_query=sql,
+                chart_type=dashboard_item_type,
+                db_config_id=db_cfg["id"],
+            )
         # A one-time opaque token lets KPI, table, and chart results enter the
         # same named-dashboard chooser. SQL and credentials never reach the UI.
         if pin_token:
             response_payload["pin_token"] = pin_token
-            response_payload["dashboard_item_type"] = chart_type
+            response_payload["dashboard_item_type"] = dashboard_item_type
         # ── Result-aware follow-up suggestions (web portal only) ──────────
         selected_schema = (getattr(event, "schema_hint", "") or "").strip().upper()
         response_payload.setdefault("trust", {})["schema"] = (

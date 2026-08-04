@@ -2,6 +2,7 @@ import asyncio
 import unittest
 from decimal import Decimal
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from core.response_builder import build_assistant_response, build_column_formats
 from core.result_cache import ResultCache
@@ -253,6 +254,52 @@ class MetricResultFormatTests(unittest.TestCase):
             adapter.payloads[0]["data"]["column_formats"],
             {"TotalRevenue": "currency"},
         )
+
+    def test_rich_kpi_response_receives_dashboard_token(self):
+        adapter = _RichAdapter()
+        with patch("core.result_renderer._create_pin_token", return_value="kpi-token") as create:
+            asyncio.run(
+                _send_results(
+                    SimpleNamespace(schema_hint="", platform="portal"),
+                    adapter,
+                    "what is total revenue",
+                    [{"TotalRevenue": Decimal("52677.25")}],
+                    "SELECT 52677.25 AS TotalRevenue",
+                    25,
+                    {"id": 7},
+                    "acct",
+                    {"id": 11, "db_type": "azure_sql"},
+                )
+            )
+        payload = adapter.payloads[0]
+        self.assertIsNotNone(payload["kpi"])
+        self.assertEqual(payload["pin_token"], "kpi-token")
+        self.assertEqual(payload["dashboard_item_type"], "kpi")
+        self.assertEqual(create.call_args.kwargs["chart_type"], "kpi")
+
+    def test_rich_table_response_receives_dashboard_token(self):
+        adapter = _RichAdapter()
+        rows = [{"Customer": "A"}, {"Customer": "B"}]
+        with patch("core.result_renderer._create_pin_token", return_value="table-token") as create:
+            asyncio.run(
+                _send_results(
+                    SimpleNamespace(schema_hint="", platform="portal"),
+                    adapter,
+                    "list customers",
+                    rows,
+                    "SELECT Customer FROM customers",
+                    25,
+                    {"id": 7},
+                    "acct",
+                    {"id": 11, "db_type": "azure_sql"},
+                    display_context={"chart_type_override": "table"},
+                )
+            )
+        payload = adapter.payloads[0]
+        self.assertIsNone(payload["kpi"])
+        self.assertEqual(payload["pin_token"], "table-token")
+        self.assertEqual(payload["dashboard_item_type"], "table")
+        self.assertEqual(create.call_args.kwargs["chart_type"], "table")
 
 
 if __name__ == "__main__":

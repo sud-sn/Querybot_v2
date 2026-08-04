@@ -76,15 +76,15 @@
 <div class="welcome-banner">
   <div>
     <div style="font-size:20px;font-weight:800;margin-bottom:4px">Welcome to QueryBot, {{ user.name.split()[0] }}</div>
-    <div style="opacity:.9;font-size:13px">Your account is ready. Pin charts from chat and they will refresh with live data every time you log in.</div>
+    <div style="opacity:.9;font-size:13px">Your account is ready. Add governed results to named dashboards and refresh them with live data.</div>
   </div>
   <a href="/portal/chat" class="btn btn-secondary btn-sm" style="flex-shrink:0">Open chat →</a>
 </div>
 {% endif %}
 
 <div class="page-header">
-  <h1>My Dashboard</h1>
-  <p>Your pinned charts refresh with live data every time you log in.</p>
+  <h1>Dashboards</h1>
+  <p>Organize governed KPIs, charts, and tables for the decisions your team follows.</p>
 </div>
 
 <div class="metrics">
@@ -355,6 +355,17 @@ function _chartFormatFor(payload, col){
   if (/revenue|sales|amount|amt|charge|cost|cogs|price|profit|salary|usd|balance/i.test(String(col))) return 'currency';
   return 'number';
 }
+function _chartColumnLabel(payload, col){
+  const key = _chartNormKey(col);
+  const roles = payload?.column_roles || payload?.chart_spec?.column_roles || {};
+  for (const [raw, meta] of Object.entries(roles)) {
+    if (_chartNormKey(raw) === key && meta?.label) return String(meta.label);
+  }
+  return String(col || 'Value').replace(/[_-]+/g,' ').replace(/\b\w/g,ch=>ch.toUpperCase());
+}
+function _chartEscHtml(value){
+  return String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+}
 function _fmtChartValue(v, fmt, compact=false){
   if (v === null || v === undefined || v === '') return '—';
   const n = Number(v);
@@ -405,6 +416,8 @@ function buildDashboardOption(payload){
   const reqType  = (payload.chart_type || 'bar').toLowerCase();
   const formatFor = col => _chartFormatFor(payload, col);
   const valueFmt  = (value, col, compact=false) => _fmtChartValue(value, formatFor(col), compact);
+  const xLabel     = _chartColumnLabel(payload, xKey || 'Category');
+  const yLabel     = _chartColumnLabel(payload, yKey || 'Value');
 
   const ttBase = {
     backgroundColor: theme.tooltipBg, borderColor: theme.axisLine,
@@ -417,7 +430,7 @@ function buildDashboardOption(payload){
   if (reqType === 'scatter' && yKeys.length >= 2) {
     return {
       color: colors,
-      tooltip: { ...ttBase, trigger:'item', formatter: p => `<strong>${String(p.value?.[2]??'')}</strong><br/>${yKeys[0]}: <strong>${valueFmt(p.value?.[0], yKeys[0])}</strong><br/>${yKeys[1]}: <strong>${valueFmt(p.value?.[1], yKeys[1])}</strong>` },
+      tooltip: { ...ttBase, trigger:'item', formatter: p => `<strong>${_chartEscHtml(xLabel)}: ${_chartEscHtml(String(p.value?.[2]??'Unspecified'))}</strong><br/>${_chartEscHtml(_chartColumnLabel(payload,yKeys[0]))}: <strong>${valueFmt(p.value?.[0], yKeys[0])}</strong><br/>${_chartEscHtml(_chartColumnLabel(payload,yKeys[1]))}: <strong>${valueFmt(p.value?.[1], yKeys[1])}</strong>` },
       xAxis: { type:'value', name:yKeys[0], axisLine:{lineStyle:{color:theme.axisLine}}, axisLabel:{color:theme.axis,formatter:v=>valueFmt(v,yKeys[0],true)}, splitLine:{lineStyle:{color:theme.split}} },
       yAxis: { type:'value', name:yKeys[1], axisLine:{lineStyle:{color:theme.axisLine}}, axisLabel:{color:theme.axis,formatter:v=>valueFmt(v,yKeys[1],true)}, splitLine:{lineStyle:{color:theme.split}} },
       series: [{ type:'scatter', symbolSize:12, itemStyle:{color:colors[0],opacity:.85}, data:rows.map(r=>[r[yKeys[0]],r[yKeys[1]],r[xKey]]) }],
@@ -426,14 +439,18 @@ function buildDashboardOption(payload){
 
   // ── Pie / Donut ────────────────────────────────────────────────────────────
   if (reqType === 'pie' || reqType === 'donut') {
-    const pieData = rows.map(r => ({ name:String(r[xKey]??''), value:_chartNumber(r[yKey]) }));
+    const pieData = rows.map(r => ({ name:String(r[xKey]??'Unspecified'), value:_chartNumber(r[yKey]) }));
+    const pieTotal = pieData.reduce((sum,item)=>sum+(Number(item.value)||0),0);
+    const pieShare = value => pieTotal>0 ? ((Number(value)||0)/pieTotal*100) : 0;
+    const pieLegend = new Map(pieData.map(item=>[item.name,pieShare(item.value)]));
+    const compactPie = window.innerWidth<=900;
     const innerR  = reqType === 'donut' ? '40%' : '0%';
     return {
       color: colors,
-      tooltip: { ...ttBase, trigger:'item', formatter: p => `<strong>${p.name}</strong><br/>${yKey||'Value'}: <strong>${valueFmt(p.value, yKey)}</strong><br/><span style="opacity:.7">${p.percent?.toFixed(1)}%</span>` },
-      legend: { orient:'vertical', right:8, top:'middle', textStyle:{color:theme.axis,fontSize:11}, formatter:n=>n.length>18?n.slice(0,17)+'…':n },
-      series: [{ type:'pie', radius:[innerR,'68%'], center:['40%','50%'], data:pieData,
-        label:{show:pieData.length<=8,formatter:'{d}%',color:theme.axis,fontSize:11},
+      tooltip: { ...ttBase, trigger:'item', formatter: p => `<strong>${_chartEscHtml(xLabel)}: ${_chartEscHtml(p.name||'Unspecified')}</strong><br/>${_chartEscHtml(yLabel)}: <strong>${valueFmt(p.value, yKey)}</strong><br/><span style="opacity:.7">Share of total: ${Number(p.percent??pieShare(p.value)).toFixed(1)}%</span>` },
+      legend: { orient:compactPie?'horizontal':'vertical', ...(compactPie?{left:'center',bottom:0}:{right:8,top:'middle'}), textStyle:{color:theme.axis,fontSize:11}, formatter:n=>`${n.length>16?n.slice(0,15)+'…':n} · ${(pieLegend.get(n)||0).toFixed(1)}%` },
+      series: [{ type:'pie', radius:[innerR,compactPie?'56%':'68%'], center:compactPie?['50%','40%']:['40%','50%'], data:pieData,
+        label:{show:pieData.length<=8,formatter:p=>`${String(p.name||'Unspecified').slice(0,16)}\n${Number(p.percent??pieShare(p.value)).toFixed(1)}%`,color:theme.axis,fontSize:11},
         itemStyle:{borderRadius:5,borderColor:theme.dark?'#0f172a':'#fff',borderWidth:2},
         emphasis:{itemStyle:{shadowBlur:12,shadowColor:'rgba(0,0,0,.18)'},scale:true,scaleSize:5},
       }],
@@ -463,13 +480,13 @@ function buildDashboardOption(payload){
   const multiTT = (params) => {
     const arr = Array.isArray(params)?params:[params];
     const lbl = arr[0]?.axisValueLabel||arr[0]?.name||'';
-    return `<div style="font-weight:700;margin-bottom:4px">${lbl}</div>`
-      + arr.map(p=>`<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${p.color};margin-right:5px"></span>${p.seriesName||'Value'}: <strong>${valueFmt(p.value, p.seriesName)}</strong>`).join('<br>');
+    return `<div style="font-weight:700;margin-bottom:4px">${_chartEscHtml(xLabel)}: ${_chartEscHtml(lbl)}</div>`
+      + arr.map(p=>`<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${p.color};margin-right:5px"></span>${_chartEscHtml(_chartColumnLabel(payload,p.seriesName||'Value'))}: <strong>${valueFmt(p.value, p.seriesName)}</strong>`).join('<br>');
   };
   const singleTT = (params) => {
     const p = Array.isArray(params) ? params[0] : params;
     const lbl = p?.axisValueLabel || p?.name || '';
-    return `<div style="font-weight:700;margin-bottom:4px">${lbl}</div>${yKey||'Value'}: <strong>${valueFmt(p?.value, yKey)}</strong>`;
+    return `<div style="font-weight:700;margin-bottom:4px">${_chartEscHtml(xLabel)}: ${_chartEscHtml(lbl)}</div>${_chartEscHtml(yLabel)}: <strong>${valueFmt(p?.value, yKey)}</strong>`;
   };
 
   return {

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from core.analysis_contract import build_analysis_contract, format_analysis_contract
 from core.chart import build_chart_payload, detect_chart_type
 from core.chart_spec import infer_chart_spec
@@ -29,6 +31,22 @@ def test_distribution_by_category_is_composition_not_histogram():
     assert intents["contribution"] is True
     assert intents["histogram"] is False
     assert analyze_query_intent(COMPOSITION_QUESTION)["wants_share"] is True
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "Show the distribution of net revenue by pharmacy state as a pie chart",
+        "Show the distribution of gross revenue by customer region",
+        "Show the distribution of booked revenue across business unit",
+        "Show the distribution of average unit cost grouped by supplier",
+        "Show the distribution of custom contract value per account tier",
+    ],
+)
+def test_modified_and_client_specific_measures_keep_category_grain(question):
+    intents = detect_analytical_intents(question)
+    assert intents["contribution"] is True
+    assert intents["histogram"] is False
 
 
 def test_statistical_distribution_remains_histogram():

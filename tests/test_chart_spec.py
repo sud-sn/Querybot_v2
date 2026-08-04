@@ -497,6 +497,23 @@ class ChartRendererTemplateTests(unittest.TestCase):
         self.assertIn("function _fmtChartValue", src)
         self.assertIn("valueFmt(p.value, p.seriesName)", src)
 
+    def test_pie_renderers_name_category_and_share_in_labels_legends_and_tooltips(self):
+        for path in [self.CHAT, self.DASH]:
+            src = self._read(path)
+            compact = src.replace(" ", "")
+            self.assertIn("function _chartColumnLabel", src)
+            self.assertIn("Share of total:", src)
+            self.assertIn("pieLegend", src)
+            self.assertIn("compactPie", src)
+            self.assertIn("p.name||'Unspecified'", compact)
+            self.assertIn("pieShare(p.value)", src)
+
+    def test_mainstream_chart_tooltips_include_dynamic_dimension_label(self):
+        chat = self._read(self.CHAT)
+        dashboard = self._read(self.DASH)
+        self.assertGreaterEqual(chat.count("escHtml(xLabel)"), 4)
+        self.assertGreaterEqual(dashboard.count("_chartEscHtml(xLabel)"), 4)
+
     def test_chart_type_controls_are_limited_by_renderable_types(self):
         for path in [self.CHAT, self.DASH]:
             src = self._read(path)

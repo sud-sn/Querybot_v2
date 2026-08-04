@@ -35,8 +35,21 @@ def test_dashboard_creation_intent(text):
     assert _DASHBOARD_CREATE_INTENT_RE.search(text)
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "add this to my dashboard",
+        "add this chart to the dashboard",
+        "put that visual on this dashboard",
+        "save the result in my dashboard",
+        "place this KPI on the dashboard",
+    ],
+)
+def test_dashboard_add_intent_accepts_natural_result_references(text):
+    assert _DASHBOARD_ADD_INTENT_RE.search(text)
+
+
 def test_dashboard_refinement_intents_are_explicit():
-    assert _DASHBOARD_ADD_INTENT_RE.search("add this to my dashboard")
     assert _DASHBOARD_RENAME_INTENT_RE.search("rename the dashboard to Executive view")
     assert _DASHBOARD_PUBLISH_INTENT_RE.search("publish this dashboard")
     add_query = _DASHBOARD_ADD_QUERY_RE.search(

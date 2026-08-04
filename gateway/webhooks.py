@@ -77,7 +77,9 @@ _DASHBOARD_CREATE_INTENT_RE = re.compile(
     re.IGNORECASE,
 )
 _DASHBOARD_ADD_INTENT_RE = re.compile(
-    r"\badd\s+(?:this|it|that|the\s+(?:result|chart|table|kpi))\s+to\s+(?:this|the|my)?\s*dashboard\b",
+    r"\b(?:add|put|save|place)\s+"
+    r"(?:it|this|that|(?:(?:this|that|the|my)\s+)?(?:result|chart|visual|table|kpi))\s+"
+    r"(?:to|on|in)\s+(?:(?:this|the|my)\s+)?dashboard\b",
     re.IGNORECASE,
 )
 _DASHBOARD_ADD_QUERY_RE = re.compile(

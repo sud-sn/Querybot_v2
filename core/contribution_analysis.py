@@ -73,13 +73,18 @@ _STATISTICAL_DISTRIBUTION_RE = re.compile(
     re.I,
 )
 _COMPOSITION_DISTRIBUTION_PATTERNS = [
+    # A category grain is the decisive signal here.  Restricting the phrase
+    # immediately after "distribution of" to a small metric vocabulary made
+    # valid governed measures such as "net revenue", "booked revenue", and
+    # client-specific metric names fall through to the histogram route.  An
+    # explicit statistical term is already handled above and always wins.
     re.compile(
-        rf"\bdistribution\s+of\s+(?:the\s+)?(?:{_COMPOSITION_MEASURE})\b"
-        r".{0,50}\b(?:by|per|across|grouped\s+by|split\s+by)\b",
+        r"\bdistribution\s+of\s+.{1,100}?"
+        r"\b(?:by|per|across|grouped\s+by|split\s+by)\b",
         re.I,
     ),
     re.compile(
-        rf"\b(?:{_COMPOSITION_MEASURE})\s+distribution\b"
+        rf"\b(?:{_COMPOSITION_MEASURE})(?:\s+\w+){{0,4}}\s+distribution\b"
         r".{0,50}\b(?:by|per|across|grouped\s+by|split\s+by)\b",
         re.I,
     ),
