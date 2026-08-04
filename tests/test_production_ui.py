@@ -26,6 +26,49 @@ def test_brand_tokens_use_enterprise_blue():
     assert "--primary-soft:  #EFF6FF;" in tokens
 
 
+def test_shared_theme_uses_graphite_dark_surfaces_and_cobalt_emphasis():
+    tokens = _read("static/css/tokens.css")
+
+    for declaration in (
+        "--bg:        #121416;",
+        "--surface:   #1A1D21;",
+        "--surface-2: #21252B;",
+        "--sidebar-bg:      #15171A;",
+        "--primary:       #5B8DEF;",
+        "--sidebar-accent:  #76A0F5;",
+    ):
+        assert declaration in tokens
+
+
+def test_admin_and_portal_shells_use_shared_sidebar_tokens():
+    for stylesheet_name in (
+        "static/css/admin.css",
+        "static/css/portal.css",
+        "static/css/production.css",
+    ):
+        stylesheet = _read(stylesheet_name)
+        assert "var(--sidebar-bg)" in stylesheet
+        assert "var(--sidebar-border)" in stylesheet
+
+    production = _read("static/css/production.css")
+    assert "background: #0A1020" not in production
+
+
+def test_theme_stylesheets_are_cache_busted_together():
+    version = "20260804-graphite-1"
+    admin = _read("admin/templates/base.html")
+    portal = _read("portal/templates/portal_base.html")
+    chat = _read("portal/templates/portal_chat.html")
+
+    assert f"tokens.css?v={version}" in admin
+    assert f"admin.css?v={version}" in admin
+    assert f"production.css?v={version}" in admin
+    assert f"tokens.css?v={version}" in portal
+    assert f"portal.css?v={version}" in portal
+    assert f"production.css?v={version}" in portal
+    assert f"chat_workspace.css?v={version}" in chat
+
+
 def test_portal_mobile_shell_exposes_theme_and_settings_actions():
     template = _read("portal/templates/portal_base.html")
     assert 'class="portal-mobile-actions"' in template

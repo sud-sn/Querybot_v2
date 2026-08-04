@@ -393,8 +393,8 @@ function chartThemeTokens(){
     axis:       dark ? '#94A3B8' : '#64748B',
     axisLine:   dark ? '#334155' : '#CBD5E1',
     split:      dark ? 'rgba(148,163,184,.12)' : 'rgba(148,163,184,.15)',
-    tooltipBg:  dark ? 'rgba(15,23,42,.96)' : 'rgba(255,255,255,.98)',
-    tooltipText:dark ? '#e2e8f0' : '#0F172A',
+    tooltipBg:  dark ? 'rgba(26,29,33,.97)' : 'rgba(255,255,255,.98)',
+    tooltipText:dark ? '#F2F4F7' : '#171A1F',
   };
 }
 
@@ -451,7 +451,7 @@ function buildDashboardOption(payload){
       legend: { orient:compactPie?'horizontal':'vertical', ...(compactPie?{left:'center',bottom:0}:{right:8,top:'middle'}), textStyle:{color:theme.axis,fontSize:11}, formatter:n=>`${n.length>16?n.slice(0,15)+'…':n} · ${(pieLegend.get(n)||0).toFixed(1)}%` },
       series: [{ type:'pie', radius:[innerR,compactPie?'56%':'68%'], center:compactPie?['50%','40%']:['40%','50%'], data:pieData,
         label:{show:pieData.length<=8,formatter:p=>`${String(p.name||'Unspecified').slice(0,16)}\n${Number(p.percent??pieShare(p.value)).toFixed(1)}%`,color:theme.axis,fontSize:11},
-        itemStyle:{borderRadius:5,borderColor:theme.dark?'#0f172a':'#fff',borderWidth:2},
+        itemStyle:{borderRadius:5,borderColor:theme.dark?'#1A1D21':'#fff',borderWidth:2},
         emphasis:{itemStyle:{shadowBlur:12,shadowColor:'rgba(0,0,0,.18)'},scale:true,scaleSize:5},
       }],
     };

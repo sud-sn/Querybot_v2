@@ -4,12 +4,7 @@
    ============================================================ */
 
 body {
-  background: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--surface-3) 54%, var(--bg)) 0,
-    color-mix(in srgb, var(--bg) 92%, var(--surface)) 260px,
-    var(--bg) 100%
-  );
+  background: var(--bg);
 }
 
 /* ── Shell: sidebar + main ── */
@@ -22,20 +17,20 @@ body {
 .sidebar {
   width: 224px;
   flex-shrink: 0;
-  background: var(--teal-900);
+  background: var(--sidebar-bg);
   display: flex;
   flex-direction: column;
   position: sticky;
   top: 0;
   height: 100vh;
   overflow-y: auto;
-  border-right: 1px solid color-mix(in srgb, var(--teal-800) 70%, transparent);
+  border-right: 1px solid var(--sidebar-border);
   z-index: 200;
   transition: width .2s;
 }
 html[data-theme='dark'] .sidebar {
-  background: color-mix(in srgb, var(--bg) 80%, var(--surface));
-  border-right-color: var(--border);
+  background: var(--sidebar-bg);
+  border-right-color: var(--sidebar-border);
 }
 
 /* Brand */
@@ -418,19 +413,19 @@ html[data-theme='dark'] .sidebar-foot .btn-secondary:hover {
 .client-sidebar {
   width: 210px;
   flex-shrink: 0;
-  background: var(--teal-900);
+  background: var(--sidebar-bg);
   display: flex;
   flex-direction: column;
   position: sticky;
   top: 0;
   height: 100vh;
   overflow-y: auto;
-  border-right: 1px solid color-mix(in srgb, var(--teal-800) 70%, transparent);
+  border-right: 1px solid var(--sidebar-border);
   z-index: 200;
 }
 html[data-theme='dark'] .client-sidebar {
-  background: color-mix(in srgb, var(--bg) 80%, var(--surface));
-  border-right-color: var(--border);
+  background: var(--sidebar-bg);
+  border-right-color: var(--sidebar-border);
 }
 
 /* ── Client header ── */

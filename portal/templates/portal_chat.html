@@ -5,7 +5,7 @@
 {% block breadcrumb %}{% endblock %}
 {% block head %}
 <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
-<link rel="stylesheet" href="/static/css/chat_workspace.css?v=20260803-4">
+<link rel="stylesheet" href="/static/css/chat_workspace.css?v=20260804-graphite-1">
 <style>
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap');
 /* Full-viewport constraints — chat page only */
@@ -493,7 +493,7 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .suggestions::-webkit-scrollbar{height:3px}.suggestions::-webkit-scrollbar-track{background:transparent}.suggestions::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
 .suggestion-chip,.composer-chip{background:var(--surface);border:1px solid var(--border);color:var(--text-soft);font-size:12px;font-weight:700;padding:9px 13px;border-radius:999px;cursor:pointer;transition:all .15s;max-width:320px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;box-shadow:var(--shadow)}
 .suggestion-chip:hover,.composer-chip:hover{background:var(--surface-3);border-color:var(--primary);color:var(--primary);transform:translateY(-1px)}
-.chat-composer{flex-shrink:0;background:var(--surface);border-top:1px solid var(--border);padding:.85rem 1.25rem;position:relative;--ai-core:#4F46E5;--ai-halo:rgba(79,70,229,.18);--ai-ring:rgba(79,70,229,.35)}
+.chat-composer{flex-shrink:0;background:var(--surface);border-top:1px solid var(--border);padding:.85rem 1.25rem;position:relative;--ai-core:var(--primary);--ai-halo:color-mix(in srgb,var(--primary) 18%,transparent);--ai-ring:color-mix(in srgb,var(--primary) 35%,transparent)}
 /* Unified composer pill — the persistent card that makes the whole input read
    as one control at rest, not bare text that only gets a border on focus. */
 .chat-input-bar{display:flex;align-items:flex-end;gap:.5rem;background:var(--surface-2);border:1.5px solid var(--border);border-radius:22px;padding:.4rem .45rem .4rem .55rem;box-shadow:var(--shadow);transition:border-color .15s,box-shadow .15s,background-color .15s}
@@ -1815,8 +1815,8 @@ function buildChartOption(payload) {
   const yLabel      = _chartColumnLabel(payload, yKey || 'Value');
   const axisColor   = dark ? '#94a3b8' : '#64748b';
   const gridColor   = dark ? 'rgba(148,163,184,.14)' : 'rgba(100,116,139,.14)';
-  const surface     = dark ? 'rgba(15,23,42,.97)' : 'rgba(255,255,255,.98)';
-  const textColor   = dark ? '#e2e8f0' : '#0f172a';
+  const surface     = dark ? 'rgba(26,29,33,.97)' : 'rgba(255,255,255,.98)';
+  const textColor   = dark ? '#F2F4F7' : '#171A1F';
   const maxLabel    = labels.reduce((m, v) => Math.max(m, v.length), 0);
   const longLabels  = maxLabel > 14;
   const manyLabels  = labels.length > 9;
@@ -1902,7 +1902,7 @@ function buildChartOption(payload) {
           fontSize: 11,
         },
         labelLine: { show: labels.length <= 8, length: 8, length2: 6 },
-        itemStyle: { borderRadius: 6, borderColor: dark ? '#0f172a' : '#fff', borderWidth: 2 },
+        itemStyle: { borderRadius: 6, borderColor: dark ? '#1A1D21' : '#fff', borderWidth: 2 },
         emphasis: { itemStyle: { shadowBlur: 14, shadowColor: 'rgba(0,0,0,.2)' }, scale: true, scaleSize: 6 },
       }],
     };
