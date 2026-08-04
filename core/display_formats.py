@@ -75,7 +75,7 @@ def parse_format_request(text: str) -> dict[str, Any] | None:
     value = " ".join(str(text or "").strip().split())
     lower = value.casefold()
     if not value or not re.search(
-        r"\b(?:format|display|show|give|change|convert|round|use|make)\b", lower
+        r"\b(?:format|display|show|give|provide|present|return|output|change|convert|round|use|make)\b", lower
     ):
         return None
     strong_format_verb = bool(re.search(r"\b(?:format|change|convert|round|use|make)\b", lower))
@@ -152,7 +152,7 @@ def parse_format_requests(text: str) -> list[dict[str, Any]]:
     # splitting independently targeted clauses.
     protected = re.sub(r"\bmonth\s+and\s+year\b", "month __QB_AND__ year", value, flags=re.I)
     clauses = re.split(
-        r"\s*(?:;|,?\s+and)\s+(?=(?:(?:format|display|show|give|change|convert|round|use|make)\b|(?:the\s+)?[A-Za-z_][A-Za-z0-9_ ]{0,60}\s+(?:as|to|in|with)\s+(?:USD|INR|EUR|GBP|CAD|AUD|JPY|currency|percent|percentage|number|MMM|YYYY|DD)))",
+        r"\s*(?:;|,?\s+and)\s+(?=(?:(?:format|display|show|give|provide|present|return|output|change|convert|round|use|make)\b|(?:the\s+)?[A-Za-z_][A-Za-z0-9_ ]{0,60}\s+(?:as|to|in|with)\s+(?:USD|INR|EUR|GBP|CAD|AUD|JPY|currency|percent|percentage|number|MMM|YYYY|DD)))",
         protected,
         flags=re.I,
     )
@@ -160,7 +160,7 @@ def parse_format_requests(text: str) -> list[dict[str, Any]]:
     for clause in clauses:
         clause = clause.replace("__QB_AND__", "and")
         candidate = clause
-        if not re.match(r"^(?:format|display|show|give|change|convert|round|use|make)\b", candidate, re.I):
+        if not re.match(r"^(?:format|display|show|give|provide|present|return|output|change|convert|round|use|make)\b", candidate, re.I):
             candidate = f"format {candidate}"
         request = parse_format_request(candidate)
         if request:
@@ -173,13 +173,19 @@ def parse_format_requests(text: str) -> list[dict[str, Any]]:
 
 def _extract_target(text: str) -> str:
     patterns = (
-        r"\b(?:format|change|display|show|give|convert|round|make)\s+(?:the\s+)?(.+?)\s+(?:as|to|in|with|into)\s+",
+        r"\b(?:format|change|display|show|give|provide|present|return|output|convert|round|make)\s+(?:me\s+)?(?:the\s+)?(.+?)\s+(?:as|to|in|with|into)\s+",
         r"\b(?:use|apply)\s+.+?\s+(?:for|on|to)\s+(?:the\s+)?(.+?)(?:\s*[.!?]|$)",
     )
     for pattern in patterns:
         match = re.search(pattern, text, re.I)
         if match:
-            target = re.sub(r"\b(?:this|the|current|previous)\s+(?:result|table|data)\b", "", match.group(1), flags=re.I)
+            target = re.sub(
+                r"\b(?:this|that|the|current|previous|above|cached)\s+"
+                r"(?:result|answer|table|data|chart)\b",
+                "",
+                match.group(1),
+                flags=re.I,
+            )
             return " ".join(target.split()).strip(" ,")
     return ""
 

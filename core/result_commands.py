@@ -88,8 +88,25 @@ _KEEP_VALUES_POSTFIX_RE = re.compile(
     re.IGNORECASE,
 )
 _RESULT_CONTEXT_RE = re.compile(
-    r"\b(?:this|the|current|previous|cached)\s+"
+    r"\b(?:this|the|current|previous|above|cached)\s+"
     r"(?:result|results|data|dataset|rows?|table)\b",
+    re.IGNORECASE,
+)
+
+_PRESENTATION_VERB_RE = re.compile(
+    r"\b(?:format|reformat|display|present|provide|return|output|render|change|convert|"
+    r"show|give)\b",
+    re.IGNORECASE,
+)
+_PRESENTATION_DETAIL_RE = re.compile(
+    r"\b(?:format|formatting|presentation|currency|decimal|percentage|percent|date|"
+    r"month\s+and\s+year|month\s+year|differently|easier\s+to\s+read)\b",
+    re.IGNORECASE,
+)
+_EXPLICIT_PRIOR_RESULT_RE = re.compile(
+    r"\b(?:(?:this|that|the|current|previous|above|cached)\s+"
+    r"(?:result|answer|data|dataset|table|chart)|from\s+(?:this|the|above)\s+"
+    r"(?:result|answer))\b",
     re.IGNORECASE,
 )
 _FILTER_OPERATOR_RE = re.compile(
@@ -314,6 +331,50 @@ def parse_result_command(text: str) -> ResultCommand | None:
             fallback_allowed=True,
         )
     return None
+
+
+def needs_result_reference_confirmation(text: str, has_cached_result: bool) -> bool:
+    """Return True only for presentation-like wording with an unclear target.
+
+    Clear result commands and explicit references to the prior result never
+    need this confirmation. Ordinary business questions also remain outside
+    this gate, even when a result happens to be cached.
+    """
+    value = " ".join(str(text or "").strip().split())
+    if not has_cached_result or not value:
+        return False
+    if parse_result_command(value) is not None:
+        return False
+    if _EXPLICIT_PRIOR_RESULT_RE.search(value):
+        return False
+    return bool(
+        _PRESENTATION_VERB_RE.search(value)
+        and _PRESENTATION_DETAIL_RE.search(value)
+    )
+
+
+def compile_confirmed_result_presentation(text: str) -> ResultCommand:
+    """Compile a user-confirmed ambiguous presentation request safely.
+
+    This is called only after the user confirms that their wording refers to
+    the cached result. It deliberately produces an incomplete allow-listed
+    format command when details are missing; the executor then asks a focused
+    column/format clarification instead of guessing.
+    """
+    parsed = parse_result_command(text)
+    if parsed is not None:
+        return parsed
+    lower = str(text or "").casefold()
+    spec: dict[str, Any] = {}
+    if re.search(r"\b(?:date|month|year)\b", lower):
+        spec = {"type": "date"}
+    elif re.search(r"\b(?:currency|money|monetary)\b", lower):
+        spec = {"type": "currency"}
+    elif re.search(r"\b(?:percentage|percent)\b", lower):
+        spec = {"type": "percentage"}
+    elif re.search(r"\b(?:decimal|number|numeric)\b", lower):
+        spec = {"type": "number"}
+    return ResultCommand("format", format_spec=spec)
 
 
 def execute_result_command(
@@ -989,9 +1050,17 @@ def _execute_format_command(
     }
     candidates = [column for column in candidates if column not in diagnostic]
     column = ""
-    if command.target_text and _normalise_value(command.target_text) not in {
-        "it", "this", "result", "thisresult", "data", "thedata",
-    }:
+    generic_targets = {
+        "it", "this", "that", "result", "thisresult", "thatresult",
+        "previousresult", "aboveresult", "answer", "thisanswer",
+        "previousanswer", "aboveanswer", "data", "thedata",
+    }
+    if kind == "date":
+        generic_targets.update({
+            "date", "thedate", "dates", "datevalue", "datevalues",
+            "datecolumn", "datefield",
+        })
+    if command.target_text and _normalise_value(command.target_text) not in generic_targets:
         column, error = _resolve_column(rows, command.target_text)
         if error:
             return _command_error(command, source_id, before, error)

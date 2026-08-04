@@ -255,7 +255,10 @@ async def _generate_analyst_reply(text: str, account_id: str, client_row: dict) 
                 max_tokens=200, temperature=0.2, **extra,
             )
         reply = reply.strip()
-        if reply.upper().startswith(_PROCEED_TO_QUERY):
+        # This is an internal routing marker, never user-facing content.
+        # Models can wrap it in prose or Markdown despite the exact-reply
+        # instruction, so treat its presence anywhere as the handoff.
+        if _PROCEED_TO_QUERY in reply.upper():
             return None  # genuine data query — fall through to pipeline
         return reply or None
     except Exception as e:

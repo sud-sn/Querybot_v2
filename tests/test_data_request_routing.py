@@ -58,6 +58,25 @@ class DataRequestRoutingTests(unittest.TestCase):
         complete.assert_called_once()
         self.assertEqual(result, "I'm QueryBot, your data analyst.")
 
+    def test_internal_query_handoff_marker_never_leaks_when_wrapped_in_prose(self):
+        wrapped = (
+            "It looks like a data request.\n\n"
+            "Replying with: *PROCEED_TO_QUERY*"
+        )
+        with patch.object(
+            dispatcher, "llm_complete",
+            new=AsyncMock(return_value=(wrapped, 10, 5)),
+        ), patch.object(
+            dispatcher, "resolve_provider",
+            return_value=("openai", "gpt-4o-mini", "sk-test", {}),
+        ):
+            result = asyncio.run(
+                dispatcher._generate_analyst_reply(
+                    "provide the date differently", "test-account", {},
+                )
+            )
+        self.assertIsNone(result)
+
 
 class VerifiedValueGraphTests(unittest.TestCase):
     def test_verified_status_forces_owning_fact_entity(self):

@@ -5,7 +5,12 @@ from pathlib import Path
 
 from core.response_builder import build_assistant_response
 from core.result_cache import ResultCache
-from core.result_commands import execute_result_command, parse_result_command
+from core.result_commands import (
+    compile_confirmed_result_presentation,
+    execute_result_command,
+    needs_result_reference_confirmation,
+    parse_result_command,
+)
 from core.semantic_model import build_semantic_model
 
 
@@ -40,6 +45,41 @@ class ResultDisplayCommandTests(unittest.TestCase):
             {"type": "date", "style": "month_year_short"},
         )
         self.assertTrue(outcome.snapshot["metadata"]["presentation_only"])
+
+    def test_provide_date_as_month_and_year_formats_the_only_date_column(self):
+        outcome = self.execute("provide the date as month and year")
+        self.assertTrue(outcome.ok, outcome.message)
+        self.assertEqual(
+            outcome.snapshot["metadata"]["display_formats"]["OrderMonth"],
+            {"type": "date", "style": "month_year_short"},
+        )
+        self.assertEqual(outcome.snapshot["rows"][0]["OrderMonth"], "2026-01")
+
+    def test_explicit_above_result_reference_is_a_generic_format_target(self):
+        outcome = self.execute("format the above result as USD currency")
+        self.assertFalse(outcome.ok)
+        self.assertTrue(outcome.clarification_required)
+        self.assertIn("Which column", outcome.clarification_prompt)
+
+    def test_ambiguous_presentation_request_confirms_only_with_cached_result(self):
+        self.assertTrue(needs_result_reference_confirmation("change the format", True))
+        self.assertFalse(needs_result_reference_confirmation("change the format", False))
+        self.assertFalse(needs_result_reference_confirmation("what was revenue by date", True))
+        self.assertFalse(
+            needs_result_reference_confirmation(
+                "provide the date as month and year", True,
+            )
+        )
+
+    def test_confirmed_ambiguous_date_request_compiles_to_safe_partial_format(self):
+        command = compile_confirmed_result_presentation("change the date format")
+        self.assertEqual(command.action, "format")
+        self.assertEqual(command.format_spec, {"type": "date"})
+        outcome = execute_result_command(
+            "session", command, cache=self.cache, source_result_id="source",
+        )
+        self.assertTrue(outcome.clarification_required)
+        self.assertIn("Which date format", outcome.clarification_prompt)
 
     def test_currency_without_code_asks_instead_of_guessing(self):
         outcome = self.execute("format Revenue as currency")
@@ -116,6 +156,15 @@ class ResultDisplayCommandTests(unittest.TestCase):
             Path(__file__).resolve().parents[1] / "gateway" / "webhooks.py"
         ).read_text(encoding="utf-8")
         self.assertIn("display_formats=display_formats", source)
+
+    def test_portal_wires_result_reference_and_format_clarifications_locally(self):
+        source = (
+            Path(__file__).resolve().parents[1] / "gateway" / "webhooks.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn('"source": "result_reference_confirmation"', source)
+        self.assertIn('"source": "local_result_command"', source)
+        self.assertIn("Are you referring to the previous result?", source)
+        self.assertIn("compile_confirmed_result_presentation", source)
 
 
 class KpiPresentationTests(unittest.TestCase):

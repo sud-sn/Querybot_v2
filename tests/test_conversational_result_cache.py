@@ -118,6 +118,15 @@ class ConversationalResultCacheTests(unittest.TestCase):
             )
         )
 
+    def test_above_result_wording_routes_to_the_cached_result(self):
+        self.assertTrue(
+            should_route_to_result_cache(
+                "No, I mean the above result",
+                True,
+                ["PERIOD", "TOTAL_REVENUE"],
+            )
+        )
+
     def test_keep_only_phrasing_parses(self):
         # _KEEP_VALUES_RE regex bug: "keep\s+(?:only\s+)?" consumed its own
         # trailing whitespace inside the optional group, leaving nothing for

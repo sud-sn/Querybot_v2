@@ -30,6 +30,8 @@ _RESULT_REF_RE = re.compile(
     r"above median|below median|"
     r"outlier|outliers|anomal|"
     r"from (these|this) results?|in (these|this) results?|"
+    r"(?:the\s+)?above\s+(?:result|answer)|(?:the\s+)?previous\s+(?:result|answer)|"
+    r"that\s+(?:result|answer|output)|"
     r"within (these|this)|among (these|this)|"
     r"of (these|this) rows?|"
     r"top \d+ of (these|this)|bottom \d+ of (these|this)|"

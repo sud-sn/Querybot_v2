@@ -34,7 +34,12 @@ from core.result_renderer import (
     _inject_distinct_if_needed,
 )
 from core.result_cache import result_cache
-from core.result_commands import parse_result_command, execute_result_command
+from core.result_commands import (
+    compile_confirmed_result_presentation,
+    execute_result_command,
+    needs_result_reference_confirmation,
+    parse_result_command,
+)
 from core.governed_result_followup import adopt_cached_snapshot, run_governed_result_followup
 from core.result_planner import (
     is_metadata_result_question,
@@ -51,7 +56,8 @@ from core.graph_resolver import resolve_for_question as _graph_resolve
 from core.chart import detect_chart_type, build_chart_payload
 from core.examples import retrieve_similar_examples, format_examples_for_prompt
 from core.clarification import (
-    get_pending, clear_pending, combine_with_clarification, resolve_option_text,
+    get_pending, save_pending, clear_pending, combine_with_clarification,
+    resolve_option_text,
 )
 from core.plan_preview import build_plan_preview, pending_plan_previews
 from core.agent_runtime import AgentRunSession, activate_agent_run
@@ -878,6 +884,32 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 command,
                 source_result_id=source_result_id,
             )
+            if outcome.clarification_required:
+                options = list(outcome.clarification_options or [])
+                prompt = outcome.clarification_prompt or outcome.message
+                clarification_meta = {
+                    "source": "local_result_command",
+                    "question": prompt,
+                    "options": options,
+                }
+                save_pending(
+                    account_id,
+                    zoom_user_id,
+                    text,
+                    clarification_meta=clarification_meta,
+                )
+                _trace_finish(
+                    trace_id,
+                    status="waiting_for_user",
+                    answer_type="clarification",
+                    final_answer_summary="Waiting for a governed display-format clarification",
+                )
+                await adapter.send_clarification_prompt(
+                    adapter.make_event(text), prompt, options,
+                )
+                async with adapter.send_lock:
+                    await websocket.send_json({"type": "typing", "active": False})
+                return
             if not outcome.ok:
                 if not outcome.handled and getattr(command, "fallback_allowed", False):
                     _trace_finish(
@@ -3001,6 +3033,70 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                         await websocket.send_json({"type": "system", "content": "No worries — skipping today's reports."})
                     continue
 
+                # Presentation follow-ups remain session-local. A confirmed
+                # ambiguous reference, or a date/currency/column choice, must
+                # execute against the cached snapshot rather than becoming a
+                # fresh source-SQL question.
+                if cmeta.get("source") in {
+                    "result_reference_confirmation", "local_result_command",
+                }:
+                    opts = cmeta.get("options") or []
+                    selected_id = str(data.get("option_id") or "").strip()
+                    free_text = _ws_text_value(
+                        data.get("text"), "text", "question", "value", "label"
+                    )
+                    selected = next(
+                        (option for option in opts if str(option.get("id") or "") == selected_id),
+                        None,
+                    )
+                    if not selected and free_text:
+                        selected = resolve_option_text(opts, free_text)
+                    if not selected:
+                        await adapter.send_clarification_prompt(
+                            adapter.make_event(pending["original_q"]),
+                            cmeta.get("question") or "Please choose one option.",
+                            opts,
+                        )
+                        continue
+
+                    clear_pending(account_id, zoom_user_id)
+                    if cmeta.get("source") == "result_reference_confirmation":
+                        if str(selected.get("id") or "") == "new-question":
+                            await websocket.send_json({
+                                "type": "message",
+                                "role": "assistant",
+                                "content": (
+                                    "Understood. Please restate the new business question, "
+                                    "and I’ll answer it from the governed data source."
+                                ),
+                            })
+                            await websocket.send_json({"type": "typing", "active": False})
+                            continue
+                        resolved_text = pending["original_q"]
+                        resolved_command = compile_confirmed_result_presentation(
+                            resolved_text
+                        )
+                    else:
+                        resolved_text = str(
+                            selected.get("resolved_question")
+                            or selected.get("value")
+                            or selected.get("label")
+                            or ""
+                        ).strip()
+                        resolved_command = parse_result_command(resolved_text)
+
+                    if resolved_command is None:
+                        await websocket.send_json({
+                            "type": "assistant_error",
+                            "role": "assistant",
+                            "content": "I could not apply that display choice. Please try again.",
+                        })
+                        await websocket.send_json({"type": "typing", "active": False})
+                        continue
+                    await websocket.send_json({"type": "typing", "active": True})
+                    await _run_local_result_command(resolved_text, resolved_command)
+                    continue
+
                 opts = cmeta.get("options") or []
                 selected_id = str(data.get("option_id") or "").strip()
                 free_text = _ws_text_value(
@@ -3730,6 +3826,35 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 for column in (_cache_snapshot or {}).get("schema", [])
                 if isinstance(column, dict) and column.get("name")
             ]
+            if needs_result_reference_confirmation(text, bool(_cache_snapshot)):
+                prompt = "Are you referring to the previous result?"
+                options = [
+                    {
+                        "id": "use-previous-result",
+                        "label": "Yes — use the previous result",
+                        "value": "use_previous_result",
+                    },
+                    {
+                        "id": "new-question",
+                        "label": "No — this is a new question",
+                        "value": "new_question",
+                    },
+                ]
+                save_pending(
+                    account_id,
+                    zoom_user_id,
+                    text,
+                    clarification_meta={
+                        "source": "result_reference_confirmation",
+                        "question": prompt,
+                        "options": options,
+                    },
+                )
+                await adapter.send_clarification_prompt(
+                    adapter.make_event(text), prompt, options,
+                )
+                await websocket.send_json({"type": "typing", "active": False})
+                continue
             if _RECONCILE_INTENT_RE.search(text) and _cache_snapshot and _cache_snapshot.get("sql"):
                 if current_query_task and not current_query_task.done():
                     current_query_task.cancel()
