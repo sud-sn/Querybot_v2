@@ -78,6 +78,65 @@ _DATA_INVENTORY_RE = re.compile(
     r"|show\s+me\s+(the\s+)?(available\s+)?(tables?|schemas?|data\s+sources?)"
     r"|list\s+(the\s+)?(available\s+)?(tables?|schemas?)"
     r"|what('s| is)\s+in\s+(the|my|your)\s+(database|data)"
+    r"|(?:(?:explain|describe)(?:\s+me)?(?:\s+about)?|tell\s+me\s+about)\s+(?:the\s+)?(?:available\s+)?(?:data|data\s+available|data\s+sources?)"
+    r")\b",
+    re.IGNORECASE,
+)
+
+# Governed workspace-guide intents.  These are kept separate so a broad
+# onboarding question receives a useful overview while a focused question
+# (for example, "how does the semantic layer work?") receives only the
+# relevant explanation.  They are deterministic metadata routes, not SQL asks.
+_SEMANTIC_EXPLAINER_RE = re.compile(
+    r"\b(?:"
+    r"(?:(?:explain|describe)(?:\s+me)?(?:\s+about)?|what(?:'s| is)|how does)\s+(?:the\s+)?semantic\s+layer"
+    r"|how\s+(?:does|do)\s+(?:the\s+)?semantic(?:\s+layer)?\s+work"
+    r"|what\s+(?:are|do)\s+(?:business\s+)?(?:metrics|terms|date\s+roles)\s+(?:mean|do)"
+    r")\b",
+    re.IGNORECASE,
+)
+
+_TABLE_MEANINGS_RE = re.compile(
+    r"\b(?:"
+    r"(?:what|which)\s+tables?\s+(?:are\s+available\s+)?(?:and\s+)?what\s+do\s+they\s+mean"
+    r"|(?:explain|describe)(?:\s+me)?(?:\s+about)?\s+(?:the\s+)?(?:available\s+)?tables?"
+    r"|(?:business\s+)?meaning\s+of\s+(?:the\s+)?tables?"
+    r"|(?:what|which)\s+(?:are\s+)?(?:the\s+)?(?:available\s+)?tables?\s+and\s+(?:their|the)\s+business\s+meanings?"
+    r"|what\s+does\s+(?:each|every)\s+table\s+(?:mean|represent)"
+    r")\b",
+    re.IGNORECASE,
+)
+
+_BUSINESS_OVERVIEW_RE = re.compile(
+    r"\b(?:"
+    r"(?:explain|describe)(?:\s+me)?(?:\s+about)?\s+(?:(?:this|the|our)\s+)?(?:business|workspace)"
+    r"|tell\s+me\s+about\s+(?:(?:this|the|our)\s+)?(?:business|workspace)"
+    r"|what\s+(?:does|is)\s+(?:this|the|our)\s+(?:business|workspace)\s+(?:do|about|cover)"
+    r"|(?:business|workspace)\s+(?:overview|summary)"
+    r"|what\s+business\s+(?:areas|domains)\s+(?:are\s+)?(?:covered|available)"
+    r")\b",
+    re.IGNORECASE,
+)
+
+_QUESTION_EXAMPLES_RE = re.compile(
+    r"\b(?:"
+    r"(?:give|show|suggest|provide)\s+(?:me\s+)?(?:some\s+)?(?:sample|example|starter)\s+questions?"
+    r"|what\s+questions?\s+(?:can|should|could)\s+(?:i|we)\s+ask"
+    r"|what\s+(?:types?|kinds?)\s+of\s+(?:natural[- ]language\s+|nl\s+)?questions?\s+(?:can|should|could)\s+(?:i|we)\s+ask"
+    r"|what\s+(?:can|should|could)\s+(?:i|we)\s+ask"
+    r"|how\s+should\s+(?:i|we)\s+(?:ask|phrase)\s+(?:a\s+)?questions?"
+    r"|questions?\s+(?:i|we)\s+can\s+ask"
+    r")\b",
+    re.IGNORECASE,
+)
+
+_CAPABILITY_OVERVIEW_RE = re.compile(
+    r"\b(?:"
+    r"what\s+(?:all\s+)?(?:can|do|could)\s+you\s+do"
+    r"|how\s+(?:can|do)\s+you\s+help"
+    r"|what\s+(?:are\s+)?your\s+capabilities"
+    r"|(?:explain|show|list)\s+(?:your\s+)?capabilities"
+    r"|what\s+is\s+querybot|how\s+does\s+querybot\s+work"
     r")\b",
     re.IGNORECASE,
 )
@@ -119,7 +178,7 @@ def detect_conversational(text: str) -> str | None:
     Classify a message into a behavioral kind, or None for normal routing.
 
     Returns one of: "greeting", "thanks", "goodbye", "frustration",
-    "data_inventory", "opinion", "vague".
+    the governed workspace-guide kinds, "opinion", or "vague".
 
     Order matters: greeting/thanks/goodbye/frustration are full-message
     anchored (cheap, unambiguous); data_inventory and opinion are substring
@@ -138,6 +197,16 @@ def detect_conversational(text: str) -> str | None:
         return "goodbye"
     if _FRUSTRATION_RE.match(t):
         return "frustration"
+    if _SEMANTIC_EXPLAINER_RE.search(t):
+        return "semantic_explainer"
+    if _TABLE_MEANINGS_RE.search(t):
+        return "table_meanings"
+    if _BUSINESS_OVERVIEW_RE.search(t):
+        return "business_overview"
+    if _QUESTION_EXAMPLES_RE.search(t):
+        return "question_examples"
+    if _CAPABILITY_OVERVIEW_RE.search(t):
+        return "capability_overview"
     if _DATA_INVENTORY_RE.search(t):
         return "data_inventory"
     if _OPINION_RE.search(t):
@@ -202,10 +271,24 @@ def detect_compound_question(text: str) -> tuple[str, str] | None:
 
 # ── Reply builders ────────────────────────────────────────────────────────────
 
-def _example_questions(account_id: str, limit: int = 3) -> list[str]:
+def _example_questions(
+    account_id: str,
+    limit: int = 3,
+    portal_user: dict | None = None,
+) -> list[str]:
     """Real questions this workspace can answer, best sources first:
     metric example_questions (admin-curated), then recent successful
     query_log questions. Best-effort — an empty list is fine."""
+    # The workspace guide uses validated examples and applies the signed-in
+    # user's table ACL.  Prefer it whenever identity is available; the legacy
+    # account-wide lookup below is retained only for non-user system greetings.
+    if portal_user:
+        try:
+            from core.workspace_guide import build_workspace_guide
+            return build_workspace_guide(account_id, portal_user).get("examples", [])[:limit]
+        except Exception as exc:
+            log.debug("conversational: governed examples unavailable: %s", exc)
+
     examples: list[str] = []
     seen: set[str] = set()
 
@@ -278,13 +361,20 @@ def _format_examples_block(examples: list[str]) -> str:
 
 def build_reply(kind: str, account_id: str, portal_user: dict | None = None) -> str:
     """Build the reply text for a detected conversational kind."""
+    try:
+        from core.workspace_guide import GUIDE_KINDS, render_workspace_guide
+        if kind in GUIDE_KINDS:
+            return render_workspace_guide(kind, account_id, portal_user)[0]
+    except Exception as exc:
+        log.warning("Workspace guide rendering failed for %s: %s", kind, exc)
+
     if kind == "greeting":
         name = (portal_user or {}).get("name") or ""
         hello = f"Hello{', ' + name.split()[0] if name else ''}! 👋"
         return (
             f"{hello} I'm QueryBot — ask me anything about your business data.\n\n"
             "For example:\n"
-            f"{_format_examples_block(_example_questions(account_id))}\n\n"
+            f"{_format_examples_block(_example_questions(account_id, portal_user=portal_user))}\n\n"
             "Type `help` for commands, or just ask in plain English."
         )
 
@@ -306,33 +396,6 @@ def build_reply(kind: str, account_id: str, portal_user: dict | None = None) -> 
             "Want to try rephrasing your question?"
         )
 
-    if kind == "data_inventory":
-        lines = ["Here's what I can query for you:"]
-        try:
-            import store
-            allowed = store.get_allowed_tables(portal_user) if portal_user else None
-            if allowed:
-                schemas: dict[str, int] = {}
-                for fqn in allowed:
-                    parts = str(fqn).split(".")
-                    schema = parts[-2] if len(parts) >= 2 else "DEFAULT"
-                    schemas[schema] = schemas.get(schema, 0) + 1
-                for schema, count in sorted(schemas.items()):
-                    lines.append(f"  • *{schema}* — {count} table{'s' if count != 1 else ''}")
-            else:
-                lines.append("  • All tables in this workspace (no restrictions on your account)")
-        except Exception as exc:
-            log.debug("conversational: data inventory lookup failed: %s", exc)
-            lines.append("  • Ask your administrator which tables are assigned to you")
-
-        metrics = _metric_names(account_id)
-        if metrics:
-            lines.append("\n*Defined business metrics:* " + ", ".join(metrics))
-        lines.append("\nTry a question like:")
-        lines.append(_format_examples_block(_example_questions(account_id)))
-        lines.append("\nYou can also browse everything on the *Semantic Layer* page in the portal.")
-        return "\n".join(lines)
-
     if kind == "opinion":
         metrics = _metric_names(account_id, limit=3)
         metric_hint = (
@@ -350,7 +413,7 @@ def build_reply(kind: str, account_id: str, portal_user: dict | None = None) -> 
         return (
             "Happy to help — I just need to know what to measure. "
             "Name a metric and (optionally) a breakdown or time range:\n\n"
-            f"{_format_examples_block(_example_questions(account_id))}\n\n"
+            f"{_format_examples_block(_example_questions(account_id, portal_user=portal_user))}\n\n"
             "You can also type `help` for commands, or ask "
             "_what data do you have?_ to see what's available."
         )
@@ -373,6 +436,18 @@ def build_reply_split(
     The questions_list contains raw question strings without markdown formatting
     so the adapter can label buttons directly.
     """
+    try:
+        from core.workspace_guide import GUIDE_KINDS, render_workspace_guide
+        if kind in GUIDE_KINDS:
+            return render_workspace_guide(
+                kind,
+                account_id,
+                portal_user,
+                include_examples=False,
+            )
+    except Exception as exc:
+        log.warning("Workspace guide split rendering failed for %s: %s", kind, exc)
+
     if kind == "greeting":
         name = (portal_user or {}).get("name") or ""
         hello = f"Hello{', ' + name.split()[0] if name else ''}! 👋"
@@ -380,38 +455,14 @@ def build_reply_split(
             f"{hello} I'm QueryBot — ask me anything about your business data.\n\n"
             "Here are some questions to get you started:"
         )
-        return intro, _example_questions(account_id)
-
-    if kind == "data_inventory":
-        lines = ["Here's what I can query for you:"]
-        try:
-            import store
-            allowed = store.get_allowed_tables(portal_user) if portal_user else None
-            if allowed:
-                schemas: dict[str, int] = {}
-                for fqn in allowed:
-                    parts = str(fqn).split(".")
-                    schema = parts[-2] if len(parts) >= 2 else "DEFAULT"
-                    schemas[schema] = schemas.get(schema, 0) + 1
-                for schema, count in sorted(schemas.items()):
-                    lines.append(f"  • *{schema}* — {count} table{'s' if count != 1 else ''}")
-            else:
-                lines.append("  • All tables in this workspace (no restrictions on your account)")
-        except Exception as exc:
-            log.debug("conversational: data inventory lookup failed: %s", exc)
-        metrics = _metric_names(account_id)
-        if metrics:
-            lines.append("\n*Defined business metrics:* " + ", ".join(metrics))
-        lines.append("\nTry a question like:")
-        intro = "\n".join(lines)
-        return intro, _example_questions(account_id)
+        return intro, _example_questions(account_id, portal_user=portal_user)
 
     if kind == "vague":
         intro = (
             "Happy to help — I just need to know what to measure. "
             "Name a metric and (optionally) a breakdown or time range:"
         )
-        return intro, _example_questions(account_id)
+        return intro, _example_questions(account_id, portal_user=portal_user)
 
     # All other kinds: delegate to build_reply, no split
     return build_reply(kind, account_id, portal_user), []

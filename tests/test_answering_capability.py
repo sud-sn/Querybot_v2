@@ -41,6 +41,38 @@ class ConversationalDetectionTests(unittest.TestCase):
         self.assertEqual(self._kind("what data do you have"), "data_inventory")
         self.assertEqual(self._kind("show me the data"), "vague")
 
+    def test_workspace_guide_kinds(self):
+        self.assertEqual(self._kind("what can you do"), "capability_overview")
+        self.assertEqual(self._kind("what all can you do"), "capability_overview")
+        self.assertEqual(self._kind("explain this business"), "business_overview")
+        self.assertEqual(self._kind("explain me about the business"), "business_overview")
+        self.assertEqual(self._kind("explain the data available"), "data_inventory")
+        self.assertEqual(self._kind("explain me about the data available"), "data_inventory")
+        self.assertEqual(
+            self._kind("which tables are available and what do they mean"),
+            "table_meanings",
+        )
+        self.assertEqual(
+            self._kind("what are the available tables and their business meaning"),
+            "table_meanings",
+        )
+        self.assertEqual(
+            self._kind("how does the semantic layer work"),
+            "semantic_explainer",
+        )
+        self.assertEqual(
+            self._kind("explain me about the semantic layer"),
+            "semantic_explainer",
+        )
+        self.assertEqual(
+            self._kind("give me sample questions"),
+            "question_examples",
+        )
+        self.assertEqual(
+            self._kind("what types of NL questions can I ask"),
+            "question_examples",
+        )
+
     def test_data_questions_never_match(self):
         for q in (
             "what is my revenue this month",
@@ -67,11 +99,11 @@ class ConversationalDetectionTests(unittest.TestCase):
         # …and data-aware kinds inside READY, after the clarification checks.
         self.assertLess(
             src.index("was_recently_expired(account_id, event.user_id)"),
-            src.index('("data_inventory", "opinion", "vague")'),
+            src.index('_conv_kind in (*_WORKSPACE_GUIDE_KINDS, "opinion", "vague")'),
         )
         # data-aware branch fires before the DDL guard / SQL enqueue
         self.assertLess(
-            src.index('("data_inventory", "opinion", "vague")'),
+            src.index('_conv_kind in (*_WORKSPACE_GUIDE_KINDS, "opinion", "vague")'),
             src.index("if is_ddl_attempt(text):"),
         )
 

@@ -46,17 +46,28 @@ _HELP = (
     "*Commands:* `help` · `status` · `whoami`"
 )
 
+_WORKSPACE_GUIDE_KINDS = (
+    "capability_overview",
+    "business_overview",
+    "data_inventory",
+    "table_meanings",
+    "semantic_explainer",
+    "question_examples",
+)
+
 _ABOUT = (
     "*QueryBot* — Your AI-powered data assistant\n\n"
     "I connect directly to your business database and answer plain-English "
-    "questions with live data. No dashboards, no filters — just ask.\n\n"
+    "questions using governed business definitions and access controls.\n\n"
     "*What I can do:*\n"
     "  • Answer questions about revenue, sales, customers, inventory, and more\n"
     "  • Show trends over any time period — today, this month, last quarter\n"
     "  • Compare values across products, regions, customers, or teams\n"
     "  • Calculate KPIs and business metrics (margin %, days to pay, etc.)\n"
     "  • Rank and filter — top 10 customers, lowest performing products\n"
-    "  • Produce charts automatically for visual results\n\n"
+    "  • Produce KPI cards, charts, and tables automatically\n"
+    "  • Create named dashboards and add or arrange governed visuals\n"
+    "  • Refine recent results and change their presentation\n\n"
     "*Example questions:*\n"
     "  • _What is our gross margin percentage this year?_\n"
     "  • _Show revenue and COGS by customer_\n"
@@ -825,16 +836,15 @@ async def dispatch(
             "before sending queries.")
         return
 
-    if text.lower() == "help":
-        await adapter.send_message(event, _HELP); return
-
-    # _ABOUT_RE questions ("what can you do", "what is querybot") are now
-    # handled dynamically by _generate_analyst_reply inside the READY branch
-    # so they get a real business-context-aware answer instead of _ABOUT.
+    # Capability questions are handled by the governed workspace guide in a
+    # READY workspace; _ABOUT_RE remains the safe setup-time fallback.
     # We keep a fast-path for when state is not yet READY (NEW/KB_BUILDING):
     # in those states client_row exists but the pipeline can't answer data
     # questions anyway, so the static _ABOUT response is still appropriate.
-    if _ABOUT_RE.search(text) and get_state(account_id).get("state") not in ("READY",):
+    if (
+        (text.lower() == "help" or _ABOUT_RE.search(text))
+        and get_state(account_id).get("state") not in ("READY",)
+    ):
         await adapter.send_message(event, _ABOUT); return
 
     # whoami/status are diagnostic commands and must work in every workspace
@@ -917,6 +927,10 @@ async def dispatch(
     # clarification reply must never be hijacked by this classifier.
     from core.conversational import build_reply, build_reply_split, detect_conversational
     _conv_kind = detect_conversational(text)
+    if text.lower() == "help":
+        # Help is dynamic once the workspace is READY and the user has been
+        # resolved, so table/metric/dashboard details are ACL-scoped.
+        _conv_kind = "capability_overview"
     if _conv_kind in ("greeting", "thanks", "goodbye", "frustration"):
         _send_sq = getattr(adapter, "send_suggested_questions", None)
         if _conv_kind == "greeting" and callable(_send_sq):
@@ -1099,7 +1113,7 @@ async def dispatch(
         # deterministic answers — sending them into SQL generation only
         # produces a confusing failure.
         _route_legacy_to_query = False
-        if _conv_kind in ("data_inventory", "opinion", "vague"):
+        if _conv_kind in ("opinion", "vague"):
             try:
                 from core.result_cache import result_cache
 
@@ -1127,11 +1141,11 @@ async def dispatch(
                 )
 
         if (
-            _conv_kind in ("data_inventory", "opinion", "vague")
+            _conv_kind in (*_WORKSPACE_GUIDE_KINDS, "opinion", "vague")
             and not _route_legacy_to_query
         ):
             _send_sq = getattr(adapter, "send_suggested_questions", None)
-            if _conv_kind in ("data_inventory", "vague") and callable(_send_sq):
+            if _conv_kind in (*_WORKSPACE_GUIDE_KINDS, "vague") and callable(_send_sq):
                 _intro, _qs = build_reply_split(_conv_kind, account_id, portal_user)
                 await adapter.send_message(event, _intro)
                 if _qs:
