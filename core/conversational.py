@@ -293,7 +293,7 @@ def _example_questions(
     seen: set[str] = set()
 
     def _add(q: str) -> None:
-        q = (q or "").strip().rstrip("?") + "?"
+        q = (q or "").strip().rstrip(" ?.!;:") + "?"
         key = q.lower()
         if len(q) > 5 and key not in seen:
             seen.add(key)

@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Iterable
 
 import store
-from core.pipeline_context import client_dir, get_portal_base, get_state
+from core.pipeline_context import client_dir, get_state
 from core.semantic_layer import table_allowed, table_name_variants
 from core.semantic_model import load_semantic_model
 
@@ -36,6 +36,23 @@ _TECHNICAL_PREFIX_RE = re.compile(
 
 def _clean_text(value: object, limit: int = 500) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()[:limit]
+
+
+def _sentence_safe_text(value: object, limit: int = 500, *, first_only: bool = False) -> str:
+    """Return readable prose without cutting a word or sentence in half."""
+    text = re.sub(r"\s+", " ", str(value or "")).strip().replace("`", "")
+    if not text:
+        return ""
+    sentence_ends = list(re.finditer(r"[.!?](?=\s|$)", text))
+    if first_only and sentence_ends:
+        return text[:sentence_ends[0].end()].strip()
+    if len(text) <= limit:
+        return text
+    complete = [match for match in sentence_ends if match.end() <= limit]
+    if complete:
+        return text[:complete[-1].end()].strip()
+    clipped = text[:limit].rsplit(" ", 1)[0].rstrip(" ,;:-")
+    return (clipped or text[:limit]).strip() + "…"
 
 
 def _humanize(value: object) -> str:
@@ -68,7 +85,9 @@ def _overview_from_markdown(content: str) -> str:
             continue
         if in_overview and stripped:
             lines.append(stripped.lstrip("- ").strip())
-    return _clean_text(" ".join(lines), 360)
+    # A table inventory needs its business purpose, not field lists, row
+    # counts, date ranges, or profiling details that often follow in the KB.
+    return _sentence_safe_text(" ".join(lines), 280, first_only=True)
 
 
 def _load_kb_overviews(kb_dir: str) -> dict[str, str]:
@@ -113,7 +132,11 @@ def _table_summary(table: dict, overviews: dict[str, str]) -> dict:
     grain = _clean_text(table.get("grain"), 140)
     meaning = (
         _lookup_overview(overviews, ref)
-        or _clean_text(table.get("description") or table.get("overview"), 360)
+        or _sentence_safe_text(
+            table.get("description") or table.get("overview"),
+            280,
+            first_only=True,
+        )
     )
     if not meaning:
         if grain:
@@ -199,7 +222,7 @@ def _safe_examples(
             schema_dir=schema_dir,
         )
         return [
-            _clean_text(item.get("question"), 180).rstrip("?") + "?"
+            _clean_text(item.get("question"), 180).rstrip(" ?.!;:") + "?"
             for item in suggestions
             if _clean_text(item.get("question"), 180)
         ][:limit]
@@ -285,7 +308,7 @@ def build_workspace_guide(account_id: str, user: dict | None) -> dict:
             log.debug("Workspace guide dashboards unavailable: %s", exc)
 
     examples = _safe_examples(account_id, kb_dir, schema_dir, allowed_tables)
-    business = _clean_text(
+    business = _sentence_safe_text(
         client.get("business_desc")
         or model.get("business_description")
         or state.get("business_desc"),
@@ -307,7 +330,6 @@ def build_workspace_guide(account_id: str, user: dict | None) -> dict:
         "dashboards": dashboards,
         "examples": examples,
         "is_admin": allowed_tables is None,
-        "portal_base": get_portal_base(),
     }
 
 
@@ -324,7 +346,7 @@ def _examples_block(examples: list[str]) -> str:
 def _table_lines(guide: dict, limit: int = 15) -> list[str]:
     tables = guide.get("tables") or []
     lines = [
-        f"*{table['name']}* (`{table['schema']}.{table['table']}`) — {table['meaning']}"
+        f"{table['name']} ({table['schema']}.{table['table']}) — {table['meaning']}"
         for table in tables[:limit]
     ]
     if len(tables) > limit:
@@ -348,9 +370,6 @@ def render_workspace_guide(
         f"{name} ({count} table{'s' if count != 1 else ''})"
         for name, count in sorted(guide["schemas"].items())
     )
-    dashboard_url = f"{guide['portal_base']}/portal/dashboard"
-    semantic_url = f"{guide['portal_base']}/portal/kb"
-
     if kind == "capability_overview":
         dashboard_count = len(guide["dashboards"])
         dashboard_note = (
@@ -372,8 +391,8 @@ def render_workspace_guide(
             "  • Calculate KPIs, trends, comparisons, rankings, distributions, and time-based analysis.\n"
             "  • Present results as KPI cards, charts, or tables and explain how the answer was produced.\n"
             "  • Refine a recent result—filter, sort, limit, reformat dates/currency/decimals, or change its visual.\n"
-            f"  • Create and maintain named [dashboards]({dashboard_url}), add results, arrange visuals, apply filters, and subscribe to updates. {dashboard_note}\n"
-            f"  • Use the governed [Semantic Layer]({semantic_url}) to resolve business terms, metrics, joins, and dates. {semantic_note}\n\n"
+            f"  • Create and maintain named dashboards, add results, arrange visuals, apply filters, and subscribe to updates. {dashboard_note}\n"
+            f"  • Use the governed Semantic Layer to resolve business terms, metrics, joins, and dates. {semantic_note}\n\n"
             "Presentation-only follow-ups can reuse your governed recent result. If a request needs new data or a different calculation, I run a new governed query. Access controls and masking still apply."
         )
         if include_examples:
@@ -407,7 +426,7 @@ def render_workspace_guide(
         text += _bullets(lines) if lines else "No queryable tables are assigned to your current access."
         if metric_names:
             text += "\n\n*Governed metrics available:* " + ", ".join(metric_names)
-        text += f"\n\nBrowse the [Semantic Layer]({semantic_url}) for the governed catalog."
+        text += "\n\nOpen Semantic Layer from the Portal sidebar to browse the governed catalog."
         return text, examples
 
     if kind == "semantic_explainer":
@@ -419,7 +438,7 @@ def render_workspace_guide(
             f"{guide['relationship_count']} governed relationship{'s' if guide['relationship_count'] != 1 else ''}, and "
             f"{guide['date_role_count']} date role{'s' if guide['date_role_count'] != 1 else ''}. "
             "If wording or a date meaning is ambiguous, I should ask you to clarify instead of guessing. Ad hoc calculations are possible when the accessible schema supports them, while approved metrics are preferred when available.\n\n"
-            f"You can inspect the catalog on the [Semantic Layer page]({semantic_url})."
+            "You can inspect the catalog from Semantic Layer in the Portal sidebar."
         )
         return text, examples
 

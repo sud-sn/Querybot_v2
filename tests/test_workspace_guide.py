@@ -67,7 +67,6 @@ class WorkspaceGuideTests(unittest.TestCase):
             patch("core.workspace_guide._safe_examples", return_value=[
                 "Show monthly revenue?", "Which customers placed the most orders?"
             ]),
-            patch("core.workspace_guide.get_portal_base", return_value="https://querybot.example"),
         ]
         for patcher in self.patchers:
             patcher.start()
@@ -106,7 +105,8 @@ class WorkspaceGuideTests(unittest.TestCase):
         self.assertIn("1 business term", text)
         self.assertIn("1 relationship", text)
         self.assertIn("1 date role", text)
-        self.assertIn("https://querybot.example/portal/dashboard", text)
+        self.assertIn("named dashboards", text)
+        self.assertNotIn("localhost", text)
         self.assertNotIn("Salary", text)
 
     def test_button_renderer_does_not_duplicate_examples_in_message(self):
@@ -118,6 +118,16 @@ class WorkspaceGuideTests(unittest.TestCase):
         self.assertEqual(len(examples), 2)
         self.assertNotIn("Show monthly revenue", text)
         self.assertNotIn("Validated questions", text)
+
+    def test_prose_and_question_punctuation_are_not_cut_or_doubled(self):
+        from core.workspace_guide import _overview_from_markdown, _sentence_safe_text
+
+        overview = _overview_from_markdown(
+            "## Overview\nOrders support revenue analysis. It has 100 rows and many fields."
+        )
+        self.assertEqual(overview, "Orders support revenue analysis.")
+        summary = _sentence_safe_text("First complete sentence. " + "x" * 800, 100)
+        self.assertEqual(summary, "First complete sentence.")
 
     def test_missing_curated_table_description_uses_safe_grain_fallback(self):
         from core.workspace_guide import build_workspace_guide
