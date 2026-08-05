@@ -27,6 +27,7 @@ if str(ROOT) not in sys.path:
 
 import core.examples as examples
 import core.dispatcher as dispatcher
+import core.knowledge as knowledge
 
 
 def _successful_process_worker(
@@ -299,14 +300,12 @@ class RunExampleValidationProcessTests(unittest.TestCase):
                     timeout_seconds=0.1,
                 ))
 
-        self.assertEqual(result, {
-            "status": "timeout",
-            "total": 1,
-            "validated": 0,
-            "failed": 1,
-        })
+        self.assertEqual(result["status"], "timeout")
+        self.assertEqual(result["total"], 1)
+        self.assertEqual(result["validated"], 0)
+        self.assertEqual(result["failed"], 1)
 
-    def test_completed_worker_activates_only_when_every_pattern_validates(self):
+    def test_completed_worker_passes_when_pattern_validates(self):
         with tempfile.TemporaryDirectory() as tmp:
             Path(tmp, "orders_queries.md").write_text(
                 "Q: revenue\nSQL: SELECT SUM(amount) FROM orders\n",
@@ -329,6 +328,117 @@ class RunExampleValidationProcessTests(unittest.TestCase):
         self.assertEqual(result["status"], "passed")
         self.assertEqual(result["validated"], 1)
         self.assertEqual(result["failed"], 0)
+
+    def test_activation_threshold_is_85_percent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            query_text = "\n".join(
+                f"Q: question {index}\nSQL: SELECT {index} AS value"
+                for index in range(20)
+            )
+            Path(tmp, "orders_queries.md").write_text(query_text, encoding="utf-8")
+
+            async def _validate(validated):
+                worker_result = {
+                    "status": "completed",
+                    "total": 20,
+                    "validated": validated,
+                    "failed": 20 - validated,
+                }
+                with patch(
+                    "core.dispatcher._run_validation_process",
+                    new=AsyncMock(return_value=worker_result),
+                ):
+                    return await dispatcher._run_example_validation(
+                        "acct1", tmp, "acct1", self._DB_CFG
+                    )
+
+            passed = asyncio.run(_validate(17))
+            failed = asyncio.run(_validate(16))
+
+        self.assertEqual(passed["status"], "passed")
+        self.assertEqual(passed["required"], 17)
+        self.assertEqual(failed["status"], "failed")
+
+
+class ValidationEvidenceTests(unittest.TestCase):
+    def test_failed_sql_is_classified_and_written_to_report(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "orders_queries.md").write_text(
+                "Q: valid revenue\nSQL: SELECT SUM(amount) FROM orders\n"
+                "Q: invalid revenue\nSQL: SELECT SUM(fake_amount) FROM orders\n",
+                encoding="utf-8",
+            )
+            fake_conn = MagicMock()
+            compile_results = [None, RuntimeError("Invalid column name 'fake_amount'.")]
+            with patch("core.examples._open_connection", return_value=fake_conn), \
+                 patch("core.examples._execute_on_connection", side_effect=compile_results), \
+                 patch("store.save_validated_example"), \
+                 patch("core.vector_store.upsert_examples"):
+                outcome = examples.validate_and_store_examples(
+                    "acct1", tmp, {}, "azure_sql", "acct1", return_report=True
+                )
+
+            report = examples.load_validation_report(tmp)
+
+        self.assertEqual(outcome["validated"], 1)
+        self.assertEqual(outcome["failed"], 1)
+        self.assertEqual(outcome["categories"], {"invalid_column": 1})
+        self.assertEqual(report["summary"]["processed"], 2)
+        self.assertEqual(report["summary"]["pass_rate"], 50.0)
+        self.assertEqual(report["failures"][0]["question"], "invalid revenue")
+        self.assertIn("fake_amount", report["failures"][0]["sql"])
+
+    def test_targeted_repair_preserves_passing_pair_and_replaces_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            schema_dir = root / "schema"
+            kb_dir = root / "kb"
+            schema_dir.mkdir()
+            kb_dir.mkdir()
+            (schema_dir / "ORDERS.md").write_text(
+                "# ORDERS\n| Column | Type |\n|---|---|\n| `AMOUNT` | decimal |\n",
+                encoding="utf-8",
+            )
+            (kb_dir / "ORDERS_kb.md").write_text("# ORDERS\nAMOUNT is revenue.", encoding="utf-8")
+            bad_sql = "SELECT SUM(FAKE_AMOUNT) FROM ORDERS"
+            (kb_dir / "ORDERS_queries.md").write_text(
+                "Q: count orders\nSQL: SELECT COUNT(*) FROM ORDERS\n\n"
+                f"Q: total revenue\nSQL: {bad_sql}\n",
+                encoding="utf-8",
+            )
+            examples._write_validation_report(
+                kb_dir,
+                account_id="acct1",
+                db_type="azure_sql",
+                total=2,
+                validated=1,
+                failures=[{
+                    "index": 2,
+                    "source_file": "ORDERS_queries.md",
+                    "table_name": "ORDERS",
+                    "question": "total revenue",
+                    "sql": bad_sql,
+                    "category": "invalid_column",
+                    "error": "Invalid column name 'FAKE_AMOUNT'.",
+                }],
+            )
+            repaired_response = "Q: total revenue\nSQL: SELECT SUM(AMOUNT) FROM ORDERS\n"
+            with patch("core.llm.llm_complete", new=AsyncMock(return_value=(repaired_response, 0, 0))):
+                result = asyncio.run(knowledge.repair_failed_query_patterns(
+                    schema_dir=str(schema_dir),
+                    kb_dir=str(kb_dir),
+                    business_desc="Order revenue",
+                    provider="openai",
+                    model="test",
+                    api_key="secret",
+                    db_type="azure_sql",
+                ))
+            rewritten = (kb_dir / "ORDERS_queries.md").read_text(encoding="utf-8")
+
+        self.assertEqual(result["patterns_repaired"], 1)
+        self.assertIn("SELECT COUNT(*) FROM ORDERS", rewritten)
+        self.assertIn("SELECT SUM(AMOUNT) FROM ORDERS", rewritten)
+        self.assertNotIn("FAKE_AMOUNT", rewritten)
 
 
 class StaleNullDiagnosticExampleFilterTests(unittest.TestCase):

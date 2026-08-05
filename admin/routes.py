@@ -7588,14 +7588,43 @@ async def admin_setup_status(request: Request, account_id: str):
         if schema_dir and _Path(schema_dir).exists() else []
     )
     progress = state_data.get("kb_progress") or {}
+    validation_state = state_data.get("kb_example_validation") or {}
+    validation_summary = {
+        key: validation_state.get(key)
+        for key in (
+            "total", "validated", "failed", "pass_rate",
+            "minimum_pass_rate", "categories", "report_file",
+        )
+        if validation_state.get(key) is not None
+    }
+    if not validation_summary and kb_dir:
+        from core.examples import load_validation_report
+        validation_summary = load_validation_report(kb_dir).get("summary") or {}
     return JSONResponse({
         "status": "ok",
         "state": client.get("state", "NEW"),
         "progress": progress,
+        "validation": validation_summary,
         "kb_file_count": len(kb_files),
         "schema_file_count": len(schema_files),
         "business_desc": state_data.get("business_desc", client.get("business_desc", "")),
     })
+
+
+@router.get("/clients/{account_id}/setup/validation-report")
+async def admin_setup_validation_report(request: Request, account_id: str):
+    """Return the latest compiler evidence; this endpoint is admin-only."""
+    if not _is_auth(request):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    client = store.get_client(account_id)
+    if not client:
+        return JSONResponse({"status": "error", "message": "Client not found"}, status_code=404)
+    state_data = json.loads(client.get("state_data") or "{}")
+    from core.examples import load_validation_report
+    report = load_validation_report(state_data.get("kb_dir", ""))
+    if not report:
+        return JSONResponse({"status": "missing", "message": "No SQL validation report is available"}, status_code=404)
+    return JSONResponse({"status": "ok", "report": report})
 
 
 
@@ -8850,6 +8879,82 @@ async def admin_build_kb(
                 stop_event=_stop_ev,
                 progress_callback=_on_kb_progress,
             )
+
+            # Generated examples are drafts until the live database compiler
+            # proves them. Make one targeted repair pass using the exact schema
+            # and per-query database errors, then validate every pattern again.
+            # Passing pairs are preserved; repairs never enter retrieval unless
+            # the second deterministic validation accepts them.
+            initial_failed = int(validation_result.get("failed") or 0)
+            if (
+                validation_result.get("status") not in {"stopped", "timeout", "error"}
+                and initial_failed > 0
+                and validation_result.get("report_file")
+            ):
+                repairing_progress = {
+                    "status": "building",
+                    "phase": "repairing_sql",
+                    "step": f"Repairing {initial_failed} failed SQL examples from compiler feedback",
+                    "current": 0,
+                    "total": initial_failed,
+                    "percent": 0,
+                    "current_table": "",
+                    "validated": int(validation_result.get("validated") or 0),
+                    "failed": initial_failed,
+                }
+                await _on_kb_progress(repairing_progress)
+                from core.knowledge import repair_failed_query_patterns
+                with llm_audit_scope(
+                    account_id=account_id,
+                    question=f"KB SQL repair for {client.get('client_name') or account_id}",
+                    enabled=bool(client.get("enable_llm_audit")),
+                    request_id=make_llm_audit_request_id(),
+                    component="kb_query_repair",
+                ):
+                    repair_result = await repair_failed_query_patterns(
+                        schema_dir=schema_dir,
+                        kb_dir=kb_dir,
+                        business_desc=business_desc,
+                        provider=provider,
+                        model=model,
+                        api_key=api_key,
+                        db_type=db_type,
+                        extra_kwargs=az_kw,
+                        progress_callback=_on_kb_progress,
+                        stop_event=_stop_ev,
+                    )
+                building_state["kb_query_repair"] = repair_result
+                if _stop_ev.is_set():
+                    validation_result = {
+                        "status": "stopped",
+                        "total": int(validation_result.get("total") or 0),
+                        "validated": int(validation_result.get("validated") or 0),
+                        "failed": initial_failed,
+                    }
+                elif int(repair_result.get("files_rewritten") or 0) > 0:
+                    await _on_kb_progress({
+                        "status": "building",
+                        "phase": "revalidating_sql",
+                        "step": "Revalidating repaired SQL examples against the live schema",
+                        "current": 0,
+                        "total": int(validation_result.get("total") or 0),
+                        "percent": 0,
+                        "current_table": "",
+                    })
+                    validation_result = await _run_example_validation(
+                        account_id,
+                        kb_dir,
+                        chroma_dir,
+                        db_for_val,
+                        stop_event=_stop_ev,
+                        progress_callback=_on_kb_progress,
+                    )
+                    validation_result["repair"] = repair_result
+                    try:
+                        from core.suggestions import build_suggestion_cache as _repair_bsc
+                        _repair_bsc(kb_dir)
+                    except Exception as _repair_suggestion_error:
+                        log.debug("Suggestion cache after SQL repair: %s", _repair_suggestion_error)
             building_state["kb_example_validation"] = validation_result
             validation_status = validation_result.get("status")
             if validation_status == "stopped":
@@ -8883,19 +8988,30 @@ async def admin_build_kb(
                         "The Knowledge Base was not activated."
                     )
                 else:
+                    validated_count = int(validation_result.get("validated") or 0)
+                    pass_rate = float(validation_result.get("pass_rate") or 0.0)
+                    minimum_rate = float(validation_result.get("minimum_pass_rate") or 85.0)
                     validation_message = (
-                        "Generated SQL validation failed "
-                        f"({failed_count}/{total_count} patterns did not pass). "
+                        "Generated SQL validation did not meet the activation threshold: "
+                        f"{validated_count}/{total_count} passed ({pass_rate:.1f}%; "
+                        f"minimum {minimum_rate:.0f}%). "
                         "The Knowledge Base was not activated."
                     )
                 validation_progress = {
                     "status": "failed",
                     "phase": "validation_failed",
                     "step": validation_message,
-                    "current": int(validation_result.get("validated") or 0),
+                    "current": total_count,
                     "total": total_count,
                     "percent": 100,
                     "current_table": "",
+                    "processed": total_count,
+                    "validated": int(validation_result.get("validated") or 0),
+                    "failed": failed_count,
+                    "pass_rate": float(validation_result.get("pass_rate") or 0.0),
+                    "minimum_pass_rate": float(validation_result.get("minimum_pass_rate") or 85.0),
+                    "categories": validation_result.get("categories") or {},
+                    "report_file": validation_result.get("report_file") or "",
                 }
                 blocked_state = dict(building_state)
                 blocked_state["kb_progress"] = validation_progress

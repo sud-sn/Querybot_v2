@@ -565,6 +565,7 @@ async def handle_unregistered_user(account_id, zoom_user_id, event, adapter):
 _EXAMPLE_VALIDATION_TIMEOUT_SECONDS = 20 * 60
 _EXAMPLE_VALIDATION_STOP_GRACE_SECONDS = 2.0
 _EXAMPLE_VALIDATION_POLL_SECONDS = 0.1
+_EXAMPLE_VALIDATION_MIN_PASS_RATE = 0.85
 
 
 def _example_validation_process_entry(
@@ -591,7 +592,7 @@ def _example_validation_process_entry(
         def _report(payload: dict) -> None:
             result_queue.put({"kind": "progress", "payload": payload})
 
-        validated = validate_and_store_examples(
+        validation_outcome = validate_and_store_examples(
             account_id,
             kb_dir,
             credentials,
@@ -599,13 +600,18 @@ def _example_validation_process_entry(
             chroma_dir,
             stop_event=worker_stop_event,
             progress_callback=_report,
+            return_report=True,
         )
+        validated = int(validation_outcome.get("validated") or 0)
+        failed = int(validation_outcome.get("failed") or max(total - validated, 0))
         result_queue.put({
             "kind": "result",
             "status": "stopped" if worker_stop_event.is_set() else "completed",
             "total": total,
             "validated": validated,
-            "failed": max(total - validated, 0),
+            "failed": failed,
+            "categories": validation_outcome.get("categories") or {},
+            "report_file": validation_outcome.get("report_file") or "",
         })
     except BaseException as exc:
         # Persist only a bounded diagnostic, never credentials or DB rows.
@@ -818,14 +824,24 @@ async def _run_example_validation(
         )
         worker_status = worker_result.get("status")
         validated = int(worker_result.get("validated") or 0)
+        required = (
+            int(total * _EXAMPLE_VALIDATION_MIN_PASS_RATE + 0.999999)
+            if total else 0
+        )
+        pass_rate = (validated / total) if total else 1.0
         status = (
-            "passed" if validated == total else "failed"
+            "passed" if validated >= required else "failed"
         ) if worker_status == "completed" else (worker_status or "error")
         result = {
             "status": status,
             "total": total,
             "validated": validated,
             "failed": max(total - validated, 0),
+            "required": required,
+            "pass_rate": round(pass_rate * 100, 1),
+            "minimum_pass_rate": round(_EXAMPLE_VALIDATION_MIN_PASS_RATE * 100, 1),
+            "categories": worker_result.get("categories") or {},
+            "report_file": worker_result.get("report_file") or "",
         }
         if worker_result.get("error"):
             result["error"] = str(worker_result["error"])[:500]

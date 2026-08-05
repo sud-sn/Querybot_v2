@@ -15,8 +15,11 @@ Step 4 (query log harvesting) feeds back into the same store — every
 successful user query becomes a validated example automatically.
 """
 
+import json
 import logging
 import re
+from collections import Counter
+from datetime import datetime, timezone
 from pathlib import Path
 
 log = logging.getLogger("querybot.examples")
@@ -25,6 +28,81 @@ _DEPRECATED_NULL_DIAGNOSTIC_RE = re.compile(r"(?i)\bMatchedRows\b|\bNonNullMetri
 
 _EMBEDDING_MODEL   = "all-MiniLM-L6-v2"
 _EXAMPLES_COLL     = "validated_examples"   # separate collection from kb_store
+_VALIDATION_REPORT = "_sql_validation_report.json"
+
+
+def _validation_error_category(message: str) -> str:
+    """Map driver-specific compile errors to stable, actionable categories."""
+    text = (message or "").lower()
+    rules = (
+        ("invalid_column", ("invalid column name", "unknown column", "ora-00904")),
+        ("invalid_table", ("invalid object name", "does not exist or not authorized", "ora-00942")),
+        ("ambiguous_column", ("ambiguous column", "ambiguously defined", "ora-00918")),
+        ("invalid_function", ("is not a recognized built-in function", "unknown function")),
+        ("syntax_error", ("incorrect syntax", "syntax error", "ora-00933", "ora-00936")),
+        ("grouping_error", ("is invalid in the select list", "not a group by expression", "ora-00979")),
+        ("type_or_conversion", ("conversion failed", "operand type clash", "data type", "ora-01722")),
+        ("permission", ("permission was denied", "not authorized", "insufficient privileges")),
+        ("timeout_or_lock", ("timeout", "time-out", "lock request time out", "deadlock")),
+        ("metadata_unsupported", ("could not be determined", "metadata could not be determined", "11526")),
+    )
+    for category, needles in rules:
+        if any(needle in text for needle in needles):
+            return category
+    return "other"
+
+
+def _safe_validation_error(exc: BaseException) -> str:
+    """Return a bounded one-line diagnostic without DB rows or credentials."""
+    message = re.sub(r"\s+", " ", str(exc or "")).strip()
+    return message[:1000] or type(exc).__name__
+
+
+def _write_validation_report(
+    queries_path: Path,
+    *,
+    account_id: str,
+    db_type: str,
+    total: int,
+    validated: int,
+    failures: list[dict],
+) -> dict:
+    """Atomically persist admin-visible SQL compile evidence for this build."""
+    categories = dict(Counter(item.get("category") or "other" for item in failures))
+    report = {
+        "version": 1,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "account_id": account_id,
+        "db_type": db_type,
+        "summary": {
+            "total": int(total),
+            "processed": int(total),
+            "validated": int(validated),
+            "failed": len(failures),
+            "pass_rate": round((validated / total) * 100, 1) if total else 0.0,
+            "categories": categories,
+        },
+        "failures": failures,
+    }
+    target = queries_path / _VALIDATION_REPORT
+    temporary = target.with_suffix(target.suffix + ".tmp")
+    temporary.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+    temporary.replace(target)
+    log.info(
+        "SQL validation report written for %s: %s (%d failure details)",
+        account_id, target, len(failures),
+    )
+    return report
+
+
+def load_validation_report(queries_dir: str) -> dict:
+    """Load the latest report defensively for the admin page and repair pass."""
+    path = Path(queries_dir) / _VALIDATION_REPORT
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        return payload if isinstance(payload, dict) else {}
+    except (OSError, ValueError, TypeError):
+        return {}
 
 
 def _fqn_from_kb_header(content: str) -> str:
@@ -82,7 +160,8 @@ def validate_and_store_examples(
     *,
     stop_event=None,
     progress_callback=None,
-) -> int:
+    return_report: bool = False,
+) -> int | dict:
     """
     Parse all *_queries.md files from Stage 2, compile each SQL against the
     real database without executing the analytical query, keep only statements
@@ -114,20 +193,22 @@ def validate_and_store_examples(
     queries_path = Path(queries_dir)
     if not queries_path.exists():
         log.warning("Queries dir not found: %s", queries_dir)
-        return 0
+        missing = {"validated": 0, "failed": 0, "total": 0, "categories": {}}
+        return missing if return_report else 0
 
     # Collect all pairs first — one pass through files
-    all_pairs: list[tuple[str, str, str]] = []  # (question, sql, table_name)
+    all_pairs: list[tuple[str, str, str, str]] = []  # question, sql, table, source
     for qfile in sorted(queries_path.glob("*_queries.md")):
         table_name = _table_name_for_query_file(qfile)
         content    = qfile.read_text(encoding="utf-8")
         pairs      = _parse_query_pairs(content)
         for question, sql in pairs:
-            all_pairs.append((question, sql, table_name))
+            all_pairs.append((question, sql, table_name, qfile.name))
 
     if not all_pairs:
         log.info("No query pairs found to validate")
-        return 0
+        empty = {"validated": 0, "failed": 0, "total": 0, "categories": {}}
+        return empty if return_report else 0
 
     log.info("Validating %d query patterns against real DB (single connection)...",
              len(all_pairs))
@@ -143,12 +224,37 @@ def validate_and_store_examples(
     validated: list[tuple[str, str, str]] = []
     conn = _open_connection(credentials, db_type)
     if conn is None:
+        connection_failure = [{
+            "index": 0,
+            "source_file": "",
+            "table_name": "",
+            "question": "Validation connection",
+            "sql": "",
+            "category": "connection",
+            "error": "Could not open a database connection for SQL validation.",
+        }]
+        report = _write_validation_report(
+            queries_path,
+            account_id=account_id,
+            db_type=db_type,
+            total=len(all_pairs),
+            validated=0,
+            failures=connection_failure,
+        )
+        connection_outcome = {
+            "validated": 0,
+            "failed": len(all_pairs),
+            "total": len(all_pairs),
+            "categories": report["summary"]["categories"],
+            "report_file": _VALIDATION_REPORT,
+        }
         log.warning("Could not open DB connection for validation — skipping")
-        return 0
+        return connection_outcome if return_report else 0
 
     failed = 0
+    failure_details: list[dict] = []
     try:
-        for index, (question, sql, table_name) in enumerate(all_pairs, start=1):
+        for index, (question, sql, table_name, source_file) in enumerate(all_pairs, start=1):
             if stop_event is not None and stop_event.is_set():
                 log.info(
                     "Example validation stopped after %d/%d patterns for %s",
@@ -162,6 +268,17 @@ def validate_and_store_examples(
                 log.info("Validated: %s", question[:60])
             except Exception as e:
                 failed += 1
+                error = _safe_validation_error(e)
+                category = _validation_error_category(error)
+                failure_details.append({
+                    "index": index,
+                    "source_file": source_file,
+                    "table_name": table_name,
+                    "question": question[:500],
+                    "sql": sql[:12000],
+                    "category": category,
+                    "error": error,
+                })
                 log.debug("Failed: '%s' — %s", question[:50], str(e)[:80])
             _emit({
                 "phase": "validating_sql",
@@ -191,7 +308,22 @@ def validate_and_store_examples(
         log.info("Stored and embedded %d/%d validated examples for %s",
                  len(validated), len(all_pairs), account_id)
 
-    return len(validated)
+    report = _write_validation_report(
+        queries_path,
+        account_id=account_id,
+        db_type=db_type,
+        total=len(all_pairs),
+        validated=len(validated),
+        failures=failure_details,
+    )
+    outcome = {
+        "validated": len(validated),
+        "failed": failed,
+        "total": len(all_pairs),
+        "categories": report["summary"]["categories"],
+        "report_file": _VALIDATION_REPORT,
+    }
+    return outcome if return_report else len(validated)
 
 
 # Per-query ceiling for the validation batch. Each adapter uses a compile-only

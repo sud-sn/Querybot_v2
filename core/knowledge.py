@@ -1057,6 +1057,159 @@ async def build_kb(
     return processed
 
 
+async def repair_failed_query_patterns(
+    *,
+    schema_dir: str,
+    kb_dir: str,
+    business_desc: str,
+    provider: str,
+    model: str,
+    api_key: str,
+    db_type: str,
+    extra_kwargs: dict | None = None,
+    progress_callback=None,
+    stop_event=None,
+) -> dict:
+    """Regenerate only SQL examples that failed live compile validation.
+
+    The validation report is the source of truth. Passing examples are kept
+    byte-for-byte, each failed question is paired with one repaired SQL
+    statement, and the caller must run the deterministic validator again.
+    This never promotes an unvalidated repair into retrieval on its own.
+    """
+    from collections import defaultdict
+    from core.examples import _parse_query_pairs, load_validation_report
+    from core.llm import _KB_DIALECT_RULES, llm_complete
+    from core.llm_audit import llm_audit_component
+
+    kb_path = Path(kb_dir)
+    schema_path = Path(schema_dir)
+    report = load_validation_report(kb_dir)
+    failures = [
+        item for item in (report.get("failures") or [])
+        if isinstance(item, dict) and item.get("source_file") and item.get("sql")
+    ]
+    grouped: dict[str, list[dict]] = defaultdict(list)
+    for item in failures:
+        grouped[str(item["source_file"])].append(item)
+
+    result = {
+        "status": "skipped" if not grouped else "completed",
+        "files_considered": len(grouped),
+        "files_rewritten": 0,
+        "patterns_requested": len(failures),
+        "patterns_repaired": 0,
+        "errors": [],
+    }
+    if not grouped:
+        return result
+
+    join_map_path = schema_path / "_join_map.md"
+    join_map = join_map_path.read_text(encoding="utf-8", errors="replace") if join_map_path.exists() else ""
+    dialect_rules = _KB_DIALECT_RULES.get(db_type, _KB_DIALECT_RULES["azure_sql"])
+    kw = dict(extra_kwargs or {})
+    kw["temperature"] = min(float(kw.get("temperature", 0.1)), 0.1)
+    total_files = len(grouped)
+
+    for file_index, (source_file, file_failures) in enumerate(sorted(grouped.items()), start=1):
+        if stop_event is not None and stop_event.is_set():
+            result["status"] = "stopped"
+            break
+        query_file = kb_path / source_file
+        table_stem = source_file[:-11] if source_file.endswith("_queries.md") else query_file.stem
+        schema_file = schema_path / f"{table_stem}.md"
+        table_kb_file = kb_path / f"{table_stem}_kb.md"
+        if not query_file.exists() or not schema_file.exists():
+            result["errors"].append(f"{source_file}: schema or query file is missing")
+            continue
+
+        original_text = query_file.read_text(encoding="utf-8", errors="replace")
+        original_pairs = _parse_query_pairs(original_text)
+        failure_questions = {str(item.get("question") or "").strip() for item in file_failures}
+        passing_pairs = [pair for pair in original_pairs if pair[0].strip() not in failure_questions]
+        schema_text = schema_file.read_text(encoding="utf-8", errors="replace")
+        kb_text = table_kb_file.read_text(encoding="utf-8", errors="replace") if table_kb_file.exists() else ""
+        related_joins = "\n".join(
+            line for line in join_map.splitlines() if table_stem.upper() in line.upper()
+        )
+
+        failed_block_parts = []
+        for position, item in enumerate(file_failures, start=1):
+            failed_block_parts.append(
+                f"FAILURE {position}\n"
+                f"Q: {item.get('question', '')}\n"
+                f"SQL: {item.get('sql', '')}\n"
+                f"DATABASE ERROR [{item.get('category', 'other')}]: {item.get('error', '')}"
+            )
+        repair_prompt = (
+            "Repair the failed question-to-SQL examples below. This is a correction task, "
+            "not a request to invent new questions. Return exactly one corrected SQL pair "
+            "for every FAILURE, in the same order, preserving each Q text exactly.\n\n"
+            f"Database dialect:\n{dialect_rules}\n\n"
+            f"Business context:\n{business_desc}\n\n"
+            f"AUTHORITATIVE PHYSICAL SCHEMA for {table_stem}:\n{schema_text[:60000]}\n\n"
+            f"TABLE KNOWLEDGE:\n{kb_text[:40000]}\n\n"
+            f"VERIFIED JOIN LINES (use only these joins):\n{related_joins[:16000] or 'No verified joins available.'}\n\n"
+            "FAILED EXAMPLES AND LIVE DATABASE COMPILE ERRORS:\n"
+            + "\n\n".join(failed_block_parts)
+            + "\n\nREPAIR RULES:\n"
+              "- Use only exact tables and columns present in the physical schema or verified joins.\n"
+              "- Treat the database error as authoritative and remove the stated cause.\n"
+              "- Never use guessed friendly column names.\n"
+              "- Preserve the analytical meaning of each question.\n"
+              "- Produce one read-only SELECT per question.\n"
+              "- Return only repeated Q:/SQL: pairs with no commentary."
+        )
+        try:
+            with llm_audit_component("kb_query_repair", question=table_stem):
+                repaired_text, _, _ = await llm_complete(
+                    "You repair analytical SQL using authoritative schema evidence and live compiler feedback.",
+                    repair_prompt,
+                    provider,
+                    model,
+                    api_key,
+                    max_tokens=4096,
+                    **kw,
+                )
+            parsed_repairs = _parse_query_pairs(repaired_text)
+        except Exception as exc:
+            result["errors"].append(f"{source_file}: {type(exc).__name__}: {str(exc)[:300]}")
+            continue
+
+        repaired_pairs: list[tuple[str, str]] = []
+        for position, item in enumerate(file_failures):
+            if position < len(parsed_repairs) and parsed_repairs[position][1].strip():
+                repaired_pairs.append((str(item.get("question") or "").strip(), parsed_repairs[position][1].strip()))
+            else:
+                # Keep an unrepaired failure visible to the next validator;
+                # silently dropping it would inflate the pass rate.
+                repaired_pairs.append((str(item.get("question") or "").strip(), str(item.get("sql") or "").strip()))
+
+        merged_pairs = passing_pairs + repaired_pairs
+        rendered = "\n\n".join(f"Q: {question}\nSQL: {sql}" for question, sql in merged_pairs if question and sql) + "\n"
+        temporary = query_file.with_suffix(query_file.suffix + ".tmp")
+        temporary.write_text(rendered, encoding="utf-8")
+        temporary.replace(query_file)
+        result["files_rewritten"] += 1
+        result["patterns_repaired"] += min(len(parsed_repairs), len(file_failures))
+
+        if progress_callback:
+            progress = {
+                "phase": "repairing_sql",
+                "step": f"Repairing failed SQL examples ({file_index}/{total_files} tables)",
+                "current": file_index,
+                "total": total_files,
+                "percent": round((file_index / total_files) * 100),
+                "current_table": table_stem,
+                "repaired": result["patterns_repaired"],
+            }
+            callback_result = progress_callback(progress)
+            if asyncio.iscoroutine(callback_result):
+                await callback_result
+
+    return result
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Qdrant embedding (replaces ChromaDB)
 # ══════════════════════════════════════════════════════════════════════════════
