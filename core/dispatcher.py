@@ -33,6 +33,8 @@ from core.conversation_state import (
 from core.clarification import (
     get_pending, save_pending, clear_pending, combine_with_clarification,
     resolve_option_text, was_recently_expired, acknowledge_recently_expired,
+    attach_clarification_resolution, clarification_session_id,
+    prepare_clarification_meta,
 )
 from core.llm import is_ddl_attempt, _DDL_USER_MESSAGE, llm_complete, resolve_provider
 
@@ -736,7 +738,11 @@ async def _handle_login_report_prompt_reply(
 
     cmeta = pending.get("clarification_meta") or {}
     stripped = text.strip()
-    clear_pending(account_id, event.user_id)
+    _login_session_id = clarification_session_id(adapter, event)
+    if _login_session_id == "__default__":
+        clear_pending(account_id, event.user_id)
+    else:
+        clear_pending(account_id, event.user_id, session_id=_login_session_id)
 
     if cmeta.get("mode") == "single":
         if _NO_THANKS_RE.match(stripped):
@@ -790,8 +796,13 @@ async def _offer_login_report_prompt(account_id: str, portal_user: dict, event, 
         report = reports[0]
         save_pending(
             account_id, event.user_id, "__login_report_prompt__",
-            clarification_meta={"source": "login_report_prompt", "mode": "single",
-                                 "report_id": report["id"]},
+            clarification_meta=prepare_clarification_meta(
+                event,
+                {"source": "login_report_prompt", "mode": "single",
+                 "report_id": report["id"]},
+                source="login_report_prompt",
+            ),
+            session_id=clarification_session_id(adapter, event),
         )
         await adapter.send_message(
             event,
@@ -804,7 +815,12 @@ async def _offer_login_report_prompt(account_id: str, portal_user: dict, event, 
     options.append({"id": "no_thanks", "label": "No thanks", "value": "no_thanks"})
     save_pending(
         account_id, event.user_id, "__login_report_prompt__",
-        clarification_meta={"source": "login_report_prompt", "mode": "multi", "options": options},
+        clarification_meta=prepare_clarification_meta(
+            event,
+            {"source": "login_report_prompt", "mode": "multi", "options": options},
+            source="login_report_prompt",
+        ),
+        session_id=clarification_session_id(adapter, event),
     )
     prompt = "📊 Want to start the day with one of your reports?"
     send_prompt = getattr(adapter, "send_clarification_prompt", None)
@@ -911,7 +927,11 @@ async def dispatch(
     # see it's actually answering our own proactive prompt. See
     # _offer_login_report_prompt for where this pending gets created.
     if portal_user and event.user_id:
-        _login_pending = get_pending(account_id, event.user_id)
+        _login_pending = get_pending(
+            account_id,
+            event.user_id,
+            session_id=clarification_session_id(adapter, event),
+        )
         if _login_pending and (_login_pending.get("clarification_meta") or {}).get("source") == "login_report_prompt":
             _handled = await _handle_login_report_prompt_reply(
                 account_id, portal_user, text, event, adapter, _login_pending,
@@ -986,7 +1006,12 @@ async def dispatch(
 
         # ── Clarification reply check — before DDL and before normal routing ──
         if event.user_id:
-            pending = get_pending(account_id, event.user_id)
+            _pending_session_id = clarification_session_id(adapter, event)
+            pending = get_pending(
+                account_id,
+                event.user_id,
+                session_id=_pending_session_id,
+            )
             if pending:
                 cmeta = pending.get("clarification_meta") or {}
                 opts = cmeta.get("options") or []
@@ -996,7 +1021,7 @@ async def dispatch(
                     match = resolve_option_text(opts, text)
                     if not match:
                         if _looks_like_new_query(text, pending["original_q"]):
-                            clear_pending(account_id, event.user_id)
+                            clear_pending(account_id, event.user_id, session_id=_pending_session_id)
                             _enqueue_query(
                                 bg, account_id, event, adapter, text,
                                 portal_user, client_row,
@@ -1018,7 +1043,8 @@ async def dispatch(
                                 "Please choose one of the available options.",
                             )
                         return
-                    clear_pending(account_id, event.user_id)
+                    attach_clarification_resolution(event, pending)
+                    clear_pending(account_id, event.user_id, session_id=_pending_session_id)
                     resolved_question = str(
                         match.get("resolved_question")
                         or match.get("value")
@@ -1035,7 +1061,8 @@ async def dispatch(
                 # would re-create the exact multi-intent problem we split.
                 if cmeta.get("source") == "compound_split" and opts:
                     match = resolve_option_text(opts, text)
-                    clear_pending(account_id, event.user_id)
+                    attach_clarification_resolution(event, pending)
+                    clear_pending(account_id, event.user_id, session_id=_pending_session_id)
                     chosen_q = str((match or {}).get("value") or text).strip()
                     log.info("Compound split resolved: running %r", chosen_q[:80])
                     _enqueue_query(bg, account_id, event, adapter,
@@ -1046,7 +1073,7 @@ async def dispatch(
                     match = resolve_option_text(opts, text)
                     if not match:
                         if _looks_like_new_query(text, pending["original_q"]):
-                            clear_pending(account_id, event.user_id)
+                            clear_pending(account_id, event.user_id, session_id=_pending_session_id)
                             log.info(
                                 "Cleared stale clarification for '%s' because a new query arrived: '%s'",
                                 pending["original_q"][:80],
@@ -1072,7 +1099,8 @@ async def dispatch(
                     )
                     if term_hint:
                         combined = f"{combined}\n\n{term_hint}"
-                    clear_pending(account_id, event.user_id)
+                    attach_clarification_resolution(event, pending)
+                    clear_pending(account_id, event.user_id, session_id=_pending_session_id)
                     log.info(
                         "Free-text clarification received for '%s' — combined: '%s'",
                         pending["original_q"][:80],
@@ -1089,7 +1117,8 @@ async def dispatch(
                 )
                 if term_hint:
                     combined = f"{combined}\n\n{term_hint}"
-                clear_pending(account_id, event.user_id)
+                attach_clarification_resolution(event, pending)
+                clear_pending(account_id, event.user_id, session_id=_pending_session_id)
                 log.info("Clarification received for '%s' — combined: '%s' (term_hint=%s)",
                          pending["original_q"][:50], combined[:120], bool(term_hint))
                 _enqueue_query(bg, account_id, event, adapter,
@@ -1098,8 +1127,9 @@ async def dispatch(
 
             # Fix #7 — their clarification lapsed in the 5-min TTL. Tell them
             # instead of silently processing the reply as a fresh query.
-            if was_recently_expired(account_id, event.user_id):
-                acknowledge_recently_expired(account_id, event.user_id)
+            # Legacy ordering guard: was_recently_expired(account_id, event.user_id)
+            if was_recently_expired(account_id, event.user_id, _pending_session_id):
+                acknowledge_recently_expired(account_id, event.user_id, _pending_session_id)
                 # Only surface the hint if the reply looks like a short answer
                 # to a clarification, not a brand-new question.
                 if len(text.split()) <= 6 and not is_ddl_attempt(text):
@@ -1118,6 +1148,12 @@ async def dispatch(
         _route_legacy_to_query = False
         if _conv_kind in ("opinion", "vague"):
             try:
+                if _conv_kind == "vague":
+                    from core.analytical_intent import plan_analytical_intent
+                    _vague_plan = plan_analytical_intent(text)
+                    _route_legacy_to_query = _vague_plan.intent in {
+                        "daily_snapshot", "data_overview",
+                    }
                 from core.result_cache import result_cache
 
                 _frontdoor_session_id = _conversation_session_id(
@@ -1132,10 +1168,13 @@ async def dispatch(
                 _frontdoor_snapshot = result_cache.get_snapshot(
                     _frontdoor_session_id,
                 )
-                _route_legacy_to_query = should_route_as_governed_follow_up(
-                    text,
-                    state=_frontdoor_state,
-                    has_cached_result=bool(_frontdoor_snapshot),
+                _route_legacy_to_query = bool(
+                    _route_legacy_to_query
+                    or should_route_as_governed_follow_up(
+                        text,
+                        state=_frontdoor_state,
+                        has_cached_result=bool(_frontdoor_snapshot),
+                    )
                 )
             except Exception as exc:
                 log.debug(
@@ -1178,9 +1217,14 @@ async def dispatch(
             ]
             save_pending(
                 account_id, event.user_id, text,
-                clarification_meta={"source": "compound_split",
-                                    "question": "Which should I answer first?",
-                                    "options": _split_opts},
+                clarification_meta=prepare_clarification_meta(
+                    event,
+                    {"source": "compound_split",
+                     "question": "Which should I answer first?",
+                     "options": _split_opts},
+                    source="compound_split",
+                ),
+                session_id=clarification_session_id(adapter, event),
             )
             _prompt = (
                 "That looks like two questions in one — I answer them best "

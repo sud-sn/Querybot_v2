@@ -49,6 +49,8 @@ from core.semantic_registry import find_registry_clarification, validated_option
 log = logging.getLogger("querybot.clarification")
 
 _EXPIRE_MINUTES = 5
+_DEFAULT_MAX_ROUNDS = 3
+_DEFAULT_SESSION_ID = "__default__"
 
 # ── KB annotation noise patterns that must never appear in chip labels ────────
 _KB_NOISE_RES = [
@@ -99,15 +101,19 @@ _RECENT_EXPIRY_GRACE_SECONDS = 600  # 10 min — for "your clarification expired
 # ──────────────────────────────────────────────────────────────────────────────
 # In-memory trail of recently-cleared pending clarifications (Fix #7)
 # ──────────────────────────────────────────────────────────────────────────────
-# Map (account_id, zoom_user_id) → monotonic timestamp of expiry.
+# Map (account_id, zoom_user_id, session_id) -> monotonic timestamp of expiry.
 # In-process; fine for a single-worker deployment. For multi-worker, move to
 # Redis or add an 'expired_at' column to pending_clarification.
-_RECENT_EXPIRED: dict[tuple[str, str], float] = {}
+_RECENT_EXPIRED: dict[tuple[str, str, str], float] = {}
 
 
-def mark_recently_expired(account_id: str, zoom_user_id: str) -> None:
+def mark_recently_expired(
+    account_id: str,
+    zoom_user_id: str,
+    session_id: str = _DEFAULT_SESSION_ID,
+) -> None:
     """Record that a pending clarification just expired."""
-    _RECENT_EXPIRED[(account_id, zoom_user_id)] = time.monotonic()
+    _RECENT_EXPIRED[(account_id, zoom_user_id, session_id)] = time.monotonic()
     if len(_RECENT_EXPIRED) > 2048:  # opportunistic GC
         now = time.monotonic()
         stale = [k for k, ts in _RECENT_EXPIRED.items()
@@ -116,20 +122,107 @@ def mark_recently_expired(account_id: str, zoom_user_id: str) -> None:
             _RECENT_EXPIRED.pop(k, None)
 
 
-def was_recently_expired(account_id: str, zoom_user_id: str) -> bool:
+def was_recently_expired(
+    account_id: str,
+    zoom_user_id: str,
+    session_id: str = _DEFAULT_SESSION_ID,
+) -> bool:
     """Return True if a clarification for this user expired in the grace window."""
-    ts = _RECENT_EXPIRED.get((account_id, zoom_user_id))
+    key = (account_id, zoom_user_id, session_id)
+    ts = _RECENT_EXPIRED.get(key)
     if not ts:
         return False
     if time.monotonic() - ts > _RECENT_EXPIRY_GRACE_SECONDS:
-        _RECENT_EXPIRED.pop((account_id, zoom_user_id), None)
+        _RECENT_EXPIRED.pop(key, None)
         return False
     return True
 
 
-def acknowledge_recently_expired(account_id: str, zoom_user_id: str) -> None:
+def acknowledge_recently_expired(
+    account_id: str,
+    zoom_user_id: str,
+    session_id: str = _DEFAULT_SESSION_ID,
+) -> None:
     """Drop the recent-expired marker after we've surfaced it to the user."""
-    _RECENT_EXPIRED.pop((account_id, zoom_user_id), None)
+    _RECENT_EXPIRED.pop((account_id, zoom_user_id, session_id), None)
+
+
+def clarification_session_id(adapter=None, event=None) -> str:
+    """Return the tenant-local thread key used by pending clarification state."""
+    raw_session_id = getattr(adapter, "session_id", "")
+    if isinstance(raw_session_id, str) and raw_session_id.strip():
+        return raw_session_id.strip()[:240]
+    raw = getattr(event, "raw", None)
+    if isinstance(raw, dict):
+        value = str(raw.get("_conversation_session_id") or "").strip()
+        if value:
+            return value[:240]
+    return _DEFAULT_SESSION_ID
+
+
+def clarification_progress(event=None) -> tuple[int, int, set[str]]:
+    """Read bounded-loop metadata attached to an internal PlatformEvent."""
+    raw = getattr(event, "raw", None)
+    raw = raw if isinstance(raw, dict) else {}
+    try:
+        round_count = max(0, int(raw.get("_clarification_round") or 0))
+    except (TypeError, ValueError):
+        round_count = 0
+    try:
+        max_rounds = max(1, min(5, int(raw.get("_clarification_max_rounds") or _DEFAULT_MAX_ROUNDS)))
+    except (TypeError, ValueError):
+        max_rounds = _DEFAULT_MAX_ROUNDS
+    resolved = {
+        str(value).strip()
+        for value in (raw.get("_clarification_resolved_sources") or [])
+        if str(value).strip()
+    }
+    return round_count, max_rounds, resolved
+
+
+def can_request_clarification(event=None, source: str = "") -> bool:
+    """Allow a new ambiguity only when it is new and the round cap permits it."""
+    round_count, max_rounds, resolved = clarification_progress(event)
+    return round_count < max_rounds and (not source or source not in resolved)
+
+
+def prepare_clarification_meta(
+    event,
+    meta: Optional[dict] = None,
+    *,
+    source: str = "",
+) -> dict:
+    """Stamp a pending prompt with loop provenance and its prompt round."""
+    round_count, max_rounds, resolved = clarification_progress(event)
+    prepared = dict(meta or {})
+    if source:
+        prepared["source"] = source
+    prepared["round_count"] = round_count + 1
+    prepared["max_rounds"] = max_rounds
+    prepared["resolved_sources"] = sorted(resolved)
+    return prepared
+
+
+def attach_clarification_resolution(event, pending: dict) -> None:
+    """Attach a user's resolved prompt to the event used for pipeline re-plan."""
+    if event is None:
+        return
+    raw = getattr(event, "raw", None)
+    if not isinstance(raw, dict):
+        raw = {}
+        event.raw = raw
+    meta = dict((pending or {}).get("clarification_meta") or {})
+    source = str(meta.get("source") or "").strip()
+    resolved = {
+        str(value).strip()
+        for value in (meta.get("resolved_sources") or [])
+        if str(value).strip()
+    }
+    if source:
+        resolved.add(source)
+    raw["_clarification_round"] = int(meta.get("round_count") or 1)
+    raw["_clarification_max_rounds"] = int(meta.get("max_rounds") or _DEFAULT_MAX_ROUNDS)
+    raw["_clarification_resolved_sources"] = sorted(resolved)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1095,29 +1188,18 @@ def _parse_ambiguity_json(raw: str) -> Optional[dict]:
 
 def _ensure_table(conn) -> None:
     conn.execute("""
-        CREATE TABLE IF NOT EXISTS pending_clarification (
-            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        CREATE TABLE IF NOT EXISTS pending_clarification_thread (
             account_id    TEXT    NOT NULL,
             zoom_user_id  TEXT    NOT NULL,
+            session_id    TEXT    NOT NULL DEFAULT '__default__',
             original_q    TEXT    NOT NULL,
             context       TEXT    NOT NULL DEFAULT '',
             expires_at    TEXT    NOT NULL,
             created_at    TEXT    DEFAULT (datetime('now')),
-            UNIQUE(account_id, zoom_user_id)
+            clarification_meta TEXT DEFAULT '',
+            PRIMARY KEY(account_id, zoom_user_id, session_id)
         )
     """)
-    try:
-        existing = [
-            row[1] for row in
-            conn.execute("PRAGMA table_info(pending_clarification)").fetchall()
-        ]
-        if "clarification_meta" not in existing:
-            conn.execute(
-                "ALTER TABLE pending_clarification ADD COLUMN "
-                "clarification_meta TEXT DEFAULT ''"
-            )
-    except Exception:
-        pass
 
 
 def save_pending(
@@ -1126,8 +1208,10 @@ def save_pending(
     original_question: str,
     context: str = "",
     clarification_meta: Optional[dict] = None,
+    *,
+    session_id: str = _DEFAULT_SESSION_ID,
 ) -> None:
-    """Save a pending clarification."""
+    """Save a pending clarification scoped to one conversation thread."""
     from store.db import get_db
     expires = (
         datetime.now(timezone.utc) + timedelta(minutes=_EXPIRE_MINUTES)
@@ -1139,18 +1223,18 @@ def save_pending(
         _ensure_table(conn)
         conn.execute(
             """
-            INSERT INTO pending_clarification
-                (account_id, zoom_user_id, original_q, context, expires_at,
+            INSERT INTO pending_clarification_thread
+                (account_id, zoom_user_id, session_id, original_q, context, expires_at,
                  clarification_meta)
-            VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(account_id, zoom_user_id) DO UPDATE SET
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(account_id, zoom_user_id, session_id) DO UPDATE SET
                 original_q         = excluded.original_q,
                 context            = excluded.context,
                 expires_at         = excluded.expires_at,
                 clarification_meta = excluded.clarification_meta,
                 created_at         = datetime('now')
             """,
-            (account_id, zoom_user_id, original_question,
+            (account_id, zoom_user_id, str(session_id or _DEFAULT_SESSION_ID), original_question,
              context[:3000], expires, meta_json),
         )
     log.info(
@@ -1160,7 +1244,12 @@ def save_pending(
     )
 
 
-def get_pending(account_id: str, zoom_user_id: str) -> Optional[dict]:
+def get_pending(
+    account_id: str,
+    zoom_user_id: str,
+    *,
+    session_id: str = _DEFAULT_SESSION_ID,
+) -> Optional[dict]:
     """
     Return pending clarification for this user if not expired.
 
@@ -1173,10 +1262,10 @@ def get_pending(account_id: str, zoom_user_id: str) -> Optional[dict]:
         _ensure_table(conn)
         row = conn.execute(
             """
-            SELECT * FROM pending_clarification
-            WHERE account_id = ? AND zoom_user_id = ?
+            SELECT * FROM pending_clarification_thread
+            WHERE account_id = ? AND zoom_user_id = ? AND session_id = ?
             """,
-            (account_id, zoom_user_id),
+            (account_id, zoom_user_id, str(session_id or _DEFAULT_SESSION_ID)),
         ).fetchone()
 
         if not row:
@@ -1190,12 +1279,16 @@ def get_pending(account_id: str, zoom_user_id: str) -> Optional[dict]:
         if datetime.now(timezone.utc) > expiry:
             conn.execute(
                 """
-                DELETE FROM pending_clarification
-                WHERE account_id = ? AND zoom_user_id = ?
+                DELETE FROM pending_clarification_thread
+                WHERE account_id = ? AND zoom_user_id = ? AND session_id = ?
                 """,
-                (account_id, zoom_user_id),
+                (account_id, zoom_user_id, str(session_id or _DEFAULT_SESSION_ID)),
             )
-            mark_recently_expired(account_id, zoom_user_id)
+            mark_recently_expired(
+                account_id,
+                zoom_user_id,
+                str(session_id or _DEFAULT_SESSION_ID),
+            )
             return None
 
         try:
@@ -1209,17 +1302,22 @@ def get_pending(account_id: str, zoom_user_id: str) -> Optional[dict]:
         return row
 
 
-def clear_pending(account_id: str, zoom_user_id: str) -> None:
+def clear_pending(
+    account_id: str,
+    zoom_user_id: str,
+    *,
+    session_id: str = _DEFAULT_SESSION_ID,
+) -> None:
     """Remove pending clarification after it has been used."""
     from store.db import get_db
     with get_db() as conn:
         _ensure_table(conn)
         conn.execute(
             """
-            DELETE FROM pending_clarification
-            WHERE account_id = ? AND zoom_user_id = ?
+            DELETE FROM pending_clarification_thread
+            WHERE account_id = ? AND zoom_user_id = ? AND session_id = ?
             """,
-            (account_id, zoom_user_id),
+            (account_id, zoom_user_id, str(session_id or _DEFAULT_SESSION_ID)),
         )
 
 

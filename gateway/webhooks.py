@@ -57,7 +57,8 @@ from core.chart import detect_chart_type, build_chart_payload
 from core.examples import retrieve_similar_examples, format_examples_for_prompt
 from core.clarification import (
     get_pending, save_pending, clear_pending, combine_with_clarification,
-    resolve_option_text,
+    resolve_option_text, attach_clarification_resolution,
+    prepare_clarification_meta,
 )
 from core.plan_preview import build_plan_preview, pending_plan_previews
 from core.agent_runtime import AgentRunSession, activate_agent_run
@@ -896,7 +897,12 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     account_id,
                     zoom_user_id,
                     text,
-                    clarification_meta=clarification_meta,
+                    clarification_meta=prepare_clarification_meta(
+                        adapter.make_event(text),
+                        clarification_meta,
+                        source="local_result_command",
+                    ),
+                    session_id=adapter.session_id,
                 )
                 _trace_finish(
                     trace_id,
@@ -3000,7 +3006,11 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 continue
 
             if msg_type == "clarification_response":
-                pending = get_pending(account_id, zoom_user_id)
+                pending = get_pending(
+                    account_id,
+                    zoom_user_id,
+                    session_id=adapter.session_id,
+                )
                 if not pending:
                     await websocket.send_json({"type": "error", "content": "That clarification is no longer active. Please ask the question again."})
                     continue
@@ -3021,7 +3031,9 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     selected = next((o for o in opts if str(o.get("id") or "") == selected_id), None)
                     if not selected and free_text:
                         selected = resolve_option_text(opts, free_text)
-                    clear_pending(account_id, zoom_user_id)
+                    clear_pending(
+                        account_id, zoom_user_id, session_id=adapter.session_id
+                    )
 
                     report = None
                     if selected and selected.get("id") != "no_thanks":
@@ -3059,7 +3071,9 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                         )
                         continue
 
-                    clear_pending(account_id, zoom_user_id)
+                    clear_pending(
+                        account_id, zoom_user_id, session_id=adapter.session_id
+                    )
                     if cmeta.get("source") == "result_reference_confirmation":
                         if str(selected.get("id") or "") == "new-question":
                             await websocket.send_json({
@@ -3149,7 +3163,11 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 await websocket.send_json({"type": "typing", "active": True})
                 if term_hint:
                     combined = f"{combined}\n\n{term_hint}"
-                clear_pending(account_id, zoom_user_id)
+                _clarification_event = adapter.make_event(combined)
+                attach_clarification_resolution(_clarification_event, pending)
+                clear_pending(
+                    account_id, zoom_user_id, session_id=adapter.session_id
+                )
                 log.info(
                     "WS clarification resolved for '%s' with reply '%s'",
                     pending["original_q"][:80], log_label[:80],
@@ -3175,7 +3193,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     with activate_agent_run(clarification_run):
                         await handle_query(
                             account_id,
-                            adapter.make_event(combined),
+                            _clarification_event,
                             adapter,
                             combined,
                             portal_user,
@@ -3844,11 +3862,16 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     account_id,
                     zoom_user_id,
                     text,
-                    clarification_meta={
-                        "source": "result_reference_confirmation",
-                        "question": prompt,
-                        "options": options,
-                    },
+                    clarification_meta=prepare_clarification_meta(
+                        adapter.make_event(text),
+                        {
+                            "source": "result_reference_confirmation",
+                            "question": prompt,
+                            "options": options,
+                        },
+                        source="result_reference_confirmation",
+                    ),
+                    session_id=adapter.session_id,
                 )
                 await adapter.send_clarification_prompt(
                     adapter.make_event(text), prompt, options,

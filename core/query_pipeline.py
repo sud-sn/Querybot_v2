@@ -20,7 +20,10 @@ from core.examples import retrieve_similar_examples, format_examples_for_prompt
 from core.clarification import (
     check_ambiguity_glossary_first, save_pending,
     build_schema_grounded_clarification_hint, extract_original_question,
+    can_request_clarification, clarification_session_id,
+    clarification_progress, prepare_clarification_meta,
 )
+from core.analytical_intent import plan_analytical_intent
 from core.schema import run_query, load_known_tables, load_schema_columns
 from core.knowledge import load_retriever
 from core.validator import normalize_generated_sql, validate_sql
@@ -479,6 +482,27 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     )
     _trace_step(trace_id, "receive_question", output_summary={"question_id": audit_request_id})
 
+    def _save_pending_clarification(
+        original_question: str,
+        prompt_context: str,
+        meta: dict | None,
+    ) -> None:
+        if not event.user_id:
+            return
+        source = str((meta or {}).get("source") or "clarification")
+        save_pending(
+            account_id,
+            event.user_id,
+            original_question,
+            prompt_context,
+            clarification_meta=prepare_clarification_meta(
+                event,
+                meta,
+                source=source,
+            ),
+            session_id=clarification_session_id(adapter, event),
+        )
+
     if not db_cfg:
         _trace_finish(trace_id, status="error", answer_type="error", error_message="No database assigned")
         await adapter.send_message(event, "⚠️ No database assigned. Contact your administrator.")
@@ -598,6 +622,102 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     # ("who is below average?", "rank these", "show outliers"), run the query
     # against the in-memory DuckDB result cache instead of hitting the
     # production database.  Fast, private, supports full analytic SQL.
+    # Structured analytical preflight. This plan contains only user text and
+    # governed catalog names; no result rows are exposed. Materially missing
+    # slots are clarified before retrieval/SQL work, while complete plans are
+    # injected as a compact control block into the generation prompt below.
+    try:
+        _planner_metrics = []
+        for _metric in store.list_metrics(account_id):
+            _base_table = str(_metric.get("base_table") or "").upper().strip()
+            if _base_table and not any(
+                table == _base_table or table.endswith("." + _base_table)
+                for table in effective
+            ):
+                continue
+            _planner_metrics.append(_metric)
+        _planner_terms = []
+        for _term in store.list_terms(account_id):
+            _term_tables = {
+                value.strip().upper()
+                for value in str(_term.get("tables_involved") or "").split(",")
+                if value.strip()
+            }
+            if _term_tables and not any(
+                any(table == allowed or table.endswith("." + allowed) for table in effective)
+                for allowed in _term_tables
+            ):
+                continue
+            _planner_terms.append(_term)
+        _analytical_plan = plan_analytical_intent(
+            question,
+            metrics=_planner_metrics,
+            terms=_planner_terms,
+        )
+    except Exception as _plan_exc:
+        log.warning("Analytical intent planning failed open: %s", _plan_exc)
+        _analytical_plan = plan_analytical_intent(question)
+
+    _analytical_plan_context = _analytical_plan.prompt_context()
+    _trace_step(
+        trace_id,
+        "analytical_intent_plan",
+        input_summary={"question": extract_original_question(question)},
+        output_summary=_analytical_plan.to_dict(),
+    )
+
+    _planner_session_id = str(getattr(adapter, "session_id", "") or "")
+    _planner_has_cached_result = bool(
+        _planner_session_id and result_cache.has_result(_planner_session_id)
+    )
+    if _analytical_plan.needs_clarification and not _planner_has_cached_result:
+        _plan_clarification = _analytical_plan.clarification
+        _plan_source = f"analytical_plan:{_plan_clarification.slot}"
+        if can_request_clarification(event, _plan_source):
+            _plan_options = [dict(option) for option in _plan_clarification.options]
+            _plan_meta = {
+                "source": _plan_source,
+                "question": _plan_clarification.question,
+                "options": _plan_options,
+                "slot": _plan_clarification.slot,
+                "plan": _analytical_plan.to_dict(),
+            }
+            if event.user_id:
+                _save_pending_clarification(
+                    question,
+                    "",
+                    _plan_meta,
+                )
+            send_prompt = getattr(adapter, "send_clarification_prompt", None)
+            if callable(send_prompt) and _plan_options:
+                await send_prompt(event, _plan_clarification.question, _plan_options)
+            else:
+                await adapter.send_message(event, _plan_clarification.question)
+            _trace_finish(
+                trace_id,
+                status="success",
+                answer_type="clarification",
+                final_answer_summary=f"Requested analytical slot: {_plan_clarification.slot}",
+                duration_ms=int(time.time() * 1000) - start_ms,
+            )
+            return
+
+        _round_count, _max_rounds, _ = clarification_progress(event)
+        if _round_count >= _max_rounds:
+            _trace_finish(
+                trace_id,
+                status="error",
+                answer_type="clarification_limit",
+                error_message=f"Unresolved analytical slot: {_plan_clarification.slot}",
+                duration_ms=int(time.time() * 1000) - start_ms,
+            )
+            await adapter.send_message(
+                event,
+                "I still do not have enough governed context to answer accurately. "
+                f"Please restate the request and specify {_plan_clarification.slot.replace('_', ' ')}.",
+            )
+            return
+
     compliance_profile = store.get_compliance_profile(account_id)
 
     # ── Front-door PII scrub (regulated tenants) ─────────────────────────────
@@ -845,13 +965,12 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 or "Which result value did you mean?"
             )
             if event.user_id:
-                save_pending(
-                    account_id,
-                    event.user_id,
+                _save_pending_clarification(
                     question,
                     context,
-                    clarification_meta={
+                    {
                         "source": "governed_result_cache",
+                        "question": _clarification_prompt,
                         "options": _clarification_options,
                         "source_result_id": getattr(adapter, "last_result_id", None),
                     },
@@ -1313,6 +1432,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
 
     context_parts = [
         part for part in (
+            _analytical_plan_context,
             selected_schema_injection,
             table_hint_injection,
             term_injection,
@@ -1329,7 +1449,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     # Value-resolution ambiguity across DIFFERENT columns ("Emco" matches a
     # customer name AND an item description) can't be settled deterministically
     # or by the LLM — ask the user, mirroring the metric-scope clarification.
-    if _value_clarify and not is_clarification:
+    if _value_clarify and can_request_clarification(event, "value_resolver"):
         _vc = _value_clarify[0]
         _vc_options = [
             {
@@ -1344,12 +1464,10 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 f"Which one did you mean?"
             )
             if event.user_id:
-                save_pending(
-                    account_id,
-                    event.user_id,
+                _save_pending_clarification(
                     question,
                     context_with_terms,
-                    clarification_meta={
+                    {
                         "term": _vc["phrase"],
                         "options": _vc_options,
                         "source": "value_resolver",
@@ -1679,18 +1797,16 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         entity_schema_map=_entity_schema_map or None,
         limit=6,
     )
-    if _metric_scope.ambiguous and not is_clarification:
+    if _metric_scope.ambiguous and can_request_clarification(event, "metric_scope"):
         options = _metric_scope.options or []
         clarifying_q = (
             "I found more than one revenue definition. Which one should I use?"
         )
         if event.user_id and options:
-            save_pending(
-                account_id,
-                event.user_id,
+            _save_pending_clarification(
                 question,
                 context_with_terms,
-                clarification_meta={
+                {
                     "term": "revenue",
                     "options": [{"label": opt, "value": opt} for opt in options],
                     "source": "metric_scope",
@@ -1892,7 +2008,10 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 _date_context_resolution["reason"] = (
                     "default date of the uniquely connected fact"
                 )
-            if _date_context_resolution.get("status") == "ambiguous" and not is_clarification:
+            if (
+                _date_context_resolution.get("status") == "ambiguous"
+                and can_request_clarification(event, "metric_date_context")
+            ):
                 _date_options = [
                     {
                         "label": (
@@ -1904,12 +2023,10 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     for item in (_date_context_resolution.get("options") or [])[:6]
                 ]
                 if event.user_id and _date_options:
-                    save_pending(
-                        account_id,
-                        event.user_id,
+                    _save_pending_clarification(
                         question,
                         context_with_terms,
-                        clarification_meta={
+                        {
                             "term": "business date",
                             "options": _date_options,
                             "source": "metric_date_context",
@@ -2588,8 +2705,10 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             duration_ms=int(time.time() * 1000) - start_ms,
         )
 
-        # Skip ambiguity check when this IS a clarification reply — prevents infinite loop
-        if not is_clarification:
+        # A clarification reply may expose a different missing slot. Re-check
+        # ambiguity under the source-aware round limit instead of skipping all
+        # later clarification opportunities.
+        if can_request_clarification(event):
             with llm_audit_scope(
                 account_id=account_id,
                 question=question,
@@ -2602,10 +2721,18 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     account_id, question, context, provider, model, api_key, az_kwargs,
                     allowed_tables=query_scope_tables,
                 )
-            if is_ambiguous and clarifying_q and event.user_id:
+            _clarification_source = str((cmeta or {}).get("source") or "llm")
+            if (
+                is_ambiguous
+                and clarifying_q
+                and event.user_id
+                and can_request_clarification(event, _clarification_source)
+            ):
+                cmeta = dict(cmeta or {})
+                cmeta["question"] = clarifying_q
                 opts = (cmeta or {}).get("options") or []
                 if opts:
-                    save_pending(account_id, event.user_id, question, context, clarification_meta=cmeta)
+                    _save_pending_clarification(question, context, cmeta)
                     send_prompt = getattr(adapter, "send_clarification_prompt", None)
                     if callable(send_prompt):
                         await send_prompt(event, clarifying_q or "I need a bit more context to answer that.", opts)
@@ -2626,7 +2753,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                             f"_Reply with one of the options above (or type your own)._"
                         )
                 else:
-                    save_pending(account_id, event.user_id, question, context, clarification_meta=cmeta)
+                    _save_pending_clarification(question, context, cmeta)
                     await adapter.send_message(event,
                         f"❓ I need a bit more context to answer that.\n\n"
                         f"{clarifying_q}\n\n"
@@ -3325,11 +3452,11 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         query_row_count=len(rows),
     )
 
-    # Zero rows — try clarification only if NOT already a clarification reply
-    # AND there is some ambiguity signal (Fix #3). Blind LLM ambiguity checks
+    # Zero rows: clarify only when an ambiguity signal exists and the bounded
+    # loop permits a distinct next question. Blind LLM ambiguity checks
     # on every empty result set waste tokens and confuse users whose filter
     # was legitimately correct but the data genuinely has no rows.
-    if len(rows) == 0 and event.user_id and not is_clarification:
+    if len(rows) == 0 and event.user_id and can_request_clarification(event):
         _zr_matches = store.match_terms_in_question(account_id, question, query_scope_tables)
         _zr_has_required = any(
             m.get("requires_clarification") and m.get("clarification_options")
@@ -3368,10 +3495,17 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 account_id, question, context, provider, model, api_key, az_kwargs,
                 allowed_tables=query_scope_tables,
             )
-        if is_ambiguous and clarifying_q:
+        _clarification_source = str((cmeta or {}).get("source") or "llm")
+        if (
+            is_ambiguous
+            and clarifying_q
+            and can_request_clarification(event, _clarification_source)
+        ):
+            cmeta = dict(cmeta or {})
+            cmeta["question"] = clarifying_q
             opts = (cmeta or {}).get("options") or []
             if opts:
-                save_pending(account_id, event.user_id, question, context, clarification_meta=cmeta)
+                _save_pending_clarification(question, context, cmeta)
                 send_prompt = getattr(adapter, "send_clarification_prompt", None)
                 if callable(send_prompt):
                     await send_prompt(event, clarifying_q or "I need a bit more context to answer that.", opts)
@@ -3382,7 +3516,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                         f"_Reply with one of the listed clarification options and I'll rerun the query._"
                     )
             else:
-                save_pending(account_id, event.user_id, question, context, clarification_meta=cmeta)
+                _save_pending_clarification(question, context, cmeta)
                 await adapter.send_message(event,
                     f"The query ran successfully but returned *no results*.\n\n"
                     f"❓ {clarifying_q}\n\n"
