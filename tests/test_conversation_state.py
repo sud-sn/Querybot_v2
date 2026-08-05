@@ -113,6 +113,54 @@ class ConversationStateStoreTests(unittest.TestCase):
         self.assertEqual(updated.expires_at, self.now + 120)
         self.assertEqual(updated.previous_intent, "result_grounded_analysis")
 
+    def test_date_preference_is_thread_and_metric_fact_scoped(self):
+        self._record()
+        binding = {
+            "context_name": "Invoice Date",
+            "date_role": "invoice_date",
+            "fact_table": "SALES.FACT_REVENUE",
+            "fact_column": "INVOICE_DATE_KEY",
+            "dimension_table": "COMMON.DIM_DATE",
+            "dimension_key": "DATE_KEY",
+            "date_value_column": "FULL_DATE",
+            "date_key_type": "surrogate_fk",
+            "rows": [{"must": "not persist"}],
+        }
+        self.store.remember_date_preference(
+            "tenant-a",
+            "session-a",
+            binding,
+            metric_names=["Revenue"],
+            fact_tables=["SALES.FACT_REVENUE"],
+        )
+
+        remembered = self.store.get_date_preference(
+            "tenant-a",
+            "session-a",
+            metric_names=["Revenue"],
+            fact_tables=["SALES.FACT_REVENUE"],
+        )
+        self.assertEqual(remembered["fact_column"], "INVOICE_DATE_KEY")
+        self.assertNotIn("rows", remembered)
+        self.assertEqual(
+            self.store.get_date_preference(
+                "tenant-a",
+                "session-a",
+                metric_names=["Inventory"],
+                fact_tables=["INVENTORY.FACT_STOCK"],
+            ),
+            {},
+        )
+        self.assertEqual(
+            self.store.get_date_preference(
+                "tenant-a",
+                "another-thread",
+                metric_names=["Revenue"],
+                fact_tables=["SALES.FACT_REVENUE"],
+            ),
+            {},
+        )
+
     def test_metadata_state_survives_store_recreation_when_persistence_enabled(self):
         with tempfile.TemporaryDirectory() as tmp:
             db_path = str(Path(tmp) / "conversation.db")
@@ -137,6 +185,21 @@ class ConversationStateStoreTests(unittest.TestCase):
                         "rows": [{"sensitive": "must not persist"}],
                     },
                 )
+                first.remember_date_preference(
+                    "tenant-a",
+                    "thread-1",
+                    {
+                        "context_name": "Invoice Date",
+                        "fact_table": "SALES.FACT_REVENUE",
+                        "fact_column": "INVOICE_DATE_KEY",
+                        "dimension_table": "COMMON.DIM_DATE",
+                        "dimension_key": "DATE_KEY",
+                        "date_value_column": "FULL_DATE",
+                        "date_key_type": "surrogate_fk",
+                    },
+                    metric_names=["Revenue"],
+                    fact_tables=["SALES.FACT_REVENUE"],
+                )
 
                 recreated = ConversationStateStore(
                     ttl_seconds=120,
@@ -150,6 +213,15 @@ class ConversationStateStoreTests(unittest.TestCase):
                 self.assertEqual(restored.result_schema, ("MONTH", "REVENUE"))
                 self.assertEqual(restored.model_versions, {"semantic_version": "v3"})
                 self.assertFalse(hasattr(restored, "rows"))
+                self.assertEqual(
+                    recreated.get_date_preference(
+                        "tenant-a",
+                        "thread-1",
+                        metric_names=["Revenue"],
+                        fact_tables=["SALES.FACT_REVENUE"],
+                    )["fact_column"],
+                    "INVOICE_DATE_KEY",
+                )
 
                 recreated.clear("tenant-a", "thread-1")
                 third = ConversationStateStore(

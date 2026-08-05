@@ -78,6 +78,7 @@ from core.compliance.governed_query import (
 )
 from core.compliance.models import ResourceRef
 from core.compliance.policy_engine import evaluate as evaluate_policy, resolve_context
+from core.conversation_state import conversation_state_store
 
 log = logging.getLogger("querybot")
 
@@ -502,6 +503,15 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             ),
             session_id=clarification_session_id(adapter, event),
         )
+
+    _event_raw = getattr(event, "raw", None)
+    _confirmed_date_role = (
+        dict(_event_raw.get("_clarification_selected_option") or {})
+        if isinstance(_event_raw, dict)
+        and str(_event_raw.get("_clarification_selected_source") or "")
+        == "metric_date_context"
+        else {}
+    )
 
     if not db_cfg:
         _trace_finish(trace_id, status="error", answer_type="error", error_message="No database assigned")
@@ -1594,9 +1604,13 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             # (see the "do NOT introduce new joins" rule in build_sql_system_
             # prompt, which defers to the graph skeleton whenever both are
             # active), so the join never actually lands in the SQL.
-            _pregraph_date_roles = find_explicit_date_roles(
-                question,
-                list((_contract_model or {}).get("date_roles") or []),
+            _pregraph_date_roles = (
+                [_confirmed_date_role]
+                if _confirmed_date_role
+                else find_explicit_date_roles(
+                    question,
+                    list((_contract_model or {}).get("date_roles") or []),
+                )
             )
             for _date_role in _pregraph_date_roles:
                 _fact_entity = entity_name_for_table(
@@ -2012,6 +2026,17 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 bindings=_date_bindings,
                 date_roles=_date_roles,
                 required_fact_tables=_date_fact_scope,
+                confirmed_date_role=_confirmed_date_role,
+                remembered_date_role=(
+                    conversation_state_store.get_date_preference(
+                        account_id,
+                        clarification_session_id(adapter, event),
+                        metric_names=_metric_names,
+                        fact_tables=_date_fact_scope,
+                    )
+                    if not _confirmed_date_role
+                    else {}
+                ),
             )
             # Diagnostic: the "selected"/"selected_many" branch below already
             # logs a resolved binding, but a "none" or "ambiguous" outcome was
@@ -2047,16 +2072,74 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 _date_context_resolution.get("status") == "ambiguous"
                 and can_request_clarification(event, "metric_date_context")
             ):
-                _date_options = [
-                    {
-                        "label": (
-                            f"{item.get('context_name') or item.get('date_role')} "
-                            f"({item.get('fact_column')})"
+                _all_date_bindings = list(
+                    _date_context_resolution.get("all_options")
+                    or _date_context_resolution.get("options")
+                    or []
+                )
+                _visible_date_bindings = list(
+                    _date_context_resolution.get("options") or []
+                )[:4]
+                _label_counts: dict[str, int] = {}
+                for _item in _all_date_bindings:
+                    _base_label = str(
+                        _item.get("context_name")
+                        or _item.get("date_role")
+                        or "Business date"
+                    ).strip()
+                    _label_counts[_base_label.casefold()] = (
+                        _label_counts.get(_base_label.casefold(), 0) + 1
+                    )
+
+                def _date_choice_option(item: dict, index: int) -> dict:
+                    base_label = str(
+                        item.get("context_name")
+                        or item.get("date_role")
+                        or "Business date"
+                    ).strip()
+                    label = base_label
+                    if _label_counts.get(base_label.casefold(), 0) > 1:
+                        fact_name = str(item.get("fact_table") or "").split(".")[-1]
+                        if fact_name:
+                            label = f"{base_label} — {fact_name}"
+                    option = {
+                        "id": f"date_role_{index}",
+                        "label": label,
+                        "value": base_label,
+                        "allow_free_text": bool(
+                            _date_context_resolution.get("allow_free_text")
                         ),
-                        "value": item.get("context_name") or item.get("date_role") or "",
                     }
-                    for item in (_date_context_resolution.get("options") or [])[:6]
+                    # These fields came from the server-side semantic contract
+                    # and let the retry use the exact physical role selected.
+                    for key in (
+                        "context_name", "aliases", "date_role", "fact_table",
+                        "fact_column", "dimension_table", "dimension_key",
+                        "date_value_column", "date_key_type", "is_default",
+                        "priority", "resolution_source", "governance_status",
+                    ):
+                        if key in item:
+                            option[key] = item.get(key)
+                    return option
+
+                _all_date_options = [
+                    _date_choice_option(item, index)
+                    for index, item in enumerate(_all_date_bindings, start=1)
                 ]
+                _visible_identities = {
+                    (
+                        str(item.get("fact_table") or "").upper(),
+                        str(item.get("fact_column") or "").upper(),
+                    )
+                    for item in _visible_date_bindings
+                }
+                _date_options = [
+                    option for option in _all_date_options
+                    if (
+                        str(option.get("fact_table") or "").upper(),
+                        str(option.get("fact_column") or "").upper(),
+                    ) in _visible_identities
+                ][:4]
                 if event.user_id and _date_options:
                     _save_pending_clarification(
                         question,
@@ -2064,6 +2147,10 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                         {
                             "term": "business date",
                             "options": _date_options,
+                            "all_options": _all_date_options,
+                            "allow_free_text": bool(
+                                _date_context_resolution.get("allow_free_text")
+                            ),
                             "source": "metric_date_context",
                         },
                     )
@@ -2073,10 +2160,17 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                         "Which date context should I use?"
                     )
                 else:
-                    _date_question = (
-                        "This metric has more than one valid business date. "
-                        "Which date context should I use?"
-                    )
+                    if _date_context_resolution.get("allow_free_text"):
+                        _date_question = (
+                            "I found these relevant business dates, but none is an "
+                            "unambiguous approved default. Which date should I use? "
+                            "If it is not listed, enter its business name below."
+                        )
+                    else:
+                        _date_question = (
+                            "This metric has more than one valid business date. "
+                            "Which date context should I use?"
+                        )
                 send_prompt = getattr(adapter, "send_clarification_prompt", None)
                 if callable(send_prompt) and _date_options:
                     await send_prompt(event, _date_question, _date_options)
@@ -2115,6 +2209,22 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                         if _date_context_resolution.get("status") == "selected_many"
                         else [_date_context_resolution.get("binding") or {}]
                     )
+                    if any(
+                        str(binding.get("resolution_source") or "")
+                        == "thread_date_preference"
+                        for binding in _selected_date_bindings
+                    ):
+                        _thread_date_label = str(
+                            (_selected_date_bindings[0] or {}).get("context_name")
+                            or (_selected_date_bindings[0] or {}).get("date_role")
+                            or "the previously selected business date"
+                        )
+                        await adapter.send_message(
+                            event,
+                            f"Using **{_thread_date_label}** for this metric in "
+                            "the current thread. Name a different business date "
+                            "at any time to change it.",
+                        )
                     _date_graph = _graph_with_exact_date_edges(
                         _full_graph,
                         _selected_date_bindings,
@@ -3751,6 +3861,36 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                             "metrics": _matched_metrics,
                         },
                         contract_version=_contract_version)
+    # Only a successful query turns the clarification choice into a thread
+    # preference. Failed validation/execution must not teach the session a
+    # potentially unusable date role, and this metadata is never promoted to
+    # the tenant's governed semantic model.
+    if _confirmed_date_role and _selected_date_bindings:
+        try:
+            _confirmed_binding = next(
+                (
+                    binding for binding in _selected_date_bindings
+                    if str(binding.get("resolution_source") or "")
+                    == "user_confirmed_date_role"
+                ),
+                {},
+            )
+            if _confirmed_binding:
+                conversation_state_store.remember_date_preference(
+                    account_id,
+                    clarification_session_id(adapter, event),
+                    _confirmed_binding,
+                    metric_names=[
+                        metric.get("name") for metric in _matched_metrics
+                        if metric.get("name")
+                    ],
+                    fact_tables=[_confirmed_binding.get("fact_table")],
+                )
+        except Exception as _date_preference_exc:
+            log.debug(
+                "Thread date preference could not be persisted: %s",
+                _date_preference_exc,
+            )
     if _why_mode and rows:
         await _send_why_insight(
             adapter, event,

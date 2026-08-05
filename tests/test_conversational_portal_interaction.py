@@ -14,6 +14,12 @@ def test_open_ended_clarification_has_a_free_text_reply_path():
     assert "Shift + Enter for a new line" in CHAT
 
 
+def test_ranked_date_choices_keep_a_custom_business_date_input_below_them():
+    assert "options.some((opt) => Boolean(opt.allow_free_text))" in CHAT
+    assert "None of these? Enter the business date to use" in CHAT
+    assert "For example: accounting date" in CHAT
+
+
 def test_outbound_messages_expose_delivery_and_manual_recovery_states():
     assert "function _setUserMessageState" in CHAT
     assert "function _retryUserMessage" in CHAT

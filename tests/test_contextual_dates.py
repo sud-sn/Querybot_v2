@@ -140,6 +140,151 @@ class ContextualDateResolutionTests(unittest.TestCase):
         self.assertEqual(result["status"], "ambiguous")
         self.assertEqual(len(result["options"]), 2)
 
+    def test_unapproved_discovered_dates_are_ranked_and_shortlisted_for_metric(self):
+        roles = []
+        for index in range(1, 8):
+            roles.append({
+                "name": f"Business Date {index}",
+                "business_role": f"business_date_{index}",
+                "fact_table": "SALES.FACT_REVENUE",
+                "fact_column": f"DATE_{index}_KEY",
+                "dimension_table": "SALES.DIM_DATE",
+                "dimension_key": "DATE_KEY",
+                "date_value_column": "FULL_DATE",
+                "date_key_type": "surrogate_fk",
+                "status": "generated",
+                "confidence": 90 - index,
+            })
+        roles.append({
+            "name": "Unrelated Inventory Date",
+            "business_role": "inventory_date",
+            "fact_table": "INVENTORY.FACT_STOCK",
+            "fact_column": "STOCK_DATE_KEY",
+            "dimension_table": "INVENTORY.DIM_DATE",
+            "dimension_key": "DATE_KEY",
+            "date_value_column": "FULL_DATE",
+            "date_key_type": "surrogate_fk",
+            "status": "generated",
+            "confidence": 99,
+        })
+
+        result = resolve_contextual_date_binding(
+            "what is my revenue today",
+            matched_metrics=[self.metric],
+            bindings=[],
+            date_roles=roles,
+            required_fact_tables={"SALES.FACT_REVENUE"},
+        )
+
+        self.assertEqual(result["status"], "ambiguous")
+        self.assertTrue(result["allow_free_text"])
+        self.assertEqual(len(result["options"]), 4)
+        self.assertEqual(len(result["all_options"]), 7)
+        self.assertEqual(result["options"][0]["fact_column"], "DATE_1_KEY")
+        self.assertNotIn(
+            "STOCK_DATE_KEY",
+            {item["fact_column"] for item in result["all_options"]},
+        )
+
+    def test_only_approved_discovered_date_on_fact_is_selected(self):
+        role = {
+            "name": "Invoice Date",
+            "business_role": "invoice_date",
+            "fact_table": "SALES.FACT_REVENUE",
+            "fact_column": "INVOICE_DATE_KEY",
+            "dimension_table": "SALES.DIM_DATE",
+            "dimension_key": "DATE_KEY",
+            "date_value_column": "FULL_DATE",
+            "date_key_type": "surrogate_fk",
+            "status": "approved",
+            "confidence": 99,
+        }
+        result = resolve_contextual_date_binding(
+            "what is my revenue today",
+            matched_metrics=[self.metric],
+            bindings=[],
+            date_roles=[role],
+            required_fact_tables={"SALES.FACT_REVENUE"},
+        )
+        self.assertEqual(result["status"], "selected")
+        self.assertEqual(result["binding"]["fact_column"], "INVOICE_DATE_KEY")
+        self.assertEqual(
+            result["binding"]["resolution_source"],
+            "single_approved_date_role",
+        )
+
+    def test_confirmed_discovered_date_is_preserved_by_physical_identity(self):
+        confirmed = _binding(
+            "Accounting Date",
+            "accounting_date",
+            "ACCOUNTING_DATE_KEY",
+        )
+        confirmed["governance_status"] = "generated"
+        result = resolve_contextual_date_binding(
+            "what is my revenue today",
+            matched_metrics=[self.metric],
+            bindings=[],
+            date_roles=[],
+            required_fact_tables={"SALES.FACT_REVENUE"},
+            confirmed_date_role=confirmed,
+        )
+        self.assertEqual(result["status"], "selected")
+        self.assertEqual(result["binding"]["fact_column"], "ACCOUNTING_DATE_KEY")
+        self.assertEqual(
+            result["binding"]["resolution_source"],
+            "user_confirmed_date_role",
+        )
+
+    def test_thread_date_preference_reuses_choice_for_same_metric_and_fact(self):
+        remembered = _binding(
+            "Accounting Date",
+            "accounting_date",
+            "ACCOUNTING_DATE_KEY",
+        )
+        result = resolve_contextual_date_binding(
+            "what is my revenue today",
+            matched_metrics=[self.metric],
+            bindings=[],
+            date_roles=[],
+            required_fact_tables={"SALES.FACT_REVENUE"},
+            remembered_date_role=remembered,
+        )
+        self.assertEqual(result["status"], "selected")
+        self.assertEqual(result["binding"]["fact_column"], "ACCOUNTING_DATE_KEY")
+        self.assertEqual(
+            result["binding"]["resolution_source"],
+            "thread_date_preference",
+        )
+
+    def test_thread_date_preference_does_not_cross_fact_scope(self):
+        remembered = _binding(
+            "Accounting Date",
+            "accounting_date",
+            "ACCOUNTING_DATE_KEY",
+        )
+        inventory_role = {
+            "name": "Stock Date",
+            "business_role": "stock_date",
+            "fact_table": "INVENTORY.FACT_STOCK",
+            "fact_column": "STOCK_DATE_KEY",
+            "dimension_table": "INVENTORY.DIM_DATE",
+            "dimension_key": "DATE_KEY",
+            "date_value_column": "FULL_DATE",
+            "date_key_type": "surrogate_fk",
+            "status": "generated",
+            "confidence": 97,
+        }
+        result = resolve_contextual_date_binding(
+            "what is my inventory today",
+            matched_metrics=[],
+            bindings=[],
+            date_roles=[inventory_role],
+            required_fact_tables={"INVENTORY.FACT_STOCK"},
+            remembered_date_role=remembered,
+        )
+        self.assertEqual(result["status"], "ambiguous")
+        self.assertEqual(result["options"][0]["fact_column"], "STOCK_DATE_KEY")
+
     def test_explicit_approved_role_overrides_default(self):
         roles = [{
             "name": "Delivery Date",

@@ -221,6 +221,84 @@ def _role_as_binding(role: dict, *, source: str) -> dict:
     }
 
 
+def _relevant_discovered_date_roles(
+    question: str,
+    *,
+    matched_metrics: list[dict] | None,
+    date_roles: list[dict] | None,
+    required_fact_tables: set[str] | None,
+) -> list[dict]:
+    """Rank physically complete date roles for a scoped clarification.
+
+    This fallback is deliberately unavailable without a resolved metric/fact
+    scope.  A production warehouse can contain dozens of business dates; a
+    global list would be noisy and could expose dates from an unrelated
+    business process.  Within the resolved fact, approved roles rank first,
+    followed by the metric's configured time column and discovery confidence.
+    """
+    metrics = list(matched_metrics or [])
+    fact_scope = {
+        _table_identity(table)[0]
+        for table in (required_fact_tables or set())
+        if table
+    }
+    metric_tables = {
+        _table_identity(metric.get("base_table"))[0]
+        for metric in metrics
+        if metric.get("base_table")
+    }
+    fact_scope |= metric_tables
+    if not fact_scope:
+        return []
+
+    configured_time_columns = {
+        str(metric.get("default_time_column") or "").strip().strip("[]`").upper().split(".")[-1]
+        for metric in metrics
+        if metric.get("default_time_column")
+    }
+    q_tokens = set(normalize_date_role_text(question).split())
+    ranked: list[tuple[int, str, str, dict]] = []
+    seen: set[tuple[str, str]] = set()
+    for role in date_roles or []:
+        status = str(role.get("status") or "").casefold()
+        if status not in {"approved", "generated", "needs_review"}:
+            continue
+        if not _role_is_complete(role):
+            continue
+        role_table = _table_identity(role.get("fact_table"))[0]
+        if not any(_same_table(role_table, table) for table in fact_scope):
+            continue
+        role_column = str(role.get("fact_column") or "").strip().upper()
+        identity = (role_table, role_column)
+        if identity in seen:
+            continue
+        seen.add(identity)
+
+        score = max(0, min(100, int(role.get("confidence") or 0)))
+        if status == "approved":
+            score += 80
+        if role_column.split(".")[-1] in configured_time_columns:
+            score += 160
+        if any(_same_table(role_table, table) for table in metric_tables):
+            score += 60
+        role_terms = set(
+            normalize_date_role_text(
+                " ".join([
+                    str(role.get("name") or ""),
+                    str(role.get("business_role") or "").replace("_", " "),
+                    " ".join(_terms(role.get("synonyms", []))),
+                ])
+            ).split()
+        )
+        # Generic temporal words do not make every date equally relevant, but
+        # an event word such as "invoiced" or "delivered" is useful evidence.
+        score += min(30, len((role_terms & q_tokens) - {"date", "day", "today"}) * 10)
+        ranked.append((score, role_table, role_column, role))
+
+    ranked.sort(key=lambda item: (-item[0], item[1], item[2]))
+    return [dict(item[3]) for item in ranked]
+
+
 def resolve_contextual_date_binding(
     question: str,
     *,
@@ -228,6 +306,8 @@ def resolve_contextual_date_binding(
     bindings: list[dict] | None,
     date_roles: list[dict] | None,
     required_fact_tables: set[str] | None = None,
+    confirmed_date_role: dict | None = None,
+    remembered_date_role: dict | None = None,
 ) -> dict:
     """Resolve a date binding without letting an LLM guess.
 
@@ -243,6 +323,25 @@ def resolve_contextual_date_binding(
     # date words recognized by question_has_temporal_intent().
     if not question_has_temporal_intent(question) and not explicit:
         return {"status": "none", "reason": "no temporal intent"}
+
+    # A clarification option is created by the server from the semantic
+    # contract and copied onto the retry event by the dispatcher.  Preserve
+    # that exact physical identity instead of trying to rediscover it from the
+    # option label (which can collide across facts).
+    if confirmed_date_role and _role_is_complete(confirmed_date_role):
+        if confirmed_date_role.get("context_name"):
+            selected = dict(confirmed_date_role)
+            selected["resolution_source"] = "user_confirmed_date_role"
+        else:
+            selected = _role_as_binding(
+                confirmed_date_role,
+                source="user_confirmed_date_role",
+            )
+        return {
+            "status": "selected",
+            "binding": selected,
+            "reason": "date role confirmed by the user",
+        }
 
     metrics = matched_metrics or []
     metric_tables = {
@@ -355,6 +454,25 @@ def resolve_contextual_date_binding(
             ),
             "reason": "default date role for resolved fact",
         }
+
+    # Ana-style thread continuity: a date explicitly confirmed by the user on
+    # an earlier turn may be reused for the same metric/fact. This sits below
+    # current-turn wording and governed defaults, and above another discovery
+    # clarification. It is a session assumption, never an ontology approval.
+    if remembered_date_role and _role_is_complete(remembered_date_role):
+        remembered = dict(remembered_date_role)
+        if fact_scope and not any(
+            _same_table(remembered.get("fact_table"), table)
+            for table in fact_scope
+        ):
+            remembered = {}
+        if remembered:
+            remembered["resolution_source"] = "thread_date_preference"
+            return {
+                "status": "selected",
+                "binding": remembered,
+                "reason": "date role previously confirmed in this thread",
+            }
     if len(approved_roles) > 1:
         return {
             "status": "ambiguous",
@@ -375,6 +493,45 @@ def resolve_contextual_date_binding(
         only = dict(candidates[0])
         only["resolution_source"] = "single_metric_context"
         return {"status": "selected", "binding": only, "reason": "only configured date context"}
+
+    discovered = _relevant_discovered_date_roles(
+        question,
+        matched_metrics=metrics,
+        date_roles=roles,
+        required_fact_tables=required_fact_tables,
+    )
+    if discovered:
+        approved = [
+            role for role in discovered
+            if str(role.get("status") or "").casefold() == "approved"
+        ]
+        # One approved role on the resolved fact is governed and unambiguous;
+        # it is safe to use even if an administrator did not explicitly mark
+        # it as the default. Multiple approved roles still need a choice.
+        if len(discovered) == 1 and len(approved) == 1:
+            return {
+                "status": "selected",
+                "binding": _role_as_binding(
+                    approved[0], source="single_approved_date_role"
+                ),
+                "reason": "only approved date role for the resolved fact",
+            }
+        all_options = [
+            _role_as_binding(role, source="discovered_date_role")
+            for role in discovered
+        ]
+        return {
+            "status": "ambiguous",
+            "reason": (
+                "the resolved fact has business dates but no unambiguous "
+                "approved/default date role"
+            ),
+            # Four choices remain scannable on mobile. The complete scoped set
+            # is retained for matching a date typed into the custom field.
+            "options": all_options[:4],
+            "all_options": all_options,
+            "allow_free_text": True,
+        }
     return {"status": "none", "reason": "no governed date context"}
 
 

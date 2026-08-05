@@ -61,6 +61,9 @@ class ConversationState:
     trace_id: str = ""
     result_schema: tuple[str, ...] = field(default_factory=tuple)
     model_versions: dict[str, str] = field(default_factory=dict)
+    # Metadata-only semantic choices confirmed by the user in this thread.
+    # Values contain schema identities (table/column/date role), never rows.
+    date_preferences: dict[str, dict[str, Any]] = field(default_factory=dict)
     updated_at: float = 0.0
     expires_at: float = 0.0
 
@@ -112,12 +115,27 @@ class ConversationStateStore:
                         trace_id TEXT DEFAULT '',
                         result_schema TEXT DEFAULT '[]',
                         model_versions TEXT DEFAULT '{}',
+                        date_preferences TEXT DEFAULT '{}',
                         updated_at REAL NOT NULL,
                         expires_at REAL NOT NULL,
                         PRIMARY KEY (account_id, session_id)
                     )
                     """
                 )
+                # Existing installations may already have the runtime-owned
+                # table. Keep this migration local to conversation metadata;
+                # no application-wide schema migration is required.
+                columns = {
+                    str(row[1])
+                    for row in conn.execute(
+                        "PRAGMA table_info(conversation_thread_state)"
+                    ).fetchall()
+                }
+                if "date_preferences" not in columns:
+                    conn.execute(
+                        "ALTER TABLE conversation_thread_state "
+                        "ADD COLUMN date_preferences TEXT DEFAULT '{}'"
+                    )
             self._table_ready = True
         except Exception as exc:
             # Conversation persistence improves continuity but must never make
@@ -132,6 +150,7 @@ class ConversationStateStore:
         try:
             schema = json.loads(row["result_schema"] or "[]")
             versions = json.loads(row["model_versions"] or "{}")
+            date_preferences = json.loads(row["date_preferences"] or "{}")
             return ConversationState(
                 account_id=str(row["account_id"] or ""),
                 session_id=str(row["session_id"] or ""),
@@ -143,6 +162,11 @@ class ConversationStateStore:
                 trace_id=str(row["trace_id"] or ""),
                 result_schema=tuple(str(value) for value in schema or ()),
                 model_versions={str(k): str(v) for k, v in (versions or {}).items()},
+                date_preferences={
+                    str(key): dict(value)
+                    for key, value in (date_preferences or {}).items()
+                    if isinstance(value, dict)
+                },
                 updated_at=float(row["updated_at"] or 0),
                 expires_at=float(row["expires_at"] or 0),
             )
@@ -163,6 +187,7 @@ class ConversationStateStore:
                     SELECT account_id, session_id, user_id, channel,
                            previous_question, previous_intent, result_id,
                            trace_id, result_schema, model_versions,
+                           date_preferences,
                            updated_at, expires_at
                     FROM conversation_thread_state
                     WHERE account_id=? AND session_id=?
@@ -188,8 +213,9 @@ class ConversationStateStore:
                         (account_id, session_id, user_id, channel,
                          previous_question, previous_intent, result_id,
                          trace_id, result_schema, model_versions,
+                         date_preferences,
                          updated_at, expires_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(account_id, session_id) DO UPDATE SET
                         user_id=excluded.user_id,
                         channel=excluded.channel,
@@ -199,6 +225,7 @@ class ConversationStateStore:
                         trace_id=excluded.trace_id,
                         result_schema=excluded.result_schema,
                         model_versions=excluded.model_versions,
+                        date_preferences=excluded.date_preferences,
                         updated_at=excluded.updated_at,
                         expires_at=excluded.expires_at
                     """,
@@ -213,6 +240,7 @@ class ConversationStateStore:
                         state.trace_id,
                         json.dumps(list(state.result_schema), separators=(",", ":")),
                         json.dumps(state.model_versions, sort_keys=True, separators=(",", ":")),
+                        json.dumps(state.date_preferences, sort_keys=True, separators=(",", ":")),
                         state.updated_at,
                         state.expires_at,
                     ),
@@ -303,6 +331,7 @@ class ConversationStateStore:
             trace_id=str(trace_id or (prior.trace_id if prior else "")),
             result_schema=schema or (prior.result_schema if prior else ()),
             model_versions=versions,
+            date_preferences=dict(prior.date_preferences) if prior else {},
             updated_at=now,
             expires_at=now + self.ttl_seconds,
         )
@@ -310,6 +339,89 @@ class ConversationStateStore:
             self._states[key] = state
         self._persist(state)
         return state
+
+    @staticmethod
+    def _date_scope_keys(
+        metric_names: Iterable[Any] = (),
+        fact_tables: Iterable[Any] = (),
+    ) -> list[str]:
+        metrics = sorted({
+            str(value or "").strip().casefold()
+            for value in metric_names
+            if str(value or "").strip()
+        })
+        facts = sorted({
+            str(value or "").strip().strip("[]`").upper()
+            for value in fact_tables
+            if str(value or "").strip()
+        })
+        if metrics and facts:
+            return [
+                f"metric:{metric}|fact:{fact}"
+                for metric in metrics
+                for fact in facts
+            ]
+        if metrics:
+            return [f"metric:{metric}" for metric in metrics]
+        return [f"fact:{fact}" for fact in facts]
+
+    def get_date_preference(
+        self,
+        account_id: Any,
+        session_id: Any,
+        *,
+        metric_names: Iterable[Any] = (),
+        fact_tables: Iterable[Any] = (),
+    ) -> dict[str, Any]:
+        """Return a user-confirmed date role scoped to this analytical topic."""
+        state = self.get(account_id, session_id)
+        if state is None:
+            return {}
+        for key in self._date_scope_keys(metric_names, fact_tables):
+            preference = state.date_preferences.get(key)
+            if isinstance(preference, dict) and preference:
+                return dict(preference)
+        return {}
+
+    def remember_date_preference(
+        self,
+        account_id: Any,
+        session_id: Any,
+        binding: dict[str, Any],
+        *,
+        metric_names: Iterable[Any] = (),
+        fact_tables: Iterable[Any] = (),
+    ) -> ConversationState | None:
+        """Remember schema metadata for the thread without governing the tenant."""
+        keys = self._date_scope_keys(metric_names, fact_tables)
+        if not keys or not isinstance(binding, dict):
+            return self.get(account_id, session_id)
+        allowed = {
+            "context_name", "aliases", "date_role", "fact_table",
+            "fact_column", "dimension_table", "dimension_key",
+            "date_value_column", "date_key_type", "governance_status",
+        }
+        safe_binding = {
+            key: value for key, value in binding.items()
+            if key in allowed and isinstance(value, (str, int, float, bool, type(None)))
+        }
+        if not safe_binding.get("fact_table") or not safe_binding.get("fact_column"):
+            return self.get(account_id, session_id)
+        key = self._key(account_id, session_id)
+        now = self._clock()
+        with self._lock:
+            prior = self.get(*key)
+            if prior is None:
+                prior = ConversationState(account_id=key[0], session_id=key[1])
+            preferences = dict(prior.date_preferences)
+            for scope_key in keys:
+                preferences[scope_key] = dict(safe_binding)
+            prior.date_preferences = preferences
+            prior.updated_at = now
+            prior.expires_at = now + self.ttl_seconds
+            self._states[key] = prior
+        self._persist(prior)
+        return prior
 
     def clear(self, account_id: Any, session_id: Any) -> None:
         key = self._key(account_id, session_id)

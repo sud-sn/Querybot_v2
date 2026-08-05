@@ -1336,6 +1336,15 @@ async def dispatch(
                     return
                 if opts:
                     match = resolve_option_text(opts, text)
+                    if not match and cmeta.get("allow_free_text"):
+                        # The portal deliberately shows only a short, relevant
+                        # date-role menu. Match a typed business date against
+                        # the complete server-side scoped set without rendering
+                        # dozens of production columns in the chat.
+                        match = resolve_option_text(
+                            cmeta.get("all_options") or [],
+                            text,
+                        )
                     if not match:
                         if _looks_like_new_query(text, pending["original_q"]):
                             clear_pending(account_id, event.user_id, session_id=_pending_session_id)
@@ -1348,12 +1357,30 @@ async def dispatch(
                             return
                         send_prompt = getattr(adapter, "send_clarification_prompt", None)
                         if callable(send_prompt):
-                            await send_prompt(event, cmeta.get("question") or "Please choose one of the available options.", opts)
+                            if cmeta.get("allow_free_text"):
+                                retry_question = (
+                                    "I couldn't match that to a discovered business date. "
+                                    "Choose one below or enter another date name exactly as "
+                                    "your business uses it."
+                                )
+                            else:
+                                retry_question = (
+                                    cmeta.get("question")
+                                    or "Please choose one of the available options."
+                                )
+                            await send_prompt(event, retry_question, opts)
                         else:
                             await adapter.send_message(event, "Please reply using one of the clarification options so I can continue.")
                         return
                     selected_text = str(match.get("value") or match.get("label") or text).strip()
                     matched_option_id = str(match.get("id") or "") or None
+                    if cmeta.get("source") == "metric_date_context":
+                        raw = getattr(event, "raw", None)
+                        if not isinstance(raw, dict):
+                            raw = {}
+                            event.raw = raw
+                        raw["_clarification_selected_source"] = "metric_date_context"
+                        raw["_clarification_selected_option"] = dict(match)
                 else:
                     # Continue the original request with the user's free-text
                     # clarification instead of resetting the conversation.

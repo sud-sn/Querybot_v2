@@ -3714,13 +3714,17 @@ function renderClarificationPrompt(data, opts = {}){
     });
     wrap.appendChild(btn);
   });
-  if (!options.length) {
+  const appendFreeTextClarification = (hasChoices) => {
     const form = document.createElement('div');
     form.className = 'clarification-freeform';
     const fieldId = `clarification-${String(data.pending_id || 'reply').replace(/[^A-Za-z0-9_-]/g, '')}`;
     form.innerHTML = `<label for="${fieldId}">Your answer</label><div class="clarification-input-row"><textarea id="${fieldId}" rows="2" maxlength="500" placeholder="Add the detail QueryBot needs to continue"></textarea><button type="button" class="clarification-submit">Continue</button></div><div class="clarification-help">Press Enter to continue · Shift + Enter for a new line</div>`;
     const input = form.querySelector('textarea');
     const submit = form.querySelector('.clarification-submit');
+    if (hasChoices) {
+      form.querySelector('label').textContent = 'None of these? Enter the business date to use';
+      input.placeholder = 'For example: accounting date';
+    }
     submit.addEventListener('click', () => _submitClarification(data, input.value, '', card));
     input.addEventListener('keydown', (event) => {
       if (event.key === 'Enter' && !event.shiftKey) {
@@ -3730,6 +3734,11 @@ function renderClarificationPrompt(data, opts = {}){
     });
     card.appendChild(form);
     setTimeout(() => input.focus(), 0);
+  };
+  if (!options.length) {
+    appendFreeTextClarification(false);
+  } else if (options.some((opt) => Boolean(opt.allow_free_text))) {
+    appendFreeTextClarification(true);
   }
   thread().appendChild(div);
   if (opts.persist !== false) pushChatCache({ kind:'clarification_prompt', payload: data, timestamp });
