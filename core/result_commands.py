@@ -92,6 +92,15 @@ _RESULT_CONTEXT_RE = re.compile(
     r"(?:result|results|data|dataset|rows?|table)\b",
     re.IGNORECASE,
 )
+_AUTO_PRESENTATION_RE = re.compile(
+    r"^\s*(?:(?:show|render|display|provide|give)(?:\s+me)?\s+"
+    r"(?:(?:this|that|the|current|previous|above)\s+)?"
+    r"(?:(?:result|results|data|dataset)\s+)?(?:as|in|into)?\s*"
+    r"(?:a\s+)?(?:chart|visual|graph)|"
+    r"(?:chart|plot|visuali[sz]e)\s+(?:this|that|the|current|previous|above)"
+    r"(?:\s+(?:result|results|data|dataset))?)\s*[.!]?\s*$",
+    re.IGNORECASE,
+)
 
 _PRESENTATION_VERB_RE = re.compile(
     r"\b(?:format|reformat|display|present|provide|return|output|render|change|convert|"
@@ -203,6 +212,13 @@ def parse_result_command(text: str) -> ResultCommand | None:
         # execute_result_command's presentation branch below.
         return ResultCommand(
             "presentation", presentation_type=match.group(1).lower(), fallback_allowed=True,
+        )
+    if _AUTO_PRESENTATION_RE.fullmatch(value):
+        # Keep chart selection deterministic and local: the renderer chooses
+        # from the cached row/column shape.  No result values are sent to an
+        # LLM merely to decide between bar, line, pie, or KPI.
+        return ResultCommand(
+            "presentation", presentation_type="auto", fallback_allowed=True,
         )
     if _KEEP_TOP_ONE_RE.fullmatch(value):
         return ResultCommand("keep_top", limit=1)
@@ -460,7 +476,11 @@ def execute_result_command(
                 column_formats=dict(source.get("column_formats") or {}),
                 metadata=metadata,
             )
-            label = "table" if presentation_type == "table" else f"{presentation_type} chart"
+            label = (
+                "best-fit chart" if presentation_type == "auto"
+                else "table" if presentation_type == "table"
+                else f"{presentation_type} chart"
+            )
             return ResultCommandOutcome(
                 handled=True,
                 ok=True,

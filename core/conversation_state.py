@@ -9,11 +9,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+import json
+import logging
 import os
 import re
 import threading
 import time
 from typing import Any, Callable, Iterable
+
+
+log = logging.getLogger("querybot.conversation_state")
 
 
 class TurnIntent(str, Enum):
@@ -61,21 +66,180 @@ class ConversationState:
 
 
 class ConversationStateStore:
-    """Tenant-isolated in-memory state with lazy TTL expiry."""
+    """Tenant-isolated metadata state with optional durable persistence.
+
+    Persisted state never contains result rows or sampled values.  It only
+    stores the same handles, output column names, and semantic-version labels
+    held in memory.  The governed result cache remains the authority for row
+    access; after a restart, a stale result handle therefore helps explain the
+    prior turn but never grants access to missing rows.
+    """
 
     def __init__(
         self,
         ttl_seconds: int | None = None,
         *,
         clock: Callable[[], float] = time.time,
+        persist: bool = False,
     ) -> None:
         configured = ttl_seconds
         if configured is None:
             configured = int(os.getenv("CONVERSATION_STATE_TTL_SECONDS", "1800"))
         self.ttl_seconds = max(60, int(configured))
         self._clock = clock
+        self.persist = bool(persist)
         self._states: dict[tuple[str, str], ConversationState] = {}
         self._lock = threading.RLock()
+        self._table_ready = False
+
+    def _ensure_table(self) -> None:
+        if not self.persist or self._table_ready:
+            return
+        try:
+            from store.database import get_db
+
+            with get_db() as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS conversation_thread_state (
+                        account_id TEXT NOT NULL,
+                        session_id TEXT NOT NULL,
+                        user_id TEXT DEFAULT '',
+                        channel TEXT DEFAULT '',
+                        previous_question TEXT DEFAULT '',
+                        previous_intent TEXT DEFAULT '',
+                        result_id TEXT DEFAULT '',
+                        trace_id TEXT DEFAULT '',
+                        result_schema TEXT DEFAULT '[]',
+                        model_versions TEXT DEFAULT '{}',
+                        updated_at REAL NOT NULL,
+                        expires_at REAL NOT NULL,
+                        PRIMARY KEY (account_id, session_id)
+                    )
+                    """
+                )
+            self._table_ready = True
+        except Exception as exc:
+            # Conversation persistence improves continuity but must never make
+            # answering unavailable when the metadata store is temporarily
+            # locked or still migrating.
+            log.warning("Conversation-state persistence unavailable: %s", exc)
+
+    @staticmethod
+    def _from_row(row: Any) -> ConversationState | None:
+        if not row:
+            return None
+        try:
+            schema = json.loads(row["result_schema"] or "[]")
+            versions = json.loads(row["model_versions"] or "{}")
+            return ConversationState(
+                account_id=str(row["account_id"] or ""),
+                session_id=str(row["session_id"] or ""),
+                user_id=str(row["user_id"] or ""),
+                channel=str(row["channel"] or ""),
+                previous_question=str(row["previous_question"] or ""),
+                previous_intent=str(row["previous_intent"] or ""),
+                result_id=str(row["result_id"] or ""),
+                trace_id=str(row["trace_id"] or ""),
+                result_schema=tuple(str(value) for value in schema or ()),
+                model_versions={str(k): str(v) for k, v in (versions or {}).items()},
+                updated_at=float(row["updated_at"] or 0),
+                expires_at=float(row["expires_at"] or 0),
+            )
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            log.warning("Ignoring invalid persisted conversation state: %s", exc)
+            return None
+
+    def _load_persisted(self, account_id: str, session_id: str) -> ConversationState | None:
+        self._ensure_table()
+        if not self._table_ready:
+            return None
+        try:
+            from store.database import get_db
+
+            with get_db() as conn:
+                row = conn.execute(
+                    """
+                    SELECT account_id, session_id, user_id, channel,
+                           previous_question, previous_intent, result_id,
+                           trace_id, result_schema, model_versions,
+                           updated_at, expires_at
+                    FROM conversation_thread_state
+                    WHERE account_id=? AND session_id=?
+                    """,
+                    (account_id, session_id),
+                ).fetchone()
+            return self._from_row(row)
+        except Exception as exc:
+            log.warning("Could not load persisted conversation state: %s", exc)
+            return None
+
+    def _persist(self, state: ConversationState) -> None:
+        self._ensure_table()
+        if not self._table_ready:
+            return
+        try:
+            from store.database import get_db
+
+            with get_db() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO conversation_thread_state
+                        (account_id, session_id, user_id, channel,
+                         previous_question, previous_intent, result_id,
+                         trace_id, result_schema, model_versions,
+                         updated_at, expires_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(account_id, session_id) DO UPDATE SET
+                        user_id=excluded.user_id,
+                        channel=excluded.channel,
+                        previous_question=excluded.previous_question,
+                        previous_intent=excluded.previous_intent,
+                        result_id=excluded.result_id,
+                        trace_id=excluded.trace_id,
+                        result_schema=excluded.result_schema,
+                        model_versions=excluded.model_versions,
+                        updated_at=excluded.updated_at,
+                        expires_at=excluded.expires_at
+                    """,
+                    (
+                        state.account_id,
+                        state.session_id,
+                        state.user_id,
+                        state.channel,
+                        state.previous_question,
+                        state.previous_intent,
+                        state.result_id,
+                        state.trace_id,
+                        json.dumps(list(state.result_schema), separators=(",", ":")),
+                        json.dumps(state.model_versions, sort_keys=True, separators=(",", ":")),
+                        state.updated_at,
+                        state.expires_at,
+                    ),
+                )
+        except Exception as exc:
+            log.warning("Could not persist conversation state: %s", exc)
+
+    def _delete_persisted(self, account_id: str, session_id: str = "") -> None:
+        self._ensure_table()
+        if not self._table_ready:
+            return
+        try:
+            from store.database import get_db
+
+            with get_db() as conn:
+                if session_id:
+                    conn.execute(
+                        "DELETE FROM conversation_thread_state WHERE account_id=? AND session_id=?",
+                        (account_id, session_id),
+                    )
+                else:
+                    conn.execute(
+                        "DELETE FROM conversation_thread_state WHERE account_id=?",
+                        (account_id,),
+                    )
+        except Exception as exc:
+            log.warning("Could not clear persisted conversation state: %s", exc)
 
     @staticmethod
     def _key(account_id: Any, session_id: Any) -> tuple[str, str]:
@@ -88,8 +252,13 @@ class ConversationStateStore:
         now = self._clock()
         with self._lock:
             state = self._states.get(key)
+            if state is None and self.persist:
+                state = self._load_persisted(*key)
+                if state is not None:
+                    self._states[key] = state
             if state is not None and state.expires_at <= now:
                 self._states.pop(key, None)
+                self._delete_persisted(*key)
                 return None
             return state
 
@@ -139,17 +308,21 @@ class ConversationStateStore:
         )
         with self._lock:
             self._states[key] = state
+        self._persist(state)
         return state
 
     def clear(self, account_id: Any, session_id: Any) -> None:
+        key = self._key(account_id, session_id)
         with self._lock:
-            self._states.pop(self._key(account_id, session_id), None)
+            self._states.pop(key, None)
+        self._delete_persisted(*key)
 
     def clear_account(self, account_id: Any) -> None:
         account = str(account_id or "")
         with self._lock:
             for key in [key for key in self._states if key[0] == account]:
                 self._states.pop(key, None)
+        self._delete_persisted(account)
 
 
 _RESET_RE = re.compile(
@@ -267,4 +440,4 @@ def should_route_as_governed_follow_up(
     )
 
 
-conversation_state_store = ConversationStateStore()
+conversation_state_store = ConversationStateStore(persist=True)

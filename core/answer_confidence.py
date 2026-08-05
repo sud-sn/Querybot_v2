@@ -34,6 +34,7 @@ def build_answer_confidence(
     zero_match_result: bool = False,
     graph_scope: str = "",
     fanout_risk: bool = False,
+    result_verification: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
     Convert technical query signals into a compact business-facing confidence score.
@@ -130,6 +131,27 @@ def build_answer_confidence(
         warnings.append(
             "One or more relationships can multiply the requested result grain."
         )
+
+    verification = result_verification or {}
+    verification_status = str(verification.get("status") or "").lower()
+    if verification_status == "pass":
+        score += 5
+        reasons.append("The returned result shape matched the analytical request.")
+    elif verification_status in {"warning", "fail"}:
+        score -= 10 if verification_status == "warning" else 30
+        details = list(verification.get("errors") or []) + list(
+            verification.get("warnings") or []
+        )
+        warnings.append(
+            str(details[0])
+            if details
+            else "The returned result shape did not fully match the analytical request."
+        )
+        if verification_status == "fail":
+            # A safe, executable query can still answer the wrong shape.  Do
+            # not present that result as medium/high confidence merely because
+            # schema validation passed.
+            score = min(score, 49)
 
     # A repaired query may be usable, but compilation and execution alone do
     # not prove business correctness. Never present a repaired result as high

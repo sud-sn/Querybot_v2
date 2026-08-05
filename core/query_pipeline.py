@@ -1153,9 +1153,44 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     columns=list(rows[0].keys()) if rows else [],
                     row_count=len(rows),
                 )
+            _metric_result_verification = {}
+            try:
+                from core.result_verifier import verify_result_shape
+                _metric_result_verification = verify_result_shape(
+                    rows,
+                    analytical_plan=_analytical_plan,
+                    resolution_plan={
+                        "metrics": [{
+                            "name": matched_metric.get("name") or "",
+                            "source": "metric_registry",
+                        }],
+                    },
+                )
+                _trace_step(
+                    trace_id,
+                    "result_shape_verification",
+                    output_summary={
+                        "status": _metric_result_verification.get("status"),
+                        "score": _metric_result_verification.get("score"),
+                        "row_count": _metric_result_verification.get("row_count"),
+                        "columns": _metric_result_verification.get("columns") or [],
+                        "metric_binding_source": "metric_registry",
+                    },
+                )
+            except Exception as _metric_verification_exc:
+                log.debug("Trusted metric result-shape verification skipped: %s", _metric_verification_exc)
             await _send_results(event, adapter, question, rows, sql_from_metric,
                                 duration_ms, portal_user, account_id, db_cfg,
                                 question_id=audit_request_id,
+                                confidence_context={
+                                    "validation_code": "trusted_metric",
+                                    "has_semantic_plan": True,
+                                    "tables_used": extract_sql_tables(
+                                        sql_from_metric,
+                                        db_cfg.get("db_type", "azure_sql"),
+                                    ),
+                                    "result_verification": _metric_result_verification,
+                                },
                                 display_context={
                                     "format_scope": "metric_registry",
                                     "metrics": [matched_metric],
@@ -3675,6 +3710,37 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
 
         except Exception as _pp_exc:
             log.debug("Post-processing analytics skipped: %s", _pp_exc)
+
+    # SQL/schema validation proves the statement is safe to run; this second,
+    # deterministic check verifies that the returned columns and row shape
+    # still match the requested analytical intent (trend, ranking,
+    # distribution, KPI, and so on).  It is metadata-only and never logs row
+    # values.  A mismatch lowers answer confidence instead of silently showing
+    # a schema-valid but business-wrong shape.
+    try:
+        from core.result_verifier import verify_result_shape
+
+        _result_verification = verify_result_shape(
+            rows,
+            analytical_plan=_analytical_plan,
+            resolution_plan=_resolution_plan,
+        )
+        _confidence_context["result_verification"] = _result_verification
+        _trace_step(
+            trace_id,
+            "result_shape_verification",
+            output_summary={
+                "status": _result_verification.get("status"),
+                "score": _result_verification.get("score"),
+                "row_count": _result_verification.get("row_count"),
+                "columns": _result_verification.get("columns") or [],
+                "metric_binding_source": _result_verification.get("metric_binding_source"),
+                "warnings": _result_verification.get("warnings") or [],
+                "errors": _result_verification.get("errors") or [],
+            },
+        )
+    except Exception as _verification_exc:
+        log.debug("Result-shape verification skipped: %s", _verification_exc)
 
     await _send_results(event, adapter, question, rows, sql, duration_ms,
                         portal_user, account_id, db_cfg,

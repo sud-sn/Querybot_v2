@@ -1,4 +1,8 @@
+import os
+from pathlib import Path
+import tempfile
 import unittest
+from unittest.mock import patch
 
 from core.conversation_state import (
     ConversationStateStore,
@@ -108,6 +112,52 @@ class ConversationStateStoreTests(unittest.TestCase):
         self.assertEqual(updated.trace_id, "trace-a")
         self.assertEqual(updated.expires_at, self.now + 120)
         self.assertEqual(updated.previous_intent, "result_grounded_analysis")
+
+    def test_metadata_state_survives_store_recreation_when_persistence_enabled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = str(Path(tmp) / "conversation.db")
+            with patch.dict(os.environ, {"QUERYBOT_DB_PATH": db_path}):
+                first = ConversationStateStore(
+                    ttl_seconds=120,
+                    clock=lambda: self.now,
+                    persist=True,
+                )
+                first.record(
+                    "tenant-a",
+                    "thread-1",
+                    user_id="user-a",
+                    channel="portal",
+                    question="Revenue by month",
+                    decision=classify_turn("Revenue by month", looks_like_data=True),
+                    result_id="result-a",
+                    trace_id="trace-a",
+                    result_schema=["MONTH", "REVENUE"],
+                    result_metadata={
+                        "semantic_version": "v3",
+                        "rows": [{"sensitive": "must not persist"}],
+                    },
+                )
+
+                recreated = ConversationStateStore(
+                    ttl_seconds=120,
+                    clock=lambda: self.now,
+                    persist=True,
+                )
+                restored = recreated.get("tenant-a", "thread-1")
+
+                self.assertIsNotNone(restored)
+                self.assertEqual(restored.previous_question, "Revenue by month")
+                self.assertEqual(restored.result_schema, ("MONTH", "REVENUE"))
+                self.assertEqual(restored.model_versions, {"semantic_version": "v3"})
+                self.assertFalse(hasattr(restored, "rows"))
+
+                recreated.clear("tenant-a", "thread-1")
+                third = ConversationStateStore(
+                    ttl_seconds=120,
+                    clock=lambda: self.now,
+                    persist=True,
+                )
+                self.assertIsNone(third.get("tenant-a", "thread-1"))
 
 
 class TurnClassificationTests(unittest.TestCase):

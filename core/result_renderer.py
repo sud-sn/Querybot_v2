@@ -723,6 +723,7 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
         graph_scope=str(confidence_context.get("graph_scope") or ""),
         fanout_risk=bool(confidence_context.get("fanout_risk")),
         zero_match_result=zero_match_result,
+        result_verification=confidence_context.get("result_verification") or {},
     )
 
     chart_override = str(

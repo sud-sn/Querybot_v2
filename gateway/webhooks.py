@@ -969,17 +969,36 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 render_question = "Filtered rows from the prior result"
             elif operation == "contribution":
                 render_question = "Percentage contribution within the prior result"
+            elif operation == "presentation":
+                _presentation_override = str(
+                    (snapshot.get("metadata") or {}).get("chart_type_override") or "auto"
+                ).lower()
+                render_question = (
+                    "Best-fit chart from the prior result"
+                    if _presentation_override == "auto"
+                    else f"Prior result shown as {_presentation_override}"
+                )
 
             chart_payload = None
             try:
-                chart_type = (
-                    "bar" if operation in {"keep_top", "sort", "contribution"}
-                    else detect_chart_type(
-                        safe_rows,
-                        question=render_question,
-                        column_formats=column_formats,
+                _presentation_override = str(
+                    (snapshot.get("metadata") or {}).get("chart_type_override") or ""
+                ).lower()
+                if operation == "presentation" and _presentation_override == "table":
+                    chart_type = None
+                elif operation == "presentation" and _presentation_override in {
+                    "area", "bar", "line", "pie", "donut", "scatter",
+                }:
+                    chart_type = _presentation_override
+                else:
+                    chart_type = (
+                        "bar" if operation in {"keep_top", "sort", "contribution"}
+                        else detect_chart_type(
+                            safe_rows,
+                            question=render_question,
+                            column_formats=column_formats,
+                        )
                     )
-                )
                 if chart_type:
                     chart_payload = build_chart_payload(
                         safe_rows,
