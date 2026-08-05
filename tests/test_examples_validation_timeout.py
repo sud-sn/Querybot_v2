@@ -361,6 +361,29 @@ class RunExampleValidationProcessTests(unittest.TestCase):
 
 
 class ValidationEvidenceTests(unittest.TestCase):
+    def test_admin_override_is_available_only_between_80_and_normal_threshold(self):
+        base = {
+            "status": "failed",
+            "total": 100,
+            "failed": 18,
+            "validated": 82,
+            "pass_rate": 82.0,
+            "minimum_pass_rate": 85.0,
+            "report_file": "_sql_validation_report.json",
+        }
+        allowed, reason = examples.validation_override_eligibility(base)
+        self.assertTrue(allowed)
+        self.assertEqual(reason, "")
+
+        below_floor = {**base, "validated": 79, "failed": 21, "pass_rate": 79.0}
+        self.assertFalse(examples.validation_override_eligibility(below_floor)[0])
+
+        normal_pass = {**base, "validated": 85, "failed": 15, "pass_rate": 85.0}
+        self.assertFalse(examples.validation_override_eligibility(normal_pass)[0])
+
+        no_report = {**base, "report_file": ""}
+        self.assertFalse(examples.validation_override_eligibility(no_report)[0])
+
     def test_failed_sql_is_classified_and_written_to_report(self):
         with tempfile.TemporaryDirectory() as tmp:
             Path(tmp, "orders_queries.md").write_text(
@@ -373,7 +396,7 @@ class ValidationEvidenceTests(unittest.TestCase):
             with patch("core.examples._open_connection", return_value=fake_conn), \
                  patch("core.examples._execute_on_connection", side_effect=compile_results), \
                  patch("store.save_validated_example"), \
-                 patch("core.vector_store.upsert_examples"):
+                 patch("core.vector_store.upsert_examples") as upsert:
                 outcome = examples.validate_and_store_examples(
                     "acct1", tmp, {}, "azure_sql", "acct1", return_report=True
                 )
@@ -387,6 +410,9 @@ class ValidationEvidenceTests(unittest.TestCase):
         self.assertEqual(report["summary"]["pass_rate"], 50.0)
         self.assertEqual(report["failures"][0]["question"], "invalid revenue")
         self.assertIn("fake_amount", report["failures"][0]["sql"])
+        embedded = upsert.call_args.args[1]
+        self.assertEqual(len(embedded), 1)
+        self.assertEqual(embedded[0][0], "valid revenue")
 
     def test_targeted_repair_preserves_passing_pair_and_replaces_failure(self):
         with tempfile.TemporaryDirectory() as tmp:

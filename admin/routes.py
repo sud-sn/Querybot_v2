@@ -7627,6 +7627,190 @@ async def admin_setup_validation_report(request: Request, account_id: str):
     return JSONResponse({"status": "ok", "report": report})
 
 
+@router.post("/clients/{account_id}/setup/accept-validation")
+async def admin_accept_kb_validation(
+    request: Request,
+    account_id: str,
+    bg: BackgroundTasks,
+):
+    """Explicitly accept an 80-85% SQL-example pass rate and finish activation."""
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    client = store.get_client(account_id)
+    if not client:
+        return RedirectResponse("/admin/clients", status_code=303)
+    if client.get("state") == "KB_BUILDING":
+        return RedirectResponse(
+            f"/admin/clients/{account_id}/setup?error={quote('Wait for the active KB build to finish')}",
+            status_code=303,
+        )
+    if client.get("state") == "READY":
+        return RedirectResponse(
+            f"/admin/clients/{account_id}/setup?saved={quote('Knowledge Base is already active')}",
+            status_code=303,
+        )
+
+    state_data = json.loads(client.get("state_data") or "{}")
+    validation = dict(state_data.get("kb_example_validation") or {})
+    from core.examples import load_validation_report, validation_override_eligibility
+    eligible, reason = validation_override_eligibility(validation)
+    kb_dir = state_data.get("kb_dir", "")
+    report = load_validation_report(kb_dir) if kb_dir else {}
+    summary = report.get("summary") or {}
+    if eligible and (
+        int(summary.get("total") or 0) != int(validation.get("total") or 0)
+        or int(summary.get("validated") or 0) != int(validation.get("validated") or 0)
+    ):
+        eligible, reason = False, "The validation report does not match the latest build. Rebuild before accepting."
+    if not eligible:
+        return RedirectResponse(
+            f"/admin/clients/{account_id}/setup?error={quote(reason)}",
+            status_code=303,
+        )
+
+    # The override bypasses only the example-coverage threshold. Critical KB
+    # quality findings remain non-bypassable.
+    from core.kb_quality import load_kb_quality_report
+    quality = load_kb_quality_report(kb_dir)
+    if quality.get("status") not in {"ready", "needs_review"}:
+        return RedirectResponse(
+            f"/admin/clients/{account_id}/setup?error={quote('Critical KB quality checks must pass before activation')}",
+            status_code=303,
+        )
+
+    async def _finish_override_activation():
+        from core.pipeline_context import save_state
+        from core.dispatcher import _run_log_harvest
+
+        accepted_at = datetime.now(timezone.utc).isoformat()
+        pass_rate = float(validation.get("pass_rate") or 0.0)
+        validated_count = int(validation.get("validated") or 0)
+        failed_count = int(validation.get("failed") or 0)
+        total_count = int(validation.get("total") or 0)
+        activating_progress = {
+            "status": "building",
+            "phase": "override_activation",
+            "step": f"Activating {validated_count} compiler-validated SQL examples by admin approval",
+            "current": total_count,
+            "total": total_count,
+            "percent": 100,
+            "validated": validated_count,
+            "failed": failed_count,
+            "pass_rate": pass_rate,
+            "current_table": "",
+        }
+        activating_state = dict(state_data)
+        activating_state["kb_progress"] = activating_progress
+        save_state(account_id, "KB_BUILDING", activating_state)
+        await notify_kb_build_changed(
+            account_id=account_id,
+            status="building",
+            progress=activating_progress,
+        )
+
+        try:
+            # The validator already embedded only passing examples. Harvesting
+            # may add successful production queries, but never imports the
+            # failed drafts recorded in the validation report.
+            await _run_log_harvest(account_id, state_data.get("chroma_dir") or account_id)
+
+            graph_summary: dict = {}
+            schema_dir = state_data.get("schema_dir", "")
+            try:
+                from core.graph_autopopulate import sync_graph_after_kb_build
+                graph_summary = sync_graph_after_kb_build(account_id, schema_dir, kb_dir)
+            except Exception as graph_error:
+                log.warning("Entity graph sync after validation override failed for %s: %s", account_id, graph_error)
+
+            contract_version = ""
+            try:
+                from core.semantic_contract import write_contract
+                contract = write_contract(account_id, kb_dir)
+                contract_version = (contract.get("meta") or {}).get("contract_version", "")
+            except Exception as contract_error:
+                log.warning("Contract compile after validation override failed for %s: %s", account_id, contract_error)
+
+            accepted_validation = dict(validation)
+            accepted_validation["activation_override"] = True
+            accepted_validation["override_accepted_at"] = accepted_at
+            ready_progress = {
+                "status": "ready",
+                "phase": "complete",
+                "step": f"Knowledge Base active with {pass_rate:.1f}% validated SQL coverage",
+                "current": total_count,
+                "total": total_count,
+                "percent": 100,
+                "validated": validated_count,
+                "failed": failed_count,
+                "pass_rate": pass_rate,
+                "current_table": "",
+            }
+            ready_state = dict(activating_state)
+            ready_state.update({
+                "kb_progress": ready_progress,
+                "kb_example_validation": accepted_validation,
+                "kb_built_contract_version": contract_version,
+                "kb_validation_override": {
+                    "accepted_at": accepted_at,
+                    "pass_rate": pass_rate,
+                    "validated": validated_count,
+                    "failed": failed_count,
+                    "total": total_count,
+                    "minimum_normal_rate": float(validation.get("minimum_pass_rate") or 85.0),
+                    "minimum_override_rate": 80.0,
+                    "failed_examples_excluded": True,
+                    "categories": validation.get("categories") or {},
+                },
+            })
+            save_state(
+                account_id,
+                "READY",
+                ready_state,
+                state_data.get("business_desc", client.get("business_desc", "")),
+            )
+            await notify_kb_build_changed(
+                account_id=account_id,
+                status="ready",
+                progress=ready_progress,
+            )
+            if graph_summary:
+                try:
+                    from core.admin_notifications import notify_graph_ready
+                    await notify_graph_ready(account_id=account_id, summary=graph_summary)
+                except Exception as notification_error:
+                    log.debug("Graph-ready notification after override failed: %s", notification_error)
+            _after_semantic_approval(account_id, "KB validation threshold explicitly accepted")
+            threading.Thread(target=_sync_all_log_exports_bg, daemon=True).start()
+            log.warning(
+                "KB validation override accepted for %s: %.1f%% (%d/%d); %d failed examples excluded",
+                account_id, pass_rate, validated_count, total_count, failed_count,
+            )
+        except Exception as exc:
+            failed_state = dict(state_data)
+            failed_state["kb_progress"] = {
+                "status": "failed",
+                "phase": "override_activation_failed",
+                "step": f"Validation override activation failed: {str(exc)[:300]}",
+                "current": total_count,
+                "total": total_count,
+                "percent": 100,
+                "current_table": "",
+            }
+            save_state(account_id, "SCHEMA_READY", failed_state)
+            await notify_kb_build_changed(
+                account_id=account_id,
+                status="failed",
+                progress=failed_state["kb_progress"],
+            )
+            log.exception("KB validation override activation failed for %s", account_id)
+
+    bg.add_task(_finish_override_activation)
+    return RedirectResponse(
+        f"/admin/clients/{account_id}/setup?saved={quote('Validation override accepted; activation is finishing')}",
+        status_code=303,
+    )
+
+
 
 
 @router.get("/clients/{account_id}/egress-log")

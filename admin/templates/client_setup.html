@@ -595,7 +595,10 @@
             <div style="font-size:12px;font-weight:800;color:var(--text)">SQL validation evidence</div>
             <div id="kbValidationSummary" style="font-size:11px;color:var(--text-muted);margin-top:2px"></div>
           </div>
-          <button type="button" class="btn btn-secondary btn-xs" id="kbValidationDetailsButton">View failure details</button>
+          <div style="display:flex;gap:.4rem;align-items:center;flex-wrap:wrap">
+            <button type="button" class="btn btn-primary btn-xs" id="kbValidationOverrideButton" style="display:none">Accept validated examples and activate</button>
+            <button type="button" class="btn btn-secondary btn-xs" id="kbValidationDetailsButton">View failure details</button>
+          </div>
         </div>
         <div id="kbValidationCategories" style="display:flex;gap:.35rem;flex-wrap:wrap;margin-top:.55rem"></div>
         <div id="kbValidationFailures" style="display:none;margin-top:.65rem;max-height:340px;overflow:auto"></div>
@@ -720,6 +723,7 @@
   const kbValidationCategories = document.getElementById('kbValidationCategories');
   const kbValidationFailures = document.getElementById('kbValidationFailures');
   const kbValidationDetailsButton = document.getElementById('kbValidationDetailsButton');
+  const kbValidationOverrideButton = document.getElementById('kbValidationOverrideButton');
 
   function renderValidationSummary(summary) {
     if (!kbValidationEvidence || !summary || !Number(summary.total || 0)) return;
@@ -727,6 +731,7 @@
     const passed = Number(summary.validated || 0);
     const failed = Number(summary.failed || 0);
     const rate = Number(summary.pass_rate || (total ? passed / total * 100 : 0));
+    const requiredRate = Number(summary.minimum_pass_rate || 85);
     kbValidationEvidence.style.display = 'block';
     if (kbValidationSummary) {
       kbValidationSummary.textContent = `${total} processed · ${passed} passed · ${failed} failed · ${rate.toFixed(1)}% pass rate`;
@@ -740,7 +745,36 @@
         kbValidationCategories.appendChild(chip);
       });
     }
+    if (kbValidationOverrideButton) {
+      const eligible = failed > 0 && rate >= 80 && rate < requiredRate;
+      kbValidationOverrideButton.style.display = eligible ? 'inline-flex' : 'none';
+      if (eligible) {
+        kbValidationOverrideButton.textContent = `Accept ${rate.toFixed(1)}% and activate`;
+      }
+    }
   }
+
+  async function acceptValidationOverride() {
+    if (!kbValidationOverrideButton) return;
+    const confirmed = window.confirm(
+      'Activate this Knowledge Base with the currently validated SQL examples?\n\n' +
+      'Only compiler-approved examples will be embedded. Failed SQL examples remain excluded and available in the validation report.'
+    );
+    if (!confirmed) return;
+    kbValidationOverrideButton.disabled = true;
+    kbValidationOverrideButton.textContent = 'Activating…';
+    try {
+      const response = await fetch(`/admin/clients/${accountId}/setup/accept-validation`, {
+        method: 'POST', credentials: 'same-origin',
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      window.setTimeout(() => window.location.reload(), 1200);
+    } catch (error) {
+      kbValidationOverrideButton.disabled = false;
+      kbValidationOverrideButton.textContent = 'Activation failed — try again';
+    }
+  }
+  if (kbValidationOverrideButton) kbValidationOverrideButton.addEventListener('click', acceptValidationOverride);
 
   async function toggleValidationDetails() {
     if (!kbValidationFailures || !kbValidationDetailsButton) return;
@@ -815,6 +849,7 @@
         validated: p.validated,
         failed: p.failed,
         pass_rate: p.pass_rate,
+        minimum_pass_rate: p.minimum_pass_rate,
         categories: p.categories || {},
       });
     }

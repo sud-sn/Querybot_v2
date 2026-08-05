@@ -29,6 +29,25 @@ _DEPRECATED_NULL_DIAGNOSTIC_RE = re.compile(r"(?i)\bMatchedRows\b|\bNonNullMetri
 _EMBEDDING_MODEL   = "all-MiniLM-L6-v2"
 _EXAMPLES_COLL     = "validated_examples"   # separate collection from kb_store
 _VALIDATION_REPORT = "_sql_validation_report.json"
+_VALIDATION_OVERRIDE_MIN_PASS_RATE = 80.0
+
+
+def validation_override_eligibility(validation: dict) -> tuple[bool, str]:
+    """Return whether an admin may explicitly accept a near-threshold build."""
+    if not isinstance(validation, dict):
+        return False, "SQL validation evidence is missing."
+    total = int(validation.get("total") or 0)
+    validated = int(validation.get("validated") or 0)
+    failed = max(total - validated, int(validation.get("failed") or 0))
+    pass_rate = float(validation.get("pass_rate") or ((validated / total) * 100 if total else 0.0))
+    required_rate = float(validation.get("minimum_pass_rate") or 85.0)
+    if total <= 0 or not validation.get("report_file"):
+        return False, "A complete SQL validation report is required."
+    if failed <= 0 or pass_rate >= required_rate:
+        return False, "This build does not require a validation override."
+    if pass_rate < _VALIDATION_OVERRIDE_MIN_PASS_RATE:
+        return False, f"At least {_VALIDATION_OVERRIDE_MIN_PASS_RATE:.0f}% of SQL examples must pass."
+    return True, ""
 
 
 def _validation_error_category(message: str) -> str:
