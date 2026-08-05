@@ -79,18 +79,37 @@ def validate_and_store_examples(
     credentials: dict,
     db_type: str,
     chroma_dir: str,   # kept for API compat — account_id used instead
+    *,
+    stop_event=None,
+    progress_callback=None,
 ) -> int:
     """
-    Parse all *_queries.md files from Stage 2, execute each SQL with LIMIT/TOP 1
-    against the real database, keep only those that succeed, store them in
-    SQLite and embed into Qdrant.
+    Parse all *_queries.md files from Stage 2, compile each SQL against the
+    real database without executing the analytical query, keep only statements
+    that resolve successfully, store them in SQLite and embed into Qdrant.
 
     Uses a SINGLE connection for the entire validation batch — not one per query.
     This prevents the Snowflake connection flood (110 connections for 11 tables).
 
+    ``stop_event`` may be a threading or multiprocessing event. It is checked
+    between probes and before embedding so a supervised worker can stop
+    cleanly without persisting additional examples. ``progress_callback`` is
+    synchronous by design because this function runs outside the asyncio event
+    loop (and, in production, inside a dedicated child process).
+
     Returns number of validated examples stored.
     """
     import store
+
+    def _emit(payload: dict) -> None:
+        if not progress_callback:
+            return
+        try:
+            progress_callback(payload)
+        except Exception as exc:
+            # Progress reporting must never turn an otherwise valid SQL probe
+            # into a failed KB build.
+            log.debug("Example-validation progress callback failed: %s", exc)
 
     queries_path = Path(queries_dir)
     if not queries_path.exists():
@@ -112,6 +131,13 @@ def validate_and_store_examples(
 
     log.info("Validating %d query patterns against real DB (single connection)...",
              len(all_pairs))
+    _emit({
+        "phase": "validating_sql",
+        "current": 0,
+        "total": len(all_pairs),
+        "validated": 0,
+        "failed": 0,
+    })
 
     # Open ONE connection and run all validations through it
     validated: list[tuple[str, str, str]] = []
@@ -120,16 +146,30 @@ def validate_and_store_examples(
         log.warning("Could not open DB connection for validation — skipping")
         return 0
 
+    failed = 0
     try:
-        for question, sql, table_name in all_pairs:
-            test_sql = _add_row_cap(sql, db_type, n=1)
+        for index, (question, sql, table_name) in enumerate(all_pairs, start=1):
+            if stop_event is not None and stop_event.is_set():
+                log.info(
+                    "Example validation stopped after %d/%d patterns for %s",
+                    index - 1, len(all_pairs), account_id,
+                )
+                break
             try:
-                _execute_on_connection(conn, db_type, test_sql)
+                _execute_on_connection(conn, db_type, sql)
                 store.save_validated_example(account_id, question, sql, table_name)
                 validated.append((question, sql, table_name))
                 log.info("Validated: %s", question[:60])
             except Exception as e:
+                failed += 1
                 log.debug("Failed: '%s' — %s", question[:50], str(e)[:80])
+            _emit({
+                "phase": "validating_sql",
+                "current": index,
+                "total": len(all_pairs),
+                "validated": len(validated),
+                "failed": failed,
+            })
     finally:
         try:
             conn.close()
@@ -137,7 +177,15 @@ def validate_and_store_examples(
             pass
 
     # Embed all validated examples into Qdrant
-    if validated:
+    stopped = stop_event is not None and stop_event.is_set()
+    if validated and not stopped:
+        _emit({
+            "phase": "embedding_examples",
+            "current": len(all_pairs),
+            "total": len(all_pairs),
+            "validated": len(validated),
+            "failed": failed,
+        })
         from core.vector_store import upsert_examples
         upsert_examples(account_id, validated)
         log.info("Stored and embedded %d/%d validated examples for %s",
@@ -146,9 +194,10 @@ def validate_and_store_examples(
     return len(validated)
 
 
-# Per-query ceiling for the validation batch. Each pattern probes a real
-# table with a LIMIT/TOP 1 — 20s is generous for that and matches the
-# admin metric Test-button probe timeout (admin/routes.py metrics_test_formula).
+# Per-query ceiling for the validation batch. Each adapter uses a compile-only
+# operation, but metadata resolution can still block behind locks or a broken
+# network connection. Twenty seconds also matches the admin metric Test-button
+# probe timeout (admin/routes.py metrics_test_formula).
 # Without this, one slow pattern (full scan, lock wait) hangs the entire
 # sequential batch indefinitely — the DB driver enforces it, not asyncio,
 # since these are synchronous blocking calls on a single shared connection.
@@ -191,6 +240,12 @@ def _open_connection(credentials: dict, db_type: str):
                 conn.timeout = _QUERY_TIMEOUT_SECONDS
             except Exception as e:
                 log.debug("Could not set pyodbc timeout: %s", e)
+            try:
+                cur = conn.cursor()
+                cur.execute(f"SET LOCK_TIMEOUT {_QUERY_TIMEOUT_SECONDS * 1000}")
+                cur.close()
+            except Exception as e:
+                log.debug("Could not set Azure SQL lock timeout: %s", e)
             return conn
     except Exception as e:
         log.error("Failed to open validation connection: %s", e)
@@ -198,15 +253,40 @@ def _open_connection(credentials: dict, db_type: str):
 
 
 def _execute_on_connection(conn, db_type: str, sql: str) -> None:
-    """Execute SQL on an existing open connection. Raises on failure."""
+    """Compile a generated query without scanning the underlying tables.
+
+    KB activation needs proof that tables, columns, joins, functions and SQL
+    syntax resolve. It does not need returned business values. Compile-only
+    validation is both safer and dramatically faster for large fact tables;
+    the outer process boundary remains the final guard for a wedged driver.
+    """
     if db_type == "snowflake":
         import snowflake.connector
         cur = conn.cursor(snowflake.connector.DictCursor)
     else:
         cur = conn.cursor()
     try:
-        cur.execute(sql)
-        cur.fetchmany(1)   # consume result to confirm query ran
+        statement = sql.strip().rstrip(";")
+        if db_type == "azure_sql":
+            # SQL Server/Azure SQL compiles the statement and describes its
+            # output metadata without executing it or returning source rows.
+            cur.execute(
+                "EXEC sys.sp_describe_first_result_set "
+                "@tsql = ?, @params = NULL, @browse_information_mode = 0",
+                statement,
+            )
+            cur.fetchmany(1)
+        elif db_type == "snowflake":
+            cur.execute(f"EXPLAIN USING TEXT {statement}")
+            cur.fetchmany(1)
+        elif db_type == "oracle" and callable(getattr(cur, "parse", None)):
+            # python-oracledb exposes parse() specifically for validating a
+            # statement without executing it.
+            cur.parse(statement)
+        else:
+            # Conservative fallback for an unknown adapter.
+            cur.execute(_add_row_cap(statement, db_type, n=1))
+            cur.fetchmany(1)
     finally:
         cur.close()
 

@@ -8317,7 +8317,10 @@ async def admin_stop_kb_build(request: Request, account_id: str):
     if ev is not None:
         ev.set()
         log.info("Stop signal sent for KB build of %s", account_id)
-        return JSONResponse({"ok": True, "message": "Stop signal sent — build will finish the current table then stop."})
+        return JSONResponse({
+            "ok": True,
+            "message": "Stop signal sent — the active KB or SQL-validation worker will stop safely.",
+        })
 
     # No active build — maybe it already finished or the server restarted.
     # Defensively roll state to SCHEMA_READY if still in KB_BUILDING.
@@ -8840,20 +8843,55 @@ async def admin_build_kb(
             # Step 2: Validate examples + Step 4: Harvest
             db_for_val = {"credentials": creds, "db_type": db_type, "id": db_cfg_id}
             validation_result = await _run_example_validation(
-                account_id, kb_dir, chroma_dir, db_for_val
+                account_id,
+                kb_dir,
+                chroma_dir,
+                db_for_val,
+                stop_event=_stop_ev,
+                progress_callback=_on_kb_progress,
             )
             building_state["kb_example_validation"] = validation_result
+            validation_status = validation_result.get("status")
+            if validation_status == "stopped":
+                _kb_stop_events.pop(account_id, None)
+                stopped_state = dict(building_state)
+                stopped_state.pop("kb_progress", None)
+                save_state(account_id, "SCHEMA_READY", stopped_state)
+                await notify_kb_build_changed(
+                    account_id=account_id,
+                    status="stopped",
+                    progress={
+                        "status": "stopped",
+                        "phase": "validation_stopped",
+                        "step": "SQL example validation stopped by user",
+                    },
+                )
+                log.info("KB validation cancelled by user for %s", account_id)
+                return
             if validation_result.get("status") != "passed":
                 failed_count = int(validation_result.get("failed") or 0)
                 total_count = int(validation_result.get("total") or 0)
-                validation_progress = {
-                    "status": "failed",
-                    "phase": "validation_failed",
-                    "step": (
+                if validation_status == "timeout":
+                    validation_message = (
+                        "Generated SQL validation exceeded its 20-minute safety limit. "
+                        "The validation worker was terminated and the Knowledge Base "
+                        "was not activated."
+                    )
+                elif validation_status == "error":
+                    validation_message = (
+                        "Generated SQL validation could not complete safely. "
+                        "The Knowledge Base was not activated."
+                    )
+                else:
+                    validation_message = (
                         "Generated SQL validation failed "
                         f"({failed_count}/{total_count} patterns did not pass). "
                         "The Knowledge Base was not activated."
-                    ),
+                    )
+                validation_progress = {
+                    "status": "failed",
+                    "phase": "validation_failed",
+                    "step": validation_message,
                     "current": int(validation_result.get("validated") or 0),
                     "total": total_count,
                     "percent": 100,

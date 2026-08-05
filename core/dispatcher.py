@@ -15,7 +15,10 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import multiprocessing
+import queue
 import re
+import time
 
 import store
 from gateway import PlatformEvent
@@ -559,50 +562,296 @@ async def handle_unregistered_user(account_id, zoom_user_id, event, adapter):
 
 # ── Background tasks ──────────────────────────────────────────────────────────
 
-async def _run_example_validation(
-    account_id: str, kb_dir: str, chroma_dir: str, db_cfg: dict
-) -> dict:
-    """Step 2 — Validate Stage 2 SQL patterns against real DB in background.
+_EXAMPLE_VALIDATION_TIMEOUT_SECONDS = 20 * 60
+_EXAMPLE_VALIDATION_STOP_GRACE_SECONDS = 2.0
+_EXAMPLE_VALIDATION_POLL_SECONDS = 0.1
 
-    validate_and_store_examples() is synchronous and runs up to ~200 blocking
-    DB calls sequentially on one connection. Run it in the default executor
-    (thread pool), not directly on the event loop — otherwise a slow pattern
-    freezes every other request the whole app is serving, not just this KB
-    build. core/examples.py sets a per-query driver timeout so a single bad
-    pattern can't stall the batch itself; this wait_for is an outer ceiling
-    in case that somehow doesn't fire (e.g. a hung network read).
+
+def _example_validation_process_entry(
+    result_queue,
+    worker_stop_event,
+    account_id: str,
+    kb_dir: str,
+    credentials: dict,
+    db_type: str,
+    chroma_dir: str,
+) -> None:
+    """Run blocking SQL validation inside a killable child process.
+
+    Driver timeouts are advisory and pyodbc can remain blocked inside native
+    ODBC code on Windows. Cancelling an asyncio Future cannot stop that call;
+    a supervised process can always be terminated without taking down the web
+    server.
     """
     try:
         from core.examples import count_query_pairs, validate_and_store_examples
+
         total = count_query_pairs(kb_dir)
-        loop = asyncio.get_running_loop()
-        count = await asyncio.wait_for(
-            loop.run_in_executor(
-                None,
-                validate_and_store_examples,
-                account_id, kb_dir, db_cfg["credentials"], db_cfg["db_type"], chroma_dir,
-            ),
-            timeout=1200.0,  # 20 min ceiling for the whole batch
+
+        def _report(payload: dict) -> None:
+            result_queue.put({"kind": "progress", "payload": payload})
+
+        validated = validate_and_store_examples(
+            account_id,
+            kb_dir,
+            credentials,
+            db_type,
+            chroma_dir,
+            stop_event=worker_stop_event,
+            progress_callback=_report,
         )
-        log.info("Example validation complete: %d validated examples for %s",
-                 count, account_id)
-        return {
-            "status": "passed" if count == total else "failed",
+        result_queue.put({
+            "kind": "result",
+            "status": "stopped" if worker_stop_event.is_set() else "completed",
             "total": total,
-            "validated": count,
-            "failed": max(total - count, 0),
+            "validated": validated,
+            "failed": max(total - validated, 0),
+        })
+    except BaseException as exc:
+        # Persist only a bounded diagnostic, never credentials or DB rows.
+        result_queue.put({
+            "kind": "result",
+            "status": "error",
+            "total": 0,
+            "validated": 0,
+            "failed": 0,
+            "error": f"{type(exc).__name__}: {exc}"[:500],
+        })
+
+
+def _terminate_validation_process(process, *, grace_seconds: float = 1.0) -> None:
+    """Terminate and reap a validation process on Windows and POSIX."""
+    if process is None or not process.is_alive():
+        if process is not None:
+            process.join(timeout=0)
+        return
+    process.terminate()
+    process.join(timeout=max(grace_seconds, 0.0))
+    if process.is_alive():
+        kill = getattr(process, "kill", None)
+        if callable(kill):
+            kill()
+            process.join(timeout=max(grace_seconds, 0.0))
+
+
+async def _run_validation_process(
+    account_id: str,
+    kb_dir: str,
+    chroma_dir: str,
+    db_cfg: dict,
+    *,
+    stop_event=None,
+    progress_callback=None,
+    timeout_seconds: float = _EXAMPLE_VALIDATION_TIMEOUT_SECONDS,
+    stop_grace_seconds: float = _EXAMPLE_VALIDATION_STOP_GRACE_SECONDS,
+    worker_target=None,
+) -> dict:
+    """Supervise validation and enforce a real, OS-level hard boundary."""
+    ctx = multiprocessing.get_context("spawn")
+    result_queue = ctx.Queue(maxsize=512)
+    worker_stop_event = ctx.Event()
+    process = None
+    final_result = None
+    stop_requested_at = None
+    deadline = time.monotonic() + max(float(timeout_seconds), 0.01)
+    target = worker_target or _example_validation_process_entry
+
+    async def _consume_message(message: dict) -> None:
+        nonlocal final_result
+        if message.get("kind") == "result":
+            final_result = message
+            return
+        if message.get("kind") != "progress" or not progress_callback:
+            return
+        payload = dict(message.get("payload") or {})
+        total = int(payload.get("total") or 0)
+        current = int(payload.get("current") or 0)
+        phase = payload.get("phase") or "validating_sql"
+        step = (
+            "Embedding validated SQL examples"
+            if phase == "embedding_examples"
+            else f"Validating generated SQL examples ({current}/{total})"
+        )
+        progress = {
+            "status": "building",
+            "phase": phase,
+            "step": step,
+            "current": current,
+            "total": total,
+            "percent": round((current / total) * 100) if total else 0,
+            "current_table": "",
+            "validated": int(payload.get("validated") or 0),
+            "failed": int(payload.get("failed") or 0),
         }
-    except asyncio.TimeoutError:
-        log.error("Example validation timed out after 20 min for %s", account_id)
-        return {"status": "timeout", "total": 0, "validated": 0, "failed": 0}
-    except Exception as e:
-        log.error("Example validation failed for %s: %s", account_id, e)
+        try:
+            callback_result = progress_callback(progress)
+            if inspect.isawaitable(callback_result):
+                await callback_result
+        except Exception as exc:
+            log.warning(
+                "Example-validation progress update failed for %s: %s",
+                account_id, exc,
+            )
+
+    async def _drain_messages() -> None:
+        while True:
+            try:
+                message = result_queue.get_nowait()
+            except queue.Empty:
+                return
+            await _consume_message(message)
+
+    try:
+        process = ctx.Process(
+            target=target,
+            args=(
+                result_queue,
+                worker_stop_event,
+                account_id,
+                kb_dir,
+                db_cfg["credentials"],
+                db_cfg["db_type"],
+                chroma_dir,
+            ),
+            name=f"querybot-example-validation-{account_id}",
+            daemon=True,
+        )
+        process.start()
+        log.info(
+            "Example validation worker started for %s (pid=%s, timeout=%ss)",
+            account_id, process.pid, int(timeout_seconds),
+        )
+
+        while True:
+            await _drain_messages()
+
+            if final_result is not None:
+                process.join(timeout=stop_grace_seconds)
+                if process.is_alive():
+                    _terminate_validation_process(process)
+                return final_result
+
+            if not process.is_alive():
+                process.join(timeout=0)
+                # Queue feeder delivery can trail process exit very briefly.
+                await asyncio.sleep(0.05)
+                await _drain_messages()
+                if final_result is not None:
+                    return final_result
+                return {
+                    "status": "error",
+                    "total": 0,
+                    "validated": 0,
+                    "failed": 0,
+                    "error": f"Validation worker exited with code {process.exitcode}",
+                }
+
+            now = time.monotonic()
+            if stop_event is not None and stop_event.is_set():
+                if stop_requested_at is None:
+                    stop_requested_at = now
+                    worker_stop_event.set()
+                    log.info("Stopping example validation worker for %s", account_id)
+                elif now - stop_requested_at >= stop_grace_seconds:
+                    _terminate_validation_process(process)
+                    return {
+                        "status": "stopped",
+                        "total": 0,
+                        "validated": 0,
+                        "failed": 0,
+                    }
+
+            if now >= deadline:
+                worker_stop_event.set()
+                _terminate_validation_process(process)
+                return {
+                    "status": "timeout",
+                    "total": 0,
+                    "validated": 0,
+                    "failed": 0,
+                }
+
+            await asyncio.sleep(_EXAMPLE_VALIDATION_POLL_SECONDS)
+    except Exception as exc:
         return {
             "status": "error",
             "total": 0,
             "validated": 0,
             "failed": 0,
-            "error": str(e)[:500],
+            "error": str(exc)[:500],
+        }
+    finally:
+        if process is not None and process.is_alive():
+            _terminate_validation_process(process)
+        try:
+            # A force-terminated child may leave its Queue feeder half-written;
+            # never let queue cleanup recreate the shutdown hang we are fixing.
+            result_queue.cancel_join_thread()
+            result_queue.close()
+        except Exception:
+            pass
+
+
+async def _run_example_validation(
+    account_id: str,
+    kb_dir: str,
+    chroma_dir: str,
+    db_cfg: dict,
+    *,
+    stop_event=None,
+    progress_callback=None,
+    timeout_seconds: float = _EXAMPLE_VALIDATION_TIMEOUT_SECONDS,
+) -> dict:
+    """Validate Stage-2 SQL patterns in a killable child process."""
+    try:
+        from core.examples import count_query_pairs
+
+        total = count_query_pairs(kb_dir)
+        worker_result = await _run_validation_process(
+            account_id,
+            kb_dir,
+            chroma_dir,
+            db_cfg,
+            stop_event=stop_event,
+            progress_callback=progress_callback,
+            timeout_seconds=timeout_seconds,
+        )
+        worker_status = worker_result.get("status")
+        validated = int(worker_result.get("validated") or 0)
+        status = (
+            "passed" if validated == total else "failed"
+        ) if worker_status == "completed" else (worker_status or "error")
+        result = {
+            "status": status,
+            "total": total,
+            "validated": validated,
+            "failed": max(total - validated, 0),
+        }
+        if worker_result.get("error"):
+            result["error"] = str(worker_result["error"])[:500]
+        if status == "passed":
+            log.info(
+                "Example validation complete: %d validated examples for %s",
+                validated, account_id,
+            )
+        elif status == "timeout":
+            log.error(
+                "Example validation worker terminated after %ss for %s",
+                int(timeout_seconds), account_id,
+            )
+        elif status == "stopped":
+            log.info("Example validation stopped by user for %s", account_id)
+        else:
+            log.error("Example validation failed for %s: %s", account_id, result)
+        return result
+    except Exception as exc:
+        log.error("Example validation failed for %s: %s", account_id, exc)
+        return {
+            "status": "error",
+            "total": 0,
+            "validated": 0,
+            "failed": 0,
+            "error": str(exc)[:500],
         }
 
 

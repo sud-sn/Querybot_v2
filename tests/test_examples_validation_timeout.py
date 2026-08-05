@@ -8,17 +8,18 @@ Regression tests for two related bugs in the Stage-2 example-validation step
    timeout, so a single slow validation pattern (full scan, lock wait) would
    hang the whole sequential ~200-pattern batch indefinitely with nothing
    further logged.
-2. core/dispatcher.py._run_example_validation is `async def` but called the
-   blocking validate_and_store_examples() directly (no run_in_executor) —
-   since this runs on the shared asyncio event loop, a slow/hung validation
-   batch froze every other request the app was serving, not just the KB
-   build in progress.
+2. Executor-thread cancellation cannot terminate a pyodbc call blocked inside
+   native ODBC code on Windows. Validation therefore runs in a supervised
+   child process with a hard timeout and a stop path that can terminate and
+   reap the worker without taking down the QueryBot service.
 """
 import asyncio
 import sys
+import tempfile
+import threading
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -26,6 +27,43 @@ if str(ROOT) not in sys.path:
 
 import core.examples as examples
 import core.dispatcher as dispatcher
+
+
+def _successful_process_worker(
+    result_queue, stop_event, account_id, kb_dir, credentials, db_type, chroma_dir
+):
+    """Pickle-safe worker used by spawn-based process supervision tests."""
+    result_queue.put({
+        "kind": "progress",
+        "payload": {
+            "phase": "validating_sql",
+            "current": 1,
+            "total": 1,
+            "validated": 1,
+            "failed": 0,
+        },
+    })
+    result_queue.put({
+        "kind": "result",
+        "status": "completed",
+        "total": 1,
+        "validated": 1,
+        "failed": 0,
+    })
+
+
+def _hung_process_worker(
+    result_queue, stop_event, account_id, kb_dir, credentials, db_type, chroma_dir
+):
+    """Simulate native ODBC code that ignores both events and cancellation."""
+    import time
+    time.sleep(60)
+
+
+def _exploding_process_worker(
+    result_queue, stop_event, account_id, kb_dir, credentials, db_type, chroma_dir
+):
+    raise RuntimeError("db exploded")
 
 
 class OpenConnectionTimeoutTests(unittest.TestCase):
@@ -36,12 +74,99 @@ class OpenConnectionTimeoutTests(unittest.TestCase):
         self.assertIs(conn, fake_conn)
         self.assertEqual(conn.timeout, examples._QUERY_TIMEOUT_SECONDS)
 
+
+class CompileOnlyValidationTests(unittest.TestCase):
+    def test_azure_sql_describes_result_without_executing_source_query(self):
+        cursor = MagicMock()
+        conn = MagicMock()
+        conn.cursor.return_value = cursor
+
+        examples._execute_on_connection(
+            conn, "azure_sql", "SELECT SUM(amount) AS revenue FROM huge_fact"
+        )
+
+        command, statement = cursor.execute.call_args.args
+        self.assertIn("sp_describe_first_result_set", command)
+        self.assertEqual(statement, "SELECT SUM(amount) AS revenue FROM huge_fact")
+        self.assertNotEqual(command, statement)
+
+    def test_snowflake_uses_explain_not_query_execution(self):
+        import types
+
+        cursor = MagicMock()
+        conn = MagicMock()
+        conn.cursor.return_value = cursor
+        connector_module = types.ModuleType("snowflake.connector")
+        connector_module.DictCursor = object
+        snowflake_module = types.ModuleType("snowflake")
+        snowflake_module.connector = connector_module
+
+        with patch.dict(sys.modules, {
+            "snowflake": snowflake_module,
+            "snowflake.connector": connector_module,
+        }):
+            examples._execute_on_connection(
+                conn, "snowflake", "SELECT SUM(amount) FROM huge_fact"
+            )
+
+        command = cursor.execute.call_args.args[0]
+        self.assertTrue(command.startswith("EXPLAIN USING TEXT SELECT"))
+
+    def test_oracle_uses_cursor_parse_without_execute(self):
+        cursor = MagicMock()
+        conn = MagicMock()
+        conn.cursor.return_value = cursor
+
+        examples._execute_on_connection(
+            conn, "oracle", "SELECT SUM(amount) FROM huge_fact"
+        )
+
+        cursor.parse.assert_called_once_with("SELECT SUM(amount) FROM huge_fact")
+        cursor.execute.assert_not_called()
+
     def test_oracle_sets_call_timeout_in_milliseconds(self):
         fake_conn = MagicMock()
         with patch("core.schema._ora_connect", return_value=fake_conn):
             conn = examples._open_connection({}, "oracle")
         self.assertIs(conn, fake_conn)
         self.assertEqual(conn.call_timeout, examples._QUERY_TIMEOUT_SECONDS * 1000)
+
+
+class BatchProgressAndStopTests(unittest.TestCase):
+    def test_stop_event_is_checked_between_queries_and_skips_embedding(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "orders_queries.md").write_text(
+                "Q: first query\nSQL: SELECT * FROM first_table\n"
+                "Q: second query\nSQL: SELECT * FROM second_table\n",
+                encoding="utf-8",
+            )
+            stop_event = threading.Event()
+            progress = []
+            fake_conn = MagicMock()
+
+            def _capture(payload):
+                progress.append(payload)
+                if payload.get("current") == 1:
+                    stop_event.set()
+
+            with patch("core.examples._open_connection", return_value=fake_conn), \
+                 patch("core.examples._execute_on_connection") as execute, \
+                 patch("store.save_validated_example") as save:
+                validated = examples.validate_and_store_examples(
+                    "acct1",
+                    tmp,
+                    {},
+                    "azure_sql",
+                    "acct1",
+                    stop_event=stop_event,
+                    progress_callback=_capture,
+                )
+
+            self.assertEqual(validated, 1)
+            self.assertEqual(execute.call_count, 1)
+            self.assertEqual(save.call_count, 1)
+            self.assertEqual([item["current"] for item in progress], [0, 1])
+            fake_conn.close.assert_called_once()
 
     def test_snowflake_sets_statement_timeout_via_alter_session(self):
         fake_cursor = MagicMock()
@@ -72,70 +197,138 @@ class OpenConnectionTimeoutTests(unittest.TestCase):
         self.assertIs(conn, fake_conn)
 
 
-class RunExampleValidationExecutorTests(unittest.TestCase):
-    def test_validation_runs_off_the_event_loop(self):
-        """The blocking validator must run via run_in_executor, not be awaited
-        directly on the event loop — otherwise it blocks all concurrent
-        requests, not just this KB build's background task."""
-        calls = []
+class RunExampleValidationProcessTests(unittest.TestCase):
+    _DB_CFG = {"credentials": {}, "db_type": "azure_sql"}
 
-        def _fake_validate(account_id, queries_dir, credentials, db_type, chroma_dir):
-            import threading
-            calls.append(threading.current_thread() is threading.main_thread())
-            return 5
+    def test_successful_worker_reports_progress_without_blocking_event_loop(self):
+        progress = []
 
-        with patch("core.examples.validate_and_store_examples", _fake_validate):
-            asyncio.run(dispatcher._run_example_validation(
-                "acct1", "kb_dir", "chroma_dir",
-                {"credentials": {}, "db_type": "azure_sql"},
-            ))
-        self.assertEqual(calls, [False])  # ran on an executor thread, not main
+        async def _capture(payload):
+            progress.append(payload)
 
-    def test_overall_timeout_is_bounded_not_infinite(self):
+        result = asyncio.run(dispatcher._run_validation_process(
+            "acct1",
+            "kb_dir",
+            "chroma_dir",
+            self._DB_CFG,
+            progress_callback=_capture,
+            timeout_seconds=5,
+            worker_target=_successful_process_worker,
+        ))
+
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["validated"], 1)
+        self.assertEqual(progress[0]["step"], "Validating generated SQL examples (1/1)")
+
+    def test_hung_native_worker_is_force_terminated_at_hard_timeout(self):
         import time
 
-        def _slow_validate(*args, **kwargs):
-            time.sleep(0.2)
-            return 0
+        started = time.monotonic()
+        result = asyncio.run(dispatcher._run_validation_process(
+            "acct1",
+            "kb_dir",
+            "chroma_dir",
+            self._DB_CFG,
+            timeout_seconds=0.25,
+            worker_target=_hung_process_worker,
+        ))
+        elapsed = time.monotonic() - started
 
-        with patch("core.examples.validate_and_store_examples", _slow_validate), \
-             patch("asyncio.wait_for", wraps=asyncio.wait_for) as spy:
-            asyncio.run(dispatcher._run_example_validation(
-                "acct1", "kb_dir", "chroma_dir",
-                {"credentials": {}, "db_type": "azure_sql"},
-            ))
-        # Confirm the call is wrapped with SOME finite timeout, not left to
-        # run unbounded on the event loop.
-        self.assertTrue(spy.called)
-        _, kwargs = spy.call_args
-        self.assertIsNotNone(kwargs.get("timeout"))
-        self.assertGreater(kwargs["timeout"], 0)
+        self.assertEqual(result["status"], "timeout")
+        self.assertLess(elapsed, 5)
 
-    def test_timeout_error_is_caught_and_logged_not_raised(self):
-        async def _never_returns(*a, **k):
-            raise asyncio.TimeoutError()
+    def test_stop_event_force_terminates_worker_that_ignores_cancellation(self):
+        async def _run():
+            stop_event = asyncio.Event()
 
-        with patch("asyncio.wait_for", side_effect=asyncio.TimeoutError()):
+            async def _request_stop():
+                await asyncio.sleep(0.15)
+                stop_event.set()
+
+            stopper = asyncio.create_task(_request_stop())
             try:
-                asyncio.run(dispatcher._run_example_validation(
-                    "acct1", "kb_dir", "chroma_dir",
-                    {"credentials": {}, "db_type": "azure_sql"},
-                ))
-            except asyncio.TimeoutError:
-                self.fail("_run_example_validation must catch its own timeout, not propagate it")
+                return await dispatcher._run_validation_process(
+                    "acct1",
+                    "kb_dir",
+                    "chroma_dir",
+                    self._DB_CFG,
+                    stop_event=stop_event,
+                    timeout_seconds=10,
+                    stop_grace_seconds=0.1,
+                    worker_target=_hung_process_worker,
+                )
+            finally:
+                await stopper
 
-    def test_exception_from_validator_is_caught_not_raised(self):
-        def _boom(*args, **kwargs):
-            raise RuntimeError("db exploded")
+        result = asyncio.run(_run())
+        self.assertEqual(result["status"], "stopped")
 
-        with patch("core.examples.validate_and_store_examples", _boom):
-            try:
-                asyncio.run(dispatcher._run_example_validation(
-                    "acct1", "kb_dir", "chroma_dir",
-                    {"credentials": {}, "db_type": "azure_sql"},
+    def test_worker_crash_is_caught_not_raised(self):
+        result = asyncio.run(dispatcher._run_validation_process(
+            "acct1",
+            "kb_dir",
+            "chroma_dir",
+            self._DB_CFG,
+            timeout_seconds=5,
+            worker_target=_exploding_process_worker,
+        ))
+        self.assertEqual(result["status"], "error")
+        self.assertIn("exited with code", result["error"])
+
+    def test_timeout_preserves_real_query_total_for_admin_diagnostics(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "orders_queries.md").write_text(
+                "Q: revenue\nSQL: SELECT SUM(amount) FROM orders\n",
+                encoding="utf-8",
+            )
+            worker_result = {
+                "status": "timeout",
+                "total": 0,
+                "validated": 0,
+                "failed": 0,
+            }
+            with patch(
+                "core.dispatcher._run_validation_process",
+                new=AsyncMock(return_value=worker_result),
+            ):
+                result = asyncio.run(dispatcher._run_example_validation(
+                    "acct1",
+                    tmp,
+                    "acct1",
+                    self._DB_CFG,
+                    timeout_seconds=0.1,
                 ))
-            except RuntimeError:
-                self.fail("_run_example_validation must not propagate validator exceptions")
+
+        self.assertEqual(result, {
+            "status": "timeout",
+            "total": 1,
+            "validated": 0,
+            "failed": 1,
+        })
+
+    def test_completed_worker_activates_only_when_every_pattern_validates(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "orders_queries.md").write_text(
+                "Q: revenue\nSQL: SELECT SUM(amount) FROM orders\n",
+                encoding="utf-8",
+            )
+            worker_result = {
+                "status": "completed",
+                "total": 1,
+                "validated": 1,
+                "failed": 0,
+            }
+            with patch(
+                "core.dispatcher._run_validation_process",
+                new=AsyncMock(return_value=worker_result),
+            ):
+                result = asyncio.run(dispatcher._run_example_validation(
+                    "acct1", tmp, "acct1", self._DB_CFG
+                ))
+
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(result["validated"], 1)
+        self.assertEqual(result["failed"], 0)
 
 
 class StaleNullDiagnosticExampleFilterTests(unittest.TestCase):
