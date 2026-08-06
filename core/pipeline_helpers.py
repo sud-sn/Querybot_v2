@@ -526,6 +526,176 @@ def _build_row_metric_join_sql(
 _REPAIR_DIALECT = {"azure_sql": "tsql", "oracle": "oracle", "snowflake": "snowflake"}
 
 
+def attempt_governed_temporal_metric_repair(
+    sql: str,
+    db_type: str,
+    known_tables: set[str],
+    allowed_tables: set[str] | None,
+    table_columns: dict[str, dict[str, str]] | None,
+    semantic_context: dict | None,
+) -> str:
+    """Compile a standard governed period comparison from executable metadata.
+
+    This is deliberately conservative: one approved expression metric, one
+    selected Date Role, and a current-vs-previous period request.  Those inputs
+    fully determine the SQL, so retrying an LLM that already ignored the role
+    is unnecessary and unsafe.  More complex dimensional comparisons continue
+    through the normal planner/retry path.
+    """
+    from core.contextual_dates import format_period_bucket_expression
+    from core.validator import validate_sql_detailed
+
+    context = semantic_context or {}
+    plan = context.get("semantic_plan") or {}
+    question = str(context.get("question") or "")
+    policies = list(plan.get("temporal_policies") or [])
+    metrics = [
+        metric for metric in (context.get("metric_formulas") or [])
+        if str(metric.get("formula_type") or "query").lower() == "expression"
+        and str(metric.get("sql_template") or "").strip()
+    ]
+    if len(policies) != 1 or len(metrics) != 1:
+        return ""
+    if not re.search(r"\b(?:compare|comparison|versus|vs\.?|difference|change)\b", question, re.I):
+        return ""
+    if not re.search(r"\b(?:this|current)\s+(?:week|month|quarter|year)\b", question, re.I):
+        return ""
+    if not re.search(r"\b(?:last|previous|prior)\s+(?:week|month|quarter|year)\b", question, re.I):
+        return ""
+
+    # A required non-date display dimension changes the requested grain and
+    # cannot be safely synthesized by this narrow compiler.
+    if any(
+        field.get("display_required") and field.get("enforcement") != "optional"
+        for field in (plan.get("fields") or [])
+    ):
+        return ""
+
+    policy = policies[0]
+    fact_table = str(policy.get("fact_table") or policy.get("anchor_table") or "")
+    fact_column = str(policy.get("fact_column") or policy.get("anchor_column") or "")
+    dimension_table = str(policy.get("dimension_table") or "")
+    dimension_key = str(policy.get("dimension_key") or "")
+    date_column = str(policy.get("date_column") or "")
+    date_key_type = str(policy.get("date_key_type") or "")
+    role_alias = re.sub(r"[^A-Za-z0-9_]", "_", str(policy.get("role_alias") or "business_date"))
+    if not fact_table or not fact_column or not date_column:
+        return ""
+    if date_key_type == "surrogate_fk" and not (dimension_table and dimension_key):
+        return ""
+
+    metric = metrics[0]
+    formula = str(metric.get("sql_template") or "").strip().rstrip(";")
+    # Query/template metrics and multi-statement fragments are intentionally
+    # outside this compiler's authority.
+    if not formula or re.search(r"\b(?:SELECT|FROM|WITH)\b|;", formula, re.I):
+        return ""
+
+    grain_match = re.search(r"\b(?:this|current)\s+(week|month|quarter|year)\b", question, re.I)
+    grain = str(policy.get("requested_grain") or (grain_match.group(1) if grain_match else "month")).lower()
+    if grain not in {"week", "month", "quarter", "year"}:
+        return ""
+
+    def qcol(name: str) -> str:
+        clean = str(name or "").strip().strip("[]\"`")
+        if db_type == "azure_sql":
+            return f"[{clean}]"
+        if db_type in {"snowflake", "oracle"}:
+            return f'"{clean}"'
+        return clean
+
+    fact_sql = _quote_table_for_count(fact_table, db_type)
+    dim_sql = _quote_table_for_count(dimension_table, db_type) if dimension_table else ""
+    if date_key_type == "surrogate_fk":
+        from_sql = (
+            f"{fact_sql} AS fact_rows\n"
+            f"    LEFT JOIN {dim_sql} AS {role_alias}\n"
+            f"      ON fact_rows.{qcol(fact_column)} = {role_alias}.{qcol(dimension_key)}"
+        )
+        date_ref = f"{role_alias}.{qcol(date_column)}"
+    else:
+        from_sql = f"{fact_sql} AS fact_rows"
+        date_ref = f"fact_rows.{qcol(date_column)}"
+
+    bucket = format_period_bucket_expression(
+        date_ref,
+        grain,
+        db_type,
+        role_alias=role_alias,
+        calendar_attributes=policy.get("calendar_attributes") or {},
+    )
+    dialect = str(db_type or "azure_sql").lower()
+    if dialect == "azure_sql":
+        base_bucket = {
+            "week": "DATEADD(day, 1 - DATEPART(weekday, anchor.max_business_date), CAST(anchor.max_business_date AS date))",
+            "month": "DATEFROMPARTS(YEAR(anchor.max_business_date), MONTH(anchor.max_business_date), 1)",
+            "quarter": "DATEFROMPARTS(YEAR(anchor.max_business_date), ((DATEPART(quarter, anchor.max_business_date) - 1) * 3) + 1, 1)",
+            "year": "DATEFROMPARTS(YEAR(anchor.max_business_date), 1, 1)",
+        }[grain]
+        start_expr = f"DATEADD({grain}, -1, {base_bucket})"
+        end_expr = f"DATEADD({grain}, 1, {base_bucket})"
+    elif dialect == "snowflake":
+        base_bucket = f"DATE_TRUNC('{grain}', anchor.max_business_date)"
+        start_expr = f"DATEADD({grain}, -1, {base_bucket})"
+        end_expr = f"DATEADD({grain}, 1, {base_bucket})"
+    elif dialect == "oracle":
+        trunc_fmt = {"week": "IW", "month": "MM", "quarter": "Q", "year": "YYYY"}[grain]
+        base_bucket = f"TRUNC(anchor.max_business_date, '{trunc_fmt}')"
+        months = {"month": 1, "quarter": 3, "year": 12}.get(grain)
+        if months:
+            start_expr = f"ADD_MONTHS({base_bucket}, -{months})"
+            end_expr = f"ADD_MONTHS({base_bucket}, {months})"
+        else:
+            start_expr = f"{base_bucket} - 7"
+            end_expr = f"{base_bucket} + 7"
+    else:
+        return ""
+
+    metric_alias = re.sub(r"[^A-Za-z0-9_]", "_", str(metric.get("name") or "metric")).upper() or "METRIC"
+    compiled = f"""WITH anchor AS (
+    SELECT MAX({date_ref}) AS max_business_date
+    FROM {from_sql}
+),
+period_totals AS (
+    SELECT
+        {bucket} AS period_start,
+        {formula} AS {metric_alias}
+    FROM {from_sql}
+    CROSS JOIN anchor
+    WHERE {date_ref} >= {start_expr}
+      AND {date_ref} < {end_expr}
+    GROUP BY {bucket}
+),
+period_comparison AS (
+    SELECT
+        period_start,
+        {metric_alias},
+        LAG({metric_alias}) OVER (ORDER BY period_start) AS previous_{metric_alias}
+    FROM period_totals
+)
+SELECT
+    period_start,
+    {metric_alias},
+    previous_{metric_alias},
+    {metric_alias} - previous_{metric_alias} AS absolute_change,
+    100.0 * ({metric_alias} - previous_{metric_alias}) / NULLIF(previous_{metric_alias}, 0) AS percent_change
+FROM period_comparison
+ORDER BY period_start"""
+
+    result = validate_sql_detailed(
+        compiled,
+        known_tables,
+        db_type,
+        allowed_tables,
+        table_columns or {},
+        semantic_context,
+    )
+    if not result.ok:
+        log.debug("Governed temporal compiler did not validate: %s (%s)", result.reason, result.code)
+        return ""
+    return compiled
+
+
 def attempt_field_plan_repair(
     sql: str,
     db_type: str,

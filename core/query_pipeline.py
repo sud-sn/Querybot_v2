@@ -54,6 +54,7 @@ from core.date_roles import (
 from core.contextual_dates import (
     build_contextual_date_plan,
     build_contextual_date_plan_many,
+    enrich_date_binding_calendar_attributes,
     find_explicit_date_roles,
     question_has_snapshot_intent,
     requested_temporal_grain,
@@ -70,6 +71,7 @@ from core.pipeline_helpers import (
     _count_tables_for_zero_row, _build_zero_row_message,
     _format_metric_formula_context, _extract_metric_formula_tables,
     _build_row_metric_join_sql, attempt_field_plan_repair,
+    attempt_governed_temporal_metric_repair,
     _clamp_kb_doc, _clamp_prompt_context, reused_plan_is_stale_for_graph,
 )
 from core.pipeline_trace import (
@@ -243,6 +245,7 @@ def _graph_with_exact_date_edges(graph: dict, bindings: list[dict]) -> dict:
     relationships = list(graph.get("relationships") or [])
     remove_ids: set[int] = set()
     additions: list[dict] = []
+    promoted_any = False
     for binding in bindings or []:
         if normalize_date_key_type(binding.get("date_key_type")) != "surrogate_fk":
             continue
@@ -270,6 +273,24 @@ def _graph_with_exact_date_edges(graph: dict, bindings: list[dict]) -> dict:
                 exact_indexes.add(index)
         if exact_indexes:
             remove_ids.update(index for index, _edge in parallel if index not in exact_indexes)
+            # The persisted Entity Graph deliberately keeps discovered edges
+            # in ``suggested`` state until an administrator reviews them.
+            # Selecting an *approved* Date Role is already an independent,
+            # stronger governance decision for this exact physical edge.  Make
+            # that edge executable in the query-local graph without mutating
+            # the persisted graph.  Previously an exact suggested edge was
+            # retained verbatim, so resolve_for_question() removed it from the
+            # confirmed subgraph and SQL generation never received the join
+            # skeleton that validation subsequently required.
+            for index in exact_indexes:
+                promoted = dict(relationships[index])
+                promoted.update({
+                    "generated_by": "date_role",
+                    "status": "confirmed",
+                    "confidence_score": 100,
+                })
+                relationships[index] = promoted
+                promoted_any = True
             continue
 
         # An approved date role is stronger evidence than a missing or stale
@@ -305,7 +326,7 @@ def _graph_with_exact_date_edges(graph: dict, bindings: list[dict]) -> dict:
                 "validation_status": "untested",
                 "confidence_score": 100,
             })
-    if not remove_ids and not additions:
+    if not remove_ids and not additions and not promoted_any:
         return graph
     return {
         **graph,
@@ -2324,6 +2345,22 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 )
                 return
             if _date_context_resolution.get("status") in {"selected", "selected_many"}:
+                # Enrich the approved role from the live schema at query time.
+                # This lets an existing date dimension expose month/year/
+                # quarter columns immediately, without a KB rebuild, while
+                # keeping the role's native date as the filter/anchor value.
+                if _date_context_resolution.get("status") == "selected_many":
+                    _date_context_resolution["bindings"] = [
+                        enrich_date_binding_calendar_attributes(binding, all_columns)
+                        for binding in (_date_context_resolution.get("bindings") or [])
+                    ]
+                else:
+                    _date_context_resolution["binding"] = (
+                        enrich_date_binding_calendar_attributes(
+                            _date_context_resolution.get("binding") or {},
+                            all_columns,
+                        )
+                    )
                 if _date_context_resolution.get("status") == "selected_many":
                     _date_plan = build_contextual_date_plan_many(
                         _date_context_resolution.get("bindings") or [],
@@ -3141,6 +3178,37 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         sql, all_known, db_cfg["db_type"], query_scope_tables, all_columns, semantic_context
     )
     _validate_ms = int((time.time() - _validate_t0) * 1000)
+
+    # When one governed expression metric and one approved Date Role fully
+    # determine a current-vs-previous period comparison, compile it from that
+    # executable contract before asking the LLM to retry. This repairs missing
+    # role joins, surrogate-key parsing, and truncated comparison CTEs with the
+    # same dynamic path for every client/schema.
+    if not ok and code in {
+        "field_plan_mismatch", "graph_plan_mismatch", "surrogate_date_conversion",
+        "temporal_anchor_missing", "temporal_anchor_mismatch", "temporal_role_mismatch",
+        "temporal_anchor_unscoped", "period_comparison_shape", "parse",
+    }:
+        _temporal_repair_t0 = time.time()
+        try:
+            _governed_temporal_sql = attempt_governed_temporal_metric_repair(
+                sql, db_cfg["db_type"], all_known, query_scope_tables,
+                all_columns, semantic_context,
+            )
+        except Exception as _temporal_rep_exc:
+            _governed_temporal_sql = ""
+            log.debug("Governed temporal repair skipped: %s", _temporal_rep_exc)
+        if _governed_temporal_sql:
+            _trace_step(
+                trace_id,
+                "governed_temporal_repair",
+                input_summary=sql,
+                output_summary=_governed_temporal_sql,
+                metadata={"mode": "deterministic", "date_role": "approved"},
+                duration_ms=int((time.time() - _temporal_repair_t0) * 1000),
+            )
+            sql = _governed_temporal_sql
+            ok, reason, code = True, "OK", "ok"
 
     # Display-field plan mismatches are mechanically fixable from the plan
     # itself (add the dimension join, swap key → display column). Try that

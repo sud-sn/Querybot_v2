@@ -85,6 +85,107 @@ def _same_table(left: Any, right: Any) -> bool:
     return bool(left_full and right_full and (left_full == right_full or left_bare == right_bare))
 
 
+def _calendar_column_name(
+    columns: dict[str, Any],
+    candidates: tuple[str, ...],
+) -> str:
+    """Return the first exact calendar attribute present in a table.
+
+    Exact-name matching is intentional.  Calendar dimensions often contain
+    unrelated business fields whose names merely contain words such as MONTH
+    or YEAR; treating those as governed calendar attributes would be worse
+    than falling back to the approved native date value.
+    """
+    by_upper = {str(name).upper(): str(name) for name in columns}
+    for candidate in candidates:
+        if candidate in by_upper:
+            return by_upper[candidate]
+    return ""
+
+
+def infer_calendar_attributes(
+    dimension_table: str,
+    table_columns: dict[str, dict[str, Any]] | None,
+    *,
+    date_value_column: str = "",
+) -> dict[str, str]:
+    """Discover validated date-dimension attributes from the live schema.
+
+    This enrichment happens at query time, so approving a Date Role does not
+    require a KB rebuild before month/year/quarter questions can use columns
+    already present in the connected calendar dimension.
+    """
+    columns: dict[str, Any] = {}
+    for table, candidate_columns in (table_columns or {}).items():
+        if _same_table(table, dimension_table):
+            columns = dict(candidate_columns or {})
+            break
+    if not columns:
+        return {}
+
+    result = {
+        "date": _calendar_column_name(
+            columns,
+            tuple(
+                value for value in (
+                    str(date_value_column or "").upper(),
+                    "DMS_DT", "CALENDAR_DATE", "FULL_DATE", "DATE_VALUE", "DATE",
+                ) if value
+            ),
+        ),
+        "year": _calendar_column_name(
+            columns,
+            ("CALENDAR_YEAR", "DMS_YR", "YEAR_NUM", "YEAR_NUMBER", "YEAR", "YR"),
+        ),
+        "year_month": _calendar_column_name(
+            columns,
+            ("YEAR_MONTH", "YEAR_MONTH_KEY", "YEARMONTH", "YYYYMM"),
+        ),
+        "month_number": _calendar_column_name(
+            columns,
+            ("MONTH_NUMBER", "MONTH_NUM", "MONTH_NO", "DMS_MTH", "MONTH", "MTH"),
+        ),
+        "month_name": _calendar_column_name(
+            columns,
+            ("MONTH_NAME", "MONTH_NM", "DMS_MTH_NM", "MTH_NM"),
+        ),
+        "quarter": _calendar_column_name(
+            columns,
+            ("QUARTER_NUMBER", "QUARTER_NUM", "QUARTER_NO", "DMS_QTR", "QUARTER", "QTR"),
+        ),
+        "week": _calendar_column_name(
+            columns,
+            ("WEEK_NUMBER", "WEEK_NUM", "WEEK_NO", "DMS_WK", "WEEK", "WK"),
+        ),
+        "day": _calendar_column_name(
+            columns,
+            ("DAY_OF_MONTH", "DAY_NUMBER", "DAY_NUM", "DMS_DAY", "DAY"),
+        ),
+    }
+    return {key: value for key, value in result.items() if value}
+
+
+def enrich_date_binding_calendar_attributes(
+    binding: dict,
+    table_columns: dict[str, dict[str, Any]] | None,
+) -> dict:
+    """Attach query-time calendar capabilities to one selected Date Role."""
+    enriched = dict(binding or {})
+    table = str(
+        enriched.get("dimension_table")
+        or enriched.get("fact_table")
+        or ""
+    )
+    attributes = infer_calendar_attributes(
+        table,
+        table_columns,
+        date_value_column=str(enriched.get("date_value_column") or ""),
+    )
+    if attributes:
+        enriched["calendar_attributes"] = attributes
+    return enriched
+
+
 def _binding_score(question: str, binding: dict) -> int:
     q = normalize_date_role_text(question)
     q_tokens = set(q.split())
@@ -819,6 +920,8 @@ def build_contextual_date_plan(binding: dict, question: str = "") -> dict:
     temporal_grain = str(binding.get("temporal_grain") or "").lower() or date_key_temporal_grain(
         date_key_type
     )
+    requested_grain = requested_temporal_grain(question)
+    calendar_attributes = dict(binding.get("calendar_attributes") or {})
     if not fact_table or not fact_column:
         return {"enabled": False, "fields": [], "joins": [], "required_tables": [], "reason": "incomplete date context"}
     if date_key_type == "surrogate_fk" and not all(
@@ -870,6 +973,8 @@ def build_contextual_date_plan(binding: dict, question: str = "") -> dict:
                 "date_key_type": date_key_type,
                 "temporal_grain": temporal_grain,
                 "role_alias": role_alias,
+                "calendar_attributes": calendar_attributes,
+                "requested_grain": requested_grain,
             }
         ],
         "joins": joins,
@@ -885,6 +990,8 @@ def build_contextual_date_plan(binding: dict, question: str = "") -> dict:
             "resolution_source": binding.get("resolution_source") or "",
             "temporal_grain": temporal_grain,
             "inference_source": binding.get("inference_source") or "",
+            "calendar_attributes": calendar_attributes,
+            "requested_grain": requested_grain,
         }],
         "required_tables": [table for table in (fact_table, dimension_table) if table],
         "reason": f"governed date context: {label}",
@@ -898,6 +1005,8 @@ def build_contextual_date_plan(binding: dict, question: str = "") -> dict:
             "resolution_source": binding.get("resolution_source") or "",
             "inference_source": binding.get("inference_source") or "",
             "inferred": bool(binding.get("inferred_fallback")),
+            "calendar_attributes": calendar_attributes,
+            "requested_grain": requested_grain,
         }],
     }
     window = detect_temporal_window(question)
@@ -935,6 +1044,8 @@ def build_contextual_date_plan(binding: dict, question: str = "") -> dict:
             "resolution_source": binding.get("resolution_source") or "",
             "temporal_grain": temporal_grain,
             "inference_source": binding.get("inference_source") or "",
+            "calendar_attributes": calendar_attributes,
+            "requested_grain": requested_grain,
         }]
     return plan
 
@@ -968,6 +1079,71 @@ def format_date_value_expression(
         if dialect in {"mysql", "mariadb"}:
             return f"STR_TO_DATE(CAST({ref} AS CHAR), '%Y%m')"
     return ref
+
+
+def format_period_bucket_expression(
+    date_ref: str,
+    grain: str,
+    db_type: str = "azure_sql",
+    *,
+    role_alias: str = "",
+    calendar_attributes: dict[str, str] | None = None,
+) -> str:
+    """Render a governed period bucket without interpreting a surrogate FK.
+
+    Validated calendar-dimension attributes are preferred. If they are not
+    available, the expression is derived from the approved native date value.
+    """
+    attrs = dict(calendar_attributes or {})
+    grain = str(grain or "day").lower()
+    dialect = str(db_type or "azure_sql").lower()
+
+    def attr(name: str) -> str:
+        column = str(attrs.get(name) or "").strip().strip("[]\"`")
+        if column and dialect in {"azure_sql", "sqlserver", "mssql"}:
+            column = f"[{column}]"
+        elif column and dialect in {"snowflake", "oracle"}:
+            column = f'"{column}"'
+        return f"{role_alias}.{column}" if column and role_alias else column
+
+    if grain == "year" and attr("year"):
+        return attr("year")
+    if grain == "month" and attr("year_month"):
+        return attr("year_month")
+    if grain == "month" and attr("year") and attr("month_number"):
+        if dialect in {"azure_sql", "sqlserver", "mssql"}:
+            return f"DATEFROMPARTS({attr('year')}, {attr('month_number')}, 1)"
+        if dialect == "snowflake":
+            return f"DATE_FROM_PARTS({attr('year')}, {attr('month_number')}, 1)"
+        if dialect == "oracle":
+            return (
+                f"TO_DATE(TO_CHAR({attr('year')}) || LPAD(TO_CHAR({attr('month_number')}), 2, '0') || '01', "
+                "'YYYYMMDD')"
+            )
+    if grain == "quarter" and attr("year") and attr("quarter"):
+        if dialect in {"azure_sql", "sqlserver", "mssql"}:
+            return f"DATEFROMPARTS({attr('year')}, (({attr('quarter')} - 1) * 3) + 1, 1)"
+        if dialect == "snowflake":
+            return f"DATE_FROM_PARTS({attr('year')}, (({attr('quarter')} - 1) * 3) + 1, 1)"
+
+    if dialect in {"azure_sql", "sqlserver", "mssql"}:
+        if grain == "year":
+            return f"DATEFROMPARTS(YEAR({date_ref}), 1, 1)"
+        if grain == "quarter":
+            return f"DATEFROMPARTS(YEAR({date_ref}), ((DATEPART(quarter, {date_ref}) - 1) * 3) + 1, 1)"
+        if grain == "week":
+            return f"DATEADD(day, 1 - DATEPART(weekday, {date_ref}), CAST({date_ref} AS date))"
+        if grain == "month":
+            return f"DATEFROMPARTS(YEAR({date_ref}), MONTH({date_ref}), 1)"
+        return f"CAST({date_ref} AS date)"
+    if dialect == "snowflake":
+        return f"DATE_TRUNC('{grain}', {date_ref})"
+    if dialect == "oracle":
+        oracle_fmt = {"year": "YYYY", "quarter": "Q", "month": "MM", "week": "IW"}.get(grain, "DD")
+        return f"TRUNC({date_ref}, '{oracle_fmt}')" if oracle_fmt != "DD" else f"TRUNC({date_ref})"
+    if dialect in {"postgres", "postgresql"}:
+        return f"DATE_TRUNC('{grain}', {date_ref})"
+    return date_ref
 
 
 def format_required_anchor(policy: dict, db_type: str = "azure_sql") -> str:

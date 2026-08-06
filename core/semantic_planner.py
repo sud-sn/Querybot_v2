@@ -699,7 +699,11 @@ def build_semantic_field_plan(
 
 
 def format_semantic_field_plan(plan: dict, db_type: str = "azure_sql") -> str:
-    from core.contextual_dates import format_date_value_expression, format_required_anchor
+    from core.contextual_dates import (
+        format_date_value_expression,
+        format_period_bucket_expression,
+        format_required_anchor,
+    )
 
     if not plan or not plan.get("enabled") or not plan.get("fields"):
         return ""
@@ -711,7 +715,14 @@ def format_semantic_field_plan(plan: dict, db_type: str = "azure_sql") -> str:
         "Resolved fields:",
     ]
     for field in plan.get("fields", []):
-        expr = f"{field['table']}.{field['column']}"
+        role_alias = str(field.get("role_alias") or "").strip()
+        if role_alias and field.get("date_key_type") == "surrogate_fk":
+            # The physical dimension table and its role-playing alias are not
+            # interchangeable once the table is joined with AS. Keep every
+            # instruction internally consistent so generation can copy it.
+            expr = f"{role_alias}.{field['column']}"
+        else:
+            expr = f"{field['table']}.{field['column']}"
         if field.get("date_key_type") in {"yyyymmdd_integer", "yyyymm_integer"}:
             expr = format_date_value_expression(
                 str(field.get("table") or ""),
@@ -727,9 +738,9 @@ def format_semantic_field_plan(plan: dict, db_type: str = "azure_sql") -> str:
                 " [business display field - use this in SELECT and GROUP BY; "
                 f"use {field.get('source_key_column')} only for JOINs unless the user asks for key/id]"
             )
-        if field.get("role_alias") and field.get("date_key_type") == "surrogate_fk":
+        if role_alias and field.get("date_key_type") == "surrogate_fk":
             role_hint += (
-                f" [role-playing date alias: {field.get('role_alias')}; "
+                f" [role-playing date alias: {role_alias}; "
                 "use the real date value through this alias, never parse the fact FK as a date]"
             )
         elif field.get("date_key_type") in {"yyyymmdd_integer", "yyyymm_integer"}:
@@ -738,6 +749,19 @@ def format_semantic_field_plan(plan: dict, db_type: str = "azure_sql") -> str:
                 "use this exact nullable expression and exclude invalid encoded values]"
             )
         lines.append(f"- {field['term']}: {expr}{role_hint}")
+        requested_grain = str(field.get("requested_grain") or "").strip()
+        if requested_grain and field.get("role") == "contextual_date":
+            bucket = format_period_bucket_expression(
+                expr,
+                requested_grain,
+                db_type,
+                role_alias=role_alias,
+                calendar_attributes=field.get("calendar_attributes") or {},
+            )
+            lines.append(
+                f"  REQUIRED {requested_grain.upper()} BUCKET: {bucket}. "
+                "Use it in SELECT/GROUP BY for the requested period; use the native date value above for filtering and MAX anchor scope."
+            )
     avoid = plan.get("avoid_columns") or []
     if avoid:
         lines.append("")
@@ -761,8 +785,9 @@ def format_semantic_field_plan(plan: dict, db_type: str = "azure_sql") -> str:
             )
             alias_clause = f" AS {role_alias}" if role_alias else ""
             role_clause = f" for {edge.get('business_role')}" if edge.get("business_role") else ""
+            join_keyword = "LEFT JOIN" if edge.get("preserve_all") else "JOIN"
             lines.append(
-                f"- {edge['from']} JOIN {edge['to']}{alias_clause} ON {conds}{role_clause}"
+                f"- {edge['from']} {join_keyword} {edge['to']}{alias_clause} ON {conds}{role_clause}"
             )
     temporal_policies = plan.get("temporal_policies") or []
     if temporal_policies:

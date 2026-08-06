@@ -10,8 +10,10 @@ from core.contextual_dates import (
     build_contextual_date_plan,
     build_contextual_date_plan_many,
     detect_temporal_window,
+    enrich_date_binding_calendar_attributes,
     find_explicit_date_roles,
     format_date_value_expression,
+    format_period_bucket_expression,
     format_required_anchor,
     question_has_snapshot_intent,
     resolve_contextual_date_binding,
@@ -26,6 +28,8 @@ from core.pipeline_context import _merge_semantic_plans
 from core.graph_resolver import infer_connected_default_date_fact
 from core.query_pipeline import _graph_with_exact_date_edges, _resolved_fact_tables
 from core.validator import validate_sql_detailed
+from core.pipeline_helpers import attempt_governed_temporal_metric_repair
+from core.query_semantics import analyze_query_intent
 
 
 def _binding(context, role, fact_column, *, default=False, metric_id=1):
@@ -1242,6 +1246,48 @@ class ContextualDateResolutionTests(unittest.TestCase):
         self.assertEqual(edges[0]["generated_by"], "date_role")
         self.assertEqual(edges[0]["status"], "confirmed")
 
+    def test_approved_date_role_promotes_exact_suggested_edge_for_query(self):
+        graph = {
+            "entities": [
+                {
+                    "entity_name": "Revenue Fact", "entity_type": "fact",
+                    "schema_name": "EMDW_DMART", "table_name": "CUS_ORD_IVC_FCT",
+                    "status": "confirmed",
+                },
+                {
+                    "entity_name": "Invoice Date", "entity_type": "dimension",
+                    "schema_name": "EMDW_DMART", "table_name": "DT_DMS",
+                    "status": "confirmed",
+                },
+            ],
+            "relationships": [{
+                "from_entity": "Revenue Fact", "to_entity": "Invoice Date",
+                "from_column": "CUS_IVC_DT_DMS_KEY", "to_column": "DT_DMS_KEY",
+                "join_type": "LEFT", "generated_by": "heuristic",
+                "status": "suggested", "validation_status": "untested",
+                "confidence_score": 92,
+            }],
+        }
+        binding = {
+            "fact_table": "EMDW_DMART.CUS_ORD_IVC_FCT",
+            "fact_column": "CUS_IVC_DT_DMS_KEY",
+            "dimension_table": "EMDW_DMART.DT_DMS",
+            "dimension_key": "DT_DMS_KEY",
+            "date_value_column": "DMS_DT",
+            "date_key_type": "surrogate_fk",
+            "date_role": "invoice_date",
+        }
+
+        scoped = _graph_with_exact_date_edges(graph, [binding])
+
+        self.assertEqual(len(scoped["relationships"]), 1)
+        edge = scoped["relationships"][0]
+        self.assertEqual(edge["status"], "confirmed")
+        self.assertEqual(edge["generated_by"], "date_role")
+        self.assertEqual(edge["confidence_score"], 100)
+        # The persisted input remains review-only; promotion is query-local.
+        self.assertEqual(graph["relationships"][0]["status"], "suggested")
+
 
 class DateRoleDiscoveryTests(unittest.TestCase):
     def _schema(self):
@@ -2076,6 +2122,115 @@ class EncodedDateFallbackTests(unittest.TestCase):
         self.assertTrue(question_has_snapshot_intent("inventory by warehouse"))
         self.assertTrue(question_has_snapshot_intent("current stock on hand"))
         self.assertFalse(question_has_snapshot_intent("inventory sales revenue"))
+
+
+class GovernedTemporalCompilerTests(unittest.TestCase):
+    QUESTION = "what is the revenue comparison for current month and the last month"
+
+    def _context(self, *, calendar_columns=True):
+        columns = {
+            "ANALYTICS.FACT_BILLING": {
+                "INVOICE_DATE_KEY": "int", "ORDER_DATE_KEY": "int", "NET_REVENUE": "decimal",
+            },
+            "ANALYTICS.DIM_CALENDAR": {
+                "DATE_KEY": "int", "CALENDAR_DATE": "date",
+                **({"CALENDAR_YEAR": "int", "MONTH_NUMBER": "int"} if calendar_columns else {}),
+            },
+        }
+        binding = enrich_date_binding_calendar_attributes({
+            "context_name": "Invoice Date", "date_role": "invoice_date",
+            "fact_table": "ANALYTICS.FACT_BILLING", "fact_column": "INVOICE_DATE_KEY",
+            "dimension_table": "ANALYTICS.DIM_CALENDAR", "dimension_key": "DATE_KEY",
+            "date_value_column": "CALENDAR_DATE", "date_key_type": "surrogate_fk",
+        }, columns)
+        plan = build_contextual_date_plan(binding, self.QUESTION)
+        metric = {
+            "name": "Revenue", "formula_type": "expression",
+            "sql_template": "SUM(NET_REVENUE)", "base_table": "ANALYTICS.FACT_BILLING",
+        }
+        context = {
+            "question": self.QUESTION,
+            "intent": analyze_query_intent(self.QUESTION),
+            "production_sql": True,
+            "semantic_plan": plan,
+            "metric_formulas": [metric],
+            "graph_context": {
+                "enabled": True,
+                "resolved_edges": [{
+                    "from_entity": "Billing", "to_entity": "Invoice Date",
+                    "from_schema": "ANALYTICS", "from_table": "FACT_BILLING",
+                    "to_schema": "ANALYTICS", "to_table": "DIM_CALENDAR",
+                    "conditions": [("INVOICE_DATE_KEY", "DATE_KEY")],
+                    "join_type": "LEFT",
+                }],
+            },
+        }
+        return columns, binding, plan, context
+
+    def test_live_schema_enriches_calendar_capabilities_without_kb_rebuild(self):
+        _columns, binding, _plan, _context = self._context()
+        self.assertEqual(binding["calendar_attributes"]["date"], "CALENDAR_DATE")
+        self.assertEqual(binding["calendar_attributes"]["year"], "CALENDAR_YEAR")
+        self.assertEqual(binding["calendar_attributes"]["month_number"], "MONTH_NUMBER")
+
+    def test_month_bucket_prefers_validated_calendar_attributes(self):
+        expression = format_period_bucket_expression(
+            "invoice_date.[CALENDAR_DATE]", "month", "azure_sql",
+            role_alias="invoice_date",
+            calendar_attributes={"year": "CALENDAR_YEAR", "month_number": "MONTH_NUMBER"},
+        )
+        self.assertEqual(
+            expression,
+            "DATEFROMPARTS(invoice_date.[CALENDAR_YEAR], invoice_date.[MONTH_NUMBER], 1)",
+        )
+
+    def test_month_bucket_falls_back_to_native_date_not_surrogate(self):
+        expression = format_period_bucket_expression(
+            "invoice_date.[CALENDAR_DATE]", "month", "azure_sql",
+            role_alias="invoice_date", calendar_attributes={},
+        )
+        self.assertEqual(
+            expression,
+            "DATEFROMPARTS(YEAR(invoice_date.[CALENDAR_DATE]), MONTH(invoice_date.[CALENDAR_DATE]), 1)",
+        )
+
+    def test_prompt_uses_one_role_alias_and_exact_month_bucket(self):
+        from core.semantic_planner import format_semantic_field_plan
+
+        _columns, _binding, plan, _context = self._context()
+        text = format_semantic_field_plan(plan, "azure_sql")
+        self.assertIn("Invoice Date: invoice_date.CALENDAR_DATE", text)
+        self.assertIn(
+            "REQUIRED MONTH BUCKET: DATEFROMPARTS(invoice_date.[CALENDAR_YEAR], invoice_date.[MONTH_NUMBER], 1)",
+            text,
+        )
+        self.assertIn("FACT_BILLING.INVOICE_DATE_KEY = invoice_date.DATE_KEY", text)
+
+    def test_compiler_builds_and_validates_exact_governed_date_join(self):
+        columns, _binding, _plan, context = self._context()
+        sql = attempt_governed_temporal_metric_repair(
+            "SELECT truncated SQL", "azure_sql", set(columns), set(columns), columns, context,
+        )
+        self.assertTrue(sql)
+        self.assertIn("fact_rows.[INVOICE_DATE_KEY] = invoice_date.[DATE_KEY]", sql)
+        self.assertIn("invoice_date.[CALENDAR_DATE]", sql)
+        self.assertIn("SUM(NET_REVENUE)", sql)
+        self.assertNotIn("ORDER_DATE_KEY", sql)
+        self.assertNotIn("TRY_CONVERT", sql.upper())
+        result = validate_sql_detailed(
+            sql, set(columns), "azure_sql", set(columns), columns, context,
+        )
+        self.assertTrue(result.ok, result.reason)
+
+    def test_compiler_is_schema_generic_and_falls_back_to_native_date(self):
+        columns, _binding, _plan, context = self._context(calendar_columns=False)
+        sql = attempt_governed_temporal_metric_repair(
+            "SELECT broken", "azure_sql", set(columns), set(columns), columns, context,
+        )
+        self.assertIn(
+            "DATEFROMPARTS(YEAR(invoice_date.[CALENDAR_DATE]), MONTH(invoice_date.[CALENDAR_DATE]), 1)", sql,
+        )
+        self.assertNotIn("EMCO", sql.upper())
 
 
 if __name__ == "__main__":
