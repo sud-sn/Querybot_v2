@@ -1,0 +1,448 @@
+/*
+QueryBot Join Planner V2 - Azure SQL production acceptance fixture
+
+Properties:
+- Rerunnable: child tables are removed before parents.
+- Azure SQL / SQL Server compatible.
+- Contains no batch separators.
+- Covers star, snowflake, role-playing dates, SCD2, bridge allocation,
+  daily/monthly snapshots, multi-fact isolation and an intentionally unsafe
+  duplicate-key relationship candidate.
+*/
+
+SET NOCOUNT ON;
+SET XACT_ABORT ON;
+
+IF SCHEMA_ID(N'QBOT_JOIN_TEST') IS NULL
+    EXEC(N'CREATE SCHEMA [QBOT_JOIN_TEST] AUTHORIZATION [dbo]');
+
+BEGIN TRY
+    BEGIN TRANSACTION;
+
+    DROP TABLE IF EXISTS [QBOT_JOIN_TEST].[TEST_EXPECTED_CASES];
+    DROP TABLE IF EXISTS [QBOT_JOIN_TEST].[FACT_BAD_RELATIONSHIP];
+    DROP TABLE IF EXISTS [QBOT_JOIN_TEST].[DIM_DUPLICATE_CODE];
+    DROP TABLE IF EXISTS [QBOT_JOIN_TEST].[FACT_RETURNS];
+    DROP TABLE IF EXISTS [QBOT_JOIN_TEST].[FACT_INVENTORY_MONTHLY];
+    DROP TABLE IF EXISTS [QBOT_JOIN_TEST].[FACT_INVENTORY_DAILY];
+    DROP TABLE IF EXISTS [QBOT_JOIN_TEST].[FACT_SALES];
+    DROP TABLE IF EXISTS [QBOT_JOIN_TEST].[BRIDGE_PRODUCT_CATEGORY];
+    DROP TABLE IF EXISTS [QBOT_JOIN_TEST].[DIM_CATEGORY];
+    DROP TABLE IF EXISTS [QBOT_JOIN_TEST].[DIM_PRODUCT];
+    DROP TABLE IF EXISTS [QBOT_JOIN_TEST].[DIM_CUSTOMER_SCD2];
+    DROP TABLE IF EXISTS [QBOT_JOIN_TEST].[DIM_WAREHOUSE];
+    DROP TABLE IF EXISTS [QBOT_JOIN_TEST].[DIM_REGION];
+    DROP TABLE IF EXISTS [QBOT_JOIN_TEST].[DIM_DATE];
+
+    CREATE TABLE [QBOT_JOIN_TEST].[DIM_DATE] (
+        [DATE_KEY] int NOT NULL,
+        [FULL_DATE] date NOT NULL,
+        [CALENDAR_YEAR] smallint NOT NULL,
+        [CALENDAR_QUARTER] tinyint NOT NULL,
+        [CALENDAR_MONTH] tinyint NOT NULL,
+        [MONTH_NAME] varchar(12) NOT NULL,
+        [MONTH_START_DATE] date NOT NULL,
+        [DAY_OF_MONTH] tinyint NOT NULL,
+        [IS_MONTH_END] bit NOT NULL,
+        CONSTRAINT [PK_QBOT_JOIN_TEST_DIM_DATE] PRIMARY KEY ([DATE_KEY]),
+        CONSTRAINT [UQ_QBOT_JOIN_TEST_DIM_DATE_FULL_DATE] UNIQUE ([FULL_DATE])
+    );
+
+    CREATE TABLE [QBOT_JOIN_TEST].[DIM_REGION] (
+        [REGION_KEY] int NOT NULL,
+        [REGION_CODE] varchar(12) NOT NULL,
+        [REGION_NAME] varchar(80) NOT NULL,
+        CONSTRAINT [PK_QBOT_JOIN_TEST_DIM_REGION] PRIMARY KEY ([REGION_KEY]),
+        CONSTRAINT [UQ_QBOT_JOIN_TEST_DIM_REGION_CODE] UNIQUE ([REGION_CODE])
+    );
+
+    CREATE TABLE [QBOT_JOIN_TEST].[DIM_WAREHOUSE] (
+        [WAREHOUSE_KEY] int NOT NULL,
+        [WAREHOUSE_CODE] varchar(12) NOT NULL,
+        [WAREHOUSE_NAME] varchar(100) NOT NULL,
+        [REGION_KEY] int NOT NULL,
+        [ACTIVE_FLAG] bit NOT NULL,
+        CONSTRAINT [PK_QBOT_JOIN_TEST_DIM_WAREHOUSE] PRIMARY KEY ([WAREHOUSE_KEY]),
+        CONSTRAINT [UQ_QBOT_JOIN_TEST_DIM_WAREHOUSE_CODE] UNIQUE ([WAREHOUSE_CODE]),
+        CONSTRAINT [FK_QBOT_JOIN_TEST_WAREHOUSE_REGION] FOREIGN KEY ([REGION_KEY])
+            REFERENCES [QBOT_JOIN_TEST].[DIM_REGION] ([REGION_KEY])
+    );
+
+    CREATE TABLE [QBOT_JOIN_TEST].[DIM_CUSTOMER_SCD2] (
+        [CUSTOMER_SK] int NOT NULL,
+        [CUSTOMER_BK] varchar(20) NOT NULL,
+        [CUSTOMER_NAME] varchar(120) NOT NULL,
+        [CUSTOMER_SEGMENT] varchar(40) NOT NULL,
+        [EFFECTIVE_FROM_DATE] date NOT NULL,
+        [EFFECTIVE_TO_DATE] date NOT NULL,
+        [CURRENT_FLAG] bit NOT NULL,
+        CONSTRAINT [PK_QBOT_JOIN_TEST_DIM_CUSTOMER] PRIMARY KEY ([CUSTOMER_SK]),
+        CONSTRAINT [UQ_QBOT_JOIN_TEST_DIM_CUSTOMER_VERSION]
+            UNIQUE ([CUSTOMER_BK], [EFFECTIVE_FROM_DATE])
+    );
+
+    CREATE TABLE [QBOT_JOIN_TEST].[DIM_PRODUCT] (
+        [PRODUCT_KEY] int NOT NULL,
+        [PRODUCT_CODE] varchar(20) NOT NULL,
+        [PRODUCT_NAME] varchar(120) NOT NULL,
+        [PRODUCT_FAMILY] varchar(50) NOT NULL,
+        [UNIT_OF_MEASURE] varchar(10) NOT NULL,
+        CONSTRAINT [PK_QBOT_JOIN_TEST_DIM_PRODUCT] PRIMARY KEY ([PRODUCT_KEY]),
+        CONSTRAINT [UQ_QBOT_JOIN_TEST_DIM_PRODUCT_CODE] UNIQUE ([PRODUCT_CODE])
+    );
+
+    CREATE TABLE [QBOT_JOIN_TEST].[DIM_CATEGORY] (
+        [CATEGORY_KEY] int NOT NULL,
+        [CATEGORY_CODE] varchar(20) NOT NULL,
+        [CATEGORY_NAME] varchar(100) NOT NULL,
+        CONSTRAINT [PK_QBOT_JOIN_TEST_DIM_CATEGORY] PRIMARY KEY ([CATEGORY_KEY]),
+        CONSTRAINT [UQ_QBOT_JOIN_TEST_DIM_CATEGORY_CODE] UNIQUE ([CATEGORY_CODE])
+    );
+
+    CREATE TABLE [QBOT_JOIN_TEST].[BRIDGE_PRODUCT_CATEGORY] (
+        [PRODUCT_KEY] int NOT NULL,
+        [CATEGORY_KEY] int NOT NULL,
+        [ALLOCATION_PCT] decimal(9,6) NOT NULL,
+        CONSTRAINT [PK_QBOT_JOIN_TEST_BRIDGE_PRODUCT_CATEGORY]
+            PRIMARY KEY ([PRODUCT_KEY], [CATEGORY_KEY]),
+        CONSTRAINT [CK_QBOT_JOIN_TEST_BRIDGE_ALLOCATION]
+            CHECK ([ALLOCATION_PCT] > 0 AND [ALLOCATION_PCT] <= 1),
+        CONSTRAINT [FK_QBOT_JOIN_TEST_BRIDGE_PRODUCT] FOREIGN KEY ([PRODUCT_KEY])
+            REFERENCES [QBOT_JOIN_TEST].[DIM_PRODUCT] ([PRODUCT_KEY]),
+        CONSTRAINT [FK_QBOT_JOIN_TEST_BRIDGE_CATEGORY] FOREIGN KEY ([CATEGORY_KEY])
+            REFERENCES [QBOT_JOIN_TEST].[DIM_CATEGORY] ([CATEGORY_KEY])
+    );
+
+    CREATE TABLE [QBOT_JOIN_TEST].[FACT_SALES] (
+        [SALES_LINE_KEY] bigint NOT NULL,
+        [INVOICE_DATE_KEY] int NOT NULL,
+        [ORDER_DATE_KEY] int NOT NULL,
+        [CUSTOMER_SK] int NOT NULL,
+        [PRODUCT_KEY] int NOT NULL,
+        [WAREHOUSE_KEY] int NOT NULL,
+        [INVOICE_NUMBER] varchar(30) NOT NULL,
+        [LINE_NUMBER] smallint NOT NULL,
+        [SOLD_QUANTITY] decimal(18,3) NOT NULL,
+        [REVENUE_AMOUNT] decimal(18,2) NOT NULL,
+        [DISCOUNT_AMOUNT] decimal(18,2) NOT NULL,
+        CONSTRAINT [PK_QBOT_JOIN_TEST_FACT_SALES] PRIMARY KEY ([SALES_LINE_KEY]),
+        CONSTRAINT [UQ_QBOT_JOIN_TEST_FACT_SALES_GRAIN]
+            UNIQUE ([INVOICE_NUMBER], [LINE_NUMBER]),
+        CONSTRAINT [FK_QBOT_JOIN_TEST_SALES_INVOICE_DATE] FOREIGN KEY ([INVOICE_DATE_KEY])
+            REFERENCES [QBOT_JOIN_TEST].[DIM_DATE] ([DATE_KEY]),
+        CONSTRAINT [FK_QBOT_JOIN_TEST_SALES_ORDER_DATE] FOREIGN KEY ([ORDER_DATE_KEY])
+            REFERENCES [QBOT_JOIN_TEST].[DIM_DATE] ([DATE_KEY]),
+        CONSTRAINT [FK_QBOT_JOIN_TEST_SALES_CUSTOMER] FOREIGN KEY ([CUSTOMER_SK])
+            REFERENCES [QBOT_JOIN_TEST].[DIM_CUSTOMER_SCD2] ([CUSTOMER_SK]),
+        CONSTRAINT [FK_QBOT_JOIN_TEST_SALES_PRODUCT] FOREIGN KEY ([PRODUCT_KEY])
+            REFERENCES [QBOT_JOIN_TEST].[DIM_PRODUCT] ([PRODUCT_KEY]),
+        CONSTRAINT [FK_QBOT_JOIN_TEST_SALES_WAREHOUSE] FOREIGN KEY ([WAREHOUSE_KEY])
+            REFERENCES [QBOT_JOIN_TEST].[DIM_WAREHOUSE] ([WAREHOUSE_KEY])
+    );
+
+    CREATE TABLE [QBOT_JOIN_TEST].[FACT_INVENTORY_DAILY] (
+        [DAILY_SNAPSHOT_KEY] bigint NOT NULL,
+        [SNAPSHOT_DATE_KEY] int NOT NULL,
+        [PRODUCT_KEY] int NOT NULL,
+        [WAREHOUSE_KEY] int NOT NULL,
+        [ON_HAND_QUANTITY] decimal(18,3) NOT NULL,
+        [ON_HAND_VALUE] decimal(18,2) NOT NULL,
+        CONSTRAINT [PK_QBOT_JOIN_TEST_FACT_INVENTORY_DAILY] PRIMARY KEY ([DAILY_SNAPSHOT_KEY]),
+        CONSTRAINT [UQ_QBOT_JOIN_TEST_INVENTORY_DAILY_GRAIN]
+            UNIQUE ([SNAPSHOT_DATE_KEY], [PRODUCT_KEY], [WAREHOUSE_KEY]),
+        CONSTRAINT [FK_QBOT_JOIN_TEST_DAILY_DATE] FOREIGN KEY ([SNAPSHOT_DATE_KEY])
+            REFERENCES [QBOT_JOIN_TEST].[DIM_DATE] ([DATE_KEY]),
+        CONSTRAINT [FK_QBOT_JOIN_TEST_DAILY_PRODUCT] FOREIGN KEY ([PRODUCT_KEY])
+            REFERENCES [QBOT_JOIN_TEST].[DIM_PRODUCT] ([PRODUCT_KEY]),
+        CONSTRAINT [FK_QBOT_JOIN_TEST_DAILY_WAREHOUSE] FOREIGN KEY ([WAREHOUSE_KEY])
+            REFERENCES [QBOT_JOIN_TEST].[DIM_WAREHOUSE] ([WAREHOUSE_KEY])
+    );
+
+    CREATE TABLE [QBOT_JOIN_TEST].[FACT_INVENTORY_MONTHLY] (
+        [MONTHLY_SNAPSHOT_KEY] bigint NOT NULL,
+        [PERIOD_DATE_KEY] int NOT NULL,
+        [PRODUCT_KEY] int NOT NULL,
+        [WAREHOUSE_KEY] int NOT NULL,
+        [CLOSING_QUANTITY] decimal(18,3) NOT NULL,
+        [CLOSING_VALUE] decimal(18,2) NOT NULL,
+        CONSTRAINT [PK_QBOT_JOIN_TEST_FACT_INVENTORY_MONTHLY] PRIMARY KEY ([MONTHLY_SNAPSHOT_KEY]),
+        CONSTRAINT [UQ_QBOT_JOIN_TEST_INVENTORY_MONTHLY_GRAIN]
+            UNIQUE ([PERIOD_DATE_KEY], [PRODUCT_KEY], [WAREHOUSE_KEY]),
+        CONSTRAINT [FK_QBOT_JOIN_TEST_MONTHLY_DATE] FOREIGN KEY ([PERIOD_DATE_KEY])
+            REFERENCES [QBOT_JOIN_TEST].[DIM_DATE] ([DATE_KEY]),
+        CONSTRAINT [FK_QBOT_JOIN_TEST_MONTHLY_PRODUCT] FOREIGN KEY ([PRODUCT_KEY])
+            REFERENCES [QBOT_JOIN_TEST].[DIM_PRODUCT] ([PRODUCT_KEY]),
+        CONSTRAINT [FK_QBOT_JOIN_TEST_MONTHLY_WAREHOUSE] FOREIGN KEY ([WAREHOUSE_KEY])
+            REFERENCES [QBOT_JOIN_TEST].[DIM_WAREHOUSE] ([WAREHOUSE_KEY])
+    );
+
+    CREATE TABLE [QBOT_JOIN_TEST].[FACT_RETURNS] (
+        [RETURN_LINE_KEY] bigint NOT NULL,
+        [RETURN_DATE_KEY] int NOT NULL,
+        [ORIGINAL_INVOICE_DATE_KEY] int NOT NULL,
+        [CUSTOMER_SK] int NULL,
+        [PRODUCT_KEY] int NOT NULL,
+        [WAREHOUSE_KEY] int NOT NULL,
+        [RETURN_QUANTITY] decimal(18,3) NOT NULL,
+        [REFUND_AMOUNT] decimal(18,2) NOT NULL,
+        CONSTRAINT [PK_QBOT_JOIN_TEST_FACT_RETURNS] PRIMARY KEY ([RETURN_LINE_KEY]),
+        CONSTRAINT [FK_QBOT_JOIN_TEST_RETURN_DATE] FOREIGN KEY ([RETURN_DATE_KEY])
+            REFERENCES [QBOT_JOIN_TEST].[DIM_DATE] ([DATE_KEY]),
+        CONSTRAINT [FK_QBOT_JOIN_TEST_RETURN_INVOICE_DATE] FOREIGN KEY ([ORIGINAL_INVOICE_DATE_KEY])
+            REFERENCES [QBOT_JOIN_TEST].[DIM_DATE] ([DATE_KEY]),
+        CONSTRAINT [FK_QBOT_JOIN_TEST_RETURN_CUSTOMER] FOREIGN KEY ([CUSTOMER_SK])
+            REFERENCES [QBOT_JOIN_TEST].[DIM_CUSTOMER_SCD2] ([CUSTOMER_SK]),
+        CONSTRAINT [FK_QBOT_JOIN_TEST_RETURN_PRODUCT] FOREIGN KEY ([PRODUCT_KEY])
+            REFERENCES [QBOT_JOIN_TEST].[DIM_PRODUCT] ([PRODUCT_KEY]),
+        CONSTRAINT [FK_QBOT_JOIN_TEST_RETURN_WAREHOUSE] FOREIGN KEY ([WAREHOUSE_KEY])
+            REFERENCES [QBOT_JOIN_TEST].[DIM_WAREHOUSE] ([WAREHOUSE_KEY])
+    );
+
+    /* Deliberately unsafe candidate: TARGET_CODE is not unique. */
+    CREATE TABLE [QBOT_JOIN_TEST].[DIM_DUPLICATE_CODE] (
+        [DUPLICATE_ROW_KEY] int NOT NULL,
+        [TARGET_CODE] varchar(20) NOT NULL,
+        [TARGET_DESCRIPTION] varchar(100) NOT NULL,
+        CONSTRAINT [PK_QBOT_JOIN_TEST_DIM_DUPLICATE_CODE] PRIMARY KEY ([DUPLICATE_ROW_KEY])
+    );
+
+    CREATE TABLE [QBOT_JOIN_TEST].[FACT_BAD_RELATIONSHIP] (
+        [BAD_EVENT_KEY] bigint NOT NULL,
+        [TARGET_CODE] varchar(20) NOT NULL,
+        [EVENT_AMOUNT] decimal(18,2) NOT NULL,
+        CONSTRAINT [PK_QBOT_JOIN_TEST_FACT_BAD_RELATIONSHIP] PRIMARY KEY ([BAD_EVENT_KEY])
+    );
+
+    CREATE TABLE [QBOT_JOIN_TEST].[TEST_EXPECTED_CASES] (
+        [CASE_ID] int NOT NULL,
+        [CAPABILITY] varchar(60) NOT NULL,
+        [QUESTION_TEXT] varchar(500) NOT NULL,
+        [EXPECTED_ANCHOR] varchar(128) NOT NULL,
+        [EXPECTED_GRAIN] varchar(200) NOT NULL,
+        [EXPECTED_NUMERIC_VALUE] decimal(18,4) NULL,
+        [EXPECTED_TEXT] varchar(300) NULL,
+        [MUST_NOT_JOIN_RAW_FACTS] bit NOT NULL,
+        [NOTES] varchar(1000) NOT NULL,
+        CONSTRAINT [PK_QBOT_JOIN_TEST_EXPECTED_CASES] PRIMARY KEY ([CASE_ID])
+    );
+
+    INSERT INTO [QBOT_JOIN_TEST].[DIM_DATE]
+        ([DATE_KEY], [FULL_DATE], [CALENDAR_YEAR], [CALENDAR_QUARTER], [CALENDAR_MONTH],
+         [MONTH_NAME], [MONTH_START_DATE], [DAY_OF_MONTH], [IS_MONTH_END])
+    VALUES
+        (20260130, '2026-01-30', 2026, 1, 1, 'January',  '2026-01-01', 30, 0),
+        (20260131, '2026-01-31', 2026, 1, 1, 'January',  '2026-01-01', 31, 1),
+        (20260201, '2026-02-01', 2026, 1, 2, 'February', '2026-02-01',  1, 0),
+        (20260202, '2026-02-02', 2026, 1, 2, 'February', '2026-02-01',  2, 0),
+        (20260203, '2026-02-03', 2026, 1, 2, 'February', '2026-02-01',  3, 0),
+        (20260228, '2026-02-28', 2026, 1, 2, 'February', '2026-02-01', 28, 1);
+
+    INSERT INTO [QBOT_JOIN_TEST].[DIM_REGION]
+        ([REGION_KEY], [REGION_CODE], [REGION_NAME])
+    VALUES
+        (1, 'NORTH', 'Northern Region'),
+        (2, 'SOUTH', 'Southern Region');
+
+    INSERT INTO [QBOT_JOIN_TEST].[DIM_WAREHOUSE]
+        ([WAREHOUSE_KEY], [WAREHOUSE_CODE], [WAREHOUSE_NAME], [REGION_KEY], [ACTIVE_FLAG])
+    VALUES
+        (10, 'WH-N1', 'North Central Warehouse', 1, 1),
+        (20, 'WH-N2', 'North Coastal Warehouse', 1, 1),
+        (30, 'WH-S1', 'South Main Warehouse', 2, 1);
+
+    INSERT INTO [QBOT_JOIN_TEST].[DIM_CUSTOMER_SCD2]
+        ([CUSTOMER_SK], [CUSTOMER_BK], [CUSTOMER_NAME], [CUSTOMER_SEGMENT],
+         [EFFECTIVE_FROM_DATE], [EFFECTIVE_TO_DATE], [CURRENT_FLAG])
+    VALUES
+        (1, 'C001', 'Acme Equipment - Legacy', 'SMB',        '2025-01-01', '2026-01-31', 0),
+        (2, 'C001', 'Acme Equipment Ltd',      'Enterprise', '2026-02-01', '9999-12-31', 1),
+        (3, 'C002', 'BuildRight Services',      'Enterprise', '2025-01-01', '9999-12-31', 1),
+        (4, 'C003', 'City Works Department',    'Public',     '2025-01-01', '9999-12-31', 1);
+
+    INSERT INTO [QBOT_JOIN_TEST].[DIM_PRODUCT]
+        ([PRODUCT_KEY], [PRODUCT_CODE], [PRODUCT_NAME], [PRODUCT_FAMILY], [UNIT_OF_MEASURE])
+    VALUES
+        (100, 'P-EXC', 'Excavator Filter', 'Excavator Parts', 'EA'),
+        (200, 'P-BLT', 'Heavy Duty Bolt',  'Fasteners',       'EA'),
+        (300, 'P-GLV', 'Safety Gloves',    'Safety',          'PAIR');
+
+    INSERT INTO [QBOT_JOIN_TEST].[DIM_CATEGORY]
+        ([CATEGORY_KEY], [CATEGORY_CODE], [CATEGORY_NAME])
+    VALUES
+        (1000, 'HARD', 'Hardware'),
+        (2000, 'ELEC', 'Electrical'),
+        (3000, 'SAFE', 'Safety');
+
+    INSERT INTO [QBOT_JOIN_TEST].[BRIDGE_PRODUCT_CATEGORY]
+        ([PRODUCT_KEY], [CATEGORY_KEY], [ALLOCATION_PCT])
+    VALUES
+        (100, 1000, 0.600000),
+        (100, 2000, 0.400000),
+        (200, 1000, 1.000000),
+        (300, 3000, 1.000000);
+
+    INSERT INTO [QBOT_JOIN_TEST].[FACT_SALES]
+        ([SALES_LINE_KEY], [INVOICE_DATE_KEY], [ORDER_DATE_KEY], [CUSTOMER_SK],
+         [PRODUCT_KEY], [WAREHOUSE_KEY], [INVOICE_NUMBER], [LINE_NUMBER],
+         [SOLD_QUANTITY], [REVENUE_AMOUNT], [DISCOUNT_AMOUNT])
+    VALUES
+        (1, 20260130, 20260130, 1, 100, 10, 'INV-001', 1,  2.000, 100.00,  5.00),
+        (2, 20260131, 20260130, 3, 200, 20, 'INV-002', 1, 12.000, 120.00,  0.00),
+        (3, 20260201, 20260131, 2, 100, 10, 'INV-003', 1,  3.000, 150.00, 10.00),
+        (4, 20260201, 20260201, 4, 300, 30, 'INV-004', 1,  8.000,  80.00,  0.00),
+        (5, 20260202, 20260201, 3, 200, 20, 'INV-005', 1, 20.000, 200.00, 15.00),
+        (6, 20260203, 20260202, 2, 300, 10, 'INV-006', 1,  7.000,  70.00,  0.00);
+
+    INSERT INTO [QBOT_JOIN_TEST].[FACT_INVENTORY_DAILY]
+        ([DAILY_SNAPSHOT_KEY], [SNAPSHOT_DATE_KEY], [PRODUCT_KEY], [WAREHOUSE_KEY],
+         [ON_HAND_QUANTITY], [ON_HAND_VALUE])
+    VALUES
+        (1, 20260202, 100, 10, 20.000, 1000.00),
+        (2, 20260202, 200, 20, 80.000,  800.00),
+        (3, 20260202, 300, 30, 90.000,  900.00),
+        (4, 20260203, 100, 10, 18.000,  900.00),
+        (5, 20260203, 300, 10, 50.000,  500.00),
+        (6, 20260203, 200, 20, 75.000,  750.00),
+        (7, 20260203, 300, 30, 85.000,  850.00);
+
+    INSERT INTO [QBOT_JOIN_TEST].[FACT_INVENTORY_MONTHLY]
+        ([MONTHLY_SNAPSHOT_KEY], [PERIOD_DATE_KEY], [PRODUCT_KEY], [WAREHOUSE_KEY],
+         [CLOSING_QUANTITY], [CLOSING_VALUE])
+    VALUES
+        (1, 20260131, 100, 10, 22.000, 1100.00),
+        (2, 20260131, 200, 20, 82.000,  820.00),
+        (3, 20260131, 300, 30, 95.000,  950.00),
+        (4, 20260228, 100, 10, 16.000,  800.00),
+        (5, 20260228, 200, 20, 70.000,  700.00),
+        (6, 20260228, 300, 30, 80.000,  800.00);
+
+    INSERT INTO [QBOT_JOIN_TEST].[FACT_RETURNS]
+        ([RETURN_LINE_KEY], [RETURN_DATE_KEY], [ORIGINAL_INVOICE_DATE_KEY], [CUSTOMER_SK],
+         [PRODUCT_KEY], [WAREHOUSE_KEY], [RETURN_QUANTITY], [REFUND_AMOUNT])
+    VALUES
+        (1, 20260202, 20260131, 3,   200, 20, 2.000, 20.00),
+        (2, 20260203, 20260201, NULL, 300, 30, 1.000, 10.00);
+
+    INSERT INTO [QBOT_JOIN_TEST].[DIM_DUPLICATE_CODE]
+        ([DUPLICATE_ROW_KEY], [TARGET_CODE], [TARGET_DESCRIPTION])
+    VALUES
+        (1, 'DUP-A', 'Duplicate A version one'),
+        (2, 'DUP-A', 'Duplicate A version two'),
+        (3, 'UNQ-B', 'Unique B');
+
+    INSERT INTO [QBOT_JOIN_TEST].[FACT_BAD_RELATIONSHIP]
+        ([BAD_EVENT_KEY], [TARGET_CODE], [EVENT_AMOUNT])
+    VALUES
+        (1, 'DUP-A', 10.00),
+        (2, 'UNQ-B', 20.00);
+
+    INSERT INTO [QBOT_JOIN_TEST].[TEST_EXPECTED_CASES]
+        ([CASE_ID], [CAPABILITY], [QUESTION_TEXT], [EXPECTED_ANCHOR], [EXPECTED_GRAIN],
+         [EXPECTED_NUMERIC_VALUE], [EXPECTED_TEXT], [MUST_NOT_JOIN_RAW_FACTS], [NOTES])
+    VALUES
+        (1, 'single_fact_star',
+         'What is total revenue by warehouse?', 'FACT_SALES', 'warehouse',
+         720.0000, NULL, 0,
+         'Total across warehouse groups must equal 720.00; FACT_SALES joins DIM_WAREHOUSE many-to-one.'),
+        (2, 'snowflake',
+         'Show revenue by region.', 'FACT_SALES', 'region',
+         720.0000, 'Northern Region=640.00; Southern Region=80.00', 0,
+         'Use FACT_SALES -> DIM_WAREHOUSE -> DIM_REGION; do not invent FACT_SALES.REGION_KEY.'),
+        (3, 'role_playing_date',
+         'Compare January and February revenue by invoice month.', 'FACT_SALES', 'invoice calendar month',
+         500.0000, 'January=220.00; February=500.00', 0,
+         'INVOICE_DATE_KEY must join DIM_DATE.DATE_KEY; ORDER_DATE_KEY is a different governed role.'),
+        (4, 'scd2',
+         'Show revenue for customer C001 using the historical customer version.', 'FACT_SALES', 'customer version',
+         320.0000, 'C001=320.00', 0,
+         'Join CUSTOMER_SK directly. Do not join facts to CUSTOMER_BK because SCD2 contains multiple versions.'),
+        (5, 'bridge_allocation',
+         'Allocate revenue by product category.', 'FACT_SALES', 'category',
+         720.0000, 'Hardware=470.00; Electrical=100.00; Safety=150.00', 0,
+         'Multiply revenue by ALLOCATION_PCT. A raw bridge join would duplicate the P-EXC revenue.'),
+        (6, 'daily_snapshot',
+         'What was inventory value by warehouse on the latest daily snapshot?',
+         'FACT_INVENTORY_DAILY', 'snapshot date, product, warehouse',
+         3000.0000, 'Latest available daily date=2026-02-03', 0,
+         'Use daily snapshot fact; latest-date value is derived from the scoped fact, not the full calendar.'),
+        (7, 'monthly_snapshot',
+         'Show month-end inventory value for February.', 'FACT_INVENTORY_MONTHLY',
+         'month-end period, product, warehouse', 2300.0000, 'February 2026', 0,
+         'Use monthly fact rather than summing daily snapshots across the month.'),
+        (8, 'multi_fact_isolation',
+         'Compare February revenue and latest inventory value by warehouse.',
+         'FACT_SALES', 'warehouse', 500.0000, 'Revenue=500.00; inventory value=3000.00', 1,
+         'Aggregate FACT_SALES and FACT_INVENTORY_DAILY in separate CTEs before joining at warehouse grain.'),
+        (9, 'return_date_role',
+         'Show refunds by return date.', 'FACT_RETURNS', 'return calendar date',
+         30.0000, '2026-02-02=20.00; 2026-02-03=10.00', 0,
+         'Use RETURN_DATE_KEY, not ORIGINAL_INVOICE_DATE_KEY.'),
+        (10, 'relationship_profile',
+         'Profile the candidate TARGET_CODE relationship.', 'FACT_BAD_RELATIONSHIP', 'event',
+         30.0000, 'target_duplicate_keys=1; fanout=1.5', 0,
+         'The relationship must be warning/blocked until a unique target key or explicit bridge is supplied.');
+
+    COMMIT TRANSACTION;
+END TRY
+BEGIN CATCH
+    IF XACT_STATE() <> 0
+        ROLLBACK TRANSACTION;
+    THROW;
+END CATCH;
+
+/* Acceptance evidence queries. These are read-only and return expected values. */
+SELECT [CAPABILITY], [QUESTION_TEXT], [EXPECTED_ANCHOR], [EXPECTED_GRAIN],
+       [EXPECTED_NUMERIC_VALUE], [EXPECTED_TEXT], [MUST_NOT_JOIN_RAW_FACTS], [NOTES]
+FROM [QBOT_JOIN_TEST].[TEST_EXPECTED_CASES]
+ORDER BY [CASE_ID];
+
+SELECT d.[REGION_NAME], SUM(f.[REVENUE_AMOUNT]) AS [REVENUE_AMOUNT]
+FROM [QBOT_JOIN_TEST].[FACT_SALES] f
+INNER JOIN [QBOT_JOIN_TEST].[DIM_WAREHOUSE] w
+    ON f.[WAREHOUSE_KEY] = w.[WAREHOUSE_KEY]
+INNER JOIN [QBOT_JOIN_TEST].[DIM_REGION] d
+    ON w.[REGION_KEY] = d.[REGION_KEY]
+GROUP BY d.[REGION_NAME]
+ORDER BY d.[REGION_NAME];
+
+SELECT d.[CALENDAR_YEAR], d.[CALENDAR_MONTH], SUM(f.[REVENUE_AMOUNT]) AS [REVENUE_AMOUNT]
+FROM [QBOT_JOIN_TEST].[FACT_SALES] f
+INNER JOIN [QBOT_JOIN_TEST].[DIM_DATE] d
+    ON f.[INVOICE_DATE_KEY] = d.[DATE_KEY]
+GROUP BY d.[CALENDAR_YEAR], d.[CALENDAR_MONTH]
+ORDER BY d.[CALENDAR_YEAR], d.[CALENDAR_MONTH];
+
+SELECT c.[CATEGORY_NAME],
+       SUM(f.[REVENUE_AMOUNT] * b.[ALLOCATION_PCT]) AS [ALLOCATED_REVENUE_AMOUNT]
+FROM [QBOT_JOIN_TEST].[FACT_SALES] f
+INNER JOIN [QBOT_JOIN_TEST].[BRIDGE_PRODUCT_CATEGORY] b
+    ON f.[PRODUCT_KEY] = b.[PRODUCT_KEY]
+INNER JOIN [QBOT_JOIN_TEST].[DIM_CATEGORY] c
+    ON b.[CATEGORY_KEY] = c.[CATEGORY_KEY]
+GROUP BY c.[CATEGORY_NAME]
+ORDER BY c.[CATEGORY_NAME];
+
+WITH [sales_agg] AS (
+    SELECT f.[WAREHOUSE_KEY], SUM(f.[REVENUE_AMOUNT]) AS [REVENUE_AMOUNT]
+    FROM [QBOT_JOIN_TEST].[FACT_SALES] f
+    INNER JOIN [QBOT_JOIN_TEST].[DIM_DATE] d
+        ON f.[INVOICE_DATE_KEY] = d.[DATE_KEY]
+    WHERE d.[CALENDAR_YEAR] = 2026 AND d.[CALENDAR_MONTH] = 2
+    GROUP BY f.[WAREHOUSE_KEY]
+),
+[inventory_agg] AS (
+    SELECT i.[WAREHOUSE_KEY], SUM(i.[ON_HAND_VALUE]) AS [ON_HAND_VALUE]
+    FROM [QBOT_JOIN_TEST].[FACT_INVENTORY_DAILY] i
+    WHERE i.[SNAPSHOT_DATE_KEY] = (
+        SELECT MAX(i2.[SNAPSHOT_DATE_KEY])
+        FROM [QBOT_JOIN_TEST].[FACT_INVENTORY_DAILY] i2
+    )
+    GROUP BY i.[WAREHOUSE_KEY]
+)
+SELECT w.[WAREHOUSE_NAME],
+       COALESCE(s.[REVENUE_AMOUNT], 0) AS [REVENUE_AMOUNT],
+       COALESCE(i.[ON_HAND_VALUE], 0) AS [ON_HAND_VALUE]
+FROM [QBOT_JOIN_TEST].[DIM_WAREHOUSE] w
+LEFT JOIN [sales_agg] s ON w.[WAREHOUSE_KEY] = s.[WAREHOUSE_KEY]
+LEFT JOIN [inventory_agg] i ON w.[WAREHOUSE_KEY] = i.[WAREHOUSE_KEY]
+ORDER BY w.[WAREHOUSE_NAME];

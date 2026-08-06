@@ -561,7 +561,13 @@ def _edge_weight(rel: dict) -> float:
     return max(0.1, cost)
 
 
-def find_join_path(entity_names: list[str], graph: dict, prefer_fact_anchor: bool = True) -> list[dict]:
+def find_join_path(
+    entity_names: list[str],
+    graph: dict,
+    prefer_fact_anchor: bool = True,
+    *,
+    anti_join: bool = False,
+) -> list[dict]:
     """
     Weighted shortest path from the anchor entity (fact table preferred)
     through relationship edges to reach all other entities. Returns an ordered
@@ -613,13 +619,27 @@ def find_join_path(entity_names: list[str], graph: dict, prefer_fact_anchor: boo
                 chosen_path = path
                 break
             for edge in adj.get(node, []):
-                weight = _edge_weight(edge)
-                if weight == float("inf"):
-                    continue
+                from core.join_planner import traversal_is_admissible
                 neighbour = (
                     edge["to_entity"] if edge["_direction"] == "forward"
                     else edge["from_entity"]
                 )
+                secondary_fact_target = (
+                    edge["_direction"] == "backward"
+                    and neighbour in entity_names
+                    and str(entities_map.get(neighbour, {}).get("entity_type") or "").lower() == "fact"
+                )
+                admissible, _ = traversal_is_admissible(
+                    edge,
+                    entities_map,
+                    direction=edge["_direction"],
+                    anti_join=anti_join,
+                )
+                if not admissible and not secondary_fact_target:
+                    continue
+                weight = _edge_weight(edge)
+                if weight == float("inf"):
+                    continue
                 new_cost = cost + weight
                 if new_cost < best_cost.get(neighbour, float("inf")):
                     best_cost[neighbour] = new_cost
@@ -674,20 +694,18 @@ def _multi_fact_fanout_risk(join_path: list[dict], entities_map: dict[str, dict]
         return []
 
     joined_facts: set[str] = set()
-    fact_to_fact_linked: set[str] = set()
     for step in join_path:
         f, t = step.get("from_entity", ""), step.get("to_entity", "")
         if f in fact_names:
             joined_facts.add(f)
         if t in fact_names:
             joined_facts.add(t)
-        if f in fact_names and t in fact_names:
-            fact_to_fact_linked.add(f)
-            fact_to_fact_linked.add(t)
 
     if len(joined_facts) < 2:
         return []
-    return sorted(joined_facts - fact_to_fact_linked)
+    # A direct fact-to-fact edge is even more dangerous than a shared-
+    # dimension path.  Join Planner V2 never exempts it.
+    return sorted(joined_facts)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1044,12 +1062,21 @@ def _resolve_on_graph(
         )
         alias = re.sub(r"[^a-z]", "", detected[0].lower())[:3] or "t"
         skeleton = f"FROM {anchor_tbl} {alias}"
+        from core.join_planner import compile_join_plan
+        join_plan = compile_join_plan(
+            graph, detected, [],
+            metric_formula_tables=metric_formula_tables or (),
+            authoritative_fact_tables=authoritative_fact_tables or (),
+            anti_join=anti_join,
+        )
         return {
             "enabled": True, "detected": detected,
             "join_skeleton": skeleton, "anchor": detected[0],
             "entity_count": entity_count,
             "entities": entities,
             "properties": graph.get("properties") or [],
+            "join_plan": join_plan,
+            "planning_status": join_plan.get("status", "selected"),
         }
 
     if not rels:
@@ -1059,20 +1086,47 @@ def _resolve_on_graph(
         return {**empty, "detected": detected}
 
     entities_map = {e["entity_name"]: e for e in entities}
-    join_path    = find_join_path(detected, graph, prefer_fact_anchor=not anti_join)
+    from core.join_planner import choose_fact_anchor, compile_join_plan
+    preferred_anchor = choose_fact_anchor(
+        entities,
+        detected,
+        metric_formula_tables=metric_formula_tables or (),
+        authoritative_fact_tables=authoritative_fact_tables or (),
+    )
+    ordered_detected = list(detected)
+    if preferred_anchor in ordered_detected:
+        ordered_detected.remove(preferred_anchor)
+        ordered_detected.insert(0, preferred_anchor)
+    join_path = find_join_path(
+        ordered_detected,
+        graph,
+        prefer_fact_anchor=not anti_join,
+        anti_join=anti_join,
+    )
 
     # Determine anchor (fact table if possible)
     anchor = detected[0]
     if anti_join:
         anchor = _anti_join_anchor(question, detected, entities_map)
     else:
-        for name in detected:
-            if entities_map.get(name, {}).get("entity_type") == "fact":
-                anchor = name
-                break
+        anchor = preferred_anchor or anchor
 
     skeleton = build_join_skeleton(join_path, entities_map, anchor, db_type, anti_join=anti_join)
     fanout_risk_facts = _multi_fact_fanout_risk(join_path, entities_map)
+    join_plan = compile_join_plan(
+        graph,
+        detected,
+        join_path,
+        metric_formula_tables=metric_formula_tables or (),
+        authoritative_fact_tables=authoritative_fact_tables or (),
+        anti_join=anti_join,
+    )
+    planning_status = join_plan.get("status", "selected")
+    if planning_status in {"blocked", "requires_isolated_aggregation", "clarification_required"}:
+        # Never hand a raw multi-fact/invalid skeleton to the LLM.  The
+        # structured plan below supplies the safe isolated-aggregation
+        # contract instead.
+        skeleton = ""
     resolved_edges = []
     for edge in join_path:
         from_meta = entities_map.get(edge.get("from_entity", ""), {})
@@ -1111,7 +1165,9 @@ def _resolve_on_graph(
         })
 
     return {
-        "enabled":       bool(skeleton),
+        "enabled":       bool(skeleton) or planning_status in {
+            "blocked", "requires_isolated_aggregation", "clarification_required",
+        },
         "detected":      detected,
         "join_skeleton": skeleton,
         "anchor":        anchor,
@@ -1122,6 +1178,8 @@ def _resolve_on_graph(
         "resolved_edges": resolved_edges,
         "fanout_risk_facts": fanout_risk_facts,
         "properties":    graph.get("properties") or [],
+        "join_plan":     join_plan,
+        "planning_status": planning_status,
     }
 
 

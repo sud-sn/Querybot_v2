@@ -1139,14 +1139,12 @@ def _col_to_target_entity(
 
 
 def _infer_entity_type(table_name: str) -> str:
-    n = table_name.lower()
-    if (any(n.startswith(p) for p in _FACT_PREFIXES)
-            or any(n.endswith(s) for s in _FACT_SUFFIXES)
-            or any(seg in n for seg in _FACT_CONTAINS)):
-        return "fact"
-    if any(n.startswith(p) for p in _BRIDGE_PREFIXES) or any(n.endswith(s) for s in _BRIDGE_SUFFIXES):
-        return "bridge"
-    return "dimension"
+    # Compatibility wrapper for callers that only have a table name.  Full
+    # schema builds use classify_schema_tables() below, which also considers
+    # PK/FK direction and column evidence.
+    from core.table_role_classifier import classify_table
+    role = classify_table(table_name).role
+    return "dimension" if role == "date_dimension" else role
 
 
 def _col_name(col) -> str:
@@ -1222,6 +1220,8 @@ def build_entity_graph_from_schema(schema_dir: str) -> dict:
         (fqn, info) for fqn, info in master.items()
         if isinstance(info, dict) and not str(fqn).startswith("__")
     ]
+    from core.table_role_classifier import classify_schema_tables
+    table_roles = classify_schema_tables(master)
 
     # ── Build entity list ────────────────────────────────────────────────────
     entities: list[dict] = []
@@ -1234,7 +1234,10 @@ def build_entity_graph_from_schema(schema_dir: str) -> dict:
         schema_part = parts[-2] if len(parts) >= 2 else ""
 
         entity_name = bare_table          # unique within account, short
-        entity_type = _infer_entity_type(bare_table)
+        classification = table_roles.get(fqn)
+        entity_type = (classification.role if classification else _infer_entity_type(bare_table))
+        if entity_type == "date_dimension":
+            entity_type = "dimension"
         columns     = tbl_info.get("columns", [])
         # Prefer DB-authoritative PK; fall back to name-pattern heuristic
         _db_pks = tbl_info.get("pk_columns", [])
@@ -1259,10 +1262,19 @@ def build_entity_graph_from_schema(schema_dir: str) -> dict:
             "color":            color,
             "pos_x":            pos_x,
             "pos_y":            pos_y,
-            "confidence_score": 75,
+            "confidence_score": classification.confidence if classification else 75,
             "status":           "suggested",
             "generated_by":     "heuristic",
-            "reason":           f"Table name pattern classified {bare_table} as {entity_type}",
+            "reason":           (
+                f"Join Planner V2 classified {bare_table} as {entity_type}: "
+                + "; ".join(classification.evidence)
+                if classification else
+                f"Table name pattern classified {bare_table} as {entity_type}"
+            ),
+            "grain":            classification.grain if classification else "needs_admin_context",
+            "grain_columns":    list(classification.grain_columns) if classification else [],
+            "fact_type":        classification.fact_type if classification else "",
+            "classifier_version": 2,
         })
 
     # ── Add role-playing date entities ──────────────────────────────────────
@@ -1286,7 +1298,7 @@ def build_entity_graph_from_schema(schema_dir: str) -> dict:
     if date_dims:
         for fqn, tbl_info in table_items:
             fact_entity = fqn_to_entity.get(fqn, fqn.split(".")[-1])
-            if _infer_entity_type(fact_entity) != "fact":
+            if (table_roles.get(fqn).role if table_roles.get(fqn) else _infer_entity_type(fact_entity)) != "fact":
                 continue
             for col in tbl_info.get("columns", []):
                 fact_col = _col_name(col)

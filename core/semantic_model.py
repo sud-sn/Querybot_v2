@@ -28,7 +28,7 @@ from core.date_roles import (
     physical_date_key_type,
     question_has_temporal_intent,
 )
-from core.naming_convention import match_audit_prefix, match_column_suffix, match_entity_prefix, match_table_suffix
+from core.naming_convention import match_audit_prefix, match_column_suffix, match_entity_prefix
 from core.schema_enrichment import EnrichedColumn, enrich_columns
 
 log = logging.getLogger(__name__)
@@ -126,21 +126,18 @@ def _field_type(meta: dict[str, Any], column: str) -> str:
     return ""
 
 
-def _table_type(table: str) -> str:
-    rule = match_table_suffix(table)
-    if rule:
-        if rule.table_type == "fact_table":
-            return "fact"
-        if rule.table_type == "dimension_table":
-            return "dimension"
-        if "bridge" in rule.table_type:
-            return "bridge"
-    upper = table.upper()
-    if upper.endswith("_FCT") or "_FCT" in upper or upper.startswith(("FACT_", "FCT_", "F_")):
-        return "fact"
-    if upper.endswith("_DMS") or upper.startswith(("DIM_", "DMS_")):
-        return "dimension"
-    return "dimension"
+def _table_type(
+    table: str,
+    metadata: dict[str, Any] | None = None,
+    schema: dict[str, Any] | None = None,
+) -> str:
+    from core.table_role_classifier import classify_table
+    result = classify_table(
+        table,
+        metadata,
+        declared_fks=(schema or {}).get("__db_fk_constraints__", []) or [],
+    )
+    return "dimension" if result.role == "date_dimension" else result.role
 
 
 def _infer_table_grain(table: str, columns: list[str], table_type: str) -> tuple[str, str, int]:
@@ -262,7 +259,7 @@ def _find_dimension_for_key(schema: dict[str, Any], source_key: str) -> tuple[st
     best: tuple[str, dict[str, Any]] | None = None
     for fqn, meta in _schema_tables(schema):
         table = _schema_table_name(fqn, meta)
-        if _table_type(table) != "dimension":
+        if _table_type(table, meta, schema) not in {"dimension", "date_dimension"}:
             continue
         cols = {c.upper() for c in _column_names(meta)}
         if source_upper in cols:
@@ -373,7 +370,7 @@ def _dimension_candidates(
                 "confidence": field.get("confidence", 50),
             })
 
-    if _table_type(table) == "dimension":
+    if _table_type(table, meta, schema) in {"dimension", "date_dimension"}:
         display = _display_field_for_columns(columns)
         code = _code_field_for_columns(columns)
         if display or code:
@@ -652,7 +649,7 @@ def _relationships(schema: dict[str, Any]) -> list[dict[str, Any]]:
 
     for fqn, meta in _schema_tables(schema):
         table = _schema_table_name(fqn, meta)
-        if _table_type(table) != "fact":
+        if _table_type(table, meta, schema) != "fact":
             continue
         for col in _column_names(meta):
             if not col.upper().endswith("_DMS_KEY"):
@@ -722,16 +719,36 @@ def _relationships(schema: dict[str, Any]) -> list[dict[str, Any]]:
 
 def build_semantic_model(schema_dir: str, *, business_desc: str = "", account_id: str = "") -> dict[str, Any]:
     schema = _read_schema(schema_dir)
+    from core.table_role_classifier import classify_schema_tables
+    table_roles = classify_schema_tables(schema)
     tables: list[dict[str, Any]] = []
     all_date_roles: list[dict[str, Any]] = []
 
     for fqn, meta in _schema_tables(schema):
         table = _schema_table_name(fqn, meta)
         columns = _column_names(meta)
-        table_type = _table_type(table)
-        grain, grain_status, grain_confidence = _infer_table_grain(
+        classification = table_roles.get(fqn)
+        table_type = (
+            "dimension" if classification and classification.role == "date_dimension"
+            else classification.role if classification else _table_type(table, meta, schema)
+        )
+        legacy_grain, legacy_status, legacy_confidence = _infer_table_grain(
             table, columns, table_type
         )
+        if legacy_status == "generated" and legacy_grain != "one row per lookup member":
+            # Keep the established high-specificity line/receipt/snapshot
+            # grain rules when they are stronger than the generic classifier.
+            grain, grain_status, grain_confidence = (
+                legacy_grain, legacy_status, legacy_confidence
+            )
+        elif classification:
+            grain = classification.grain
+            grain_status = "generated" if classification.confidence >= 70 else "needs_review"
+            grain_confidence = classification.confidence
+        else:
+            grain, grain_status, grain_confidence = (
+                legacy_grain, legacy_status, legacy_confidence
+            )
         enriched = enrich_columns(columns)
         fields = [_field_entry(item, meta) for item in enriched]
         date_roles = _date_roles(schema, fqn, meta)
@@ -747,6 +764,10 @@ def build_semantic_model(schema_dir: str, *, business_desc: str = "", account_id
             "grain": grain,
             "grain_status": grain_status,
             "grain_confidence": grain_confidence,
+            "grain_columns": list(classification.grain_columns) if classification else [],
+            "fact_type": classification.fact_type if classification else "",
+            "classification_evidence": list(classification.evidence) if classification else [],
+            "classifier_version": 2,
             "fields": fields,
             "default_filters": _default_filters(fields),
             "measures": _measure_candidates(fields),

@@ -556,6 +556,127 @@ def _fanout_aggregate_errors(
     }]
 
 
+def _join_plan_contract_errors(tree, graph_context: dict | None) -> list[dict]:
+    """Enforce Join Planner V2, including physical multi-fact isolation."""
+    graph = graph_context or {}
+    plan = graph.get("join_plan") or {}
+    status = str(plan.get("status") or graph.get("planning_status") or "")
+    if not status:
+        return []
+    if status in {"blocked", "clarification_required"}:
+        return [{
+            "code": "join_plan_unresolved",
+            "message": str(plan.get("reason") or "No governed join path was selected."),
+        }]
+
+    entity_map = {
+        str(entity.get("entity_name") or ""): entity
+        for entity in graph.get("entities") or []
+    }
+    fact_names = list(plan.get("fact_entities") or [])
+    fact_tables = {
+        name: str(entity_map.get(name, {}).get("table_name") or "").upper()
+        for name in fact_names
+        if str(entity_map.get(name, {}).get("table_name") or "").strip()
+    }
+    if len(fact_tables) < 2:
+        return []
+
+    def _fact_for_table(node) -> str:
+        variants = set(_table_variants(node))
+        for name, table in fact_tables.items():
+            if table in variants or table.split(".")[-1] in variants:
+                return name
+        return ""
+
+    def _ancestor(node, cls):
+        parent = getattr(node, "parent", None)
+        while parent is not None:
+            if isinstance(parent, cls):
+                return parent
+            parent = getattr(parent, "parent", None)
+        return None
+
+    occurrences: dict[str, list] = {name: [] for name in fact_tables}
+    for table_node in tree.find_all(sg_exp.Table):
+        fact = _fact_for_table(table_node)
+        if fact:
+            occurrences[fact].append(table_node)
+
+    missing = sorted(name for name, rows in occurrences.items() if not rows)
+    if missing and status == "requires_isolated_aggregation":
+        return [{
+            "code": "multi_fact_missing_subplan",
+            "message": "The SQL omitted required isolated fact plan(s): " + ", ".join(missing),
+        }]
+
+    # No SELECT scope may read two physical facts. Joining aggregated CTEs in
+    # the outer SELECT is allowed because their Table nodes are CTE aliases,
+    # not physical fact tables.
+    for select in tree.find_all(sg_exp.Select):
+        scoped: set[str] = set()
+        for table_node in select.find_all(sg_exp.Table):
+            nearest_select = _ancestor(table_node, sg_exp.Select)
+            if nearest_select is select:
+                fact = _fact_for_table(table_node)
+                if fact:
+                    scoped.add(fact)
+        if len(scoped) > 1:
+            return [{
+                "code": "raw_fact_to_fact_join",
+                "message": (
+                    "One SELECT scope reads multiple physical facts ("
+                    + ", ".join(sorted(scoped))
+                    + "). Aggregate every fact in its own CTE before combining results."
+                ),
+            }]
+
+    if status != "requires_isolated_aggregation":
+        return []
+
+    aggregate_types = tuple(
+        value for value in (
+            getattr(sg_exp, "Count", None), getattr(sg_exp, "Sum", None),
+            getattr(sg_exp, "Avg", None), getattr(sg_exp, "Min", None),
+            getattr(sg_exp, "Max", None),
+        ) if value is not None
+    )
+    cte_by_fact: dict[str, set[str]] = {name: set() for name in fact_tables}
+    errors: list[dict] = []
+    for fact, rows in occurrences.items():
+        for table_node in rows:
+            cte = _ancestor(table_node, sg_exp.CTE)
+            if cte is None:
+                errors.append({
+                    "code": "multi_fact_not_isolated",
+                    "message": f"Physical fact {fact} must be read inside its own aggregate CTE.",
+                })
+                continue
+            cte_name = str(cte.alias_or_name or "").upper()
+            cte_by_fact[fact].add(cte_name)
+            if aggregate_types and not any(cte.this.find_all(*aggregate_types)):
+                errors.append({
+                    "code": "multi_fact_not_aggregated",
+                    "message": f"CTE {cte_name or '<unnamed>'} reads {fact} without aggregating it first.",
+                })
+    used_ctes: dict[str, str] = {}
+    for fact, ctes in cte_by_fact.items():
+        if len(ctes) != 1:
+            errors.append({
+                "code": "multi_fact_cte_contract",
+                "message": f"Fact {fact} must have exactly one isolated aggregate CTE; found {sorted(ctes)}.",
+            })
+        for cte in ctes:
+            other = used_ctes.get(cte)
+            if other and other != fact:
+                errors.append({
+                    "code": "multi_fact_shared_cte",
+                    "message": f"Facts {other} and {fact} share CTE {cte}; each fact requires its own CTE.",
+                })
+            used_ctes[cte] = fact
+    return errors
+
+
 def _normalize_identifier(name: str) -> str:
     return re.sub(r"[^A-Z0-9]+", "", (name or "").upper())
 
@@ -2121,9 +2242,20 @@ def validate_sql_detailed(
             if isinstance(target, sg_exp.Column) and target.name:
                 select_column_names.add(target.name.upper())
 
+    graph_context = (semantic_context or {}).get("graph_context")
+    join_contract_errors = _join_plan_contract_errors(tree, graph_context)
+    if join_contract_errors:
+        return SqlValidationResult(
+            False,
+            "Generated SQL does not satisfy the governed join execution contract. "
+            + " ".join(error["message"] for error in join_contract_errors[:5]),
+            join_contract_errors[0]["code"],
+            join_contract_errors,
+        )
+
     graph_plan_errors = _graph_plan_errors(
         tree,
-        (semantic_context or {}).get("graph_context"),
+        graph_context,
         alias_to_table,
     )
     if graph_plan_errors:
@@ -2141,7 +2273,7 @@ def validate_sql_detailed(
 
     fanout_errors = _fanout_aggregate_errors(
         tree,
-        (semantic_context or {}).get("graph_context"),
+        graph_context,
         alias_to_table,
     )
     if fanout_errors:

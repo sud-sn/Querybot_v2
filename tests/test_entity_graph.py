@@ -690,7 +690,7 @@ class TestMultiFactFanoutRisk(unittest.TestCase):
         risk = _multi_fact_fanout_risk(path, emap)
         self.assertEqual(risk, ["F1", "F2"])
 
-    def test_direct_fact_to_fact_edge_not_flagged(self):
+    def test_direct_fact_to_fact_edge_is_always_flagged(self):
         from core.graph_resolver import _multi_fact_fanout_risk
         emap = self._emap(F1="fact", F2="fact", D1="dimension")
         path = [
@@ -698,7 +698,7 @@ class TestMultiFactFanoutRisk(unittest.TestCase):
             {"from_entity": "F1", "to_entity": "F2"},
         ]
         risk = _multi_fact_fanout_risk(path, emap)
-        self.assertEqual(risk, [])
+        self.assertEqual(risk, ["F1", "F2"])
 
     def test_single_fact_not_flagged(self):
         from core.graph_resolver import _multi_fact_fanout_risk

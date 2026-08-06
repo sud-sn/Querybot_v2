@@ -884,6 +884,34 @@ def build_sql_system_prompt(
                 )
             base = base + "\n\n" + "\n".join(_metric_lines)
 
+    # Join Planner V2 fail-closed contracts. Multi-fact requests must use one
+    # aggregate CTE per physical fact and may only combine those aggregates at
+    # a conformed dimension grain. A blocked plan must not be improvised.
+    _join_plan = (graph_context or {}).get("join_plan") or {}
+    _planning_status = _join_plan.get("status") or (graph_context or {}).get("planning_status")
+    if _planning_status == "requires_isolated_aggregation":
+        _subplans = _join_plan.get("isolated_fact_plans") or []
+        _facts = ", ".join(_join_plan.get("fact_entities") or [])
+        _common = ", ".join(_join_plan.get("common_dimensions") or []) or "the requested conformed dimensions"
+        base = base + (
+            "\n\n## Governed multi-fact execution plan (mandatory)\n"
+            f"Physical facts: {_facts}. Common output grain: {_common}.\n"
+            "Create exactly one aggregate CTE per physical fact. Each CTE must read only its own "
+            "fact plus governed dimensions, group to the common output grain, and calculate that "
+            "fact's measures before any combination. The final SELECT may join only those aggregated "
+            "CTEs on every common-grain key. NEVER join two physical fact tables directly or through "
+            "raw dimension rows; never calculate a measure after facts have been combined.\n"
+            "Isolated fact contracts: " + json.dumps(_subplans, sort_keys=True)
+        )
+    elif _planning_status in {"blocked", "clarification_required"}:
+        base = base + (
+            "\n\n## Governed join plan unavailable\n"
+            "The entity graph could not prove a safe star/snowflake path for every requested entity. "
+            "Do not invent a JOIN or infer a fact-to-fact relationship. Return no SQL; the application "
+            "will ask the user/admin for the missing relationship or analytical anchor.\n"
+            "Reason: " + str(_join_plan.get("reason") or "ambiguous join path")
+        )
+
     # Inject pre-built JOIN skeleton from entity graph when available.
     # The LLM must use this skeleton and must NOT change table names or JOINs.
     if graph_context and graph_context.get("enabled") and graph_context.get("join_skeleton"):

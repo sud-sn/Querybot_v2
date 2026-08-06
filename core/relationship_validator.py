@@ -34,6 +34,9 @@ class RelationshipValidationResult:
     orphan_rate: float = -1.0
     null_fk_rate: float = -1.0
     fanout_ratio: float = -1.0
+    target_rows: int = -1
+    target_distinct_keys: int = -1
+    target_duplicate_keys: int = -1
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -48,6 +51,9 @@ class RelationshipValidationResult:
             "orphan_rate": self.orphan_rate,
             "null_fk_rate": self.null_fk_rate,
             "fanout_ratio": self.fanout_ratio,
+            "target_rows": self.target_rows,
+            "target_distinct_keys": self.target_distinct_keys,
+            "target_duplicate_keys": self.target_duplicate_keys,
         }
 
 
@@ -205,6 +211,7 @@ def build_profile_sql(db_type: str, rel: dict, from_ent: dict, to_ent: dict) -> 
         f"l.{_quote_col(left, db_type)} IS NOT NULL" for left, _ in pairs
     )
     count_fn = "COUNT_BIG(1)" if db_type == "azure_sql" else "COUNT(*)"
+    right_keys = ", ".join(f"r.{_quote_col(right, db_type)}" for _, right in pairs)
     return f"""
 SELECT
   (SELECT {count_fn} FROM {left_table} l) AS left_rows,
@@ -218,7 +225,14 @@ SELECT
       SELECT 1 FROM {right_table} r WHERE {on_sql}
     )) AS orphan_rows,
   (SELECT {count_fn} FROM {left_table} l
-    INNER JOIN {right_table} r ON {on_sql}) AS join_rows
+    INNER JOIN {right_table} r ON {on_sql}) AS join_rows,
+  (SELECT {count_fn} FROM {right_table} r) AS target_rows,
+  (SELECT {count_fn} FROM (
+     SELECT {right_keys} FROM {right_table} r GROUP BY {right_keys}
+   ) distinct_target_keys) AS target_distinct_keys,
+  (SELECT {count_fn} FROM (
+     SELECT {right_keys} FROM {right_table} r GROUP BY {right_keys} HAVING {count_fn} > 1
+   ) duplicate_target_keys) AS target_duplicate_keys
 """.strip()
 
 
@@ -246,7 +260,7 @@ def _execute_probe(
     creds = raw_cfg.get("credentials", {})
     sql = build_profile_sql(db_type, rel, from_ent, to_ent)
 
-    def _run() -> tuple[int, int, int, int, int]:
+    def _run() -> tuple[int, int, int, int, int, int, int, int]:
         if db_type == "azure_sql":
             conn = _az_connect({**creds, "login_timeout": min(timeout_seconds, 20)}, max_retries=1)
         elif db_type == "snowflake":
@@ -258,8 +272,8 @@ def _execute_probe(
             cur.execute(sql)
             row = cur.fetchone()
             if not row:
-                return 0, 0, 0, 0, 0
-            return tuple(int(value or 0) for value in row[:5])
+                return 0, 0, 0, 0, 0, 0, 0, 0
+            return tuple(int(value or 0) for value in row[:8])
         finally:
             try:
                 conn.close()
@@ -269,7 +283,8 @@ def _execute_probe(
     pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     try:
         future = pool.submit(_run)
-        left_rows, non_null_rows, matched_rows, orphan_rows, join_rows = future.result(
+        (left_rows, non_null_rows, matched_rows, orphan_rows, join_rows,
+         target_rows, target_distinct_keys, target_duplicate_keys) = future.result(
             timeout=timeout_seconds
         )
     finally:
@@ -281,7 +296,7 @@ def _execute_probe(
     fanout_ratio = round(join_rows / matched_rows, 3) if matched_rows else 0.0
     multiplicity = (
         "zero_match" if matched_rows <= 0
-        else "one_to_many_or_many_to_many" if fanout_ratio > 1.01
+        else "one_to_many_or_many_to_many" if target_duplicate_keys > 0 or fanout_ratio > 1.01
         else "one_to_one_or_many_to_one"
     )
 
@@ -298,13 +313,16 @@ def _execute_probe(
             orphan_rate=orphan_rate,
             null_fk_rate=null_fk_rate,
             fanout_ratio=fanout_ratio,
+            target_rows=target_rows,
+            target_distinct_keys=target_distinct_keys,
+            target_duplicate_keys=target_duplicate_keys,
         )
 
-    status = STATUS_WARNING if orphan_rate > 5.0 or fanout_ratio > 10.0 else STATUS_VALID
+    status = STATUS_WARNING if orphan_rate > 5.0 or fanout_ratio > 1.01 or target_duplicate_keys > 0 else STATUS_VALID
     quality_note = (
         f"Matched {match_rate:.2f}% of non-null source keys; "
         f"orphans {orphan_rate:.2f}%, null keys {null_fk_rate:.2f}%, "
-        f"fanout {fanout_ratio:.3f}x."
+        f"fanout {fanout_ratio:.3f}x; target duplicate keys {target_duplicate_keys}."
     )
 
     return RelationshipValidationResult(
@@ -319,6 +337,9 @@ def _execute_probe(
         orphan_rate=orphan_rate,
         null_fk_rate=null_fk_rate,
         fanout_ratio=fanout_ratio,
+        target_rows=target_rows,
+        target_distinct_keys=target_distinct_keys,
+        target_duplicate_keys=target_duplicate_keys,
     )
 
 

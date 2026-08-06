@@ -339,6 +339,9 @@ class TestConstraintImport(unittest.TestCase):
         self.assertIn("[PRODUCT_ID]", sql)
         self.assertIn("[COMPANY_ID]", sql)
         self.assertIn("orphan_rows", sql)
+        self.assertIn("target_distinct_keys", sql)
+        self.assertIn("target_duplicate_keys", sql)
+        self.assertIn("HAVING COUNT_BIG(1) > 1", sql)
 
     def test_kb_join_map_keeps_composite_constraint_atomic(self):
         master = {
