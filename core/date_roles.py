@@ -88,9 +88,55 @@ DATE_DIMENSION_KEY_HINTS = (
 DATE_KEY_TYPES = (
     "surrogate_fk",
     "yyyymmdd_integer",
+    "yyyymm_integer",
     "native_date",
     "timestamp",
 )
+
+_INTEGER_TYPE_RE = re.compile(
+    r"^(?:tinyint|smallint|int|integer|bigint|number|numeric|decimal)(?:\s*\(|\b)",
+    re.IGNORECASE,
+)
+_YYYYMMDD_NAME_RE = re.compile(
+    r"(?:^|_)(?:YYYYMMDD|DATE_YYYYMMDD|CALENDAR_DAY_KEY)(?:_|$)|"
+    r"(?:^|_)(?:DT_DMS_KEY|DATE_DMS_KEY)$",
+    re.IGNORECASE,
+)
+_YYYYMM_NAME_RE = re.compile(
+    r"(?:^|_)(?:YYYYMM|YEAR_MONTH|YR_MONTH|YR_MTH|YEAR_MTH)(?:_|$)|"
+    r"(?:^|_)(?:PRD_DMS_KEY|PERIOD_DMS_KEY)$",
+    re.IGNORECASE,
+)
+
+
+def infer_encoded_date_key(column_name: str, data_type: str = "") -> dict:
+    """Infer a self-contained integer calendar encoding from strong metadata.
+
+    This intentionally does *not* classify arbitrary integer IDs as dates.  A
+    direct fallback is emitted only for naming conventions that declare the
+    physical representation (YYYYMMDD/day or YYYYMM/month).  Sequential
+    ``*_DATE_ID``/``*_DATE_KEY`` values remain governed surrogate keys and
+    still require a real date-dimension relationship or an admin mapping.
+    """
+    raw_type = " ".join(str(data_type or "").strip().lower().split())
+    if not _INTEGER_TYPE_RE.match(raw_type):
+        return {}
+    column = str(column_name or "").strip().strip('"`[]')
+    if _YYYYMMDD_NAME_RE.search(column):
+        return {
+            "date_key_type": "yyyymmdd_integer",
+            "temporal_grain": "day",
+            "confidence": 98,
+            "inference_source": "encoded_date_name",
+        }
+    if _YYYYMM_NAME_RE.search(column):
+        return {
+            "date_key_type": "yyyymm_integer",
+            "temporal_grain": "month",
+            "confidence": 96,
+            "inference_source": "encoded_period_name",
+        }
+    return {}
 
 
 def physical_date_key_type(data_type: str) -> str:
@@ -128,6 +174,9 @@ def normalize_date_key_type(value: str, *, has_date_dimension_fk: bool = False) 
         "fk": "surrogate_fk",
         "yyyymmdd": "yyyymmdd_integer",
         "integer_date": "yyyymmdd_integer",
+        "yyyymm": "yyyymm_integer",
+        "integer_month": "yyyymm_integer",
+        "year_month": "yyyymm_integer",
         "date": "native_date",
         "datetime": "timestamp",
         "datetime2": "timestamp",
@@ -151,10 +200,23 @@ def classify_date_key(
     physical_type = physical_date_key_type(data_type)
     if physical_type:
         return physical_type
+    inferred = infer_encoded_date_key(column_name, data_type)
+    if inferred:
+        return str(inferred["date_key_type"])
     # Integer date keys are deliberately not guessed from a *_DT_* name.
     # YYYYMMDD must be declared/profiled; otherwise treating 4067 as a date
     # causes invalid conversions and, worse, plausible but incorrect periods.
     return "yyyymmdd_integer" if normalize_date_key_type(declared_encoding) == "yyyymmdd_integer" else "surrogate_fk"
+
+
+def date_key_temporal_grain(date_key_type: str) -> str:
+    """Return the finest calendar grain supported by a governed key type."""
+    key_type = normalize_date_key_type(date_key_type)
+    if key_type == "yyyymm_integer":
+        return "month"
+    if key_type in {"yyyymmdd_integer", "native_date", "timestamp"}:
+        return "day"
+    return ""
 
 
 def normalize_date_role_text(text: str) -> str:
@@ -245,7 +307,10 @@ def is_date_role_column(column_name: str) -> bool:
     return detect_date_role(column_name) is not None
 
 
-_DMS_KEY_SUFFIX_RE = re.compile(r"(?:_DT_DMS_KEY|_DATE_DMS_KEY)$", re.IGNORECASE)
+_DMS_KEY_SUFFIX_RE = re.compile(
+    r"(?:_DT_DMS_KEY|_DATE_DMS_KEY|_PRD_DMS_KEY|_PERIOD_DMS_KEY)$",
+    re.IGNORECASE,
+)
 _SURROGATE_KEY_SUFFIX_RE = re.compile(r"(?:_ID|_KEY)$", re.IGNORECASE)
 
 

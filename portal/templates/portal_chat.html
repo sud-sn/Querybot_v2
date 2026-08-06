@@ -3420,7 +3420,14 @@ function appendAssistantResponse(msg, opts = {}){
   const sqlProofHtml = trust.sql
     ? `<div class="trust-sql-label"><span>SQL used</span><button class="sql-copy-btn" onclick="copySqlBox(this)">Copy</button></div><div class="sql-box">${escHtml(trust.sql)}</div>`
     : `<div class="trust-sql-label"><span>Execution</span></div><div class="sql-box">${escHtml(trust.operation || 'No SQL query was executed for this result.')}</div>`;
-  const trustHtml = `<details class="trust-box"><summary>How this answer was produced</summary><div class="trust-grid"><div class="trust-item"><div class="trust-k">Rows</div><div class="trust-v">${escHtml(String(trust.row_count ?? ''))}</div></div><div class="trust-item"><div class="trust-k">Runtime</div><div class="trust-v">${escHtml(trust.duration_label || '')}</div></div><div class="trust-item"><div class="trust-k">Data source</div><div class="trust-v">${escHtml((trust.data_source || '').toUpperCase())}</div></div><div class="trust-item"><div class="trust-k">Schema mode</div><div class="trust-v">${escHtml(trustSchema)}</div></div><div class="trust-item"><div class="trust-k">Result scope</div><div class="trust-v">${escHtml(trust.scope_badge || resultScope.badge || '')}</div></div></div>${analysisProofHtml}${sqlProofHtml}</details>`;
+  const dateContexts = Array.isArray(trust.date_context) ? trust.date_context : [];
+  const dateContextHtml = dateContexts.map(ctx => {
+    const physical = [String(ctx.table || '').split('.').pop(), ctx.column || ''].filter(Boolean).join('.');
+    const grain = ctx.temporal_grain ? `${ctx.temporal_grain} grain` : 'calendar grain';
+    const provenance = ctx.inferred ? 'inferred encoded field' : 'governed date context';
+    return `<div class="trust-item"><div class="trust-k">Business date</div><div class="trust-v">${escHtml(ctx.label || 'Business date')} · ${escHtml(grain)} · ${escHtml(physical)} · ${escHtml(provenance)}</div></div>`;
+  }).join('');
+  const trustHtml = `<details class="trust-box"><summary>How this answer was produced</summary><div class="trust-grid"><div class="trust-item"><div class="trust-k">Rows</div><div class="trust-v">${escHtml(String(trust.row_count ?? ''))}</div></div><div class="trust-item"><div class="trust-k">Runtime</div><div class="trust-v">${escHtml(trust.duration_label || '')}</div></div><div class="trust-item"><div class="trust-k">Data source</div><div class="trust-v">${escHtml((trust.data_source || '').toUpperCase())}</div></div><div class="trust-item"><div class="trust-k">Schema mode</div><div class="trust-v">${escHtml(trustSchema)}</div></div><div class="trust-item"><div class="trust-k">Result scope</div><div class="trust-v">${escHtml(trust.scope_badge || resultScope.badge || '')}</div></div>${dateContextHtml}</div>${analysisProofHtml}${sqlProofHtml}</details>`;
 
   // Each result card gets a unique ID for the inline chat
   const rcId = `rc-${chartCounter}`;

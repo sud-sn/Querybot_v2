@@ -46,11 +46,17 @@ from core.semantic_model import (
     build_runtime_semantic_context, build_runtime_semantic_plan,
     build_field_plan_repair_note,
 )
-from core.date_roles import question_has_temporal_intent, normalize_date_key_type
+from core.date_roles import (
+    date_key_temporal_grain,
+    question_has_temporal_intent,
+    normalize_date_key_type,
+)
 from core.contextual_dates import (
     build_contextual_date_plan,
     build_contextual_date_plan_many,
     find_explicit_date_roles,
+    question_has_snapshot_intent,
+    requested_temporal_grain,
     resolve_contextual_date_binding,
 )
 from core.metric_scope import metric_source_tables, resolve_metric_scope
@@ -413,7 +419,9 @@ async def _send_why_insight(
 # Query pipeline — table-aware
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _governed_date_anchor_repair_lines(semantic_plan: dict) -> str:
+def _governed_date_anchor_repair_lines(
+    semantic_plan: dict, db_type: str = "azure_sql"
+) -> str:
     """Build the "REQUIRED ANCHOR" guidance shared by every repair path that
     can surface a broken governed date-role join -- temporal_anchor_* directly,
     and graph_plan_mismatch when the missing entity-graph edge IS the date-role
@@ -421,7 +429,7 @@ def _governed_date_anchor_repair_lines(semantic_plan: dict) -> str:
     independently derive a correctly fact-scoped anchor subquery; that's the
     exact class of mistake this whole date-role system exists to prevent).
     """
-    from core.contextual_dates import format_required_anchor
+    from core.contextual_dates import format_date_value_expression, format_required_anchor
 
     lines = []
     for policy in (semantic_plan or {}).get("temporal_policies") or []:
@@ -432,15 +440,19 @@ def _governed_date_anchor_repair_lines(semantic_plan: dict) -> str:
         date_column = str(policy.get("date_column") or "")
         if not (fact_table and fact_column and date_table and date_column):
             continue
+        key_type = str(policy.get("date_key_type") or "")
         join_rule = (
             f"{fact_table}.{fact_column} = {date_table}.{date_key}"
-            if date_key else "native date column (no surrogate join)"
+            if date_key else "direct fact date/period (no surrogate join)"
+        )
+        date_expression = format_date_value_expression(
+            date_table, date_column, key_type, db_type
         )
         lines.append(
             f"- JOIN/FIELD: {join_rule}; filter and anchor on "
-            f"{date_table}.{date_column}.\n"
+            f"{date_expression}.\n"
             f"- REQUIRED ANCHOR (copy this exact subquery as the anchor; "
-            f"do not build your own): {format_required_anchor(policy)}"
+            f"do not build your own): {format_required_anchor(policy, db_type)}"
         )
     return "\n".join(lines)
 
@@ -1906,7 +1918,10 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     # semantic plan so both generation and validation receive the same rule.
     _date_context_resolution: dict = {"status": "none"}
     _selected_date_bindings: list[dict] = []
-    if question_has_temporal_intent(_semantic_plan_question):
+    if (
+        question_has_temporal_intent(_semantic_plan_question)
+        or question_has_snapshot_intent(_semantic_plan_question)
+    ):
         try:
             _metric_ids = [
                 int(metric.get("id") or 0) for metric in _matched_metrics
@@ -1960,6 +1975,54 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     and bool(role.get("is_default"))
                     and role.get("fact_table")
                 }
+                if not _default_fact_tables:
+                    _requested_grain = requested_temporal_grain(
+                        _semantic_plan_question
+                    )
+                    _grain_order = {
+                        "day": 1, "week": 2, "month": 3,
+                        "quarter": 4, "year": 5,
+                    }
+                    _inferred_roles = [
+                        role for role in _date_roles
+                        if str(role.get("status") or "").casefold() == "generated"
+                        and int(role.get("confidence") or 0) >= 95
+                        and normalize_date_key_type(role.get("date_key_type"))
+                        in {"yyyymmdd_integer", "yyyymm_integer"}
+                        and role.get("inference_source")
+                    ]
+                    if _requested_grain:
+                        _inferred_roles = [
+                            role for role in _inferred_roles
+                            if _grain_order.get(
+                                str(role.get("temporal_grain") or "")
+                                or date_key_temporal_grain(role.get("date_key_type")),
+                                99,
+                            ) <= _grain_order.get(_requested_grain, 0)
+                        ]
+                    elif question_has_snapshot_intent(_semantic_plan_question):
+                        _known_grains = [
+                            str(role.get("temporal_grain") or "")
+                            or date_key_temporal_grain(role.get("date_key_type"))
+                            for role in _inferred_roles
+                        ]
+                        if _known_grains:
+                            _finest_grain = min(
+                                _known_grains,
+                                key=lambda grain: _grain_order.get(grain, 99),
+                            )
+                            _inferred_roles = [
+                                role for role in _inferred_roles
+                                if (
+                                    str(role.get("temporal_grain") or "")
+                                    or date_key_temporal_grain(role.get("date_key_type"))
+                                ) == _finest_grain
+                            ]
+                    _default_fact_tables = {
+                        str(role.get("fact_table") or "")
+                        for role in _inferred_roles
+                        if role.get("fact_table")
+                    }
                 _requested_semantic_tables = {
                     str(field.get("source_table") or field.get("table") or "")
                     for field in (_semantic_plan or {}).get("fields") or []
@@ -2058,9 +2121,45 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 len(_date_bindings),
                 len(_date_roles),
             )
+            if _date_context_resolution.get("status") == "unsupported_grain":
+                _requested = str(
+                    _date_context_resolution.get("requested_grain") or "requested"
+                )
+                _available = str(
+                    _date_context_resolution.get("available_grain") or "coarser"
+                )
+                _available_option = (
+                    (_date_context_resolution.get("options") or [{}])[0]
+                )
+                _available_label = str(
+                    _available_option.get("context_name")
+                    or _available_option.get("date_role")
+                    or "the available business date"
+                )
+                await adapter.send_message(
+                    event,
+                    f"I can’t return a trustworthy **{_requested}-level** result from "
+                    f"this source. **{_available_label}** is available only at "
+                    f"**{_available} grain**, so using it would invent finer dates. "
+                    f"Ask for a {_available}-level result, or configure/connect a "
+                    f"source with {_requested}-level history.",
+                )
+                _trace_finish(
+                    trace_id,
+                    status="success",
+                    answer_type="clarification",
+                    final_answer_summary="Requested a compatible temporal grain",
+                    duration_ms=int(time.time() * 1000) - start_ms,
+                )
+                return
             if (
                 _date_fact_inference.get("status") == "selected"
                 and _date_context_resolution.get("status") == "selected"
+                and str(
+                    (_date_context_resolution.get("binding") or {}).get(
+                        "resolution_source"
+                    ) or ""
+                ) != "inferred_encoded_fact_date"
             ):
                 _date_context_resolution["binding"]["resolution_source"] = (
                     "connected_dimension_default"
@@ -2117,6 +2216,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                         "fact_column", "dimension_table", "dimension_key",
                         "date_value_column", "date_key_type", "is_default",
                         "priority", "resolution_source", "governance_status",
+                        "temporal_grain", "inference_source", "inferred_fallback",
                     ):
                         if key in item:
                             option[key] = item.get(key)
@@ -2224,6 +2324,38 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                             f"Using **{_thread_date_label}** for this metric in "
                             "the current thread. Name a different business date "
                             "at any time to change it.",
+                        )
+                    _inferred_binding = next(
+                        (
+                            binding for binding in _selected_date_bindings
+                            if bool(binding.get("inferred_fallback"))
+                            or str(binding.get("resolution_source") or "")
+                            == "inferred_encoded_fact_date"
+                        ),
+                        None,
+                    )
+                    if _inferred_binding:
+                        _inferred_label = str(
+                            _inferred_binding.get("context_name")
+                            or _inferred_binding.get("date_role")
+                            or "Business date"
+                        )
+                        _inferred_table = str(
+                            _inferred_binding.get("fact_table") or ""
+                        ).split(".")[-1]
+                        _inferred_column = str(
+                            _inferred_binding.get("fact_column") or ""
+                        )
+                        _inferred_grain = str(
+                            _inferred_binding.get("temporal_grain") or "calendar"
+                        )
+                        await adapter.send_message(
+                            event,
+                            f"Using inferred **{_inferred_label}** from "
+                            f"`{_inferred_table}.{_inferred_column}` at "
+                            f"**{_inferred_grain} grain**. It is a deterministic "
+                            "encoded date on the resolved fact, but it is not an "
+                            "admin-approved Date Role or metric date.",
                         )
                     _date_graph = _graph_with_exact_date_edges(
                         _full_graph,
@@ -3239,8 +3371,9 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             elif last_code == "date_key_format":
                 validation_repair_note = (
                     "\nDATE-KEY REPAIR RULE:\n"
-                    "- Convert integer YYYYMMDD date keys before FORMAT/YEAR/MONTH/DATEPART.\n"
-                    "- For Azure SQL use TRY_CONVERT(date, CONVERT(varchar(8), alias.DATE_KEY_COL), 112).\n"
+                    "- Decode integer calendar keys before FORMAT/YEAR/MONTH/DATEPART.\n"
+                    "- YYYYMMDD uses varchar(8); YYYYMM period keys use varchar(6) plus '01'.\n"
+                    "- Copy the exact nullable conversion from the semantic date-key plan and exclude invalid/sentinel values.\n"
                 )
             elif last_code == "top_n_shape":
                 _top_limit = top_n_intent.limit if top_n_intent else "N"

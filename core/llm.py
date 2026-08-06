@@ -501,6 +501,18 @@ def build_sql_system_prompt(
             else ""
         )
         + (
+            "- ENCODED MONTH/PERIOD RULE: Columns ending in _PRD_DMS_KEY or "
+            "_PERIOD_DMS_KEY are integer YYYYMM values at MONTH grain when the "
+            "semantic plan identifies them as yyyymm_integer. They do not support "
+            "day-level answers. For Azure SQL decode with "
+            "TRY_CONVERT(date, CONVERT(varchar(6), alias.PERIOD_KEY) + '01', 112). "
+            "Exclude NULL decoded values (including sentinels such as month 00), "
+            "anchor latest-snapshot questions on MAX of the decoded expression, and "
+            "never sum semi-additive inventory/balance values across periods.\n"
+            if ("_PRD_DMS_KEY" in table_context.upper() or "_PERIOD_DMS_KEY" in table_context.upper())
+            else ""
+        )
+        + (
             "- CALENDAR COLUMNS LIVE ON THE DATE DIMENSION: Year/month/quarter columns "
             "(YR, MTH, QTR, YEAR, MONTH_NM and similar) exist ONLY on the date dimension "
             "table (DT_DMS or equivalent), NEVER on fact tables. Referencing YR or any "

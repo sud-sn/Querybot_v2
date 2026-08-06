@@ -92,6 +92,12 @@ def check_date_coverage(db_cfg: dict, policy: dict, db_type: str) -> CoverageGap
     """
     from core.contextual_dates import format_required_anchor
 
+    # Day-coverage diagnostics count distinct days. A monthly encoded snapshot
+    # is valid for month-level analysis but cannot be evaluated by this check
+    # without producing a false "missing days" warning.
+    if str(policy.get("temporal_grain") or "").lower() not in {"", "day"}:
+        return None
+
     requested_days = _window_to_days(policy.get("amount"), policy.get("unit"))
     if requested_days <= 0:
         return None
@@ -114,7 +120,7 @@ def check_date_coverage(db_cfg: dict, policy: dict, db_type: str) -> CoverageGap
         if not all(idents) or not all(_SAFE_IDENT_RE.match(v) for v in idents):
             return None
 
-    anchor_expr = format_required_anchor(policy)
+    anchor_expr = format_required_anchor(policy, db_type)
     if not anchor_expr:
         return None
 

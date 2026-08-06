@@ -22,6 +22,7 @@ from core.date_roles import (
     find_date_dimension_key,
     find_date_value_column,
     generated_date_role_synonyms,
+    infer_encoded_date_key,
     is_date_dimension_table,
     normalize_date_key_type,
     physical_date_key_type,
@@ -42,6 +43,7 @@ _APPROVED_MEASURE_KEYS = frozenset({"status", "confidence", "expression"})
 _APPROVED_DATE_ROLE_KEYS = frozenset({
     "name", "business_role", "dimension_table", "dimension_key",
     "date_value_column", "date_key_type", "synonyms", "status", "confidence",
+    "temporal_grain", "inference_source",
 })
 
 
@@ -487,9 +489,44 @@ def _date_roles(schema: dict[str, Any], table_fqn: str, meta: dict[str, Any]) ->
                 "dimension_key": "",
                 "date_value_column": col,
                 "date_key_type": physical_type,
+                "temporal_grain": "day",
+                "inference_source": "native_temporal_type",
                 "synonyms": generated_date_role_synonyms(native_role, col),
                 "status": "generated",
                 "confidence": 98,
+            })
+            continue
+
+        # Some ERP/ETL models carry the calendar value directly in an integer
+        # fact column (YYYYMMDD or YYYYMM) without declaring a database FK and
+        # without registering a Date Role. Strong naming conventions make
+        # those encodings deterministic; weaker integer IDs remain excluded.
+        encoded = infer_encoded_date_key(col, data_type)
+        # Preserve an established role-playing date-dimension mapping for the
+        # common *_DT_DMS_KEY convention when a recognized role and calendar
+        # dimension are both present. Monthly *_PRD_DMS_KEY fields are direct
+        # period encodings unless an actual database FK was found above; do
+        # not attach them heuristically to an unrelated day dimension.
+        if encoded and (
+            encoded["date_key_type"] == "yyyymm_integer"
+            or not role
+            or not date_dims
+        ):
+            encoded_role = role or derive_date_role(col)
+            roles.append({
+                "name": encoded_role.label,
+                "business_role": encoded_role.key,
+                "fact_table": _qualified_name(table_fqn, meta),
+                "fact_column": col,
+                "dimension_table": "",
+                "dimension_key": "",
+                "date_value_column": col,
+                "date_key_type": encoded["date_key_type"],
+                "temporal_grain": encoded["temporal_grain"],
+                "inference_source": encoded["inference_source"],
+                "synonyms": generated_date_role_synonyms(encoded_role, col),
+                "status": "generated",
+                "confidence": encoded["confidence"],
             })
             continue
 
@@ -568,6 +605,7 @@ def _date_role_coverage(
         if is_date_dimension_table(fqn, meta.get("columns", [])):
             calendar_columns += len(meta.get("columns", []) or [])
             continue
+
         for raw in meta.get("columns", []) or []:
             column = str((raw or {}).get("name") or "").strip()
             dtype = str((raw or {}).get("type") or (raw or {}).get("data_type") or "").strip()

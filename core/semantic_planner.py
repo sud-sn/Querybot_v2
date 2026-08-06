@@ -699,7 +699,7 @@ def build_semantic_field_plan(
 
 
 def format_semantic_field_plan(plan: dict, db_type: str = "azure_sql") -> str:
-    from core.contextual_dates import format_required_anchor
+    from core.contextual_dates import format_date_value_expression, format_required_anchor
 
     if not plan or not plan.get("enabled") or not plan.get("fields"):
         return ""
@@ -712,6 +712,13 @@ def format_semantic_field_plan(plan: dict, db_type: str = "azure_sql") -> str:
     ]
     for field in plan.get("fields", []):
         expr = f"{field['table']}.{field['column']}"
+        if field.get("date_key_type") in {"yyyymmdd_integer", "yyyymm_integer"}:
+            expr = format_date_value_expression(
+                str(field.get("table") or ""),
+                str(field.get("column") or ""),
+                str(field.get("date_key_type") or ""),
+                db_type,
+            )
         # Show a non-binding hint for measures — the LLM should aggregate only when
         # the query is aggregating (not for row-level queries like "show all invoices").
         role_hint = " [measure — apply SUM/COUNT only if aggregating]" if field.get("role") == "measure" else ""
@@ -720,10 +727,15 @@ def format_semantic_field_plan(plan: dict, db_type: str = "azure_sql") -> str:
                 " [business display field - use this in SELECT and GROUP BY; "
                 f"use {field.get('source_key_column')} only for JOINs unless the user asks for key/id]"
             )
-        if field.get("role_alias"):
+        if field.get("role_alias") and field.get("date_key_type") == "surrogate_fk":
             role_hint += (
                 f" [role-playing date alias: {field.get('role_alias')}; "
                 "use the real date value through this alias, never parse the fact FK as a date]"
+            )
+        elif field.get("date_key_type") in {"yyyymmdd_integer", "yyyymm_integer"}:
+            role_hint += (
+                f" [decoded {field.get('temporal_grain') or 'calendar'} date; "
+                "use this exact nullable expression and exclude invalid encoded values]"
             )
         lines.append(f"- {field['term']}: {expr}{role_hint}")
     avoid = plan.get("avoid_columns") or []
@@ -770,12 +782,37 @@ def format_semantic_field_plan(plan: dict, db_type: str = "azure_sql") -> str:
                 )
                 else f"{policy.get('date_table')}.{policy.get('date_column')}"
             )
+            if policy.get("date_key_type") in {"yyyymmdd_integer", "yyyymm_integer"}:
+                date_ref = format_date_value_expression(
+                    str(policy.get("date_table") or policy.get("fact_table") or ""),
+                    str(policy.get("date_column") or policy.get("fact_column") or ""),
+                    str(policy.get("date_key_type") or ""),
+                    db_type,
+                )
             lines.append(
                 f"- {policy.get('business_role') or 'Business date'}: derive the anchor "
                 f"with MAX({date_ref}) over the same governed source rows, then apply "
                 f"the requested {policy.get('kind')} boundary from that anchor."
             )
-            _anchor = format_required_anchor(policy)
+            if policy.get("date_key_type") in {"yyyymmdd_integer", "yyyymm_integer"}:
+                encoded_expr = format_date_value_expression(
+                    str(policy.get("date_table") or policy.get("fact_table") or ""),
+                    str(policy.get("date_column") or policy.get("fact_column") or ""),
+                    str(policy.get("date_key_type") or ""),
+                    db_type,
+                )
+                lines.append(
+                    f"  PHYSICAL ENCODING: {policy.get('date_key_type')} at "
+                    f"{policy.get('temporal_grain') or 'calendar'} grain. Use "
+                    f"{encoded_expr}; invalid/sentinel integer values must resolve "
+                    "to NULL and be excluded."
+                )
+            if policy.get("kind") == "latest_snapshot":
+                lines.append(
+                    "  SNAPSHOT RULE: filter the decoded business date equal to the "
+                    "required MAX anchor; do not sum inventory/balance values across periods."
+                )
+            _anchor = format_required_anchor(policy, db_type)
             if _anchor:
                 lines.append(
                     f"  REQUIRED ANCHOR (copy this exact subquery as the anchor; do not "

@@ -4,13 +4,66 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from core.date_roles import detect_date_role, find_date_dimension_key, is_date_dimension_table
+from core.date_roles import (
+    detect_date_role,
+    find_date_dimension_key,
+    infer_encoded_date_key,
+    is_date_dimension_table,
+)
 from core.graph_resolver import resolve_for_question
 from core.schema import build_entity_graph_from_schema
 from core.semantic_model import build_semantic_model, patch_date_role
 
 
 class DateRoleDetectionTests(unittest.TestCase):
+    def test_encoded_integer_inference_requires_strong_naming_evidence(self):
+        self.assertEqual(
+            infer_encoded_date_key("SNAPSHOT_DT_DMS_KEY", "int")["date_key_type"],
+            "yyyymmdd_integer",
+        )
+        self.assertEqual(
+            infer_encoded_date_key("INVENTORY_PRD_DMS_KEY", "bigint")["date_key_type"],
+            "yyyymm_integer",
+        )
+        self.assertEqual(
+            infer_encoded_date_key("INVENTORY_PRD_DMS_KEY", "bigint")["temporal_grain"],
+            "month",
+        )
+        self.assertEqual(infer_encoded_date_key("WAREHOUSE_KEY", "int"), {})
+        self.assertEqual(infer_encoded_date_key("ORDER_DATE_ID", "int"), {})
+        self.assertEqual(infer_encoded_date_key("INVENTORY_PRD_DMS_KEY", "varchar"), {})
+
+    def test_month_period_is_direct_when_no_physical_date_fk_exists(self):
+        schema = {
+            "OPS.ITM_BAL_PRD_FCT": {
+                "schema": "OPS",
+                "table": "ITM_BAL_PRD_FCT",
+                "columns": [
+                    {"name": "WAREHOUSE_KEY", "type": "int"},
+                    {"name": "PRD_DMS_KEY", "type": "int"},
+                    {"name": "ON_HAND_QTY", "type": "decimal"},
+                ],
+            },
+            "OPS.DT_DMS": {
+                "schema": "OPS",
+                "table": "DT_DMS",
+                "columns": [
+                    {"name": "DT_DMS_KEY", "type": "int"},
+                    {"name": "DMS_DT", "type": "date"},
+                ],
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "_schema.json").write_text(json.dumps(schema), encoding="utf-8")
+            model = build_semantic_model(tmp)
+
+        roles = {role["fact_column"]: role for role in model["date_roles"]}
+        self.assertNotIn("WAREHOUSE_KEY", roles)
+        self.assertEqual(roles["PRD_DMS_KEY"]["date_key_type"], "yyyymm_integer")
+        self.assertEqual(roles["PRD_DMS_KEY"]["temporal_grain"], "month")
+        self.assertEqual(roles["PRD_DMS_KEY"]["dimension_table"], "")
+        self.assertEqual(roles["PRD_DMS_KEY"]["status"], "generated")
+
     def test_detects_common_fact_date_roles(self):
         cases = {
             "CUS_IVC_DT_DMS_KEY": "Invoice Date",

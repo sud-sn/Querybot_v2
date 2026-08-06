@@ -6,10 +6,57 @@ import re
 from typing import Any
 
 from core.date_roles import (
+    date_key_temporal_grain,
     normalize_date_key_type,
     normalize_date_role_text,
     question_has_temporal_intent,
 )
+
+
+_GRAIN_ORDER = {"day": 1, "week": 2, "month": 3, "quarter": 4, "year": 5}
+
+
+def requested_temporal_grain(question: str) -> str:
+    """Return the finest grain explicitly requested by the user."""
+    window = detect_temporal_window(question)
+    unit = str(window.get("unit") or "").lower()
+    if unit in _GRAIN_ORDER:
+        return unit
+    q = normalize_date_role_text(question)
+    for grain, words in (
+        ("day", ("daily", "by day", "each day")),
+        ("week", ("weekly", "by week", "each week")),
+        ("month", ("monthly", "by month", "each month")),
+        ("quarter", ("quarterly", "by quarter", "each quarter")),
+        ("year", ("yearly", "annual", "by year", "each year")),
+    ):
+        if any(word in q for word in words):
+            return grain
+    return ""
+
+
+def question_has_snapshot_intent(question: str) -> bool:
+    """Detect semi-additive stock/balance questions that imply latest data.
+
+    This is intentionally narrow: revenue/orders/sales wording is excluded so
+    an operational measure is not silently converted into a snapshot query.
+    """
+    q = normalize_date_role_text(question)
+    if not q or re.search(r"\b(?:revenue|sales|sold|orders?|invoices?)\b", q):
+        return False
+    return bool(re.search(r"\b(?:inventory|stock|on hand|balance|warehouse balance)\b", q))
+
+
+def _role_temporal_grain(role: dict) -> str:
+    return str(role.get("temporal_grain") or "").lower() or date_key_temporal_grain(
+        str(role.get("date_key_type") or "")
+    )
+
+
+def _grain_is_compatible(source_grain: str, requested_grain: str) -> bool:
+    if not requested_grain or not source_grain:
+        return True
+    return _GRAIN_ORDER.get(source_grain, 99) <= _GRAIN_ORDER.get(requested_grain, 0)
 
 
 def _terms(value: Any) -> list[str]:
@@ -212,6 +259,14 @@ def _role_as_binding(role: dict, *, source: str) -> dict:
         "date_key_type": normalize_date_key_type(
             role.get("date_key_type") or "surrogate_fk"
         ),
+        "temporal_grain": _role_temporal_grain(role),
+        "inference_source": role.get("inference_source") or "",
+        "inferred_fallback": bool(
+            role.get("inference_source")
+            and normalize_date_key_type(role.get("date_key_type"))
+            in {"yyyymmdd_integer", "yyyymm_integer"}
+            and str(role.get("status") or "").casefold() != "approved"
+        ),
         "is_default": int(bool(role.get("is_default"))),
         "priority": int(role.get("confidence") or 0),
         "resolution_source": source,
@@ -321,8 +376,14 @@ def resolve_contextual_date_binding(
     # An approved business synonym is temporal intent even when the phrase is
     # abbreviated (for example, "inv dt") and contains none of the generic
     # date words recognized by question_has_temporal_intent().
-    if not question_has_temporal_intent(question) and not explicit:
+    if (
+        not question_has_temporal_intent(question)
+        and not question_has_snapshot_intent(question)
+        and not explicit
+    ):
         return {"status": "none", "reason": "no temporal intent"}
+
+    requested_grain = requested_temporal_grain(question)
 
     # A clarification option is created by the server from the semantic
     # contract and copied onto the retry event by the dispatcher.  Preserve
@@ -361,6 +422,15 @@ def resolve_contextual_date_binding(
         ]
         explicit = scoped or explicit
     if len(explicit) == 1:
+        explicit_grain = _role_temporal_grain(explicit[0])
+        if not _grain_is_compatible(explicit_grain, requested_grain):
+            return {
+                "status": "unsupported_grain",
+                "reason": "the selected business date is coarser than the requested period",
+                "requested_grain": requested_grain,
+                "available_grain": explicit_grain,
+                "options": [_role_as_binding(explicit[0], source="explicit_date_role")],
+            }
         explicit_source = (
             "explicit_date_role"
             if explicit[0].get("_selection_status") == "approved"
@@ -501,6 +571,39 @@ def resolve_contextual_date_binding(
         required_fact_tables=required_fact_tables,
     )
     if discovered:
+        if question_has_snapshot_intent(question) and not requested_grain:
+            known_grains = [
+                _role_temporal_grain(role)
+                for role in discovered
+                if _role_temporal_grain(role)
+            ]
+            if known_grains:
+                finest = min(known_grains, key=lambda grain: _GRAIN_ORDER.get(grain, 99))
+                discovered = [
+                    role for role in discovered
+                    if _role_temporal_grain(role) == finest
+                ]
+        compatible = [
+            role for role in discovered
+            if _grain_is_compatible(_role_temporal_grain(role), requested_grain)
+        ]
+        if compatible:
+            discovered = compatible
+        elif requested_grain:
+            return {
+                "status": "unsupported_grain",
+                "reason": "the resolved fact has no date at the requested grain",
+                "requested_grain": requested_grain,
+                "available_grain": min(
+                    (_role_temporal_grain(role) for role in discovered if _role_temporal_grain(role)),
+                    key=lambda grain: _GRAIN_ORDER.get(grain, 99),
+                    default="",
+                ),
+                "options": [
+                    _role_as_binding(role, source="discovered_date_role")
+                    for role in discovered[:4]
+                ],
+            }
         approved = [
             role for role in discovered
             if str(role.get("status") or "").casefold() == "approved"
@@ -516,6 +619,26 @@ def resolve_contextual_date_binding(
                 ),
                 "reason": "only approved date role for the resolved fact",
             }
+        # Deterministic direct integer encodings are safe scoped fallbacks:
+        # the resolved fact owns the field, the physical representation is
+        # known, and there is only one compatible candidate. This is not an
+        # approval and is disclosed as inference in the returned provenance.
+        if len(discovered) == 1:
+            only = discovered[0]
+            key_type = normalize_date_key_type(only.get("date_key_type"))
+            if (
+                str(only.get("status") or "").casefold() == "generated"
+                and int(only.get("confidence") or 0) >= 95
+                and key_type in {"yyyymmdd_integer", "yyyymm_integer"}
+                and only.get("inference_source")
+            ):
+                binding = _role_as_binding(only, source="inferred_encoded_fact_date")
+                binding["inferred_fallback"] = True
+                return {
+                    "status": "selected",
+                    "binding": binding,
+                    "reason": "only deterministic encoded date on the resolved fact",
+                }
         all_options = [
             _role_as_binding(role, source="discovered_date_role")
             for role in discovered
@@ -581,6 +704,9 @@ def build_contextual_date_plan(binding: dict, question: str = "") -> dict:
     date_key_type = normalize_date_key_type(
         binding.get("date_key_type") or "surrogate_fk"
     )
+    temporal_grain = str(binding.get("temporal_grain") or "").lower() or date_key_temporal_grain(
+        date_key_type
+    )
     if not fact_table or not fact_column:
         return {"enabled": False, "fields": [], "joins": [], "required_tables": [], "reason": "incomplete date context"}
     if date_key_type == "surrogate_fk" and not all(
@@ -630,6 +756,7 @@ def build_contextual_date_plan(binding: dict, question: str = "") -> dict:
                 "source": "approved_metric_date_context",
                 "enforcement": "required",
                 "date_key_type": date_key_type,
+                "temporal_grain": temporal_grain,
                 "role_alias": role_alias,
             }
         ],
@@ -644,12 +771,32 @@ def build_contextual_date_plan(binding: dict, question: str = "") -> dict:
             "business_role": label,
             "governance_status": binding.get("governance_status") or "",
             "resolution_source": binding.get("resolution_source") or "",
+            "temporal_grain": temporal_grain,
+            "inference_source": binding.get("inference_source") or "",
         }],
         "required_tables": [table for table in (fact_table, dimension_table) if table],
         "reason": f"governed date context: {label}",
         "resolved_date_context": dict(binding),
+        "date_disclosures": [{
+            "label": label,
+            "table": fact_table,
+            "column": fact_column,
+            "date_key_type": date_key_type,
+            "temporal_grain": temporal_grain,
+            "resolution_source": binding.get("resolution_source") or "",
+            "inference_source": binding.get("inference_source") or "",
+            "inferred": bool(binding.get("inferred_fallback")),
+        }],
     }
     window = detect_temporal_window(question)
+    if not window and question_has_snapshot_intent(question):
+        window = {
+            "kind": "latest_snapshot",
+            "amount": 1,
+            "unit": temporal_grain or "period",
+            "anchor_policy": "latest_available",
+            "implicit": True,
+        }
     if window:
         plan["temporal_policies"] = [{
             **window,
@@ -674,11 +821,44 @@ def build_contextual_date_plan(binding: dict, question: str = "") -> dict:
             "business_role": label,
             "governance_status": binding.get("governance_status") or "",
             "resolution_source": binding.get("resolution_source") or "",
+            "temporal_grain": temporal_grain,
+            "inference_source": binding.get("inference_source") or "",
         }]
     return plan
 
 
-def format_required_anchor(policy: dict) -> str:
+def format_date_value_expression(
+    table: str,
+    column: str,
+    date_key_type: str,
+    db_type: str = "azure_sql",
+) -> str:
+    """Render one governed physical date as a nullable calendar expression."""
+    ref = f"{table}.{column}" if table else column
+    key_type = normalize_date_key_type(date_key_type)
+    dialect = str(db_type or "azure_sql").lower()
+    if key_type == "yyyymmdd_integer":
+        if dialect in {"azure_sql", "sqlserver", "mssql"}:
+            return f"TRY_CONVERT(date, CONVERT(varchar(8), {ref}), 112)"
+        if dialect == "snowflake":
+            return f"TRY_TO_DATE(TO_VARCHAR({ref}), 'YYYYMMDD')"
+        if dialect in {"postgres", "postgresql"}:
+            return f"TO_DATE(CAST({ref} AS text), 'YYYYMMDD')"
+        if dialect in {"mysql", "mariadb"}:
+            return f"STR_TO_DATE(CAST({ref} AS CHAR), '%Y%m%d')"
+    if key_type == "yyyymm_integer":
+        if dialect in {"azure_sql", "sqlserver", "mssql"}:
+            return f"TRY_CONVERT(date, CONVERT(varchar(6), {ref}) + '01', 112)"
+        if dialect == "snowflake":
+            return f"TRY_TO_DATE(TO_VARCHAR({ref}), 'YYYYMM')"
+        if dialect in {"postgres", "postgresql"}:
+            return f"TO_DATE(CAST({ref} AS text), 'YYYYMM')"
+        if dialect in {"mysql", "mariadb"}:
+            return f"STR_TO_DATE(CAST({ref} AS CHAR), '%Y%m')"
+    return ref
+
+
+def format_required_anchor(policy: dict, db_type: str = "azure_sql") -> str:
     """
     Build the "copy this exact subquery" anchor text for a temporal policy.
 
@@ -698,7 +878,10 @@ def format_required_anchor(policy: dict) -> str:
     if str(policy.get("date_key_type") or "") != "surrogate_fk":
         date_table = str(policy.get("date_table") or fact_table)
         date_column = str(policy.get("date_column") or fact_column)
-        return f"(SELECT MAX({date_column}) FROM {date_table})"
+        date_expression = format_date_value_expression(
+            "", date_column, str(policy.get("date_key_type") or ""), db_type
+        )
+        return f"(SELECT MAX({date_expression}) FROM {date_table})"
 
     dimension_table = str(policy.get("dimension_table") or policy.get("date_table") or "")
     dimension_key = str(policy.get("dimension_key") or "")
@@ -756,6 +939,9 @@ def build_contextual_date_plan_many(bindings: list[dict], question: str = "") ->
         ],
         "temporal_policies": [
             policy for plan in plans for policy in plan.get("temporal_policies", [])
+        ],
+        "date_disclosures": [
+            item for plan in plans for item in plan.get("date_disclosures", [])
         ],
         "required_tables": sorted({
             table for plan in plans for table in plan.get("required_tables", []) if table

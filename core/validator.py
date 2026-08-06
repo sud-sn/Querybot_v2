@@ -957,11 +957,8 @@ def _find_metric_formula_errors(sql: str, tree, semantic_context: dict | None, t
 
 
 def _is_numeric_date_key(col_name: str, col_type: str = "") -> bool:
-    name = (col_name or "").upper()
-    ctype = (col_type or "").upper()
-    if name.endswith("_DT_DMS_KEY") or name.endswith("_DATE_DMS_KEY"):
-        return not any(token in ctype for token in ("DATE", "TIME"))
-    return False
+    from core.date_roles import infer_encoded_date_key
+    return bool(infer_encoded_date_key(col_name, col_type))
 
 
 def _find_date_key_format_errors(
@@ -987,17 +984,27 @@ def _find_date_key_format_errors(
             continue
         col_type = all_cols.get(col, "")
         if _is_numeric_date_key(col, col_type):
+            from core.contextual_dates import format_date_value_expression
+            from core.date_roles import infer_encoded_date_key
+            encoding = infer_encoded_date_key(col, col_type)
+            decoded = format_date_value_expression(
+                "alias", col, str(encoding.get("date_key_type") or ""), "azure_sql"
+            )
             errors.append({
                 "code": "date_key_format",
                 "message": (
                     f"FORMAT() was applied directly to numeric date key {col}. "
-                    "Convert YYYYMMDD keys to date first."
+                    + (
+                        "Convert YYYYMMDD keys to date first."
+                        if encoding.get("date_key_type") == "yyyymmdd_integer"
+                        else "Decode the governed month integer key before applying date functions."
+                    )
                 ),
                 "column": col,
                 "alias": _strip_identifier(match.group("alias") or ""),
                 "suggestions": [
-                    f"TRY_CONVERT(date, CONVERT(varchar(8), alias.{col}), 112)",
-                    f"FORMAT(TRY_CONVERT(date, CONVERT(varchar(8), alias.{col}), 112), 'yyyy-MM')",
+                    decoded,
+                    f"FORMAT({decoded}, 'yyyy-MM')",
                 ],
             })
     return errors

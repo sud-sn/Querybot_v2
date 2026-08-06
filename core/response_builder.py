@@ -1680,6 +1680,7 @@ def build_assistant_response(
             "scope_badge": ctx.get("result_scope", {}).get("badge", ""),
             "confidence": confidence or {},
             "question_id": question_id,   # public key for feedback API (B3)
+            "date_context": list((semantic_plan or {}).get("date_disclosures") or []),
         },
         "confidence": confidence or {},
     }

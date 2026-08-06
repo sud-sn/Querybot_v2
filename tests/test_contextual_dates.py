@@ -11,7 +11,9 @@ from core.contextual_dates import (
     build_contextual_date_plan_many,
     detect_temporal_window,
     find_explicit_date_roles,
+    format_date_value_expression,
     format_required_anchor,
+    question_has_snapshot_intent,
     resolve_contextual_date_binding,
 )
 from core.semantic_model import (
@@ -1730,6 +1732,92 @@ class GovernedDateAnchorRepairLinesTests(unittest.TestCase):
         from core.query_pipeline import _governed_date_anchor_repair_lines
         self.assertEqual(_governed_date_anchor_repair_lines({}), "")
         self.assertEqual(_governed_date_anchor_repair_lines({"temporal_policies": []}), "")
+
+
+class EncodedDateFallbackTests(unittest.TestCase):
+    @staticmethod
+    def _role(column: str, key_type: str, grain: str, table: str) -> dict:
+        return {
+            "name": "Snapshot Date" if grain == "day" else "Snapshot Period",
+            "business_role": "snapshot_date" if grain == "day" else "snapshot_period",
+            "fact_table": table,
+            "fact_column": column,
+            "date_value_column": column,
+            "date_key_type": key_type,
+            "temporal_grain": grain,
+            "inference_source": "encoded_date_name" if grain == "day" else "encoded_period_name",
+            "status": "generated",
+            "confidence": 98 if grain == "day" else 96,
+            "synonyms": ["snapshot date"] if grain == "day" else ["snapshot period"],
+        }
+
+    def test_single_scoped_encoded_period_is_selected_and_disclosed(self):
+        role = self._role(
+            "PRD_DMS_KEY", "yyyymm_integer", "month", "OPS.ITM_BAL_PRD_FCT"
+        )
+        result = resolve_contextual_date_binding(
+            "show inventory by warehouse",
+            matched_metrics=[], bindings=[], date_roles=[role],
+            required_fact_tables={"OPS.ITM_BAL_PRD_FCT"},
+        )
+        self.assertEqual(result["status"], "selected")
+        self.assertEqual(result["binding"]["resolution_source"], "inferred_encoded_fact_date")
+        self.assertTrue(result["binding"]["inferred_fallback"])
+
+        plan = build_contextual_date_plan(result["binding"], "show inventory by warehouse")
+        self.assertEqual(plan["temporal_policies"][0]["kind"], "latest_snapshot")
+        self.assertEqual(plan["date_disclosures"][0]["temporal_grain"], "month")
+        self.assertTrue(plan["date_disclosures"][0]["inferred"])
+
+    def test_month_period_refuses_day_level_request(self):
+        role = self._role(
+            "PRD_DMS_KEY", "yyyymm_integer", "month", "OPS.ITM_BAL_PRD_FCT"
+        )
+        result = resolve_contextual_date_binding(
+            "show inventory for the last 2 days",
+            matched_metrics=[], bindings=[], date_roles=[role],
+            required_fact_tables={"OPS.ITM_BAL_PRD_FCT"},
+        )
+        self.assertEqual(result["status"], "unsupported_grain")
+        self.assertEqual(result["requested_grain"], "day")
+        self.assertEqual(result["available_grain"], "month")
+
+    def test_daily_snapshot_wins_over_monthly_for_generic_inventory(self):
+        monthly = self._role(
+            "PRD_DMS_KEY", "yyyymm_integer", "month", "OPS.ITM_BAL_PRD_FCT"
+        )
+        daily = self._role(
+            "SNAPSHOT_DT_DMS_KEY", "yyyymmdd_integer", "day", "OPS.ITM_BAL_DAY_FCT"
+        )
+        result = resolve_contextual_date_binding(
+            "show inventory by warehouse",
+            matched_metrics=[], bindings=[], date_roles=[monthly, daily],
+            required_fact_tables={"OPS.ITM_BAL_PRD_FCT", "OPS.ITM_BAL_DAY_FCT"},
+        )
+        self.assertEqual(result["status"], "selected")
+        self.assertEqual(result["binding"]["fact_table"], "OPS.ITM_BAL_DAY_FCT")
+        self.assertEqual(result["binding"]["temporal_grain"], "day")
+
+    def test_encoded_sql_expressions_are_dialect_aware(self):
+        self.assertEqual(
+            format_date_value_expression("f", "PRD_DMS_KEY", "yyyymm_integer", "azure_sql"),
+            "TRY_CONVERT(date, CONVERT(varchar(6), f.PRD_DMS_KEY) + '01', 112)",
+        )
+        anchor = format_required_anchor({
+            "anchor_table": "OPS.ITM_BAL_PRD_FCT",
+            "fact_table": "OPS.ITM_BAL_PRD_FCT",
+            "anchor_column": "PRD_DMS_KEY",
+            "fact_column": "PRD_DMS_KEY",
+            "date_table": "OPS.ITM_BAL_PRD_FCT",
+            "date_column": "PRD_DMS_KEY",
+            "date_key_type": "yyyymm_integer",
+        })
+        self.assertIn("CONVERT(varchar(6), PRD_DMS_KEY) + '01'", anchor)
+
+    def test_snapshot_intent_is_narrow(self):
+        self.assertTrue(question_has_snapshot_intent("inventory by warehouse"))
+        self.assertTrue(question_has_snapshot_intent("current stock on hand"))
+        self.assertFalse(question_has_snapshot_intent("inventory sales revenue"))
 
 
 if __name__ == "__main__":
