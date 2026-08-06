@@ -340,6 +340,93 @@ class ContextualDateResolutionTests(unittest.TestCase):
             "SALES.DIM_DATE.DATE_KEY)",
         )
 
+    def test_current_month_does_not_explicitly_match_ent_date(self):
+        metric = {
+            **self.metric,
+            "default_time_column": "CUS_IVC_DT_DMS_KEY",
+        }
+        invoice_role = {
+            "name": "Invoice Date",
+            "business_role": "invoice_date",
+            "fact_table": "EMDW_DMART.CUS_ORD_IVC_FCT",
+            "fact_column": "CUS_IVC_DT_DMS_KEY",
+            "dimension_table": "EMDW_DMART.DT_DMS",
+            "dimension_key": "DT_DMS_KEY",
+            "date_value_column": "DMS_DT",
+            "date_key_type": "surrogate_fk",
+            "status": "approved",
+            "confidence": 100,
+        }
+        ent_role = {
+            "name": "Ent Date",
+            "business_role": "ent_date",
+            "synonyms": ["ent"],
+            "fact_table": "EMDW_DMART.FNN_FCT",
+            "fact_column": "ENT_DT_DMS_KEY",
+            "dimension_table": "EMDW_DMART.DT_DMS",
+            "dimension_key": "DT_DMS_KEY",
+            "date_value_column": "DMS_DT",
+            "date_key_type": "surrogate_fk",
+            "status": "approved",
+            "confidence": 100,
+        }
+        question = "what is the revenue comparison for current month and the last month"
+
+        self.assertEqual(find_explicit_date_roles(question, [ent_role]), [])
+        result = resolve_contextual_date_binding(
+            question,
+            matched_metrics=[metric],
+            bindings=[],
+            date_roles=[ent_role, invoice_role],
+            required_fact_tables={"EMDW_DMART.CUS_ORD_IVC_FCT"},
+        )
+
+        self.assertEqual(result["status"], "selected")
+        self.assertEqual(result["binding"]["date_role"], "invoice_date")
+        self.assertEqual(result["binding"]["fact_column"], "CUS_IVC_DT_DMS_KEY")
+        self.assertEqual(
+            result["binding"]["resolution_source"],
+            "metric_default_time_column",
+        )
+
+    def test_ent_date_still_matches_when_user_names_it(self):
+        ent_role = {
+            "name": "Ent Date",
+            "business_role": "ent_date",
+            "synonyms": ["ent"],
+            "fact_table": "EMDW_DMART.FNN_FCT",
+            "fact_column": "ENT_DT_DMS_KEY",
+            "dimension_table": "EMDW_DMART.DT_DMS",
+            "dimension_key": "DT_DMS_KEY",
+            "date_value_column": "DMS_DT",
+            "date_key_type": "surrogate_fk",
+            "status": "approved",
+            "confidence": 100,
+        }
+
+        matches = find_explicit_date_roles(
+            "show finance entries by ent date",
+            [ent_role],
+        )
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(matches[0]["fact_column"], "ENT_DT_DMS_KEY")
+
+    def test_current_month_does_not_match_short_context_alias(self):
+        ent_binding = {
+            **_binding("Ent Date", "ent_date", "ENT_DT_DMS_KEY"),
+            "aliases": "ent",
+            "fact_table": "EMDW_DMART.FNN_FCT",
+        }
+        result = resolve_contextual_date_binding(
+            "compare revenue for current month and last month",
+            matched_metrics=[self.metric],
+            bindings=[ent_binding],
+            date_roles=[],
+            required_fact_tables={"SALES.FACT_REVENUE"},
+        )
+
+        self.assertNotEqual(result.get("reason"), "business context match")
+
     def test_thread_date_preference_does_not_cross_fact_scope(self):
         remembered = _binding(
             "Accounting Date",

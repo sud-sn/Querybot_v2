@@ -90,7 +90,7 @@ def _binding_score(question: str, binding: dict) -> int:
     q_tokens = set(q.split())
     best = 0
     for phrase in _terms([binding.get("context_name", ""), *_terms(binding.get("aliases", ""))]):
-        if phrase in q:
+        if _phrase_span(q, phrase):
             best = max(best, 100 + len(phrase.split()) * 8)
             continue
         tokens = set(phrase.split())
@@ -99,6 +99,23 @@ def _binding_score(question: str, binding: dict) -> int:
         elif tokens:
             best = max(best, len(tokens & q_tokens) * 8)
     return best + int(binding.get("priority") or 0)
+
+
+def _phrase_span(text: str, phrase: str) -> tuple[int, int] | None:
+    """Find a normalized phrase only at token boundaries.
+
+    ERP abbreviations can be very short (for example ``ENT``).  Plain
+    ``str.find`` treated those as explicit business-date requests when they
+    merely appeared inside an ordinary word such as ``current``.  The date
+    resolver then moved the query onto an unrelated fact before metric
+    defaults had a chance to apply.  Boundary matching preserves intentional
+    inputs such as ``ent date`` while rejecting ``currENT month``.
+    """
+    normalized = str(phrase or "").strip()
+    if not normalized:
+        return None
+    match = re.search(rf"(?<!\w){re.escape(normalized)}(?!\w)", text)
+    return (match.start(), match.end()) if match else None
 
 
 def _role_is_complete(role: dict) -> bool:
@@ -144,9 +161,9 @@ def _explicit_role_matches(
         # fact/entity noun appears elsewhere in the question.
         role_matches: list[tuple[int, int, str, int]] = []
         for phrase in phrases:
-            start = q.find(phrase) if phrase else -1
-            if start >= 0:
-                role_matches.append((start, start + len(phrase), phrase, 2))
+            span = _phrase_span(q, phrase)
+            if span:
+                role_matches.append((span[0], span[1], phrase, 2))
                 continue
 
             # Business users commonly replace the word "date" with the
@@ -161,9 +178,9 @@ def _explicit_role_matches(
                 if stem:
                     for grain in ("date", "day", "month", "week", "quarter", "year"):
                         variant = f"{stem} {grain}"
-                        start = q.find(variant)
-                        if start >= 0:
-                            role_matches.append((start, start + len(variant), variant, 2))
+                        span = _phrase_span(q, variant)
+                        if span:
+                            role_matches.append((span[0], span[1], variant, 2))
                     # Event wording often names the business date implicitly:
                     # "ordered revenue", "booked sales", "invoiced amount".
                     # Keep this word-boundary based so "order" does not match
