@@ -354,6 +354,61 @@ def _relevant_discovered_date_roles(
     return [dict(item[3]) for item in ranked]
 
 
+def _metric_default_time_role_bindings(
+    *,
+    matched_metrics: list[dict] | None,
+    date_roles: list[dict] | None,
+    fact_scope: set[str] | None,
+) -> list[dict]:
+    """Resolve metric ``default_time_column`` values to approved Date Roles.
+
+    The metric registry historically exposed its default time column only as
+    prose in the SQL prompt.  That allowed generation to select another
+    similarly named integer key and, for surrogate keys, to parse the key as
+    ``YYYYMMDD`` instead of using the approved date-dimension join.  Turning
+    the setting into a physical binding makes it part of the executable
+    semantic plan and therefore visible to both generation and validation.
+
+    Only complete, approved roles qualify.  A column name that happens to
+    match an unreviewed discovery candidate must not silently become governed
+    merely because an administrator selected the column on a metric.
+    """
+    configured: list[tuple[str, str]] = []
+    for metric in matched_metrics or []:
+        column = str(metric.get("default_time_column") or "").strip().strip("[]`")
+        if not column:
+            continue
+        metric_table = str(metric.get("base_table") or "").strip()
+        configured.append((metric_table, column.upper().split(".")[-1]))
+    if not configured:
+        return []
+
+    scoped_tables = {table for table in (fact_scope or set()) if table}
+    matches: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    for role in date_roles or []:
+        if str(role.get("status") or "").casefold() != "approved":
+            continue
+        if not _role_is_complete(role):
+            continue
+        role_table = str(role.get("fact_table") or "")
+        role_column = str(role.get("fact_column") or "").strip().upper().split(".")[-1]
+        for metric_table, configured_column in configured:
+            if role_column != configured_column:
+                continue
+            table_scope = {table for table in (metric_table, *scoped_tables) if table}
+            if table_scope and not any(_same_table(role_table, table) for table in table_scope):
+                continue
+            identity = (_table_identity(role_table)[0], role_column)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            matches.append(
+                _role_as_binding(role, source="metric_default_time_column")
+            )
+    return matches
+
+
 def resolve_contextual_date_binding(
     question: str,
     *,
@@ -495,6 +550,64 @@ def resolve_contextual_date_binding(
             "options": winners,
         }
 
+    # A business date explicitly chosen earlier in this thread is an active
+    # analytical assumption, while the registry/default flags below are only
+    # fallbacks.  Reuse the user's choice for the same metric/fact unless the
+    # current question explicitly names a different role (handled above).
+    if remembered_date_role and _role_is_complete(remembered_date_role):
+        remembered = dict(remembered_date_role)
+        if fact_scope and not any(
+            _same_table(remembered.get("fact_table"), table)
+            for table in fact_scope
+        ):
+            remembered = {}
+        if remembered:
+            remembered_grain = _role_temporal_grain(remembered)
+            if not _grain_is_compatible(remembered_grain, requested_grain):
+                return {
+                    "status": "unsupported_grain",
+                    "reason": "the selected thread business date is coarser than the requested period",
+                    "requested_grain": requested_grain,
+                    "available_grain": remembered_grain,
+                    "options": [remembered],
+                }
+            remembered["resolution_source"] = "thread_date_preference"
+            return {
+                "status": "selected",
+                "binding": remembered,
+                "reason": "date role previously confirmed in this thread",
+            }
+
+    # The metric's Default time column is an administrator-selected default.
+    # Resolve it through the approved Date Role so a surrogate FK carries its
+    # dimension join and native calendar value into the executable plan.
+    metric_defaults = _metric_default_time_role_bindings(
+        matched_metrics=metrics,
+        date_roles=roles,
+        fact_scope=fact_scope,
+    )
+    if len(metric_defaults) == 1:
+        default_grain = _role_temporal_grain(metric_defaults[0])
+        if not _grain_is_compatible(default_grain, requested_grain):
+            return {
+                "status": "unsupported_grain",
+                "reason": "the metric default business date is coarser than the requested period",
+                "requested_grain": requested_grain,
+                "available_grain": default_grain,
+                "options": metric_defaults,
+            }
+        return {
+            "status": "selected",
+            "binding": metric_defaults[0],
+            "reason": "approved Date Role selected by the metric default time column",
+        }
+    if len(metric_defaults) > 1:
+        return {
+            "status": "ambiguous",
+            "reason": "metric default time column matches multiple approved Date Roles",
+            "options": metric_defaults,
+        }
+
     defaults = [dict(item) for item in candidates if int(item.get("is_default") or 0)]
     if len(defaults) == 1:
         defaults[0]["resolution_source"] = "metric_default"
@@ -525,24 +638,6 @@ def resolve_contextual_date_binding(
             "reason": "default date role for resolved fact",
         }
 
-    # Ana-style thread continuity: a date explicitly confirmed by the user on
-    # an earlier turn may be reused for the same metric/fact. This sits below
-    # current-turn wording and governed defaults, and above another discovery
-    # clarification. It is a session assumption, never an ontology approval.
-    if remembered_date_role and _role_is_complete(remembered_date_role):
-        remembered = dict(remembered_date_role)
-        if fact_scope and not any(
-            _same_table(remembered.get("fact_table"), table)
-            for table in fact_scope
-        ):
-            remembered = {}
-        if remembered:
-            remembered["resolution_source"] = "thread_date_preference"
-            return {
-                "status": "selected",
-                "binding": remembered,
-                "reason": "date role previously confirmed in this thread",
-            }
     if len(approved_roles) > 1:
         return {
             "status": "ambiguous",

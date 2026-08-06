@@ -258,6 +258,88 @@ class ContextualDateResolutionTests(unittest.TestCase):
             "thread_date_preference",
         )
 
+    def test_thread_date_preference_overrides_a_registry_default(self):
+        remembered = _binding(
+            "Invoice Date",
+            "invoice_date",
+            "INVOICE_DATE_KEY",
+        )
+        order_default = _binding(
+            "Order Date",
+            "order_date",
+            "ORDER_DATE_KEY",
+            default=True,
+        )
+        result = resolve_contextual_date_binding(
+            "compare revenue for the current month and last month",
+            matched_metrics=[self.metric],
+            bindings=[order_default],
+            date_roles=[],
+            required_fact_tables={"SALES.FACT_REVENUE"},
+            remembered_date_role=remembered,
+        )
+        self.assertEqual(result["status"], "selected")
+        self.assertEqual(result["binding"]["fact_column"], "INVOICE_DATE_KEY")
+        self.assertEqual(
+            result["binding"]["resolution_source"],
+            "thread_date_preference",
+        )
+
+    def test_metric_default_time_column_compiles_approved_surrogate_role(self):
+        metric = {
+            **self.metric,
+            "default_time_column": "INVOICE_DATE_KEY",
+        }
+        invoice_role = {
+            "name": "Invoice Date",
+            "business_role": "invoice_date",
+            "synonyms": ["invoiced date"],
+            "fact_table": "SALES.FACT_REVENUE",
+            "fact_column": "INVOICE_DATE_KEY",
+            "dimension_table": "SALES.DIM_DATE",
+            "dimension_key": "DATE_KEY",
+            "date_value_column": "FULL_DATE",
+            "date_key_type": "surrogate_fk",
+            "status": "approved",
+            "confidence": 100,
+        }
+        order_default = _binding(
+            "Order Date",
+            "order_date",
+            "ORDER_DATE_KEY",
+            default=True,
+        )
+
+        result = resolve_contextual_date_binding(
+            "compare revenue for the current month and last month",
+            matched_metrics=[metric],
+            bindings=[order_default],
+            date_roles=[invoice_role],
+            required_fact_tables={"SALES.FACT_REVENUE"},
+        )
+
+        self.assertEqual(result["status"], "selected")
+        self.assertEqual(result["binding"]["fact_column"], "INVOICE_DATE_KEY")
+        self.assertEqual(
+            result["binding"]["resolution_source"],
+            "metric_default_time_column",
+        )
+        plan = build_contextual_date_plan(
+            result["binding"],
+            "compare revenue for the current month and last month",
+        )
+        self.assertEqual(
+            plan["joins"][0]["conditions"],
+            [("INVOICE_DATE_KEY", "DATE_KEY")],
+        )
+        self.assertEqual(plan["fields"][0]["column"], "FULL_DATE")
+        self.assertEqual(
+            format_required_anchor(plan["temporal_policies"][0]),
+            "(SELECT MAX(SALES.DIM_DATE.FULL_DATE) FROM SALES.DIM_DATE "
+            "JOIN SALES.FACT_REVENUE ON SALES.FACT_REVENUE.INVOICE_DATE_KEY = "
+            "SALES.DIM_DATE.DATE_KEY)",
+        )
+
     def test_thread_date_preference_does_not_cross_fact_scope(self):
         remembered = _binding(
             "Accounting Date",
@@ -816,6 +898,59 @@ class ContextualDateResolutionTests(unittest.TestCase):
             semantic_context={"semantic_plan": plan},
         )
         self.assertTrue(result.ok, result.reason)
+
+    def test_validator_accepts_current_vs_previous_month_on_invoice_role(self):
+        binding = {
+            **_binding(
+                "Invoice Date",
+                "invoice_date",
+                "CUS_IVC_DT_DMS_KEY",
+            ),
+            "fact_table": "EMDW_DMART.CUS_ORD_IVC_FCT",
+            "dimension_table": "EMDW_DMART.DT_DMS",
+            "dimension_key": "DT_DMS_KEY",
+            "date_value_column": "DMS_DT",
+        }
+        plan = build_contextual_date_plan(
+            binding,
+            "compare revenue for the current month and last month",
+        )
+        columns = {
+            "EMDW_DMART.CUS_ORD_IVC_FCT": {
+                "CUS_IVC_DT_DMS_KEY": "int",
+                "SOP_CUS_IVC_LIN_AMT": "decimal",
+            },
+            "EMDW_DMART.DT_DMS": {
+                "DT_DMS_KEY": "int",
+                "DMS_DT": "date",
+            },
+        }
+        sql = (
+            "SELECT "
+            "SUM(CASE WHEN YEAR(d.DMS_DT)=YEAR(a.MAX_DATE) "
+            "AND MONTH(d.DMS_DT)=MONTH(a.MAX_DATE) "
+            "THEN f.SOP_CUS_IVC_LIN_AMT ELSE 0 END) AS CURRENT_REVENUE, "
+            "SUM(CASE WHEN YEAR(d.DMS_DT)=YEAR(DATEADD(month,-1,a.MAX_DATE)) "
+            "AND MONTH(d.DMS_DT)=MONTH(DATEADD(month,-1,a.MAX_DATE)) "
+            "THEN f.SOP_CUS_IVC_LIN_AMT ELSE 0 END) AS PREVIOUS_REVENUE "
+            "FROM EMDW_DMART.CUS_ORD_IVC_FCT f "
+            "JOIN EMDW_DMART.DT_DMS d "
+            "ON f.CUS_IVC_DT_DMS_KEY=d.DT_DMS_KEY "
+            "CROSS JOIN (SELECT MAX(d2.DMS_DT) AS MAX_DATE "
+            "FROM EMDW_DMART.DT_DMS d2 "
+            "JOIN EMDW_DMART.CUS_ORD_IVC_FCT f2 "
+            "ON f2.CUS_IVC_DT_DMS_KEY=d2.DT_DMS_KEY) a"
+        )
+        result = validate_sql_detailed(
+            sql,
+            set(columns),
+            "azure_sql",
+            table_columns=columns,
+            semantic_context={"semantic_plan": plan},
+        )
+        self.assertTrue(result.ok, result.reason)
+        self.assertNotIn("TRY_CONVERT", sql)
+        self.assertNotIn("CUS_ORD_DT_DMS_KEY", sql)
 
     def test_validator_accepts_selected_context_join(self):
         plan = build_contextual_date_plan(self.bindings[1])
