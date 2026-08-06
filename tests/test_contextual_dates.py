@@ -427,6 +427,42 @@ class ContextualDateResolutionTests(unittest.TestCase):
 
         self.assertNotEqual(result.get("reason"), "business context match")
 
+    def test_period_comparison_receives_non_truncating_sql_budget(self):
+        from core.query_pipeline import _sql_completion_token_budget
+
+        plan = build_contextual_date_plan(
+            _binding("Invoice Date", "invoice_date", "INVOICE_DATE_KEY"),
+            "compare revenue for current month and last month",
+        )
+        question = "what is the revenue comparison for current month and the last month"
+
+        self.assertEqual(
+            _sql_completion_token_budget(question, plan),
+            1280,
+        )
+        self.assertEqual(
+            _sql_completion_token_budget(question, plan, retry=True),
+            1536,
+        )
+
+    def test_simple_lookup_keeps_compact_sql_budget(self):
+        from core.query_pipeline import _sql_completion_token_budget
+
+        self.assertEqual(
+            _sql_completion_token_budget("list the top five customers", {}),
+            768,
+        )
+
+    def test_parse_repair_reasserts_date_contract_and_complete_select(self):
+        src = (
+            Path(__file__).resolve().parents[1] / "core" / "query_pipeline.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('elif last_code == "parse":', src)
+        self.assertIn("Every WITH/CTE must be closed and followed by a final SELECT", src)
+        self.assertIn("_sql_repair_max_tokens", src)
+        self.assertNotIn("temperature=0.0, max_tokens=512", src)
+
     def test_thread_date_preference_does_not_cross_fact_scope(self):
         remembered = _binding(
             "Accounting Date",

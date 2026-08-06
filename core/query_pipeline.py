@@ -89,6 +89,38 @@ from core.conversation_state import conversation_state_store
 log = logging.getLogger("querybot")
 
 
+def _sql_completion_token_budget(
+    question: str,
+    semantic_plan: dict | None = None,
+    *,
+    retry: bool = False,
+) -> int:
+    """Return an output budget proportionate to the required SQL shape.
+
+    A flat 512-token ceiling truncated legitimate period-comparison CTEs in
+    production.  The parser then saw only the first half of the query and
+    could not reach the semantic validators that would have corrected a wrong
+    date role.  Output-token limits are ceilings (billing remains based on
+    actual output), so give complex analytical shapes room to finish while
+    keeping compact lookups bounded.
+    """
+    q = str(question or "").casefold()
+    plan = semantic_plan or {}
+    complex_terms = (
+        "compare", "comparison", "versus", " vs ", "trend", "variance",
+        "change", "growth", "contribution", "share", "running total",
+        "moving average", "rank", "percentile", "current month",
+        "last month", "previous month", "current year", "last year",
+    )
+    complex_shape = bool(
+        plan.get("temporal_policies")
+        and any(term in q for term in complex_terms)
+    ) or len(plan.get("joins") or []) > 2
+    if complex_shape:
+        return 1536 if retry else 1280
+    return 1024 if retry else 768
+
+
 def _unknown_column_is_cross_schema(reason: str, schema_hint: str) -> bool:
     """Return whether an unknown column exists only outside the locked schema.
 
@@ -2764,6 +2796,15 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         graph_context=_graph_ctx or None,
         semantic_plan=_semantic_plan or None,
     )
+    _sql_generation_max_tokens = _sql_completion_token_budget(
+        question,
+        _semantic_plan,
+    )
+    _sql_repair_max_tokens = _sql_completion_token_budget(
+        question,
+        _semantic_plan,
+        retry=True,
+    )
     try:
         _reused_plan = store.find_reusable_validated_sql_plan(
             account_id=account_id,
@@ -2819,7 +2860,9 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             else:
                 sql, tok_in, tok_out = await llm_complete(
                     system, question, provider, model, api_key,
-                    temperature=0.0, max_tokens=512, **az_kwargs,
+                    temperature=0.0,
+                    max_tokens=_sql_generation_max_tokens,
+                    **az_kwargs,
                 )
             _trace_update(
                 trace_id,
@@ -2838,6 +2881,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     "source_request_source": _reused_plan.get("request_source") if _reused_plan else None,
                     "source_row_count": _reused_plan.get("query_row_count") if _reused_plan else None,
                     "authorization_match": "referenced_tables_subset" if _reused_plan else None,
+                    "max_output_tokens": _sql_generation_max_tokens if not _reused_plan else 0,
                 },
                 duration_ms=int((time.time() - _llm_gen_t0) * 1000),
             )
@@ -2915,7 +2959,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     model,
                     api_key,
                     temperature=0.0,
-                    max_tokens=768,
+                    max_tokens=_sql_repair_max_tokens,
                     **az_kwargs,
                 )
             tok_in += _recovery_tok_in
@@ -3421,6 +3465,26 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     "- Keep NULLIF(PREV_METRIC, 0) around the denominator and balance every parenthesis.\n"
                     "- Preserve the exact governed date-role JOIN and use a native date value directly when the date dimension exposes one.\n"
                 )
+            elif last_code == "parse":
+                _date_contract_lines = _governed_date_anchor_repair_lines(
+                    _semantic_plan or {}
+                )
+                validation_repair_note = (
+                    "\nINCOMPLETE OR MALFORMED SQL REPAIR REQUIRED:\n"
+                    "- Discard the truncated draft and return one complete SQL statement.\n"
+                    "- Every WITH/CTE must be closed and followed by a final SELECT.\n"
+                    "- Prefer one period_totals CTE plus conditional aggregation or LAG; "
+                    "do not duplicate a long current-period query into separate incomplete CTEs.\n"
+                    "- Do not shorten SQL with ellipses (...).\n"
+                    "- Preserve the approved metric formula and the governed date-role "
+                    "join; never parse a surrogate date key as YYYYMMDD.\n"
+                    + (
+                        "- Copy this governed date-role contract exactly:\n"
+                        + _date_contract_lines
+                        if _date_contract_lines
+                        else ""
+                    )
+                )
             elif last_code == "field_plan_mismatch":
                 # Narrow the note to the field(s) that ACTUALLY failed --
                 # without this, a plan defining both a display field (e.g.
@@ -3585,7 +3649,9 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                         semantic_plan=_retry_plan,
                     ),
                     retry_user, provider, model, api_key,
-                    temperature=0.0, max_tokens=512, **az_kwargs,
+                    temperature=0.0,
+                    max_tokens=_sql_repair_max_tokens,
+                    **az_kwargs,
                 )
             # Retry timings accumulate onto the same buckets as the first
             # attempt (bucket aggregation sums by step_name), not separate rows.
