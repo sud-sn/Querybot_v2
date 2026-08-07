@@ -1925,8 +1925,12 @@ async def portal_export_csv(request: Request, trace_id: int | None = None):
                 status_code=403,
             )
     except Exception as exc:
-        profile = store.get_compliance_profile(user["account_id"])
-        if profile.get("mode") == "regulated" and profile.get("enforcement_mode") == "enforce":
+        # See core/result_renderer.py: the old enforcement_mode == "enforce"
+        # conjunct meant a regulated tenant in shadow mode could export freely
+        # whenever export-policy evaluation itself failed.
+        from core.compliance.policy_engine import is_regulated
+
+        if is_regulated(user["account_id"]):
             return JSONResponse(
                 {"ok": False, "error": f"Export policy could not be verified: {str(exc)[:120]}"},
                 status_code=403,

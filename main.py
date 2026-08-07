@@ -77,6 +77,19 @@ async def startup() -> None:
     except Exception as e:
         log.warning("LLM audit purge failed at startup: %s", e)
 
+    # KB egress log retention — much longer than the LLM-call window: these rows
+    # are the record of what schema/sample data ever left the database.
+    try:
+        egress_retention = int(os.getenv("KB_EGRESS_RETENTION_DAYS", "365"))
+        deleted = store.purge_old_kb_egress(egress_retention)
+        if deleted:
+            log.info(
+                "Purged %d kb_data_egress_log rows older than %d days",
+                deleted, egress_retention,
+            )
+    except Exception as e:
+        log.warning("KB egress purge failed at startup: %s", e)
+
     try:
         from core.log_export import scheduled_log_export_loop
         app.state.log_export_task = asyncio.create_task(scheduled_log_export_loop())

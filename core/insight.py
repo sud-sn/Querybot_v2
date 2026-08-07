@@ -305,10 +305,24 @@ def compute_data_brief(
     context: dict | None = None,
 ) -> dict:
     """
-    Compute a complete statistical data brief from result rows.
-    
-    Returns a dict of aggregated metrics — NEVER contains raw row values.
-    This is the ONLY thing the LLM sees.
+    Compute a statistical data brief from result rows.
+
+    ⚠️  THIS BRIEF CONTAINS REAL DATA VALUES. The previous docstring claimed it
+    "NEVER contains raw row values"; that was false and dangerously so, because
+    every new consumer read it as a safety guarantee. It carries, among others:
+      • brief["value"]                      — the literal single-cell result
+      • category_breakdown.top_5/bottom_3   — actual dimension labels + amounts
+      • time_series from_period/to_period   — actual period labels
+      • numeric min/max/mean/total          — derived from real rows
+
+    The only filter is _is_sensitive_field(), which matches on COLUMN NAME
+    keywords, so a value in a column named PRODUCT_NAME or DRUG survives intact.
+
+    Consequently every consumer that hands this to an LLM MUST first check
+    core.compliance.policy_engine.result_llm_features_allowed(account_id).
+    Today's consumers — the why-insight narration, the drilldown planner,
+    period comparison and follow-up suggestions — all do. If you add a fifth,
+    gate it too; the brief itself is not a safe boundary.
     """
     from core.metric_semantics import detect_metric_semantics
     from core.response_builder import infer_result_scope, summarize_result_context

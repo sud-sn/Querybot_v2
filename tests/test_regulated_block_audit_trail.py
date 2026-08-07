@@ -40,6 +40,29 @@ def _arun(coro):
     return asyncio.run(coro)
 
 
+
+# Phase-1 fail-closed default (docs/LLM_EGRESS_PLAN.md A7): an account with no
+# compliance_profile row is now treated as regulated. Every test in this module
+# is about a PROVISIONED tenant whose mode is varied explicitly, so declare the
+# profile as existing; without this they would exercise the unprovisioned path
+# instead of the mode they patch.
+_profile_exists_patcher = None
+
+
+def setUpModule():
+    global _profile_exists_patcher
+    from unittest.mock import patch
+    _profile_exists_patcher = patch(
+        "core.compliance.policy_engine.store.compliance_profile_exists",
+        return_value=True,
+    )
+    _profile_exists_patcher.start()
+
+
+def tearDownModule():
+    if _profile_exists_patcher is not None:
+        _profile_exists_patcher.stop()
+
 class RecordLlmBlockedTests(unittest.TestCase):
     def test_writes_blocked_row_when_scope_active(self):
         from core.llm_audit import llm_audit_scope, record_llm_blocked

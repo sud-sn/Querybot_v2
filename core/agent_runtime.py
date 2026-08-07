@@ -39,8 +39,13 @@ def _safe_text(value: Any, limit: int = 1200) -> str:
 def _sanitize_objective(account_id: str, text: str) -> str:
     cleaned = str(text or "")
     try:
+        from core.compliance.policy_engine import is_regulated
+
         profile = store.get_compliance_profile(account_id)
-        if str(profile.get("mode") or "standard").lower() != "standard":
+        # Union, not replacement: is_regulated adds unprovisioned tenants, while
+        # the mode check keeps any future non-standard posture covered. Scrubbing
+        # is a safety measure, so this predicate may widen but must never narrow.
+        if is_regulated(account_id) or str(profile.get("mode") or "standard").lower() != "standard":
             from core.masking import scrub_question_pii
             cleaned, _ = scrub_question_pii(
                 cleaned, str(profile.get("industry") or ""),

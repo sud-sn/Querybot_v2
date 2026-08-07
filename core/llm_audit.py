@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextvars
 import hashlib
+import json as _json
 import logging
 import re
 from contextlib import contextmanager
@@ -124,6 +125,7 @@ def llm_audit_scope(
     request_id: str | None = None,
     question_id: str | None = None,
     component: str = "general",
+    egress: dict | None = None,
 ) -> Iterator[dict]:
     current = _AUDIT_SCOPE.get() or {}
     merged = {
@@ -138,6 +140,12 @@ def llm_audit_scope(
         # that don't supply one (e.g. KB build jobs where there's no parent question).
         "question_id": question_id or current.get("question_id") or "",
         "component":   component or current.get("component") or "general",
+        # Descriptive egress metadata the call site knows and the prompt text
+        # cannot be reliably parsed for — chiefly which tables and columns were
+        # described to the model. Optional: build_egress_manifest still derives
+        # the compliance-critical values_sent flag without it, so a call site
+        # that supplies nothing is recorded honestly rather than not at all.
+        "egress":      dict(egress) if egress else (current.get("egress") or {}),
     }
     token = _AUDIT_SCOPE.set(merged)
     try:
@@ -147,13 +155,30 @@ def llm_audit_scope(
 
 
 @contextmanager
-def llm_audit_component(component: str, *, question: str | None = None) -> Iterator[dict | None]:
+def llm_audit_component(
+    component: str,
+    *,
+    question: str | None = None,
+    new_request_id: bool = False,
+) -> Iterator[dict | None]:
+    """
+    Narrow the ambient scope to one component.
+
+    ``new_request_id`` mints a fresh request_id for this component instead of
+    inheriting the parent's. Long-running parents — chiefly the KB build, which
+    opens a single scope and then makes one LLM call per table — otherwise give
+    every child call the same request_id, so individual calls cannot be told
+    apart in the audit log. Grouping is unaffected: the admin view buckets by
+    question_id, which still comes from the parent.
+    """
     current = _AUDIT_SCOPE.get()
     if not current:
         yield None
         return
     merged = dict(current)
     merged["component"] = component or merged.get("component") or "general"
+    if new_request_id:
+        merged["request_id"] = make_llm_audit_request_id()
     if question is not None and question.strip():
         merged["question"] = question.strip()
     token = _AUDIT_SCOPE.set(merged)
@@ -165,6 +190,79 @@ def llm_audit_component(component: str, *, question: str | None = None) -> Itera
 
 def get_current_llm_audit_scope() -> dict | None:
     return _AUDIT_SCOPE.get()
+
+
+# ── Egress manifest ──────────────────────────────────────────────────────────
+#
+# Markers of prompt sections that carry REAL DATA VALUES. Each is a literal
+# header emitted by the code that injects the section, so detection is exact
+# rather than heuristic — which is what lets values_sent be computed evidence
+# instead of a claim. Adding a new value-bearing prompt section means adding
+# its marker here; that is the one maintenance obligation this design carries.
+_VALUE_BEARING_MARKERS: tuple[tuple[str, str], ...] = (
+    # core/value_resolver.py::build_verified_values_injection
+    ("VERIFIED FILTER VALUES", "value_index"),
+    # core/query_pipeline.py / gateway/webhooks.py repair prompts. The DB error
+    # itself is masked by core.failure_messages.scrub_error_for_llm, so it is
+    # NOT the value source here — the echoed prior SQL is, because its WHERE
+    # literals are reproduced verbatim. Those literals were authored by the
+    # model on the previous turn rather than newly disclosed, which is why the
+    # repair path was left intact in Phase 0; the manifest still reports them
+    # so the record stays honest about what the prompt contained.
+    ("The following SQL failed with this error", "echoed_sql"),
+)
+
+_CONTENT_MARKERS: tuple[tuple[str, str], ...] = (
+    ("COLUMN SYNONYM MAP", "synonyms"),
+    ("BUSINESS TERM DEFINITIONS", "business_terms"),
+    ("Session context", "conversation_history"),
+    ("Example queries", "few_shot"),
+    ("Entity graph", "entity_graph"),
+)
+
+
+def build_egress_manifest(system: str, user: str, scope: dict | None = None) -> dict:
+    """
+    Describe what this call actually sent to the model.
+
+    Two sources, deliberately separated by trustworthiness:
+
+    * ``values_sent`` / ``value_sources`` are DERIVED from the assembled prompt
+      text by matching literal section headers. Nothing has to be declared, so
+      a call site cannot forget to report a leak, and an unaudited-by-omission
+      path is impossible.
+    * ``tables`` / ``columns`` come from the audit scope's ``egress`` dict,
+      because they cannot be recovered from prose. They are descriptive only;
+      no compliance decision rests on them.
+
+    Returns a plain dict for JSON storage. Never raises — a manifest failure
+    must not lose the audit row it belongs to.
+    """
+    manifest: dict = {
+        "tables": [],
+        "columns": [],
+        "content": [],
+        "values_sent": False,
+        "value_sources": [],
+    }
+    try:
+        blob = f"{system or ''}\n{user or ''}"
+        sources = [label for marker, label in _VALUE_BEARING_MARKERS if marker in blob]
+        manifest["value_sources"] = sources
+        manifest["values_sent"] = bool(sources)
+        manifest["content"] = [label for marker, label in _CONTENT_MARKERS if marker in blob]
+        if user:
+            manifest["content"].insert(0, "question")
+
+        egress = (scope or {}).get("egress") or {}
+        tables = egress.get("tables") or []
+        columns = egress.get("columns") or []
+        # Bounded and de-duplicated: this is an audit summary, not a payload.
+        manifest["tables"] = sorted({str(t) for t in tables if t})[:50]
+        manifest["columns"] = sorted({str(c) for c in columns if c})[:200]
+    except Exception as exc:  # noqa: BLE001 — never break the audit write
+        log.debug("Egress manifest build failed: %s", exc)
+    return manifest
 
 
 def sanitize_llm_text(text: str, *, limit: int = 1200) -> str:
@@ -244,6 +342,9 @@ def record_llm_call(
             response_hash=_response_hash(response) if response else "",
             response_preview_sanitized=sanitize_llm_text(response, limit=1200),
             response_chars=len(response or ""),
+            egress_manifest=_json.dumps(
+                build_egress_manifest(system, user, scope), separators=(",", ":")
+            ),
         )
     except Exception as exc:
         log.warning("LLM audit write failed: %s", exc)

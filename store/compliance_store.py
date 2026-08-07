@@ -18,6 +18,22 @@ def _loads(value: Any, default):
         return default
 
 
+def compliance_profile_exists(account_id: str) -> bool:
+    """
+    True when this account has a real compliance_profile row.
+
+    get_compliance_profile synthesizes a permissive `standard` default for a
+    missing row, which makes "never provisioned" indistinguishable from
+    "explicitly standard". Callers that need to fail closed on unprovisioned
+    tenants (see core.compliance.policy_engine.is_regulated) ask here instead.
+    """
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM compliance_profile WHERE account_id=?", (account_id,)
+        ).fetchone()
+    return row is not None
+
+
 def get_compliance_profile(account_id: str) -> dict:
     with get_db() as conn:
         row = conn.execute(

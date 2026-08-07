@@ -32,7 +32,9 @@ import logging
 import re
 
 import store
-from core.llm import llm_complete, resolve_provider
+# NOTE: this module deliberately imports no LLM entry point. Result narration
+# runs through core.governed_result_followup (metadata only). See the removal
+# note under "LLM narration" below.
 from core.chart import detect_chart_type, build_chart_payload
 from core.response_builder import (
     build_assistant_response, build_column_formats,
@@ -269,62 +271,13 @@ def _inject_distinct_if_needed(sql: str, question: str) -> str:
 
 
 # ── LLM narration ─────────────────────────────────────────────────────────────
-
-async def _generate_result_narration(
-    question: str,
-    rows: list[dict],
-    currency_cols: list[str],
-    client: dict,
-) -> str:
-    """
-    Generate a 1-2 sentence plain-English insight from a drill-down result.
-    Uses a minimal 150-token LLM call.  Returns "" on any failure so callers
-    can silently skip it.
-    """
-    if not rows:
-        return ""
-    try:
-        col_names = list(rows[0].keys())
-        preview_rows = rows[:5]
-        row_lines = []
-        for r in preview_rows:
-            parts = []
-            for k, v in r.items():
-                if k in currency_cols and v is not None:
-                    try:
-                        parts.append(f"{k}=${float(v):,.2f}")
-                    except (ValueError, TypeError):
-                        parts.append(f"{k}={v}")
-                else:
-                    parts.append(f"{k}={v}")
-            row_lines.append("  " + ", ".join(parts))
-        total = len(rows)
-        summary = (
-            f"Question: {question}\n"
-            f"Result ({total} row{'s' if total != 1 else ''}):\n"
-            + "\n".join(row_lines)
-            + (f"\n  ...and {total - 5} more rows" if total > 5 else "")
-        )
-        provider, model, api_key, az_kwargs = resolve_provider(client, purpose="query")
-        narration, _, _ = await llm_complete(
-            system=(
-                "You are a data analyst. Given a question and a query result, "
-                "write exactly ONE concise sentence (max 30 words) summarising "
-                "the key insight or direct answer. Be specific — include the top "
-                "value or most notable number. No padding, no 'The data shows'."
-            ),
-            user=summary,
-            provider=provider,
-            model=model,
-            api_key=api_key,
-            max_tokens=80,
-            temperature=0.2,
-            **az_kwargs,
-        )
-        return (narration or "").strip()
-    except Exception as _exc:
-        log.debug("result_chat narration skipped: %s", _exc)
-        return ""
+#
+# _generate_result_narration was removed (2026-08-04). It serialised the first
+# five result rows verbatim into an LLM prompt, which is exactly what the
+# regulated-tenant boundary forbids. It had no callers — result-chat narration
+# goes through core.governed_result_followup, which sends metadata only — so it
+# was a loaded gun rather than a live leak. Do not reintroduce row-serialising
+# narration here; extend the governed follow-up path instead.
 
 
 # ── Drilldown context builders ────────────────────────────────────────────────
@@ -767,8 +720,13 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
             ):
                 chart_type = None
         except Exception as exc:
-            profile = store.get_compliance_profile(account_id)
-            if profile.get("mode") == "regulated" and profile.get("enforcement_mode") == "enforce":
+            # Previously also required enforcement_mode == "enforce", which left
+            # a regulated tenant in shadow mode with no chart protection at all
+            # when policy evaluation failed. Shadow governs whether a *decision*
+            # is advisory, not whether a failed evaluation may be ignored.
+            from core.compliance.policy_engine import is_regulated
+
+            if is_regulated(account_id):
                 log.warning("Chart blocked because policy evaluation failed: %s", exc)
                 chart_type = None
     pin_token = None

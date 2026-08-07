@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import fnmatch
+import logging
 from typing import Iterable
 
 import store
@@ -8,8 +9,38 @@ from core.compliance.models import PolicyContext, PolicyDecision, ResourceRef
 from core.compliance.packs import get_pack
 
 
+log = logging.getLogger("querybot")
+
 _HARD_DENIED_ACTIONS = {"insert", "update", "delete", "ddl", "cross_tenant"}
 _BREAK_GLASS_DENIED_ACTIONS = {"export", "llm_context"}
+
+
+def is_regulated(account_id: str) -> bool:
+    """
+    The single answer to "does this tenant get the regulated data boundary?".
+
+    Before this existed the codebase asked four different ways — mode ==
+    "regulated"; mode == "regulated" AND enforcement_mode == "enforce"; mode !=
+    "standard"; and industry in (banking, healthcare_pharmacy). The second was
+    a fail-open: a regulated tenant left in `shadow` got no chart or export
+    protection at all. Use this helper for the boundary decision; the industry
+    field remains the right key only where it genuinely means industry, such as
+    picking an NER model in core.masking.
+
+    Unprovisioned tenants count as regulated. store.get_compliance_profile
+    synthesizes a `standard` default for a missing row, so without this check a
+    workspace that had never been through compliance setup would silently get
+    the loosest posture. init_db backfills an explicit profile for every
+    existing client, so a missing row now means genuinely new, not legacy.
+    """
+    if not store.compliance_profile_exists(account_id):
+        log.warning(
+            "No compliance profile for account %s — treating as regulated "
+            "(fail-closed). Complete compliance setup to select a posture.",
+            account_id,
+        )
+        return True
+    return store.get_compliance_profile(account_id).get("mode") == "regulated"
 
 
 def result_llm_features_allowed(account_id: str) -> bool:
@@ -28,7 +59,7 @@ def result_llm_features_allowed(account_id: str) -> bool:
     agreement covers legal liability for permitted use, not the
     minimum-necessary-exposure posture this boundary is for.
     """
-    return store.get_compliance_profile(account_id).get("mode") != "regulated"
+    return not is_regulated(account_id)
 
 
 def resolve_context(

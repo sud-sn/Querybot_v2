@@ -39,6 +39,11 @@ LLM_COLUMNS = [
     "SOURCE_ID", "ACCOUNT_ID", "QUESTION_ID", "REQUEST_ID", "QUESTION",
     "COMPONENT", "LLM_PROVIDER", "LLM_MODEL", "STATUS", "PAYLOAD_HASH",
     "PAYLOAD_PREVIEW_SANITIZED", "PROMPT_CHARS", "ERROR_MSG", "CREATED_AT",
+    # The response side was previously never exported, so the tenant's own copy
+    # of the audit trail could prove what was SENT but not what came back.
+    "RESPONSE_HASH", "RESPONSE_PREVIEW_SANITIZED", "RESPONSE_CHARS",
+    # Per-call egress manifest (what was sent + whether any data values were).
+    "EGRESS_MANIFEST",
 ]
 
 EGRESS_COLUMNS = [
@@ -48,6 +53,8 @@ EGRESS_COLUMNS = [
     "TRIGGERED_BY", "CREATED_AT",
     "FIELDS_SENT", "ROW_COUNT_SENT", "MASKED_FIELDS", "MASK_MODE",
     "MASK_REPLACEMENT_MAP",
+    # Correlates an egress row with the llm_call_log rows of the same run.
+    "REQUEST_ID",
 ]
 
 
@@ -723,7 +730,11 @@ def _fetch_llm_rows_after(last_id: int, limit: int) -> list[tuple]:
         rows = conn.execute("""
             SELECT id, account_id, question_id, request_id, question, component,
                    llm_provider, llm_model, status, payload_hash,
-                   payload_preview_sanitized, prompt_chars, error_msg, created_at
+                   payload_preview_sanitized, prompt_chars, error_msg, created_at,
+                   COALESCE(response_hash, ''),
+                   COALESCE(response_preview_sanitized, ''),
+                   COALESCE(response_chars, 0),
+                   COALESCE(egress_manifest, '')
               FROM llm_call_log
              WHERE id > ?
              ORDER BY id
@@ -752,7 +763,8 @@ def _fetch_egress_rows_after(last_id: int, limit: int) -> list[tuple]:
                    {_col('row_count_sent',        '0')}   AS row_count_sent,
                    {_col('masked_fields',         "'[]'")} AS masked_fields,
                    {_col('mask_mode',             "'none'")} AS mask_mode,
-                   {_col('mask_replacement_map',  "'{}'")} AS mask_replacement_map
+                   {_col('mask_replacement_map',  "'{}'")} AS mask_replacement_map,
+                   {_col('request_id',            "''")} AS request_id
               FROM kb_data_egress_log
              WHERE id > ?
              ORDER BY id

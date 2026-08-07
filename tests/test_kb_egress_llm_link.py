@@ -101,8 +101,15 @@ class GetKbTableDocAuditTests(unittest.TestCase):
 
 class WiringGuardTests(unittest.TestCase):
     def test_knowledge_py_tags_kb_table_doc_with_table_name(self):
+        """store.get_kb_table_doc_audit finds a table's evidence row by matching
+        component='kb_table_doc' AND question=<table_name>, so the tag must be
+        present. Asserted on the call's arguments rather than its exact text —
+        the previous literal match broke when an unrelated keyword argument was
+        added, even though the tag it guards was untouched."""
         src = KNOWLEDGE_PY.read_text(encoding="utf-8")
-        self.assertIn('llm_audit_component("kb_table_doc", question=table_name)', src)
+        idx = src.index('llm_audit_component("kb_table_doc"')
+        call = src[idx:src.index(")", idx) + 1]
+        self.assertIn("question=table_name", call)
 
     def test_store_exports_get_kb_table_doc_audit(self):
         src = STORE_INIT.read_text(encoding="utf-8")

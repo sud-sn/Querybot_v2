@@ -1021,6 +1021,11 @@
         {% if audit_component or audit_status %}
         <a href="?" style="font-size:12px;color:var(--gray-600);text-decoration:underline;padding-bottom:.5rem">Clear filters</a>
         {% endif %}
+        <a href="/admin/clients/{{ client.account_id }}/llm-audit.csv?days=30"
+           style="margin-left:auto;font-size:12px;padding-bottom:.5rem;color:var(--primary);text-decoration:underline"
+           title="One row per LLM call for the last 30 days, with the egress manifest flattened into readable columns — for offline audit review. Contains no prompt text, only the sanitized preview and SHA-256 fingerprints already stored.">
+          ↓ Export audit CSV (30d)
+        </a>
       </form>
     </div>
 
@@ -1075,6 +1080,15 @@
             {% else %}
             <span class="badge badge-green">OK</span>
             {% endif %}
+            {% if group.any_values_sent %}
+            <div style="margin-top:3px">
+              <span class="badge badge-amber" title="At least one call in this question included real data values. Sources: {{ group.value_sources|join(', ') }}">DATA VALUES</span>
+            </div>
+            {% else %}
+            <div style="margin-top:3px">
+              <span class="badge badge-green" title="Every call in this question sent only the question text, schema names and governed context — no data values">NO DATA VALUES</span>
+            </div>
+            {% endif %}
           </td>
           <td class="audit-chars">{{ group.total_chars }}</td>
           <td style="font-size:11px;color:var(--gray-600)">
@@ -1115,6 +1129,25 @@
               <div class="audit-chars" style="margin-top:3px;text-align:left">{{ call.prompt_chars }} ch</div>
             </td>
             <td>
+              {% if call.egress %}
+              <div style="margin-bottom:.45rem;padding:.4rem .55rem;border-radius:4px;background:var(--surface-3,#f0f1f3);font-size:11px;line-height:1.5">
+                <div style="font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--gray-500);margin-bottom:2px">What was sent</div>
+                {% if call.egress.tables %}
+                <div><strong>{{ call.egress.tables|length }}</strong> table{{ "s" if call.egress.tables|length != 1 else "" }}<span style="color:var(--gray-600)" title="{{ call.egress.tables|join(', ') }}">: {{ call.egress.tables[:3]|join(', ') }}{% if call.egress.tables|length > 3 %} +{{ call.egress.tables|length - 3 }} more{% endif %}</span></div>
+                {% endif %}
+                {% if call.egress.columns %}
+                <div><strong>{{ call.egress.columns|length }}</strong> column{{ "s" if call.egress.columns|length != 1 else "" }} described</div>
+                {% endif %}
+                {% if call.egress.content %}
+                <div style="color:var(--gray-600)">Content: {{ call.egress.content|join(', ') }}</div>
+                {% endif %}
+                {% if call.egress.values_sent %}
+                <div style="margin-top:3px;color:var(--amber-700,#92400e);font-weight:600">⚠ Real data values included — via {{ call.egress.value_sources|join(', ') }}</div>
+                {% else %}
+                <div style="margin-top:3px;color:var(--green-700,#15803d);font-weight:600">✓ 0 data values</div>
+                {% endif %}
+              </div>
+              {% endif %}
               <div class="audit-preview">{{ call.payload_preview_sanitized or "—" }}</div>
               {% if call.response_preview_sanitized %}
               <div style="margin-top:.4rem;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--gray-500)">Sanitized response preview · {{ call.response_chars }} ch</div>

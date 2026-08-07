@@ -2763,6 +2763,10 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                 _fb_prov, _fb_model, _fb_key, _fb_az = resolve_provider(
                                     client, purpose="query"
                                 )
+                                # One request id shared by the fallback generate +
+                                # its two retries so the LLM audit log groups them
+                                # as a single question rather than three orphans.
+                                _fb_request_id = make_llm_audit_request_id()
                                 # Full system prompt — same as main pipeline, with graph context
                                 _fb_system = build_sql_system_prompt(
                                     _fb_db_cfg.get("db_type", "azure_sql"),
@@ -2789,11 +2793,19 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                 )
                                 if _drill_ctx:
                                     _fb_system = _fb_system + "\n\n---\n\n" + _drill_ctx
-                                _fb_sql_raw, _, _ = await llm_complete(
-                                    _fb_system, rc_question,
-                                    _fb_prov, _fb_model, _fb_key,
-                                    max_tokens=512, **_fb_az,
-                                )
+                                with llm_audit_scope(
+                                    account_id=account_id,
+                                    question=rc_question,
+                                    enabled=bool(client.get("enable_llm_audit")),
+                                    request_id=_fb_request_id,
+                                    question_id=_rc_question_id,
+                                    component="result_chat_sql_fallback",
+                                ):
+                                    _fb_sql_raw, _, _ = await llm_complete(
+                                        _fb_system, rc_question,
+                                        _fb_prov, _fb_model, _fb_key,
+                                        max_tokens=512, **_fb_az,
+                                    )
                                 log.info(
                                     "result_chat DB fallback generated SQL: %s",
                                     (_fb_sql_raw or "None")[:300],
@@ -2838,11 +2850,19 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                             "If unsure of column names, use SELECT TOP 20 * from the "
                                             "same table. Return only the corrected SQL."
                                         )
-                                        _fb_retry_raw, _, _ = await llm_complete(
-                                            _fb_system, _fb_retry_user,
-                                            _fb_prov, _fb_model, _fb_key,
-                                            max_tokens=512, **_fb_az,
-                                        )
+                                        with llm_audit_scope(
+                                            account_id=account_id,
+                                            question=rc_question,
+                                            enabled=bool(client.get("enable_llm_audit")),
+                                            request_id=_fb_request_id,
+                                            question_id=_rc_question_id,
+                                            component="result_chat_sql_fallback_retry",
+                                        ):
+                                            _fb_retry_raw, _, _ = await llm_complete(
+                                                _fb_system, _fb_retry_user,
+                                                _fb_prov, _fb_model, _fb_key,
+                                                max_tokens=512, **_fb_az,
+                                            )
                                         if _fb_retry_raw and _fb_retry_raw.startswith("```"):
                                             _fb_retry_raw = "\n".join(
                                                 _fb_retry_raw.split("\n")[1:]
@@ -2890,21 +2910,33 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                                     f"Find the EXACT column names in the Knowledge Base "
                                                     f"(system prompt). NEVER guess or use CamelCase variants.\n"
                                                 )
+                                            from core.failure_messages import (
+                                                scrub_error_for_llm as _scrub_err,
+                                            )
+
                                             _exec_retry_user = (
                                                 f"The following SQL failed with this error:\n"
                                                 f"SQL: {_fb_sql_raw}\n"
-                                                f"Error: {_exec_err}\n"
+                                                f"Error: {_scrub_err(_exec_err)}\n"
                                                 f"{_col_note}\n"
                                                 f"The original question was: {rc_question}\n\n"
                                                 "Rewrite the SQL to fix the error. Use ONLY column names "
                                                 "that appear verbatim in the Knowledge Base. "
                                                 "Return only the corrected SQL."
                                             )
-                                            _exec_retry_raw, _, _ = await llm_complete(
-                                                _fb_system, _exec_retry_user,
-                                                _fb_prov, _fb_model, _fb_key,
-                                                max_tokens=512, **_fb_az,
-                                            )
+                                            with llm_audit_scope(
+                                                account_id=account_id,
+                                                question=rc_question,
+                                                enabled=bool(client.get("enable_llm_audit")),
+                                                request_id=_fb_request_id,
+                                                question_id=_rc_question_id,
+                                                component="result_chat_sql_exec_retry",
+                                            ):
+                                                _exec_retry_raw, _, _ = await llm_complete(
+                                                    _fb_system, _exec_retry_user,
+                                                    _fb_prov, _fb_model, _fb_key,
+                                                    max_tokens=512, **_fb_az,
+                                                )
                                             if _exec_retry_raw and _exec_retry_raw.startswith("```"):
                                                 _exec_retry_raw = "\n".join(
                                                     _exec_retry_raw.split("\n")[1:]
@@ -3286,6 +3318,43 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                         _dim_name = action[len("drill_dim:"):]
                         try:
                             from core.drill_dimension import generate_drill_by_dimension
+                            from core.compliance.policy_engine import result_llm_features_allowed
+
+                            # drill_dim is a result-follow-up action like why/analyze/
+                            # compare_prior, and sends the original SQL (WHERE literals
+                            # included) to the model. It belongs behind the same
+                            # regulated-tenant boundary as its siblings.
+                            if not result_llm_features_allowed(account_id):
+                                with llm_audit_scope(
+                                    account_id=account_id,
+                                    question=f"drill_dim:{_dim_name}: {cached.get('question', '')}".strip()[:500],
+                                    enabled=bool(client.get("enable_llm_audit")),
+                                    request_id=make_llm_audit_request_id(),
+                                    question_id=getattr(adapter, "last_question_id", None) or "",
+                                    component="drill_dim",
+                                ):
+                                    from core.llm_audit import record_llm_blocked
+                                    record_llm_blocked(
+                                        "drill_dim",
+                                        "drill-down blocked — regulated tenant, LLM never "
+                                        "received the result rows or the original SQL.",
+                                    )
+                                # Unlike the auto-triggered why-insight, this is an
+                                # explicit button click, so it gets a visible reply.
+                                await websocket.send_json({
+                                    "type": "assistant_error",
+                                    "action": "drill_dim",
+                                    "content": (
+                                        "Breaking a result down with AI is turned off for this "
+                                        "workspace by the data policy."
+                                    ),
+                                    "suggestion": (
+                                        f"Ask \"Break down by {_dim_name}\" as a new question — "
+                                        "that runs as a governed query instead."
+                                    ),
+                                })
+                                continue
+
                             provider, model, api_key, az_kwargs = resolve_provider(client, purpose="query")
                             _dd_plan = cached.get("semantic_plan") or {}
                             with llm_audit_scope(

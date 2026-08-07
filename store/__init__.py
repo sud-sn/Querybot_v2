@@ -34,7 +34,7 @@ from store.config_store import (
     log_query, get_query_stats, get_recent_queries, get_monthly_breakdown,
     search_recent_queries_referencing,
     get_suggestions,
-    log_llm_call, get_recent_llm_calls, purge_old_llm_calls,
+    log_llm_call, get_recent_llm_calls, purge_old_llm_calls, purge_old_kb_egress,
     get_llm_trust_summary, RESULT_LLM_COMPONENTS, get_kb_table_doc_audit,
 )
 from store.user_store import (
@@ -106,7 +106,7 @@ from store.eval_store import (
     get_eval_run, latest_eval_run, previous_eval_run, latest_regressed_run,
 )
 from store.compliance_store import (
-    get_compliance_profile, save_compliance_profile,
+    get_compliance_profile, save_compliance_profile, compliance_profile_exists,
     create_policy_version, activate_policy_version, list_policy_versions,
     list_classifications, get_classification_map, save_classification,
     list_policy_rules, replace_policy_rules, list_row_policies, replace_row_policies,
@@ -162,7 +162,7 @@ __all__ = [
     "log_query","get_query_stats","get_recent_queries","get_monthly_breakdown",
     "search_recent_queries_referencing",
     "get_suggestions",
-    "log_llm_call","get_recent_llm_calls","purge_old_llm_calls",
+    "log_llm_call","get_recent_llm_calls","purge_old_llm_calls","purge_old_kb_egress",
     "get_llm_trust_summary","RESULT_LLM_COMPONENTS","get_kb_table_doc_audit",
     "create_group","list_groups","get_group","update_group","delete_group",
     "set_group_tables","get_group_tables",
@@ -215,7 +215,7 @@ __all__ = [
     "list_agent_subtasks_for_account",
     "save_eval_run","save_eval_case_result","list_eval_runs",
     "get_eval_run","latest_eval_run","previous_eval_run","latest_regressed_run",
-    "get_compliance_profile","save_compliance_profile",
+    "get_compliance_profile","save_compliance_profile","compliance_profile_exists",
     "create_policy_version","activate_policy_version","list_policy_versions",
     "list_classifications","get_classification_map","save_classification",
     "list_policy_rules","replace_policy_rules","list_row_policies","replace_row_policies",

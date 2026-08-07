@@ -211,6 +211,11 @@ CREATE TABLE IF NOT EXISTS llm_call_log (
     response_preview_sanitized TEXT   DEFAULT '',
     response_chars            INTEGER DEFAULT 0,
     error_msg                 TEXT    DEFAULT '',
+    -- Structured statement of WHAT went to the model on this call: tables,
+    -- columns, content categories, and a computed values_sent flag. The
+    -- sanitized preview is good forensics but cannot answer "were any data
+    -- values sent?" without a human reading it; this can. See core/llm_audit.py.
+    egress_manifest           TEXT    NOT NULL DEFAULT '',
     created_at                TEXT    DEFAULT (datetime('now'))
 );
 
@@ -686,6 +691,10 @@ CREATE TABLE IF NOT EXISTS kb_data_egress_log (
     mask_mode       TEXT    NOT NULL DEFAULT 'none',
     -- v21: per-field replacement strategy map {field: strategy_name}
     mask_replacement_map TEXT NOT NULL DEFAULT '{}',
+    -- v38: correlation id linking this egress row to the llm_call_log rows of
+    -- the same KB build / discovery run. Without it the two logs could only be
+    -- matched by table name and timestamp, by hand.
+    request_id      TEXT    NOT NULL DEFAULT '',
     created_at      TEXT    DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_kb_egress_account_op
@@ -913,10 +922,51 @@ def init_db() -> None:
         )
     _run_migrations()
     _migrate_legacy_examples_to_candidates()
+    _backfill_compliance_profiles()
     if is_postgres():
         log.info("Database initialised (PostgreSQL: %s)", DATABASE_URL.split("@")[-1])
     else:
         log.info("Database initialised (SQLite: %s)", DB_PATH)
+
+
+def _backfill_compliance_profiles() -> None:
+    """
+    Give every pre-existing client an explicit `standard` compliance profile.
+
+    core.compliance.policy_engine.is_regulated fails closed when an account has
+    no compliance_profile row, so that a workspace which never went through
+    compliance setup cannot silently run with the loosest posture. That is only
+    a safe rule once "no row" means genuinely new — before this backfill it also
+    meant "created before compliance profiles existed", and treating those as
+    regulated would abruptly disable result narration for every legacy tenant.
+
+    Writes the same values get_compliance_profile already synthesizes, so the
+    effective posture of an existing client does not change; only the ability to
+    distinguish legacy from unprovisioned does. Idempotent — inserts nothing for
+    accounts that already have a row.
+    """
+    try:
+        with get_db() as conn:
+            rows = conn.execute(
+                "SELECT c.account_id FROM client c "
+                "LEFT JOIN compliance_profile p ON p.account_id = c.account_id "
+                "WHERE p.account_id IS NULL"
+            ).fetchall()
+            if not rows:
+                return
+            for row in rows:
+                conn.execute(
+                    "INSERT INTO compliance_profile "
+                    "(account_id, industry, mode, enforcement_mode, lifecycle_state) "
+                    "VALUES (?, 'standard', 'standard', 'shadow', 'DRAFT')",
+                    (row[0],),
+                )
+        log.info(
+            "Migration: backfilled %d standard compliance profile(s) for "
+            "pre-existing clients", len(rows)
+        )
+    except Exception as exc:  # noqa: BLE001 — never block startup on a backfill
+        log.warning("Compliance profile backfill skipped: %s", exc)
 
 
 def _run_migrations() -> None:
@@ -1112,6 +1162,10 @@ def _run_migrations() -> None:
         # gate visibility; user-created reports join the same account-wide pool
         # as admin-created ones (askable/subscribable by anyone in the account).
         ("report", "created_by_user_id", "INTEGER DEFAULT NULL"),
+        # v38: per-call data-egress manifest — the structured answer to "what
+        # went to the model on this call, and did any data values go with it".
+        ("llm_call_log", "egress_manifest", "TEXT NOT NULL DEFAULT ''"),
+        ("kb_data_egress_log", "request_id", "TEXT NOT NULL DEFAULT ''"),
     ]
     with get_db() as conn:
         _ensure_llm_call_log_table(conn)
@@ -1525,6 +1579,7 @@ def _ensure_llm_call_log_table(conn: sqlite3.Connection) -> None:
             response_preview_sanitized TEXT   DEFAULT '',
             response_chars            INTEGER DEFAULT 0,
             error_msg                 TEXT    DEFAULT '',
+            egress_manifest           TEXT    NOT NULL DEFAULT '',
             created_at                TEXT    DEFAULT (datetime('now'))
         );
         CREATE INDEX IF NOT EXISTS idx_llm_call_log_account  ON llm_call_log(account_id);

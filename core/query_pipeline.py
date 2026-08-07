@@ -2917,6 +2917,19 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             request_id=audit_request_id,
             question_id=audit_request_id,
             component="sql_generation",
+            # Descriptive half of the egress manifest. `effective` is the
+            # ACL-filtered table set this prompt describes, so the audit row
+            # states what the model was actually shown rather than everything
+            # the workspace owns. The values_sent half is computed from the
+            # assembled prompt inside build_egress_manifest — not from here.
+            egress={
+                "tables": sorted(effective),
+                "columns": sorted(
+                    f"{t}.{c}"
+                    for t in effective
+                    for c in (all_columns.get(t) or [])
+                ),
+            },
         ):
             if _reused_plan:
                 sql = str(_reused_plan.get("sql_generated") or "")
@@ -3448,10 +3461,12 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     f"that represents the same concept, reuse that EXACT column name verbatim.\n"
                     f"NEVER guess, never use CamelCase variants of column names.\n"
                 )
+            from core.failure_messages import scrub_error_for_llm
+
             retry_user = (
                 f"The following SQL failed with this error:\n"
                 f"SQL: {sql}\n"
-                f"Error: {exec_error}\n"
+                f"Error: {scrub_error_for_llm(exec_error)}\n"
                 f"{col_fix_note}\n"
                 f"The original question was: {question}\n\n"
                 f"Rewrite the SQL to fix the error. Use ONLY column names that appear "

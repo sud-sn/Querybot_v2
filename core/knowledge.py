@@ -633,7 +633,7 @@ async def build_kb(
 
     # ── Business vocabulary KB ────────────────────────────────────────────────
     biz_user = build_biz_vocab_prompt(table_names, column_reference, business_desc)
-    with llm_audit_component("kb_business_vocab"):
+    with llm_audit_component("kb_business_vocab", new_request_id=True):
         biz_text, _, _ = await llm_complete(
             system_base, biz_user, provider, model, api_key, max_tokens=3000, **kw
         )
@@ -905,7 +905,7 @@ async def build_kb(
         # llm_call_log — the enclosing llm_audit_scope for the whole KB build
         # (admin/routes.py) shares one request_id across every table, so that
         # alone can't disambiguate which table a given audit row belongs to.
-        with llm_audit_component("kb_table_doc", question=table_name):
+        with llm_audit_component("kb_table_doc", question=table_name, new_request_id=True):
             kb_text, _, _ = await llm_complete(
                 system, stage1_user, provider, model, api_key,
                 max_tokens=4096, **kw
@@ -931,7 +931,9 @@ async def build_kb(
             entity_type=entity_type,
             confirmed_joins=_confirmed_snippets,
         )
-        with llm_audit_component("kb_query_examples"):
+        with llm_audit_component(
+            "kb_query_examples", question=table_name, new_request_id=True
+        ):
             query_text, _, _ = await llm_complete(
                 system, query_user, provider, model, api_key,
                 max_tokens=3000, **kw
@@ -1161,7 +1163,9 @@ async def repair_failed_query_patterns(
               "- Return only repeated Q:/SQL: pairs with no commentary."
         )
         try:
-            with llm_audit_component("kb_query_repair", question=table_stem):
+            with llm_audit_component(
+                "kb_query_repair", question=table_stem, new_request_id=True
+            ):
                 repaired_text, _, _ = await llm_complete(
                     "You repair analytical SQL using authoritative schema evidence and live compiler feedback.",
                     repair_prompt,

@@ -7822,6 +7822,82 @@ async def client_egress_log(request: Request, account_id: str):
     return JSONResponse({"status": "ok", "rows": rows, "count": len(rows)})
 
 
+@router.get("/clients/{account_id}/llm-audit.csv")
+async def client_llm_audit_csv(request: Request, account_id: str, days: int = 30):
+    """
+    Auditor export — one CSV row per LLM call, with the egress manifest flattened
+    into readable columns.
+
+    The admin table answers "what happened on this question" interactively; an
+    auditor needs the same evidence offline, filtered to a period, in something
+    they can open in Excel and keep. Prompt text is never included — only the
+    sanitized preview and the SHA-256 fingerprints already stored, so exporting
+    cannot widen exposure beyond what the audit log itself holds.
+    """
+    if not _is_auth(request):
+        raise HTTPException(status_code=401)
+
+    import csv
+    import io
+    import json as _json
+    from datetime import datetime, timedelta, timezone
+
+    cutoff = (
+        datetime.now(timezone.utc) - timedelta(days=max(1, min(int(days or 30), 3650)))
+    ).strftime("%Y-%m-%dT%H:%M:%S")
+
+    with _get_db() as conn:
+        rows = conn.execute(
+            """
+            SELECT created_at, question_id, request_id, component, question,
+                   llm_provider, llm_model, status, prompt_chars, response_chars,
+                   payload_hash, response_hash,
+                   COALESCE(egress_manifest, '') AS egress_manifest,
+                   COALESCE(error_msg, '') AS error_msg
+              FROM llm_call_log
+             WHERE account_id = ? AND created_at >= ?
+             ORDER BY created_at DESC, id DESC
+            """,
+            (account_id, cutoff),
+        ).fetchall()
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow([
+        "Timestamp", "Question ID", "Request ID", "Component", "Question",
+        "Provider", "Model", "Status", "Prompt chars", "Response chars",
+        "Data values sent", "Value sources", "Tables sent", "Columns sent",
+        "Content categories", "Prompt SHA-256", "Response SHA-256", "Error",
+    ])
+    for r in rows:
+        d = dict(r)
+        try:
+            m = _json.loads(d.get("egress_manifest") or "{}") or {}
+        except Exception:
+            m = {}
+        writer.writerow([
+            d.get("created_at", ""), d.get("question_id", ""), d.get("request_id", ""),
+            d.get("component", ""), d.get("question", ""),
+            d.get("llm_provider", ""), d.get("llm_model", ""), d.get("status", ""),
+            d.get("prompt_chars", 0), d.get("response_chars", 0),
+            "YES" if m.get("values_sent") else "no",
+            ", ".join(m.get("value_sources") or []),
+            ", ".join(m.get("tables") or []),
+            len(m.get("columns") or []),
+            ", ".join(m.get("content") or []),
+            d.get("payload_hash", ""), d.get("response_hash", ""),
+            d.get("error_msg", ""),
+        ])
+
+    buf.seek(0)
+    filename = f"querybot_llm_audit_{account_id[:12]}_{days}d.csv"
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
 @router.get("/clients/{account_id}/schema-tree")
 async def admin_schema_tree(request: Request, account_id: str, refresh: str = "0"):
     """
@@ -8937,11 +9013,17 @@ async def admin_build_kb(
                 )
 
             provider, model, api_key, az_kw = resolve_provider(client, purpose="kb")
+            # One id for the whole build so its calls stay grouped in the audit
+            # view, while each component inside mints its own request_id (see
+            # llm_audit_component(new_request_id=True) in core/knowledge.py) so
+            # individual per-table calls remain separately identifiable.
+            _kb_build_id = make_llm_audit_request_id()
             with llm_audit_scope(
                 account_id=account_id,
                 question=f"KB build for {client.get('client_name') or account_id}",
                 enabled=bool(client.get("enable_llm_audit")),
-                request_id=make_llm_audit_request_id(),
+                request_id=_kb_build_id,
+                question_id=_kb_build_id,
                 component="kb_build",
             ):
                 count = await build_kb(

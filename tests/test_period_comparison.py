@@ -39,6 +39,29 @@ from core.period_comparison import (
 # detect_period_grain
 # ══════════════════════════════════════════════════════════════════════════════
 
+
+# Phase-1 fail-closed default (docs/LLM_EGRESS_PLAN.md A7): an account with no
+# compliance_profile row is now treated as regulated. Every test in this module
+# is about a PROVISIONED tenant whose mode is varied explicitly, so declare the
+# profile as existing; without this they would exercise the unprovisioned path
+# instead of the mode they patch.
+_profile_exists_patcher = None
+
+
+def setUpModule():
+    global _profile_exists_patcher
+    from unittest.mock import patch
+    _profile_exists_patcher = patch(
+        "core.compliance.policy_engine.store.compliance_profile_exists",
+        return_value=True,
+    )
+    _profile_exists_patcher.start()
+
+
+def tearDownModule():
+    if _profile_exists_patcher is not None:
+        _profile_exists_patcher.stop()
+
 class DetectPeriodGrainTests(unittest.TestCase):
 
     def test_yyyy_mm_format(self):

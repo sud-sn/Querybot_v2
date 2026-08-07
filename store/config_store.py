@@ -755,6 +755,7 @@ def log_llm_call(
     response_hash: str = "",
     response_preview_sanitized: str = "",
     response_chars: int = 0,
+    egress_manifest: str = "",
 ) -> None:
     with get_db() as conn:
         conn.execute(
@@ -763,8 +764,9 @@ def log_llm_call(
                 (account_id, question_id, request_id, question, component,
                  llm_provider, llm_model, status, payload_hash,
                  payload_preview_sanitized, prompt_chars, error_msg,
-                 response_hash, response_preview_sanitized, response_chars)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 response_hash, response_preview_sanitized, response_chars,
+                 egress_manifest)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 account_id,
@@ -782,6 +784,7 @@ def log_llm_call(
                 response_hash,
                 response_preview_sanitized,
                 response_chars,
+                egress_manifest,
             ),
         )
 
@@ -844,6 +847,14 @@ def get_recent_llm_calls(
     groups: dict[str, list] = OrderedDict()
     for row in rows:
         r = dict(row)
+        # Decode the per-call egress manifest so templates get a dict, not a
+        # JSON blob. Older rows predate the column and legitimately have none.
+        try:
+            import json as _json_mod
+
+            r["egress"] = _json_mod.loads(r.get("egress_manifest") or "{}") or {}
+        except Exception:
+            r["egress"] = {}
         qid = r.get("question_id") or r["request_id"]
         if qid not in groups:
             groups[qid] = []
@@ -866,6 +877,17 @@ def get_recent_llm_calls(
             "total_chars":  sum(c.get("prompt_chars", 0) for c in calls),
             "any_error":    1 if any(c["status"] == "error" for c in calls) else 0,
             "any_blocked":  1 if any(c["status"] == "blocked" for c in calls) else 0,
+            # The headline an auditor scans for: did ANY call in this question
+            # carry data values, and via which route. Rolled up here so the
+            # answer doesn't require expanding every call.
+            "any_values_sent": 1 if any(
+                (c.get("egress") or {}).get("values_sent") for c in calls
+            ) else 0,
+            "value_sources": sorted({
+                src
+                for c in calls
+                for src in ((c.get("egress") or {}).get("value_sources") or [])
+            }),
             "calls":        calls,
         })
 
@@ -960,6 +982,31 @@ def get_llm_trust_summary(account_id: str, days: int = 30) -> dict:
         "result_llm_blocked": result_by_status.get("blocked", 0),
         "last_blocked_at": last_blocked["created_at"] if last_blocked else "",
     }
+
+
+def purge_old_kb_egress(retention_days: int = 365) -> int:
+    """
+    Delete kb_data_egress_log rows older than retention_days.
+
+    Counterpart to purge_old_llm_calls, which this table previously lacked
+    entirely — so egress evidence accumulated forever while the LLM audit rows
+    it corresponds to were purged at 30 days, leaving orphaned halves of the
+    same story. The default is deliberately much longer than the LLM-call
+    retention: these rows are the compliance record of what schema and sample
+    data ever left the database, which auditors ask about in years, not weeks.
+    """
+    if retention_days <= 0:
+        return 0
+    from datetime import timedelta
+    cutoff = (
+        datetime.now(timezone.utc) - timedelta(days=int(retention_days))
+    ).strftime("%Y-%m-%dT%H:%M:%S")
+    with get_db() as conn:
+        cur = conn.execute(
+            "DELETE FROM kb_data_egress_log WHERE created_at < ?",
+            (cutoff,),
+        )
+        return cur.rowcount or 0
 
 
 def purge_old_llm_calls(retention_days: int = 30) -> int:
@@ -1626,6 +1673,7 @@ def log_kb_egress(
     masked_fields: list | None = None,
     mask_mode: str = "none",
     mask_replacement_map: dict | None = None,
+    request_id: str = "",
 ) -> None:
     """
     Write one row to kb_data_egress_log for a single processed table.
@@ -1662,8 +1710,8 @@ def log_kb_egress(
                      database_name, schema_name, table_name,
                      column_count, sample_mode, distinct_col_count, triggered_by,
                      fields_sent, row_count_sent, masked_fields, mask_mode,
-                     mask_replacement_map)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     mask_replacement_map, request_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 account_id, operation, db_type,
                 database_name or "", schema_name or "", table_name,
@@ -1673,6 +1721,7 @@ def log_kb_egress(
                 _json.dumps(masked_fields or []),
                 mask_mode,
                 _json.dumps(mask_replacement_map or {}),
+                request_id or "",
             ))
     except Exception as exc:
         log.warning("kb_data_egress_log write failed for %s/%s: %s",

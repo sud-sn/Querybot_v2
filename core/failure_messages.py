@@ -128,6 +128,80 @@ def sanitize_db_error(raw: str) -> dict[str, str]:
     }
 
 
+_ERR_VALUE_PARENS_RE = re.compile(
+    r"((?:duplicate key value|key value|value)\s+is\s*)\([^)]*\)", re.IGNORECASE
+)
+_ERR_SINGLE_QUOTED_RE = re.compile(r"'([^']*)'")
+_ERR_DOUBLE_QUOTED_RE = re.compile(r'"([^"]*)"')
+_ERR_LONG_NUMBER_RE = re.compile(r"\b\d{6,}\b")
+
+
+def _err_is_schema_identifier(s: str) -> bool:
+    """
+    True when a quoted token inside a DB error is a schema identifier rather
+    than a data value.
+
+    Deliberately biased toward masking: a token is only kept when it carries a
+    positive structural signal of being an identifier — an underscore, an
+    all-uppercase shape, or a dotted qualified name. A bare mixed-case word
+    ("Lipitor") is treated as data even though it *could* be a PascalCase
+    column, because leaking a value is worse than losing a name the caller's
+    column-fix note already supplies.
+    """
+    s = s.strip()
+    if not s or " " in s:
+        return False
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*", s):
+        return False
+    return "_" in s or "." in s or s.isupper()
+
+
+def _mask_err_quoted(match: re.Match, quote: str) -> str:
+    inner = match.group(1)
+    if _err_is_schema_identifier(inner):
+        return match.group(0)
+    return f"{quote}[value]{quote}"
+
+
+def scrub_error_for_llm(raw: str) -> str:
+    """
+    Prepare a raw database error for inclusion in an LLM repair prompt.
+
+    Database engines routinely echo the offending row value back in the error
+    text — "Conversion failed when converting the varchar value 'Lipitor 40mg'
+    to data type int", or "The duplicate key value is (Priya Raghunathan)".
+    Interpolating that verbatim puts real data into a prompt on a path that is
+    otherwise metadata-only, so it is masked here.
+
+    The repair signal survives: driver/vendor prefixes are stripped (they carry
+    no repair information) while the error class, the data types involved and
+    schema identifiers are preserved.
+
+    This is stricter than core.llm_audit.sanitize_llm_text, which is tuned for
+    human-readable audit previews: that helper masks any quoted token of ten or
+    more characters (so it would drop 'NET_REVENUE') and only catches unquoted
+    runs of twenty or more (so it would keep 'Priya Raghunathan'). Both are the
+    wrong trade for a prompt.
+
+    Applied for every tenant, not only regulated ones — the value is never
+    needed to fix the SQL, and one unconditional path avoids the mode-predicate
+    drift that gates elsewhere in this codebase suffer from.
+    """
+    if not raw:
+        return ""
+    text = _clean_db_error(raw)
+    # Parenthesised payloads of known value-bearing templates, before quoting
+    # rules — these values are usually unquoted.
+    text = _ERR_VALUE_PARENS_RE.sub(r"\1([value])", text)
+    text = _ERR_SINGLE_QUOTED_RE.sub(lambda m: _mask_err_quoted(m, "'"), text)
+    text = _ERR_DOUBLE_QUOTED_RE.sub(lambda m: _mask_err_quoted(m, '"'), text)
+    text = _ERR_LONG_NUMBER_RE.sub("[number]", text)
+    text = text.strip()
+    if len(text) > 400:
+        text = text[:397].rstrip() + "..."
+    return text
+
+
 # ── "Did you mean" suggestions ───────────────────────────────────────────────
 
 _SUGGEST_STOPWORDS = {
