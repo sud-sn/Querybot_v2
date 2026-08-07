@@ -1710,8 +1710,32 @@ def _scope_plan_to_single_fact(
         if name:
             table_type_by_name[name] = str(table.get("type") or "").lower()
 
+    def _table_matches(left: str, right: str) -> bool:
+        """Same suffix rule the SQL validator uses for table identity.
+
+        A plan field can name CHATBOT_DB.SCHEMA.TABLE while the model records
+        SCHEMA.TABLE (or vice versa) — they are the same physical table. An
+        exact dict lookup missed that, so a rival fact's field never counted
+        as a fact, only one fact was ever found, and this whole function
+        returned having done nothing. Live symptom: the ERP warehouse field
+        stayed hard-required for a revenue question and drove a fan-out repair.
+        """
+        left_parts = (left or "").upper().split(".")
+        right_parts = (right or "").upper().split(".")
+        if len(left_parts) >= 2 and len(right_parts) >= 2:
+            return left_parts[-2:] == right_parts[-2:]
+        return left_parts[-1:] == right_parts[-1:]
+
     def _is_fact(table_name: Any) -> bool:
-        return table_type_by_name.get(str(table_name or "").upper(), "") == "fact"
+        name = str(table_name or "").upper()
+        if not name:
+            return False
+        if table_type_by_name.get(name) == "fact":
+            return True
+        return any(
+            role == "fact" and _table_matches(known, name)
+            for known, role in table_type_by_name.items()
+        )
 
     distinct_facts = list(dict.fromkeys(
         str(f.get("table") or "").upper()

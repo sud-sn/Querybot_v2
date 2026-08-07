@@ -119,6 +119,34 @@ class CrossFactPlanScopingTests(unittest.TestCase):
         self.assertEqual(fields[0]["enforcement"], "required")
         self.assertEqual(fields[1]["enforcement"], "optional")
 
+    def test_scoping_survives_database_qualified_field_tables(self):
+        """Field tables and model tables need not agree on qualification.
+
+        Taken verbatim from the production log: the field planner emitted
+        CHATBOT_DB.QBOT_LIVE_TEST.ERP_ITM_BAL_PRD_FCT while the model records
+        QBOT_LIVE_TEST.ERP_ITM_BAL_PRD_FCT. An exact lookup missed the match,
+        so only one fact was ever counted and scoping silently no-opped --
+        leaving the ERP field hard-required for a revenue question.
+        """
+        fields = [
+            {"term": "warehouse",
+             "table": f"{DATABASE}.{SCHEMA}.ERP_ITM_BAL_PRD_FCT",
+             "column": "WHS_DMS_KEY", "role": "attribute",
+             "enforcement": "required"},
+            {"term": "Revenue", "table": f"{SCHEMA}.F_SALES_INVOICE",
+             "column": "NET_REVENUE_AMOUNT", "role": "measure",
+             "enforcement": "required"},
+        ]
+        tables = [
+            {"qualified_name": f"{SCHEMA}.ERP_ITM_BAL_PRD_FCT", "type": "fact"},
+            {"qualified_name": f"{SCHEMA}.F_SALES_INVOICE", "type": "fact"},
+            {"qualified_name": f"{SCHEMA}.D_WAREHOUSE", "type": "dimension"},
+        ]
+        anchor = _scope_plan_to_single_fact(fields, [], tables)
+        self.assertEqual(anchor, f"{SCHEMA}.F_SALES_INVOICE".upper())
+        self.assertEqual(fields[0]["enforcement"], "optional")
+        self.assertEqual(fields[1]["enforcement"], "required")
+
     def test_single_fact_plan_keeps_every_requirement(self):
         fields = [
             {"term": "daily inventory value", "table": f"{SCHEMA}.F_INVENTORY_DAILY",
