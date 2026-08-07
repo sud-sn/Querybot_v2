@@ -914,6 +914,66 @@ def _graph_plan_errors(tree, graph_context: dict | None, alias_to_table: dict[st
     return errors
 
 
+def _raw_multi_fact_errors(tree, semantic_context: dict | None) -> list[dict]:
+    """Refuse two physical fact tables inside one SELECT scope.
+
+    `_multi_fact_plan_errors` already encodes this rule, but only fires when
+    the entity graph resolved `fact_entities`. On a client whose graph is
+    still pending review that guard is inert — which is how a revenue question
+    executed `ERP_ITM_BAL_PRD_FCT JOIN F_SALES_INVOICE` in production and
+    reported 2700.00 against a true 1050.00, every invoice row duplicated once
+    per inventory row for the same warehouse.
+
+    This variant reads the fact list off the compiled semantic model instead,
+    so it holds whenever table roles are known, approved graph or not. Joining
+    pre-aggregated CTEs stays legal: their table nodes are CTE aliases, not
+    physical facts.
+    """
+    plan = (semantic_context or {}).get("semantic_plan") or {}
+    known_facts = {
+        str(name).upper()
+        for name in (plan.get("known_fact_tables") or [])
+        if str(name or "").strip()
+    }
+    if len(known_facts) < 2:
+        return []
+
+    def _matched_fact(node) -> str:
+        variants = set(_table_variants(node))
+        for fact in known_facts:
+            if fact in variants or fact.split(".")[-1] in variants:
+                return fact
+        return ""
+
+    def _nearest_select(node):
+        parent = getattr(node, "parent", None)
+        while parent is not None:
+            if isinstance(parent, sg_exp.Select):
+                return parent
+            parent = getattr(parent, "parent", None)
+        return None
+
+    for select in tree.find_all(sg_exp.Select):
+        scoped: set[str] = set()
+        for table_node in select.find_all(sg_exp.Table):
+            if _nearest_select(table_node) is select and _matched_fact(table_node):
+                scoped.add(_matched_fact(table_node))
+        if len(scoped) > 1:
+            return [{
+                "code": "raw_fact_to_fact_join",
+                "message": (
+                    "One SELECT scope reads multiple fact tables ("
+                    + ", ".join(sorted(scoped))
+                    + "). Joining facts directly multiplies each row of one by the "
+                    "matching rows of the other and inflates every measure. "
+                    "Aggregate each fact in its own CTE at the shared key, then "
+                    "join those results."
+                ),
+                "facts": sorted(scoped),
+            }]
+    return []
+
+
 def _find_table_with_column(table_columns: dict[str, dict[str, str]], table: str, column: str) -> str:
     col_u = (column or "").upper()
     for table_key, cols in table_columns.items():
@@ -2207,6 +2267,19 @@ def validate_sql_detailed(
             ),
             "top_n_shape",
             [top_n_error],
+        )
+
+    raw_multi_fact_errors = _raw_multi_fact_errors(tree, semantic_context)
+    if raw_multi_fact_errors:
+        log.warning(
+            "raw fact-to-fact join rejected: facts=%s",
+            raw_multi_fact_errors[0].get("facts"),
+        )
+        return SqlValidationResult(
+            False,
+            raw_multi_fact_errors[0]["message"],
+            "raw_fact_to_fact_join",
+            raw_multi_fact_errors,
         )
 
     field_plan = (semantic_context or {}).get("semantic_plan") or {}

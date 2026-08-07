@@ -1894,6 +1894,16 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 account_id, state.get("kb_dir", ""),
             )
         else:
+            # Hand the validator the fact list so its raw fact-to-fact join
+            # guard works without an approved entity graph. The graph-based
+            # guard is inert while relationships sit in review, which is
+            # exactly when a fan-out join is most likely to slip through.
+            _semantic_plan["known_fact_tables"] = sorted({
+                str(t.get("qualified_name") or t.get("table") or "")
+                for t in _anchor_tables
+                if str(t.get("type") or "").lower() == "fact"
+                and (t.get("qualified_name") or t.get("table"))
+            })
             _plan_anchor = _scope_plan_to_single_fact(
                 _semantic_plan.get("fields") or [],
                 _semantic_plan.get("joins") or [],

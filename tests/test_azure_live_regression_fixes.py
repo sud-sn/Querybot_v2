@@ -306,6 +306,84 @@ class BusinessDateNameTests(unittest.TestCase):
         self.assertEqual(_label_from_column("SVC_DT_DMS_KEY"), "Svc Date")
 
 
+class RawFactToFactJoinTests(unittest.TestCase):
+    """H — a fan-out join must be refused, not answered.
+
+    The existing multi-fact guard only fires when the entity graph resolved
+    fact entities. With relationships still in review it was inert, and this
+    exact SQL executed in production: every invoice row duplicated once per
+    inventory row for the same warehouse, reporting 2700.00 where the true
+    total is 1050.00. A believable wrong number is worse than a refusal.
+    """
+
+    PLAN = {"semantic_plan": {
+        "enabled": True,
+        "known_fact_tables": [
+            f"{SCHEMA}.F_SALES_INVOICE",
+            f"{SCHEMA}.ERP_ITM_BAL_PRD_FCT",
+        ],
+    }}
+
+    def test_production_fanout_sql_is_rejected(self):
+        sql = (
+            "SELECT w.WAREHOUSE_NAME, SUM(i.NET_REVENUE_AMOUNT) AS TOTAL_REVENUE "
+            f"FROM {SCHEMA}.ERP_ITM_BAL_PRD_FCT f "
+            f"JOIN {SCHEMA}.D_WAREHOUSE w ON f.WHS_DMS_KEY = w.WAREHOUSE_SK "
+            f"JOIN {SCHEMA}.F_SALES_INVOICE i ON f.WHS_DMS_KEY = i.WAREHOUSE_SK "
+            "GROUP BY w.WAREHOUSE_NAME ORDER BY TOTAL_REVENUE DESC"
+        )
+        result = _validate(sql, self.PLAN)
+        self.assertFalse(result.ok)
+        self.assertEqual(result.code, "raw_fact_to_fact_join")
+
+    def test_correct_single_fact_query_passes(self):
+        sql = (
+            "SELECT w.WAREHOUSE_NAME, SUM(i.NET_REVENUE_AMOUNT) AS TOTAL_REVENUE "
+            f"FROM {SCHEMA}.F_SALES_INVOICE i "
+            f"JOIN {SCHEMA}.D_WAREHOUSE w ON i.WAREHOUSE_SK = w.WAREHOUSE_SK "
+            "GROUP BY w.WAREHOUSE_NAME ORDER BY TOTAL_REVENUE DESC"
+        )
+        result = _validate(sql, self.PLAN)
+        self.assertTrue(result.ok, result.reason)
+
+    def test_pre_aggregated_ctes_are_still_allowed(self):
+        """The sanctioned multi-fact pattern must not be collateral damage."""
+        sql = (
+            "WITH rev AS (SELECT WAREHOUSE_SK, SUM(NET_REVENUE_AMOUNT) AS R "
+            f"             FROM {SCHEMA}.F_SALES_INVOICE GROUP BY WAREHOUSE_SK), "
+            "     inv AS (SELECT WHS_DMS_KEY, SUM(INV_VAL_AMT) AS V "
+            f"             FROM {SCHEMA}.ERP_ITM_BAL_PRD_FCT GROUP BY WHS_DMS_KEY) "
+            "SELECT w.WAREHOUSE_NAME, rev.R, inv.V FROM rev "
+            f"JOIN {SCHEMA}.D_WAREHOUSE w ON rev.WAREHOUSE_SK = w.WAREHOUSE_SK "
+            "JOIN inv ON inv.WHS_DMS_KEY = rev.WAREHOUSE_SK"
+        )
+        result = _validate(sql, self.PLAN)
+        self.assertTrue(result.ok, result.reason)
+
+    def test_guard_is_inert_without_a_known_fact_list(self):
+        """No table roles => no claim. Must not fail closed on every join."""
+        sql = (
+            "SELECT w.WAREHOUSE_NAME, SUM(i.NET_REVENUE_AMOUNT) AS TOTAL_REVENUE "
+            f"FROM {SCHEMA}.ERP_ITM_BAL_PRD_FCT f "
+            f"JOIN {SCHEMA}.F_SALES_INVOICE i ON f.WHS_DMS_KEY = i.WAREHOUSE_SK "
+            f"JOIN {SCHEMA}.D_WAREHOUSE w ON f.WHS_DMS_KEY = w.WAREHOUSE_SK "
+            "GROUP BY w.WAREHOUSE_NAME"
+        )
+        self.assertTrue(_validate(sql, {"semantic_plan": {"enabled": True}}).ok)
+
+    def test_single_fact_plus_many_dimensions_is_fine(self):
+        sql = (
+            "SELECT w.WAREHOUSE_NAME, d.CALENDAR_YEAR, "
+            "SUM(i.NET_REVENUE_AMOUNT) AS TOTAL_REVENUE "
+            f"FROM {SCHEMA}.F_SALES_INVOICE i "
+            f"JOIN {SCHEMA}.D_WAREHOUSE w ON i.WAREHOUSE_SK = w.WAREHOUSE_SK "
+            f"JOIN {SCHEMA}.D_DATE d ON i.INVOICE_DATE_SK = d.DATE_SK "
+            "GROUP BY w.WAREHOUSE_NAME, d.CALENDAR_YEAR"
+        )
+        result = _validate(sql, self.PLAN)
+        self.assertTrue(result.ok, result.reason)
+
+
 class SemiAdditiveMetadataTests(unittest.TestCase):
     """G — snapshot detection must not depend on a domain noun list.
 
