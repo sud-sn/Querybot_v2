@@ -2657,7 +2657,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                     _fb_examples = retrieve_similar_examples(rc_question, account_id, n=3)
                                     if _fb_examples:
                                         _fb_rag_ctx = (
-                                            format_examples_for_prompt(_fb_examples)
+                                            format_examples_for_prompt(_fb_examples, account_id)
                                             + "\n\n---\n\n" + _fb_rag_ctx
                                         )
                                 except Exception:

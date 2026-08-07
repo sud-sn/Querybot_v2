@@ -1411,7 +1411,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             kb_dir=state.get("kb_dir", ""),
         )
         if examples:
-            context = format_examples_for_prompt(examples) + "\n\n---\n\n" + context
+            context = format_examples_for_prompt(examples, account_id) + "\n\n---\n\n" + context
             log.info("Injected %d validated examples into prompt", len(examples))
             _trace_step(
                 trace_id, "retrieve_examples",
@@ -1463,7 +1463,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         from core.value_index import value_index_enabled
         from core.value_resolver import (
             resolve_literals, build_verified_values_injection,
-            build_known_terms,
+            build_known_terms, filter_resolved_for_compliance,
         )
         if value_index_enabled(state):
             _known_terms = build_known_terms(account_id, all_columns)
@@ -1471,9 +1471,17 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 account_id, question, allowed_tables=query_scope_tables,
                 known_terms=_known_terms,
             )
+            # Regulated tenants only ground on columns an admin has reviewed as
+            # non-sensitive; everything else is dropped before it can reach the
+            # prompt. Applied here rather than inside the injection builder so
+            # the clarify bucket (which carries no values) still works, and so
+            # the decision is recorded in the trace.
+            _resolved_values, _value_egress = filter_resolved_for_compliance(
+                account_id, _resolved_values
+            )
             verified_values_hint = build_verified_values_injection(_resolved_values)
             _value_clarify = _resolved_values.get("clarify") or []
-            if verified_values_hint or _value_clarify:
+            if verified_values_hint or _value_clarify or _value_egress.get("dropped"):
                 _trace_step(
                     trace_id,
                     "value_resolution",
@@ -1481,6 +1489,8 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                         "verified": len(_resolved_values.get("verified") or []),
                         "in_lists": len(_resolved_values.get("in_lists") or []),
                         "clarify": len(_value_clarify),
+                        "compliance_filtered": _value_egress.get("dropped", 0),
+                        "compliance_applied": bool(_value_egress.get("applied")),
                     },
                 )
     except Exception as _vr_exc:

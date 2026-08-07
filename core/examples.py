@@ -694,10 +694,43 @@ def _is_stale_surrogate_date_example(sql: str) -> bool:
         return False
 
 
-def format_examples_for_prompt(examples: list[dict]) -> str:
+_SQL_STRING_LITERAL_RE = re.compile(r"'((?:[^']|'')*)'")
+
+
+def scrub_example_sql_literals(sql: str) -> str:
+    """
+    Replace string literals in an example SQL with a placeholder.
+
+    KB generation is explicitly told to write examples "using actual distinct
+    values from the KB" (core/llm.py), so stored example SQL legitimately
+    contains real values — `WHERE STATUS = 'Denied'`, and for a pharma tenant
+    equally `WHERE PRODUCT_NAME = 'Lipitor 40mg'`. Those examples are then
+    concatenated into every SQL-generation prompt.
+
+    Masking them costs nothing: the surrounding prompt already instructs the
+    model that examples "show SQL structure only" and that filters "MUST be
+    derived from the current question — never copied from the example". The
+    literal is not meant to be reused, so the shape is the entire teaching
+    value and `'<value>'` preserves it.
+
+    Only single-quoted strings are touched — in SQL those are data. Identifiers
+    are bare, bracketed or double-quoted and are left intact, so the example
+    still teaches real table and column names.
+    """
+    if not sql:
+        return sql
+    return _SQL_STRING_LITERAL_RE.sub("'<value>'", sql)
+
+
+def format_examples_for_prompt(examples: list[dict], account_id: str = "") -> str:
     """
     Format validated examples as few-shot context for the SQL generation prompt.
     Returns empty string if no examples.
+
+    When account_id identifies a regulated tenant, example SQL has its string
+    literals masked first — see scrub_example_sql_literals. account_id defaults
+    to empty so existing callers keep working; a caller that omits it gets the
+    unmasked behaviour, which is why the two live call sites both pass it.
     """
     examples = [
         ex for ex in (examples or [])
@@ -706,6 +739,25 @@ def format_examples_for_prompt(examples: list[dict]) -> str:
     ]
     if not examples:
         return ""
+
+    if account_id:
+        try:
+            from core.compliance.policy_engine import is_regulated
+
+            if is_regulated(account_id):
+                examples = [
+                    {**ex, "sql": scrub_example_sql_literals(ex.get("sql", ""))}
+                    for ex in examples
+                ]
+        except Exception as exc:  # noqa: BLE001 — fail closed
+            log.warning(
+                "Example literal scrub failed for %s (%s) — masking literals "
+                "anyway rather than risking egress", account_id, exc,
+            )
+            examples = [
+                {**ex, "sql": scrub_example_sql_literals(ex.get("sql", ""))}
+                for ex in examples
+            ]
 
     lines = [
         "VERIFIED EXAMPLES — These question→SQL pairs have been tested against "

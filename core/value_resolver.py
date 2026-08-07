@@ -278,6 +278,123 @@ def _sanitize(value: str) -> str:
     return text.replace("'", "''")
 
 
+def filter_resolved_for_compliance(account_id: str, resolved: dict) -> tuple[dict, dict]:
+    """
+    Restrict verified-value grounding to columns a regulated tenant has cleared.
+
+    The VERIFIED FILTER VALUES block puts real cell values into the SQL prompt.
+    That is deliberate — without it the model invents literals and the SQL is
+    wrong — but it was previously gated only by the `value_index_enabled`
+    feature flag, never by compliance mode, so a regulated tenant's real
+    customer and product names went to the model on ordinary questions.
+
+    Policy (docs/LLM_EGRESS_PLAN.md §5, option b):
+      * Non-regulated tenant  → unchanged, every resolution is injected.
+      * Regulated tenant      → a column's values are injected only when it has
+        an admin-REVIEWED classification carrying none of the industry pack's
+        sensitive tags. Unclassified and unreviewed columns are dropped, so an
+        incomplete classification workflow degrades to full suppression rather
+        than to silent exposure.
+
+    Returns (filtered_resolved, evidence). `evidence` records what was dropped
+    and why so the decision is visible in the trace instead of being invisible
+    accuracy loss. Never raises: on any failure it returns an EMPTY resolution
+    set, because the failure mode of this function must be "no grounding", not
+    "ungoverned grounding".
+    """
+    evidence: dict = {
+        "applied": False, "regulated": False,
+        "kept": 0, "dropped": 0, "dropped_columns": [], "reason": "",
+    }
+    if not resolved:
+        return resolved, evidence
+
+    try:
+        from core.compliance.policy_engine import is_regulated
+
+        if not is_regulated(account_id):
+            evidence["reason"] = "tenant_not_regulated"
+            return resolved, evidence
+
+        evidence["applied"] = True
+        evidence["regulated"] = True
+
+        import store
+        from core.compliance.packs import get_pack
+
+        profile = store.get_compliance_profile(account_id)
+        # get_pack is keyed by policy_pack_key, not by industry — see the
+        # convention in core/compliance/policy_engine.py.
+        pack = get_pack(str(profile.get("policy_pack_key") or "")) or {}
+        sensitive = {str(t).upper() for t in (pack.get("sensitive_tags") or [])}
+        classifications = store.get_classification_map(account_id)
+
+        if not sensitive:
+            # A regulated tenant with no resolvable policy pack has no defined
+            # notion of "sensitive", so nothing can be cleared as safe. Dropping
+            # everything is the only honest reading; treating an empty set as
+            # "nothing is sensitive" would fail open on the exact tenants whose
+            # compliance setup is incomplete.
+            evidence["reason"] = "no_policy_pack"
+            dropped = dict(resolved)
+            for bucket in ("verified", "in_lists"):
+                items = resolved.get(bucket) or []
+                evidence["dropped"] += len(items)
+                for item in items:
+                    ref = f"{item.get('table_fqn', '?')}.{item.get('column', '?')}"
+                    if ref not in evidence["dropped_columns"]:
+                        evidence["dropped_columns"].append(ref)
+                dropped[bucket] = []
+            if evidence["dropped"]:
+                log.warning(
+                    "Value grounding fully suppressed for %s — regulated tenant "
+                    "has no resolvable policy pack (policy_pack_key=%r)",
+                    account_id, profile.get("policy_pack_key"),
+                )
+            return dropped, evidence
+
+        def _cleared(table_fqn: str, column: str) -> bool:
+            row = classifications.get(f"{str(table_fqn).upper()}.{str(column).upper()}")
+            if not row or not row.get("reviewed"):
+                return False
+            tags = {str(t).upper() for t in (row.get("tags") or [])}
+            return not (tags & sensitive)
+
+        filtered: dict = dict(resolved)
+        for bucket in ("verified", "in_lists"):
+            kept_items = []
+            for item in (resolved.get(bucket) or []):
+                if _cleared(item.get("table_fqn", ""), item.get("column", "")):
+                    kept_items.append(item)
+                else:
+                    evidence["dropped"] += 1
+                    ref = f"{item.get('table_fqn', '?')}.{item.get('column', '?')}"
+                    if ref not in evidence["dropped_columns"]:
+                        evidence["dropped_columns"].append(ref)
+            evidence["kept"] += len(kept_items)
+            filtered[bucket] = kept_items
+
+        if evidence["dropped"]:
+            log.info(
+                "Value grounding suppressed for %d resolution(s) on %s — "
+                "columns are not admin-reviewed as non-sensitive: %s",
+                evidence["dropped"], account_id,
+                ", ".join(evidence["dropped_columns"][:10]),
+            )
+        return filtered, evidence
+    except Exception as exc:  # noqa: BLE001 — fail closed, never ungoverned
+        log.warning(
+            "Value-grounding compliance filter failed for %s (%s) — suppressing "
+            "all verified values for this question", account_id, exc,
+        )
+        evidence["reason"] = f"filter_error: {exc}"
+        evidence["applied"] = True
+        blocked = dict(resolved)
+        blocked["verified"] = []
+        blocked["in_lists"] = []
+        return blocked, evidence
+
+
 def build_verified_values_injection(resolved: dict) -> str:
     """Prompt block for verified + in-list resolutions. Empty string if none."""
     verified = (resolved or {}).get("verified") or []
