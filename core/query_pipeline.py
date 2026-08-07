@@ -2233,6 +2233,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     _date_context_resolution.get("options") or []
                 )[:4]
                 _label_counts: dict[str, int] = {}
+                _label_positions: dict[str, int] = {}
                 for _item in _all_date_bindings:
                     _base_label = str(
                         _item.get("context_name")
@@ -2251,9 +2252,19 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     ).strip()
                     label = base_label
                     if _label_counts.get(base_label.casefold(), 0) > 1:
-                        fact_name = str(item.get("fact_table") or "").split(".")[-1]
-                        if fact_name:
-                            label = f"{base_label} — {fact_name}"
+                        label_key = base_label.casefold()
+                        _label_positions[label_key] = _label_positions.get(label_key, 0) + 1
+                        grain = str(item.get("temporal_grain") or "").strip()
+                        if grain:
+                            label = (
+                                f"{base_label} ({grain.title()} data "
+                                f"{_label_positions[label_key]})"
+                            )
+                        else:
+                            label = (
+                                f"{base_label} (business date "
+                                f"{_label_positions[label_key]})"
+                            )
                     option = {
                         "id": f"date_role_{index}",
                         "label": label,
@@ -2279,6 +2290,24 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     _date_choice_option(item, index)
                     for index, item in enumerate(_all_date_bindings, start=1)
                 ]
+                # Browser suggestions contain business labels only. Exact
+                # physical fields stay in the server-side option objects used
+                # to compile the governed date plan after selection.
+                _business_date_suggestions: list[str] = []
+                _seen_business_date_suggestions: set[str] = set()
+                for _option in _all_date_options:
+                    for _candidate in (
+                        _option.get("label"),
+                        _option.get("value"),
+                    ):
+                        _suggestion = str(_candidate or "").strip()
+                        _suggestion_key = _suggestion.casefold()
+                        if (
+                            _suggestion
+                            and _suggestion_key not in _seen_business_date_suggestions
+                        ):
+                            _seen_business_date_suggestions.add(_suggestion_key)
+                            _business_date_suggestions.append(_suggestion)
                 _visible_identities = {
                     (
                         str(item.get("fact_table") or "").upper(),
@@ -2293,19 +2322,9 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                         str(option.get("fact_column") or "").upper(),
                     ) in _visible_identities
                 ][:4]
-                if event.user_id and _date_options:
-                    _save_pending_clarification(
-                        question,
-                        context_with_terms,
-                        {
-                            "term": "business date",
-                            "options": _date_options,
-                            "all_options": _all_date_options,
-                            "allow_free_text": bool(
-                                _date_context_resolution.get("allow_free_text")
-                            ),
-                            "source": "metric_date_context",
-                        },
+                for _option in _date_options:
+                    _option["business_suggestions"] = list(
+                        _business_date_suggestions
                     )
                 if _date_fact_inference.get("status") == "ambiguous":
                     _date_question = (
@@ -2324,6 +2343,21 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                             "This metric has more than one valid business date. "
                             "Which date context should I use?"
                         )
+                if event.user_id and _date_options:
+                    _save_pending_clarification(
+                        question,
+                        context_with_terms,
+                        {
+                            "term": "business date",
+                            "question": _date_question,
+                            "options": _date_options,
+                            "all_options": _all_date_options,
+                            "allow_free_text": bool(
+                                _date_context_resolution.get("allow_free_text")
+                            ),
+                            "source": "metric_date_context",
+                        },
+                    )
                 send_prompt = getattr(adapter, "send_clarification_prompt", None)
                 if callable(send_prompt) and _date_options:
                     await send_prompt(event, _date_question, _date_options)

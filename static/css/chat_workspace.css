@@ -897,6 +897,29 @@ body:has(.chat-page) .portal-sidebar-collapsed .portal-side-actions { grid-templ
 .clarification-submit:hover { background: var(--primary-hover); border-color: var(--primary-hover); }
 .clarification-freeform :disabled { opacity: .58; cursor: not-allowed; }
 .clarification-help { color: var(--text-muted); font-size: 10px; }
+.clarification-business-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-top: 1px;
+}
+.clarification-business-suggestions[hidden] { display: none; }
+.clarification-business-suggestion {
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--text-soft);
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.clarification-business-suggestion:hover,
+.clarification-business-suggestion:focus-visible {
+  border-color: var(--primary);
+  color: var(--primary);
+  outline: none;
+}
 
 .chat-inner:has(#welcomeState:not([style*="display: none"])) .suggestions-wrap {
   order: 3;

@@ -31,6 +31,7 @@ from core.clarification import (
     mark_recently_expired,
     was_recently_expired,
     acknowledge_recently_expired,
+    resolve_date_option_text,
     resolve_option_text,
 )
 from core.webhook_dedup import (
@@ -431,6 +432,79 @@ class ConstrainedMenuAmbiguityTests(unittest.TestCase):
 # Existing guards still hold (regression suite)
 # ──────────────────────────────────────────────────────────────────────────────
 class RegressionTests(unittest.TestCase):
+
+    def test_date_option_matches_business_name_alias_and_exact_physical_field(self):
+        options = [
+            {
+                "id": "date_role_1",
+                "label": "Invoice Date",
+                "value": "Invoice Date",
+                "context_name": "Invoice Date",
+                "date_role": "invoice_date",
+                "aliases": "invoiced date, billing date",
+                "fact_table": "SALES.F_SALES_INVOICE",
+                "fact_column": "INVOICE_DATE_KEY",
+            },
+            {
+                "id": "date_role_2",
+                "label": "Order Date",
+                "value": "Order Date",
+                "date_role": "order_date",
+                "fact_table": "SALES.F_ORDERS",
+                "fact_column": "ORDER_DATE_KEY",
+            },
+        ]
+
+        self.assertEqual(
+            resolve_date_option_text(options, "billing date")["id"],
+            "date_role_1",
+        )
+        self.assertEqual(
+            resolve_date_option_text(options, "invoice")["id"],
+            "date_role_1",
+        )
+        self.assertEqual(
+            resolve_date_option_text(
+                options,
+                "SALES.F_SALES_INVOICE.INVOICE_DATE_KEY",
+            )["id"],
+            "date_role_1",
+        )
+
+    def test_date_option_does_not_guess_an_ambiguous_business_name(self):
+        options = [
+            {
+                "id": "date_role_1",
+                "label": "Transaction Date",
+                "fact_table": "SALES.F_ORDERS",
+                "fact_column": "DATE_KEY",
+            },
+            {
+                "id": "date_role_2",
+                "label": "Transaction Date",
+                "fact_table": "FINANCE.F_INVOICE",
+                "fact_column": "DATE_KEY",
+            },
+        ]
+
+        self.assertIsNone(
+            resolve_date_option_text(options, "transaction date")
+        )
+
+    def test_date_option_can_resolve_a_server_side_choice_not_in_visible_four(self):
+        options = [
+            {
+                "id": f"date_role_{index}",
+                "label": f"Business Date {index}",
+                "fact_table": "SALES.F_REVENUE",
+                "fact_column": f"DATE_{index}_KEY",
+            }
+            for index in range(1, 7)
+        ]
+
+        resolved = resolve_date_option_text(options, "Business Date 6")
+        self.assertIsNotNone(resolved)
+        self.assertEqual(resolved["id"], "date_role_6")
 
     def test_resolve_option_text_word_overlap(self):
         options = [

@@ -3703,6 +3703,9 @@ function renderClarificationPrompt(data, opts = {}){
   const div = document.createElement('div');
   div.className = 'msg msg-bot';
   const options = Array.isArray(data.options) ? data.options : [];
+  const businessSuggestions = [...new Set(options.flatMap((opt) =>
+    Array.isArray(opt.business_suggestions) ? opt.business_suggestions : []
+  ).map((value) => String(value || '').trim()).filter(Boolean))];
   const question = data.question || (options.length
     ? 'Please choose one option so I can continue.'
     : 'Please add the detail I need so I can continue.');
@@ -3725,14 +3728,41 @@ function renderClarificationPrompt(data, opts = {}){
     const form = document.createElement('div');
     form.className = 'clarification-freeform';
     const fieldId = `clarification-${String(data.pending_id || 'reply').replace(/[^A-Za-z0-9_-]/g, '')}`;
-    form.innerHTML = `<label for="${fieldId}">Your answer</label><div class="clarification-input-row"><textarea id="${fieldId}" rows="2" maxlength="500" placeholder="Add the detail QueryBot needs to continue"></textarea><button type="button" class="clarification-submit">Continue</button></div><div class="clarification-help">Press Enter to continue · Shift + Enter for a new line</div>`;
+    form.innerHTML = `<label for="${fieldId}">Your answer</label><div class="clarification-input-row"><textarea id="${fieldId}" rows="2" maxlength="500" autocomplete="off" placeholder="Add the detail QueryBot needs to continue"></textarea><button type="button" class="clarification-submit">Continue</button></div><div class="clarification-business-suggestions" role="listbox" aria-label="Suggested business dates"></div><div class="clarification-help">Press Enter to continue · Shift + Enter for a new line</div>`;
     const input = form.querySelector('textarea');
     const submit = form.querySelector('.clarification-submit');
+    const suggestionList = form.querySelector('.clarification-business-suggestions');
     if (hasChoices) {
-      form.querySelector('label').textContent = 'None of these? Enter the business date to use';
-      input.placeholder = 'For example: accounting date';
+      form.querySelector('label').textContent = 'Search by business date name';
+      input.placeholder = 'For example: invoice date';
     }
+    const renderBusinessSuggestions = () => {
+      if (!hasChoices || !businessSuggestions.length) {
+        suggestionList.hidden = true;
+        return;
+      }
+      const query = String(input.value || '').trim().toLocaleLowerCase();
+      const matches = businessSuggestions.filter((label) =>
+        !query || label.toLocaleLowerCase().includes(query)
+      ).slice(0, 6);
+      suggestionList.replaceChildren();
+      matches.forEach((label) => {
+        const choice = document.createElement('button');
+        choice.type = 'button';
+        choice.className = 'clarification-business-suggestion';
+        choice.setAttribute('role', 'option');
+        choice.textContent = label;
+        choice.addEventListener('click', () => {
+          input.value = label;
+          _submitClarification(data, label, '', card);
+        });
+        suggestionList.appendChild(choice);
+      });
+      suggestionList.hidden = !matches.length;
+    };
     submit.addEventListener('click', () => _submitClarification(data, input.value, '', card));
+    input.addEventListener('input', renderBusinessSuggestions);
+    input.addEventListener('focus', renderBusinessSuggestions);
     input.addEventListener('keydown', (event) => {
       if (event.key === 'Enter' && !event.shiftKey) {
         event.preventDefault();
@@ -3740,7 +3770,10 @@ function renderClarificationPrompt(data, opts = {}){
       }
     });
     card.appendChild(form);
-    setTimeout(() => input.focus(), 0);
+    setTimeout(() => {
+      input.focus();
+      renderBusinessSuggestions();
+    }, 0);
   };
   if (!options.length) {
     appendFreeTextClarification(false);

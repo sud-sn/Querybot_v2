@@ -35,7 +35,8 @@ from core.conversation_state import (
 )
 from core.clarification import (
     get_pending, save_pending, clear_pending, combine_with_clarification,
-    resolve_option_text, was_recently_expired, acknowledge_recently_expired,
+    resolve_option_text, resolve_date_option_text,
+    was_recently_expired, acknowledge_recently_expired,
     attach_clarification_resolution, clarification_session_id,
     prepare_clarification_meta,
 )
@@ -1335,8 +1336,18 @@ async def dispatch(
                                    is_clarification=True)
                     return
                 if opts:
-                    match = resolve_option_text(opts, text)
-                    if not match and cmeta.get("allow_free_text"):
+                    if cmeta.get("source") == "metric_date_context":
+                        match = resolve_date_option_text(
+                            cmeta.get("all_options") or opts,
+                            text,
+                        )
+                    else:
+                        match = resolve_option_text(opts, text)
+                    if (
+                        not match
+                        and cmeta.get("allow_free_text")
+                        and cmeta.get("source") != "metric_date_context"
+                    ):
                         # The portal deliberately shows only a short, relevant
                         # date-role menu. Match a typed business date against
                         # the complete server-side scoped set without rendering
@@ -1359,9 +1370,9 @@ async def dispatch(
                         if callable(send_prompt):
                             if cmeta.get("allow_free_text"):
                                 retry_question = (
-                                    "I couldn't match that to a discovered business date. "
-                                    "Choose one below or enter another date name exactly as "
-                                    "your business uses it."
+                                    "I couldn't match that business date unambiguously. "
+                                    "Choose a suggested business date below or type a more "
+                                    "specific business name."
                                 )
                             else:
                                 retry_question = (

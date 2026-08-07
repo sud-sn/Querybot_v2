@@ -4,6 +4,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 CHAT = (ROOT / "portal" / "templates" / "portal_chat.html").read_text(encoding="utf-8")
 CSS = (ROOT / "static" / "css" / "chat_workspace.css").read_text(encoding="utf-8")
+WEB_ADAPTER = (ROOT / "gateway" / "web_adapter.py").read_text(encoding="utf-8")
+WEBHOOKS = (ROOT / "gateway" / "webhooks.py").read_text(encoding="utf-8")
 
 
 def test_open_ended_clarification_has_a_free_text_reply_path():
@@ -16,8 +18,56 @@ def test_open_ended_clarification_has_a_free_text_reply_path():
 
 def test_ranked_date_choices_keep_a_custom_business_date_input_below_them():
     assert "options.some((opt) => Boolean(opt.allow_free_text))" in CHAT
-    assert "None of these? Enter the business date to use" in CHAT
-    assert "For example: accounting date" in CHAT
+    assert "Search by business date name" in CHAT
+    assert "For example: invoice date" in CHAT
+    assert "business_suggestions" in CHAT
+    assert "clarification-business-suggestion" in CHAT
+    assert ".clarification-business-suggestion" in CSS
+
+
+def test_date_suggestions_do_not_render_physical_schema_fields():
+    clarification_block = CHAT.split("function renderClarificationPrompt", 1)[1].split(
+        "function _submitClarification", 1
+    )[0]
+    assert "fact_column" not in clarification_block
+    assert "fact_table" not in clarification_block
+
+    adapter_block = WEB_ADAPTER.split(
+        "async def send_clarification_prompt", 1
+    )[1].split("async def upload_file", 1)[0]
+    assert "_public_clarification_options(options)" in adapter_block
+    assert '"business_suggestions"' in WEB_ADAPTER
+    assert '"fact_column"' not in adapter_block
+    assert '"fact_table"' not in adapter_block
+
+    from gateway.web_adapter import _public_clarification_options
+
+    public = _public_clarification_options([{
+        "id": "date_role_1",
+        "label": "Invoice Date",
+        "value": "Invoice Date",
+        "allow_free_text": True,
+        "business_suggestions": ["Invoice Date", "Order Date"],
+        "fact_table": "SALES.F_INVOICE",
+        "fact_column": "INVOICE_DATE_KEY",
+        "dimension_table": "SALES.D_DATE",
+    }])
+    assert public == [{
+        "id": "date_role_1",
+        "label": "Invoice Date",
+        "value": "Invoice Date",
+        "allow_free_text": True,
+        "business_suggestions": ["Invoice Date", "Order Date"],
+    }]
+
+
+def test_portal_date_reply_uses_full_server_side_choices_and_preserves_binding():
+    response_block = WEBHOOKS.split(
+        'if msg_type == "clarification_response":', 1
+    )[1].split("await handle_query(", 1)[0]
+    assert 'cmeta.get("all_options") or opts' in response_block
+    assert "resolve_date_option_text" in response_block
+    assert '"_clarification_selected_option"' in response_block
 
 
 def test_outbound_messages_expose_delivery_and_manual_recovery_states():

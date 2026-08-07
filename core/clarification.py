@@ -292,6 +292,136 @@ def resolve_option_text(options: list[dict], text: str) -> dict | None:
     return best_match if best_score >= 2 else None
 
 
+def _normalized_date_term(value: object) -> str:
+    """Normalize a business-facing date term without losing word boundaries."""
+    return " ".join(
+        token
+        for token in re.split(r"[^a-z0-9]+", str(value or "").casefold())
+        if token
+    )
+
+
+def _normalized_identifier(value: object) -> str:
+    """Normalize a physical identifier for exact, server-side matching only."""
+    return re.sub(r"[\[\]`\"'\s]", "", str(value or "").casefold())
+
+
+def _date_business_terms(option: dict) -> set[str]:
+    """Return the governed business vocabulary attached to a date choice."""
+    raw_terms: list[object] = [
+        option.get("label"),
+        option.get("value"),
+        option.get("context_name"),
+        option.get("date_role"),
+        option.get("business_role"),
+    ]
+    aliases = option.get("aliases")
+    if isinstance(aliases, (list, tuple, set)):
+        raw_terms.extend(aliases)
+    elif aliases:
+        raw_terms.extend(re.split(r"[,;|]", str(aliases)))
+    return {
+        normalized
+        for normalized in (_normalized_date_term(value) for value in raw_terms)
+        if normalized
+    }
+
+
+def _date_identifier_terms(option: dict) -> set[str]:
+    """Return exact physical identities; these are never sent as UI suggestions."""
+    fact_table = _normalized_identifier(option.get("fact_table"))
+    fact_column = _normalized_identifier(option.get("fact_column"))
+    if not fact_column:
+        return set()
+    terms = {fact_column}
+    if fact_table:
+        terms.add(f"{fact_table}.{fact_column}")
+        terms.add(f"{fact_table.split('.')[-1]}.{fact_column}")
+    return terms
+
+
+def _one_date_match(matches: list[dict]) -> dict | None:
+    """Return a match only when it identifies one physical date role."""
+    unique: dict[tuple[str, str, str], dict] = {}
+    for option in matches:
+        fact_table = _normalized_identifier(option.get("fact_table"))
+        fact_column = _normalized_identifier(option.get("fact_column"))
+        identity = (
+            fact_table,
+            fact_column,
+            "" if fact_table or fact_column else str(option.get("id") or ""),
+        )
+        unique.setdefault(identity, option)
+    return next(iter(unique.values())) if len(unique) == 1 else None
+
+
+def resolve_date_option_text(options: list[dict], text: str) -> dict | None:
+    """Resolve a typed date clarification against governed scoped choices.
+
+    Business names, role names, and aliases are matched conversationally.
+    Physical columns are accepted only as exact server-side identifiers for
+    administrator/debug workflows. Ambiguous terms never select the first
+    role silently; the caller must ask the user to choose a specific option.
+    """
+    reply_business = _normalized_date_term(text)
+    reply_identifier = _normalized_identifier(text)
+    if not reply_business:
+        return None
+
+    normalized = _with_option_ids(options)
+
+    exact_business = [
+        option
+        for option in normalized
+        if reply_business in _date_business_terms(option)
+    ]
+    if exact_business:
+        return _one_date_match(exact_business)
+
+    # Physical identifiers are intentionally exact-only and are not exposed
+    # by the web adapter or the portal's business-name suggestion list.
+    exact_identifier = [
+        option
+        for option in normalized
+        if reply_identifier in _date_identifier_terms(option)
+    ]
+    if exact_identifier:
+        return _one_date_match(exact_identifier)
+
+    # Allow concise business replies such as "invoice" for "Invoice Date",
+    # but only if the phrase maps to one scoped date role.
+    if len(reply_business) >= 4:
+        phrase_matches = [
+            option
+            for option in normalized
+            if any(
+                reply_business in term or term in reply_business
+                for term in _date_business_terms(option)
+            )
+        ]
+        if phrase_matches:
+            return _one_date_match(phrase_matches)
+
+    reply_words = {word for word in reply_business.split() if len(word) >= 3}
+    if not reply_words:
+        return None
+    scored: list[tuple[int, dict]] = []
+    for option in normalized:
+        candidate_words = {
+            word
+            for term in _date_business_terms(option)
+            for word in term.split()
+            if len(word) >= 3
+        }
+        scored.append((len(reply_words & candidate_words), option))
+    best_score = max((score for score, _ in scored), default=0)
+    if best_score < 2:
+        return None
+    return _one_date_match(
+        [option for score, option in scored if score == best_score]
+    )
+
+
 _COMMON_STOPWORDS = {
     "the", "and", "for", "with", "from", "into", "their", "there", "that",
     "this", "those", "these", "show", "find", "give", "list", "what", "which",

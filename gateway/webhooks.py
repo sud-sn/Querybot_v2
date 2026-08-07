@@ -57,7 +57,7 @@ from core.chart import detect_chart_type, build_chart_payload
 from core.examples import retrieve_similar_examples, format_examples_for_prompt
 from core.clarification import (
     get_pending, save_pending, clear_pending, combine_with_clarification,
-    resolve_option_text, attach_clarification_resolution,
+    resolve_option_text, resolve_date_option_text, attach_clarification_resolution,
     prepare_clarification_meta,
 )
 from core.plan_preview import build_plan_preview, pending_plan_previews
@@ -3146,13 +3146,27 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                         None,
                     )
                     if not selected and free_text:
-                        selected = resolve_option_text(opts, free_text)
+                        if cmeta.get("source") == "metric_date_context":
+                            selected = resolve_date_option_text(
+                                cmeta.get("all_options") or opts,
+                                free_text,
+                            )
+                        else:
+                            selected = resolve_option_text(opts, free_text)
                     if not selected:
                         send_prompt = getattr(adapter, "send_clarification_prompt", None)
                         if callable(send_prompt):
+                            retry_question = (
+                                "I couldn't match that business date unambiguously. "
+                                "Choose a suggested business date or type a more "
+                                "specific business name."
+                                if cmeta.get("source") == "metric_date_context"
+                                else cmeta.get("question")
+                                or "Please choose one option."
+                            )
                             await send_prompt(
                                 adapter.make_event(pending["original_q"]),
-                                cmeta.get("question") or "Please choose one option.",
+                                retry_question,
                                 opts,
                             )
                         else:
@@ -3160,11 +3174,17 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                         continue
                     selected_text = str(selected.get("value") or selected.get("label") or "").strip()
                     selected_opt_id = str(selected.get("id") or "") or None   # Fix #2
+                    option_is_visible = any(
+                        str(option.get("id") or "") == selected_opt_id
+                        for option in opts
+                    )
                     combined, term_hint = combine_with_clarification(
                         pending["original_q"],
                         selected_text,
                         cmeta,
-                        selected_option_id=selected_opt_id,                   # Fix #2
+                        selected_option_id=(
+                            selected_opt_id if option_is_visible else None
+                        ),
                     )
                     log_label = selected_text
                 else:
@@ -3183,6 +3203,13 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 if term_hint:
                     combined = f"{combined}\n\n{term_hint}"
                 _clarification_event = adapter.make_event(combined)
+                if cmeta.get("source") == "metric_date_context" and opts:
+                    _clarification_event.raw["_clarification_selected_source"] = (
+                        "metric_date_context"
+                    )
+                    _clarification_event.raw["_clarification_selected_option"] = dict(
+                        selected
+                    )
                 attach_clarification_resolution(_clarification_event, pending)
                 clear_pending(
                     account_id, zoom_user_id, session_id=adapter.session_id

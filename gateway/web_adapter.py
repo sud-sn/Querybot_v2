@@ -28,6 +28,23 @@ log = logging.getLogger("querybot.web_adapter")
 _HISTORY_MAXLEN = 3
 
 
+def _public_clarification_options(options: list[dict] | None) -> list[dict]:
+    """Project server-side choices to business-facing browser fields only."""
+    public_options: list[dict] = []
+    for option in options or []:
+        if not isinstance(option, dict):
+            continue
+        public_options.append({
+            key: option.get(key)
+            for key in (
+                "id", "label", "value", "allow_free_text",
+                "business_suggestions",
+            )
+            if key in option
+        })
+    return public_options
+
+
 class WebAdapter(PlatformAdapter):
     """Adapter for browser WebSocket connections."""
 
@@ -574,11 +591,15 @@ class WebAdapter(PlatformAdapter):
     async def send_clarification_prompt(self, event: PlatformEvent, question: str, options: list[dict], pending_id: str | None = None) -> None:
         try:
             agent_event = self._record_agent_clarification(question, options)
+            # The browser only needs business-facing choice data. Physical
+            # tables, columns, and join metadata remain in the server-side
+            # pending clarification and are never exposed as suggestions.
+            public_options = _public_clarification_options(options)
             async with self.send_lock:
                 await self.ws.send_json({
                     "type": "clarification_prompt",
                     "question": question,
-                    "options": options,
+                    "options": public_options,
                     "pending_id": pending_id or "",
                 })
                 if agent_event:
