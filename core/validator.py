@@ -2614,6 +2614,39 @@ def validate_sql_detailed(
                         join_eq_pairs.add((lc, rc))
                         join_eq_pairs.add((rc, lc))  # symmetric
 
+            # A semi-join states the same relationship as an inner join:
+            # `fact.INVOICE_DATE_SK IN (SELECT d.DATE_SK FROM D_DATE d ...)`
+            # equates exactly the two planned columns, just without an ON
+            # clause. Requiring the literal JOIN...ON shape rejected correct,
+            # safe SQL in production ("Required semantic join condition was not
+            # visible: F_SALES_INVOICE.INVOICE_DATE_SK = D_DATE.DATE_SK" for a
+            # last-2-data-days question that used IN). Both sides must still be
+            # real columns — a subquery selecting a literal or an expression
+            # proves nothing and is not counted.
+            for in_node in tree.find_all(sg_exp.In):
+                outer_expr = in_node.this
+                if not isinstance(outer_expr, sg_exp.Column):
+                    continue
+                subquery = in_node.args.get("query")
+                if subquery is None:
+                    continue
+                inner_select = subquery.this if isinstance(subquery, sg_exp.Subquery) else subquery
+                if not isinstance(inner_select, sg_exp.Select):
+                    continue
+                projections = inner_select.selects or []
+                if len(projections) != 1:
+                    continue
+                inner_expr = projections[0]
+                if isinstance(inner_expr, sg_exp.Alias):
+                    inner_expr = inner_expr.this
+                if not isinstance(inner_expr, sg_exp.Column):
+                    continue
+                oc = (outer_expr.name or "").upper()
+                ic = (inner_expr.name or "").upper()
+                if oc and ic:
+                    join_eq_pairs.add((oc, ic))
+                    join_eq_pairs.add((ic, oc))  # symmetric
+
             # Keep a conservative identifier-only fallback for dialect AST
             # rewrites: it proves the real columns are directly equated and
             # never reasons from literals or row values.
@@ -2670,7 +2703,16 @@ def validate_sql_detailed(
 
     if select_aliases:
         bad_order: set[str] = set()
-        for ordered_node in tree.find_all(sg_exp.Ordered):
+        # Only the outermost ORDER BY is scoped to the outer SELECT's aliases.
+        # Walking every Ordered node in the tree judged a *subquery's* own
+        # ORDER BY against the outer alias list — e.g.
+        #   ... WHERE INVOICE_DATE_SK IN (
+        #         SELECT TOP 2 DATE_SK FROM D_DATE ORDER BY FULL_DATE DESC)
+        # was rejected for "FULL_DATE not in SELECT aliases", although
+        # FULL_DATE is a perfectly valid ordering column inside that subquery.
+        _outer_order = select.args.get("order") if select is not None else None
+        _outer_ordered = list(_outer_order.expressions) if _outer_order is not None else []
+        for ordered_node in _outer_ordered:
             col_expr = ordered_node.this
             if isinstance(col_expr, sg_exp.Column) and not col_expr.table:
                 col_name = col_expr.name

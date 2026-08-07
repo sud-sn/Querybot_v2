@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any
 
@@ -13,6 +14,8 @@ from core.date_roles import (
 )
 
 
+log = logging.getLogger(__name__)
+
 _GRAIN_ORDER = {"day": 1, "week": 2, "month": 3, "quarter": 4, "year": 5}
 
 
@@ -23,24 +26,78 @@ def requested_temporal_grain(question: str) -> str:
     if unit in _GRAIN_ORDER:
         return unit
     q = normalize_date_role_text(question)
+    # Period-close wording ("month-end inventory", "end of month balance") is
+    # as explicit a monthly-grain request as "monthly". Omitting it left
+    # `requested_temporal_grain` blank for "Show month-end inventory value for
+    # February 2026", so every daily snapshot role stayed grain-compatible and
+    # the finest-grain preference handed the question to the daily fact — the
+    # monthly period role was never offered at all.
     for grain, words in (
-        ("day", ("daily", "by day", "each day")),
-        ("week", ("weekly", "by week", "each week")),
-        ("month", ("monthly", "by month", "each month")),
-        ("quarter", ("quarterly", "by quarter", "each quarter")),
-        ("year", ("yearly", "annual", "by year", "each year")),
+        ("day", ("daily", "by day", "each day", "day end", "end of day")),
+        ("week", ("weekly", "by week", "each week", "week end", "end of week")),
+        ("month", (
+            "monthly", "by month", "each month",
+            "month end", "end of month", "eom", "month close",
+        )),
+        ("quarter", (
+            "quarterly", "by quarter", "each quarter",
+            "quarter end", "end of quarter", "eoq",
+        )),
+        ("year", (
+            "yearly", "annual", "by year", "each year",
+            "year end", "end of year", "eoy",
+        )),
     ):
         if any(word in q for word in words):
             return grain
     return ""
 
 
-def question_has_snapshot_intent(question: str) -> bool:
+def metrics_are_semi_additive(matched_metrics: list[dict] | None) -> bool:
+    """True when a matched registry metric is a semi-additive measure.
+
+    Governed metadata, not question wording — so this holds for any domain
+    whose snapshot measure happens not to be called inventory or balance
+    (headcount, assets under management, open subscriptions, ...).
+    """
+    from core.analysis_contract import measure_class_for_metric
+
+    for metric in matched_metrics or []:
+        if not isinstance(metric, dict):
+            continue
+        try:
+            if measure_class_for_metric(metric) == "semi_additive":
+                return True
+        except Exception:  # never let classification break date resolution
+            log.debug("semi-additive classification failed for %r", metric, exc_info=True)
+    return False
+
+
+def question_has_snapshot_intent(
+    question: str,
+    *,
+    matched_metrics: list[dict] | None = None,
+) -> bool:
     """Detect semi-additive stock/balance questions that imply latest data.
 
-    This is intentionally narrow: revenue/orders/sales wording is excluded so
-    an operational measure is not silently converted into a snapshot query.
+    Two independent signals, either of which is sufficient:
+
+    1. The resolved metric is declared/derived semi-additive. This is the
+       governed path and works in any domain — the wording list below only
+       ever knew inventory/stock/balance, so "month-end headcount" or
+       "month-end assets under management" were silently treated as ordinary
+       additive measures and could be summed across periods.
+    2. Question wording, kept as the fallback for when no metric resolved.
+
+    Metadata can only *promote* to True; it never suppresses the wording
+    signal, so this cannot weaken an existing detection.
+
+    The wording branch stays intentionally narrow: revenue/orders/sales
+    phrasing is excluded so an operational measure is not silently converted
+    into a snapshot query.
     """
+    if metrics_are_semi_additive(matched_metrics):
+        return True
     q = normalize_date_role_text(question)
     if not q or re.search(r"\b(?:revenue|sales|sold|orders?|invoices?)\b", q):
         return False
@@ -551,7 +608,9 @@ def resolve_contextual_date_binding(
     # date words recognized by question_has_temporal_intent().
     if (
         not question_has_temporal_intent(question)
-        and not question_has_snapshot_intent(question)
+        and not question_has_snapshot_intent(
+            question, matched_metrics=matched_metrics
+        )
         and not explicit
     ):
         return {"status": "none", "reason": "no temporal intent"}
@@ -784,17 +843,29 @@ def resolve_contextual_date_binding(
         required_fact_tables=required_fact_tables,
     )
     if discovered:
-        if question_has_snapshot_intent(question) and not requested_grain:
+        if question_has_snapshot_intent(question, matched_metrics=metrics):
             known_grains = [
                 _role_temporal_grain(role)
                 for role in discovered
                 if _role_temporal_grain(role)
             ]
-            if known_grains:
+            if known_grains and not requested_grain:
                 finest = min(known_grains, key=lambda grain: _GRAIN_ORDER.get(grain, 99))
                 discovered = [
                     role for role in discovered
                     if _role_temporal_grain(role) == finest
+                ]
+            elif known_grains and requested_grain in known_grains:
+                # A stock/balance measure is semi-additive: a month-end figure
+                # is a stored snapshot, never the sum of that month's daily
+                # snapshots. So when the user names a grain and the fact
+                # carries a role at exactly that grain, that role is the only
+                # correct one — generic "finer grain rolls up" compatibility
+                # would otherwise keep the daily roles in play and let the
+                # answer silently aggregate across time.
+                discovered = [
+                    role for role in discovered
+                    if _role_temporal_grain(role) == requested_grain
                 ]
         compatible = [
             role for role in discovered

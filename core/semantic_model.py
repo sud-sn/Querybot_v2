@@ -232,7 +232,10 @@ def _business_role_from_column(column: str) -> str:
     col = column.upper()
     if col.endswith("_DMS_KEY"):
         col = col[: -len("_DMS_KEY")]
-    for suffix in ("_KEY", "_ID", "_NUM", "_NO", "_CD", "_CODE"):
+    # "_SK"/"_FK" are surrogate-key plumbing exactly like "_KEY"/"_ID".
+    # Omitting them left INVOICE_DATE_SK deriving the business role
+    # "invoice_date_sk", which surfaced to users as "Invoice Sk Date".
+    for suffix in ("_KEY", "_ID", "_SK", "_FK", "_NUM", "_NO", "_CD", "_CODE"):
         if col.endswith(suffix):
             col = col[: -len(suffix)]
     return "_".join(t.lower() for t in re.split(r"[_\W]+", col) if t)
@@ -1675,6 +1678,96 @@ def build_runtime_semantic_context(
     return "\n".join(header + deduped)
 
 
+def _scope_plan_to_single_fact(
+    fields: list[dict[str, Any]],
+    joins: list[dict[str, Any]],
+    tables: list[dict[str, Any]],
+) -> str:
+    """Demote requirements that point at a fact table the answer isn't anchored on.
+
+    A business term like "warehouse" or "inventory value" is frequently an
+    approved field on several fact tables at once (F_INVENTORY_DAILY.WAREHOUSE_SK,
+    ERP_ITM_BAL_PRD_FCT.WHS_DMS_KEY, M3_MITBAL.MLWHLO ...).  Each term picks its
+    winner independently by score, so a question anchored on one fact could end
+    up carrying a *hard* requirement naming a rival fact's column.
+
+    That requirement is unsatisfiable by construction: honouring it would force
+    a raw fact-to-fact join, which the SQL rules forbid elsewhere for fan-out
+    reasons.  The validator therefore rejected correct SQL — live symptom:
+    "SQL did not use required semantic field warehouse:
+    ...ERP_ITM_BAL_PRD_FCT.WHS_DMS_KEY" raised against a query written entirely
+    against F_INVENTORY_DAILY.
+
+    Rule: requirements may name at most one fact table — the anchor.  Fields and
+    joins belonging to rival facts stay in the plan as *optional* hints so the
+    prompt still sees them, but they can no longer hard-fail validation.
+
+    Returns the chosen anchor (upper-cased), or "" when no scoping was needed.
+    """
+    table_type_by_name: dict[str, str] = {}
+    for table in tables:
+        name = str(table.get("qualified_name") or table.get("table") or "").upper()
+        if name:
+            table_type_by_name[name] = str(table.get("type") or "").lower()
+
+    def _is_fact(table_name: Any) -> bool:
+        return table_type_by_name.get(str(table_name or "").upper(), "") == "fact"
+
+    distinct_facts = list(dict.fromkeys(
+        str(f.get("table") or "").upper()
+        for f in fields
+        if _is_fact(f.get("table"))
+    ))
+    if len(distinct_facts) < 2:
+        return ""
+
+    # Anchor = the fact carrying the measure the question actually asked for.
+    # `fields` is emitted in descending score order, so the first fact is the
+    # best-scoring one when no explicit measure resolved.
+    anchor = next(
+        (
+            str(f.get("table") or "").upper()
+            for f in fields
+            if str(f.get("role") or "") in {"measure", "measure_candidate"}
+            and _is_fact(f.get("table"))
+        ),
+        distinct_facts[0],
+    )
+
+    demoted_fields: list[str] = []
+    for field in fields:
+        table_u = str(field.get("table") or "").upper()
+        if (
+            field.get("enforcement") == "required"
+            and _is_fact(table_u)
+            and table_u != anchor
+        ):
+            field["enforcement"] = "optional"
+            field["demoted_reason"] = f"rival fact table; answer is anchored on {anchor}"
+            demoted_fields.append(f"{table_u}.{str(field.get('column') or '').upper()}")
+
+    demoted_joins: list[str] = []
+    for join in joins:
+        from_u = str(join.get("from") or "").upper()
+        to_u = str(join.get("to") or "").upper()
+        touches_rival_fact = (
+            (_is_fact(from_u) and from_u != anchor)
+            or (_is_fact(to_u) and to_u != anchor)
+        )
+        if join.get("enforcement") == "required" and touches_rival_fact:
+            join["enforcement"] = "optional"
+            join["demoted_reason"] = f"rival fact table; answer is anchored on {anchor}"
+            demoted_joins.append(f"{from_u}->{to_u}")
+
+    if demoted_fields or demoted_joins:
+        log.info(
+            "Semantic plan scoped to fact anchor %s (candidates=%s): "
+            "demoted fields=%s joins=%s to optional",
+            anchor, distinct_facts, demoted_fields, demoted_joins,
+        )
+    return anchor
+
+
 def build_runtime_semantic_plan(
     kb_dir: str,
     *,
@@ -2000,6 +2093,8 @@ def build_runtime_semantic_plan(
 
     if not fields:
         return {"enabled": False, "fields": [], "joins": [], "required_tables": [], "reason": "no matching semantic model fields"}
+
+    _scope_plan_to_single_fact(fields, joins, tables)
 
     required_tables = sorted({f["table"] for f in fields} | {j["from"] for j in joins} | {j["to"] for j in joins})
 

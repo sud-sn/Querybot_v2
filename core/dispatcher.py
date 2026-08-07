@@ -124,10 +124,28 @@ _REPORT_ASK_RE = re.compile(
     re.IGNORECASE,
 )
 
+# The verb half of the data-request test. A question that fails this check is
+# treated as off-topic and answered by the conversational analyst instead of
+# being executed — so a missing verb silently turns a real analytical question
+# into a chatty non-answer. Live symptom: "Allocate total revenue by product
+# category." came back as "QueryBot can help ... let me know!" with no SQL,
+# because "allocate" (like break down / split / sum / trend / plot / segment)
+# was absent here while the shape half matched fine.
 _DATA_REQUEST_ACTION_RE = re.compile(
     r"\b(?:please\s+)?(?:show|list|find|retrieve|display|give|count|calculate|"
     r"compute|compare|analy[sz]e|summari[sz]e|rank|identify|what|how\s+many|when|who|"
-    r"which|get|pull|tell)\b",
+    r"which|get|pull|tell"
+    # Allocation / distribution of a measure across a dimension.
+    r"|allocate|apportion|attribute|distribute"
+    # Decomposition phrasing.
+    r"|break\s*down|breakdown|split|segment|group|bucket|categori[sz]e|slice"
+    # Aggregation verbs used imperatively ("sum revenue by ...").
+    r"|sum|total|aggregate|average|avg|median"
+    # Time-series and projection.
+    r"|trend|forecast|project"
+    # Visualisation asks that still require the underlying data.
+    r"|plot|chart|graph|visuali[sz]e"
+    r")\b",
     re.IGNORECASE,
 )
 _DATA_REQUEST_SHAPE_RE = re.compile(

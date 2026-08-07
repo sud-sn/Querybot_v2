@@ -466,29 +466,71 @@ def _column_name(col: dict | str) -> str:
     return str(col)
 
 
+# Physical plumbing that must never reach a business-date label shown to an
+# end user: surrogate/foreign key markers and packed-integer encodings.
+# A live regression surfaced "Invoice Sk Date" and "Posting Yyyymm Date" as
+# clarification buttons — INVOICE_DATE_KEY already rendered correctly as
+# "Invoice Date", so only the _SK spelling (and the YYYYMM/YYYYMMDD encodings)
+# were leaking storage detail into the business vocabulary.
+_KEY_TOKENS = {"key", "id", "sk", "fk", "dimension", "dim", "utc"}
+# Packed-integer date encodings. These are never a business word in any
+# position, so they are safe to drop wherever they appear.
+_ENCODING_TOKENS = {"yyyymmdd", "yyyymm", "yymmdd", "yymm"}
+_MONTH_ENCODINGS = {"yyyymm", "yymm"}
+# Unambiguous plumbing prefixes (DIM_ORDER_DATE, DMS_SVC_DT).
+_PLUMBING_PREFIXES = {"dim", "dms"}
+
+
+def _strip_plumbing_tokens(tokens: list[str]) -> list[str]:
+    """Drop storage plumbing while protecting real business words.
+
+    Surrogate-key markers are a *positional* convention — they suffix a name
+    (INVOICE_DATE_SK, ADMIT_DATE_KEY). Removing them wherever they appear
+    would corrupt legitimate vocabulary: KEY_ACCOUNT_DATE is a "Key Account"
+    date, not an "Account" date. So key tokens are stripped only from the
+    tail (and the well-known DIM_/DMS_ prefixes from the head), while packed
+    date encodings are stripped anywhere.
+    """
+    result = [tok for tok in tokens if tok.lower() not in _ENCODING_TOKENS]
+    while result and result[0].lower() in _PLUMBING_PREFIXES:
+        result.pop(0)
+    while result and result[-1].lower() in _KEY_TOKENS:
+        result.pop()
+    return result
+
+
 def _label_from_column(column: str) -> str:
     original = (column or "").strip().strip('"`[]')
     text = original.upper()
     text = re.sub(
-        r"_(?:DATE|DT)(?:_DMS)?_(?:KEY|ID)$",
+        r"_(?:DATE|DT)(?:_DMS)?_(?:KEY|ID|SK|FK)$",
         "",
         text,
     )
     text = re.sub(r"_?DMS_KEY$", "", text)
-    text = re.sub(r"_(?:KEY|ID)$", "", text)
+    text = re.sub(r"_(?:KEY|ID|SK|FK)$", "", text)
     text = re.sub(r"_?(?:DATE|DT)$", "", text)
     from core.identifier_intelligence import analyze_identifier
     analysis = analyze_identifier(original)
-    semantic_parts = [
-        part for part in analysis.expanded_name.split()
-        if part not in {"date", "datetime", "timestamp", "dimension", "key", "id"}
-    ]
+    raw_parts = analysis.expanded_name.split()
+    # A YYYYMM-encoded column is a monthly *period*, not a calendar date —
+    # naming it "... Date" both leaks the encoding and misdescribes the grain,
+    # which left the monthly inventory role unreachable when a user searched
+    # for its real business name ("Inventory Period").
+    is_month_grain = any(part in _MONTH_ENCODINGS for part in raw_parts)
+    semantic_parts = _strip_plumbing_tokens([
+        part for part in raw_parts
+        if part not in {"date", "datetime", "timestamp"}
+    ])
     if semantic_parts:
         label = " ".join(semantic_parts).title().strip()
-        if "Date" not in label:
-            label = (label + " Date").strip()
+        suffix = "Period" if is_month_grain else "Date"
+        if suffix not in label and (suffix != "Date" or "Period" not in label):
+            label = (label + " " + suffix).strip()
         return label or "Business Date"
-    parts = [p for p in text.split("_") if p and p not in {"CUS", "PCH", "SLR"}]
+    parts = _strip_plumbing_tokens([
+        p for p in text.split("_") if p and p not in {"CUS", "PCH", "SLR"}
+    ])
     expanded = []
     mini = {
         "ORD": "Order", "IVC": "Invoice", "DLV": "Delivery", "RQD": "Requested",
@@ -500,6 +542,7 @@ def _label_from_column(column: str) -> str:
     for part in parts:
         expanded.append(mini.get(part, part.capitalize()))
     label = " ".join(expanded).strip()
-    if "Date" not in label:
-        label = (label + " Date").strip()
+    suffix = "Period" if is_month_grain else "Date"
+    if suffix not in label and (suffix != "Date" or "Period" not in label):
+        label = (label + " " + suffix).strip()
     return label or "Business Date"

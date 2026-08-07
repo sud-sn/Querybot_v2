@@ -45,6 +45,43 @@ def _measure_class(column: str, field: dict[str, Any]) -> str:
     return "unknown"
 
 
+def measure_class_for_metric(metric: dict[str, Any]) -> str:
+    """Classify a registry metric as additive / semi_additive / non_additive.
+
+    An admin-declared `aggregation_semantics` (or `aggregation`) is
+    authoritative; otherwise the measure columns named in the approved formula
+    are inspected. Semi-additive wins any tie because it is the restrictive
+    reading — a balance summed across time is wrong, whereas an additive
+    measure aggregated at one grain is merely narrower than it needed to be.
+
+    Tenant-neutral: reads only registry metadata and column naming, never
+    physical schema names or a client's vocabulary.
+    """
+    declared = str(
+        metric.get("aggregation_semantics")
+        or metric.get("aggregation")
+        or ""
+    ).strip().lower().replace("-", "_")
+    if declared in {"additive", "semi_additive", "non_additive"}:
+        return declared
+
+    formula = str(
+        metric.get("sql_template")
+        or metric.get("formula")
+        or metric.get("expression")
+        or ""
+    )
+    source = f"{formula} {metric.get('column') or ''}"
+    classes = {
+        _measure_class(token, {})
+        for token in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", source)
+    }
+    for candidate in ("semi_additive", "non_additive", "additive"):
+        if candidate in classes:
+            return candidate
+    return "unknown"
+
+
 def build_analysis_contract(
     question: str,
     *,
