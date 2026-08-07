@@ -1870,24 +1870,46 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     # 1050.00 to 2700.00 — a wrong answer where the old behaviour merely
     # refused to answer.
     try:
-        from core.semantic_model import _scope_plan_to_single_fact
+        from core.semantic_model import _scope_plan_to_single_fact, load_semantic_model
 
-        _plan_anchor = _scope_plan_to_single_fact(
-            _semantic_plan.get("fields") or [],
-            _semantic_plan.get("joins") or [],
-            (_contract_model or {}).get("tables") or [],
-        )
-        if _plan_anchor:
-            _semantic_plan["fact_anchor"] = _plan_anchor
-            _trace_step(
-                trace_id,
-                "semantic_plan_fact_anchor",
-                output_summary={"anchor": _plan_anchor},
+        # Table roles must come from somewhere that is actually populated.
+        # _contract_model is None whenever no contract has been compiled, and
+        # passing an empty table list made every table look like a non-fact —
+        # the scope check then found fewer than two facts and returned having
+        # done nothing at all. Silent no-op: the rival-fact requirement stayed
+        # required and the repair still built the fan-out join. Fall back to
+        # the on-disk model, which is the same source build_runtime_semantic_plan
+        # reads when no contract model is supplied.
+        _anchor_tables = (_contract_model or {}).get("tables") or []
+        if not _anchor_tables:
+            _anchor_tables = (
+                load_semantic_model(state.get("kb_dir", "")) or {}
+            ).get("tables") or []
+
+        if not _anchor_tables:
+            log.warning(
+                "Merged-plan fact scoping skipped for %s: no table roles "
+                "available from the contract model or %s — a rival fact's "
+                "field can stay hard-required and drive a fan-out repair",
+                account_id, state.get("kb_dir", ""),
             )
+        else:
+            _plan_anchor = _scope_plan_to_single_fact(
+                _semantic_plan.get("fields") or [],
+                _semantic_plan.get("joins") or [],
+                _anchor_tables,
+            )
+            if _plan_anchor:
+                _semantic_plan["fact_anchor"] = _plan_anchor
+                _trace_step(
+                    trace_id,
+                    "semantic_plan_fact_anchor",
+                    output_summary={"anchor": _plan_anchor},
+                )
     except Exception as _anchor_exc:
         log.warning(
             "Merged-plan fact scoping failed — a rival fact's field may stay "
-            "hard-required for this question: %s", _anchor_exc,
+            "hard-required for this question: %s", _anchor_exc, exc_info=True,
         )
 
     # ── Table-coverage fallback when the entity graph didn't resolve ──────────
