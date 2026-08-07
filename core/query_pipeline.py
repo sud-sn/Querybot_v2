@@ -1859,6 +1859,37 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
 
     _semantic_plan = _merge_semantic_plans(_semantic_plan, _semantic_model_plan)
 
+    # Single-fact scoping has to run on the MERGED plan, not just the model
+    # plan: the LLM field planner is a second, independent source of required
+    # fields, and a rival fact's column arriving from there survives the merge
+    # untouched. Live consequence when this only ran inside
+    # build_runtime_semantic_plan — "total revenue by warehouse" still failed
+    # field_plan_mismatch demanding ERP_ITM_BAL_PRD_FCT.WHS_DMS_KEY, and the
+    # repair "satisfied" it by joining the ERP fact to F_SALES_INVOICE. That
+    # raw fact-to-fact join passed validation and fanned revenue out from
+    # 1050.00 to 2700.00 — a wrong answer where the old behaviour merely
+    # refused to answer.
+    try:
+        from core.semantic_model import _scope_plan_to_single_fact
+
+        _plan_anchor = _scope_plan_to_single_fact(
+            _semantic_plan.get("fields") or [],
+            _semantic_plan.get("joins") or [],
+            (_contract_model or {}).get("tables") or [],
+        )
+        if _plan_anchor:
+            _semantic_plan["fact_anchor"] = _plan_anchor
+            _trace_step(
+                trace_id,
+                "semantic_plan_fact_anchor",
+                output_summary={"anchor": _plan_anchor},
+            )
+    except Exception as _anchor_exc:
+        log.warning(
+            "Merged-plan fact scoping failed — a rival fact's field may stay "
+            "hard-required for this question: %s", _anchor_exc,
+        )
+
     # ── Table-coverage fallback when the entity graph didn't resolve ──────────
     # The graph-driven gap-fill above is gated on _graph_ctx["enabled"] — an
     # entity with no table_name, or a disabled/empty graph, silently killed
