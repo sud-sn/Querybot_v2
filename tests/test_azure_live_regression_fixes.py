@@ -147,6 +147,48 @@ class CrossFactPlanScopingTests(unittest.TestCase):
         self.assertEqual(fields[0]["enforcement"], "optional")
         self.assertEqual(fields[1]["enforcement"], "required")
 
+    def test_field_with_no_enforcement_key_is_demoted(self):
+        """"Required" means *not* enforcement=="optional".
+
+        semantic_planner.py only ever sets "optional" (see its own
+        `f.get("enforcement") != "optional"` filter) and the validator skips
+        only that value. Testing for enforcement=="required" therefore matched
+        nothing the LLM field planner produced — which is every field that
+        actually caused the live fan-out.
+        """
+        fields = [
+            {"term": "warehouse",
+             "table": f"{DATABASE}.{SCHEMA}.ERP_ITM_BAL_PRD_FCT",
+             "column": "WHS_DMS_KEY"},                      # no enforcement key
+            {"term": "Revenue", "table": f"{SCHEMA}.F_SALES_INVOICE",
+             "column": "NET_REVENUE_AMOUNT", "role": "measure",
+             "enforcement": "required"},
+        ]
+        tables = [
+            {"qualified_name": f"{SCHEMA}.ERP_ITM_BAL_PRD_FCT", "type": "fact"},
+            {"qualified_name": f"{SCHEMA}.F_SALES_INVOICE", "type": "fact"},
+        ]
+        anchor = _scope_plan_to_single_fact(fields, [], tables)
+        self.assertEqual(anchor, f"{SCHEMA}.F_SALES_INVOICE".upper())
+        self.assertEqual(fields[0]["enforcement"], "optional")
+        self.assertEqual(fields[1]["enforcement"], "required")
+
+    def test_already_optional_fields_are_left_alone(self):
+        fields = [
+            {"term": "warehouse", "table": f"{SCHEMA}.ERP_ITM_BAL_PRD_FCT",
+             "column": "WHS_DMS_KEY", "enforcement": "optional"},
+            {"term": "Revenue", "table": f"{SCHEMA}.F_SALES_INVOICE",
+             "column": "NET_REVENUE_AMOUNT", "role": "measure",
+             "enforcement": "required"},
+        ]
+        tables = [
+            {"qualified_name": f"{SCHEMA}.ERP_ITM_BAL_PRD_FCT", "type": "fact"},
+            {"qualified_name": f"{SCHEMA}.F_SALES_INVOICE", "type": "fact"},
+        ]
+        _scope_plan_to_single_fact(fields, [], tables)
+        self.assertEqual(fields[0]["enforcement"], "optional")
+        self.assertNotIn("demoted_reason", fields[0])
+
     def test_single_fact_plan_keeps_every_requirement(self):
         fields = [
             {"term": "daily inventory value", "table": f"{SCHEMA}.F_INVENTORY_DAILY",

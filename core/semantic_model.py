@@ -1761,8 +1761,14 @@ def _scope_plan_to_single_fact(
     demoted_fields: list[str] = []
     for field in fields:
         table_u = str(field.get("table") or "").upper()
+        # "Required" is the ABSENCE of enforcement=="optional", not the
+        # presence of enforcement=="required" — semantic_planner.py only ever
+        # sets "optional", and the validator skips only that value. Testing for
+        # "required" therefore missed every field the LLM field planner
+        # produced, including the ERP warehouse field that kept driving the
+        # fan-out repair.
         if (
-            field.get("enforcement") == "required"
+            field.get("enforcement") != "optional"
             and _is_fact(table_u)
             and table_u != anchor
         ):
@@ -1778,7 +1784,7 @@ def _scope_plan_to_single_fact(
             (_is_fact(from_u) and from_u != anchor)
             or (_is_fact(to_u) and to_u != anchor)
         )
-        if join.get("enforcement") == "required" and touches_rival_fact:
+        if join.get("enforcement") != "optional" and touches_rival_fact:
             join["enforcement"] = "optional"
             join["demoted_reason"] = f"rival fact table; answer is anchored on {anchor}"
             demoted_joins.append(f"{from_u}->{to_u}")
