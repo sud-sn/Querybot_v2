@@ -53,6 +53,8 @@ from core.dispatcher import _looks_like_data_request  # noqa: E402
 from core.response_builder import _period_comparison_from_rows  # noqa: E402
 from core.semantic_planner import (  # noqa: E402
     _anchor_fields_to_measure_fact,
+    _demote_measures_with_a_rival_at_the_requested_grain,
+    build_semantic_field_plan,
     _find_display_field_for_key,
     _is_key_column,
     _key_prefix,
@@ -1450,3 +1452,95 @@ class ResolvedDateFactArbitratesTests(unittest.TestCase):
         ])
         out = _demote_fields_off_resolved_fact(plan, self._date_plan())
         self.assertEqual(self._enforcement(out)["INVENTORY_VALUE"], "optional")
+
+
+class GrainAwareMeasureBindingTests(unittest.TestCase):
+    """Live case 6, actual root cause. The log settled it:
+
+        Semantic field plan: fields=['inventory value=...F_INVENTORY_DAILY.INVENTORY_VALUE']
+        Fact scoping inputs: facts_in_plan=['...F_INVENTORY_DAILY']
+        Date-context gate: ... -> entering date resolution     (no arbitration line)
+
+    Only one fact ever enters the plan, so there was no producer disagreement
+    to arbitrate -- the earlier theory was wrong. The planner binds the measure
+    without consulting the grain the question asked for, so "month-end" was
+    pinned to the daily snapshot fact and the correct monthly SQL refused.
+
+    The rival is invisible to name equality: the monthly column is
+    ENDING_INVENTORY_VALUE, which is why the exact match won outright.
+    """
+
+    COLS = {
+        "QBOT_LIVE_TEST.F_INVENTORY_DAILY": {
+            "WAREHOUSE_SK": "int", "INVENTORY_VALUE": "decimal", "SNAPSHOT_DATE": "date",
+        },
+        "QBOT_LIVE_TEST.F_INVENTORY_MONTHLY": {
+            "WAREHOUSE_SK": "int", "ENDING_INVENTORY_VALUE": "decimal",
+            "PERIOD_YYYYMM": "int",
+        },
+    }
+
+    def _fields(self, question, cols=None):
+        plan = build_semantic_field_plan(
+            question, cols or self.COLS, set(cols or self.COLS), "QBOT_LIVE_TEST"
+        )
+        return {f["column"]: f.get("enforcement") for f in (plan.get("fields") or [])}
+
+    def test_the_live_case_6_question_no_longer_hard_requires_the_daily_fact(self):
+        self.assertEqual(
+            self._fields("Show month-end inventory value for February 2026.")
+            ["INVENTORY_VALUE"], "optional",
+        )
+
+    def test_a_grain_free_question_keeps_its_exact_binding_required(self):
+        """The demotion must not become a blanket weakening of every measure."""
+        self.assertIsNone(self._fields("Show inventory value by warehouse")["INVENTORY_VALUE"])
+
+    def test_no_rival_column_means_no_demotion(self):
+        """With nothing else to use, a hint would only lose information."""
+        solo = {"QBOT_LIVE_TEST.F_INVENTORY_DAILY": self.COLS["QBOT_LIVE_TEST.F_INVENTORY_DAILY"]}
+        self.assertIsNone(
+            self._fields("Show month-end inventory value for February 2026.", solo)
+            ["INVENTORY_VALUE"],
+        )
+
+    def test_an_identically_named_column_elsewhere_is_not_a_rival(self):
+        """Same name is the same measure, not an alternative grain for it.
+
+        Tested against the helper directly: through the public planner this
+        case is genuine ambiguity, which the pre-existing ambiguous_source
+        rule demotes for its own reasons, hiding whether this rule fired.
+        """
+        fields = [{"term": "inventory value", "role": "measure",
+                   "table": f"{SCHEMA}.F_INVENTORY_DAILY", "column": "INVENTORY_VALUE"}]
+        _demote_measures_with_a_rival_at_the_requested_grain(
+            fields, "month-end inventory value for February 2026",
+            {f"{SCHEMA}.F_INVENTORY_ARCHIVE": {"INVENTORY_VALUE": "decimal"}},
+        )
+        self.assertIsNone(fields[0].get("enforcement"))
+
+    def test_the_helper_fires_on_a_containment_rival(self):
+        """The paired positive: ENDING_INVENTORY_VALUE *does* count."""
+        fields = [{"term": "inventory value", "role": "measure",
+                   "table": f"{SCHEMA}.F_INVENTORY_DAILY", "column": "INVENTORY_VALUE"}]
+        _demote_measures_with_a_rival_at_the_requested_grain(
+            fields, "month-end inventory value for February 2026",
+            {f"{SCHEMA}.F_INVENTORY_MONTHLY": {"ENDING_INVENTORY_VALUE": "decimal"}},
+        )
+        self.assertEqual(fields[0]["enforcement"], "optional")
+
+    def test_a_dimension_field_is_never_demoted_by_this_rule(self):
+        fields = [{"term": "warehouse", "role": "dimension",
+                   "table": f"{SCHEMA}.D_WAREHOUSE", "column": "WAREHOUSE_NAME"}]
+        _demote_measures_with_a_rival_at_the_requested_grain(
+            fields, "month-end inventory value for February 2026",
+            {f"{SCHEMA}.OTHER": {"FULL_WAREHOUSE_NAME": "varchar"}},
+        )
+        self.assertIsNone(fields[0].get("enforcement"))
+
+    def test_other_grain_words_also_trigger_it(self):
+        for question in (
+            "monthly inventory value for February 2026",
+            "quarterly inventory value",
+        ):
+            self.assertEqual(self._fields(question)["INVENTORY_VALUE"], "optional", question)

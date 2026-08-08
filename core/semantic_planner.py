@@ -767,6 +767,64 @@ def _same_physical_table(left: str, right: str) -> bool:
     return left_parts[-1:] == right_parts[-1:]
 
 
+def _demote_measures_with_a_rival_at_the_requested_grain(
+    fields: list[dict],
+    question: str,
+    table_columns: dict[str, dict[str, str]],
+) -> None:
+    """Stop hard-requiring a measure when the question asks for another grain.
+
+    Live case 6 -- "month-end inventory value for February 2026" -- bound
+    "inventory value" to F_INVENTORY_DAILY.INVENTORY_VALUE and required it.
+    Nothing here consults the grain the question asked for, so a month-end
+    question was pinned to the daily snapshot fact. The generator correctly
+    wrote F_INVENTORY_MONTHLY.ENDING_INVENTORY_VALUE and was refused.
+
+    The rival is not found by name equality: the monthly column is
+    ENDING_INVENTORY_VALUE, which is why plain ambiguity detection missed it
+    and the exact match won outright. Match on containment instead -- another
+    fact carrying a column that *contains* this measure's name is a plausible
+    alternative source for the same quantity.
+
+    Demote rather than re-point: choosing the rival would mean guessing which
+    of its columns is the right one. Demoting lets generation use either,
+    which is all that is needed -- a wrong hard requirement rejects correct
+    SQL, a wrong hint merely fails to help.
+
+    Only fires when the question names a grain. Grain-free questions keep the
+    exact binding hard-required exactly as before.
+    """
+    # Imported here: core.contextual_dates imports from this module, so a
+    # top-level import would be circular.
+    from core.contextual_dates import requested_temporal_grain
+
+    grain = requested_temporal_grain(question)
+    if not grain:
+        return
+    for field in fields:
+        if field.get("enforcement") == "optional":
+            continue
+        if str(field.get("role") or "").strip().lower() not in {"measure", "measure_candidate"}:
+            continue
+        column = str(field.get("column") or "").upper()
+        home = str(field.get("table") or "").upper()
+        if not column or not home:
+            continue
+        rivals = [
+            table for table, cols in (table_columns or {}).items()
+            if str(table).upper() != home
+            and any(column in str(c).upper() and str(c).upper() != column for c in (cols or {}))
+        ]
+        if rivals:
+            field["enforcement"] = "optional"
+            field["demoted_reason"] = "rival_measure_at_requested_grain"
+            log.info(
+                "Demoted required measure %s.%s to optional: the question asks "
+                "for %s grain and %s also carries a column containing %s",
+                home, column, grain, sorted(rivals)[:3], column,
+            )
+
+
 def build_semantic_field_plan(
     question: str,
     table_columns: dict[str, dict[str, str]] | None,
@@ -799,6 +857,9 @@ def build_semantic_field_plan(
         # requirement (a wrong hard requirement rejects correct SQL).
         if field.get("ambiguous_source"):
             field["enforcement"] = "optional"
+    _demote_measures_with_a_rival_at_the_requested_grain(
+        fields, question, normalized_columns
+    )
     # Phase 3: lock the fact to the resolved measure before joins are built,
     # so a rival fact's field can never contribute a required join edge.
     _locked_fact = _anchor_fields_to_measure_fact(fields, fact_tables)
