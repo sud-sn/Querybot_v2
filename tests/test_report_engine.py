@@ -625,7 +625,16 @@ class RunDueReportDigestsTests(unittest.TestCase):
         base.update(overrides)
         return base
 
+    # Frozen so the class does not depend on the wall clock. run_due_report_digests
+    # calls datetime.now() and _subscription_due() compares it against the
+    # subscription's hour, so a default hour=8 fixture was only "due" when the
+    # suite happened to run after 08:00 -- these tests passed all day and began
+    # failing after midnight. Sibling test_not_due_subscription_skipped already
+    # froze time for exactly this reason; the rest did not.
+    FROZEN_NOW = (2026, 7, 27, 8, 0, 0)
+
     def _run(self, subs, *, report=_UNSET, user=_UNSET, response=None):
+        from datetime import datetime as _real_datetime
         captured = {}
         resolved_report = {"id": 1, "name": "R"} if report is _UNSET else report
         resolved_user = {"id": 7} if user is _UNSET else user
@@ -643,7 +652,9 @@ class RunDueReportDigestsTests(unittest.TestCase):
                   return_value=response if response is not None else {"ok": True, "message": "**R**", "items": []}) as mock_build,
             patch("core.report_engine._deliver_report_response", side_effect=_fake_deliver),
             patch("store.report_store.update_subscription") as mock_update,
+            patch("core.report_engine.datetime") as mock_dt,
         ):
+            mock_dt.now.return_value = _real_datetime(*self.FROZEN_NOW)
             re_engine.run_due_report_digests()
         return captured, mock_build, mock_update
 
@@ -706,7 +717,12 @@ class RunDueReportDigestsTests(unittest.TestCase):
             patch("core.report_engine.build_report_response", return_value={"ok": True, "message": "R", "items": []}),
             patch("core.report_engine._deliver_report_response", side_effect=_fake_deliver),
             patch("store.report_store.update_subscription"),
+            # Same freeze as _run(): this test builds its own patch block, so
+            # it did not inherit the fix and stayed wall-clock dependent.
+            patch("core.report_engine.datetime") as mock_dt,
         ):
+            from datetime import datetime as _real_datetime
+            mock_dt.now.return_value = _real_datetime(*self.FROZEN_NOW)
             re_engine.run_due_report_digests()  # must not raise
 
         self.assertEqual(captured["account_id"], "acct-ok")
