@@ -44,6 +44,7 @@ from core.contextual_dates import (  # noqa: E402
 )
 from core.date_roles import _label_from_column  # noqa: E402
 from core.dispatcher import _looks_like_data_request  # noqa: E402
+from core.response_builder import _period_comparison_from_rows  # noqa: E402
 from core.semantic_planner import _anchor_fields_to_measure_fact  # noqa: E402
 from core.semantic_model import (  # noqa: E402
     _is_measure_binding,
@@ -877,3 +878,49 @@ class MonthEndGrainTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PeriodComparisonNarrationTests(unittest.TestCase):
+    """Live case 3 — correct data, contradicting summary.
+
+    The comparison SQL returns one wide row of current/previous pairs. Treated
+    as a time series, first and last period are the same cell, so the summary
+    read "trended flat 0.0% from 2026-03 to 2026-03" while the table showed
+    2026-03 $500.00 against 2026-02 $400.00, +25%. A wrong summary over right
+    data is worse than an error: nothing signals the reader to distrust it.
+    """
+
+    LIVE_ROW = {
+        "CURRENT_MONTH": "2026-03", "CURRENT_REVENUE": 500.0,
+        "PREVIOUS_MONTH": "2026-02", "PREVIOUS_REVENUE": 400.0,
+        "DIFFERENCE": 100, "PCT_CHANGE": 25.0,
+    }
+
+    def test_live_row_is_recognised_as_a_comparison(self):
+        found = _period_comparison_from_rows([self.LIVE_ROW])
+        self.assertIsNotNone(found)
+        self.assertEqual(found["measure_column"], "CURRENT_REVENUE")
+        self.assertEqual(found["current_period"], "2026-03")
+        self.assertEqual(found["previous_period"], "2026-02")
+        self.assertAlmostEqual(found["pct_change"], 25.0)
+
+    def test_percentage_is_derived_when_absent(self):
+        found = _period_comparison_from_rows([{
+            "CURRENT_MONTH": "2026-03", "CURRENT_SALES": 80,
+            "PREVIOUS_MONTH": "2026-02", "PREVIOUS_SALES": 100,
+        }])
+        self.assertAlmostEqual(found["pct_change"], -20.0)
+
+    def test_label_pair_is_not_mistaken_for_the_measure(self):
+        """CURRENT_MONTH/PREVIOUS_MONTH are periods, not the quantity."""
+        found = _period_comparison_from_rows([self.LIVE_ROW])
+        self.assertNotEqual(found["measure_column"], "CURRENT_MONTH")
+
+    def test_non_comparison_shapes_are_left_alone(self):
+        for rows in (
+            [],
+            [{"WAREHOUSE_NAME": "W01", "TOTAL_REVENUE": 600}],      # grouped
+            [{"CURRENT_MONTH": "2026-03", "PREVIOUS_MONTH": "2026-02"}],  # labels only
+            [dict(LIVE) for LIVE in (PeriodComparisonNarrationTests.LIVE_ROW,) * 2],  # series
+        ):
+            self.assertIsNone(_period_comparison_from_rows(rows), rows)

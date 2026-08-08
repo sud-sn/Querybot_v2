@@ -450,6 +450,87 @@ def _build_kpi_payload(
     }
 
 
+_COMPARISON_PREFIXES = (("CURRENT_", "PREVIOUS_"), ("THIS_", "LAST_"))
+_PCT_CHANGE_COLUMNS = ("PCT_CHANGE", "PERCENT_CHANGE", "PCT_DIFF", "CHANGE_PCT")
+
+
+def _numeric_or_none(value: Any) -> float | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        return float(str(value).replace(",", "").replace("$", "").strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _period_comparison_from_rows(rows: list[dict]) -> dict | None:
+    """Recognise a single-row current-vs-previous comparison.
+
+    The SQL for a period comparison returns ONE wide row of paired columns
+    (CURRENT_x / PREVIOUS_x, plus a difference and percentage), not a series.
+    Narrating it as a trend produced "trended flat 0.0% from 2026-03 to
+    2026-03" over data that actually read 2026-03 $500 vs 2026-02 $400, +25%.
+
+    Column-naming convention only -- no tenant vocabulary. Requires a numeric
+    pair to call it a comparison; a non-numeric pair (e.g. CURRENT_MONTH /
+    PREVIOUS_MONTH) supplies the period labels instead.
+    """
+    if not rows or len(rows) != 1:
+        return None
+    row = rows[0]
+    if not isinstance(row, dict):
+        return None
+    upper = {str(k).upper(): k for k in row}
+
+    numeric_pair = None
+    label_pair = None
+    for cur_prefix, prev_prefix in _COMPARISON_PREFIXES:
+        for key_u, key in upper.items():
+            if not key_u.startswith(cur_prefix):
+                continue
+            suffix = key_u[len(cur_prefix):]
+            prev_u = f"{prev_prefix}{suffix}"
+            if prev_u not in upper:
+                continue
+            prev_key = upper[prev_u]
+            cur_val = _numeric_or_none(row.get(key))
+            prev_val = _numeric_or_none(row.get(prev_key))
+            if cur_val is not None and prev_val is not None:
+                if numeric_pair is None:
+                    numeric_pair = (key, prev_key, cur_val, prev_val)
+            elif label_pair is None:
+                label_pair = (row.get(key), row.get(prev_key))
+
+    if not numeric_pair:
+        return None
+    measure_col, previous_col, current_value, previous_value = numeric_pair
+
+    pct = None
+    for candidate in _PCT_CHANGE_COLUMNS:
+        if candidate in upper:
+            pct = _numeric_or_none(row.get(upper[candidate]))
+            if pct is not None:
+                break
+    if pct is None and previous_value:
+        pct = (current_value - previous_value) * 100.0 / previous_value
+
+    current_period, previous_period = ("the current period", "the previous period")
+    if label_pair and label_pair[0] is not None and label_pair[1] is not None:
+        current_period, previous_period = str(label_pair[0]), str(label_pair[1])
+
+    return {
+        "measure_column": measure_col,
+        "previous_column": previous_col,
+        "current_value": row.get(measure_col),
+        "previous_value": row.get(previous_col),
+        "current_period": current_period,
+        "previous_period": previous_period,
+        "pct_change": pct,
+    }
+
+
 def detect_zero_match_result(rows: list[dict]) -> bool:
     """
     True for a single-row diagnostic aggregate whose match-count column is
@@ -1077,6 +1158,30 @@ def _build_insight_summary(
         col = raw_col.replace("_", " ").title()
         val = brief.get("value", "")
         return f"{col}: {format_value(val, raw_col)}." if col else ""
+
+    # A period comparison arrives as ONE wide row (current/previous pairs), not
+    # a series. Classified as time_series it narrated "trended flat 0.0% from
+    # 2026-03 to 2026-03" -- first and last period of a single-row series are
+    # the same cell -- while the table correctly showed 2026-03 $500.00 against
+    # 2026-02 $400.00, +25%. Correct data with a contradicting summary is worse
+    # than an error: the reader gets no signal to distrust it.
+    _cmp = _period_comparison_from_rows(rows)
+    if _cmp:
+        measure = _display_label(_cmp["measure_column"])
+        cur = format_value(_cmp["current_value"], _cmp["measure_column"])
+        prev = format_value(_cmp["previous_value"], _cmp["previous_column"])
+        sentence = (
+            f"{measure} was {cur} in {_cmp['current_period']} "
+            f"versus {prev} in {_cmp['previous_period']}"
+        )
+        pct = _cmp.get("pct_change")
+        if pct is None:
+            return sentence + "."
+        if pct > 0:
+            return sentence + f" - up {abs(pct):.1f}%."
+        if pct < 0:
+            return sentence + f" - down {abs(pct):.1f}%."
+        return sentence + " - unchanged."
 
     if mode == "time_series":
         ts = brief.get("time_series") or {}
