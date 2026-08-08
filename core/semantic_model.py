@@ -1678,6 +1678,36 @@ def build_runtime_semantic_context(
     return "\n".join(header + deduped)
 
 
+# A surrogate/business key never carries a measure. Universal warehouse naming,
+# not tenant vocabulary -- the same suffix set the label and role helpers use.
+_KEY_SUFFIX_RE = re.compile(r"(?:^|_)(?:SK|KEY|ID|FK|CODE|CD|NO|NUM|NBR)$", re.I)
+_DIMENSION_ROLES = {"dimension", "display_dimension", "date_dimension"}
+
+
+def _is_measure_binding(field: dict[str, Any]) -> bool:
+    """Is this plan field plausibly the measure being asked for?
+
+    Cannot rely on role=="measure": build_runtime_semantic_plan defaults an
+    approved field's role to "attribute", so the live Revenue binding arrived
+    as role=attribute and no measure was ever found. Use positive evidence
+    instead, in order of reliability:
+
+      1. an explicit measure role, when present;
+      2. never a dimension/date-dimension binding;
+      3. otherwise, any column that is not a key -- a key column is plumbing
+         for a join, never the quantity under analysis.
+    """
+    role = str(field.get("role") or "").strip().lower()
+    if role in {"measure", "measure_candidate"}:
+        return True
+    if role in _DIMENSION_ROLES:
+        return False
+    column = str(field.get("column") or "")
+    if not column:
+        return False
+    return not bool(_KEY_SUFFIX_RE.search(column))
+
+
 def _scope_plan_to_single_fact(
     fields: list[dict[str, Any]],
     joins: list[dict[str, Any]],
@@ -1770,11 +1800,22 @@ def _scope_plan_to_single_fact(
         (
             str(f.get("table") or "").upper()
             for f in fields
-            if str(f.get("role") or "") in {"measure", "measure_candidate"}
-            and _is_fact(f.get("table"))
+            if _is_measure_binding(f) and _is_fact(f.get("table"))
         ),
-        distinct_facts[0],
+        "",
     )
+    if not anchor:
+        # Deliberately no fallback. The previous code defaulted to
+        # distinct_facts[0] -- list order, not evidence -- and production
+        # showed what that costs: for "total revenue by warehouse" it anchored
+        # on ERP_ITM_BAL_PRD_FCT and demoted the real measure
+        # (F_SALES_INVOICE.NET_REVENUE_AMOUNT), keeping the wrong binding
+        # required. A guess that can invert the answer is worse than no rule.
+        log.info(
+            "Fact scoping made no change: no measure binding identifies an "
+            "anchor among %s - refusing to guess", distinct_facts,
+        )
+        return ""
 
     demoted_fields: list[str] = []
     for field in fields:

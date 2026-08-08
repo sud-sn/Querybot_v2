@@ -46,6 +46,7 @@ from core.date_roles import _label_from_column  # noqa: E402
 from core.dispatcher import _looks_like_data_request  # noqa: E402
 from core.semantic_planner import _anchor_fields_to_measure_fact  # noqa: E402
 from core.semantic_model import (  # noqa: E402
+    _is_measure_binding,
     _business_role_from_column,
     _scope_plan_to_single_fact,
 )
@@ -189,6 +190,81 @@ class CrossFactPlanScopingTests(unittest.TestCase):
         _scope_plan_to_single_fact(fields, [], tables)
         self.assertEqual(fields[0]["enforcement"], "optional")
         self.assertNotIn("demoted_reason", fields[0])
+
+    def test_live_plan_shape_anchors_on_the_measure_fact(self):
+        """Field shapes copied verbatim from the production log.
+
+        The measure arrives as role="attribute" (build_runtime_semantic_plan
+        defaults an approved field's role), so anchoring on role=="measure"
+        found nothing and the old distinct_facts[0] fallback picked ERP by
+        list order -- demoting the real measure and keeping the wrong binding
+        required. That is how correct SQL kept being rejected.
+        """
+        fields = [
+            {"term": "warehouse", "role": "dimension",
+             "table": f"{DATABASE}.{SCHEMA}.ERP_ITM_BAL_PRD_FCT",
+             "column": "WHS_DMS_KEY"},
+            {"term": "Revenue", "role": "attribute", "enforcement": "required",
+             "table": f"{SCHEMA}.F_SALES_INVOICE",
+             "column": "NET_REVENUE_AMOUNT"},
+        ]
+        tables = [
+            {"qualified_name": f"{SCHEMA}.ERP_ITM_BAL_PRD_FCT", "type": "fact"},
+            {"qualified_name": f"{SCHEMA}.F_SALES_INVOICE", "type": "fact"},
+        ]
+        anchor = _scope_plan_to_single_fact(fields, [], tables)
+        self.assertEqual(anchor, f"{SCHEMA}.F_SALES_INVOICE".upper())
+        self.assertEqual(fields[0]["enforcement"], "optional")   # ERP key
+        self.assertEqual(fields[1]["enforcement"], "required")   # measure kept
+
+    def test_anchor_order_does_not_decide(self):
+        """Same plan, facts listed the other way round -> same anchor."""
+        for erp_first in (True, False):
+            erp = {"term": "warehouse", "role": "dimension",
+                   "table": f"{SCHEMA}.ERP_ITM_BAL_PRD_FCT", "column": "WHS_DMS_KEY"}
+            rev = {"term": "Revenue", "role": "attribute", "enforcement": "required",
+                   "table": f"{SCHEMA}.F_SALES_INVOICE", "column": "NET_REVENUE_AMOUNT"}
+            fields = [erp, rev] if erp_first else [rev, erp]
+            tables = [
+                {"qualified_name": f"{SCHEMA}.ERP_ITM_BAL_PRD_FCT", "type": "fact"},
+                {"qualified_name": f"{SCHEMA}.F_SALES_INVOICE", "type": "fact"},
+            ]
+            self.assertEqual(
+                _scope_plan_to_single_fact(fields, [], tables),
+                f"{SCHEMA}.F_SALES_INVOICE".upper(),
+                f"anchor changed with field order (erp_first={erp_first})",
+            )
+            self.assertEqual(erp["enforcement"], "optional")
+
+    def test_no_measure_means_no_demotion(self):
+        """Refuse to guess: two key bindings, no measure -> change nothing.
+
+        The old fallback would have picked one arbitrarily and demoted the
+        other, which is how a wrong anchor silently inverted the plan.
+        """
+        fields = [
+            {"term": "warehouse", "role": "dimension",
+             "table": f"{SCHEMA}.ERP_ITM_BAL_PRD_FCT", "column": "WHS_DMS_KEY"},
+            {"term": "warehouse", "role": "dimension",
+             "table": f"{SCHEMA}.F_INVENTORY_DAILY", "column": "WAREHOUSE_SK"},
+        ]
+        tables = [
+            {"qualified_name": f"{SCHEMA}.ERP_ITM_BAL_PRD_FCT", "type": "fact"},
+            {"qualified_name": f"{SCHEMA}.F_INVENTORY_DAILY", "type": "fact"},
+        ]
+        self.assertEqual(_scope_plan_to_single_fact(fields, [], tables), "")
+        self.assertNotIn("enforcement", fields[0])
+        self.assertNotIn("enforcement", fields[1])
+
+    def test_key_columns_are_never_treated_as_measures(self):
+        for column, expected in (
+            ("NET_REVENUE_AMOUNT", True), ("INVENTORY_VALUE", True),
+            ("WHS_DMS_KEY", False), ("WAREHOUSE_SK", False),
+            ("CUSTOMER_ID", False), ("PRODUCT_CODE", False),
+        ):
+            self.assertEqual(
+                _is_measure_binding({"column": column}), expected, column,
+            )
 
     def test_single_fact_plan_keeps_every_requirement(self):
         fields = [
