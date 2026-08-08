@@ -1186,3 +1186,43 @@ class SurrogateKeyDisplayNameTests(unittest.TestCase):
         self.assertIsNotNone(_find_display_field_for_key(
             "WAREHOUSE_SK", "warehouse", "inventory by warehouse", self.STAR, None, ""
         ))
+
+
+class SurrogateKeyDisplayPromptRuleTests(unittest.TestCase):
+    """Live cases 7/12 again: the planner never emits the dimension field, so
+    the display-name resolver is never reached. The decision is made by the
+    generator, which grouped by WAREHOUSE_SK / CATEGORY_SK -- valid SQL that
+    reports integers to a user. The existing CROSS-TABLE rule does not bite
+    because it assumes the grouping column lives in a dimension table; here
+    the key sits on the fact, so grouping by it "works".
+    """
+
+    def _prompt(self, db_type="azure_sql"):
+        from core.llm import build_sql_system_prompt
+        return build_sql_system_prompt(db_type, "TABLE CONTEXT")
+
+    def test_the_rule_is_present(self):
+        self.assertIn("SURROGATE KEY DISPLAY RULE", self._prompt())
+
+    def test_it_names_the_key_suffixes_the_resolver_recognises(self):
+        prompt = self._prompt()
+        for suffix in ("_SK", "_KEY", "_ID", "_FK", "_DMS_KEY"):
+            self.assertIn(suffix, prompt, suffix)
+
+    def test_it_names_the_display_suffixes_the_resolver_looks_for(self):
+        prompt = self._prompt()
+        for suffix in ("_NAME", "_DESC", "_DSC", "_DESCRIPTION", "_NM"):
+            self.assertIn(suffix, prompt, suffix)
+
+    def test_it_keeps_the_explicit_key_request_escape_hatch(self):
+        """Must agree with _question_asks_for_key, or the two layers fight."""
+        prompt = self._prompt().lower()
+        self.assertIn("explicitly asked for the key", prompt)
+
+    def test_it_forbids_inventing_a_dimension(self):
+        prompt = self._prompt().lower()
+        self.assertIn("never invent a table or column", prompt)
+
+    def test_the_rule_reaches_every_dialect(self):
+        for db_type in ("azure_sql", "postgres", "snowflake"):
+            self.assertIn("SURROGATE KEY DISPLAY RULE", self._prompt(db_type), db_type)
