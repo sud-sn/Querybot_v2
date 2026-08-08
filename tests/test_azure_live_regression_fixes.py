@@ -53,6 +53,7 @@ from core.dispatcher import _looks_like_data_request  # noqa: E402
 from core.response_builder import _period_comparison_from_rows  # noqa: E402
 from core.semantic_planner import (  # noqa: E402
     _anchor_fields_to_measure_fact,
+    _source_signal_tokens,
     _demote_measures_with_a_rival_at_the_requested_grain,
     build_semantic_field_plan,
     _find_display_field_for_key,
@@ -1588,3 +1589,87 @@ class AbsencePhrasingIsADataRequestTests(unittest.TestCase):
     def test_ordinary_data_requests_are_unaffected(self):
         self.assertTrue(_looks_like_data_request("What is total revenue by warehouse?"))
         self.assertTrue(_looks_like_data_request("Allocate total revenue by product category."))
+
+
+class ExplicitlyNamedSourceScopingTests(unittest.TestCase):
+    """Live cases 4/10/16: a source named in the question did not scope it.
+
+    Candidate scoring compares a term against column names only, so "using the
+    M3 balance data" and "from the ERP item balance fact" carried no weight,
+    and case 4 ignored the client's own KB rule about which table anchors a
+    relative period.
+
+    The scoping test is deliberately narrow. A token qualifies as naming a
+    *source* only if it appears in a table name and in no column anywhere in
+    the schema. WAREHOUSE names D_WAREHOUSE but is also WAREHOUSE_SK, so
+    scoping on it would drop the measure from "inventory value by warehouse"
+    and break cases 1, 7 and 12 -- a fix that costs more than the bug.
+    """
+
+    COLS = {
+        "QBOT_LIVE_TEST.F_INVENTORY_DAILY": {
+            "WAREHOUSE_SK": "int", "INVENTORY_VALUE": "decimal", "SNAPSHOT_DATE": "date",
+        },
+        "QBOT_LIVE_TEST.ERP_ITM_BAL_PRD_FCT": {
+            "ITM_DMS_KEY": "int", "WHS_DMS_KEY": "int",
+            "PRD_DMS_KEY": "int", "INV_VAL_AMT": "decimal",
+        },
+        "QBOT_LIVE_TEST.D_WAREHOUSE": {"WAREHOUSE_SK": "int", "WAREHOUSE_NAME": "varchar"},
+    }
+
+    def _tables(self, question, cols=None):
+        plan = build_semantic_field_plan(
+            question, cols or self.COLS, set(cols or self.COLS), "QBOT_LIVE_TEST"
+        )
+        return {f["table"].split(".")[-1] for f in (plan.get("fields") or [])}
+
+    def test_a_named_source_scopes_the_plan(self):
+        tables = self._tables(
+            "From the ERP item balance fact, show the latest monthly inventory value by warehouse."
+        )
+        self.assertIn("ERP_ITM_BAL_PRD_FCT", tables)
+        self.assertNotIn("F_INVENTORY_DAILY", tables)
+
+    def test_a_question_naming_no_source_is_unchanged(self):
+        """The regression that matters: scoping must be a silent no-op here."""
+        self.assertEqual(
+            self._tables("Show inventory value by warehouse"),
+            {"F_INVENTORY_DAILY", "ERP_ITM_BAL_PRD_FCT"},
+        )
+
+    def test_a_dimension_name_is_not_a_source_signal(self):
+        """WAREHOUSE names a table AND columns, so it must not scope."""
+        tables = self._tables("Show inventory value by warehouse")
+        self.assertIn("F_INVENTORY_DAILY", tables)
+
+    def test_source_signal_tokens_exclude_column_words(self):
+        signals = _source_signal_tokens(self.COLS)
+        flat = set().union(*signals.values()) if signals else set()
+        self.assertIn("ERP", flat)
+        self.assertNotIn("WAREHOUSE", flat)   # also WAREHOUSE_SK / WAREHOUSE_NAME
+        self.assertNotIn("PRD", flat)         # also PRD_DMS_KEY
+        self.assertNotIn("ITM", flat)         # also ITM_DMS_KEY
+
+    def test_layer_prefixes_are_not_source_signals(self):
+        signals = _source_signal_tokens(self.COLS)
+        flat = set().union(*signals.values()) if signals else set()
+        for token in ("D", "F", "FCT", "DMS"):
+            self.assertNotIn(token, flat, token)
+
+    def test_a_named_source_without_the_term_declines_rather_than_emptying(self):
+        """M3's cryptic columns match no business term, so no candidate exists
+        there. Scoping to an empty set would lose the plan entirely."""
+        cols = dict(self.COLS)
+        cols["QBOT_LIVE_TEST.M3_MITBAL"] = {"MLWHLO": "varchar", "MLAVAL": "decimal"}
+        tables = self._tables(
+            "Using the M3 balance data, show March inventory value by warehouse.", cols
+        )
+        self.assertTrue(tables, "scoping emptied the plan instead of declining")
+
+    def test_matching_is_case_insensitive(self):
+        """_norm lowercases the question; signal tokens come from table names
+        in upper case. A direct comparison silently never matched."""
+        self.assertIn(
+            "ERP_ITM_BAL_PRD_FCT",
+            self._tables("from the erp item balance fact show inventory value by warehouse"),
+        )
