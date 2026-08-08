@@ -1226,3 +1226,87 @@ class SurrogateKeyDisplayPromptRuleTests(unittest.TestCase):
     def test_the_rule_reaches_every_dialect(self):
         for db_type in ("azure_sql", "postgres", "snowflake"):
             self.assertIn("SURROGATE KEY DISPLAY RULE", self._prompt(db_type), db_type)
+
+
+class CalendarAttributeSatisfiesDateRoleTests(unittest.TestCase):
+    """Live case 13: a textbook multi-fact comparison was refused.
+
+    The generated SQL joined D_DATE through the planned Invoice Date role and
+    filtered CALENDAR_YEAR = 2026 AND CALENDAR_MONTH_NAME = 'March'. It was
+    rejected for "not using QBOT_LIVE_TEST.D_DATE.FULL_DATE" -- the validator
+    demanded that one literal column and treated every sibling attribute of
+    the same correctly-joined dimension as a miss.
+
+    A date role identifies which date *concept* to use; the join establishes
+    it. Filtering on that dimension's year/month expresses the role exactly
+    as faithfully as its date column does.
+    """
+
+    def _plan(self, **extra):
+        field = {
+            "term": "Invoice Date",
+            "table": f"{SCHEMA}.D_DATE",
+            "column": "FULL_DATE",
+            "role": "date_dimension",
+        }
+        field.update(extra)
+        return {"enabled": True, "fields": [field], "joins": []}
+
+    CALENDAR_ATTRS = {
+        "date": "FULL_DATE",
+        "year": "CALENDAR_YEAR",
+        "month": "CALENDAR_MONTH_NUMBER",
+    }
+
+    LIVE_SQL = f"""
+        SELECT d.CALENDAR_YEAR, SUM(f.NET_REVENUE_AMOUNT) AS MARCH_REVENUE
+        FROM {SCHEMA}.F_SALES_INVOICE f
+        JOIN {SCHEMA}.D_DATE d ON f.INVOICE_DATE_SK = d.DATE_SK
+        WHERE d.CALENDAR_YEAR = 2026 AND d.CALENDAR_MONTH_NUMBER = 3
+        GROUP BY d.CALENDAR_YEAR
+    """
+
+    def _codes(self, sql, plan):
+        result = _validate(sql, {"semantic_plan": plan})
+        return {e.get("code") for e in (result.errors or [])}
+
+    def test_a_calendar_attribute_now_satisfies_the_date_role(self):
+        codes = self._codes(
+            self.LIVE_SQL, self._plan(calendar_attributes=self.CALENDAR_ATTRS)
+        )
+        self.assertNotIn("field_plan_mismatch", codes)
+
+    def test_the_planned_column_itself_still_satisfies_it(self):
+        sql = f"""
+            SELECT d.FULL_DATE, SUM(f.NET_REVENUE_AMOUNT) AS REV
+            FROM {SCHEMA}.F_SALES_INVOICE f
+            JOIN {SCHEMA}.D_DATE d ON f.INVOICE_DATE_SK = d.DATE_SK
+            GROUP BY d.FULL_DATE
+        """
+        codes = self._codes(sql, self._plan(calendar_attributes=self.CALENDAR_ATTRS))
+        self.assertNotIn("field_plan_mismatch", codes)
+
+    def test_ignoring_the_date_dimension_entirely_is_still_rejected(self):
+        """The guard must still catch SQL that never uses the role at all."""
+        # Grouped, so this isolates the field-plan check rather than tripping
+        # the bare-aggregate diagnostic on a different path.
+        sql = f"""
+            SELECT POSTING_YYYYMM, SUM(NET_REVENUE_AMOUNT) AS REV
+            FROM {SCHEMA}.F_SALES_INVOICE
+            WHERE POSTING_YYYYMM = 202603
+            GROUP BY POSTING_YYYYMM
+        """
+        codes = self._codes(sql, self._plan(calendar_attributes=self.CALENDAR_ATTRS))
+        self.assertIn("field_plan_mismatch", codes)
+
+    def test_without_calendar_attributes_nothing_is_loosened(self):
+        """Non-date fields carry no attributes, so their check is unchanged."""
+        codes = self._codes(self.LIVE_SQL, self._plan())
+        self.assertIn("field_plan_mismatch", codes)
+
+    def test_a_blank_attribute_entry_is_ignored(self):
+        codes = self._codes(
+            self.LIVE_SQL,
+            self._plan(calendar_attributes={"date": "FULL_DATE", "quarter": ""}),
+        )
+        self.assertIn("field_plan_mismatch", codes)

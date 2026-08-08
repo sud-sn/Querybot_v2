@@ -2610,8 +2610,25 @@ def validate_sql_detailed(
                 # the formula is the authoritative source — skip this check.
                 if plan_col in _metric_formula_cols:
                     continue
+                # A date role says *which date concept* to use; the governed
+                # join is what establishes it. Once the SQL has joined the
+                # calendar dimension through the planned role, filtering on
+                # CALENDAR_YEAR or CALENDAR_MONTH_NAME of that same dimension
+                # expresses the role exactly as faithfully as FULL_DATE does.
+                # Demanding the one literal column rejected correct SQL:
+                # live case 13 joined D_DATE via INVOICE_DATE_SK and filtered
+                # CALENDAR_YEAR = 2026 AND CALENDAR_MONTH_NAME = 'March', and
+                # was refused for "not using" QBOT_LIVE_TEST.D_DATE.FULL_DATE.
+                # The alternatives are not guessed -- calendar_attributes is
+                # discovered from the live schema by infer_calendar_attributes,
+                # and is absent on non-date fields, so nothing else loosens.
+                acceptable_cols = {plan_col}
+                for attr_col in (field.get("calendar_attributes") or {}).values():
+                    attr_name = str(attr_col or "").strip().upper()
+                    if attr_name:
+                        acceptable_cols.add(attr_name)
                 field_visible = any(
-                    _table_matches(used_table, plan_table) and used_col == plan_col
+                    _table_matches(used_table, plan_table) and used_col in acceptable_cols
                     for used_table, used_col in used_columns
                 )
                 if not field_visible:
@@ -2620,7 +2637,10 @@ def validate_sql_detailed(
                     # an alias directly bound to the planned physical table is
                     # sufficient evidence even if the catalog key was not.
                     for col_node in tree.find_all(sg_exp.Column):
-                        if (col_node.name or "").upper() != plan_col:
+                        # Same acceptance set as above -- this fallback exists
+                        # for catalogs that qualify tables differently, and
+                        # must not re-impose the exact-column rule.
+                        if (col_node.name or "").upper() not in acceptable_cols:
                             continue
                         table_ref = (col_node.table or "").upper()
                         for table_node in tree.find_all(sg_exp.Table):
