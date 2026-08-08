@@ -585,10 +585,31 @@ def _demote_fields_off_resolved_fact(plan: dict, date_plan: dict) -> dict:
         resolved = _bare_table_name(policy.get("table"))
         if resolved:
             break
-    if not resolved:
-        return plan
     facts = {_bare_table_name(t) for t in (plan.get("known_fact_tables") or []) if t}
-    if not facts or resolved not in facts:
+    # Log unconditionally, including every early return. This arbitration
+    # shipped inert once already: it left the live case unchanged and there
+    # was no way to tell from the outside whether it ran and declined, or
+    # never ran at all. Both are recoverable; not knowing which is not.
+    log.info(
+        "Date-fact arbitration: resolved_fact=%r known_facts=%r "
+        "date_key_policies=%r required_fact_fields=%r",
+        resolved, sorted(facts),
+        [(p.get("table"), p.get("column")) for p in (date_plan.get("date_key_policies") or [])],
+        [(f.get("table"), f.get("column"), f.get("role"), f.get("enforcement"))
+         for f in (plan.get("fields") or [])
+         if _bare_table_name(f.get("table")) in facts],
+    )
+    if not resolved:
+        log.info("Date-fact arbitration skipped: the date plan named no fact")
+        return plan
+    if not facts:
+        log.info("Date-fact arbitration skipped: the plan carries no known_fact_tables")
+        return plan
+    if resolved not in facts:
+        log.info(
+            "Date-fact arbitration skipped: resolved fact %r is not among the "
+            "model's known facts %r", resolved, sorted(facts),
+        )
         return plan
     for field in plan.get("fields") or []:
         if field.get("enforcement") == "optional":
@@ -2225,10 +2246,18 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     # semantic plan so both generation and validation receive the same rule.
     _date_context_resolution: dict = {"status": "none"}
     _selected_date_bindings: list[dict] = []
-    if (
-        question_has_temporal_intent(_semantic_plan_question)
-        or question_has_snapshot_intent(_semantic_plan_question)
-    ):
+    # Everything downstream of this gate -- date-role resolution, the date plan,
+    # and the fact arbitration that consumes it -- is silent when the gate is
+    # closed. Record the decision itself so an absent arbitration log can be
+    # read as "the gate was shut" rather than "the hook is broken".
+    _temporal_intent = question_has_temporal_intent(_semantic_plan_question)
+    _snapshot_intent = question_has_snapshot_intent(_semantic_plan_question)
+    log.info(
+        "Date-context gate for %r: temporal_intent=%s snapshot_intent=%s -> %s",
+        (_semantic_plan_question or "")[:80], _temporal_intent, _snapshot_intent,
+        "entering date resolution" if (_temporal_intent or _snapshot_intent) else "SKIPPED",
+    )
+    if _temporal_intent or _snapshot_intent:
         try:
             _metric_ids = [
                 int(metric.get("id") or 0) for metric in _matched_metrics
