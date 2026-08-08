@@ -48,7 +48,12 @@ from core.date_roles import _label_from_column  # noqa: E402
 from core.query_pipeline import _date_option_labels  # noqa: E402
 from core.dispatcher import _looks_like_data_request  # noqa: E402
 from core.response_builder import _period_comparison_from_rows  # noqa: E402
-from core.semantic_planner import _anchor_fields_to_measure_fact  # noqa: E402
+from core.semantic_planner import (  # noqa: E402
+    _anchor_fields_to_measure_fact,
+    _find_display_field_for_key,
+    _is_key_column,
+    _key_prefix,
+)
 from core.semantic_model import (  # noqa: E402
     _is_measure_binding,
     _business_role_from_column,
@@ -1093,3 +1098,91 @@ class StableDateOptionLabelTests(unittest.TestCase):
             lowered = label.lower()
             for leak in ("snapshot_", "invoice_date_sk", "yyyymmdd", "_sk", "f_", "qbot"):
                 self.assertNotIn(leak, lowered, label)
+
+
+class SurrogateKeyDisplayNameTests(unittest.TestCase):
+    """Live cases 7/12: correct totals reported against raw surrogate keys.
+
+        WAREHOUSE_SK  DAILY_INVENTORY_VALUE        CATEGORY_ID  TOTAL_REVENUE
+        10            $1,200.00                    1,000        $760.00
+
+    The planner already knows how to swap a key for its dimension's display
+    name, but every gate on that path tested for "_KEY"/"_DMS_KEY" -- the
+    Infor M3 convention. A Kimball star schema names its keys "_SK", so
+    _key_prefix returned "", the finder bailed, and the upgrade never ran.
+    A fix that only recognises one customer's naming is not a fix.
+    """
+
+    STAR = {
+        "SALES.F_INVENTORY_DAILY": {
+            "WAREHOUSE_SK": "int", "INVENTORY_VALUE": "decimal",
+        },
+        "SALES.D_WAREHOUSE": {"WAREHOUSE_SK": "int", "WAREHOUSE_NAME": "varchar"},
+        "SALES.D_CATEGORY": {"CATEGORY_SK": "int", "CATEGORY_NAME": "varchar"},
+    }
+
+    def test_kimball_surrogate_key_resolves_to_its_display_name(self):
+        found = _find_display_field_for_key(
+            "WAREHOUSE_SK", "", "inventory by warehouse", self.STAR, None, ""
+        )
+        self.assertEqual(found["table"], "SALES.D_WAREHOUSE")
+        self.assertEqual(found["column"], "WAREHOUSE_NAME")
+        self.assertEqual(found["source_key_column"], "WAREHOUSE_SK")
+
+    def test_the_m3_convention_still_works(self):
+        """The path this originally served must not regress."""
+        m3 = {
+            "ERP.ITM_BAL_FCT": {"WHS_DMS_KEY": "int", "INV_VAL_AMT": "decimal"},
+            "ERP.WHS_DMS": {"WHS_DMS_KEY": "int", "WHS_DSC": "varchar"},
+        }
+        found = _find_display_field_for_key(
+            "WHS_DMS_KEY", "", "inventory by warehouse", m3, None, ""
+        )
+        self.assertEqual(found["column"], "WHS_DSC")
+
+    def test_a_foreign_schema_and_convention_also_resolves(self):
+        pharma = {
+            "RWE.FACT_RX": {"PRESCRIBER_ID": "int", "TRX": "int"},
+            "RWE.DIM_PRESCRIBER": {"PRESCRIBER_ID": "int", "PRESCRIBER_NAME": "varchar"},
+        }
+        found = _find_display_field_for_key(
+            "PRESCRIBER_ID", "", "trx by prescriber", pharma, None, ""
+        )
+        self.assertEqual(found["column"], "PRESCRIBER_NAME")
+
+    def test_display_and_degenerate_columns_are_not_keys(self):
+        """_CODE/_CD/_NO are display or degenerate; treating them as keys
+        would let a column become its own display field."""
+        for column in ("WAREHOUSE_CODE", "STATUS_CD", "ORDER_NO", "INVENTORY_VALUE"):
+            self.assertFalse(_is_key_column(column), column)
+
+    def test_a_bare_suffix_is_not_a_key(self):
+        for column in ("_SK", "_KEY", "_ID", ""):
+            self.assertFalse(_is_key_column(column), column)
+
+    def test_key_prefix_covers_every_recognised_suffix(self):
+        self.assertEqual(_key_prefix("WAREHOUSE_SK"), "WAREHOUSE")
+        self.assertEqual(_key_prefix("PRESCRIBER_ID"), "PRESCRIBER")
+        self.assertEqual(_key_prefix("CUSTOMER_FK"), "CUSTOMER")
+        self.assertEqual(_key_prefix("PRODUCT_KEY"), "PRODUCT")
+        self.assertEqual(_key_prefix("WHS_DMS_KEY"), "WHS")
+        self.assertEqual(_key_prefix("INVENTORY_VALUE"), "")
+
+    def test_no_display_table_means_no_upgrade_rather_than_a_guess(self):
+        orphan = {"SALES.F_ORDERS": {"CARRIER_SK": "int", "FREIGHT_AMT": "decimal"}}
+        self.assertIsNone(
+            _find_display_field_for_key("CARRIER_SK", "", "freight by carrier", orphan, None, "")
+        )
+
+    def test_asking_for_the_key_itself_is_respected(self):
+        """The caller passes the business term; the question names the key."""
+        self.assertIsNone(_find_display_field_for_key(
+            "WAREHOUSE_SK", "warehouse", "show the warehouse sk", self.STAR, None, ""
+        ))
+        self.assertIsNone(_find_display_field_for_key(
+            "WAREHOUSE_SK", "warehouse", "list the warehouse id", self.STAR, None, ""
+        ))
+        # ...but an ordinary breakdown still gets the name.
+        self.assertIsNotNone(_find_display_field_for_key(
+            "WAREHOUSE_SK", "warehouse", "inventory by warehouse", self.STAR, None, ""
+        ))

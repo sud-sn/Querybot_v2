@@ -420,7 +420,9 @@ def _question_asks_for_key(term: str, question: str) -> bool:
     term_norm = _norm(term)
     if not term_norm:
         return False
-    key_words = ("key", "id", "identifier", "number")
+    # "sk"/"fk" belong here now that those suffixes are recognised as keys:
+    # a user who asks for "warehouse sk" wants the key, not the display name.
+    key_words = ("key", "id", "identifier", "number", "sk", "fk")
     return any(
         re.search(rf"(?<![a-z0-9]){re.escape(term_norm)}\s+{word}(?![a-z0-9])", q)
         or re.search(rf"(?<![a-z0-9]){word}\s+{re.escape(term_norm)}(?![a-z0-9])", q)
@@ -439,12 +441,30 @@ def _question_asks_for_code(term: str, question: str) -> bool:
     )
 
 
-def _key_prefix(column: str) -> str:
+# Surrogate/foreign-key suffixes, longest first so "_DMS_KEY" wins over "_KEY".
+# Deliberately excludes _CODE/_CD/_NO/_NUM: those are display or degenerate
+# columns, and treating them as keys would make a column its own display field.
+_KEY_SUFFIXES = ("_DMS_KEY", "_KEY", "_SK", "_FK", "_ID")
+
+
+def _is_key_column(column: str) -> bool:
     col = (column or "").upper()
-    if col.endswith("_DMS_KEY"):
-        return col[:-8]
-    if col.endswith("_KEY"):
-        return col[:-4]
+    return any(col.endswith(suffix) and len(col) > len(suffix) for suffix in _KEY_SUFFIXES)
+
+
+def _key_prefix(column: str) -> str:
+    """Strip a surrogate-key suffix to get the entity name it points at.
+
+    Recognises the Kimball convention (_SK), the generic one (_ID/_FK/_KEY)
+    and the Infor M3 one (_DMS_KEY). Previously only the last two were
+    handled, so WAREHOUSE_SK yielded no prefix and the display-name upgrade
+    below could never fire on a standard star schema -- warehouses and
+    categories were reported to users as raw surrogate keys (10, 20, 30).
+    """
+    col = (column or "").upper()
+    for suffix in _KEY_SUFFIXES:
+        if col.endswith(suffix) and len(col) > len(suffix):
+            return col[: -len(suffix)]
     return ""
 
 
@@ -467,7 +487,12 @@ def _display_table_score(table: str, key_prefix: str) -> int:
     score = 0
     if bare == f"{key_prefix}_DMS":
         score += 12
-    if bare.startswith("DIM_"):
+    # An exact dimension-table match under the common naming conventions
+    # deserves the same weight as the M3 one above: D_WAREHOUSE for
+    # WAREHOUSE_SK is as strong a signal as WAREHOUSE_DMS for WAREHOUSE_DMS_KEY.
+    if key_prefix and bare in {f"D_{key_prefix}", f"DIM_{key_prefix}", key_prefix}:
+        score += 12
+    if bare.startswith(("DIM_", "D_")):
         score += 8
     if "FCT" not in bare and "FACT" not in bare:
         score += 4
@@ -486,7 +511,7 @@ def _find_display_field_for_key(
 ) -> dict | None:
     key_col = (key_column or "").upper()
     prefix = _key_prefix(key_col)
-    if not prefix or not key_col.endswith("_KEY"):
+    if not prefix or not _is_key_column(key_col):
         return None
     if _question_asks_for_key(term, question):
         return None
@@ -532,7 +557,7 @@ def _apply_display_dimension_fields(
     out: list[dict] = []
     for field in fields:
         col = (field.get("column") or "").upper()
-        if field.get("role") == "dimension" and col.endswith("_DMS_KEY"):
+        if field.get("role") == "dimension" and _is_key_column(col):
             display = _find_display_field_for_key(
                 col,
                 field.get("term") or "",
