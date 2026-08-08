@@ -45,7 +45,10 @@ from core.contextual_dates import (  # noqa: E402
     requested_temporal_grain,
 )
 from core.date_roles import _label_from_column  # noqa: E402
-from core.query_pipeline import _date_option_labels  # noqa: E402
+from core.query_pipeline import (  # noqa: E402
+    _date_option_labels,
+    _demote_fields_off_resolved_fact,
+)
 from core.dispatcher import _looks_like_data_request  # noqa: E402
 from core.response_builder import _period_comparison_from_rows  # noqa: E402
 from core.semantic_planner import (  # noqa: E402
@@ -1368,3 +1371,82 @@ class PerScopeAliasResolutionTests(unittest.TestCase):
         """
         errs = self._errs(sql)
         self.assertEqual([e["column"] for e in errs], ["NOPE"])
+
+
+class ResolvedDateFactArbitratesTests(unittest.TestCase):
+    """Live case 6: "month-end inventory value for February 2026" died.
+
+    The temporal resolver picked F_INVENTORY_MONTHLY and said so on screen.
+    The field plan bound "inventory value" to F_INVENTORY_DAILY.INVENTORY_VALUE.
+    The LLM wrote exactly the right SQL --
+
+        SELECT SUM(ENDING_INVENTORY_VALUE) FROM F_INVENTORY_MONTHLY
+        WHERE PERIOD_YYYYMM = 202602
+
+    -- and was refused for not using the daily column. No repair can satisfy
+    both requirements, so the query returned no answer at all.
+    """
+
+    MONTHLY = f"{SCHEMA}.F_INVENTORY_MONTHLY"
+    DAILY = f"{SCHEMA}.F_INVENTORY_DAILY"
+
+    def _plan(self, **extra):
+        plan = {
+            "enabled": True,
+            "known_fact_tables": [self.MONTHLY, self.DAILY],
+            "fields": [
+                {"term": "inventory value", "table": self.DAILY,
+                 "column": "INVENTORY_VALUE", "role": "measure"},
+                {"term": "warehouse", "table": f"{SCHEMA}.D_WAREHOUSE",
+                 "column": "WAREHOUSE_NAME", "role": "dimension"},
+            ],
+        }
+        plan.update(extra)
+        return plan
+
+    def _date_plan(self, table=None):
+        return {"enabled": True, "date_key_policies": [
+            {"table": table or self.MONTHLY, "column": "PERIOD_YYYYMM"}
+        ]}
+
+    def _enforcement(self, plan):
+        return {f["column"]: f.get("enforcement") for f in plan["fields"]}
+
+    def test_a_measure_on_a_rival_fact_becomes_a_hint(self):
+        plan = _demote_fields_off_resolved_fact(self._plan(), self._date_plan())
+        self.assertEqual(self._enforcement(plan)["INVENTORY_VALUE"], "optional")
+
+    def test_dimension_fields_are_untouched(self):
+        plan = _demote_fields_off_resolved_fact(self._plan(), self._date_plan())
+        self.assertIsNone(self._enforcement(plan)["WAREHOUSE_NAME"])
+
+    def test_a_measure_on_the_resolved_fact_stays_required(self):
+        plan = self._plan()
+        plan["fields"][0]["table"] = self.MONTHLY
+        plan["fields"][0]["column"] = "ENDING_INVENTORY_VALUE"
+        out = _demote_fields_off_resolved_fact(plan, self._date_plan())
+        self.assertIsNone(self._enforcement(out)["ENDING_INVENTORY_VALUE"])
+
+    def test_no_resolved_fact_changes_nothing(self):
+        plan = _demote_fields_off_resolved_fact(self._plan(), {"enabled": True})
+        self.assertIsNone(self._enforcement(plan)["INVENTORY_VALUE"])
+
+    def test_an_unknown_resolved_fact_changes_nothing(self):
+        """Only arbitrate between facts the model actually classified."""
+        plan = _demote_fields_off_resolved_fact(
+            self._plan(), self._date_plan(table=f"{SCHEMA}.SOMETHING_ELSE")
+        )
+        self.assertIsNone(self._enforcement(plan)["INVENTORY_VALUE"])
+
+    def test_no_known_fact_tables_changes_nothing(self):
+        plan = _demote_fields_off_resolved_fact(
+            self._plan(known_fact_tables=[]), self._date_plan()
+        )
+        self.assertIsNone(self._enforcement(plan)["INVENTORY_VALUE"])
+
+    def test_qualification_differences_do_not_defeat_the_match(self):
+        plan = self._plan(known_fact_tables=[
+            f"{DATABASE}.{self.MONTHLY}", f"{DATABASE}.{self.DAILY}"
+        ])
+        out = _demote_fields_off_resolved_fact(plan, self._date_plan())
+        self.assertEqual(self._enforcement(out)["INVENTORY_VALUE"], "optional")

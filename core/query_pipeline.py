@@ -555,6 +555,57 @@ def _date_option_labels(bindings: list[dict]) -> dict[tuple[str, str], str]:
     return resolved
 
 
+def _bare_table_name(value: str) -> str:
+    return str(value or "").upper().strip().strip("[]\"`").split(".")[-1]
+
+
+def _demote_fields_off_resolved_fact(plan: dict, date_plan: dict) -> dict:
+    """Let the resolved date fact arbitrate between two disagreeing producers.
+
+    The field plan and the temporal resolver are built independently and then
+    merged, with nothing deciding between them. Live case 6 asked for
+    "month-end inventory value for February 2026": the resolver correctly
+    picked F_INVENTORY_MONTHLY (its own message said so), while the field plan
+    bound "inventory value" to F_INVENTORY_DAILY.INVENTORY_VALUE. The LLM wrote
+    exactly the right SQL against the monthly fact and was refused for not
+    using the daily column -- and no repair could satisfy both, so the query
+    died with no answer at all.
+
+    When the date resolution has settled on one fact, a *required* measure on
+    a different fact cannot also be right. Demote it to a hint rather than
+    dropping it: the codebase's own rule is that a wrong hard requirement
+    rejects correct SQL, while a wrong hint only fails to help.
+
+    Deliberately narrow -- this only fires when both tables are known facts and
+    they genuinely differ. Fields on dimensions, and plans where the resolver
+    produced no fact, are untouched.
+    """
+    resolved = ""
+    for policy in date_plan.get("date_key_policies") or []:
+        resolved = _bare_table_name(policy.get("table"))
+        if resolved:
+            break
+    if not resolved:
+        return plan
+    facts = {_bare_table_name(t) for t in (plan.get("known_fact_tables") or []) if t}
+    if not facts or resolved not in facts:
+        return plan
+    for field in plan.get("fields") or []:
+        if field.get("enforcement") == "optional":
+            continue
+        table = _bare_table_name(field.get("table"))
+        if table and table in facts and table != resolved:
+            field["enforcement"] = "optional"
+            field["demoted_reason"] = "off_resolved_date_fact"
+            log.info(
+                "Demoted required field %s.%s to optional: the date context "
+                "resolved fact %s, so a hard requirement on a rival fact "
+                "cannot also hold",
+                table, str(field.get("column") or ""), resolved,
+            )
+    return plan
+
+
 def _governed_date_anchor_repair_lines(
     semantic_plan: dict, db_type: str = "azure_sql"
 ) -> str:
@@ -2592,6 +2643,11 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     )
                 if _date_plan.get("enabled"):
                     _semantic_plan = _merge_semantic_plans(_semantic_plan, _date_plan)
+                    # The two producers can name different facts; the resolved
+                    # date fact decides, or neither requirement is satisfiable.
+                    _semantic_plan = _demote_fields_off_resolved_fact(
+                        _semantic_plan, _date_plan
+                    )
                     _selected_date_bindings = (
                         _date_context_resolution.get("bindings")
                         if _date_context_resolution.get("status") == "selected_many"
