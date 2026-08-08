@@ -38,7 +38,9 @@ from core.analysis_contract import measure_class_for_metric  # noqa: E402
 from core.contextual_dates import (  # noqa: E402
     _GRAIN_ORDER,
     _role_temporal_grain,
+    build_contextual_date_plan,
     metrics_are_semi_additive,
+    question_has_explicit_date_filter,
     question_has_snapshot_intent,
     requested_temporal_grain,
 )
@@ -924,3 +926,84 @@ class PeriodComparisonNarrationTests(unittest.TestCase):
             [dict(LIVE) for LIVE in (PeriodComparisonNarrationTests.LIVE_ROW,) * 2],  # series
         ):
             self.assertIsNone(_period_comparison_from_rows(rows), rows)
+
+
+class ExplicitDateBeatsLatestSnapshotTests(unittest.TestCase):
+    """Live case 8: 'daily inventory value for March 2, 2026' returned 1485.
+
+    1485 is the 2026-03-03 total. The stated date was dropped and replaced
+    with MAX(snapshot date), and the newest snapshot was reported at 75/100
+    confidence with no caveat -- a wrong number presented as a good one.
+
+    The cause was an inference, not the model: the question carries snapshot
+    intent (semi-additive stock measure) and detect_temporal_window() only
+    recognises *relative* wording, so an absolute date produced no window and
+    the implicit latest_snapshot branch took over.
+    """
+
+    INVENTORY_BINDING = {
+        "id": 7,
+        "metric_id": 7,
+        "metric_name": "Daily Inventory Value",
+        "context_name": "Snapshot Date",
+        "date_role": "snapshot_date",
+        "fact_table": "QBOT_LIVE_TEST.F_INVENTORY_DAILY",
+        "fact_column": "SNAPSHOT_DATE",
+        "dimension_table": "",
+        "dimension_key": "",
+        "date_value_column": "SNAPSHOT_DATE",
+        "date_key_type": "native_date",
+        "is_default": 1,
+        "priority": 50,
+    }
+
+    def _policies(self, question):
+        plan = build_contextual_date_plan(self.INVENTORY_BINDING, question)
+        return plan.get("temporal_policies") or []
+
+    def test_the_live_case_8_question_no_longer_anchors_to_latest(self):
+        self.assertEqual(self._policies("Show daily inventory value for March 2, 2026."), [])
+
+    def test_latest_snapshot_wording_still_anchors(self):
+        """The inference must survive for questions that really do mean 'newest'."""
+        policies = self._policies(
+            "What was inventory value by warehouse on the latest daily snapshot?"
+        )
+        self.assertEqual(len(policies), 1)
+        self.assertEqual(policies[0]["kind"], "latest_snapshot")
+        self.assertEqual(policies[0]["anchor_policy"], "latest_available")
+
+    def test_relative_wording_is_untouched(self):
+        """detect_temporal_window() runs first; the guard must not shadow it."""
+        policies = self._policies("show inventory value for the current month")
+        self.assertEqual(len(policies), 1)
+        self.assertEqual(policies[0]["kind"], "this_month")
+
+    def test_explicit_date_wording_is_recognised(self):
+        for question in (
+            "Show daily inventory value for March 2, 2026.",
+            "month-end inventory value for February 2026",
+            "inventory on 2026-03-02",
+            "inventory on 03/02/2026",
+            "inventory for period 202602",
+            "stock on hand in january",
+            "balance for 2 march 2026",
+        ):
+            self.assertTrue(question_has_explicit_date_filter(question), question)
+
+    def test_relative_and_bare_questions_are_not_explicit(self):
+        for question in (
+            "What was inventory value by warehouse on the latest daily snapshot?",
+            "inventory by warehouse",
+            "current stock on hand",
+            "show me the last 2 days of inventory",
+            "month-end inventory value",
+        ):
+            self.assertFalse(question_has_explicit_date_filter(question), question)
+
+    def test_may_and_march_need_a_number_to_count_as_months(self):
+        """Both are ordinary English words; a bare one must not block the anchor."""
+        self.assertFalse(question_has_explicit_date_filter("which warehouses may hold stock"))
+        self.assertFalse(question_has_explicit_date_filter("stock we may need to march forward"))
+        self.assertTrue(question_has_explicit_date_filter("inventory for may 2026"))
+        self.assertTrue(question_has_explicit_date_filter("inventory for march 2"))

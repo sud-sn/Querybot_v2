@@ -942,6 +942,50 @@ def resolve_contextual_date_binding(
     return {"status": "none", "reason": "no governed date context"}
 
 
+# Month names that are also ordinary English words ("may", "march") need a
+# numeric neighbour before they count as a date; the rest stand alone safely.
+_UNAMBIGUOUS_MONTHS = (
+    r"january|february|april|june|july|august|september|october|november|"
+    r"december|jan|feb|apr|jun|jul|aug|sept?|oct|nov|dec"
+)
+_AMBIGUOUS_MONTHS = r"march|mar|may"
+
+_EXPLICIT_DATE_PATTERNS = (
+    # Any four-digit calendar year. Covers "March 2, 2026", "February 2026",
+    # "2026-03-02" and "03/02/2026" alike, because normalize_date_role_text
+    # has already reduced every separator to a space.
+    r"\b(?:19|20)\d{2}\b",
+    # Encoded YYYYMM / YYYYMMDD periods typed directly by the user.
+    r"\b(?:19|20)\d{4}(?:\d{2})?\b",
+    # Unambiguous month names need no numeric neighbour.
+    rf"\b(?:{_UNAMBIGUOUS_MONTHS})\b",
+    # Ambiguous ones do, on either side: "march 2", "2 march".
+    rf"\b(?:{_AMBIGUOUS_MONTHS})\s+\d{{1,4}}\b",
+    rf"\b\d{{1,4}}\s+(?:{_AMBIGUOUS_MONTHS})\b",
+)
+
+
+def question_has_explicit_date_filter(question: str) -> bool:
+    """Return True when the question names an absolute date, month or period.
+
+    This exists to stop an *implicit* "latest available" window from being
+    inferred over a date the user stated outright. A semi-additive question
+    such as "daily inventory value for March 2, 2026" carries snapshot
+    intent, so the latest-snapshot inference fires; without this guard the
+    stated date is dropped and the newest snapshot is returned instead --
+    a wrong number reported as a successful result.
+
+    Deliberately conservative: only wording that cannot mean "most recent"
+    counts. Relative phrasing ("last 2 days", "current month") is handled by
+    detect_temporal_window() before this is ever consulted, so nothing here
+    needs to recognise it.
+    """
+    q = normalize_date_role_text(question)
+    if not q:
+        return False
+    return any(re.search(pattern, q) for pattern in _EXPLICIT_DATE_PATTERNS)
+
+
 def detect_temporal_window(question: str) -> dict:
     """Detect relative calendar wording that must use a data-relative anchor."""
     q = normalize_date_role_text(question)
@@ -1081,7 +1125,15 @@ def build_contextual_date_plan(binding: dict, question: str = "") -> dict:
         }],
     }
     window = detect_temporal_window(question)
-    if not window and question_has_snapshot_intent(question):
+    if (
+        not window
+        # An outright stated date is the user's filter and outranks any
+        # inference. Without this the snapshot branch below would replace
+        # "for March 2, 2026" with MAX(snapshot date) and report the newest
+        # snapshot as though it were the requested one.
+        and not question_has_explicit_date_filter(question)
+        and question_has_snapshot_intent(question)
+    ):
         window = {
             "kind": "latest_snapshot",
             "amount": 1,
