@@ -1789,12 +1789,42 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
 
     _semantic_plan = {}
     try:
+        # Phase 3: the model's fact classifications let the planner lock the
+        # measure's fact. Without them it falls back to prior behaviour.
+        _planner_fact_tables = {
+            str(t.get("qualified_name") or t.get("table") or "")
+            for t in ((_contract_model or {}).get("tables") or [])
+            if str(t.get("type") or "").lower() == "fact"
+            and (t.get("qualified_name") or t.get("table"))
+        }
+        if not _planner_fact_tables:
+            try:
+                from core.semantic_model import load_semantic_model
+                _planner_fact_tables = {
+                    str(t.get("qualified_name") or t.get("table") or "")
+                    for t in ((load_semantic_model(state.get("kb_dir", "")) or {}).get("tables") or [])
+                    if str(t.get("type") or "").lower() == "fact"
+                    and (t.get("qualified_name") or t.get("table"))
+                }
+            except Exception as _pf_exc:
+                _planner_fact_tables = set()
+                log.warning(
+                    "Measure-first anchoring inactive — no fact classifications "
+                    "available for %s: %s", account_id, _pf_exc,
+                )
+        if not _planner_fact_tables:
+            log.warning(
+                "Measure-first anchoring inactive for %s: model has no fact "
+                "tables, so a rival fact's field can still be hard-required",
+                account_id,
+            )
         _semantic_plan = build_semantic_field_plan(
             _semantic_plan_question,
             all_columns,
             query_scope_tables,
             selected_schema=schema_hint,
             vocab=_vocab,
+            fact_tables=_planner_fact_tables,
         )
         if _semantic_plan.get("enabled"):
             _trace_step(

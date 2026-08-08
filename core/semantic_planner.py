@@ -9,8 +9,12 @@ reasonable join path can be inferred.
 
 from __future__ import annotations
 
+import logging
 import re
 from collections import deque
+
+
+log = logging.getLogger(__name__)
 
 
 _ABBREVIATIONS = {
@@ -651,14 +655,107 @@ def _build_required_joins(fields: list[dict], table_columns: dict[str, dict[str,
 _DATE_PART_COLUMNS = {"DAY", "MONTH", "YEAR", "QUARTER", "WEEK", "SEMESTER", "HALF"}
 
 
+def _anchor_fields_to_measure_fact(
+    fields: list[dict],
+    fact_tables: set[str] | None,
+) -> str:
+    """Phase 3 — the resolved measure's fact table is authoritative.
+
+    Terms are scored per-term across every allowed table, so a generic word
+    like "warehouse" or "date" can win on whichever table happens to score
+    highest — including a fact table that has nothing to do with the measure.
+    Live failure: "What is total revenue by warehouse?" bound
+
+        Revenue   -> F_SALES_INVOICE.NET_REVENUE_AMOUNT      (correct)
+        warehouse -> ERP_ITM_BAL_PRD_FCT.WHS_DMS_KEY         (wrong fact)
+
+    Requiring both forces a fact-to-fact join, which duplicates every invoice
+    row once per inventory row for the same warehouse.
+
+    Rule: once a measure resolves, its fact is locked. A non-measure field
+    sitting on a *different* fact is not evidence about this question — it is
+    demoted to a hint so it can never hard-require the second fact. Dimension
+    tables are untouched: joining the measure's fact to a dimension is the
+    normal star path.
+
+    Returns the locked fact (upper-cased), or "" when nothing was locked.
+    """
+    if not fields:
+        return ""
+    known_facts = {str(t).upper() for t in (fact_tables or set()) if str(t or "").strip()}
+    if not known_facts:
+        return ""
+
+    def _is_fact(table_name: str) -> bool:
+        name = str(table_name or "").upper()
+        if not name:
+            return False
+        parts = name.split(".")
+        for fact in known_facts:
+            fact_parts = fact.split(".")
+            if len(parts) >= 2 and len(fact_parts) >= 2:
+                if parts[-2:] == fact_parts[-2:]:
+                    return True
+            elif parts[-1:] == fact_parts[-1:]:
+                return True
+        return False
+
+    anchor = next(
+        (
+            str(f.get("table") or "").upper()
+            for f in fields
+            if f.get("role") == "measure" and _is_fact(f.get("table"))
+        ),
+        "",
+    )
+    if not anchor:
+        return ""
+
+    demoted: list[str] = []
+    for field in fields:
+        table_u = str(field.get("table") or "").upper()
+        if (
+            field.get("role") != "measure"
+            and field.get("enforcement") != "optional"
+            and _is_fact(table_u)
+            and not _same_physical_table(table_u, anchor)
+        ):
+            field["enforcement"] = "optional"
+            field["demoted_reason"] = (
+                f"measure-first anchoring: fact is {anchor}"
+            )
+            demoted.append(f"{table_u}.{str(field.get('column') or '').upper()}")
+
+    if demoted:
+        log.info(
+            "Measure-first anchoring locked fact %s; demoted rival-fact "
+            "field(s) to optional: %s", anchor, demoted,
+        )
+    return anchor
+
+
+def _same_physical_table(left: str, right: str) -> bool:
+    left_parts = (left or "").upper().split(".")
+    right_parts = (right or "").upper().split(".")
+    if len(left_parts) >= 2 and len(right_parts) >= 2:
+        return left_parts[-2:] == right_parts[-2:]
+    return left_parts[-1:] == right_parts[-1:]
+
+
 def build_semantic_field_plan(
     question: str,
     table_columns: dict[str, dict[str, str]] | None,
     allowed_tables: set[str] | None = None,
     selected_schema: str = "",
     vocab=None,
+    fact_tables: set[str] | None = None,
 ) -> dict:
-    """Build a conservative field-source plan from exact known schema columns."""
+    """Build a conservative field-source plan from exact known schema columns.
+
+    `fact_tables` carries the model's fact classifications so the resolved
+    measure's fact can be locked (Phase 3). Omitting it preserves the previous
+    behaviour exactly — no anchoring is attempted without table roles.
+    """
     vocab = _planner_vocab(vocab)
     normalized_columns = {
         str(t).upper(): {str(c).upper(): str(v) for c, v in (cols or {}).items()}
@@ -677,6 +774,10 @@ def build_semantic_field_plan(
         # requirement (a wrong hard requirement rejects correct SQL).
         if field.get("ambiguous_source"):
             field["enforcement"] = "optional"
+    # Phase 3: lock the fact to the resolved measure before joins are built,
+    # so a rival fact's field can never contribute a required join edge.
+    _locked_fact = _anchor_fields_to_measure_fact(fields, fact_tables)
+
     joins = _build_required_joins(fields, normalized_columns, vocab=vocab)
     # Join edges that exist only to reach optional (date-part) fields must be
     # optional too — otherwise the field is skippable but its join still blocks.
@@ -688,12 +789,17 @@ def build_semantic_field_plan(
     for edge in joins:
         if (edge["from"], edge["to"]) not in _required_edge_keys:
             edge["enforcement"] = "optional"
-    required_tables = sorted({f["table"] for f in fields})
+    # Required tables follow enforcement: a demoted rival fact is a hint, and
+    # listing it as required would drag it back into retrieval and the prompt.
+    required_tables = sorted({
+        f["table"] for f in fields if f.get("enforcement") != "optional"
+    }) or sorted({f["table"] for f in fields})
     return {
         "enabled": True,
         "fields": fields,
         "joins": joins,
         "required_tables": required_tables,
+        "fact_anchor": _locked_fact,
         "reason": "schema-derived semantic field plan",
     }
 

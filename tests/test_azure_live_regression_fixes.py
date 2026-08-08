@@ -44,6 +44,7 @@ from core.contextual_dates import (  # noqa: E402
 )
 from core.date_roles import _label_from_column  # noqa: E402
 from core.dispatcher import _looks_like_data_request  # noqa: E402
+from core.semantic_planner import _anchor_fields_to_measure_fact  # noqa: E402
 from core.semantic_model import (  # noqa: E402
     _business_role_from_column,
     _scope_plan_to_single_fact,
@@ -452,6 +453,70 @@ class RawFactToFactJoinTests(unittest.TestCase):
         )
         result = _validate(sql, self.PLAN)
         self.assertTrue(result.ok, result.reason)
+
+
+class MeasureFirstFactAnchoringTests(unittest.TestCase):
+    """Phase 3 — the resolved measure's fact is authoritative.
+
+    A generic term ("warehouse") scored per-term across every allowed table
+    could bind to a fact unrelated to the measure, forcing a fact-to-fact join.
+    """
+
+    TABLES = {f"{SCHEMA}.F_SALES_INVOICE", f"{SCHEMA}.ERP_ITM_BAL_PRD_FCT"}
+
+    def test_rival_fact_dimension_is_demoted_to_a_hint(self):
+        fields = [
+            {"term": "revenue", "role": "measure",
+             "table": f"{SCHEMA}.F_SALES_INVOICE", "column": "NET_REVENUE_AMOUNT"},
+            {"term": "warehouse", "role": "dimension",
+             "table": f"{DATABASE}.{SCHEMA}.ERP_ITM_BAL_PRD_FCT",
+             "column": "WHS_DMS_KEY"},
+        ]
+        anchor = _anchor_fields_to_measure_fact(fields, self.TABLES)
+        self.assertEqual(anchor, f"{SCHEMA}.F_SALES_INVOICE".upper())
+        self.assertEqual(fields[1]["enforcement"], "optional")
+        self.assertNotIn("enforcement", fields[0])   # measure untouched
+
+    def test_dimension_tables_are_never_demoted(self):
+        """The star path is the point — only rival *facts* are demoted."""
+        fields = [
+            {"term": "revenue", "role": "measure",
+             "table": f"{SCHEMA}.F_SALES_INVOICE", "column": "NET_REVENUE_AMOUNT"},
+            {"term": "warehouse", "role": "dimension",
+             "table": f"{SCHEMA}.D_WAREHOUSE", "column": "WAREHOUSE_NAME"},
+        ]
+        _anchor_fields_to_measure_fact(fields, self.TABLES)
+        self.assertNotIn("enforcement", fields[1])
+
+    def test_no_measure_means_no_anchor(self):
+        """Cannot lock a fact without a measure — must not guess one."""
+        fields = [
+            {"term": "warehouse", "role": "dimension",
+             "table": f"{SCHEMA}.ERP_ITM_BAL_PRD_FCT", "column": "WHS_DMS_KEY"},
+        ]
+        self.assertEqual(_anchor_fields_to_measure_fact(fields, self.TABLES), "")
+        self.assertNotIn("enforcement", fields[0])
+
+    def test_inert_without_fact_classifications(self):
+        """No table roles => no claim; prior behaviour is preserved exactly."""
+        fields = [
+            {"term": "revenue", "role": "measure",
+             "table": f"{SCHEMA}.F_SALES_INVOICE", "column": "NET_REVENUE_AMOUNT"},
+            {"term": "warehouse", "role": "dimension",
+             "table": f"{SCHEMA}.ERP_ITM_BAL_PRD_FCT", "column": "WHS_DMS_KEY"},
+        ]
+        self.assertEqual(_anchor_fields_to_measure_fact(fields, None), "")
+        self.assertNotIn("enforcement", fields[1])
+
+    def test_measure_on_the_same_fact_is_kept_required(self):
+        fields = [
+            {"term": "revenue", "role": "measure",
+             "table": f"{SCHEMA}.F_SALES_INVOICE", "column": "NET_REVENUE_AMOUNT"},
+            {"term": "quantity", "role": "dimension",
+             "table": f"{DATABASE}.{SCHEMA}.F_SALES_INVOICE", "column": "QUANTITY"},
+        ]
+        _anchor_fields_to_measure_fact(fields, self.TABLES)
+        self.assertNotIn("enforcement", fields[1])
 
 
 class SemiAdditiveMetadataTests(unittest.TestCase):
