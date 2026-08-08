@@ -151,7 +151,15 @@ _DATA_REQUEST_ACTION_RE = re.compile(
 _DATA_REQUEST_SHAPE_RE = re.compile(
     r"\b(?:all|top|bottom|total|count|number|average|trend|records?|rows?|"
     r"fields?|columns?|include|with|where|whose|who\s+have|by|per|for\s+each|each|"
-    r"revenue|sales|profit|amount|data|info|value)\b",
+    r"revenue|sales|profit|amount|data|info|value"
+    # Absence phrasing describes a record set as precisely as "all" or "top":
+    # "which orders have not been shipped" asks for the rows where a related
+    # event is missing. Live case 15 matched the action half on "which" and
+    # failed here, so a governed anti-join question was answered
+    # conversationally -- "let me know and I can proceed" -- with no SQL.
+    # "'t been" carries no leading word boundary inside "haven't", so the
+    # contraction needs its own alternative rather than an n[o']t spelling.
+    r"|not\s+been|'t\s+been|not\s+yet|without|missing|never)\b",
     re.IGNORECASE,
 )
 

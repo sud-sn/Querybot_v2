@@ -1544,3 +1544,47 @@ class GrainAwareMeasureBindingTests(unittest.TestCase):
             "quarterly inventory value",
         ):
             self.assertEqual(self._fields(question)["INVENTORY_VALUE"], "optional", question)
+
+
+class AbsencePhrasingIsADataRequestTests(unittest.TestCase):
+    """Live case 15: "Which orders have not been shipped?" got prose, not SQL.
+
+        "QueryBot can help identify orders that have not been shipped...
+         If you'd like to retrieve this information, let me know."
+
+    The action half matched on "which"; the *shape* half did not. That regex
+    lists words describing a record set -- all, top, records, rows, by, per --
+    and absence phrasing was absent from it, though "the rows where a related
+    event is missing" is exactly such a set. This is the same class as case
+    12's allocation wording, which was fixed by widening the action half; the
+    two halves fail independently.
+    """
+
+    def test_the_live_case_15_question_is_a_data_request(self):
+        self.assertTrue(_looks_like_data_request("Which orders have not been shipped?"))
+
+    def test_absence_phrasings_are_recognised(self):
+        for question in (
+            "Which invoices haven't been paid?",
+            "Show orders without shipments",
+            "List customers with missing addresses",
+            "Which products have never been ordered?",
+            "Which orders are not yet fulfilled?",
+        ):
+            self.assertTrue(_looks_like_data_request(question), question)
+
+    def test_conversation_is_still_not_a_data_request(self):
+        """Negation in small talk must not be mistaken for a filter."""
+        for question in (
+            "hello",
+            "thanks!",
+            "who are you?",
+            "I have not been able to log in",
+            "sorry, that was not what I meant",
+            "can you help me?",
+        ):
+            self.assertFalse(_looks_like_data_request(question), question)
+
+    def test_ordinary_data_requests_are_unaffected(self):
+        self.assertTrue(_looks_like_data_request("What is total revenue by warehouse?"))
+        self.assertTrue(_looks_like_data_request("Allocate total revenue by product category."))
