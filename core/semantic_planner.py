@@ -127,6 +127,22 @@ _DIRECT_ALIASES = {
     "SAPR": {"sales price", "list price"},                         # NOT bare "price"
     "ITNO": {"item number", "part number"},                        # NOT bare "item"/"product"/"sku"
     "ITGR": {"item group", "product group"},                       # NOT bare "category"
+    # ── M3 MITBAL (item balance) ───────────────────────────────────────────
+    # MITBAL columns carry the file's ML prefix, so they miss the bare M3
+    # codes above: MLAVAL is not WHLO/ITNO-shaped and matched nothing at all.
+    # Live case 16 named this table outright ("using the M3 balance data") and
+    # still resolved against the daily snapshot fact, because no MITBAL
+    # candidate was ever produced for the planner to choose between.
+    # Same rule as the block above: qualified phrases only. "inventory value"
+    # is two words and already the business term for this quantity; bare
+    # "value" or "balance" would pull this ERP table into unrelated questions.
+    "MLAVAL": {"m3 inventory value", "m3 balance value", "item balance value"},
+    "MLSTQT": {"m3 stock quantity", "item balance stock quantity"},
+    "MLALQT": {"m3 allocated quantity", "item balance allocated quantity"},
+    "MLPERY": {"m3 period", "item balance period", "m3 balance period"},
+    "MLWHLO": {"m3 warehouse", "item balance warehouse"},          # NOT bare "warehouse"
+    "MLITNO": {"m3 item number", "item balance item number"},
+    "MLLMDT": {"m3 last modified date"},
 }
 
 _JOIN_SYNONYMS = {
