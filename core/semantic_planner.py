@@ -203,11 +203,43 @@ def _column_words(column: str, vocab=None) -> list[str]:
     return words
 
 
+# Suffixes that mark a column as the human-readable label for its entity.
+# Deliberately excludes key suffixes: WAREHOUSE_NAME answers to "warehouse",
+# WAREHOUSE_SK does not. Aliasing both to the bare noun would make every such
+# pair ambiguous, and ambiguous_source demotes both to optional -- weakening
+# bindings that work today to fix ones that do not.
+_DISPLAY_COLUMN_SUFFIXES = ("_NAME", "_DESCRIPTION", "_DESC", "_DSC", "_NM")
+
+
+def _entity_noun_alias(column: str) -> str:
+    """Return the entity a display column labels, or "" if it is not one.
+
+    _aliases_for_column only ever produced the full column name as a phrase,
+    so WAREHOUSE_NAME was addressable as "warehouse name" and nothing else.
+    Nobody asks that way: dimensions are named by their entity noun ("revenue
+    by warehouse", "sales per customer"), while measures happen to match
+    because their business term usually *is* the whole column name
+    (INVENTORY_VALUE / "inventory value"). The planner could therefore express
+    measures but not the dimensions they are grouped by -- live case 10 built
+    no plan at all, and case 7 had no dimension field for the display-name
+    upgrade to attach to.
+    """
+    col = (column or "").upper()
+    for suffix in _DISPLAY_COLUMN_SUFFIXES:
+        if col.endswith(suffix) and len(col) > len(suffix):
+            return col[: -len(suffix)]
+    return ""
+
+
 def _aliases_for_column(column: str, vocab=None) -> set[str]:
     v = _planner_vocab(vocab)
     col = (column or "").upper()
     aliases = {_norm(col), _norm(" ".join(_column_words(col, vocab=v)))}
     aliases.update(_norm(a) for a in v.direct_aliases.get(col, set()))
+    entity = _entity_noun_alias(col)
+    if entity:
+        aliases.add(_norm(entity))
+        aliases.add(_norm(" ".join(_column_words(entity, vocab=v))))
     return {a for a in aliases if a}
 
 

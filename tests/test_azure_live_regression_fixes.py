@@ -50,6 +50,7 @@ from core.dispatcher import _looks_like_data_request  # noqa: E402
 from core.response_builder import _period_comparison_from_rows  # noqa: E402
 from core.semantic_planner import (  # noqa: E402
     _anchor_fields_to_measure_fact,
+    _entity_noun_alias,
     _demote_measures_with_a_rival_at_the_requested_grain,
     build_semantic_field_plan,
     _find_display_field_for_key,
@@ -1370,3 +1371,67 @@ class PerScopeAliasResolutionTests(unittest.TestCase):
         """
         errs = self._errs(sql)
         self.assertEqual([e["column"] for e in errs], ["NOPE"])
+
+
+class DimensionEntityNounAliasTests(unittest.TestCase):
+    """The planner could name measures but not the dimensions they group by.
+
+    _aliases_for_column only ever produced the full column name as a phrase, so
+    WAREHOUSE_NAME was addressable as "warehouse name" and nothing else. Nobody
+    asks that way -- dimensions are named by their entity noun ("by warehouse",
+    "per customer") -- while measures match because their business term usually
+    *is* the whole column name (INVENTORY_VALUE / "inventory value").
+
+    Live case 10 therefore produced zero candidates and built no plan at all,
+    and case 7 had no dimension field for the display-name upgrade to attach
+    to, which is why display enforcement had nothing to enforce.
+    """
+
+    COLS = {
+        "QBOT_LIVE_TEST.F_INVENTORY_DAILY": {
+            "WAREHOUSE_SK": "int", "INVENTORY_VALUE": "decimal", "SNAPSHOT_DATE": "date",
+        },
+        "QBOT_LIVE_TEST.D_WAREHOUSE": {"WAREHOUSE_SK": "int", "WAREHOUSE_NAME": "varchar"},
+    }
+
+    def _plan_tables(self, question):
+        plan = build_semantic_field_plan(
+            question, self.COLS, set(self.COLS), "QBOT_LIVE_TEST"
+        )
+        return {(f["table"].split(".")[-1], f["column"]) for f in (plan.get("fields") or [])}
+
+    def test_a_display_column_answers_to_its_entity_noun(self):
+        self.assertEqual(_entity_noun_alias("WAREHOUSE_NAME"), "WAREHOUSE")
+        self.assertEqual(_entity_noun_alias("PRODUCT_DESCRIPTION"), "PRODUCT")
+        self.assertEqual(_entity_noun_alias("CUS_NM"), "CUS")
+
+    def test_key_columns_get_no_entity_noun(self):
+        """The load-bearing exclusion: aliasing WAREHOUSE_SK to "warehouse"
+        would make it ambiguous with WAREHOUSE_NAME, and ambiguous_source
+        demotes both -- weakening bindings that work to fix ones that do not."""
+        for column in ("WAREHOUSE_SK", "CUSTOMER_ID", "PRODUCT_KEY", "ORDER_CODE"):
+            self.assertEqual(_entity_noun_alias(column), "", column)
+
+    def test_a_bare_suffix_is_not_an_entity(self):
+        for column in ("_NAME", "_DESC", "NAME", ""):
+            self.assertEqual(_entity_noun_alias(column), "", column)
+
+    def test_the_grouping_dimension_now_enters_the_plan(self):
+        tables = self._plan_tables(
+            "What was inventory value by warehouse on the latest daily snapshot?"
+        )
+        self.assertIn(("D_WAREHOUSE", "WAREHOUSE_NAME"), tables)
+        self.assertIn(("F_INVENTORY_DAILY", "INVENTORY_VALUE"), tables)
+
+    def test_the_surrogate_key_is_not_pulled_in_alongside_it(self):
+        tables = self._plan_tables(
+            "What was inventory value by warehouse on the latest daily snapshot?"
+        )
+        self.assertNotIn(("D_WAREHOUSE", "WAREHOUSE_SK"), tables)
+        self.assertNotIn(("F_INVENTORY_DAILY", "WAREHOUSE_SK"), tables)
+
+    def test_an_unmentioned_dimension_is_not_added(self):
+        """The invariant: this widens matching, so a question that names no
+        dimension must produce exactly what it produced before."""
+        tables = self._plan_tables("Show inventory value")
+        self.assertEqual(tables, {("F_INVENTORY_DAILY", "INVENTORY_VALUE")})
