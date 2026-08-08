@@ -45,6 +45,7 @@ from core.contextual_dates import (  # noqa: E402
     requested_temporal_grain,
 )
 from core.date_roles import _label_from_column  # noqa: E402
+from core.query_pipeline import _date_option_labels  # noqa: E402
 from core.dispatcher import _looks_like_data_request  # noqa: E402
 from core.response_builder import _period_comparison_from_rows  # noqa: E402
 from core.semantic_planner import _anchor_fields_to_measure_fact  # noqa: E402
@@ -1007,3 +1008,88 @@ class ExplicitDateBeatsLatestSnapshotTests(unittest.TestCase):
         self.assertFalse(question_has_explicit_date_filter("stock we may need to march forward"))
         self.assertTrue(question_has_explicit_date_filter("inventory for may 2026"))
         self.assertTrue(question_has_explicit_date_filter("inventory for march 2"))
+
+
+class StableDateOptionLabelTests(unittest.TestCase):
+    """Live cases 7/8: the date picker offered three entries named the same.
+
+        Snapshot At Date
+        Snapshot Date (Day data 1)
+        Snapshot Date (Day data 2)
+
+    Nothing there lets a user choose, and the ordinal came from the order the
+    bindings arrived in rather than from the role -- so clicking "(Day data 2)"
+    bound SNAPSHOT_YYYYMMDD on one request and could bind SNAPSHOT_DATE on the
+    next. A menu entry that does not always mean the same column is worse than
+    an ugly one.
+    """
+
+    NATIVE = {
+        "context_name": "Snapshot Date",
+        "fact_table": "QBOT_LIVE_TEST.F_INVENTORY_DAILY",
+        "fact_column": "SNAPSHOT_DATE",
+        "date_key_type": "native_date",
+        "temporal_grain": "day",
+    }
+    ENCODED = {
+        "context_name": "Snapshot Date",
+        "fact_table": "QBOT_LIVE_TEST.F_INVENTORY_DAILY",
+        "fact_column": "SNAPSHOT_YYYYMMDD",
+        "date_key_type": "yyyymmdd_integer",
+        "temporal_grain": "day",
+    }
+    INVOICE = {
+        "context_name": "Invoice Date",
+        "fact_table": "QBOT_LIVE_TEST.F_SALES_INVOICE",
+        "fact_column": "INVOICE_DATE_SK",
+        "date_key_type": "surrogate_fk",
+        "temporal_grain": "day",
+    }
+
+    def test_a_unique_business_name_is_left_alone(self):
+        labels = _date_option_labels([self.INVOICE])
+        self.assertEqual(list(labels.values()), ["Invoice Date"])
+
+    def test_colliding_names_are_split_by_how_the_date_is_stored(self):
+        labels = _date_option_labels([self.NATIVE, self.ENCODED])
+        self.assertEqual(
+            labels[("QBOT_LIVE_TEST.F_INVENTORY_DAILY", "SNAPSHOT_DATE")],
+            "Snapshot Date (calendar date)",
+        )
+        self.assertEqual(
+            labels[("QBOT_LIVE_TEST.F_INVENTORY_DAILY", "SNAPSHOT_YYYYMMDD")],
+            "Snapshot Date (date code)",
+        )
+
+    def test_labels_do_not_depend_on_binding_order(self):
+        """The regression: same roles, different arrival order, same labels."""
+        forward = _date_option_labels([self.NATIVE, self.ENCODED, self.INVOICE])
+        reverse = _date_option_labels([self.INVOICE, self.ENCODED, self.NATIVE])
+        self.assertEqual(forward, reverse)
+
+    def test_every_physical_role_gets_its_own_label(self):
+        labels = _date_option_labels([self.NATIVE, self.ENCODED, self.INVOICE])
+        self.assertEqual(len(set(labels.values())), len(labels))
+
+    def test_a_repeated_binding_does_not_create_a_phantom_option(self):
+        """list_metric_date_contexts can return one role under two metrics."""
+        labels = _date_option_labels([self.NATIVE, dict(self.NATIVE), self.ENCODED])
+        self.assertEqual(len(labels), 2)
+
+    def test_identical_storage_falls_back_to_a_reproducible_ordinal(self):
+        twin_a = {**self.NATIVE, "fact_column": "OPENED_ON"}
+        twin_b = {**self.NATIVE, "fact_column": "CLOSED_ON"}
+        forward = _date_option_labels([twin_a, twin_b])
+        reverse = _date_option_labels([twin_b, twin_a])
+        self.assertEqual(forward, reverse)
+        self.assertEqual(len(set(forward.values())), 2)
+        for label in forward.values():
+            self.assertIn("calendar date", label)
+
+    def test_no_label_leaks_a_column_or_table_name(self):
+        """Clarification A forbids showing tables, columns, keys or SQL."""
+        labels = _date_option_labels([self.NATIVE, self.ENCODED, self.INVOICE])
+        for label in labels.values():
+            lowered = label.lower()
+            for leak in ("snapshot_", "invoice_date_sk", "yyyymmdd", "_sk", "f_", "qbot"):
+                self.assertNotIn(leak, lowered, label)

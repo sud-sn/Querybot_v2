@@ -472,6 +472,89 @@ async def _send_why_insight(
 # Query pipeline — table-aware
 # ══════════════════════════════════════════════════════════════════════════════
 
+# How a date is physically carried, said in business words. Two roles on the
+# same fact routinely share a business name ("Snapshot Date" stored both as a
+# real date and as a YYYYMMDD code); this is what tells them apart on screen
+# without naming a column, table, or key.
+_DATE_KEY_QUALIFIERS = {
+    "native_date": "calendar date",
+    "timestamp": "timestamp",
+    "yyyymmdd_integer": "date code",
+    "yyyymm_integer": "month code",
+    "surrogate_fk": "calendar reference",
+}
+
+
+def _date_option_identity(binding: dict) -> tuple[str, str]:
+    """Physical identity of a date role, used to key and to order stably."""
+    return (
+        str(binding.get("fact_table") or "").upper(),
+        str(binding.get("fact_column") or "").upper(),
+    )
+
+
+def _date_option_labels(bindings: list[dict]) -> dict[tuple[str, str], str]:
+    """Give every physical date role one stable, unique business label.
+
+    Ambiguity here is normal, not exceptional: the same business date is
+    often stored twice on a fact. The previous scheme appended a positional
+    ordinal ("Snapshot Date (Day data 1)"), which had two faults -- it said
+    nothing a user could choose on, and the number came from the order the
+    bindings happened to arrive in, so the same menu entry could point at a
+    different column on the next request.
+
+    Disambiguate by *how the date is stored*, which is a property of the role
+    itself and therefore identical on every render. Where that is still not
+    enough, fall back to an ordinal derived from sorted physical identity so
+    it is at least reproducible.
+    """
+    base_labels: dict[tuple[str, str], str] = {}
+    for binding in bindings:
+        identity = _date_option_identity(binding)
+        if identity in base_labels:
+            continue
+        base_labels[identity] = str(
+            binding.get("context_name")
+            or binding.get("date_role")
+            or "Business date"
+        ).strip() or "Business date"
+
+    qualifiers: dict[tuple[str, str], str] = {}
+    for binding in bindings:
+        identity = _date_option_identity(binding)
+        qualifiers.setdefault(
+            identity,
+            _DATE_KEY_QUALIFIERS.get(
+                normalize_date_key_type(binding.get("date_key_type")), ""
+            ),
+        )
+
+    by_base: dict[str, list[tuple[str, str]]] = {}
+    for identity, label in base_labels.items():
+        by_base.setdefault(label.casefold(), []).append(identity)
+
+    resolved: dict[tuple[str, str], str] = {}
+    for identities in by_base.values():
+        if len(identities) == 1:
+            identity = identities[0]
+            resolved[identity] = base_labels[identity]
+            continue
+        by_qualifier: dict[str, list[tuple[str, str]]] = {}
+        for identity in identities:
+            by_qualifier.setdefault(qualifiers.get(identity, ""), []).append(identity)
+        for qualifier, same in by_qualifier.items():
+            # Sorted identity keeps the ordinal reproducible across requests.
+            for position, identity in enumerate(sorted(same), start=1):
+                base = base_labels[identity]
+                if qualifier and len(same) == 1:
+                    resolved[identity] = f"{base} ({qualifier})"
+                elif qualifier:
+                    resolved[identity] = f"{base} ({qualifier} {position})"
+                else:
+                    resolved[identity] = f"{base} ({position})"
+    return resolved
+
+
 def _governed_date_anchor_repair_lines(
     semantic_plan: dict, db_type: str = "azure_sql"
 ) -> str:
@@ -2352,17 +2435,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 _visible_date_bindings = list(
                     _date_context_resolution.get("options") or []
                 )[:4]
-                _label_counts: dict[str, int] = {}
-                _label_positions: dict[str, int] = {}
-                for _item in _all_date_bindings:
-                    _base_label = str(
-                        _item.get("context_name")
-                        or _item.get("date_role")
-                        or "Business date"
-                    ).strip()
-                    _label_counts[_base_label.casefold()] = (
-                        _label_counts.get(_base_label.casefold(), 0) + 1
-                    )
+                _stable_date_labels = _date_option_labels(_all_date_bindings)
 
                 def _date_choice_option(item: dict, index: int) -> dict:
                     base_label = str(
@@ -2370,25 +2443,17 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                         or item.get("date_role")
                         or "Business date"
                     ).strip()
-                    label = base_label
-                    if _label_counts.get(base_label.casefold(), 0) > 1:
-                        label_key = base_label.casefold()
-                        _label_positions[label_key] = _label_positions.get(label_key, 0) + 1
-                        grain = str(item.get("temporal_grain") or "").strip()
-                        if grain:
-                            label = (
-                                f"{base_label} ({grain.title()} data "
-                                f"{_label_positions[label_key]})"
-                            )
-                        else:
-                            label = (
-                                f"{base_label} (business date "
-                                f"{_label_positions[label_key]})"
-                            )
+                    label = _stable_date_labels.get(
+                        _date_option_identity(item), base_label
+                    )
                     option = {
                         "id": f"date_role_{index}",
                         "label": label,
-                        "value": base_label,
+                        # Carry the disambiguated label, not the shared base
+                        # name: the selection echo and the free-text matcher
+                        # both read this, and the base name alone cannot say
+                        # which of two same-named roles the user picked.
+                        "value": label,
                         "allow_free_text": bool(
                             _date_context_resolution.get("allow_free_text")
                         ),
