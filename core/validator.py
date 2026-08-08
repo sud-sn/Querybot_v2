@@ -2417,6 +2417,42 @@ def validate_sql_detailed(
             and len(unique_base_keys) == len(distinct_base_tables)
             and all(table_columns.get(k) for k in unique_base_keys)
         )
+        # Resolve each column's alias inside its OWN query scope. alias_to_table
+        # above is one flat dict for the whole statement, so two CTEs that each
+        # alias their own fact as "f" -- the natural way to write a multi-fact
+        # comparison, and the shape this codebase asks for -- collide: the
+        # second binding overwrites the first, and the first CTE's columns get
+        # checked against the wrong table. Live case 13 was refused for
+        # "NET_REVENUE_AMOUNT not found on F_INVENTORY_DAILY" when that column
+        # was read from F_SALES_INVOICE in a different CTE.
+        # alias_to_table stays flat because other checks consume it; this map
+        # is consulted first and only overrides when a scope resolves the alias.
+        scoped_column_table: dict[int, str] = {}
+        try:
+            from sqlglot.optimizer.scope import build_scope
+
+            _root_scope = build_scope(tree)
+            for _scope in (_root_scope.traverse() if _root_scope else []):
+                _local: dict[str, str] = {}
+                for _src_alias, _src in (_scope.sources or {}).items():
+                    if not isinstance(_src, sg_exp.Table):
+                        continue  # a nested scope (CTE ref), not a physical table
+                    _variants = _table_variants(_src)
+                    if not _variants:
+                        continue
+                    _key = _pick_table_key(_variants, table_columns)
+                    if _key:
+                        _local[str(_src_alias).upper()] = _key
+                for _col in _scope.columns:
+                    _ref = (_col.table or "").upper()
+                    if _ref and _ref in _local:
+                        scoped_column_table[id(_col)] = _local[_ref]
+        except Exception:
+            # Scope analysis is an accuracy improvement, never a gate. Any
+            # sqlglot version or shape it cannot handle falls back to the flat
+            # map, i.e. exactly the previous behaviour.
+            log.debug("scope-based alias resolution unavailable", exc_info=True)
+
         unknown_cols_by_key: dict[tuple[str, str], dict] = {}
         _unresolved_table_refs_logged: set[str] = set()
         for col_node in tree.find_all(sg_exp.Column):
@@ -2428,7 +2464,7 @@ def validate_sql_detailed(
                 continue
 
             if table_ref:
-                table_key = alias_to_table.get(table_ref)
+                table_key = scoped_column_table.get(id(col_node)) or alias_to_table.get(table_ref)
                 if not table_key or table_key not in table_columns:
                     # Every column reference on this table alias goes
                     # unvalidated for the rest of this query — this is how a

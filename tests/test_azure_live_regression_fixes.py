@@ -1310,3 +1310,61 @@ class CalendarAttributeSatisfiesDateRoleTests(unittest.TestCase):
             self._plan(calendar_attributes={"date": "FULL_DATE", "quarter": ""}),
         )
         self.assertIn("field_plan_mismatch", codes)
+
+
+class PerScopeAliasResolutionTests(unittest.TestCase):
+    """Live case 13: a correct two-CTE comparison refused as unknown_column.
+
+        unknown_column | F_INVENTORY_DAILY | NET_REVENUE_AMOUNT
+        unknown_column | F_INVENTORY_DAILY | INVOICE_DATE_SK
+
+    Both columns are read from F_SALES_INVOICE -- in the *other* CTE. Each CTE
+    aliased its own fact as "f", which is how anyone writes this, and
+    alias_to_table is one flat dict for the whole statement, so the second
+    binding overwrote the first. The safe multi-fact pattern this codebase
+    asks for was therefore the pattern most likely to be false-rejected.
+    """
+
+    COLLIDING = f"""
+        WITH a AS (SELECT SUM(f.NET_REVENUE_AMOUNT) x FROM {SCHEMA}.F_SALES_INVOICE f),
+             b AS (SELECT SUM(f.INVENTORY_VALUE) y   FROM {SCHEMA}.F_INVENTORY_DAILY f)
+        SELECT a.x, b.y FROM a, b
+    """
+
+    def _errs(self, sql):
+        return [e for e in (_validate(sql).errors or []) if e.get("code") == "unknown_column"]
+
+    def test_the_same_alias_in_two_ctes_resolves_per_scope(self):
+        self.assertEqual(self._errs(self.COLLIDING), [])
+
+    def test_a_bad_column_is_still_caught_inside_a_cte(self):
+        sql = f"""
+            WITH a AS (SELECT SUM(f.TOTALLY_MADE_UP) x FROM {SCHEMA}.F_SALES_INVOICE f),
+                 b AS (SELECT SUM(f.INVENTORY_VALUE) y FROM {SCHEMA}.F_INVENTORY_DAILY f)
+            SELECT a.x, b.y FROM a, b
+        """
+        errs = self._errs(sql)
+        self.assertEqual(len(errs), 1)
+        self.assertEqual(errs[0]["column"], "TOTALLY_MADE_UP")
+
+    def test_the_bad_column_is_blamed_on_the_right_table(self):
+        """Scoping must fix attribution, not just suppress the error."""
+        sql = f"""
+            WITH a AS (SELECT SUM(f.TOTALLY_MADE_UP) x FROM {SCHEMA}.F_SALES_INVOICE f),
+                 b AS (SELECT SUM(f.INVENTORY_VALUE) y FROM {SCHEMA}.F_INVENTORY_DAILY f)
+            SELECT a.x, b.y FROM a, b
+        """
+        self.assertEqual(self._errs(sql)[0]["table"], f"{SCHEMA}.F_SALES_INVOICE")
+
+    def test_a_single_scope_query_is_unaffected(self):
+        sql = f"SELECT f.NO_SUCH_COLUMN FROM {SCHEMA}.F_SALES_INVOICE f"
+        self.assertTrue(self._errs(sql))
+
+    def test_a_plain_join_still_validates_both_sides(self):
+        sql = f"""
+            SELECT f.NET_REVENUE_AMOUNT, d.NOPE
+            FROM {SCHEMA}.F_SALES_INVOICE f
+            JOIN {SCHEMA}.D_DATE d ON f.INVOICE_DATE_SK = d.DATE_SK
+        """
+        errs = self._errs(sql)
+        self.assertEqual([e["column"] for e in errs], ["NOPE"])
