@@ -1889,6 +1889,23 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
 
     _semantic_plan = _merge_semantic_plans(_semantic_plan, _semantic_model_plan)
 
+    # Merged-plan contents, unconditionally. The validator enforces THIS object,
+    # so when it rejects correct SQL this line is the ground truth for which
+    # bindings were actually in force — inferring it from the rejection message
+    # cost several wrong diagnoses.
+    log.info(
+        "Merged semantic plan for %s: %d field(s) %s | %d join(s) | required_tables=%s",
+        account_id,
+        len(_semantic_plan.get("fields") or []),
+        [
+            f"{f.get('term')}={f.get('table')}.{f.get('column')}"
+            f"[role={f.get('role')},enf={f.get('enforcement')}]"
+            for f in (_semantic_plan.get("fields") or [])
+        ],
+        len(_semantic_plan.get("joins") or []),
+        _semantic_plan.get("required_tables"),
+    )
+
     # Single-fact scoping has to run on the MERGED plan, not just the model
     # plan: the LLM field planner is a second, independent source of required
     # fields, and a rival fact's column arriving from there survives the merge

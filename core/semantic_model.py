@@ -1742,7 +1742,25 @@ def _scope_plan_to_single_fact(
         for f in fields
         if _is_fact(f.get("table"))
     ))
+    # Unconditional: five separate fixes to this function were inert in
+    # production and indistinguishable in the logs from "nothing to do".
+    # Print the inputs every time so an early return is always explainable.
+    log.info(
+        "Fact scoping inputs: fields=%s | facts_in_plan=%s | known_fact_roles=%d",
+        [
+            f"{str(f.get('table') or '').upper()}.{str(f.get('column') or '').upper()}"
+            f"[role={f.get('role')},enf={f.get('enforcement')},fact={_is_fact(f.get('table'))}]"
+            for f in fields
+        ],
+        distinct_facts,
+        sum(1 for role in table_type_by_name.values() if role == "fact"),
+    )
     if len(distinct_facts) < 2:
+        log.info(
+            "Fact scoping made no change: %d fact(s) in plan - a lone binding "
+            "on a rival fact is NOT demoted by this rule",
+            len(distinct_facts),
+        )
         return ""
 
     # Anchor = the fact carrying the measure the question actually asked for.
