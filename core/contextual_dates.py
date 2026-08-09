@@ -989,6 +989,18 @@ def question_has_explicit_date_filter(question: str) -> bool:
 def detect_temporal_window(question: str) -> dict:
     """Detect relative calendar wording that must use a data-relative anchor."""
     q = normalize_date_role_text(question)
+    observed = re.search(
+        r"\b(?:last|latest|most\s+recent)\s+(\d+)\s+"
+        r"(?:(?:available|observed|data)\s+)(day|week|month|quarter|year)s?\b",
+        q,
+    )
+    if observed:
+        return {
+            "kind": "latest_n_observed",
+            "amount": int(observed.group(1)),
+            "unit": observed.group(2),
+            "anchor_policy": "observed_periods",
+        }
     patterns = (
         (r"\btoday\b", "today", 0, "day"),
         (r"\byesterday\b", "yesterday", 1, "day"),

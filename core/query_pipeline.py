@@ -24,6 +24,7 @@ from core.clarification import (
     clarification_progress, prepare_clarification_meta,
 )
 from core.analytical_intent import plan_analytical_intent
+from core.analytical_request_plan import compile_analytical_request_plan
 from core.schema import run_query, load_known_tables, load_schema_columns
 from core.knowledge import load_retriever
 from core.validator import normalize_generated_sql, validate_sql
@@ -42,6 +43,7 @@ from core.result_cache import result_cache
 from core.query_router import should_route_to_result_cache, should_attempt_cache_followup
 from core.governed_result_followup import adopt_cached_snapshot, run_governed_result_followup
 from core.semantic_planner import build_semantic_field_plan
+from core.source_resolution import resolve_source_scope, source_clarification_options
 from core.semantic_model import (
     build_runtime_semantic_context, build_runtime_semantic_plan,
     build_field_plan_repair_note,
@@ -54,6 +56,7 @@ from core.date_roles import (
 from core.contextual_dates import (
     build_contextual_date_plan,
     build_contextual_date_plan_many,
+    detect_temporal_window,
     enrich_date_binding_calendar_attributes,
     find_explicit_date_roles,
     question_has_snapshot_intent,
@@ -1871,6 +1874,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     _semantic_plan_question = extract_original_question(question)
 
     _semantic_plan = {}
+    _source_scope: dict = {"status": "none", "selected_fact": "", "candidates": []}
     try:
         # Phase 3: the model's fact classifications let the planner lock the
         # measure's fact. Without them it falls back to prior behaviour.
@@ -1901,6 +1905,78 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 "tables, so a rival fact's field can still be hard-required",
                 account_id,
             )
+        _source_model = _contract_model
+        if not _source_model:
+            try:
+                from core.semantic_model import load_semantic_model
+                _source_model = load_semantic_model(state.get("kb_dir", "")) or {}
+            except Exception:
+                _source_model = {}
+        _resolved_clarification_sources = {
+            str(value).strip()
+            for value in (
+                _event_raw.get("_clarification_resolved_sources") or []
+                if isinstance(_event_raw, dict) else []
+            )
+            if str(value).strip()
+        }
+        _source_resolution_question = (
+            question
+            if is_clarification and "source_scope" in _resolved_clarification_sources
+            else _semantic_plan_question
+        )
+        _source_scope = resolve_source_scope(
+            _source_resolution_question,
+            _source_model,
+            vocab=_vocab,
+            selected_schema=schema_hint,
+        )
+        _preferred_facts = {
+            str(_source_scope.get("selected_fact") or "")
+        } - {""}
+        log.info(
+            "Business source resolution for %s: status=%s selected=%s candidates=%s",
+            account_id, _source_scope.get("status"),
+            _source_scope.get("selected_fact"),
+            [f"{c.get('table')}:{c.get('score')}" for c in (_source_scope.get("candidates") or [])[:4]],
+        )
+        if (
+            _source_scope.get("status") == "ambiguous"
+            and can_request_clarification(event, "source_scope")
+        ):
+            _source_options = source_clarification_options(_source_scope)
+            if _source_options:
+                _source_question = (
+                    "I found more than one relevant business dataset. "
+                    "Which source should I use for this analysis?"
+                )
+                _save_pending_clarification(
+                    _semantic_plan_question,
+                    context_with_terms,
+                    {
+                        "source": "source_scope",
+                        "question": _source_question,
+                        "options": _source_options,
+                    },
+                )
+                _send_source_prompt = getattr(adapter, "send_clarification_prompt", None)
+                if callable(_send_source_prompt):
+                    await _send_source_prompt(event, _source_question, _source_options)
+                else:
+                    await adapter.send_message(
+                        event,
+                        _source_question + "\n\n" + "\n".join(
+                            f"- {option['label']}" for option in _source_options
+                        ),
+                    )
+                _trace_finish(
+                    trace_id,
+                    status="success",
+                    answer_type="clarification",
+                    final_answer_summary="Requested clarification for an ambiguous business source",
+                    duration_ms=int(time.time() * 1000) - start_ms,
+                )
+                return
         _semantic_plan = build_semantic_field_plan(
             _semantic_plan_question,
             all_columns,
@@ -1908,7 +1984,9 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             selected_schema=schema_hint,
             vocab=_vocab,
             fact_tables=_planner_fact_tables,
+            preferred_fact_tables=_preferred_facts,
         )
+        _semantic_plan["source_scope"] = _source_scope
         if _semantic_plan.get("enabled"):
             _trace_step(
                 trace_id,
@@ -1941,7 +2019,11 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             question=_semantic_plan_question,
             selected_schema=schema_hint,
             model=_contract_model,
+            preferred_fact_tables={
+                str(_source_scope.get("selected_fact") or "")
+            } - {""},
         )
+        _semantic_model_plan["source_scope"] = _source_scope
         if _semantic_model_plan.get("enabled"):
             _smp_field_summary = [
                 f"{f.get('term')}={f.get('table')}.{f.get('column')}"
@@ -1971,6 +2053,11 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     "enforcement inactive for this question: %s", _smp_exc)
 
     _semantic_plan = _merge_semantic_plans(_semantic_plan, _semantic_model_plan)
+    # Source resolution is an analytical request constraint, not a field-plan
+    # implementation detail.  Preserve it even when one of the two independent
+    # field planners produced no bindings and was therefore skipped by the
+    # merge helper.
+    _semantic_plan["source_scope"] = _source_scope
 
     # Merged-plan contents, unconditionally. The validator enforces THIS object,
     # so when it rejects correct SQL this line is the ground truth for which
@@ -2894,13 +2981,24 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
 
         if _intents.get("relative_date"):
             ri = _intents["relative_date"]
-            _analytic_hints.append(
-                f"RELATIVE DATE HINT: The user is asking about a rolling window of "
-                f"{ri.n} {ri.unit}(s). Use dynamic date arithmetic rather than hardcoded dates. "
-                f"For SQL Server/Azure SQL use DATEADD; for Snowflake use DATEADD or interval syntax; "
-                f"for Oracle use INTERVAL or ADD_MONTHS. "
-                f"{'Also compute the prior window for comparison.' if ri.compare else ''}"
-            )
+            _temporal_window = detect_temporal_window(_semantic_plan_question)
+            if _temporal_window.get("kind") == "latest_n_observed":
+                _analytic_hints.append(
+                    "OBSERVED PERIOD HINT: Select exactly the latest "
+                    f"{_temporal_window.get('n') or ri.n} distinct observed "
+                    f"{_temporal_window.get('unit') or ri.unit} values from the selected fact. "
+                    "Do not subtract a number from MAX(date), and do not anchor to the full "
+                    "calendar dimension. Aggregate once per selected observed period and "
+                    "return the periods in chronological order."
+                )
+            else:
+                _analytic_hints.append(
+                    f"RELATIVE DATE HINT: The user is asking about a rolling window of "
+                    f"{ri.n} {ri.unit}(s). Use dynamic date arithmetic rather than hardcoded dates. "
+                    f"For SQL Server/Azure SQL use DATEADD; for Snowflake use DATEADD or interval syntax; "
+                    f"for Oracle use INTERVAL or ADD_MONTHS. "
+                    f"{'Also compute the prior window for comparison.' if ri.compare else ''}"
+                )
             log.info("analytic_intent: relative_date=%s", ri.unit)
 
         # ── Tier 2 SQL hints ──────────────────────────────────────────────────
@@ -2976,6 +3074,29 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             + "\n\n---\n\n"
             + "\n\n".join(_analytic_hints)
         )
+
+    # Compile the resolved facts, fields, dates, joins and output shape into a
+    # single plan before SQL generation. This is dataset-neutral: every value
+    # comes from this tenant's semantic model, metrics and Date Roles.
+    _analytical_request_plan = compile_analytical_request_plan(
+        _semantic_plan_question,
+        _semantic_plan,
+        matched_metrics=_matched_metrics,
+        analysis_contract=_analysis_contract,
+    )
+    _semantic_plan["analytical_request_plan"] = _analytical_request_plan
+    _trace_step(
+        trace_id,
+        "analytical_request_plan",
+        output_summary={
+            "status": _analytical_request_plan.get("status"),
+            "source_fact": _analytical_request_plan.get("source_fact"),
+            "measures": len(_analytical_request_plan.get("measures") or []),
+            "dimensions": len(_analytical_request_plan.get("dimensions") or []),
+            "temporal_operations": len(_analytical_request_plan.get("temporal_operations") or []),
+        },
+        metadata=_analytical_request_plan,
+    )
 
     # Final safety cap after every prepend/append is done. Priority blocks
     # (metric formulas, semantic model context) sit at the HEAD of the string,
@@ -3412,6 +3533,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         "analysis_contract": _analysis_contract,
         "resolution_plan": _resolution_plan,
         "planner_alignment": _planner_alignment,
+        "analytical_request_plan": _analytical_request_plan,
     }
     _validate_t0 = time.time()
     ok, reason, code = validate_sql(
@@ -3427,7 +3549,8 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     if not ok and code in {
         "field_plan_mismatch", "graph_plan_mismatch", "surrogate_date_conversion",
         "temporal_anchor_missing", "temporal_anchor_mismatch", "temporal_role_mismatch",
-        "temporal_anchor_unscoped", "period_comparison_shape", "parse",
+        "temporal_anchor_unscoped", "observed_period_shape", "source_fact_mismatch",
+        "period_comparison_shape", "parse",
     }:
         _temporal_repair_t0 = time.time()
         try:
@@ -3632,7 +3755,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         rows = None
         ok = False
 
-    retryable = (not ok and (last_code or code) in ("unknown_table", "unknown_column", "date_key_format", "dialect_mismatch", "production_shape", "period_comparison_shape", "composition_shape", "anti_join_shape", "fanout_aggregate", "top_n_shape", "graph_plan_mismatch", "field_plan_mismatch", "metric_formula_mismatch", "null_aggregate_diagnostic", "parse", "multi_statement", "not_select", "reused_plan_empty", "zero_row_fresh", "surrogate_date_conversion", "temporal_anchor_missing", "temporal_anchor_mismatch", "temporal_role_mismatch", "temporal_anchor_unscoped")) or (exec_error is not None)
+    retryable = (not ok and (last_code or code) in ("unknown_table", "unknown_column", "date_key_format", "dialect_mismatch", "production_shape", "period_comparison_shape", "composition_shape", "anti_join_shape", "fanout_aggregate", "top_n_shape", "graph_plan_mismatch", "field_plan_mismatch", "metric_formula_mismatch", "null_aggregate_diagnostic", "parse", "multi_statement", "not_select", "reused_plan_empty", "zero_row_fresh", "surrogate_date_conversion", "temporal_anchor_missing", "temporal_anchor_mismatch", "temporal_role_mismatch", "temporal_anchor_unscoped", "observed_period_shape", "source_fact_mismatch")) or (exec_error is not None)
 
     if retryable:
         if exec_error is not None:
@@ -4343,6 +4466,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             rows,
             analytical_plan=_analytical_plan,
             resolution_plan=_resolution_plan,
+            request_plan=_analytical_request_plan,
         )
         _confidence_context["result_verification"] = _result_verification
         _trace_step(

@@ -1826,6 +1826,90 @@ def _temporal_anchor_errors(tree, sql: str, policies: list[dict]) -> list[dict]:
     return errors
 
 
+def _source_scope_errors(tree, semantic_context: dict | None) -> list[dict]:
+    plan = (semantic_context or {}).get("analytical_request_plan") or {}
+    required = str(plan.get("source_fact") or "")
+    if not required:
+        return []
+    scanned = [
+        ".".join(part for part in (table.catalog, table.db, table.name) if part)
+        for table in tree.find_all(sg_exp.Table)
+        if table.name
+    ]
+    if any(_table_matches(required, table) for table in scanned):
+        return []
+    return [{
+        "code": "source_fact_mismatch",
+        "message": (
+            f"The compiled analytical plan requires {required} as its measure fact, "
+            f"but the SQL scans {', '.join(scanned) or 'no physical source table'}."
+        ),
+        "required_fact": required,
+        "scanned_tables": scanned,
+    }]
+
+
+def _observed_period_errors(tree, sql: str, policies: list[dict]) -> list[dict]:
+    """Enforce exact latest-N *observed* periods from the selected fact.
+
+    This is intentionally different from a rolling calendar window.  "Last 2
+    data days" must select the two latest distinct dates present in fact rows,
+    then return one grouped value per selected date.
+    """
+    observed = [
+        policy for policy in policies or []
+        if str(policy.get("anchor_policy") or "") == "observed_periods"
+        or str(policy.get("kind") or "") == "latest_n_observed"
+    ]
+    if not observed:
+        return []
+    normalized = re.sub(r"\s+", " ", _strip_literals_and_comments(sql)).upper()
+    errors: list[dict] = []
+    for policy in observed:
+        amount = max(1, int(policy.get("amount") or 1))
+        date_column = str(policy.get("date_column") or policy.get("fact_column") or "").upper()
+        fact_table = str(policy.get("fact_table") or policy.get("anchor_table") or "").upper()
+        fact_bare = fact_table.split(".")[-1]
+        has_limit = bool(re.search(rf"\bTOP\s*\(?\s*{amount}\s*\)?\b", normalized))
+        if not has_limit:
+            # sqlglot normalises non-TSQL dialects to a Limit expression.
+            has_limit = any(
+                str(limit.expression or "").strip() == str(amount)
+                for limit in tree.find_all(sg_exp.Limit)
+            )
+        has_distinct = any(bool(select.args.get("distinct")) for select in tree.find_all(sg_exp.Select))
+        ordered_desc = bool(
+            date_column
+            and re.search(
+                rf"\bORDER\s+BY\b[^;]*\b{re.escape(date_column)}\b[^;]*\bDESC\b",
+                normalized,
+            )
+        )
+        fact_scoped = bool(fact_bare and re.search(rf"\b{re.escape(fact_bare)}\b", normalized))
+        grouped_date = bool(
+            date_column
+            and re.search(rf"\bGROUP\s+BY\b[^;]*\b{re.escape(date_column)}\b", normalized)
+        )
+        if not (has_limit and has_distinct and ordered_desc and fact_scoped and grouped_date):
+            errors.append({
+                "code": "observed_period_shape",
+                "message": (
+                    f"Latest {amount} observed {policy.get('unit') or 'period'}s must be compiled "
+                    f"as TOP {amount} DISTINCT {date_column} values ordered descending from "
+                    f"{fact_table}, then returned at one row per selected business date."
+                ),
+                "amount": amount,
+                "column": date_column,
+                "table": fact_table,
+                "missing": {
+                    "limit": not has_limit, "distinct": not has_distinct,
+                    "descending_order": not ordered_desc,
+                    "fact_scope": not fact_scoped, "date_group": not grouped_date,
+                },
+            })
+    return errors
+
+
 def _temporal_anchor_scope_errors(tree, policies: list[dict]) -> list[dict]:
     """
     The MAX() used to anchor a relative-date question must be scoped to the
@@ -2282,13 +2366,24 @@ def validate_sql_detailed(
             raw_multi_fact_errors,
         )
 
+    source_scope_errors = _source_scope_errors(tree, semantic_context)
+    if source_scope_errors:
+        return SqlValidationResult(
+            False,
+            source_scope_errors[0]["message"],
+            "source_fact_mismatch",
+            source_scope_errors,
+        )
+
     field_plan = (semantic_context or {}).get("semantic_plan") or {}
     _temporal_policies = list(field_plan.get("temporal_policies") or [])
     temporal_anchor_errors = _temporal_anchor_errors(
         tree,
         sql,
         _temporal_policies,
-    ) + _temporal_anchor_scope_errors(tree, _temporal_policies)
+    ) + _temporal_anchor_scope_errors(tree, _temporal_policies) + _observed_period_errors(
+        tree, sql, _temporal_policies
+    )
     if temporal_anchor_errors:
         return SqlValidationResult(
             False,

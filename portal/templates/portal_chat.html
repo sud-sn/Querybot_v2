@@ -4485,7 +4485,10 @@ function connect(){
     } else if (msg.type === 'status') {
       updateProcessing(msg.stage, msg.label, msg.detail);
     } else if (msg.type === 'system') {
-      if (/^Query stopped\.?$/i.test(msg.content || '')) _markActiveOutbound('stopped', 'Stopped');
+      if (/^Query stopped\.?$/i.test(msg.content || '')) {
+        _markActiveOutbound('stopped', 'Stopped');
+        setProcessing(false);
+      }
       appendSystem(msg.content, { persist: !/^Connected as /i.test(msg.content || '') });
     } else if (msg.type === 'clarification_prompt') {
       setProcessing(false);
@@ -4501,6 +4504,9 @@ function connect(){
       }
       // Detect failure messages — show error mascot briefly before rendering
       if (msgContent.startsWith('❌') || msgContent.startsWith('❓')) {
+        // This is a terminal frame. Do not depend on a later typing:false
+        // message to restore the composer; that frame can be delayed/lost.
+        setProcessing(false);
         if (msgContent.startsWith('❌')) {
           _markActiveOutbound('failed', 'Needs attention');
           showMascotError();
@@ -4588,6 +4594,7 @@ function connect(){
       _markActiveOutbound('failed', 'Action failed');
       appendSystem(`⚠ ${msg.content || 'Action could not be completed.'}${errDetail}`);
     } else if (msg.type === 'error') {
+      setProcessing(false);
       _pendingSuggestion = null;  // clear stale pending chip on WS-level error
       showMascotError();
       if (window._composerMascotError) window._composerMascotError('Something went wrong — please retry');

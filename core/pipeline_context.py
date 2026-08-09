@@ -122,6 +122,7 @@ def _merge_semantic_plans(*plans: dict | None) -> dict:
     seen_temporal_policies: set[tuple[str, str, str, str]] = set()
     date_disclosures: list[dict] = []
     seen_date_disclosures: set[tuple[str, str, str]] = set()
+    source_scope: dict = {}
 
     # Pre-pass: union avoid lists across plans so the main loop can drop a
     # superseded column no matter which plan proposed it.  The LLM field
@@ -134,6 +135,8 @@ def _merge_semantic_plans(*plans: dict | None) -> dict:
     for plan in plans:
         if not plan or not plan.get("enabled"):
             continue
+        if plan.get("source_scope") and not source_scope:
+            source_scope = dict(plan.get("source_scope") or {})
         for avoid in plan.get("avoid_columns") or []:
             key = (
                 _semantic_table_identity(avoid.get("table") or ""),
@@ -244,6 +247,7 @@ def _merge_semantic_plans(*plans: dict | None) -> dict:
         "date_key_policies": date_key_policies,
         "temporal_policies": temporal_policies,
         "date_disclosures": date_disclosures,
+        "source_scope": source_scope,
     }
 
 

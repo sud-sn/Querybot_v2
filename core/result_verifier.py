@@ -88,6 +88,7 @@ def verify_result_shape(
     *,
     analytical_plan: Any = None,
     resolution_plan: dict[str, Any] | None = None,
+    request_plan: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return an auditable shape-verification report for one executed result.
 
@@ -98,6 +99,7 @@ def verify_result_shape(
     rows = [row for row in (rows or []) if isinstance(row, dict)]
     intent_plan = _plan_dict(analytical_plan)
     resolution = dict(resolution_plan or {})
+    compiled_request = dict(request_plan or {})
     columns = list(rows[0].keys()) if rows else []
     numeric = _numeric_columns(rows, columns)
     temporal = _time_columns(rows, columns)
@@ -202,6 +204,26 @@ def verify_result_shape(
         errors.append(f"A {output} requires a date or period axis.")
     if output in {"pie chart", "bar chart", "chart", "graph"} and not numeric:
         errors.append("The requested chart requires a numeric measure.")
+
+    observed_policies = [
+        policy for policy in (compiled_request.get("temporal_operations") or [])
+        if str(policy.get("kind") or "") == "latest_n_observed"
+    ]
+    for policy in observed_policies:
+        amount = max(1, int(policy.get("amount") or 1))
+        if not temporal:
+            errors.append("Latest observed periods require a visible business-date column.")
+            continue
+        if len(rows) > amount:
+            errors.append(
+                f"The request asked for the latest {amount} observed periods, but {len(rows)} period rows were returned."
+            )
+        date_column = temporal[0]
+        visible_values = [row.get(date_column) for row in rows if row.get(date_column) is not None]
+        if len(visible_values) != len({str(value) for value in visible_values}):
+            errors.append("Latest observed periods were not returned at one row per distinct business date.")
+        if rows and len(rows) <= amount and temporal and not errors:
+            checks.append(f"Result is grouped into the latest {len(rows)} distinct observed period(s).")
 
     if not errors and not warnings:
         checks.append("Returned columns and row shape are consistent with the analytical request.")

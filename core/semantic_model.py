@@ -1864,6 +1864,7 @@ def build_runtime_semantic_plan(
     selected_schema: str = "",
     max_fields: int = 8,
     model: dict[str, Any] | None = None,
+    preferred_fact_tables: set[str] | None = None,
 ) -> dict[str, Any]:
     """Build validator-ready requirements from the structured semantic model.
 
@@ -1883,6 +1884,17 @@ def build_runtime_semantic_plan(
         return {"enabled": False, "fields": [], "joins": [], "required_tables": [], "reason": "no tables in selected schema"}
 
     q_terms = _terms_for_text(question)
+    preferred_fact_tables = {
+        str(name or "").upper() for name in (preferred_fact_tables or set()) if name
+    }
+
+    def _preferred_source(source_table: str) -> bool:
+        parts = str(source_table or "").upper().split(".")
+        return any(
+            (len(parts) >= 2 and len(pref.split(".")) >= 2 and parts[-2:] == pref.split(".")[-2:])
+            or parts[-1:] == pref.split(".")[-1:]
+            for pref in preferred_fact_tables
+        )
     has_temporal_intent = question_has_temporal_intent(question)
     fields: list[dict[str, Any]] = []
     joins: list[dict[str, Any]] = []
@@ -1910,6 +1922,8 @@ def build_runtime_semantic_plan(
             if not signature:
                 signature = (column.upper(),)
             score += _approved_field_table_score(source_table, q_terms)
+            if preferred_fact_tables and _preferred_source(source_table):
+                score += 20
             role = str(field.get("role") or "attribute")
             approved_candidates.append((
                 (role, signature),

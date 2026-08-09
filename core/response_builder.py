@@ -1185,6 +1185,16 @@ def _build_insight_summary(
 
     if mode == "time_series":
         ts = brief.get("time_series") or {}
+        observation_count = int(
+            ts.get("observation_count")
+            or brief.get("row_count")
+            or ctx.get("row_count")
+            or 0
+        )
+        # Two endpoints support a comparison, not a trend claim. Avoid
+        # presenting one interval as sustained momentum or decline.
+        if observation_count and observation_count < 3:
+            return {}
         direction = ts.get("direction", "stable")
         pct = ts.get("overall_pct_change")
         first = ts.get("first_period", "")
@@ -1361,7 +1371,7 @@ def _build_decision_signal(ctx: dict, brief: dict, anomaly_callouts: list[dict])
         direction = ts.get("direction", "stable")
         pct = ts.get("overall_pct_change")
         streak = ts.get("longest_decline_streak", 0)
-        if direction == "decreasing" and (streak >= 3 or (pct is not None and pct <= -10)):
+        if direction == "decreasing" and streak >= 3:
             return {
                 "line": f"Sustained downward trend ({pct:+.0f}% overall) — worth investigating before it compounds." if pct is not None
                         else "Sustained downward trend — worth investigating before it compounds.",

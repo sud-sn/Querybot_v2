@@ -240,6 +240,29 @@ def _aliases_for_column(column: str, vocab=None) -> set[str]:
     if entity:
         aliases.add(_norm(entity))
         aliases.add(_norm(" ".join(_column_words(entity, vocab=v))))
+    # Users commonly omit a generic physical measure suffix. Derive that
+    # business alias for every dataset (INVENTORY_VALUE -> "inventory")
+    # instead of adding product/client-specific entries to Python.
+    if any(
+        col.endswith(suffix)
+        for suffix in (
+            "_AMOUNT", "_AMT", "_VALUE", "_QUANTITY", "_QTY", "_COUNT",
+            "_TOTAL", "_COST", "_CST", "_PROFIT", "_PFT", "_MARGIN",
+        )
+    ):
+        generic_suffixes = {
+            "amount", "value", "quantity", "count", "number", "total",
+            "metric", "measure",
+        }
+        # Derive only from the physical column expansion. A curated alias such
+        # as "invoice amount" may intentionally be qualified; stripping it to
+        # bare "invoice" would make a transaction noun look like a measure and
+        # hard-require the wrong field.
+        words = _norm(" ".join(_column_words(col, vocab=v))).split()
+        while len(words) > 1 and words[-1] in generic_suffixes:
+            words = words[:-1]
+            if words:
+                aliases.add(" ".join(words))
     return {a for a in aliases if a}
 
 
@@ -274,7 +297,14 @@ def _table_context_score(table: str, question: str) -> int:
     return score
 
 
-def _score_candidate(table: str, column: str, role: str, question: str, base_tables: set[str]) -> int:
+def _score_candidate(
+    table: str,
+    column: str,
+    role: str,
+    question: str,
+    base_tables: set[str],
+    preferred_fact_tables: set[str] | None = None,
+) -> int:
     score = _table_context_score(table, question)
     if table in base_tables:
         score += 6
@@ -286,6 +316,11 @@ def _score_candidate(table: str, column: str, role: str, question: str, base_tab
         score += 1
     if column == "DIVI" and "division" in _norm(question):
         score += 3
+    if preferred_fact_tables and role == "measure" and any(
+        _same_physical_table(table, preferred)
+        for preferred in preferred_fact_tables
+    ):
+        score += 20
     return score
 
 
@@ -451,7 +486,11 @@ def _drop_compound_modifier_matches(candidates: list[dict], normalized_question:
     return kept
 
 
-def _choose_fields(question: str, candidates: list[dict]) -> list[dict]:
+def _choose_fields(
+    question: str,
+    candidates: list[dict],
+    preferred_fact_tables: set[str] | None = None,
+) -> list[dict]:
     if not candidates:
         return []
     base_tables = {
@@ -462,7 +501,10 @@ def _choose_fields(question: str, candidates: list[dict]) -> list[dict]:
     chosen_by_term: dict[str, dict] = {}
     for c in candidates:
         key = c["term"]
-        score = _score_candidate(c["table"], c["column"], c["role"], question, base_tables)
+        score = _score_candidate(
+            c["table"], c["column"], c["role"], question, base_tables,
+            preferred_fact_tables,
+        )
         current = chosen_by_term.get(key)
         if not current or score > current["_score"]:
             c = dict(c)
@@ -932,6 +974,7 @@ def build_semantic_field_plan(
     selected_schema: str = "",
     vocab=None,
     fact_tables: set[str] | None = None,
+    preferred_fact_tables: set[str] | None = None,
 ) -> dict:
     """Build a conservative field-source plan from exact known schema columns.
 
@@ -945,7 +988,7 @@ def build_semantic_field_plan(
         for t, cols in (table_columns or {}).items()
     }
     candidates = _find_candidates(question, normalized_columns, allowed_tables, selected_schema, vocab=vocab)
-    fields = _choose_fields(question, candidates)
+    fields = _choose_fields(question, candidates, preferred_fact_tables)
     fields = _apply_display_dimension_fields(fields, question, normalized_columns, allowed_tables, selected_schema)
     if not fields:
         return {"enabled": False, "fields": [], "joins": [], "reason": "no matching semantic fields"}
@@ -997,16 +1040,36 @@ def format_semantic_field_plan(plan: dict, db_type: str = "azure_sql") -> str:
         format_required_anchor,
     )
 
-    if not plan or not plan.get("enabled") or not plan.get("fields"):
+    if not plan:
+        return ""
+    fields = list(plan.get("fields") or [])
+    source_scope = plan.get("source_scope") or {}
+    analytical_request_plan = plan.get("analytical_request_plan") or {}
+    if not fields and not source_scope.get("selected_fact") and not analytical_request_plan:
         return ""
     lines = [
         "## Semantic field-source plan",
         "Use these exact source fields when the question mentions the mapped business terms.",
         "Do not move a mapped column to another table and do not remove underscores from column names.",
-        "",
-        "Resolved fields:",
     ]
-    for field in plan.get("fields", []):
+    if fields:
+        lines.extend(["", "Resolved fields:"])
+    if source_scope.get("selected_fact"):
+        lines.extend([
+            "",
+            "Authoritative measure source:",
+            f"- {source_scope['selected_fact']} is the single fact for measures in this request.",
+            "- Do not substitute or directly join another fact table. Reach descriptive attributes only through governed dimensions.",
+        ])
+    if analytical_request_plan:
+        try:
+            from core.analytical_request_plan import format_analytical_request_plan
+            request_text = format_analytical_request_plan(analytical_request_plan)
+        except Exception:
+            request_text = ""
+        if request_text:
+            lines.extend(["", request_text])
+    for field in fields:
         role_alias = str(field.get("role_alias") or "").strip()
         if role_alias and field.get("date_key_type") == "surrogate_fk":
             # The physical dimension table and its role-playing alias are not
@@ -1106,11 +1169,20 @@ def format_semantic_field_plan(plan: dict, db_type: str = "azure_sql") -> str:
                     str(policy.get("date_key_type") or ""),
                     db_type,
                 )
-            lines.append(
-                f"- {policy.get('business_role') or 'Business date'}: derive the anchor "
-                f"with MAX({date_ref}) over the same governed source rows, then apply "
-                f"the requested {policy.get('kind')} boundary from that anchor."
-            )
+            if policy.get("kind") == "latest_n_observed":
+                lines.append(
+                    f"- {policy.get('business_role') or 'Business date'}: select exactly the latest "
+                    f"{int(policy.get('amount') or 1)} DISTINCT observed {policy.get('unit') or 'period'} "
+                    f"value(s) from the governed fact rows using {date_ref}, ordered descending. "
+                    "Filter the answer to that selected period set and group by the real business date; "
+                    "do not turn this into MAX(date)-N calendar arithmetic and do not return one scalar total."
+                )
+            else:
+                lines.append(
+                    f"- {policy.get('business_role') or 'Business date'}: derive the anchor "
+                    f"with MAX({date_ref}) over the same governed source rows, then apply "
+                    f"the requested {policy.get('kind')} boundary from that anchor."
+                )
             if policy.get("date_key_type") in {"yyyymmdd_integer", "yyyymm_integer"}:
                 encoded_expr = format_date_value_expression(
                     str(policy.get("date_table") or policy.get("fact_table") or ""),
@@ -1129,7 +1201,7 @@ def format_semantic_field_plan(plan: dict, db_type: str = "azure_sql") -> str:
                     "  SNAPSHOT RULE: filter the decoded business date equal to the "
                     "required MAX anchor; do not sum inventory/balance values across periods."
                 )
-            _anchor = format_required_anchor(policy, db_type)
+            _anchor = "" if policy.get("kind") == "latest_n_observed" else format_required_anchor(policy, db_type)
             if _anchor:
                 lines.append(
                     f"  REQUIRED ANCHOR (copy this exact subquery as the anchor; do not "
