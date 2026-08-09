@@ -1793,8 +1793,8 @@ function renderChartWarnings(payload) {
 // palette (dataviz skill: "a status color never impersonates a series") --
 // used only for the biggest-drop/biggest-gain markers below, never as a
 // series color choice.
-const _STATUS_GOOD = '#0ca30c';
-const _STATUS_CRITICAL = '#d03b3b';
+const _STATUS_GOOD = '#15803d';
+const _STATUS_CRITICAL = '#dc2626';
 
 // Turns core/insight.py's already-computed biggest_period_drop/gain
 // (reused as-is, not recomputed) into ECharts markPoint entries anchored
@@ -1807,23 +1807,56 @@ const _STATUS_CRITICAL = '#d03b3b';
 function _buildAnnotationMarkPoints(payload, labels, values) {
   const ann = payload?.annotations;
   if (!ann) return [];
+  const dark = document.documentElement.getAttribute('data-theme') === 'dark';
   const points = [];
   const push = (entry, kind) => {
     if (!entry) return;
     const idx = labels.indexOf(String(entry.period ?? ''));
     if (idx < 0 || values[idx] == null) return;
     const isDrop = kind === 'drop';
+    const statusColor = isDrop ? _STATUS_CRITICAL : _STATUS_GOOD;
+    const labelColor = dark
+      ? (isDrop ? '#fca5a5' : '#86efac')
+      : statusColor;
+    const labelBackground = dark
+      ? (isDrop ? 'rgba(220,38,38,.16)' : 'rgba(21,128,61,.16)')
+      : (isDrop ? 'rgba(220,38,38,.09)' : 'rgba(21,128,61,.09)');
+    const labelBorder = dark
+      ? (isDrop ? 'rgba(252,165,165,.32)' : 'rgba(134,239,172,.32)')
+      : (isDrop ? 'rgba(220,38,38,.25)' : 'rgba(21,128,61,.25)');
+    const pct = Number(entry.pct_change);
+    const pctLabel = Number.isFinite(pct)
+      ? `${pct > 0 ? '+' : ''}${pct.toFixed(1)}%`
+      : '';
     points.push({
       name: isDrop ? 'Biggest drop' : 'Biggest gain',
       coord: [idx, values[idx]],
-      value: entry.pct_change != null ? `${entry.pct_change > 0 ? '+' : ''}${entry.pct_change.toFixed(1)}%` : '',
-      symbol: isDrop ? 'pin' : 'triangle',
-      symbolSize: isDrop ? 32 : 14,
-      symbolRotate: isDrop ? 180 : 0,
-      itemStyle: { color: isDrop ? _STATUS_CRITICAL : _STATUS_GOOD },
+      value: pctLabel,
+      symbol: 'circle',
+      symbolSize: 15,
+      symbolOffset: [0, isDrop ? 3 : -3],
+      itemStyle: {
+        color: statusColor,
+        borderColor: dark ? '#111827' : '#ffffff',
+        borderWidth: 3,
+        shadowBlur: 6,
+        shadowColor: isDrop ? 'rgba(220,38,38,.24)' : 'rgba(21,128,61,.22)',
+      },
+      emphasis: { scale: 1.12 },
       label: {
-        show: true, position: isDrop ? 'bottom' : 'top', fontSize: 10, fontWeight: 700,
-        color: isDrop ? _STATUS_CRITICAL : _STATUS_GOOD,
+        show: true,
+        position: isDrop ? 'bottom' : 'top',
+        distance: 9,
+        formatter: `${isDrop ? '↓' : '↑'} ${pctLabel} ${isDrop ? 'Drop' : 'Gain'}`,
+        fontSize: 10,
+        fontWeight: 800,
+        lineHeight: 16,
+        color: labelColor,
+        backgroundColor: labelBackground,
+        borderColor: labelBorder,
+        borderWidth: 1,
+        borderRadius: 6,
+        padding: [4, 7],
       },
     });
   };
@@ -1843,6 +1876,9 @@ function buildChartOption(payload) {
   const colors      = (dark ? palette.dark : palette.light) || palette.light;
   const gradPair    = _PAL_GRAD[palName]  || _PAL_GRAD.default;
   const labels      = rows.map(r => String((xKey && r?.[xKey]) ?? ''));
+  const hasAnnotations = Boolean(
+    payload?.annotations?.biggest_period_drop || payload?.annotations?.biggest_period_gain
+  );
   const formatFor   = col => _chartFormatFor(payload, col);
   const valueFmt    = (value, col, compact=false) => _fmtChartValue(value, formatFor(col), compact);
   const xLabel      = _chartColumnLabel(payload, xKey || 'Category');
@@ -2405,7 +2441,12 @@ function buildChartOption(payload) {
     color: colors,
     grid: horizontal
       ? { left: 148, right: 28, top: 28, bottom: 20, containLabel: false }
-      : { left: 56, right: 24, top: yKeys.length > 1 ? 44 : 24, bottom: longLabels ? 82 : 48 },
+      : {
+          left: 56,
+          right: 24,
+          top: hasAnnotations ? (yKeys.length > 1 ? 68 : 58) : (yKeys.length > 1 ? 44 : 24),
+          bottom: longLabels ? 82 : (hasAnnotations ? 58 : 48),
+        },
     tooltip: {
       ...tooltipStyle,
       trigger: (type === 'scatter') ? 'item' : 'axis',
@@ -2474,7 +2515,7 @@ function buildChartOption(payload) {
           : undefined,
         // Only the first (or sole) series carries the biggest-drop/gain
         // annotation -- it refers to one measure's trend, not every series.
-        markPoint: i === 0 ? { symbol: 'circle', data: _buildAnnotationMarkPoints(payload, labels, values) } : undefined,
+        markPoint: i === 0 ? { silent: true, data: _buildAnnotationMarkPoints(payload, labels, values) } : undefined,
       };
     });
     return option;
@@ -2517,7 +2558,7 @@ function buildChartOption(payload) {
       // horizontal bars are never used for temporal data (see `horizontal`
       // above), but guard explicitly rather than assume that holds forever.
       markPoint: (i === 0 && !horizontal)
-        ? { symbol: 'circle', data: _buildAnnotationMarkPoints(payload, labels, values) }
+        ? { silent: true, data: _buildAnnotationMarkPoints(payload, labels, values) }
         : undefined,
     };
   });

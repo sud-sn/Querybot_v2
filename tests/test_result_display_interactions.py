@@ -202,6 +202,24 @@ class KpiPresentationTests(unittest.TestCase):
         self.assertIsNone(payload["kpi"])
         self.assertIn("No matching data", payload["answer"]["headline"])
 
+    def test_null_scalar_period_result_is_presented_as_no_data(self):
+        payload = build_assistant_response(
+            question="show revenue for fiscal Q2",
+            rows=[{"Revenue": None}],
+            sql="SELECT SUM(revenue) AS Revenue FROM sales WHERE fiscal_quarter = 2",
+            duration_ms=20,
+            column_formats={"Revenue": "currency"},
+        )
+        self.assertEqual(
+            payload["answer"]["headline"],
+            "No revenue data was found for the requested period.",
+        )
+        self.assertEqual(payload["answer"]["short_value"], "No data")
+        self.assertEqual(payload["kpi"]["state"], "missing")
+        self.assertEqual(payload["kpi"]["value"], "")
+        self.assertIn("No revenue data", payload["insight_summary"])
+        self.assertNotIn("None", str(payload["answer"]))
+
     def test_kpi_carries_currency_override_and_precision(self):
         payload = build_assistant_response(
             question="what is revenue", rows=[{"Revenue": 52677.25}],

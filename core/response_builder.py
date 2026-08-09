@@ -527,15 +527,19 @@ def _build_kpi_payload(
         return None
     column = next(iter(rows[0]))
     value = rows[0].get(column)
+    scalar_missing = _is_missing_scalar(value)
     return {
         "label": _display_label(column),
         "value": _safe_cell(value),
         "format": column_formats.get(column, "number"),
         "display_format": dict(display_formats.get(column) or {}),
-        "state": "missing" if null_issue else "ready",
+        "state": "missing" if (null_issue or scalar_missing) else "ready",
         "note": (
             "Matching records were found, but this metric has no non-null values."
-            if null_issue else "Single-value result"
+            if null_issue
+            else "No data was returned for the requested period or filters."
+            if scalar_missing
+            else "Single-value result"
         ),
     }
 
@@ -553,6 +557,48 @@ def _numeric_or_none(value: Any) -> float | None:
         return float(str(value).replace(",", "").replace("$", "").strip())
     except (TypeError, ValueError):
         return None
+
+
+def _is_missing_scalar(value: Any) -> bool:
+    """Return True when a scalar database result carries no usable value."""
+    if value is None:
+        return True
+    if isinstance(value, float) and not math.isfinite(value):
+        return True
+    return False
+
+
+def _single_missing_scalar(rows: list[dict]) -> tuple[str, Any] | None:
+    if len(rows) != 1 or len(rows[0]) != 1:
+        return None
+    column = next(iter(rows[0]))
+    value = rows[0].get(column)
+    return (column, value) if _is_missing_scalar(value) else None
+
+
+def _missing_scalar_copy(column: str, question: str) -> dict[str, str]:
+    """Build calm, business-facing copy for successful NULL aggregates.
+
+    SQL aggregates such as SUM() return one physical row containing NULL when
+    the requested period has no matching facts.  That is an empty analytical
+    result, not a value called ``None`` and not a query failure.
+    """
+    metric = _display_label(column)
+    metric_lower = metric[:1].lower() + metric[1:] if metric else "metric"
+    temporal = bool(re.search(
+        r"\b(today|yesterday|tomorrow|day|week|month|quarter|q[1-4]|year|"
+        r"fiscal|calendar|period|date|latest|last|current|previous|prior)\b",
+        str(question or ""),
+        re.IGNORECASE,
+    ))
+    target = "the requested period" if temporal else "the current filters"
+    return {
+        "headline": f"No {metric_lower} data was found for {target}.",
+        "short_value": "No data",
+        "comparison": "The query completed successfully, but no metric value was returned.",
+        "scope_badge": "No data",
+        "scope_note": f"There are no matching {metric_lower} values for {target}.",
+    }
 
 
 def _period_comparison_from_rows(rows: list[dict]) -> dict | None:
@@ -817,6 +863,10 @@ def build_answer(
             "scope_badge": scope.get("badge", ""),
             "scope_note": scope.get("note", ""),
         }
+
+    missing_scalar = _single_missing_scalar(rows)
+    if missing_scalar:
+        return _missing_scalar_copy(missing_scalar[0], question)
 
     null_issue = detect_null_metric_issue(rows)
     if null_issue:
@@ -1233,6 +1283,10 @@ def _build_insight_summary(
 
     if detect_zero_match_result(rows):
         return "No matching data was found for this question."
+
+    missing_scalar = _single_missing_scalar(rows)
+    if missing_scalar:
+        return _missing_scalar_copy(missing_scalar[0], ctx.get("question", ""))["headline"]
 
     null_issue = detect_null_metric_issue(rows)
     if null_issue:

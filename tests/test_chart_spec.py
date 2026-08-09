@@ -452,10 +452,10 @@ class ChartAnnotationTests(unittest.TestCase):
         # db_cfg live-query context disproportionate to what's being
         # verified here (a two-line call-order fact).
         renderer_src = (self.ROOT / "core" / "result_renderer.py").read_text(encoding="utf-8")
-        self.assertIn("from core.insight import generate_followup_suggestions, compute_data_brief", renderer_src)
-        brief_call_pos = renderer_src.index("brief = compute_data_brief(rows, question)")
+        self.assertIn("build_chart_annotations", renderer_src)
+        annotation_pos = renderer_src.index("chart_annotations = build_chart_annotations(rows, question)")
         payload_call_pos = renderer_src.index("chart_payload = build_chart_payload(")
-        self.assertLess(brief_call_pos, payload_call_pos)
+        self.assertLess(annotation_pos, payload_call_pos)
         self.assertIn("annotations=chart_annotations,", renderer_src)
 
     def test_portal_chat_renders_annotations_as_mark_points(self):
@@ -471,6 +471,20 @@ class ChartAnnotationTests(unittest.TestCase):
             src.count("markPoint: "), 2,
             "expected exactly one markPoint wiring each in the line/area and bar series builders",
         )
+        self.assertIn("silent: true", src)
+        self.assertIn("formatter: `${isDrop ? '↓' : '↑'} ${pctLabel}", src)
+        self.assertIn("top: hasAnnotations ? (yKeys.length > 1 ? 68 : 58)", src)
+        self.assertIn("backgroundColor: labelBackground", src)
+
+    def test_dashboard_refresh_and_renderer_keep_annotations(self):
+        routes = (self.ROOT / "portal" / "routes.py").read_text(encoding="utf-8")
+        dash = (self.ROOT / "portal" / "templates" / "portal_dashboard.html").read_text(encoding="utf-8")
+        self.assertIn("annotations=build_chart_annotations(", routes)
+        self.assertIn("function _buildAnnotationMarkPoints(payload, labels, values)", dash)
+        self.assertEqual(dash.count("markPoint:"), 2)
+        self.assertIn("silent:true", dash)
+        self.assertIn("top:hasAnnotations?(yKeys.length>1?68:58)", dash)
+        self.assertIn("backgroundColor:labelBackground", dash)
 
 
 class ChartRendererTemplateTests(unittest.TestCase):

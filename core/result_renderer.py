@@ -35,7 +35,7 @@ import store
 # NOTE: this module deliberately imports no LLM entry point. Result narration
 # runs through core.governed_result_followup (metadata only). See the removal
 # note under "LLM narration" below.
-from core.chart import detect_chart_type, build_chart_payload
+from core.chart import detect_chart_type, build_chart_payload, build_chart_annotations
 from core.response_builder import (
     build_assistant_response, build_column_formats,
     detect_null_metric_issue, detect_zero_match_result,
@@ -747,17 +747,7 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
         # period-over-period drop/gain directly on the chart, not only as
         # separate text underneath it. Best-effort: any shape mismatch or
         # non-time-series result simply yields no annotation, not an error.
-        chart_annotations = None
-        try:
-            brief = compute_data_brief(rows, question)
-            time_series = brief.get("time_series") or {}
-            if time_series.get("biggest_period_drop") or time_series.get("biggest_period_gain"):
-                chart_annotations = {
-                    "biggest_period_drop": time_series.get("biggest_period_drop"),
-                    "biggest_period_gain": time_series.get("biggest_period_gain"),
-                }
-        except Exception as exc:
-            log.debug("Chart annotation brief skipped: %s", exc)
+        chart_annotations = build_chart_annotations(rows, question)
 
         chart_payload = build_chart_payload(
             rows,

@@ -35,7 +35,7 @@ from fastapi.templating import Jinja2Templates
 
 import store
 from core.schema import run_query
-from core.chart import detect_chart_type, build_chart_payload
+from core.chart import detect_chart_type, build_chart_payload, build_chart_annotations
 from core.semantic_layer import build_semantic_layer_tables, find_semantic_field
 from core.field_overrides import load_field_overrides
 from core.portal_notifications import portal_notification_hub
@@ -978,6 +978,9 @@ def _refresh_chart(
                     chart_type,
                     title=chart["title"],
                     question=chart.get("question", ""),
+                    annotations=build_chart_annotations(
+                        rows, chart.get("question", "")
+                    ),
                 ) if chart_type else None
                 if payload:
                     payload["color_palette"] = chart.get("color_palette") or "default"
@@ -1821,7 +1824,7 @@ async def portal_query_thread(request: Request, thread_id: str):
         return JSONResponse({"ok": False, "error": "Thread not found."}, status_code=404)
 
     import json as _json
-    from core.chart import build_chart_payload, detect_chart_type
+    from core.chart import build_chart_payload, detect_chart_type, build_chart_annotations
     from core.response_builder import build_assistant_response
 
     turns = []
@@ -1838,7 +1841,10 @@ async def portal_query_thread(request: Request, thread_id: str):
         question = str(trace.get("question_text_sanitized") or "")
         chart_type = detect_chart_type(rows, question=question) if rows else None
         chart = (
-            build_chart_payload(rows, chart_type, title=question, question=question)
+            build_chart_payload(
+                rows, chart_type, title=question, question=question,
+                annotations=build_chart_annotations(rows, question),
+            )
             if chart_type else None
         )
         payload = build_assistant_response(

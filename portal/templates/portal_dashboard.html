@@ -386,6 +386,58 @@ function renderChartWarnings(payload){
     `<div class="chart-warning">${String(w ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]))}</div>`).join('')}</div>`;
 }
 
+const _STATUS_GOOD = '#15803d';
+const _STATUS_CRITICAL = '#dc2626';
+
+function _buildAnnotationMarkPoints(payload, labels, values){
+  const annotations = payload?.annotations;
+  if (!annotations) return [];
+  const dark = document.documentElement.getAttribute('data-theme') === 'dark';
+  const points = [];
+  const add = (entry, kind) => {
+    if (!entry) return;
+    const idx = labels.indexOf(String(entry.period ?? ''));
+    if (idx < 0 || values[idx] == null) return;
+    const isDrop = kind === 'drop';
+    const statusColor = isDrop ? _STATUS_CRITICAL : _STATUS_GOOD;
+    const labelColor = dark
+      ? (isDrop ? '#fca5a5' : '#86efac')
+      : statusColor;
+    const labelBackground = dark
+      ? (isDrop ? 'rgba(220,38,38,.16)' : 'rgba(21,128,61,.16)')
+      : (isDrop ? 'rgba(220,38,38,.09)' : 'rgba(21,128,61,.09)');
+    const labelBorder = dark
+      ? (isDrop ? 'rgba(252,165,165,.32)' : 'rgba(134,239,172,.32)')
+      : (isDrop ? 'rgba(220,38,38,.25)' : 'rgba(21,128,61,.25)');
+    const pct = Number(entry.pct_change);
+    const pctLabel = Number.isFinite(pct) ? `${pct > 0 ? '+' : ''}${pct.toFixed(1)}%` : '';
+    points.push({
+      name:isDrop?'Biggest drop':'Biggest gain',
+      coord:[idx,values[idx]], value:pctLabel,
+      symbol:'circle', symbolSize:15,
+      symbolOffset:[0,isDrop?3:-3],
+      itemStyle:{
+        color:statusColor,
+        borderColor:dark?'#111827':'#ffffff',
+        borderWidth:3,
+        shadowBlur:6,
+        shadowColor:isDrop?'rgba(220,38,38,.24)':'rgba(21,128,61,.22)',
+      },
+      emphasis:{scale:1.12},
+      label:{
+        show:true, position:isDrop?'bottom':'top', distance:9,
+        formatter:`${isDrop?'↓':'↑'} ${pctLabel} ${isDrop?'Drop':'Gain'}`,
+        fontSize:10, fontWeight:800, lineHeight:16,
+        color:labelColor, backgroundColor:labelBackground,
+        borderColor:labelBorder, borderWidth:1, borderRadius:6, padding:[4,7],
+      },
+    });
+  };
+  add(annotations.biggest_period_drop,'drop');
+  add(annotations.biggest_period_gain,'gain');
+  return points;
+}
+
 function chartThemeTokens(){
   const dark = document.documentElement.getAttribute('data-theme') === 'dark';
   return {
@@ -488,12 +540,21 @@ function buildDashboardOption(payload){
     const lbl = p?.axisValueLabel || p?.name || '';
     return `<div style="font-weight:700;margin-bottom:4px">${_chartEscHtml(xLabel)}: ${_chartEscHtml(lbl)}</div>${_chartEscHtml(yLabel)}: <strong>${valueFmt(p?.value, yKey)}</strong>`;
   };
+  const hasAnnotations = Boolean(
+    payload?.annotations?.biggest_period_drop || payload?.annotations?.biggest_period_gain
+  );
 
   return {
     color: colors,
     grid: horizontal
       ? {left:56,right:18,top:24,bottom:12,containLabel:true}
-      : {left:48,right:18,top:yKeys.length>1?44:24,bottom:rotation?72:42,containLabel:true},
+      : {
+          left:48,
+          right:18,
+          top:hasAnnotations?(yKeys.length>1?68:58):(yKeys.length>1?44:24),
+          bottom:rotation?72:(hasAnnotations?56:42),
+          containLabel:true,
+        },
     tooltip: { ...ttBase, trigger:isLine?'axis':'item', formatter: yKeys.length>1?multiTT:singleTT },
     xAxis: horizontal
       ? {type:'value',axisLine:{show:false},splitLine:{lineStyle:{color:theme.split}},axisLabel:{color:theme.axis,formatter:v=>valueFmt(v,yKey,true)}}
@@ -511,6 +572,7 @@ function buildDashboardOption(payload){
           itemStyle:{color:colors[i%colors.length],borderRadius:isLine?0:(horizontal?[0,6,6,0]:[6,6,0,0])},
           barMaxWidth:horizontal?18:28,
           areaStyle:isArea?{color:new echarts.graphic.LinearGradient(0,0,0,1,[{offset:0,color:colors[i%colors.length]+'44'},{offset:1,color:colors[i%colors.length]+'05'}])}:undefined,
+          markPoint:(i===0&&!horizontal)?{silent:true,data:_buildAnnotationMarkPoints(payload,labels,rows.map(r=>_chartNumber(r[k])))}:undefined,
         }))
       : [{
           name:yKey||'Value', type:isLine?'line':'bar', smooth:isLine,
@@ -520,6 +582,7 @@ function buildDashboardOption(payload){
           lineStyle:{width:3,color:colors[0]},
           itemStyle:{color:isLine?colors[0]:gradColor, borderRadius:isLine?0:(horizontal?[0,10,10,0]:[10,10,0,0])},
           areaStyle:isLine?{color:areaColor}:undefined,
+          markPoint:!horizontal?{silent:true,data:_buildAnnotationMarkPoints(payload,labels,values)}:undefined,
         }],
   };
 }

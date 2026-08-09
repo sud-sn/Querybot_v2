@@ -346,6 +346,30 @@ def _render(rows: list[dict], chart_type: str, title: str, plt) -> bytes:
 _ANNOTATABLE_TYPES = {"bar", "line", "area"}
 
 
+def build_chart_annotations(rows: list[dict], question: str = "") -> dict | None:
+    """Return governed trend callouts for chart-capable period results.
+
+    The statistical brief is the single source of truth for gain/drop periods.
+    Keeping this helper beside ``build_chart_payload`` lets chat, history, and
+    refreshed dashboard charts render the same annotations instead of only the
+    live WebSocket response carrying them.
+    """
+    try:
+        from core.insight import compute_data_brief
+
+        time_series = (
+            compute_data_brief(rows, question).get("time_series") or {}
+        )
+        annotations = {
+            key: time_series.get(key)
+            for key in ("biggest_period_drop", "biggest_period_gain")
+            if time_series.get(key)
+        }
+        return annotations or None
+    except Exception:
+        return None
+
+
 def build_chart_payload(
     rows: list[dict],
     chart_type: str | None,
