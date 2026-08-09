@@ -3828,9 +3828,14 @@ function _submitClarification(data, answer, optionId, card){
     toastLong('Connection lost. Your clarification is still here; send it after reconnection.');
     return;
   }
+  // A clarification prompt is itself the server's authorization to answer.
+  // Do not gate it on a possibly-late typing/agent-state frame: that race left
+  // visible option buttons inert even though the server was waiting.  The
+  // pending_id and server-side pending record remain the authority, and the
+  // controls are disabled immediately below to prevent duplicate submits.
   if (processingActive && agentRunState !== 'waiting_for_user') {
-    toast('QueryBot is still finishing the current step. Please try again in a moment.');
-    return;
+    toast('QueryBot is still finishing the current step; applying your clarification now.');
+    setAgentRunState('waiting_for_user');
   }
   card?.querySelectorAll('button, textarea').forEach((control) => control.disabled = true);
   const payload = { type:'clarification_response', pending_id: data.pending_id || '' };

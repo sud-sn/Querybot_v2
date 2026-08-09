@@ -62,7 +62,17 @@ _BOX_PATTERNS = [
     re.compile(r"\bquartile[s]?\s+(?:of|by|for|analysis|breakdown)\b", re.I),
     # allow "of" as preposition, and allow an intermediate word before the preposition
     re.compile(r"\b(?:median|iqr|interquartile)\s+(?:\w+\s+)?(?:by|per|for|across|of)\b", re.I),
-    re.compile(r"\b(?:p25|p75|q1|q3|p50)\b", re.I),
+    # P25/P50/P75 are unambiguously statistical.  Q1/Q3 are not: in
+    # analytical questions they overwhelmingly mean calendar/fiscal quarters
+    # ("revenue trend from Q1 to Q3").  Standalone Q1/Q3 therefore require
+    # explicit statistical context instead of silently turning a time-series
+    # result into diagnostic box-plot columns.
+    re.compile(r"\b(?:p25|p75|p50)\b", re.I),
+    re.compile(
+        r"\b(?:q1|q3)\b.{0,35}\b(?:quartile|box\s*plot|distribution|percentile|iqr|interquartile)\b|"
+        r"\b(?:quartile|box\s*plot|distribution|percentile|iqr|interquartile)\b.{0,35}\b(?:q1|q3)\b",
+        re.I,
+    ),
     # "spread by/per/across" OR "spread of X by"
     re.compile(r"\bspread\s+(?:by|per|across|for)\s+\w+\b", re.I),
     re.compile(r"\bspread\s+of\b.{0,40}\bby\b", re.I),

@@ -1712,6 +1712,7 @@ def _scope_plan_to_single_fact(
     fields: list[dict[str, Any]],
     joins: list[dict[str, Any]],
     tables: list[dict[str, Any]],
+    preferred_fact_tables: set[str] | None = None,
 ) -> str:
     """Demote requirements that point at a fact table the answer isn't anchored on.
 
@@ -1772,6 +1773,18 @@ def _scope_plan_to_single_fact(
         for f in fields
         if _is_fact(f.get("table"))
     ))
+    preferred_fact_tables = {
+        str(value or "").upper() for value in (preferred_fact_tables or set()) if value
+    }
+    preferred_anchor = next(
+        (
+            known for known, role in table_type_by_name.items()
+            if role == "fact" and any(
+                _table_matches(known, preferred) for preferred in preferred_fact_tables
+            )
+        ),
+        "",
+    )
     # Unconditional: five separate fixes to this function were inert in
     # production and indistinguishable in the logs from "nothing to do".
     # Print the inputs every time so an early return is always explainable.
@@ -1785,7 +1798,11 @@ def _scope_plan_to_single_fact(
         distinct_facts,
         sum(1 for role in table_type_by_name.values() if role == "fact"),
     )
-    if len(distinct_facts) < 2:
+    if len(distinct_facts) < 2 and not (
+        preferred_anchor
+        and distinct_facts
+        and not _table_matches(distinct_facts[0], preferred_anchor)
+    ):
         log.info(
             "Fact scoping made no change: %d fact(s) in plan - a lone binding "
             "on a rival fact is NOT demoted by this rule",
@@ -1793,10 +1810,11 @@ def _scope_plan_to_single_fact(
         )
         return ""
 
-    # Anchor = the fact carrying the measure the question actually asked for.
+    # Anchor = the authoritative source when present, otherwise the fact
+    # carrying the measure the question actually asked for.
     # `fields` is emitted in descending score order, so the first fact is the
     # best-scoring one when no explicit measure resolved.
-    anchor = next(
+    anchor = preferred_anchor or next(
         (
             str(f.get("table") or "").upper()
             for f in fields
@@ -1829,7 +1847,7 @@ def _scope_plan_to_single_fact(
         if (
             field.get("enforcement") != "optional"
             and _is_fact(table_u)
-            and table_u != anchor
+            and not _table_matches(table_u, anchor)
         ):
             field["enforcement"] = "optional"
             field["demoted_reason"] = f"rival fact table; answer is anchored on {anchor}"
@@ -1840,8 +1858,8 @@ def _scope_plan_to_single_fact(
         from_u = str(join.get("from") or "").upper()
         to_u = str(join.get("to") or "").upper()
         touches_rival_fact = (
-            (_is_fact(from_u) and from_u != anchor)
-            or (_is_fact(to_u) and to_u != anchor)
+            (_is_fact(from_u) and not _table_matches(from_u, anchor))
+            or (_is_fact(to_u) and not _table_matches(to_u, anchor))
         )
         if join.get("enforcement") != "optional" and touches_rival_fact:
             join["enforcement"] = "optional"

@@ -101,6 +101,22 @@ def _requested_grain(question: str) -> str:
     return ""
 
 
+def _requested_grains(question: str) -> set[str]:
+    q = _norm(question)
+    return {
+        grain for word, grain in _GRAIN_WORDS.items()
+        if re.search(rf"\b{word}\b", q)
+    }
+
+
+def _same_table(left: str, right: str) -> bool:
+    lp = str(left or "").upper().strip().strip("[]\"`").split(".")
+    rp = str(right or "").upper().strip().strip("[]\"`").split(".")
+    if len(lp) >= 2 and len(rp) >= 2:
+        return lp[-2:] == rp[-2:]
+    return bool(lp and rp and lp[-1] == rp[-1])
+
+
 def _grain_matches(requested: str, table: dict[str, Any]) -> bool:
     if not requested:
         return False
@@ -147,6 +163,7 @@ def resolve_source_scope(
     *,
     vocab=None,
     selected_schema: str = "",
+    authoritative_fact_tables: set[str] | None = None,
 ) -> dict[str, Any]:
     """Resolve a source fact before resolving fields.
 
@@ -167,13 +184,32 @@ def resolve_source_scope(
     if not tables:
         return {"status": "none", "selected_fact": "", "candidates": [], "reason": "no classified facts"}
 
+    # Shared entity labels (for example two facts both called "inventory
+    # snapshot") describe a subject area, not an explicit physical source.
+    # Count aliases tenant-locally so only a unique alias can lock a source.
+    alias_counts: dict[str, int] = {}
+    table_aliases: dict[str, set[str]] = {}
+    for table in tables:
+        identity = _table_identity(table)
+        aliases = _table_aliases(table, vocab=vocab)
+        table_aliases[identity] = aliases
+        for alias in aliases:
+            alias_counts[alias] = alias_counts.get(alias, 0) + 1
+
     requested_grain = _requested_grain(question)
+    requested_grains = _requested_grains(question)
+    authoritative_fact_tables = {
+        str(value or "").upper() for value in (authoritative_fact_tables or set()) if value
+    }
     scored: list[dict[str, Any]] = []
     for table in tables:
         score = 0
         evidence: list[str] = []
         matches = sorted(
-            (a for a in _table_aliases(table, vocab=vocab) if _contains_phrase(question, a)),
+            (
+                a for a in table_aliases.get(_table_identity(table), set())
+                if alias_counts.get(a, 0) == 1 and _contains_phrase(question, a)
+            ),
             key=len, reverse=True,
         )
         if matches:
@@ -182,6 +218,17 @@ def resolve_source_scope(
             if meaningful:
                 score += 4 + min(6, len(meaningful) * 2)
                 evidence.append(f"source:{best}")
+
+        metric_bound = any(
+            _same_table(_table_identity(table), source)
+            for source in authoritative_fact_tables
+        )
+        if metric_bound:
+            # An approved metric's physical source is stronger evidence than a
+            # cadence word.  This prevents "revenue by invoice month" from
+            # selecting a monthly inventory fact merely because it says month.
+            score += 30
+            evidence.append("approved_metric_source")
 
         measure_hits: set[str] = set()
         for field in table.get("fields", []) or []:
@@ -199,9 +246,10 @@ def resolve_source_scope(
             score += 5 + min(4, len(measure_hits))
             evidence.append("measure:" + ",".join(sorted(measure_hits)[:3]))
 
-        if _grain_matches(requested_grain, table):
-            score += 5
-            evidence.append(f"grain:{requested_grain}")
+        for grain in requested_grains or ({requested_grain} if requested_grain else set()):
+            if _grain_matches(grain, table):
+                score += 5
+                evidence.append(f"grain:{grain}")
         if score:
             scored.append({
                 "table": _table_identity(table), "score": score,
@@ -214,6 +262,47 @@ def resolve_source_scope(
     scored.sort(key=lambda item: (-int(item["score"]), item["table"]))
     if not scored:
         return {"status": "none", "selected_fact": "", "candidates": [], "reason": "no source evidence"}
+    compound_language = bool(re.search(r"\b(?:compare|versus|vs\.?|with)\b", _norm(question)))
+    if len(requested_grains) > 1 and compound_language:
+        selected_by_grain: list[dict[str, Any]] = []
+        for grain in sorted(requested_grains):
+            matches = [item for item in scored if f"grain:{grain}" in item["evidence"]]
+            if matches:
+                selected_by_grain.append(matches[0])
+        unique = list({item["table"]: item for item in selected_by_grain}.values())
+        if len(unique) > 1:
+            return {
+                "status": "compound",
+                "selected_fact": "",
+                "selected_facts": [item["table"] for item in unique],
+                "candidates": unique,
+                "requested_grains": sorted(requested_grains),
+                "reason": "multiple requested grains require isolated fact subplans",
+            }
+    # An explicit source phrase always wins over metric metadata.  Otherwise a
+    # single approved metric source is authoritative.  Both rules are derived
+    # from the tenant model/registry, never from client-specific names.
+    explicit = [item for item in scored if any(e.startswith("source:") for e in item["evidence"])]
+    if explicit:
+        explicit.sort(key=lambda item: (-int(item["score"]), item["table"]))
+        top = explicit[0]
+        return {
+            "status": "selected", "selected_fact": top["table"],
+            "candidates": explicit[:6], "requested_grain": requested_grain,
+            "requested_grains": sorted(requested_grains),
+            "reason": "explicit tenant source terminology",
+        }
+
+    metric_bound = [item for item in scored if "approved_metric_source" in item["evidence"]]
+    if len(metric_bound) == 1:
+        top = metric_bound[0]
+        return {
+            "status": "selected", "selected_fact": top["table"],
+            "candidates": metric_bound, "requested_grain": requested_grain,
+            "requested_grains": sorted(requested_grains),
+            "reason": "approved metric source binding",
+        }
+
     top = scored[0]
     runner_score = int(scored[1]["score"]) if len(scored) > 1 else 0
     selected = int(top["score"]) >= 7 and int(top["score"]) - runner_score >= 2
@@ -221,6 +310,7 @@ def resolve_source_scope(
         "status": "selected" if selected else "ambiguous",
         "selected_fact": top["table"] if selected else "",
         "candidates": scored[:6], "requested_grain": requested_grain,
+        "requested_grains": sorted(requested_grains),
         "reason": "tenant semantic model and terminology evidence",
     }
 
@@ -251,6 +341,15 @@ def format_source_scope(scope: dict[str, Any]) -> str:
             "## Authoritative source scope\n"
             f"Use {selected} as the single measure fact for this request. "
             "Do not substitute or join another fact table. Dimension joins are allowed only through governed relationships."
+        )
+    selected_facts = [str(value) for value in scope.get("selected_facts") or [] if value]
+    if selected_facts:
+        return (
+            "## Authoritative compound source scope\n"
+            "Build one independently aggregated subquery for each fact: "
+            + ", ".join(selected_facts)
+            + ". Combine only their aggregated outputs through governed shared dimensions; "
+              "never join physical fact rows directly."
         )
     candidates = ", ".join(c.get("table", "") for c in (scope.get("candidates") or [])[:3])
     return f"## Unresolved source scope\nDo not guess between these candidate facts: {candidates}."

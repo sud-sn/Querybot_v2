@@ -92,6 +92,11 @@ _RESULT_CONTEXT_RE = re.compile(
     r"(?:result|results|data|dataset|rows?|table)\b",
     re.IGNORECASE,
 )
+_ELLIPTICAL_EXTREME_RE = re.compile(
+    r"^\s*which\s+(?:one|row|item|result)\s+(?:is|was)\s+(?:the\s+)?"
+    r"(highest|lowest|best|worst)\s*[?!.]?\s*$",
+    re.IGNORECASE,
+)
 _AUTO_PRESENTATION_RE = re.compile(
     r"^\s*(?:(?:show|render|display|provide|give)(?:\s+me)?\s+"
     r"(?:(?:this|that|the|current|previous|above)\s+)?"
@@ -222,6 +227,13 @@ def parse_result_command(text: str) -> ResultCommand | None:
         )
     if _KEEP_TOP_ONE_RE.fullmatch(value):
         return ResultCommand("keep_top", limit=1)
+    match = _ELLIPTICAL_EXTREME_RE.fullmatch(value)
+    if match:
+        return ResultCommand(
+            "keep_top",
+            limit=1,
+            direction="asc" if match.group(1).lower() in {"lowest", "worst"} else "desc",
+        )
     match = _POSITIONAL_RE.fullmatch(value)
     if match:
         verb, position, amount = (part.lower() for part in match.groups())

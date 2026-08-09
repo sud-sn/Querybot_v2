@@ -819,6 +819,38 @@ def attempt_field_plan_repair(
         ] if p]
         return bool(parts) and _table_matches(".".join(parts), table_name)
 
+    def _has_ancestor(node, kinds: tuple[type, ...]) -> bool:
+        parent = getattr(node, "parent", None)
+        while parent is not None:
+            if isinstance(parent, kinds):
+                return True
+            parent = getattr(parent, "parent", None)
+        return False
+
+    def _inside_join_or_filter(node) -> bool:
+        """Return True for structural predicates that repair must never edit."""
+        return _has_ancestor(node, (sg_exp.Join, sg_exp.Where))
+
+    def _output_or_group_column(node) -> bool:
+        """Allow display/supersession swaps only in presentation contexts.
+
+        A deterministic field repair may change a selected/grouped business
+        field, but never a relationship predicate or row filter.  ORDER BY is
+        intentionally included because it commonly repeats the selected
+        display expression.
+        """
+        if _inside_join_or_filter(node):
+            return False
+        return _has_ancestor(node, (sg_exp.Select, sg_exp.Group, sg_exp.Order, sg_exp.Having))
+
+    def _aggregate_measure_column(node) -> bool:
+        """Only aggregate arguments are eligible for a measure substitution."""
+        if _inside_join_or_filter(node) or _has_ancestor(node, (sg_exp.Group,)):
+            return False
+        return _has_ancestor(node, (sg_exp.AggFunc,)) and _has_ancestor(
+            node, (sg_exp.Select, sg_exp.Having)
+        )
+
     changed = False
 
     # ── Superseded-column swaps (avoided → admin-approved, same table) ────────
@@ -836,6 +868,8 @@ def attempt_field_plan_repair(
         replaced_here = False
         for col_node in list(tree.find_all(sg_exp.Column)):
             if (col_node.name or "").upper() != avoid_col:
+                continue
+            if not _output_or_group_column(col_node):
                 continue
             tbl_ref = (col_node.table or "").upper()
             if tbl_ref and aliases and tbl_ref not in aliases:
@@ -880,7 +914,15 @@ def attempt_field_plan_repair(
         }
 
         def _measure_shaped(name: str, ctype: str) -> bool:
-            if name.endswith(("_KEY", "_ID", "_CD", "_NUM", "_NO")):
+            # Surrogate/business/date keys are identifiers even when physically
+            # stored as integers.  Treating *_SK as a measure is what changed
+            # ORDER_SK = ORDER_SK into ORDER_SK = SHIPPED_AMOUNT in production.
+            if name.endswith((
+                "_SK", "_KEY", "_FK", "_ID", "_CD", "_CODE", "_NUM",
+                "_NO", "_NBR", "_YYYYMM", "_YYYYMMDD", "_DMS_KEY",
+            )):
+                return False
+            if any(token in name for token in ("DATE_KEY", "DATE_SK", "DT_DMS_KEY")):
                 return False
             base = ctype.lower().split("(")[0].strip()
             return any(t in base for t in (
@@ -889,6 +931,8 @@ def attempt_field_plan_repair(
 
         candidates: set[str] = set()
         for col_node in tree.find_all(sg_exp.Column):
+            if not _aggregate_measure_column(col_node):
+                continue
             name = (col_node.name or "").upper()
             tbl_ref = (col_node.table or "").upper()
             if tbl_ref and tbl_ref not in aliases:
@@ -902,8 +946,11 @@ def attempt_field_plan_repair(
         if len(candidates) != 1:
             return ""
         wrong_col = candidates.pop()
+        replaced_measure = False
         for col_node in list(tree.find_all(sg_exp.Column)):
             if (col_node.name or "").upper() != wrong_col:
+                continue
+            if not _aggregate_measure_column(col_node):
                 continue
             tbl_ref = (col_node.table or "").upper()
             if tbl_ref and tbl_ref not in aliases:
@@ -912,6 +959,9 @@ def attempt_field_plan_repair(
                 sg_exp.column(req_col, table=col_node.table)
                 if col_node.table else sg_exp.column(req_col)
             )
+            replaced_measure = True
+        if not replaced_measure:
+            return ""
         changed = True
 
     for field in missing_display:

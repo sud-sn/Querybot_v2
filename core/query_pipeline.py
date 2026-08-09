@@ -2024,15 +2024,32 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             if is_clarification and "source_scope" in _resolved_clarification_sources
             else _semantic_plan_question
         )
+        # Metric candidates are already tenant-scoped and phrase-matched. Run
+        # an early, conservative metric pass solely to give source arbitration
+        # approved physical-table evidence. The full graph-aware metric scope
+        # still runs below and remains authoritative for formula enforcement.
+        _early_metric_scope = resolve_metric_scope(
+            _metric_candidates,
+            _semantic_plan_question,
+            all_columns,
+            selected_schema=schema_hint,
+            limit=6,
+        )
+        _early_metric_tables: set[str] = set()
+        if not _early_metric_scope.ambiguous:
+            for _early_metric in _early_metric_scope.metrics:
+                _early_metric_tables.update(metric_source_tables(_early_metric, all_columns))
+
         _source_scope = resolve_source_scope(
             _source_resolution_question,
             _source_model,
             vocab=_vocab,
             selected_schema=schema_hint,
+            authoritative_fact_tables=_early_metric_tables,
         )
-        _preferred_facts = {
-            str(_source_scope.get("selected_fact") or "")
-        } - {""}
+        _preferred_facts = ({str(_source_scope.get("selected_fact") or "")} | {
+            str(value) for value in (_source_scope.get("selected_facts") or [])
+        }) - {""}
         log.info(
             "Business source resolution for %s: status=%s selected=%s candidates=%s",
             account_id, _source_scope.get("status"),
@@ -2118,9 +2135,11 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             question=_semantic_plan_question,
             selected_schema=schema_hint,
             model=_contract_model,
-            preferred_fact_tables={
+            preferred_fact_tables=({
                 str(_source_scope.get("selected_fact") or "")
-            } - {""},
+            } | {
+                str(value) for value in (_source_scope.get("selected_facts") or [])
+            }) - {""},
         )
         _semantic_model_plan["source_scope"] = _source_scope
         if _semantic_model_plan.get("enabled"):
@@ -2220,11 +2239,17 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 if str(t.get("type") or "").lower() == "fact"
                 and (t.get("qualified_name") or t.get("table"))
             })
-            _plan_anchor = _scope_plan_to_single_fact(
-                _semantic_plan.get("fields") or [],
-                _semantic_plan.get("joins") or [],
-                _anchor_tables,
-            )
+            _compound_sources = {
+                str(value) for value in (_source_scope.get("selected_facts") or []) if value
+            }
+            _plan_anchor = ""
+            if not _compound_sources:
+                _plan_anchor = _scope_plan_to_single_fact(
+                    _semantic_plan.get("fields") or [],
+                    _semantic_plan.get("joins") or [],
+                    _anchor_tables,
+                    preferred_fact_tables=_preferred_facts,
+                )
             if _plan_anchor:
                 _semantic_plan["fact_anchor"] = _plan_anchor
                 _trace_step(
@@ -2232,6 +2257,22 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     "semantic_plan_fact_anchor",
                     output_summary={"anchor": _plan_anchor},
                 )
+
+            # Required tables are derived state. Rebuild them after rival-fact
+            # demotion so optional retrieval noise cannot remain a hard table
+            # requirement later in validation/prompt coverage.
+            _required_tables = {
+                str(field.get("table") or "")
+                for field in (_semantic_plan.get("fields") or [])
+                if field.get("enforcement") != "optional" and field.get("table")
+            }
+            for _join in (_semantic_plan.get("joins") or []):
+                if _join.get("enforcement") == "optional":
+                    continue
+                _required_tables.update(
+                    str(_join.get(key) or "") for key in ("from", "to") if _join.get(key)
+                )
+            _semantic_plan["required_tables"] = sorted(_required_tables)
     except Exception as _anchor_exc:
         log.warning(
             "Merged-plan fact scoping failed — a rival fact's field may stay "

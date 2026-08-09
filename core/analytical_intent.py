@@ -139,6 +139,7 @@ class AnalyticalPlan:
     dimensions: tuple[str, ...] = ()
     filters: tuple[str, ...] = ()
     time_range: str = ""
+    quarter_periods: tuple[str, ...] = ()
     date_role: str = "unresolved"
     calendar_basis: str = "unresolved"
     fiscal_year_start_month: int | None = None
@@ -164,6 +165,7 @@ class AnalyticalPlan:
             "dimensions": list(self.dimensions),
             "filters": list(self.filters),
             "time_range": self.time_range,
+            "quarter_periods": list(self.quarter_periods),
             "date_role": self.date_role,
             "calendar_basis": self.calendar_basis,
             "fiscal_year_start_month": self.fiscal_year_start_month,
@@ -292,6 +294,36 @@ def _named_quarter(text: str) -> str:
     return f"Q{number}{' ' + year if year else ''}"
 
 
+def _named_quarters(text: str) -> tuple[str, ...]:
+    """Return all requested business quarters in analytical order.
+
+    "Q1 to Q3" means an inclusive trend (Q1, Q2, Q3), while "Q1 and
+    Q3" means two explicitly selected periods. Calendar/fiscal interpretation
+    is resolved separately; this function only preserves the requested shape.
+    """
+    found: list[str] = []
+    word_numbers = {"first": "1", "second": "2", "third": "3", "fourth": "4"}
+    for match in _NAMED_QUARTER_RE.finditer(text or ""):
+        number = match.group(1) or match.group(2) or word_numbers.get(
+            str(match.group(3) or "").casefold(), ""
+        )
+        year = str(match.group(4) or "")
+        label = f"Q{number}{' ' + year if year else ''}"
+        if number and label not in found:
+            found.append(label)
+    if len(found) == 2 and re.search(
+        r"\b(?:from\s+)?q\s*[1-4]\s+(?:to|through|thru|until|-)+\s+q\s*[1-4]\b",
+        text or "",
+        re.I,
+    ):
+        start = int(re.search(r"[1-4]", found[0]).group(0))
+        end = int(re.search(r"[1-4]", found[1]).group(0))
+        if start <= end:
+            year = found[0].split(" ", 1)[1] if " " in found[0] else ""
+            return tuple(f"Q{quarter}{' ' + year if year else ''}" for quarter in range(start, end + 1))
+    return tuple(found)
+
+
 def _fiscal_start_month(text: str) -> int | None:
     match = _FISCAL_START_RE.search(text or "")
     if not match:
@@ -358,7 +390,8 @@ def plan_analytical_intent(
         value for value in dimensions if value.casefold() not in metric_words
     )
     time_match = _TIME_RE.search(text)
-    named_quarter = _named_quarter(text)
+    quarter_periods = _named_quarters(text)
+    named_quarter = quarter_periods[0] if quarter_periods else _named_quarter(text)
     time_range = named_quarter or (time_match.group(1).lower() if time_match else "")
     output_match = _OUTPUT_RE.search(text)
     output = output_match.group(1).lower() if output_match else "auto"
@@ -496,6 +529,7 @@ def plan_analytical_intent(
         business_concepts=tuple(business_concepts),
         dimensions=dimensions,
         time_range=time_range,
+        quarter_periods=quarter_periods,
         date_role="governed_default" if time_range else "unresolved",
         calendar_basis=calendar_basis,
         fiscal_year_start_month=fiscal_start_month,

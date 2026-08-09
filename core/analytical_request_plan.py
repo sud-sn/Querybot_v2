@@ -39,6 +39,9 @@ def compile_analytical_request_plan(
     plan = semantic_plan or {}
     source_scope = plan.get("source_scope") or {}
     selected_fact = str(source_scope.get("selected_fact") or plan.get("fact_anchor") or "")
+    selected_facts = [
+        str(value) for value in (source_scope.get("selected_facts") or []) if value
+    ]
     fields = [f for f in (plan.get("fields") or []) if f.get("enforcement") != "optional"]
     measures = [
         {"term": f.get("term"), "table": f.get("table"), "column": f.get("column")}
@@ -84,6 +87,27 @@ def compile_analytical_request_plan(
                 "aggregate_before_join": True,
                 "physical_fact_must_appear_in_own_cte": True,
             })
+    # Source arbitration can identify a multi-grain compound request even when
+    # the entity graph has no explicit fact-to-fact path (the safe and common
+    # case). Compile those facts into isolated subplans directly rather than
+    # collapsing them to the first cadence or asking a misleading one-option
+    # source clarification.
+    if not subrequests and len(selected_facts) > 1:
+        shared_dimensions = list(dict.fromkeys(
+            str(d.get("term") or "") for d in dimensions if d.get("term")
+        ))
+        for index, physical in enumerate(selected_facts, start=1):
+            source_facts.append(physical)
+            subrequests.append({
+                "id": f"fact_subplan_{index}",
+                "source_fact": physical,
+                "measures": [m for m in measures if _same_table(m.get("table"), physical)],
+                "dimensions": [dict(d) for d in dimensions],
+                "temporal_operations": [dict(item) for item in temporal],
+                "group_by": shared_dimensions,
+                "aggregate_before_join": True,
+                "physical_fact_must_appear_in_own_cte": True,
+            })
     if not source_facts and selected_fact:
         source_facts = [selected_fact]
 
@@ -112,7 +136,11 @@ def compile_analytical_request_plan(
     if subrequests:
         compiled["combination"] = {
             "mode": "join_aggregated_subplans",
-            "shared_dimensions": list(join_plan.get("common_dimensions") or []),
+            "shared_dimensions": list(
+                join_plan.get("common_dimensions")
+                or subrequests[0].get("group_by")
+                or []
+            ),
             "join_inputs": "aggregated_subplans_only",
         }
     return compiled
