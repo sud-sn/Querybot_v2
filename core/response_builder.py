@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import json
 import math
 import re
 from datetime import date, datetime
@@ -13,6 +14,44 @@ log = logging.getLogger("querybot.response_builder")
 
 _PREVIEW_ROW_CAP = 200
 _RESULT_FORMATS = {"number", "currency", "percentage", "date", "text"}
+
+_TEXT_ONLY_RESPONSE_KEYS = {
+    "content", "text", "headline", "short_value", "insight_summary",
+    "label", "title", "message", "reason", "description", "next_step",
+    "executive_summary", "scope_badge", "duration_label", "data_source",
+    "question", "question_id", "sql",
+}
+
+
+def sanitize_response_text_fields(value: Any, *, parent_key: str = "") -> Any:
+    """Keep structured objects out of response fields consumed as text.
+
+    Browser coercion of an accidental object produces ``[object Object]``.
+    Enforce the response contract at the final payload boundary while leaving
+    legitimate structured fields (chart, data, confidence, diagnostics) intact.
+    """
+    if parent_key in _TEXT_ONLY_RESPONSE_KEYS:
+        if isinstance(value, list):
+            scalar_items = [
+                str(item) for item in value
+                if isinstance(item, (str, int, float, bool))
+            ]
+            return " · ".join(scalar_items)
+        if isinstance(value, dict):
+            return ""
+        if value is None:
+            return ""
+        if isinstance(value, (str, int, float, bool)):
+            return str(value)
+        return ""
+    if isinstance(value, dict):
+        return {
+            key: sanitize_response_text_fields(item, parent_key=str(key))
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [sanitize_response_text_fields(item) for item in value]
+    return value
 
 _CURRENCY_NAME_RE = re.compile(
     r"\b(revenue|amount|cost|price|total|sales|charge|fee|payment|spend|"
@@ -164,11 +203,12 @@ def _normalise_key(value: str) -> str:
 def _term_tokens(value: Any) -> set[str]:
     text = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", str(value or ""))
     text = text.replace("_", " ").replace("-", " ")
-    return {
+    payload = {
         tok.lower()
         for tok in re.findall(r"[A-Za-z0-9]+", text)
         if tok and tok.lower() not in _FORMAT_STOP_TOKENS
     }
+    return payload
 
 
 def _metric_tokens(metric: dict) -> set[str]:
@@ -323,6 +363,56 @@ def _looks_temporal(values: list[str]) -> bool:
         or any(tok in sample for tok in substr_tokens)
         or any(re.search(r"\b" + tok + r"\b", sample) for tok in wb_tokens)
     )
+
+
+def _temporal_sort_value(value: Any) -> tuple[int, int, int, int] | None:
+    """Return a sortable date/period key without changing displayed values."""
+    if isinstance(value, datetime):
+        return value.year, value.month, value.day, 0
+    if isinstance(value, date):
+        return value.year, value.month, value.day, 0
+    text = str(value or "").strip()
+    if not text:
+        return None
+    match = re.match(r"^((?:19|20)\d{2})[-/]?(\d{2})(?:[-/]?(\d{2}))?$", text)
+    if match:
+        year, month, day = (int(part or 1) for part in match.groups())
+        if 1 <= month <= 12 and 1 <= day <= 31:
+            return year, month, day, 0
+    match = re.match(r"^(?:Q([1-4])\s*[-/]?\s*((?:19|20)\d{2})|((?:19|20)\d{2})\s*[-/]?\s*Q([1-4]))$", text, re.I)
+    if match:
+        quarter = int(match.group(1) or match.group(4))
+        year = int(match.group(2) or match.group(3))
+        return year, ((quarter - 1) * 3) + 1, 1, quarter
+    for fmt in ("%B %Y", "%b %Y", "%b-%y", "%B-%y", "%Y-%m-%d", "%Y/%m/%d"):
+        try:
+            parsed = datetime.strptime(text, fmt)
+            return parsed.year, parsed.month, parsed.day, 0
+        except ValueError:
+            continue
+    return None
+
+
+def _chronological_analysis_rows(rows: list[dict]) -> list[dict]:
+    """Sort a copy for temporal analysis while preserving table display order."""
+    copied = list(rows)
+    if len(copied) < 2:
+        return copied
+    numeric_cols = _numeric_cols(copied)
+    for column in _text_cols(copied, numeric_cols):
+        values = [str(row.get(column, "")) for row in copied]
+        if not _looks_temporal(values):
+            continue
+        keys = [_temporal_sort_value(row.get(column)) for row in copied]
+        if all(key is not None for key in keys):
+            return [
+                row
+                for _key, _index, row in sorted(
+                    zip(keys, range(len(copied)), copied),
+                    key=lambda item: (item[0], item[1]),
+                )
+            ]
+    return copied
 
 
 def _safe_pct_change(first: float, last: float) -> float | None:
@@ -1193,8 +1283,32 @@ def _build_insight_summary(
         )
         # Two endpoints support a comparison, not a trend claim. Avoid
         # presenting one interval as sustained momentum or decline.
-        if observation_count and observation_count < 3:
-            return {}
+        if observation_count == 1:
+            raw_value_col = ctx.get("value_col") or ""
+            value_col = raw_value_col.replace("_", " ").title() or "Value"
+            return (
+                f"{value_col} was "
+                f"{format_value(ts.get('first_value'), raw_value_col)} "
+                f"in {ts.get('first_period', 'the returned period')}."
+            )
+        if observation_count == 2:
+            raw_value_col = ctx.get("value_col") or ""
+            value_col = raw_value_col.replace("_", " ").title() or "Value"
+            first_value = ts.get("first_value")
+            last_value = ts.get("last_value")
+            sentence = (
+                f"{value_col} changed from {format_value(first_value, raw_value_col)} "
+                f"in {ts.get('first_period', 'the first period')} to "
+                f"{format_value(last_value, raw_value_col)} "
+                f"in {ts.get('last_period', 'the second period')}"
+            )
+            pct = ts.get("overall_pct_change")
+            if pct is None:
+                return sentence + "."
+            direction = "up" if pct > 0 else "down" if pct < 0 else "unchanged"
+            if direction == "unchanged":
+                return sentence + " - unchanged."
+            return sentence + f" - {direction} {abs(pct):.1f}%."
         direction = ts.get("direction", "stable")
         pct = ts.get("overall_pct_change")
         first = ts.get("first_period", "")
@@ -1257,6 +1371,10 @@ def _build_anomaly_callouts(brief: dict) -> list[dict]:
 
     if mode == "time_series":
         ts = brief.get("time_series") or {}
+        if int(ts.get("period_count") or brief.get("row_count") or 0) < 3:
+            # One point has no interval; two points have one comparison. Do
+            # not label that single interval an anomaly or a sustained move.
+            return []
         drop = ts.get("biggest_period_drop") or {}
         gain = ts.get("biggest_period_gain") or {}
         streak = ts.get("longest_decline_streak", 0)
@@ -1368,6 +1486,9 @@ def _build_decision_signal(ctx: dict, brief: dict, anomaly_callouts: list[dict])
 
     if mode == "time_series":
         ts = brief.get("time_series") or {}
+        period_count = int(ts.get("period_count") or brief.get("row_count") or 0)
+        if period_count < 3:
+            return {}
         direction = ts.get("direction", "stable")
         pct = ts.get("overall_pct_change")
         streak = ts.get("longest_decline_streak", 0)
@@ -1697,7 +1818,8 @@ def build_assistant_response(
     zero_match = detect_zero_match_result(raw_rows)
     null_issue = detect_null_metric_issue(raw_rows)
     visible_rows = visible_result_rows(raw_rows)
-    ctx = summarize_result_context(visible_rows, question, sql=sql)
+    analysis_rows = _chronological_analysis_rows(visible_rows)
+    ctx = summarize_result_context(analysis_rows, question, sql=sql)
     result_operation = str((display_context or {}).get("result_operation") or "")
     if result_operation in {"keep_top", "sort", "contribution"} and ctx.get("mode") == "time_series":
         # Period labels sorted by a measure are a ranking, not a chronology.
@@ -1715,7 +1837,7 @@ def build_assistant_response(
         for header, spec in (display_formats or {}).items()
         if header in headers and isinstance(spec, dict)
     }
-    answer_rows = raw_rows if (zero_match or null_issue) else visible_rows
+    answer_rows = raw_rows if (zero_match or null_issue) else analysis_rows
     answer = build_answer(
         answer_rows,
         question,
@@ -1724,7 +1846,7 @@ def build_assistant_response(
         display_formats=resolved_display_formats,
     )
     brief = compute_data_brief(
-        visible_rows,
+        analysis_rows,
         question,
         result_scope=ctx.get("result_scope"),
         context=ctx,
@@ -1734,7 +1856,7 @@ def build_assistant_response(
     # Generate a summary sentence and anomaly callouts from the data brief.
     # These are computed entirely from statistics — no LLM call, no extra latency.
     insight_summary = _build_insight_summary(
-        raw_rows,
+        raw_rows if (zero_match or null_issue) else analysis_rows,
         ctx,
         brief,
         resolved_column_formats,
@@ -1799,6 +1921,7 @@ def build_assistant_response(
         },
         "confidence": confidence or {},
     }
+    return sanitize_response_text_fields(payload)
 
 
 def _safe_cell(val: Any) -> str:
@@ -1813,4 +1936,9 @@ def _safe_cell(val: Any) -> str:
         return f"{val:,.4f}".rstrip("0").rstrip(".")
     if isinstance(val, int):
         return f"{val:,}" if abs(val) >= 1000 else str(val)
+    if isinstance(val, (dict, list, tuple)):
+        try:
+            return json.dumps(val, ensure_ascii=False, separators=(",", ":"))
+        except (TypeError, ValueError):
+            return ""
     return str(val)

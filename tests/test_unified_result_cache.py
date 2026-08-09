@@ -230,6 +230,61 @@ class GovernedResultFollowupTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.status, "unsupported")
         self.assertFalse(result.evidence["database_queried"])
 
+    async def test_highest_followup_uses_active_result_without_database_query(self):
+        async def complete(**_kwargs):
+            return (
+                '{"operation":"keep_top","metric":"REVENUE",'
+                '"direction":"desc","confidence":0.99}',
+                10,
+                5,
+            )
+
+        result = await run_governed_result_followup(
+            "Which one is highest?",
+            self.session_id,
+            complete=complete,
+            cache=self.cache,
+        )
+
+        self.assertTrue(result.executed, result.reason)
+        self.assertEqual(result.command.action, "keep_top")
+        self.assertEqual(result.outcome.rows_after, 1)
+        self.assertEqual(result.outcome.snapshot["rows"][0]["REVENUE"], 1200.0)
+        self.assertFalse(result.evidence["database_queried"])
+        self.assertEqual(result.evidence["rows_sent_to_llm"], 0)
+
+    async def test_date_format_clarification_option_executes_on_active_result(self):
+        date_result_id = self.cache.store(
+            self.session_id,
+            [{"INVOICE_MONTH": "2026-01", "REVENUE": 1200.0}],
+            "Revenue by invoice month",
+            "SELECT governed date result",
+            column_formats={"INVOICE_MONTH": "date", "REVENUE": "currency"},
+        )
+        first = await run_governed_result_followup(
+            "change the date format",
+            self.session_id,
+            source_result_id=date_result_id,
+            cache=self.cache,
+        )
+        self.assertEqual(first.status, "clarification")
+        self.assertIn("Which date format", first.outcome.clarification_prompt)
+
+        selected = first.outcome.clarification_options[0]["resolved_question"]
+        resumed = await run_governed_result_followup(
+            selected,
+            self.session_id,
+            source_result_id=date_result_id,
+            cache=self.cache,
+            is_clarification=True,
+        )
+        self.assertTrue(resumed.executed, resumed.reason)
+        self.assertEqual(
+            resumed.outcome.snapshot["metadata"]["display_formats"]["INVOICE_MONTH"]["style"],
+            "month_year_short",
+        )
+        self.assertFalse(resumed.evidence["database_queried"])
+
     async def test_previous_result_presentation_uses_prior_cached_snapshot(self):
         latest_result_id = self.cache.store(
             self.session_id,

@@ -8,6 +8,7 @@ never authorizes a raw fact-to-fact join.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import re
 from typing import Any, Iterable
 
 
@@ -35,6 +36,7 @@ class JoinPlan:
     required_edge_ids: list[Any] = field(default_factory=list)
     isolated_fact_plans: list[dict[str, Any]] = field(default_factory=list)
     common_dimensions: list[str] = field(default_factory=list)
+    bridge_allocations: list[dict[str, str]] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     reason: str = ""
 
@@ -50,6 +52,7 @@ class JoinPlan:
             "required_edge_ids": self.required_edge_ids,
             "isolated_fact_plans": self.isolated_fact_plans,
             "common_dimensions": self.common_dimensions,
+            "bridge_allocations": self.bridge_allocations,
             "warnings": self.warnings,
             "reason": self.reason,
             "raw_fact_to_fact_allowed": False,
@@ -171,6 +174,36 @@ def compile_join_plan(
     facts = [name for name in detected_names if _role(entity_map[name]) == "fact"]
     dimensions = [name for name in detected_names if _role(entity_map[name]) == "dimension"]
     bridges = [name for name in detected_names if _role(entity_map[name]) == "bridge"]
+    bridge_allocations: list[dict[str, str]] = []
+    for bridge_name in bridges:
+        bridge_entity = entity_map.get(bridge_name, {})
+        physical_table = str(bridge_entity.get("table_name") or "").strip()
+        schema_name = str(
+            bridge_entity.get("schema_name") or bridge_entity.get("schema") or ""
+        ).strip()
+        if physical_table and "." not in physical_table and schema_name:
+            physical_table = f"{schema_name}.{physical_table}"
+        for prop in graph.get("properties") or []:
+            if str(prop.get("entity_name") or "") != bridge_name:
+                continue
+            if str(prop.get("status") or "confirmed").casefold() != "confirmed":
+                continue
+            evidence = " ".join(
+                str(prop.get(key) or "")
+                for key in ("column_name", "display_name", "business_meaning", "synonyms")
+            ).casefold()
+            # Do not accept a generic physical "weight" field (for example
+            # product net weight) as an allocation. Allocation weight is still
+            # detected by its allocation/share wording.
+            if not re.search(r"\b(?:allocat\w*|share|ratio|pct|percent\w*|proportion)\b", evidence):
+                continue
+            column = str(prop.get("column_name") or "").strip()
+            if column:
+                bridge_allocations.append({
+                    "entity": bridge_name,
+                    "table": physical_table,
+                    "column": column,
+                })
     anchor = choose_fact_anchor(
         entities_list,
         detected_names,
@@ -218,6 +251,7 @@ def compile_join_plan(
             fact_entities=facts,
             dimension_entities=dimensions,
             bridge_entities=bridges,
+            bridge_allocations=bridge_allocations,
             required_edge_ids=edge_ids,
             warnings=invalid_edges,
             reason="One or more graph edges violate the governed star/snowflake contract.",
@@ -248,6 +282,7 @@ def compile_join_plan(
             fact_entities=facts,
             dimension_entities=dimensions,
             bridge_entities=bridges,
+            bridge_allocations=bridge_allocations,
             required_edge_ids=edge_ids,
             isolated_fact_plans=isolated,
             common_dimensions=common,
@@ -263,9 +298,11 @@ def compile_join_plan(
             "This fact-to-fact path is authorized only for missing-record existence logic; do not aggregate measures across both facts.",
         ]
     elif bridges:
-        warnings = [
-            "Bridge traversal can multiply rows; use allocation weight when governed, otherwise aggregate with a distinct business key.",
-        ]
+        warnings = ([
+            "Bridge traversal can multiply rows; every additive measure must use the governed allocation column.",
+        ] if bridge_allocations else [
+            "Bridge traversal has no governed allocation column; additive measures are blocked until one is mapped. Distinct-key counts remain allowed.",
+        ])
     else:
         warnings = []
 
@@ -275,6 +312,7 @@ def compile_join_plan(
         fact_entities=facts,
         dimension_entities=dimensions,
         bridge_entities=bridges,
+        bridge_allocations=bridge_allocations,
         required_edge_ids=edge_ids,
         warnings=warnings,
         reason=(

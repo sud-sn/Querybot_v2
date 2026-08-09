@@ -17,9 +17,49 @@ from typing import Any, Iterable
 _TIME_RE = re.compile(
     r"\b(today|today'?s|yesterday|this\s+(?:week|month|quarter|year)|"
     r"last\s+(?:week|month|quarter|year)|year\s+to\s+date|ytd|mtd|qtd|"
+    r"q[1-4](?:\s+(?:19|20)\d{2})?|"
+    r"(?:first|second|third|fourth)\s+quarter(?:\s+(?:19|20)\d{2})?|"
+    r"quarter\s+[1-4](?:\s+(?:19|20)\d{2})?|"
     r"latest(?:\s+available)?(?:\s+(?:day|date|period))?)\b",
     re.I,
 )
+_NAMED_QUARTER_RE = re.compile(
+    r"\b(?:q\s*([1-4])|quarter\s+([1-4])|"
+    r"(first|second|third|fourth)\s+quarter)"
+    r"(?:\s+(?:of\s+)?((?:19|20)\d{2}))?\b",
+    re.I,
+)
+_CALENDAR_BASIS_RE = re.compile(
+    r"\b(?:calendar\s+(?:year|quarter|q[1-4])|"
+    r"use\s+calendar\s+(?:quarters?|periods?)|calendar\s+basis)\b",
+    re.I,
+)
+_FISCAL_BASIS_RE = re.compile(
+    r"\b(?:fiscal|financial)\s+(?:year|quarter|q[1-4]|calendar|basis)|"
+    r"\b(?:fy\s*\d{2,4}|fq[1-4])\b|"
+    r"\buse\s+(?:the\s+)?(?:fiscal|financial)\s+(?:quarters?|calendar|periods?)\b",
+    re.I,
+)
+_FISCAL_START_RE = re.compile(
+    r"\b(?:fiscal|financial)\s+year\s+(?:starts?|begins?)\s+(?:in|on)?\s*"
+    r"(january|february|march|april|may|june|july|august|september|"
+    r"october|november|december)\b",
+    re.I,
+)
+_MONTH_NUMBERS = {
+    "january": 1,
+    "february": 2,
+    "march": 3,
+    "april": 4,
+    "may": 5,
+    "june": 6,
+    "july": 7,
+    "august": 8,
+    "september": 9,
+    "october": 10,
+    "november": 11,
+    "december": 12,
+}
 _DAILY_SNAPSHOT_RE = re.compile(
     r"\b(?:today'?s?\s+(?:data|numbers?|snapshot|summary|performance)|"
     r"(?:data|numbers?|snapshot|summary|performance)\s+(?:for\s+)?today|"
@@ -100,6 +140,9 @@ class AnalyticalPlan:
     filters: tuple[str, ...] = ()
     time_range: str = ""
     date_role: str = "unresolved"
+    calendar_basis: str = "unresolved"
+    fiscal_year_start_month: int | None = None
+    calendar_basis_source: str = ""
     comparison: str = ""
     entity_grain: str = ""
     output: str = "auto"
@@ -122,6 +165,9 @@ class AnalyticalPlan:
             "filters": list(self.filters),
             "time_range": self.time_range,
             "date_role": self.date_role,
+            "calendar_basis": self.calendar_basis,
+            "fiscal_year_start_month": self.fiscal_year_start_month,
+            "calendar_basis_source": self.calendar_basis_source,
             "comparison": self.comparison,
             "entity_grain": self.entity_grain,
             "output": self.output,
@@ -208,17 +254,75 @@ def _latest_clarification(question: str) -> str:
     return matches[-1].strip() if matches else ""
 
 
+def _normalise_calendar_profile(profile: dict[str, Any] | None) -> dict[str, Any]:
+    """Return the small, safe calendar subset accepted by the planner."""
+    raw = profile if isinstance(profile, dict) else {}
+    basis = str(
+        raw.get("basis")
+        or raw.get("calendar_basis")
+        or raw.get("calendar_mode")
+        or ""
+    ).strip().casefold()
+    if basis in {"financial", "fiscal_year", "financial_year"}:
+        basis = "fiscal"
+    if basis not in {"calendar", "fiscal"}:
+        basis = ""
+    try:
+        start_month = int(raw.get("fiscal_year_start_month") or 0)
+    except (TypeError, ValueError):
+        start_month = 0
+    if not 1 <= start_month <= 12:
+        start_month = 0
+    return {
+        "basis": basis,
+        "fiscal_year_start_month": start_month or None,
+        "source": str(raw.get("source") or "").strip(),
+    }
+
+
+def _named_quarter(text: str) -> str:
+    match = _NAMED_QUARTER_RE.search(text or "")
+    if not match:
+        return ""
+    word_numbers = {"first": "1", "second": "2", "third": "3", "fourth": "4"}
+    number = match.group(1) or match.group(2) or word_numbers.get(
+        str(match.group(3) or "").casefold(), ""
+    )
+    year = str(match.group(4) or "")
+    return f"Q{number}{' ' + year if year else ''}"
+
+
+def _fiscal_start_month(text: str) -> int | None:
+    match = _FISCAL_START_RE.search(text or "")
+    if not match:
+        return None
+    return _MONTH_NUMBERS.get(match.group(1).casefold())
+
+
+def _fiscal_month_options() -> tuple[dict[str, str], ...]:
+    return tuple(
+        {
+            "id": f"fiscal-start-{month}",
+            "label": name.title(),
+            "value": f"The fiscal year starts in {name.title()}",
+        }
+        for name, month in _MONTH_NUMBERS.items()
+    )
+
+
 def plan_analytical_intent(
     question: str,
     *,
     metrics: Iterable[dict[str, Any]] = (),
     terms: Iterable[dict[str, Any]] = (),
+    calendar_profile: dict[str, Any] | None = None,
 ) -> AnalyticalPlan:
     """Build a structured plan from the question and governed catalog names."""
     text = str(question or "").strip()
     metrics = tuple(metrics or ())
     terms = tuple(terms or ())
     clarified = _latest_clarification(text)
+    profile = _normalise_calendar_profile(calendar_profile)
     metric_matches = _matched_catalog_names(text, metrics)
     concept_match = _BUSINESS_CONCEPT_RE.search(text)
     business_concepts = [concept_match.group(1).lower()] if concept_match else []
@@ -254,7 +358,8 @@ def plan_analytical_intent(
         value for value in dimensions if value.casefold() not in metric_words
     )
     time_match = _TIME_RE.search(text)
-    time_range = time_match.group(1).lower() if time_match else ""
+    named_quarter = _named_quarter(text)
+    time_range = named_quarter or (time_match.group(1).lower() if time_match else "")
     output_match = _OUTPUT_RE.search(text)
     output = output_match.group(1).lower() if output_match else "auto"
     top_match = _TOP_N_RE.search(text)
@@ -274,6 +379,29 @@ def plan_analytical_intent(
         assumptions.append("Use the latest complete governed business date; disclose if it differs from wall-clock today.")
     if clarified:
         assumptions.append(f"User clarification: {clarified[:180]}")
+
+    explicit_fiscal = bool(_FISCAL_BASIS_RE.search(text))
+    explicit_calendar = bool(_CALENDAR_BASIS_RE.search(text))
+    if explicit_fiscal and not explicit_calendar:
+        calendar_basis = "fiscal"
+        calendar_basis_source = "question"
+    elif explicit_calendar and not explicit_fiscal:
+        calendar_basis = "calendar"
+        calendar_basis_source = "question"
+    else:
+        calendar_basis = str(profile.get("basis") or "unresolved")
+        calendar_basis_source = str(profile.get("source") or ("profile" if calendar_basis != "unresolved" else ""))
+    fiscal_start_month = _fiscal_start_month(text)
+    if fiscal_start_month is None and calendar_basis == "fiscal":
+        fiscal_start_month = profile.get("fiscal_year_start_month")
+    if calendar_basis == "calendar":
+        assumptions.append("Interpret named quarters using calendar quarters.")
+    elif calendar_basis == "fiscal" and fiscal_start_month:
+        month_name = next(
+            name.title() for name, month in _MONTH_NUMBERS.items()
+            if month == fiscal_start_month
+        )
+        assumptions.append(f"Interpret named quarters using a fiscal year starting in {month_name}.")
 
     unresolved: list[str] = []
     clarification: ClarificationRequest | None = None
@@ -315,6 +443,45 @@ def plan_analytical_intent(
                 reason="This analytical concept has no matching governed definition.",
             )
 
+    # A bare Q1/Q2/Q3/Q4 is not universally a calendar quarter. Do not make
+    # that business decision in SQL generation. Configured or thread-level
+    # metadata may resolve it; otherwise ask before retrieval and execution.
+    if named_quarter and calendar_basis == "unresolved" and clarification is None:
+        unresolved.append("calendar_basis")
+        clarification = ClarificationRequest(
+            slot="calendar_basis",
+            question=(
+                f"Should I interpret {named_quarter} using calendar quarters "
+                "or your fiscal quarters?"
+            ),
+            options=(
+                {
+                    "id": "calendar-basis-calendar",
+                    "label": "Calendar quarters",
+                    "value": "Use calendar quarters for this request",
+                },
+                {
+                    "id": "calendar-basis-fiscal",
+                    "label": "Fiscal quarters",
+                    "value": "Use fiscal quarters for this request",
+                },
+            ),
+            reason="The workspace has no approved calendar basis for a bare quarter reference.",
+        )
+    elif (
+        calendar_basis == "fiscal"
+        and (named_quarter or explicit_fiscal)
+        and not fiscal_start_month
+        and clarification is None
+    ):
+        unresolved.append("fiscal_year_start_month")
+        clarification = ClarificationRequest(
+            slot="fiscal_year_start_month",
+            question="Which month does your fiscal year start?",
+            options=_fiscal_month_options(),
+            reason="Fiscal Q1 cannot be calculated safely without the fiscal year start month.",
+        )
+
     signals = sum(
         bool(value)
         for value in (metric_matches, business_concepts, dimensions, time_range, output_match)
@@ -330,6 +497,9 @@ def plan_analytical_intent(
         dimensions=dimensions,
         time_range=time_range,
         date_role="governed_default" if time_range else "unresolved",
+        calendar_basis=calendar_basis,
+        fiscal_year_start_month=fiscal_start_month,
+        calendar_basis_source=calendar_basis_source,
         comparison=comparison,
         entity_grain=entity_grain,
         output=output,

@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from core.response_builder import build_assistant_response
+from core.response_builder import build_assistant_response, sanitize_response_text_fields
 from core.result_cache import ResultCache
 from core.result_commands import (
     compile_confirmed_result_presentation,
@@ -260,6 +260,23 @@ class DateRoleCoverageTests(unittest.TestCase):
         self.assertEqual(coverage["review_candidate_count"], 1)
         self.assertEqual(coverage["review_candidates"][0]["column"], "LEGACY_PERIOD")
         self.assertEqual(coverage["technical_date_count"], 1)
+
+
+class ResponseTextContractTests(unittest.TestCase):
+    def test_structured_objects_cannot_enter_text_only_response_fields(self):
+        payload = sanitize_response_text_fields({
+            "answer": {
+                "headline": {"bad": "object"},
+                "short_value": ["safe", {"bad": "object"}],
+            },
+            "chart": {"series": [{"name": "Revenue", "data": [1, 2]}]},
+            "next_actions": [{"label": {"nested": "object"}, "action": "compare"}],
+        })
+        self.assertEqual(payload["answer"]["headline"], "")
+        self.assertEqual(payload["answer"]["short_value"], "safe")
+        self.assertEqual(payload["next_actions"][0]["label"], "")
+        self.assertEqual(payload["chart"]["series"][0]["data"], [1, 2])
+        self.assertNotIn("[object Object]", json.dumps(payload))
 
 
 if __name__ == "__main__":

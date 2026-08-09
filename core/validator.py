@@ -579,6 +579,60 @@ def _join_plan_contract_errors(tree, graph_context: dict | None) -> list[dict]:
         for name in fact_names
         if str(entity_map.get(name, {}).get("table_name") or "").strip()
     }
+
+    # A many-to-many bridge can multiply an additive measure.  A warning in
+    # the prompt is not a sufficient production control: require the approved
+    # allocation field in every SUM/AVG expression, and fail closed when the
+    # graph has not governed one yet. Distinct-key counts remain valid because
+    # they do not allocate an additive amount.
+    bridge_names = list(plan.get("bridge_entities") or [])
+    bridge_tables = {
+        str(entity_map.get(name, {}).get("table_name") or "").upper()
+        for name in bridge_names
+        if str(entity_map.get(name, {}).get("table_name") or "").strip()
+    }
+    bridge_is_scanned = any(
+        any(
+            bridge in set(_table_variants(table_node))
+            or bridge.split(".")[-1] in set(_table_variants(table_node))
+            for bridge in bridge_tables
+        )
+        for table_node in tree.find_all(sg_exp.Table)
+    )
+    additive_aggregates = list(tree.find_all(sg_exp.Sum)) + list(tree.find_all(sg_exp.Avg))
+    if bridge_is_scanned and additive_aggregates:
+        governed_columns = {
+            str(item.get("column") or "").strip().upper()
+            for item in plan.get("bridge_allocations") or []
+            if str(item.get("column") or "").strip()
+        }
+        if not governed_columns:
+            return [{
+                "code": "bridge_allocation_unresolved",
+                "message": (
+                    "An additive measure crosses a many-to-many bridge, but the "
+                    "entity graph has no confirmed allocation field. Map an allocation "
+                    "weight/share or use a governed distinct business-key count."
+                ),
+            }]
+        unsafe = []
+        for aggregate in additive_aggregates:
+            used = {
+                str(column.name or "").strip().upper()
+                for column in aggregate.find_all(sg_exp.Column)
+            }
+            if not used.intersection(governed_columns):
+                unsafe.append(aggregate.sql())
+        if unsafe:
+            return [{
+                "code": "bridge_allocation_missing",
+                "message": (
+                    "Additive measures crossing this bridge must include the governed "
+                    f"allocation field ({', '.join(sorted(governed_columns))})."
+                ),
+                "governed_allocation_columns": sorted(governed_columns),
+                "unsafe_aggregates": unsafe[:5],
+            }]
     if len(fact_tables) < 2:
         return []
 
@@ -1828,23 +1882,38 @@ def _temporal_anchor_errors(tree, sql: str, policies: list[dict]) -> list[dict]:
 
 def _source_scope_errors(tree, semantic_context: dict | None) -> list[dict]:
     plan = (semantic_context or {}).get("analytical_request_plan") or {}
-    required = str(plan.get("source_fact") or "")
-    if not required:
+    required_facts = [
+        str(value).strip()
+        for value in (plan.get("source_facts") or [])
+        if str(value).strip()
+    ]
+    if not required_facts:
+        required = str(plan.get("source_fact") or "").strip()
+        required_facts = [required] if required else []
+    if not required_facts:
         return []
     scanned = [
         ".".join(part for part in (table.catalog, table.db, table.name) if part)
         for table in tree.find_all(sg_exp.Table)
         if table.name
     ]
-    if any(_table_matches(required, table) for table in scanned):
+    missing = [
+        required
+        for required in required_facts
+        if not any(_table_matches(required, table) for table in scanned)
+    ]
+    if not missing:
         return []
     return [{
         "code": "source_fact_mismatch",
         "message": (
-            f"The compiled analytical plan requires {required} as its measure fact, "
+            "The compiled analytical plan requires "
+            f"{', '.join(missing)} as measure fact source(s), "
             f"but the SQL scans {', '.join(scanned) or 'no physical source table'}."
         ),
-        "required_fact": required,
+        "required_fact": missing[0],
+        "required_facts": required_facts,
+        "missing_facts": missing,
         "scanned_tables": scanned,
     }]
 

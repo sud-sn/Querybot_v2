@@ -83,6 +83,87 @@ def test_governed_churn_term_removes_definition_question():
     assert not plan.needs_clarification
 
 
+def test_bare_named_quarter_requires_calendar_basis():
+    plan = plan_analytical_intent(
+        "compare revenue in Q1 and Q2",
+        metrics=METRICS,
+    )
+
+    assert plan.intent == "comparison"
+    assert plan.time_range == "Q1"
+    assert plan.calendar_basis == "unresolved"
+    assert plan.clarification.slot == "calendar_basis"
+    assert [option["label"] for option in plan.clarification.options] == [
+        "Calendar quarters",
+        "Fiscal quarters",
+    ]
+
+
+def test_explicit_calendar_quarter_does_not_clarify():
+    plan = plan_analytical_intent(
+        "compare revenue in calendar Q1 and calendar Q2",
+        metrics=METRICS,
+    )
+
+    assert plan.calendar_basis == "calendar"
+    assert plan.calendar_basis_source == "question"
+    assert not plan.needs_clarification
+
+
+def test_fiscal_quarter_requires_start_month_when_not_configured():
+    plan = plan_analytical_intent(
+        "compare revenue in fiscal Q1 and fiscal Q2",
+        metrics=METRICS,
+    )
+
+    assert plan.calendar_basis == "fiscal"
+    assert plan.clarification.slot == "fiscal_year_start_month"
+    assert len(plan.clarification.options) == 12
+    assert plan.clarification.options[3]["label"] == "April"
+
+
+def test_fiscal_quarter_uses_approved_or_thread_profile():
+    plan = plan_analytical_intent(
+        "compare revenue in Q1 and Q2",
+        metrics=METRICS,
+        calendar_profile={
+            "basis": "fiscal",
+            "fiscal_year_start_month": 4,
+            "source": "user_confirmed",
+        },
+    )
+
+    assert plan.calendar_basis == "fiscal"
+    assert plan.fiscal_year_start_month == 4
+    assert not plan.needs_clarification
+    assert "starting in April" in " ".join(plan.assumptions)
+
+
+def test_fiscal_clarification_sequence_resolves_without_january_default():
+    after_basis = (
+        "compare revenue in Q1 and Q2\n\n"
+        "Clarification for the same request: Use fiscal quarters for this request.\n"
+        "Use this clarification to interpret the original request; "
+        "do not treat it as a separate question."
+    )
+    first_plan = plan_analytical_intent(after_basis, metrics=METRICS)
+
+    assert first_plan.clarification.slot == "fiscal_year_start_month"
+    assert first_plan.fiscal_year_start_month is None
+
+    after_month = (
+        after_basis
+        + "\n\nClarification for the same request: The fiscal year starts in April.\n"
+        + "Use this clarification to interpret the original request; "
+        + "do not treat it as a separate question."
+    )
+    final_plan = plan_analytical_intent(after_month, metrics=METRICS)
+
+    assert final_plan.calendar_basis == "fiscal"
+    assert final_plan.fiscal_year_start_month == 4
+    assert not final_plan.needs_clarification
+
+
 def test_bounded_loop_allows_only_new_sources():
     first_event = _event()
     first_meta = prepare_clarification_meta(

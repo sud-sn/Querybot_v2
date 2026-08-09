@@ -2102,6 +2102,24 @@ class EncodedDateFallbackTests(unittest.TestCase):
         self.assertEqual(result["binding"]["fact_table"], "OPS.ITM_BAL_DAY_FCT")
         self.assertEqual(result["binding"]["temporal_grain"], "day")
 
+    def test_explicit_m3_balance_scope_never_offers_unrelated_sales_dates(self):
+        m3_period = self._role(
+            "PRD_DMS_KEY", "yyyymm_integer", "month", "ERP.M3_MITBAL"
+        )
+        sales_date = self._role(
+            "INVOICE_DT_KEY", "yyyymmdd_integer", "day", "SALES.F_SALES"
+        )
+        result = resolve_contextual_date_binding(
+            "using M3 item balance show inventory by warehouse for the latest period",
+            matched_metrics=[],
+            bindings=[],
+            date_roles=[sales_date, m3_period],
+            required_fact_tables={"ERP.M3_MITBAL"},
+        )
+        self.assertEqual(result["status"], "selected")
+        self.assertEqual(result["binding"]["fact_table"], "ERP.M3_MITBAL")
+        self.assertEqual(result["binding"]["fact_column"], "PRD_DMS_KEY")
+
     def test_encoded_sql_expressions_are_dialect_aware(self):
         self.assertEqual(
             format_date_value_expression("f", "PRD_DMS_KEY", "yyyymm_integer", "azure_sql"),

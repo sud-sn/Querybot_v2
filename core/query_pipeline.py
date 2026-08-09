@@ -94,6 +94,63 @@ from core.conversation_state import conversation_state_store
 log = logging.getLogger("querybot")
 
 
+def _calendar_profile_for_request(
+    client_state: dict | None,
+    db_cfg: dict | None,
+    thread_preference: dict | None,
+) -> dict:
+    """Resolve calendar metadata without inventing a tenant default.
+
+    An approved workspace setting wins over a thread preference. A fiscal
+    start month alone is sufficient evidence that the workspace uses a
+    fiscal calendar; otherwise a missing basis remains unresolved so the
+    analytical planner can ask the user.
+    """
+    state = client_state if isinstance(client_state, dict) else {}
+    database = db_cfg if isinstance(db_cfg, dict) else {}
+    thread = thread_preference if isinstance(thread_preference, dict) else {}
+    nested = state.get("calendar_profile")
+    configured = dict(nested) if isinstance(nested, dict) else {}
+    for key in (
+        "basis",
+        "calendar_basis",
+        "calendar_mode",
+        "fiscal_year_start_month",
+    ):
+        if configured.get(key) in (None, ""):
+            value = state.get(key)
+            if value in (None, ""):
+                value = database.get(key)
+            if value not in (None, ""):
+                configured[key] = value
+
+    configured_basis = str(
+        configured.get("basis")
+        or configured.get("calendar_basis")
+        or configured.get("calendar_mode")
+        or ""
+    ).strip().casefold()
+    if configured_basis in {"financial", "fiscal_year", "financial_year"}:
+        configured_basis = "fiscal"
+    try:
+        configured_start = int(configured.get("fiscal_year_start_month") or 0)
+    except (TypeError, ValueError):
+        configured_start = 0
+    if not 1 <= configured_start <= 12:
+        configured_start = 0
+    if configured_start and not configured_basis:
+        configured_basis = "fiscal"
+
+    profile = dict(thread)
+    if configured_basis in {"calendar", "fiscal"}:
+        profile["basis"] = configured_basis
+        profile["source"] = "workspace_config"
+    if configured_start:
+        profile["fiscal_year_start_month"] = configured_start
+        profile["source"] = "workspace_config"
+    return profile
+
+
 def _sql_completion_token_budget(
     question: str,
     semantic_plan: dict | None = None,
@@ -787,6 +844,20 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     # governed catalog names; no result rows are exposed. Materially missing
     # slots are clarified before retrieval/SQL work, while complete plans are
     # injected as a compact control block into the generation prompt below.
+    _planner_session_id = str(getattr(adapter, "session_id", "") or "")
+    _thread_calendar_preference = (
+        conversation_state_store.get_calendar_preference(
+            account_id,
+            _planner_session_id,
+        )
+        if _planner_session_id
+        else {}
+    )
+    _planner_calendar_profile = _calendar_profile_for_request(
+        state,
+        db_cfg,
+        _thread_calendar_preference,
+    )
     try:
         _planner_metrics = []
         for _metric in store.list_metrics(account_id):
@@ -814,10 +885,32 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             question,
             metrics=_planner_metrics,
             terms=_planner_terms,
+            calendar_profile=_planner_calendar_profile,
         )
     except Exception as _plan_exc:
         log.warning("Analytical intent planning failed open: %s", _plan_exc)
-        _analytical_plan = plan_analytical_intent(question)
+        _analytical_plan = plan_analytical_intent(
+            question,
+            calendar_profile=_planner_calendar_profile,
+        )
+
+    # Keep an explicit or clarified calendar choice available to later turns
+    # in this thread. This stores only calendar metadata, never result values,
+    # and does not change the tenant's approved configuration.
+    if (
+        _planner_session_id
+        and _analytical_plan.calendar_basis in {"calendar", "fiscal"}
+        and _analytical_plan.calendar_basis_source == "question"
+    ):
+        conversation_state_store.remember_calendar_preference(
+            account_id,
+            _planner_session_id,
+            {
+                "basis": _analytical_plan.calendar_basis,
+                "fiscal_year_start_month": _analytical_plan.fiscal_year_start_month,
+                "source": "user_confirmed",
+            },
+        )
 
     _analytical_plan_context = _analytical_plan.prompt_context()
     _trace_step(
@@ -827,11 +920,17 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         output_summary=_analytical_plan.to_dict(),
     )
 
-    _planner_session_id = str(getattr(adapter, "session_id", "") or "")
     _planner_has_cached_result = bool(
         _planner_session_id and result_cache.has_result(_planner_session_id)
     )
-    if _analytical_plan.needs_clarification and not _planner_has_cached_result:
+    _calendar_slot_requires_answer = bool(
+        _analytical_plan.clarification
+        and _analytical_plan.clarification.slot
+        in {"calendar_basis", "fiscal_year_start_month"}
+    )
+    if _analytical_plan.needs_clarification and (
+        _calendar_slot_requires_answer or not _planner_has_cached_result
+    ):
         _plan_clarification = _analytical_plan.clarification
         _plan_source = f"analytical_plan:{_plan_clarification.slot}"
         if can_request_clarification(event, _plan_source):
@@ -3034,13 +3133,26 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             _analytic_hints.append(build_forecast_sql_hint(_n_fc))
             log.info("analytic_intent: forecast=True periods=%d", _n_fc)
 
-        if _intents.get("fiscal"):
+        if _intents.get("fiscal") or _analytical_plan.calendar_basis == "fiscal":
             from core.fiscal_calendar import build_fiscal_sql_hint
-            _fiscal_month = db_cfg.get("fiscal_year_start_month", 1)
-            _analytic_hints.append(
-                build_fiscal_sql_hint(question, _fiscal_month, db_cfg.get("db_type", "azure_sql"))
-            )
-            log.info("analytic_intent: fiscal=True start_month=%d", _fiscal_month)
+            _fiscal_month = _analytical_plan.fiscal_year_start_month
+            if _fiscal_month:
+                _analytic_hints.append(
+                    build_fiscal_sql_hint(
+                        question,
+                        _fiscal_month,
+                        db_cfg.get("db_type", "azure_sql"),
+                    )
+                )
+                log.info("analytic_intent: fiscal=True start_month=%d", _fiscal_month)
+            else:
+                # The analytical preflight normally returns a clarification
+                # before reaching this point. Never silently turn an unknown
+                # fiscal calendar into a January calendar if a bounded-loop
+                # edge case reaches hint construction.
+                log.warning(
+                    "Fiscal SQL hint withheld: fiscal year start month is unresolved"
+                )
 
         if _intents.get("histogram"):
             from core.distribution_analysis import build_histogram_sql_hint
@@ -3083,6 +3195,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         _semantic_plan,
         matched_metrics=_matched_metrics,
         analysis_contract=_analysis_contract,
+        graph_context=_graph_ctx,
     )
     _semantic_plan["analytical_request_plan"] = _analytical_request_plan
     _trace_step(
@@ -3094,6 +3207,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             "measures": len(_analytical_request_plan.get("measures") or []),
             "dimensions": len(_analytical_request_plan.get("dimensions") or []),
             "temporal_operations": len(_analytical_request_plan.get("temporal_operations") or []),
+            "subrequests": len(_analytical_request_plan.get("subrequests") or []),
         },
         metadata=_analytical_request_plan,
     )

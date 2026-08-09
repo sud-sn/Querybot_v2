@@ -122,16 +122,27 @@ def parse_fiscal_reference(question: str) -> FiscalRef:
 # Date range computation
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _require_fiscal_start_month(value: int | None) -> int:
+    """Reject unresolved fiscal configuration instead of assuming January."""
+    try:
+        month = int(value or 0)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("fiscal_year_start_month must be configured") from exc
+    if not 1 <= month <= 12:
+        raise ValueError("fiscal_year_start_month must be between 1 and 12")
+    return month
+
+
 def fiscal_date_range(
     ref: FiscalRef,
-    fiscal_year_start_month: int = 1,
+    fiscal_year_start_month: int | None = None,
     current_year: int = 2026,
 ) -> tuple[str, str]:
     """
     Return (start_date_str, end_date_str) for the described fiscal period.
     Dates in ISO format (YYYY-MM-DD).
     """
-    fsm = fiscal_year_start_month  # 1-12
+    fsm = _require_fiscal_start_month(fiscal_year_start_month)
 
     # Determine the fiscal year number
     fy = ref.fy_year or current_year
@@ -184,20 +195,17 @@ _MONTH_NAMES = {
 
 def build_fiscal_sql_hint(
     question: str,
-    fiscal_year_start_month: int = 1,
+    fiscal_year_start_month: int | None = None,
     db_type: str = "azure_sql",
 ) -> str:
-    fsm  = fiscal_year_start_month
+    fsm = _require_fiscal_start_month(fiscal_year_start_month)
     fsmn = _MONTH_NAMES.get(fsm, "January")
     ref  = parse_fiscal_reference(question)
     is_tsql = db_type in ("azure_sql", "sql_server", "mssql")
     is_snowflake = db_type == "snowflake"
 
-    try:
-        start_dt, end_dt = fiscal_date_range(ref, fsm)
-        date_range_clause = f"BETWEEN '{start_dt}' AND '{end_dt}'"
-    except Exception:
-        date_range_clause = None
+    start_dt, end_dt = fiscal_date_range(ref, fsm)
+    date_range_clause = f"BETWEEN '{start_dt}' AND '{end_dt}'"
 
     if fsm == 1:
         # Calendar year — standard YEAR() function works
@@ -260,16 +268,16 @@ def build_fiscal_sql_hint(
 
 def fiscal_period_label(
     calendar_date_str: str,
-    fiscal_year_start_month: int = 1,
+    fiscal_year_start_month: int | None = None,
 ) -> str:
     """
     Convert a calendar date string (YYYY-MM-DD or YYYY-MM) to a fiscal period label.
     E.g. "2023-07-01" with fsm=4 → "FY2024 Q2"
     """
+    fsm = _require_fiscal_start_month(fiscal_year_start_month)
     try:
         parts = calendar_date_str[:7].split("-")
         y, mo = int(parts[0]), int(parts[1])
-        fsm = fiscal_year_start_month
         if fsm == 1:
             fy = y
         else:

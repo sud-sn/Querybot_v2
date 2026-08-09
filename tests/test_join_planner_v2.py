@@ -171,6 +171,21 @@ class TestJoinPlanCompilation(unittest.TestCase):
         self.assertFalse(plan["raw_fact_to_fact_allowed"])
         self.assertEqual(len(plan["isolated_fact_plans"]), 2)
 
+    def test_bridge_allocation_is_discovered_from_confirmed_business_metadata(self):
+        graph = dict(self.graph)
+        graph["properties"] = [{
+            "entity_name": "ProductCategory",
+            "column_name": "CATEGORY_SHARE",
+            "display_name": "Revenue allocation percentage",
+            "status": "confirmed",
+        }]
+        path = [{
+            "id": 3, "from_entity": "Sales", "to_entity": "ProductCategory",
+            "relationship_type": "many_to_one",
+        }]
+        plan = compile_join_plan(graph, ["Sales", "ProductCategory"], path)
+        self.assertEqual(plan["bridge_allocations"][0]["column"], "CATEGORY_SHARE")
+
 
 class TestJoinPlanSqlContract(unittest.TestCase):
     def setUp(self):
@@ -219,6 +234,48 @@ class TestJoinPlanSqlContract(unittest.TestCase):
         tree = sqlglot.parse_one("SELECT 1", read="tsql")
         errors = _join_plan_contract_errors(tree, context)
         self.assertEqual(errors[0]["code"], "join_plan_unresolved")
+
+    def test_additive_bridge_measure_requires_governed_allocation(self):
+        context = {
+            "entities": [
+                {"entity_name": "Sales", "table_name": "FACT_SALES", "entity_type": "fact"},
+                {"entity_name": "CategoryBridge", "table_name": "BRIDGE_CATEGORY", "entity_type": "bridge"},
+            ],
+            "join_plan": {
+                "status": "selected",
+                "fact_entities": ["Sales"],
+                "bridge_entities": ["CategoryBridge"],
+                "bridge_allocations": [{"entity": "CategoryBridge", "table": "BRIDGE_CATEGORY", "column": "ALLOCATION_PCT"}],
+            },
+        }
+        missing = _join_plan_contract_errors(sqlglot.parse_one(
+            "SELECT SUM(s.REVENUE) FROM FACT_SALES s JOIN BRIDGE_CATEGORY b ON s.PRODUCT_KEY=b.PRODUCT_KEY",
+            read="tsql",
+        ), context)
+        self.assertEqual(missing[0]["code"], "bridge_allocation_missing")
+
+        accepted = _join_plan_contract_errors(sqlglot.parse_one(
+            "SELECT SUM(s.REVENUE * b.ALLOCATION_PCT) FROM FACT_SALES s JOIN BRIDGE_CATEGORY b ON s.PRODUCT_KEY=b.PRODUCT_KEY",
+            read="tsql",
+        ), context)
+        self.assertEqual(accepted, [])
+
+    def test_bridge_without_allocation_mapping_fails_closed_for_sum(self):
+        context = {
+            "entities": [
+                {"entity_name": "Sales", "table_name": "FACT_SALES", "entity_type": "fact"},
+                {"entity_name": "CategoryBridge", "table_name": "BRIDGE_CATEGORY", "entity_type": "bridge"},
+            ],
+            "join_plan": {
+                "status": "selected", "fact_entities": ["Sales"],
+                "bridge_entities": ["CategoryBridge"], "bridge_allocations": [],
+            },
+        }
+        errors = _join_plan_contract_errors(sqlglot.parse_one(
+            "SELECT SUM(s.REVENUE) FROM FACT_SALES s JOIN BRIDGE_CATEGORY b ON s.PRODUCT_KEY=b.PRODUCT_KEY",
+            read="tsql",
+        ), context)
+        self.assertEqual(errors[0]["code"], "bridge_allocation_unresolved")
 
 
 if __name__ == "__main__":

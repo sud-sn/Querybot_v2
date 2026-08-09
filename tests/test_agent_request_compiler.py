@@ -122,6 +122,61 @@ class ExecutableRequestPlanTests(unittest.TestCase):
         self.assertEqual(plan["output_shape"], "time_series")
         self.assertIn("no_direct_fact_to_fact_join", plan["prohibitions"])
 
+    def test_compound_request_compiles_one_isolated_subplan_per_fact(self):
+        semantic = {
+            "enabled": True,
+            "source_scope": {"selected_fact": "OPS.F_SALES"},
+            "fields": [
+                {"term": "revenue", "table": "OPS.F_SALES", "column": "NET_AMOUNT", "role": "measure"},
+                {"term": "inventory", "table": "OPS.F_INVENTORY", "column": "STOCK_VALUE", "role": "measure"},
+                {"term": "warehouse", "table": "OPS.D_WAREHOUSE", "column": "WAREHOUSE_NAME", "role": "dimension"},
+            ],
+        }
+        graph = {
+            "entities": [
+                {"entity_name": "Sales", "schema_name": "OPS", "table_name": "F_SALES"},
+                {"entity_name": "Inventory", "schema_name": "OPS", "table_name": "F_INVENTORY"},
+            ],
+            "join_plan": {
+                "status": "requires_isolated_aggregation",
+                "common_dimensions": ["Warehouse"],
+                "isolated_fact_plans": [
+                    {"fact_entity": "Sales"},
+                    {"fact_entity": "Inventory"},
+                ],
+            },
+        }
+
+        plan = compile_analytical_request_plan(
+            "compare monthly revenue with daily inventory",
+            semantic,
+            graph_context=graph,
+        )
+
+        self.assertEqual(plan["source_facts"], ["OPS.F_SALES", "OPS.F_INVENTORY"])
+        self.assertEqual(len(plan["subrequests"]), 2)
+        self.assertTrue(all(item["aggregate_before_join"] for item in plan["subrequests"]))
+        self.assertEqual(plan["combination"]["join_inputs"], "aggregated_subplans_only")
+
+    def test_compound_source_contract_requires_every_subplan_fact(self):
+        semantic = {
+            "analytical_request_plan": {
+                "source_fact": "OPS.F_SALES",
+                "source_facts": ["OPS.F_SALES", "OPS.F_INVENTORY"],
+            },
+        }
+        result = validate_sql_detailed(
+            "SELECT SUM(NET_AMOUNT) FROM OPS.F_SALES",
+            {"OPS.F_SALES", "OPS.F_INVENTORY"},
+            "mssql",
+            None,
+            {"OPS.F_SALES": {"NET_AMOUNT": "decimal"}, "OPS.F_INVENTORY": {"STOCK_VALUE": "decimal"}},
+            semantic,
+        )
+        self.assertFalse(result.ok)
+        self.assertEqual(result.code, "source_fact_mismatch")
+        self.assertEqual(result.errors[0]["missing_facts"], ["OPS.F_INVENTORY"])
+
     def test_latest_data_days_is_not_a_calendar_window(self):
         window = detect_temporal_window("revenue for the last 2 data days")
         self.assertEqual(window["kind"], "latest_n_observed")

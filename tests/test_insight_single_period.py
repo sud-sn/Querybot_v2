@@ -22,6 +22,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from core.insight import compute_data_brief, _compute_time_series_brief
+from core.response_builder import build_assistant_response
 
 
 class SinglePeriodTimeSeriesTests(unittest.TestCase):
@@ -50,6 +51,40 @@ class SinglePeriodTimeSeriesTests(unittest.TestCase):
         self.assertIsNotNone(ts["biggest_period_drop"])
         self.assertIsNotNone(ts["biggest_period_gain"])
         self.assertEqual(ts["biggest_period_gain"]["to_period"], "2026-06")
+
+    def test_single_period_insight_summary_is_always_text(self):
+        payload = build_assistant_response(
+            question="show the highest month",
+            rows=[{"MONTH": "2026-06", "REVENUE": 812.0}],
+            sql="SELECT TOP 1 month, revenue",
+            duration_ms=10,
+        )
+
+        self.assertIsInstance(payload["insight_summary"], str)
+        self.assertIn("2026-06", payload["insight_summary"])
+
+    def test_two_periods_are_compared_not_called_a_trend(self):
+        payload = build_assistant_response(
+            question="compare monthly revenue",
+            rows=[
+                {"MONTH": "2026-02", "REVENUE": 200.0},
+                {"MONTH": "2026-01", "REVENUE": 100.0},
+            ],
+            sql="SELECT month, revenue ORDER BY month DESC",
+            duration_ms=10,
+        )
+
+        summary = payload["insight_summary"]
+        self.assertIsInstance(summary, str)
+        self.assertIn("from 100", summary)
+        self.assertIn("2026-01", summary)
+        self.assertIn("to 200", summary)
+        self.assertIn("2026-02", summary)
+        self.assertNotIn("trended", summary.lower())
+        self.assertEqual(payload["anomaly_callouts"], [])
+        self.assertEqual(payload["decision_signal"], {})
+        # Analysis uses chronology, but the table keeps the database order.
+        self.assertEqual(payload["data"]["rows"][0]["MONTH"], "2026-02")
 
 
 if __name__ == "__main__":

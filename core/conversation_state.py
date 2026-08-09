@@ -64,6 +64,10 @@ class ConversationState:
     # Metadata-only semantic choices confirmed by the user in this thread.
     # Values contain schema identities (table/column/date role), never rows.
     date_preferences: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # Calendar interpretation confirmed for this thread. This is deliberately
+    # separate from a Date Role: it answers whether "Q1" means calendar or
+    # fiscal Q1 and, for fiscal calendars, which month starts the year.
+    calendar_preference: dict[str, Any] = field(default_factory=dict)
     updated_at: float = 0.0
     expires_at: float = 0.0
 
@@ -116,6 +120,7 @@ class ConversationStateStore:
                         result_schema TEXT DEFAULT '[]',
                         model_versions TEXT DEFAULT '{}',
                         date_preferences TEXT DEFAULT '{}',
+                        calendar_preference TEXT DEFAULT '{}',
                         updated_at REAL NOT NULL,
                         expires_at REAL NOT NULL,
                         PRIMARY KEY (account_id, session_id)
@@ -136,6 +141,11 @@ class ConversationStateStore:
                         "ALTER TABLE conversation_thread_state "
                         "ADD COLUMN date_preferences TEXT DEFAULT '{}'"
                     )
+                if "calendar_preference" not in columns:
+                    conn.execute(
+                        "ALTER TABLE conversation_thread_state "
+                        "ADD COLUMN calendar_preference TEXT DEFAULT '{}'"
+                    )
             self._table_ready = True
         except Exception as exc:
             # Conversation persistence improves continuity but must never make
@@ -151,6 +161,7 @@ class ConversationStateStore:
             schema = json.loads(row["result_schema"] or "[]")
             versions = json.loads(row["model_versions"] or "{}")
             date_preferences = json.loads(row["date_preferences"] or "{}")
+            calendar_preference = json.loads(row["calendar_preference"] or "{}")
             return ConversationState(
                 account_id=str(row["account_id"] or ""),
                 session_id=str(row["session_id"] or ""),
@@ -167,6 +178,11 @@ class ConversationStateStore:
                     for key, value in (date_preferences or {}).items()
                     if isinstance(value, dict)
                 },
+                calendar_preference=(
+                    dict(calendar_preference)
+                    if isinstance(calendar_preference, dict)
+                    else {}
+                ),
                 updated_at=float(row["updated_at"] or 0),
                 expires_at=float(row["expires_at"] or 0),
             )
@@ -187,7 +203,7 @@ class ConversationStateStore:
                     SELECT account_id, session_id, user_id, channel,
                            previous_question, previous_intent, result_id,
                            trace_id, result_schema, model_versions,
-                           date_preferences,
+                           date_preferences, calendar_preference,
                            updated_at, expires_at
                     FROM conversation_thread_state
                     WHERE account_id=? AND session_id=?
@@ -213,9 +229,9 @@ class ConversationStateStore:
                         (account_id, session_id, user_id, channel,
                          previous_question, previous_intent, result_id,
                          trace_id, result_schema, model_versions,
-                         date_preferences,
+                         date_preferences, calendar_preference,
                          updated_at, expires_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(account_id, session_id) DO UPDATE SET
                         user_id=excluded.user_id,
                         channel=excluded.channel,
@@ -226,6 +242,7 @@ class ConversationStateStore:
                         result_schema=excluded.result_schema,
                         model_versions=excluded.model_versions,
                         date_preferences=excluded.date_preferences,
+                        calendar_preference=excluded.calendar_preference,
                         updated_at=excluded.updated_at,
                         expires_at=excluded.expires_at
                     """,
@@ -241,6 +258,7 @@ class ConversationStateStore:
                         json.dumps(list(state.result_schema), separators=(",", ":")),
                         json.dumps(state.model_versions, sort_keys=True, separators=(",", ":")),
                         json.dumps(state.date_preferences, sort_keys=True, separators=(",", ":")),
+                        json.dumps(state.calendar_preference, sort_keys=True, separators=(",", ":")),
                         state.updated_at,
                         state.expires_at,
                     ),
@@ -332,6 +350,7 @@ class ConversationStateStore:
             result_schema=schema or (prior.result_schema if prior else ()),
             model_versions=versions,
             date_preferences=dict(prior.date_preferences) if prior else {},
+            calendar_preference=dict(prior.calendar_preference) if prior else {},
             updated_at=now,
             expires_at=now + self.ttl_seconds,
         )
@@ -423,6 +442,56 @@ class ConversationStateStore:
         self._persist(prior)
         return prior
 
+    def get_calendar_preference(
+        self,
+        account_id: Any,
+        session_id: Any,
+    ) -> dict[str, Any]:
+        """Return the metadata-only calendar choice for this thread."""
+        state = self.get(account_id, session_id)
+        if state is None or not isinstance(state.calendar_preference, dict):
+            return {}
+        return dict(state.calendar_preference)
+
+    def remember_calendar_preference(
+        self,
+        account_id: Any,
+        session_id: Any,
+        preference: dict[str, Any],
+    ) -> ConversationState | None:
+        """Remember a user-confirmed calendar basis without governing a tenant."""
+        if not isinstance(preference, dict):
+            return self.get(account_id, session_id)
+        basis = str(preference.get("basis") or "").strip().casefold()
+        if basis not in {"calendar", "fiscal"}:
+            return self.get(account_id, session_id)
+        safe: dict[str, Any] = {"basis": basis}
+        if basis == "fiscal":
+            try:
+                start_month = int(preference.get("fiscal_year_start_month") or 0)
+            except (TypeError, ValueError):
+                start_month = 0
+            if 1 <= start_month <= 12:
+                safe["fiscal_year_start_month"] = start_month
+        source = str(preference.get("source") or "user_confirmed").strip()
+        if source:
+            safe["source"] = source[:40]
+
+        key = self._key(account_id, session_id)
+        if not all(key):
+            return None
+        now = self._clock()
+        with self._lock:
+            prior = self.get(*key)
+            if prior is None:
+                prior = ConversationState(account_id=key[0], session_id=key[1])
+            prior.calendar_preference = safe
+            prior.updated_at = now
+            prior.expires_at = now + self.ttl_seconds
+            self._states[key] = prior
+        self._persist(prior)
+        return prior
+
     def clear(self, account_id: Any, session_id: Any) -> None:
         key = self._key(account_id, session_id)
         with self._lock:
@@ -457,7 +526,12 @@ _ANALYSIS_RE = re.compile(
     re.I,
 )
 _DEICTIC_RE = re.compile(
-    r"\b(?:this|that|these|those|it|them|the\s+result|the\s+rows|above|previous)\b",
+    r"\b(?:this|that|these|those|it|them|one|ones|the\s+result|the\s+rows|above|previous)\b",
+    re.I,
+)
+_RESULT_SUPERLATIVE_RE = re.compile(
+    r"^\s*(?:which|what)\s+(?:one|ones|row|item)\s+(?:is|are)\s+"
+    r"(?:the\s+)?(?:highest|lowest|best|worst|first|second|next)\b",
     re.I,
 )
 
@@ -515,6 +589,12 @@ def classify_turn(
             TurnIntent.RESULT_GROUNDED_ANALYSIS,
             0.9,
             "analysis language with an active governed result",
+        )
+    if has_prior and _RESULT_SUPERLATIVE_RE.search(value):
+        return decision(
+            TurnIntent.RESULT_GROUNDED_ANALYSIS,
+            0.92,
+            "superlative reference to the active governed result",
         )
     if has_prior and _DEICTIC_RE.search(value):
         return decision(

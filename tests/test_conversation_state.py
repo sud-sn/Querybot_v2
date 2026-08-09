@@ -151,6 +151,32 @@ class ConversationStateStoreTests(unittest.TestCase):
             ),
             {},
         )
+
+    def test_calendar_preference_is_metadata_only_and_thread_scoped(self):
+        self._record()
+        self.store.remember_calendar_preference(
+            "tenant-a",
+            "session-a",
+            {
+                "basis": "fiscal",
+                "fiscal_year_start_month": 4,
+                "source": "user_confirmed",
+                "rows": [{"must": "not persist"}],
+            },
+        )
+
+        self.assertEqual(
+            self.store.get_calendar_preference("tenant-a", "session-a"),
+            {
+                "basis": "fiscal",
+                "fiscal_year_start_month": 4,
+                "source": "user_confirmed",
+            },
+        )
+        self.assertEqual(
+            self.store.get_calendar_preference("tenant-a", "another-thread"),
+            {},
+        )
         self.assertEqual(
             self.store.get_date_preference(
                 "tenant-a",
@@ -287,6 +313,13 @@ class TurnClassificationTests(unittest.TestCase):
 
         self.assertEqual(decision.intent, TurnIntent.RESULT_GROUNDED_ANALYSIS)
         self.assertTrue(decision.uses_prior_result)
+
+    def test_short_superlative_uses_active_result(self):
+        decision = self.classify("Which one is highest?")
+
+        self.assertEqual(decision.intent, TurnIntent.RESULT_GROUNDED_ANALYSIS)
+        self.assertTrue(decision.uses_prior_result)
+        self.assertEqual(decision.parent_result_id, "result-a")
 
     def test_unrelated_business_question_starts_new_query(self):
         decision = self.classify(

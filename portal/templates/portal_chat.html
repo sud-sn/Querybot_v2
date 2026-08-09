@@ -1028,6 +1028,8 @@ let wsReady = false;
 let reconnectAttempts = 0;
 let restoringCache = false;
 let processingActive = false;
+let agentRunState = 'idle';
+let activeAgentRunId = '';
 let processingStartedAt = 0;
 let processingElapsedTimer = null;
 let lastAssistantText = '';
@@ -1318,6 +1320,38 @@ function setProcessing(active){
   }
   scrollBottom();
 }
+
+const AGENT_RUN_TERMINAL_STATES = new Set(['completed', 'blocked', 'failed', 'cancelled']);
+
+function _agentStateFromEvent(msg = {}){
+  const stage = String(msg.stage || '').toLowerCase();
+  const status = String(msg.run_status || '').toLowerCase();
+  if (stage === 'waiting_for_user' || status === 'waiting_for_user') return 'waiting_for_user';
+  if (AGENT_RUN_TERMINAL_STATES.has(status)) return status;
+  return 'running';
+}
+
+function setAgentRunState(state, msg = {}){
+  const normalized = String(state || 'idle').toLowerCase();
+  const eventRunId = String(msg.run_id || '');
+  const isStart = msg.type === 'agent_run_started';
+
+  // A newly started run supersedes the previous one. Late events from an
+  // older run must not lock the composer or replace the current run state.
+  if (isStart && eventRunId) activeAgentRunId = eventRunId;
+  if (!isStart && eventRunId && activeAgentRunId && eventRunId !== activeAgentRunId) {
+    return false;
+  }
+  if (!activeAgentRunId && eventRunId) activeAgentRunId = eventRunId;
+
+  agentRunState = normalized;
+  if (normalized === 'running') {
+    setProcessing(true);
+  } else if (normalized === 'waiting_for_user' || normalized === 'idle' || AGENT_RUN_TERMINAL_STATES.has(normalized)) {
+    setProcessing(false);
+  }
+  return true;
+}
 // While a question is in flight, the send button becomes a Stop control —
 // clicking it sends {type:'cancel'} so the server can cancel the in-flight
 // task (see gateway/webhooks.py's ws_chat: LLM calls are interrupted
@@ -1341,7 +1375,7 @@ function stopQuery(){
   // Optimistically reset the composer instead of waiting for the server's
   // round trip — the server-side "Query stopped." message + typing:false
   // will arrive right behind this and are idempotent with it.
-  setProcessing(false);
+  setAgentRunState('cancelled');
 }
 function updateProcessing(stage, label, detail){
   setProcessing(true);
@@ -3794,20 +3828,24 @@ function _submitClarification(data, answer, optionId, card){
     toastLong('Connection lost. Your clarification is still here; send it after reconnection.');
     return;
   }
-  if (processingActive) return;
+  if (processingActive && agentRunState !== 'waiting_for_user') {
+    toast('QueryBot is still finishing the current step. Please try again in a moment.');
+    return;
+  }
   card?.querySelectorAll('button, textarea').forEach((control) => control.disabled = true);
   const payload = { type:'clarification_response', pending_id: data.pending_id || '' };
   if (optionId) payload.option_id = optionId;
   else payload.text = text;
   const userMessage = appendUser(text, { deliveryState:'working', payload });
   _activeOutboundMessage = userMessage;
-  updateProcessing('authorization', 'Resolving clarification', 'Applying your clarification and continuing the governed query.');
+  setAgentRunState('running');
+  _updateStageSteps('authorization', 'Resolving clarification', 'Applying your clarification and continuing the governed query.');
   try {
     ws.send(JSON.stringify(payload));
   } catch (_) {
     _setUserMessageState(userMessage, 'interrupted', 'Answer again when connected');
     card?.querySelectorAll('button, textarea').forEach((control) => control.disabled = false);
-    setProcessing(false);
+    setAgentRunState('waiting_for_user');
   }
 }
 // ── Schema selector ──────────────────────────────────────────────────────────
@@ -4476,22 +4514,26 @@ function connect(){
   ws.onmessage = (evt) => {
     const msg = safeJsonParse(evt.data); if (!msg) return;
     if (msg.type === 'typing') {
-      setProcessing(!!msg.active);
+      // The clarification prompt is authoritative. A delayed typing:true
+      // frame from the run that produced it must not disable its controls.
+      if (!(msg.active && agentRunState === 'waiting_for_user')) {
+        if (msg.active) setAgentRunState('running', msg);
+        else if (agentRunState === 'running') setProcessing(false);
+      }
     } else if (msg.type === 'agent_run_started') {
-      setProcessing(true);
-      _applyAgentRunEvent(msg);
+      if (setAgentRunState(_agentStateFromEvent(msg), msg)) _applyAgentRunEvent(msg);
     } else if (msg.type === 'agent_run_progress' || msg.type === 'agent_run_finished') {
-      _applyAgentRunEvent(msg);
+      if (setAgentRunState(_agentStateFromEvent(msg), msg)) _applyAgentRunEvent(msg);
     } else if (msg.type === 'status') {
-      updateProcessing(msg.stage, msg.label, msg.detail);
+      if (agentRunState !== 'waiting_for_user') updateProcessing(msg.stage, msg.label, msg.detail);
     } else if (msg.type === 'system') {
       if (/^Query stopped\.?$/i.test(msg.content || '')) {
         _markActiveOutbound('stopped', 'Stopped');
-        setProcessing(false);
+        setAgentRunState('cancelled', msg);
       }
       appendSystem(msg.content, { persist: !/^Connected as /i.test(msg.content || '') });
     } else if (msg.type === 'clarification_prompt') {
-      setProcessing(false);
+      setAgentRunState('waiting_for_user', msg);
       showMascotClarify();
       setTimeout(() => renderClarificationPrompt(msg), 500);
     } else if (msg.type === 'message') {
@@ -4506,7 +4548,7 @@ function connect(){
       if (msgContent.startsWith('❌') || msgContent.startsWith('❓')) {
         // This is a terminal frame. Do not depend on a later typing:false
         // message to restore the composer; that frame can be delayed/lost.
-        setProcessing(false);
+        setAgentRunState(msgContent.startsWith('❌') ? 'failed' : 'waiting_for_user', msg);
         if (msgContent.startsWith('❌')) {
           _markActiveOutbound('failed', 'Needs attention');
           showMascotError();
@@ -4539,7 +4581,7 @@ function connect(){
         }
         // ────────────────────────────────────────────────────────────────────
         setTimeout(() => {
-          setProcessing(false);
+          setAgentRunState('completed', msg);
           appendBot(msgContent);
           refreshQueryLimitStatus({toast:true});
         }, 700);
@@ -4560,7 +4602,7 @@ function connect(){
       }
       // ─────────────────────────────────────────────────────────────────────────
       setTimeout(() => {
-        setProcessing(false);
+        setAgentRunState('completed', msg);
         appendAssistantResponse(msg);
         refreshQueryLimitStatus({toast:true});
         window.dispatchEvent(new CustomEvent('qb-query-success'));
@@ -4568,11 +4610,11 @@ function connect(){
       return; // prevent falling through to setProcessing(false) in 'typing' event
     } else if (msg.type === 'assistant_dashboard') {
       _markActiveOutbound('complete');
-      setProcessing(false);
+      setAgentRunState('completed', msg);
       appendDashboardEvent(msg);
     } else if (msg.type === 'dashboard_selection_required') {
       _markActiveOutbound('complete');
-      setProcessing(false);
+      setAgentRunState('completed', msg);
       openDashboardPicker({
         token: msg.pin_token,
         title: msg.title || 'Dashboard visual',
@@ -4586,7 +4628,7 @@ function connect(){
     } else if (msg.type === 'assistant_error') {
       // Do not depend solely on a later typing:false frame: action failures
       // must always leave the workspace in an interactive state.
-      setProcessing(false);
+      setAgentRunState('failed', msg);
       // Inline action errors (contribution, outliers, set_alert, download_csv…)
       // The typing indicator is cleared by the server's separate typing:false message.
       // We still need to surface the error so the user knows what happened.
@@ -4594,7 +4636,7 @@ function connect(){
       _markActiveOutbound('failed', 'Action failed');
       appendSystem(`⚠ ${msg.content || 'Action could not be completed.'}${errDetail}`);
     } else if (msg.type === 'error') {
-      setProcessing(false);
+      setAgentRunState('failed', msg);
       _pendingSuggestion = null;  // clear stale pending chip on WS-level error
       showMascotError();
       if (window._composerMascotError) window._composerMascotError('Something went wrong — please retry');
@@ -4618,7 +4660,7 @@ function connect(){
     wsReady = false;
     document.getElementById('sendBtn').disabled = true;
     if (queryWasActive) _markActiveOutbound('interrupted', 'Interrupted · Retry when connected');
-    setProcessing(false);
+    setAgentRunState('idle');
     if ([4001, 4003, 4004].includes(evt.code)) {
       const note = evt.code === 4004 ? 'Chat is not enabled for this workspace.' : 'Your session is invalid or no longer authorized.';
       setConnectionState('Unavailable', note);

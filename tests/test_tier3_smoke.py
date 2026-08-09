@@ -393,6 +393,18 @@ class TestFiscalParsing:
         assert "DATEADD" in hint or "YEAR" in hint
         assert "July" in hint or "month 7" in hint
 
+    def test_missing_fiscal_configuration_never_assumes_january(self):
+        from core.fiscal_calendar import (
+            build_fiscal_sql_hint,
+            fiscal_date_range,
+            parse_fiscal_reference,
+        )
+        ref = parse_fiscal_reference("FY2024 revenue")
+        with pytest.raises(ValueError, match="fiscal_year_start_month"):
+            fiscal_date_range(ref)
+        with pytest.raises(ValueError, match="fiscal_year_start_month"):
+            build_fiscal_sql_hint("FY2024 revenue")
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Histogram — Detection

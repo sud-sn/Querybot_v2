@@ -294,12 +294,19 @@ def compile_planner_response(
         return ResultCommand("sort", target_text=target, direction=direction), ""
 
     limit_ref = str(plan.get("limit_ref") or "").strip()
-    if limit_ref not in bindings:
-        return None, "The row limit was not locally bound."
-    try:
-        limit = int(str(bindings[limit_ref]).replace(",", ""))
-    except (TypeError, ValueError):
-        return None, "The row limit was not numeric."
+    if limit_ref:
+        if limit_ref not in bindings:
+            return None, "The row limit was not locally bound."
+        try:
+            limit = int(str(bindings[limit_ref]).replace(",", ""))
+        except (TypeError, ValueError):
+            return None, "The row limit was not numeric."
+    else:
+        # Natural superlatives such as "Which one is highest?" mean one row
+        # and contain no numeric literal to bind. The allow-listed keep_top
+        # operation is the only operation for which this deterministic
+        # default is safe.
+        limit = 1
     metric = column("metric", required=False)
     return ResultCommand(
         "keep_top",
