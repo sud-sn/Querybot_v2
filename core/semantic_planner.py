@@ -396,7 +396,59 @@ def _find_candidates(
                 "role": _role_for_column(col_u, str(col_type)),
                 "aliases": sorted(aliases),
             })
-    return candidates
+    return _drop_compound_modifier_matches(candidates, qn)
+
+
+def _drop_compound_modifier_matches(candidates: list[dict], normalized_question: str) -> list[dict]:
+    """Drop a term that is only the modifier half of a compound noun.
+
+    English noun compounds are head-final: "product category" names a kind of
+    category, not a kind of product. Once display columns answer to their
+    entity noun, both halves match independently -- PRODUCT_NAME on "product"
+    and CATEGORY_NAME on "category" -- and the generator groups by both.
+    Live case 12 asked to allocate revenue "by product category" and came back
+    split by product as well, a grain nobody requested.
+
+    A single-word term is dropped when it sits immediately before another
+    matched term in the question, i.e. it is modifying that term rather than
+    naming a field of its own. Multi-word terms are left alone: they are
+    already the specific phrase, not a fragment of one.
+    """
+    words = normalized_question.split()
+    terms = {str(c.get("term") or "").strip() for c in candidates}
+    terms.discard("")
+    if len(terms) < 2:
+        return candidates
+
+    modifiers: set[str] = set()
+    for term in terms:
+        if " " in term:
+            continue  # already a specific phrase
+        for i, word in enumerate(words[:-1]):
+            if word != term:
+                continue
+            # Head of the compound is whatever matched term follows it.
+            for other in terms:
+                if other == term:
+                    continue
+                head = other.split()
+                if words[i + 1 : i + 1 + len(head)] == head:
+                    modifiers.add(term)
+                    break
+            if term in modifiers:
+                break
+
+    if not modifiers:
+        return candidates
+    kept = [c for c in candidates if str(c.get("term") or "").strip() not in modifiers]
+    if not kept:
+        return candidates
+    if len(kept) != len(candidates):
+        log.info(
+            "Dropped compound-modifier term(s) %s: they modify a following "
+            "matched term rather than naming a field", sorted(modifiers),
+        )
+    return kept
 
 
 def _choose_fields(question: str, candidates: list[dict]) -> list[dict]:

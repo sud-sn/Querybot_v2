@@ -1435,3 +1435,60 @@ class DimensionEntityNounAliasTests(unittest.TestCase):
         dimension must produce exactly what it produced before."""
         tables = self._plan_tables("Show inventory value")
         self.assertEqual(tables, {("F_INVENTORY_DAILY", "INVENTORY_VALUE")})
+
+
+class CompoundModifierTermTests(unittest.TestCase):
+    """Live case 12 regression, introduced by the entity-noun alias.
+
+    Once display columns answer to their entity noun, both halves of a compound
+    match independently: "by product category" hit PRODUCT_NAME on "product"
+    and CATEGORY_NAME on "category", and the generator grouped by both. The
+    allocation still summed to 1050, but the answer was split by a product
+    grain nobody asked for.
+
+    English noun compounds are head-final -- "product category" is a kind of
+    category -- so a single-word term sitting immediately before another
+    matched term is modifying it, not naming a field.
+    """
+
+    COLS = {
+        "QBOT_LIVE_TEST.F_SALES_INVOICE": {
+            "PRODUCT_SK": "int", "WAREHOUSE_SK": "int", "NET_REVENUE_AMOUNT": "decimal",
+        },
+        "QBOT_LIVE_TEST.D_CATEGORY": {"CATEGORY_SK": "int", "CATEGORY_NAME": "varchar"},
+        "QBOT_LIVE_TEST.D_PRODUCT": {"PRODUCT_SK": "int", "PRODUCT_NAME": "varchar"},
+        "QBOT_LIVE_TEST.D_WAREHOUSE": {"WAREHOUSE_SK": "int", "WAREHOUSE_NAME": "varchar"},
+        "QBOT_LIVE_TEST.F_INVENTORY_DAILY": {
+            "WAREHOUSE_SK": "int", "INVENTORY_VALUE": "decimal", "SNAPSHOT_DATE": "date",
+        },
+    }
+
+    def _cols_in_plan(self, question):
+        plan = build_semantic_field_plan(
+            question, self.COLS, set(self.COLS), "QBOT_LIVE_TEST"
+        )
+        return {f["column"] for f in (plan.get("fields") or [])}
+
+    def test_the_modifier_half_of_a_compound_is_dropped(self):
+        cols = self._cols_in_plan("Allocate total revenue by product category.")
+        self.assertIn("CATEGORY_NAME", cols)
+        self.assertNotIn("PRODUCT_NAME", cols)
+
+    def test_the_same_word_alone_still_matches(self):
+        """"product" is only a modifier when something it modifies follows."""
+        self.assertIn("PRODUCT_NAME", self._cols_in_plan("Show total revenue by product"))
+
+    def test_a_non_adjacent_pair_is_not_treated_as_a_compound(self):
+        cols = self._cols_in_plan("Show revenue by product and by category")
+        self.assertIn("PRODUCT_NAME", cols)
+        self.assertIn("CATEGORY_NAME", cols)
+
+    def test_an_unrelated_question_is_unaffected(self):
+        cols = self._cols_in_plan(
+            "What was inventory value by warehouse on the latest daily snapshot?"
+        )
+        self.assertEqual(cols, {"WAREHOUSE_NAME", "INVENTORY_VALUE"})
+
+    def test_dropping_everything_is_refused(self):
+        """A filter that empties the plan is worse than no filter."""
+        self.assertTrue(self._cols_in_plan("Show revenue by product category"))
