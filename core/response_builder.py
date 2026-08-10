@@ -9,6 +9,7 @@ from statistics import mean, median, stdev
 from typing import Any
 
 from core.display_formats import normalize_display_format
+from core.clarification import extract_original_question
 
 log = logging.getLogger("querybot.response_builder")
 
@@ -1116,6 +1117,9 @@ def compute_chip_eligibility(
     ctx: dict,
     brief: dict | None = None,
     semantic_plan: dict | None = None,
+    *,
+    sql: str = "",
+    db_type: str = "",
 ) -> list[dict]:
     """
     Signal-based chip eligibility.  Replaces the old mode-only ``_dynamic_actions``.
@@ -1215,6 +1219,10 @@ def compute_chip_eligibility(
                 continue
             if dc in result_cols_upper:
                 continue  # already in the result — skip
+            if sql:
+                from core.drill_dimension import build_deterministic_drill_sql
+                if not build_deterministic_drill_sql(sql, dim, db_type or "azure_sql"):
+                    continue
             conf = 75 if dim.get("status") == "approved" else 68
             _add(
                 f"drill_dim:{name}",
@@ -1868,18 +1876,25 @@ def build_assistant_response(
     question_id: str = "",
 ) -> dict:
     from core.insight import compute_data_brief
+    display_question = extract_original_question(question).strip() or question
+    display_chart = dict(chart) if isinstance(chart, dict) else chart
+    if isinstance(display_chart, dict):
+        if "title" in display_chart:
+            display_chart["title"] = display_question
+        if "question" in display_chart:
+            display_chart["question"] = display_question
     raw_rows = list(rows)
     zero_match = detect_zero_match_result(raw_rows)
     null_issue = detect_null_metric_issue(raw_rows)
     visible_rows = visible_result_rows(raw_rows)
     analysis_rows = _chronological_analysis_rows(visible_rows)
-    ctx = summarize_result_context(analysis_rows, question, sql=sql)
+    ctx = summarize_result_context(analysis_rows, display_question, sql=sql)
     result_operation = str((display_context or {}).get("result_operation") or "")
     if result_operation in {"keep_top", "sort", "contribution"} and ctx.get("mode") == "time_series":
         # Period labels sorted by a measure are a ranking, not a chronology.
         # Treating them as a series creates false trend claims from sort order.
         ctx["mode"] = "ranking"
-        ctx["result_scope"] = infer_result_scope(visible_rows, question, sql, mode="ranking")
+        ctx["result_scope"] = infer_result_scope(visible_rows, display_question, sql, mode="ranking")
     resolved_column_formats = build_column_formats(
         visible_rows,
         display_context=display_context,
@@ -1894,14 +1909,14 @@ def build_assistant_response(
     answer_rows = raw_rows if (zero_match or null_issue) else analysis_rows
     answer = build_answer(
         answer_rows,
-        question,
+        display_question,
         ctx.get("result_scope"),
         column_formats=resolved_column_formats,
         display_formats=resolved_display_formats,
     )
     brief = compute_data_brief(
         analysis_rows,
-        question,
+        display_question,
         result_scope=ctx.get("result_scope"),
         context=ctx,
     )
@@ -1936,17 +1951,23 @@ def build_assistant_response(
         null_issue=null_issue,
     )
 
-    return {
+    payload = {
         "type": "assistant_response",
-        "question": question,
+        "question": display_question,
         "answer": answer,
-        "chart": chart,
+        "chart": display_chart,
         "kpi": kpi,
         "insight_summary": insight_summary,
         "anomaly_callouts": anomaly_callouts,
         "decision_signal": decision_signal,
         "summary": {"executive_summary": ""},
-        "next_actions": compute_chip_eligibility(ctx, brief=brief, semantic_plan=semantic_plan),
+        "next_actions": compute_chip_eligibility(
+            ctx,
+            brief=brief,
+            semantic_plan=semantic_plan,
+            sql=sql,
+            db_type=data_source or "azure_sql",
+        ),
         "analysis_contract": ctx,
         "data_brief": brief,
         "result_scope": ctx.get("result_scope", {}),

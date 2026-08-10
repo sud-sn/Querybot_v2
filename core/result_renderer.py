@@ -47,6 +47,7 @@ from core.answer_rca import extract_sql_tables
 from core.pipeline_context import get_portal_base
 from core.pipeline_helpers import _send_live_stage
 from core.pipeline_trace import _create_pin_token
+from core.clarification import extract_original_question
 
 log = logging.getLogger("querybot")
 
@@ -611,6 +612,7 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
                         contract_version: str = "",
                         cache_result: bool = True):
     """Send formatted results to the chat platform. Shared by LLM and metric registry paths."""
+    display_question = extract_original_question(question).strip() or question
     if question_id:
         profile = store.get_compliance_profile(account_id)
         store.store_protected_result_rows(
@@ -647,7 +649,7 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
     cache_fn = getattr(adapter, "cache_result", None)
     if cache_result and callable(cache_fn):
         cache_fn(
-            rows, question, sql, db_cfg, rag_context,
+            rows, display_question, sql, db_cfg, rag_context,
             question_id=question_id,
             column_formats=column_formats,
             data_brief=confidence_context.get("data_brief") if confidence_context else None,
@@ -689,7 +691,7 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
     else:
         chart_type = detect_chart_type(
             rows,
-            question=question,
+            question=display_question,
             column_formats=column_formats,
         )
     if chart_type:
@@ -735,7 +737,7 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
         pin_token = _create_pin_token(
             user_id=portal_user["id"],
             account_id=account_id,
-            question=question,
+            question=display_question,
             sql_query=sql,
             chart_type=chart_type,
             db_config_id=db_cfg["id"],
@@ -747,20 +749,20 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
         # period-over-period drop/gain directly on the chart, not only as
         # separate text underneath it. Best-effort: any shape mismatch or
         # non-time-series result simply yields no annotation, not an error.
-        chart_annotations = build_chart_annotations(rows, question)
+        chart_annotations = build_chart_annotations(rows, display_question)
 
         chart_payload = build_chart_payload(
             rows,
             chart_type,
-            title=question,
-            question=question,
+            title=display_question,
+            question=display_question,
             column_formats=column_formats,
             annotations=chart_annotations,
         )
         if chart_payload:
             if pin_token:
                 chart_payload["pin_token"] = pin_token
-            chart_payload["question"] = question
+            chart_payload["question"] = display_question
             chart_payload["duration_label"] = dur_label
             chart_payload["row_count"] = len(rows)
 
@@ -805,7 +807,7 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
         if chart_payload:
             await _send_live_stage(adapter, event, "chart_ready", "Building chart", "Rendering an interactive chart for this answer.")
         response_payload = build_assistant_response(
-            question=question,
+            question=display_question,
             rows=rows,
             sql=sql,
             duration_ms=duration_ms,
@@ -828,7 +830,7 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
             pin_token = _create_pin_token(
                 user_id=portal_user["id"],
                 account_id=account_id,
-                question=question,
+                question=display_question,
                 sql_query=sql,
                 chart_type=dashboard_item_type,
                 db_config_id=db_cfg["id"],
@@ -872,7 +874,7 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
             try:
                 suggestions = await generate_followup_suggestions(
                     brief=brief,
-                    question=question,
+                    question=display_question,
                     result_scope=result_scope,
                     db_cfg=db_cfg,
                     account_id=account_id,
@@ -903,7 +905,7 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
         )
         greeting = f"*{portal_user.get('name', '')}* — " if portal_user and portal_user.get('name') else ""
         reply = (
-            f"{greeting}*{question}*\n\n"
+            f"{greeting}*{display_question}*\n\n"
             f"{coverage_line}"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
             f"  {col_name}\n"
@@ -915,7 +917,7 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
     else:
         greeting = f"*{portal_user.get('name', '')}*\n" if portal_user and portal_user.get('name') else ""
         reply = (
-            f"{greeting}*{question}*\n\n"
+            f"{greeting}*{display_question}*\n\n"
             f"{coverage_line}"
             f"*{len(rows)} {row_word}*\n"
             f"{'─' * 40}\n"

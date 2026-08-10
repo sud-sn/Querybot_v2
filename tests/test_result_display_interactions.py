@@ -168,6 +168,27 @@ class ResultDisplayCommandTests(unittest.TestCase):
 
 
 class KpiPresentationTests(unittest.TestCase):
+    def test_internal_clarification_wrapper_never_reaches_display_payload(self):
+        original = "Which warehouses had the highest trading margin last year?"
+        combined = (
+            f"{original}\n"
+            "Clarification for the same request: Allocated Costs. "
+            "Use this clarification to interpret the original request; "
+            "do not treat it as a separate question."
+        )
+        payload = build_assistant_response(
+            question=combined,
+            rows=[{"Warehouse": "Central", "Allocated Costs": 1250.0}],
+            sql="SELECT Warehouse, SUM(Cost) AS [Allocated Costs] FROM Fact GROUP BY Warehouse",
+            duration_ms=20,
+            chart={"title": combined, "question": combined, "type": "bar"},
+        )
+        self.assertEqual(payload["question"], original)
+        self.assertEqual(payload["chart"]["title"], original)
+        self.assertEqual(payload["chart"]["question"], original)
+        self.assertNotIn("Clarification for the same request", str(payload))
+        self.assertNotIn("do not treat it as a separate question", str(payload))
+
     def test_single_metric_is_kpi_not_diagnostic_table(self):
         payload = build_assistant_response(
             question="what is revenue",

@@ -1408,7 +1408,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             _add_history = getattr(adapter, "add_to_history", None)
             if callable(_add_history) and rows:
                 _add_history(
-                    question=question,
+                    question=extract_original_question(question),
                     sql=sql_from_metric,
                     columns=list(rows[0].keys()) if rows else [],
                     row_count=len(rows),
@@ -4469,7 +4469,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     _add_history = getattr(adapter, "add_to_history", None)
     if callable(_add_history) and rows:
         _add_history(
-            question=question,
+            question=extract_original_question(question),
             sql=sql,
             columns=list(rows[0].keys()) if rows else [],
             row_count=len(rows),

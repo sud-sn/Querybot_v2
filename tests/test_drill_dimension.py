@@ -19,6 +19,7 @@ import unittest
 from pathlib import Path
 
 from core.drill_dimension import (
+    build_deterministic_drill_sql,
     build_drill_sql_prompt,
     find_drill_candidate,
 )
@@ -150,11 +151,67 @@ class BuildDrillSqlPromptTests(unittest.TestCase):
         self.assertIn("no markdown", system.lower())
 
 
+class DeterministicDrillSqlTests(unittest.TestCase):
+
+    def test_adds_governed_join_select_and_group_by(self):
+        sql = (
+            "SELECT SUM(f.ALLOCATED_COST) AS TOTAL_COST "
+            "FROM PROFITABILITY.CUS_ORD_IVC_FCT f "
+            "WHERE f.FISCAL_YEAR = 2025"
+        )
+        rewritten = build_deterministic_drill_sql(
+            sql,
+            _dim("Customer", "CUS_NM", table="PROFITABILITY.CUS_DMS",
+                 src_key="CUS_DMS_KEY"),
+            "azure_sql",
+        )
+        self.assertIsNotNone(rewritten)
+        upper = rewritten.upper()
+        self.assertIn("LEFT JOIN PROFITABILITY.CUS_DMS", upper)
+        self.assertIn("F.CUS_DMS_KEY = QB_DIM.CUS_DMS_KEY", upper)
+        self.assertIn("QB_DIM.CUS_NM", upper)
+        self.assertIn("GROUP BY QB_DIM.CUS_NM", upper)
+        self.assertIn("F.FISCAL_YEAR = 2025", upper)
+
+    def test_rejects_dimension_from_unrelated_fact(self):
+        sql = "SELECT SUM(ALLOCATED_COST) FROM PROFITABILITY.CUS_ORD_IVC_FCT"
+        dim = _dim(
+            "Customer", "CUS_NM", table="PROFITABILITY.CUS_DMS",
+            src_table="PROFITABILITY.OTHER_FCT", src_key="CUS_DMS_KEY",
+        )
+        self.assertIsNone(build_deterministic_drill_sql(sql, dim, "azure_sql"))
+
+    def test_rejects_set_operation_instead_of_guessing_scope(self):
+        sql = (
+            "SELECT SUM(AMT) AS VALUE FROM PROFITABILITY.CUS_ORD_IVC_FCT "
+            "UNION ALL SELECT SUM(AMT) FROM PROFITABILITY.OTHER_FCT"
+        )
+        self.assertIsNone(
+            build_deterministic_drill_sql(sql, _dim("Warehouse", "WHS_DSC"), "azure_sql")
+        )
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # compute_chip_eligibility — drill_dim chips
 # ══════════════════════════════════════════════════════════════════════════════
 
 class ChipEligibilityDrillDimTests(unittest.TestCase):
+
+    def test_drill_chip_is_shown_only_when_active_sql_supports_join(self):
+        ctx = _ctx(text_cols=[])
+        supported = _dim("Warehouse", "WHS_DSC")
+        unrelated = _dim(
+            "Customer", "CUS_NM", table="PROFITABILITY.CUS_DMS",
+            src_table="PROFITABILITY.OTHER_FCT", src_key="CUS_DMS_KEY",
+        )
+        plan = _plan_with_dims(supported, unrelated)
+        sql = "SELECT SUM(f.AMT) AS Revenue FROM PROFITABILITY.CUS_ORD_IVC_FCT f"
+        chips = compute_chip_eligibility(
+            ctx, semantic_plan=plan, sql=sql, db_type="azure_sql",
+        )
+        ids = [chip["id"] for chip in chips]
+        self.assertIn("drill_dim:Warehouse", ids)
+        self.assertNotIn("drill_dim:Customer", ids)
 
     def test_drill_chip_shown_when_dim_not_in_result(self):
         """Warehouse dim is available but WHS_DSC not in result cols → chip shown."""

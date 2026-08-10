@@ -7,8 +7,8 @@ Design principles
 ─────────────────
 • Finding drill candidates is a pure function of the semantic plan and the
   current result column set — no DB or LLM needed.
-• SQL rewrite is delegated to the LLM with a deliberately narrow prompt: add
-  ONE dimension column + its JOIN.  Everything else must be preserved.
+• SQL rewrite is compiled deterministically from the active SQL and governed
+  dimension metadata. Unsupported dimensions are never offered as actions.
 • The response is a full ``assistant_response`` (table result with chips), not
   an ``assistant_analysis`` card, because the user is asking for new data.
 • Every failure exits with a clear fallback message — never a Python exception
@@ -28,6 +28,7 @@ Entry point
 from __future__ import annotations
 
 import logging
+import re
 import time
 from typing import Any
 
@@ -53,6 +54,148 @@ def find_drill_candidate(
         if (dim.get("name") or "").strip().lower() == target:
             return dim
     return None
+
+
+def _dialect_name(db_type: str) -> str:
+    value = str(db_type or "").strip().lower()
+    return {
+        "azure_sql": "tsql",
+        "sql_server": "tsql",
+        "mssql": "tsql",
+        "postgresql": "postgres",
+    }.get(value, value or "tsql")
+
+
+def _table_parts(value: str) -> tuple[str, ...]:
+    """Return comparable catalog/schema/table parts without SQL quoting."""
+    return tuple(
+        part.lower()
+        for part in re.findall(r"[A-Za-z0-9_$#]+", str(value or ""))
+        if part
+    )
+
+
+def _table_matches(sql_table: str, semantic_table: str) -> bool:
+    actual = _table_parts(sql_table)
+    expected = _table_parts(semantic_table)
+    if not actual or not expected:
+        return False
+    if len(expected) == 1:
+        return actual[-1] == expected[-1]
+    width = min(len(actual), len(expected))
+    return width >= 2 and actual[-width:] == expected[-width:]
+
+
+def _sqlglot_table_name(table: Any) -> str:
+    """Return a Table node's physical name without its alias."""
+    return ".".join(
+        str(part)
+        for part in (table.catalog, table.db, table.name)
+        if str(part or "").strip()
+    )
+
+
+def build_deterministic_drill_sql(
+    original_sql: str,
+    dim: dict,
+    db_type: str = "azure_sql",
+) -> str | None:
+    """Compile one proven dimension drill from the active SQL and metadata."""
+    try:
+        import sqlglot
+        from sqlglot import exp
+    except Exception:
+        return None
+
+    required = (
+        "display_table", "display_column", "source_table",
+        "source_key_column",
+    )
+    if not original_sql or any(not str(dim.get(key) or "").strip() for key in required):
+        return None
+
+    dialect = _dialect_name(db_type)
+    try:
+        tree = sqlglot.parse_one(str(original_sql).strip().rstrip(";"), read=dialect)
+    except Exception:
+        return None
+    if not isinstance(tree, exp.Select):
+        return None
+
+    root_tables = [
+        table for table in tree.find_all(exp.Table)
+        if table.find_ancestor(exp.Select) is tree
+    ]
+    source_table = next(
+        (table for table in root_tables
+         if _table_matches(_sqlglot_table_name(table), dim["source_table"])),
+        None,
+    )
+    if source_table is None:
+        return None
+
+    display_col_name = str(dim["display_column"]).strip()
+    if any(
+        isinstance(col, exp.Column)
+        and str(col.name or "").lower() == display_col_name.lower()
+        for col in tree.find_all(exp.Column)
+        if col.find_ancestor(exp.Select) is tree
+    ):
+        return None
+
+    display_table = next(
+        (table for table in root_tables
+         if _table_matches(_sqlglot_table_name(table), dim["display_table"])),
+        None,
+    )
+    source_alias = source_table.alias_or_name
+    if not source_alias:
+        return None
+
+    display_already_joined = display_table is not None
+    if display_already_joined:
+        display_alias = display_table.alias_or_name
+    else:
+        used_aliases = {str(table.alias_or_name or "").lower() for table in root_tables}
+        display_alias = "qb_dim"
+        suffix = 2
+        while display_alias.lower() in used_aliases:
+            display_alias = f"qb_dim_{suffix}"
+            suffix += 1
+        try:
+            display_table = exp.to_table(str(dim["display_table"])).as_(display_alias)
+        except Exception:
+            return None
+
+    display_expr = exp.column(display_col_name, table=display_alias)
+    output_name = str(dim.get("name") or display_col_name).strip()
+    tree.select(
+        exp.alias_(display_expr.copy(), output_name, quoted=True),
+        append=True,
+        copy=False,
+    )
+
+    has_aggregate = any(expression.find(exp.AggFunc) is not None for expression in tree.expressions)
+    if tree.args.get("group") is not None or has_aggregate:
+        tree.group_by(display_expr.copy(), append=True, copy=False)
+
+    if not display_already_joined:
+        display_key = str(dim.get("display_key") or dim["source_key_column"]).strip()
+        tree.join(
+            display_table,
+            on=exp.EQ(
+                this=exp.column(str(dim["source_key_column"]).strip(), table=source_alias),
+                expression=exp.column(display_key, table=display_alias),
+            ),
+            join_type="LEFT",
+            append=True,
+            copy=False,
+        )
+
+    try:
+        return tree.sql(dialect=dialect)
+    except Exception:
+        return None
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -144,14 +287,13 @@ async def generate_drill_by_dimension(
     Pipeline
     ────────
     1. Resolve the dimension metadata from the semantic plan
-    2. LLM rewrites the SQL to add the display column + JOIN
+    2. Compile the display column + governed JOIN deterministically
     3. Validate the new SQL
     4. Execute against the live DB
     5. Build and return a full assistant_response
 
     All failure paths return a graceful ``assistant_error`` dict — never raise.
     """
-    from core.llm import llm_complete
     from core.response_builder import build_assistant_response
     from core.schema import run_query
     from core.validator import validate_sql
@@ -176,38 +318,17 @@ async def generate_drill_by_dimension(
             f"Try asking: \"Break down by {dim_name}\" in a new question.",
         )
 
-    display_table  = dim["display_table"]
-    display_col    = dim["display_column"]
-    source_table   = dim["source_table"]
-    source_key     = dim["source_key_column"]
-    display_key    = dim.get("display_key") or source_key
-
-    # ── Step 2: LLM rewrites the SQL ────────────────────────────────────────
-    sys_p, usr_p = build_drill_sql_prompt(
-        original_sql, display_table, display_col,
-        source_table, source_key, display_key,
+    # Compile the governed JOIN deterministically. The response builder uses
+    # this same compiler to decide whether the button may be shown at all.
+    drill_sql = build_deterministic_drill_sql(
+        original_sql,
+        dim,
+        db_type=db_cfg.get("db_type", "azure_sql"),
     )
-
-    try:
-        raw_sql, _, _ = await llm_complete(
-            sys_p, usr_p,
-            provider, model, api_key,
-            max_tokens=700,
-            temperature=0.0,
-            **extra_kwargs,
-        )
-    except Exception as exc:
-        log.warning("drill_dim: LLM rewrite failed: %s", exc)
+    if not drill_sql:
         return _fallback(
-            "An error occurred while preparing the drill-down query.",
-            f"Try asking: \"Show [metric] by {dim_name}\" directly.",
-        )
-
-    drill_sql = _clean_sql(raw_sql)
-    if not drill_sql or "CANNOT_REWRITE" in drill_sql.upper():
-        return _fallback(
-            f"Could not safely add the '{dim_name}' dimension to the current query.",
-            f"Try asking: \"Show [metric] broken down by {dim_name}\".",
+            f"The '{dim_name}' dimension is not safely joinable to the current result.",
+            f"Ask a new question that explicitly requests a {dim_name} breakdown.",
         )
 
     # ── Step 3: Validate ────────────────────────────────────────────────────
