@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 
@@ -113,6 +114,7 @@ def compile_analytical_request_plan(
         source_facts = [selected_fact]
 
     intent_plan = analytical_intent_plan if isinstance(analytical_intent_plan, dict) else {}
+    intent = str(intent_plan.get("intent") or "").strip().casefold()
     measure_semantics = str(intent_plan.get("measure_semantics") or "").strip()
     counted_entity = str(intent_plan.get("counted_entity") or "").strip()
     derived_measure = {}
@@ -144,10 +146,92 @@ def compile_analytical_request_plan(
             ],
         }
 
+    question_text = str(question or "")
+    change_direction = ""
+    if re.search(r"\b(?:reduced|decreased|declined|fewer|dropped|fell)\b", question_text, re.I):
+        change_direction = "decrease"
+    elif re.search(r"\b(?:increased|grew|grown|more|rose|rising)\b", question_text, re.I):
+        change_direction = "increase"
+    comparison_requested = bool(
+        intent == "comparison"
+        or intent_plan.get("comparison")
+        or re.search(
+            r"\b(?:versus|vs\.?|compared?\s+(?:to|with)|previous|prior|baseline)\b",
+            question_text,
+            re.I,
+        )
+    )
+    analytical_recipe: dict[str, Any] = {}
+    if (
+        derived_measure.get("semantics") == "count_distinct_business_identifier"
+        and (change_direction or comparison_requested)
+    ):
+        analytical_recipe = {
+            "kind": "period_over_period_entity_change",
+            "measure": "count_distinct_business_identifier",
+            "direction": change_direction or "compare",
+            "entity_grain": str(intent_plan.get("entity_grain") or ""),
+            "period_policy": "equal_non_overlapping_governed_windows",
+            "required_outputs": [
+                "entity_identifier",
+                "current_period_count",
+                "prior_period_count",
+                "absolute_change",
+                "percentage_change",
+            ],
+            "filter_policy": (
+                "return_only_decreases" if change_direction == "decrease"
+                else "return_only_increases" if change_direction == "increase"
+                else "return_all_comparable_entities"
+            ),
+            "zero_baseline_policy": "preserve_and_label_not_comparable",
+        }
+
+    registered_metrics = [
+        {"id": m.get("id"), "name": m.get("name"), "formula": m.get("formula") or m.get("sql_formula")}
+        for m in (matched_metrics or [])
+    ]
+    has_measure = bool(measures or registered_metrics or (
+        derived_measure.get("target_table") and derived_measure.get("target_column")
+    ))
+    temporal_requested = bool(
+        intent_plan.get("time_range")
+        or intent_plan.get("quarter_periods")
+        or intent_plan.get("date_role") not in {None, "", "unresolved"}
+        or temporal
+    )
+    source_required = bool(
+        has_measure
+        or temporal_requested
+        or intent in {
+            "comparison", "trend", "ranking", "distribution",
+            "daily_snapshot", "metric_query", "causal_analysis",
+        }
+        or measure_semantics == "count_distinct_business_identifier"
+    )
+    missing_slots: list[str] = []
+    if source_required and not source_facts:
+        missing_slots.append("source_fact")
+    if measure_semantics == "count_distinct_business_identifier" and not (
+        derived_measure.get("target_table") and derived_measure.get("target_column")
+    ):
+        missing_slots.append("count_target")
+    if intent in {"ranking", "trend", "comparison", "distribution", "metric_query"} and not has_measure:
+        missing_slots.append("measure")
+    if temporal_requested and not temporal:
+        missing_slots.append("date_role")
+    if intent == "comparison" and not str(intent_plan.get("comparison") or "").strip():
+        missing_slots.append("comparison_window")
+
+    has_any_binding = bool(source_facts or measures or dimensions or registered_metrics or derived_measure)
+    status = "incomplete" if missing_slots else "compiled" if has_any_binding else "unresolved"
     compiled = {
         "version": 1,
         "question": str(question or ""),
-        "status": "compiled" if (selected_fact or source_facts or measures or dimensions) else "unresolved",
+        "status": status,
+        "intent": intent,
+        "confidence": intent_plan.get("confidence"),
+        "missing_slots": list(dict.fromkeys(missing_slots)),
         "source_fact": selected_fact,
         "source_facts": source_facts,
         "subrequests": subrequests,
@@ -155,11 +239,16 @@ def compile_analytical_request_plan(
         "dimensions": dimensions,
         "temporal_operations": temporal,
         "joins": [dict(j) for j in (plan.get("joins") or []) if j.get("enforcement") != "optional"],
-        "metrics": [
-            {"id": m.get("id"), "name": m.get("name"), "formula": m.get("formula") or m.get("sql_formula")}
-            for m in (matched_metrics or [])
-        ],
+        "metrics": registered_metrics,
         "derived_measure": derived_measure,
+        "analytical_recipe": analytical_recipe,
+        "filters": list(intent_plan.get("filters") or []),
+        "time_range": str(intent_plan.get("time_range") or ""),
+        "quarter_periods": list(intent_plan.get("quarter_periods") or []),
+        "calendar_basis": str(intent_plan.get("calendar_basis") or ""),
+        "comparison": str(intent_plan.get("comparison") or ""),
+        "entity_grain": str(intent_plan.get("entity_grain") or ""),
+        "top_n": intent_plan.get("top_n"),
         "output_shape": output_shape,
         "prohibitions": [
             "no_direct_fact_to_fact_join",
@@ -184,6 +273,8 @@ def format_analytical_request_plan(plan: dict[str, Any] | None) -> str:
     if not plan or plan.get("status") != "compiled":
         return ""
     lines = ["## Executable analytical request plan"]
+    if plan.get("intent"):
+        lines.append(f"- Analytical intent: {plan['intent']}")
     if plan.get("subrequests"):
         lines.append("- Compound request: execute each fact subplan independently.")
         for subplan in plan["subrequests"]:
@@ -218,10 +309,32 @@ def format_analytical_request_plan(plan: dict[str, Any] | None) -> str:
             "- Do not substitute revenue, amount, quantity, a display name, a line key, "
             "a row surrogate, or an unrelated registered metric."
         )
+    recipe = plan.get("analytical_recipe") or {}
+    if recipe.get("kind") == "period_over_period_entity_change":
+        lines.append(
+            "- Analytical recipe: calculate the exact governed distinct-event count "
+            "for two equal, non-overlapping governed periods at the requested entity grain."
+        )
+        lines.append(
+            "- Return current count, prior count, absolute change, and percentage change; "
+            "do not compare amount, revenue, quantity, or row counts."
+        )
+        if recipe.get("direction") == "decrease":
+            lines.append("- Keep entities whose current count is lower than their prior count.")
+        elif recipe.get("direction") == "increase":
+            lines.append("- Keep entities whose current count is higher than their prior count.")
     if plan.get("dimensions"):
         lines.append("- Output dimensions: " + ", ".join(
             f"{d.get('table')}.{d.get('column')}" for d in plan["dimensions"]
         ))
+    if plan.get("time_range"):
+        lines.append(f"- Requested time range: {plan['time_range']}")
+    if plan.get("comparison"):
+        lines.append(f"- Comparison operation: {plan['comparison']}")
+    if plan.get("entity_grain"):
+        lines.append(f"- Required business grain: {plan['entity_grain']}")
+    if plan.get("top_n"):
+        lines.append(f"- Final result limit: Top {plan['top_n']}")
     lines.append(f"- Required output shape: {plan.get('output_shape') or 'table'}")
     lines.append("This plan is authoritative. If a SQL draft conflicts with it, regenerate the SQL; do not reinterpret the question.")
     return "\n".join(lines)

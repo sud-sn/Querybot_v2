@@ -291,6 +291,82 @@ class ExecutableRequestPlanTests(unittest.TestCase):
         self.assertEqual(window["anchor_policy"], "observed_periods")
         self.assertEqual(window["amount"], 2)
 
+    def test_reduced_event_request_compiles_period_change_recipe(self):
+        semantic = {
+            "enabled": True,
+            "source_scope": {"selected_fact": "OPS.F_ORDERS"},
+            "count_target": {
+                "status": "selected",
+                "selected": {
+                    "table": "OPS.F_ORDERS", "column": "ORDER_NUMBER",
+                    "business_name": "Order Number",
+                },
+            },
+            "temporal_policies": [{
+                "kind": "relative_window", "amount": 30, "unit": "day",
+                "fact_table": "OPS.F_ORDERS", "fact_column": "ORDER_DATE_SK",
+            }],
+        }
+        plan = compile_analytical_request_plan(
+            "which customers have reduced orders in the last 30 days compared with the previous 30 days",
+            semantic,
+            analytical_intent_plan={
+                "intent": "entity_lookup",
+                "measure_semantics": "count_distinct_business_identifier",
+                "counted_entity": "order",
+                "entity_grain": "customers",
+                "time_range": "last 30 days",
+            },
+        )
+        recipe = plan["analytical_recipe"]
+        self.assertEqual(recipe["kind"], "period_over_period_entity_change")
+        self.assertEqual(recipe["direction"], "decrease")
+        self.assertEqual(recipe["filter_policy"], "return_only_decreases")
+        prompt = format_analytical_request_plan(plan)
+        self.assertIn("two equal, non-overlapping governed periods", prompt)
+        self.assertIn("current count, prior count", prompt)
+
+    def test_event_count_plan_stops_when_business_identifier_is_unresolved(self):
+        plan = compile_analytical_request_plan(
+            "which customers have reduced orders recently",
+            {
+                "enabled": True,
+                "source_scope": {"selected_fact": "OPS.F_ORDERS"},
+                "temporal_policies": [{
+                    "kind": "relative_window", "amount": 30, "unit": "day",
+                    "fact_table": "OPS.F_ORDERS", "fact_column": "ORDER_DATE_SK",
+                }],
+            },
+            analytical_intent_plan={
+                "intent": "entity_lookup",
+                "measure_semantics": "count_distinct_business_identifier",
+                "counted_entity": "order",
+                "entity_grain": "customers",
+                "time_range": "recently",
+            },
+        )
+        self.assertEqual(plan["status"], "incomplete")
+        self.assertIn("count_target", plan["missing_slots"])
+        self.assertEqual(format_analytical_request_plan(plan), "")
+
+    def test_temporal_metric_plan_stops_when_date_role_is_unresolved(self):
+        plan = compile_analytical_request_plan(
+            "show the revenue trend last month",
+            {
+                "enabled": True,
+                "source_scope": {"selected_fact": "OPS.F_SALES"},
+                "fields": [{
+                    "term": "revenue", "table": "OPS.F_SALES",
+                    "column": "NET_AMOUNT", "role": "measure",
+                }],
+            },
+            analytical_intent_plan={
+                "intent": "trend", "time_range": "last month",
+            },
+        )
+        self.assertEqual(plan["status"], "incomplete")
+        self.assertIn("date_role", plan["missing_slots"])
+
     def test_prompt_demands_distinct_observed_periods(self):
         binding = {
             "fact_table": "S.F_SALES", "fact_column": "INVOICE_DATE_SK",

@@ -37,6 +37,7 @@ import json
 import logging
 import re
 import time
+import uuid
 from difflib import SequenceMatcher
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
@@ -180,6 +181,46 @@ def clarification_progress(event=None) -> tuple[int, int, set[str]]:
     return round_count, max_rounds, resolved
 
 
+def clarification_resolutions(event=None) -> dict[str, dict]:
+    """Return structured choices accumulated across clarification rounds.
+
+    The natural-language rewrite is useful context for an LLM, but it is not
+    authoritative state.  Governed choices (count target, Date Role, source,
+    calendar basis, and similar slots) must survive every later clarification
+    as structured server-side metadata.
+    """
+    raw = getattr(event, "raw", None)
+    raw = raw if isinstance(raw, dict) else {}
+    resolutions = raw.get("_clarification_resolutions") or {}
+    if not isinstance(resolutions, dict):
+        return {}
+    return {
+        str(source).strip(): dict(value)
+        for source, value in resolutions.items()
+        if str(source).strip() and isinstance(value, dict)
+    }
+
+
+def selected_clarification_option(event, source: str) -> dict:
+    """Return the governed option selected for ``source`` in any round."""
+    source = str(source or "").strip()
+    resolution = clarification_resolutions(event).get(source) or {}
+    option = resolution.get("option")
+    if isinstance(option, dict):
+        return dict(option)
+
+    # Compatibility for callers/events created before cumulative resolution
+    # state was introduced.
+    raw = getattr(event, "raw", None)
+    if (
+        isinstance(raw, dict)
+        and str(raw.get("_clarification_selected_source") or "") == source
+        and isinstance(raw.get("_clarification_selected_option"), dict)
+    ):
+        return dict(raw["_clarification_selected_option"])
+    return {}
+
+
 def can_request_clarification(event=None, source: str = "") -> bool:
     """Allow a new ambiguity only when it is new and the round cap permits it."""
     round_count, max_rounds, resolved = clarification_progress(event)
@@ -200,6 +241,8 @@ def prepare_clarification_meta(
     prepared["round_count"] = round_count + 1
     prepared["max_rounds"] = max_rounds
     prepared["resolved_sources"] = sorted(resolved)
+    prepared["resolutions"] = clarification_resolutions(event)
+    prepared["pending_id"] = str(prepared.get("pending_id") or uuid.uuid4().hex)
     return prepared
 
 
@@ -220,9 +263,23 @@ def attach_clarification_resolution(event, pending: dict) -> None:
     }
     if source:
         resolved.add(source)
+    resolutions = {
+        str(key).strip(): dict(value)
+        for key, value in (meta.get("resolutions") or {}).items()
+        if str(key).strip() and isinstance(value, dict)
+    }
+    selected_source = str(raw.get("_clarification_selected_source") or source).strip()
+    selected_option = raw.get("_clarification_selected_option")
+    if selected_source and isinstance(selected_option, dict):
+        resolutions[selected_source] = {
+            "option": dict(selected_option),
+            "pending_id": str(meta.get("pending_id") or ""),
+            "round": int(meta.get("round_count") or 1),
+        }
     raw["_clarification_round"] = int(meta.get("round_count") or 1)
     raw["_clarification_max_rounds"] = int(meta.get("max_rounds") or _DEFAULT_MAX_ROUNDS)
     raw["_clarification_resolved_sources"] = sorted(resolved)
+    raw["_clarification_resolutions"] = resolutions
 
 
 # ══════════════════════════════════════════════════════════════════════════════

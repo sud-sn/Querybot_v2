@@ -22,6 +22,7 @@ from core.clarification import (
     build_schema_grounded_clarification_hint, extract_original_question,
     can_request_clarification, clarification_session_id,
     clarification_progress, prepare_clarification_meta,
+    selected_clarification_option,
 )
 from core.analytical_intent import plan_analytical_intent
 from core.analytical_request_plan import compile_analytical_request_plan
@@ -740,12 +741,8 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         )
 
     _event_raw = getattr(event, "raw", None)
-    _confirmed_date_role = (
-        dict(_event_raw.get("_clarification_selected_option") or {})
-        if isinstance(_event_raw, dict)
-        and str(_event_raw.get("_clarification_selected_source") or "")
-        == "metric_date_context"
-        else {}
+    _confirmed_date_role = selected_clarification_option(
+        event, "metric_date_context"
     )
 
     if not db_cfg:
@@ -880,13 +877,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         if _planner_session_id
         else {}
     )
-    _confirmed_count_target = (
-        dict(_event_raw.get("_clarification_selected_option") or {})
-        if isinstance(_event_raw, dict)
-        and str(_event_raw.get("_clarification_selected_source") or "")
-        == "count_target"
-        else {}
-    )
+    _confirmed_count_target = selected_clarification_option(event, "count_target")
     _planner_calendar_profile = _calendar_profile_for_request(
         state,
         db_cfg,
@@ -2083,6 +2074,38 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             selected_schema=schema_hint,
             authoritative_fact_tables=_early_metric_tables,
         )
+        _confirmed_source = selected_clarification_option(event, "source_scope")
+        _confirmed_source_table = str(
+            _confirmed_source.get("value")
+            or _confirmed_source.get("table")
+            or ""
+        ).strip()
+        if _confirmed_source_table:
+            _known_source_candidates = {
+                str(candidate.get("table") or "").strip()
+                for candidate in (_source_scope.get("candidates") or [])
+            }
+            _known_fact_tables = {
+                str(table.get("qualified_name") or table.get("table") or "").strip()
+                for table in (_source_model.get("tables") or [])
+                if str(table.get("type") or "").lower() == "fact"
+            }
+            if (
+                _confirmed_source_table in _known_source_candidates
+                or _confirmed_source_table in _known_fact_tables
+            ):
+                _source_scope = {
+                    **_source_scope,
+                    "status": "selected",
+                    "selected_fact": _confirmed_source_table,
+                    "reason": "user-confirmed governed source",
+                }
+            else:
+                log.warning(
+                    "Ignoring stale source clarification for %s: %s is no longer a governed fact",
+                    account_id,
+                    _confirmed_source_table,
+                )
         _preferred_facts = ({str(_source_scope.get("selected_fact") or "")} | {
             str(value) for value in (_source_scope.get("selected_facts") or [])
         }) - {""}
@@ -3412,6 +3435,42 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         },
         metadata=_analytical_request_plan,
     )
+    if _analytical_request_plan.get("status") == "incomplete":
+        _missing_plan_slots = list(
+            _analytical_request_plan.get("missing_slots") or []
+        )
+        log.warning(
+            "Analytical request plan incomplete for %s: missing=%s question=%r",
+            account_id,
+            _missing_plan_slots,
+            _semantic_plan_question[:120],
+        )
+        _slot_labels = {
+            "source_fact": "the business event dataset to analyse",
+            "measure": "the governed measure to calculate",
+            "count_target": "the stable business identifier to count",
+            "date_role": "the business date to use",
+            "comparison_window": "the periods or windows to compare",
+        }
+        _missing_copy = ", ".join(
+            _slot_labels.get(slot, slot.replace("_", " "))
+            for slot in _missing_plan_slots[:3]
+        )
+        _trace_finish(
+            trace_id,
+            status="error",
+            answer_type="semantic_plan_incomplete",
+            error_message=f"Missing compiled analytical slots: {_missing_plan_slots}",
+            duration_ms=int(time.time() * 1000) - start_ms,
+        )
+        await adapter.send_message(
+            event,
+            "I understand the analytical request, but I cannot compile a trusted "
+            f"query until the semantic layer resolves {_missing_copy}. "
+            "Please name the business measure or event more specifically, or ask "
+            "an administrator to approve the missing semantic mapping.",
+        )
+        return
 
     # Final safety cap after every prepend/append is done. Priority blocks
     # (metric formulas, semantic model context) sit at the HEAD of the string,

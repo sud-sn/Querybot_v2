@@ -687,6 +687,27 @@ async def ws_chat(websocket: WebSocket, account_id: str):
     except Exception as history_exc:
         log.debug("Server thread history restore skipped: %s", history_exc)
 
+    # Browser cache is display-only and may contain an obsolete clarification
+    # card. On reconnect, re-issue only the currently pending server record so
+    # the UI has exactly one authorized card with the matching pending id.
+    if not _is_new_portal_session:
+        try:
+            reconnect_pending = get_pending(
+                account_id,
+                zoom_user_id,
+                session_id=adapter.session_id,
+            )
+            if reconnect_pending:
+                reconnect_meta = reconnect_pending.get("clarification_meta") or {}
+                await adapter.send_clarification_prompt(
+                    adapter.make_event(reconnect_pending.get("original_q") or ""),
+                    reconnect_meta.get("question") or "Please choose one option so I can continue.",
+                    list(reconnect_meta.get("options") or []),
+                    pending_id=str(reconnect_meta.get("pending_id") or ""),
+                )
+        except Exception as pending_restore_exc:
+            log.debug("Pending clarification restore skipped: %s", pending_restore_exc)
+
     # The currently in-flight main-question task, if any — lets the receive
     # loop below cancel it when the user clicks Stop. Question handling runs
     # as a background task (not awaited inline) specifically so this loop
@@ -3069,6 +3090,18 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     await websocket.send_json({"type": "error", "content": "That clarification is no longer active. Please ask the question again."})
                     continue
                 cmeta = pending.get("clarification_meta") or {}
+                expected_pending_id = str(cmeta.get("pending_id") or "")
+                submitted_pending_id = str(data.get("pending_id") or "")
+                if expected_pending_id and submitted_pending_id != expected_pending_id:
+                    await websocket.send_json({
+                        "type": "assistant_error",
+                        "content": (
+                            "That clarification belongs to an older step and is no longer active. "
+                            "Please answer the newest clarification card."
+                        ),
+                        "code": "stale_clarification",
+                    })
+                    continue
 
                 # Login-time report prompt reply (chip click) -- resolved
                 # separately from the generic clarification flow below since
@@ -3238,7 +3271,12 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 if term_hint:
                     combined = f"{combined}\n\n{term_hint}"
                 _clarification_event = adapter.make_event(combined)
-                if cmeta.get("source") in {"metric_date_context", "count_target"} and opts:
+                # Preserve every governed choice as structured server-side
+                # state. The natural-language clarification wrapper is only
+                # prompt context and must never be the sole source of truth
+                # for later compiler stages. This intentionally generalises
+                # the former {"metric_date_context", "count_target"} subset.
+                if cmeta.get("source") and opts:
                     _clarification_event.raw["_clarification_selected_source"] = (
                         cmeta.get("source")
                     )
@@ -3304,6 +3342,15 @@ async def ws_chat(websocket: WebSocket, account_id: str):
 
             if action:
                 try:
+                    action_id = _ws_text_value(
+                        data.get("action_id"), "action_id", "id", "value"
+                    )
+                    await websocket.send_json({
+                        "type": "assistant_action_ack",
+                        "action": action,
+                        "action_id": action_id,
+                        "result_id": requested_result_id,
+                    })
                     # Result cards can remain visible after reconnects and
                     # after newer answers have been produced. Resolve the
                     # action against the card the user actually clicked.
@@ -3848,8 +3895,15 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                             from core.response_builder import build_analysis_response
                             await websocket.send_json(build_analysis_response(action, context))
                     else:
-                        from core.response_builder import build_analysis_response
-                        await websocket.send_json(build_analysis_response(action, context))
+                        await websocket.send_json({
+                            "type": "assistant_error",
+                            "action": action,
+                            "action_id": action_id,
+                            "content": (
+                                "That result is no longer available for this action. "
+                                "Run the question again to create a fresh governed result."
+                            ),
+                        })
                 finally:
                     await websocket.send_json({"type": "typing", "active": False})
                 continue

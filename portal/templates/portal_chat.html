@@ -1413,7 +1413,7 @@ function replayCachedEntry(entry){
   else if (kind === 'assistant_response') appendAssistantResponse(entry.payload || {}, { persist:false, timestamp: entry.timestamp });
   else if (kind === 'assistant_analysis') appendAnalysisResponse(entry.payload || {}, { persist:false, timestamp: entry.timestamp });
   else if (kind === 'chart') appendChart(entry.payload || {}, { persist:false, timestamp: entry.timestamp });
-  else if (kind === 'clarification_prompt') renderClarificationPrompt(entry.payload || {}, { persist:false, timestamp: entry.timestamp });
+  else if (kind === 'clarification_prompt') renderClarificationPrompt(entry.payload || {}, { persist:false, stale:true, timestamp: entry.timestamp });
 }
 function restoreChatCache(){
   const items = loadChatCache();
@@ -2692,10 +2692,44 @@ function _mountChartControls(wrapEl, chartId, onUpdate) {
 
 function sendAnalysisAction(action, context, label, resultId){
   if (!wsReady) { toast('Live session is not ready'); return; }
+  const button = document.activeElement?.matches?.('[data-analysis-action]') ? document.activeElement : null;
+  const actionId = (window.crypto?.randomUUID?.() || `action-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+  if (window._activeAnalysisAction) {
+    finishAnalysisAction({ action_id:window._activeAnalysisAction.id }, true);
+  }
+  if (button) {
+    button.disabled = true;
+    button.dataset.originalLabel = button.textContent;
+    button.textContent = 'Working...';
+  }
   appendSystem(`Running ${label.toLowerCase()}…`);
   setProcessing(true);
   updateProcessing('analysis', label, 'Using the returned result only — no new query is being run.');
-  ws.send(JSON.stringify({ action, context, result_id: resultId || '' }));
+  const timer = setTimeout(() => {
+    if (window._activeAnalysisAction?.id !== actionId) return;
+    if (button) {
+      button.disabled = false;
+      button.textContent = button.dataset.originalLabel || label;
+    }
+    window._activeAnalysisAction = null;
+    setAgentRunState('failed', { action_id: actionId });
+    appendSystem('This action did not finish in time. Please retry it.');
+  }, 30000);
+  window._activeAnalysisAction = { id:actionId, action, button, label, timer, acknowledged:false };
+  ws.send(JSON.stringify({ action, context, result_id: resultId || '', action_id: actionId }));
+}
+
+function finishAnalysisAction(msg, failed = false){
+  const active = window._activeAnalysisAction;
+  if (!active) return;
+  if (msg?.action_id && msg.action_id !== active.id) return;
+  clearTimeout(active.timer);
+  if (active.button) {
+    active.button.disabled = false;
+    active.button.textContent = active.button.dataset.originalLabel || active.label;
+  }
+  window._activeAnalysisAction = null;
+  if (!failed && agentRunState === 'running') setProcessing(false);
 }
 // ── Tier-1 table: sortable columns, text filter, numeric footer, "Ask" shortcut ──
 let _dtIdCounter = 0;
@@ -3775,6 +3809,13 @@ function appendSystem(text, opts = {}){
 }
 function renderClarificationPrompt(data, opts = {}){
   hideWelcome();
+  // Only the newest server-authorized clarification may remain actionable.
+  // Cached or earlier-round cards stay visible as conversation history but
+  // cannot submit against a newer pending record.
+  document.querySelectorAll('.clarification-card').forEach((oldCard) => {
+    oldCard.querySelectorAll('button, textarea').forEach((control) => control.disabled = true);
+    oldCard.classList.add('clarification-expired');
+  });
   const timestamp = timeLabel(opts.timestamp);
   const div = document.createElement('div');
   div.className = 'msg msg-bot';
@@ -3785,7 +3826,7 @@ function renderClarificationPrompt(data, opts = {}){
   const question = data.question || (options.length
     ? 'Please choose one option so I can continue.'
     : 'Please add the detail I need so I can continue.');
-  div.innerHTML = `<div class="msg-avatar"><img src="/static/img/logo-mark.svg" alt="" class="qb-logo-mark"></div><div class="msg-content"><div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timestamp}</span></div><div class="clarification-card"><div class="clarification-question">${escHtml(question)}</div><div class="clarification-options"></div></div></div>`;
+  div.innerHTML = `<div class="msg-avatar"><img src="/static/img/logo-mark.svg" alt="" class="qb-logo-mark"></div><div class="msg-content"><div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timestamp}</span></div><div class="clarification-card" data-pending-id="${escHtml(data.pending_id || '')}"><div class="clarification-question">${escHtml(question)}</div><div class="clarification-options"></div></div></div>`;
   const wrap = div.querySelector('.clarification-options');
   const card = div.querySelector('.clarification-card');
   _markActiveOutbound('complete', 'Clarification requested');
@@ -3855,6 +3896,10 @@ function renderClarificationPrompt(data, opts = {}){
     appendFreeTextClarification(false);
   } else if (options.some((opt) => Boolean(opt.allow_free_text))) {
     appendFreeTextClarification(true);
+  }
+  if (opts.stale) {
+    card.querySelectorAll('button, textarea').forEach((control) => control.disabled = true);
+    card.classList.add('clarification-expired');
   }
   thread().appendChild(div);
   if (opts.persist !== false) pushChatCache({ kind:'clarification_prompt', payload: data, timestamp });
@@ -4634,7 +4679,12 @@ function connect(){
         }, 700);
         return;
       }
+    } else if (msg.type === 'assistant_action_ack') {
+      if (window._activeAnalysisAction && (!msg.action_id || msg.action_id === window._activeAnalysisAction.id)) {
+        window._activeAnalysisAction.acknowledged = true;
+      }
     } else if (msg.type === 'assistant_response') {
+      finishAnalysisAction(msg);
       _markActiveOutbound('complete');
       // Show celebration state briefly so the user sees it before result renders
       _setMascotState('chart_ready');
@@ -4656,6 +4706,7 @@ function connect(){
       }, 900);
       return; // prevent falling through to setProcessing(false) in 'typing' event
     } else if (msg.type === 'assistant_dashboard') {
+      finishAnalysisAction(msg);
       _markActiveOutbound('complete');
       setAgentRunState('completed', msg);
       appendDashboardEvent(msg);
@@ -4669,10 +4720,28 @@ function connect(){
         color_palette: msg.color_palette || 'default',
       });
     } else if (msg.type === 'assistant_analysis') {
+      finishAnalysisAction(msg);
       appendAnalysisResponse(msg);
+    } else if (msg.type === 'assistant_export') {
+      finishAnalysisAction(msg);
+      try {
+        const blob = new Blob([msg.content || ''], { type:'text/csv;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = msg.filename || 'querybot-results.csv';
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+        appendSystem(`Downloaded ${msg.row_count ?? 0} row${msg.row_count === 1 ? '' : 's'} as CSV.`);
+      } catch (_) {
+        appendSystem('The CSV was prepared, but the browser could not start the download.');
+      }
     } else if (msg.type === 'chart') {
       appendChart(msg.chart || {});
     } else if (msg.type === 'assistant_error') {
+      finishAnalysisAction(msg, true);
       // Do not depend solely on a later typing:false frame: action failures
       // must always leave the workspace in an interactive state.
       setAgentRunState('failed', msg);

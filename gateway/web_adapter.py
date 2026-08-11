@@ -626,8 +626,26 @@ class WebAdapter(PlatformAdapter):
             log.debug("Agent clarification audit failed: %s", exc)
             return None
 
+    def _pending_clarification_id(self) -> str:
+        """Return the id of the one server-authorized pending prompt."""
+        try:
+            from core.clarification import get_pending
+            pending = get_pending(
+                self._account,
+                self._user_id,
+                session_id=self.session_id,
+            ) or {}
+            return str(
+                (pending.get("clarification_meta") or {}).get("pending_id")
+                or ""
+            )
+        except Exception as exc:
+            log.debug("Clarification pending id lookup skipped: %s", exc)
+            return ""
+
     async def send_clarification_prompt(self, event: PlatformEvent, question: str, options: list[dict], pending_id: str | None = None) -> None:
         try:
+            pending_id = pending_id or self._pending_clarification_id()
             agent_event = self._record_agent_clarification(question, options)
             # The browser only needs business-facing choice data. Physical
             # tables, columns, and join metadata remain in the server-side

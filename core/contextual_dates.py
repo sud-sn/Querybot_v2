@@ -243,6 +243,46 @@ def enrich_date_binding_calendar_attributes(
     return enriched
 
 
+_EVENT_DATE_AFFINITY = (
+    (("order", "placed", "ordered"), ("order", "created", "entered", "booked")),
+    (("invoice", "invoiced", "billed"), ("invoice", "billing", "posted")),
+    (("ship", "shipped", "shipment", "dispatch"), ("ship", "shipment", "dispatch")),
+    (("deliver", "delivered", "delivery"), ("deliver", "delivery")),
+    (("cancel", "cancelled", "canceled"), ("cancel", "cancelled", "canceled")),
+    (("return", "returned", "refund"), ("return", "returned", "refund")),
+    (("payment", "paid", "receipt"), ("payment", "paid", "receipt")),
+    (("inventory", "stock", "balance"), ("inventory", "stock", "balance", "period", "snapshot")),
+)
+_AUDIT_DATE_TERMS = {"modified", "updated", "update", "audit", "load", "loaded"}
+
+
+def _event_date_affinity_score(question: str, role_text: str) -> int:
+    """Score a Date Role by the business event expressed in the question.
+
+    This is intentionally schema-independent. Physical names still come only
+    from tenant metadata; the lexical layer merely distinguishes operational
+    dates (order, invoice, shipment, inventory period) from audit dates.
+    """
+    q_tokens = set(normalize_date_role_text(question).split())
+    role_tokens = set(normalize_date_role_text(role_text).split())
+    score = 0
+    for question_terms, role_terms in _EVENT_DATE_AFFINITY:
+        if q_tokens.intersection(question_terms):
+            if role_tokens.intersection(role_terms):
+                score += 90
+            # Competing event dates should not remain tied merely because all
+            # of them are approved and live on the same fact.
+            elif role_tokens.intersection(
+                set().union(*(set(item[1]) for item in _EVENT_DATE_AFFINITY))
+            ):
+                score -= 35
+    asks_for_audit_date = bool(q_tokens.intersection(_AUDIT_DATE_TERMS))
+    is_audit_date = bool(role_tokens.intersection(_AUDIT_DATE_TERMS))
+    if is_audit_date:
+        score += 100 if asks_for_audit_date else -120
+    return score
+
+
 def _binding_score(question: str, binding: dict) -> int:
     q = normalize_date_role_text(question)
     q_tokens = set(q.split())
@@ -256,7 +296,16 @@ def _binding_score(question: str, binding: dict) -> int:
             best = max(best, 70 + len(tokens) * 6)
         elif tokens:
             best = max(best, len(tokens & q_tokens) * 8)
-    return best + int(binding.get("priority") or 0)
+    role_text = " ".join([
+        str(binding.get("context_name") or ""),
+        str(binding.get("date_role") or "").replace("_", " "),
+        str(binding.get("aliases") or ""),
+    ])
+    return (
+        best
+        + int(binding.get("priority") or 0)
+        + _event_date_affinity_score(question, role_text)
+    )
 
 
 def _phrase_span(text: str, phrase: str) -> tuple[int, int] | None:
@@ -523,6 +572,14 @@ def _relevant_discovered_date_roles(
         # Generic temporal words do not make every date equally relevant, but
         # an event word such as "invoiced" or "delivered" is useful evidence.
         score += min(30, len((role_terms & q_tokens) - {"date", "day", "today"}) * 10)
+        score += _event_date_affinity_score(
+            question,
+            " ".join([
+                str(role.get("name") or ""),
+                str(role.get("business_role") or "").replace("_", " "),
+                " ".join(_terms(role.get("synonyms", []))),
+            ]),
+        )
         ranked.append((score, role_table, role_column, role))
 
     ranked.sort(key=lambda item: (-item[0], item[1], item[2]))

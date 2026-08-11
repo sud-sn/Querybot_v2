@@ -24,6 +24,8 @@ os.environ["QUERYBOT_KEY_FILE"] = str(Path(_tmpdir) / "test_key")
 
 
 from core.clarification import (
+    attach_clarification_resolution,
+    clarification_resolutions,
     _parse_ambiguity_json,
     _pick_option,
     combine_with_clarification,
@@ -33,6 +35,7 @@ from core.clarification import (
     acknowledge_recently_expired,
     resolve_date_option_text,
     resolve_option_text,
+    selected_clarification_option,
 )
 from core.webhook_dedup import (
     is_duplicate_event,
@@ -41,6 +44,47 @@ from core.webhook_dedup import (
     _reset_for_tests,
 )
 from gateway.base import PlatformEvent
+
+
+def test_governed_choices_accumulate_across_clarification_rounds():
+    first = PlatformEvent(
+        account_id="acct1", user_id="u1", channel_id="c1",
+        text="orders", platform="portal", raw={
+            "_clarification_selected_source": "count_target",
+            "_clarification_selected_option": {
+                "id": "order-number", "label": "Order Number",
+                "table": "OPS.F_ORDER", "column": "ORDER_NO",
+            },
+        },
+    )
+    attach_clarification_resolution(first, {
+        "clarification_meta": {
+            "source": "count_target", "round_count": 1,
+            "max_rounds": 5, "pending_id": "p1",
+        },
+    })
+
+    second = PlatformEvent(
+        account_id="acct1", user_id="u1", channel_id="c1",
+        text="invoice date", platform="portal", raw={
+            "_clarification_selected_source": "metric_date_context",
+            "_clarification_selected_option": {
+                "id": "invoice-date", "label": "Invoice Date",
+                "fact_table": "OPS.F_ORDER", "fact_column": "INVOICE_DATE_SK",
+            },
+        },
+    )
+    attach_clarification_resolution(second, {
+        "clarification_meta": {
+            "source": "metric_date_context", "round_count": 2,
+            "max_rounds": 5, "pending_id": "p2",
+            "resolved_sources": ["count_target"],
+            "resolutions": clarification_resolutions(first),
+        },
+    })
+
+    assert selected_clarification_option(second, "count_target")["column"] == "ORDER_NO"
+    assert selected_clarification_option(second, "metric_date_context")["fact_column"] == "INVOICE_DATE_SK"
 
 
 # ──────────────────────────────────────────────────────────────────────────────

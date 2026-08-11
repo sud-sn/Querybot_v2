@@ -92,6 +92,22 @@ def test_result_action_targets_the_clicked_governed_snapshot():
     assert "That result is no longer available for analysis" in action_block
 
 
+def test_result_actions_acknowledge_complete_download_and_timeout_visibly():
+    assert "assistant_action_ack" in WEBHOOKS
+    assert "action_id: actionId" in CHAT
+    assert "function finishAnalysisAction" in CHAT
+    assert "This action did not finish in time" in CHAT
+    assert "msg.type === 'assistant_export'" in CHAT
+    assert "new Blob([msg.content || '']" in CHAT
+
+
+def test_only_live_server_clarification_is_actionable_after_restore():
+    assert "stale:true" in CHAT
+    assert "if (opts.stale)" in CHAT
+    assert "reconnect_pending = get_pending(" in WEBHOOKS
+    assert "pending_id=str(reconnect_meta.get" in WEBHOOKS
+
+
 def test_outbound_messages_expose_delivery_and_manual_recovery_states():
     assert "function _setUserMessageState" in CHAT
     assert "function _retryUserMessage" in CHAT
