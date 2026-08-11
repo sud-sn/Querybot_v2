@@ -15,7 +15,11 @@ import re
 
 from core.date_roles import date_role_terms, detect_date_role
 from core.erp_column_dict import ERP_COLUMN_DICT
-from core.identifier_intelligence import analyze_identifier, tokenize_identifier
+from core.identifier_intelligence import (
+    analyze_identifier,
+    resolve_governed_column_code,
+    tokenize_identifier,
+)
 
 
 ABBREVIATIONS: dict[str, str] = {
@@ -272,9 +276,16 @@ def _expand_column(column: str, vocab=None) -> tuple[str, list[str]]:
     v = _active_vocab(vocab)
 
     # 1. ERP dictionary — highest confidence
-    if col in v.column_dict:
-        label, _ = v.column_dict[col]
-        return label.lower(), ["erp dictionary"]
+    governed_code, record_prefix, record_table = resolve_governed_column_code(col, vocab=v)
+    if governed_code in v.column_dict:
+        label, _ = v.column_dict[governed_code]
+        evidence = ["erp dictionary"]
+        if record_prefix:
+            evidence.extend([
+                f"terminology-pack record prefix {record_prefix}={record_table or 'known ERP file'}",
+                f"governed field code={governed_code}",
+            ])
+        return label.lower(), evidence
 
     # 2. Infrastructure / platform fields
     if any(col.startswith(p.upper()) for p in _INFRA_PREFIXES) or raw in _INFRA_CAMEL:
@@ -300,8 +311,9 @@ def _metric_candidates(column: str, expanded: str, role: str, vocab=None) -> lis
     date_role = detect_date_role(col, vocab=v)
     if date_role:
         candidates.extend(date_role_terms(date_role))
-    if col in v.column_dict:
-        label, synonyms = v.column_dict[col]
+    governed_code, _, _ = resolve_governed_column_code(col, vocab=v)
+    if governed_code in v.column_dict:
+        label, synonyms = v.column_dict[governed_code]
         candidates.extend([label.lower(), *[s.lower() for s in synonyms[:4]]])
     if role == "measure":
         candidates.append(expanded)
@@ -338,6 +350,7 @@ def _role_for_column(column: str, data_type: str = "", distinct_values: str = ""
     ctype = (data_type or "").upper()
     distinct = distinct_values or ""
     v = _active_vocab(vocab)
+    governed_code, record_prefix, record_table = resolve_governed_column_code(col, vocab=v)
     evidence: list[str] = []
     warnings: list[str] = []
     default_filter = ""
@@ -365,17 +378,26 @@ def _role_for_column(column: str, data_type: str = "", distinct_values: str = ""
         if col.endswith("_DT_DMS_KEY"):
             warnings.append("Treat as YYYYMMDD integer date key unless metadata proves otherwise.")
         return "date_key", evidence, warnings, default_filter
-    if col in {"YEA4"}:
+    if governed_code in {"YEA4"}:
         evidence.append("ERP fiscal year code")
         return "date_attribute", evidence, warnings, default_filter
     if col.endswith("_DMS_KEY"):
         evidence.append("dimension key suffix")
         warnings.append("Dimension key values may be displayed with separators; SQL filters should use raw unformatted literals.")
         return "dimension_key", evidence, warnings, default_filter
-    if col in v.raw_identifier_codes:
+    if governed_code in getattr(v, "raw_status_codes", set()):
+        if record_prefix:
+            evidence.append(f"M3 record prefix {record_prefix}={record_table}")
+        evidence.append("ERP status code")
+        return "status_filter", evidence, warnings, default_filter
+    if governed_code in v.raw_identifier_codes:
+        if record_prefix:
+            evidence.append(f"M3 record prefix {record_prefix}={record_table}")
         evidence.append("ERP identifier/dimension code")
         return "identifier", evidence, warnings, default_filter
-    if col in v.raw_measure_codes or any(s in col for s in ("_AMT", "_QTY", "_CST", "_PFT", "_PCE", "_RATE")):
+    if governed_code in v.raw_measure_codes or any(s in col for s in ("_AMT", "_QTY", "_CST", "_PFT", "_PCE", "_RATE")):
+        if record_prefix:
+            evidence.append(f"M3 record prefix {record_prefix}={record_table}")
         evidence.append("measure naming pattern")
         return "measure", evidence, warnings, default_filter
     if col.endswith("_IND") or col.endswith("_STS") or col.endswith("_STS_DMS_KEY"):
@@ -393,7 +415,8 @@ def _confidence(column: str, role: str, evidence: list[str], expanded_name: str,
     col = _clean_identifier(column).upper()
     score = 35
 
-    if col in _active_vocab(vocab).column_dict:
+    governed_code, _, _ = resolve_governed_column_code(col, vocab=_active_vocab(vocab))
+    if governed_code in _active_vocab(vocab).column_dict:
         score = 95
     elif "numbered series pattern" in evidence:
         score = 72          # we know what it is structurally, not semantically

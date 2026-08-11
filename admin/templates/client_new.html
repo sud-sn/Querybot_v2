@@ -97,20 +97,20 @@
       <section class="onboarding-section" aria-labelledby="vocabulary-heading">
         <div class="onboarding-section-heading">
           <span class="onboarding-step">3</span>
-          <div><strong id="vocabulary-heading">Data terminology</strong><span>Select vocabulary packs that match the source system.</span></div>
+          <div><strong id="vocabulary-heading">ERP / CRM source system</strong><span>Select the packaged application that owns the data.</span></div>
         </div>
-        <div class="choice-grid">
+        <div class="form-group" style="margin-bottom:0">
+          <label for="f_source_pack">Source application</label>
+          <select id="f_source_pack" name="erp_packs">
+            <option value="">Other / custom database (normal schema)</option>
           {% for pack in erp_packs_available %}
-          <label class="choice-card">
-            <input type="checkbox" name="erp_packs" value="{{ pack.pack_id }}" {% if pack.status == 'stub' %}disabled{% endif %}>
-            <span class="choice-card-copy">
-              <span class="choice-card-title">{{ pack.erp_name }}{% if pack.status == 'stub' %} (coming soon){% endif %}</span>
-              <span class="choice-card-description">{{ pack.description }}</span>
-            </span>
-          </label>
+            {% if pack.status != 'stub' %}
+            <option value="{{ pack.pack_id }}">{{ pack.erp_name }}</option>
+            {% endif %}
           {% endfor %}
+          </select>
+          <p class="form-note">For an ordinary, custom, or unknown schema choose <strong>Other</strong>. The selection can be changed during setup before discovery.</p>
         </div>
-        <p class="form-note" style="margin-top:.65rem">Leave all packs unselected to use QueryBot's built-in DMS/FCT vocabulary.</p>
       </section>
       {% endif %}
 

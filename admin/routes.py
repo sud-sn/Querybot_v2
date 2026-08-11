@@ -2185,6 +2185,36 @@ def _list_erp_packs() -> list[dict]:
         return []
 
 
+def _client_erp_pack_ids(client: dict | None) -> list[str]:
+    """Return normalized source-system pack ids from a client row.
+
+    Setup is also a recovery surface, so malformed legacy metadata must not
+    make the page fail to render.
+    """
+    try:
+        raw = (client or {}).get("erp_packs") or "[]"
+        values = json.loads(raw) if isinstance(raw, str) else raw
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return []
+    if not isinstance(values, list):
+        return []
+    return list(dict.fromkeys(
+        str(value).strip() for value in values if str(value).strip()
+    ))
+
+
+def _setup_source_pack_value(client: dict | None) -> str:
+    """Value shown by the setup wizard's single source-system selector."""
+    pack_ids = _client_erp_pack_ids(client)
+    if not pack_ids:
+        return "other"
+    if len(pack_ids) == 1:
+        return pack_ids[0]
+    # Advanced Client Settings still supports multiple packs. Do not silently
+    # replace that state merely by opening the simpler setup wizard.
+    return "multiple"
+
+
 @router.post("/clients/{account_id}/reset")
 async def client_reset(request: Request, account_id: str):
     if not _is_auth(request):
@@ -7547,6 +7577,8 @@ async def client_setup_page(request: Request, account_id: str):
 
     return _resp(request, "client_setup.html", {
         "client":               client,
+        "erp_packs_available":  _list_erp_packs(),
+        "client_source_pack":   _setup_source_pack_value(client),
         "state":                state,
         "graph_pending_reviews": graph_pending_reviews,
         "db_cfg":               db_cfg,
@@ -7566,6 +7598,79 @@ async def client_setup_page(request: Request, account_id: str):
         "saved":                request.query_params.get("saved"),
         "error":                request.query_params.get("error"),
     })
+
+
+@router.post("/clients/{account_id}/setup/source-system")
+async def admin_setup_source_system(
+    request: Request,
+    account_id: str,
+    source_pack: str = Form("other"),
+):
+    """Persist the ERP/CRM vocabulary selected in the setup wizard.
+
+    ``other`` means no packaged product vocabulary. QueryBot retains its
+    normal schema intelligence and can still learn naming conventions during
+    discovery. Only shipped, non-stub packs can be selected here.
+    """
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    client = store.get_client(account_id)
+    if not client:
+        return RedirectResponse("/admin/clients", status_code=303)
+
+    from urllib.parse import quote
+
+    manifests = _list_erp_packs()
+    selected = str(source_pack or "other").strip()
+    valid_packs = {
+        str(pack.get("pack_id") or "").strip()
+        for pack in manifests
+        if pack.get("status") != "stub" and str(pack.get("pack_id") or "").strip()
+    }
+    if selected in {"", "other"}:
+        selected_ids: list[str] = []
+        selected_label = "Other / custom database"
+    elif selected == "multiple":
+        return RedirectResponse(
+            f"/admin/clients/{account_id}/setup?error={quote('Choose one source system or Other before saving')}",
+            status_code=303,
+        )
+    elif selected not in valid_packs:
+        return RedirectResponse(
+            f"/admin/clients/{account_id}/setup?error={quote('The selected ERP/CRM vocabulary pack is not available')}",
+            status_code=303,
+        )
+    else:
+        selected_ids = [selected]
+        selected_label = next(
+            (
+                str(pack.get("erp_name") or selected)
+                for pack in manifests
+                if pack.get("pack_id") == selected
+            ),
+            selected,
+        )
+
+    changed = _client_erp_pack_ids(client) != selected_ids
+    store.update_client_meta(account_id, erp_packs=json.dumps(selected_ids))
+
+    message = f"Source system saved: {selected_label}."
+    try:
+        state_data = json.loads(client.get("state_data") or "{}")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        state_data = {}
+    if changed and (state_data.get("schema_dir") or state_data.get("kb_dir")):
+        message += " Re-run schema discovery and rebuild the Knowledge Base to apply it."
+    elif changed:
+        message += " It will be used during schema discovery and Knowledge Base generation."
+    else:
+        message += " No rebuild is required because the selection did not change."
+
+    log.info("Admin selected source-system pack for %s: %s", account_id, selected_ids or ["other"])
+    return RedirectResponse(
+        f"/admin/clients/{account_id}/setup?saved={quote(message)}",
+        status_code=303,
+    )
 
 
 @router.get("/clients/{account_id}/setup/status")

@@ -71,6 +71,28 @@ def _clean(value: str) -> str:
     return str(value or "").strip().strip('"`[]')
 
 
+def resolve_governed_column_code(identifier: str, vocab=None) -> tuple[str, str, str]:
+    """Return ``(governed_code, record_prefix, canonical_table)``.
+
+    Exact physical codes always win. A record prefix is removed only when the
+    active terminology pack explicitly owns that two-character prefix *and*
+    the remaining suffix is an exact governed dictionary code. This makes M3
+    fields such as ``OBORNO`` understandable without guessing at arbitrary
+    compact identifiers in other ERP/CRM datasets.
+    """
+    raw = _clean(identifier)
+    compact = re.sub(r"[^A-Za-z0-9]", "", raw).upper()
+    v = _active_vocab(vocab)
+    if compact in (v.column_dict or {}):
+        return compact, "", ""
+    prefixes = getattr(v, "record_prefixes", {}) or {}
+    if len(compact) > 2 and compact[:2] in prefixes:
+        suffix = compact[2:]
+        if suffix in (v.column_dict or {}):
+            return suffix, compact[:2], str(prefixes[compact[:2]] or "")
+    return compact, "", ""
+
+
 def _dedupe(values: Iterable[str], *, limit: int = 24) -> tuple[str, ...]:
     seen: set[str] = set()
     result: list[str] = []
@@ -186,7 +208,8 @@ def analyze_identifier(identifier: str, vocab=None) -> IdentifierAnalysis:
     v = _active_vocab(vocab)
     style = detect_identifier_style(raw)
     compact = re.sub(r"[^A-Za-z0-9]", "", raw).upper()
-    dictionary_entry = (v.column_dict or {}).get(compact)
+    governed_code, record_prefix, record_table = resolve_governed_column_code(raw, vocab=v)
+    dictionary_entry = (v.column_dict or {}).get(governed_code)
     tokens = tokenize_identifier(raw, vocab=v)
     lexicon = _expansion_lexicon(v)
     evidence: list[str] = [f"identifier style={style}"]
@@ -196,10 +219,16 @@ def analyze_identifier(identifier: str, vocab=None) -> IdentifierAnalysis:
     if dictionary_entry:
         label, dictionary_synonyms = dictionary_entry
         expanded_name = str(label).strip().lower()
-        evidence.append("terminology-pack exact column match")
+        if record_prefix:
+            evidence.append(
+                f"terminology-pack record prefix {record_prefix}={record_table or 'known ERP file'}"
+            )
+            evidence.append(f"governed field code={governed_code}")
+        else:
+            evidence.append("terminology-pack exact column match")
         # Token expansions still feed physical shorthand variants, but the
         # governed dictionary label remains the authoritative meaning.
-        for token in tokens or [compact]:
+        for token in tokens or [governed_code]:
             expanded_tokens.append(lexicon.get(token, token.lower()))
         confidence = 95
     else:
@@ -240,6 +269,14 @@ def analyze_identifier(identifier: str, vocab=None) -> IdentifierAnalysis:
 
     raw_phrase = " ".join(token.lower() for token in tokens)
     alias_values: list[str] = [raw_phrase, expanded_name, *dictionary_synonyms]
+    if dictionary_entry:
+        # M3 labels often qualify the business term in parentheses, for
+        # example "Ordered Quantity (Alternate Unit)". Users normally ask for
+        # "ordered quantity"; retain both forms without reducing the alias to
+        # a dangerously broad bare word such as "quantity".
+        unqualified_label = re.sub(r"\s*\([^)]*\)\s*", " ", str(dictionary_entry[0])).strip()
+        if unqualified_label:
+            alias_values.append(unqualified_label)
     if tokens and len(tokens) <= 5:
         for index, token in enumerate(tokens):
             expansion = lexicon.get(token, token.lower())
@@ -279,6 +316,15 @@ def _pack_match_profile(pack_id: str, pack: dict[str, Any], columns: list[str], 
     unique_columns = [value for value in exact_columns if ownership.get("C:" + value, 0) == 1]
     unique_tables = [value for value in exact_tables if ownership.get("T:" + value, 0) == 1]
 
+    record_prefixes = {
+        str(value).upper() for value in (pack.get("record_prefixes") or {})
+        if len(str(value).strip()) == 2
+    }
+    prefixed_columns = sorted({
+        value for value in col_values
+        if len(value) > 2 and value[:2] in record_prefixes and value[2:] in column_dict
+    })
+
     date_matches: list[str] = []
     for item in pack.get("date_role_patterns") or []:
         try:
@@ -300,12 +346,13 @@ def _pack_match_profile(pack_id: str, pack: dict[str, Any], columns: list[str], 
             continue
         table_pattern_matches.extend(value for value in table_pattern_values if pattern.search(value))
 
-    unique_evidence = len(unique_columns) + len(unique_tables)
+    unique_evidence = len(unique_columns) + len(unique_tables) + len(prefixed_columns)
     score = (
         len(unique_columns) * 5
         + (len(exact_columns) - len(unique_columns))
         + len(unique_tables) * 10
         + (len(exact_tables) - len(unique_tables)) * 2
+        + len(prefixed_columns) * 5
         + len(set(date_matches)) * 2
         + len(set(table_pattern_matches)) * 2
     )
@@ -318,6 +365,7 @@ def _pack_match_profile(pack_id: str, pack: dict[str, Any], columns: list[str], 
         "unique_evidence": unique_evidence,
         "exact_column_matches": exact_columns[:20],
         "exact_table_matches": exact_tables[:12],
+        "record_prefixed_column_matches": prefixed_columns[:20],
         "date_pattern_matches": sorted(set(date_matches))[:12],
         "table_pattern_matches": sorted(set(table_pattern_matches))[:12],
     }

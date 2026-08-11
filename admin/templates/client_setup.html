@@ -215,6 +215,64 @@
   </div>
 </div>
 
+<!-- Source-system vocabulary -->
+<div class="setup-step" id="source-system-section">
+  <div class="step-head">
+    <div class="step-num {% if client_source_pack != 'other' %}done{% endif %}">
+      {% if client_source_pack != 'other' %}{{ ic('check', 14) }}{% else %}{{ ic('database', 14) }}{% endif %}
+    </div>
+    <div>
+      <div class="step-title">ERP / CRM source system</div>
+      <div style="font-size:12px;color:var(--text-muted)">
+        Apply the correct product vocabulary before schema discovery and KB generation
+      </div>
+    </div>
+    <span style="margin-left:auto;font-size:12px;color:var(--blue);font-weight:700">
+      {% if client_source_pack == 'other' %}Other / custom database
+      {% elif client_source_pack == 'multiple' %}Multiple packs
+      {% else %}
+        {% for pack in erp_packs_available %}{% if pack.pack_id == client_source_pack %}{{ pack.erp_name }}{% endif %}{% endfor %}
+      {% endif %}
+    </span>
+  </div>
+  <div class="step-body">
+    <form method="post" action="/admin/clients/{{ client.account_id }}/setup/source-system">
+      <div class="form-grid" style="align-items:end">
+        <div class="form-group" style="margin-bottom:0">
+          <label for="setup_source_pack">Source application</label>
+          <select id="setup_source_pack" name="source_pack" required>
+            <option value="other" {% if client_source_pack == 'other' %}selected{% endif %}>
+              Other / custom database (normal schema)
+            </option>
+            {% if client_source_pack == 'multiple' %}
+            <option value="multiple" selected disabled>Multiple packs configured in Client Settings</option>
+            {% endif %}
+            {% for pack in erp_packs_available %}
+              {% if pack.status != 'stub' %}
+              <option value="{{ pack.pack_id }}" {% if pack.pack_id == client_source_pack %}selected{% endif %}>
+                {{ pack.erp_name }}
+              </option>
+              {% endif %}
+            {% endfor %}
+          </select>
+          <p class="form-note">
+            Select a product only when the database originates from that ERP or CRM.
+            For an ordinary, custom, or unknown schema choose <strong>Other</strong>.
+          </p>
+        </div>
+        <div class="form-group" style="margin-bottom:0">
+          <button class="btn btn-secondary btn-sm" type="submit">Save source system</button>
+        </div>
+      </div>
+      {% if schema_files or kb_files %}
+      <p class="form-note" style="margin-top:.65rem;color:var(--amber)">
+        Changing this selection requires schema rediscovery and a Knowledge Base rebuild.
+      </p>
+      {% endif %}
+    </form>
+  </div>
+</div>
+
 <!-- Optional step: regulated industry profile -->
 <div class="setup-step">
   <div class="step-head">

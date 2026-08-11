@@ -236,6 +236,16 @@ def _aliases_for_column(column: str, vocab=None) -> set[str]:
     col = (column or "").upper()
     aliases = {_norm(col), _norm(" ".join(_column_words(col, vocab=v)))}
     aliases.update(_norm(a) for a in v.direct_aliases.get(col, set()))
+    # Pack-governed identifier intelligence supplies ERP physical aliases.
+    # For Infor M3 this maps record-prefixed fields such as OBORNO/MBWHLO to
+    # their business terms while remaining inert for other naming packs.
+    try:
+        from core.identifier_intelligence import analyze_identifier
+        analysis = analyze_identifier(col, vocab=v)
+        if analysis.confidence >= 70:
+            aliases.update(_norm(a) for a in analysis.aliases)
+    except Exception:
+        pass
     entity = _entity_noun_alias(col)
     if entity:
         aliases.add(_norm(entity))
@@ -266,14 +276,31 @@ def _aliases_for_column(column: str, vocab=None) -> set[str]:
     return {a for a in aliases if a}
 
 
-def _role_for_column(column: str, col_type: str = "") -> str:
+def _role_for_column(column: str, col_type: str = "", vocab=None) -> str:
     col = (column or "").upper()
     ctype = (col_type or "").upper()
+    v = _planner_vocab(vocab)
+    try:
+        from core.identifier_intelligence import resolve_governed_column_code
+        governed_code, _, _ = resolve_governed_column_code(col, vocab=v)
+    except Exception:
+        governed_code = col
+    try:
+        from core.date_roles import detect_date_role
+        if detect_date_role(col, vocab=v):
+            return "date_key"
+    except Exception:
+        pass
     if col.endswith("_DT_DMS_KEY") or col.endswith("_DATE_DMS_KEY"):
         return "date_key"
-    if col in {"DIVI"} or col.endswith("_DMS_KEY") or col in {"WHLO", "ORNO", "PONR", "POSX"}:
+    if (
+        governed_code in getattr(v, "raw_status_codes", set())
+        or governed_code in v.raw_identifier_codes
+        or col.endswith("_DMS_KEY")
+        or governed_code in {"DIVI", "WHLO", "ORNO", "PONR", "POSX"}
+    ):
         return "dimension"
-    if any(suffix in col for suffix in ("_AMT", "_QTY", "_CST", "_PFT")):
+    if governed_code in v.raw_measure_codes or any(suffix in col for suffix in ("_AMT", "_QTY", "_CST", "_PFT")):
         return "measure"
     if any(token in ctype for token in ("INT", "DECIMAL", "NUMBER", "NUMERIC", "FLOAT")):
         return "measure"
@@ -428,7 +455,7 @@ def _find_candidates(
                 "term": term,
                 "table": table_u,
                 "column": col_u,
-                "role": _role_for_column(col_u, str(col_type)),
+                "role": _role_for_column(col_u, str(col_type), vocab=vocab),
                 "aliases": sorted(aliases),
             })
     return _drop_compound_modifier_matches(candidates, qn)

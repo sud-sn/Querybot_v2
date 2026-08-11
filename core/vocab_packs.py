@@ -15,8 +15,8 @@ date-role regexes…). This module makes that vocabulary data-driven:
 Backward compatibility contract: with no packs selected, every consumer
 behaves EXACTLY as before — `builtin_vocab()` mirrors the module constants,
 and every consumer API takes an optional `vocab=None` that falls back to the
-active vocab, whose default is the builtin. Selecting the infor_m3 pack is a
-no-op by construction (it is a serialization of the builtins).
+active vocab, whose default is the builtin. The Infor M3 pack preserves every
+builtin mapping and adds M3-only physical record prefixes and source metadata.
 
 ContextVar note: `activate_vocab()` scopes the vocab for a request/build.
 ContextVars do NOT propagate into `loop.run_in_executor` threads — pass
@@ -58,11 +58,17 @@ class MergedVocab:
     join_synonyms: dict[str, set[str]] = field(default_factory=dict)
     # {PREFIX: business entity}
     entity_prefixes: dict[str, str] = field(default_factory=dict)
+    # {two-character record prefix: canonical ERP file}. Infor M3 physical
+    # columns commonly prepend a record/file prefix to a governed field code
+    # (for example OB + ORNO = OBORNO). This is deliberately pack-scoped so
+    # generic schemas never have their first two characters stripped.
+    record_prefixes: dict[str, str] = field(default_factory=dict)
     # [(compiled pattern with one capture group, label template "… {}", role)]
     numbered_series: list[tuple[re.Pattern, str, str]] = field(default_factory=list)
     raw_identifier_codes: set[str] = field(default_factory=set)
     raw_measure_codes: set[str] = field(default_factory=set)
     raw_date_codes: set[str] = field(default_factory=set)
+    raw_status_codes: set[str] = field(default_factory=set)
     # [(compiled pattern, date-role key)] — PACK-added patterns only; builtin
     # date-role regexes stay in core/date_roles.py and are checked after these.
     date_role_patterns: list[tuple[re.Pattern, str]] = field(default_factory=list)
@@ -170,6 +176,13 @@ def _merge_pack(vocab: MergedVocab, pack: dict, origin: str) -> None:
     for prefix, entity in (pack.get("entity_prefixes") or {}).items():
         vocab.entity_prefixes[str(prefix).upper()] = str(entity)
 
+    for prefix, table in (pack.get("record_prefixes") or {}).items():
+        prefix_key = str(prefix).upper().strip()
+        if len(prefix_key) != 2 or not prefix_key.isalnum():
+            log.warning("Skipping invalid record prefix %r in %s", prefix, origin)
+            continue
+        vocab.record_prefixes[prefix_key] = str(table).upper().strip()
+
     new_series: list[tuple[re.Pattern, str, str]] = []
     for item in pack.get("numbered_series") or []:
         if not isinstance(item, dict):
@@ -187,6 +200,7 @@ def _merge_pack(vocab: MergedVocab, pack: dict, origin: str) -> None:
     vocab.raw_identifier_codes |= {str(c).upper() for c in (pack.get("raw_identifier_codes") or [])}
     vocab.raw_measure_codes |= {str(c).upper() for c in (pack.get("raw_measure_codes") or [])}
     vocab.raw_date_codes |= {str(c).upper() for c in (pack.get("raw_date_codes") or [])}
+    vocab.raw_status_codes |= {str(c).upper() for c in (pack.get("raw_status_codes") or [])}
 
     new_dr: list[tuple[re.Pattern, str]] = []
     try:
@@ -283,10 +297,12 @@ def _clone_builtin() -> MergedVocab:
         direct_aliases={k: set(v) for k, v in b.direct_aliases.items()},
         join_synonyms={k: set(v) for k, v in b.join_synonyms.items()},
         entity_prefixes=dict(b.entity_prefixes),
+        record_prefixes=dict(b.record_prefixes),
         numbered_series=list(b.numbered_series),
         raw_identifier_codes=set(b.raw_identifier_codes),
         raw_measure_codes=set(b.raw_measure_codes),
         raw_date_codes=set(b.raw_date_codes),
+        raw_status_codes=set(b.raw_status_codes),
         date_role_patterns=list(b.date_role_patterns),
         fact_patterns=list(b.fact_patterns),
         dimension_patterns=list(b.dimension_patterns),

@@ -5,9 +5,10 @@ Terminology pack infrastructure:
   1. Pack file parsing (all shipped packs load; stubs validate)
   2. Merge semantics (override / union / prepend / dedupe)
   3. GOLDEN backward-compat gate — builtin vocab == module constants, and
-     enrich/plan/date-role outputs are identical three ways:
+     legacy enrich/plan/date-role outputs are identical three ways:
      no vocab / builtin activated / infor_m3 pack merged.
-  4. Drift guard — packs/infor_m3.json stays byte-equivalent to the builtins.
+  4. Drift guard — packs/infor_m3.json preserves builtin mappings while
+     permitting pack-scoped M3 extensions.
   5. Generic star-schema pack classification.
 """
 import json
@@ -153,15 +154,19 @@ class GoldenBackwardCompatTests(unittest.TestCase):
             self.assertEqual(d, a, col)
             self.assertEqual(d, p, col)
 
-    def test_infor_m3_pack_matches_builtin_column_dict(self):
-        """Drift guard: the pack file must stay in sync with the constants."""
+    def test_infor_m3_pack_preserves_builtin_column_dict(self):
+        """Drift guard: M3 extensions may grow, but builtins cannot change."""
         from core.erp_column_dict import ERP_COLUMN_DICT
         pack = load_pack("infor_m3")
         pack_dict = {
             code: (e["label"], list(e["synonyms"]))
             for code, e in pack["column_dict"].items()
         }
-        self.assertEqual(pack_dict, {k: (v[0], list(v[1])) for k, v in ERP_COLUMN_DICT.items()})
+        builtin_dict = {k: (v[0], list(v[1])) for k, v in ERP_COLUMN_DICT.items()}
+        self.assertEqual(
+            {code: pack_dict.get(code) for code in builtin_dict},
+            builtin_dict,
+        )
 
 
 class GenericStarSchemaPackTests(unittest.TestCase):
@@ -312,6 +317,34 @@ class ActivationPointTests(unittest.TestCase):
         tmpl = (ROOT / "admin" / "templates" / "client_detail.html").read_text(encoding="utf-8")
         self.assertIn('name="erp_packs"', tmpl)
         self.assertIn("erp_packs_available", tmpl)
+
+    def test_setup_template_has_erp_crm_or_other_selector(self):
+        tmpl = (ROOT / "admin" / "templates" / "client_setup.html").read_text(encoding="utf-8")
+        self.assertIn("ERP / CRM source system", tmpl)
+        self.assertIn('name="source_pack"', tmpl)
+        self.assertIn('value="other"', tmpl)
+        self.assertIn("Other / custom database", tmpl)
+        self.assertIn("/setup/source-system", tmpl)
+
+    def test_setup_route_persists_source_pack(self):
+        routes = (ROOT / "admin" / "routes.py").read_text(encoding="utf-8")
+        self.assertIn('setup/source-system")', routes)
+        self.assertIn("erp_packs=json.dumps(selected_ids)", routes)
+        self.assertIn('selected in {"", "other"}', routes)
+
+    def test_setup_source_pack_value_handles_other_single_and_advanced(self):
+        from admin.routes import _client_erp_pack_ids, _setup_source_pack_value
+
+        self.assertEqual(_client_erp_pack_ids({"erp_packs": "not-json"}), [])
+        self.assertEqual(_setup_source_pack_value({"erp_packs": "[]"}), "other")
+        self.assertEqual(
+            _setup_source_pack_value({"erp_packs": '["infor_m3"]'}),
+            "infor_m3",
+        )
+        self.assertEqual(
+            _setup_source_pack_value({"erp_packs": '["infor_m3", "dynamics"]'}),
+            "multiple",
+        )
 
 
 if __name__ == "__main__":

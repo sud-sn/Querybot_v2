@@ -1,22 +1,171 @@
 {
   "pack_id": "infor_m3",
   "erp_name": "Infor M3",
-  "version": 1,
+  "version": 2,
   "status": "complete",
-  "description": "Infor M3 / MovEx column codes, abbreviations, and naming conventions. Byte-equivalent to QueryBot's built-in defaults - selecting this pack changes nothing for existing M3 clients; it exists so the M3 vocabulary is visible, versionable, and a template for other ERP packs.",
+  "description": "Infor M3 / MovEx operational files, record-prefixed physical columns, short codes, business dates, and naming conventions.",
   "table_dict": {
+    "OOHEAD": {
+      "label": "Customer Order Header",
+      "synonyms": ["sales orders", "customer orders", "order headers"],
+      "type": "fact"
+    },
+    "OOLINE": {
+      "label": "Customer Order Lines",
+      "synonyms": ["sales order lines", "customer order details", "ordered items"],
+      "type": "fact"
+    },
+    "OCUSMA": {
+      "label": "Customer Master",
+      "synonyms": ["customers", "customer details", "customer accounts"],
+      "type": "dimension"
+    },
+    "MITMAS": {
+      "label": "Item Master",
+      "synonyms": ["items", "products", "product master", "SKUs"],
+      "type": "dimension"
+    },
     "MITBAL": {
       "label": "M3 Item Balance",
-      "synonyms": ["M3 balance data", "item balance data", "M3 inventory balance"],
+      "synonyms": ["M3 balance data", "item warehouse balance", "inventory by warehouse", "current stock balance"],
       "type": "fact"
     },
     "M3_MITBAL": {
       "label": "M3 Item Balance",
       "synonyms": ["M3 balance data", "item balance data", "M3 inventory balance"],
       "type": "fact"
+    },
+    "MITLOC": {
+      "label": "Item Location Balance",
+      "synonyms": ["lot inventory", "stock by location", "item location balance"],
+      "type": "fact"
+    },
+    "MITTRA": {
+      "label": "Stock Transactions",
+      "synonyms": ["inventory transactions", "stock movements", "item transactions"],
+      "type": "fact"
+    },
+    "MITSTA": {
+      "label": "Inventory Statistics",
+      "synonyms": ["item warehouse statistics", "inventory history", "stock statistics"],
+      "type": "fact"
+    },
+    "MHDISH": {
+      "label": "Delivery Header",
+      "synonyms": ["deliveries", "shipments", "dispatch headers"],
+      "type": "fact"
+    },
+    "MPHEAD": {
+      "label": "Purchase Order Header",
+      "synonyms": ["purchase orders", "supplier orders", "PO headers"],
+      "type": "fact"
+    },
+    "MPLINE": {
+      "label": "Purchase Order Lines",
+      "synonyms": ["purchase order details", "supplier order lines", "purchased items"],
+      "type": "fact"
+    },
+    "CIDMAS": {
+      "label": "Supplier Master",
+      "synonyms": ["suppliers", "vendors", "supplier details"],
+      "type": "dimension"
+    },
+    "FSLEDG": {
+      "label": "Customer Ledger",
+      "synonyms": ["accounts receivable", "customer invoices", "customer ledger transactions"],
+      "type": "fact"
+    },
+    "FPLEDG": {
+      "label": "Supplier Ledger",
+      "synonyms": ["accounts payable", "supplier invoices", "vendor ledger transactions"],
+      "type": "fact"
+    },
+    "FGLEDG": {
+      "label": "General Ledger",
+      "synonyms": ["GL transactions", "financial postings", "general ledger transactions"],
+      "type": "fact"
+    },
+    "OSASTD": {
+      "label": "Sales Statistics",
+      "synonyms": ["sales history", "sales statistics dataset", "sales analysis"],
+      "type": "fact"
+    },
+    "OSBSTD": {
+      "label": "Sales Statistics Detail",
+      "synonyms": ["sales history details", "sales transaction statistics", "detailed sales analysis"],
+      "type": "fact"
+    },
+    "CSYTAB": {
+      "label": "System Code Values",
+      "synonyms": ["code descriptions", "reference codes", "system values"],
+      "type": "dimension"
     }
   },
+  "record_prefixes": {
+    "OA": "OOHEAD",
+    "OB": "OOLINE",
+    "OK": "OCUSMA",
+    "MM": "MITMAS",
+    "MB": "MITBAL",
+    "ML": "MITLOC",
+    "MT": "MITTRA",
+    "MS": "MITSTA",
+    "OQ": "MHDISH",
+    "IA": "MPHEAD",
+    "IB": "MPLINE",
+    "ID": "CIDMAS",
+    "FS": "FSLEDG",
+    "FP": "FPLEDG",
+    "FG": "FGLEDG",
+    "UC": "OSASTD",
+    "UB": "OSBSTD",
+    "CT": "CSYTAB"
+  },
+  "date_role_patterns": [
+    {"pattern": "^(?:[A-Z0-9]{2})?IVDT$", "role": "invoice_date"},
+    {"pattern": "^(?:[A-Z0-9]{2})?ORDT$", "role": "order_date"},
+    {"pattern": "^(?:[A-Z0-9]{2})?DWDT$", "role": "requested_delivery_date"},
+    {"pattern": "^(?:[A-Z0-9]{2})?CODT$", "role": "confirmed_delivery_date"},
+    {"pattern": "^(?:[A-Z0-9]{2})?PLDT$", "role": "planned_delivery_date"},
+    {"pattern": "^(?:[A-Z0-9]{2})?(?:DLDT|DSDT)$", "role": "delivery_date"},
+    {"pattern": "^(?:[A-Z0-9]{2})?DUDT$", "role": "due_date"},
+    {"pattern": "^(?:[A-Z0-9]{2})?ACDT$", "role": "accounting_date"},
+    {"pattern": "^(?:[A-Z0-9]{2})?RGDT$", "role": "registration_date"},
+    {"pattern": "^(?:[A-Z0-9]{2})?LMDT$", "role": "modified_date"}
+  ],
   "column_dict": {
+    "STAT": {
+      "label": "Status",
+      "synonyms": ["status", "record status", "item status", "order status"]
+    },
+    "UNMS": {
+      "label": "Basic Unit of Measure",
+      "synonyms": ["unit of measure", "base unit", "UOM", "basic UOM"]
+    },
+    "STQT": {
+      "label": "On-hand Approved Quantity",
+      "synonyms": ["stock on hand", "on-hand quantity", "approved stock", "available stock quantity"]
+    },
+    "FUDS": {
+      "label": "Supplementary Item Description",
+      "synonyms": ["item description", "additional item description", "product description"]
+    },
+    "PUNO": {
+      "label": "Purchase Order Number",
+      "synonyms": ["purchase order", "PO number", "supplier order number"]
+    },
+    "PNLI": {
+      "label": "Purchase Order Line Number",
+      "synonyms": ["purchase order line", "PO line", "supplier order line"]
+    },
+    "PNLS": {
+      "label": "Purchase Order Line Suffix",
+      "synonyms": ["purchase order line suffix", "PO line suffix", "purchase sub-line"]
+    },
+    "SINO": {
+      "label": "Supplier Invoice Number",
+      "synonyms": ["supplier invoice", "vendor invoice", "AP invoice number"]
+    },
     "ORNO": {
       "label": "Order Number",
       "synonyms": [
@@ -1685,12 +1834,16 @@
     "JSNO",
     "ORNO",
     "PONR",
+    "PNLI",
+    "PNLS",
     "POSX",
     "PROJ",
     "PYNO",
     "ROUT",
     "SMCD",
     "SUNO",
+    "PUNO",
+    "SINO",
     "VONO",
     "WHLO"
   ],
@@ -1725,10 +1878,21 @@
     "SAAM",
     "SAPR",
     "SGAM",
+    "STQT",
     "TRQT",
     "UCOS",
     "VOL3",
     "VTAM"
+  ],
+  "raw_status_codes": [
+    "STAT",
+    "ORST",
+    "SDST",
+    "CRST",
+    "RMST",
+    "IIST",
+    "CLST",
+    "CUST"
   ],
   "raw_date_codes": [
     "ACDT",
