@@ -1092,6 +1092,15 @@ def _execute_format_command(
             "date", "thedate", "dates", "datevalue", "datevalues",
             "datecolumn", "datefield",
         })
+    elif kind in {"number", "currency", "percentage"}:
+        generic_targets.update({
+            "amount", "amounts", "theamount", "theamounts",
+            "value", "values", "thevalue", "thevalues",
+            "measure", "measures", "themeasure", "themeasures",
+            "metric", "metrics", "themetric", "themetrics",
+            "number", "numbers", "thenumber", "thenumbers",
+            "figure", "figures", "thefigure", "thefigures",
+        })
     if command.target_text and _normalise_value(command.target_text) not in generic_targets:
         column, error = _resolve_column(rows, command.target_text)
         if error:
@@ -1117,6 +1126,16 @@ def _execute_format_command(
             f"I could not find a column compatible with the requested {kind} format.",
         )
 
+    preserve_existing_type = bool(requested.pop("preserve_existing_type", False))
+    existing_kind = str((source.get("column_formats") or {}).get(column) or "").lower()
+    if preserve_existing_type and existing_kind in {"currency", "percentage"}:
+        existing_specs = (source.get("metadata") or {}).get("display_formats") or {}
+        existing_spec = dict(existing_specs.get(column) or {})
+        merged = {"type": existing_kind, **existing_spec}
+        merged.update({key: value for key, value in requested.items() if key != "type"})
+        requested = merged
+        kind = existing_kind
+
     if kind == "date" and not requested.get("style"):
         return _format_clarification(
             source_id, before, f"Which date format should I use for {column}?", [
@@ -1126,7 +1145,11 @@ def _execute_format_command(
                 ("31-Jan-2026", f"format {column} as DD-MMM-YYYY"),
             ],
         )
-    if kind == "currency" and not requested.get("currency_code"):
+    if (
+        kind == "currency"
+        and not requested.get("currency_code")
+        and not (preserve_existing_type and existing_kind == "currency")
+    ):
         return _format_clarification(
             source_id, before, f"Which currency should I use for {column}?", [
                 (code, f"format {column} as {code} currency")

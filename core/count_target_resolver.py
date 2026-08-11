@@ -55,6 +55,37 @@ def _entity_forms(entity: str) -> set[str]:
     return forms
 
 
+def _table_owns_entity(table: dict[str, Any], entity: str) -> bool:
+    """Return whether the fact itself represents the requested event.
+
+    Related facts routinely carry another event's surrogate key (for example,
+    a shipment fact carrying ``ORDER_SK``).  Those keys are valid join paths,
+    but they are not evidence that the related fact owns the event being
+    counted.  Restrict ownership evidence to table identity metadata and the
+    physical table name; descriptions and grain prose often mention related
+    entities and would recreate the same false positive.
+    """
+    forms = _entity_forms(entity)
+    if not forms:
+        return False
+
+    physical = _table_name(table).split(".")[-1]
+    identity_values = [
+        physical,
+        table.get("entity"),
+        table.get("business_entity"),
+        table.get("business_name"),
+        table.get("display_name"),
+        table.get("subject"),
+        table.get("subject_area"),
+    ]
+    identity_text = _norm(" ".join(str(value or "") for value in identity_values))
+    return any(
+        re.search(rf"(?<![a-z0-9]){re.escape(form)}(?![a-z0-9])", identity_text)
+        for form in forms
+    )
+
+
 def _field_text(field: dict[str, Any]) -> str:
     values: list[Any] = []
     for key in (
@@ -201,6 +232,11 @@ def _candidate(
         score -= 38
         evidence.append("line-level identifier penalty")
     surrogate = column.upper().endswith(_SURROGATE_SUFFIXES)
+    if surrogate and not _table_owns_entity(table, entity):
+        # A foreign surrogate on a related fact is a join key, not the
+        # governed identifier of the event being counted.  Fail closed rather
+        # than silently switching the source fact and its Date Role.
+        return None
     if surrogate:
         score -= 24
         evidence.append("surrogate-key penalty")

@@ -21,6 +21,7 @@ from collections import deque
 from pathlib import Path
 
 import store
+from core.semantic_plan_utils import required_semantic_tables
 
 
 # ── File-system ────────────────────────────────────────────────────────────────
@@ -235,11 +236,10 @@ def _merge_semantic_plans(*plans: dict | None) -> dict:
         "enabled": True,
         "fields": fields,
         "joins": joins,
-        "required_tables": sorted(
-            {f.get("table") for f in fields if f.get("table")}
-            | {j.get("from") for j in joins if j.get("from")}
-            | {j.get("to") for j in joins if j.get("to")}
-        ),
+        "required_tables": sorted(required_semantic_tables({
+            "fields": fields,
+            "joins": joins,
+        })),
         "reason": " + ".join(dict.fromkeys(reasons)) or "merged semantic plan",
         "advisory_fields": advisory_fields,
         "available_dimensions": available_dimensions,

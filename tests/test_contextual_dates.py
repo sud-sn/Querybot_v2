@@ -889,6 +889,34 @@ class ContextualDateResolutionTests(unittest.TestCase):
         self.assertEqual(result["status"], "selected")
         self.assertEqual(result["binding"]["date_role"], "booked_date")
 
+    def test_equivalent_native_and_encoded_snapshot_roles_prefer_native_date(self):
+        roles = [
+            {
+                "name": "Snapshot Date", "business_role": "snapshot_date",
+                "fact_table": "OPS.F_INVENTORY_DAILY", "fact_column": "SNAPSHOT_DATE",
+                "date_value_column": "SNAPSHOT_DATE", "date_key_type": "native_date",
+                "temporal_grain": "day", "status": "approved", "confidence": 100,
+            },
+            {
+                "name": "Snapshot Date", "business_role": "snapshot_date",
+                "fact_table": "OPS.F_INVENTORY_DAILY", "fact_column": "SNAPSHOT_YYYYMMDD",
+                "date_value_column": "SNAPSHOT_YYYYMMDD", "date_key_type": "yyyymmdd_integer",
+                "temporal_grain": "day", "status": "approved", "confidence": 100,
+            },
+        ]
+
+        result = resolve_contextual_date_binding(
+            "inventory value on the latest daily snapshot",
+            matched_metrics=[],
+            bindings=[],
+            date_roles=roles,
+            required_fact_tables={"OPS.F_INVENTORY_DAILY"},
+        )
+
+        self.assertEqual(result["status"], "selected")
+        self.assertEqual(result["binding"]["fact_column"], "SNAPSHOT_DATE")
+        self.assertEqual(result["binding"]["date_key_type"], "native_date")
+
     def test_validator_accepts_same_date_dimension_joined_twice(self):
         plan = build_contextual_date_plan_many([
             _binding("Booked", "booked_date", "BOOKED_DT_ID"),

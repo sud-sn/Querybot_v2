@@ -7,6 +7,7 @@ from core.graph_resolver import detect_entities
 from core.pipeline_context import _merge_semantic_plans
 from core.semantic_model import MODEL_JSON, build_runtime_semantic_plan
 from core.table_coverage import build_required_fqns
+from core.semantic_plan_utils import required_semantic_tables
 
 
 def _tmp_dir():
@@ -277,6 +278,39 @@ class TableCoverageExpansionTests(unittest.TestCase):
 
 
 class SemanticPlanMergeTests(unittest.TestCase):
+    def test_optional_rival_fact_is_not_a_required_table(self):
+        plan = {
+            "enabled": True,
+            "fields": [
+                {
+                    "term": "Revenue",
+                    "table": "QBOT_LIVE_TEST.F_SALES_INVOICE",
+                    "column": "NET_REVENUE_AMOUNT",
+                    "enforcement": "required",
+                },
+                {
+                    "term": "Warehouse",
+                    "table": "QBOT_LIVE_TEST.ERP_ITM_BAL_PRD_FCT",
+                    "column": "WHS_DMS_KEY",
+                    "enforcement": "optional",
+                },
+            ],
+            "joins": [],
+            "required_tables": [
+                "QBOT_LIVE_TEST.F_SALES_INVOICE",
+                "QBOT_LIVE_TEST.ERP_ITM_BAL_PRD_FCT",
+            ],
+        }
+
+        self.assertEqual(
+            required_semantic_tables(plan),
+            {"QBOT_LIVE_TEST.F_SALES_INVOICE"},
+        )
+        self.assertEqual(
+            _merge_semantic_plans(plan)["required_tables"],
+            ["QBOT_LIVE_TEST.F_SALES_INVOICE"],
+        )
+
     def test_merge_deduplicates_two_and_three_part_table_names(self):
         schema_plan = {
             "enabled": True,

@@ -95,6 +95,7 @@ from core.compliance.governed_query import (
 from core.compliance.models import ResourceRef
 from core.compliance.policy_engine import evaluate as evaluate_policy, resolve_context
 from core.conversation_state import conversation_state_store
+from core.semantic_plan_utils import required_semantic_tables
 
 log = logging.getLogger("querybot")
 
@@ -2535,18 +2536,9 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             # Required tables are derived state. Rebuild them after rival-fact
             # demotion so optional retrieval noise cannot remain a hard table
             # requirement later in validation/prompt coverage.
-            _required_tables = {
-                str(field.get("table") or "")
-                for field in (_semantic_plan.get("fields") or [])
-                if field.get("enforcement") != "optional" and field.get("table")
-            }
-            for _join in (_semantic_plan.get("joins") or []):
-                if _join.get("enforcement") == "optional":
-                    continue
-                _required_tables.update(
-                    str(_join.get(key) or "") for key in ("from", "to") if _join.get(key)
-                )
-            _semantic_plan["required_tables"] = sorted(_required_tables)
+            _semantic_plan["required_tables"] = sorted(
+                required_semantic_tables(_semantic_plan)
+            )
     except Exception as _anchor_exc:
         log.warning(
             "Merged-plan fact scoping failed — a rival fact's field may stay "
@@ -2564,9 +2556,9 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         try:
             from core.table_coverage import guarantee_table_coverage
             _plan_fqns = {
-                str(f.get("table") or "").upper()
-                for f in (_semantic_plan or {}).get("fields") or []
-                if f.get("table") and "." in str(f.get("table"))
+                str(table).upper()
+                for table in required_semantic_tables(_semantic_plan)
+                if "." in str(table)
             }
             if _plan_fqns:
                 _plan_gap_docs = guarantee_table_coverage(
@@ -2793,11 +2785,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                         for role in _inferred_roles
                         if role.get("fact_table")
                     }
-                _requested_semantic_tables = {
-                    str(field.get("source_table") or field.get("table") or "")
-                    for field in (_semantic_plan or {}).get("fields") or []
-                    if field.get("source_table") or field.get("table")
-                }
+                _requested_semantic_tables = required_semantic_tables(_semantic_plan)
                 _date_dimension_tables = {
                     str(role.get("dimension_table") or "")
                     for role in _date_roles

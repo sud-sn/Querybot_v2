@@ -112,8 +112,14 @@ def parse_format_request(text: str) -> dict[str, Any] | None:
             if re.search(rf"\b{re.escape(alias)}\b", lower):
                 spec["currency_code"] = code
                 break
-    elif re.search(r"\b(?:decimal places?|decimals?|whole numbers?|no decimals?|number format|compact numbers?|thousands separators?)\b", lower):
+    elif re.search(r"\b(?:decimal places?|decimals?|whole numbers?|no decimals?|number format|compact numbers?|thousands separators?|in thousands?)\b", lower):
         spec = {"type": "number"}
+        # Precision/scale-only follow-ups should retain an existing semantic
+        # currency or percentage contract.  For example, "show the amounts in
+        # thousands with 2 decimals" changes presentation; it does not turn a
+        # governed currency measure into a plain number.
+        if not re.search(r"\b(?:number format|as (?:a )?number|plain number)\b", lower):
+            spec["preserve_existing_type"] = True
     else:
         return None
 
@@ -122,7 +128,7 @@ def parse_format_request(text: str) -> dict[str, Any] | None:
         spec["fraction_digits"] = int(digits.group(1))
     elif re.search(r"\b(?:whole numbers?|no decimals?|zero decimals?)\b", lower):
         spec["fraction_digits"] = 0
-    if re.search(r"\b(?:compact|abbreviat(?:e|ed)|in k(?: and)? m|thousands and millions)\b", lower):
+    if re.search(r"\b(?:compact|abbreviat(?:e|ed)|in k(?: and)? m|in thousands?|thousands and millions)\b", lower):
         spec["style"] = "compact"
     if re.search(r"\b(?:without|no)\s+(?:thousand )?separators?\b", lower):
         spec["grouping"] = False

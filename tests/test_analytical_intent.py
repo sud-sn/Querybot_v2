@@ -33,6 +33,31 @@ def test_daily_snapshot_requests_a_governed_subject():
     assert "latest complete governed business date" in " ".join(plan.assumptions)
 
 
+def test_daily_inventory_snapshot_selects_the_uniquely_matching_metric():
+    plan = plan_analytical_intent(
+        "What was inventory value by warehouse on the latest daily snapshot?",
+        metrics=[
+            {"name": "Daily Inventory Value", "category": "Inventory"},
+            {"name": "ERP Period Inventory Value", "category": "Inventory"},
+            {"name": "M3 Inventory Value", "category": "Inventory"},
+            {"name": "Month-End Inventory Value", "category": "Inventory"},
+        ],
+    )
+
+    assert plan.intent == "daily_snapshot"
+    assert plan.metrics == ("Daily Inventory Value",)
+    assert not plan.needs_clarification
+
+
+def test_snapshot_dimension_stops_before_latest_period_wording():
+    plan = plan_analytical_intent(
+        "What was inventory value by warehouse on the latest daily snapshot?",
+        metrics=[{"name": "Daily Inventory Value", "category": "Inventory"}],
+    )
+
+    assert plan.dimensions == ("warehouse",)
+
+
 def test_snapshot_reply_is_replanned_as_the_same_request():
     question = (
         "what was my today's data\n\n"

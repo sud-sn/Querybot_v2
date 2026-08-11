@@ -49,6 +49,7 @@ from __future__ import annotations
 from typing import Any
 
 from core.semantic_ids import date_role_id, field_id, join_id, metric_id
+from core.semantic_plan_utils import required_semantic_tables
 
 
 def _table_key(value: Any) -> str:
@@ -98,21 +99,9 @@ def build_planner_alignment(
     required_tables: set[str] = {
         _table_key(table) for table in metric_formula_tables or [] if _table_key(table)
     }
-    for table in semantic_plan.get("required_tables") or []:
+    for table in required_semantic_tables(semantic_plan):
         if _table_key(table):
             required_tables.add(_table_key(table))
-    for field in semantic_plan.get("fields") or []:
-        if not isinstance(field, dict):
-            continue
-        for key in ("table", "source_table", "date_value_table"):
-            if _table_key(field.get(key)):
-                required_tables.add(_table_key(field.get(key)))
-    for join in semantic_plan.get("joins") or []:
-        if not isinstance(join, dict):
-            continue
-        for key in ("from", "to", "from_table", "to_table"):
-            if _table_key(join.get(key)):
-                required_tables.add(_table_key(join.get(key)))
     for binding in _date_bindings(date_context_resolution):
         for key in ("fact_table", "dimension_table", "date_table"):
             if _table_key(binding.get(key)):
@@ -186,7 +175,12 @@ def build_cannot_generate_recovery_prompt(
     fields = [
         f"{field.get('term') or 'field'}={field.get('table')}.{field.get('column')}"
         for field in semantic_plan.get("fields") or []
-        if isinstance(field, dict) and field.get("table") and field.get("column")
+        if (
+            isinstance(field, dict)
+            and field.get("enforcement") != "optional"
+            and field.get("table")
+            and field.get("column")
+        )
     ]
     required_tables = plan.get("required_tables") or semantic_plan.get("required_tables") or []
     return (

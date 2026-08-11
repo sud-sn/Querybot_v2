@@ -95,6 +95,36 @@ class ResultDisplayCommandTests(unittest.TestCase):
         self.assertEqual(spec["currency_code"], "INR")
         self.assertEqual(spec["fraction_digits"], 0)
 
+    def test_generic_amounts_resolve_the_only_numeric_measure(self):
+        cache = ResultCache()
+        cache.store(
+            "s",
+            [
+                {"Warehouse": "Chennai", "Daily Inventory Value": 1200.0},
+                {"Warehouse": "Bengaluru", "Daily Inventory Value": 640.0},
+            ],
+            column_formats={"Daily Inventory Value": "currency"},
+            result_id="daily-inventory",
+        )
+        outcome = execute_result_command(
+            "s",
+            parse_result_command("Show the amounts in thousands with 2 decimals."),
+            cache=cache,
+            source_result_id="daily-inventory",
+        )
+        self.assertTrue(outcome.ok, outcome.message)
+        spec = outcome.snapshot["metadata"]["display_formats"]["Daily Inventory Value"]
+        self.assertEqual(spec["type"], "currency")
+        self.assertEqual(spec["style"], "compact")
+        self.assertEqual(spec["fraction_digits"], 2)
+        self.assertEqual(outcome.snapshot["rows"][0]["Daily Inventory Value"], 1200.0)
+
+    def test_generic_amounts_ask_when_multiple_numeric_measures_exist(self):
+        outcome = self.execute("Show the amounts with 2 decimals")
+        self.assertFalse(outcome.ok)
+        self.assertTrue(outcome.clarification_required)
+        self.assertIn("Which column", outcome.clarification_prompt)
+
     def test_percentage_scale_is_inferred_from_fraction_values(self):
         outcome = self.execute("show MarginPct as percentage")
         self.assertTrue(outcome.ok, outcome.message)

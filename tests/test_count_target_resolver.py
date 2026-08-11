@@ -201,3 +201,64 @@ def test_client_approved_alias_metadata_resolves_an_opaque_identifier():
     assert result["status"] == "selected"
     assert result["selected"]["column"] == "DOCREF"
     assert result["selected"]["business_name"] == "Customer Order Reference"
+
+
+def test_related_fact_foreign_surrogate_cannot_own_counted_event():
+    model = {
+        "tables": [
+            {
+                "qualified_name": "TENANT_X.F_ORDERS",
+                "type": "fact",
+                "entity": "customer order",
+                "grain": "one row per customer order",
+                "fields": [
+                    _field(
+                        "ORDER_NUMBER", "Order Number", status="approved",
+                        approved_meaning="Stable business identifier for one order.",
+                        business_candidates=["order number"],
+                    ),
+                ],
+            },
+            {
+                "qualified_name": "TENANT_X.F_SHIPMENTS",
+                "type": "fact",
+                "entity": "shipment",
+                "grain": "one row per shipment",
+                "fields": [
+                    _field(
+                        "ORDER_SK", "Order Key", role="dimension_key",
+                        aggregation="identifier", business_candidates=["order key"],
+                    ),
+                ],
+            },
+        ],
+    }
+
+    result = resolve_count_target("order", model)
+
+    assert result["status"] == "selected"
+    assert result["selected"]["table"] == "TENANT_X.F_ORDERS"
+    assert result["selected"]["column"] == "ORDER_NUMBER"
+    assert all(item["table"] != "TENANT_X.F_SHIPMENTS" for item in result["candidates"])
+
+
+def test_related_fact_surrogate_alone_fails_closed():
+    model = {
+        "tables": [{
+            "qualified_name": "TENANT_X.F_SHIPMENTS",
+            "type": "fact",
+            "entity": "shipment",
+            "grain": "one row per shipment",
+            "fields": [
+                _field(
+                    "ORDER_SK", "Order Key", role="dimension_key",
+                    aggregation="identifier", business_candidates=["order key"],
+                ),
+            ],
+        }],
+    }
+
+    result = resolve_count_target("order", model)
+
+    assert result["status"] == "missing"
+    assert result["candidates"] == []

@@ -464,6 +464,54 @@ def _governed_explicit_role_matches(
     return [{**role, "_selection_status": "generated"} for role in generated]
 
 
+def _preferred_equivalent_explicit_role(roles: list[dict]) -> dict | None:
+    """Collapse duplicate physical encodings of one governed business date.
+
+    Warehouses frequently expose the same logical date twice, such as a native
+    ``SNAPSHOT_DATE`` and an integer ``SNAPSHOT_YYYYMMDD``.  If both rows carry
+    the same approved role, fact, grain, and matched phrase, asking a business
+    user which storage format to use is not a meaningful clarification.  Pick
+    the safest executable representation deterministically while preserving
+    genuine ambiguities between Order Date, Invoice Date, Ship Date, and other
+    distinct business roles.
+    """
+    if len(roles) < 2:
+        return roles[0] if roles else None
+
+    def semantic_identity(role: dict) -> tuple[str, str, str, str]:
+        business_role = normalize_date_role_text(
+            role.get("business_role") or role.get("name") or ""
+        )
+        return (
+            _table_identity(role.get("fact_table"))[0],
+            business_role,
+            _role_temporal_grain(role),
+            normalize_date_role_text(role.get("_matched_phrase") or ""),
+        )
+
+    identities = {semantic_identity(role) for role in roles}
+    if len(identities) != 1 or not next(iter(identities))[1]:
+        return None
+
+    type_rank = {
+        "native_date": 60,
+        "timestamp": 55,
+        "surrogate_fk": 50,
+        "yyyymmdd_integer": 40,
+        "yyyymm_integer": 30,
+        "date_string": 20,
+    }
+    return max(
+        roles,
+        key=lambda role: (
+            bool(role.get("is_default")),
+            type_rank.get(normalize_date_key_type(role.get("date_key_type")), 0),
+            int(role.get("confidence") or 0),
+            str(role.get("fact_column") or ""),
+        ),
+    )
+
+
 def find_explicit_date_roles(question: str, date_roles: list[dict] | None) -> list[dict]:
     """Return governed roles explicitly named by the user.
 
@@ -738,6 +786,18 @@ def resolve_contextual_date_binding(
             "reason": "explicit date role in question",
         }
     if len(explicit) > 1:
+        equivalent = _preferred_equivalent_explicit_role(explicit)
+        if equivalent is not None:
+            equivalent_source = (
+                "explicit_date_role"
+                if equivalent.get("_selection_status") == "approved"
+                else "explicit_generated_date_role"
+            )
+            return {
+                "status": "selected",
+                "binding": _role_as_binding(equivalent, source=equivalent_source),
+                "reason": "equivalent physical date encodings resolved to the preferred governed role",
+            }
         distinct_columns = {
             (_table_identity(role.get("fact_table"))[0], str(role.get("fact_column") or "").upper())
             for role in explicit

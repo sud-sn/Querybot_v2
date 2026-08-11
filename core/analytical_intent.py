@@ -139,7 +139,7 @@ _OUTPUT_RE = re.compile(
 _DIMENSION_RE = re.compile(
     r"\b(?:by|per|across|grouped\s+by|split\s+by|for\s+each)\s+"
     r"([a-z][a-z0-9 _-]{1,45}?)(?=\s+(?:for|in|during|where|with|from|"
-    r"today|yesterday|this|last|versus|vs\.?|as\s+a)\b|[?.!,]|$)",
+    r"on|today|yesterday|this|last|latest|versus|vs\.?|as\s+a)\b|[?.!,]|$)",
     re.I,
 )
 _TOP_N_RE = re.compile(r"\b(?:top|bottom)\s+(\d{1,3})\b", re.I)
@@ -337,6 +337,38 @@ def _relevant_metric_options(
     )
 
 
+def _unambiguous_relevant_metric(
+    question: str,
+    metrics: Iterable[dict[str, Any]],
+) -> str:
+    """Return a metric only when the user's own words separate it clearly.
+
+    Snapshot questions commonly omit the full governed metric name while still
+    naming both its subject and cadence (for example, ``daily inventory
+    value``).  Requiring an exact catalog phrase made the agent ask users to
+    choose among Daily, Monthly, and ERP inventory measures even though the
+    requested grain already disambiguated them.  This metadata-only scorer is
+    deliberately conservative: a candidate must overlap at least two
+    meaningful terms and beat the runner-up, so generic requests such as
+    ``today's data`` still ask for a subject.
+    """
+    question_terms = _normalised_terms(question)
+    ranked: list[tuple[int, str]] = []
+    for metric in metrics or ():
+        label = str(metric.get("name") or "").strip()
+        if not label:
+            continue
+        phrases = " ".join(_catalog_phrases(metric))
+        overlap = question_terms & _normalised_terms(phrases)
+        if overlap:
+            ranked.append((len(overlap), label))
+    ranked.sort(key=lambda item: (-item[0], item[1].casefold()))
+    if not ranked or ranked[0][0] < 2:
+        return ""
+    runner_up = ranked[1][0] if len(ranked) > 1 else 0
+    return ranked[0][1] if ranked[0][0] > runner_up else ""
+
+
 def detect_business_event_count(question: str) -> str:
     """Return the requested countable event, or ``""`` when it asks for value.
 
@@ -489,6 +521,15 @@ def plan_analytical_intent(
     else:
         intent = "metric_query"
 
+    # A subject/category phrase can match several governed metrics at once
+    # (for example, every Inventory metric has category ``Inventory``).  When
+    # cadence and measure wording uniquely separate one candidate, narrow the
+    # plan before deciding whether a clarification is required.
+    if intent in {"daily_snapshot", "data_overview"} and len(metric_matches) > 1:
+        inferred_metric = _unambiguous_relevant_metric(text, metrics)
+        if inferred_metric:
+            metric_matches = [inferred_metric]
+
     dimensions = tuple(
         dict.fromkeys(match.group(1).strip(" -") for match in _DIMENSION_RE.finditer(text))
     )
@@ -554,18 +595,25 @@ def plan_analytical_intent(
         if clarified:
             metric_matches = [clarified]
         else:
-            unresolved.append("subject")
-            options = _subject_options(metrics)
-            clarification = ClarificationRequest(
-                slot="subject",
-                question=(
-                    "Which business area or metric should I use for this snapshot?"
-                    if intent == "daily_snapshot"
-                    else "Which business area or metric would you like me to analyse?"
-                ),
-                options=options,
-                reason="The request does not identify a governed measure or subject area.",
-            )
+            inferred_metric = _unambiguous_relevant_metric(text, metrics)
+            if inferred_metric:
+                metric_matches = [inferred_metric]
+                assumptions.append(
+                    f"Resolved the governed measure from explicit subject and cadence wording: {inferred_metric}."
+                )
+            else:
+                unresolved.append("subject")
+                options = _subject_options(metrics)
+                clarification = ClarificationRequest(
+                    slot="subject",
+                    question=(
+                        "Which business area or metric should I use for this snapshot?"
+                        if intent == "daily_snapshot"
+                        else "Which business area or metric would you like me to analyse?"
+                    ),
+                    options=options,
+                    reason="The request does not identify a governed measure or subject area.",
+                )
     elif intent == "ranking" and not metric_matches and not business_concepts:
         unresolved.append("metric")
         clarification = ClarificationRequest(

@@ -157,6 +157,52 @@ class PlannerAlignmentTests(unittest.TestCase):
             set(alignment["required_entities"]), {"F_CLAIM", "D_DATE"},
         )
 
+    def test_optional_rival_fact_does_not_drive_alignment(self):
+        alignment = build_planner_alignment(
+            graph=GRAPH,
+            graph_ctx={
+                "enabled": True,
+                "detected": ["F_RX_FILL", "D_DATE"],
+                "anchor": "F_RX_FILL",
+            },
+            semantic_plan={
+                "enabled": True,
+                "fields": [
+                    {
+                        "term": "revenue",
+                        "table": "PHARMA_LAB.F_RX_FILL",
+                        "column": "NET_REVENUE_AMT",
+                        "enforcement": "required",
+                    },
+                    {
+                        "term": "service date",
+                        "table": "PHARMA_LAB.F_CLAIM",
+                        "column": "SERVICE_DATE_ID",
+                        "enforcement": "optional",
+                    },
+                ],
+                "joins": [
+                    {
+                        "from": "PHARMA_LAB.F_CLAIM",
+                        "to": "PHARMA_LAB.D_DATE",
+                        "conditions": [("SERVICE_DATE_ID", "DATE_ID")],
+                        "enforcement": "optional",
+                    },
+                ],
+                # Deliberately stale derived state: structured enforcement
+                # must win and exclude the optional rival fact.
+                "required_tables": [
+                    "PHARMA_LAB.F_RX_FILL",
+                    "PHARMA_LAB.F_CLAIM",
+                    "PHARMA_LAB.D_DATE",
+                ],
+            },
+        )
+
+        self.assertEqual(alignment["authoritative_fact_entities"], ["F_RX_FILL"])
+        self.assertNotIn("F_CLAIM", alignment["required_entities"])
+        self.assertNotIn("PHARMA_LAB.F_CLAIM", alignment["required_tables"])
+
     def test_resolution_plan_coverage_uses_reconciled_required_tables(self):
         alignment = {
             "required_tables": ["PHARMA_LAB.F_RX_FILL", "PHARMA_LAB.D_DATE"],
@@ -209,6 +255,32 @@ class CannotGenerateRecoveryTests(unittest.TestCase):
         branch = source[source.index('if "CANNOT_GENERATE" in sql.upper():') :]
         self.assertIn('answer_type="cannot_generate"', branch[:1800])
         self.assertIn("_trace_finish(", branch[:1800])
+
+    def test_recovery_prompt_excludes_optional_rival_field(self):
+        prompt = build_cannot_generate_recovery_prompt(
+            question="revenue by month",
+            resolution_plan={"required_tables": ["PHARMA_LAB.F_RX_FILL"]},
+            graph_ctx={},
+            semantic_plan={
+                "fields": [
+                    {
+                        "term": "revenue",
+                        "table": "PHARMA_LAB.F_RX_FILL",
+                        "column": "NET_REVENUE_AMT",
+                        "enforcement": "required",
+                    },
+                    {
+                        "term": "claim date",
+                        "table": "PHARMA_LAB.F_CLAIM",
+                        "column": "SERVICE_DATE_ID",
+                        "enforcement": "optional",
+                    },
+                ],
+            },
+        )
+
+        self.assertIn("NET_REVENUE_AMT", prompt)
+        self.assertNotIn("SERVICE_DATE_ID", prompt)
 
 
 class TraceLifecycleGuardTests(unittest.TestCase):

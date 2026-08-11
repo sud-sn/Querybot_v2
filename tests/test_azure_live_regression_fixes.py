@@ -304,6 +304,31 @@ class CrossFactPlanScopingTests(unittest.TestCase):
         by_table = {f["table"]: f["enforcement"] for f in fields}
         self.assertEqual(by_table[f"{SCHEMA}.D_WAREHOUSE"], "required")
 
+    def test_rival_fact_present_only_in_join_is_demoted(self):
+        """A stale rival join must not survive because its fact has no field."""
+        fields = [
+            {"term": "Revenue", "table": f"{SCHEMA}.F_SALES_INVOICE",
+             "column": "NET_REVENUE_AMOUNT", "role": "measure",
+             "enforcement": "required"},
+            {"term": "Invoice Month", "table": f"{SCHEMA}.D_DATE",
+             "column": "FULL_DATE", "role": "date_dimension",
+             "enforcement": "required"},
+        ]
+        joins = [
+            {"from": f"{SCHEMA}.F_SALES_INVOICE", "to": f"{SCHEMA}.D_DATE",
+             "conditions": [("INVOICE_DATE_SK", "DATE_SK")],
+             "enforcement": "required"},
+            {"from": f"{SCHEMA}.F_INVENTORY_DAILY", "to": f"{SCHEMA}.D_DATE",
+             "conditions": [("SNAPSHOT_YYYYMMDD", "DATE_SK")],
+             "enforcement": "required"},
+        ]
+
+        anchor = _scope_plan_to_single_fact(fields, joins, MODEL_TABLES)
+
+        self.assertEqual(anchor, f"{SCHEMA}.F_SALES_INVOICE".upper())
+        self.assertEqual(joins[0]["enforcement"], "required")
+        self.assertEqual(joins[1]["enforcement"], "optional")
+
     def test_live_case_7_sql_is_accepted_after_scoping(self):
         fields = [
             {"term": "daily inventory value", "table": f"{SCHEMA}.F_INVENTORY_DAILY",

@@ -30,6 +30,7 @@ from core.date_roles import (
 )
 from core.naming_convention import match_audit_prefix, match_column_suffix, match_entity_prefix
 from core.schema_enrichment import EnrichedColumn, enrich_columns
+from core.semantic_plan_utils import required_semantic_tables
 
 log = logging.getLogger(__name__)
 
@@ -1768,11 +1769,22 @@ def _scope_plan_to_single_fact(
             for known, role in table_type_by_name.items()
         )
 
-    distinct_facts = list(dict.fromkeys(
+    # A rival fact can enter only through a join while every selected field
+    # belongs to the authoritative fact/dimension.  Looking at fields alone
+    # then reported "one fact" and returned before the rival join could be
+    # demoted.  Include both join endpoints in the fact inventory.
+    fact_candidates = [
         str(f.get("table") or "").upper()
         for f in fields
         if _is_fact(f.get("table"))
-    ))
+    ]
+    for join in joins:
+        fact_candidates.extend(
+            str(join.get(key) or "").upper()
+            for key in ("from", "to")
+            if _is_fact(join.get(key))
+        )
+    distinct_facts = list(dict.fromkeys(fact_candidates))
     preferred_fact_tables = {
         str(value or "").upper() for value in (preferred_fact_tables or set()) if value
     }
@@ -2217,7 +2229,10 @@ def build_runtime_semantic_plan(
 
     _scope_plan_to_single_fact(fields, joins, tables)
 
-    required_tables = sorted({f["table"] for f in fields} | {j["from"] for j in joins} | {j["to"] for j in joins})
+    required_tables = sorted(required_semantic_tables({
+        "fields": fields,
+        "joins": joins,
+    }))
 
     # ── All available dimensions (for drill-by-dimension chip, Sprint C) ────────
     # Collect every complete dimension entry from every scoped table regardless
