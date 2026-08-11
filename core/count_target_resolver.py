@@ -78,7 +78,12 @@ def _business_label(field: dict[str, Any], entity: str) -> str:
         or field.get("expanded_name")
         or ""
     ).strip()
-    if expanded and not re.fullmatch(r"[A-Z0-9_]+", expanded):
+    expanded_words = set(_norm(expanded).split())
+    physical_key_label = bool(
+        expanded_words & {"sk", "fk"}
+        or (expanded_words & {"key"} and not expanded_words & {"number", "reference", "identifier"})
+    )
+    if expanded and not re.fullmatch(r"[A-Z0-9_]+", expanded) and not physical_key_label:
         return expanded
     meaning = str(field.get("approved_meaning") or "").strip()
     if meaning:

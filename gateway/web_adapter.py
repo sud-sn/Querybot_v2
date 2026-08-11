@@ -253,6 +253,12 @@ class WebAdapter(PlatformAdapter):
                     "user_id": self._user_id,
                     "metadata_contains_raw_values": False,
                     "contract_version": contract_version,
+                    # Keep only governed execution metadata here. The cache
+                    # already owns the rows; credentials are deliberately not
+                    # copied into the snapshot. This lets a result-card action
+                    # restore the exact semantic context after a reconnect.
+                    "db_config_id": int((db_cfg or {}).get("id") or 0),
+                    "semantic_plan": dict(semantic_plan or {}),
                 },
             )
             self.last_result_id = cached_result_id or None
@@ -268,6 +274,25 @@ class WebAdapter(PlatformAdapter):
     ) -> dict:
         """Refresh the portal compatibility view from a canonical snapshot."""
         previous = self.last_result if isinstance(self.last_result, dict) else {}
+        metadata = (
+            dict(snapshot.get("metadata") or {})
+            if isinstance(snapshot.get("metadata"), dict)
+            else {}
+        )
+        snapshot_result_id = str(snapshot.get("result_id") or "")
+        same_snapshot = bool(
+            snapshot_result_id
+            and snapshot_result_id == str(previous.get("result_id") or "")
+        )
+        db_cfg = previous.get("db_cfg") or {} if same_snapshot else {}
+        db_config_id = int(metadata.get("db_config_id") or 0)
+        if db_config_id and int((db_cfg or {}).get("id") or 0) != db_config_id:
+            try:
+                import store
+
+                db_cfg = store.get_db_config(db_config_id) or {}
+            except Exception as exc:
+                log.debug("Cached result database context restore failed: %s", exc)
         previous.update({
             "rows": list(snapshot.get("rows") or []),
             "question": str(snapshot.get("question") or previous.get("question") or ""),
@@ -275,6 +300,19 @@ class WebAdapter(PlatformAdapter):
             "column_formats": dict(snapshot.get("column_formats") or {}),
             "result_id": str(snapshot.get("result_id") or ""),
             "result_operation": str(snapshot.get("operation") or "source_query"),
+            "db_cfg": db_cfg,
+            "semantic_plan": dict(
+                metadata.get("semantic_plan")
+                or previous.get("semantic_plan")
+                or {}
+            ),
+            "contract_version": str(
+                metadata.get("contract_version")
+                or (previous.get("contract_version") if same_snapshot else "")
+                or ""
+            ),
+            "rag_context": previous.get("rag_context", "") if same_snapshot else "",
+            "data_brief": dict(previous.get("data_brief") or {}) if same_snapshot else {},
         })
         self.last_result = previous
         self.last_result_id = previous["result_id"] or None

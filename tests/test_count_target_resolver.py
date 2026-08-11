@@ -162,6 +162,25 @@ def test_opaque_erp_column_uses_expanded_business_metadata():
     assert result["selected"]["column"] == "ORNO"
 
 
+def test_physical_surrogate_label_is_not_exposed_to_business_user():
+    model = _model([
+        _field(
+            "ORDER_SK", "Order SK", role="dimension_key",
+            aggregation="identifier", business_candidates=["order key"],
+        ),
+    ], grain="one row per sales order")
+
+    result = resolve_count_target(
+        "order", model,
+        source_scope={"selected_fact": "TENANT_X.F_ORDER_LINE"},
+    )
+    options = count_target_clarification_options(result)
+
+    assert options
+    assert " sk" not in options[0]["label"].casefold()
+    assert options[0]["business_name"] == "Order identifier"
+
+
 def test_client_approved_alias_metadata_resolves_an_opaque_identifier():
     model = _model([{
         "column": "DOCREF",

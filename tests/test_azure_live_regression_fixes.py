@@ -45,7 +45,7 @@ from core.contextual_dates import (  # noqa: E402
     requested_temporal_grain,
 )
 from core.date_roles import _label_from_column  # noqa: E402
-from core.query_pipeline import _date_option_labels  # noqa: E402
+from core.query_pipeline import _date_option_labels, _unique_date_bindings  # noqa: E402
 from core.dispatcher import _looks_like_data_request  # noqa: E402
 from core.response_builder import _period_comparison_from_rows  # noqa: E402
 from core.semantic_planner import (  # noqa: E402
@@ -1083,6 +1083,20 @@ class StableDateOptionLabelTests(unittest.TestCase):
         """list_metric_date_contexts can return one role under two metrics."""
         labels = _date_option_labels([self.NATIVE, dict(self.NATIVE), self.ENCODED])
         self.assertEqual(len(labels), 2)
+
+    def test_duplicate_physical_binding_keeps_approved_default_once(self):
+        generated = {**self.NATIVE, "status": "generated", "priority": 1}
+        approved = {
+            **self.NATIVE,
+            "status": "approved",
+            "is_default": True,
+            "priority": 5,
+        }
+        unique = _unique_date_bindings([generated, approved, dict(generated)])
+
+        self.assertEqual(len(unique), 1)
+        self.assertEqual(unique[0]["status"], "approved")
+        self.assertTrue(unique[0]["is_default"])
 
     def test_identical_storage_falls_back_to_a_reproducible_ordinal(self):
         twin_a = {**self.NATIVE, "fact_column": "OPENED_ON"}

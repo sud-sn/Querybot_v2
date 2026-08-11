@@ -2103,6 +2103,9 @@ async def ws_chat(websocket: WebSocket, account_id: str):
 
             msg_type = _ws_text_value(data.get("type"), "type", "value")
             action = _ws_text_value(data.get("action"), "action", "value")
+            requested_result_id = _ws_text_value(
+                data.get("result_id"), "result_id", "id", "value"
+            )
             context = data.get("context")
             if not isinstance(context, dict):
                 context = {}
@@ -3235,9 +3238,9 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 if term_hint:
                     combined = f"{combined}\n\n{term_hint}"
                 _clarification_event = adapter.make_event(combined)
-                if cmeta.get("source") == "metric_date_context" and opts:
+                if cmeta.get("source") in {"metric_date_context", "count_target"} and opts:
                     _clarification_event.raw["_clarification_selected_source"] = (
-                        "metric_date_context"
+                        cmeta.get("source")
                     )
                     _clarification_event.raw["_clarification_selected_option"] = dict(
                         selected
@@ -3301,6 +3304,25 @@ async def ws_chat(websocket: WebSocket, account_id: str):
 
             if action:
                 try:
+                    # Result cards can remain visible after reconnects and
+                    # after newer answers have been produced. Resolve the
+                    # action against the card the user actually clicked.
+                    if requested_result_id:
+                        action_snapshot = result_cache.get_snapshot(
+                            getattr(adapter, "session_id", "") or "",
+                            requested_result_id,
+                        )
+                        if not action_snapshot:
+                            await websocket.send_json({
+                                "type": "assistant_error",
+                                "action": action,
+                                "content": (
+                                    "That result is no longer available for analysis. "
+                                    "Run the question again to create a fresh governed result."
+                                ),
+                            })
+                            continue
+                        adopt_cached_snapshot(adapter, action_snapshot)
                     cached = adapter.last_result
 
                     # Numeric-value check that works for Python int/float AND

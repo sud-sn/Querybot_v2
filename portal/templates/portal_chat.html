@@ -2690,12 +2690,12 @@ function _mountChartControls(wrapEl, chartId, onUpdate) {
   });
 }
 
-function sendAnalysisAction(action, context, label){
+function sendAnalysisAction(action, context, label, resultId){
   if (!wsReady) { toast('Live session is not ready'); return; }
   appendSystem(`Running ${label.toLowerCase()}…`);
   setProcessing(true);
   updateProcessing('analysis', label, 'Using the returned result only — no new query is being run.');
-  ws.send(JSON.stringify({ action, context }));
+  ws.send(JSON.stringify({ action, context, result_id: resultId || '' }));
 }
 // ── Tier-1 table: sortable columns, text filter, numeric footer, "Ask" shortcut ──
 let _dtIdCounter = 0;
@@ -3620,6 +3620,7 @@ function appendAssistantResponse(msg, opts = {}){
         btn.dataset.analysisAction,
         msg.analysis_contract || {},
         btn.dataset.analysisLabel || 'Analysis',
+        trust.result_id || msg.data?.result_id || '',
       );
     });
   });

@@ -557,6 +557,29 @@ def _date_option_identity(binding: dict) -> tuple[str, str]:
     )
 
 
+def _unique_date_bindings(bindings: list[dict]) -> list[dict]:
+    """Collapse duplicate physical roles while keeping the strongest metadata."""
+    chosen: dict[tuple[str, str], dict] = {}
+
+    def strength(item: dict) -> tuple[int, int, int, str]:
+        status = str(item.get("governance_status") or item.get("status") or "").casefold()
+        return (
+            1 if status == "approved" else 0,
+            1 if item.get("is_default") else 0,
+            int(item.get("priority") or 0),
+            str(item.get("context_name") or item.get("date_role") or ""),
+        )
+
+    for binding in bindings or []:
+        identity = _date_option_identity(binding)
+        if not any(identity):
+            continue
+        current = chosen.get(identity)
+        if current is None or strength(binding) > strength(current):
+            chosen[identity] = binding
+    return [chosen[key] for key in sorted(chosen)]
+
+
 def _date_option_labels(bindings: list[dict]) -> dict[tuple[str, str], str]:
     """Give every physical date role one stable, unique business label.
 
@@ -2571,6 +2594,11 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 semantic_plan=_semantic_plan,
                 metric_tables=_metric_formula_tables,
             )
+            # Explicit/metric/count source selection is stronger than rival
+            # facts admitted by broad retrieval. Date roles must remain on the
+            # selected event fact(s), including opaque ERP and M3 tables.
+            if _preferred_facts:
+                _date_fact_scope = set(_preferred_facts)
             _date_roles = list((_contract_model or {}).get("date_roles") or [])
             _explicit_date_roles = find_explicit_date_roles(
                 _semantic_plan_question,
@@ -2793,14 +2821,14 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 _date_context_resolution.get("status") == "ambiguous"
                 and can_request_clarification(event, "metric_date_context")
             ):
-                _all_date_bindings = list(
+                _all_date_bindings = _unique_date_bindings(list(
                     _date_context_resolution.get("all_options")
                     or _date_context_resolution.get("options")
                     or []
-                )
-                _visible_date_bindings = list(
+                ))
+                _visible_date_bindings = _unique_date_bindings(list(
                     _date_context_resolution.get("options") or []
-                )[:4]
+                ))[:4]
                 _stable_date_labels = _date_option_labels(_all_date_bindings)
 
                 def _date_choice_option(item: dict, index: int) -> dict:

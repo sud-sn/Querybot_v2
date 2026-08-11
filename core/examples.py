@@ -455,7 +455,9 @@ def _parse_query_pairs(content: str) -> list[tuple[str, str]]:
         if stripped.upper().startswith("Q:"):
             # Save previous pair if complete
             if q and sql:
-                pairs.append((q, "\n".join(sql).strip()))
+                cleaned = _clean_generated_sql("\n".join(sql))
+                if cleaned:
+                    pairs.append((q, cleaned))
             q     = stripped[2:].strip()
             sql   = []
             in_sql = False
@@ -468,7 +470,9 @@ def _parse_query_pairs(content: str) -> list[tuple[str, str]]:
             # Continuation of multi-line SQL
             if stripped.startswith("Q:"):
                 if q and sql:
-                    pairs.append((q, "\n".join(sql).strip()))
+                    cleaned = _clean_generated_sql("\n".join(sql))
+                    if cleaned:
+                        pairs.append((q, cleaned))
                 q     = stripped[2:].strip()
                 sql   = []
                 in_sql = False
@@ -477,9 +481,46 @@ def _parse_query_pairs(content: str) -> list[tuple[str, str]]:
 
     # Last pair
     if q and sql:
-        pairs.append((q, "\n".join(sql).strip()))
+        cleaned = _clean_generated_sql("\n".join(sql))
+        if cleaned:
+            pairs.append((q, cleaned))
 
     return [(q, s) for q, s in pairs if q and s and len(s) > 10]
+
+
+def _clean_generated_sql(value: str) -> str:
+    """Return only the SQL statement from an LLM-authored Markdown block.
+
+    Stage-2 files are Markdown, and models sometimes emit `````sql`` fences
+    on the line after ``SQL:`` or append a second explanatory fenced block.
+    Those markers are documentation, never SQL.  Strip them before validation
+    so activation measures query quality rather than Markdown formatting.
+    """
+    text = str(value or "").replace("\r\n", "\n").strip()
+    if not text:
+        return ""
+
+    lines: list[str] = []
+    fence_open = False
+    sql_started = False
+    for raw in text.split("\n"):
+        line = raw.strip()
+        if re.match(r"^```(?:sql|tsql|snowflake|oracle)?\s*$", line, re.I):
+            if sql_started:
+                break
+            fence_open = True
+            continue
+        if line.startswith("```"):
+            if sql_started or fence_open:
+                break
+            continue
+        if sql_started and (line.startswith("#") or re.match(r"^(?:Q|QUESTION)\s*:", line, re.I)):
+            break
+        if line:
+            lines.append(line)
+            sql_started = True
+
+    return "\n".join(lines).strip().rstrip(";")
 
 
 def _add_row_cap(sql: str, db_type: str, n: int = 1) -> str:

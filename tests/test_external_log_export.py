@@ -75,6 +75,10 @@ class ExternalLogExportTests(unittest.TestCase):
         self.assertIn("CREATE SCHEMA [LOGS]", ddl)
         self.assertIn("[LOGS].[QUERY_LOG]", ddl)
         self.assertIn("[LOGS].[LLM_CALL_LOG]", ddl)
+        self.assertIn("RESPONSE_HASH", ddl)
+        self.assertIn("RESPONSE_PREVIEW_SANITIZED", ddl)
+        self.assertIn("EGRESS_MANIFEST", ddl)
+        self.assertIn("REQUEST_ID", ddl)
         self.assertTrue(conn.committed)
         self.assertTrue(conn.closed)
 

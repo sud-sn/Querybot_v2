@@ -434,6 +434,10 @@ def _provision_snowflake(cur, schema: str) -> None:
             PROMPT_CHARS NUMBER,
             ERROR_MSG VARCHAR,
             CREATED_AT VARCHAR,
+            RESPONSE_HASH VARCHAR,
+            RESPONSE_PREVIEW_SANITIZED VARCHAR,
+            RESPONSE_CHARS NUMBER,
+            EGRESS_MANIFEST VARCHAR,
             EXPORTED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
         )
     """)
@@ -456,6 +460,7 @@ def _provision_snowflake(cur, schema: str) -> None:
             MASKED_FIELDS VARCHAR,
             MASK_MODE VARCHAR,
             MASK_REPLACEMENT_MAP VARCHAR,
+            REQUEST_ID VARCHAR,
             EXPORTED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
         )
     """)
@@ -466,6 +471,7 @@ def _provision_snowflake(cur, schema: str) -> None:
         ("MASKED_FIELDS",        "VARCHAR"),
         ("MASK_MODE",            "VARCHAR"),
         ("MASK_REPLACEMENT_MAP", "VARCHAR"),
+        ("REQUEST_ID",            "VARCHAR"),
     ):
         try:
             cur.execute(
@@ -480,6 +486,18 @@ def _provision_snowflake(cur, schema: str) -> None:
         )
     except Exception:
         pass
+    for col, typedef in (
+        ("RESPONSE_HASH",              "VARCHAR"),
+        ("RESPONSE_PREVIEW_SANITIZED", "VARCHAR"),
+        ("RESPONSE_CHARS",             "NUMBER"),
+        ("EGRESS_MANIFEST",            "VARCHAR"),
+    ):
+        try:
+            cur.execute(
+                f'ALTER TABLE "{schema}"."{LLM_TABLE}" ADD COLUMN IF NOT EXISTS {col} {typedef}'
+            )
+        except Exception:
+            pass
 
 
 def _provision_azure_sql(cur, schema: str) -> None:
@@ -529,6 +547,10 @@ def _provision_azure_sql(cur, schema: str) -> None:
                 PROMPT_CHARS BIGINT NULL,
                 ERROR_MSG NVARCHAR(MAX) NULL,
                 CREATED_AT NVARCHAR(40) NULL,
+                RESPONSE_HASH NVARCHAR(128) NULL,
+                RESPONSE_PREVIEW_SANITIZED NVARCHAR(MAX) NULL,
+                RESPONSE_CHARS BIGINT NULL,
+                EGRESS_MANIFEST NVARCHAR(MAX) NULL,
                 EXPORTED_AT DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
             )
         END
@@ -554,6 +576,7 @@ def _provision_azure_sql(cur, schema: str) -> None:
                 MASKED_FIELDS NVARCHAR(MAX) NULL,
                 MASK_MODE NVARCHAR(50) NULL,
                 MASK_REPLACEMENT_MAP NVARCHAR(MAX) NULL,
+                REQUEST_ID NVARCHAR(255) NULL,
                 EXPORTED_AT DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
             )
         END
@@ -566,6 +589,7 @@ def _provision_azure_sql(cur, schema: str) -> None:
         ("MASKED_FIELDS",        "NVARCHAR(MAX) NULL"),
         ("MASK_MODE",            "NVARCHAR(50) NULL"),
         ("MASK_REPLACEMENT_MAP", "NVARCHAR(MAX) NULL"),
+        ("REQUEST_ID",            "NVARCHAR(255) NULL"),
     ):
         try:
             cur.execute(f"""
@@ -592,6 +616,24 @@ def _provision_azure_sql(cur, schema: str) -> None:
         """)
     except Exception as _col_exc:
         log.debug("Azure SQL SAMPLE_MODE add skipped: %s", _col_exc)
+    for col, typedef in (
+        ("RESPONSE_HASH",              "NVARCHAR(128) NULL"),
+        ("RESPONSE_PREVIEW_SANITIZED", "NVARCHAR(MAX) NULL"),
+        ("RESPONSE_CHARS",             "BIGINT NULL"),
+        ("EGRESS_MANIFEST",            "NVARCHAR(MAX) NULL"),
+    ):
+        try:
+            cur.execute(f"""
+                IF NOT EXISTS (
+                    SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+                    WHERE TABLE_SCHEMA = N'{schema}'
+                      AND TABLE_NAME   = N'{LLM_TABLE}'
+                      AND COLUMN_NAME  = N'{col}'
+                )
+                ALTER TABLE [{schema}].[{LLM_TABLE}] ADD [{col}] {typedef}
+            """)
+        except Exception as _col_exc:
+            log.debug("Azure SQL LLM add column %s skipped: %s", col, _col_exc)
 
 
 def _provision_oracle(cur, schema: str) -> None:
@@ -629,6 +671,7 @@ def _provision_oracle(cur, schema: str) -> None:
                 MASKED_FIELDS CLOB,
                 MASK_MODE VARCHAR2(50),
                 MASK_REPLACEMENT_MAP CLOB,
+                REQUEST_ID VARCHAR2(255),
                 EXPORTED_AT TIMESTAMP DEFAULT SYSTIMESTAMP
             )
         """)
@@ -640,6 +683,7 @@ def _provision_oracle(cur, schema: str) -> None:
             ("MASKED_FIELDS",        "CLOB"),
             ("MASK_MODE",            "VARCHAR2(50)"),
             ("MASK_REPLACEMENT_MAP", "CLOB"),
+            ("REQUEST_ID",            "VARCHAR2(255)"),
         ):
             try:
                 cur.execute(f'ALTER TABLE "{schema}"."{EGRESS_TABLE}" ADD ("{col}" {typedef})')
@@ -684,9 +728,24 @@ def _provision_oracle(cur, schema: str) -> None:
                 PROMPT_CHARS NUMBER,
                 ERROR_MSG CLOB,
                 CREATED_AT VARCHAR2(40),
+                RESPONSE_HASH VARCHAR2(128),
+                RESPONSE_PREVIEW_SANITIZED CLOB,
+                RESPONSE_CHARS NUMBER,
+                EGRESS_MANIFEST CLOB,
                 EXPORTED_AT TIMESTAMP DEFAULT SYSTIMESTAMP
             )
         """)
+    else:
+        for col, typedef in (
+            ("RESPONSE_HASH",              "VARCHAR2(128)"),
+            ("RESPONSE_PREVIEW_SANITIZED", "CLOB"),
+            ("RESPONSE_CHARS",             "NUMBER"),
+            ("EGRESS_MANIFEST",            "CLOB"),
+        ):
+            try:
+                cur.execute(f'ALTER TABLE "{schema}"."{LLM_TABLE}" ADD ("{col}" {typedef})')
+            except Exception:
+                pass
 
 
 def _oracle_table_exists(cur, schema: str, table: str) -> bool:

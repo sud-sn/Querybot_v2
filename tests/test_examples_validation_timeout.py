@@ -77,6 +77,21 @@ class OpenConnectionTimeoutTests(unittest.TestCase):
 
 
 class CompileOnlyValidationTests(unittest.TestCase):
+    def test_markdown_fences_and_following_explanation_are_not_validated_as_sql(self):
+        pairs = examples._parse_query_pairs(
+            "Q: total revenue\nSQL:\n```sql\nSELECT SUM(amount) FROM sales;\n```\n"
+            "```text\nThis query sums revenue.\n```\n"
+        )
+
+        self.assertEqual(pairs, [("total revenue", "SELECT SUM(amount) FROM sales")])
+
+    def test_inline_sql_without_fence_is_preserved(self):
+        pairs = examples._parse_query_pairs(
+            "Q: total orders\nSQL: SELECT COUNT(*) FROM orders;\n"
+        )
+
+        self.assertEqual(pairs, [("total orders", "SELECT COUNT(*) FROM orders")])
+
     def test_azure_sql_describes_result_without_executing_source_query(self):
         cursor = MagicMock()
         conn = MagicMock()

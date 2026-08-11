@@ -474,6 +474,14 @@ class ResultCache:
             # inherit unless the caller passes it explicitly.
             if "display_formats" not in resolved_metadata and source.metadata.get("display_formats"):
                 resolved_metadata["display_formats"] = dict(source.metadata["display_formats"])
+            # Governed execution metadata contains no credentials or result
+            # values and is required to keep actions on derived snapshots
+            # bound to the same database and semantic contract as their
+            # source. Never inherit arbitrary metadata here.
+            for key in ("db_config_id", "semantic_plan", "contract_version"):
+                if key not in resolved_metadata and source.metadata.get(key) is not None:
+                    value = source.metadata[key]
+                    resolved_metadata[key] = dict(value) if isinstance(value, dict) else value
             child = _CacheEntry(
                 list(rows),
                 question or source.question,

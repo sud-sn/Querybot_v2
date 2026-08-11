@@ -70,6 +70,28 @@ def test_portal_date_reply_uses_full_server_side_choices_and_preserves_binding()
     assert '"_clarification_selected_option"' in response_block
 
 
+def test_portal_count_reply_preserves_hidden_governed_target():
+    response_block = WEBHOOKS.split(
+        'if msg_type == "clarification_response":', 1
+    )[1].split("await handle_query(", 1)[0]
+    assert '{"metric_date_context", "count_target"}' in response_block
+    assert 'cmeta.get("source")' in response_block
+    assert '"_clarification_selected_option"' in response_block
+
+
+def test_result_action_targets_the_clicked_governed_snapshot():
+    assert "function sendAnalysisAction(action, context, label, resultId)" in CHAT
+    assert "result_id: resultId || ''" in CHAT
+    assert "trust.result_id || msg.data?.result_id || ''" in CHAT
+    action_block = WEBHOOKS.split("if action:", 1)[1].split(
+        "if not text:", 1
+    )[0]
+    assert "requested_result_id" in action_block
+    assert "result_cache.get_snapshot(" in action_block
+    assert "adopt_cached_snapshot(adapter, action_snapshot)" in action_block
+    assert "That result is no longer available for analysis" in action_block
+
+
 def test_outbound_messages_expose_delivery_and_manual_recovery_states():
     assert "function _setUserMessageState" in CHAT
     assert "function _retryUserMessage" in CHAT

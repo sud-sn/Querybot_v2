@@ -1,5 +1,6 @@
 import unittest
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 from core.governed_result_followup import adopt_cached_snapshot, run_governed_result_followup
 from core.result_cache import ResultCache
@@ -432,6 +433,82 @@ class UnifiedCacheWiringTests(unittest.TestCase):
         block = source[start:source.index("_fb_sql_raw", start)]
         self.assertNotIn("prev_rows", block)
         self.assertNotIn("original_sql", block)
+
+    def test_web_adapter_snapshot_restores_governed_action_context(self):
+        from core.result_cache import result_cache
+        from gateway.web_adapter import WebAdapter
+
+        source = WebAdapter(
+            AsyncMock(), "tenant", "7", thread_id="action-restore"
+        )
+        semantic_plan = {
+            "enabled": True,
+            "available_dimensions": [{"name": "Warehouse"}],
+        }
+        source.cache_result(
+            [{"REVENUE": 10}],
+            "Revenue",
+            "SELECT governed",
+            db_cfg={"id": 41, "db_type": "azure_sql"},
+            semantic_plan=semantic_plan,
+            contract_version="contract-1",
+        )
+        snapshot = result_cache.get_snapshot(
+            source.session_id, source.last_result_id
+        )
+        restored = WebAdapter(
+            AsyncMock(), "tenant", "7", thread_id="action-restore"
+        )
+        restored.last_result = {
+            "result_id": "newer-card",
+            "db_cfg": {"id": 99, "db_type": "snowflake"},
+            "semantic_plan": {"enabled": False},
+            "rag_context": "context from the wrong card",
+        }
+        try:
+            with patch(
+                "store.get_db_config",
+                return_value={"id": 41, "db_type": "azure_sql"},
+            ):
+                restored.adopt_cached_snapshot(snapshot)
+
+            self.assertEqual(restored.last_result_id, source.last_result_id)
+            self.assertEqual(restored.last_result["semantic_plan"], semantic_plan)
+            self.assertEqual(restored.last_result["db_cfg"]["id"], 41)
+            self.assertEqual(restored.last_result["rag_context"], "")
+            self.assertEqual(
+                restored.last_result["contract_version"], "contract-1"
+            )
+        finally:
+            result_cache.clear(source.session_id)
+
+    def test_derived_snapshot_inherits_only_safe_execution_metadata(self):
+        cache = ResultCache(max_sessions=2)
+        source_id = cache.store(
+            "session",
+            [{"REVENUE": 10}],
+            "Revenue",
+            "SELECT governed",
+            metadata={
+                "db_config_id": 7,
+                "semantic_plan": {"enabled": True},
+                "contract_version": "v1",
+                "unsafe_extra": "do not inherit",
+            },
+        )
+
+        derived = cache.derive_snapshot(
+            "session",
+            source_id,
+            [{"REVENUE": 10}],
+            question="Revenue formatted",
+            operation="format",
+        )
+
+        self.assertEqual(derived["metadata"]["db_config_id"], 7)
+        self.assertEqual(derived["metadata"]["semantic_plan"], {"enabled": True})
+        self.assertEqual(derived["metadata"]["contract_version"], "v1")
+        self.assertNotIn("unsafe_extra", derived["metadata"])
 
 
 if __name__ == "__main__":
