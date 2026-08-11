@@ -16,7 +16,9 @@ from typing import Any, Iterable
 
 _TIME_RE = re.compile(
     r"\b(today|today'?s|yesterday|this\s+(?:week|month|quarter|year)|"
-    r"last\s+(?:week|month|quarter|year)|year\s+to\s+date|ytd|mtd|qtd|"
+    r"last\s+(?:(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+)?"
+    r"(?:observed\s+(?:business\s+)?)?"
+    r"(?:days?|weeks?|months?|quarters?|years?)|year\s+to\s+date|ytd|mtd|qtd|"
     r"q[1-4](?:\s+(?:19|20)\d{2})?|"
     r"(?:first|second|third|fourth)\s+quarter(?:\s+(?:19|20)\d{2})?|"
     r"quarter\s+[1-4](?:\s+(?:19|20)\d{2})?|"
@@ -97,6 +99,38 @@ _BUSINESS_CONCEPT_RE = re.compile(
     r"slow[- ]moving|overdue|attrition)\b",
     re.I,
 )
+_BUSINESS_EVENT_RE = re.compile(
+    r"\b(orders?|invoices?|shipments?|returns?|transactions?|payments?|"
+    r"purchases?|receipts?|deliveries?|claims?|prescriptions?|tickets?)\b",
+    re.I,
+)
+_EVENT_COUNT_CUE_RE = re.compile(
+    r"\b(?:how\s+many|number\s+of|count(?:\s+of)?|total(?:\s+number\s+of)?)\b|"
+    r"\b(?:fewer|more|reduced|decreased|declined|increased|grew|grown|growth\s+in)\s+"
+    r"(?:orders?|invoices?|shipments?|returns?|transactions?|payments?|purchases?|"
+    r"receipts?|deliveries?|claims?|prescriptions?|tickets?)\b|"
+    r"\b(?:by|based\s+on)\s+(?:orders?|invoices?|shipments?|returns?|transactions?|"
+    r"payments?|purchases?|receipts?|deliveries?|claims?|prescriptions?|tickets?)\b",
+    re.I,
+)
+_EVENT_VALUE_CUE_RE = re.compile(
+    r"\b(?:value|amount|revenue|sales|quantity|units?|cost|margin|discount|price|"
+    r"duration|days?)\b",
+    re.I,
+)
+_ENTITY_GRAIN_RE = re.compile(
+    r"\b(?:by|per|for\s+each)\s+(?:each\s+)?"
+    r"(customers?|people|persons?|employees?|suppliers?|items?|products?|"
+    r"warehouses?|orders?|invoices?)\b",
+    re.I,
+)
+_VAGUE_RECENT_EVENT_CHANGE_RE = re.compile(
+    r"\b(?:recently|recent)\b.*\b(?:orders?|invoices?|shipments?|returns?|transactions?|"
+    r"payments?|purchases?|receipts?|deliveries?|claims?|prescriptions?|tickets?)\b|"
+    r"\b(?:orders?|invoices?|shipments?|returns?|transactions?|payments?|purchases?|"
+    r"receipts?|deliveries?|claims?|prescriptions?|tickets?)\b.*\b(?:recently|recent)\b",
+    re.I,
+)
 _OUTPUT_RE = re.compile(
     r"\b(pie\s+chart|bar\s+chart|line\s+chart|area\s+chart|chart|graph|"
     r"table|kpi|dashboard)\b",
@@ -146,6 +180,8 @@ class AnalyticalPlan:
     calendar_basis_source: str = ""
     comparison: str = ""
     entity_grain: str = ""
+    measure_semantics: str = ""
+    counted_entity: str = ""
     output: str = "auto"
     top_n: int | None = None
     assumptions: tuple[str, ...] = ()
@@ -172,6 +208,8 @@ class AnalyticalPlan:
             "calendar_basis_source": self.calendar_basis_source,
             "comparison": self.comparison,
             "entity_grain": self.entity_grain,
+            "measure_semantics": self.measure_semantics,
+            "counted_entity": self.counted_entity,
             "output": self.output,
             "top_n": self.top_n,
             "assumptions": list(self.assumptions),
@@ -249,6 +287,72 @@ def _subject_options(metrics: Iterable[dict[str, Any]]) -> tuple[dict[str, str],
         {"id": f"subject-{index}", "label": label, "value": label}
         for index, label in enumerate(labels, start=1)
     )
+
+
+def _normalised_terms(text: str) -> set[str]:
+    """Small lexical set for relevance filtering; never resolves schema names."""
+    stop = {
+        "and", "are", "best", "bottom", "by", "each", "for", "from", "highest",
+        "in", "last", "lowest", "me", "month", "months", "of", "per", "rank",
+        "show", "the", "this", "top", "total", "what", "which", "year", "years",
+    }
+    terms: set[str] = set()
+    for token in re.findall(r"[a-z0-9]+", str(text or "").casefold()):
+        if len(token) < 2 or token in stop or token.isdigit():
+            continue
+        if token.endswith("ies") and len(token) > 4:
+            token = token[:-3] + "y"
+        elif token.endswith("s") and len(token) > 3:
+            token = token[:-1]
+        terms.add(token)
+    return terms
+
+
+def _relevant_metric_options(
+    question: str,
+    metrics: Iterable[dict[str, Any]],
+) -> tuple[dict[str, str], ...]:
+    """Offer only metrics with evidence in the user's words.
+
+    The old fallback returned the first four account metrics. That made a
+    request for order count offer unrelated measures such as COGS or allocated
+    cost. Empty options are intentional: free text is safer than a fabricated
+    shortlist when the catalog has no compatible measure.
+    """
+    question_terms = _normalised_terms(question)
+    ranked: list[tuple[int, str]] = []
+    for metric in metrics or ():
+        label = str(metric.get("name") or "").strip()
+        if not label:
+            continue
+        phrases = " ".join(_catalog_phrases(metric))
+        overlap = question_terms & _normalised_terms(phrases)
+        if overlap:
+            ranked.append((len(overlap), label))
+    ranked.sort(key=lambda item: (-item[0], item[1].casefold()))
+    labels = list(dict.fromkeys(label for _, label in ranked))[:4]
+    return tuple(
+        {"id": f"metric-{index}", "label": label, "value": label}
+        for index, label in enumerate(labels, start=1)
+    )
+
+
+def detect_business_event_count(question: str) -> str:
+    """Return the requested countable event, or ``""`` when it asks for value.
+
+    This is schema-independent language interpretation. The physical business
+    identifier is resolved later from governed semantic metadata; this helper
+    never guesses a column or table.
+    """
+    text = str(question or "")
+    match = _BUSINESS_EVENT_RE.search(text)
+    if not match or _EVENT_VALUE_CUE_RE.search(text):
+        return ""
+    if not _EVENT_COUNT_CUE_RE.search(text):
+        return ""
+    raw = match.group(1).casefold()
+    irregular = {"deliveries": "delivery", "purchases": "purchase"}
+    return irregular.get(raw, raw[:-1] if raw.endswith("s") else raw)
 
 
 def _latest_clarification(question: str) -> str:
@@ -358,6 +462,9 @@ def plan_analytical_intent(
     metric_matches = _matched_catalog_names(text, metrics)
     concept_match = _BUSINESS_CONCEPT_RE.search(text)
     business_concepts = [concept_match.group(1).lower()] if concept_match else []
+    counted_entity = detect_business_event_count(text)
+    if counted_entity:
+        business_concepts.append(f"{counted_entity} count")
     known_concepts = _matched_catalog_names(text, terms) if concept_match else []
     for concept in known_concepts:
         if concept not in business_concepts:
@@ -397,14 +504,19 @@ def plan_analytical_intent(
     output = output_match.group(1).lower() if output_match else "auto"
     top_match = _TOP_N_RE.search(text)
     top_n = int(top_match.group(1)) if top_match else None
+    grain_match = _ENTITY_GRAIN_RE.search(text)
     entity_match = re.search(
         r"\b(customers?|people|persons?|employees?|suppliers?|items?|products?|"
         r"warehouses?|orders?|invoices?)\b",
         text,
         re.I,
     )
-    entity_grain = entity_match.group(1).lower() if entity_match else (dimensions[0] if dimensions else "")
-    if intent == "ranking" and entity_grain and not dimensions:
+    entity_grain = (
+        grain_match.group(1).lower()
+        if grain_match
+        else (entity_match.group(1).lower() if entity_match else (dimensions[0] if dimensions else ""))
+    )
+    if intent == "ranking" and entity_grain and (not dimensions or grain_match):
         dimensions = (entity_grain,)
     comparison = "period_or_segment_comparison" if _COMPARISON_RE.search(text) else ""
     assumptions: list[str] = []
@@ -459,12 +571,12 @@ def plan_analytical_intent(
         clarification = ClarificationRequest(
             slot="metric",
             question="What measure should I use to rank them?",
-            options=_subject_options(metrics),
+            options=_relevant_metric_options(text, metrics),
             reason="A ranking requires a governed measure.",
         )
 
     if business_concepts:
-        is_defined = bool(known_concepts or metric_matches)
+        is_defined = bool(known_concepts or metric_matches or counted_entity)
         if not is_defined and not clarified and clarification is None:
             unresolved.append("business_definition")
             clarification = ClarificationRequest(
@@ -475,6 +587,38 @@ def plan_analytical_intent(
                 ),
                 reason="This analytical concept has no matching governed definition.",
             )
+
+    if (
+        counted_entity
+        and _VAGUE_RECENT_EVENT_CHANGE_RE.search(text)
+        and not clarified
+        and clarification is None
+    ):
+        unresolved.append("recent_window")
+        clarification = ClarificationRequest(
+            slot="recent_window",
+            question=(
+                "What comparison window should I use for 'recently'?"
+            ),
+            options=(
+                {
+                    "id": "recent-7-days",
+                    "label": "Last 7 vs previous 7 days",
+                    "value": "Compare the last 7 observed business days with the previous 7 observed business days.",
+                },
+                {
+                    "id": "recent-30-days",
+                    "label": "Last 30 vs previous 30 days",
+                    "value": "Compare the last 30 observed business days with the previous 30 observed business days.",
+                },
+                {
+                    "id": "recent-90-days",
+                    "label": "Last 90 vs previous 90 days",
+                    "value": "Compare the last 90 observed business days with the previous 90 observed business days.",
+                },
+            ),
+            reason="A decrease requires both a recent period and a comparable baseline.",
+        )
 
     # A bare Q1/Q2/Q3/Q4 is not universally a calendar quarter. Do not make
     # that business decision in SQL generation. Configured or thread-level
@@ -536,6 +680,8 @@ def plan_analytical_intent(
         calendar_basis_source=calendar_basis_source,
         comparison=comparison,
         entity_grain=entity_grain,
+        measure_semantics="count_distinct_business_identifier" if counted_entity else "",
+        counted_entity=counted_entity,
         output=output,
         top_n=top_n,
         assumptions=tuple(assumptions),

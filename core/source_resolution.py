@@ -24,6 +24,12 @@ _GRAIN_WORDS = {
     "quarterly": "quarter", "quarter": "quarter", "yearly": "year",
     "annual": "year", "year": "year",
 }
+_ATOMIC_ALIAS_STOP_WORDS = _GENERIC_TABLE_WORDS | {
+    "annual", "balance", "daily", "day", "detail", "details", "dimension",
+    "event", "fct", "header", "hist", "historical", "line", "lines", "month",
+    "monthly", "period", "quarter", "quarterly", "snapshot", "summary", "year",
+    "yearly", "one", "row", "rows", "per",
+}
 
 
 def _norm(value: str) -> str:
@@ -90,7 +96,22 @@ def _table_aliases(table: dict[str, Any], vocab=None) -> set[str]:
     if isinstance(entry, dict):
         aliases.add(_norm(entry.get("label") or ""))
         aliases.update(_norm(v) for v in (entry.get("synonyms") or []) if v)
-    return {a for a in aliases if a and a not in _GENERIC_TABLE_WORDS}
+    aliases = {a for a in aliases if a and a not in _GENERIC_TABLE_WORDS}
+    # Tenant models often describe an event fact as "customer sales order" or
+    # expose an ERP name such as CUS_ORD_IVC_FCT, while users simply say
+    # "orders". Add meaningful atomic nouns from the tenant's own metadata.
+    # Alias frequency below prevents a shared noun from silently selecting one
+    # of several facts; shared matches become clarification candidates.
+    atomic: set[str] = set()
+    for alias in aliases:
+        for token in alias.split():
+            if len(token) >= 3 and token not in _ATOMIC_ALIAS_STOP_WORDS and not token.isdigit():
+                atomic.add(token)
+                if token.endswith("y") and len(token) > 3:
+                    atomic.add(token[:-1] + "ies")
+                elif not token.endswith("s"):
+                    atomic.add(token + "s")
+    return aliases | atomic
 
 
 def _requested_grain(question: str) -> str:
@@ -216,8 +237,20 @@ def resolve_source_scope(
             best = matches[0]
             meaningful = [w for w in best.split() if w not in _GENERIC_TABLE_WORDS]
             if meaningful:
-                score += 4 + min(6, len(meaningful) * 2)
-                evidence.append(f"source:{best}")
+                score += 5 + min(6, len(meaningful) * 2)
+                evidence_kind = "source" if len(meaningful) > 1 else "subject"
+                evidence.append(f"{evidence_kind}:{best}")
+        shared_matches = sorted(
+            (
+                a for a in table_aliases.get(_table_identity(table), set())
+                if alias_counts.get(a, 0) > 1 and _contains_phrase(question, a)
+            ),
+            key=len,
+            reverse=True,
+        )
+        if shared_matches:
+            score += 3
+            evidence.append(f"shared_source:{shared_matches[0]}")
 
         metric_bound = any(
             _same_table(_table_identity(table), source)

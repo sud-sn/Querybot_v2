@@ -1,6 +1,9 @@
 import unittest
 
-from core.analytical_request_plan import compile_analytical_request_plan
+from core.analytical_request_plan import (
+    compile_analytical_request_plan,
+    format_analytical_request_plan,
+)
 from core.contextual_dates import build_contextual_date_plan, detect_temporal_window
 from core.semantic_planner import build_semantic_field_plan, format_semantic_field_plan
 from core.source_resolution import resolve_source_scope, source_clarification_options
@@ -57,6 +60,42 @@ def _model(schema="ACME_OPS", m3_name="M3_MITBAL"):
 
 
 class DynamicSourceResolutionTests(unittest.TestCase):
+    def test_unique_business_event_noun_selects_fact_from_tenant_metadata(self):
+        model = {"tables": [
+            {
+                "qualified_name": "TENANT_X.F_CUSTOMER_ORDER",
+                "schema": "TENANT_X", "type": "fact",
+                "entity": "customer sales order",
+                "grain": "one row per order line", "fields": [],
+            },
+            {
+                "qualified_name": "TENANT_X.F_STOCK_DAY",
+                "schema": "TENANT_X", "type": "fact",
+                "entity": "inventory snapshot",
+                "grain": "one row per item warehouse day", "fields": [],
+            },
+        ]}
+        result = resolve_source_scope("which customers reduced orders", model)
+        self.assertEqual(result["status"], "selected")
+        self.assertEqual(result["selected_fact"], "TENANT_X.F_CUSTOMER_ORDER")
+
+    def test_shared_business_event_noun_stays_ambiguous(self):
+        model = {"tables": [
+            {
+                "qualified_name": "TENANT_Y.F_SALES_ORDER",
+                "schema": "TENANT_Y", "type": "fact",
+                "entity": "sales order", "grain": "one row per sales order", "fields": [],
+            },
+            {
+                "qualified_name": "TENANT_Y.F_PURCHASE_ORDER",
+                "schema": "TENANT_Y", "type": "fact",
+                "entity": "purchase order", "grain": "one row per purchase order", "fields": [],
+            },
+        ]}
+        result = resolve_source_scope("show total orders", model)
+        self.assertEqual(result["status"], "ambiguous")
+        self.assertEqual(len(result["candidates"]), 2)
+
     def test_requested_grain_selects_daily_fact_without_dataset_names(self):
         result = resolve_source_scope(
             "show daily inventory by warehouse", _model(schema="CLIENT_X")
@@ -109,6 +148,75 @@ class DynamicSourceResolutionTests(unittest.TestCase):
 
 
 class ExecutableRequestPlanTests(unittest.TestCase):
+    def test_business_event_count_is_executable_and_validator_enforced(self):
+        semantic = {
+            "enabled": True,
+            "source_scope": {"selected_fact": "OPS.F_ORDERS"},
+            "fields": [{
+                "term": "customer", "table": "OPS.D_CUSTOMER",
+                "column": "CUSTOMER_NAME", "role": "dimension",
+            }],
+            "count_target": {
+                "status": "selected",
+                "reason": "governed identifier evidence",
+                "selected": {
+                    "table": "OPS.F_ORDERS", "column": "ORDER_NUMBER",
+                    "business_name": "Order Number",
+                    "business_meaning": "one number per order",
+                    "confidence": 96,
+                },
+            },
+        }
+        plan = compile_analytical_request_plan(
+            "top customers by total orders",
+            semantic,
+            analytical_intent_plan={
+                "measure_semantics": "count_distinct_business_identifier",
+                "counted_entity": "order",
+            },
+        )
+
+        self.assertEqual(plan["derived_measure"]["aggregation"], "count_distinct")
+        self.assertEqual(plan["derived_measure"]["target_column"], "ORDER_NUMBER")
+        prompt = format_analytical_request_plan(plan)
+        self.assertIn("COUNT(DISTINCT", prompt)
+        self.assertIn("OPS.F_ORDERS.ORDER_NUMBER", prompt)
+        self.assertIn("unrelated registered metric", prompt)
+
+        columns = {
+            "OPS.F_ORDERS": {"ORDER_NUMBER": "varchar", "CUSTOMER_SK": "int", "REVENUE": "decimal"},
+            "OPS.D_CUSTOMER": {"CUSTOMER_SK": "int", "CUSTOMER_NAME": "varchar"},
+        }
+        context = {"analytical_request_plan": plan}
+        bad = validate_sql_detailed(
+            "SELECT c.CUSTOMER_NAME, SUM(o.REVENUE) AS VALUE "
+            "FROM OPS.F_ORDERS o JOIN OPS.D_CUSTOMER c ON o.CUSTOMER_SK=c.CUSTOMER_SK "
+            "GROUP BY c.CUSTOMER_NAME",
+            set(columns), "mssql", None, columns, context,
+        )
+        self.assertFalse(bad.ok)
+        self.assertEqual(bad.code, "derived_measure_mismatch")
+
+        wrong_distinct = validate_sql_detailed(
+            "SELECT c.CUSTOMER_NAME, COUNT(DISTINCT o.CUSTOMER_SK) AS ORDER_COUNT "
+            "FROM OPS.F_ORDERS o JOIN OPS.D_CUSTOMER c ON o.CUSTOMER_SK=c.CUSTOMER_SK "
+            "GROUP BY c.CUSTOMER_NAME",
+            set(columns), "mssql", None, columns, context,
+        )
+        self.assertFalse(wrong_distinct.ok)
+        self.assertEqual(wrong_distinct.code, "derived_measure_mismatch")
+        self.assertEqual(
+            wrong_distinct.errors[0]["observed_count_targets"], ["O.CUSTOMER_SK"]
+        )
+
+        good = validate_sql_detailed(
+            "SELECT c.CUSTOMER_NAME, COUNT(DISTINCT o.ORDER_NUMBER) AS ORDER_COUNT "
+            "FROM OPS.F_ORDERS o JOIN OPS.D_CUSTOMER c ON o.CUSTOMER_SK=c.CUSTOMER_SK "
+            "GROUP BY c.CUSTOMER_NAME",
+            set(columns), "mssql", None, columns, context,
+        )
+        self.assertTrue(good.ok, good.reason)
+
     def test_compiler_preserves_single_fact_and_output_shape(self):
         semantic = {
             "enabled": True,

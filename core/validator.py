@@ -1918,6 +1918,80 @@ def _source_scope_errors(tree, semantic_context: dict | None) -> list[dict]:
     }]
 
 
+def _derived_measure_errors(
+    tree,
+    semantic_context: dict | None,
+    alias_to_table: dict[str, str] | None = None,
+    table_columns: dict[str, dict[str, str]] | None = None,
+) -> list[dict]:
+    """Enforce deterministic measures compiled from ordinary business language."""
+    request_plan = (semantic_context or {}).get("analytical_request_plan") or {}
+    derived = request_plan.get("derived_measure") or {}
+    if derived.get("semantics") != "count_distinct_business_identifier":
+        return []
+
+    alias_to_table = alias_to_table or {}
+    table_columns = table_columns or {}
+    target_table = str(derived.get("target_table") or "").strip()
+    target_column = str(derived.get("target_column") or "").strip().upper()
+    valid_count = False
+    observed_targets: list[str] = []
+    for aggregate in tree.find_all(sg_exp.Count):
+        expression = aggregate.this
+        is_distinct = isinstance(expression, sg_exp.Distinct) or bool(aggregate.args.get("distinct"))
+        if not is_distinct:
+            continue
+        if not target_table or not target_column:
+            valid_count = True
+            break
+        for column in aggregate.find_all(sg_exp.Column):
+            column_name = str(column.name or "").upper()
+            table_ref = str(column.table or "").upper()
+            if column_name:
+                observed_targets.append(
+                    f"{table_ref + '.' if table_ref else ''}{column_name}"
+                )
+            if column_name != target_column:
+                continue
+            if table_ref:
+                physical_table = alias_to_table.get(table_ref, table_ref)
+                if _table_matches(physical_table, target_table):
+                    valid_count = True
+                    break
+                continue
+            owning_tables = [
+                table for table, columns in table_columns.items()
+                if target_column in {str(name).upper() for name in (columns or {})}
+            ]
+            if len(owning_tables) == 1 and _table_matches(owning_tables[0], target_table):
+                valid_count = True
+                break
+        if valid_count:
+            break
+    if valid_count:
+        return []
+
+    entity = str(derived.get("business_entity") or "business event")
+    exact_requirement = (
+        f"{target_table}.{target_column}"
+        if target_table and target_column
+        else f"the governed stable {entity} business identifier"
+    )
+    return [{
+        "code": "derived_measure_mismatch",
+        "message": (
+            f"The compiled request requires COUNT(DISTINCT {exact_requirement}), "
+            "but the SQL does not use that exact governed count target. "
+            "Do not substitute revenue, amount, quantity, row count, or another metric."
+        ),
+        "required_semantics": "count_distinct_business_identifier",
+        "business_entity": entity,
+        "target_table": target_table,
+        "target_column": target_column,
+        "observed_count_targets": observed_targets,
+    }]
+
+
 def _observed_period_errors(tree, sql: str, policies: list[dict]) -> list[dict]:
     """Enforce exact latest-N *observed* periods from the selected fact.
 
@@ -2442,6 +2516,20 @@ def validate_sql_detailed(
             source_scope_errors[0]["message"],
             "source_fact_mismatch",
             source_scope_errors,
+        )
+
+    derived_measure_errors = _derived_measure_errors(
+        tree,
+        semantic_context,
+        alias_to_table,
+        table_columns,
+    )
+    if derived_measure_errors:
+        return SqlValidationResult(
+            False,
+            derived_measure_errors[0]["message"],
+            "derived_measure_mismatch",
+            derived_measure_errors,
         )
 
     field_plan = (semantic_context or {}).get("semantic_plan") or {}

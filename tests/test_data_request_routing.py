@@ -20,6 +20,15 @@ class DataRequestRoutingTests(unittest.TestCase):
     def test_obvious_general_request_is_not_data_shaped(self):
         self.assertFalse(dispatcher._looks_like_data_request("Tell me a joke about summer."))
 
+    def test_order_change_and_order_count_questions_are_data_requests(self):
+        questions = (
+            "which customers have reduced orders recently",
+            "what is the total orders placed by each customer show top 10 in the last 2 months",
+        )
+        for question in questions:
+            with self.subTest(question=question):
+                self.assertTrue(dispatcher._looks_like_data_request(question))
+
     def test_data_shaped_request_bypasses_llm_classifier(self):
         # _generate_analyst_reply replaces _classify_is_data_question.
         # A data-shaped request must return None (fall through to pipeline)
@@ -76,6 +85,32 @@ class DataRequestRoutingTests(unittest.TestCase):
                 )
             )
         self.assertIsNone(result)
+
+    def test_query_offer_and_confirmation_are_recognized_deterministically(self):
+        reply = (
+            "I can compare recent order volumes with history. "
+            "If you'd like to proceed with retrieving this data, let me know."
+        )
+        self.assertTrue(dispatcher._analyst_reply_offers_query(reply))
+        for text in ("yes", "yes proceed with the retrieving", "go ahead", "run it"):
+            self.assertTrue(dispatcher._is_query_confirmation(text), text)
+        self.assertFalse(dispatcher._is_query_confirmation("use invoice date instead"))
+
+    def test_analyst_offer_resume_uses_the_original_question(self):
+        source = (dispatcher.__file__ and open(dispatcher.__file__, encoding="utf-8").read())
+        start = source.index('cmeta.get("source") == "analyst_query_offer"')
+        block = source[start:start + 2600]
+        self.assertIn('pending["original_q"]', block)
+        self.assertIn("is_clarification=True", block)
+        self.assertLess(block.index('pending["original_q"]'), block.index("is_clarification=True"))
+
+    def test_count_target_choice_is_attached_to_replanned_event(self):
+        source = open(dispatcher.__file__, encoding="utf-8").read()
+        self.assertIn(
+            'cmeta.get("source") in {"metric_date_context", "count_target"}',
+            source,
+        )
+        self.assertIn('raw["_clarification_selected_option"] = dict(match)', source)
 
 
 class VerifiedValueGraphTests(unittest.TestCase):

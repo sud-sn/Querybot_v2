@@ -63,6 +63,82 @@ def test_complete_trend_plan_preserves_grain_and_time():
     assert "ANALYTICAL INTENT PLAN" in plan.prompt_context()
 
 
+def test_top_customers_by_total_orders_compiles_event_count_without_irrelevant_metrics():
+    metrics = [
+        {"name": "Allocated Costs", "category": "Finance"},
+        {"name": "Avg Days To Pay", "category": "Finance"},
+        {"name": "COGS", "category": "Finance"},
+        {"name": "Customer Discount Amount", "category": "Finance"},
+    ]
+    plan = plan_analytical_intent(
+        "what is the total orders placed by each customer show top 10 in the last 2 months",
+        metrics=metrics,
+    )
+
+    assert plan.intent == "ranking"
+    assert plan.measure_semantics == "count_distinct_business_identifier"
+    assert plan.counted_entity == "order"
+    assert plan.business_concepts == ("order count",)
+    assert plan.entity_grain == "customer"
+    assert plan.dimensions == ("customer",)
+    assert plan.time_range == "last 2 months"
+    assert plan.top_n == 10
+    assert not plan.needs_clarification
+    assert "Allocated Costs" not in plan.prompt_context()
+
+
+def test_unknown_ranking_never_backfills_unrelated_metric_options():
+    plan = plan_analytical_intent(
+        "which warehouses have the highest trading margin",
+        metrics=[
+            {"name": "Allocated Costs"},
+            {"name": "Avg Days To Pay"},
+            {"name": "COGS"},
+            {"name": "Customer Discount Amount"},
+        ],
+    )
+
+    assert plan.needs_clarification
+    assert plan.clarification.slot == "metric"
+    assert plan.clarification.options == ()
+
+
+def test_order_value_is_not_reinterpreted_as_order_count():
+    plan = plan_analytical_intent(
+        "show top customers by total order value",
+        metrics=[{"name": "Order Value", "synonyms": "order amount"}],
+    )
+
+    assert plan.metrics == ("Order Value",)
+    assert plan.counted_entity == ""
+    assert plan.measure_semantics == ""
+
+
+def test_vague_recent_order_change_asks_for_comparable_windows():
+    plan = plan_analytical_intent("which customers have reduced orders recently")
+
+    assert plan.measure_semantics == "count_distinct_business_identifier"
+    assert plan.counted_entity == "order"
+    assert plan.needs_clarification
+    assert plan.clarification.slot == "recent_window"
+    assert [option["label"] for option in plan.clarification.options] == [
+        "Last 7 vs previous 7 days",
+        "Last 30 vs previous 30 days",
+        "Last 90 vs previous 90 days",
+    ]
+
+
+def test_resolved_recent_order_change_does_not_repeat_clarification():
+    plan = plan_analytical_intent(
+        "which customers have reduced orders recently\n"
+        "Clarification for the same request: Compare the last 30 observed business "
+        "days with the previous 30 observed business days."
+    )
+
+    assert plan.time_range == "last 30 observed business days"
+    assert not plan.needs_clarification
+
+
 def test_unknown_churn_requires_a_business_definition():
     plan = plan_analytical_intent("find the persons who have churned", metrics=METRICS)
 

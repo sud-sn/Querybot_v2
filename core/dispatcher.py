@@ -151,7 +151,10 @@ _DATA_REQUEST_ACTION_RE = re.compile(
 _DATA_REQUEST_SHAPE_RE = re.compile(
     r"\b(?:all|top|bottom|total|count|number|average|trend|records?|rows?|"
     r"fields?|columns?|include|with|where|whose|who\s+have|by|per|for\s+each|each|"
-    r"revenue|sales|profit|amount|data|info|value"
+    r"revenue|sales|profit|amount|data|info|value|"
+    r"customers?|orders?|invoices?|shipments?|returns?|transactions?|payments?|"
+    r"purchases?|receipts?|deliveries?|claims?|prescriptions?|tickets?|"
+    r"reduced|decreased|declined|increased|fewer|more|recently"
     # Absence phrasing describes a record set as precisely as "all" or "top":
     # "which orders have not been shipped" asks for the rows where a related
     # event is missing. Live case 15 matched the action half on "which" and
@@ -162,6 +165,27 @@ _DATA_REQUEST_SHAPE_RE = re.compile(
     r"|not\s+been|'t\s+been|not\s+yet|without|missing|never)\b",
     re.IGNORECASE,
 )
+
+_QUERY_CONFIRM_RE = re.compile(
+    r"^\s*(?:go\s+ahead|proceed|continue|run\s+it|do\s+it|sure|ok(?:ay)?|"
+    r"yes(?:\s+please)?(?:\s+proceed(?:\s+with\s+(?:the\s+)?retriev(?:al|ing))?)?)"
+    r"\s*[.!]?\s*$",
+    re.IGNORECASE,
+)
+_ANALYST_QUERY_OFFER_RE = re.compile(
+    r"(?:let\s+me\s+know|if\s+you(?:'d|\s+would)\s+like).{0,100}"
+    r"(?:proceed|retriev|fetch|run\s+(?:the\s+)?(?:query|analysis)|get\s+(?:the\s+)?data)",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _analyst_reply_offers_query(reply: str) -> bool:
+    """Detect a conversational promise that requires durable confirmation."""
+    return bool(_ANALYST_QUERY_OFFER_RE.search(str(reply or "")))
+
+
+def _is_query_confirmation(text: str) -> bool:
+    return bool(_QUERY_CONFIRM_RE.match(str(text or "")))
 
 
 def _looks_like_data_request(text: str) -> bool:
@@ -467,6 +491,36 @@ async def _run_query_with_guard_locked(
     if not bypass_analyst_gate(_decision):
         _analyst_reply = await _generate_analyst_reply(text, account_id, client_row)
         if _analyst_reply is not None:
+            if _analyst_reply_offers_query(_analyst_reply) and event.user_id:
+                # Persist the offered request before rendering it. A later
+                # "yes, proceed" must replay this exact question rather than
+                # entering the SQL pipeline as an unrelated two-word query.
+                _offer_options = [{
+                    "id": "proceed",
+                    "label": "Proceed",
+                    "value": "Proceed",
+                    "resolved_question": text,
+                }]
+                save_pending(
+                    account_id,
+                    event.user_id,
+                    text,
+                    clarification_meta={
+                        "source": "analyst_query_offer",
+                        "question": _analyst_reply,
+                        "options": _offer_options,
+                    },
+                    session_id=clarification_session_id(adapter, event),
+                )
+                send_prompt = getattr(adapter, "send_clarification_prompt", None)
+                if callable(send_prompt):
+                    await send_prompt(event, _analyst_reply, _offer_options)
+                else:
+                    await adapter.send_message(
+                        event,
+                        f"{_analyst_reply}\n\nReply **Proceed** to run this analysis.",
+                    )
+                return
             await adapter.send_message(event, _analyst_reply)
             return
 
@@ -1309,6 +1363,46 @@ async def dispatch(
                 opts = cmeta.get("options") or []
                 selected_text = text
                 matched_option_id: str | None = None
+                if cmeta.get("source") == "analyst_query_offer":
+                    if _is_query_confirmation(text):
+                        attach_clarification_resolution(event, pending)
+                        clear_pending(
+                            account_id, event.user_id,
+                            session_id=_pending_session_id,
+                        )
+                        log.info(
+                            "Analyst query offer confirmed; resuming original request %r",
+                            pending["original_q"][:100],
+                        )
+                        _enqueue_query(
+                            bg, account_id, event, adapter,
+                            pending["original_q"], portal_user, client_row,
+                            is_clarification=True,
+                        )
+                        return
+                    if _looks_like_new_query(text, pending["original_q"]):
+                        clear_pending(
+                            account_id, event.user_id,
+                            session_id=_pending_session_id,
+                        )
+                        _enqueue_query(
+                            bg, account_id, event, adapter, text,
+                            portal_user, client_row,
+                        )
+                        return
+                    send_prompt = getattr(adapter, "send_clarification_prompt", None)
+                    if callable(send_prompt):
+                        await send_prompt(
+                            event,
+                            cmeta.get("question") or "Would you like me to run this analysis?",
+                            opts,
+                        )
+                    else:
+                        await adapter.send_message(
+                            event,
+                            "Reply **Proceed** to run the analysis, or ask a new question.",
+                        )
+                    return
                 if cmeta.get("source") == "governed_result_cache" and opts:
                     match = resolve_option_text(opts, text)
                     if not match:
@@ -1411,12 +1505,12 @@ async def dispatch(
                         return
                     selected_text = str(match.get("value") or match.get("label") or text).strip()
                     matched_option_id = str(match.get("id") or "") or None
-                    if cmeta.get("source") == "metric_date_context":
+                    if cmeta.get("source") in {"metric_date_context", "count_target"}:
                         raw = getattr(event, "raw", None)
                         if not isinstance(raw, dict):
                             raw = {}
                             event.raw = raw
-                        raw["_clarification_selected_source"] = "metric_date_context"
+                        raw["_clarification_selected_source"] = cmeta.get("source")
                         raw["_clarification_selected_option"] = dict(match)
                 else:
                     # Continue the original request with the user's free-text

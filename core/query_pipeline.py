@@ -44,6 +44,10 @@ from core.query_router import should_route_to_result_cache, should_attempt_cache
 from core.governed_result_followup import adopt_cached_snapshot, run_governed_result_followup
 from core.semantic_planner import build_semantic_field_plan
 from core.source_resolution import resolve_source_scope, source_clarification_options
+from core.count_target_resolver import (
+    count_target_clarification_options,
+    resolve_count_target,
+)
 from core.semantic_model import (
     build_runtime_semantic_context, build_runtime_semantic_plan,
     build_field_plan_repair_note,
@@ -851,6 +855,13 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             _planner_session_id,
         )
         if _planner_session_id
+        else {}
+    )
+    _confirmed_count_target = (
+        dict(_event_raw.get("_clarification_selected_option") or {})
+        if isinstance(_event_raw, dict)
+        and str(_event_raw.get("_clarification_selected_source") or "")
+        == "count_target"
         else {}
     )
     _planner_calendar_profile = _calendar_profile_for_request(
@@ -1973,6 +1984,8 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     _semantic_plan_question = extract_original_question(question)
 
     _semantic_plan = {}
+    _source_model: dict = {}
+    _preferred_facts: set[str] = set()
     _source_scope: dict = {"status": "none", "selected_fact": "", "candidates": []}
     try:
         # Phase 3: the model's fact classifications let the planner lock the
@@ -2176,6 +2189,124 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     # field planners produced no bindings and was therefore skipped by the
     # merge helper.
     _semantic_plan["source_scope"] = _source_scope
+
+    # A business-event count is not fully governed until the expression
+    # inside COUNT(DISTINCT ...) is resolved. Resolve it from this tenant's
+    # structured semantic model and, when evidence is close, ask using
+    # business meanings rather than exposing physical identifiers.
+    _count_target_resolution: dict = {}
+    if _analytical_plan.counted_entity:
+        _count_target_resolution = resolve_count_target(
+            _analytical_plan.counted_entity,
+            _source_model,
+            source_scope=_source_scope,
+            confirmed_option=_confirmed_count_target,
+        )
+        _trace_step(
+            trace_id,
+            "count_target_resolution",
+            output_summary={
+                "status": _count_target_resolution.get("status"),
+                "entity": _count_target_resolution.get("entity"),
+                "selected": (
+                    (_count_target_resolution.get("selected") or {}).get("business_name")
+                ),
+                "candidate_count": len(_count_target_resolution.get("candidates") or []),
+            },
+            metadata=_count_target_resolution,
+        )
+        log.info(
+            "Count target resolution for %s: entity=%s status=%s selected=%s candidates=%s",
+            account_id,
+            _analytical_plan.counted_entity,
+            _count_target_resolution.get("status"),
+            (_count_target_resolution.get("selected") or {}).get("business_name"),
+            [
+                f"{item.get('business_name')}:{item.get('score')}"
+                for item in (_count_target_resolution.get("candidates") or [])[:4]
+            ],
+        )
+        if _count_target_resolution.get("status") == "ambiguous":
+            _count_options = count_target_clarification_options(_count_target_resolution)
+            _count_question = (
+                f"I found more than one possible business identifier for counting "
+                f"{_analytical_plan.counted_entity}s. Which meaning represents one "
+                "business event for this question?"
+            )
+            if _count_options and can_request_clarification(event, "count_target"):
+                _save_pending_clarification(
+                    _semantic_plan_question,
+                    context_with_terms,
+                    {
+                        "source": "count_target",
+                        "question": _count_question,
+                        "options": _count_options,
+                    },
+                )
+                _send_count_prompt = getattr(adapter, "send_clarification_prompt", None)
+                if callable(_send_count_prompt):
+                    await _send_count_prompt(event, _count_question, _count_options)
+                else:
+                    await adapter.send_message(
+                        event,
+                        _count_question + "\n\n" + "\n".join(
+                            f"- {option['label']}" for option in _count_options
+                        ),
+                    )
+                _trace_finish(
+                    trace_id,
+                    status="success",
+                    answer_type="clarification",
+                    final_answer_summary="Requested governed count identifier clarification",
+                    duration_ms=int(time.time() * 1000) - start_ms,
+                )
+                return
+        if _count_target_resolution.get("status") == "missing":
+            await adapter.send_message(
+                event,
+                f"I understand that you want to count {_analytical_plan.counted_entity}s, "
+                "but the semantic layer does not yet identify which business field "
+                f"represents one {_analytical_plan.counted_entity}. Please ask your "
+                "administrator to approve that business identifier before I calculate it.",
+            )
+            _trace_finish(
+                trace_id,
+                status="error",
+                answer_type="semantic_mapping_required",
+                error_message="No governed count target",
+                duration_ms=int(time.time() * 1000) - start_ms,
+            )
+            return
+        if _count_target_resolution.get("status") != "selected":
+            await adapter.send_message(
+                event,
+                "I could not confirm a safe business identifier to count. Please choose "
+                "one of the business meanings when prompted or ask your administrator "
+                "to approve the intended identifier.",
+            )
+            _trace_finish(
+                trace_id,
+                status="error",
+                answer_type="semantic_mapping_required",
+                error_message="Count target remained ambiguous",
+                duration_ms=int(time.time() * 1000) - start_ms,
+            )
+            return
+
+        _semantic_plan["count_target"] = _count_target_resolution
+        _target_fact = str(
+            (_count_target_resolution.get("selected") or {}).get("table") or ""
+        )
+        if _target_fact and not str(_source_scope.get("selected_fact") or ""):
+            _source_scope = {
+                "status": "selected",
+                "selected_fact": _target_fact,
+                "selected_facts": [],
+                "candidates": [],
+                "reason": "governed count target source",
+            }
+            _preferred_facts.add(_target_fact)
+            _semantic_plan["source_scope"] = _source_scope
 
     # Merged-plan contents, unconditionally. The validator enforces THIS object,
     # so when it rejects correct SQL this line is the ground truth for which
@@ -3237,6 +3368,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         matched_metrics=_matched_metrics,
         analysis_contract=_analysis_contract,
         graph_context=_graph_ctx,
+        analytical_intent_plan=_analytical_plan.to_dict(),
     )
     _semantic_plan["analytical_request_plan"] = _analytical_request_plan
     _trace_step(

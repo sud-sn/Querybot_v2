@@ -35,6 +35,7 @@ def compile_analytical_request_plan(
     matched_metrics: list[dict[str, Any]] | None = None,
     analysis_contract: dict[str, Any] | None = None,
     graph_context: dict[str, Any] | None = None,
+    analytical_intent_plan: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     plan = semantic_plan or {}
     source_scope = plan.get("source_scope") or {}
@@ -111,6 +112,38 @@ def compile_analytical_request_plan(
     if not source_facts and selected_fact:
         source_facts = [selected_fact]
 
+    intent_plan = analytical_intent_plan if isinstance(analytical_intent_plan, dict) else {}
+    measure_semantics = str(intent_plan.get("measure_semantics") or "").strip()
+    counted_entity = str(intent_plan.get("counted_entity") or "").strip()
+    derived_measure = {}
+    if measure_semantics == "count_distinct_business_identifier" and counted_entity:
+        count_resolution = plan.get("count_target") or {}
+        exact_target = (
+            count_resolution.get("selected")
+            if count_resolution.get("status") == "selected"
+            and isinstance(count_resolution.get("selected"), dict)
+            else {}
+        )
+        derived_measure = {
+            "semantics": measure_semantics,
+            "business_entity": counted_entity,
+            "aggregation": "count_distinct",
+            "identifier_policy": "governed_stable_business_identifier",
+            "target_table": exact_target.get("table") or "",
+            "target_column": exact_target.get("column") or "",
+            "business_name": exact_target.get("business_name") or "",
+            "business_meaning": exact_target.get("business_meaning") or "",
+            "confidence": exact_target.get("confidence"),
+            "resolution_reason": count_resolution.get("reason") or "",
+            "forbidden_substitutions": [
+                "registered_metric_without_question_evidence",
+                "amount_or_value_column",
+                "quantity_column",
+                "display_name",
+                "line_or_row_surrogate",
+            ],
+        }
+
     compiled = {
         "version": 1,
         "question": str(question or ""),
@@ -126,6 +159,7 @@ def compile_analytical_request_plan(
             {"id": m.get("id"), "name": m.get("name"), "formula": m.get("formula") or m.get("sql_formula")}
             for m in (matched_metrics or [])
         ],
+        "derived_measure": derived_measure,
         "output_shape": output_shape,
         "prohibitions": [
             "no_direct_fact_to_fact_join",
@@ -164,6 +198,26 @@ def format_analytical_request_plan(plan: dict[str, Any] | None) -> str:
         lines.append("- Measures: " + ", ".join(
             f"{m.get('table')}.{m.get('column')}" for m in plan["measures"]
         ))
+    derived = plan.get("derived_measure") or {}
+    if derived.get("semantics") == "count_distinct_business_identifier":
+        entity = str(derived.get("business_entity") or "business event")
+        target_table = str(derived.get("target_table") or "")
+        target_column = str(derived.get("target_column") or "")
+        if target_table and target_column:
+            lines.append(
+                f"- Exact derived measure: COUNT(DISTINCT {target_table}.{target_column}) "
+                f"for {derived.get('business_name') or entity}. This exact table and "
+                "column are authoritative."
+            )
+        else:
+            lines.append(
+                f"- Derived measure: COUNT(DISTINCT the governed stable {entity} business "
+                "identifier)."
+            )
+        lines.append(
+            "- Do not substitute revenue, amount, quantity, a display name, a line key, "
+            "a row surrogate, or an unrelated registered metric."
+        )
     if plan.get("dimensions"):
         lines.append("- Output dimensions: " + ", ".join(
             f"{d.get('table')}.{d.get('column')}" for d in plan["dimensions"]

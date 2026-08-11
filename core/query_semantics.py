@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import asdict, dataclass
 
+from core.analytical_intent import detect_business_event_count
 from core.contribution_analysis import detect_composition_intent
 
 
@@ -427,6 +428,7 @@ def build_generic_query_hints(question: str) -> str:
 
     intent = analyze_query_intent(question)
     top_n = detect_top_n_intent(question)
+    counted_event = detect_business_event_count(question)
     hints: list[str] = [
         "GENERIC QUERY INTERPRETATION RULES:",
         "- Exact schema-backed categorical values from the provided context are authoritative and must be preserved exactly, even when they look misspelled. Only normalize a value when that exact literal is absent from schema or business context.",
@@ -435,6 +437,16 @@ def build_generic_query_hints(question: str) -> str:
     if intent["wants_distinct_count"] and intent["has_employee_scope"]:
         hints.append(
             "- When the user asks for a unique employee count or distinct employee total, use COUNT(DISTINCT stable employee key). Prefer EMPLOYEE_ID, EMPLOYEE_NUMBER, PERSON_ID, PERSON_NUMBER, STAFF_ID, or USER_ID over employee names when such keys exist."
+        )
+
+    if counted_event:
+        hints.append(
+            f"- BUSINESS EVENT COUNT DETECTED: interpret '{counted_event} count' as "
+            f"COUNT(DISTINCT the governed {counted_event} business identifier). Resolve "
+            "the physical identifier from approved semantic metadata on the selected event "
+            "fact; prefer a stable business ID/number over a row surrogate, line key, name, "
+            "amount, or quantity. If the fact is line-grained, still count the distinct "
+            "event identifier. Never substitute an unrelated registered metric."
         )
 
     if re.search(
