@@ -330,6 +330,16 @@ def _metric_candidates(column: str, expanded: str, role: str, vocab=None) -> lis
     elif role == "status_filter":
         candidates.append(expanded)
 
+    # Description/name fields are how business users refer to a dimension,
+    # not merely to a physical display column. Derive those conversational
+    # aliases for every model (warehouse description -> warehouse / warehouse
+    # name, product description -> product / product name) before shorthand
+    # aliases consume the bounded candidate list.
+    display_match = re.match(r"^(.+?)\s+(?:description|name)$", expanded.strip())
+    if display_match:
+        business_entity = display_match.group(1).strip()
+        candidates.extend([expanded, business_entity, f"{business_entity} name"])
+
     # Physical shorthand (``ord dt``), mixed expansion (``order dt``), and
     # camel/Pascal-case variants come from the same engine used at retrieval
     # time. This keeps KB aliases symmetric with user-question normalization.

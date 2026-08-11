@@ -3440,7 +3440,11 @@ function appendAssistantResponse(msg, opts = {}){
     : '';
 
   // ── Decision actions — incl. diagnose and other result chips ────────────
-  const nextActions = Array.isArray(msg.next_actions) ? msg.next_actions : [];
+  const actionResultId = trust.result_id || msg.data?.result_id || '';
+  // Never attach an executable action to an unaddressable card. Falling back
+  // to the adapter's latest result could otherwise run an old card's button
+  // against a newer answer after reconnect or thread navigation.
+  const nextActions = actionResultId && Array.isArray(msg.next_actions) ? msg.next_actions : [];
   const nextActionsHtml = nextActions.length
     ? nextActions.map(a => {
         const isDiagnose = a.id === 'diagnose';
@@ -3654,7 +3658,7 @@ function appendAssistantResponse(msg, opts = {}){
         btn.dataset.analysisAction,
         msg.analysis_contract || {},
         btn.dataset.analysisLabel || 'Analysis',
-        trust.result_id || msg.data?.result_id || '',
+        actionResultId,
       );
     });
   });
@@ -4682,6 +4686,14 @@ function connect(){
     } else if (msg.type === 'assistant_action_ack') {
       if (window._activeAnalysisAction && (!msg.action_id || msg.action_id === window._activeAnalysisAction.id)) {
         window._activeAnalysisAction.acknowledged = true;
+        if (window._activeAnalysisAction.button) {
+          window._activeAnalysisAction.button.textContent = 'Finishing...';
+        }
+        updateProcessing(
+          'analysis',
+          window._activeAnalysisAction.label,
+          'The governed action was accepted and is being completed.'
+        );
       }
     } else if (msg.type === 'assistant_response') {
       finishAnalysisAction(msg);

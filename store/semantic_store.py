@@ -95,12 +95,27 @@ def save_term(
                     (account_id, term_norm),
                 ).fetchone()
                 if existing:
-                    return save_term(
-                        account_id, term, kind, canonical_expression,
-                        tables_involved, grain, aliases, definition,
-                        requires_clarification, clarification_options,
-                        source, term_id=existing["id"],
+                    # Keep the upsert in this connection. Recursing while the
+                    # failed INSERT transaction still owns SQLite's write lock
+                    # opens a second connection and can deadlock on Windows.
+                    conn.execute(
+                        """
+                        UPDATE business_term SET
+                            kind = ?, canonical_expression = ?,
+                            tables_involved = ?, grain = ?, aliases = ?,
+                            definition = ?, requires_clarification = ?,
+                            clarification_options = ?, source = ?,
+                            updated_at = datetime('now')
+                        WHERE id = ? AND account_id = ?
+                        """,
+                        (
+                            kind, canonical_expression, tables_involved, grain,
+                            aliases_norm, definition,
+                            1 if requires_clarification else 0, opts_json, source,
+                            existing["id"], account_id,
+                        ),
                     )
+                    return int(existing["id"])
             raise
 
 

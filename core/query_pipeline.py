@@ -2001,6 +2001,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     _source_model: dict = {}
     _preferred_facts: set[str] = set()
     _source_scope: dict = {"status": "none", "selected_fact": "", "candidates": []}
+    _semantic_model_plan: dict = {}
     try:
         # Phase 3: the model's fact classifications let the planner lock the
         # measure's fact. Without them it falls back to prior behaviour.
@@ -2187,7 +2188,6 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         _semantic_plan = {}
         log.debug("Semantic field planning skipped: %s", _sp_exc)
 
-    _semantic_model_plan = {}
     try:
         _semantic_model_plan = build_runtime_semantic_plan(
             state.get("kb_dir", ""),
@@ -2275,9 +2275,18 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         if _count_target_resolution.get("status") == "ambiguous":
             _count_options = count_target_clarification_options(_count_target_resolution)
             _count_question = (
-                f"I found more than one possible business identifier for counting "
-                f"{_analytical_plan.counted_entity}s. Which meaning represents one "
-                "business event for this question?"
+                (
+                    f"I found one possible business identifier for counting "
+                    f"{_analytical_plan.counted_entity}s, but its event grain is not "
+                    "approved strongly enough for me to assume it. Does this meaning "
+                    "represent one business event for this question?"
+                )
+                if len(_count_options) == 1
+                else (
+                    f"I found more than one possible business identifier for counting "
+                    f"{_analytical_plan.counted_entity}s. Which meaning represents one "
+                    "business event for this question?"
+                )
             )
             if _count_options and can_request_clarification(event, "count_target"):
                 _save_pending_clarification(
@@ -2343,7 +2352,25 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         _target_fact = str(
             (_count_target_resolution.get("selected") or {}).get("table") or ""
         )
-        if _target_fact and not str(_source_scope.get("selected_fact") or ""):
+        _source_changed_by_count = False
+        _current_fact = str(_source_scope.get("selected_fact") or "")
+        _target_parts = [
+            part for part in _target_fact.upper().replace("[", "").replace("]", "").split(".")
+            if part
+        ]
+        _current_parts = [
+            part for part in _current_fact.upper().replace("[", "").replace("]", "").split(".")
+            if part
+        ]
+        _same_count_fact = bool(
+            _target_parts
+            and _current_parts
+            and (
+                _target_parts[-2:] == _current_parts[-2:]
+                or _target_parts[-1] == _current_parts[-1]
+            )
+        )
+        if _target_fact and not _same_count_fact:
             _source_scope = {
                 "status": "selected",
                 "selected_fact": _target_fact,
@@ -2351,8 +2378,78 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 "candidates": [],
                 "reason": "governed count target source",
             }
+            # The governed identifier is stronger evidence of the counted
+            # event than an earlier lexical rival such as a shipment fact that
+            # merely contains ORDER_SK. Keep exactly one fact authoritative.
+            _preferred_facts.clear()
             _preferred_facts.add(_target_fact)
             _semantic_plan["source_scope"] = _source_scope
+            _source_changed_by_count = True
+
+        # Count resolution may establish the authoritative event fact only
+        # after the two field planners above have already run. Rebuild both
+        # planners with that confirmed fact so fields, joins, required tables
+        # and subsequent Date Roles all consume the same source decision.
+        if _source_changed_by_count:
+            try:
+                _replanned_fields = build_semantic_field_plan(
+                    _semantic_plan_question,
+                    all_columns,
+                    query_scope_tables,
+                    selected_schema=schema_hint,
+                    vocab=_vocab,
+                    fact_tables=_planner_fact_tables,
+                    preferred_fact_tables=_preferred_facts,
+                )
+                _replanned_model = build_runtime_semantic_plan(
+                    state.get("kb_dir", ""),
+                    question=_semantic_plan_question,
+                    selected_schema=schema_hint,
+                    model=_contract_model,
+                    preferred_fact_tables=_preferred_facts,
+                )
+                _semantic_plan = _merge_semantic_plans(
+                    _replanned_fields,
+                    _replanned_model,
+                )
+                _semantic_model_plan = _replanned_model
+                _semantic_plan["source_scope"] = _source_scope
+                _semantic_plan["count_target"] = _count_target_resolution
+                _trace_step(
+                    trace_id,
+                    "semantic_plan_rebuilt_after_count_source",
+                    output_summary={
+                        "source_fact": _target_fact,
+                        "fields": len(_semantic_plan.get("fields") or []),
+                        "joins": len(_semantic_plan.get("joins") or []),
+                    },
+                )
+                log.info(
+                    "Rebuilt semantic plan for %s after governed count target "
+                    "established source fact %s: fields=%d joins=%d",
+                    account_id,
+                    _target_fact,
+                    len(_semantic_plan.get("fields") or []),
+                    len(_semantic_plan.get("joins") or []),
+                )
+            except Exception as _count_replan_exc:
+                log.exception(
+                    "Count source established for %s but semantic-plan rebuild failed",
+                    account_id,
+                )
+                await adapter.send_message(
+                    event,
+                    "I resolved the business event to count, but I could not compile "
+                    "a consistent governed field and join plan for it. No query was run.",
+                )
+                _trace_finish(
+                    trace_id,
+                    status="error",
+                    answer_type="semantic_plan_incomplete",
+                    error_message=f"Count source plan rebuild failed: {_count_replan_exc}",
+                    duration_ms=int(time.time() * 1000) - start_ms,
+                )
+                return
 
     # Merged-plan contents, unconditionally. The validator enforces THIS object,
     # so when it rejects correct SQL this line is the ground truth for which

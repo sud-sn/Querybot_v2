@@ -453,7 +453,7 @@ class ChartAnnotationTests(unittest.TestCase):
         # verified here (a two-line call-order fact).
         renderer_src = (self.ROOT / "core" / "result_renderer.py").read_text(encoding="utf-8")
         self.assertIn("build_chart_annotations", renderer_src)
-        annotation_pos = renderer_src.index("chart_annotations = build_chart_annotations(rows, question)")
+        annotation_pos = renderer_src.index("chart_annotations = build_chart_annotations(rows, display_question)")
         payload_call_pos = renderer_src.index("chart_payload = build_chart_payload(")
         self.assertLess(annotation_pos, payload_call_pos)
         self.assertIn("annotations=chart_annotations,", renderer_src)

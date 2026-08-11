@@ -79,6 +79,30 @@ class DynamicSourceResolutionTests(unittest.TestCase):
         self.assertEqual(result["status"], "selected")
         self.assertEqual(result["selected_fact"], "TENANT_X.F_CUSTOMER_ORDER")
 
+    def test_business_identifier_recovers_source_when_table_entity_is_missing(self):
+        model = {"tables": [
+            {
+                "qualified_name": "CLIENT_X.F_ORDERS", "schema": "CLIENT_X",
+                "type": "fact", "entity": "", "grain": "",
+                "fields": [{
+                    "column": "ORDER_NUMBER", "role": "identifier",
+                    "status": "approved", "business_name": "Order Number",
+                    "approved_meaning": "Stable business number for one customer order",
+                }],
+            },
+            {
+                "qualified_name": "CLIENT_X.F_SHIPMENTS", "schema": "CLIENT_X",
+                "type": "fact", "entity": "shipment", "grain": "one row per shipment",
+                "fields": [{
+                    "column": "ORDER_SK", "role": "dimension_key",
+                    "business_name": "Order surrogate key",
+                }],
+            },
+        ]}
+        result = resolve_source_scope("total orders by customer", model)
+        self.assertEqual(result["status"], "selected")
+        self.assertEqual(result["selected_fact"], "CLIENT_X.F_ORDERS")
+
     def test_shared_business_event_noun_stays_ambiguous(self):
         model = {"tables": [
             {
@@ -148,6 +172,31 @@ class DynamicSourceResolutionTests(unittest.TestCase):
 
 
 class ExecutableRequestPlanTests(unittest.TestCase):
+    def test_approved_attribute_measure_is_compiled_as_measure_not_dimension(self):
+        plan = compile_analytical_request_plan(
+            "show revenue by warehouse",
+            {
+                "enabled": True,
+                "source_scope": {"selected_fact": "OPS.F_SALES"},
+                "fields": [
+                    {
+                        "term": "Revenue", "table": "OPS.F_SALES",
+                        "column": "NET_REVENUE_AMOUNT", "role": "attribute",
+                        "enforcement": "required",
+                    },
+                    {
+                        "term": "Warehouse", "table": "OPS.D_WAREHOUSE",
+                        "column": "WAREHOUSE_NAME", "role": "attribute",
+                        "enforcement": "required",
+                    },
+                ],
+            },
+            analytical_intent_plan={"intent": "ranking"},
+        )
+        self.assertEqual(plan["status"], "compiled")
+        self.assertEqual(plan["measures"][0]["column"], "NET_REVENUE_AMOUNT")
+        self.assertEqual(plan["dimensions"][0]["column"], "WAREHOUSE_NAME")
+
     def test_business_event_count_is_executable_and_validator_enforced(self):
         semantic = {
             "enabled": True,

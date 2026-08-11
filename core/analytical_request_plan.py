@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from core.semantic_model import _is_measure_binding
+
 
 def _entity_physical_table(entity: dict[str, Any]) -> str:
     table = str(entity.get("table_name") or "").strip()
@@ -16,6 +18,31 @@ def _entity_physical_table(entity: dict[str, Any]) -> str:
     return f"{schema}.{table}" if schema else table
 
 
+def _table_matches(left: Any, right: Any) -> bool:
+    left_parts = [part for part in re.split(r"[.\[\]`]", str(left or "").upper()) if part]
+    right_parts = [part for part in re.split(r"[.\[\]`]", str(right or "").upper()) if part]
+    if not left_parts or not right_parts:
+        return False
+    return left_parts[-2:] == right_parts[-2:] or left_parts[-1] == right_parts[-1]
+
+
+def _is_compiled_measure(field: dict[str, Any], selected_fact: str) -> bool:
+    """Use generic attribute bindings as measures only on the chosen fact.
+
+    Runtime semantic contracts can label an approved numeric fact field as an
+    ``attribute``.  The same generic role can also describe a name or category
+    on a dimension, so treating every non-key attribute as a measure would turn
+    labels into aggregations.  Explicit measure roles remain authoritative;
+    the fallback is restricted to the already governed source fact.
+    """
+    role = str(field.get("role") or "").strip().lower()
+    if role in {"measure", "measure_candidate"}:
+        return True
+    return bool(
+        selected_fact
+        and _table_matches(field.get("table"), selected_fact)
+        and _is_measure_binding(field)
+    )
 def _same_table(left: Any, right: Any) -> bool:
     left_text = str(left or "").strip().strip("[]\"`").upper()
     right_text = str(right or "").strip().strip("[]\"`").upper()
@@ -45,13 +72,14 @@ def compile_analytical_request_plan(
         str(value) for value in (source_scope.get("selected_facts") or []) if value
     ]
     fields = [f for f in (plan.get("fields") or []) if f.get("enforcement") != "optional"]
+    selected_fact = str((plan.get("source_scope") or {}).get("selected_fact") or "")
     measures = [
         {"term": f.get("term"), "table": f.get("table"), "column": f.get("column")}
-        for f in fields if str(f.get("role") or "").lower() in {"measure", "measure_candidate"}
+        for f in fields if _is_compiled_measure(f, selected_fact)
     ]
     dimensions = [
         {"term": f.get("term"), "table": f.get("table"), "column": f.get("column")}
-        for f in fields if str(f.get("role") or "").lower() in {
+        for f in fields if not _is_compiled_measure(f, selected_fact) and str(f.get("role") or "").lower() in {
             "dimension", "display_dimension", "attribute", "date_dimension", "contextual_date",
         }
     ]

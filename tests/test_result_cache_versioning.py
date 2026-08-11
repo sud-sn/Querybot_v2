@@ -58,11 +58,9 @@ class ContractVersionAccessorTests(unittest.TestCase):
             self.cache.get_contract_version(self.session, result_id=rid), "v7",
         )
 
-    def test_derived_snapshot_preserves_no_version_by_default(self):
-        # derive_snapshot() doesn't inherit the source's metadata dict
-        # unless the caller passes it explicitly - confirms current
-        # behavior so a future change here is a deliberate decision, not
-        # an accident.
+    def test_derived_snapshot_preserves_contract_version_by_default(self):
+        # Result operations remain governed by the semantic contract that
+        # produced their parent even though arbitrary metadata is not copied.
         self.cache.store(
             self.session, [{"a": 1}], "q", "SELECT 1",
             metadata={"contract_version": "v1"}, result_id="src",
@@ -70,7 +68,7 @@ class ContractVersionAccessorTests(unittest.TestCase):
         self.cache.derive_snapshot(
             self.session, "src", [{"a": 2}], question="q2", operation="sort",
         )
-        self.assertEqual(self.cache.get_contract_version(self.session), "")
+        self.assertEqual(self.cache.get_contract_version(self.session), "v1")
 
 
 class StalenessDecisionTests(unittest.TestCase):

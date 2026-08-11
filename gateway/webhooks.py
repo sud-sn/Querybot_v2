@@ -3345,6 +3345,14 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     action_id = _ws_text_value(
                         data.get("action_id"), "action_id", "id", "value"
                     )
+                    def _bound_action_payload(payload: dict) -> dict:
+                        """Correlate every terminal action frame to its click/card."""
+                        resolved = dict(payload or {})
+                        resolved.setdefault("action", action)
+                        resolved.setdefault("action_id", action_id)
+                        resolved.setdefault("result_id", requested_result_id)
+                        return resolved
+
                     await websocket.send_json({
                         "type": "assistant_action_ack",
                         "action": action,
@@ -3448,7 +3456,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                     query_executor=_ws_execute_governed,
                                     **az_kwargs,
                                 )
-                            await websocket.send_json(_dd_result)
+                            await websocket.send_json(_bound_action_payload(_dd_result))
                             # Cache the drill result so subsequent actions apply to it
                             if _dd_result.get("type") == "assistant_response":
                                 _dd_cache_fn = getattr(adapter, "cache_result", None)
@@ -3512,7 +3520,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                     semantic_plan=cached.get("semantic_plan"),
                                     **az_kwargs,
                                 )
-                            await websocket.send_json(_cp_result)
+                            await websocket.send_json(_bound_action_payload(_cp_result))
                         except Exception as _cp_err:
                             log.warning("compare_prior failed: %s", _cp_err)
                             await websocket.send_json({
@@ -3570,7 +3578,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                     semantic_plan=cached.get("semantic_plan"),
                                 )
                                 _ct_resp["contribution_stats"] = _ct_stats
-                                await websocket.send_json(_ct_resp)
+                            await websocket.send_json(_bound_action_payload(_ct_resp))
                         except Exception as _ct_err:
                             log.warning("contribution transform failed: %s", _ct_err)
                             await websocket.send_json({
@@ -3617,7 +3625,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                     semantic_plan=cached.get("semantic_plan"),
                                 )
                                 _ol_resp["outlier_stats"] = _ol_stats
-                                await websocket.send_json(_ol_resp)
+                                await websocket.send_json(_bound_action_payload(_ol_resp))
                         except Exception as _ol_err:
                             log.warning("outlier filter failed: %s", _ol_err)
                             await websocket.send_json({
@@ -3670,14 +3678,14 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                             _csv_filename = build_csv_filename(
                                 cached.get("question", "")
                             )
-                            await websocket.send_json({
+                            await websocket.send_json(_bound_action_payload({
                                 "type":      "assistant_export",
                                 "action":    "download_csv",
                                 "format":    "csv",
                                 "filename":  _csv_filename,
                                 "content":   _csv_content,
                                 "row_count": len(_csv_rows),
-                            })
+                            }))
                         except Exception as _csv_err:
                             log.warning("download_csv failed: %s", _csv_err)
                             await websocket.send_json({
@@ -3843,7 +3851,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                 insight["action"] = "diagnose"
                                 if not insight.get("title"):
                                     insight["title"] = "Root cause analysis"
-                            await websocket.send_json(insight)
+                            await websocket.send_json(_bound_action_payload(insight))
                         except Exception as _dx_err:
                             log.warning("diagnose action failed: %s", _dx_err)
                             await websocket.send_json({
@@ -3889,11 +3897,13 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                     query_executor=_ws_execute_governed,
                                     **az_kwargs,
                                 )
-                            await websocket.send_json(insight)
+                            await websocket.send_json(_bound_action_payload(insight))
                         except Exception as insight_err:
                             log.warning("LLM insight failed, using static fallback: %s", insight_err)
                             from core.response_builder import build_analysis_response
-                            await websocket.send_json(build_analysis_response(action, context))
+                            await websocket.send_json(_bound_action_payload(
+                                build_analysis_response(action, context)
+                            ))
                     else:
                         await websocket.send_json({
                             "type": "assistant_error",

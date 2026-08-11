@@ -29,7 +29,10 @@ _ATOMIC_ALIAS_STOP_WORDS = _GENERIC_TABLE_WORDS | {
     "event", "fct", "header", "hist", "historical", "line", "lines", "month",
     "monthly", "period", "quarter", "quarterly", "snapshot", "summary", "year",
     "yearly", "one", "row", "rows", "per",
+    "business", "code", "id", "identifier", "key", "no", "num", "number",
+    "reference", "surrogate",
 }
+_SURROGATE_FIELD_SUFFIXES = ("_DMS_KEY", "_KEY", "_SK", "_FK")
 
 
 def _norm(value: str) -> str:
@@ -96,6 +99,45 @@ def _table_aliases(table: dict[str, Any], vocab=None) -> set[str]:
     if isinstance(entry, dict):
         aliases.add(_norm(entry.get("label") or ""))
         aliases.update(_norm(v) for v in (entry.get("synonyms") or []) if v)
+
+    # Some production models have weak/missing table-level entity metadata but
+    # strong approved business identifiers (for example "Order Number"). Use
+    # those identifiers to recover the event noun for source selection. Foreign
+    # and surrogate keys are deliberately excluded: CUSTOMER_SK on an order
+    # fact describes a relationship, not the fact's business event.
+    for field in table.get("fields", []) or []:
+        status = _norm(field.get("status") or field.get("review_status") or "")
+        if status and status not in {"approved", "confirmed", "validated"}:
+            continue
+        column = str(field.get("column") or "").upper()
+        if column.endswith(_SURROGATE_FIELD_SUFFIXES):
+            continue
+        role = _norm(field.get("role") or "")
+        aggregation = _norm(field.get("aggregation") or "")
+        naming_role = _norm(field.get("naming_role") or "")
+        identifier_like = bool(
+            role == "identifier"
+            or aggregation == "identifier"
+            or naming_role in {"business number", "identifier", "code"}
+            or column.endswith(("_NUMBER", "_NUM", "_NO"))
+        )
+        if not identifier_like:
+            continue
+        values = [
+            field.get("business_name"), field.get("display_name"),
+            field.get("expanded_name"), field.get("approved_meaning"),
+        ]
+        raw_candidates = field.get("business_candidates") or []
+        values.extend(
+            raw_candidates
+            if isinstance(raw_candidates, (list, tuple, set))
+            else [raw_candidates]
+        )
+        for value in values:
+            normalized = _norm(value or "")
+            words = [word for word in normalized.split() if word not in _ATOMIC_ALIAS_STOP_WORDS]
+            if words:
+                aliases.add(" ".join(words))
     aliases = {a for a in aliases if a and a not in _GENERIC_TABLE_WORDS}
     # Tenant models often describe an event fact as "customer sales order" or
     # expose an ERP name such as CUS_ORD_IVC_FCT, while users simply say

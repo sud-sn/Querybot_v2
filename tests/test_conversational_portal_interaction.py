@@ -90,6 +90,8 @@ def test_result_action_targets_the_clicked_governed_snapshot():
     assert "result_cache.get_snapshot(" in action_block
     assert "adopt_cached_snapshot(adapter, action_snapshot)" in action_block
     assert "That result is no longer available for analysis" in action_block
+    assert "const actionResultId = trust.result_id || msg.data?.result_id || '';" in CHAT
+    assert "const nextActions = actionResultId &&" in CHAT
 
 
 def test_result_actions_acknowledge_complete_download_and_timeout_visibly():
@@ -99,6 +101,11 @@ def test_result_actions_acknowledge_complete_download_and_timeout_visibly():
     assert "This action did not finish in time" in CHAT
     assert "msg.type === 'assistant_export'" in CHAT
     assert "new Blob([msg.content || '']" in CHAT
+    assert "_bound_action_payload(_dd_result)" in WEBHOOKS
+    assert "_bound_action_payload(_cp_result)" in WEBHOOKS
+    assert "_bound_action_payload(insight)" in WEBHOOKS
+    assert 'resolved.setdefault("action_id", action_id)' in WEBHOOKS
+    assert "The governed action was accepted and is being completed." in CHAT
 
 
 def test_only_live_server_clarification_is_actionable_after_restore():

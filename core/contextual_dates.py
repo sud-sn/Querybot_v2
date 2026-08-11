@@ -132,8 +132,15 @@ def _terms(value: Any) -> list[str]:
 
 
 def _table_identity(value: Any) -> tuple[str, str]:
-    full = str(value or "").strip().strip("[]`").upper()
-    return full, full.split(".")[-1] if full else ""
+    # The same physical Date Role can arrive as TABLE, SCHEMA.TABLE,
+    # DB.SCHEMA.TABLE or bracketed Azure SQL identifiers. Canonicalize to the
+    # schema/table suffix so equivalent roles do not become duplicate chips or
+    # disagree with remembered/metric bindings.
+    cleaned = str(value or "").strip().replace("[", "").replace("]", "")
+    cleaned = cleaned.replace("`", "").replace('"', "").upper()
+    parts = [part.strip() for part in cleaned.split(".") if part.strip()]
+    canonical = ".".join(parts[-2:]) if len(parts) >= 2 else (parts[0] if parts else "")
+    return canonical, parts[-1] if parts else ""
 
 
 def _same_table(left: Any, right: Any) -> bool:
