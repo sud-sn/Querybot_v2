@@ -69,8 +69,9 @@ class CheckDateCoverageTests(unittest.TestCase):
         self.assertIsNotNone(gap)
         self.assertEqual(gap.requested_days, 7)
         self.assertEqual(gap.actual_days, 3)
-        self.assertIn("3 distinct business dates", gap.message)
-        self.assertIn("requested 7-day period", gap.message)
+        self.assertIn("last 7 days", gap.message)
+        self.assertIn("only 3 business dates", gap.message)
+        self.assertIn("3 days with data", gap.message)
 
     def test_partial_coverage_names_metric_and_business_date_role(self):
         policy = dict(self.native_policy)
@@ -85,8 +86,9 @@ class CheckDateCoverageTests(unittest.TestCase):
             )
         self.assertEqual(
             gap.message,
-            "Revenue records were available on 2 distinct invoice dates within "
-            "the requested 7-day period. The result reflects those available records.",
+            "You asked for the last 7 days, but revenue records were found on "
+            "only 2 invoice dates (2 days with data). The result reflects the "
+            "available data.",
         )
 
     def test_month_window_is_described_as_months_not_approximate_days(self):
@@ -103,14 +105,40 @@ class CheckDateCoverageTests(unittest.TestCase):
         self.assertIn("requested 6-month period", gap.message)
         self.assertNotIn("180-day", gap.message)
 
-    def test_off_by_one_tolerance_does_not_flag(self):
+    def test_one_missing_day_is_reported(self):
         with patch("core.contextual_dates.format_required_anchor", return_value="(SELECT MAX(ORDER_DATE) FROM DBO.F_ORDERS)"), \
              patch("core.date_coverage.run_query", side_effect=[
                  [{"AnchorDate": "2026-07-20"}],
                  [{"DaysWithData": 6}],
              ]):
             gap = check_date_coverage(self.db_cfg, self.native_policy, "azure_sql")
-        self.assertIsNone(gap)
+        self.assertIsNotNone(gap)
+        self.assertEqual(gap.actual_days, 6)
+
+    def test_last_two_days_with_one_observed_day_is_reported_clearly(self):
+        policy = dict(self.native_policy)
+        policy.update({
+            "amount": 2,
+            "unit": "day",
+            "business_role": "Invoice Date",
+        })
+        with patch("core.contextual_dates.format_required_anchor", return_value="(SELECT MAX(ORDER_DATE) FROM DBO.F_ORDERS)"), \
+             patch("core.date_coverage.run_query", side_effect=[
+                 [{"AnchorDate": "2026-07-20"}],
+                 [{"DaysWithData": 1}],
+             ]):
+            gap = check_date_coverage(
+                self.db_cfg, policy, "azure_sql", metric_name="Revenue",
+            )
+        self.assertIsNotNone(gap)
+        self.assertEqual(gap.requested_days, 2)
+        self.assertEqual(gap.actual_days, 1)
+        self.assertEqual(
+            gap.message,
+            "You asked for the last 2 days, but revenue records were found on "
+            "only 1 invoice date (1 day with data). The result reflects the "
+            "available data.",
+        )
 
     def test_surrogate_fk_uses_join(self):
         with patch("core.contextual_dates.format_required_anchor",

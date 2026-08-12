@@ -164,8 +164,11 @@ def check_date_coverage(
         log.debug("Date coverage check skipped: %s", exc)
         return None
 
-    # Small tolerance: today's row may be partial without being a real gap.
-    if actual_days >= requested_days - 1:
+    # A partial current day is still represented by one distinct date, so an
+    # off-by-one tolerance here hides a real coverage gap.  Report every
+    # window where fewer distinct business dates were observed than requested;
+    # the result remains valid, but the user can see that the period is sparse.
+    if actual_days >= requested_days:
         return None
 
     role = str(policy.get("business_role") or "business date").strip().lower()
@@ -181,12 +184,23 @@ def check_date_coverage(
     )
     requested_amount = int(policy.get("amount") or requested_days)
     requested_unit = str(policy.get("unit") or "day").strip().lower() or "day"
-    return CoverageGap(
-        requested_days=requested_days,
-        actual_days=actual_days,
-        message=(
+    if requested_unit == "day":
+        available_label = "day" if actual_days == 1 else "days"
+        message = (
+            f"You asked for the last {requested_amount} days, but "
+            f"{metric_subject.lower()} were found on only {actual_days} "
+            f"{date_label} ({actual_days} {available_label} with data). "
+            "The result reflects the available data."
+        )
+    else:
+        message = (
             f"{metric_subject} were available on {actual_days} distinct "
             f"{date_label} within the requested {requested_amount}-{requested_unit} "
             "period. The result reflects those available records."
-        ),
+        )
+
+    return CoverageGap(
+        requested_days=requested_days,
+        actual_days=actual_days,
+        message=message,
     )
