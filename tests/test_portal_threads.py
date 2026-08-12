@@ -73,6 +73,32 @@ def test_history_api_filters_by_portal_user_and_groups_thread_turns():
     assert payload["items"][1]["thread_id"] == "legacy-1"
 
 
+def test_history_api_hides_internal_clarification_wrapper():
+    user = {"id": 7, "account_id": "acct"}
+    traces = [{
+        "id": 4,
+        "portal_user_id": 7,
+        "session_id": "acct:web_7:thread:clarified",
+        "question_text_sanitized": (
+            "Show revenue for Q1.\n\n"
+            "Clarification for the same request: Use calendar quarters.\n"
+            "Use this clarification to interpret the original request; "
+            "do not treat it as a separate question."
+        ),
+        "generated_sql": "SELECT 1",
+        "query_row_count": 1,
+        "query_duration_ms": 10,
+        "status": "success",
+        "created_at": "2026-07-31 12:00:00",
+    }]
+    with patch("portal.routes._get_portal_user", return_value=user), patch(
+        "portal.routes.store.list_answer_traces", return_value=traces
+    ):
+        response = asyncio.run(portal_query_history(object()))
+
+    assert _response_json(response)["items"][0]["question"] == "Show revenue for Q1."
+
+
 def test_thread_detail_reconstructs_result_for_owner_only():
     user = {"id": 7, "account_id": "acct"}
     traces = [{
@@ -101,6 +127,37 @@ def test_thread_detail_reconstructs_result_for_owner_only():
     list_traces.assert_called_once_with(
         "acct", limit=200, portal_user_id=7, oldest_first=True
     )
+
+
+def test_thread_detail_hides_internal_clarification_wrapper():
+    user = {"id": 7, "account_id": "acct"}
+    traces = [{
+        "id": 5,
+        "portal_user_id": 7,
+        "session_id": "acct:web_7:thread:abc",
+        "question_id": "qid-5",
+        "question_text_sanitized": (
+            "Show revenue for Q1.\n\n"
+            "Clarification for the same request: Use calendar quarters.\n"
+            "Use this clarification to interpret the original request; "
+            "do not treat it as a separate question."
+        ),
+        "generated_sql": "SELECT 1 AS total",
+        "result_rows": '[{"total": 1}]',
+        "query_row_count": 1,
+        "query_duration_ms": 12,
+        "db_type": "azure_sql",
+        "status": "success",
+        "created_at": "2026-07-31 10:00:00",
+    }]
+    with patch("portal.routes._get_portal_user", return_value=user), patch(
+        "portal.routes.store.list_answer_traces", return_value=traces
+    ):
+        response = asyncio.run(portal_query_thread(object(), "abc"))
+
+    payload = _response_json(response)
+    assert payload["turns"][0]["question"] == "Show revenue for Q1."
+    assert payload["turns"][0]["payload"]["question"] == "Show revenue for Q1."
 
 
 def test_thread_detail_does_not_match_another_session():

@@ -4048,6 +4048,9 @@ function sendMessage(tableHint){
     toastLong('You are offline. Your message is saved and ready to send after reconnection.');
     return;
   }
+  // Prevent a pending autocomplete request from reopening stale suggestions
+  // after the submitted text has been cleared.
+  inp._autoSuggest?.dismiss();
   const normalizedTableHint = typeof tableHint === 'string'
     ? tableHint.trim()
     : String(tableHint?.fqn || tableHint?.table_hint || tableHint?.table || '').trim();
@@ -5048,6 +5051,8 @@ class AutoSuggest {
     this._idx   = -1;
     this._timer = null;
     this._dd    = null;
+    this._requestSeq = 0;
+    this._el._autoSuggest = this;
     this._bound = {
       input: () => this._onInput(),
       key:   (e) => this._onKey(e),
@@ -5065,15 +5070,19 @@ class AutoSuggest {
   _onInput() {
     clearTimeout(this._timer);
     const q = this._el.value.trim();
+    const requestSeq = ++this._requestSeq;
     if (q.length < 2) { this._hide(); return; }
-    this._timer = setTimeout(() => this._fetch(q), 250);
+    this._timer = setTimeout(() => this._fetch(q, requestSeq), 250);
   }
 
-  async _fetch(q) {
+  async _fetch(q, requestSeq) {
     try {
       const r = await fetch(`/portal/api/suggest?q=${encodeURIComponent(q)}&limit=6`);
       if (!r.ok) return;
       const d = await r.json();
+      // Ignore results for text submitted, cleared, or replaced while this
+      // request was in flight.
+      if (requestSeq !== this._requestSeq || this._el.value.trim() !== q) return;
       this._items = (d.suggestions || []);
       this._idx   = -1;
       if (this._items.length) this._render();
@@ -5136,6 +5145,13 @@ class AutoSuggest {
     this._idx = -1;
   }
 
+  dismiss() {
+    clearTimeout(this._timer);
+    this._requestSeq += 1;
+    this._items = [];
+    this._hide();
+  }
+
   _onKey(e) {
     if (!this._dd || this._dd.style.display === 'none') return;
     if (e.key === 'ArrowDown') {
@@ -5172,7 +5188,7 @@ class AutoSuggest {
   }
 
   destroy() {
-    clearTimeout(this._timer);
+    this.dismiss();
     this._el.removeEventListener('input',   this._bound.input);
     this._el.removeEventListener('keydown', this._bound.key);
     this._el.removeEventListener('blur',    this._bound.blur);
@@ -5180,6 +5196,7 @@ class AutoSuggest {
     window.removeEventListener('resize',    this._bound.resize);
     this._dd?.remove();
     this._dd = null;
+    if (this._el._autoSuggest === this) delete this._el._autoSuggest;
   }
 }
 

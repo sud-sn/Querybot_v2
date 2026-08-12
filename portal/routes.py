@@ -1759,6 +1759,7 @@ async def portal_query_history(request: Request):
         portal_user_id=int(user["id"]),
     )
     grouped: dict[str, dict] = {}
+    from core.clarification import extract_original_question
     for t in traces:
         if t.get("status") != "success" or not t.get("generated_sql"):
             continue
@@ -1769,7 +1770,9 @@ async def portal_query_history(request: Request):
             # Pre-thread traces remain individually accessible without being
             # merged into one misleading account-wide conversation.
             thread_id = f"legacy-{int(t.get('id') or 0)}"
-        question = t.get("question_text_sanitized") or "Untitled thread"
+        question = extract_original_question(
+            str(t.get("question_text_sanitized") or "")
+        ) or "Untitled thread"
         if thread_id not in grouped:
             grouped[thread_id] = {
                 "id": thread_id,
@@ -1825,6 +1828,7 @@ async def portal_query_thread(request: Request, thread_id: str):
 
     import json as _json
     from core.chart import build_chart_payload, detect_chart_type, build_chart_annotations
+    from core.clarification import extract_original_question
     from core.response_builder import build_assistant_response
 
     turns = []
@@ -1838,7 +1842,9 @@ async def portal_query_thread(request: Request, thread_id: str):
             except (TypeError, ValueError):
                 raw_rows = []
         rows = raw_rows if isinstance(raw_rows, list) else []
-        question = str(trace.get("question_text_sanitized") or "")
+        question = extract_original_question(
+            str(trace.get("question_text_sanitized") or "")
+        )
         chart_type = detect_chart_type(rows, question=question) if rows else None
         chart = (
             build_chart_payload(

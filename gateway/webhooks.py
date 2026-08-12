@@ -58,7 +58,7 @@ from core.examples import retrieve_similar_examples, format_examples_for_prompt
 from core.clarification import (
     get_pending, save_pending, clear_pending, combine_with_clarification,
     resolve_option_text, resolve_date_option_text, attach_clarification_resolution,
-    prepare_clarification_meta,
+    prepare_clarification_meta, extract_original_question,
 )
 from core.plan_preview import build_plan_preview, pending_plan_previews
 from core.agent_runtime import AgentRunSession, activate_agent_run
@@ -66,6 +66,104 @@ from core.agent_runtime import AgentRunSession, activate_agent_run
 log = logging.getLogger("querybot")
 
 router = APIRouter()
+
+
+def _restore_durable_thread_result(
+    account_id: str,
+    portal_user_id: int,
+    adapter,
+    *,
+    result_id: str | None = None,
+) -> dict:
+    """Restore a governed result from the authenticated user's thread trace.
+
+    Result cards persist across reconnects while the in-process cache expires.
+    Only post-policy rows already stored for this exact user and thread are
+    restored; this path never queries the client database or invokes an LLM.
+    """
+    session_id = str(getattr(adapter, "session_id", "") or "")
+    if not session_id:
+        return {}
+    requested_result_id = str(result_id or "").strip()
+    cached = result_cache.get_snapshot(
+        session_id,
+        requested_result_id or getattr(adapter, "last_result_id", None),
+    )
+    if cached:
+        adopt_cached_snapshot(adapter, cached)
+        return cached
+
+    try:
+        if requested_result_id:
+            exact_trace = store.get_answer_trace_by_question_id(
+                account_id,
+                requested_result_id,
+            )
+            traces = [exact_trace] if (
+                exact_trace
+                and int(exact_trace.get("portal_user_id") or 0) == int(portal_user_id)
+                and str(exact_trace.get("session_id") or "") == session_id
+            ) else []
+        else:
+            traces = store.list_answer_traces(
+                account_id,
+                limit=5,
+                portal_user_id=int(portal_user_id),
+                session_id=session_id,
+            )
+        for trace in traces:
+            trace_result_id = str(trace.get("question_id") or "").strip()
+            if requested_result_id and trace_result_id != requested_result_id:
+                continue
+            if str(trace.get("status") or "").lower() != "success":
+                continue
+            sql = str(trace.get("generated_sql") or "").strip()
+            if not sql:
+                continue
+            rows = trace.get("result_rows") or []
+            if isinstance(rows, str):
+                try:
+                    rows = json.loads(rows)
+                except (TypeError, ValueError):
+                    rows = []
+            if not isinstance(rows, list) or not rows or not all(
+                isinstance(row, dict) for row in rows
+            ):
+                continue
+
+            question = extract_original_question(
+                str(trace.get("question_text_sanitized") or "")
+            ).strip()
+            adapter.cache_result(
+                rows,
+                question,
+                sql,
+                get_client_db(account_id) or {},
+                question_id=trace_result_id or None,
+                contract_version=str(trace.get("contract_version") or ""),
+            )
+            restored = result_cache.get_snapshot(
+                session_id,
+                trace_result_id or getattr(adapter, "last_result_id", None),
+            )
+            if restored:
+                adopt_cached_snapshot(
+                    adapter,
+                    restored,
+                    question_id=trace_result_id or None,
+                )
+                log.info(
+                    "Restored governed result from durable thread trace: "
+                    "account=%s user=%s result=%s rows=%d",
+                    account_id,
+                    portal_user_id,
+                    trace_result_id or getattr(adapter, "last_result_id", ""),
+                    len(rows),
+                )
+                return restored
+    except Exception as exc:
+        log.debug("Durable thread result restore skipped: %s", exc)
+    return {}
 
 # Conversational report/playbook builder intent -- deliberately simple
 # keyword/regex fast path (mirrors core/result_commands.py's style), not an
@@ -684,6 +782,11 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 "row_count": int(trace.get("query_row_count") or 0),
             })
         adapter.load_history(history)
+        _restore_durable_thread_result(
+            account_id,
+            int(portal_user["id"]),
+            adapter,
+        )
     except Exception as history_exc:
         log.debug("Server thread history restore skipped: %s", history_exc)
 
@@ -901,6 +1004,17 @@ async def ws_chat(websocket: WebSocket, account_id: str):
         )
         try:
             source_result_id = getattr(adapter, "last_result_id", None)
+            if not result_cache.has_result(
+                session_id,
+                result_id=source_result_id,
+            ):
+                _restore_durable_thread_result(
+                    account_id,
+                    int(portal_user["id"]),
+                    adapter,
+                    result_id=source_result_id,
+                )
+                source_result_id = getattr(adapter, "last_result_id", None)
             outcome = precomputed_outcome or execute_result_command(
                 session_id,
                 command,
@@ -1159,6 +1273,14 @@ async def ws_chat(websocket: WebSocket, account_id: str):
         session_id = getattr(adapter, "session_id", "") or ""
         source_result_id = getattr(adapter, "last_result_id", None)
         snapshot = result_cache.get_snapshot(session_id, source_result_id)
+        if not snapshot:
+            snapshot = _restore_durable_thread_result(
+                account_id,
+                int(portal_user["id"]),
+                adapter,
+                result_id=source_result_id,
+            )
+            source_result_id = getattr(adapter, "last_result_id", None)
         if not snapshot:
             await _run_main_question(strip_result_context(text), table_hint, schema_hint)
             return
@@ -2393,6 +2515,16 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 _trace_step(_rc_trace_id, "receive_question", output_summary={"result_id": rc_result_id})
                 try:
                     _sid = getattr(adapter, "session_id", None)
+                    if _sid and not result_cache.has_result(
+                        _sid,
+                        result_id=rc_result_id or None,
+                    ):
+                        _restore_durable_thread_result(
+                            account_id,
+                            int(portal_user["id"]),
+                            adapter,
+                            result_id=rc_result_id or None,
+                        )
                     if not _sid or not result_cache.has_result(_sid):
                         _trace_finish(_rc_trace_id, status="error", answer_type="error", error_message="No cached result found")
                         await websocket.send_json({
@@ -3368,6 +3500,13 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                             requested_result_id,
                         )
                         if not action_snapshot:
+                            action_snapshot = _restore_durable_thread_result(
+                                account_id,
+                                int(portal_user["id"]),
+                                adapter,
+                                result_id=requested_result_id,
+                            )
+                        if not action_snapshot:
                             await websocket.send_json({
                                 "type": "assistant_error",
                                 "action": action,
@@ -3870,6 +4009,27 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                         continue
 
                     # ── standard action buttons (explain, analyze, compare …) ─
+                    # Compare points already present in the returned series
+                    # without a second model call. The cached result contract
+                    # has the first/last labels, values, and change. A prior-
+                    # period lookup is a separate database-backed action.
+                    if action == "compare" and cached and cached.get("rows"):
+                        from core.response_builder import (
+                            build_analysis_response,
+                            summarize_result_context,
+                        )
+                        comparison_context = dict(context or {})
+                        if not comparison_context.get("mode"):
+                            comparison_context = summarize_result_context(
+                                cached["rows"],
+                                cached.get("question", ""),
+                                sql=cached.get("sql", ""),
+                            )
+                        await websocket.send_json(_bound_action_payload(
+                            build_analysis_response("compare", comparison_context)
+                        ))
+                        continue
+
                     if cached and cached.get("rows") is not None:
                         try:
                             provider, model, api_key, az_kwargs = resolve_provider(client, purpose="query")
@@ -4040,6 +4200,13 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 getattr(adapter, "session_id", "") or "",
                 getattr(adapter, "last_result_id", None),
             )
+            if not _cache_snapshot:
+                _cache_snapshot = _restore_durable_thread_result(
+                    account_id,
+                    int(portal_user["id"]),
+                    adapter,
+                    result_id=getattr(adapter, "last_result_id", None),
+                )
             _cache_columns = [
                 str(column.get("name") or "")
                 for column in (_cache_snapshot or {}).get("schema", [])

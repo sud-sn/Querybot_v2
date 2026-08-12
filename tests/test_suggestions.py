@@ -78,6 +78,35 @@ class SuggestionTrustTests(unittest.TestCase):
                 _table_name_for_query_file(kb / "Attendance_queries.md"),
             )
 
+    def test_internal_clarification_wrapper_is_not_surfaced(self):
+        with self._tmpdir() as tmp:
+            kb = self._kb_dir(tmp)
+            build_suggestion_cache(str(kb))
+            original = "Show revenue by invoice month."
+            wrapped = (
+                original
+                + "\n\nClarification for the same request: Invoice Date.\n"
+                + "Use this clarification to interpret the original request; "
+                + "do not treat it as a separate question."
+            )
+            examples = [{
+                "question": wrapped,
+                "sql_query": "SELECT COUNT(*) FROM [HR].[Attendance];",
+                "table_name": "ATTENDANCE",
+            }]
+
+            with patch("store.get_validated_examples", return_value=examples), \
+                 patch("store.list_metrics", return_value=[]):
+                suggestions = get_suggestions(
+                    "acct",
+                    str(kb),
+                    allowed_tables={"CHATBOT_DB.HR.ATTENDANCE"},
+                    n=6,
+                    schema_dir=str(kb),
+                )
+
+            self.assertEqual(original, suggestions[0]["question"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -250,6 +250,80 @@ class ConversationalResultCacheTests(unittest.TestCase):
             [300.0, 200.0],
         )
 
+    def test_elliptical_highest_infers_the_only_numeric_business_measure(self):
+        cache = ResultCache()
+        cache.store(
+            self.session,
+            [
+                {"PERIOD": "January", "REVENUE": 150.0},
+                {"PERIOD": "February", "REVENUE": 400.0},
+                {"PERIOD": "March", "REVENUE": 500.0},
+            ],
+            result_id="elliptical-highest-source",
+        )
+        outcome = execute_result_command(
+            self.session, parse_result_command("Which one is highest?"), cache=cache,
+        )
+        self.assertTrue(outcome.ok, outcome.message)
+        self.assertEqual(outcome.snapshot["rows"], [{"PERIOD": "March", "REVENUE": 500.0}])
+        self.assertEqual(outcome.snapshot["metadata"]["order_column"], "REVENUE")
+        self.assertIn("highest result by Revenue", outcome.message)
+
+    def test_elliptical_lowest_infers_the_only_numeric_business_measure(self):
+        cache = ResultCache()
+        cache.store(
+            self.session,
+            [
+                {"PERIOD": "January", "REVENUE": 150.0},
+                {"PERIOD": "February", "REVENUE": 400.0},
+                {"PERIOD": "March", "REVENUE": 500.0},
+            ],
+            result_id="elliptical-lowest-source",
+        )
+        outcome = execute_result_command(
+            self.session, parse_result_command("Which one is lowest?"), cache=cache,
+        )
+        self.assertTrue(outcome.ok, outcome.message)
+        self.assertEqual(outcome.snapshot["rows"], [{"PERIOD": "January", "REVENUE": 150.0}])
+
+    def test_elliptical_extreme_asks_when_multiple_business_measures_exist(self):
+        cache = ResultCache()
+        cache.store(
+            self.session,
+            [
+                {"CUSTOMER": "A", "REVENUE": 150.0, "PROFIT": 25.0, "ROW_NUMBER": 1},
+                {"CUSTOMER": "B", "REVENUE": 400.0, "PROFIT": 10.0, "ROW_NUMBER": 2},
+            ],
+            result_id="elliptical-ambiguous-source",
+        )
+        outcome = execute_result_command(
+            self.session, parse_result_command("Which one is highest?"), cache=cache,
+        )
+        self.assertFalse(outcome.ok)
+        self.assertTrue(outcome.clarification_required)
+        self.assertEqual(
+            {option["label"] for option in outcome.clarification_options},
+            {"Revenue", "Profit"},
+        )
+        resolved = parse_result_command(outcome.clarification_options[0]["resolved_question"])
+        self.assertIsNotNone(resolved)
+
+    def test_positional_top_one_preserves_existing_row_order(self):
+        cache = ResultCache()
+        cache.store(
+            self.session,
+            [
+                {"PERIOD": "January", "REVENUE": 150.0},
+                {"PERIOD": "March", "REVENUE": 500.0},
+            ],
+            result_id="positional-top-source",
+        )
+        outcome = execute_result_command(
+            self.session, parse_result_command("Keep the top one"), cache=cache,
+        )
+        self.assertTrue(outcome.ok, outcome.message)
+        self.assertEqual(outcome.snapshot["rows"], [{"PERIOD": "January", "REVENUE": 150.0}])
+
     def test_ranked_period_subset_is_not_described_as_a_time_trend(self):
         payload = build_assistant_response(
             question="Top 3 months by net revenue from the prior result",
@@ -581,6 +655,18 @@ class ConversationalResultCacheWiringTests(unittest.TestCase):
         self.assertNotIn("llm_complete", block)
         self.assertNotIn("_generate_duckdb_sql", block)
         self.assertNotIn("run_query(", block)
+
+    def test_compare_period_action_is_deterministic_and_result_local(self):
+        source = (ROOT / "gateway" / "webhooks.py").read_text(encoding="utf-8")
+        action_start = source.index('if action == "compare" and cached')
+        action_end = source.index(
+            'if cached and cached.get("rows") is not None:', action_start,
+        )
+        block = source[action_start:action_end]
+        self.assertIn('build_analysis_response("compare"', block)
+        self.assertIn("summarize_result_context", block)
+        self.assertNotIn("generate_analysis_response", block)
+        self.assertNotIn("_ws_execute_governed", block)
 
     def test_analytic_cache_miss_routes_to_governed_pipeline(self):
         source = (ROOT / "gateway" / "webhooks.py").read_text(encoding="utf-8")

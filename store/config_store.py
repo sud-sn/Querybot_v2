@@ -622,6 +622,15 @@ def get_suggestions(account_id: str, q: str, limit: int = 8) -> list[dict]:
     q_lower = q.lower()
     candidates: list[tuple[int, str, str]] = []  # (score, text, kind)
 
+    def _display_question(value: str) -> str:
+        """Remove internal clarification metadata at the UI read boundary."""
+        text = (value or "").strip()
+        try:
+            from core.clarification import extract_original_question
+            return (extract_original_question(text) or "").strip()
+        except Exception:
+            return text
+
     with get_db() as conn:
         # 1 — Recent successful questions (most valuable: real questions that worked)
         rows = conn.execute(
@@ -631,7 +640,7 @@ def get_suggestions(account_id: str, q: str, limit: int = 8) -> list[dict]:
             (account_id,),
         ).fetchall()
         for r in rows:
-            text = (r["question"] or "").strip()
+            text = _display_question(r["question"] or "")
             if not text:
                 continue
             tl = text.lower()

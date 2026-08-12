@@ -235,6 +235,15 @@ class FrontendWiringTests(unittest.TestCase):
         body = self.html[start:start + 400]
         self.assertIn("processingActive", body)
 
+    def test_send_message_dismisses_autocomplete(self):
+        start = self.html.index("function sendMessage(tableHint)")
+        body = self.html[start:start + 1800]
+        self.assertIn("inp._autoSuggest?.dismiss()", body)
+
+    def test_autocomplete_ignores_stale_fetches(self):
+        self.assertIn("requestSeq !== this._requestSeq", self.html)
+        self.assertIn("this._el._autoSuggest = this", self.html)
+
     def test_stop_mode_css_present(self):
         self.assertIn(".send-btn.is-stop{", self.html)
         self.assertIn(".stop-icon{", self.html)

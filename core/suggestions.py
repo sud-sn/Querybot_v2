@@ -242,6 +242,14 @@ def get_suggestions(
     seen: set[str] = set()
 
     def _add(q: str, fqn: str = "") -> bool:
+        # Clarification retries retain an internal wrapper in the audit log so
+        # SQL generation can reproduce the resolved choice. That metadata is
+        # not a user-facing question and must not leak into starter cards.
+        try:
+            from core.clarification import extract_original_question
+            q = extract_original_question(q)
+        except Exception:
+            pass
         q = q.strip()
         key = q.lower()
         if not q or key in seen or len(suggestions) >= n:

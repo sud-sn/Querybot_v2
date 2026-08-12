@@ -1,4 +1,5 @@
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -92,6 +93,119 @@ def test_result_action_targets_the_clicked_governed_snapshot():
     assert "That result is no longer available for analysis" in action_block
     assert "const actionResultId = trust.result_id || msg.data?.result_id || '';" in CHAT
     assert "const nextActions = actionResultId &&" in CHAT
+
+
+def test_durable_thread_result_restore_is_user_thread_scoped_and_exact():
+    from core.result_cache import result_cache
+    from gateway.web_adapter import WebAdapter
+    from gateway.webhooks import _restore_durable_thread_result
+
+    adapter = WebAdapter(
+        AsyncMock(), "tenant-a", "web_17", thread_id="thread-a",
+        portal_user_id=17,
+    )
+    trace = {
+        "question_id": "result-123",
+        "question_text_sanitized": (
+            "Revenue by month. Clarification for the same request: Invoice Date. "
+            "Use this clarification to interpret the original request; do not treat "
+            "it as a separate question."
+        ),
+        "generated_sql": "select invoice_month, sum(revenue) from governed_sales",
+        "result_rows": '[{"INVOICE_MONTH":"2026-01","REVENUE":125}]',
+        "status": "success",
+        "contract_version": "contract-7",
+    }
+    try:
+        trace["portal_user_id"] = 17
+        trace["session_id"] = "tenant-a:web_17:thread:thread-a"
+        with patch(
+            "gateway.webhooks.store.get_answer_trace_by_question_id", return_value=trace
+        ) as get_trace, patch(
+            "gateway.webhooks.get_client_db",
+            return_value={"id": 41, "db_type": "azure_sql"},
+        ):
+            snapshot = _restore_durable_thread_result(
+                "tenant-a", 17, adapter, result_id="result-123"
+            )
+
+        assert snapshot["result_id"] == "result-123"
+        assert snapshot["rows"] == [{"INVOICE_MONTH": "2026-01", "REVENUE": 125}]
+        assert snapshot["question"] == "Revenue by month."
+        assert adapter.last_result_id == "result-123"
+        get_trace.assert_called_once_with(
+            "tenant-a", "result-123",
+        )
+    finally:
+        result_cache.clear(adapter.session_id)
+
+
+def test_durable_thread_result_restore_rejects_errors_and_empty_rows():
+    from core.result_cache import result_cache
+    from gateway.web_adapter import WebAdapter
+    from gateway.webhooks import _restore_durable_thread_result
+
+    adapter = WebAdapter(
+        AsyncMock(), "tenant-b", "web_22", thread_id="thread-b",
+        portal_user_id=22,
+    )
+    traces = [
+        {
+            "question_id": "failed-result",
+            "question_text_sanitized": "Failed",
+            "generated_sql": "select 1",
+            "result_rows": '[{"VALUE":1}]',
+            "status": "error",
+        },
+        {
+            "question_id": "empty-result",
+            "question_text_sanitized": "Empty",
+            "generated_sql": "select 1 where 1=0",
+            "result_rows": "[]",
+            "status": "success",
+        },
+    ]
+    try:
+        with patch(
+            "gateway.webhooks.store.list_answer_traces", return_value=traces
+        ):
+            snapshot = _restore_durable_thread_result("tenant-b", 22, adapter)
+        assert snapshot == {}
+        assert not result_cache.has_result(adapter.session_id)
+    finally:
+        result_cache.clear(adapter.session_id)
+
+
+def test_durable_exact_result_restore_rejects_another_user_or_thread():
+    from core.result_cache import result_cache
+    from gateway.web_adapter import WebAdapter
+    from gateway.webhooks import _restore_durable_thread_result
+
+    adapter = WebAdapter(
+        AsyncMock(), "tenant-c", "web_31", thread_id="owned-thread",
+        portal_user_id=31,
+    )
+    foreign_trace = {
+        "question_id": "foreign-result",
+        "portal_user_id": 99,
+        "session_id": "tenant-c:web_99:thread:other-thread",
+        "question_text_sanitized": "Revenue",
+        "generated_sql": "select revenue from sales",
+        "result_rows": '[{"REVENUE":500}]',
+        "status": "success",
+    }
+    try:
+        with patch(
+            "gateway.webhooks.store.get_answer_trace_by_question_id",
+            return_value=foreign_trace,
+        ):
+            snapshot = _restore_durable_thread_result(
+                "tenant-c", 31, adapter, result_id="foreign-result"
+            )
+        assert snapshot == {}
+        assert not result_cache.has_result(adapter.session_id)
+    finally:
+        result_cache.clear(adapter.session_id)
 
 
 def test_result_actions_acknowledge_complete_download_and_timeout_visibly():

@@ -92,6 +92,11 @@ _RESULT_CONTEXT_RE = re.compile(
     r"(?:result|results|data|dataset|rows?|table)\b",
     re.IGNORECASE,
 )
+_KEEP_BOTTOM_BY_RE = re.compile(
+    r"^\s*keep\s+(?:only\s+)?(?:the\s+)?bottom\s+(\d{1,4})"
+    r"(?:\s+[a-z][a-z0-9 _-]*?)?\s+by\s+(.+?)\s*[.!]?\s*$",
+    re.IGNORECASE,
+)
 _ELLIPTICAL_EXTREME_RE = re.compile(
     r"^\s*which\s+(?:one|row|item|result)\s+(?:is|was)\s+(?:the\s+)?"
     r"(highest|lowest|best|worst)\s*[?!.]?\s*$",
@@ -168,6 +173,9 @@ class ResultCommand:
     presentation_type: str = ""
     format_spec: dict[str, Any] = field(default_factory=dict)
     fallback_allowed: bool = False
+    # True only for semantic extrema such as "Which one is highest?". Plain
+    # positional commands ("keep the first row") must preserve row order.
+    infer_metric: bool = False
 
 
 @dataclass
@@ -233,6 +241,7 @@ def parse_result_command(text: str) -> ResultCommand | None:
             "keep_top",
             limit=1,
             direction="asc" if match.group(1).lower() in {"lowest", "worst"} else "desc",
+            infer_metric=True,
         )
     match = _POSITIONAL_RE.fullmatch(value)
     if match:
@@ -253,6 +262,14 @@ def parse_result_command(text: str) -> ResultCommand | None:
         return ResultCommand(
             "keep_top",
             limit=max(1, min(int(match.group(1)), 1000)),
+            metric_text=_clean_field_text(match.group(2)),
+        )
+    match = _KEEP_BOTTOM_BY_RE.fullmatch(value)
+    if match:
+        return ResultCommand(
+            "keep_top",
+            limit=max(1, min(int(match.group(1)), 1000)),
+            direction="asc",
             metric_text=_clean_field_text(match.group(2)),
         )
     match = _SORT_RE.fullmatch(value)
@@ -599,6 +616,32 @@ def execute_result_command(
                 order_column, error = _resolve_column(rows, command.metric_text)
                 if error:
                     return _command_error(command, source_id, before, error)
+            elif command.infer_metric:
+                candidates = _ranking_measure_columns(rows)
+                if len(candidates) == 1:
+                    order_column = candidates[0]
+                elif len(candidates) > 1:
+                    extreme = "lowest" if command.direction == "asc" else "highest"
+                    position = "bottom" if command.direction == "asc" else "top"
+                    return _format_clarification(
+                        source_id,
+                        before,
+                        f"Which measure should I use to find the {extreme} result?",
+                        [
+                            (
+                                _business_column_label(column),
+                                f"keep the {position} 1 by {column}",
+                            )
+                            for column in candidates
+                        ],
+                    )
+                else:
+                    return _command_error(
+                        command,
+                        source_id,
+                        before,
+                        "The current result has no numeric business measure to rank.",
+                    )
             descending = command.direction != "asc"
             order_keyword = "DESC" if descending else "ASC"
             if order_column:
@@ -647,10 +690,17 @@ def execute_result_command(
                 },
             )
             position = "last" if not descending and not order_column else "first"
+            if command.infer_metric and order_column:
+                message = (
+                    f"Kept the {('highest' if descending else 'lowest')} result "
+                    f"by {_business_column_label(order_column)}."
+                )
+            else:
+                message = f"Kept the {position} {len(transformed)} rows from the current result."
             return ResultCommandOutcome(
                 handled=True,
                 ok=True,
-                message=f"Kept the {position} {len(transformed)} rows from the current result.",
+                message=message,
                 snapshot=snapshot,
                 operation="keep_top",
                 rows_before=before,
@@ -1418,6 +1468,50 @@ def _column_is_numeric(rows: list[dict], column: str) -> bool:
         return True
     except (TypeError, ValueError):
         return False
+
+
+_RANKING_MEASURE_TOKENS = {
+    "amount", "average", "avg", "balance", "count", "cost", "cogs",
+    "discount", "gross", "inventory", "margin", "measure", "metric",
+    "net", "orders", "percent", "percentage", "profit", "quantity",
+    "qty", "rate", "revenue", "sales", "total", "value", "volume",
+}
+_RANKING_DIMENSION_TOKENS = {
+    "date", "day", "fiscal", "id", "index", "key", "month", "number",
+    "period", "quarter", "rank", "row", "sequence", "sk", "week", "year",
+}
+_RANKING_DIAGNOSTIC_TOKENS = {
+    "confidence", "diagnostic", "matched", "nonnull", "null", "records",
+    "rows", "score", "validation",
+}
+
+
+def _ranking_measure_columns(rows: list[dict]) -> list[str]:
+    """Return numeric business measures suitable for an elliptical extreme.
+
+    Numeric identifiers, temporal sort keys, and result-quality diagnostics
+    are deliberately excluded. If more than one real measure remains the
+    caller asks the user which one to rank instead of making a silent guess.
+    """
+    if not rows:
+        return []
+    candidates: list[str] = []
+    for raw_column in rows[0].keys():
+        column = str(raw_column)
+        if not _column_is_numeric(rows, column):
+            continue
+        tokens = set(re.findall(r"[a-z0-9]+", column.casefold()))
+        if tokens & _RANKING_DIAGNOSTIC_TOKENS:
+            continue
+        has_measure_signal = bool(tokens & _RANKING_MEASURE_TOKENS)
+        if tokens & _RANKING_DIMENSION_TOKENS and not has_measure_signal:
+            continue
+        candidates.append(column)
+    return candidates
+
+
+def _business_column_label(column: str) -> str:
+    return re.sub(r"[_\s]+", " ", str(column or "").strip()).title()
 
 
 def _number(value: Any) -> float | None:
