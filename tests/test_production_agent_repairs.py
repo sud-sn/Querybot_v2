@@ -13,6 +13,9 @@ from core.pipeline_helpers import attempt_field_plan_repair
 from core.result_commands import parse_result_command
 from core.source_resolution import resolve_source_scope
 from core.semantic_model import _scope_plan_to_single_fact
+from core.metric_scope import metric_source_tables
+from core.pipeline_trace import _learning_result_is_eligible
+from core.semantic_planner import build_semantic_field_plan
 from core.validator import validate_sql_detailed
 from core.vocab_packs import MergedVocab
 
@@ -73,6 +76,56 @@ def test_approved_metric_source_beats_unrelated_monthly_grain():
     assert scope["status"] == "selected"
     assert scope["selected_fact"] == "TENANT.F_SALES"
     assert scope["reason"] == "approved metric source binding"
+
+
+def test_metric_source_tables_collapse_bare_two_and_three_part_aliases():
+    tables = metric_source_tables(
+        {
+            "base_table": "CUS_ORD_IVC_FCT",
+            "required_columns": "SOP_CUS_IVC_LIN_AMT",
+        },
+        {
+            "CUS_ORD_IVC_FCT": {"SOP_CUS_IVC_LIN_AMT": "decimal"},
+            "EMDW_DMART.CUS_ORD_IVC_FCT": {"SOP_CUS_IVC_LIN_AMT": "decimal"},
+            "EMCODW_DEV.EMDW_DMART.CUS_ORD_IVC_FCT": {"SOP_CUS_IVC_LIN_AMT": "decimal"},
+        },
+    )
+    assert tables == {"EMDW_DMART.CUS_ORD_IVC_FCT"}
+
+
+def test_calendar_day_column_is_never_compiled_as_a_measure():
+    plan = build_semantic_field_plan(
+        "show revenue trend by day",
+        {
+            "OPS.F_SALES": {"NET_REVENUE": "decimal", "DATE_SK": "int"},
+            "OPS.D_DATE": {"DATE_SK": "int", "DAY": "int", "FULL_DATE": "date"},
+        },
+        fact_tables={"OPS.F_SALES"},
+        preferred_fact_tables={"OPS.F_SALES"},
+    )
+    day = next(field for field in plan["fields"] if field["column"] == "DAY")
+    assert day["role"] == "date_dimension"
+    assert day["enforcement"] == "optional"
+
+
+def test_empty_metric_result_is_not_eligible_for_positive_learning():
+    assert not _learning_result_is_eligible(0, {"status": "empty"})
+    assert not _learning_result_is_eligible(
+        1,
+        {
+            "status": "fail",
+            "numeric_columns": [],
+            "resolved_metrics": ["Revenue"],
+        },
+    )
+    assert _learning_result_is_eligible(
+        1,
+        {
+            "status": "pass",
+            "numeric_columns": ["Revenue"],
+            "resolved_metrics": ["Revenue"],
+        },
+    )
 
 
 def test_explicit_erp_source_beats_metric_or_grain_inference():

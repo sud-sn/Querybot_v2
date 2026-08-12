@@ -1021,6 +1021,7 @@ def build_semantic_field_plan(
         return {"enabled": False, "fields": [], "joins": [], "reason": "no matching semantic fields"}
     for field in fields:
         if (field.get("column") or "").upper() in _DATE_PART_COLUMNS:
+            field["role"] = "date_dimension"
             field["enforcement"] = "optional"
         # A term that tied across multiple source tables/columns was resolved
         # by arbitrary order, not evidence — keep it as a hint, never a hard

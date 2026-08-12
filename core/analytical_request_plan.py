@@ -72,7 +72,24 @@ def compile_analytical_request_plan(
         str(value) for value in (source_scope.get("selected_facts") or []) if value
     ]
     fields = [f for f in (plan.get("fields") or []) if f.get("enforcement") != "optional"]
-    selected_fact = str((plan.get("source_scope") or {}).get("selected_fact") or "")
+
+    metric_sources: list[str] = []
+    for metric in matched_metrics or []:
+        values = (
+            metric.get("_resolved_source_tables")
+            or metric.get("source_tables")
+            or ([metric.get("base_table")] if metric.get("base_table") else [])
+        )
+        for value in values:
+            table = str(value or "").strip()
+            if table and table not in metric_sources:
+                metric_sources.append(table)
+    # A validated formula metric is authoritative source evidence even when
+    # no physical measure field was emitted by the semantic field planner.
+    if not selected_fact and len(metric_sources) == 1:
+        selected_fact = metric_sources[0]
+    if not selected_facts and selected_fact:
+        selected_facts = [selected_fact]
     measures = [
         {"term": f.get("term"), "table": f.get("table"), "column": f.get("column")}
         for f in fields if _is_compiled_measure(f, selected_fact)
@@ -216,7 +233,16 @@ def compile_analytical_request_plan(
         }
 
     registered_metrics = [
-        {"id": m.get("id"), "name": m.get("name"), "formula": m.get("formula") or m.get("sql_formula")}
+        {
+            "id": m.get("id"),
+            "name": m.get("name"),
+            "formula": m.get("formula") or m.get("sql_formula"),
+            "source_tables": list(
+                m.get("_resolved_source_tables")
+                or m.get("source_tables")
+                or ([m.get("base_table")] if m.get("base_table") else [])
+            ),
+        }
         for m in (matched_metrics or [])
     ]
     has_measure = bool(measures or registered_metrics or (

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from collections import deque
 from pathlib import Path
 
@@ -124,6 +125,7 @@ def _merge_semantic_plans(*plans: dict | None) -> dict:
     date_disclosures: list[dict] = []
     seen_date_disclosures: set[tuple[str, str, str]] = set()
     source_scope: dict = {}
+    fact_anchor = ""
 
     # Pre-pass: union avoid lists across plans so the main loop can drop a
     # superseded column no matter which plan proposed it.  The LLM field
@@ -134,10 +136,22 @@ def _merge_semantic_plans(*plans: dict | None) -> dict:
     avoid_columns: list[dict] = []
     seen_avoid: set[tuple[str, str]] = set()
     for plan in plans:
-        if not plan or not plan.get("enabled"):
+        if not plan:
             continue
-        if plan.get("source_scope") and not source_scope:
-            source_scope = dict(plan.get("source_scope") or {})
+        candidate_scope = plan.get("source_scope") or {}
+        if candidate_scope:
+            if not source_scope:
+                source_scope = dict(candidate_scope)
+            else:
+                # Merge missing evidence without allowing a later, weaker
+                # plan to erase the already selected metric fact.
+                for key, value in candidate_scope.items():
+                    if value not in (None, "", [], {}) and not source_scope.get(key):
+                        source_scope[key] = value
+        if not fact_anchor and plan.get("fact_anchor"):
+            fact_anchor = str(plan.get("fact_anchor") or "")
+        if not plan.get("enabled"):
+            continue
         for avoid in plan.get("avoid_columns") or []:
             key = (
                 _semantic_table_identity(avoid.get("table") or ""),
@@ -231,7 +245,16 @@ def _merge_semantic_plans(*plans: dict | None) -> dict:
             seen_joins.add(key)
             joins.append(join)
     if not fields:
-        return {"enabled": False, "fields": [], "joins": [], "required_tables": [], "reason": "no semantic fields"}
+        return {
+            "enabled": False,
+            "fields": [],
+            "joins": [],
+            "required_tables": [],
+            "reason": "no semantic fields",
+            "source_scope": source_scope,
+            "fact_anchor": fact_anchor,
+            "avoid_columns": avoid_columns,
+        }
     return {
         "enabled": True,
         "fields": fields,
@@ -248,7 +271,75 @@ def _merge_semantic_plans(*plans: dict | None) -> dict:
         "temporal_policies": temporal_policies,
         "date_disclosures": date_disclosures,
         "source_scope": source_scope,
+        "fact_anchor": fact_anchor,
     }
+
+
+def _scope_semantic_plan_to_analytical_request(
+    plan: dict | None,
+    analytical_plan: dict | None,
+) -> dict:
+    """Remove lexical field bindings that contradict a compiled count intent.
+
+    In phrases such as "warehouses with the most customer orders", customer
+    modifies the order event; it is not a requested output dimension. Likewise
+    an order-quantity column is not the governed identifier to COUNT DISTINCT.
+    Keep those matches as optional hints so they can inform generation without
+    becoming validator requirements.
+    """
+    scoped = plan if isinstance(plan, dict) else {}
+    intent = analytical_plan if isinstance(analytical_plan, dict) else {}
+    if str(intent.get("measure_semantics") or "") != "count_distinct_business_identifier":
+        return scoped
+
+    requested_dimensions = {
+        re.sub(r"[^a-z0-9]+", " ", str(value or "").casefold()).strip().rstrip("s")
+        for value in [intent.get("entity_grain"), *(intent.get("dimensions") or [])]
+        if str(value or "").strip()
+    }
+    target = scoped.get("count_target") or {}
+    selected = target.get("selected") if isinstance(target.get("selected"), dict) else {}
+    target_table = _semantic_table_identity(selected.get("table") or "")
+    target_column = str(selected.get("column") or "").upper()
+
+    for field in scoped.get("fields") or []:
+        role = str(field.get("role") or "").casefold()
+        term = re.sub(
+            r"[^a-z0-9]+", " ", str(field.get("term") or "").casefold()
+        ).strip().rstrip("s")
+        is_exact_target = (
+            target_table
+            and target_column
+            and _semantic_table_identity(field.get("table") or "") == target_table
+            and str(field.get("column") or "").upper() == target_column
+        )
+        if is_exact_target:
+            continue
+        if role in {"measure", "metric", "calculated_measure"}:
+            field["enforcement"] = "optional"
+            field["demotion_reason"] = "derived event count uses governed identifier"
+        elif role in {"dimension", "display_dimension", "attribute"} and term:
+            if term not in requested_dimensions:
+                field["enforcement"] = "optional"
+                field["demotion_reason"] = "event modifier is not requested output grain"
+
+    required_table_names = {
+        str(field.get("table") or "")
+        for field in scoped.get("fields") or []
+        if field.get("enforcement") != "optional" and field.get("table")
+    }
+    if selected.get("table"):
+        required_table_names.add(str(selected.get("table")))
+    required_identities = {
+        _semantic_table_identity(table) for table in required_table_names if table
+    }
+    scoped["required_tables"] = sorted(required_table_names)
+    for join in scoped.get("joins") or []:
+        from_table = _semantic_table_identity(join.get("from") or "")
+        to_table = _semantic_table_identity(join.get("to") or "")
+        if from_table not in required_identities or to_table not in required_identities:
+            join["enforcement"] = "optional"
+    return scoped
 
 
 # ── Usage limits ──────────────────────────────────────────────────────────────

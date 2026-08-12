@@ -172,6 +172,35 @@ class DynamicSourceResolutionTests(unittest.TestCase):
 
 
 class ExecutableRequestPlanTests(unittest.TestCase):
+    def test_metric_source_is_a_compiler_fallback_when_field_plan_is_empty(self):
+        plan = compile_analytical_request_plan(
+            "what is my revenue trend for the last 7 days",
+            {
+                "enabled": True,
+                "fields": [{
+                    "term": "Invoice Date", "table": "OPS.D_DATE",
+                    "column": "FULL_DATE", "role": "contextual_date",
+                }],
+                "temporal_policies": [{
+                    "kind": "relative_window", "amount": 7, "unit": "day",
+                    "fact_table": "OPS.F_SALES", "fact_column": "INVOICE_DATE_SK",
+                }],
+            },
+            matched_metrics=[{
+                "id": 7,
+                "name": "Revenue",
+                "formula": "SUM(NET_REVENUE_AMOUNT)",
+                "_resolved_source_tables": ["OPS.F_SALES"],
+            }],
+            analytical_intent_plan={
+                "intent": "trend", "time_range": "last 7 days",
+            },
+        )
+
+        self.assertEqual(plan["status"], "compiled")
+        self.assertEqual(plan["source_fact"], "OPS.F_SALES")
+        self.assertEqual(plan["source_facts"], ["OPS.F_SALES"])
+        self.assertEqual(plan["metrics"][0]["source_tables"], ["OPS.F_SALES"])
     def test_approved_attribute_measure_is_compiled_as_measure_not_dimension(self):
         plan = compile_analytical_request_plan(
             "show revenue by warehouse",

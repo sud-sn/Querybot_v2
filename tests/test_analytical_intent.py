@@ -112,6 +112,24 @@ def test_top_customers_by_total_orders_compiles_event_count_without_irrelevant_m
     assert "Allocated Costs" not in plan.prompt_context()
 
 
+def test_most_customer_orders_by_warehouse_is_an_event_count_not_metric_ranking():
+    plan = plan_analytical_intent(
+        "Retrieve the top 10 warehouses with the most customer orders.",
+        metrics=[
+            {"name": "Customer Discount Amount", "category": "Finance"},
+            {"name": "Allocated Costs", "category": "Finance"},
+        ],
+    )
+
+    assert plan.intent == "ranking"
+    assert plan.measure_semantics == "count_distinct_business_identifier"
+    assert plan.counted_entity == "order"
+    assert plan.entity_grain == "warehouse"
+    assert plan.dimensions == ("warehouse",)
+    assert not plan.needs_clarification
+    assert "Customer Discount Amount" not in plan.prompt_context()
+
+
 def test_unknown_ranking_never_backfills_unrelated_metric_options():
     plan = plan_analytical_intent(
         "which warehouses have the highest trading margin",

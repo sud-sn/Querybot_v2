@@ -25,6 +25,24 @@ _current_trace_id: ContextVar[int | None] = ContextVar(
 )
 
 
+def _learning_result_is_eligible(
+    row_count: int,
+    result_verification: dict | None,
+) -> bool:
+    """Only successful, materially populated results may teach the system."""
+    verification = result_verification if isinstance(result_verification, dict) else {}
+    if int(row_count or 0) <= 0:
+        return False
+    status = str(verification.get("status") or "pass").strip().casefold()
+    if status in {"empty", "fail", "failed", "error", "blocked"}:
+        return False
+    resolved_metrics = verification.get("resolved_metrics") or []
+    numeric_columns = verification.get("numeric_columns") or []
+    if resolved_metrics and not numeric_columns:
+        return False
+    return True
+
+
 # ── Query log ─────────────────────────────────────────────────────────────────
 
 def _log_q(account_id, question, sql, rows, success, error,
@@ -222,6 +240,20 @@ def _create_learning_candidate(
         from core.quality_scorer import score_trace
         from store.learning_store import create_candidate
 
+        result_verification = confidence_ctx.get("result_verification") or {}
+        if not _learning_result_is_eligible(row_count, result_verification):
+            log.info(
+                "Learning candidate skipped for %s: result was empty or semantically unverified",
+                account_id,
+            )
+            return
+
+        versions = compute_learning_versions(account_id, kb_dir=kb_dir, schema_dir=schema_dir)
+        semantic_model_version = versions["semantic_model_version"]
+        metric_version         = versions["metric_version"]
+        schema_version         = versions["schema_version"]
+        contract_version       = versions["contract_version"]
+
         # If we reached this point the DB execution succeeded (rows were sent).
         execution_success = True
 
@@ -257,12 +289,6 @@ def _create_learning_candidate(
         if quarantine_reasons:
             evidence["learning_gate"] = "admin_review_required"
             evidence["quarantine_reasons"] = quarantine_reasons
-
-        versions = compute_learning_versions(account_id, kb_dir=kb_dir, schema_dir=schema_dir)
-        semantic_model_version = versions["semantic_model_version"]
-        metric_version         = versions["metric_version"]
-        schema_version         = versions["schema_version"]
-        contract_version       = versions["contract_version"]
 
         create_candidate(
             origin_question_id = question_id,

@@ -72,6 +72,7 @@ from core.metric_scope import metric_source_tables, resolve_metric_scope
 from core.answer_rca import extract_sql_tables
 from core.pipeline_context import (
     get_state, get_client_db, _merge_semantic_plans,
+    _scope_semantic_plan_to_analytical_request,
     check_query_limit, check_token_limit,
 )
 from core.pipeline_helpers import (
@@ -2645,7 +2646,10 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         )
         return
 
+    # Work on request-local copies. Source resolution is execution evidence,
+    # not persistent registry metadata, and must not leak into later requests.
     _matched_metrics = _metric_scope.metrics
+    _matched_metrics = [dict(metric) for metric in _matched_metrics]
     if _matched_metrics:
         try:
             store.increment_metric_usage(account_id, [m.get("name") for m in _matched_metrics if m.get("name")])
@@ -2654,7 +2658,9 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     metric_formula_context = _format_metric_formula_context(_matched_metrics, account_id=account_id)
     _metric_formula_tables = set()
     for _metric in _matched_metrics:
-        _metric_formula_tables.update(metric_source_tables(_metric, all_columns))
+        _resolved_metric_tables = metric_source_tables(_metric, all_columns)
+        _metric["_resolved_source_tables"] = sorted(_resolved_metric_tables)
+        _metric_formula_tables.update(_resolved_metric_tables)
     if metric_formula_context:
         # Prepend metric formulas BEFORE the KB context so the LLM reads them
         # first and they take precedence over any similar-column documentation
@@ -3093,7 +3099,12 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                         _semantic_plan_question,
                     )
                 if _date_plan.get("enabled"):
+                    _source_scope_before_date_merge = dict(
+                        (_semantic_plan or {}).get("source_scope") or {}
+                    )
                     _semantic_plan = _merge_semantic_plans(_semantic_plan, _date_plan)
+                    if _source_scope_before_date_merge and not _semantic_plan.get("source_scope"):
+                        _semantic_plan["source_scope"] = _source_scope_before_date_merge
                     _selected_date_bindings = (
                         _date_context_resolution.get("bindings")
                         if _date_context_resolution.get("status") == "selected_many"
@@ -3498,6 +3509,10 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     # Compile the resolved facts, fields, dates, joins and output shape into a
     # single plan before SQL generation. This is dataset-neutral: every value
     # comes from this tenant's semantic model, metrics and Date Roles.
+    _semantic_plan = _scope_semantic_plan_to_analytical_request(
+        _semantic_plan,
+        _analytical_plan.to_dict(),
+    )
     _analytical_request_plan = compile_analytical_request_plan(
         _semantic_plan_question,
         _semantic_plan,

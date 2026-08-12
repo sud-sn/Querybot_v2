@@ -110,6 +110,44 @@ def _sql_tables(sql: str) -> set[str]:
     return tables
 
 
+def _canonical_table_references(tables: set[str]) -> set[str]:
+    """Collapse bare, schema, and database-qualified aliases of one table.
+
+    Schema-qualified names are preferred because they are portable across
+    database/catalog deployments and avoid injecting the same KB document
+    several times under equivalent spellings.
+    """
+    cleaned = {
+        str(table or "").replace("[", "").replace("]", "").replace('"', "").upper()
+        for table in tables
+        if str(table or "").strip()
+    }
+    qualified_by_bare: dict[str, list[str]] = {}
+    for table in cleaned:
+        parts = [part for part in table.split(".") if part]
+        if len(parts) >= 2:
+            qualified_by_bare.setdefault(parts[-1], []).append(table)
+
+    result: set[str] = set()
+    handled_bare: set[str] = set()
+    for bare, variants in qualified_by_bare.items():
+        identities = {".".join(value.split(".")[-2:]) for value in variants}
+        if len(identities) == 1:
+            # Prefer the stable schema.table representation when available.
+            result.add(next(iter(identities)))
+            handled_bare.add(bare)
+        else:
+            result.update(variants)
+    for table in cleaned:
+        parts = [part for part in table.split(".") if part]
+        if len(parts) == 1 and parts[0] in handled_bare:
+            continue
+        if len(parts) >= 2 and parts[-1] in handled_bare:
+            continue
+        result.add(table)
+    return result
+
+
 def metric_source_tables(metric: dict[str, Any], table_columns: dict[str, dict[str, str]] | None) -> set[str]:
     """Infer metric source tables from base_table, SQL, and required columns."""
     tables: set[str] = set()
@@ -124,7 +162,7 @@ def metric_source_tables(metric: dict[str, Any], table_columns: dict[str, dict[s
             col_names = {str(c).upper() for c in (cols or {})}
             if required & col_names:
                 tables.add(str(table).upper())
-    return tables
+    return _canonical_table_references(tables)
 
 
 def metric_source_schemas(

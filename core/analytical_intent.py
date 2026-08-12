@@ -106,6 +106,10 @@ _BUSINESS_EVENT_RE = re.compile(
 )
 _EVENT_COUNT_CUE_RE = re.compile(
     r"\b(?:how\s+many|number\s+of|count(?:\s+of)?|total(?:\s+number\s+of)?)\b|"
+    r"\b(?:most|fewest|highest|lowest)\s+(?:number\s+of\s+)?"
+    r"(?:(?:customer|sales|purchase)\s+)?"
+    r"(?:orders?|invoices?|shipments?|returns?|transactions?|payments?|purchases?|"
+    r"receipts?|deliveries?|claims?|prescriptions?|tickets?)\b|"
     r"\b(?:fewer|more|reduced|decreased|declined|increased|grew|grown|growth\s+in)\s+"
     r"(?:orders?|invoices?|shipments?|returns?|transactions?|payments?|purchases?|"
     r"receipts?|deliveries?|claims?|prescriptions?|tickets?)\b|"
@@ -327,7 +331,11 @@ def _relevant_metric_options(
             continue
         phrases = " ".join(_catalog_phrases(metric))
         overlap = question_terms & _normalised_terms(phrases)
-        if overlap:
+        # One generic shared word (for example "customer" in both an order
+        # question and "Customer Discount Amount") is not enough evidence to
+        # offer a governed measure. Exact metric-name matches are handled by
+        # the primary matcher; this fallback is deliberately conservative.
+        if len(overlap) >= 2:
             ranked.append((len(overlap), label))
     ranked.sort(key=lambda item: (-item[0], item[1].casefold()))
     labels = list(dict.fromkeys(label for _, label in ranked))[:4]
@@ -557,6 +565,11 @@ def plan_analytical_intent(
         if grain_match
         else (entity_match.group(1).lower() if entity_match else (dimensions[0] if dimensions else ""))
     )
+    entity_grain = {
+        "people": "person",
+        "persons": "person",
+        "deliveries": "delivery",
+    }.get(entity_grain, entity_grain[:-1] if entity_grain.endswith("s") else entity_grain)
     if intent == "ranking" and entity_grain and (not dimensions or grain_match):
         dimensions = (entity_grain,)
     comparison = "period_or_segment_comparison" if _COMPARISON_RE.search(text) else ""

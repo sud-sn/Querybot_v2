@@ -4,7 +4,10 @@ import unittest
 from pathlib import Path
 
 from core.graph_resolver import detect_entities
-from core.pipeline_context import _merge_semantic_plans
+from core.pipeline_context import (
+    _merge_semantic_plans,
+    _scope_semantic_plan_to_analytical_request,
+)
 from core.semantic_model import MODEL_JSON, build_runtime_semantic_plan
 from core.table_coverage import build_required_fqns
 from core.semantic_plan_utils import required_semantic_tables
@@ -278,6 +281,99 @@ class TableCoverageExpansionTests(unittest.TestCase):
 
 
 class SemanticPlanMergeTests(unittest.TestCase):
+    def test_event_count_drops_modifier_dimension_and_quantity_requirement(self):
+        plan = {
+            "enabled": True,
+            "count_target": {
+                "selected": {"table": "OPS.F_ORDER", "column": "ORDER_NUMBER"},
+            },
+            "fields": [
+                {
+                    "term": "customer order", "table": "OPS.F_ORDER",
+                    "column": "ORDER_QTY", "role": "measure", "enforcement": "required",
+                },
+                {
+                    "term": "Customer", "table": "OPS.D_CUSTOMER",
+                    "column": "CUSTOMER_NAME", "role": "display_dimension",
+                    "enforcement": "required",
+                },
+                {
+                    "term": "Warehouse", "table": "OPS.D_WAREHOUSE",
+                    "column": "WAREHOUSE_NAME", "role": "display_dimension",
+                    "enforcement": "required",
+                },
+            ],
+            "joins": [
+                {
+                    "from": "OPS.F_ORDER", "to": "OPS.D_CUSTOMER",
+                    "conditions": [("CUSTOMER_SK", "CUSTOMER_SK")],
+                    "enforcement": "required",
+                },
+                {
+                    "from": "OPS.F_ORDER", "to": "OPS.D_WAREHOUSE",
+                    "conditions": [("WAREHOUSE_SK", "WAREHOUSE_SK")],
+                    "enforcement": "required",
+                },
+            ],
+        }
+        scoped = _scope_semantic_plan_to_analytical_request(plan, {
+            "measure_semantics": "count_distinct_business_identifier",
+            "entity_grain": "warehouse",
+            "dimensions": ["warehouse"],
+        })
+
+        enforcement = {field["term"]: field["enforcement"] for field in scoped["fields"]}
+        self.assertEqual(enforcement["customer order"], "optional")
+        self.assertEqual(enforcement["Customer"], "optional")
+        self.assertEqual(enforcement["Warehouse"], "required")
+        join_enforcement = {
+            join["to"]: join["enforcement"] for join in scoped["joins"]
+        }
+        self.assertEqual(join_enforcement["OPS.D_CUSTOMER"], "optional")
+        self.assertEqual(join_enforcement["OPS.D_WAREHOUSE"], "required")
+
+    def test_merge_preserves_source_scope_from_a_fieldless_plan(self):
+        source_plan = {
+            "enabled": False,
+            "fields": [],
+            "joins": [],
+            "source_scope": {
+                "status": "selected",
+                "selected_fact": "OPS.F_SALES",
+                "reason": "approved metric source binding",
+            },
+        }
+        date_plan = {
+            "enabled": True,
+            "fields": [{
+                "term": "Invoice Date",
+                "table": "OPS.D_DATE",
+                "column": "FULL_DATE",
+                "role": "contextual_date",
+            }],
+            "joins": [{
+                "from": "OPS.F_SALES",
+                "to": "OPS.D_DATE",
+                "conditions": [("INVOICE_DATE_SK", "DATE_SK")],
+                "preserve_all": True,
+            }],
+        }
+
+        merged = _merge_semantic_plans(source_plan, date_plan)
+
+        self.assertTrue(merged["enabled"])
+        self.assertEqual(merged["source_scope"]["selected_fact"], "OPS.F_SALES")
+
+    def test_fieldless_merge_keeps_source_scope_for_request_compilation(self):
+        merged = _merge_semantic_plans({
+            "enabled": False,
+            "fields": [],
+            "source_scope": {"selected_fact": "OPS.F_SALES"},
+        })
+
+        self.assertFalse(merged["enabled"])
+        self.assertEqual(merged["source_scope"]["selected_fact"], "OPS.F_SALES")
+
     def test_optional_rival_fact_is_not_a_required_table(self):
         plan = {
             "enabled": True,
