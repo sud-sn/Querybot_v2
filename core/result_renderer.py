@@ -781,8 +781,13 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
     if _temporal_policies:
         try:
             from core.date_coverage import check_date_coverage
+            _coverage_metrics = (display_context or {}).get("metrics") or []
+            _coverage_metric_name = ""
+            if len(_coverage_metrics) == 1:
+                _coverage_metric_name = str(_coverage_metrics[0].get("name") or "")
             _gap = check_date_coverage(
                 db_cfg, _temporal_policies[0], str(db_cfg.get("db_type", "azure_sql")),
+                metric_name=_coverage_metric_name,
             )
             if _gap:
                 coverage_caveats.append(_gap.message)

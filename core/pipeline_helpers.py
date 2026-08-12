@@ -526,6 +526,229 @@ def _build_row_metric_join_sql(
 _REPAIR_DIALECT = {"azure_sql": "tsql", "oracle": "oracle", "snowflake": "snowflake"}
 
 
+def compile_governed_temporal_metric_sql(
+    db_type: str,
+    known_tables: set[str],
+    allowed_tables: set[str] | None,
+    table_columns: dict[str, dict[str, str]] | None,
+    semantic_context: dict | None,
+) -> str:
+    """Compile a simple governed metric/window request without an LLM.
+
+    The metric registry and an approved Date Role already contain every
+    physical decision needed for requests such as ``total revenue for the
+    last 6 months`` and ``revenue trend for the last 7 days``.  Sending that
+    fully-resolved case back through free-form SQL generation introduces
+    needless failure modes (wrong date key, calendar-table anchoring,
+    truncated CTEs and redundant aggregate-of-aggregate wrappers).
+
+    This compiler is intentionally narrow.  It only accepts one expression
+    metric, one rolling/today temporal policy and no requested non-date dimension.
+    Anything requiring ranking, comparison, distribution, multiple facts or
+    dimensional grouping remains on the normal analytical planner path.
+    """
+    from core.contextual_dates import format_period_bucket_expression
+    from core.validator import validate_sql_detailed
+
+    context = semantic_context or {}
+    plan = context.get("semantic_plan") or {}
+    request_plan = context.get("analytical_request_plan") or {}
+    question = str(context.get("question") or "")
+    policies = list(plan.get("temporal_policies") or [])
+    metrics = [
+        metric for metric in (context.get("metric_formulas") or [])
+        if str(metric.get("formula_type") or "query").lower() == "expression"
+        and str(metric.get("sql_template") or metric.get("formula") or "").strip()
+    ]
+    if len(policies) != 1 or len(metrics) != 1:
+        return ""
+    if request_plan and str(request_plan.get("status") or "") != "compiled":
+        return ""
+    if request_plan.get("subrequests") or len(request_plan.get("source_facts") or []) > 1:
+        return ""
+    if re.search(
+        r"\b(?:compare|comparison|versus|vs\.?|difference|change|rank|top|bottom|"
+        r"distribution|share|percentile|correlation|why|forecast)\b",
+        question,
+        re.I,
+    ):
+        return ""
+
+    # A requested non-date display field changes the result grain.  It must be
+    # handled by the full semantic join planner, not this scalar/time-series
+    # compiler.
+    if any(
+        field.get("display_required") and field.get("enforcement") != "optional"
+        for field in (plan.get("fields") or [])
+    ):
+        return ""
+
+    policy = policies[0]
+    window_kind = str(policy.get("kind") or "")
+    if window_kind not in {"last_n", "today", "yesterday"}:
+        return ""
+    try:
+        amount = int(policy.get("amount"))
+    except (TypeError, ValueError):
+        return ""
+    unit = str(policy.get("unit") or "").lower()
+    if unit not in {"day", "week", "month", "quarter", "year"}:
+        return ""
+    if window_kind == "last_n" and amount <= 0:
+        return ""
+
+    fact_table = str(policy.get("fact_table") or policy.get("anchor_table") or "")
+    fact_column = str(policy.get("fact_column") or policy.get("anchor_column") or "")
+    dimension_table = str(policy.get("dimension_table") or "")
+    dimension_key = str(policy.get("dimension_key") or "")
+    date_column = str(policy.get("date_column") or "")
+    date_key_type = str(policy.get("date_key_type") or "")
+    role_alias = re.sub(
+        r"[^A-Za-z0-9_]", "_", str(policy.get("role_alias") or "business_date")
+    )
+    if not fact_table or not fact_column or not date_column:
+        return ""
+    if date_key_type == "surrogate_fk" and not (dimension_table and dimension_key):
+        return ""
+
+    metric = metrics[0]
+    formula = str(metric.get("sql_template") or metric.get("formula") or "").strip().rstrip(";")
+    if not formula or re.search(r"\b(?:SELECT|FROM|WITH)\b|;", formula, re.I):
+        return ""
+
+    metric_sources = list(
+        metric.get("_resolved_source_tables")
+        or metric.get("source_tables")
+        or ([metric.get("base_table")] if metric.get("base_table") else [])
+    )
+    if metric_sources and not any(
+        str(source).split(".")[-1].upper() == fact_table.split(".")[-1].upper()
+        for source in metric_sources
+    ):
+        return ""
+
+    def qcol(name: str) -> str:
+        clean = str(name or "").strip().strip("[]\"`")
+        if db_type == "azure_sql":
+            return f"[{clean}]"
+        if db_type in {"snowflake", "oracle"}:
+            return f'"{clean}"'
+        return clean
+
+    fact_sql = _quote_table_for_count(fact_table, db_type)
+    if date_key_type == "surrogate_fk":
+        dim_sql = _quote_table_for_count(dimension_table, db_type)
+        from_sql = (
+            f"{fact_sql} AS fact_rows\n"
+            f"    LEFT JOIN {dim_sql} AS {role_alias}\n"
+            f"      ON fact_rows.{qcol(fact_column)} = {role_alias}.{qcol(dimension_key)}"
+        )
+        date_ref = f"{role_alias}.{qcol(date_column)}"
+    else:
+        from_sql = f"{fact_sql} AS fact_rows"
+        date_ref = f"fact_rows.{qcol(date_column)}"
+
+    dialect = str(db_type or "").lower()
+    if window_kind == "last_n":
+        if dialect in {"azure_sql", "snowflake"}:
+            start_expr = f"DATEADD({unit}, -{amount}, anchor.max_business_date)"
+        elif dialect == "oracle":
+            if unit == "day":
+                start_expr = f"anchor.max_business_date - {amount}"
+            elif unit == "week":
+                start_expr = f"anchor.max_business_date - {amount * 7}"
+            else:
+                months = amount * {"month": 1, "quarter": 3, "year": 12}[unit]
+                start_expr = f"ADD_MONTHS(anchor.max_business_date, -{months})"
+        else:
+            return ""
+        where_sql = (
+            f"{date_ref} > {start_expr}\n"
+            f"  AND {date_ref} <= anchor.max_business_date"
+        )
+    else:
+        if dialect == "azure_sql":
+            selected_day = (
+                "CAST(anchor.max_business_date AS date)"
+                if window_kind == "today"
+                else "DATEADD(day, -1, CAST(anchor.max_business_date AS date))"
+            )
+            date_day = f"CAST({date_ref} AS date)"
+        elif dialect == "snowflake":
+            selected_day = (
+                "CAST(anchor.max_business_date AS date)"
+                if window_kind == "today"
+                else "DATEADD(day, -1, CAST(anchor.max_business_date AS date))"
+            )
+            date_day = f"CAST({date_ref} AS date)"
+        elif dialect == "oracle":
+            selected_day = (
+                "TRUNC(anchor.max_business_date)"
+                if window_kind == "today"
+                else "TRUNC(anchor.max_business_date) - 1"
+            )
+            date_day = f"TRUNC({date_ref})"
+        else:
+            return ""
+        where_sql = f"{date_day} = {selected_day}"
+
+    metric_alias = (
+        re.sub(r"[^A-Za-z0-9_]", "_", str(metric.get("name") or "metric")).upper()
+        or "METRIC"
+    )
+    is_trend = bool(
+        str(request_plan.get("intent") or "").lower() == "trend"
+        or str(request_plan.get("output_shape") or "").lower() == "time_series"
+        or re.search(r"\b(?:trend|over\s+time|by\s+(?:day|week|month|quarter|year))\b", question, re.I)
+    )
+    select_sql = f"{formula} AS {metric_alias}"
+    group_sql = ""
+    order_sql = ""
+    if is_trend:
+        grain = str(policy.get("requested_grain") or unit).lower()
+        if grain not in {"day", "week", "month", "quarter", "year"}:
+            grain = unit
+        bucket = format_period_bucket_expression(
+            date_ref,
+            grain,
+            db_type,
+            role_alias=role_alias,
+            calendar_attributes=policy.get("calendar_attributes") or {},
+        )
+        if not bucket:
+            return ""
+        select_sql = f"{bucket} AS PERIOD,\n    {formula} AS {metric_alias}"
+        group_sql = f"\nGROUP BY {bucket}"
+        order_sql = "\nORDER BY PERIOD"
+
+    compiled = f"""WITH anchor AS (
+    SELECT MAX({date_ref}) AS max_business_date
+    FROM {from_sql}
+)
+SELECT
+    {select_sql}
+FROM {from_sql}
+CROSS JOIN anchor
+WHERE {where_sql}{group_sql}{order_sql}"""
+
+    result = validate_sql_detailed(
+        compiled,
+        known_tables,
+        db_type,
+        allowed_tables,
+        table_columns or {},
+        semantic_context,
+    )
+    if not result.ok:
+        log.debug(
+            "Governed rolling metric compiler did not validate: %s (%s)",
+            result.reason,
+            result.code,
+        )
+        return ""
+    return compiled
+
+
 def attempt_governed_temporal_metric_repair(
     sql: str,
     db_type: str,

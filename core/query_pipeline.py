@@ -80,7 +80,7 @@ from core.pipeline_helpers import (
     _count_tables_for_zero_row, _build_zero_row_message,
     _format_metric_formula_context, _extract_metric_formula_tables,
     _build_row_metric_join_sql, attempt_field_plan_repair,
-    attempt_governed_temporal_metric_repair,
+    attempt_governed_temporal_metric_repair, compile_governed_temporal_metric_sql,
     _clamp_kb_doc, _clamp_prompt_context, reused_plan_is_stale_for_graph,
 )
 from core.pipeline_trace import (
@@ -3649,6 +3649,35 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 )
                 return
 
+    # Compile the common fully-governed case before free-form generation.  A
+    # single approved expression metric plus a single approved rolling Date
+    # Role already determines the complete query; an LLM should not be asked
+    # to rediscover those physical choices.
+    _generation_semantic_context = {
+        "intent": query_intent,
+        "top_n": top_n_intent.to_dict() if top_n_intent else None,
+        "question": question,
+        "production_sql": True,
+        "graph_context": _graph_ctx,
+        "semantic_plan": _semantic_plan,
+        "metric_formulas": _matched_metrics,
+        "analysis_contract": _analysis_contract,
+        "resolution_plan": _resolution_plan,
+        "planner_alignment": _planner_alignment,
+        "analytical_request_plan": _analytical_request_plan,
+    }
+    try:
+        _compiled_governed_sql = compile_governed_temporal_metric_sql(
+            db_cfg["db_type"],
+            all_known,
+            query_scope_tables,
+            all_columns,
+            _generation_semantic_context,
+        )
+    except Exception as _compile_exc:
+        _compiled_governed_sql = ""
+        log.debug("Governed rolling metric compilation skipped: %s", _compile_exc)
+
     system = build_sql_system_prompt(
         db_cfg["db_type"], context_with_terms,
         conversation_history=_conv_history or None,
@@ -3665,7 +3694,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         retry=True,
     )
     try:
-        _reused_plan = store.find_reusable_validated_sql_plan(
+        _reused_plan = None if _compiled_governed_sql else store.find_reusable_validated_sql_plan(
             account_id=account_id,
             question=question,
             selected_schema=schema_hint,
@@ -3687,7 +3716,15 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         )
         _reused_plan = None
     try:
-        if _reused_plan:
+        if _compiled_governed_sql:
+            await _send_live_stage(
+                adapter,
+                event,
+                "compiling_sql",
+                "Compiling governed query",
+                "Using the approved metric formula and business date mapping.",
+            )
+        elif _reused_plan:
             await _send_live_stage(
                 adapter,
                 event,
@@ -3719,7 +3756,14 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 ),
             },
         ):
-            if _reused_plan:
+            if _compiled_governed_sql:
+                sql = _compiled_governed_sql
+                tok_in = tok_out = 0
+                log.info(
+                    "Compiled governed rolling metric SQL for %s without an LLM retry",
+                    account_id,
+                )
+            elif _reused_plan:
                 sql = str(_reused_plan.get("sql_generated") or "")
                 tok_in = tok_out = 0
                 log.info(
@@ -3744,7 +3788,12 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             )
             _trace_step(
                 trace_id,
-                "reuse_validated_sql_plan" if _reused_plan else "llm_generate_sql",
+                (
+                    "compile_governed_temporal_metric"
+                    if _compiled_governed_sql
+                    else "reuse_validated_sql_plan" if _reused_plan
+                    else "llm_generate_sql"
+                ),
                 output_summary={
                     "tokens_in": tok_in,
                     "tokens_out": tok_out,
@@ -3753,7 +3802,12 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     "source_request_source": _reused_plan.get("request_source") if _reused_plan else None,
                     "source_row_count": _reused_plan.get("query_row_count") if _reused_plan else None,
                     "authorization_match": "referenced_tables_subset" if _reused_plan else None,
-                    "max_output_tokens": _sql_generation_max_tokens if not _reused_plan else 0,
+                    "max_output_tokens": (
+                        _sql_generation_max_tokens
+                        if not (_reused_plan or _compiled_governed_sql)
+                        else 0
+                    ),
+                    "compiler": "governed_metric_date" if _compiled_governed_sql else None,
                 },
                 duration_ms=int((time.time() - _llm_gen_t0) * 1000),
             )
@@ -3996,19 +4050,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
 
     await _send_live_stage(adapter, event, "validating_sql", "Checking query safety", "Verifying table access, structure, and execution safety.")
     retry_count = 0
-    semantic_context = {
-        "intent": query_intent,
-        "top_n": top_n_intent.to_dict() if top_n_intent else None,
-        "question": question,
-        "production_sql": True,
-        "graph_context": _graph_ctx,
-        "semantic_plan": _semantic_plan,
-        "metric_formulas": _matched_metrics,
-        "analysis_contract": _analysis_contract,
-        "resolution_plan": _resolution_plan,
-        "planner_alignment": _planner_alignment,
-        "analytical_request_plan": _analytical_request_plan,
-    }
+    semantic_context = _generation_semantic_context
     _validate_t0 = time.time()
     ok, reason, code = validate_sql(
         sql, all_known, db_cfg["db_type"], query_scope_tables, all_columns, semantic_context

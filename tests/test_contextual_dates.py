@@ -28,7 +28,10 @@ from core.pipeline_context import _merge_semantic_plans
 from core.graph_resolver import infer_connected_default_date_fact
 from core.query_pipeline import _graph_with_exact_date_edges, _resolved_fact_tables
 from core.validator import validate_sql_detailed
-from core.pipeline_helpers import attempt_governed_temporal_metric_repair
+from core.pipeline_helpers import (
+    attempt_governed_temporal_metric_repair,
+    compile_governed_temporal_metric_sql,
+)
 from core.query_semantics import analyze_query_intent
 
 
@@ -2277,6 +2280,79 @@ class GovernedTemporalCompilerTests(unittest.TestCase):
             "DATEFROMPARTS(YEAR(invoice_date.[CALENDAR_DATE]), MONTH(invoice_date.[CALENDAR_DATE]), 1)", sql,
         )
         self.assertNotIn("EMCO", sql.upper())
+
+    def test_rolling_total_compiles_directly_without_redundant_grouping(self):
+        columns, binding, _plan, context = self._context()
+        question = "what is my total revenue for the last 6 months"
+        context["question"] = question
+        context["semantic_plan"] = build_contextual_date_plan(binding, question)
+        context["analytical_request_plan"] = {
+            "status": "compiled",
+            "intent": "metric_query",
+            "source_facts": ["ANALYTICS.FACT_BILLING"],
+            "output_shape": "kpi",
+        }
+        sql = compile_governed_temporal_metric_sql(
+            "azure_sql", set(columns), set(columns), columns, context,
+        )
+        self.assertTrue(sql)
+        self.assertIn("SUM(NET_REVENUE) AS REVENUE", sql)
+        self.assertIn("DATEADD(month, -6, anchor.max_business_date)", sql)
+        self.assertIn("fact_rows.[INVOICE_DATE_KEY] = invoice_date.[DATE_KEY]", sql)
+        self.assertNotIn("GROUP BY", sql)
+        self.assertNotIn("SUM(REVENUE)", sql)
+        result = validate_sql_detailed(
+            sql, set(columns), "azure_sql", set(columns), columns, context,
+        )
+        self.assertTrue(result.ok, result.reason)
+
+    def test_rolling_trend_compiles_one_governed_period_series(self):
+        columns, binding, _plan, context = self._context()
+        question = "show my revenue trend for the last 7 days"
+        context["question"] = question
+        context["semantic_plan"] = build_contextual_date_plan(binding, question)
+        context["analytical_request_plan"] = {
+            "status": "compiled",
+            "intent": "trend",
+            "source_facts": ["ANALYTICS.FACT_BILLING"],
+            "output_shape": "time_series",
+        }
+        sql = compile_governed_temporal_metric_sql(
+            "azure_sql", set(columns), set(columns), columns, context,
+        )
+        self.assertTrue(sql)
+        self.assertIn("CAST(invoice_date.[CALENDAR_DATE] AS date) AS PERIOD", sql)
+        self.assertIn("DATEADD(day, -7, anchor.max_business_date)", sql)
+        self.assertIn("GROUP BY CAST(invoice_date.[CALENDAR_DATE] AS date)", sql)
+        self.assertIn("ORDER BY PERIOD", sql)
+
+    def test_today_metric_uses_latest_governed_business_date(self):
+        columns, binding, _plan, context = self._context()
+        question = "what is my revenue today"
+        context["question"] = question
+        context["semantic_plan"] = build_contextual_date_plan(binding, question)
+        context["analytical_request_plan"] = {
+            "status": "compiled",
+            "intent": "metric_query",
+            "source_facts": ["ANALYTICS.FACT_BILLING"],
+            "output_shape": "kpi",
+        }
+        sql = compile_governed_temporal_metric_sql(
+            "azure_sql", set(columns), set(columns), columns, context,
+        )
+        self.assertTrue(sql)
+        self.assertIn("SUM(NET_REVENUE) AS REVENUE", sql)
+        self.assertIn("MAX(invoice_date.[CALENDAR_DATE])", sql)
+        self.assertIn(
+            "CAST(invoice_date.[CALENDAR_DATE] AS date) = "
+            "CAST(anchor.max_business_date AS date)",
+            sql,
+        )
+        self.assertNotIn("GETDATE", sql.upper())
+        result = validate_sql_detailed(
+            sql, set(columns), "azure_sql", set(columns), columns, context,
+        )
+        self.assertTrue(result.ok, result.reason)
 
 
 if __name__ == "__main__":

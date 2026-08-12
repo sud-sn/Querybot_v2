@@ -84,7 +84,12 @@ def _run_scalar(credentials: dict, db_type: str, sql: str) -> object | None:
     return next(iter(rows[0].values()), None)
 
 
-def check_date_coverage(db_cfg: dict, policy: dict, db_type: str) -> CoverageGap | None:
+def check_date_coverage(
+    db_cfg: dict,
+    policy: dict,
+    db_type: str,
+    metric_name: str = "",
+) -> CoverageGap | None:
     """Compare the requested window (``policy['amount']``/``policy['unit']``)
     against how many distinct calendar days actually have data in that
     window, using the same fact/dimension resolution the main query's date
@@ -163,14 +168,25 @@ def check_date_coverage(db_cfg: dict, policy: dict, db_type: str) -> CoverageGap
     if actual_days >= requested_days - 1:
         return None
 
-    day_word = "day" if actual_days == 1 else "days"
-    requested_word = "day" if requested_days == 1 else "days"
+    role = str(policy.get("business_role") or "business date").strip().lower()
+    if role.endswith(" date"):
+        role = role[:-5].strip()
+    date_label = f"{role} date" if role else "business date"
+    if actual_days != 1:
+        date_label += "s"
+    metric_subject = (
+        f"{str(metric_name).strip()} records"
+        if str(metric_name).strip()
+        else "Records"
+    )
+    requested_amount = int(policy.get("amount") or requested_days)
+    requested_unit = str(policy.get("unit") or "day").strip().lower() or "day"
     return CoverageGap(
         requested_days=requested_days,
         actual_days=actual_days,
         message=(
-            f"I found data for {actual_days} {day_word} out of the "
-            f"{requested_days} {requested_word} you asked about — here's "
-            f"what's available:"
+            f"{metric_subject} were available on {actual_days} distinct "
+            f"{date_label} within the requested {requested_amount}-{requested_unit} "
+            "period. The result reflects those available records."
         ),
     )
