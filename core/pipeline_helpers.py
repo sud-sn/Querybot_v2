@@ -31,6 +31,24 @@ from core.answer_rca import build_business_rca, extract_sql_tables
 log = logging.getLogger("querybot")
 
 
+def allow_progressive_sql_repair(
+    seen_reason_codes: set[str] | list[str] | tuple[str, ...],
+    candidate_reason_code: str,
+    attempts_used: int,
+    *,
+    max_attempts: int = 2,
+) -> bool:
+    """Admit another LLM SQL repair only when it is making progress.
+
+    A different validator reason means the previous repair cleared one layer
+    and exposed another.  Repeating the same reason is a non-progress loop and
+    is stopped immediately.  The hard attempt cap prevents runaway cost.
+    """
+    code = str(candidate_reason_code or "").strip().casefold()
+    seen = {str(value or "").strip().casefold() for value in seen_reason_codes}
+    return bool(code and attempts_used < max_attempts and code not in seen)
+
+
 # ── Prompt-context size control ───────────────────────────────────────────────
 # The assembled SQL-generation context previously had NO size limit anywhere:
 # 7 full reassembled table docs + up to 6 gap-fill docs + examples + semantic

@@ -82,6 +82,7 @@ from core.pipeline_helpers import (
     _build_row_metric_join_sql, attempt_field_plan_repair,
     attempt_governed_temporal_metric_repair, compile_governed_temporal_metric_sql,
     _clamp_kb_doc, _clamp_prompt_context, reused_plan_is_stale_for_graph,
+    allow_progressive_sql_repair,
 )
 from core.pipeline_trace import (
     _log_q, _trace_create, _trace_update, _trace_step, _trace_finish,
@@ -4042,7 +4043,9 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     #   * access_denied — the user genuinely lacks permission; we need the
     #                     admin to intervene, not a different SQL.
     #   * ddl / cannot_generate — already terminal.
-    # Only the currently-failing query is retried — a single attempt, never a loop.
+    # Only the currently-failing query is repaired. A first repair is always
+    # bounded, and one additional attempt is admitted later only when the
+    # validator reason code changes (proof that the first repair progressed).
     rows        = None
     exec_error  = None
     last_reason = ""
@@ -4271,6 +4274,22 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         rows = None
         ok = False
 
+    _sql_repair_reason_codes = {
+        "unknown_table", "unknown_column", "date_key_format", "dialect_mismatch",
+        "production_shape", "period_comparison_shape", "composition_shape",
+        "anti_join_shape", "fanout_aggregate", "top_n_shape", "graph_plan_mismatch",
+        "field_plan_mismatch", "metric_formula_mismatch", "null_aggregate_diagnostic",
+        "parse", "multi_statement", "not_select", "reused_plan_empty",
+        "zero_row_fresh", "surrogate_date_conversion", "temporal_anchor_missing",
+        "temporal_anchor_mismatch", "temporal_role_mismatch",
+        "temporal_anchor_unscoped", "observed_period_shape", "source_fact_mismatch",
+    }
+    _initial_repair_code = str(last_code or code or "").strip().casefold()
+    _repair_reason_codes_seen = {_initial_repair_code} if _initial_repair_code else set()
+    _llm_repair_attempts = 0
+    # Keep the explicit tuple on this assignment for the established wiring
+    # guards that audit newly-added validator codes. The normalized set above
+    # is reused by the progressive-repair gate below.
     retryable = (not ok and (last_code or code) in ("unknown_table", "unknown_column", "date_key_format", "dialect_mismatch", "production_shape", "period_comparison_shape", "composition_shape", "anti_join_shape", "fanout_aggregate", "top_n_shape", "graph_plan_mismatch", "field_plan_mismatch", "metric_formula_mismatch", "null_aggregate_diagnostic", "parse", "multi_statement", "not_select", "reused_plan_empty", "zero_row_fresh", "surrogate_date_conversion", "temporal_anchor_missing", "temporal_anchor_mismatch", "temporal_role_mismatch", "temporal_anchor_unscoped", "observed_period_shape", "source_fact_mismatch")) or (exec_error is not None)
 
     if retryable:
@@ -4582,6 +4601,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         try:
             await _send_live_stage(adapter, event, "repairing_query", "Repairing query", "Fixing a validation or execution issue before retrying.")
             _retry_llm_t0 = time.time()
+            _llm_repair_attempts += 1
             with llm_audit_scope(
                 account_id=account_id,
                 question=question,
@@ -4604,7 +4624,9 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 )
             # Retry timings accumulate onto the same buckets as the first
             # attempt (bucket aggregation sums by step_name), not separate rows.
-            _trace_step(trace_id, "llm_generate_sql", output_summary={"retry": True}, duration_ms=int((time.time() - _retry_llm_t0) * 1000))
+            _trace_step(trace_id, "llm_generate_sql", output_summary={"retry": True},
+                        metadata={"repair_attempt": _llm_repair_attempts},
+                        duration_ms=int((time.time() - _retry_llm_t0) * 1000))
             if sql_retry.startswith("```"):
                 sql_retry = "\n".join(sql_retry.split("\n")[1:]).rsplit("```", 1)[0].strip()
 
@@ -4663,6 +4685,173 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         except Exception as retry_err:
             log.warning("Retry LLM call failed for %s: %s",
                         account_id, str(retry_err)[:100])
+
+    # A first repair can legitimately clear one validator layer and expose a
+    # different one (for example graph_plan_mismatch -> field_plan_mismatch).
+    # Permit one more code-directed attempt only when the reason code changed;
+    # the same code twice is a non-progress loop and remains terminal.
+    _progressive_repair_allowed = bool(
+        not ok
+        and exec_error is None
+        and (last_code or "") in _sql_repair_reason_codes
+        and allow_progressive_sql_repair(
+            _repair_reason_codes_seen,
+            last_code,
+            _llm_repair_attempts,
+            max_attempts=2,
+        )
+    )
+    if _progressive_repair_allowed:
+        _prior_repair_code = next(iter(_repair_reason_codes_seen), "validation_error")
+        _repair_reason_codes_seen.add(str(last_code or "").strip().casefold())
+        _progressive_user = (
+            "The previous repair made progress but exposed a different validation failure.\n"
+            f"Previous failure code: {_prior_repair_code}\n"
+            f"Current failure code: {last_code}\n"
+            f"Current validation reason: {last_reason}\n"
+            f"Current SQL: {sql_retry}\n\n"
+            f"Original question: {question}\n\n"
+            "Fix only the current failure while preserving the corrections already made. "
+            "Follow the executable analytical request plan, approved metric formulas, exact "
+            "date-role contract, and entity-graph joins in the system prompt. Return one "
+            "complete SQL SELECT statement and no explanation."
+        )
+        try:
+            await _send_live_stage(
+                adapter,
+                event,
+                "repairing_query",
+                "Completing query repair",
+                "The first correction exposed another validation issue; applying one bounded follow-up repair.",
+            )
+            _progressive_t0 = time.time()
+            _llm_repair_attempts += 1
+            with llm_audit_scope(
+                account_id=account_id,
+                question=question,
+                enabled=audit_enabled,
+                request_id=audit_request_id,
+                question_id=audit_request_id,
+                component="sql_repair_progressive",
+            ):
+                _progressive_sql, _, _ = await llm_complete(
+                    build_sql_system_prompt(
+                        db_cfg["db_type"],
+                        context_with_terms,
+                        graph_context=_graph_ctx or None,
+                        semantic_plan=_retry_plan,
+                    ),
+                    _progressive_user,
+                    provider,
+                    model,
+                    api_key,
+                    temperature=0.0,
+                    max_tokens=_sql_repair_max_tokens,
+                    **az_kwargs,
+                )
+            _trace_step(
+                trace_id,
+                "llm_generate_sql",
+                output_summary={"retry": True, "repair_attempt": _llm_repair_attempts},
+                duration_ms=int((time.time() - _progressive_t0) * 1000),
+            )
+            if _progressive_sql.startswith("```"):
+                _progressive_sql = "\n".join(_progressive_sql.split("\n")[1:]).rsplit("```", 1)[0].strip()
+            _progressive_sql = _inject_distinct_if_needed(_progressive_sql, question)
+            _progressive_sql = normalize_generated_sql(_progressive_sql, db_cfg["db_type"])
+
+            if "CANNOT_GENERATE" not in _progressive_sql.upper() and len(_progressive_sql) > 10:
+                _progressive_validate_t0 = time.time()
+                _progressive_ok, _progressive_reason, _progressive_code = validate_sql(
+                    _progressive_sql,
+                    all_known,
+                    db_cfg["db_type"],
+                    query_scope_tables,
+                    all_columns,
+                    _retry_semantic_context,
+                )
+                _trace_step(
+                    trace_id,
+                    "validate_sql",
+                    input_summary=_progressive_sql,
+                    output_summary=_progressive_reason,
+                    status="success" if _progressive_ok else "error",
+                    metadata={
+                        "code": _progressive_code,
+                        "retry": True,
+                        "repair_attempt": _llm_repair_attempts,
+                    },
+                    duration_ms=int((time.time() - _progressive_validate_t0) * 1000),
+                )
+                if _progressive_ok:
+                    _progressive_exec_t0 = time.time()
+                    try:
+                        await _send_live_stage(
+                            adapter,
+                            event,
+                            "executing_query",
+                            "Retrying query",
+                            "Running the corrected query against your data.",
+                        )
+                        _loop = asyncio.get_running_loop()
+                        governed = await asyncio.wait_for(
+                            _loop.run_in_executor(
+                                None,
+                                _execute_with_policy,
+                                _progressive_sql,
+                                _retry_semantic_context,
+                            ),
+                            timeout=180.0,
+                        )
+                        rows = governed.rows
+                        sql = governed.sql
+                        exec_error = None
+                        ok, last_reason, last_code = True, "OK", "ok"
+                        retry_count = _llm_repair_attempts
+                        log.info(
+                            "Progressive repair succeeded for %s after %d attempts",
+                            account_id,
+                            _llm_repair_attempts,
+                        )
+                        _trace_step(
+                            trace_id,
+                            "execute_sql",
+                            input_summary=sql,
+                            output_summary={
+                                "rows": len(rows),
+                                "retry": True,
+                                "repair_attempt": _llm_repair_attempts,
+                            },
+                            duration_ms=int((time.time() - _progressive_exec_t0) * 1000),
+                        )
+                    except asyncio.TimeoutError:
+                        exec_error = "Progressive repair query timed out after 3 minutes."
+                        log.warning("Progressive repair query timed out for %s", account_id)
+                    except PolicyDeniedError as policy_error:
+                        exec_error = None
+                        ok = False
+                        last_reason = policy_error.decision.explanation or "Blocked by regulated data policy."
+                        last_code = policy_error.decision.reason_code
+                    except Exception as progressive_exec_err:
+                        exec_error = str(progressive_exec_err)
+                        log.warning(
+                            "Progressive repair execution failed for %s: %s",
+                            account_id,
+                            exec_error[:100],
+                        )
+                else:
+                    last_reason, last_code = _progressive_reason, _progressive_code
+                    log.warning(
+                        "Progressive repair still invalid for %s: %s",
+                        account_id,
+                        _progressive_reason[:120],
+                    )
+        except Exception as progressive_repair_err:
+            log.warning(
+                "Progressive repair LLM call failed for %s: %s",
+                account_id,
+                str(progressive_repair_err)[:100],
+            )
 
     # ── Terminal failure handling ────────────────────────────────────────────
     # Raw reasons/errors stay in query_log + answer_trace (audit unchanged);
