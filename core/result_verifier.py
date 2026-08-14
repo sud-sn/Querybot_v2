@@ -26,6 +26,11 @@ _TIME_VALUE_RE = re.compile(
     re.I,
 )
 _CONTRIBUTION_RE = re.compile(r"(?:contribution|share|percent|percentage|pct)", re.I)
+_DIAGNOSTIC_NAME_RE = re.compile(
+    r"(?:^|_)(?:row_?count|record_?count|matched_?records?|non_?null|"
+    r"null_?count|retry_?count|confidence|diagnostic)(?:_|$)",
+    re.I,
+)
 
 
 def _plan_dict(plan: Any) -> dict[str, Any]:
@@ -83,6 +88,14 @@ def _column_matches(term: str, columns: list[str]) -> bool:
     )
 
 
+def _as_number(value: Any) -> float | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float, Decimal)):
+        return float(value)
+    return None
+
+
 def verify_result_shape(
     rows: list[dict[str, Any]] | None,
     *,
@@ -128,10 +141,20 @@ def verify_result_shape(
         for metric in resolution.get("metrics") or []
         if isinstance(metric, dict) and metric.get("name")
     ]
+    resolved_metric_columns = [
+        column for column in numeric
+        if any(_column_matches(metric, [column]) for metric in resolved_metrics)
+    ]
     if resolved_metrics:
         checks.append("Approved metric binding was present in the resolution plan.")
         if not numeric:
             errors.append("The result has no numeric output for the resolved metric.")
+        elif resolved_metric_columns:
+            checks.append("The approved metric is visible in the output columns.")
+        else:
+            warnings.append(
+                "Numeric output was returned, but no column is labelled with the approved metric name."
+            )
     elif intent_plan.get("metrics") and not numeric:
         errors.append("The requested measure did not produce a numeric output column.")
 
@@ -199,6 +222,10 @@ def verify_result_shape(
             errors.append(f"A KPI request should return one row, not {len(rows)}.")
         if not numeric:
             errors.append("A KPI request requires a numeric value.")
+        elif resolved_metrics and not resolved_metric_columns:
+            errors.append("A KPI must expose the approved metric, not only diagnostic counts.")
+        elif numeric and all(_DIAGNOSTIC_NAME_RE.search(column) for column in numeric):
+            errors.append("Diagnostic count columns cannot be presented as the KPI value.")
 
     if output in {"line chart", "area chart"} and not temporal:
         errors.append(f"A {output} requires a date or period axis.")
@@ -224,6 +251,49 @@ def verify_result_shape(
             errors.append("Latest observed periods were not returned at one row per distinct business date.")
         if rows and len(rows) <= amount and temporal and not errors:
             checks.append(f"Result is grouped into the latest {len(rows)} distinct observed period(s).")
+
+    recipe = compiled_request.get("analytical_recipe") or {}
+    if str(recipe.get("kind") or "") == "period_over_period_entity_change":
+        required_change_columns = {
+            "entity": next((column for column in columns if _normalise(column) == "entity"), ""),
+            "current": next((column for column in columns if _normalise(column) == "currentperiodcount"), ""),
+            "prior": next((column for column in columns if _normalise(column) == "priorperiodcount"), ""),
+            "absolute": next((column for column in columns if _normalise(column) == "absolutechange"), ""),
+        }
+        missing = [name for name, column in required_change_columns.items() if not column]
+        if missing:
+            errors.append(
+                "Period-over-period entity analysis is missing required output columns: "
+                + ", ".join(missing)
+                + "."
+            )
+        else:
+            direction = str(recipe.get("direction") or "compare").casefold()
+            inconsistent_changes = 0
+            wrong_direction = 0
+            for row in rows:
+                current = _as_number(row.get(required_change_columns["current"]))
+                prior = _as_number(row.get(required_change_columns["prior"]))
+                absolute = _as_number(row.get(required_change_columns["absolute"]))
+                if current is None or prior is None or absolute is None:
+                    inconsistent_changes += 1
+                    continue
+                if abs((current - prior) - absolute) > 1e-6:
+                    inconsistent_changes += 1
+                if direction == "decrease" and not current < prior:
+                    wrong_direction += 1
+                elif direction == "increase" and not current > prior:
+                    wrong_direction += 1
+            if inconsistent_changes:
+                errors.append(
+                    f"{inconsistent_changes} entity-change row(s) do not reconcile current, prior, and absolute change."
+                )
+            if wrong_direction:
+                errors.append(
+                    f"{wrong_direction} entity-change row(s) do not match the requested {direction} direction."
+                )
+            if not inconsistent_changes and not wrong_direction:
+                checks.append("Period-over-period entity changes reconcile to the returned counts.")
 
     if not errors and not warnings:
         checks.append("Returned columns and row shape are consistent with the analytical request.")

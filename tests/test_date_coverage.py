@@ -1,7 +1,12 @@
 import unittest
 from unittest.mock import patch
 
-from core.date_coverage import check_date_coverage, _window_to_days, _parse_date_value
+from core.date_coverage import (
+    check_date_coverage,
+    _window_to_days,
+    _parse_date_value,
+    _safe_metric_formula,
+)
 
 
 class WindowToDaysTests(unittest.TestCase):
@@ -31,6 +36,18 @@ class ParseDateValueTests(unittest.TestCase):
 
     def test_garbage_returns_none(self):
         self.assertIsNone(_parse_date_value("not-a-date"))
+
+
+class SafeMetricFormulaTests(unittest.TestCase):
+    def test_accepts_approved_aggregate_expression(self):
+        self.assertEqual(
+            _safe_metric_formula("SUM(REVENUE_AMOUNT)"),
+            "SUM(REVENUE_AMOUNT)",
+        )
+
+    def test_rejects_query_and_qualified_expression(self):
+        self.assertEqual(_safe_metric_formula("SELECT SUM(x) FROM fact"), "")
+        self.assertEqual(_safe_metric_formula("SUM(f.REVENUE_AMOUNT)"), "")
 
 
 class CheckDateCoverageTests(unittest.TestCase):
@@ -139,6 +156,79 @@ class CheckDateCoverageTests(unittest.TestCase):
             "only 1 invoice date (1 day with data). The result reflects the "
             "available data.",
         )
+
+    def test_two_row_dates_but_one_nonzero_metric_day_is_reported(self):
+        policy = dict(self.native_policy)
+        policy.update({
+            "amount": 2,
+            "unit": "day",
+            "business_role": "Invoice Date",
+        })
+        with patch("core.contextual_dates.format_required_anchor", return_value="(SELECT MAX(ORDER_DATE) FROM DBO.F_ORDERS)"), \
+             patch("core.date_coverage.run_query", side_effect=[
+                 [{"AnchorDate": "2026-07-20"}],
+                 [{"DaysWithData": 2}],
+                 [{"DaysWithMetricData": 1}],
+             ]) as mock_run:
+            gap = check_date_coverage(
+                self.db_cfg,
+                policy,
+                "azure_sql",
+                metric_name="Revenue",
+                metric_formula="SUM(REVENUE_AMOUNT)",
+            )
+        self.assertIsNotNone(gap)
+        self.assertEqual(gap.actual_days, 2)
+        self.assertEqual(gap.metric_active_days, 1)
+        self.assertEqual(
+            gap.message,
+            "You asked for the last 2 days. Records existed on 2 invoice dates, "
+            "but Revenue was nonzero on only 1 day. The result reflects the "
+            "available metric values.",
+        )
+        activity_sql = mock_run.call_args_list[2].args[2]
+        self.assertIn("GROUP BY ORDER_DATE", activity_sql)
+        self.assertIn("HAVING (SUM(REVENUE_AMOUNT)) IS NOT NULL", activity_sql)
+        self.assertIn("(SUM(REVENUE_AMOUNT)) <> 0", activity_sql)
+
+    def test_metric_activity_does_not_warn_when_both_days_are_nonzero(self):
+        policy = dict(self.native_policy)
+        policy.update({"amount": 2, "unit": "day"})
+        with patch("core.contextual_dates.format_required_anchor", return_value="(SELECT MAX(ORDER_DATE) FROM DBO.F_ORDERS)"), \
+             patch("core.date_coverage.run_query", side_effect=[
+                 [{"AnchorDate": "2026-07-20"}],
+                 [{"DaysWithData": 2}],
+                 [{"DaysWithMetricData": 2}],
+             ]):
+            gap = check_date_coverage(
+                self.db_cfg,
+                policy,
+                "azure_sql",
+                metric_name="Revenue",
+                metric_formula="SUM(REVENUE_AMOUNT)",
+            )
+        self.assertIsNone(gap)
+
+    def test_metric_probe_failure_falls_back_to_row_date_coverage(self):
+        policy = dict(self.native_policy)
+        policy.update({"amount": 2, "unit": "day"})
+        with patch("core.contextual_dates.format_required_anchor", return_value="(SELECT MAX(ORDER_DATE) FROM DBO.F_ORDERS)"), \
+             patch("core.date_coverage.run_query", side_effect=[
+                 [{"AnchorDate": "2026-07-20"}],
+                 [{"DaysWithData": 1}],
+                 RuntimeError("formula needs another join"),
+             ]):
+            gap = check_date_coverage(
+                self.db_cfg,
+                policy,
+                "azure_sql",
+                metric_name="Revenue",
+                metric_formula="SUM(REVENUE_AMOUNT)",
+            )
+        self.assertIsNotNone(gap)
+        self.assertEqual(gap.actual_days, 1)
+        self.assertIsNone(gap.metric_active_days)
+        self.assertIn("only 1 business date", gap.message)
 
     def test_surrogate_fk_uses_join(self):
         with patch("core.contextual_dates.format_required_anchor",

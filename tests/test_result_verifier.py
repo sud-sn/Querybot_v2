@@ -66,6 +66,60 @@ def test_distribution_percentages_must_reconcile():
     assert any("sum to" in warning for warning in report["warnings"])
 
 
+def test_kpi_rejects_diagnostic_count_in_place_of_approved_metric():
+    report = verify_result_shape(
+        [{"row_count": 25}],
+        analytical_plan={"intent": "metric_query", "output": "kpi"},
+        resolution_plan={"metrics": [{"name": "Revenue"}]},
+    )
+
+    assert report["status"] == "fail"
+    assert any("approved metric" in error.lower() for error in report["errors"])
+
+
+def test_period_change_rows_are_reconciled_without_exposing_them_to_llm():
+    report = verify_result_shape(
+        [{
+            "ENTITY": "Customer A",
+            "CURRENT_PERIOD_COUNT": 8,
+            "PRIOR_PERIOD_COUNT": 12,
+            "ABSOLUTE_CHANGE": -4,
+            "PERCENTAGE_CHANGE": Decimal("-33.33"),
+        }],
+        analytical_plan={"intent": "entity_lookup", "dimensions": ["entity"]},
+        request_plan={
+            "analytical_recipe": {
+                "kind": "period_over_period_entity_change",
+                "direction": "decrease",
+            },
+        },
+    )
+
+    assert report["status"] == "pass"
+    assert any("reconcile" in check.lower() for check in report["checks"])
+
+
+def test_period_change_rejects_wrong_direction_or_arithmetic():
+    report = verify_result_shape(
+        [{
+            "ENTITY": "Customer A",
+            "CURRENT_PERIOD_COUNT": 14,
+            "PRIOR_PERIOD_COUNT": 12,
+            "ABSOLUTE_CHANGE": 99,
+        }],
+        request_plan={
+            "analytical_recipe": {
+                "kind": "period_over_period_entity_change",
+                "direction": "decrease",
+            },
+        },
+    )
+
+    assert report["status"] == "fail"
+    assert any("do not reconcile" in error for error in report["errors"])
+    assert any("decrease" in error for error in report["errors"])
+
+
 def test_failed_shape_caps_answer_confidence_below_medium():
     confidence = build_answer_confidence(
         validation_code="ok",

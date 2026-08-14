@@ -526,6 +526,527 @@ def _build_row_metric_join_sql(
 _REPAIR_DIALECT = {"azure_sql": "tsql", "oracle": "oracle", "snowflake": "snowflake"}
 
 
+def _same_physical_table(left: object, right: object) -> bool:
+    """Compare qualified table names without making database qualification mandatory."""
+    left_parts = [part for part in re.split(r"[.\[\]`\"]", str(left or "").upper()) if part]
+    right_parts = [part for part in re.split(r"[.\[\]`\"]", str(right or "").upper()) if part]
+    if not left_parts or not right_parts:
+        return False
+    if left_parts == right_parts or left_parts[-2:] == right_parts[-2:]:
+        return True
+    # A bare table name may legitimately be compared with a discovered
+    # schema-qualified name. Two differently qualified schemas must not be
+    # treated as the same table merely because their final identifier matches.
+    return (
+        (len(left_parts) == 1 or len(right_parts) == 1)
+        and left_parts[-1] == right_parts[-1]
+    )
+
+
+def _join_condition_pairs(join: dict) -> list[tuple[str, str]]:
+    pairs: list[tuple[str, str]] = []
+    for condition in join.get("conditions") or []:
+        if isinstance(condition, dict):
+            left = condition.get("from_column") or condition.get("left_column")
+            right = condition.get("to_column") or condition.get("right_column")
+        elif isinstance(condition, (list, tuple)) and len(condition) >= 2:
+            left, right = condition[0], condition[1]
+        else:
+            continue
+        left_text = str(left or "").strip().strip("[]\"`")
+        right_text = str(right or "").strip().strip("[]\"`")
+        if left_text and right_text:
+            pairs.append((left_text, right_text))
+    return pairs
+
+
+def _required_join_path(
+    source: str,
+    target: str,
+    joins: list[dict],
+    *,
+    forbidden_facts: set[str] | None = None,
+) -> list[dict]:
+    """Return the shortest governed path, preserving each edge's orientation."""
+    if _same_physical_table(source, target):
+        return []
+    graph: dict[str, list[dict]] = {}
+    names: dict[str, str] = {}
+
+    def key(table: object) -> str:
+        text = str(table or "").strip()
+        parts = [part for part in re.split(r"[.\[\]`\"]", text.upper()) if part]
+        return ".".join(parts[-2:] if len(parts) >= 2 else parts)
+
+    forbidden = {key(table) for table in (forbidden_facts or set())}
+    for join in joins:
+        if str(join.get("enforcement") or "required").lower() == "optional":
+            continue
+        left = str(join.get("from") or join.get("from_table") or "").strip()
+        right = str(join.get("to") or join.get("to_table") or "").strip()
+        conditions = _join_condition_pairs(join)
+        if not left or not right or not conditions:
+            continue
+        left_key, right_key = key(left), key(right)
+        names[left_key], names[right_key] = left, right
+        graph.setdefault(left_key, []).append({
+            "from": left_key, "to": right_key, "conditions": conditions,
+        })
+        graph.setdefault(right_key, []).append({
+            "from": right_key, "to": left_key,
+            "conditions": [(right_col, left_col) for left_col, right_col in conditions],
+        })
+
+    start, finish = key(source), key(target)
+    queue: list[tuple[str, list[dict]]] = [(start, [])]
+    seen = {start}
+    while queue:
+        table, path = queue.pop(0)
+        for edge in graph.get(table, []):
+            nxt = edge["to"]
+            if nxt in seen or (nxt in forbidden and nxt != finish):
+                continue
+            next_path = path + [{
+                "from": names.get(edge["from"], edge["from"]),
+                "to": names.get(edge["to"], edge["to"]),
+                "conditions": list(edge["conditions"]),
+            }]
+            if nxt == finish:
+                return next_path
+            seen.add(nxt)
+            queue.append((nxt, next_path))
+    return []
+
+
+def _compile_governed_grouped_request_sql(
+    db_type: str,
+    known_tables: set[str],
+    allowed_tables: set[str] | None,
+    table_columns: dict[str, dict[str, str]] | None,
+    semantic_context: dict | None,
+) -> str:
+    """Compile one-fact grouped/ranked requests from exact governed bindings.
+
+    This path intentionally refuses to infer a table, column, relationship, or
+    aggregation. It exists for cases where the semantic compiler has already
+    resolved those decisions but free-form generation can still drift onto an
+    unrelated metric or fact table.
+    """
+    from core.contextual_dates import format_period_bucket_expression
+    from core.validator import validate_sql_detailed
+
+    context = semantic_context or {}
+    plan = context.get("semantic_plan") or {}
+    request = context.get("analytical_request_plan") or {}
+    question = str(context.get("question") or "")
+    if str(request.get("status") or "") != "compiled":
+        return ""
+    source_facts = [str(table) for table in (request.get("source_facts") or []) if table]
+    if len(source_facts) != 1 or request.get("subrequests"):
+        return ""
+    fact_table = str(request.get("source_fact") or source_facts[0])
+    if not fact_table:
+        return ""
+
+    policies = list(plan.get("temporal_policies") or [])
+    if len(policies) > 1:
+        return ""
+    policy = policies[0] if policies else {}
+    if policy and str(policy.get("kind") or "") not in {
+        "last_n", "latest_n_observed", "today", "yesterday",
+    }:
+        return ""
+
+    metrics = [
+        metric for metric in (context.get("metric_formulas") or [])
+        if str(metric.get("formula_type") or "query").lower() == "expression"
+        and str(metric.get("sql_template") or metric.get("formula") or "").strip()
+    ]
+    metric_specs: list[tuple[str, str]] = []
+    for metric in metrics:
+        sources = list(
+            metric.get("_resolved_source_tables")
+            or metric.get("source_tables")
+            or ([metric.get("base_table")] if metric.get("base_table") else [])
+        )
+        if sources and not any(_same_physical_table(source, fact_table) for source in sources):
+            return ""
+        formula = str(metric.get("sql_template") or metric.get("formula") or "").strip().rstrip(";")
+        if not formula or re.search(r"\b(?:SELECT|FROM|WITH)\b|;", formula, re.I):
+            return ""
+        alias = re.sub(r"[^A-Za-z0-9_]", "_", str(metric.get("name") or "metric")).upper()
+        metric_specs.append((alias or "METRIC", formula))
+
+    derived = request.get("derived_measure") or {}
+    if not metric_specs and derived.get("semantics") == "count_distinct_business_identifier":
+        target_table = str(derived.get("target_table") or "")
+        target_column = str(derived.get("target_column") or "")
+        if not target_column or not _same_physical_table(target_table, fact_table):
+            return ""
+        metric_specs.append((
+            re.sub(r"[^A-Za-z0-9_]", "_", str(derived.get("business_entity") or "event")).upper()
+            + "_COUNT",
+            f"COUNT(DISTINCT fact_rows.{{qcol:{target_column}}})",
+        ))
+    if not metric_specs or len(metric_specs) > 3:
+        return ""
+
+    def qcol(name: str) -> str:
+        clean = str(name or "").strip().strip("[]\"`")
+        if db_type == "azure_sql":
+            return f"[{clean}]"
+        if db_type in {"snowflake", "oracle"}:
+            return f'"{clean}"'
+        return clean
+
+    quoted_metric_specs: list[tuple[str, str]] = []
+    derived_target_column = str(derived.get("target_column") or "")
+    for alias, formula in metric_specs:
+        if "{qcol:" in formula:
+            formula = formula.replace(
+                f"{{qcol:{derived_target_column}}}", qcol(derived_target_column)
+            )
+        quoted_metric_specs.append((alias, formula))
+    metric_specs = quoted_metric_specs
+
+    required_fields = [
+        field for field in (plan.get("fields") or [])
+        if str(field.get("enforcement") or "required").lower() != "optional"
+    ]
+    dimensions = []
+    for field in required_fields:
+        role = str(field.get("role") or "").lower()
+        if role in {"date_dimension", "contextual_date", "measure", "measure_candidate"}:
+            continue
+        table = str(field.get("table") or "")
+        column = str(field.get("column") or "")
+        if not table or not column:
+            continue
+        if field.get("display_required") or not _same_physical_table(table, fact_table):
+            dimensions.append(field)
+        elif role in {"dimension", "display_dimension", "attribute"}:
+            column_types = next(
+                (cols for name, cols in (table_columns or {}).items() if _same_physical_table(name, table)),
+                {},
+            )
+            dtype = str(column_types.get(column) or column_types.get(column.upper()) or "").lower()
+            if any(token in dtype for token in ("char", "text", "string")):
+                dimensions.append(field)
+    unique_dimensions: list[dict] = []
+    for field in dimensions:
+        if not any(
+            _same_physical_table(field.get("table"), existing.get("table"))
+            and str(field.get("column") or "").upper() == str(existing.get("column") or "").upper()
+            for existing in unique_dimensions
+        ):
+            unique_dimensions.append(field)
+    if len(unique_dimensions) > 1:
+        return ""
+    # Preserve the established scalar/single-series compiler byte-for-byte.
+    # This helper owns only the new cases: a governed dimension, a governed
+    # derived event count, or multiple same-fact metrics.
+    if (
+        not unique_dimensions
+        and len(metric_specs) == 1
+        and derived.get("semantics") != "count_distinct_business_identifier"
+    ):
+        return ""
+
+    intent = str(request.get("intent") or "").lower()
+    top_n = request.get("top_n") or ((context.get("top_n") or {}).get("limit"))
+    ranking = intent == "ranking" or bool(top_n)
+    if ranking and not unique_dimensions:
+        return ""
+    if intent in {"comparison", "distribution", "causal_analysis"}:
+        return ""
+
+    fact_sql = _quote_table_for_count(fact_table, db_type)
+    from_lines = [f"{fact_sql} AS fact_rows"]
+    alias_by_table: dict[str, str] = {fact_table: "fact_rows"}
+
+    def alias_for(table: str) -> str:
+        for known, alias in alias_by_table.items():
+            if _same_physical_table(known, table):
+                return alias
+        return ""
+
+    requested_targets: list[tuple[str, str]] = []
+    if unique_dimensions:
+        requested_targets.append((str(unique_dimensions[0]["table"]), "business_dimension"))
+    date_target = str(policy.get("dimension_table") or "") if policy else ""
+    date_alias = re.sub(r"[^A-Za-z0-9_]", "_", str(policy.get("role_alias") or "business_date"))
+    if date_target:
+        requested_targets.append((date_target, date_alias))
+
+    all_source_facts = {str(table) for table in source_facts}
+    joins = list(plan.get("joins") or [])
+    for target, preferred_alias in requested_targets:
+        if alias_for(target):
+            continue
+        path = _required_join_path(
+            fact_table, target, joins,
+            forbidden_facts={table for table in all_source_facts if not _same_physical_table(table, fact_table)},
+        )
+        if not path:
+            return ""
+        for edge in path:
+            left_alias = alias_for(str(edge["from"]))
+            if not left_alias:
+                return ""
+            right_table = str(edge["to"])
+            right_alias = alias_for(right_table)
+            if right_alias:
+                continue
+            right_alias = preferred_alias if _same_physical_table(right_table, target) else f"join_{len(alias_by_table)}"
+            if right_alias in alias_by_table.values():
+                right_alias = f"join_{len(alias_by_table)}"
+            conditions = " AND ".join(
+                f"{left_alias}.{qcol(left_col)} = {right_alias}.{qcol(right_col)}"
+                for left_col, right_col in edge["conditions"]
+            )
+            from_lines.append(
+                f"JOIN {_quote_table_for_count(right_table, db_type)} AS {right_alias} ON {conditions}"
+            )
+            alias_by_table[right_table] = right_alias
+
+    dimension_ref = ""
+    dimension_alias = ""
+    if unique_dimensions:
+        dimension = unique_dimensions[0]
+        dimension_alias = re.sub(
+            r"[^A-Za-z0-9_]", "_", str(dimension.get("term") or dimension.get("column") or "dimension")
+        ).upper()
+        table_alias = alias_for(str(dimension["table"]))
+        if not table_alias:
+            return ""
+        dimension_ref = f"{table_alias}.{qcol(str(dimension['column']))}"
+
+    date_ref = ""
+    if policy:
+        fact_column = str(policy.get("fact_column") or policy.get("anchor_column") or "")
+        date_column = str(policy.get("date_column") or "")
+        key_type = str(policy.get("date_key_type") or "")
+        if not fact_column or not date_column:
+            return ""
+        if key_type == "surrogate_fk":
+            if not date_target or not str(policy.get("dimension_key") or ""):
+                return ""
+            resolved_date_alias = alias_for(date_target)
+            if not resolved_date_alias:
+                return ""
+            date_ref = f"{resolved_date_alias}.{qcol(date_column)}"
+        else:
+            date_ref = f"fact_rows.{qcol(date_column)}"
+
+    from_sql = "\n    ".join(from_lines)
+    where_parts: list[str] = []
+    anchor_sql = ""
+    if policy:
+        try:
+            amount = int(policy.get("amount"))
+        except (TypeError, ValueError):
+            return ""
+        unit = str(policy.get("unit") or "").lower()
+        kind = str(policy.get("kind") or "")
+        if unit not in {"day", "week", "month", "quarter", "year"}:
+            return ""
+        if kind in {"last_n", "latest_n_observed"} and amount <= 0:
+            return ""
+        if kind == "latest_n_observed":
+            if unit != "day":
+                # Selecting latest observed weeks/months requires a governed
+                # period bucket before limiting. Keep that less common shape
+                # on the validated planner path for now.
+                return ""
+            if db_type == "azure_sql":
+                observed_limit = f"TOP ({amount}) "
+                observed_suffix = ""
+            elif db_type == "snowflake":
+                observed_limit = ""
+                observed_suffix = f"\n    LIMIT {amount}"
+            elif db_type == "oracle":
+                observed_limit = ""
+                observed_suffix = f"\n    FETCH FIRST {amount} ROWS ONLY"
+            else:
+                return ""
+            anchor_sql = f"""WITH observed_periods AS (
+    SELECT DISTINCT {observed_limit}{date_ref} AS observed_business_date
+    FROM {from_sql}
+    WHERE {date_ref} IS NOT NULL
+    ORDER BY {date_ref} DESC{observed_suffix}
+)
+"""
+            where_parts.append(
+                f"{date_ref} IN (SELECT observed_business_date FROM observed_periods)"
+            )
+        else:
+            anchor_sql = f"WITH anchor AS (\n    SELECT MAX({date_ref}) AS max_business_date\n    FROM {from_sql}\n)\n"
+
+        recipe = request.get("analytical_recipe") or {}
+        if recipe.get("kind") == "period_over_period_entity_change":
+            if (
+                kind != "last_n"
+                or not dimension_ref
+                or derived.get("semantics") != "count_distinct_business_identifier"
+                or db_type not in {"azure_sql", "snowflake"}
+            ):
+                return ""
+            target_column = str(derived.get("target_column") or "")
+            if not target_column:
+                return ""
+            current_start = f"DATEADD({unit}, -{amount}, anchor.max_business_date)"
+            prior_start = f"DATEADD({unit}, -{amount * 2}, anchor.max_business_date)"
+            target_ref = f"fact_rows.{qcol(target_column)}"
+            direction = str(recipe.get("direction") or "compare").lower()
+            direction_filter = ""
+            order_direction = "DESC"
+            if direction == "decrease":
+                direction_filter = "\nWHERE CURRENT_PERIOD_COUNT < PRIOR_PERIOD_COUNT"
+                order_direction = "ASC"
+            elif direction == "increase":
+                direction_filter = "\nWHERE CURRENT_PERIOD_COUNT > PRIOR_PERIOD_COUNT"
+            change_anchor_sql = anchor_sql.rstrip() + ",\n"
+            compiled_change = f"""{change_anchor_sql}period_counts AS (
+    SELECT
+        {dimension_ref} AS ENTITY,
+        COUNT(DISTINCT CASE
+            WHEN {date_ref} > {current_start}
+             AND {date_ref} <= anchor.max_business_date
+            THEN {target_ref} END) AS CURRENT_PERIOD_COUNT,
+        COUNT(DISTINCT CASE
+            WHEN {date_ref} > {prior_start}
+             AND {date_ref} <= {current_start}
+            THEN {target_ref} END) AS PRIOR_PERIOD_COUNT
+    FROM {from_sql}
+    CROSS JOIN anchor
+    WHERE {date_ref} > {prior_start}
+      AND {date_ref} <= anchor.max_business_date
+    GROUP BY {dimension_ref}
+)
+SELECT
+    ENTITY,
+    CURRENT_PERIOD_COUNT,
+    PRIOR_PERIOD_COUNT,
+    CURRENT_PERIOD_COUNT - PRIOR_PERIOD_COUNT AS ABSOLUTE_CHANGE,
+    CASE
+        WHEN PRIOR_PERIOD_COUNT = 0 THEN NULL
+        ELSE 100.0 * (CURRENT_PERIOD_COUNT - PRIOR_PERIOD_COUNT) / PRIOR_PERIOD_COUNT
+    END AS PERCENTAGE_CHANGE
+FROM period_counts{direction_filter}
+ORDER BY ABSOLUTE_CHANGE {order_direction}"""
+            result = validate_sql_detailed(
+                compiled_change,
+                known_tables,
+                db_type,
+                allowed_tables,
+                table_columns or {},
+                context,
+            )
+            if not result.ok:
+                log.debug(
+                    "Governed entity-change compiler did not validate: %s (%s)",
+                    result.reason,
+                    result.code,
+                )
+                return ""
+            return compiled_change
+
+        if kind == "latest_n_observed":
+            pass
+        elif kind == "last_n":
+            if db_type in {"azure_sql", "snowflake"}:
+                start = f"DATEADD({unit}, -{amount}, anchor.max_business_date)"
+            elif db_type == "oracle":
+                if unit == "day":
+                    start = f"anchor.max_business_date - {amount}"
+                elif unit == "week":
+                    start = f"anchor.max_business_date - {amount * 7}"
+                else:
+                    start = f"ADD_MONTHS(anchor.max_business_date, -{amount * {'month': 1, 'quarter': 3, 'year': 12}[unit]})"
+            else:
+                return ""
+            where_parts.extend([f"{date_ref} > {start}", f"{date_ref} <= anchor.max_business_date"])
+        else:
+            if db_type in {"azure_sql", "snowflake"}:
+                selected = "CAST(anchor.max_business_date AS date)"
+                if kind == "yesterday":
+                    selected = "DATEADD(day, -1, CAST(anchor.max_business_date AS date))"
+                where_parts.append(f"CAST({date_ref} AS date) = {selected}")
+            elif db_type == "oracle":
+                selected = "TRUNC(anchor.max_business_date)" + (" - 1" if kind == "yesterday" else "")
+                where_parts.append(f"TRUNC({date_ref}) = {selected}")
+            else:
+                return ""
+
+    is_trend = bool(
+        intent == "trend"
+        or str(request.get("output_shape") or "").lower() == "time_series"
+        or re.search(r"\b(?:trend|over\s+time|by\s+(?:day|week|month|quarter|year))\b", question, re.I)
+    )
+    select_parts: list[str] = []
+    group_parts: list[str] = []
+    if is_trend:
+        if not date_ref:
+            return ""
+        grain = str(policy.get("requested_grain") or policy.get("unit") or "day").lower()
+        if grain not in {"day", "week", "month", "quarter", "year"}:
+            grain = "day"
+        bucket = format_period_bucket_expression(
+            date_ref, grain, db_type,
+            role_alias=date_alias,
+            calendar_attributes=policy.get("calendar_attributes") or {},
+        )
+        if not bucket:
+            return ""
+        select_parts.append(f"{bucket} AS PERIOD")
+        group_parts.append(bucket)
+    if dimension_ref:
+        select_parts.append(f"{dimension_ref} AS {dimension_alias}")
+        group_parts.append(dimension_ref)
+    select_parts.extend(f"{formula} AS {alias}" for alias, formula in metric_specs)
+
+    top_clause = ""
+    try:
+        limit = int(top_n or 0)
+    except (TypeError, ValueError):
+        limit = 0
+    if ranking and limit > 0:
+        if db_type == "azure_sql":
+            top_clause = f"TOP ({limit}) "
+        elif db_type not in {"snowflake", "oracle"}:
+            return ""
+    cross_anchor = (
+        "\nCROSS JOIN anchor"
+        if policy and str(policy.get("kind") or "") != "latest_n_observed"
+        else ""
+    )
+    where_sql = "\nWHERE " + "\n  AND ".join(where_parts) if where_parts else ""
+    group_sql = "\nGROUP BY " + ", ".join(group_parts) if group_parts else ""
+    order_sql = ""
+    if ranking:
+        order_sql = f"\nORDER BY {metric_specs[0][0]} DESC"
+    elif is_trend:
+        order_sql = "\nORDER BY PERIOD"
+    limit_sql = f"\nFETCH FIRST {limit} ROWS ONLY" if ranking and limit > 0 and db_type == "oracle" else ""
+    if ranking and limit > 0 and db_type == "snowflake":
+        limit_sql = f"\nLIMIT {limit}"
+
+    compiled = (
+        f"{anchor_sql}SELECT\n    {top_clause}" + ",\n    ".join(select_parts)
+        + f"\nFROM {from_sql}{cross_anchor}{where_sql}{group_sql}{order_sql}{limit_sql}"
+    )
+    result = validate_sql_detailed(
+        compiled, known_tables, db_type, allowed_tables, table_columns or {}, context,
+    )
+    if not result.ok:
+        log.debug(
+            "Governed grouped request compiler did not validate: %s (%s)",
+            result.reason, result.code,
+        )
+        return ""
+    return compiled
+
+
 def compile_governed_temporal_metric_sql(
     db_type: str,
     known_tables: set[str],
@@ -542,13 +1063,24 @@ def compile_governed_temporal_metric_sql(
     needless failure modes (wrong date key, calendar-table anchoring,
     truncated CTEs and redundant aggregate-of-aggregate wrappers).
 
-    This compiler is intentionally narrow.  It only accepts one expression
-    metric, one rolling/today temporal policy and no requested non-date dimension.
-    Anything requiring ranking, comparison, distribution, multiple facts or
-    dimensional grouping remains on the normal analytical planner path.
+    The scalar branch remains intentionally narrow. Governed grouped/ranked,
+    exact event-count and same-fact multi-metric requests are dispatched to a
+    separate conservative compiler above. Anything requiring an unresolved
+    relationship, distribution or multiple facts remains on the normal
+    analytical planner path.
     """
     from core.contextual_dates import format_period_bucket_expression
     from core.validator import validate_sql_detailed
+
+    grouped = _compile_governed_grouped_request_sql(
+        db_type,
+        known_tables,
+        allowed_tables,
+        table_columns,
+        semantic_context,
+    )
+    if grouped:
+        return grouped
 
     context = semantic_context or {}
     plan = context.get("semantic_plan") or {}
@@ -585,7 +1117,7 @@ def compile_governed_temporal_metric_sql(
 
     policy = policies[0]
     window_kind = str(policy.get("kind") or "")
-    if window_kind not in {"last_n", "today", "yesterday"}:
+    if window_kind not in {"last_n", "latest_n_observed", "today", "yesterday"}:
         return ""
     try:
         amount = int(policy.get("amount"))
@@ -594,7 +1126,7 @@ def compile_governed_temporal_metric_sql(
     unit = str(policy.get("unit") or "").lower()
     if unit not in {"day", "week", "month", "quarter", "year"}:
         return ""
-    if window_kind == "last_n" and amount <= 0:
+    if window_kind in {"last_n", "latest_n_observed"} and amount <= 0:
         return ""
 
     fact_table = str(policy.get("fact_table") or policy.get("anchor_table") or "")
@@ -649,7 +1181,30 @@ def compile_governed_temporal_metric_sql(
         date_ref = f"fact_rows.{qcol(date_column)}"
 
     dialect = str(db_type or "").lower()
-    if window_kind == "last_n":
+    observed_period_cte = ""
+    if window_kind == "latest_n_observed":
+        if unit != "day":
+            return ""
+        if dialect == "azure_sql":
+            observed_limit = f"TOP ({amount}) "
+            observed_suffix = ""
+        elif dialect == "snowflake":
+            observed_limit = ""
+            observed_suffix = f"\n    LIMIT {amount}"
+        elif dialect == "oracle":
+            observed_limit = ""
+            observed_suffix = f"\n    FETCH FIRST {amount} ROWS ONLY"
+        else:
+            return ""
+        observed_period_cte = f"""WITH observed_periods AS (
+    SELECT DISTINCT {observed_limit}{date_ref} AS observed_business_date
+    FROM {from_sql}
+    WHERE {date_ref} IS NOT NULL
+    ORDER BY {date_ref} DESC{observed_suffix}
+)
+"""
+        where_sql = f"{date_ref} IN (SELECT observed_business_date FROM observed_periods)"
+    elif window_kind == "last_n":
         if dialect in {"azure_sql", "snowflake"}:
             start_expr = f"DATEADD({unit}, -{amount}, anchor.max_business_date)"
         elif dialect == "oracle":
@@ -721,7 +1276,13 @@ def compile_governed_temporal_metric_sql(
         group_sql = f"\nGROUP BY {bucket}"
         order_sql = "\nORDER BY PERIOD"
 
-    compiled = f"""WITH anchor AS (
+    if window_kind == "latest_n_observed":
+        compiled = f"""{observed_period_cte}SELECT
+    {select_sql}
+FROM {from_sql}
+WHERE {where_sql}{group_sql}{order_sql}"""
+    else:
+        compiled = f"""WITH anchor AS (
     SELECT MAX({date_ref}) AS max_business_date
     FROM {from_sql}
 )
