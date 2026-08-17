@@ -1714,6 +1714,7 @@ def _scope_plan_to_single_fact(
     joins: list[dict[str, Any]],
     tables: list[dict[str, Any]],
     preferred_fact_tables: set[str] | None = None,
+    preferred_source_reason: str = "",
 ) -> str:
     """Demote requirements that point at a fact table the answer isn't anchored on.
 
@@ -1822,18 +1823,70 @@ def _scope_plan_to_single_fact(
         )
         return ""
 
-    # Anchor = the authoritative source when present, otherwise the fact
-    # carrying the measure the question actually asked for.
-    # `fields` is emitted in descending score order, so the first fact is the
-    # best-scoring one when no explicit measure resolved.
-    anchor = preferred_anchor or next(
-        (
-            str(f.get("table") or "").upper()
-            for f in fields
-            if _is_measure_binding(f) and _is_fact(f.get("table"))
-        ),
-        "",
+    # Anchor = the fact that carries the measure the question asked for.
+    #
+    # `preferred_fact_tables` arrives from business-source resolution, which is
+    # a lexical/heuristic pick — NOT governed evidence. Letting it win
+    # unconditionally inverted the answer: for "total amount of confirmed
+    # purchase orders by profit center" source resolution chose
+    # CUS_ORD_IVC_FCT (customer invoices) while the compiled plan required
+    # PCH_ORD_RCT_FCT.PCH_ORD_LIN_CAD_AMT (the purchase-order amount). The
+    # preferred fact carried no measure field at all — it only appeared through
+    # a join — so anchoring on it demoted the one required measure to optional,
+    # the request plan then declared the wrong measure fact, and the validator
+    # rejected the model's CORRECT SQL with source_fact_mismatch.
+    #
+    # So the preferred source only wins when a measure binding corroborates it.
+    # Otherwise the measure's own fact is the anchor: that is the evidence, and
+    # this function's own contract below is that a guess which can invert the
+    # answer is worse than no rule.
+    #
+    # `fields` is emitted in descending score order, but governance strength
+    # outranks score. An explicit enforcement="required" binding came from the
+    # structured semantic model — an approved, governed decision. An unset
+    # enforcement is the LLM field planner's suggestion, which is exactly how
+    # "purchase" was bound to ITM_BAL_PRD_FCT.PCH_QTY (an inventory quantity)
+    # for a question about purchase-order amounts. "optional" is already
+    # demoted and must never claim the anchor.
+    def _governance_rank(field: dict[str, Any]) -> int:
+        enforcement = str(field.get("enforcement") or "").strip().lower()
+        if enforcement == "required":
+            return 0
+        if enforcement == "optional":
+            return 2
+        return 1
+
+    measure_facts = [
+        str(f.get("table") or "").upper()
+        for f in sorted(fields, key=_governance_rank)
+        if _is_measure_binding(f) and _is_fact(f.get("table"))
+    ]
+    preferred_carries_measure = bool(preferred_anchor) and any(
+        _table_matches(table, preferred_anchor) for table in measure_facts
     )
+    # WHY the source was chosen decides whether it may override the measure.
+    # A source the user named outright ("...from purchase order receipts") or
+    # confirmed in a clarification is a governed decision and outranks a rival
+    # measure binding. A source inferred from an approved metric's base table,
+    # or from score, is a guess — and that guess anchored a purchase-order
+    # question on the customer-invoice fact.
+    preferred_is_authoritative = str(preferred_source_reason or "").strip().lower() in {
+        "explicit tenant source terminology",
+        "user-confirmed governed source",
+    }
+    if preferred_anchor and (preferred_carries_measure or preferred_is_authoritative):
+        anchor = preferred_anchor
+    elif measure_facts:
+        anchor = measure_facts[0]
+        if preferred_anchor and not _table_matches(anchor, preferred_anchor):
+            log.info(
+                "Fact scoping: preferred source %s (reason=%r) carries no "
+                "measure in this plan — anchoring on %s, which owns the "
+                "requested measure",
+                preferred_anchor, preferred_source_reason or "unspecified", anchor,
+            )
+    else:
+        anchor = preferred_anchor
     if not anchor:
         # Deliberately no fallback. The previous code defaulted to
         # distinct_facts[0] -- list order, not evidence -- and production

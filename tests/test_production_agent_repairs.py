@@ -153,8 +153,14 @@ def test_explicit_source_demotes_a_lone_rival_fact_binding():
         "column": "INVENTORY_VALUE", "role": "measure", "enforcement": "required",
     }]
     tables = _source_model()["tables"]
+    # "Explicit source" is the precondition this test is about: the user named
+    # the source outright, which is a governed decision and therefore outranks a
+    # rival measure binding. Arbitration that merely INFERRED a source (from an
+    # approved metric's base table, or from score) must not override the plan's
+    # required measure — see _scope_plan_to_single_fact.
     anchor = _scope_plan_to_single_fact(
         fields, [], tables, preferred_fact_tables={"TENANT.ERP_BALANCE"},
+        preferred_source_reason="explicit tenant source terminology",
     )
     assert anchor == "TENANT.ERP_BALANCE"
     assert fields[0]["enforcement"] == "optional"

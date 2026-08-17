@@ -2922,6 +2922,9 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     _semantic_plan.get("joins") or [],
                     _anchor_tables,
                     preferred_fact_tables=_preferred_facts,
+                    # Provenance decides whether arbitration may override the
+                    # plan's required measure — see _scope_plan_to_single_fact.
+                    preferred_source_reason=str(_source_scope.get("reason") or ""),
                 )
             if _plan_anchor:
                 _semantic_plan["fact_anchor"] = _plan_anchor
@@ -4937,6 +4940,35 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     # is reused by the progressive-repair gate below.
     retryable = (not ok and (last_code or code) in ("unknown_table", "unknown_column", "date_key_format", "dialect_mismatch", "production_shape", "period_comparison_shape", "composition_shape", "anti_join_shape", "fanout_aggregate", "top_n_shape", "graph_plan_mismatch", "field_plan_mismatch", "metric_formula_mismatch", "null_aggregate_diagnostic", "parse", "multi_statement", "not_select", "reused_plan_empty", "zero_row_fresh", "surrogate_date_conversion", "temporal_anchor_missing", "temporal_anchor_mismatch", "temporal_role_mismatch", "temporal_anchor_unscoped", "observed_period_shape", "source_fact_mismatch")) or (exec_error is not None)
 
+    # A statement timeout is not a defect in the SQL, so there is nothing for a
+    # repair to fix. Rewriting it cannot make the database faster: the retry
+    # spends another full timeout window, costs a generation call, and can
+    # replace a clear "the query timed out" answer with a misleading validator
+    # error from the regenerated SQL. Observed live — a governed revenue query
+    # timed out at 120 s, the retry ran 120 s more and then failed on the
+    # entity-graph join plan, so four minutes bought a wrong explanation.
+    from core.failure_messages import is_query_timeout
+    from core.schema import _query_timeout_seconds
+
+    _timed_out = exec_error is not None and is_query_timeout(exec_error)
+    if _timed_out:
+        retryable = False
+        _trace_step(
+            trace_id,
+            "execution_timeout_no_repair",
+            input_summary=sql,
+            output_summary={
+                "timeout_seconds": _query_timeout_seconds(db_cfg),
+                "repair_attempted": False,
+            },
+            status="error",
+        )
+        log.warning(
+            "Execution timed out for %s after %ss — not repairing: the SQL is "
+            "valid and a rewrite cannot make the database faster",
+            account_id, _query_timeout_seconds(db_cfg),
+        )
+
     if retryable:
         if exec_error is not None:
             import re as _re_retry
@@ -5552,6 +5584,22 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             kind="execution", exception_text=exec_error or "Unknown error",
             sql=sql, question=question,
         )
+        if _timed_out:
+            # "The database did not respond in time" is true but not actionable.
+            # The governed plan names the exact column this question filters and
+            # joins on, so name the index that would make it fast instead.
+            from core.failure_messages import build_query_timeout_guidance
+
+            _timeout_guidance = build_query_timeout_guidance(
+                _semantic_plan,
+                timeout_seconds=_query_timeout_seconds(db_cfg),
+            )
+            _rca["most_likely_reason"] = _timeout_guidance["reason"]
+            _rca["suggested_next_step"] = _timeout_guidance["next_step"]
+            _rca.setdefault("technical_notes", []).append(
+                "The SQL was valid and governed; it was not repaired, because "
+                "rewriting a query cannot make the database faster."
+            )
         if not ok and last_code:
             # A validation failure preceded this: the repaired query passed
             # validation but died at execution. Keep the history visible so

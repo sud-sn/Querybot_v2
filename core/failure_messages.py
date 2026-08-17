@@ -92,6 +92,83 @@ _DB_ERROR_MAP: list[tuple[str, str, str]] = [
 ]
 
 
+_QUERY_TIMEOUT_RE = re.compile(
+    r"timeout expired|query timeout|\bHYT00\b|timed out",
+    re.IGNORECASE,
+)
+
+
+def is_query_timeout(raw: str) -> bool:
+    """Whether a database error is a statement timeout rather than a defect.
+
+    This distinction decides whether the pipeline should repair the SQL. A
+    timeout means the query was VALID and the database was too slow — usually a
+    missing index on the filtered key. Rewriting it cannot make the database
+    faster: the retry burns another full timeout window, costs a generation
+    call, and can replace a clear "the query timed out" diagnostic with a
+    misleading validator error from the regenerated SQL. Observed live: a
+    governed revenue query timed out at 120 s, the retry ran for another 120 s
+    and then failed validation on the entity-graph join plan, so the user waited
+    four minutes to be told the wrong thing.
+
+    Login/connection timeouts are excluded — those are covered by the
+    connectivity patterns and are genuinely worth one more attempt.
+    """
+    text = str(raw or "")
+    if not text:
+        return False
+    if re.search(r"login timeout", text, re.IGNORECASE):
+        return False
+    return bool(_QUERY_TIMEOUT_RE.search(text))
+
+
+def build_query_timeout_guidance(
+    semantic_plan: dict | None = None,
+    *,
+    timeout_seconds: int | None = None,
+) -> dict[str, str]:
+    """Turn a statement timeout into something an administrator can act on.
+
+    "The database did not respond in time" is true but not useful. When the plan
+    carries a governed date role we know exactly which column the query filters
+    and joins on, so we can name the index that would make it fast.
+    """
+    policies = [
+        policy for policy in ((semantic_plan or {}).get("temporal_policies") or [])
+        if isinstance(policy, dict)
+    ]
+    detail = (
+        f"The database stopped the query after {timeout_seconds} seconds."
+        if timeout_seconds
+        else "The database stopped the query before it finished."
+    )
+    for policy in policies:
+        fact = str(policy.get("fact_table") or policy.get("anchor_table") or "").strip()
+        key = str(policy.get("fact_column") or "").strip()
+        if fact and key:
+            return {
+                "reason": (
+                    f"{detail} This question filters and joins "
+                    f"{fact} on {key}, so it reads the whole table unless that "
+                    "column is indexed."
+                ),
+                "next_step": (
+                    f"Ask your database administrator to add an index on "
+                    f"{fact} ({key}). Until then, narrowing the question — a "
+                    "single month, or one customer or warehouse — keeps it "
+                    "inside the time limit."
+                ),
+            }
+    return {
+        "reason": detail,
+        "next_step": (
+            "Narrow the question with a date range or a specific customer, "
+            "product or warehouse. If it keeps happening on simple questions, "
+            "ask your administrator to review indexing on the queried tables."
+        ),
+    }
+
+
 def _clean_db_error(raw: str) -> str:
     """Strip driver noise: pyodbc tuple wrapping and [Vendor][Driver] prefixes."""
     text = (raw or "").strip()

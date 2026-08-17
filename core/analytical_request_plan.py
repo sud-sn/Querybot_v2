@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any
 
 from core.semantic_model import _is_measure_binding
+
+log = logging.getLogger("querybot.analytical_request_plan")
 
 
 def _entity_physical_table(entity: dict[str, Any]) -> str:
@@ -72,6 +75,64 @@ def compile_analytical_request_plan(
         str(value) for value in (source_scope.get("selected_facts") or []) if value
     ]
     fields = [f for f in (plan.get("fields") or []) if f.get("enforcement") != "optional"]
+
+    # ── The measure decides the measure fact ─────────────────────────────────
+    # `source_scope.selected_fact` is business-source arbitration: useful, but
+    # lexical/heuristic evidence. It was winning over the compiled plan, and
+    # this plan is what the validator enforces — so a wrong pick here rejects
+    # correct SQL rather than just answering oddly.
+    #
+    # Live case: "what is the total amount of confirmed purchase orders by
+    # profit center". Source arbitration scored CUS_ORD_IVC_FCT (customer
+    # invoices) 33 on an approved-metric binding while the compiled plan
+    # required PCH_ORD_RCT_FCT.PCH_ORD_LIN_CAD_AMT. This plan then declared
+    # CUS_ORD_IVC_FCT the measure fact, the model generated correct SQL over
+    # PCH_ORD_RCT_FCT, and source_fact_mismatch blocked the right answer.
+    #
+    # So a required measure field, or the governed fact anchor derived from one,
+    # outranks arbitration. A source the USER explicitly chose still wins over
+    # both — that is a governed decision, not a guess.
+    _user_confirmed_source = (
+        str(source_scope.get("reason") or "") == "user-confirmed governed source"
+    )
+    if not _user_confirmed_source:
+        # Governance strength, not list order: enforcement="required" is the
+        # structured semantic model's approved binding, while an unset value is
+        # the LLM field planner's suggestion — which is how "purchase" bound to
+        # an inventory quantity on a purchase-order question. Ordering by list
+        # position would let that suggestion claim the measure fact.
+        _ranked_measures = sorted(
+            (
+                field for field in fields
+                if str(field.get("role") or "").strip().lower()
+                in {"measure", "measure_candidate"}
+            ),
+            key=lambda field: (
+                0 if str(field.get("enforcement") or "").strip().lower() == "required"
+                else 1
+            ),
+        )
+        _governed_candidates = [
+            str(plan.get("fact_anchor") or ""),
+            *(str(field.get("table") or "") for field in _ranked_measures),
+        ]
+        for _candidate in _governed_candidates:
+            if not _candidate or not selected_fact:
+                continue
+            if _table_matches(_candidate, selected_fact):
+                break
+            log.info(
+                "Analytical request plan: business-source arbitration chose %s "
+                "but the compiled plan's required measure lives on %s — "
+                "anchoring the measure fact on %s",
+                selected_fact, _candidate, _candidate,
+            )
+            selected_fact = _candidate
+            selected_facts = [
+                value for value in selected_facts
+                if _table_matches(value, _candidate)
+            ] or [_candidate]
+            break
 
     metric_sources: list[str] = []
     for metric in matched_metrics or []:
