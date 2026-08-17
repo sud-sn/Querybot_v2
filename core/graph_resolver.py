@@ -854,14 +854,45 @@ def _selected_path_matches(path: list[dict], selected_edge_ids) -> bool:
     return bool(selected) and selected == actual
 
 
-def _path_label(path: list[dict]) -> str:
-    labels = []
+def _path_label(path: list[dict], entities: list[dict] | None = None) -> str:
+    """A business-readable name for one join path.
+
+    The previous form joined every edge label with " -> ", which produced two
+    kinds of unusable option: role-playing edges that share a label repeated
+    themselves ("Confirmed Delivery Date -> Confirmed Delivery Date"), and
+    unlabelled edges fell back to raw physical table names
+    ("CUS_ORD_IVC_FCT to ITM_DMS -> PCH_ORD_RCT_FCT to ITM_DMS"). Neither tells
+    a business user what they are choosing between.
+
+    So: prefer the edge's business role, then the entities' display names, never
+    a bare physical name when a display name exists; collapse consecutive
+    repeats; and describe intermediate hops with "via".
+    """
+    display_by_entity = {
+        str(entity.get("entity_name") or ""): str(
+            entity.get("display_name") or entity.get("entity_name") or ""
+        ).strip()
+        for entity in entities or []
+        if entity.get("entity_name")
+    }
+
+    def _name(entity_name: Any) -> str:
+        key = str(entity_name or "")
+        return display_by_entity.get(key) or key
+
+    labels: list[str] = []
     for edge in path:
-        labels.append(
-            str(edge.get("label") or "").strip()
-            or f"{edge.get('from_entity')} to {edge.get('to_entity')}"
-        )
-    return " -> ".join(labels)
+        label = str(edge.get("label") or "").strip()
+        if not label:
+            label = str(edge.get("business_role") or "").strip()
+        if not label:
+            label = f"{_name(edge.get('from_entity'))} via {_name(edge.get('to_entity'))}"
+        # Role-playing edges through one dimension repeat the same business
+        # role; saying it twice adds nothing.
+        if labels and labels[-1].casefold() == label.casefold():
+            continue
+        labels.append(label)
+    return " via ".join(labels)
 
 
 def _question_edge_weight(edge: dict, question: str) -> float:
@@ -1023,17 +1054,38 @@ def find_join_path_with_diagnostics(
             and len(candidates) > 1
             and candidates[1][0] - candidates[0][0] <= 0.25
         ):
-            diagnostics["ambiguous_targets"].append({
-                "target": target,
-                "options": [
-                    {
-                        "label": _path_label(path),
-                        "value": _path_label(path),
-                        "edge_ids": _path_selection_ids(path),
-                    }
-                    for _, path in candidates[:2]
-                ],
-            })
+            _graph_entities = graph.get("entities") or []
+            _path_options: list[dict] = []
+            for _, path in candidates[:2]:
+                label = _path_label(path, _graph_entities)
+                # Two paths a user cannot tell apart are not a choice. When the
+                # business labels collapse to the same text the paths mean the
+                # same thing to them, so offer it once and let the deterministic
+                # ranking pick — asking twice with identical buttons was the
+                # defect, not the ambiguity.
+                if any(
+                    option["label"].casefold() == label.casefold()
+                    for option in _path_options
+                ):
+                    continue
+                _path_options.append({
+                    "label": label,
+                    "value": label,
+                    "edge_ids": _path_selection_ids(path),
+                })
+            if len(_path_options) > 1:
+                diagnostics["ambiguous_targets"].append({
+                    "target": target,
+                    "options": _path_options,
+                })
+            else:
+                log.info(
+                    "Graph: %d equally-ranked paths to %s are not "
+                    "business-distinguishable (%s) — using the top-ranked path "
+                    "instead of asking an unanswerable question",
+                    len(candidates[:2]), target,
+                    _path_options[0]["label"] if _path_options else "unlabelled",
+                )
         for step in chosen_path:
             edge_identity = physical_relationship_signature(step)
             if not any(

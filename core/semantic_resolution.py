@@ -155,6 +155,63 @@ def build_planner_alignment(
         if non_date:
             table_to_entity[table] = non_date[-1]
 
+    # ── One measure fact, decided by the measure ──────────────────────────────
+    # `metric_formula_tables` is every fact any matched metric is built on. When
+    # a metric matches loosely it drags its facts in here, and treating them all
+    # as authoritative had a compounding effect: with 2+ "authoritative" facts,
+    # the rival-fact drop below can never fire (each one looks authoritative to
+    # the others), so the graph is asked to connect several facts at once, no
+    # single anchor can be chosen, and planning ends in
+    # `clarification_required` — surfacing as a join-path question the user
+    # cannot answer.
+    #
+    # Live case: "what is the total amount of purchase orders by profit center"
+    # matched a metric built on CUS_ORD_IVC_FCT + FNN_FCT while the compiled
+    # plan required PCH_ORD_RCT_FCT.PCH_ORD_LIN_CAD_AMT. All three became
+    # required entities, the anchor came back empty, and the user was asked to
+    # choose between "Confirmed Delivery Date -> Confirmed Delivery Date" and a
+    # pair of raw physical table names.
+    #
+    # So when the plan itself names the fact that carries the requested measure,
+    # that fact is the only authoritative one. Other metric-formula facts stay
+    # available to the prompt but stop being required graph entities.
+    governed_measure_fact = ""
+    for candidate in (
+        str(semantic_plan.get("fact_anchor") or ""),
+        *(
+            str(field.get("table") or "")
+            for field in sorted(
+                (
+                    field for field in (semantic_plan.get("fields") or [])
+                    if isinstance(field, dict)
+                    and str(field.get("role") or "").strip().lower()
+                    in {"measure", "measure_candidate"}
+                    and field.get("enforcement") != "optional"
+                ),
+                key=lambda field: (
+                    0 if str(field.get("enforcement") or "").strip().lower() == "required"
+                    else 1
+                ),
+            )
+        ),
+    ):
+        key = _table_key(candidate)
+        if key and table_to_entity.get(key) and str(
+            entities_by_name.get(table_to_entity[key], {}).get("entity_type") or ""
+        ).lower() == "fact":
+            governed_measure_fact = key
+            break
+
+    dropped_metric_facts: set[str] = set()
+    if governed_measure_fact:
+        for table in sorted(required_tables):
+            entity = entities_by_name.get(table_to_entity.get(table, ""), {})
+            if str(entity.get("entity_type") or "").lower() != "fact":
+                continue
+            if table != governed_measure_fact:
+                dropped_metric_facts.add(table)
+        required_tables -= dropped_metric_facts
+
     required_entities = {
         table_to_entity[table]
         for table in required_tables
@@ -228,10 +285,13 @@ def build_planner_alignment(
         "governed_date_entities": sorted(governed_date_entities),
         "dropped_fact_entities": sorted(dropped_fact_entities),
         "dropped_date_entities": sorted(dropped_date_entities),
+        "governed_measure_fact": governed_measure_fact,
+        "dropped_metric_facts": sorted(dropped_metric_facts),
         "previous_anchor": previous_anchor,
         "changed": (
             bool(dropped_fact_entities)
             or bool(dropped_date_entities)
+            or bool(dropped_metric_facts)
             or not required_entities.issubset(detected)
         ),
     }
