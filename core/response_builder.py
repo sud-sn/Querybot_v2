@@ -1925,7 +1925,8 @@ def build_assistant_response(
     question_id: str = "",
 ) -> dict:
     from core.insight import compute_data_brief
-    display_question = extract_original_question(question).strip() or question
+    from core.clarification import extract_display_question
+    display_question = extract_display_question(question).strip() or question
     display_chart = dict(chart) if isinstance(chart, dict) else chart
     if isinstance(display_chart, dict):
         if "title" in display_chart:

@@ -612,7 +612,8 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
                         contract_version: str = "",
                         cache_result: bool = True):
     """Send formatted results to the chat platform. Shared by LLM and metric registry paths."""
-    display_question = extract_original_question(question).strip() or question
+    from core.clarification import extract_display_question
+    display_question = extract_display_question(question).strip() or question
     if question_id:
         profile = store.get_compliance_profile(account_id)
         store.store_protected_result_rows(

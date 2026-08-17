@@ -29,6 +29,8 @@ from core.clarification import (
     _parse_ambiguity_json,
     _pick_option,
     combine_with_clarification,
+    combine_with_result_context,
+    extract_display_question,
     extract_original_question,
     mark_recently_expired,
     was_recently_expired,
@@ -588,6 +590,38 @@ class ExtractOriginalQuestionTests(unittest.TestCase):
 
     def test_empty_string_passes_through(self):
         self.assertEqual(extract_original_question(""), "")
+
+    def test_result_followup_keeps_parent_metric_and_window_for_semantics(self):
+        contextualized = combine_with_result_context(
+            "What was revenue for the last 5 days?",
+            "Provide the trend for each day",
+        )
+        combined, _ = combine_with_clarification(
+            contextualized,
+            "Invoice Date",
+            {"source": "metric_date_context"},
+        )
+
+        semantic_question = extract_original_question(combined)
+        self.assertIn("revenue", semantic_question.lower())
+        self.assertIn("last 5 days", semantic_question.lower())
+        self.assertIn("trend for each day", semantic_question.lower())
+        self.assertNotIn("invoice date", semantic_question.lower())
+        self.assertEqual(
+            extract_display_question(combined),
+            "Provide the trend for each day",
+        )
+
+        from core.contextual_dates import detect_temporal_window
+        self.assertEqual(
+            detect_temporal_window(semantic_question),
+            {
+                "kind": "last_n",
+                "amount": 5,
+                "unit": "day",
+                "anchor_policy": "latest_available",
+            },
+        )
 
     def test_clarification_chip_text_does_not_pollute_semantic_field_plan(self):
         # Regression: a real production clarification reply used a business

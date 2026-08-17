@@ -42,7 +42,11 @@ from core.graph_resolver import (
 from core.llm_audit import llm_audit_scope, make_llm_audit_request_id
 from core.result_cache import result_cache
 from core.query_router import should_route_to_result_cache, should_attempt_cache_followup
-from core.governed_result_followup import adopt_cached_snapshot, run_governed_result_followup
+from core.governed_result_followup import (
+    adopt_cached_snapshot,
+    contextualize_source_query_fallback,
+    run_governed_result_followup,
+)
 from core.semantic_planner import build_semantic_field_plan
 from core.source_resolution import resolve_source_scope, source_clarification_options
 from core.count_target_resolver import (
@@ -1384,6 +1388,50 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     "cached_values_forwarded": False,
                 },
             )
+            _source_result_id = getattr(adapter, "last_result_id", None)
+            _contextualized_question = contextualize_source_query_fallback(
+                question,
+                _session_id,
+                source_result_id=_source_result_id,
+            )
+            if _contextualized_question != question:
+                question = _contextualized_question
+                # The first analytical plan was built before cache routing,
+                # when the turn contained only the short follow-up. Rebuild it
+                # from the inherited source intent so metric, window, grain,
+                # and comparison semantics stay aligned with the re-query.
+                try:
+                    _analytical_plan = plan_analytical_intent(
+                        question,
+                        metrics=_planner_metrics,
+                        terms=_planner_terms,
+                        calendar_profile=_planner_calendar_profile,
+                    )
+                except Exception as _lineage_plan_exc:
+                    log.warning(
+                        "Source-query lineage planning failed open: %s",
+                        _lineage_plan_exc,
+                    )
+                    _analytical_plan = plan_analytical_intent(
+                        question,
+                        calendar_profile=_planner_calendar_profile,
+                    )
+                _analytical_plan_context = _analytical_plan.prompt_context()
+                _trace_step(
+                    trace_id,
+                    "source_query_lineage",
+                    output_summary={
+                        "source_result_id": str(_source_result_id or ""),
+                        "parent_question_preserved": True,
+                        "analytical_plan_rebuilt": True,
+                        "cached_values_forwarded": False,
+                    },
+                )
+                log.info(
+                    "Source-query fallback preserved governed parent intent "
+                    "for result %s",
+                    str(_source_result_id or "")[:16],
+                )
 
     # Unsupported cache requests continue through the governed source-query pipeline.
 
