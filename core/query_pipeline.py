@@ -3842,6 +3842,10 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     # single approved expression metric plus a single approved rolling Date
     # Role already determines the complete query; an LLM should not be asked
     # to rediscover those physical choices.
+    _effective_temporal_window = (
+        dict(_structured_temporal_window)
+        or detect_temporal_window(_semantic_plan_question)
+    )
     _generation_semantic_context = {
         "intent": query_intent,
         "top_n": top_n_intent.to_dict() if top_n_intent else None,
@@ -3854,7 +3858,37 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         "resolution_plan": _resolution_plan,
         "planner_alignment": _planner_alignment,
         "analytical_request_plan": _analytical_request_plan,
+        # Keep the request-level window beside the compiled semantic plan.
+        # This is deliberately redundant: it lets cache eligibility fail
+        # closed if a future plan merge ever drops the temporal policy.
+        "temporal_window": _effective_temporal_window,
     }
+    if (
+        _effective_temporal_window
+        and not list((_semantic_plan or {}).get("temporal_policies") or [])
+    ):
+        log.error(
+            "Temporal request reached SQL generation without a compiled policy "
+            "for %s: window=%s semantic_question=%r",
+            account_id,
+            _effective_temporal_window,
+            _semantic_plan_question[:160],
+        )
+        _trace_finish(
+            trace_id,
+            status="error",
+            answer_type="temporal_plan_error",
+            error_message="Effective temporal window missing from semantic contract",
+            duration_ms=int(time.time() * 1000) - start_ms,
+        )
+        await adapter.send_message(
+            event,
+            "I retained your requested time period, but could not compile it "
+            "into the selected business-date contract. I did not run an "
+            "unbounded query. Please retry the request; if it persists, ask "
+            "an administrator to review the applicable Date Role.",
+        )
+        return
     try:
         _compiled_governed_sql = compile_governed_temporal_metric_sql(
             db_cfg["db_type"],
@@ -3912,6 +3946,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             query_scope_tables,
             all_columns,
             _generation_semantic_context,
+            _effective_temporal_window,
         )
         if _reuse_staleness_code:
             log.info(

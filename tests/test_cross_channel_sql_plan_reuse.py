@@ -372,6 +372,12 @@ class ReusedPlanSemanticContractGuardTests(unittest.TestCase):
             set(self.COLUMNS),
             self.COLUMNS,
             {"semantic_plan": self.PLAN},
+            {
+                "kind": "last_n",
+                "amount": 5,
+                "unit": "day",
+                "anchor_policy": "latest_available",
+            },
         )
 
     def test_unbounded_daily_plan_is_stale_for_current_five_day_contract(self):
@@ -399,6 +405,24 @@ class ReusedPlanSemanticContractGuardTests(unittest.TestCase):
         )
         self.assertEqual(self._code(sql), "")
 
+    def test_temporal_reuse_fails_closed_when_plan_merge_lost_policy(self):
+        from core.pipeline_helpers import reused_plan_semantic_staleness_code
+
+        code = reused_plan_semantic_staleness_code(
+            "SELECT d.FULL_DATE, SUM(f.NET_REVENUE_AMOUNT) "
+            "FROM QBOT_LIVE_TEST.F_SALES_INVOICE f "
+            "JOIN QBOT_LIVE_TEST.D_DATE d ON f.INVOICE_DATE_SK = d.DATE_SK "
+            "GROUP BY d.FULL_DATE",
+            set(self.COLUMNS),
+            "azure_sql",
+            set(self.COLUMNS),
+            self.COLUMNS,
+            {"semantic_plan": {"enabled": True, "temporal_policies": []}},
+            {"kind": "last_n", "amount": 5, "unit": "day"},
+        )
+
+        self.assertEqual(code, "current_temporal_policy_missing")
+
     def test_reuse_gate_is_wired_before_plan_selection(self):
         from pathlib import Path
 
@@ -406,6 +430,16 @@ class ReusedPlanSemanticContractGuardTests(unittest.TestCase):
         guard = source.index("_reuse_staleness_code = reused_plan_semantic_staleness_code")
         selection = source.index("elif _reused_plan:", guard)
         self.assertLess(guard, selection)
+
+    def test_pipeline_passes_effective_window_to_cache_guard(self):
+        from pathlib import Path
+
+        source = Path("core/query_pipeline.py").read_text(encoding="utf-8")
+        self.assertIn('"temporal_window": _effective_temporal_window', source)
+        self.assertIn(
+            "_generation_semantic_context,\n            _effective_temporal_window,",
+            source,
+        )
 
 if __name__ == "__main__":
     unittest.main()

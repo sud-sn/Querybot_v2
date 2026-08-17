@@ -1935,6 +1935,7 @@ def reused_plan_semantic_staleness_code(
     allowed_tables: set[str] | None = None,
     table_columns: dict[str, dict[str, str]] | None = None,
     semantic_context: dict | None = None,
+    expected_temporal_window: dict | None = None,
 ) -> str:
     """Return the current-contract validation code for an obsolete cached plan.
 
@@ -1954,6 +1955,18 @@ def reused_plan_semantic_staleness_code(
     """
     if not str(sql or "").strip():
         return "empty_reused_plan"
+    # The effective rolling window is request state, not an incidental detail
+    # of the cached SQL.  Clarification and result-follow-up turns can retain
+    # that state even when an upstream semantic-plan merge is incomplete.  In
+    # that case ordinary validation has no temporal policy to enforce and an
+    # old, unbounded daily query would otherwise look valid.  Never reuse a
+    # candidate until the current request has compiled its window into the
+    # semantic contract.  Fresh generation can then either build the governed
+    # contract or fail closed; cache reuse must not hide the missing contract.
+    temporal_window = dict(expected_temporal_window or {})
+    semantic_plan = (semantic_context or {}).get("semantic_plan") or {}
+    if temporal_window and not list(semantic_plan.get("temporal_policies") or []):
+        return "current_temporal_policy_missing"
     try:
         from core.validator import validate_sql_detailed
 
