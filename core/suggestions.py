@@ -3,14 +3,21 @@ core/suggestions.py
 
 Dynamic question suggestion engine for the portal chat UI.
 
-Sources (priority order):
-  1. Stage 2 *_queries.md files — natural language questions generated at KB
-     build time from the actual schema. Available from day 1 after KB build.
-     Cached as suggested_questions.json in the kb_dir so portal loads are fast.
-  2. Validated examples (SQLite) — questions that have been proven against the
-     real DB. Highest trust, but only available after Stage 2 validation runs.
-  3. Metric registry — admin-defined metrics formatted as natural questions.
-     Reliable fallback when neither of the above has enough content.
+Sources, in descending order of trust — which is also the order they are used:
+  1. Validated examples (SQLite) — questions PROVEN against the real database.
+     Only available once Stage 2 validation has run.
+  2. Metric registry — admin-defined metrics formatted as natural questions.
+     Deterministic SQL, so they cannot fail for planning reasons.
+  3. Stage 2 *_queries.md files — questions the LLM WROTE during KB generation.
+     Never executed, so least trustworthy; available from day 1, which is why
+     they are kept at all. Cached as suggested_questions.json for fast loads,
+     and filtered against the entity graph before being offered.
+
+A suggestion is a promise: the user clicks a button this module supplied, so
+offering one that cannot be answered is worse than offering nothing. Tier 3 in
+particular used to run FIRST, which is how the portal came to show clickable
+questions that failed — the least trustworthy source filled the panel before
+the proven ones were consulted.
 
 All sources are filtered by the user's allowed_tables so users never see
 suggestions for data they cannot access.
@@ -383,24 +390,7 @@ def get_suggestions(
 
     return suggestions
 
-    # ── Tier 1: Stage 2 query pattern cache ──────────────────────────────────
-    cached = _load_cache(kb_dir)
-    if cached:
-        scoped = [
-            e for e in cached
-            if _table_allowed(e)
-            and (schema_tables is None or
-                 e.get("table", "").upper() in schema_tables or
-                 # Also check bare part of FQN against schema_tables
-                 (e.get("fqn", "").upper().split(".")[-1] in schema_tables))
-        ]
-        random.shuffle(scoped)
-        for e in scoped:
-            _add(e["question"], e.get("fqn", ""))
-            if len(suggestions) >= n:
-                break
-
-    # ── Tier 2: Validated examples ────────────────────────────────────────────
+    # ── Tier 1: Validated examples ────────────────────────────────────────────
     if len(suggestions) < n:
         try:
             import store
@@ -420,7 +410,7 @@ def get_suggestions(
         except Exception as e:
             log.debug("Suggestion tier 2 (validated examples) failed: %s", e)
 
-    # ── Tier 3: Metric registry fallback ─────────────────────────────────────
+    # ── Tier 2: Metric registry fallback ─────────────────────────────────────
     if len(suggestions) < n:
         try:
             import store
@@ -451,4 +441,115 @@ def get_suggestions(
         except Exception as e:
             log.debug("Suggestion tier 3 (metric registry) failed: %s", e)
 
+    # These are questions the LLM WROTE while generating the knowledge base. They
+    # have never been executed, so they are the least trustworthy source in this
+    # function -- and they were running first, which is how the portal came to
+    # offer clickable questions that fail. This module's own docstring already
+    # said they should be used "as metadata only, not as raw user-facing
+    # prompts"; the implementation had inverted its own contract.
+    #
+    # They still earn their place when the safer tiers cannot fill the list (a
+    # new tenant has no validated examples yet), but only if the entity graph
+    # can actually reach what they name. That check is pure and in-memory -- no
+    # LLM, no warehouse round-trip -- so it costs nothing to refuse a question
+    # we already know will dead-end.
+    # ── Tier 3: Stage 2 query patterns — LAST, and only what the graph can reach
+    cached = _load_cache(kb_dir)
+    if cached:
+        scoped = [
+            e for e in cached
+            if _table_allowed(e)
+            and (schema_tables is None or
+                 e.get("table", "").upper() in schema_tables or
+                 # Also check bare part of FQN against schema_tables
+                 (e.get("fqn", "").upper().split(".")[-1] in schema_tables))
+        ]
+        random.shuffle(scoped)
+        _reachable = _graph_reachability_check(account_id)
+        for e in scoped:
+            if not _reachable(e["question"]):
+                continue
+            _add(e["question"], e.get("fqn", ""))
+            if len(suggestions) >= n:
+                break
+
     return suggestions
+
+
+def _graph_reachability_check(account_id: str):
+    """Return a predicate: can the entity graph reach what this question names?
+
+    Offering a question the graph cannot resolve is worse than offering nothing
+    -- the user clicks a button we supplied and is told to go ask an
+    administrator. The check reuses the resolver the real pipeline runs before
+    SQL generation, which is pure and in-memory (no LLM, no warehouse query), so
+    the graph is loaded once here and every candidate is free to test.
+
+    Fails OPEN: any error, or a graph that is empty or review-only, returns True
+    so this can only ever remove questions we can prove are dead ends.
+    """
+    try:
+        import store
+        from core.graph_resolver import detect_entities
+
+        graph = store.get_full_graph(account_id) or {}
+        if not (graph.get("entities") or []):
+            return lambda question: True
+    except Exception as exc:
+        log.debug("Suggestion reachability check unavailable: %s", exc)
+        return lambda question: True
+
+    # Entities that carry no relationship at all, but whose physical table is
+    # also owned by a sibling entity that does. That pairing is always a defect
+    # -- a duplicate entity minted for a table that already had one -- and it is
+    # fatal rather than merely untidy: the detector matches the question to the
+    # jointless twin by name, the pathfinder cannot reach it, and the whole
+    # question is refused with "Missing governed path for: <name>". Live example
+    # on this shape: "Customer" with zero edges beside "Cus Dms" with fifteen.
+    connected: set[str] = set()
+    for rel in graph.get("relationships") or []:
+        for side in ("from_entity", "to_entity"):
+            if rel.get(side):
+                connected.add(str(rel[side]))
+
+    def _table_of(entity: dict) -> str:
+        table = str(entity.get("table_name") or "").strip().upper()
+        schema = str(entity.get("schema_name") or "").strip().upper()
+        return f"{schema}.{table}" if schema else table
+
+    tables_with_a_connected_owner = {
+        _table_of(entity)
+        for entity in graph.get("entities") or []
+        if str(entity.get("entity_name") or "") in connected and _table_of(entity)
+    }
+    jointless_twins = {
+        str(entity.get("entity_name") or "")
+        for entity in graph.get("entities") or []
+        if str(entity.get("entity_name") or "") not in connected
+        and _table_of(entity) in tables_with_a_connected_owner
+    }
+    if not jointless_twins:
+        return lambda question: True
+    log.info(
+        "Suggestion filter active — %d entity/entities have no relationships "
+        "while a sibling on the same table does: %s",
+        len(jointless_twins), sorted(jointless_twins),
+    )
+
+    def _reachable(question: str) -> bool:
+        try:
+            detected = set(detect_entities(question, graph))
+        except Exception as exc:
+            log.debug("Suggestion reachability check failed for %r: %s", question, exc)
+            return True
+        blocked_by = detected & jointless_twins
+        if blocked_by:
+            log.info(
+                "Suggestion withheld — %r resolves to %s, which has no governed "
+                "relationships; a sibling entity on the same table does",
+                question, sorted(blocked_by),
+            )
+            return False
+        return True
+
+    return _reachable
