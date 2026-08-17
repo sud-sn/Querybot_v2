@@ -403,7 +403,14 @@ def run_query(credentials: dict, db_type: str, sql: str, max_rows: int = 200) ->
         raise ValueError(f"Unsupported db_type: {db_type!r}")
 
 
-_DEFAULT_QUERY_TIMEOUT_SECONDS = 120
+# 120 s was below the cost of a single scan on a realistic warehouse, so a large
+# fact could not answer ANY question at the default: measured on a client dev
+# mart, 9,247,293 rows read at ~61k rows/sec is ~151 s for one pass, and a
+# governed date question needs two. The failure mode of too-low is "no answer at
+# all"; of too-high, "a worker thread is held longer". 300 s covers a couple of
+# passes over a mid-size fact while staying well under the 600 s cap, and
+# QUERYBOT_QUERY_TIMEOUT_SECONDS still raises or lowers it per deployment.
+_DEFAULT_QUERY_TIMEOUT_SECONDS = 300
 
 
 def _query_timeout_seconds(cfg: dict) -> int:

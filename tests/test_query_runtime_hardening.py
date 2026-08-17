@@ -14,10 +14,19 @@ import core.schema as schema
 
 class QueryRuntimeTimeoutTests(unittest.TestCase):
     def test_timeout_configuration_is_bounded(self):
-        self.assertEqual(schema._query_timeout_seconds({}), 120)
+        # Pin the contract, not the number: the default must be bounded and
+        # large enough for at least one scan of a realistic fact table.
+        self.assertEqual(
+            schema._query_timeout_seconds({}), schema._DEFAULT_QUERY_TIMEOUT_SECONDS,
+        )
+        self.assertGreaterEqual(schema._DEFAULT_QUERY_TIMEOUT_SECONDS, 120)
+        self.assertLessEqual(schema._DEFAULT_QUERY_TIMEOUT_SECONDS, 600)
         self.assertEqual(schema._query_timeout_seconds({"query_timeout_seconds": 0}), 1)
         self.assertEqual(schema._query_timeout_seconds({"query_timeout_seconds": 9999}), 600)
-        self.assertEqual(schema._query_timeout_seconds({"query_timeout_seconds": "bad"}), 120)
+        self.assertEqual(
+            schema._query_timeout_seconds({"query_timeout_seconds": "bad"}),
+            schema._DEFAULT_QUERY_TIMEOUT_SECONDS,
+        )
 
     def test_azure_sql_sets_driver_timeout_before_execute(self):
         cursor = MagicMock()

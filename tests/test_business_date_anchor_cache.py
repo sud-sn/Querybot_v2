@@ -327,7 +327,11 @@ class TestQueryTimeoutIsConfigurable(unittest.TestCase):
             os.environ["QUERYBOT_QUERY_TIMEOUT_SECONDS"] = "99999"
             self.assertEqual(_query_timeout_seconds({}), 600, "must stay clamped")
             os.environ["QUERYBOT_QUERY_TIMEOUT_SECONDS"] = "nonsense"
-            self.assertEqual(_query_timeout_seconds({}), 120, "bad value -> default")
+            from core.schema import _DEFAULT_QUERY_TIMEOUT_SECONDS
+            self.assertEqual(
+                _query_timeout_seconds({}), _DEFAULT_QUERY_TIMEOUT_SECONDS,
+                "bad value -> default",
+            )
         finally:
             if original is None:
                 os.environ.pop("QUERYBOT_QUERY_TIMEOUT_SECONDS", None)
