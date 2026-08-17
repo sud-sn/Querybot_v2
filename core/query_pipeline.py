@@ -1688,6 +1688,14 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                         # this query is that SQL plus one governed date column.
                         "validation_code": "derived_from_validated_parent",
                         "has_semantic_plan": True,
+                        # Carry the parent's governed plan onto this answer so a
+                        # further re-grain ("now by week") resolves against the
+                        # same date role instead of losing it one hop later.
+                        "semantic_plan": dict(
+                            (_regrain_snapshot.get("metadata") or {}).get(
+                                "semantic_plan"
+                            ) or {}
+                        ),
                         "tables_used": extract_sql_tables(
                             _regrain_sql, db_cfg.get("db_type", "azure_sql"),
                         ),

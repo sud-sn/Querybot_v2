@@ -140,6 +140,19 @@ class GovernedChannelSessionMixin:
                     "channel": str(getattr(self, "platform_type", "channel")),
                     "metadata_contains_raw_values": False,
                     "contract_version": contract_version,
+                    # Governed execution metadata only — table/column names,
+                    # formulas and the resolved date role. No credentials and
+                    # no result values (the cache already owns the rows).
+                    #
+                    # This is what lets a follow-up restore the exact semantic
+                    # context of the answer it refers to: the trend re-grain
+                    # reads the resolved date role from here, and result-card
+                    # actions read it after a reconnect. WebAdapter stored it
+                    # from the start; every channel that mixes this in was
+                    # silently falling back instead, because a missing plan
+                    # looks exactly like "no governed date" to the caller.
+                    "db_config_id": int((db_cfg or {}).get("id") or 0),
+                    "semantic_plan": dict(semantic_plan or {}),
                 },
             )
             self.last_result_id = cached_result_id or None
@@ -149,6 +162,11 @@ class GovernedChannelSessionMixin:
 
     def adopt_cached_snapshot(self, snapshot: dict, *, question_id: str | None = None) -> dict:
         previous = self.last_result if isinstance(self.last_result, dict) else {}
+        metadata = (
+            dict(snapshot.get("metadata") or {})
+            if isinstance(snapshot.get("metadata"), dict)
+            else {}
+        )
         previous.update({
             "rows": list(snapshot.get("rows") or []),
             "question": str(snapshot.get("question") or previous.get("question") or ""),
@@ -156,6 +174,19 @@ class GovernedChannelSessionMixin:
             "column_formats": dict(snapshot.get("column_formats") or {}),
             "result_id": str(snapshot.get("result_id") or ""),
             "result_operation": str(snapshot.get("operation") or "source_query"),
+            # Restore the governed semantic context with the rows, so an action
+            # taken on this snapshot resolves against the same date role and
+            # tables the answer was built from rather than against nothing.
+            "semantic_plan": dict(
+                metadata.get("semantic_plan")
+                or previous.get("semantic_plan")
+                or {}
+            ),
+            "contract_version": str(
+                metadata.get("contract_version")
+                or previous.get("contract_version")
+                or ""
+            ),
         })
         self.last_result = previous
         self.last_result_id = previous["result_id"] or None

@@ -590,6 +590,95 @@ class TestPipelineWiring(unittest.TestCase):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# 7b  Every channel must cache the governed plan the follow-up depends on
+# ══════════════════════════════════════════════════════════════════════════════
+class TestEveryChannelCachesTheGovernedPlan(unittest.TestCase):
+    """A missing plan looks exactly like "no governed date" to the caller.
+
+    WebAdapter stored semantic_plan in the snapshot metadata from the start; the
+    shared channel mixin did not, so on Teams/Slack/Zoom the deterministic trend
+    route silently fell back to the pipeline instead of reusing the parent SQL —
+    the whole feature degraded with nothing in the logs to say why.
+    """
+
+    PLAN = {"temporal_policies": [_policy()]}
+
+    def _store_via(self, adapter, session_id):
+        from core.result_cache import result_cache
+
+        result_cache.clear(session_id)
+        adapter.cache_result(
+            [{"TOTAL_REVENUE": 1234.0}],
+            "What was my revenue for past 5 days?",
+            PARENT_SQL,
+            {"id": 7, "db_type": "azure_sql"},
+            "",
+            question_id=None,
+            column_formats={},
+            data_brief={},
+            semantic_plan=self.PLAN,
+            contract_version="contract-9",
+        )
+        return result_cache.get_snapshot(session_id)
+
+    def test_web_adapter_snapshot_carries_the_plan(self):
+        from unittest.mock import AsyncMock
+        from gateway.web_adapter import WebAdapter
+
+        adapter = WebAdapter(
+            AsyncMock(), "tenant-regrain", "web_9", thread_id="thread-9",
+            portal_user_id=9,
+        )
+        snapshot = self._store_via(adapter, adapter.session_id)
+        self.assertEqual(
+            temporal_policy_from_plan(
+                (snapshot.get("metadata") or {}).get("semantic_plan")
+            ).get("fact_column"),
+            "INVOICE_DT_DMS_KEY",
+        )
+
+    def test_governed_channel_mixin_snapshot_carries_the_plan(self):
+        from gateway.session_state import GovernedChannelSessionMixin
+
+        class _Channel(GovernedChannelSessionMixin):
+            platform_type = "teams"
+
+        adapter = _Channel()
+        adapter.bind_session("tenant-regrain", "teams-user-1")
+        snapshot = self._store_via(adapter, adapter.session_id)
+        metadata = snapshot.get("metadata") or {}
+        self.assertTrue(
+            metadata.get("semantic_plan"),
+            "every channel must cache the governed plan, or the trend route "
+            "silently degrades on that channel",
+        )
+        self.assertEqual(
+            temporal_policy_from_plan(metadata.get("semantic_plan")).get("fact_column"),
+            "INVOICE_DT_DMS_KEY",
+        )
+        self.assertEqual(metadata.get("db_config_id"), 7)
+
+    def test_mixin_adopt_restores_the_plan_with_the_rows(self):
+        from gateway.session_state import GovernedChannelSessionMixin
+
+        class _Channel(GovernedChannelSessionMixin):
+            platform_type = "teams"
+
+        adapter = _Channel()
+        adapter.bind_session("tenant-regrain", "teams-user-2")
+        snapshot = self._store_via(adapter, adapter.session_id)
+
+        adapter.last_result = {}
+        restored = adapter.adopt_cached_snapshot(snapshot)
+        self.assertTrue(
+            restored.get("semantic_plan"),
+            "an action on a restored snapshot must resolve against the same "
+            "date role the answer was built from",
+        )
+        self.assertEqual(restored.get("contract_version"), "contract-9")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # 8  The route through the real pipeline
 # ══════════════════════════════════════════════════════════════════════════════
 class TestPipelineRoute(unittest.TestCase):
