@@ -26,7 +26,12 @@ from core.clarification import (
 )
 from core.analytical_intent import plan_analytical_intent
 from core.analytical_request_plan import compile_analytical_request_plan
-from core.schema import run_query, load_known_tables, load_schema_columns
+from core.schema import (
+    load_known_tables,
+    load_schema_columns,
+    query_wait_timeout_seconds as _query_wait_timeout,
+    run_query,
+)
 from core.knowledge import load_retriever
 from core.validator import normalize_generated_sql, validate_sql
 from core.query_semantics import (
@@ -1613,7 +1618,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                         _loop.run_in_executor(
                             None, _execute_with_policy, _regrain_sql,
                         ),
-                        timeout=180.0,
+                        timeout=_query_wait_timeout(db_cfg),
                     )
                 except asyncio.TimeoutError:
                     await adapter.send_message(
@@ -1774,7 +1779,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             try:
                 governed = await asyncio.wait_for(
                     _loop.run_in_executor(None, _execute_with_policy, sql_from_metric),
-                    timeout=180.0,
+                    timeout=_query_wait_timeout(db_cfg),
                 )
             except asyncio.TimeoutError:
                 await adapter.send_message(
@@ -4889,7 +4894,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             _loop = asyncio.get_running_loop()
             governed = await asyncio.wait_for(
                 _loop.run_in_executor(None, _execute_with_policy, sql, semantic_context),
-                timeout=180.0,
+                timeout=_query_wait_timeout(db_cfg),
             )
             rows = governed.rows
             sql = governed.sql
@@ -5390,7 +5395,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                         _loop = asyncio.get_running_loop()
                         governed = await asyncio.wait_for(
                             _loop.run_in_executor(None, _execute_with_policy, sql_retry, _retry_semantic_context),
-                            timeout=180.0,
+                            timeout=_query_wait_timeout(db_cfg),
                         )
                         rows = governed.rows
                         sql         = governed.sql
@@ -5542,7 +5547,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                                 _progressive_sql,
                                 _retry_semantic_context,
                             ),
-                            timeout=180.0,
+                            timeout=_query_wait_timeout(db_cfg),
                         )
                         rows = governed.rows
                         sql = governed.sql

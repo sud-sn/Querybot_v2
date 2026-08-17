@@ -427,6 +427,23 @@ def _query_timeout_seconds(cfg: dict) -> int:
     return max(1, min(value, 600))
 
 
+def query_wait_timeout_seconds(cfg: dict) -> int:
+    """Application-level wait for one query, always LOOSER than the DB's own limit.
+
+    The pipeline wraps every execution in asyncio.wait_for. Those waits were
+    hardcoded to 180 s while the statement timeout defaulted to 120 s, so raising
+    the statement timeout had no effect beyond 180: the application killed the
+    query first, and with an asyncio.TimeoutError instead of the driver's
+    "Query timeout expired". That loses the diagnostic the failure card is built
+    on — the one that names the table and column and says an index is needed.
+
+    Deriving the wait from the statement timeout keeps the database as the
+    authority on how long a query may run, and leaves the driver headroom to
+    raise its own error and return it.
+    """
+    return _query_timeout_seconds(cfg) + 30
+
+
 def load_known_tables(schema_dir: str) -> set[str]:
     """
     Load the set of known table identifiers from _schema.json.
