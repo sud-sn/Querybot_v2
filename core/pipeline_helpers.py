@@ -1926,3 +1926,48 @@ def reused_plan_is_stale_for_graph(sql: str, graph_ctx: dict | None, db_type: st
     # CTE names and other non-table identifiers extract_sql_tables may return.
     extra = (actual_tables & entity_tables) - expected_tables
     return bool(extra)
+
+
+def reused_plan_semantic_staleness_code(
+    sql: str,
+    known_tables: set[str],
+    db_type: str,
+    allowed_tables: set[str] | None = None,
+    table_columns: dict[str, dict[str, str]] | None = None,
+    semantic_context: dict | None = None,
+) -> str:
+    """Return the current-contract validation code for an obsolete cached plan.
+
+    Reusable plans are indexed by the visible question text.  A result follow-up
+    such as ``provide the trend for each day`` can keep that text while inheriting
+    a new structured temporal window from the preceding turn.  The cache lookup
+    therefore cannot, by itself, tell an unbounded historical daily plan from the
+    newly requested five-day plan.
+
+    Revalidate the candidate against the *current* semantic contract before it is
+    selected.  This covers temporal policies, approved metric/date mappings,
+    source-fact constraints, field plans, and join governance without encoding a
+    client, schema, date column, or interval in the reuse layer.  Any validation
+    failure means the candidate is stale for this request and fresh compilation
+    must continue.  Validation exceptions also fail closed because accepting an
+    unchecked cached plan would bypass the normal validator later in the pipeline.
+    """
+    if not str(sql or "").strip():
+        return "empty_reused_plan"
+    try:
+        from core.validator import validate_sql_detailed
+
+        result = validate_sql_detailed(
+            sql,
+            known_tables,
+            db_type,
+            allowed_tables,
+            table_columns,
+            semantic_context,
+        )
+    except Exception:
+        log.exception("Reusable SQL plan current-contract validation failed")
+        return "reuse_validation_error"
+    if result.ok:
+        return ""
+    return str(result.code or "current_contract_mismatch")

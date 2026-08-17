@@ -86,6 +86,7 @@ from core.pipeline_helpers import (
     _build_row_metric_join_sql, attempt_field_plan_repair,
     attempt_governed_temporal_metric_repair, compile_governed_temporal_metric_sql,
     _clamp_kb_doc, _clamp_prompt_context, reused_plan_is_stale_for_graph,
+    reused_plan_semantic_staleness_code,
     allow_progressive_sql_repair,
 )
 from core.pipeline_trace import (
@@ -3903,6 +3904,33 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             _reused_plan.get("trace_id"), account_id,
         )
         _reused_plan = None
+    if _reused_plan:
+        _reuse_staleness_code = reused_plan_semantic_staleness_code(
+            str(_reused_plan.get("sql_generated") or ""),
+            all_known,
+            db_cfg["db_type"],
+            query_scope_tables,
+            all_columns,
+            _generation_semantic_context,
+        )
+        if _reuse_staleness_code:
+            log.info(
+                "Discarding reusable SQL plan trace=%s for %s: current semantic "
+                "contract validation failed with %s - falling through to fresh "
+                "governed generation.",
+                _reused_plan.get("trace_id"), account_id, _reuse_staleness_code,
+            )
+            _trace_step(
+                trace_id,
+                "discard_stale_reused_sql_plan",
+                input_summary={
+                    "source_trace_id": _reused_plan.get("trace_id"),
+                    "source_query_log_id": _reused_plan.get("query_log_id"),
+                },
+                output_summary={"validation_code": _reuse_staleness_code},
+                metadata={"reason": "current_semantic_contract_mismatch"},
+            )
+            _reused_plan = None
     try:
         if _compiled_governed_sql:
             await _send_live_stage(
