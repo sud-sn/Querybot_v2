@@ -273,6 +273,7 @@ def guarantee_table_coverage(
     rag_filter: set[str] | None,
     max_fill: int = MAX_GAP_FILL,
     already_injected: set[str] | None = None,
+    sections: tuple[str, ...] | set[str] | None = None,
 ) -> list[str]:
     """
     Check which required tables are missing from retrieved_docs and return
@@ -333,12 +334,19 @@ def guarantee_table_coverage(
     )
 
     # ── Fetch gap-fill docs from Qdrant ───────────────────────────────────────
-    from core.vector_store import fetch_docs_for_fqn
+    from core.vector_store import GAP_FILL_SECTIONS, fetch_docs_for_fqn
+
+    # A gap-filled table was missed by retrieval, so it is normally a join
+    # partner or the owner of one measure — not the subject of the question.
+    # Send its schema truth and governance, not its illustrative SQL: gap-fill
+    # appends to the END of the prompt, which is exactly where the character cap
+    # truncates, so a bloated document discards itself.
+    wanted_sections = GAP_FILL_SECTIONS if sections is None else sections
 
     gap_docs: list[str] = []
     for fqn in missing[:max_fill]:
         try:
-            content = fetch_docs_for_fqn(account_id, fqn)
+            content = fetch_docs_for_fqn(account_id, fqn, sections=wanted_sections)
             if content:
                 gap_docs.append(content)
                 if already_injected is not None:

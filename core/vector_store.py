@@ -158,6 +158,21 @@ _SECTION_ORDER: list[str] = [
 ]
 
 
+# Sections a gap-filled table actually needs. A table reaches gap-fill because
+# retrieval missed it, and it is usually there as a join partner or to supply a
+# single measure — not as the subject of the question. Everything here is schema
+# truth or governance; "patterns" (long illustrative SQL blocks) is excluded
+# because it is the bulk of a large document and the least load-bearing part.
+#
+# Live measurement: five gap-filled M3 tables produced a 253 kB prompt that was
+# clamped to the 120 kB cap with the TAIL truncated — and the tail is exactly
+# where gap-fill appends, so the model planned fields from context it never saw.
+GAP_FILL_SECTIONS: tuple[str, ...] = (
+    "overview", "key_metrics", "always_exclude", "columns", "join_keys",
+    "synonyms", "preamble",
+)
+
+
 def _section_sort_key(section_type: str) -> int:
     """Return an integer rank for canonical section ordering."""
     try:
@@ -1318,17 +1333,29 @@ def retrieve_similar_examples(
 # Direct FQN fetch — used by the table coverage guarantee
 # ══════════════════════════════════════════════════════════════════════════════
 
-def fetch_docs_for_fqn(account_id: str, fqn: str) -> str | None:
+def fetch_docs_for_fqn(
+    account_id: str,
+    fqn: str,
+    sections: tuple[str, ...] | set[str] | None = None,
+) -> str | None:
     """
-    Fetch and reconstruct the full KB document for a specific table FQN.
+    Fetch and reconstruct the KB document for a specific table FQN.
 
     Used by core.table_coverage.guarantee_table_coverage() to gap-fill tables
     that dense + BM25 retrieval missed.  This is a deterministic filter-only
     fetch — never a semantic search — so it always targets the right table.
 
+    sections:
+      Restrict the reassembled document to these section slugs (see
+      GAP_FILL_SECTIONS). None means every section, which is what callers
+      wanting the complete document should pass. Gap-fill passes a subset
+      because it appends to the END of the prompt, where the character cap
+      truncates first: five whole M3 documents produced a 253 kB prompt that
+      was clamped to 120 kB, discarding the very context just fetched.
+
     Chunked KB docs (doc_type="kb", section_type != "full"):
-      All section chunks for the FQN are fetched, sorted in canonical order,
-      and reassembled into one coherent markdown string.
+      Matching section chunks for the FQN are fetched, sorted in canonical
+      order, and reassembled into one coherent markdown string.
 
     Whole-doc / legacy KB docs (section_type="full"):
       Returned as-is.
@@ -1391,6 +1418,33 @@ def fetch_docs_for_fqn(account_id: str, fqn: str) -> str | None:
 
     # Priority 1 — chunked KB (new format): reconstruct from sections
     if kb_section_payloads:
+        if sections:
+            wanted = {str(slug).strip().lower() for slug in sections}
+            selected = [
+                payload for payload in kb_section_payloads
+                if str(payload.get("section_type") or "").strip().lower() in wanted
+            ]
+            # Never return nothing because the filter matched no slug: a table
+            # whose sections are named differently must still reach the prompt.
+            if selected:
+                full_chars = sum(
+                    len(str(p.get("content") or "")) for p in kb_section_payloads
+                )
+                kept_chars = sum(len(str(p.get("content") or "")) for p in selected)
+                if kept_chars < full_chars:
+                    log.info(
+                        "fetch_docs_for_fqn: %s trimmed to %d/%d sections "
+                        "(%d -> %d chars)",
+                        fqn_upper, len(selected), len(kb_section_payloads),
+                        full_chars, kept_chars,
+                    )
+                kb_section_payloads = selected
+            else:
+                log.info(
+                    "fetch_docs_for_fqn: %s has no %s section(s) — returning "
+                    "the whole document",
+                    fqn_upper, sorted(wanted),
+                )
         return _reconstruct_full_doc(fqn_upper, kb_section_payloads)
 
     # Priority 2 — whole-doc KB (legacy format or no ## sections found)

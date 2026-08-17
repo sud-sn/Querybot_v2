@@ -461,7 +461,7 @@ class TestGapFillIsNotRepeated(unittest.TestCase):
 
         fetched: list[str] = []
 
-        def _fake_fetch(account_id, fqn):
+        def _fake_fetch(account_id, fqn, sections=None):
             fetched.append(fqn)
             return f"# KB doc for {fqn}"
 
@@ -506,7 +506,7 @@ class TestGapFillIsNotRepeated(unittest.TestCase):
 
         fetched: list[str] = []
         with patch("core.vector_store.fetch_docs_for_fqn",
-                   lambda account_id, fqn: fetched.append(fqn) or "# doc"):
+                   lambda account_id, fqn, sections=None: fetched.append(fqn) or "# doc"):
             ledger = {"EMDW_DMART.CUS_ORD_IVC_FCT"}
             docs = table_coverage.guarantee_table_coverage(
                 account_id="acct",
