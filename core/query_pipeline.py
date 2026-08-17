@@ -4325,6 +4325,40 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                         "probe_ms": _resolved_anchor.get("probe_ms", 0),
                     },
                 )
+                # ── Disclose a stale "today" before answering it ──────────────
+                # "today"/"yesterday"/"this month" anchor on the latest date the
+                # data actually holds, which is correct — but answering them with
+                # a bare number is not. On a warehouse loaded to 2025-04-17, "what
+                # is today's revenue" returns a confident figure from sixteen
+                # months ago and says nothing about which day it is. That is the
+                # one failure mode worse than an error: a believable wrong answer.
+                try:
+                    from datetime import date as _date
+
+                    _anchor_kind = str(_anchor_policies[0].get("kind") or "")
+                    if _anchor_kind in {"today", "yesterday", "this_week",
+                                        "this_month", "this_quarter", "this_year"}:
+                        _anchor_date = _date.fromisoformat(_resolved_anchor["value"])
+                        _drift_days = (_date.today() - _anchor_date).days
+                        if _drift_days > 1:
+                            _anchor_label = _anchor_date.strftime("%d %b %Y")
+                            await adapter.send_message(
+                                event,
+                                f"ℹ️ The most recent business data is **{_anchor_label}** "
+                                f"({_drift_days} days ago), so \"{_anchor_kind.replace('_', ' ')}\" "
+                                f"is answered as of that date rather than the calendar date.",
+                            )
+                            _trace_step(
+                                trace_id,
+                                "stale_relative_date_disclosed",
+                                output_summary={
+                                    "window_kind": _anchor_kind,
+                                    "anchor": _resolved_anchor["value"],
+                                    "drift_days": _drift_days,
+                                },
+                            )
+                except Exception as _drift_exc:
+                    log.debug("Stale-window disclosure skipped: %s", _drift_exc)
     except Exception as _anchor_exc:
         log.warning(
             "Business-date anchor resolution skipped for %s: %s — the compiled "

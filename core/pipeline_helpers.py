@@ -1479,6 +1479,18 @@ SELECT
     {select_sql}
 FROM {from_sql}
 WHERE {where_sql}{group_sql}{order_sql}"""
+    elif resolved_anchor.get("value") and literal_window_predicate:
+        # A fact-native date with a resolved anchor is the cheapest shape there
+        # is: the window is two literals against the fact's own date column, so
+        # there is no anchor CTE, no window_keys CTE and no dimension to reach.
+        # This branch previously required `seekable`, so for a native-date role
+        # the literal window was computed and then silently discarded and the
+        # full-scan anchor came back — the cache bought nothing for exactly the
+        # configuration it helps most.
+        compiled = f"""SELECT
+    {select_sql}
+FROM {from_sql}
+WHERE {literal_window_predicate}{group_sql}{order_sql}"""
     else:
         compiled = f"""WITH anchor AS (
     SELECT MAX({date_ref}) AS max_business_date

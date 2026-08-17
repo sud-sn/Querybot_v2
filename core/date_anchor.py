@@ -38,8 +38,15 @@ log = logging.getLogger("querybot.date_anchor")
 # cache entirely and probe on every question.
 _DEFAULT_TTL_SECONDS = 900
 
+# How long to remember that a probe FAILED. On a starved warehouse the probe can
+# exhaust the statement timeout every time; without this, every question repeats
+# a two-minute failure that is already known to fail. Kept much shorter than the
+# success TTL so a warehouse that recovers is picked up quickly.
+_DEFAULT_FAILURE_TTL_SECONDS = 300
+
 _lock = threading.Lock()
 _cache: dict[tuple[str, str, str], dict[str, Any]] = {}
+_failures: dict[tuple[str, str, str], float] = {}
 
 
 def _ttl_seconds() -> int:
@@ -178,14 +185,33 @@ def remember_anchor(account_id: str, policy: dict | None, anchor: dict) -> None:
         _cache[key] = {"anchor": dict(anchor), "expires_at": time.time() + ttl}
 
 
+def _failure_ttl_seconds() -> int:
+    try:
+        return max(0, int(os.getenv("QUERYBOT_DATE_ANCHOR_FAILURE_TTL_SECONDS", "")
+                          or _DEFAULT_FAILURE_TTL_SECONDS))
+    except (TypeError, ValueError):
+        return _DEFAULT_FAILURE_TTL_SECONDS
+
+
+def _remember_failure(key: tuple[str, str, str]) -> None:
+    ttl = _failure_ttl_seconds()
+    if not ttl:
+        return
+    with _lock:
+        _failures[key] = time.time() + ttl
+
+
 def clear_cache(account_id: str | None = None) -> None:
-    """Drop cached anchors — for tests, and after a data-refresh signal."""
+    """Drop cached anchors and failures — for tests, and after a data refresh."""
     with _lock:
         if account_id is None:
             _cache.clear()
+            _failures.clear()
             return
         for key in [key for key in _cache if key[0] == str(account_id)]:
             _cache.pop(key, None)
+        for key in [key for key in _failures if key[0] == str(account_id)]:
+            _failures.pop(key, None)
 
 
 def resolve_business_anchor(
@@ -212,6 +238,19 @@ def resolve_business_anchor(
     if hit:
         return {**hit, "cached": True}
 
+    key = anchor_key(account_id, policy)
+    with _lock:
+        failed_until = _failures.get(key, 0.0)
+    if failed_until > time.time():
+        # Already known to fail. Retrying costs the full statement timeout again
+        # and yields the same nothing, so skip straight to the in-query anchor.
+        log.info(
+            "Business-date anchor probe skipped for %s on %s.%s — a recent probe "
+            "failed and is still in the negative cache",
+            account_id, policy.get("fact_table"), policy.get("fact_column"),
+        )
+        return {}
+
     sql = build_anchor_probe_sql(policy, db_type)
     if not sql:
         return {}
@@ -220,10 +259,12 @@ def resolve_business_anchor(
     try:
         rows = run_probe(sql) or []
     except Exception as exc:
+        _remember_failure(key)
         log.warning(
-            "Business-date anchor probe failed for %s on %s.%s: %s — keeping the "
-            "in-query anchor",
-            account_id, policy.get("fact_table"), policy.get("fact_column"), exc,
+            "Business-date anchor probe failed for %s on %s.%s after %d ms: %s — "
+            "keeping the in-query anchor and not retrying for %d s",
+            account_id, policy.get("fact_table"), policy.get("fact_column"),
+            int((time.time() - started) * 1000), exc, _failure_ttl_seconds(),
         )
         return {}
 
@@ -243,6 +284,7 @@ def resolve_business_anchor(
 
     value = _coerce_anchor(raw)
     if not value:
+        _remember_failure(key)
         log.warning(
             "Business-date anchor probe for %s returned no usable date (%r) — "
             "keeping the in-query anchor", account_id, raw,
