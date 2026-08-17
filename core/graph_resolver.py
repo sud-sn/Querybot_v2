@@ -561,13 +561,55 @@ def _edge_weight(rel: dict) -> float:
     return max(0.1, cost)
 
 
-def find_join_path(
+def _path_identity(path: list[dict]) -> tuple:
+    return tuple(
+        edge.get("id")
+        or edge.get("relationship_key")
+        or (
+            edge.get("from_entity"), edge.get("to_entity"),
+            edge.get("from_column"), edge.get("to_column"),
+        )
+        for edge in path
+    )
+
+
+def _path_label(path: list[dict]) -> str:
+    labels = []
+    for edge in path:
+        labels.append(
+            str(edge.get("label") or "").strip()
+            or f"{edge.get('from_entity')} to {edge.get('to_entity')}"
+        )
+    return " -> ".join(labels)
+
+
+def _question_edge_weight(edge: dict, question: str) -> float:
+    """Prefer a confirmed business role explicitly named by the user."""
+    weight = _edge_weight(edge)
+    if not question or weight == float("inf"):
+        return weight
+    q_norm = _normalize(question)
+    q_tokens = _tokens(question)
+    phrases = [
+        str(edge.get("label") or "").strip(),
+        str(edge.get("business_role") or "").strip(),
+    ]
+    if any(
+        phrase and _phrase_in_question(phrase, q_tokens, q_norm)
+        for phrase in phrases
+    ):
+        weight -= 0.75
+    return max(0.1, weight)
+
+
+def find_join_path_with_diagnostics(
     entity_names: list[str],
     graph: dict,
     prefer_fact_anchor: bool = True,
     *,
     anti_join: bool = False,
-) -> list[dict]:
+    question: str = "",
+) -> tuple[list[dict], dict]:
     """
     Weighted shortest path from the anchor entity (fact table preferred)
     through relationship edges to reach all other entities. Returns an ordered
@@ -577,10 +619,13 @@ def find_join_path(
       [{"from_entity", "to_entity", "from_column", "to_column",
         "join_type", "relationship_type", "_direction"}]
 
-    Empty list if the graph has no entities / relationships.
+    Returns ``(path, diagnostics)``. Diagnostics identify unreachable entities
+    and equally safe alternative paths so callers can fail closed or ask a
+    business-role clarification instead of silently selecting one.
     """
+    diagnostics = {"unreachable": [], "ambiguous_targets": []}
     if not entity_names or len(entity_names) < 2:
-        return []
+        return [], diagnostics
 
     entities_map = {e["entity_name"]: e for e in graph.get("entities", [])}
     rels = graph.get("relationships", [])
@@ -604,20 +649,27 @@ def find_join_path(
     for target in targets:
         if target in visited_nodes:
             continue
-        queue: list[tuple[float, int, str, list[dict]]] = [
-            (0.0, next(sequence), start, []) for start in sorted(visited_nodes)
+        queue: list[tuple[float, int, str, list[dict], frozenset[str]]] = [
+            (0.0, next(sequence), start, [], frozenset({start}))
+            for start in sorted(visited_nodes)
         ]
         heapq.heapify(queue)
         best_cost: dict[str, float] = {start: 0.0 for start in visited_nodes}
-        chosen_path: list[dict] | None = None
+        candidates: list[tuple[float, list[dict]]] = []
+        candidate_ids: set[tuple] = set()
 
         while queue:
-            cost, _, node, path = heapq.heappop(queue)
-            if cost > best_cost.get(node, float("inf")):
+            cost, _, node, path, path_nodes = heapq.heappop(queue)
+            if cost > best_cost.get(node, float("inf")) + 0.25:
                 continue
             if node == target:
-                chosen_path = path
-                break
+                identity = _path_identity(path)
+                if identity not in candidate_ids:
+                    candidates.append((cost, path))
+                    candidate_ids.add(identity)
+                if len(candidates) >= 2:
+                    break
+                continue
             for edge in adj.get(node, []):
                 from core.join_planner import traversal_is_admissible
                 neighbour = (
@@ -637,20 +689,44 @@ def find_join_path(
                 )
                 if not admissible and not secondary_fact_target:
                     continue
-                weight = _edge_weight(edge)
+                if neighbour in path_nodes:
+                    continue
+                weight = _question_edge_weight(edge, question)
                 if weight == float("inf"):
                     continue
                 new_cost = cost + weight
-                if new_cost < best_cost.get(neighbour, float("inf")):
-                    best_cost[neighbour] = new_cost
+                if new_cost <= best_cost.get(neighbour, float("inf")) + 0.25:
+                    best_cost[neighbour] = min(
+                        new_cost, best_cost.get(neighbour, float("inf"))
+                    )
                     heapq.heappush(
                         queue,
-                        (new_cost, next(sequence), neighbour, path + [edge]),
+                        (
+                            new_cost, next(sequence), neighbour, path + [edge],
+                            path_nodes | {neighbour},
+                        ),
                     )
 
-        if chosen_path is None:
+        if not candidates:
             log.debug("Graph resolver: no path from %s to %s", visited_nodes, target)
+            diagnostics["unreachable"].append(target)
             continue
+        candidates.sort(
+            key=lambda item: (item[0], len(item[1]), repr(_path_identity(item[1])))
+        )
+        chosen_cost, chosen_path = candidates[0]
+        if len(candidates) > 1 and candidates[1][0] - chosen_cost <= 0.25:
+            diagnostics["ambiguous_targets"].append({
+                "target": target,
+                "options": [
+                    {
+                        "label": _path_label(path),
+                        "value": _path_label(path),
+                        "edge_ids": list(_path_identity(path)),
+                    }
+                    for _, path in candidates[:2]
+                ],
+            })
         for step in chosen_path:
             edge_identity = step.get("id") or step.get("relationship_key") or (
                 step.get("from_entity"), step.get("to_entity"),
@@ -669,7 +745,24 @@ def find_join_path(
             for node_name in [step["from_entity"], step["to_entity"]]
         )
 
-    return visited_edges
+    return visited_edges, diagnostics
+
+
+def find_join_path(
+    entity_names: list[str],
+    graph: dict,
+    prefer_fact_anchor: bool = True,
+    *,
+    anti_join: bool = False,
+) -> list[dict]:
+    """Backward-compatible path-only interface used by existing callers."""
+    path, _ = find_join_path_with_diagnostics(
+        entity_names,
+        graph,
+        prefer_fact_anchor=prefer_fact_anchor,
+        anti_join=anti_join,
+    )
+    return path
 
 
 def _multi_fact_fanout_risk(join_path: list[dict], entities_map: dict[str, dict]) -> list[str]:
@@ -1031,6 +1124,35 @@ def _resolve_on_graph(
     if not entities:
         return empty
 
+    def _unresolved_result(
+        detected_entities: list[str],
+        *,
+        status: str,
+        reason: str,
+        options: list[dict] | None = None,
+        missing_entities: list[str] | None = None,
+    ) -> dict:
+        join_plan = {
+            "enabled": True,
+            "status": status,
+            "reason": reason,
+            "clarification_options": options or [],
+            "missing_entities": missing_entities or [],
+            "edge_ids": [],
+            "steps": [],
+        }
+        return {
+            **empty,
+            "enabled": True,
+            "detected": detected_entities,
+            "join_plan": join_plan,
+            "planning_status": status,
+            "clarification_options": options or [],
+            "missing_entities": missing_entities or [],
+            "reason": reason,
+            "properties": graph.get("properties") or [],
+        }
+
     anti_join = bool((intent or {}).get("wants_missing_records"))
     detected = detect_entities(
         question,
@@ -1083,7 +1205,16 @@ def _resolve_on_graph(
         # Multiple governed entities were requested, but no governed
         # relationship connects them. A single-table fallback would silently
         # discard part of the question and falsely report a resolved plan.
-        return {**empty, "detected": detected}
+        return {
+            **empty,
+            "detected": detected,
+            "planning_status": "blocked",
+            "missing_entities": detected[1:],
+            "reason": (
+                "No confirmed relationship connects the requested business entities. "
+                "An administrator must confirm the required entity-graph join."
+            ),
+        }
 
     entities_map = {e["entity_name"]: e for e in entities}
     from core.join_planner import choose_fact_anchor, compile_join_plan
@@ -1097,12 +1228,52 @@ def _resolve_on_graph(
     if preferred_anchor in ordered_detected:
         ordered_detected.remove(preferred_anchor)
         ordered_detected.insert(0, preferred_anchor)
-    join_path = find_join_path(
+    join_path, path_diagnostics = find_join_path_with_diagnostics(
         ordered_detected,
         graph,
         prefer_fact_anchor=not anti_join,
         anti_join=anti_join,
+        question=question,
     )
+
+    if path_diagnostics.get("ambiguous_targets"):
+        ambiguity = path_diagnostics["ambiguous_targets"][0]
+        options = ambiguity.get("options") or []
+        return _unresolved_result(
+            detected,
+            status="clarification_required",
+            reason=(
+                f"More than one equally governed join path can reach "
+                f"{ambiguity.get('target')}. Choose the intended business relationship."
+            ),
+            options=options,
+        )
+
+    reached_entities = {
+        entity_name
+        for edge in join_path
+        for entity_name in (edge.get("from_entity"), edge.get("to_entity"))
+        if entity_name
+    }
+    reached_entities.add(ordered_detected[0])
+    missing_entities = [
+        entity_name for entity_name in detected if entity_name not in reached_entities
+    ]
+    missing_entities.extend(
+        entity_name
+        for entity_name in (path_diagnostics.get("unreachable") or [])
+        if entity_name not in missing_entities
+    )
+    if missing_entities:
+        return _unresolved_result(
+            detected,
+            status="blocked",
+            reason=(
+                "The confirmed entity graph cannot reach every business entity "
+                f"required by this question: {', '.join(missing_entities)}."
+            ),
+            missing_entities=missing_entities,
+        )
 
     # Determine anchor (fact table if possible)
     anchor = detected[0]

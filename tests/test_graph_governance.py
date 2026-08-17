@@ -3,7 +3,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from core.graph_resolver import build_join_skeleton, find_join_path
+from core.graph_resolver import (
+    build_join_skeleton,
+    find_join_path,
+    resolve_for_question,
+)
 from core.relationship_validator import build_profile_sql
 from core.schema import _build_join_map, build_entity_graph_from_schema
 from core.validator import validate_sql_detailed
@@ -100,6 +104,47 @@ class TestGraphContractValidation(unittest.TestCase):
         )
         self.assertFalse(result.ok)
         self.assertEqual(result.code, "graph_plan_mismatch")
+
+    def test_direct_fact_to_terminal_dimension_cannot_replace_snowflake_path(self):
+        known = {"DBO.F_SALES", "DBO.D_WAREHOUSE", "DBO.D_REGION"}
+        columns = {
+            "DBO.F_SALES": {"WAREHOUSE_SK": "int", "REGION_SK": "int", "AMOUNT": "decimal"},
+            "DBO.D_WAREHOUSE": {"WAREHOUSE_SK": "int", "REGION_SK": "int"},
+            "DBO.D_REGION": {"REGION_SK": "int", "REGION_NAME": "varchar"},
+        }
+        graph = {
+            "enabled": True,
+            "resolved_edges": [
+                {
+                    "id": 51, "from_schema": "dbo", "from_table": "F_SALES",
+                    "to_schema": "dbo", "to_table": "D_WAREHOUSE",
+                    "conditions": [["WAREHOUSE_SK", "WAREHOUSE_SK"]],
+                    "join_type": "INNER",
+                },
+                {
+                    "id": 52, "from_schema": "dbo", "from_table": "D_WAREHOUSE",
+                    "to_schema": "dbo", "to_table": "D_REGION",
+                    "conditions": [["REGION_SK", "REGION_SK"]],
+                    "join_type": "INNER",
+                },
+            ],
+        }
+        result = validate_sql_detailed(
+            """
+            SELECT r.REGION_NAME, SUM(f.AMOUNT) AS TOTAL_AMOUNT
+            FROM dbo.F_SALES f
+            JOIN dbo.D_REGION r ON f.REGION_SK = r.REGION_SK
+            GROUP BY r.REGION_NAME
+            """,
+            known, "azure_sql", known, columns, {"graph_context": graph},
+        )
+        self.assertFalse(result.ok)
+        self.assertEqual(result.code, "graph_plan_mismatch")
+        missing_edge_ids = {
+            error.get("edge_id") for error in result.errors
+            if error.get("code") == "graph_join_missing"
+        }
+        self.assertEqual(missing_edge_ids, {51, 52})
 
 
 class TestFanoutRiskEdgeExemption(unittest.TestCase):
@@ -235,6 +280,66 @@ class TestGovernedGraphResolution(unittest.TestCase):
 
 
 class TestConstraintImport(unittest.TestCase):
+    def test_trusted_database_fk_and_endpoints_are_immediately_confirmed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            schema = {
+                "DBO.F_SALES": {
+                    "columns": [
+                        {"name": "CUSTOMER_SK", "type": "int", "nullable": False},
+                        {"name": "AMOUNT", "type": "decimal", "nullable": True},
+                    ],
+                    "pk_columns": [],
+                },
+                "DBO.D_CUSTOMER": {
+                    "columns": [
+                        {"name": "CUSTOMER_SK", "type": "int", "nullable": False},
+                    ],
+                    "pk_columns": ["CUSTOMER_SK"],
+                },
+                "__db_fk_constraints__": [{
+                    "source": "azure_sql", "constraint_name": "FK_SALES_CUSTOMER",
+                    "parent_schema": "DBO", "parent_table": "F_SALES",
+                    "parent_col": "CUSTOMER_SK", "ref_schema": "DBO",
+                    "ref_table": "D_CUSTOMER", "ref_col": "CUSTOMER_SK",
+                    "ordinal": 1, "enforced": True,
+                }],
+            }
+            Path(tmp, "_schema.json").write_text(json.dumps(schema), encoding="utf-8")
+            graph = build_entity_graph_from_schema(tmp)
+
+        entities = {entity["entity_name"]: entity for entity in graph["entities"]}
+        edge = next(rel for rel in graph["relationships"] if rel.get("source_enforced"))
+        self.assertEqual(edge["status"], "confirmed")
+        self.assertEqual(entities[edge["from_entity"]]["status"], "confirmed")
+        self.assertEqual(entities[edge["to_entity"]]["status"], "confirmed")
+        self.assertEqual(entities[edge["from_entity"]]["generated_by"], "db_schema")
+
+    def test_untrusted_database_fk_remains_review_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            schema = {
+                "DBO.F_SALES": {
+                    "columns": [{"name": "CUSTOMER_SK", "type": "int", "nullable": False}],
+                    "pk_columns": [],
+                },
+                "DBO.D_CUSTOMER": {
+                    "columns": [{"name": "CUSTOMER_SK", "type": "int", "nullable": False}],
+                    "pk_columns": ["CUSTOMER_SK"],
+                },
+                "__db_fk_constraints__": [{
+                    "source": "azure_sql", "constraint_name": "FK_SALES_CUSTOMER",
+                    "parent_schema": "DBO", "parent_table": "F_SALES",
+                    "parent_col": "CUSTOMER_SK", "ref_schema": "DBO",
+                    "ref_table": "D_CUSTOMER", "ref_col": "CUSTOMER_SK",
+                    "ordinal": 1, "enforced": False,
+                }],
+            }
+            Path(tmp, "_schema.json").write_text(json.dumps(schema), encoding="utf-8")
+            graph = build_entity_graph_from_schema(tmp)
+
+        edge = next(rel for rel in graph["relationships"] if rel.get("generated_by") == "db_declared_fk")
+        self.assertEqual(edge["status"], "suggested")
+        self.assertFalse(edge["source_enforced"])
+
     def test_two_role_playing_fks_to_same_date_dimension_remain_separate(self):
         with tempfile.TemporaryDirectory() as tmp:
             schema = {
@@ -380,6 +485,136 @@ class TestConstraintImport(unittest.TestCase):
         self.assertEqual(join_map.count("DB-enforced FK"), 1)
         self.assertIn("[FACT_SALES].[PRODUCT_ID] = [DIM_PRODUCT].[PRODUCT_ID] AND", join_map)
         self.assertIn("[FACT_SALES].[COMPANY_ID] = [DIM_PRODUCT].[COMPANY_ID]", join_map)
+
+
+class TestProductionGraphPlanning(unittest.TestCase):
+    @staticmethod
+    def _entity(name, kind, table=None):
+        return {
+            "entity_name": name,
+            "table_name": table or name,
+            "schema_name": "dbo",
+            "entity_type": kind,
+            "display_name": name.replace("_", " "),
+            "status": "confirmed",
+        }
+
+    @staticmethod
+    def _edge(edge_id, source, target, source_col, target_col, label=""):
+        return {
+            "id": edge_id,
+            "from_entity": source,
+            "to_entity": target,
+            "from_column": source_col,
+            "to_column": target_col,
+            "relationship_key": f"DBFK:{edge_id}",
+            "relationship_type": "many_to_one",
+            "join_type": "INNER",
+            "label": label,
+            "generated_by": "db_fk",
+            "source_enforced": 1,
+            "status": "confirmed",
+            "validation_status": "valid",
+            "confidence_score": 100,
+        }
+
+    def test_snowflake_path_uses_intermediate_dimension(self):
+        graph = {
+            "entities": [
+                self._entity("F_SALES", "fact"),
+                self._entity("D_WAREHOUSE", "dimension"),
+                self._entity("D_REGION", "dimension"),
+            ],
+            "relationships": [
+                self._edge(1, "F_SALES", "D_WAREHOUSE", "WAREHOUSE_SK", "WAREHOUSE_SK"),
+                self._edge(2, "D_WAREHOUSE", "D_REGION", "REGION_SK", "REGION_SK"),
+            ],
+            "properties": [],
+        }
+        result = resolve_for_question(
+            "show revenue by region",
+            "tenant", "azure_sql", graph=graph,
+            required_entities={"F_SALES", "D_REGION"},
+            metric_formula_tables={"F_SALES"},
+        )
+        self.assertTrue(result["enabled"])
+        self.assertEqual(result["edge_ids"], [1, 2])
+        self.assertIn("[WAREHOUSE_SK]", result["join_skeleton"])
+        self.assertIn("[REGION_SK]", result["join_skeleton"])
+
+    def test_unreachable_requested_entity_blocks_partial_plan(self):
+        graph = {
+            "entities": [
+                self._entity("F_SALES", "fact"),
+                self._entity("D_WAREHOUSE", "dimension"),
+                self._entity("D_REGION", "dimension"),
+            ],
+            "relationships": [
+                self._edge(1, "F_SALES", "D_WAREHOUSE", "WAREHOUSE_SK", "WAREHOUSE_SK"),
+            ],
+            "properties": [],
+        }
+        result = resolve_for_question(
+            "show revenue by region",
+            "tenant", "azure_sql", graph=graph,
+            required_entities={"F_SALES", "D_REGION"},
+            metric_formula_tables={"F_SALES"},
+        )
+        self.assertTrue(result["enabled"])
+        self.assertEqual(result["planning_status"], "blocked")
+        self.assertEqual(result["join_skeleton"], "")
+        self.assertIn("D_REGION", result["missing_entities"])
+
+    def test_equal_governed_paths_require_business_clarification(self):
+        graph = {
+            "entities": [
+                self._entity("F_SALES", "fact"),
+                self._entity("B_DIRECT", "bridge"),
+                self._entity("B_CHANNEL", "bridge"),
+                self._entity("D_CUSTOMER", "dimension"),
+            ],
+            "relationships": [
+                self._edge(1, "F_SALES", "B_DIRECT", "DIRECT_SK", "DIRECT_SK", "Direct sales"),
+                self._edge(2, "B_DIRECT", "D_CUSTOMER", "CUSTOMER_SK", "CUSTOMER_SK", "Direct customer"),
+                self._edge(3, "F_SALES", "B_CHANNEL", "CHANNEL_SK", "CHANNEL_SK", "Channel sales"),
+                self._edge(4, "B_CHANNEL", "D_CUSTOMER", "CUSTOMER_SK", "CUSTOMER_SK", "Channel customer"),
+            ],
+            "properties": [],
+        }
+        result = resolve_for_question(
+            "show revenue by customer",
+            "tenant", "azure_sql", graph=graph,
+            required_entities={"F_SALES", "D_CUSTOMER"},
+            metric_formula_tables={"F_SALES"},
+        )
+        self.assertEqual(result["planning_status"], "clarification_required")
+        self.assertFalse(result["join_skeleton"])
+        self.assertEqual(len(result["clarification_options"]), 2)
+
+    def test_explicit_business_role_selects_the_matching_governed_path(self):
+        graph = {
+            "entities": [
+                self._entity("F_SALES", "fact"),
+                self._entity("B_DIRECT", "bridge"),
+                self._entity("B_CHANNEL", "bridge"),
+                self._entity("D_CUSTOMER", "dimension"),
+            ],
+            "relationships": [
+                self._edge(1, "F_SALES", "B_DIRECT", "DIRECT_SK", "DIRECT_SK", "Direct sales"),
+                self._edge(2, "B_DIRECT", "D_CUSTOMER", "CUSTOMER_SK", "CUSTOMER_SK", "Direct customer"),
+                self._edge(3, "F_SALES", "B_CHANNEL", "CHANNEL_SK", "CHANNEL_SK", "Channel sales"),
+                self._edge(4, "B_CHANNEL", "D_CUSTOMER", "CUSTOMER_SK", "CUSTOMER_SK", "Channel customer"),
+            ],
+            "properties": [],
+        }
+        result = resolve_for_question(
+            "show revenue by customer using channel sales",
+            "tenant", "azure_sql", graph=graph,
+            required_entities={"F_SALES", "D_CUSTOMER"},
+            metric_formula_tables={"F_SALES"},
+        )
+        self.assertEqual(result["planning_status"], "selected")
+        self.assertEqual(result["edge_ids"], [3, 4])
 
 
 if __name__ == "__main__":

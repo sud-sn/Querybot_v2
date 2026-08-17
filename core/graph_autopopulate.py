@@ -26,6 +26,7 @@ import re
 from pathlib import Path
 
 import store
+from core.relationship_identity import physical_relationship_signature
 
 log = logging.getLogger("querybot.graph_autopopulate")
 
@@ -48,10 +49,40 @@ def auto_populate_from_schema(account_id: str, schema_dir: str) -> tuple[int, in
     if not graph_data["entities"]:
         return 0, 0
 
-    existing_entities = {e["entity_name"] for e in store.list_entities(account_id, active_only=False)}
+    existing_entities = {
+        e["entity_name"]: e
+        for e in store.list_entities(account_id, active_only=False)
+    }
     ent_added = 0
     for ent in graph_data["entities"]:
-        if ent["entity_name"] in existing_entities:
+        existing = existing_entities.get(ent["entity_name"])
+        if existing:
+            # Trusted DB constraints may promote an old heuristic draft so the
+            # confirmed edge and both endpoints enter the executable graph.
+            # Manual, already-confirmed, and rejected admin decisions remain
+            # untouched.
+            if (
+                ent.get("status") == "confirmed"
+                and ent.get("generated_by") == "db_schema"
+                and (existing.get("status") or "suggested") == "suggested"
+                and (existing.get("generated_by") or "heuristic") != "manual"
+            ):
+                with store.get_db() as conn:
+                    conn.execute(
+                        """UPDATE entity_graph
+                              SET table_name=?, schema_name=?, pk_column=?,
+                                  entity_type=?, is_active=1,
+                                  confidence_score=100, status='confirmed',
+                                  generated_by='db_schema', reason=?
+                            WHERE account_id=? AND entity_name=?
+                              AND status='suggested'
+                              AND COALESCE(generated_by, 'heuristic') <> 'manual'""",
+                        (
+                            ent.get("table_name", ""), ent.get("schema_name", ""),
+                            ent.get("pk_column", ""), ent.get("entity_type", "dimension"),
+                            ent.get("reason", ""), account_id, ent["entity_name"],
+                        ),
+                    )
             continue
         store.save_entity(
             account_id       = account_id,
@@ -74,10 +105,63 @@ def auto_populate_from_schema(account_id: str, schema_dir: str) -> tuple[int, in
 
     rel_added = 0
     all_entities = {e["entity_name"] for e in store.list_entities(account_id, active_only=False)}
+    active_relationships = store.list_relationships(account_id, active_only=True)
     for rel in graph_data["relationships"]:
         # Both entities must exist before we can add the relationship
         if rel["from_entity"] not in all_entities or rel["to_entity"] not in all_entities:
             continue
+        incoming_key = str(rel.get("relationship_key") or "").strip()
+        existing_key = next(
+            (
+                row for row in active_relationships
+                if str(row.get("relationship_key") or "").strip() == incoming_key
+            ),
+            None,
+        )
+
+        if rel.get("source_enforced") and rel.get("status") == "confirmed":
+            signature = physical_relationship_signature(rel)
+            exact_matches = [
+                row for row in active_relationships
+                if physical_relationship_signature(row) == signature
+            ]
+            governed_match = next(
+                (
+                    row for row in exact_matches
+                    if (row.get("status") or "") == "confirmed"
+                    or (row.get("generated_by") or "") == "manual"
+                ),
+                None,
+            )
+            # Preserve a human-confirmed business role that already represents
+            # this exact physical join under a different identity.
+            if governed_match and str(governed_match.get("relationship_key") or "") != incoming_key:
+                log.info(
+                    "Graph sync kept governed relationship %s instead of duplicate DB FK %s",
+                    governed_match.get("relationship_key"), incoming_key,
+                )
+                continue
+
+            stale_ids = [
+                int(row["id"])
+                for row in exact_matches
+                if str(row.get("relationship_key") or "") != incoming_key
+                and (row.get("status") or "suggested") == "suggested"
+                and (row.get("generated_by") or "heuristic") != "manual"
+            ]
+            if stale_ids:
+                with store.get_db() as conn:
+                    conn.executemany(
+                        """UPDATE entity_relationships SET is_active=0
+                              WHERE account_id=? AND id=? AND status='suggested'
+                                AND COALESCE(generated_by, 'heuristic') <> 'manual'""",
+                        [(account_id, rel_id) for rel_id in stale_ids],
+                    )
+                active_relationships = [
+                    row for row in active_relationships
+                    if int(row.get("id") or -1) not in stale_ids
+                ]
+
         # Identity-based upsert preserves multiple business roles and composite
         # constraints between the same physical tables. Confirmed/manual rows
         # are still immutable.
@@ -100,7 +184,9 @@ def auto_populate_from_schema(account_id: str, schema_dir: str) -> tuple[int, in
             source_enforced   = bool(rel.get("source_enforced", False)),
             optionality       = rel.get("optionality", "unknown"),
         )
-        rel_added += 1
+        if existing_key is None:
+            rel_added += 1
+        active_relationships = store.list_relationships(account_id, active_only=True)
 
     return ent_added, rel_added
 
@@ -535,8 +621,8 @@ def sync_graph_after_kb_build(account_id: str, schema_dir: str, kb_dir: str) -> 
         log.warning("Graph auto-layout failed for %s: %s", account_id, exc)
 
     try:
-        entities = store.list_entities(account_id, active_only=False)
-        rels     = store.list_relationships(account_id, active_only=False)
+        entities = store.list_entities(account_id, active_only=True)
+        rels     = store.list_relationships(account_id, active_only=True)
         summary["entities_total"]      = len(entities)
         summary["relationships_total"] = len(rels)
         summary["pending_review"] = (

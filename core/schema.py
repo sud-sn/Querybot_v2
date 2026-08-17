@@ -1204,8 +1204,9 @@ def build_entity_graph_from_schema(schema_dir: str) -> dict:
                              "from_column", "to_column"}],
         }
 
-    Both sets are annotated with confidence_score=75 / status='suggested'
-    so the admin sees them as drafts requiring confirmation.
+    Heuristic rows are drafts requiring confirmation. Database-enforced,
+    trusted foreign keys (and their endpoint entities) are structural facts
+    and are emitted as confirmed so the runtime can execute them immediately.
     """
     schema_json = Path(schema_dir) / "_schema.json"
     if not schema_json.exists():
@@ -1448,13 +1449,36 @@ def build_entity_graph_from_schema(schema_dir: str) -> dict:
             "source_enforced": enforced,
             "optionality": optionality,
             "confidence_score": 100 if enforced else 94,
-            "status": "suggested",
+            "status": "confirmed" if enforced else "suggested",
             "generated_by": "db_fk" if enforced else "db_declared_fk",
             "reason": (
                 f"Database constraint {constraint_name or relationship_key} defines "
                 f"{len(rows)} join column pair(s)."
             ),
         })
+
+    # A confirmed relationship is executable only when both endpoint entities
+    # are present in the confirmed subgraph. Promote exactly the endpoints of
+    # trusted, enabled database constraints; classifications and inferred
+    # relationships elsewhere remain review-only. Role-playing date entities
+    # are included because a DB constraint may deliberately target one role.
+    confirmed_entity_names = {
+        name
+        for rel in db_fk_relationships
+        if rel.get("source_enforced") and rel.get("status") == "confirmed"
+        for name in (rel.get("from_entity"), rel.get("to_entity"))
+        if name
+    }
+    for entity in entities:
+        if entity.get("entity_name") not in confirmed_entity_names:
+            continue
+        entity["status"] = "confirmed"
+        entity["confidence_score"] = 100
+        entity["generated_by"] = "db_schema"
+        entity["reason"] = (
+            "Entity participates in a trusted, enabled database foreign-key "
+            "constraint."
+        )
 
     # Star-schema rules:
     #   fact  → dimension  ✓  (standard star edge)
@@ -1541,27 +1565,23 @@ def build_entity_graph_from_schema(schema_dir: str) -> dict:
 
     # Merge by full edge identity, not table pair. DB constraints supersede an
     # identical inferred edge while independent roles remain available.
-    def _signature(rel: dict) -> tuple:
-        extras = tuple(
-            (str(c.get("from_col") or "").upper(), str(c.get("to_col") or "").upper())
-            for c in rel.get("join_conditions", []) or []
-        )
-        return (
-            rel.get("from_entity"), rel.get("to_entity"),
-            str(rel.get("from_column") or "").upper(),
-            str(rel.get("to_column") or "").upper(), extras,
-        )
+    from core.relationship_identity import physical_relationship_signature
 
     relationships: list[dict] = list(db_fk_relationships)
-    authoritative = {_signature(rel) for rel in db_fk_relationships}
+    authoritative = {
+        physical_relationship_signature(rel) for rel in db_fk_relationships
+    }
     for rel in role_date_relationships:
-        if _signature(rel) not in authoritative:
+        if physical_relationship_signature(rel) not in authoritative:
             relationships.append(rel)
-    existing = {_signature(rel) for rel in relationships}
+    existing = {
+        physical_relationship_signature(rel) for rel in relationships
+    }
     for _, rel in best_rel.values():
-        if _signature(rel) not in existing:
+        signature = physical_relationship_signature(rel)
+        if signature not in existing:
             relationships.append(rel)
-            existing.add(_signature(rel))
+            existing.add(signature)
 
     return {"entities": entities, "relationships": relationships}
 

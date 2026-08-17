@@ -747,6 +747,17 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     _confirmed_date_role = selected_clarification_option(
         event, "metric_date_context"
     )
+    _confirmed_join_path = selected_clarification_option(event, "graph_join_path")
+    _graph_resolution_question = question
+    if _confirmed_join_path.get("label") or _confirmed_join_path.get("value"):
+        _graph_resolution_question = (
+            extract_original_question(question)
+            + " "
+            + str(
+                _confirmed_join_path.get("label")
+                or _confirmed_join_path.get("value")
+            )
+        ).strip()
 
     if not db_cfg:
         _trace_finish(trace_id, status="error", answer_type="error", error_message="No database assigned")
@@ -1919,7 +1930,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 _pregraph_date_roles,
             )
             _graph_ctx = _graph_resolve(
-                question=question,
+                question=_graph_resolution_question,
                 account_id=account_id,
                 db_type=db_cfg.get("db_type", "azure_sql"),
                 graph=_resolution_graph,
@@ -3278,7 +3289,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 _full_graph, _selected_date_bindings,
             )
             _aligned_graph_ctx = _graph_resolve(
-                question=_semantic_plan_question,
+                question=_graph_resolution_question,
                 account_id=account_id,
                 db_type=db_cfg.get("db_type", "azure_sql"),
                 graph=_aligned_graph,
@@ -3291,6 +3302,82 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             )
             if _aligned_graph_ctx.get("enabled"):
                 _graph_ctx = _aligned_graph_ctx
+
+        if (
+            _graph_ctx.get("planning_status") == "clarification_required"
+            and _graph_ctx.get("clarification_options")
+            and can_request_clarification(event, "graph_join_path")
+        ):
+            _join_options = list(_graph_ctx.get("clarification_options") or [])[:5]
+            _join_question = (
+                "I found more than one equally governed relationship path for "
+                "this analysis. Which business relationship should I use?"
+            )
+            _save_pending_clarification(
+                _semantic_plan_question,
+                context_with_terms,
+                {
+                    "source": "graph_join_path",
+                    "question": _join_question,
+                    "options": _join_options,
+                },
+            )
+            _send_join_prompt = getattr(adapter, "send_clarification_prompt", None)
+            if callable(_send_join_prompt):
+                await _send_join_prompt(event, _join_question, _join_options)
+            else:
+                await adapter.send_message(
+                    event,
+                    _join_question + "\n\n" + "\n".join(
+                        f"- {option.get('label')}" for option in _join_options
+                    ),
+                )
+            _trace_finish(
+                trace_id,
+                status="success",
+                answer_type="clarification",
+                final_answer_summary=(
+                    "Requested clarification for ambiguous governed join path"
+                ),
+                duration_ms=int(time.time() * 1000) - start_ms,
+            )
+            return
+
+        if (
+            _graph_ctx.get("enabled")
+            and _graph_ctx.get("planning_status") == "blocked"
+        ):
+            _graph_reason = str(
+                _graph_ctx.get("reason")
+                or "The confirmed entity graph does not contain a safe path for every requested business entity."
+            ).strip()
+            _missing_graph_entities = list(
+                _graph_ctx.get("missing_entities") or []
+            )
+            _graph_block_message = (
+                "I couldn't build a trusted join plan for this question. "
+                + _graph_reason
+            )
+            if _missing_graph_entities:
+                _graph_block_message += (
+                    "\n\nMissing governed path for: "
+                    + ", ".join(str(name) for name in _missing_graph_entities)
+                    + "."
+                )
+            _graph_block_message += (
+                "\n\nAsk an administrator to confirm the required relationship "
+                "in the Entity Graph, then try the question again."
+            )
+            await adapter.send_message(event, _graph_block_message)
+            _trace_finish(
+                trace_id,
+                status="error",
+                answer_type="validation_error",
+                error_message=_graph_reason,
+                final_answer_summary="Blocked SQL generation because the governed join path was incomplete",
+                duration_ms=int(time.time() * 1000) - start_ms,
+            )
+            return
 
         _trace_step(
             trace_id,
