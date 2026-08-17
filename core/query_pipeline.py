@@ -4298,6 +4298,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     # below carries a literal window instead of a subquery — so nothing reads the
     # fact merely to discover its own latest date. Still data-relative, never the
     # clock; see core/date_anchor.py.
+    _anchor_policies: list[dict] = []
     try:
         from core.date_anchor import resolve_business_anchor
 
@@ -4325,44 +4326,71 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                         "probe_ms": _resolved_anchor.get("probe_ms", 0),
                     },
                 )
-                # ── Disclose a stale "today" before answering it ──────────────
-                # "today"/"yesterday"/"this month" anchor on the latest date the
-                # data actually holds, which is correct — but answering them with
-                # a bare number is not. On a warehouse loaded to 2025-04-17, "what
-                # is today's revenue" returns a confident figure from sixteen
-                # months ago and says nothing about which day it is. That is the
-                # one failure mode worse than an error: a believable wrong answer.
-                try:
-                    from datetime import date as _date
-
-                    _anchor_kind = str(_anchor_policies[0].get("kind") or "")
-                    if _anchor_kind in {"today", "yesterday", "this_week",
-                                        "this_month", "this_quarter", "this_year"}:
-                        _anchor_date = _date.fromisoformat(_resolved_anchor["value"])
-                        _drift_days = (_date.today() - _anchor_date).days
-                        if _drift_days > 1:
-                            _anchor_label = _anchor_date.strftime("%d %b %Y")
-                            await adapter.send_message(
-                                event,
-                                f"ℹ️ The most recent business data is **{_anchor_label}** "
-                                f"({_drift_days} days ago), so \"{_anchor_kind.replace('_', ' ')}\" "
-                                f"is answered as of that date rather than the calendar date.",
-                            )
-                            _trace_step(
-                                trace_id,
-                                "stale_relative_date_disclosed",
-                                output_summary={
-                                    "window_kind": _anchor_kind,
-                                    "anchor": _resolved_anchor["value"],
-                                    "drift_days": _drift_days,
-                                },
-                            )
-                except Exception as _drift_exc:
-                    log.debug("Stale-window disclosure skipped: %s", _drift_exc)
     except Exception as _anchor_exc:
         log.warning(
             "Business-date anchor resolution skipped for %s: %s — the compiled "
             "SQL keeps its in-query anchor", account_id, _anchor_exc,
+        )
+
+    # ── Disclose a current-period window before answering it ─────────────────
+    # "today"/"yesterday"/"this month" anchor on the latest date the data holds,
+    # which is correct — but answering them with a bare number is not. On a
+    # warehouse loaded to 2025-04-17, "what is today's revenue" returns a
+    # confident figure from sixteen months ago and says nothing about which day
+    # it is. A believable stale number is worse than a zero, because a zero
+    # prompts a question.
+    #
+    # This deliberately sits OUTSIDE the anchor-resolved branch. The first
+    # version was nested inside it, and on a warehouse slow enough to need this
+    # disclosure the probe is exactly what times out — so the one mechanism that
+    # would have disclosed the staleness was skipped precisely when it mattered.
+    # Without a probed date we cannot name the day, but we can still say the
+    # answer is data-relative rather than calendar-relative.
+    try:
+        from datetime import date as _date
+
+        _window_kind = str(
+            (_anchor_policies[0] if _anchor_policies else {}).get("kind") or ""
+        )
+        if _window_kind in {"today", "yesterday", "this_week", "this_month",
+                            "this_quarter", "this_year"}:
+            _spoken_kind = _window_kind.replace("_", " ")
+            _anchor_value = str(
+                (_generation_semantic_context.get("resolved_date_anchor") or {})
+                .get("value") or ""
+            )
+            _drift_days = None
+            if _anchor_value:
+                _anchor_date = _date.fromisoformat(_anchor_value)
+                _drift_days = (_date.today() - _anchor_date).days
+            if _drift_days is not None and _drift_days > 1:
+                await adapter.send_message(
+                    event,
+                    f"ℹ️ The most recent business data is "
+                    f"**{_anchor_date.strftime('%d %b %Y')}** ({_drift_days} days "
+                    f"ago), so \"{_spoken_kind}\" is answered as of that date "
+                    f"rather than the calendar date.",
+                )
+            elif _drift_days is None:
+                await adapter.send_message(
+                    event,
+                    f"ℹ️ \"{_spoken_kind}\" is answered against the most recent "
+                    "business date present in your data, which may be earlier "
+                    "than the calendar date.",
+                )
+            if _drift_days is None or _drift_days > 1:
+                _trace_step(
+                    trace_id,
+                    "stale_relative_date_disclosed",
+                    output_summary={
+                        "window_kind": _window_kind,
+                        "anchor": _anchor_value or "unresolved",
+                        "drift_days": _drift_days,
+                    },
+                )
+    except Exception as _drift_exc:
+        log.warning(
+            "Current-period disclosure skipped for %s: %s", account_id, _drift_exc,
         )
 
     try:
