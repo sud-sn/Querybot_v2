@@ -40,10 +40,10 @@ BEGIN TRANSACTION;
         n,
         /* Weight recent days more heavily so "last 2 days" is never empty. */
         DATEADD(day, -((n * 7) % @DaysOfHistory), @LatestBusinessDate) AS invoice_date,
-        5000 + ((n * 3 - 1) % 60)  AS cus_key,
-        7000 + ((n * 5 - 1) % 40)  AS itm_key,
-        901  + ((n * 2 - 1) % 6)   AS whs_key,
-        101  + ((n - 1) % 8)       AS pft_key,
+        5001 + (n % 60)            AS cus_key,
+        7001 + ((n * 7) % 40)      AS itm_key,
+        901  + (n % 6)             AS whs_key,
+        101  + (n % 8)             AS pft_key,
         CONVERT(decimal(18,3), 1 + (n % 40)) AS qty,
         CASE WHEN n % 53 = 0 THEN 1 ELSE 0 END AS cancelled
     FROM N
@@ -121,10 +121,10 @@ FROM Amounts;
     SELECT
         n,
         DATEADD(day, -((n * 11) % @DaysOfHistory), @LatestBusinessDate) AS receipt_date,
-        8000 + ((n * 3 - 1) % 10) AS sup_key,
-        7000 + ((n * 7 - 1) % 40) AS itm_key,
-        901  + ((n * 5 - 1) % 6)  AS whs_key,
-        101  + ((n * 2 - 1) % 8)  AS pft_key,
+        8001 + ((n * 3) % 10)  AS sup_key,
+        7001 + ((n * 11) % 40) AS itm_key,
+        901  + ((n * 5) % 6)   AS whs_key,
+        101  + ((n * 3) % 8)   AS pft_key,
         CONVERT(decimal(18,3), 10 + (n % 90)) AS ord_qty,
         CASE WHEN n % 37 = 0 THEN 'REJECTED'
              WHEN n % 19 = 0 THEN 'OPEN'
@@ -175,8 +175,8 @@ FROM Costed;
     SELECT
         n,
         DATEADD(day, -((n * 13) % @DaysOfHistory), @LatestBusinessDate) AS acg_date,
-        101  + ((n - 1) % 8)      AS pft_key,
-        5000 + ((n * 7 - 1) % 60) AS cus_key,
+        101  + (n % 8)         AS pft_key,
+        5001 + ((n * 7) % 60)  AS cus_key,
         CONVERT(decimal(18,2), 250.00 + ((n % 120) * 47.25)) AS amt
     FROM N
 )
@@ -224,7 +224,7 @@ FROM Base;
     CROSS JOIN EMDW_DMART.ITM_DMS i
 ), Calc AS (
     SELECT *,
-        8000 + ((WHS_DMS_KEY + ITM_DMS_KEY + m) % 10) AS sup_key,
+        8001 + ((WHS_DMS_KEY + ITM_DMS_KEY + m) % 10) AS sup_key,
         CONVERT(decimal(18,3), 25 + ((WHS_DMS_KEY * 7 + ITM_DMS_KEY * 11 + m * 13) % 220)) AS oh,
         CONVERT(decimal(18,3), (WHS_DMS_KEY + ITM_DMS_KEY + m) % 30) AS alc,
         CONVERT(decimal(18,4), 8.25 + ((ITM_DMS_KEY - 7000) * 6.40)) AS unit_cost
@@ -265,3 +265,48 @@ SELECT
                     WHERE f.CUS_IVC_DT_DMS_KEY = d.DT_DMS_KEY))        AS MAX_INVOICE_DATE,
     (SELECT MAX(DT_DMS_KEY) FROM EMDW_DMART.DT_DMS)                    AS MAX_CALENDAR_KEY,
     CAST(GETDATE() AS date)                                            AS TODAY;
+
+/*  Referential integrity self-check. Every one of these must return 0.
+    A synthetic key generated as BASE + (expr % N) yields BASE..BASE+N-1, while
+    a dimension seeded as BASE + n yields BASE+1..BASE+N — an off-by-one that
+    only surfaces when the modular arithmetic happens to hit it, so it must be
+    asserted rather than assumed. */
+SELECT 'orphan_invoice_item'      AS CHECK_NAME, COUNT_BIG(*) AS BAD_ROWS
+  FROM EMDW_DMART.CUS_ORD_IVC_FCT f
+  LEFT JOIN EMDW_DMART.ITM_DMS d ON d.ITM_DMS_KEY = f.ITM_DMS_KEY
+ WHERE f.ITM_DMS_KEY IS NOT NULL AND d.ITM_DMS_KEY IS NULL
+UNION ALL SELECT 'orphan_invoice_customer', COUNT_BIG(*)
+  FROM EMDW_DMART.CUS_ORD_IVC_FCT f
+  LEFT JOIN EMDW_DMART.CUS_DMS d ON d.CUS_DMS_KEY = f.CUS_DMS_KEY
+ WHERE f.CUS_DMS_KEY IS NOT NULL AND d.CUS_DMS_KEY IS NULL
+UNION ALL SELECT 'orphan_invoice_date', COUNT_BIG(*)
+  FROM EMDW_DMART.CUS_ORD_IVC_FCT f
+  LEFT JOIN EMDW_DMART.DT_DMS d ON d.DT_DMS_KEY = f.CUS_IVC_DT_DMS_KEY
+ WHERE f.CUS_IVC_DT_DMS_KEY IS NOT NULL AND d.DT_DMS_KEY IS NULL
+UNION ALL SELECT 'orphan_purchase_item', COUNT_BIG(*)
+  FROM EMDW_DMART.PCH_ORD_RCT_FCT f
+  LEFT JOIN EMDW_DMART.ITM_DMS d ON d.ITM_DMS_KEY = f.ITM_DMS_KEY
+ WHERE f.ITM_DMS_KEY IS NOT NULL AND d.ITM_DMS_KEY IS NULL
+UNION ALL SELECT 'orphan_purchase_supplier', COUNT_BIG(*)
+  FROM EMDW_DMART.PCH_ORD_RCT_FCT f
+  LEFT JOIN EMDW_DMART.SUP_DMS d ON d.SUP_DMS_KEY = f.SUP_DMS_KEY
+ WHERE f.SUP_DMS_KEY IS NOT NULL AND d.SUP_DMS_KEY IS NULL
+UNION ALL SELECT 'orphan_finance_customer', COUNT_BIG(*)
+  FROM EMDW_DMART.FNN_FCT f
+  LEFT JOIN EMDW_DMART.CUS_DMS d ON d.CUS_DMS_KEY = f.CUS_DMS_KEY
+ WHERE f.CUS_DMS_KEY IS NOT NULL AND d.CUS_DMS_KEY IS NULL;
+
+/*  Dimension coverage. Thin coverage does not fail the load, but it silently
+    weakens every "by <dimension>" test — an invoice fact touching 3 of 6
+    warehouses makes "revenue by warehouse" look like it works on half the data. */
+SELECT 'warehouses_in_invoices' AS COVERAGE, COUNT(DISTINCT WHS_DMS_KEY) AS USED,
+       (SELECT COUNT(*) FROM EMDW_DMART.WHS_DMS) AS AVAILABLE
+  FROM EMDW_DMART.CUS_ORD_IVC_FCT
+UNION ALL SELECT 'items_in_invoices', COUNT(DISTINCT ITM_DMS_KEY),
+       (SELECT COUNT(*) FROM EMDW_DMART.ITM_DMS) FROM EMDW_DMART.CUS_ORD_IVC_FCT
+UNION ALL SELECT 'customers_in_invoices', COUNT(DISTINCT CUS_DMS_KEY),
+       (SELECT COUNT(*) FROM EMDW_DMART.CUS_DMS) FROM EMDW_DMART.CUS_ORD_IVC_FCT
+UNION ALL SELECT 'profit_centres_in_invoices', COUNT(DISTINCT PFT_CTR_DMS_KEY),
+       (SELECT COUNT(*) FROM EMDW_DMART.PFT_CTR_DMS) FROM EMDW_DMART.CUS_ORD_IVC_FCT
+UNION ALL SELECT 'profit_centres_in_purchases', COUNT(DISTINCT PFT_CTR_DMS_KEY),
+       (SELECT COUNT(*) FROM EMDW_DMART.PFT_CTR_DMS) FROM EMDW_DMART.PCH_ORD_RCT_FCT;
