@@ -272,6 +272,7 @@ def guarantee_table_coverage(
     retrieved_docs: list[str],
     rag_filter: set[str] | None,
     max_fill: int = MAX_GAP_FILL,
+    already_injected: set[str] | None = None,
 ) -> list[str]:
     """
     Check which required tables are missing from retrieved_docs and return
@@ -284,6 +285,16 @@ def guarantee_table_coverage(
     retrieved_docs: KB docs already in the prompt context (pinned + table_kbs)
     rag_filter    : ACL-allowed FQN set (None = admin / unrestricted)
     max_fill      : hard cap on injected gap-fill docs (default 3)
+    already_injected :
+        Mutable set of FQNs this request has ALREADY gap-filled into the prompt.
+        The pipeline calls this function once per planning stage (graph, date
+        role, metric formulas, planner reconciliation), and each call only sees
+        the RAG docs — not what an earlier call appended. Without this, the same
+        table is re-fetched from Qdrant and re-appended every stage: the live
+        trace showed one 90 kB fact document injected four times and a date
+        dimension twice, ~14 s of redundant vector scrolls that then pushed the
+        prompt from 394 kB to the 120 kB cap, where the tail — those very docs —
+        was truncated away. Updated in place with everything fetched here.
 
     Returns
     -------
@@ -294,6 +305,8 @@ def guarantee_table_coverage(
         return []
 
     covered = _covered_variants(retrieved_docs)
+    for fqn in already_injected or ():
+        covered |= _fqn_variants(fqn)
 
     # ── Find gaps ─────────────────────────────────────────────────────────────
     missing: list[str] = []
@@ -328,6 +341,8 @@ def guarantee_table_coverage(
             content = fetch_docs_for_fqn(account_id, fqn)
             if content:
                 gap_docs.append(content)
+                if already_injected is not None:
+                    already_injected.add(fqn)
                 log.info(
                     "Table coverage: gap-filled %-44s  (%d chars)",
                     fqn, len(content),

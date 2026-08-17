@@ -2146,6 +2146,13 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     ]
     context_with_terms = "\n\n".join(context_parts)
 
+    # Tables whose KB document this request has already appended to the prompt.
+    # Coverage runs once per planning stage (graph, date role, metric formulas,
+    # planner reconciliation) and each call only sees the RAG docs, so without a
+    # shared ledger the same table is re-fetched from Qdrant and re-appended
+    # every stage — one 90 kB fact document went in four times on the live trace.
+    _injected_kb_tables: set[str] = set()
+
     # Value-resolution ambiguity across DIFFERENT columns ("Emco" matches a
     # customer name AND an item description) can't be settled deterministically
     # or by the LLM — ask the user, mirroring the metric-scope clarification.
@@ -2352,6 +2359,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     retrieved_docs = relevant_kbs,   # what actually went into context
                     rag_filter    = rag_filter,       # ACL scope (None = admin)
                     max_fill      = 3,
+                    already_injected = _injected_kb_tables,
                 )
                 if _gap_docs:
                     context_with_terms = (
@@ -2957,6 +2965,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     retrieved_docs = relevant_kbs,
                     rag_filter     = rag_filter,
                     max_fill       = 3,
+                    already_injected = _injected_kb_tables,
                 )
                 if _plan_gap_docs:
                     context_with_terms = (
@@ -3668,6 +3677,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                             retrieved_docs=relevant_kbs,
                             rag_filter=rag_filter,
                             max_fill=2,
+                            already_injected=_injected_kb_tables,
                         )
                         if _date_gap_docs:
                             context_with_terms = (
@@ -3711,6 +3721,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 retrieved_docs = relevant_kbs,
                 rag_filter    = None,   # metric tables are admin-approved; bypass per-user ACL
                 max_fill      = 4,
+                already_injected = _injected_kb_tables,
             )
             if _mf_gap_docs:
                 context_with_terms = (
@@ -3893,6 +3904,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             retrieved_docs=relevant_kbs,
             rag_filter=rag_filter,
             max_fill=4,
+            already_injected=_injected_kb_tables,
         )
         if _alignment_gap_docs:
             context_with_terms += "\n\n---\n\n" + "\n\n---\n\n".join(_alignment_gap_docs)

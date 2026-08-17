@@ -21,6 +21,7 @@ from __future__ import annotations
 import logging
 import json
 import re
+from typing import Callable
 
 from core.schema import run_query
 from core.query_semantics import analyze_query_intent
@@ -1065,6 +1066,71 @@ ORDER BY ABSOLUTE_CHANGE {order_direction}"""
     return compiled
 
 
+def build_seekable_date_window(
+    *,
+    db_type: str,
+    fact_sql: str,
+    fact_key: str,
+    dim_sql: str,
+    dim_key: str,
+    date_col: str,
+    quote: "Callable[[str], str]",
+) -> tuple[str, str, str]:
+    """Build an anchor and a key list a star-schema fact can SEEK on.
+
+    The obvious shape for "latest available business date" is
+    ``MAX(dim.date)`` over ``fact JOIN dim``, and the obvious window filter is
+    ``dim.date BETWEEN ... AND ...``. Both read the whole fact:
+
+      * The anchor hash-joins every fact row to the date dimension purely to
+        take one MAX, with no predicate to restrict either side.
+      * Filtering on a *dimension* column leaves the optimiser no way to use an
+        index on the fact's own date key, so a two-day window scans years of
+        invoices and then throws almost all of them away.
+
+    On a production fact this is the difference between an index seek and a
+    full scan — the live symptom was a 120 s ODBC statement timeout on
+    "revenue for the last 2 days".
+
+    This returns three fragments that keep the same semantics while making the
+    fact access seekable:
+
+      ``anchor_sql``  MAX(date) taken over the DIMENSION, restricted by an
+                      EXISTS against the fact key. The semi-join can be
+                      satisfied from the fact's key index alone rather than
+                      materialising every row, and it still means "the latest
+                      date that actually has fact rows".
+      ``window_cte``  the date keys inside the requested window — a handful of
+                      rows, computed entirely from the small dimension.
+      ``key_filter``  a predicate on the FACT's own key column, which is what
+                      turns the scan into a seek.
+
+    The caller keeps its physical ``fact JOIN dim`` in the main query, so the
+    governed entity-graph edge is still present for the validator and any
+    calendar attributes stay addressable.
+    """
+    return (
+        (
+            f"SELECT MAX(anchor_date.{quote(date_col)}) AS max_business_date\n"
+            f"    FROM {dim_sql} AS anchor_date\n"
+            f"    WHERE EXISTS (\n"
+            f"        SELECT 1 FROM {fact_sql} AS anchor_fact\n"
+            f"        WHERE anchor_fact.{quote(fact_key)} = anchor_date.{quote(dim_key)}\n"
+            f"    )"
+        ),
+        (
+            f"SELECT window_date.{quote(dim_key)} AS business_date_key\n"
+            f"    FROM {dim_sql} AS window_date\n"
+            f"    CROSS JOIN anchor\n"
+            f"    WHERE {{window_predicate}}"
+        ),
+        (
+            f"fact_rows.{quote(fact_key)} IN "
+            f"(SELECT business_date_key FROM window_keys)"
+        ),
+    )
+
+
 def compile_governed_temporal_metric_sql(
     db_type: str,
     known_tables: set[str],
@@ -1199,6 +1265,30 @@ def compile_governed_temporal_metric_sql(
         date_ref = f"fact_rows.{qcol(date_column)}"
 
     dialect = str(db_type or "").lower()
+
+    # A surrogate-key star gets a seekable shape: the window is resolved to date
+    # KEYS off the small dimension, and the fact is filtered on its own key.
+    # Filtering the dimension's date column instead leaves the optimiser no way
+    # to use the fact's date-key index, which is what made a two-day revenue
+    # question scan the whole invoice fact and hit the statement timeout.
+    seekable = date_key_type == "surrogate_fk"
+    anchor_body = window_keys_body = key_filter = ""
+    if seekable:
+        anchor_body, window_keys_body, key_filter = build_seekable_date_window(
+            db_type=db_type,
+            fact_sql=fact_sql,
+            fact_key=fact_column,
+            dim_sql=_quote_table_for_count(dimension_table, db_type),
+            dim_key=dimension_key,
+            date_col=date_column,
+            quote=qcol,
+        )
+        # Inside window_keys the dimension is aliased window_date, so the window
+        # predicate must be expressed against that alias, not the display join.
+        window_date_ref = f"window_date.{qcol(date_column)}"
+    else:
+        window_date_ref = date_ref
+
     observed_period_cte = ""
     if window_kind == "latest_n_observed":
         if unit != "day":
@@ -1214,6 +1304,12 @@ def compile_governed_temporal_metric_sql(
             observed_suffix = f"\n    FETCH FIRST {amount} ROWS ONLY"
         else:
             return ""
+        # Deliberately NOT re-shaped for seeks. `observed_period_shape` in the
+        # validator requires the observed days to be selected from the FACT
+        # ("TOP N DISTINCT <date> ... from <fact>"), so moving them onto the
+        # dimension would need that governed contract relaxed too. This window
+        # keeps its established, validated shape; `last_n`, `today` and
+        # `yesterday` below carry the seek rewrite.
         observed_period_cte = f"""WITH observed_periods AS (
     SELECT DISTINCT {observed_limit}{date_ref} AS observed_business_date
     FROM {from_sql}
@@ -1235,7 +1331,11 @@ def compile_governed_temporal_metric_sql(
                 start_expr = f"ADD_MONTHS(anchor.max_business_date, -{months})"
         else:
             return ""
-        where_sql = (
+        window_predicate = (
+            f"{window_date_ref} > {start_expr}\n"
+            f"      AND {window_date_ref} <= anchor.max_business_date"
+        )
+        where_sql = key_filter if seekable else (
             f"{date_ref} > {start_expr}\n"
             f"  AND {date_ref} <= anchor.max_business_date"
         )
@@ -1247,6 +1347,7 @@ def compile_governed_temporal_metric_sql(
                 else "DATEADD(day, -1, CAST(anchor.max_business_date AS date))"
             )
             date_day = f"CAST({date_ref} AS date)"
+            window_day = f"CAST({window_date_ref} AS date)"
         elif dialect == "snowflake":
             selected_day = (
                 "CAST(anchor.max_business_date AS date)"
@@ -1254,6 +1355,7 @@ def compile_governed_temporal_metric_sql(
                 else "DATEADD(day, -1, CAST(anchor.max_business_date AS date))"
             )
             date_day = f"CAST({date_ref} AS date)"
+            window_day = f"CAST({window_date_ref} AS date)"
         elif dialect == "oracle":
             selected_day = (
                 "TRUNC(anchor.max_business_date)"
@@ -1261,9 +1363,11 @@ def compile_governed_temporal_metric_sql(
                 else "TRUNC(anchor.max_business_date) - 1"
             )
             date_day = f"TRUNC({date_ref})"
+            window_day = f"TRUNC({window_date_ref})"
         else:
             return ""
-        where_sql = f"{date_day} = {selected_day}"
+        window_predicate = f"{window_day} = {selected_day}"
+        where_sql = key_filter if seekable else f"{date_day} = {selected_day}"
 
     metric_alias = (
         re.sub(r"[^A-Za-z0-9_]", "_", str(metric.get("name") or "metric")).upper()
@@ -1296,6 +1400,25 @@ def compile_governed_temporal_metric_sql(
 
     if window_kind == "latest_n_observed":
         compiled = f"""{observed_period_cte}SELECT
+    {select_sql}
+FROM {from_sql}
+WHERE {where_sql}{group_sql}{order_sql}"""
+    elif seekable:
+        # anchor and window_keys are both computed off the small date dimension.
+        # The main query keeps its physical fact-to-dimension join (so the
+        # governed graph edge is present and calendar attributes stay
+        # addressable) but reaches the fact through its own key, which is what
+        # makes this an index seek instead of a full scan.
+        window_keys_sql = window_keys_body.replace(
+            "{window_predicate}", window_predicate,
+        )
+        compiled = f"""WITH anchor AS (
+    {anchor_body}
+),
+window_keys AS (
+    {window_keys_sql}
+)
+SELECT
     {select_sql}
 FROM {from_sql}
 WHERE {where_sql}{group_sql}{order_sql}"""

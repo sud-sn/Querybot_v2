@@ -2458,8 +2458,16 @@ class GovernedTemporalCompilerTests(unittest.TestCase):
 
         self.assertTrue(sql)
         self.assertIn("DATEADD(day, -5, anchor.max_business_date)", sql)
-        self.assertIn("invoice_date.[CALENDAR_DATE] >", sql)
-        self.assertIn("invoice_date.[CALENDAR_DATE] <= anchor.max_business_date", sql)
+        # The five-day window is applied to the governed date value. It is
+        # resolved in the window_keys CTE (aliased window_date) so the fact can
+        # be reached by its own key — see build_seekable_date_window — rather
+        # than by filtering the joined dimension, which forced a full scan.
+        self.assertIn("window_date.[CALENDAR_DATE] >", sql)
+        self.assertIn("window_date.[CALENDAR_DATE] <= anchor.max_business_date", sql)
+        self.assertIn(
+            "fact_rows.[INVOICE_DATE_KEY] IN (SELECT business_date_key FROM window_keys)",
+            sql,
+        )
         self.assertIn("GROUP BY CAST(invoice_date.[CALENDAR_DATE] AS date)", sql)
         result = validate_sql_detailed(
             sql, set(columns), "azure_sql", set(columns), columns, context,
@@ -2482,10 +2490,19 @@ class GovernedTemporalCompilerTests(unittest.TestCase):
         )
         self.assertTrue(sql)
         self.assertIn("SUM(NET_REVENUE) AS REVENUE", sql)
-        self.assertIn("MAX(invoice_date.[CALENDAR_DATE])", sql)
+        # The business clock is MAX of the approved date-role value, never the
+        # database clock. It is taken over the date dimension restricted by an
+        # EXISTS against the fact key, so it still means "the latest date that
+        # actually has rows" without hash-joining the entire fact.
+        self.assertIn("MAX(anchor_date.[CALENDAR_DATE])", sql)
+        self.assertIn("EXISTS", sql)
         self.assertIn(
-            "CAST(invoice_date.[CALENDAR_DATE] AS date) = "
+            "CAST(window_date.[CALENDAR_DATE] AS date) = "
             "CAST(anchor.max_business_date AS date)",
+            sql,
+        )
+        self.assertIn(
+            "fact_rows.[INVOICE_DATE_KEY] IN (SELECT business_date_key FROM window_keys)",
             sql,
         )
         self.assertNotIn("GETDATE", sql.upper())

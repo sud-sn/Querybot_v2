@@ -1877,6 +1877,21 @@ def _temporal_anchor_errors(tree, sql: str, policies: list[dict]) -> list[dict]:
     )
     if approved and approved_fact_keys:
         from core.date_roles import is_surrogate_date_role_key_column
+        # Names the query itself defines — projection aliases and CTE output
+        # columns — are not physical date-role columns, so they can never be a
+        # substituted role. Reading a governed window back out of a CTE
+        # ("SELECT business_date_key FROM window_keys") would otherwise be
+        # rejected as if it were a rival date key on the fact.
+        local_names = {
+            str(alias.alias or "").upper()
+            for alias in tree.find_all(sg_exp.Alias)
+            if alias.alias
+        }
+        local_names |= {
+            str(cte.alias_or_name or "").upper()
+            for cte in tree.find_all(sg_exp.CTE)
+            if cte.alias_or_name
+        }
         flagged: set[str] = set()
         scopes = list(tree.find_all(sg_exp.Where))
         if scan_join_conditions:
@@ -1887,6 +1902,7 @@ def _temporal_anchor_errors(tree, sql: str, policies: list[dict]) -> list[dict]:
                 if (
                     name
                     and name not in approved
+                    and name not in local_names
                     and name not in flagged
                     and is_surrogate_date_role_key_column(name)
                 ):

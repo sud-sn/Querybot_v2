@@ -46,11 +46,18 @@ DATE_ROLES: tuple[DateRole, ...] = (
 
 _ROLE_BY_KEY = {role.key: role for role in DATE_ROLES}
 
+# _SK (surrogate key) and _FK are as standard in dimensional modelling as _KEY
+# and _ID. Without them INVOICE_DATE_SK resolved to no business date role at
+# all, which silently removed a whole naming convention from date governance:
+# the role never reached the semantic model, a governed filter on it read as an
+# identity/category lookup rather than a time filter, and role substitution went
+# unchecked.
+_DATE_KEY_SUFFIX = r"(?:_(?:DMS_)?(?:KEY|ID|SK|FK))"
 _GENERIC_DATE_KEY_RE = re.compile(
-    r"(?:^|_)(?:DATE|DT)(?:_(?:DMS_)?(?:KEY|ID))$"
+    rf"(?:^|_)(?:DATE|DT){_DATE_KEY_SUFFIX}$"
 )
 _PLAIN_DATE_KEY_RE = re.compile(
-    r"(?:^|_)DATE(?:_(?:DMS_)?(?:KEY|ID))$"
+    rf"(?:^|_)DATE{_DATE_KEY_SUFFIX}$"
 )
 
 _COLUMN_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
@@ -311,7 +318,12 @@ _DMS_KEY_SUFFIX_RE = re.compile(
     r"(?:_DT_DMS_KEY|_DATE_DMS_KEY|_PRD_DMS_KEY|_PERIOD_DMS_KEY)$",
     re.IGNORECASE,
 )
-_SURROGATE_KEY_SUFFIX_RE = re.compile(r"(?:_ID|_KEY)$", re.IGNORECASE)
+# _SK / _FK are as standard in dimensional modelling as _ID / _KEY. Omitting
+# them meant INVOICE_DATE_SK was not recognized as a date-role key at all, so a
+# governed date filter on it read as an identity/category lookup (triggering the
+# null-aware-aggregate requirement on a pure time-bounded aggregate) and role
+# substitution went unguarded on every warehouse using that convention.
+_SURROGATE_KEY_SUFFIX_RE = re.compile(r"(?:_ID|_KEY|_SK|_FK)$", re.IGNORECASE)
 
 
 def is_plain_surrogate_date_role_column(column_name: str) -> bool:
