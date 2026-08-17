@@ -208,6 +208,11 @@ def should_route_to_result_cache(
 
     # Deterministic result commands must never be rejected as off-topic or
     # sent to a fresh source query while a current snapshot exists.
+    # Use the authoritative parser rather than duplicating only a subset of
+    # its language here. The local import avoids coupling module import order.
+    from core.result_commands import parse_result_command
+    if parse_result_command(q) is not None:
+        return True
     if _RESULT_COMMAND_RE.match(q):
         return True
 

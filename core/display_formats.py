@@ -200,7 +200,22 @@ def looks_temporal(value: Any) -> bool:
     if isinstance(value, (date, datetime)):
         return True
     text = str(value or "").strip()
-    return bool(re.fullmatch(r"\d{4}[-/]\d{1,2}(?:[-/]\d{1,2})?", text))
+    if re.fullmatch(r"\d{4}[-/]\d{1,2}(?:[-/]\d{1,2})?", text):
+        return True
+    # ERP period keys are often numeric even though they carry a calendar
+    # value. Validate the component ranges so ordinary identifiers are not
+    # accidentally offered as dates.
+    compact = re.fullmatch(r"(\d{4})(\d{2})(\d{2})?", text)
+    if not compact:
+        return False
+    try:
+        year = int(compact.group(1))
+        month = int(compact.group(2))
+        day = int(compact.group(3) or 1)
+        date(year, month, day)
+    except ValueError:
+        return False
+    return 1900 <= year <= 2199
 
 
 def candidate_columns(rows: list[dict], kind: str) -> list[str]:
@@ -210,8 +225,16 @@ def candidate_columns(rows: list[dict], kind: str) -> list[str]:
     if kind == "date":
         return [
             h for h in headers
-            if re.search(r"\b(?:date|month|period|year|week|quarter)\b", h.replace("_", " "), re.I)
-            or any(looks_temporal(row.get(h)) for row in rows[:20] if row.get(h) not in (None, ""))
+            if re.search(
+                r"\b(?:date|dt|month|period|prd|year|week|quarter|yyyymm|yyyymmdd)\b",
+                h.replace("_", " "),
+                re.I,
+            )
+            or any(
+                looks_temporal(row.get(h))
+                for row in rows[:20]
+                if row.get(h) not in (None, "")
+            )
         ]
     if kind in {"number", "currency", "percentage"}:
         output = []

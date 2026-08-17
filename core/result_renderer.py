@@ -612,7 +612,8 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
                         contract_version: str = "",
                         cache_result: bool = True):
     """Send formatted results to the chat platform. Shared by LLM and metric registry paths."""
-    display_question = extract_original_question(question).strip() or question
+    from core.clarification import extract_display_question
+    display_question = extract_display_question(question).strip() or question
     if question_id:
         profile = store.get_compliance_profile(account_id)
         store.store_protected_result_rows(
@@ -783,11 +784,19 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
             from core.date_coverage import check_date_coverage
             _coverage_metrics = (display_context or {}).get("metrics") or []
             _coverage_metric_name = ""
+            _coverage_metric_formula = ""
             if len(_coverage_metrics) == 1:
                 _coverage_metric_name = str(_coverage_metrics[0].get("name") or "")
+                if str(_coverage_metrics[0].get("formula_type") or "query").lower() == "expression":
+                    _coverage_metric_formula = str(
+                        _coverage_metrics[0].get("sql_template")
+                        or _coverage_metrics[0].get("formula")
+                        or ""
+                    )
             _gap = check_date_coverage(
                 db_cfg, _temporal_policies[0], str(db_cfg.get("db_type", "azure_sql")),
                 metric_name=_coverage_metric_name,
+                metric_formula=_coverage_metric_formula,
             )
             if _gap:
                 coverage_caveats.append(_gap.message)

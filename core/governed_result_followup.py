@@ -19,6 +19,7 @@ from core.result_commands import (
     parse_result_command,
 )
 from core.result_planner import plan_result_command
+from core.clarification import combine_with_result_context
 
 
 FollowupStatus = Literal[
@@ -42,6 +43,49 @@ class GovernedFollowupResult:
     @property
     def executed(self) -> bool:
         return self.status == "executed" and bool(self.outcome and self.outcome.ok)
+
+
+def contextualize_source_query_fallback(
+    question: str,
+    session_id: str,
+    *,
+    source_result_id: str | None = None,
+    cache: ResultCache = result_cache,
+) -> str:
+    """Merge a cache follow-up with the root governed source question.
+
+    Result transforms form a lineage chain.  A later operation that requires
+    fresh source rows must inherit the oldest available source-query request,
+    rather than treating a short phrase such as "trend by day" as a new query.
+    Only questions and lineage IDs are read here; cached row values are never
+    copied or exposed.
+    """
+    snapshot = cache.get_snapshot(session_id, source_result_id)
+    if not snapshot:
+        return question
+
+    root_question = str(snapshot.get("question") or "").strip()
+    current = snapshot
+    seen: set[str] = set()
+    for _ in range(8):
+        result_id = str(current.get("result_id") or "")
+        if result_id:
+            if result_id in seen:
+                break
+            seen.add(result_id)
+        if str(current.get("operation") or "source_query") == "source_query":
+            candidate = str(current.get("question") or "").strip()
+            if candidate:
+                root_question = candidate
+        parent_id = str(current.get("parent_result_id") or "")
+        if not parent_id:
+            break
+        parent = cache.get_snapshot(session_id, parent_id)
+        if not parent:
+            break
+        current = parent
+
+    return combine_with_result_context(root_question, question)
 
 
 def adopt_cached_snapshot(

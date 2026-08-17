@@ -86,6 +86,19 @@ Create or confirm these metrics:
 - **Refund Amount** = `SUM(F_RETURNS.REFUND_AMOUNT)`, default time column
   `RETURN_DATE_SK`, currency.
 
+For a repeatable baseline, the fixture includes an idempotent seeder for the
+three sales metrics used by the compiler regression tests. Run it from the
+QueryBot repository root after schema discovery / KB generation (replace the
+account id if your test client uses another value):
+
+```powershell
+python tests/fixtures/azure_sql_live_regression/04_seed_querybot_metrics.py --account Test_Az
+```
+
+This creates or updates **Revenue**, **Gross Sales**, and **Discount Amount**
+and binds all three to the approved Invoice Date role. It does not modify
+users, access policy, or tenant-governance data.
+
 ## Live test sequence
 
 Start a new portal thread and run the questions in

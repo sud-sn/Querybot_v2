@@ -39,6 +39,34 @@ def test_trend_without_period_fails_shape_verification():
     assert any("date or period" in error for error in report["errors"])
 
 
+def test_trend_accepts_plausible_numeric_erp_period_key():
+    report = verify_result_shape(
+        [
+            {"PRD_DMS_KEY": 202601, "Revenue": 10},
+            {"PRD_DMS_KEY": 202602, "Revenue": 12},
+        ],
+        analytical_plan={"intent": "trend", "metrics": ["Revenue"]},
+        resolution_plan={"metrics": [{"name": "Revenue"}]},
+    )
+
+    assert report["status"] == "pass"
+    assert report["time_columns"] == ["PRD_DMS_KEY"]
+
+
+def test_trend_rejects_invalid_numeric_period_identifier():
+    report = verify_result_shape(
+        [
+            {"PRD_DMS_KEY": 202699, "Revenue": 10},
+            {"PRD_DMS_KEY": 202698, "Revenue": 12},
+        ],
+        analytical_plan={"intent": "trend", "metrics": ["Revenue"]},
+        resolution_plan={"metrics": [{"name": "Revenue"}]},
+    )
+
+    assert report["status"] == "fail"
+    assert report["time_columns"] == []
+
+
 def test_top_n_over_return_is_visible_warning():
     report = verify_result_shape(
         [{"customer": chr(65 + index), "revenue": 100 - index} for index in range(5)],
@@ -64,6 +92,60 @@ def test_distribution_percentages_must_reconcile():
 
     assert report["status"] == "warning"
     assert any("sum to" in warning for warning in report["warnings"])
+
+
+def test_kpi_rejects_diagnostic_count_in_place_of_approved_metric():
+    report = verify_result_shape(
+        [{"row_count": 25}],
+        analytical_plan={"intent": "metric_query", "output": "kpi"},
+        resolution_plan={"metrics": [{"name": "Revenue"}]},
+    )
+
+    assert report["status"] == "fail"
+    assert any("approved metric" in error.lower() for error in report["errors"])
+
+
+def test_period_change_rows_are_reconciled_without_exposing_them_to_llm():
+    report = verify_result_shape(
+        [{
+            "ENTITY": "Customer A",
+            "CURRENT_PERIOD_COUNT": 8,
+            "PRIOR_PERIOD_COUNT": 12,
+            "ABSOLUTE_CHANGE": -4,
+            "PERCENTAGE_CHANGE": Decimal("-33.33"),
+        }],
+        analytical_plan={"intent": "entity_lookup", "dimensions": ["entity"]},
+        request_plan={
+            "analytical_recipe": {
+                "kind": "period_over_period_entity_change",
+                "direction": "decrease",
+            },
+        },
+    )
+
+    assert report["status"] == "pass"
+    assert any("reconcile" in check.lower() for check in report["checks"])
+
+
+def test_period_change_rejects_wrong_direction_or_arithmetic():
+    report = verify_result_shape(
+        [{
+            "ENTITY": "Customer A",
+            "CURRENT_PERIOD_COUNT": 14,
+            "PRIOR_PERIOD_COUNT": 12,
+            "ABSOLUTE_CHANGE": 99,
+        }],
+        request_plan={
+            "analytical_recipe": {
+                "kind": "period_over_period_entity_change",
+                "direction": "decrease",
+            },
+        },
+    )
+
+    assert report["status"] == "fail"
+    assert any("do not reconcile" in error for error in report["errors"])
+    assert any("decrease" in error for error in report["errors"])
 
 
 def test_failed_shape_caps_answer_confidence_below_medium():

@@ -952,6 +952,20 @@ class PeriodComparisonNarrationTests(unittest.TestCase):
         found = _period_comparison_from_rows([self.LIVE_ROW])
         self.assertNotEqual(found["measure_column"], "CURRENT_MONTH")
 
+    def test_numeric_period_labels_do_not_become_the_measure(self):
+        found = _period_comparison_from_rows([{
+            "CURRENT_PERIOD": 202608,
+            "PRIOR_PERIOD": 202607,
+            "CURRENT_REVENUE": 500.0,
+            "PRIOR_REVENUE": 400.0,
+            "PCT_CHANGE": 25.0,
+        }])
+        self.assertIsNotNone(found)
+        self.assertEqual(found["measure_column"], "CURRENT_REVENUE")
+        self.assertEqual(found["current_period"], "202608")
+        self.assertEqual(found["previous_period"], "202607")
+        self.assertAlmostEqual(found["pct_change"], 25.0)
+
     def test_non_comparison_shapes_are_left_alone(self):
         for rows in (
             [],

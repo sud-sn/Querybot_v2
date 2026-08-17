@@ -29,6 +29,160 @@ _SURROGATE_KEY_SUFFIX_RE = re.compile(r"(?:_ID|_KEY)$", re.IGNORECASE)
 _IDENTIFIER_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9_]{2,}")
 
 
+# Advanced SQL-generation rules are intentionally identified by their exact
+# prompt headings.  Direct callers that do not provide a compiled analytical
+# request plan retain the legacy full prompt.  The production pipeline embeds
+# that plan in ``semantic_plan`` and can therefore remove rules that cannot
+# apply to the current request instead of making every rule compete for model
+# attention on every question.
+_OPTIONAL_SQL_RULE_MARKERS: dict[str, str] = {
+    "correlation": "- CORRELATION / SCATTER RULE:",
+    "encoded_date": "- AZURE SQL DATE-KEY RULE:",
+    "encoded_period": "- ENCODED MONTH/PERIOD RULE:",
+    "date_dimension_calendar": "- CALENDAR COLUMNS LIVE ON THE DATE DIMENSION:",
+    "surrogate_date": "- DATE-DIMENSION SURROGATE KEY RULE",
+    "year_comparison": "- YEAR-OVER-YEAR / PERIOD COMPARISON RULE:",
+    "distinct_entity": "- DISTINCT ENTITY RULE:",
+    "having": "- HAVING RULE:",
+    "benchmark": "- ABOVE/BELOW BENCHMARK RULE:",
+    "top_n_per_group": "- TOP-N PER GROUP RULE:",
+    "percentage_of_total": "- PERCENTAGE OF TOTAL RULE:",
+    "anti_join": "- ANTI-JOIN RULE:",
+    "star_join": "- STAR-SCHEMA JOIN ORDER RULE:",
+    "multi_fact": "- FACT-TO-FACT JOIN RULE:",
+    "conditional_aggregation": "- CONDITIONAL AGGREGATION RULE:",
+    "period_comparison": "- MONTH-OVER-MONTH / QUARTER-OVER-QUARTER RULE:",
+    "running_total": "- RUNNING TOTAL RULE:",
+    "moving_average": "- MOVING AVERAGE RULE:",
+    "event_interval": "- AVG INTERVAL BETWEEN EVENTS RULE:",
+    "null_safe_join": "- NULL-SAFE JOIN RULE:",
+    "null_aggregate": "- NULL-AWARE FILTERED AGGREGATE RULE",
+    "ranking": "- RANKING RULE:",
+}
+
+_CORE_SQL_RULE_BOUNDARY_MARKERS: tuple[str, ...] = (
+    "- NAME CONCATENATION RULE:",
+    "- CROSS-TABLE QUERY RULE:",
+    "- SURROGATE KEY DISPLAY RULE:",
+    "- ORDER BY ALIAS RULE:",
+    "- APPROVED METRIC FORMULA RULE:",
+)
+
+
+def _compiled_sql_rule_features(semantic_plan: dict | None) -> set[str] | None:
+    """Return the advanced rule features required by a compiled request.
+
+    ``None`` means no trustworthy compiled plan is available and deliberately
+    preserves the legacy full prompt.  Feature detection uses only the
+    dataset-neutral request plan and the user's wording; it never relies on a
+    client/table name.
+    """
+    if not isinstance(semantic_plan, dict):
+        return None
+    plan = semantic_plan.get("analytical_request_plan")
+    if not isinstance(plan, dict) or plan.get("status") != "compiled":
+        return None
+
+    question = str(plan.get("question") or "").casefold()
+    intent = str(plan.get("intent") or "").casefold()
+    dimensions = list(plan.get("dimensions") or [])
+    measures = list(plan.get("measures") or [])
+    metrics = list(plan.get("metrics") or [])
+    joins = list(plan.get("joins") or [])
+    source_facts = list(plan.get("source_facts") or [])
+    temporal = list(plan.get("temporal_operations") or [])
+    filters = list(plan.get("filters") or [])
+    top_n = plan.get("top_n")
+
+    features: set[str] = set()
+    has_measure = bool(measures or metrics or (plan.get("derived_measure") or {}))
+    has_temporal = bool(
+        temporal
+        or plan.get("time_range")
+        or plan.get("quarter_periods")
+        or re.search(
+            r"\b(?:today|yesterday|date|day|week|month|quarter|year|period|recent|latest)\b",
+            question,
+        )
+    )
+    has_comparison = bool(
+        intent == "comparison"
+        or plan.get("comparison")
+        or re.search(r"\b(?:compare|comparison|versus|vs\.?|previous|prior|change)\b", question)
+    )
+
+    if dimensions and has_measure:
+        features.update({"star_join", "null_safe_join"})
+    if joins:
+        features.add("null_safe_join")
+    if len(source_facts) > 1 or plan.get("subrequests"):
+        features.add("multi_fact")
+    if has_temporal:
+        # The context/schema conditions inside the corresponding rule still
+        # decide which physical date convention is emitted.
+        features.update({"encoded_date", "encoded_period", "date_dimension_calendar", "surrogate_date"})
+    if has_temporal and has_comparison:
+        features.add("period_comparison")
+        if re.search(r"\b(?:year|yoy|year[- ]over[- ]year)\b", question):
+            features.add("year_comparison")
+    if re.search(r"\b(?:correlat|relationship between|scatter|\w+\s+vs\.?\s+\w+)\b", question):
+        features.add("correlation")
+    if re.search(r"\b(?:list|show|find|retrieve|which|unique|distinct)\b", question):
+        features.add("distinct_entity")
+    if re.search(r"\b(?:above|below|greater than|less than|at least|at most|more than|fewer than)\b", question):
+        features.add("having")
+    if re.search(r"\b(?:average|benchmark|mean)\b", question):
+        features.add("benchmark")
+    if top_n and (len(dimensions) > 1 or re.search(r"\b(?:per|each)\b", question)):
+        features.add("top_n_per_group")
+    if intent == "distribution" or re.search(r"\b(?:share|contribution|percent(?:age)? of|mix)\b", question):
+        features.add("percentage_of_total")
+    if re.search(r"\b(?:without|unmatched|missing|never|not been|no matching|have no)\b", question):
+        features.add("anti_join")
+    if re.search(r"\b(?:split by|status|conditional|case when)\b", question):
+        features.add("conditional_aggregation")
+    if re.search(r"\b(?:running total|cumulative|year[- ]to[- ]date|total so far)\b", question):
+        features.add("running_total")
+    if re.search(r"\b(?:moving average|rolling average|smoothed|trailing average)\b", question):
+        features.add("moving_average")
+    if re.search(r"\b(?:between consecutive|days between|time between|gap between)\b", question):
+        features.add("event_interval")
+    if (filters or re.search(r"\b(?:for|where|with)\b", question)) and has_measure:
+        features.add("null_aggregate")
+    if intent == "ranking" or top_n or re.search(r"\b(?:rank|ranking|leaderboard|highest|lowest|top\s+\d+)\b", question):
+        features.add("ranking")
+    return features
+
+
+def _filter_sql_rules_for_compiled_plan(prompt: str, semantic_plan: dict | None) -> str:
+    """Remove irrelevant advanced rule blocks from a generated SQL prompt."""
+    features = _compiled_sql_rule_features(semantic_plan)
+    if features is None:
+        return prompt
+
+    positions: list[tuple[int, str, str]] = []
+    for feature, marker in _OPTIONAL_SQL_RULE_MARKERS.items():
+        pos = prompt.find(marker)
+        if pos >= 0:
+            positions.append((pos, feature, marker))
+    boundary_positions = [pos for pos, _, _ in positions]
+    for marker in _CORE_SQL_RULE_BOUNDARY_MARKERS:
+        pos = prompt.find(marker)
+        if pos >= 0:
+            boundary_positions.append(pos)
+    kb_pos = prompt.find("Knowledge Base — available tables and their business context:")
+    boundaries = sorted(boundary_positions + ([kb_pos] if kb_pos >= 0 else []))
+    removals: list[tuple[int, int]] = []
+    for pos, feature, _ in positions:
+        if feature in features:
+            continue
+        end = next((boundary for boundary in boundaries if boundary > pos), len(prompt))
+        removals.append((pos, end))
+    for start, end in sorted(removals, reverse=True):
+        prompt = prompt[:start] + prompt[end:]
+    return prompt
+
+
 def _find_date_role_tokens(table_context: str) -> list[str]:
     """Column-name-shaped tokens in the retrieved KB context that are BOTH a
     recognized date-role foreign key (core.date_roles) AND end in _ID/_KEY —
@@ -821,6 +975,7 @@ def build_sql_system_prompt(
         "Always ORDER BY the rank column in the outer query.\n\n"
         f"Knowledge Base — available tables and their business context:\n{table_context}"
     )
+    base = _filter_sql_rules_for_compiled_plan(base, semantic_plan)
     if conversation_history:
         history_lines = []
         for i, turn in enumerate(conversation_history, 1):

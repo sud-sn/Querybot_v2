@@ -50,10 +50,10 @@ _SORT_RE = re.compile(
     re.IGNORECASE,
 )
 _PRESENTATION_RE = re.compile(
-    r"^\s*(?:show|render|display|change|give)(?:\s+me)?\s+"
+    r"^\s*(?:show|render|display|change|convert|give)(?:\s+me)?\s+"
     r"(?:(?:this|the|these|current|previous)\s+)?"
     r"(?:(?:result|results|data|dataset|chart)\s+)?"
-    r"(?:as|in|into)\s+(?:an?\s+)?"
+    r"(?:as|in|into|to)\s+(?:an?\s+)?"
     r"(area|bar|line|pie|donut|scatter|table)(?:\s+chart)?\s*[.!]?\s*$",
     re.IGNORECASE,
 )
@@ -218,20 +218,18 @@ def parse_result_command(text: str) -> ResultCommand | None:
         )
     match = _PRESENTATION_RE.fullmatch(value)
     if match:
-        # fallback_allowed: a chart request against a shape that can't
-        # support it (e.g. "line chart" on a single aggregate row with no
-        # day breakdown) must be able to fall through to a fresh query
-        # instead of silently re-labeling stale data -- see
-        # execute_result_command's presentation branch below.
+        # Presentation changes are cache-only operations. They must never
+        # fall through to a fresh source query: doing so can change the
+        # metric, date role, or table behind a pronoun such as "this".
         return ResultCommand(
-            "presentation", presentation_type=match.group(1).lower(), fallback_allowed=True,
+            "presentation", presentation_type=match.group(1).lower(), fallback_allowed=False,
         )
     if _AUTO_PRESENTATION_RE.fullmatch(value):
         # Keep chart selection deterministic and local: the renderer chooses
         # from the cached row/column shape.  No result values are sent to an
         # LLM merely to decide between bar, line, pie, or KPI.
         return ResultCommand(
-            "presentation", presentation_type="auto", fallback_allowed=True,
+            "presentation", presentation_type="auto", fallback_allowed=False,
         )
     if _KEEP_TOP_ONE_RE.fullmatch(value):
         return ResultCommand("keep_top", limit=1)
@@ -469,25 +467,19 @@ def execute_result_command(
 
         if command.action == "presentation":
             presentation_type = str(command.presentation_type or "").lower()
-            # A series-shaped chart (a trend/comparison across multiple
-            # points) is meaningless re-labeling a single cached row --
-            # e.g. "line chart" on a one-row aggregate like "net revenue
-            # for last 7 days" has no day axis to plot at all. Only "table"
-            # is presentation-neutral and always valid regardless of row
-            # count. Route this back to a fresh query (via
-            # fallback_allowed, now set on every presentation command)
-            # instead of silently re-labeling stale data as a chart.
+            # A series chart needs multiple cached points. Fail locally and
+            # explain the missing shape; never reinterpret this presentation
+            # command as a new database question.
             if presentation_type in {"line", "area", "bar", "scatter", "pie", "donut"} and len(rows) < 2:
                 return ResultCommandOutcome(
-                    handled=False,
+                    handled=True,
                     ok=False,
                     message=(
-                        f"The current result has only {len(rows)} row(s) -- not enough "
-                        f"to show as a {presentation_type} chart. Regenerating the query "
-                        f"with a breakdown."
+                        f"The current result has only {len(rows)} data point(s), so it cannot "
+                        f"be shown as a {presentation_type} chart. Ask for the same metric "
+                        "by day, week, month, or another business dimension first."
                     ),
                     source_result_id=source_id,
-                    retry_question=f"{str(source.get('question') or '').strip()}, broken down by day",
                 )
             metadata = dict(source.get("metadata") or {})
             metadata.update({

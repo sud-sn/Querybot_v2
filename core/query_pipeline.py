@@ -51,7 +51,11 @@ from core.result_regrain import (
     resolve_regrain_grain,
     temporal_policy_from_plan,
 )
-from core.governed_result_followup import adopt_cached_snapshot, run_governed_result_followup
+from core.governed_result_followup import (
+    adopt_cached_snapshot,
+    contextualize_source_query_fallback,
+    run_governed_result_followup,
+)
 from core.semantic_planner import build_semantic_field_plan
 from core.source_resolution import resolve_source_scope, source_clarification_options
 from core.count_target_resolver import (
@@ -91,6 +95,8 @@ from core.pipeline_helpers import (
     _build_row_metric_join_sql, attempt_field_plan_repair,
     attempt_governed_temporal_metric_repair, compile_governed_temporal_metric_sql,
     _clamp_kb_doc, _clamp_prompt_context, reused_plan_is_stale_for_graph,
+    reused_plan_semantic_staleness_code,
+    allow_progressive_sql_repair,
 )
 from core.pipeline_trace import (
     _log_q, _trace_create, _trace_update, _trace_step, _trace_finish,
@@ -839,6 +845,17 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     _confirmed_date_role = selected_clarification_option(
         event, "metric_date_context"
     )
+    _confirmed_join_path = selected_clarification_option(event, "graph_join_path")
+    _graph_resolution_question = question
+    if _confirmed_join_path.get("label") or _confirmed_join_path.get("value"):
+        _graph_resolution_question = (
+            extract_original_question(question)
+            + " "
+            + str(
+                _confirmed_join_path.get("label")
+                or _confirmed_join_path.get("value")
+            )
+        ).strip()
 
     if not db_cfg:
         _trace_finish(trace_id, status="error", answer_type="error", error_message="No database assigned")
@@ -1470,6 +1487,50 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     "cached_values_forwarded": False,
                 },
             )
+            _source_result_id = getattr(adapter, "last_result_id", None)
+            _contextualized_question = contextualize_source_query_fallback(
+                question,
+                _session_id,
+                source_result_id=_source_result_id,
+            )
+            if _contextualized_question != question:
+                question = _contextualized_question
+                # The first analytical plan was built before cache routing,
+                # when the turn contained only the short follow-up. Rebuild it
+                # from the inherited source intent so metric, window, grain,
+                # and comparison semantics stay aligned with the re-query.
+                try:
+                    _analytical_plan = plan_analytical_intent(
+                        question,
+                        metrics=_planner_metrics,
+                        terms=_planner_terms,
+                        calendar_profile=_planner_calendar_profile,
+                    )
+                except Exception as _lineage_plan_exc:
+                    log.warning(
+                        "Source-query lineage planning failed open: %s",
+                        _lineage_plan_exc,
+                    )
+                    _analytical_plan = plan_analytical_intent(
+                        question,
+                        calendar_profile=_planner_calendar_profile,
+                    )
+                _analytical_plan_context = _analytical_plan.prompt_context()
+                _trace_step(
+                    trace_id,
+                    "source_query_lineage",
+                    output_summary={
+                        "source_result_id": str(_source_result_id or ""),
+                        "parent_question_preserved": True,
+                        "analytical_plan_rebuilt": True,
+                        "cached_values_forwarded": False,
+                    },
+                )
+                log.info(
+                    "Source-query fallback preserved governed parent intent "
+                    "for result %s",
+                    str(_source_result_id or "")[:16],
+                )
 
     # Unsupported cache requests continue through the governed source-query pipeline.
 
@@ -2225,7 +2286,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 _pregraph_date_roles,
             )
             _graph_ctx = _graph_resolve(
-                question=question,
+                question=_graph_resolution_question,
                 account_id=account_id,
                 db_type=db_cfg.get("db_type", "azure_sql"),
                 graph=_resolution_graph,
@@ -2306,7 +2367,18 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     # aliases (e.g. "key" against a *_DMS_KEY column). Strip it back out
     # for field-plan purposes only; the LLM-facing prompt still gets the
     # full `question` with clarification context further below.
-    _semantic_plan_question = extract_original_question(question)
+    _structured_semantic_question = ""
+    _structured_temporal_window: dict = {}
+    if isinstance(_event_raw, dict):
+        _structured_semantic_question = str(
+            _event_raw.get("_clarification_semantic_question") or ""
+        ).strip()
+        _raw_temporal_window = _event_raw.get("_clarification_temporal_window")
+        if isinstance(_raw_temporal_window, dict) and _raw_temporal_window.get("kind"):
+            _structured_temporal_window = dict(_raw_temporal_window)
+    _semantic_plan_question = (
+        _structured_semantic_question or extract_original_question(question)
+    )
 
     _semantic_plan = {}
     _source_model: dict = {}
@@ -3346,6 +3418,9 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                             "Which date context should I use?"
                         )
                 if event.user_id and _date_options:
+                    _pending_temporal_window = detect_temporal_window(
+                        _semantic_plan_question
+                    )
                     _save_pending_clarification(
                         question,
                         context_with_terms,
@@ -3358,6 +3433,11 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                                 _date_context_resolution.get("allow_free_text")
                             ),
                             "source": "metric_date_context",
+                            # Keep the visible follow-up in original_q for the
+                            # chat transcript, but persist the executable
+                            # lineage independently for the resumed compiler.
+                            "semantic_question": _semantic_plan_question,
+                            "temporal_window": _pending_temporal_window,
                         },
                     )
                 send_prompt = getattr(adapter, "send_clarification_prompt", None)
@@ -3401,12 +3481,45 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     _date_plan = build_contextual_date_plan_many(
                         _date_context_resolution.get("bindings") or [],
                         _semantic_plan_question,
+                        temporal_window=_structured_temporal_window,
                     )
                 else:
                     _date_plan = build_contextual_date_plan(
                         _date_context_resolution.get("binding") or {},
                         _semantic_plan_question,
+                        temporal_window=_structured_temporal_window,
                     )
+                _expected_temporal_window = (
+                    _structured_temporal_window
+                    or detect_temporal_window(_semantic_plan_question)
+                )
+                if (
+                    _expected_temporal_window
+                    and _date_plan.get("enabled")
+                    and not _date_plan.get("temporal_policies")
+                ):
+                    # Fail closed instead of running an unbounded query when a
+                    # known user window cannot be compiled into the date plan.
+                    log.error(
+                        "Temporal constraint lost before date-plan merge for %s: %s",
+                        account_id,
+                        _expected_temporal_window,
+                    )
+                    await adapter.send_message(
+                        event,
+                        "I retained your requested time period, but could not "
+                        "safely apply it to the selected business date. No "
+                        "unbounded query was run. Please choose another date "
+                        "context or ask your administrator to review this Date Role.",
+                    )
+                    _trace_finish(
+                        trace_id,
+                        status="error",
+                        answer_type="temporal_plan_error",
+                        error_message="Temporal window was not compiled into the date plan",
+                        duration_ms=int(time.time() * 1000) - start_ms,
+                    )
+                    return
                 if _date_plan.get("enabled"):
                     _source_scope_before_date_merge = dict(
                         (_semantic_plan or {}).get("source_scope") or {}
@@ -3629,7 +3742,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 _full_graph, _selected_date_bindings,
             )
             _aligned_graph_ctx = _graph_resolve(
-                question=_semantic_plan_question,
+                question=_graph_resolution_question,
                 account_id=account_id,
                 db_type=db_cfg.get("db_type", "azure_sql"),
                 graph=_aligned_graph,
@@ -3639,6 +3752,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 authoritative_fact_tables=set(
                     _planner_alignment.get("authoritative_fact_tables") or []
                 ),
+                selected_edge_ids=_confirmed_join_path.get("edge_ids") or [],
             )
             if _aligned_graph_ctx.get("enabled"):
                 _graph_ctx = _aligned_graph_ctx
@@ -3657,6 +3771,82 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 _planner_alignment.get("dropped_date_entities") or [],
                 _planner_alignment.get("dropped_fact_entities") or [],
             )
+
+        if (
+            _graph_ctx.get("planning_status") == "clarification_required"
+            and _graph_ctx.get("clarification_options")
+            and can_request_clarification(event, "graph_join_path")
+        ):
+            _join_options = list(_graph_ctx.get("clarification_options") or [])[:5]
+            _join_question = (
+                "I found more than one equally governed relationship path for "
+                "this analysis. Which business relationship should I use?"
+            )
+            _save_pending_clarification(
+                _semantic_plan_question,
+                context_with_terms,
+                {
+                    "source": "graph_join_path",
+                    "question": _join_question,
+                    "options": _join_options,
+                },
+            )
+            _send_join_prompt = getattr(adapter, "send_clarification_prompt", None)
+            if callable(_send_join_prompt):
+                await _send_join_prompt(event, _join_question, _join_options)
+            else:
+                await adapter.send_message(
+                    event,
+                    _join_question + "\n\n" + "\n".join(
+                        f"- {option.get('label')}" for option in _join_options
+                    ),
+                )
+            _trace_finish(
+                trace_id,
+                status="success",
+                answer_type="clarification",
+                final_answer_summary=(
+                    "Requested clarification for ambiguous governed join path"
+                ),
+                duration_ms=int(time.time() * 1000) - start_ms,
+            )
+            return
+
+        if (
+            _graph_ctx.get("enabled")
+            and _graph_ctx.get("planning_status") == "blocked"
+        ):
+            _graph_reason = str(
+                _graph_ctx.get("reason")
+                or "The confirmed entity graph does not contain a safe path for every requested business entity."
+            ).strip()
+            _missing_graph_entities = list(
+                _graph_ctx.get("missing_entities") or []
+            )
+            _graph_block_message = (
+                "I couldn't build a trusted join plan for this question. "
+                + _graph_reason
+            )
+            if _missing_graph_entities:
+                _graph_block_message += (
+                    "\n\nMissing governed path for: "
+                    + ", ".join(str(name) for name in _missing_graph_entities)
+                    + "."
+                )
+            _graph_block_message += (
+                "\n\nAsk an administrator to confirm the required relationship "
+                "in the Entity Graph, then try the question again."
+            )
+            await adapter.send_message(event, _graph_block_message)
+            _trace_finish(
+                trace_id,
+                status="error",
+                answer_type="validation_error",
+                error_message=_graph_reason,
+                final_answer_summary="Blocked SQL generation because the governed join path was incomplete",
+                duration_ms=int(time.time() * 1000) - start_ms,
+            )
+            return
 
         _trace_step(
             trace_id,
@@ -4026,6 +4216,10 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     # single approved expression metric plus a single approved rolling Date
     # Role already determines the complete query; an LLM should not be asked
     # to rediscover those physical choices.
+    _effective_temporal_window = (
+        dict(_structured_temporal_window)
+        or detect_temporal_window(_semantic_plan_question)
+    )
     _generation_semantic_context = {
         "intent": query_intent,
         "top_n": top_n_intent.to_dict() if top_n_intent else None,
@@ -4038,7 +4232,37 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         "resolution_plan": _resolution_plan,
         "planner_alignment": _planner_alignment,
         "analytical_request_plan": _analytical_request_plan,
+        # Keep the request-level window beside the compiled semantic plan.
+        # This is deliberately redundant: it lets cache eligibility fail
+        # closed if a future plan merge ever drops the temporal policy.
+        "temporal_window": _effective_temporal_window,
     }
+    if (
+        _effective_temporal_window
+        and not list((_semantic_plan or {}).get("temporal_policies") or [])
+    ):
+        log.error(
+            "Temporal request reached SQL generation without a compiled policy "
+            "for %s: window=%s semantic_question=%r",
+            account_id,
+            _effective_temporal_window,
+            _semantic_plan_question[:160],
+        )
+        _trace_finish(
+            trace_id,
+            status="error",
+            answer_type="temporal_plan_error",
+            error_message="Effective temporal window missing from semantic contract",
+            duration_ms=int(time.time() * 1000) - start_ms,
+        )
+        await adapter.send_message(
+            event,
+            "I retained your requested time period, but could not compile it "
+            "into the selected business-date contract. I did not run an "
+            "unbounded query. Please retry the request; if it persists, ask "
+            "an administrator to review the applicable Date Role.",
+        )
+        return
     try:
         _compiled_governed_sql = compile_governed_temporal_metric_sql(
             db_cfg["db_type"],
@@ -4089,6 +4313,34 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             _reused_plan.get("trace_id"), account_id,
         )
         _reused_plan = None
+    if _reused_plan:
+        _reuse_staleness_code = reused_plan_semantic_staleness_code(
+            str(_reused_plan.get("sql_generated") or ""),
+            all_known,
+            db_cfg["db_type"],
+            query_scope_tables,
+            all_columns,
+            _generation_semantic_context,
+            _effective_temporal_window,
+        )
+        if _reuse_staleness_code:
+            log.info(
+                "Discarding reusable SQL plan trace=%s for %s: current semantic "
+                "contract validation failed with %s - falling through to fresh "
+                "governed generation.",
+                _reused_plan.get("trace_id"), account_id, _reuse_staleness_code,
+            )
+            _trace_step(
+                trace_id,
+                "discard_stale_reused_sql_plan",
+                input_summary={
+                    "source_trace_id": _reused_plan.get("trace_id"),
+                    "source_query_log_id": _reused_plan.get("query_log_id"),
+                },
+                output_summary={"validation_code": _reuse_staleness_code},
+                metadata={"reason": "current_semantic_contract_mismatch"},
+            )
+            _reused_plan = None
     try:
         if _compiled_governed_sql:
             await _send_live_stage(
@@ -4416,7 +4668,9 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     #   * access_denied — the user genuinely lacks permission; we need the
     #                     admin to intervene, not a different SQL.
     #   * ddl / cannot_generate — already terminal.
-    # Only the currently-failing query is retried — a single attempt, never a loop.
+    # Only the currently-failing query is repaired. A first repair is always
+    # bounded, and one additional attempt is admitted later only when the
+    # validator reason code changes (proof that the first repair progressed).
     rows        = None
     exec_error  = None
     last_reason = ""
@@ -4645,6 +4899,22 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         rows = None
         ok = False
 
+    _sql_repair_reason_codes = {
+        "unknown_table", "unknown_column", "date_key_format", "dialect_mismatch",
+        "production_shape", "period_comparison_shape", "composition_shape",
+        "anti_join_shape", "fanout_aggregate", "top_n_shape", "graph_plan_mismatch",
+        "field_plan_mismatch", "metric_formula_mismatch", "null_aggregate_diagnostic",
+        "parse", "multi_statement", "not_select", "reused_plan_empty",
+        "zero_row_fresh", "surrogate_date_conversion", "temporal_anchor_missing",
+        "temporal_anchor_mismatch", "temporal_role_mismatch",
+        "temporal_anchor_unscoped", "observed_period_shape", "source_fact_mismatch",
+    }
+    _initial_repair_code = str(last_code or code or "").strip().casefold()
+    _repair_reason_codes_seen = {_initial_repair_code} if _initial_repair_code else set()
+    _llm_repair_attempts = 0
+    # Keep the explicit tuple on this assignment for the established wiring
+    # guards that audit newly-added validator codes. The normalized set above
+    # is reused by the progressive-repair gate below.
     retryable = (not ok and (last_code or code) in ("unknown_table", "unknown_column", "date_key_format", "dialect_mismatch", "production_shape", "period_comparison_shape", "composition_shape", "anti_join_shape", "fanout_aggregate", "top_n_shape", "graph_plan_mismatch", "field_plan_mismatch", "metric_formula_mismatch", "null_aggregate_diagnostic", "parse", "multi_statement", "not_select", "reused_plan_empty", "zero_row_fresh", "surrogate_date_conversion", "temporal_anchor_missing", "temporal_anchor_mismatch", "temporal_role_mismatch", "temporal_anchor_unscoped", "observed_period_shape", "source_fact_mismatch")) or (exec_error is not None)
 
     if retryable:
@@ -4956,6 +5226,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         try:
             await _send_live_stage(adapter, event, "repairing_query", "Repairing query", "Fixing a validation or execution issue before retrying.")
             _retry_llm_t0 = time.time()
+            _llm_repair_attempts += 1
             with llm_audit_scope(
                 account_id=account_id,
                 question=question,
@@ -4979,7 +5250,9 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 )
             # Retry timings accumulate onto the same buckets as the first
             # attempt (bucket aggregation sums by step_name), not separate rows.
-            _trace_step(trace_id, "llm_generate_sql", output_summary={"retry": True}, duration_ms=int((time.time() - _retry_llm_t0) * 1000))
+            _trace_step(trace_id, "llm_generate_sql", output_summary={"retry": True},
+                        metadata={"repair_attempt": _llm_repair_attempts},
+                        duration_ms=int((time.time() - _retry_llm_t0) * 1000))
             if sql_retry.startswith("```"):
                 sql_retry = "\n".join(sql_retry.split("\n")[1:]).rsplit("```", 1)[0].strip()
 
@@ -5038,6 +5311,173 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         except Exception as retry_err:
             log.warning("Retry LLM call failed for %s: %s",
                         account_id, str(retry_err)[:100])
+
+    # A first repair can legitimately clear one validator layer and expose a
+    # different one (for example graph_plan_mismatch -> field_plan_mismatch).
+    # Permit one more code-directed attempt only when the reason code changed;
+    # the same code twice is a non-progress loop and remains terminal.
+    _progressive_repair_allowed = bool(
+        not ok
+        and exec_error is None
+        and (last_code or "") in _sql_repair_reason_codes
+        and allow_progressive_sql_repair(
+            _repair_reason_codes_seen,
+            last_code,
+            _llm_repair_attempts,
+            max_attempts=2,
+        )
+    )
+    if _progressive_repair_allowed:
+        _prior_repair_code = next(iter(_repair_reason_codes_seen), "validation_error")
+        _repair_reason_codes_seen.add(str(last_code or "").strip().casefold())
+        _progressive_user = (
+            "The previous repair made progress but exposed a different validation failure.\n"
+            f"Previous failure code: {_prior_repair_code}\n"
+            f"Current failure code: {last_code}\n"
+            f"Current validation reason: {last_reason}\n"
+            f"Current SQL: {sql_retry}\n\n"
+            f"Original question: {question}\n\n"
+            "Fix only the current failure while preserving the corrections already made. "
+            "Follow the executable analytical request plan, approved metric formulas, exact "
+            "date-role contract, and entity-graph joins in the system prompt. Return one "
+            "complete SQL SELECT statement and no explanation."
+        )
+        try:
+            await _send_live_stage(
+                adapter,
+                event,
+                "repairing_query",
+                "Completing query repair",
+                "The first correction exposed another validation issue; applying one bounded follow-up repair.",
+            )
+            _progressive_t0 = time.time()
+            _llm_repair_attempts += 1
+            with llm_audit_scope(
+                account_id=account_id,
+                question=question,
+                enabled=audit_enabled,
+                request_id=audit_request_id,
+                question_id=audit_request_id,
+                component="sql_repair_progressive",
+            ):
+                _progressive_sql, _, _ = await llm_complete(
+                    build_sql_system_prompt(
+                        db_cfg["db_type"],
+                        context_with_terms,
+                        graph_context=_graph_ctx or None,
+                        semantic_plan=_retry_plan,
+                    ),
+                    _progressive_user,
+                    provider,
+                    model,
+                    api_key,
+                    temperature=0.0,
+                    max_tokens=_sql_repair_max_tokens,
+                    **az_kwargs,
+                )
+            _trace_step(
+                trace_id,
+                "llm_generate_sql",
+                output_summary={"retry": True, "repair_attempt": _llm_repair_attempts},
+                duration_ms=int((time.time() - _progressive_t0) * 1000),
+            )
+            if _progressive_sql.startswith("```"):
+                _progressive_sql = "\n".join(_progressive_sql.split("\n")[1:]).rsplit("```", 1)[0].strip()
+            _progressive_sql = _inject_distinct_if_needed(_progressive_sql, question)
+            _progressive_sql = normalize_generated_sql(_progressive_sql, db_cfg["db_type"])
+
+            if "CANNOT_GENERATE" not in _progressive_sql.upper() and len(_progressive_sql) > 10:
+                _progressive_validate_t0 = time.time()
+                _progressive_ok, _progressive_reason, _progressive_code = validate_sql(
+                    _progressive_sql,
+                    all_known,
+                    db_cfg["db_type"],
+                    query_scope_tables,
+                    all_columns,
+                    _retry_semantic_context,
+                )
+                _trace_step(
+                    trace_id,
+                    "validate_sql",
+                    input_summary=_progressive_sql,
+                    output_summary=_progressive_reason,
+                    status="success" if _progressive_ok else "error",
+                    metadata={
+                        "code": _progressive_code,
+                        "retry": True,
+                        "repair_attempt": _llm_repair_attempts,
+                    },
+                    duration_ms=int((time.time() - _progressive_validate_t0) * 1000),
+                )
+                if _progressive_ok:
+                    _progressive_exec_t0 = time.time()
+                    try:
+                        await _send_live_stage(
+                            adapter,
+                            event,
+                            "executing_query",
+                            "Retrying query",
+                            "Running the corrected query against your data.",
+                        )
+                        _loop = asyncio.get_running_loop()
+                        governed = await asyncio.wait_for(
+                            _loop.run_in_executor(
+                                None,
+                                _execute_with_policy,
+                                _progressive_sql,
+                                _retry_semantic_context,
+                            ),
+                            timeout=180.0,
+                        )
+                        rows = governed.rows
+                        sql = governed.sql
+                        exec_error = None
+                        ok, last_reason, last_code = True, "OK", "ok"
+                        retry_count = _llm_repair_attempts
+                        log.info(
+                            "Progressive repair succeeded for %s after %d attempts",
+                            account_id,
+                            _llm_repair_attempts,
+                        )
+                        _trace_step(
+                            trace_id,
+                            "execute_sql",
+                            input_summary=sql,
+                            output_summary={
+                                "rows": len(rows),
+                                "retry": True,
+                                "repair_attempt": _llm_repair_attempts,
+                            },
+                            duration_ms=int((time.time() - _progressive_exec_t0) * 1000),
+                        )
+                    except asyncio.TimeoutError:
+                        exec_error = "Progressive repair query timed out after 3 minutes."
+                        log.warning("Progressive repair query timed out for %s", account_id)
+                    except PolicyDeniedError as policy_error:
+                        exec_error = None
+                        ok = False
+                        last_reason = policy_error.decision.explanation or "Blocked by regulated data policy."
+                        last_code = policy_error.decision.reason_code
+                    except Exception as progressive_exec_err:
+                        exec_error = str(progressive_exec_err)
+                        log.warning(
+                            "Progressive repair execution failed for %s: %s",
+                            account_id,
+                            exec_error[:100],
+                        )
+                else:
+                    last_reason, last_code = _progressive_reason, _progressive_code
+                    log.warning(
+                        "Progressive repair still invalid for %s: %s",
+                        account_id,
+                        _progressive_reason[:120],
+                    )
+        except Exception as progressive_repair_err:
+            log.warning(
+                "Progressive repair LLM call failed for %s: %s",
+                account_id,
+                str(progressive_repair_err)[:100],
+            )
 
     # ── Terminal failure handling ────────────────────────────────────────────
     # Raw reasons/errors stay in query_log + answer_trace (audit unchanged);

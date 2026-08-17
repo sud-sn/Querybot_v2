@@ -329,5 +329,117 @@ class ReusedPlanStalenessGuardTests(unittest.TestCase):
         self.assertFalse(self._stale("not even sql {{{"))
 
 
+class ReusedPlanSemanticContractGuardTests(unittest.TestCase):
+    TABLE = "QBOT_LIVE_TEST.F_SALES_INVOICE"
+    DATE_TABLE = "QBOT_LIVE_TEST.D_DATE"
+    COLUMNS = {
+        TABLE: {
+            "INVOICE_DATE_SK": "int",
+            "NET_REVENUE_AMOUNT": "decimal",
+        },
+        DATE_TABLE: {
+            "DATE_SK": "int",
+            "FULL_DATE": "date",
+        },
+    }
+    PLAN = {
+        "enabled": True,
+        "fields": [],
+        "joins": [],
+        "required_tables": [],
+        "temporal_policies": [{
+            "kind": "last_n",
+            "amount": 5,
+            "unit": "day",
+            "anchor_policy": "latest_available",
+            "fact_table": TABLE,
+            "fact_column": "INVOICE_DATE_SK",
+            "date_table": DATE_TABLE,
+            "date_column": "FULL_DATE",
+            "dimension_table": DATE_TABLE,
+            "dimension_key": "DATE_SK",
+            "date_key_type": "surrogate_fk",
+            "business_role": "invoice_date",
+        }],
+    }
+
+    def _code(self, sql):
+        from core.pipeline_helpers import reused_plan_semantic_staleness_code
+        return reused_plan_semantic_staleness_code(
+            sql,
+            set(self.COLUMNS),
+            "azure_sql",
+            set(self.COLUMNS),
+            self.COLUMNS,
+            {"semantic_plan": self.PLAN},
+            {
+                "kind": "last_n",
+                "amount": 5,
+                "unit": "day",
+                "anchor_policy": "latest_available",
+            },
+        )
+
+    def test_unbounded_daily_plan_is_stale_for_current_five_day_contract(self):
+        sql = (
+            "SELECT d.FULL_DATE, SUM(f.NET_REVENUE_AMOUNT) AS DAILY_REVENUE "
+            "FROM QBOT_LIVE_TEST.F_SALES_INVOICE f "
+            "JOIN QBOT_LIVE_TEST.D_DATE d ON f.INVOICE_DATE_SK = d.DATE_SK "
+            "GROUP BY d.FULL_DATE"
+        )
+        self.assertEqual(self._code(sql), "temporal_anchor_missing")
+
+    def test_current_five_day_plan_remains_reusable(self):
+        sql = (
+            "WITH anchor AS ("
+            "SELECT MAX(d.FULL_DATE) AS max_business_date "
+            "FROM QBOT_LIVE_TEST.F_SALES_INVOICE f "
+            "JOIN QBOT_LIVE_TEST.D_DATE d ON f.INVOICE_DATE_SK = d.DATE_SK) "
+            "SELECT d.FULL_DATE, SUM(f.NET_REVENUE_AMOUNT) AS DAILY_REVENUE "
+            "FROM QBOT_LIVE_TEST.F_SALES_INVOICE f "
+            "JOIN QBOT_LIVE_TEST.D_DATE d ON f.INVOICE_DATE_SK = d.DATE_SK "
+            "CROSS JOIN anchor a "
+            "WHERE d.FULL_DATE > DATEADD(day, -5, a.max_business_date) "
+            "AND d.FULL_DATE <= a.max_business_date "
+            "GROUP BY d.FULL_DATE"
+        )
+        self.assertEqual(self._code(sql), "")
+
+    def test_temporal_reuse_fails_closed_when_plan_merge_lost_policy(self):
+        from core.pipeline_helpers import reused_plan_semantic_staleness_code
+
+        code = reused_plan_semantic_staleness_code(
+            "SELECT d.FULL_DATE, SUM(f.NET_REVENUE_AMOUNT) "
+            "FROM QBOT_LIVE_TEST.F_SALES_INVOICE f "
+            "JOIN QBOT_LIVE_TEST.D_DATE d ON f.INVOICE_DATE_SK = d.DATE_SK "
+            "GROUP BY d.FULL_DATE",
+            set(self.COLUMNS),
+            "azure_sql",
+            set(self.COLUMNS),
+            self.COLUMNS,
+            {"semantic_plan": {"enabled": True, "temporal_policies": []}},
+            {"kind": "last_n", "amount": 5, "unit": "day"},
+        )
+
+        self.assertEqual(code, "current_temporal_policy_missing")
+
+    def test_reuse_gate_is_wired_before_plan_selection(self):
+        from pathlib import Path
+
+        source = Path("core/query_pipeline.py").read_text(encoding="utf-8")
+        guard = source.index("_reuse_staleness_code = reused_plan_semantic_staleness_code")
+        selection = source.index("elif _reused_plan:", guard)
+        self.assertLess(guard, selection)
+
+    def test_pipeline_passes_effective_window_to_cache_guard(self):
+        from pathlib import Path
+
+        source = Path("core/query_pipeline.py").read_text(encoding="utf-8")
+        self.assertIn('"temporal_window": _effective_temporal_window', source)
+        self.assertIn(
+            "_generation_semantic_context,\n            _effective_temporal_window,",
+            source,
+        )
+
 if __name__ == "__main__":
     unittest.main()

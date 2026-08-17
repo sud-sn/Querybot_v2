@@ -44,6 +44,29 @@ class CoverageGap:
     requested_days: int
     actual_days: int
     message: str
+    metric_active_days: int | None = None
+
+
+def _safe_metric_formula(value: object) -> str:
+    """Return a safe approved aggregate expression for coverage probing.
+
+    Metric formulas have already passed the Metric Registry validator.  This
+    extra, deliberately conservative gate keeps the best-effort diagnostic
+    query from accepting query-shaped SQL or non-aggregate row expressions.
+    Complex or qualified formulas simply fall back to row-date coverage.
+    """
+    formula = str(value or "").strip().rstrip(";")
+    if not formula:
+        return ""
+    if re.search(r";|--|/\*|\*/|\b(?:select|from|with|insert|update|delete|merge|drop|alter|create)\b", formula, re.I):
+        return ""
+    if not re.search(r"\b(?:sum|avg|min|max|count)\s*\(", formula, re.I):
+        return ""
+    # Table-qualified formulas need the registry's full join/alias plan and
+    # cannot safely be transplanted into this small diagnostic query.
+    if re.search(r"(?:\]|\"|`|[A-Za-z0-9_$])\s*\.\s*(?:\[|\"|`|[A-Za-z_$])", formula):
+        return ""
+    return formula
 
 
 def _window_to_days(amount, unit) -> int:
@@ -89,6 +112,7 @@ def check_date_coverage(
     policy: dict,
     db_type: str,
     metric_name: str = "",
+    metric_formula: str = "",
 ) -> CoverageGap | None:
     """Compare the requested window (``policy['amount']``/``policy['unit']``)
     against how many distinct calendar days actually have data in that
@@ -142,24 +166,61 @@ def check_date_coverage(
         window_start = anchor_date - timedelta(days=requested_days - 1)
         start_iso, end_iso = window_start.isoformat(), anchor_date.isoformat()
 
+        coverage_from = ""
+        coverage_where = ""
+        coverage_date_ref = ""
         if surrogate:
             quoted_dim = _quote_table_for_count(dimension_table, db_type)
             quoted_fact = _quote_table_for_count(fact_table, db_type)
+            coverage_from = (
+                f"{quoted_dim} d JOIN {quoted_fact} f "
+                f"ON f.{fact_column} = d.{dimension_key}"
+            )
+            coverage_date_ref = f"d.{date_column}"
+            coverage_where = (
+                f"{coverage_date_ref} >= '{start_iso}' "
+                f"AND {coverage_date_ref} <= '{end_iso}'"
+            )
             coverage_sql = (
-                f"SELECT COUNT(DISTINCT d.{date_column}) AS DaysWithData "
-                f"FROM {quoted_dim} d JOIN {quoted_fact} f "
-                f"ON f.{fact_column} = d.{dimension_key} "
-                f"WHERE d.{date_column} >= '{start_iso}' AND d.{date_column} <= '{end_iso}'"
+                f"SELECT COUNT(DISTINCT {coverage_date_ref}) AS DaysWithData "
+                f"FROM {coverage_from} WHERE {coverage_where}"
             )
         else:
             quoted_table = _quote_table_for_count(date_table, db_type)
+            coverage_from = quoted_table
+            coverage_date_ref = date_column
+            coverage_where = (
+                f"{coverage_date_ref} >= '{start_iso}' "
+                f"AND {coverage_date_ref} <= '{end_iso}'"
+            )
             coverage_sql = (
-                f"SELECT COUNT(DISTINCT {date_column}) AS DaysWithData "
-                f"FROM {quoted_table} "
-                f"WHERE {date_column} >= '{start_iso}' AND {date_column} <= '{end_iso}'"
+                f"SELECT COUNT(DISTINCT {coverage_date_ref}) AS DaysWithData "
+                f"FROM {coverage_from} WHERE {coverage_where}"
             )
         actual_value = _run_scalar(credentials, db_type, coverage_sql)
         actual_days = int(actual_value) if actual_value is not None else 0
+
+        metric_active_days: int | None = None
+        approved_formula = _safe_metric_formula(metric_formula)
+        if approved_formula:
+            metric_activity_sql = (
+                "SELECT COUNT(*) AS DaysWithMetricData FROM ("
+                f"SELECT {coverage_date_ref} AS MetricDate "
+                f"FROM {coverage_from} WHERE {coverage_where} "
+                f"GROUP BY {coverage_date_ref} "
+                f"HAVING ({approved_formula}) IS NOT NULL "
+                f"AND ({approved_formula}) <> 0"
+                ") metric_activity"
+            )
+            try:
+                metric_value = _run_scalar(credentials, db_type, metric_activity_sql)
+                metric_active_days = int(metric_value) if metric_value is not None else 0
+            except Exception as exc:
+                # This extra probe is advisory.  Formula shapes that need more
+                # joins or dialect-specific handling must not erase the basic
+                # row-date coverage result that was already obtained above.
+                log.debug("Metric activity coverage skipped: %s", exc)
+                metric_active_days = None
     except Exception as exc:
         log.debug("Date coverage check skipped: %s", exc)
         return None
@@ -168,7 +229,9 @@ def check_date_coverage(
     # off-by-one tolerance here hides a real coverage gap.  Report every
     # window where fewer distinct business dates were observed than requested;
     # the result remains valid, but the user can see that the period is sparse.
-    if actual_days >= requested_days:
+    if actual_days >= requested_days and (
+        metric_active_days is None or metric_active_days >= requested_days
+    ):
         return None
 
     role = str(policy.get("business_role") or "business date").strip().lower()
@@ -184,7 +247,20 @@ def check_date_coverage(
     )
     requested_amount = int(policy.get("amount") or requested_days)
     requested_unit = str(policy.get("unit") or "day").strip().lower() or "day"
-    if requested_unit == "day":
+    if (
+        requested_unit == "day"
+        and metric_active_days is not None
+        and metric_active_days < min(actual_days, requested_days)
+    ):
+        available_label = "day" if metric_active_days == 1 else "days"
+        metric_label = str(metric_name).strip() or "The selected metric"
+        message = (
+            f"You asked for the last {requested_amount} days. Records existed "
+            f"on {actual_days} {date_label}, but {metric_label} was nonzero on "
+            f"only {metric_active_days} {available_label}. The result reflects "
+            "the available metric values."
+        )
+    elif requested_unit == "day":
         available_label = "day" if actual_days == 1 else "days"
         message = (
             f"You asked for the last {requested_amount} days, but "
@@ -203,4 +279,5 @@ def check_date_coverage(
         requested_days=requested_days,
         actual_days=actual_days,
         message=message,
+        metric_active_days=metric_active_days,
     )

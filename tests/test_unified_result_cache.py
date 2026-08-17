@@ -2,7 +2,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
-from core.governed_result_followup import adopt_cached_snapshot, run_governed_result_followup
+from core.governed_result_followup import (
+    adopt_cached_snapshot,
+    contextualize_source_query_fallback,
+    run_governed_result_followup,
+)
 from core.result_cache import ResultCache
 
 
@@ -23,6 +27,38 @@ class GovernedResultFollowupTests(unittest.IsolatedAsyncioTestCase):
             "SELECT protected source query",
             column_formats={"REVENUE": "currency"},
         )
+
+    def test_source_requery_uses_root_question_across_result_lineage(self):
+        source_id = self.cache.store(
+            self.session_id,
+            [{"REVENUE": 580.0}],
+            "What was revenue for the last 5 days?",
+            "SELECT SUM(REVENUE) FROM governed_sales",
+        )
+        child = self.cache.derive_snapshot(
+            self.session_id,
+            source_id,
+            [{"REVENUE": "$580.00"}],
+            question="Format this as currency",
+            operation="format",
+        )
+
+        contextualized = contextualize_source_query_fallback(
+            "Provide the trend for each day",
+            self.session_id,
+            source_result_id=child["result_id"],
+            cache=self.cache,
+        )
+
+        from core.clarification import extract_display_question, extract_original_question
+        self.assertEqual(
+            extract_display_question(contextualized),
+            "Provide the trend for each day",
+        )
+        semantic_question = extract_original_question(contextualized)
+        self.assertIn("revenue", semantic_question.lower())
+        self.assertIn("last 5 days", semantic_question.lower())
+        self.assertIn("trend for each day", semantic_question.lower())
 
     async def test_explicit_command_executes_without_model(self):
         called = False

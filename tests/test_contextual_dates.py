@@ -222,6 +222,82 @@ class ContextualDateResolutionTests(unittest.TestCase):
             "single_approved_date_role",
         )
 
+    def test_available_dates_is_unbounded_scope_not_date_role_ambiguity(self):
+        metric = {
+            **self.metric,
+            "default_time_column": "INVOICE_DATE_KEY",
+        }
+        roles = [
+            {
+                "name": "Invoice Date",
+                "business_role": "invoice_date",
+                "fact_table": "SALES.FACT_REVENUE",
+                "fact_column": "INVOICE_DATE_KEY",
+                "dimension_table": "SALES.DIM_DATE",
+                "dimension_key": "DATE_KEY",
+                "date_value_column": "FULL_DATE",
+                "date_key_type": "surrogate_fk",
+                "status": "approved",
+                "confidence": 100,
+            },
+            {
+                "name": "Last Modified Date",
+                "business_role": "last_modified_date",
+                "fact_table": "SALES.FACT_REVENUE",
+                "fact_column": "MODIFIED_DATE_KEY",
+                "dimension_table": "SALES.DIM_DATE",
+                "dimension_key": "DATE_KEY",
+                "date_value_column": "FULL_DATE",
+                "date_key_type": "surrogate_fk",
+                "status": "approved",
+                "confidence": 100,
+            },
+        ]
+
+        result = resolve_contextual_date_binding(
+            "what is my revenue per warehouse for the available dates",
+            matched_metrics=[metric],
+            bindings=self.bindings,
+            date_roles=roles,
+            required_fact_tables={"SALES.FACT_REVENUE"},
+        )
+
+        self.assertEqual(result["status"], "none")
+        self.assertEqual(result["scope"], "all_available")
+
+    def test_available_date_trend_still_uses_metric_default_date(self):
+        metric = {
+            **self.metric,
+            "default_time_column": "INVOICE_DATE_KEY",
+        }
+        invoice_role = {
+            "name": "Invoice Date",
+            "business_role": "invoice_date",
+            "fact_table": "SALES.FACT_REVENUE",
+            "fact_column": "INVOICE_DATE_KEY",
+            "dimension_table": "SALES.DIM_DATE",
+            "dimension_key": "DATE_KEY",
+            "date_value_column": "FULL_DATE",
+            "date_key_type": "surrogate_fk",
+            "status": "approved",
+            "confidence": 100,
+        }
+
+        result = resolve_contextual_date_binding(
+            "show my revenue trend over all available dates",
+            matched_metrics=[metric],
+            bindings=[],
+            date_roles=[invoice_role],
+            required_fact_tables={"SALES.FACT_REVENUE"},
+        )
+
+        self.assertEqual(result["status"], "selected")
+        self.assertEqual(result["binding"]["date_role"], "invoice_date")
+        self.assertEqual(
+            result["binding"]["resolution_source"],
+            "metric_default_time_column",
+        )
+
     def test_confirmed_discovered_date_is_preserved_by_physical_identity(self):
         confirmed = _binding(
             "Accounting Date",
@@ -786,6 +862,31 @@ class ContextualDateResolutionTests(unittest.TestCase):
         self.assertEqual(window["amount"], 7)
         self.assertEqual(window["unit"], "day")
         self.assertEqual(window["anchor_policy"], "latest_available")
+
+    def test_structured_window_survives_date_role_clarification_text(self):
+        binding = _binding("Invoice Date", "invoice_date", "INVOICE_DATE_SK")
+        window = {
+            "kind": "last_n",
+            "amount": 5,
+            "unit": "day",
+            "anchor_policy": "latest_available",
+        }
+
+        plan = build_contextual_date_plan(
+            binding,
+            "Invoice Date",
+            temporal_window=window,
+        )
+        self.assertEqual(plan["temporal_policies"][0]["kind"], "last_n")
+        self.assertEqual(plan["temporal_policies"][0]["amount"], 5)
+        self.assertEqual(plan["temporal_policies"][0]["unit"], "day")
+
+        combined = build_contextual_date_plan_many(
+            [binding],
+            "Invoice Date",
+            temporal_window=window,
+        )
+        self.assertEqual(combined["temporal_policies"][0]["amount"], 5)
 
     def test_rolling_window_recognizes_latest_as_synonym_for_last(self):
         # Regression: "in the latest 7 days" (a natural, common phrasing)
@@ -2325,6 +2426,45 @@ class GovernedTemporalCompilerTests(unittest.TestCase):
         self.assertIn("DATEADD(day, -7, anchor.max_business_date)", sql)
         self.assertIn("GROUP BY CAST(invoice_date.[CALENDAR_DATE] AS date)", sql)
         self.assertIn("ORDER BY PERIOD", sql)
+
+    def test_clarified_daily_trend_compiles_inherited_five_day_window(self):
+        """Regression: a date-role selection must not produce all-history SQL."""
+        columns, binding, _plan, context = self._context()
+        inherited_window = {
+            "kind": "last_n",
+            "amount": 5,
+            "unit": "day",
+            "anchor_policy": "latest_available",
+        }
+        # The visible clarification reply contains no time expression. The
+        # structured pending state is therefore the only reliable source of
+        # the parent result's five-day constraint.
+        context["question"] = "Provide the trend for each day"
+        context["semantic_plan"] = build_contextual_date_plan(
+            binding,
+            "Invoice Date",
+            temporal_window=inherited_window,
+        )
+        context["analytical_request_plan"] = {
+            "status": "compiled",
+            "intent": "trend",
+            "source_facts": ["ANALYTICS.FACT_BILLING"],
+            "output_shape": "time_series",
+        }
+
+        sql = compile_governed_temporal_metric_sql(
+            "azure_sql", set(columns), set(columns), columns, context,
+        )
+
+        self.assertTrue(sql)
+        self.assertIn("DATEADD(day, -5, anchor.max_business_date)", sql)
+        self.assertIn("invoice_date.[CALENDAR_DATE] >", sql)
+        self.assertIn("invoice_date.[CALENDAR_DATE] <= anchor.max_business_date", sql)
+        self.assertIn("GROUP BY CAST(invoice_date.[CALENDAR_DATE] AS date)", sql)
+        result = validate_sql_detailed(
+            sql, set(columns), "azure_sql", set(columns), columns, context,
+        )
+        self.assertTrue(result.ok, result.reason)
 
     def test_today_metric_uses_latest_governed_business_date(self):
         columns, binding, _plan, context = self._context()

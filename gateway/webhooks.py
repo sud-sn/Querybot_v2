@@ -25,7 +25,7 @@ from core.dispatcher import dispatch
 from core.query_pipeline import handle_query
 from core.pipeline_context import get_state, get_client_db
 from core.pipeline_trace import (
-    _log_q, _trace_create, _trace_update, _trace_step, _trace_finish,
+    _create_pin_token, _log_q, _trace_create, _trace_update, _trace_step, _trace_finish,
 )
 from core.pipeline_helpers import _extract_kb_synonym_injection
 from core.result_renderer import (
@@ -1161,6 +1161,33 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 display_formats=display_formats,
                 question_id=question_id,
             )
+            dashboard_item_type = (
+                str((chart_payload or {}).get("chart_type") or "").lower()
+                or ("kpi" if response.get("kpi") else "table")
+            )
+            source_sql = str(snapshot.get("sql") or "").strip()
+            local_db_cfg = get_client_db(account_id) or {}
+            if (
+                operation == "presentation"
+                and source_sql
+                and portal_user
+                and portal_user.get("id") is not None
+                and local_db_cfg.get("id") is not None
+            ):
+                pin_token = _create_pin_token(
+                    user_id=int(portal_user["id"]),
+                    account_id=account_id,
+                    question=source_question,
+                    sql_query=source_sql,
+                    chart_type=dashboard_item_type,
+                    db_config_id=int(local_db_cfg["id"]),
+                )
+                response["pin_token"] = pin_token
+                response["dashboard_item_type"] = dashboard_item_type
+                if chart_payload is not None:
+                    chart_payload["pin_token"] = pin_token
+                if isinstance(response.get("chart"), dict):
+                    response["chart"]["pin_token"] = pin_token
             response["result_command"] = {
                 "operation": outcome.operation,
                 "source_result_id": outcome.source_result_id,

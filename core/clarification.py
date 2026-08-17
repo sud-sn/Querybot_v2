@@ -281,6 +281,21 @@ def attach_clarification_resolution(event, pending: dict) -> None:
     raw["_clarification_resolved_sources"] = sorted(resolved)
     raw["_clarification_resolutions"] = resolutions
 
+    # A clarification reply must not be the only carrier of execution intent.
+    # In particular, a result follow-up such as "provide the trend for each
+    # day" can inherit a governed rolling window from its parent result, then
+    # pause to ask which business date to use.  Persisting only the visible
+    # option caused the resumed query to retain the date role but silently lose
+    # the rolling window.  Restore the server-authored semantic question and
+    # temporal window as structured state so every downstream compiler stage
+    # sees the same constraints, independently of prompt wording.
+    semantic_question = str(meta.get("semantic_question") or "").strip()
+    if semantic_question:
+        raw["_clarification_semantic_question"] = semantic_question
+    temporal_window = meta.get("temporal_window")
+    if isinstance(temporal_window, dict) and temporal_window.get("kind"):
+        raw["_clarification_temporal_window"] = dict(temporal_window)
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Option normalisation and matching
@@ -1666,6 +1681,43 @@ def clear_pending(
 # ══════════════════════════════════════════════════════════════════════════════
 
 _CLARIFICATION_WRAPPER_MARKER = "Clarification for the same request: "
+_RESULT_CONTEXT_MARKER = "Context from the active governed result: "
+
+
+def combine_with_result_context(parent_question: str, followup_question: str) -> str:
+    """Carry a source result's analytical request into a governed re-query.
+
+    A cached aggregate can answer local presentation operations, but it cannot
+    invent a finer grain that was not returned (for example, turning a one-row
+    five-day KPI into a daily trend).  When that happens the source-query
+    fallback needs both pieces of intent: the user's new operation and the
+    parent metric, filters, and time window.  The marker keeps this context
+    machine-readable so UI rendering can still show only the user's follow-up.
+    """
+    parent = " ".join(str(parent_question or "").split()).strip()
+    followup = " ".join(str(followup_question or "").split()).strip()
+    if (
+        not parent
+        or not followup
+        or _RESULT_CONTEXT_MARKER in str(followup_question or "")
+    ):
+        return str(followup_question or parent_question or "").strip()
+    return (
+        f"{followup}\n\n"
+        f"{_RESULT_CONTEXT_MARKER}{parent}"
+    )
+
+
+def extract_display_question(question: str) -> str:
+    """Return only the user-visible turn, excluding internal lineage context."""
+    value = str(question or "")
+    clarification_at = value.find(_CLARIFICATION_WRAPPER_MARKER)
+    if clarification_at != -1:
+        value = value[:clarification_at]
+    result_context_at = value.find(_RESULT_CONTEXT_MARKER)
+    if result_context_at != -1:
+        value = value[:result_context_at]
+    return value.strip()
 
 
 def extract_original_question(question: str) -> str:
@@ -1683,10 +1735,26 @@ def extract_original_question(question: str) -> str:
 
     Returns the input unchanged if the wrapper marker isn't present.
     """
-    marker_idx = (question or "").find(_CLARIFICATION_WRAPPER_MARKER)
+    value = str(question or "")
+    marker_idx = value.find(_CLARIFICATION_WRAPPER_MARKER)
     if marker_idx == -1:
-        return question
-    return question[:marker_idx].rstrip()
+        base = value
+    else:
+        base = value[:marker_idx].rstrip()
+
+    context_idx = base.find(_RESULT_CONTEXT_MARKER)
+    if context_idx == -1:
+        return base
+
+    followup = base[:context_idx].strip()
+    parent = base[context_idx + len(_RESULT_CONTEXT_MARKER):].strip()
+    if not parent:
+        return followup
+    if not followup:
+        return parent
+    # Deterministic planners need the inherited metric/window as well as the
+    # new requested grain.  Clarification labels remain excluded above.
+    return f"{parent}\nFollow-up request: {followup}"
 
 
 def combine_with_clarification(
