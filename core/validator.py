@@ -887,23 +887,108 @@ def _graph_plan_errors(tree, graph_context: dict | None, alias_to_table: dict[st
 
     fanout_risk_entities = set(graph.get("fanout_risk_facts") or [])
 
+    # Resolve each alias inside its OWN query scope before falling back to the
+    # flat statement-wide map. `alias_to_table` keeps one entry per alias for the
+    # whole statement, so two CTEs that each alias their own table as "f" -- the
+    # natural way to write a multi-CTE query, and a shape this codebase asks the
+    # model to produce -- collide: the last binding wins and a governed edge that
+    # IS present in the first CTE resolves against the wrong table and reads as
+    # missing. The column checker already fixed exactly this class of bug with
+    # build_scope; the join checker was still on the flat map, so correct SQL was
+    # rejected as not following the entity-graph plan.
+    scoped_alias_to_table: dict[int, dict[str, str]] = {}
+    try:
+        from sqlglot.optimizer.scope import build_scope
+
+        _root = build_scope(tree)
+        for _scope in (_root.traverse() if _root else []):
+            _local: dict[str, str] = {}
+            for _alias, _src in (_scope.sources or {}).items():
+                if not isinstance(_src, sg_exp.Table):
+                    continue  # a nested CTE reference, not a physical table
+                _local[str(_alias).upper()] = ".".join(
+                    part for part in (_src.catalog, _src.db, _src.name) if part
+                )
+            if _local:
+                scoped_alias_to_table[id(_scope.expression)] = _local
+    except Exception:
+        scoped_alias_to_table = {}
+
+    def _resolve_alias(node, alias: str) -> str:
+        """Physical table for `alias` as seen from this node's own scope."""
+        if not alias:
+            return ""
+        ancestor = node
+        while ancestor is not None:
+            local = scoped_alias_to_table.get(id(ancestor))
+            if local and alias in local:
+                return local[alias]
+            ancestor = ancestor.parent
+        return alias_to_table.get(alias, "")
+
+    def _collect(equality, join_type: str) -> None:
+        left, right = equality.left, equality.right
+        if not isinstance(left, sg_exp.Column) or not isinstance(right, sg_exp.Column):
+            return
+        left_alias = (left.table or "").upper()
+        right_alias = (right.table or "").upper()
+        actual_conditions.append({
+            "left_table": _resolve_alias(equality, left_alias),
+            "left_column": (left.name or "").upper(),
+            "right_table": _resolve_alias(equality, right_alias),
+            "right_column": (right.name or "").upper(),
+            "join_type": join_type,
+        })
+
     actual_conditions: list[dict] = []
     for join in tree.find_all(sg_exp.Join):
         side = str(join.args.get("side") or "").upper()
         kind = str(join.args.get("kind") or "").upper()
         join_type = side or kind or "INNER"
         for equality in join.find_all(sg_exp.EQ):
+            _collect(equality, join_type)
+
+    def _local_alias_table(node, alias: str) -> str:
+        """Physical table for `alias` ONLY if declared in the condition's own scope.
+
+        A correlated reference resolves through an ancestor scope, and that is
+        exactly what must not count: `WHERE f.DATE_SK = (SELECT MAX(d.DATE_SK)
+        FROM D_DATE d, D_WHS w WHERE w.WHS_SK = f.WHS_SK)` joins the subquery's
+        rows to the OUTER row, so it is machinery for computing a scalar — not a
+        join of the outer query's rows, and it must not satisfy a governed edge.
+        """
+        if not alias:
+            return ""
+        ancestor = node
+        while ancestor is not None:
+            local = scoped_alias_to_table.get(id(ancestor))
+            if local is not None:
+                return local.get(alias, "")
+            ancestor = ancestor.parent
+        return ""
+
+    # A comma join with the condition in WHERE ("FROM fact f, dim d WHERE
+    # f.key = d.key") is an INNER JOIN by any other name, and it is a shape the
+    # model produces regularly. Scanning JOIN nodes only meant those queries were
+    # rejected as missing the governed edge even though the edge was right there.
+    for where in tree.find_all(sg_exp.Where):
+        owning_select = where.parent
+        for equality in where.find_all(sg_exp.EQ):
+            if equality.find_ancestor(sg_exp.Select) is not owning_select:
+                continue
             left, right = equality.left, equality.right
             if not isinstance(left, sg_exp.Column) or not isinstance(right, sg_exp.Column):
                 continue
-            left_alias = (left.table or "").upper()
-            right_alias = (right.table or "").upper()
+            left_table = _local_alias_table(equality, (left.table or "").upper())
+            right_table = _local_alias_table(equality, (right.table or "").upper())
+            if not left_table or not right_table:
+                continue  # correlated, or an alias this scope does not declare
             actual_conditions.append({
-                "left_table": alias_to_table.get(left_alias, ""),
+                "left_table": left_table,
                 "left_column": (left.name or "").upper(),
-                "right_table": alias_to_table.get(right_alias, ""),
+                "right_table": right_table,
                 "right_column": (right.name or "").upper(),
-                "join_type": join_type,
+                "join_type": "INNER",
             })
 
     errors: list[dict] = []

@@ -4298,6 +4298,29 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         _compiled_governed_sql = ""
         log.debug("Governed rolling metric compilation skipped: %s", _compile_exc)
 
+    # The governed compilers decline by returning "" from ~90 different guard
+    # clauses, almost all of them silent. When the inputs looked compilable and
+    # nothing came back, the question quietly leaves the governed contract for
+    # free-form generation — indistinguishable in the logs from "this question
+    # was never eligible". Say so once, with the inputs, so a wrong answer can
+    # be traced to the fallback instead of being re-derived by hand.
+    if not _compiled_governed_sql:
+        _compilable_policies = list((_semantic_plan or {}).get("temporal_policies") or [])
+        _compilable_metrics = [
+            metric for metric in (_matched_metrics or [])
+            if str(metric.get("formula_type") or "query").lower() == "expression"
+        ]
+        if len(_compilable_policies) == 1 and len(_compilable_metrics) == 1:
+            log.warning(
+                "Governed compiler declined for %s despite one temporal policy "
+                "(kind=%s role=%s) and one expression metric (%s) — answering "
+                "through free-form SQL generation instead",
+                account_id,
+                _compilable_policies[0].get("kind") or "",
+                _compilable_policies[0].get("business_role") or "",
+                _compilable_metrics[0].get("name") or "",
+            )
+
     system = build_sql_system_prompt(
         db_cfg["db_type"], context_with_terms,
         conversation_history=_conv_history or None,
@@ -4938,7 +4961,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     # Keep the explicit tuple on this assignment for the established wiring
     # guards that audit newly-added validator codes. The normalized set above
     # is reused by the progressive-repair gate below.
-    retryable = (not ok and (last_code or code) in ("unknown_table", "unknown_column", "date_key_format", "dialect_mismatch", "production_shape", "period_comparison_shape", "composition_shape", "anti_join_shape", "fanout_aggregate", "top_n_shape", "graph_plan_mismatch", "field_plan_mismatch", "metric_formula_mismatch", "null_aggregate_diagnostic", "parse", "multi_statement", "not_select", "reused_plan_empty", "zero_row_fresh", "surrogate_date_conversion", "temporal_anchor_missing", "temporal_anchor_mismatch", "temporal_role_mismatch", "temporal_anchor_unscoped", "observed_period_shape", "source_fact_mismatch")) or (exec_error is not None)
+    retryable = (not ok and (last_code or code) in ("unknown_table", "unknown_column", "date_key_format", "dialect_mismatch", "production_shape", "period_comparison_shape", "composition_shape", "anti_join_shape", "fanout_aggregate", "top_n_shape", "graph_plan_mismatch", "field_plan_mismatch", "metric_formula_mismatch", "null_aggregate_diagnostic", "parse", "multi_statement", "not_select", "reused_plan_empty", "zero_row_fresh", "surrogate_date_conversion", "temporal_anchor_missing", "temporal_anchor_mismatch", "temporal_role_mismatch", "temporal_anchor_unscoped", "observed_period_shape", "source_fact_mismatch", "order_alias_mismatch")) or (exec_error is not None)
 
     # A statement timeout is not a defect in the SQL, so there is nothing for a
     # repair to fix. Rewriting it cannot make the database faster: the retry

@@ -409,6 +409,15 @@ _VALIDATION_REASONS: dict[str, str] = {
     "temporal_anchor_mismatch": "The generated query anchored the relative time period on the wrong date column.",
     "temporal_role_mismatch": "The generated query used a different date than the approved default date for this data.",
     "temporal_anchor_unscoped": "The generated query calculated the relative time period from the full date calendar instead of your actual data, which can include dates with no records yet.",
+    # These five had no business-facing translation, so the raw developer
+    # message reached the user. The live example was source_fact_mismatch,
+    # which showed a business user "The compiled analytical plan requires
+    # EMDW_DMART.CUS_ORD_IVC_FCT as measure fact source(s), but the SQL scans ...".
+    "source_fact_mismatch": "The generated query measured the amount from a different business dataset than the one this question resolved to.",
+    "raw_fact_to_fact_join": "The generated query joined two business event tables directly, which would multiply the totals.",
+    "fanout_aggregate": "The generated query could count the same rows more than once, which would overstate the totals.",
+    "derived_measure_mismatch": "The generated query did not calculate this metric the way its approved definition requires.",
+    "locking_select": "The generated query asked the database for a lock, which read-only questions are not allowed to do.",
 }
 
 _VALIDATION_NEXT_STEPS: dict[str, str] = {
@@ -424,6 +433,12 @@ _VALIDATION_NEXT_STEPS: dict[str, str] = {
     "temporal_anchor_mismatch": "Try asking again; if it keeps failing, ask your administrator to check the Date Roles setup for this table.",
     "temporal_role_mismatch": "Name the date you mean explicitly (e.g. 'by dispense date'), or ask your administrator to change the default date role.",
     "temporal_anchor_unscoped": "Try asking again; if it keeps failing, ask your administrator to check the Date Roles setup for this table.",
+    "source_fact_mismatch": "Name the business dataset you mean (for example 'from purchase order receipts'), or ask your administrator to review which dataset this metric and these business terms belong to.",
+    "raw_fact_to_fact_join": "Ask about one business event at a time, or ask your administrator to approve a relationship path between these two tables in the Entity Graph.",
+    "fanout_aggregate": "Try asking for one breakdown at a time. If it keeps failing, ask your administrator to review the relationship cardinality in the Entity Graph.",
+    "derived_measure_mismatch": "Ask your administrator to review this metric's approved formula in the Semantic Layer.",
+    "locking_select": "Ask the question again without any wording that implies changing or locking data.",
+    "order_alias_mismatch": "Try asking again; this is usually a transient generation slip.",
 }
 _DEFAULT_VALIDATION_NEXT_STEP = (
     "Try naming the metric and the breakdown explicitly (e.g. 'total revenue by customer'). "
