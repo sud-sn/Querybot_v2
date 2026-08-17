@@ -222,6 +222,82 @@ class ContextualDateResolutionTests(unittest.TestCase):
             "single_approved_date_role",
         )
 
+    def test_available_dates_is_unbounded_scope_not_date_role_ambiguity(self):
+        metric = {
+            **self.metric,
+            "default_time_column": "INVOICE_DATE_KEY",
+        }
+        roles = [
+            {
+                "name": "Invoice Date",
+                "business_role": "invoice_date",
+                "fact_table": "SALES.FACT_REVENUE",
+                "fact_column": "INVOICE_DATE_KEY",
+                "dimension_table": "SALES.DIM_DATE",
+                "dimension_key": "DATE_KEY",
+                "date_value_column": "FULL_DATE",
+                "date_key_type": "surrogate_fk",
+                "status": "approved",
+                "confidence": 100,
+            },
+            {
+                "name": "Last Modified Date",
+                "business_role": "last_modified_date",
+                "fact_table": "SALES.FACT_REVENUE",
+                "fact_column": "MODIFIED_DATE_KEY",
+                "dimension_table": "SALES.DIM_DATE",
+                "dimension_key": "DATE_KEY",
+                "date_value_column": "FULL_DATE",
+                "date_key_type": "surrogate_fk",
+                "status": "approved",
+                "confidence": 100,
+            },
+        ]
+
+        result = resolve_contextual_date_binding(
+            "what is my revenue per warehouse for the available dates",
+            matched_metrics=[metric],
+            bindings=self.bindings,
+            date_roles=roles,
+            required_fact_tables={"SALES.FACT_REVENUE"},
+        )
+
+        self.assertEqual(result["status"], "none")
+        self.assertEqual(result["scope"], "all_available")
+
+    def test_available_date_trend_still_uses_metric_default_date(self):
+        metric = {
+            **self.metric,
+            "default_time_column": "INVOICE_DATE_KEY",
+        }
+        invoice_role = {
+            "name": "Invoice Date",
+            "business_role": "invoice_date",
+            "fact_table": "SALES.FACT_REVENUE",
+            "fact_column": "INVOICE_DATE_KEY",
+            "dimension_table": "SALES.DIM_DATE",
+            "dimension_key": "DATE_KEY",
+            "date_value_column": "FULL_DATE",
+            "date_key_type": "surrogate_fk",
+            "status": "approved",
+            "confidence": 100,
+        }
+
+        result = resolve_contextual_date_binding(
+            "show my revenue trend over all available dates",
+            matched_metrics=[metric],
+            bindings=[],
+            date_roles=[invoice_role],
+            required_fact_tables={"SALES.FACT_REVENUE"},
+        )
+
+        self.assertEqual(result["status"], "selected")
+        self.assertEqual(result["binding"]["date_role"], "invoice_date")
+        self.assertEqual(
+            result["binding"]["resolution_source"],
+            "metric_default_time_column",
+        )
+
     def test_confirmed_discovered_date_is_preserved_by_physical_identity(self):
         confirmed = _binding(
             "Accounting Date",

@@ -25,3 +25,4 @@ def test_ambiguous_graph_path_is_persisted_as_resumable_clarification():
     assert 'selected_clarification_option(event, "graph_join_path")' in PIPELINE_SOURCE
     assert '"source": "graph_join_path"' in PIPELINE_SOURCE
     assert 'can_request_clarification(event, "graph_join_path")' in PIPELINE_SOURCE
+    assert 'selected_edge_ids=_confirmed_join_path.get("edge_ids") or []' in PIPELINE_SOURCE

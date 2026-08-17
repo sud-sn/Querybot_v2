@@ -3400,6 +3400,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 authoritative_fact_tables=set(
                     _planner_alignment.get("authoritative_fact_tables") or []
                 ),
+                selected_edge_ids=_confirmed_join_path.get("edge_ids") or [],
             )
             if _aligned_graph_ctx.get("enabled"):
                 _graph_ctx = _aligned_graph_ctx

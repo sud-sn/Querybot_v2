@@ -19,6 +19,37 @@ log = logging.getLogger(__name__)
 _GRAIN_ORDER = {"day": 1, "week": 2, "month": 3, "quarter": 4, "year": 5}
 
 
+def _question_requests_unbounded_available_scope(question: str) -> bool:
+    """Return whether the user asked for all observed data, not a date role.
+
+    Phrases such as ``for the available dates`` describe the requested data
+    scope.  They do not identify a business event date (invoice, order,
+    delivery, and so on).  Treating the bare word ``dates`` as a role request
+    caused otherwise unbounded metric questions to ask users to choose among
+    every date role on the fact.
+
+    A real temporal breakdown remains governed: ``trend over all available
+    dates`` and ``revenue by month for available history`` still need the
+    metric's approved/default date binding.
+    """
+    normalized = normalize_date_role_text(question)
+    if not normalized:
+        return False
+    available_scope = bool(re.search(
+        r"\b(?:all\s+)?available\s+(?:dates?|history|data|records?|periods?)\b",
+        normalized,
+    ))
+    if not available_scope:
+        return False
+    temporal_breakdown = bool(re.search(
+        r"\b(?:trend|timeline|daily|weekly|monthly|quarterly|yearly)\b"
+        r"|\b(?:by|per|each)\s+(?:date|day|week|month|quarter|year)\b"
+        r"|\bover\s+time\b",
+        normalized,
+    ))
+    return not temporal_breakdown
+
+
 def requested_temporal_grain(question: str) -> str:
     """Return the finest grain explicitly requested by the user."""
     window = detect_temporal_window(question)
@@ -835,6 +866,18 @@ def resolve_contextual_date_binding(
                 )
                 for role in explicit
             ],
+        }
+
+    # "Available dates/history" is an unbounded data-scope instruction, not
+    # a request to choose one of the fact's role-playing dates.  No date join
+    # or filter is required when the user is grouping by another dimension
+    # (for example, revenue per warehouse).  Explicit role wording above and
+    # real temporal breakdowns are deliberately unaffected.
+    if _question_requests_unbounded_available_scope(question):
+        return {
+            "status": "none",
+            "reason": "all available data requested; no date filter is required",
+            "scope": "all_available",
         }
 
     scored = [(_binding_score(question, item), item) for item in candidates]

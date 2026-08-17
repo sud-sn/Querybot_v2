@@ -32,6 +32,7 @@ import logging
 from typing import Optional
 
 from core.date_roles import question_has_temporal_intent, relationship_matches_date_role
+from core.relationship_identity import physical_relationship_signature
 
 log = logging.getLogger("querybot.graph_resolver")
 
@@ -562,15 +563,33 @@ def _edge_weight(rel: dict) -> float:
 
 
 def _path_identity(path: list[dict]) -> tuple:
-    return tuple(
-        edge.get("id")
-        or edge.get("relationship_key")
-        or (
-            edge.get("from_entity"), edge.get("to_entity"),
-            edge.get("from_column"), edge.get("to_column"),
-        )
-        for edge in path
-    )
+    """Canonical physical identity, independent of persisted row IDs.
+
+    Schema discovery and Date Role promotion can represent the same physical
+    FK more than once with different database IDs.  IDs are useful for
+    replaying a selected option, but they must not make one logical join look
+    like two equally governed paths.
+    """
+    return tuple(physical_relationship_signature(edge) for edge in path)
+
+
+def _edge_selection_id(edge: dict):
+    """Stable JSON-safe identifier used to resume a real path choice."""
+    if edge.get("id") is not None:
+        return edge.get("id")
+    if edge.get("relationship_key"):
+        return edge.get("relationship_key")
+    return repr(physical_relationship_signature(edge))
+
+
+def _path_selection_ids(path: list[dict]) -> list:
+    return [_edge_selection_id(edge) for edge in path]
+
+
+def _selected_path_matches(path: list[dict], selected_edge_ids) -> bool:
+    selected = [str(value) for value in (selected_edge_ids or []) if value is not None]
+    actual = [str(value) for value in _path_selection_ids(path)]
+    return bool(selected) and selected == actual
 
 
 def _path_label(path: list[dict]) -> str:
@@ -599,6 +618,20 @@ def _question_edge_weight(edge: dict, question: str) -> float:
         for phrase in phrases
     ):
         weight -= 0.75
+    # Operational audit timestamps are valid graph metadata but are almost
+    # never the business event requested by an analytical question.  Keep
+    # them available when explicitly named while preventing them from tying
+    # with Invoice/Order/Shipment paths for unrelated questions.
+    edge_role = _normalize(" ".join(phrases))
+    audit_phrases = (
+        "last modified", "last updated", "modified date", "modified time",
+        "update date", "updated date", "audit date", "audit time",
+        "load date", "load time", "etl date", "etl time",
+    )
+    if any(phrase in edge_role for phrase in audit_phrases) and not any(
+        phrase in q_norm for phrase in audit_phrases
+    ):
+        weight += 12.0
     return max(0.1, weight)
 
 
@@ -609,6 +642,7 @@ def find_join_path_with_diagnostics(
     *,
     anti_join: bool = False,
     question: str = "",
+    selected_edge_ids=None,
 ) -> tuple[list[dict], dict]:
     """
     Weighted shortest path from the anchor entity (fact table preferred)
@@ -714,29 +748,34 @@ def find_join_path_with_diagnostics(
         candidates.sort(
             key=lambda item: (item[0], len(item[1]), repr(_path_identity(item[1])))
         )
-        chosen_cost, chosen_path = candidates[0]
-        if len(candidates) > 1 and candidates[1][0] - chosen_cost <= 0.25:
+        selected_candidate = next(
+            (
+                candidate for candidate in candidates
+                if _selected_path_matches(candidate[1], selected_edge_ids)
+            ),
+            None,
+        )
+        chosen_cost, chosen_path = selected_candidate or candidates[0]
+        if (
+            selected_candidate is None
+            and len(candidates) > 1
+            and candidates[1][0] - candidates[0][0] <= 0.25
+        ):
             diagnostics["ambiguous_targets"].append({
                 "target": target,
                 "options": [
                     {
                         "label": _path_label(path),
                         "value": _path_label(path),
-                        "edge_ids": list(_path_identity(path)),
+                        "edge_ids": _path_selection_ids(path),
                     }
                     for _, path in candidates[:2]
                 ],
             })
         for step in chosen_path:
-            edge_identity = step.get("id") or step.get("relationship_key") or (
-                step.get("from_entity"), step.get("to_entity"),
-                step.get("from_column"), step.get("to_column"),
-            )
+            edge_identity = physical_relationship_signature(step)
             if not any(
-                (existing.get("id") or existing.get("relationship_key") or (
-                    existing.get("from_entity"), existing.get("to_entity"),
-                    existing.get("from_column"), existing.get("to_column"),
-                )) == edge_identity
+                physical_relationship_signature(existing) == edge_identity
                 for existing in visited_edges
             ):
                 visited_edges.append(step)
@@ -1111,6 +1150,7 @@ def _resolve_on_graph(
     required_entities,
     metric_formula_tables,
     authoritative_fact_tables,
+    selected_edge_ids=None,
 ) -> dict:
     """Run detection + pathfinding + skeleton build against one graph snapshot."""
     entities     = graph.get("entities", [])
@@ -1234,6 +1274,7 @@ def _resolve_on_graph(
         prefer_fact_anchor=not anti_join,
         anti_join=anti_join,
         question=question,
+        selected_edge_ids=selected_edge_ids,
     )
 
     if path_diagnostics.get("ambiguous_targets"):
@@ -1364,6 +1405,7 @@ def resolve_for_question(
     metric_formula_tables: Optional[list[str] | set[str]] = None,
     authoritative_fact_tables: Optional[list[str] | set[str]] = None,
     use_suggested: Optional[bool] = None,
+    selected_edge_ids: Optional[list] = None,
 ) -> dict:
     """
     Main entry point called before SQL generation.
@@ -1418,6 +1460,7 @@ def resolve_for_question(
         confirmed_result = _resolve_on_graph(
             question, db_type, confirmed, intent,
             required_entities, metric_formula_tables, authoritative_fact_tables,
+            selected_edge_ids,
         )
         # A confirmed multi-entity join — or a graph with nothing suggested —
         # is final. A confirmed single-entity anchor is retained below unless
@@ -1444,6 +1487,7 @@ def resolve_for_question(
             full_result = _resolve_on_graph(
                 question, db_type, reviewable, intent,
                 required_entities, metric_formula_tables, authoritative_fact_tables,
+                selected_edge_ids,
             )
             # Prefer the suggested-inclusive result only when it adds value
             # (a join the confirmed graph could not produce).

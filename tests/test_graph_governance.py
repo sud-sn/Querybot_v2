@@ -591,6 +591,90 @@ class TestProductionGraphPlanning(unittest.TestCase):
         self.assertFalse(result["join_skeleton"])
         self.assertEqual(len(result["clarification_options"]), 2)
 
+    def test_duplicate_rows_for_same_physical_edge_do_not_create_ambiguity(self):
+        graph = {
+            "entities": [
+                self._entity("F_SALES", "fact"),
+                self._entity("D_WAREHOUSE", "dimension"),
+            ],
+            "relationships": [
+                self._edge(
+                    101, "F_SALES", "D_WAREHOUSE",
+                    "WAREHOUSE_SK", "WAREHOUSE_SK", "Warehouse",
+                ),
+                self._edge(
+                    202, "F_SALES", "D_WAREHOUSE",
+                    "WAREHOUSE_SK", "WAREHOUSE_SK", "Warehouse",
+                ),
+            ],
+            "properties": [],
+        }
+
+        result = resolve_for_question(
+            "show revenue by warehouse",
+            "tenant", "azure_sql", graph=graph,
+            required_entities={"F_SALES", "D_WAREHOUSE"},
+            metric_formula_tables={"F_SALES"},
+        )
+
+        self.assertEqual(result["planning_status"], "selected")
+        self.assertEqual(len(result["edge_ids"]), 1)
+
+    def test_unrequested_audit_path_loses_to_business_relationship(self):
+        graph = {
+            "entities": [
+                self._entity("F_SALES", "fact"),
+                self._entity("B_BUSINESS", "bridge"),
+                self._entity("B_AUDIT", "bridge"),
+                self._entity("D_WAREHOUSE", "dimension"),
+            ],
+            "relationships": [
+                self._edge(1, "F_SALES", "B_BUSINESS", "WH_SK", "WH_SK", "Warehouse assignment"),
+                self._edge(2, "B_BUSINESS", "D_WAREHOUSE", "WH_SK", "WH_SK", "Warehouse"),
+                self._edge(3, "F_SALES", "B_AUDIT", "MODIFIED_SK", "MODIFIED_SK", "Last Modified Date"),
+                self._edge(4, "B_AUDIT", "D_WAREHOUSE", "WH_SK", "WH_SK", "Last Modified Date"),
+            ],
+            "properties": [],
+        }
+
+        result = resolve_for_question(
+            "show revenue by warehouse",
+            "tenant", "azure_sql", graph=graph,
+            required_entities={"F_SALES", "D_WAREHOUSE"},
+            metric_formula_tables={"F_SALES"},
+        )
+
+        self.assertEqual(result["planning_status"], "selected")
+        self.assertEqual(result["edge_ids"], [1, 2])
+
+    def test_selected_edge_ids_resume_true_path_ambiguity(self):
+        graph = {
+            "entities": [
+                self._entity("F_SALES", "fact"),
+                self._entity("B_DIRECT", "bridge"),
+                self._entity("B_CHANNEL", "bridge"),
+                self._entity("D_CUSTOMER", "dimension"),
+            ],
+            "relationships": [
+                self._edge(1, "F_SALES", "B_DIRECT", "DIRECT_SK", "DIRECT_SK", "Direct sales"),
+                self._edge(2, "B_DIRECT", "D_CUSTOMER", "CUSTOMER_SK", "CUSTOMER_SK", "Direct customer"),
+                self._edge(3, "F_SALES", "B_CHANNEL", "CHANNEL_SK", "CHANNEL_SK", "Channel sales"),
+                self._edge(4, "B_CHANNEL", "D_CUSTOMER", "CUSTOMER_SK", "CUSTOMER_SK", "Channel customer"),
+            ],
+            "properties": [],
+        }
+
+        result = resolve_for_question(
+            "show revenue by customer",
+            "tenant", "azure_sql", graph=graph,
+            required_entities={"F_SALES", "D_CUSTOMER"},
+            metric_formula_tables={"F_SALES"},
+            selected_edge_ids=[3, 4],
+        )
+
+        self.assertEqual(result["planning_status"], "selected")
+        self.assertEqual(result["edge_ids"], [3, 4])
+
     def test_explicit_business_role_selects_the_matching_governed_path(self):
         graph = {
             "entities": [
