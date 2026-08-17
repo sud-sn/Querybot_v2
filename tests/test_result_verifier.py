@@ -39,6 +39,34 @@ def test_trend_without_period_fails_shape_verification():
     assert any("date or period" in error for error in report["errors"])
 
 
+def test_trend_accepts_plausible_numeric_erp_period_key():
+    report = verify_result_shape(
+        [
+            {"PRD_DMS_KEY": 202601, "Revenue": 10},
+            {"PRD_DMS_KEY": 202602, "Revenue": 12},
+        ],
+        analytical_plan={"intent": "trend", "metrics": ["Revenue"]},
+        resolution_plan={"metrics": [{"name": "Revenue"}]},
+    )
+
+    assert report["status"] == "pass"
+    assert report["time_columns"] == ["PRD_DMS_KEY"]
+
+
+def test_trend_rejects_invalid_numeric_period_identifier():
+    report = verify_result_shape(
+        [
+            {"PRD_DMS_KEY": 202699, "Revenue": 10},
+            {"PRD_DMS_KEY": 202698, "Revenue": 12},
+        ],
+        analytical_plan={"intent": "trend", "metrics": ["Revenue"]},
+        resolution_plan={"metrics": [{"name": "Revenue"}]},
+    )
+
+    assert report["status"] == "fail"
+    assert report["time_columns"] == []
+
+
 def test_top_n_over_return_is_visible_warning():
     report = verify_result_shape(
         [{"customer": chr(65 + index), "revenue": 100 - index} for index in range(5)],

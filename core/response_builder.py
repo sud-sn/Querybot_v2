@@ -62,7 +62,10 @@ _CURRENCY_NAME_RE = re.compile(
     re.IGNORECASE,
 )
 _PERCENT_NAME_RE = re.compile(r"\b(percent|percentage|pct|rate|ratio|share)\b", re.IGNORECASE)
-_DATE_NAME_RE = re.compile(r"\b(date|period|year|month|quarter|week|day)\b", re.IGNORECASE)
+_DATE_NAME_RE = re.compile(
+    r"\b(date|dt|period|prd|yyyymm|yyyymmdd|year|month|quarter|week|day)\b",
+    re.IGNORECASE,
+)
 _VALUE_TOKENS = {
     "amount", "avg", "average", "balance", "charge", "cost", "count",
     "earning", "fee", "gross", "income", "invoice", "loss", "margin",
@@ -145,9 +148,16 @@ def _format_display_value(
         else:
             text = str(value or "").strip()
             match = re.match(r"^(\d{4})[-/](\d{1,2})(?:[-/](\d{1,2}))?", text)
+            if not match:
+                match = re.fullmatch(r"(\d{4})(\d{2})(\d{2})?", text)
             if match:
                 try:
-                    parsed = date(int(match.group(1)), int(match.group(2)), int(match.group(3) or 1))
+                    candidate = date(
+                        int(match.group(1)),
+                        int(match.group(2)),
+                        int(match.group(3) or 1),
+                    )
+                    parsed = candidate if 1900 <= candidate.year <= 2199 else None
                 except ValueError:
                     parsed = None
         if parsed:
@@ -330,6 +340,19 @@ def build_column_formats(
         metrics = []
     strict = (ctx.get("format_scope") if isinstance(ctx, dict) else "") == "metric_registry"
 
+    # Encoded ERP periods such as 202601/20260131 are semantically dates even
+    # when the database type is INT. Apply a display-only date contract when
+    # both the column name and sampled values support that interpretation.
+    for header in headers:
+        if header in formats or not _DATE_NAME_RE.search(header.replace("_", " ")):
+            continue
+        values = [
+            row.get(header) for row in rows[:20]
+            if row.get(header) not in (None, "")
+        ]
+        if values and all(_parse_compact_date_value(value) is not None for value in values):
+            formats[header] = "date"
+
     for metric in metrics:
         if not isinstance(metric, dict):
             continue
@@ -340,6 +363,22 @@ def build_column_formats(
             formats.setdefault(header, fmt)
 
     return formats
+
+
+def _parse_compact_date_value(value: Any) -> date | None:
+    text = str(value or "").strip()
+    match = re.fullmatch(r"(\d{4})(\d{2})(\d{2})?", text)
+    if not match:
+        return None
+    try:
+        parsed = date(
+            int(match.group(1)),
+            int(match.group(2)),
+            int(match.group(3) or 1),
+        )
+    except ValueError:
+        return None
+    return parsed if 1900 <= parsed.year <= 2199 else None
 
 
 def _text_cols(rows: list[dict], numeric_cols: list[str]) -> list[str]:
@@ -545,7 +584,11 @@ def _build_kpi_payload(
     }
 
 
-_COMPARISON_PREFIXES = (("CURRENT_", "PREVIOUS_"), ("THIS_", "LAST_"))
+_COMPARISON_PREFIXES = (
+    ("CURRENT_", "PREVIOUS_"),
+    ("CURRENT_", "PRIOR_"),
+    ("THIS_", "LAST_"),
+)
 _PCT_CHANGE_COLUMNS = ("PCT_CHANGE", "PERCENT_CHANGE", "PCT_DIFF", "CHANGE_PCT")
 
 
@@ -634,7 +677,13 @@ def _period_comparison_from_rows(rows: list[dict]) -> dict | None:
             prev_key = upper[prev_u]
             cur_val = _numeric_or_none(row.get(key))
             prev_val = _numeric_or_none(row.get(prev_key))
-            if cur_val is not None and prev_val is not None:
+            is_period_label = bool(re.search(
+                r"(?:^|_)(?:DATE|DT|DAY|WEEK|MONTH|QUARTER|YEAR|PERIOD|PRD|YYYYMM|YYYYMMDD)(?:_|$)",
+                suffix,
+            ))
+            if is_period_label and label_pair is None:
+                label_pair = (row.get(key), row.get(prev_key))
+            elif cur_val is not None and prev_val is not None:
                 if numeric_pair is None:
                     numeric_pair = (key, prev_key, cur_val, prev_val)
             elif label_pair is None:

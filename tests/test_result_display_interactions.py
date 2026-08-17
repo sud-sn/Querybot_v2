@@ -3,7 +3,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from core.response_builder import build_assistant_response, sanitize_response_text_fields
+from core.response_builder import (
+    build_assistant_response,
+    build_column_formats,
+    sanitize_response_text_fields,
+)
+from core.display_formats import candidate_columns
+from core.chart import build_chart_payload
 from core.result_cache import ResultCache
 from core.result_commands import (
     compile_confirmed_result_presentation,
@@ -187,6 +193,43 @@ class ResultDisplayCommandTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertIn("display_formats=display_formats", source)
 
+    def test_cached_result_response_gets_governed_dashboard_token(self):
+        source = (
+            Path(__file__).resolve().parents[1] / "gateway" / "webhooks.py"
+        ).read_text(encoding="utf-8")
+        start = source.index("async def _run_local_result_command")
+        end = source.index("async def _run_metadata_result_planner", start)
+        local_path = source[start:end]
+        self.assertIn("pin_token = _create_pin_token(", local_path)
+        self.assertIn('operation == "presentation"', local_path)
+        self.assertIn('(chart_payload or {}).get("chart_type")', local_path)
+        self.assertIn('response["pin_token"] = pin_token', local_path)
+        self.assertIn('response["dashboard_item_type"]', local_path)
+
+    def test_numeric_erp_period_is_a_date_format_candidate(self):
+        rows = [
+            {"PRD_DMS_KEY": 202601, "Revenue": 10},
+            {"PRD_DMS_KEY": 202602, "Revenue": 12},
+        ]
+        self.assertEqual(candidate_columns(rows, "date"), ["PRD_DMS_KEY"])
+        formats = build_column_formats(rows)
+        self.assertEqual(formats["PRD_DMS_KEY"], "date")
+        chart = build_chart_payload(
+            rows,
+            "line",
+            title="Revenue trend",
+            question="show the revenue trend",
+            column_formats=formats,
+        )
+        self.assertEqual(chart["x_key"], "PRD_DMS_KEY")
+        self.assertEqual(chart["y_keys"], ["Revenue"])
+        self.assertEqual(chart["chart_type"], "line")
+
+    def test_invalid_numeric_identifier_is_not_a_date_candidate(self):
+        rows = [{"CUSTOMER_KEY": 202699, "Revenue": 10}]
+        self.assertEqual(candidate_columns(rows, "date"), [])
+        self.assertNotIn("CUSTOMER_KEY", build_column_formats(rows))
+
     def test_portal_wires_result_reference_and_format_clarifications_locally(self):
         source = (
             Path(__file__).resolve().parents[1] / "gateway" / "webhooks.py"
@@ -306,6 +349,18 @@ class KpiPresentationTests(unittest.TestCase):
             display_formats={"Period": {"type": "date", "style": "month_year_short"}},
         )
         self.assertEqual(period["answer"]["short_value"], "Aug-26")
+
+        encoded_period = build_assistant_response(
+            question="show the period",
+            rows=[{"PRD_DMS_KEY": 202608}],
+            sql="SELECT PRD_DMS_KEY",
+            duration_ms=20,
+            column_formats={"PRD_DMS_KEY": "date"},
+            display_formats={
+                "PRD_DMS_KEY": {"type": "date", "style": "month_year_short"},
+            },
+        )
+        self.assertEqual(encoded_period["answer"]["short_value"], "Aug-26")
 
 
 class DateRoleCoverageTests(unittest.TestCase):

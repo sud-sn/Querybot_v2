@@ -569,21 +569,26 @@ class ConversationalResultCacheTests(unittest.TestCase):
         self.assertFalse(outcome.handled)
         self.assertTrue(command.fallback_allowed)
 
-    def test_presentation_command_has_fallback_allowed(self):
-        # Symmetric with the other analytical command types above -- a
-        # chart request that turns out not to fit the cached shape must be
-        # able to fall through to a fresh query, not just fail outright.
+    def test_presentation_command_is_cache_only(self):
+        # A presentation request is about the current result. It must never
+        # become a fresh source query with a different metric or date role.
         command = parse_result_command("show as a line chart")
         self.assertEqual(command.action, "presentation")
-        self.assertTrue(command.fallback_allowed)
+        self.assertFalse(command.fallback_allowed)
 
-    def test_series_chart_on_single_row_falls_back_with_retry_question(self):
+    def test_change_this_to_line_chart_is_recognised(self):
+        command = parse_result_command("Change this to a line chart")
+        self.assertIsNotNone(command)
+        self.assertEqual(command.action, "presentation")
+        self.assertEqual(command.presentation_type, "line")
+        self.assertFalse(command.fallback_allowed)
+
+    def test_series_chart_on_single_row_fails_locally_without_new_query(self):
         # Live-bug reproduction: "net revenue for last 7 days" (a single
         # aggregate row) followed by "show as a line chart" must not
         # silently re-label that one row as a chart -- there's no day axis
-        # to plot at all. Must route to a fresh query, carrying the
-        # ORIGINAL question's metric/window forward via retry_question
-        # (the new message alone, "show as a line chart", has neither).
+        # to plot at all. It must explain that locally rather than turning
+        # the display instruction into another database question.
         cache = ResultCache()
         cache.store(
             self.session,
@@ -594,11 +599,9 @@ class ConversationalResultCacheTests(unittest.TestCase):
         command = parse_result_command("show as a line chart")
         outcome = execute_result_command(self.session, command, cache=cache)
         self.assertFalse(outcome.ok)
-        self.assertFalse(outcome.handled)
-        self.assertEqual(
-            outcome.retry_question,
-            "what was net revenue for last 7 days, broken down by day",
-        )
+        self.assertTrue(outcome.handled)
+        self.assertEqual(outcome.retry_question, "")
+        self.assertIn("only 1 data point", outcome.message)
 
     def test_table_presentation_on_single_row_still_succeeds(self):
         # "table" is presentation-neutral -- a single row renders fine as a

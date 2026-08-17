@@ -16,7 +16,7 @@ from typing import Any
 
 
 _TIME_NAME_RE = re.compile(
-    r"(?:^|_)(?:date|day|week|month|quarter|year|period|fiscal|calendar)(?:_|$)",
+    r"(?:^|_)(?:date|dt|day|week|month|quarter|year|period|prd|yyyymm|yyyymmdd|fiscal|calendar)(?:_|$)",
     re.I,
 )
 _TIME_VALUE_RE = re.compile(
@@ -31,6 +31,21 @@ _DIAGNOSTIC_NAME_RE = re.compile(
     r"null_?count|retry_?count|confidence|diagnostic)(?:_|$)",
     re.I,
 )
+
+
+def _encoded_time_value(value: Any) -> bool:
+    text = str(value or "").strip()
+    match = re.fullmatch(r"(\d{4})(\d{2})(\d{2})?", text)
+    if not match:
+        return False
+    try:
+        year = int(match.group(1))
+        month = int(match.group(2))
+        day = int(match.group(3) or 1)
+        date(year, month, day)
+    except ValueError:
+        return False
+    return 1900 <= year <= 2199
 
 
 def _plan_dict(plan: Any) -> dict[str, Any]:
@@ -64,10 +79,19 @@ def _numeric_columns(rows: list[dict[str, Any]], columns: list[str]) -> list[str
 def _time_columns(rows: list[dict[str, Any]], columns: list[str]) -> list[str]:
     found: list[str] = []
     for column in columns:
-        if _TIME_NAME_RE.search(str(column)):
-            found.append(column)
-            continue
         values = [row.get(column) for row in rows[:20] if row.get(column) is not None]
+        if _TIME_NAME_RE.search(str(column)):
+            # A date-like name is useful evidence, but encoded integer keys
+            # must also contain plausible calendar values. This prevents IDs
+            # such as CUSTOMER_PERIOD_KEY=900001 from becoming a time axis.
+            if not values or all(
+                isinstance(value, (date, datetime))
+                or bool(_TIME_VALUE_RE.match(str(value).strip()))
+                or _encoded_time_value(value)
+                for value in values
+            ):
+                found.append(column)
+            continue
         if values and all(
             isinstance(value, (date, datetime))
             or bool(_TIME_VALUE_RE.match(str(value).strip()))
