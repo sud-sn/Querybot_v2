@@ -3799,6 +3799,32 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 _planner_alignment.get("dropped_fact_entities") or [],
             )
 
+        # Near-tied relationship paths are now ranked deterministically rather
+        # than escalated (core/graph_resolver.py). Say which one was used, so the
+        # choice is visible and the user can redirect, instead of stopping the
+        # answer to ask a question only a data modeller could answer.
+        _ranked_rel = _graph_ctx.get("ranked_relationship") or {}
+        if _ranked_rel.get("chosen") and _ranked_rel.get("alternatives"):
+            try:
+                await adapter.send_message(
+                    event,
+                    f"ℹ️ Using the **{_ranked_rel['chosen']}** relationship to reach "
+                    f"{_ranked_rel.get('target')}. "
+                    f"Ask again naming *{_ranked_rel['alternatives'][0]}* to use "
+                    "the other one.",
+                )
+                _trace_step(
+                    trace_id,
+                    "relationship_path_ranked",
+                    output_summary={
+                        "target": _ranked_rel.get("target"),
+                        "chosen": _ranked_rel.get("chosen"),
+                        "alternatives": _ranked_rel.get("alternatives"),
+                    },
+                )
+            except Exception as _rank_exc:
+                log.debug("Ranked-relationship disclosure skipped: %s", _rank_exc)
+
         if (
             _graph_ctx.get("planning_status") == "clarification_required"
             and _graph_ctx.get("clarification_options")

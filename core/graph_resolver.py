@@ -1591,17 +1591,41 @@ def _resolve_on_graph(
         selected_edge_ids=selected_edge_ids,
     )
 
+    # ── Near-tied paths are ranked, not escalated ────────────────────────────
+    # find_join_path_with_diagnostics has ALREADY chosen the lowest risk-weighted
+    # path (and honours selected_edge_ids when the user picked one). Discarding
+    # that answer to ask the user was wrong twice over: a business user cannot
+    # know which physical join path to take, and the question was asked per
+    # AMBIGUOUS TARGET — so answering it only resolved the first, and the next
+    # target dead-ended with the same message and no way forward.
+    #
+    # A near-tie is not an absence of evidence. The ranking already weighs
+    # confirmed over suggested, validated over untested, and penalises fan-out
+    # and broken edges; ties break on a stable ordering, so the same question
+    # resolves the same way every time. Take that path, record what was chosen
+    # and what it was chosen over, and let the caller disclose it.
+    #
+    # Genuinely unresolvable cases below (nothing reachable, no anchor, raw
+    # fact-to-fact) still block — those are absences of governance, not ties.
+    ambiguity_note: dict = {}
     if path_diagnostics.get("ambiguous_targets"):
         ambiguity = path_diagnostics["ambiguous_targets"][0]
-        options = ambiguity.get("options") or []
-        return _unresolved_result(
-            detected,
-            status="clarification_required",
-            reason=(
-                f"More than one equally governed join path can reach "
-                f"{ambiguity.get('target')}. Choose the intended business relationship."
-            ),
-            options=options,
+        options = list(ambiguity.get("options") or [])
+        chosen_label = str((options[0] or {}).get("label") or "") if options else ""
+        alternatives = [
+            str(option.get("label") or "") for option in options[1:] if option
+        ]
+        ambiguity_note = {
+            "target": ambiguity.get("target"),
+            "chosen": chosen_label,
+            "alternatives": alternatives,
+            "options": options,
+        }
+        log.info(
+            "Graph: %d near-tied paths reach %s — using the top-ranked "
+            "relationship %r over %s rather than asking the user",
+            len(options), ambiguity.get("target"),
+            chosen_label or "(unlabelled)", alternatives or "no alternative",
         )
 
     reached_entities = {
@@ -1706,6 +1730,9 @@ def _resolve_on_graph(
         "properties":    graph.get("properties") or [],
         "join_plan":     join_plan,
         "planning_status": planning_status,
+        # Present only when near-tied paths were ranked rather than escalated.
+        # The caller discloses it; it never blocks the answer.
+        "ranked_relationship": ambiguity_note,
     }
 
 

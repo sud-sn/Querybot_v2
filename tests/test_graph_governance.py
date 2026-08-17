@@ -565,7 +565,7 @@ class TestProductionGraphPlanning(unittest.TestCase):
         self.assertEqual(result["join_skeleton"], "")
         self.assertIn("D_REGION", result["missing_entities"])
 
-    def test_equal_governed_paths_require_business_clarification(self):
+    def test_equal_governed_paths_are_ranked_and_disclosed_not_escalated(self):
         graph = {
             "entities": [
                 self._entity("F_SALES", "fact"),
@@ -587,9 +587,25 @@ class TestProductionGraphPlanning(unittest.TestCase):
             required_entities={"F_SALES", "D_CUSTOMER"},
             metric_formula_tables={"F_SALES"},
         )
-        self.assertEqual(result["planning_status"], "clarification_required")
-        self.assertFalse(result["join_skeleton"])
-        self.assertEqual(len(result["clarification_options"]), 2)
+        # A near-tie is not an absence of governance. The pathfinder already
+        # ranks by risk weight and breaks ties stably, so the answer is
+        # deterministic and repeatable — and a business user cannot be expected
+        # to choose a physical join path anyway. Asking also dead-ended: the
+        # question was posed per ambiguous target, so answering it resolved only
+        # the first and the next target failed with the same message.
+        #
+        # The contract is now "resolve, but never silently": the query proceeds,
+        # and what was chosen and what it was chosen over are both reported so
+        # the caller can disclose it and the user can redirect.
+        self.assertEqual(result["planning_status"], "selected")
+        self.assertTrue(result["join_skeleton"])
+        ranked = result.get("ranked_relationship") or {}
+        self.assertTrue(ranked.get("chosen"), "the chosen relationship must be named")
+        self.assertTrue(
+            ranked.get("alternatives"),
+            "the path not taken must be named so the user can ask for it",
+        )
+        self.assertEqual(ranked.get("target"), "D_CUSTOMER")
 
     def test_duplicate_rows_for_same_physical_edge_do_not_create_ambiguity(self):
         graph = {
