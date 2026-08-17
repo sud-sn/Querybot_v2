@@ -787,6 +787,31 @@ class ContextualDateResolutionTests(unittest.TestCase):
         self.assertEqual(window["unit"], "day")
         self.assertEqual(window["anchor_policy"], "latest_available")
 
+    def test_structured_window_survives_date_role_clarification_text(self):
+        binding = _binding("Invoice Date", "invoice_date", "INVOICE_DATE_SK")
+        window = {
+            "kind": "last_n",
+            "amount": 5,
+            "unit": "day",
+            "anchor_policy": "latest_available",
+        }
+
+        plan = build_contextual_date_plan(
+            binding,
+            "Invoice Date",
+            temporal_window=window,
+        )
+        self.assertEqual(plan["temporal_policies"][0]["kind"], "last_n")
+        self.assertEqual(plan["temporal_policies"][0]["amount"], 5)
+        self.assertEqual(plan["temporal_policies"][0]["unit"], "day")
+
+        combined = build_contextual_date_plan_many(
+            [binding],
+            "Invoice Date",
+            temporal_window=window,
+        )
+        self.assertEqual(combined["temporal_policies"][0]["amount"], 5)
+
     def test_rolling_window_recognizes_latest_as_synonym_for_last(self):
         # Regression: "in the latest 7 days" (a natural, common phrasing)
         # was silently NOT recognized as relative-date wording -- only
@@ -2325,6 +2350,45 @@ class GovernedTemporalCompilerTests(unittest.TestCase):
         self.assertIn("DATEADD(day, -7, anchor.max_business_date)", sql)
         self.assertIn("GROUP BY CAST(invoice_date.[CALENDAR_DATE] AS date)", sql)
         self.assertIn("ORDER BY PERIOD", sql)
+
+    def test_clarified_daily_trend_compiles_inherited_five_day_window(self):
+        """Regression: a date-role selection must not produce all-history SQL."""
+        columns, binding, _plan, context = self._context()
+        inherited_window = {
+            "kind": "last_n",
+            "amount": 5,
+            "unit": "day",
+            "anchor_policy": "latest_available",
+        }
+        # The visible clarification reply contains no time expression. The
+        # structured pending state is therefore the only reliable source of
+        # the parent result's five-day constraint.
+        context["question"] = "Provide the trend for each day"
+        context["semantic_plan"] = build_contextual_date_plan(
+            binding,
+            "Invoice Date",
+            temporal_window=inherited_window,
+        )
+        context["analytical_request_plan"] = {
+            "status": "compiled",
+            "intent": "trend",
+            "source_facts": ["ANALYTICS.FACT_BILLING"],
+            "output_shape": "time_series",
+        }
+
+        sql = compile_governed_temporal_metric_sql(
+            "azure_sql", set(columns), set(columns), columns, context,
+        )
+
+        self.assertTrue(sql)
+        self.assertIn("DATEADD(day, -5, anchor.max_business_date)", sql)
+        self.assertIn("invoice_date.[CALENDAR_DATE] >", sql)
+        self.assertIn("invoice_date.[CALENDAR_DATE] <= anchor.max_business_date", sql)
+        self.assertIn("GROUP BY CAST(invoice_date.[CALENDAR_DATE] AS date)", sql)
+        result = validate_sql_detailed(
+            sql, set(columns), "azure_sql", set(columns), columns, context,
+        )
+        self.assertTrue(result.ok, result.reason)
 
     def test_today_metric_uses_latest_governed_business_date(self):
         columns, binding, _plan, context = self._context()

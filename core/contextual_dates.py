@@ -1158,7 +1158,12 @@ def detect_temporal_window(question: str) -> dict:
     return {}
 
 
-def build_contextual_date_plan(binding: dict, question: str = "") -> dict:
+def build_contextual_date_plan(
+    binding: dict,
+    question: str = "",
+    *,
+    temporal_window: dict | None = None,
+) -> dict:
     """Compile a selected binding into validator-enforced semantic fields."""
     fact_table = str(binding.get("fact_table") or "")
     fact_column = str(binding.get("fact_column") or "")
@@ -1260,7 +1265,10 @@ def build_contextual_date_plan(binding: dict, question: str = "") -> dict:
             "requested_grain": requested_grain,
         }],
     }
-    window = detect_temporal_window(question)
+    # Clarification resumes may carry a structured temporal constraint from
+    # the pending request.  Prefer that governed state over reparsing the
+    # display text; the latter may contain only the selected date-role label.
+    window = dict(temporal_window or {}) or detect_temporal_window(question)
     if (
         not window
         # An outright stated date is the user's filter and outranks any
@@ -1447,9 +1455,21 @@ def format_required_anchor(policy: dict, db_type: str = "azure_sql") -> str:
     )
 
 
-def build_contextual_date_plan_many(bindings: list[dict], question: str = "") -> dict:
+def build_contextual_date_plan_many(
+    bindings: list[dict],
+    question: str = "",
+    *,
+    temporal_window: dict | None = None,
+) -> dict:
     """Compile multiple explicit role-playing dates into one exact plan."""
-    plans = [build_contextual_date_plan(binding, question) for binding in bindings or []]
+    plans = [
+        build_contextual_date_plan(
+            binding,
+            question,
+            temporal_window=temporal_window,
+        )
+        for binding in bindings or []
+    ]
     plans = [plan for plan in plans if plan.get("enabled")]
     if not plans:
         return {"enabled": False, "fields": [], "joins": [], "required_tables": []}

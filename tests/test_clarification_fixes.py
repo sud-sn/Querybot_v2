@@ -89,6 +89,50 @@ def test_governed_choices_accumulate_across_clarification_rounds():
     assert selected_clarification_option(second, "metric_date_context")["fact_column"] == "INVOICE_DATE_SK"
 
 
+def test_date_clarification_restores_structured_parent_window():
+    """A date-role reply must retain the parent result's rolling window."""
+    semantic_question = (
+        "What was revenue for the last 5 days?\n"
+        "Follow-up request: Provide the trend for each day"
+    )
+    window = {
+        "kind": "last_n",
+        "amount": 5,
+        "unit": "day",
+        "anchor_policy": "latest_available",
+    }
+    event = PlatformEvent(
+        account_id="acct1",
+        user_id="u1",
+        channel_id="c1",
+        text="Invoice Date",
+        platform="portal",
+        raw={
+            "_clarification_selected_source": "metric_date_context",
+            "_clarification_selected_option": {
+                "id": "invoice-date",
+                "label": "Invoice Date",
+                "fact_table": "OPS.F_INVOICE",
+                "fact_column": "INVOICE_DATE_SK",
+            },
+        },
+    )
+
+    attach_clarification_resolution(event, {
+        "clarification_meta": {
+            "source": "metric_date_context",
+            "round_count": 1,
+            "max_rounds": 3,
+            "pending_id": "date-window",
+            "semantic_question": semantic_question,
+            "temporal_window": window,
+        },
+    })
+
+    assert event.raw["_clarification_semantic_question"] == semantic_question
+    assert event.raw["_clarification_temporal_window"] == window
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Fix #5 — tolerant JSON parsing
 # ──────────────────────────────────────────────────────────────────────────────
@@ -654,7 +698,7 @@ class ExtractOriginalQuestionTests(unittest.TestCase):
         from pathlib import Path
         src = (Path(__file__).resolve().parents[1] / "core" / "query_pipeline.py").read_text(encoding="utf-8")
         self.assertIn("extract_original_question", src)
-        self.assertIn("_semantic_plan_question = extract_original_question(question)", src)
+        self.assertIn("_structured_semantic_question or extract_original_question(question)", src)
         self.assertIn("build_semantic_field_plan(\n            _semantic_plan_question,", src)
         self.assertIn("question=_semantic_plan_question,", src)
 

@@ -281,6 +281,21 @@ def attach_clarification_resolution(event, pending: dict) -> None:
     raw["_clarification_resolved_sources"] = sorted(resolved)
     raw["_clarification_resolutions"] = resolutions
 
+    # A clarification reply must not be the only carrier of execution intent.
+    # In particular, a result follow-up such as "provide the trend for each
+    # day" can inherit a governed rolling window from its parent result, then
+    # pause to ask which business date to use.  Persisting only the visible
+    # option caused the resumed query to retain the date role but silently lose
+    # the rolling window.  Restore the server-authored semantic question and
+    # temporal window as structured state so every downstream compiler stage
+    # sees the same constraints, independently of prompt wording.
+    semantic_question = str(meta.get("semantic_question") or "").strip()
+    if semantic_question:
+        raw["_clarification_semantic_question"] = semantic_question
+    temporal_window = meta.get("temporal_window")
+    if isinstance(temporal_window, dict) and temporal_window.get("kind"):
+        raw["_clarification_temporal_window"] = dict(temporal_window)
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Option normalisation and matching

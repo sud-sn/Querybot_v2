@@ -2057,7 +2057,18 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     # aliases (e.g. "key" against a *_DMS_KEY column). Strip it back out
     # for field-plan purposes only; the LLM-facing prompt still gets the
     # full `question` with clarification context further below.
-    _semantic_plan_question = extract_original_question(question)
+    _structured_semantic_question = ""
+    _structured_temporal_window: dict = {}
+    if isinstance(_event_raw, dict):
+        _structured_semantic_question = str(
+            _event_raw.get("_clarification_semantic_question") or ""
+        ).strip()
+        _raw_temporal_window = _event_raw.get("_clarification_temporal_window")
+        if isinstance(_raw_temporal_window, dict) and _raw_temporal_window.get("kind"):
+            _structured_temporal_window = dict(_raw_temporal_window)
+    _semantic_plan_question = (
+        _structured_semantic_question or extract_original_question(question)
+    )
 
     _semantic_plan = {}
     _source_model: dict = {}
@@ -3097,6 +3108,9 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                             "Which date context should I use?"
                         )
                 if event.user_id and _date_options:
+                    _pending_temporal_window = detect_temporal_window(
+                        _semantic_plan_question
+                    )
                     _save_pending_clarification(
                         question,
                         context_with_terms,
@@ -3109,6 +3123,11 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                                 _date_context_resolution.get("allow_free_text")
                             ),
                             "source": "metric_date_context",
+                            # Keep the visible follow-up in original_q for the
+                            # chat transcript, but persist the executable
+                            # lineage independently for the resumed compiler.
+                            "semantic_question": _semantic_plan_question,
+                            "temporal_window": _pending_temporal_window,
                         },
                     )
                 send_prompt = getattr(adapter, "send_clarification_prompt", None)
@@ -3152,12 +3171,45 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     _date_plan = build_contextual_date_plan_many(
                         _date_context_resolution.get("bindings") or [],
                         _semantic_plan_question,
+                        temporal_window=_structured_temporal_window,
                     )
                 else:
                     _date_plan = build_contextual_date_plan(
                         _date_context_resolution.get("binding") or {},
                         _semantic_plan_question,
+                        temporal_window=_structured_temporal_window,
                     )
+                _expected_temporal_window = (
+                    _structured_temporal_window
+                    or detect_temporal_window(_semantic_plan_question)
+                )
+                if (
+                    _expected_temporal_window
+                    and _date_plan.get("enabled")
+                    and not _date_plan.get("temporal_policies")
+                ):
+                    # Fail closed instead of running an unbounded query when a
+                    # known user window cannot be compiled into the date plan.
+                    log.error(
+                        "Temporal constraint lost before date-plan merge for %s: %s",
+                        account_id,
+                        _expected_temporal_window,
+                    )
+                    await adapter.send_message(
+                        event,
+                        "I retained your requested time period, but could not "
+                        "safely apply it to the selected business date. No "
+                        "unbounded query was run. Please choose another date "
+                        "context or ask your administrator to review this Date Role.",
+                    )
+                    _trace_finish(
+                        trace_id,
+                        status="error",
+                        answer_type="temporal_plan_error",
+                        error_message="Temporal window was not compiled into the date plan",
+                        duration_ms=int(time.time() * 1000) - start_ms,
+                    )
+                    return
                 if _date_plan.get("enabled"):
                     _source_scope_before_date_merge = dict(
                         (_semantic_plan or {}).get("source_scope") or {}
