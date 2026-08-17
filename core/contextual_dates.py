@@ -1400,7 +1400,7 @@ def format_period_bucket_expression(
     if dialect == "oracle":
         oracle_fmt = {"year": "YYYY", "quarter": "Q", "month": "MM", "week": "IW"}.get(grain, "DD")
         return f"TRUNC({date_ref}, '{oracle_fmt}')" if oracle_fmt != "DD" else f"TRUNC({date_ref})"
-    if dialect in {"postgres", "postgresql"}:
+    if dialect in {"postgres", "postgresql", "duckdb"}:
         return f"DATE_TRUNC('{grain}', {date_ref})"
     return date_ref
 

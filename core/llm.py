@@ -213,13 +213,30 @@ def build_sql_system_prompt(
     conversation_history: list | None = None,
     graph_context: dict | None = None,
     semantic_plan: dict | None = None,
+    question: str = "",
 ) -> str:
     """System prompt for SQL generation — used on every user query.
 
     graph_context: dict from graph_resolver.resolve_for_question().
     conversation_history: list of {question, sql, columns, row_count} dicts.
     Injected as session context to resolve follow-up references.
+    question: the user's question. Optional — when supplied, narrowly-scoped
+    rules (period comparison, moving average, anti-join, …) are gated on it so
+    they stop competing for attention with the rules that do apply. Omitting
+    it keeps every rule, i.e. the pre-gating prompt.
     """
+    from core.sql_prompt_rules import RuleContext, rule_applies
+
+    _rule_ctx = RuleContext(
+        question=question,
+        table_context=table_context or "",
+        semantic_plan=semantic_plan or {},
+        graph_context=graph_context or {},
+    )
+
+    def _rule(rule_id: str, text: str) -> str:
+        """Include `text` only when this question needs that rule."""
+        return text if rule_applies(rule_id, _rule_ctx) else ""
     label  = _DB_LABELS.get(db_type, db_type)
     syntax = _SQL_SYNTAX.get(db_type, "- Use standard ANSI SQL\n")
 
@@ -477,14 +494,15 @@ def build_sql_system_prompt(
         "(ORDER BY TOTAL_COST DESC). Never add, remove, or change underscores, spaces, "
         "or any characters in the alias. If you ORDER BY a name that was not defined "
         "in the SELECT clause the query will fail at runtime.\n"
+        + _rule("correlation",
         "- CORRELATION / SCATTER RULE: When the user asks whether two numeric metrics "
         "are correlated, asks 'are X and Y related', or asks to 'show X vs Y', do NOT "
         "attempt to compute a Pearson / statistical correlation coefficient — SQL has no "
         "built-in CORR() on all platforms. Instead generate a SELECT that returns BOTH "
         "numeric columns (and optionally a label column) so the result can be visualised "
         "as a scatter chart. Example: SELECT label_col, numeric_col_1, numeric_col_2 "
-        "FROM table ORDER BY numeric_col_1 DESC\n"
-        "- APPROVED METRIC FORMULA RULE: If the context includes 'APPROVED METRIC FORMULAS' "
+        "FROM table ORDER BY numeric_col_1 DESC\n")
+        + "- APPROVED METRIC FORMULA RULE: If the context includes 'APPROVED METRIC FORMULAS' "
         "and the user asks for that metric or any synonym, the approved calculation MUST be "
         "used in EVERY SELECT expression — including inside CTEs, subqueries, and comparison "
         "queries. The approved formula OVERRIDES any column name found in the KB schema docs "
@@ -574,7 +592,7 @@ def build_sql_system_prompt(
             if _has_plain_date_role_key
             else ""
         )
-        + "- YEAR-OVER-YEAR / PERIOD COMPARISON RULE: When the user asks to compare a metric "
+        + _rule("year_over_year", "- YEAR-OVER-YEAR / PERIOD COMPARISON RULE: When the user asks to compare a metric "
         "'last year vs year before', 'prior year', 'year over year', 'how did X change', "
         "'compared to last year', or 'vs previous year':\n"
         "  1. Always CAST the year/period column to INT: CAST(year_col AS INT) AS YR\n"
@@ -621,8 +639,8 @@ def build_sql_system_prompt(
         "    WHERE c.YR = (SELECT MAX(YR) FROM base);\n"
         "  Snowflake / Oracle: same pattern with dialect date functions.\n"
         "  NEVER use MAX(col)-1 in a WHERE clause for year anchoring — use the CTE "
-        "approach above so the anchor is derived once and reused cleanly.\n"
-        "- DISTINCT ENTITY RULE: When the question asks to LIST, SHOW, FIND, GET, "
+        "approach above so the anchor is derived once and reused cleanly.\n")
+        + "- DISTINCT ENTITY RULE: When the question asks to LIST, SHOW, FIND, GET, "
         "or WHO — referring to individual entities (prescribers, patients, doctors, "
         "customers, products, drugs, items, employees) rather than aggregating metrics — "
         "ALWAYS use SELECT DISTINCT on the entity name/identifier column. "
@@ -646,6 +664,7 @@ def build_sql_system_prompt(
         "  Incorrect: SELECT dept, COUNT(*) AS CNT FROM tbl WHERE COUNT(*) > 10 GROUP BY dept\n"
         "  With alias: GROUP BY dept HAVING COUNT(*) > 10  (never HAVING CNT > 10 unless the DB "
         "explicitly supports alias in HAVING — assume it does not)\n\n"
+        + _rule("benchmark",
         "- ABOVE/BELOW BENCHMARK RULE: When the user asks which groups are above or below the "
         "overall average/mean of an aggregated metric, first calculate one row per group in a "
         "CTE, then calculate AVG(metric_alias) OVER () in a second CTE, and filter in the final "
@@ -654,8 +673,8 @@ def build_sql_system_prompt(
         "return at most one row, but the window form is preferred because it makes cardinality "
         "explicit. Example shape: WITH grouped AS (... GROUP BY dimension), scored AS "
         "(SELECT grouped.*, AVG(metric_alias) OVER () AS overall_avg FROM grouped) SELECT "
-        "dimension, metric_alias, overall_avg FROM scored WHERE metric_alias < overall_avg.\n\n"
-        "- TOP-N PER GROUP RULE: When the user asks for 'top N per category', 'best X in each Y', "
+        "dimension, metric_alias, overall_avg FROM scored WHERE metric_alias < overall_avg.\n\n")
+        + "- TOP-N PER GROUP RULE: When the user asks for 'top N per category', 'best X in each Y', "
         "'highest Z for every W', use a window function CTE with ROW_NUMBER() PARTITION BY:\n"
         f"{_top_n_per_group_pattern}\n"
         "  Replace group_col with the grouping dimension, metric_col with the ranking metric, "
@@ -668,6 +687,7 @@ def build_sql_system_prompt(
         f"{_pct_total_pattern}\n"
         "  Always ROUND to 2 decimal places. Always guard against divide-by-zero with "
         "NULLIF(SUM(SUM(metric)) OVER (), 0) if data may be empty.\n\n"
+        + _rule("anti_join",
         "- ANTI-JOIN RULE: When the user asks for records that have NO matching rows in another "
         "table ('employees with no absences', 'customers without orders', 'products never sold', "
         "'items missing from', 'not in'), ALWAYS use a LEFT JOIN … WHERE right.key IS NULL "
@@ -677,8 +697,8 @@ def build_sql_system_prompt(
         "to the correct period without excluding parent rows that have records in other periods. "
         "The FROM table must be the source/parent table containing the records to list; the "
         "missing-side table must be on the RIGHT side of the LEFT JOIN. Never answer a "
-        "missing-data question by querying only the missing-side table with WHERE measure IS NULL.\n\n"
-        "- STAR-SCHEMA JOIN ORDER RULE: ALWAYS put the fact table in the FROM clause and "
+        "missing-data question by querying only the missing-side table with WHERE measure IS NULL.\n\n")
+        + "- STAR-SCHEMA JOIN ORDER RULE: ALWAYS put the fact table in the FROM clause and "
         "dimension tables in JOIN clauses. Never put a dimension in FROM and fact in JOIN — "
         "this produces wrong cardinality and confuses query readers. "
         "Identify fact tables by ANY of these naming patterns (case-insensitive): "
@@ -704,6 +724,7 @@ def build_sql_system_prompt(
         "    COUNT(*) AS TOTAL\n"
         "  FROM [schema].[table]\n"
         "  Use the exact distinct values from the KB for CASE WHEN conditions.\n\n"
+        + _rule("month_over_month",
         "- MONTH-OVER-MONTH / QUARTER-OVER-QUARTER RULE: When the user asks for MoM trend, "
         "'how did X change each month', 'monthly growth', 'QoQ comparison', or 'quarter over "
         "quarter', use staged CTEs: first aggregate the approved metric to PERIOD, then apply "
@@ -723,20 +744,22 @@ def build_sql_system_prompt(
         f"{_mom_pattern}\n"
         "  For quarterly: replace the month bucket function with the quarter bucket from the "
         "DATE BUCKETING rules above. Always include: period value, prior period value, "
-        "absolute difference, and PCT_CHANGE rounded to 2 decimal places.\n\n"
-        "- RUNNING TOTAL RULE: When the user asks for 'cumulative', 'running total', "
+        "absolute difference, and PCT_CHANGE rounded to 2 decimal places.\n\n")
+        + "- RUNNING TOTAL RULE: When the user asks for 'cumulative', 'running total', "
         "'year-to-date total', 'cumulative sum', or 'total so far', use a nested window aggregate "
         "SUM(SUM(metric)) OVER (ORDER BY date_col ROWS UNBOUNDED PRECEDING):\n"
         f"{_running_total_pattern}\n"
         "  The inner SUM() aggregates the group; the outer SUM() OVER () accumulates across groups. "
         "Always ORDER BY the period column both inside and outside the window.\n\n"
+        + _rule("moving_average",
         "- MOVING AVERAGE RULE: When the user asks for a rolling average, smoothed trend, "
         "'N-period moving average', or 'trailing average', use AVG() OVER with a ROWS BETWEEN "
         "N-1 PRECEDING AND CURRENT ROW window:\n"
         f"{_moving_avg_pattern}\n"
         "  Replace N with the window size stated by the user (default 3 if unspecified). "
         "Cast integer metrics to FLOAT/DECIMAL to avoid integer division truncation "
-        "(Azure SQL: CAST(metric AS FLOAT); Snowflake/Oracle: metric directly as AVG handles it).\n\n"
+        "(Azure SQL: CAST(metric AS FLOAT); Snowflake/Oracle: metric directly as AVG handles it).\n\n")
+        + _rule("avg_interval",
         "- AVG INTERVAL BETWEEN EVENTS RULE: When the user asks for the average/typical gap "
         "in days (or other time unit) BETWEEN CONSECUTIVE events of the same kind per group "
         "('days between payments', 'time between orders', 'average gap between visits by "
@@ -752,8 +775,8 @@ def build_sql_system_prompt(
         "  If the event date is a _DT_DMS_KEY/_DATE_DMS_KEY surrogate key, convert it with "
         "TRY_CONVERT inside the INNER subquery (per the DATE-KEY RULE above) BEFORE applying "
         "LAG — never apply LAG to the raw integer key and never leave the conversion for the "
-        "outer query.\n\n"
-        "- NULL-SAFE JOIN RULE: When writing a JOIN or LEFT JOIN that might produce NULLs for "
+        "outer query.\n\n")
+        + "- NULL-SAFE JOIN RULE: When writing a JOIN or LEFT JOIN that might produce NULLs for "
         "numeric metrics on the right side (i.e. left join where right rows may be absent), "
         "always wrap the right-side numeric columns in COALESCE(col, 0) or ISNULL(col, 0) "
         "(Azure SQL) / NVL(col, 0) (Oracle) / COALESCE(col, 0) (Snowflake) in the SELECT list "

@@ -1843,7 +1843,11 @@ def _temporal_anchor_errors(tree, sql: str, policies: list[dict]) -> list[dict]:
     # FILL_DATE, the SQL filtered DISPENSE_DATE_ID against the calendar
     # dimension instead).
     approved: set[str] = set()
-    for policy in governed:
+    # Every governed policy for this question, not only the relative-date ones:
+    # a question can legitimately resolve two roles with different anchor
+    # policies ("invoiced revenue vs ordered revenue"), and narrowing the
+    # approved set to `governed` would flag the other role's own governed join.
+    for policy in policies or []:
         # fact_column: the governed key/date on the fact; date_column: the
         # calendar value; dimension_key: the date dimension's own PK, which
         # legitimately appears in the governed JOIN (including joins nested
@@ -1852,17 +1856,39 @@ def _temporal_anchor_errors(tree, sql: str, policies: list[dict]) -> list[dict]:
             value = str(policy.get(key) or "").upper()
             if value:
                 approved.add(value)
-    if approved:
-        from core.date_roles import is_plain_surrogate_date_role_column
+    # "Not the approved key" is only knowable when a policy actually names the
+    # approved key. A policy that carries only a calendar column governs the
+    # anchor (checked above and in _temporal_anchor_scope_errors) but says
+    # nothing about which fact key is allowed, so scanning for substitutes
+    # there would flag the governed join itself.
+    approved_fact_keys = any(
+        str(policy.get("fact_column") or "").strip() for policy in policies or []
+    )
+    # A role-playing date reaches its dimension through fact_column =
+    # dimension_key, so an ON clause is exactly where substitution hides:
+    # "JOIN DT_DMS d ON f.LAST_MOD_DT_DMS_KEY = d.DT_DMS_KEY" moves the whole
+    # query — including the MAX() anchor derived from it — onto an audit date,
+    # and a WHERE-only scan sees nothing. Extend into joins only for roles that
+    # are actually keyed that way.
+    scan_join_conditions = any(
+        str(policy.get("fact_column") or "").strip()
+        and str(policy.get("dimension_key") or "").strip()
+        for policy in policies or []
+    )
+    if approved and approved_fact_keys:
+        from core.date_roles import is_surrogate_date_role_key_column
         flagged: set[str] = set()
-        for where_node in tree.find_all(sg_exp.Where):
-            for column in where_node.find_all(sg_exp.Column):
+        scopes = list(tree.find_all(sg_exp.Where))
+        if scan_join_conditions:
+            scopes.extend(tree.find_all(sg_exp.Join))
+        for scope in scopes:
+            for column in scope.find_all(sg_exp.Column):
                 name = str(column.name or "").upper()
                 if (
                     name
                     and name not in approved
                     and name not in flagged
-                    and is_plain_surrogate_date_role_column(name)
+                    and is_surrogate_date_role_key_column(name)
                 ):
                     flagged.add(name)
         for name in sorted(flagged):

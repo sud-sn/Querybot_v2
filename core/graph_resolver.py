@@ -31,7 +31,13 @@ import re
 import logging
 from typing import Optional
 
-from core.date_roles import question_has_temporal_intent, relationship_matches_date_role
+from core.date_roles import (
+    DATE_DIMENSION_TABLE_HINTS,
+    DATE_ROLES,
+    date_role_terms,
+    normalize_date_role_text,
+    relationship_matches_date_role,
+)
 
 log = logging.getLogger("querybot.graph_resolver")
 
@@ -136,6 +142,162 @@ def _phrase_in_question(phrase: str, q_tokens: set[str], q_norm: str) -> bool:
     return all((w in q_tokens or (w + "s") in q_tokens) for w in words) or phrase_norm in q_norm
 
 
+# Generic temporal vocabulary. These words say *when* a user wants data, never
+# *which* governed business date answers the question. Every role-playing date
+# entity in a tenant shares them, so a match on one of these alone identifies
+# no particular role.
+_GENERIC_TEMPORAL_WORDS = frozenset({
+    "date", "dates", "day", "days", "daily", "week", "weeks", "weekly",
+    "month", "months", "monthly", "quarter", "quarters", "quarterly",
+    "year", "years", "yearly", "period", "periods", "time", "times",
+    "timeline", "calendar", "last", "latest", "recent", "previous", "prior",
+    "current", "next", "today", "yesterday", "tomorrow", "available",
+    "earliest", "trend", "trends", "when", "range", "ago",
+    "ytd", "mtd", "qtd", "yoy", "mom", "wow",
+})
+
+# Words that mark an entity as a business-date concept rather than an ordinary
+# business dimension. Kept deliberately narrow: an ordinary entity (Customer,
+# Warehouse, Invoice) does not carry one of these as a standalone word.
+_DATE_ENTITY_MARKERS = frozenset({
+    "date", "dates", "dt", "day", "week", "month", "quarter", "year",
+    "period", "calendar",
+})
+
+
+def _collapse(text: str) -> str:
+    """Normalize and collapse whitespace so phrase matching is contiguous."""
+    return " ".join(_normalize(text).split())
+
+
+def is_date_role_entity(entity: dict) -> bool:
+    """Whether a graph entity represents a (role-playing) business date.
+
+    Role-playing date dimensions are the one entity class whose *name* is made
+    almost entirely of generic temporal words, which is what makes loose
+    per-word matching pick them at random. Recognized from tenant metadata
+    only — name/display-name markers plus the shared date-dimension table
+    hints — never from a hardcoded business name.
+    """
+    words = set(_normalize(entity.get("entity_name") or "").split())
+    words |= set(_normalize(entity.get("display_name") or "").split())
+    if words & _DATE_ENTITY_MARKERS:
+        return True
+    table = re.sub(
+        r"[^A-Z0-9]+", "_",
+        str(entity.get("table_name") or "").split(".")[-1].upper(),
+    )
+    if table in DATE_DIMENSION_TABLE_HINTS:
+        return True
+    return any(hint in table for hint in ("DIM_DATE", "DATE_DIM", "CALENDAR"))
+
+
+def _role_phrase_variants(phrase: str) -> list[str]:
+    """Business phrases that authoritatively name one date role.
+
+    A phrase qualifies only when it still carries a non-generic business word:
+    "invoice date" and "modified date" name a role, bare "date" or "last date"
+    name every role in the tenant and therefore none of them.
+
+    Leading generic modifiers are also dropped ("Last Modified Date" →
+    "modified date") so a user who types the business half of the role name is
+    understood, while the business word itself stays mandatory.
+    """
+    words = _collapse(phrase).split()
+    if not words:
+        return []
+    variants: list[str] = []
+    for start in range(len(words)):
+        candidate = words[start:]
+        if not any(word not in _GENERIC_TEMPORAL_WORDS for word in candidate):
+            continue
+        variants.append(" ".join(candidate))
+        # Only leading *generic* modifiers may be dropped; removing a business
+        # word would turn "Invoice Date" into "date" and match everything.
+        if words[start] not in _GENERIC_TEMPORAL_WORDS:
+            break
+    return variants
+
+
+def date_role_entity_phrases(graph: dict) -> dict[str, set[str]]:
+    """Registered business phrases naming each date-role entity in the graph.
+
+    Sources are tenant metadata plus the builtin business-date vocabulary:
+    the entity's own name and display name, the labels of relationships that
+    target it (the business role of a role-playing edge), its properties'
+    display names and synonyms, and the registered synonyms of any builtin
+    date role that edge label maps onto ("invoiced on", "billing date").
+    """
+    phrases: dict[str, set[str]] = {}
+    date_entities = {
+        str(entity.get("entity_name") or ""): entity
+        for entity in graph.get("entities") or []
+        if entity.get("entity_name") and is_date_role_entity(entity)
+    }
+    if not date_entities:
+        return {}
+
+    for name, entity in date_entities.items():
+        bucket = phrases.setdefault(name, set())
+        for raw in (name, entity.get("display_name") or ""):
+            bucket.update(_role_phrase_variants(raw))
+
+    for rel in graph.get("relationships") or []:
+        target = str(rel.get("to_entity") or "")
+        if target not in date_entities:
+            # Role-playing edges are stored fact → date, but tolerate either
+            # direction so a reversed row still contributes its business role.
+            target = str(rel.get("from_entity") or "")
+            if target not in date_entities:
+                continue
+        bucket = phrases.setdefault(target, set())
+        for raw in (rel.get("label") or "", rel.get("description") or ""):
+            bucket.update(_role_phrase_variants(raw))
+            label_norm = normalize_date_role_text(raw)
+            if not label_norm:
+                continue
+            for role in DATE_ROLES:
+                if label_norm in {
+                    normalize_date_role_text(role.label),
+                    role.key.replace("_", " "),
+                }:
+                    for term in date_role_terms(role):
+                        bucket.update(_role_phrase_variants(term))
+
+    for prop in graph.get("properties") or []:
+        owner = str(prop.get("entity_name") or "")
+        if owner not in date_entities:
+            continue
+        bucket = phrases.setdefault(owner, set())
+        for field in ("display_name", "synonyms"):
+            raw = prop.get(field) or ""
+            for piece in (raw.split(",") if field == "synonyms" else [raw]):
+                bucket.update(_role_phrase_variants(piece))
+    return phrases
+
+
+def question_names_date_role(question: str, phrases: set[str] | frozenset[str]) -> bool:
+    """Whether the question authoritatively names this date role.
+
+    The complete business phrase must appear contiguously at word boundaries.
+    A trailing plural is tolerated ("by invoice dates"); a single word from the
+    role name is never enough, which is the whole point of this gate.
+    """
+    q = _collapse(question)
+    if not q:
+        return False
+    for phrase in phrases or ():
+        words = phrase.split()
+        if not words:
+            continue
+        pattern = r"(?<!\w)" + r"\s+".join(
+            rf"{re.escape(word)}s?" for word in words
+        ) + r"(?!\w)"
+        if re.search(pattern, q):
+            return True
+    return False
+
+
 def _table_candidates_from_required(required_tables: list[str] | set[str] | None) -> set[str]:
     candidates: set[str] = set()
     for raw in required_tables or []:
@@ -174,6 +336,81 @@ def entity_name_for_table(graph: dict, table_ref: str) -> str:
             continue
         return ent.get("entity_name", "")
     return ""
+
+
+def date_role_entity_for_binding(graph: dict, binding: dict) -> str:
+    """Resolve which date-role entity a governed date binding points at.
+
+    Several role-playing date entities normally share one physical date
+    dimension, so ``entity_name_for_table`` alone returns whichever role
+    happens to come first — that is how an approved Invoice Date binding could
+    force "Last Modified Date" into the required entities. Resolve by physical
+    edge first (the binding names the exact fact column and dimension key),
+    then by the role's own business name, and only fall back to the table when
+    exactly one entity owns it.
+
+    Returns "" when nothing matches; callers treat that as "nothing to force".
+    """
+    binding = binding or {}
+    fact_table = str(binding.get("fact_table") or "")
+    dim_table = str(binding.get("dimension_table") or binding.get("date_table") or "")
+    fact_col = str(binding.get("fact_column") or "").strip().strip('[]"`').upper()
+    dim_col = str(binding.get("dimension_key") or "").strip().strip('[]"`').upper()
+
+    entities = graph.get("entities") or []
+    by_name = {str(e.get("entity_name") or ""): e for e in entities if e.get("entity_name")}
+    fact_entity = entity_name_for_table(graph, fact_table) if fact_table else ""
+
+    # 1. The exact physical edge the binding describes.
+    if fact_entity and fact_col and dim_col:
+        for rel in graph.get("relationships") or []:
+            left = str(rel.get("from_entity") or "")
+            right = str(rel.get("to_entity") or "")
+            from_col = str(rel.get("from_column") or "").strip().strip('[]"`').upper()
+            to_col = str(rel.get("to_column") or "").strip().strip('[]"`').upper()
+            if left == fact_entity and from_col == fact_col and to_col == dim_col:
+                if is_date_role_entity(by_name.get(right, {})):
+                    return right
+            if right == fact_entity and to_col == fact_col and from_col == dim_col:
+                if is_date_role_entity(by_name.get(left, {})):
+                    return left
+
+    # 2. The date entity whose business name is this role.
+    role_names = {
+        _collapse(str(binding.get(key) or "").replace("_", " "))
+        for key in ("context_name", "date_role", "name", "business_role")
+    } - {""}
+    if role_names:
+        for name, entity in by_name.items():
+            if not is_date_role_entity(entity):
+                continue
+            if dim_table and not _same_table_ref(entity, dim_table):
+                continue
+            candidates = {_collapse(name), _collapse(str(entity.get("display_name") or ""))}
+            if candidates & role_names:
+                return name
+
+    # 3. A single entity owning the dimension table is unambiguous.
+    if dim_table:
+        owners = [
+            name for name, entity in by_name.items()
+            if _same_table_ref(entity, dim_table)
+        ]
+        if len(owners) == 1:
+            return owners[0]
+    return ""
+
+
+def _same_table_ref(entity: dict, table_ref: str) -> bool:
+    parts = [p.strip().strip('[]"`').upper() for p in str(table_ref or "").split(".") if p.strip()]
+    if not parts:
+        return False
+    bare = parts[-1]
+    schema = parts[-2] if len(parts) >= 2 else ""
+    if str(entity.get("table_name") or "").strip().strip('[]"`').upper() != bare:
+        return False
+    ent_schema = str(entity.get("schema_name") or "").strip().strip('[]"`').upper()
+    return not (schema and ent_schema and schema != ent_schema)
 
 
 def infer_connected_default_date_fact(
@@ -346,13 +583,13 @@ def detect_entities(
     """
     q = _normalize(question)
     q_tokens = _tokens(question)
-    has_temporal_intent = question_has_temporal_intent(question)
     scores: dict[str, int] = {}
 
     entities   = graph.get("entities", [])
     required_table_candidates = _table_candidates_from_required(required_tables)
     authoritative_fact_candidates = _table_candidates_from_required(authoritative_fact_tables)
     required_entity_names = {str(e) for e in (required_entities or [])}
+    date_role_phrases = date_role_entity_phrases(graph)
 
     props_by_entity: dict[str, list[dict]] = {}
     for prop in graph.get("properties", []) or []:
@@ -386,11 +623,35 @@ def detect_entities(
 
         norm_name = _normalize(name)
         display_name = _normalize(ent.get("display_name") or name)
-        is_date_role_entity = (
-            "date" in norm_name.split()
-            or "date" in display_name.split()
-        )
-        if is_date_role_entity and not has_temporal_intent and name not in required_entity_names:
+
+        # ── Role-playing date entities: authoritative signals only ───────────
+        # Every business date in a tenant ("Invoice Date", "Order Date",
+        # "Last Modified Date") is named almost entirely out of generic
+        # temporal words, and several of them share one physical date
+        # dimension. The loose scoring below therefore selected them by
+        # coincidence: "revenue for the last 2 days" matched "Last Modified
+        # Date" on the single word "last", which forced an audit date into the
+        # join skeleton beside the metric's own approved date. Two date edges
+        # into the same dimension then either return no rows or provoke an
+        # irrelevant clarification.
+        #
+        # So a date role must be named, not guessed. Lexical selection requires
+        # the complete registered business phrase (or a registered synonym);
+        # every other authoritative source — the metric's approved default date
+        # role, a date role selected earlier in the thread, a prior
+        # clarification, the compiled semantic plan — arrives through
+        # required_entities, which is honored above and below.
+        if is_date_role_entity(ent):
+            if name in required_entity_names:
+                scores[name] = score
+                continue
+            if not question_names_date_role(q, date_role_phrases.get(name, set())):
+                continue
+            # Named explicitly. Score on the role itself, never on the shared
+            # date-dimension table name or its generic calendar columns.
+            score += 10
+            if score >= 3:
+                scores[name] = score
             continue
 
         for word in norm_name.split():

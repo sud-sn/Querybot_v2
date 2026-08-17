@@ -57,6 +57,8 @@ from core.chart import detect_chart_type, build_chart_payload
 from core.examples import retrieve_similar_examples, format_examples_for_prompt
 from core.clarification import (
     get_pending, save_pending, clear_pending, combine_with_clarification,
+    clarification_reply_matches_option, clarification_rejection_message,
+    is_clarification_rejection,
     resolve_option_text, resolve_date_option_text, attach_clarification_resolution,
     prepare_clarification_meta, extract_original_question,
 )
@@ -3262,6 +3264,39 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                         await _deliver_report_via_adapter(account_id, portal_user, report, adapter.make_event(""), adapter)
                     else:
                         await websocket.send_json({"type": "system", "content": "No worries — skipping today's reports."})
+                    continue
+
+                # ── Outright rejection of the offered options ────────────────
+                # Symmetric with the standard dispatcher: a card whose free-text
+                # box receives "no, don't use this" must clear the pending
+                # clarification instead of re-rendering the same options — which
+                # is what made the irrelevant date/join clarification repeat
+                # forever. Option matching runs first, so a card that
+                # deliberately offers a "No" option keeps owning that reply, and
+                # an explicit chip click (option_id) is never a rejection. The
+                # login-report prompt above resolves its own "no thanks" option.
+                _rejection_text = _ws_text_value(
+                    data.get("text"), "text", "question", "value", "label"
+                )
+                if (
+                    not str(data.get("option_id") or "").strip()
+                    and is_clarification_rejection(_rejection_text)
+                    and not clarification_reply_matches_option(cmeta, _rejection_text)
+                ):
+                    log.info(
+                        "WS %s clarification rejected by user for %r — pending clarification cleared",
+                        cmeta.get("source") or "llm",
+                        pending["original_q"][:80],
+                    )
+                    clear_pending(
+                        account_id, zoom_user_id, session_id=adapter.session_id,
+                    )
+                    await websocket.send_json({
+                        "type": "message",
+                        "role": "assistant",
+                        "content": clarification_rejection_message(cmeta),
+                    })
+                    await websocket.send_json({"type": "typing", "active": False})
                     continue
 
                 # Presentation follow-ups remain session-local. A confirmed

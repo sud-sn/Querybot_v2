@@ -36,12 +36,21 @@ from core.query_semantics import (
 )
 from core.graph_resolver import (
     resolve_for_question as _graph_resolve,
+    date_role_entity_for_binding,
     entity_name_for_table,
     infer_connected_default_date_fact,
+    is_date_role_entity,
 )
 from core.llm_audit import llm_audit_scope, make_llm_audit_request_id
 from core.result_cache import result_cache
 from core.query_router import should_route_to_result_cache, should_attempt_cache_followup
+from core.result_regrain import (
+    build_regrain_sql,
+    parse_trend_regrain_request,
+    regrain_question_text,
+    resolve_regrain_grain,
+    temporal_policy_from_plan,
+)
 from core.governed_result_followup import adopt_cached_snapshot, run_governed_result_followup
 from core.semantic_planner import build_semantic_field_plan
 from core.source_resolution import resolve_source_scope, source_clarification_options
@@ -317,7 +326,13 @@ def _graph_with_exact_date_edges(graph: dict, bindings: list[dict]) -> dict:
         if normalize_date_key_type(binding.get("date_key_type")) != "surrogate_fk":
             continue
         fact_entity = entity_name_for_table(graph, str(binding.get("fact_table") or ""))
-        dim_entity = entity_name_for_table(graph, str(binding.get("dimension_table") or ""))
+        # Role-aware. When role-playing dates are modelled as separate entities
+        # sharing one physical dimension, a table lookup returns an arbitrary
+        # role — and this function would then rewrite THAT role's edge with this
+        # binding's columns, silently corrupting the query-local graph. The
+        # resolver already falls back to the sole owner of the dimension table,
+        # so "" means genuinely ambiguous: leave the graph alone.
+        dim_entity = date_role_entity_for_binding(graph, binding)
         fact_col = str(binding.get("fact_column") or "").upper()
         dim_col = str(binding.get("dimension_key") or "").upper()
         if not all((fact_entity, dim_entity, fact_col, dim_col)):
@@ -560,8 +575,51 @@ def _date_option_identity(binding: dict) -> tuple[str, str]:
     )
 
 
+# Preference between physical encodings of ONE business date. A native date is
+# safest to filter and anchor on; an encoded integer is the least safe.
+_DATE_ENCODING_RANK = {
+    "native_date": 60,
+    "timestamp": 55,
+    "surrogate_fk": 50,
+    "yyyymmdd_integer": 40,
+    "yyyymm_integer": 30,
+    "date_string": 20,
+}
+
+
+def _date_option_business_identity(binding: dict) -> tuple[str, str, str]:
+    """Business identity of a date role: same role, same fact, same grain.
+
+    Two rows with this identity mean the same thing to a business user and
+    carry the same effective join contract — they differ only in how the date
+    is physically stored. Asking which storage format to use is not a
+    meaningful clarification, so they collapse into one option.
+    """
+    role = " ".join(
+        str(
+            binding.get("context_name")
+            or binding.get("date_role")
+            or ""
+        ).replace("_", " ").casefold().split()
+    )
+    return (
+        str(binding.get("fact_table") or "").upper(),
+        role,
+        str(binding.get("temporal_grain") or "").casefold(),
+    )
+
+
 def _unique_date_bindings(bindings: list[dict]) -> list[dict]:
-    """Collapse duplicate physical roles while keeping the strongest metadata."""
+    """Collapse duplicate roles while keeping the strongest metadata.
+
+    Two passes. The first removes exact physical duplicates (the same fact
+    column offered twice). The second collapses rows that are the SAME business
+    date on the same fact at the same grain but stored differently (a native
+    SNAPSHOT_DATE beside an integer SNAPSHOT_YYYYMMDD): those would otherwise
+    render as two buttons a business user cannot choose between — the defect
+    behind "duplicate Last Modified Date options". Genuinely distinct roles
+    (Invoice Date vs Order Date) always survive as separate options.
+    """
     chosen: dict[tuple[str, str], dict] = {}
 
     def strength(item: dict) -> tuple[int, int, int, str]:
@@ -580,7 +638,33 @@ def _unique_date_bindings(bindings: list[dict]) -> list[dict]:
         current = chosen.get(identity)
         if current is None or strength(binding) > strength(current):
             chosen[identity] = binding
-    return [chosen[key] for key in sorted(chosen)]
+
+    def encoding_strength(item: dict) -> tuple[int, int, int, int, str]:
+        status = str(item.get("governance_status") or item.get("status") or "").casefold()
+        return (
+            1 if status == "approved" else 0,
+            1 if item.get("is_default") else 0,
+            _DATE_ENCODING_RANK.get(
+                normalize_date_key_type(item.get("date_key_type")), 0
+            ),
+            int(item.get("priority") or 0),
+            str(item.get("fact_column") or ""),
+        )
+
+    collapsed: dict[tuple[str, str, str], dict] = {}
+    for identity in sorted(chosen):
+        binding = chosen[identity]
+        business = _date_option_business_identity(binding)
+        # A row with no business role name cannot be judged equivalent to
+        # anything; keep it keyed on its own physical identity.
+        key = business if business[1] else (identity[0], identity[1], "")
+        current = collapsed.get(key)
+        if current is None or encoding_strength(binding) > encoding_strength(current):
+            collapsed[key] = binding
+    return [
+        collapsed[key]
+        for key in sorted(collapsed, key=lambda item: _date_option_identity(collapsed[item]))
+    ]
 
 
 def _date_option_labels(bindings: list[dict]) -> dict[tuple[str, str], str]:
@@ -633,15 +717,24 @@ def _date_option_labels(bindings: list[dict]) -> dict[tuple[str, str], str]:
         for identity in identities:
             by_qualifier.setdefault(qualifiers.get(identity, ""), []).append(identity)
         for qualifier, same in by_qualifier.items():
-            # Sorted identity keeps the ordinal reproducible across requests.
-            for position, identity in enumerate(sorted(same), start=1):
+            for identity in sorted(same):
                 base = base_labels[identity]
                 if qualifier and len(same) == 1:
                     resolved[identity] = f"{base} ({qualifier})"
-                elif qualifier:
-                    resolved[identity] = f"{base} ({qualifier} {position})"
+                    continue
+                # Two roles sharing a name AND a storage format are genuinely
+                # different physical dates that the tenant's metadata gives no
+                # business words to tell apart. Name the source field rather
+                # than a bare ordinal: a positional number says nothing a user
+                # can choose on, while the field name is at least actionable
+                # (and tells an admin which role needs a distinct name).
+                field = str(identity[1] or "").strip()
+                if qualifier and field:
+                    resolved[identity] = f"{base} ({qualifier} {field})"
+                elif field:
+                    resolved[identity] = f"{base} ({field})"
                 else:
-                    resolved[identity] = f"{base} ({position})"
+                    resolved[identity] = base
     return resolved
 
 
@@ -885,6 +978,11 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         db_cfg,
         _thread_calendar_preference,
     )
+    # Initialized before the try so later stages that re-plan (the trend
+    # re-grain fallback below) always have these in scope, even when catalog
+    # loading failed open.
+    _planner_metrics: list[dict] = []
+    _planner_terms: list[dict] = []
     try:
         _planner_metrics = []
         for _metric in store.list_metrics(account_id):
@@ -1375,6 +1473,207 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
 
     # Unsupported cache requests continue through the governed source-query pipeline.
 
+    # ── Step 2.6: Trend re-grain of the parent answer ────────────────────────
+    # "What was my revenue for the past 5 days?" answers with one total. The
+    # follow-up "provide the trend" is neither a question about those rows (a
+    # total cannot be un-aggregated, so the result cache has nothing to give)
+    # nor a new question (three words carry no metric, so re-deriving the
+    # metric, the business date and the window loses all three). It is the SAME
+    # query at a finer grain.
+    #
+    # So compile it that way: take the parent's already-validated SQL, add the
+    # parent's OWN governed business date to the SELECT and GROUP BY, order it
+    # chronologically, and leave everything else — crucially the WHERE clause,
+    # and therefore the window — untouched. The daily series then always sums
+    # back to the total the user is looking at, and the date can only be the
+    # role that answer was already governed by. No LLM is involved.
+    _regrain_request = (
+        parse_trend_regrain_request(question)
+        if (_session_id and _has_cached_result and not is_clarification)
+        else None
+    )
+    if _regrain_request:
+        _regrain_snapshot = result_cache.get_snapshot(
+            _session_id, getattr(adapter, "last_result_id", None)
+        ) or result_cache.get_snapshot(_session_id)
+        _regrain_parent_sql = str(_regrain_snapshot.get("sql") or "")
+        _regrain_parent_question = str(_regrain_snapshot.get("question") or "")
+        _regrain_policy = temporal_policy_from_plan(
+            (_regrain_snapshot.get("metadata") or {}).get("semantic_plan") or {}
+        )
+        _regrain_grain = resolve_regrain_grain(_regrain_request, _regrain_policy)
+        _regrain_sql, _regrain_refusal = build_regrain_sql(
+            _regrain_parent_sql,
+            _regrain_policy,
+            _regrain_grain,
+            db_cfg.get("db_type", "azure_sql"),
+        )
+        _regrain_question = regrain_question_text(
+            _regrain_parent_question, _regrain_grain
+        )
+        _trace_step(
+            trace_id,
+            "trend_regrain",
+            input_summary={
+                "follow_up": _regrain_request.matched_phrase,
+                "parent_question": _regrain_parent_question,
+            },
+            output_summary={
+                "grain": _regrain_grain,
+                "business_role": _regrain_policy.get("business_role") or "",
+                "compiled": bool(_regrain_sql),
+                "reason": _regrain_refusal,
+            },
+            status="success" if _regrain_sql else "error",
+        )
+        log.info(
+            "Trend re-grain for %s: grain=%s role=%s parent=%r compiled=%s%s",
+            account_id, _regrain_grain,
+            _regrain_policy.get("business_role") or "",
+            _regrain_parent_question[:60], bool(_regrain_sql),
+            "" if _regrain_sql else f" reason={_regrain_refusal}",
+        )
+        if _regrain_sql:
+            _trace_update(trace_id, route="trend_regrain", generated_sql=_regrain_sql)
+            _trace_step(
+                trace_id, "route",
+                output_summary={"route": "trend_regrain", "grain": _regrain_grain},
+            )
+            await _send_live_stage(
+                adapter, event, "executing_query", "Building the trend",
+                "Re-running the previous answer's governed query, grouped by its "
+                "approved business date.",
+            )
+            _regrain_t0 = time.time()
+            try:
+                _loop = asyncio.get_running_loop()
+                try:
+                    governed = await asyncio.wait_for(
+                        _loop.run_in_executor(
+                            None, _execute_with_policy, _regrain_sql,
+                        ),
+                        timeout=180.0,
+                    )
+                except asyncio.TimeoutError:
+                    await adapter.send_message(
+                        event,
+                        "⏱ The trend query timed out after 3 minutes. Try a "
+                        "narrower window or a coarser period.",
+                    )
+                    _trace_finish(
+                        trace_id, status="error", answer_type="timeout",
+                        error_message="Trend re-grain timed out",
+                    )
+                    return
+                rows = governed.rows
+                _regrain_sql = governed.sql
+                duration_ms = int(time.time() * 1000) - start_ms
+            except PolicyDeniedError as policy_error:
+                _trace_finish(
+                    trace_id, status="error", answer_type="policy_denied",
+                    error_message=str(policy_error),
+                )
+                await adapter.send_message(event, str(policy_error))
+                return
+            except Exception as _regrain_exc:
+                # Fall through to the fallback below rather than failing the
+                # turn: the restated parent question still carries the parent's
+                # metric, business date and window.
+                log.warning(
+                    "Trend re-grain execution failed for %s (%s); "
+                    "falling back to the governed pipeline",
+                    account_id, _regrain_exc,
+                )
+            else:
+                # The query has already run against the production database, so
+                # bookkeeping must never be able to discard the answer or send
+                # the turn back through the pipeline for a second execution.
+                try:
+                    _log_q(account_id, _regrain_question, _regrain_sql, len(rows), True, "",
+                           "trend_regrain", "deterministic", 0, 0, duration_ms,
+                           portal_user_id=pu_id, zoom_user_id=zid,
+                           question_id=audit_request_id)
+                    _trace_update(
+                        trace_id,
+                        sql_validation_status="derived_from_validated_parent",
+                        query_row_count=len(rows),
+                        query_duration_ms=duration_ms,
+                    )
+                    _trace_step(
+                        trace_id, "execute_sql", input_summary=_regrain_sql,
+                        output_summary={"rows": len(rows)},
+                        duration_ms=int((time.time() - _regrain_t0) * 1000),
+                    )
+                    _add_history = getattr(adapter, "add_to_history", None)
+                    if callable(_add_history) and rows:
+                        _add_history(
+                            question=_regrain_question,
+                            sql=_regrain_sql,
+                            columns=list(rows[0].keys()) if rows else [],
+                            row_count=len(rows),
+                        )
+                except Exception as _regrain_log_exc:
+                    log.warning(
+                        "Trend re-grain bookkeeping failed for %s (%s) — the "
+                        "answer below was still produced and delivered",
+                        account_id, _regrain_log_exc,
+                    )
+                await _send_results(
+                    event, adapter, _regrain_question, rows, _regrain_sql,
+                    duration_ms, portal_user, account_id, db_cfg,
+                    question_id=audit_request_id,
+                    confidence_context={
+                        # The parent SQL was validated before it ever executed;
+                        # this query is that SQL plus one governed date column.
+                        "validation_code": "derived_from_validated_parent",
+                        "has_semantic_plan": True,
+                        "tables_used": extract_sql_tables(
+                            _regrain_sql, db_cfg.get("db_type", "azure_sql"),
+                        ),
+                    },
+                    display_context={
+                        **dict(_regrain_snapshot.get("metadata") or {}).get(
+                            "display_formats", {}
+                        ),
+                        "format_scope": "trend_regrain",
+                    },
+                    contract_version=_contract_version,
+                )
+                _trace_finish(
+                    trace_id, status="success", answer_type="table",
+                    row_count=len(rows), duration_ms=duration_ms,
+                    final_answer_summary=(
+                        f"Re-grained the previous answer by {_regrain_grain}"
+                    ),
+                )
+                return
+        # Not compilable (or execution failed). Restate the PARENT question at
+        # the requested grain so the normal pipeline resolves the same metric,
+        # the same approved date role and the same window — rather than trying
+        # to answer "provide the trend" on its own, which carries none of them.
+        if _regrain_parent_question:
+            log.info(
+                "Trend re-grain fallback for %s: answering %r through the "
+                "governed pipeline", account_id, _regrain_question,
+            )
+            question = _regrain_question
+            # Re-plan against the question we are actually going to answer.
+            # The plan built from "provide the trend" describes nothing, and
+            # every stage below reads it (counted entity, calendar basis,
+            # prompt context).
+            try:
+                _analytical_plan = plan_analytical_intent(
+                    question,
+                    metrics=_planner_metrics,
+                    terms=_planner_terms,
+                    calendar_profile=_planner_calendar_profile,
+                )
+                _analytical_plan_context = _analytical_plan.prompt_context()
+            except Exception as _regrain_plan_exc:
+                log.warning(
+                    "Trend re-grain re-planning failed for %s: %s",
+                    account_id, _regrain_plan_exc,
+                )
 
     # ── Step 3: Metric registry — deterministic SQL for known metrics ────────
     # If the question matches a defined metric, assemble SQL without the LLM.
@@ -1908,8 +2207,16 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 if normalize_date_key_type(
                     str(_date_role.get("date_key_type") or "surrogate_fk")
                 ) == "surrogate_fk":
-                    _dim_entity = entity_name_for_table(
-                        _full_graph, str(_date_role.get("dimension_table") or "")
+                    # Role-aware: several role-playing date entities normally
+                    # share one physical date dimension, so a table lookup
+                    # would force an arbitrary role (this is how an approved
+                    # Invoice Date could require "Last Modified Date").
+                    # Returns "" when several roles own the dimension and none
+                    # matches this binding — forcing an arbitrary one there is
+                    # precisely the defect, so force nothing and let the exact
+                    # date edge come from _graph_with_exact_date_edges().
+                    _dim_entity = date_role_entity_for_binding(
+                        _full_graph, _date_role
                     )
                     if _dim_entity:
                         _value_required_entities.add(_dim_entity)
@@ -1928,8 +2235,10 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             )
             if _graph_ctx.get("enabled"):
                 log.info(
-                    "Graph resolved for %s: entities=%s anchor=%s schema_filter=%s",
+                    "Graph resolved for %s: entities=%s anchor=%s planning_status=%s "
+                    "schema_filter=%s",
                     account_id, _graph_ctx.get("detected"), _graph_ctx.get("anchor"),
+                    _graph_ctx.get("planning_status") or "selected",
                     schema_hint or "none",
                 )
                 _trace_step(
@@ -3162,11 +3471,54 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                         _full_graph,
                         _selected_date_bindings,
                     )
-                    _date_required_entities = set(_graph_ctx.get("detected") or [])
+                    _entities_by_name = {
+                        str(_entity.get("entity_name") or ""): _entity
+                        for _entity in (_date_graph.get("entities") or [])
+                        if _entity.get("entity_name")
+                    }
+                    # The governed roles this question actually resolved to.
+                    # Resolved by physical edge, because role-playing roles
+                    # share one date dimension and a table lookup would return
+                    # an arbitrary one.
+                    _governed_date_entities = {
+                        _resolved_entity
+                        for _resolved_entity in (
+                            date_role_entity_for_binding(_date_graph, _binding_candidate)
+                            for _binding_candidate in _selected_date_bindings
+                        )
+                        if _resolved_entity
+                    }
+                    # Carry the broad pass forward, minus any *other* business
+                    # date it guessed lexically. Requiring a second date role
+                    # beside the resolved one forces two edges into the same
+                    # date dimension, which silently returns no rows.
+                    _date_required_entities = {
+                        _detected_entity
+                        for _detected_entity in (_graph_ctx.get("detected") or [])
+                        if _detected_entity in _governed_date_entities
+                        or not _governed_date_entities
+                        or not is_date_role_entity(
+                            _entities_by_name.get(_detected_entity, {})
+                        )
+                    }
+                    _date_required_entities |= _governed_date_entities
                     for _date_table in _date_plan.get("required_tables") or []:
                         _date_entity = entity_name_for_table(_date_graph, str(_date_table))
-                        if _date_entity:
+                        # Never let a shared date-dimension table re-introduce a
+                        # role the governed binding did not select.
+                        if _date_entity and (
+                            _date_entity in _date_required_entities
+                            or not is_date_role_entity(
+                                _entities_by_name.get(_date_entity, {})
+                            )
+                        ):
                             _date_required_entities.add(_date_entity)
+                    log.info(
+                        "Date-role graph scoping for %s: governed=%s required=%s",
+                        account_id,
+                        sorted(_governed_date_entities),
+                        sorted(_date_required_entities),
+                    )
                     _scoped_graph_ctx = _graph_resolve(
                         question=_semantic_plan_question,
                         account_id=account_id,
@@ -3290,6 +3642,21 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             )
             if _aligned_graph_ctx.get("enabled"):
                 _graph_ctx = _aligned_graph_ctx
+            # The narrowing this pass performed is the difference between
+            # answering on the metric's approved business date and joining an
+            # unrelated one beside it, so make it readable in production logs
+            # rather than only in the trace metadata below.
+            log.info(
+                "Graph resolved (authoritative) for %s: entities=%s anchor=%s "
+                "planning_status=%s governed_dates=%s dropped_dates=%s dropped_facts=%s",
+                account_id,
+                _graph_ctx.get("detected"),
+                _graph_ctx.get("anchor"),
+                _graph_ctx.get("planning_status") or "selected",
+                _planner_alignment.get("governed_date_entities") or [],
+                _planner_alignment.get("dropped_date_entities") or [],
+                _planner_alignment.get("dropped_fact_entities") or [],
+            )
 
         _trace_step(
             trace_id,
@@ -3303,6 +3670,12 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 "entities": _graph_ctx.get("detected") or [],
                 "dropped_fact_entities": (
                     _planner_alignment.get("dropped_fact_entities") or []
+                ),
+                "governed_date_entities": (
+                    _planner_alignment.get("governed_date_entities") or []
+                ),
+                "dropped_date_entities": (
+                    _planner_alignment.get("dropped_date_entities") or []
                 ),
             },
             metadata={
@@ -3683,6 +4056,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         conversation_history=_conv_history or None,
         graph_context=_graph_ctx or None,
         semantic_plan=_semantic_plan or None,
+        question=question,
     )
     _sql_generation_max_tokens = _sql_completion_token_budget(
         question,
@@ -4596,6 +4970,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                         context_with_terms,
                         graph_context=_graph_ctx or None,
                         semantic_plan=_retry_plan,
+                        question=question,
                     ),
                     retry_user, provider, model, api_key,
                     temperature=0.0,

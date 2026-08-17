@@ -349,6 +349,159 @@ def resolve_option_text(options: list[dict], text: str) -> dict | None:
     return best_match if best_score >= 2 else None
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# Clarification rejection
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# A user who is offered options they consider irrelevant answers the offer, not
+# the question: "no, don't use this". That reply matches no option, so the
+# clarification used to be re-sent verbatim — the same card, forever.
+#
+# Detecting this must stay NARROW, because ordinary data questions are full of
+# negation ("show customers with no orders", "do not include cancelled orders",
+# "revenue excluding returned invoices"). So the reply is only a rejection when,
+# after dropping conversational filler, the WHOLE utterance is a refusal. The
+# patterns below are fully anchored for exactly that reason: any content word
+# the patterns do not name — a metric, an entity, a verb such as "include" or
+# "exclude" — leaves the match unmatched and the reply is treated as text.
+
+# Filler that may precede or follow a refusal without changing it.
+_REJECTION_FILLER = frozenset({
+    "please", "actually", "sorry", "hmm", "hmmm", "um", "uh", "well", "ok",
+    "okay", "alright", "right", "thanks", "thank", "you", "thx", "but", "and",
+    "so", "just", "though", "however", "yeah", "yep",
+})
+
+# Standalone negatives that may open a refusal ("no, don't use this").
+_REJECTION_LEAD_NEGATIVES = frozenset({"no", "nope", "nah", "negative", "nooo"})
+
+# Each pattern must match the ENTIRE remaining utterance.
+_REJECTION_PATTERNS = tuple(
+    re.compile(rf"^(?:{body})$") for body in (
+        # Bare refusals of the offered set.
+        r"neither(?:\s+(?:of\s+)?(?:these|those|them|the\s+(?:two|options?)|options?))?",
+        r"none(?:\s+of\s+(?:these|those|them|the\s+(?:above|options?)))?",
+        r"not\s+(?:these|those|them|either|any(?:\s+of\s+(?:these|those|them))?)",
+        r"no\s+thanks?(?:\s+you)?",
+        r"no\s+(?:neither|none|nothing)(?:\s+of\s+(?:these|those|them))?",
+        # Explicit "don't use ..." refusals.
+        r"(?:dont|do\s+not|doesnt|cant|cannot|wont|will\s+not)\s+"
+        r"(?:use|pick|choose|select|apply|want|need)\s+"
+        r"(?:this|that|it|these|those|them|either|any|none|"
+        r"(?:any|either|none)\s+of\s+(?:these|those|them)|"
+        # An optional determiner and an optional GENERIC modifier only. A
+        # business word ("the invoice date option") names a specific choice, so
+        # it is a refinement for the option matcher, never a blanket refusal.
+        r"(?:the|these|those|this|that|any|either)?\s*"
+        r"(?:date|dates|business|join|joins|relationship|relationships|"
+        r"path|paths)?\s*"
+        r"(?:option|options|path|paths|relationship|relationships|"
+        r"date|dates|one|ones|join|joins)(?:\s+(?:above|shown|listed))?)",
+        r"i\s+(?:dont|do\s+not)\s+(?:want|need|like)\s+"
+        r"(?:this|that|it|these|those|them|either|any(?:\s+of\s+(?:these|those|them))?)",
+        r"(?:use|pick|choose|select)\s+(?:neither|none\s+of\s+(?:these|those|them))",
+        # Cancellations of the clarification step itself.
+        r"cancel(?:\s+(?:this|that|it|the\s+(?:question|clarification|step)))?",
+        r"(?:skip|stop|forget|drop|ignore)\s+"
+        r"(?:this|that|it|the\s+(?:question|clarification|step)?)",
+        r"(?:skip|stop|forget|drop|ignore)",
+        r"never\s*mind",
+        r"nvm",
+        r"start\s+over",
+        r"none\s+apply",
+        r"not\s+relevant",
+        r"(?:this|that|these|those)\s+(?:is|are)\s+(?:not\s+relevant|irrelevant)",
+    )
+)
+
+
+def _rejection_tokens(text: str) -> list[str]:
+    """Tokenize a reply for rejection matching, folding common contractions."""
+    lowered = (text or "").strip().casefold()
+    # "don't" / "don’t" / "dont" must all reach the patterns as "dont".
+    lowered = re.sub(r"[‘’'`]", "", lowered)
+    return [token for token in re.split(r"[^a-z0-9]+", lowered) if token]
+
+
+def is_clarification_rejection(text: str) -> bool:
+    """Whether a reply refuses the pending clarification outright.
+
+    True for narrow, self-contained refusals: "no", "nope", "don't use this",
+    "do not use either", "neither", "none of these", "cancel", "skip this".
+
+    False for data questions that merely contain negation — "show customers
+    with no orders", "do not include cancelled orders", "revenue excluding
+    returned invoices", "warehouses with no available stock" — because a
+    rejection has to be the whole message, not a clause inside a request.
+    """
+    tokens = _rejection_tokens(text)
+    if not tokens:
+        return False
+    # Real refusals are short. This bound is a cheap guard so a long request
+    # can never reach the patterns at all.
+    if len(tokens) > 8:
+        return False
+
+    while tokens and tokens[0] in _REJECTION_FILLER:
+        tokens.pop(0)
+    while tokens and tokens[-1] in _REJECTION_FILLER:
+        tokens.pop()
+    if not tokens:
+        return False
+
+    # A leading standalone negative may introduce the refusal, and on its own
+    # ("no", "nope") IS the refusal.
+    if tokens[0] in _REJECTION_LEAD_NEGATIVES:
+        remainder = tokens[1:]
+        while remainder and remainder[0] in _REJECTION_FILLER:
+            remainder.pop(0)
+        if not remainder:
+            return True
+        tokens = remainder
+
+    phrase = " ".join(tokens)
+    return any(pattern.match(phrase) for pattern in _REJECTION_PATTERNS)
+
+
+def clarification_reply_matches_option(cmeta: dict | None, text: str) -> bool:
+    """Whether a reply resolves to one of the pending clarification's options.
+
+    Checked before treating a reply as a rejection, so a clarification that
+    deliberately offers "No — this is a new question" keeps owning the word
+    "no" instead of being cancelled out from under itself.
+    """
+    meta = cmeta or {}
+    options = meta.get("options") or []
+    all_options = meta.get("all_options") or options
+    if not options:
+        return False
+    if meta.get("source") == "metric_date_context":
+        return bool(resolve_date_option_text(all_options, text))
+    return bool(
+        resolve_option_text(options, text)
+        or (all_options is not options and resolve_option_text(all_options, text))
+    )
+
+
+def clarification_rejection_message(cmeta: dict | None) -> str:
+    """User-facing acknowledgement for a rejected clarification."""
+    source = str((cmeta or {}).get("source") or "")
+    if source in {"graph_join_path", "source_scope"}:
+        return (
+            "Okay — I won't use those relationship paths. Please restate the "
+            "intended business relationship, or ask the question again."
+        )
+    if source == "metric_date_context":
+        return (
+            "Okay — I won't use those business dates. Tell me which business "
+            "date you meant, or ask the question again."
+        )
+    return (
+        "Okay — I've cancelled that clarification and won't use those options. "
+        "Please restate what you meant, or ask the question again."
+    )
+
+
 def _normalized_date_term(value: object) -> str:
     """Normalize a business-facing date term without losing word boundaries."""
     return " ".join(

@@ -35,6 +35,8 @@ from core.conversation_state import (
 )
 from core.clarification import (
     get_pending, save_pending, clear_pending, combine_with_clarification,
+    clarification_reply_matches_option, clarification_rejection_message,
+    is_clarification_rejection,
     resolve_option_text, resolve_date_option_text,
     was_recently_expired, acknowledge_recently_expired,
     attach_clarification_resolution, clarification_session_id,
@@ -1363,6 +1365,28 @@ async def dispatch(
                 opts = cmeta.get("options") or []
                 selected_text = text
                 matched_option_id: str | None = None
+
+                # ── Outright rejection of the offered options ────────────────
+                # "no, don't use this" answers the offer, not the question. It
+                # matches no option, so without this the same card was re-sent
+                # forever. Option matching runs first, so a clarification that
+                # deliberately offers "No — this is a new question" keeps
+                # owning that reply.
+                if is_clarification_rejection(text) and not clarification_reply_matches_option(
+                    cmeta, text
+                ):
+                    log.info(
+                        "%s clarification rejected by user for %r — pending clarification cleared",
+                        cmeta.get("source") or "llm",
+                        pending["original_q"][:80],
+                    )
+                    clear_pending(
+                        account_id, event.user_id, session_id=_pending_session_id,
+                    )
+                    await adapter.send_message(
+                        event, clarification_rejection_message(cmeta),
+                    )
+                    return
                 if cmeta.get("source") == "analyst_query_offer":
                     if _is_query_confirmation(text):
                         attach_clarification_resolution(event, pending)

@@ -62,6 +62,18 @@ def _table_key(value: Any) -> str:
     return ".".join(parts[-2:]) if len(parts) >= 2 else (parts[-1] if parts else "")
 
 
+def _is_date_entity(entity: dict[str, Any] | None) -> bool:
+    """Whether a graph entity is a business-date (role-playing) dimension."""
+    if not entity:
+        return False
+    try:
+        from core.graph_resolver import is_date_role_entity
+
+        return is_date_role_entity(entity)
+    except Exception:
+        return False
+
+
 def _date_bindings(date_context_resolution: dict[str, Any] | None) -> list[dict[str, Any]]:
     resolution = date_context_resolution or {}
     if resolution.get("status") == "selected_many":
@@ -112,15 +124,36 @@ def build_planner_alignment(
         for entity in graph.get("entities") or []
         if entity.get("entity_name")
     }
-    table_to_entity: dict[str, str] = {}
+    owners_by_table: dict[str, list[str]] = {}
     for name, entity in entities_by_name.items():
         table = _table_key(
             f"{entity.get('schema_name')}.{entity.get('table_name')}"
             if entity.get("schema_name") else entity.get("table_name")
         )
-        if table:
-            table_to_entity[table] = name
-            table_to_entity.setdefault(table.split(".")[-1], name)
+        if not table:
+            continue
+        owners_by_table.setdefault(table, []).append(name)
+        bare = table.split(".")[-1]
+        if bare != table:
+            owners_by_table.setdefault(bare, []).append(name)
+
+    table_to_entity: dict[str, str] = {}
+    for table, owners in owners_by_table.items():
+        if len(owners) == 1:
+            table_to_entity[table] = owners[0]
+            continue
+        # One physical date dimension is normally shared by every role-playing
+        # date entity on it. Mapping that table to an entity would therefore
+        # pick a business date at random — which is how a required
+        # ``dimension_table`` from an approved Invoice Date binding could end up
+        # requiring "Last Modified Date". Leave it unmapped: the governed date
+        # binding below names the role this question actually resolved to.
+        non_date = [
+            name for name in owners
+            if not _is_date_entity(entities_by_name.get(name))
+        ]
+        if non_date:
+            table_to_entity[table] = non_date[-1]
 
     required_entities = {
         table_to_entity[table]
@@ -136,17 +169,54 @@ def build_planner_alignment(
         if table_to_entity.get(table) in authoritative_fact_entities
     }
 
+    # A governed date binding names ONE role-playing date entity. Resolve it by
+    # physical edge rather than by table, because several roles normally share
+    # one date dimension and a table lookup returns an arbitrary one.
+    governed_date_entities: set[str] = set()
+    date_bindings = _date_bindings(date_context_resolution)
+    if date_bindings:
+        try:
+            from core.graph_resolver import date_role_entity_for_binding
+
+            for binding in date_bindings:
+                name = date_role_entity_for_binding(graph, binding)
+                if name:
+                    governed_date_entities.add(name)
+        except Exception:
+            # Alignment is a narrowing pass; if the role cannot be resolved,
+            # fall back to keeping what was detected rather than dropping it.
+            governed_date_entities = set()
+    required_entities |= governed_date_entities
+
     detected = {str(name) for name in graph_ctx.get("detected") or [] if str(name)}
     dropped_fact_entities: set[str] = set()
-    if authoritative_fact_entities:
-        for name in detected:
-            entity_type = str(entities_by_name.get(name, {}).get("entity_type") or "").lower()
-            if entity_type == "fact" and name not in authoritative_fact_entities:
+    dropped_date_entities: set[str] = set()
+
+    # The first graph pass is deliberately broad so it can help metric scoping.
+    # Its lexical date-role guesses must not become authoritative requirements
+    # here: once a role is in required_entities the final pass scores it +100
+    # and the pathfinder is obliged to connect it, so an unrelated audit date
+    # ends up joined beside the metric's approved date — two edges into the same
+    # date dimension, which returns no rows or provokes an irrelevant
+    # clarification. Once a date role IS governed, only that role survives.
+    date_entities_are_governed = bool(governed_date_entities)
+    for name in detected:
+        entity = entities_by_name.get(name, {})
+        entity_type = str(entity.get("entity_type") or "").lower()
+        if entity_type == "fact" and authoritative_fact_entities:
+            if name not in authoritative_fact_entities:
                 dropped_fact_entities.add(name)
                 continue
             required_entities.add(name)
-    else:
-        required_entities.update(detected)
+            continue
+        if (
+            date_entities_are_governed
+            and name not in governed_date_entities
+            and _is_date_entity(entity)
+        ):
+            dropped_date_entities.add(name)
+            continue
+        required_entities.add(name)
 
     previous_anchor = str(graph_ctx.get("anchor") or "")
     return {
@@ -155,9 +225,15 @@ def build_planner_alignment(
         "required_entities": sorted(required_entities),
         "authoritative_fact_tables": sorted(authoritative_fact_tables),
         "authoritative_fact_entities": sorted(authoritative_fact_entities),
+        "governed_date_entities": sorted(governed_date_entities),
         "dropped_fact_entities": sorted(dropped_fact_entities),
+        "dropped_date_entities": sorted(dropped_date_entities),
         "previous_anchor": previous_anchor,
-        "changed": bool(dropped_fact_entities) or not required_entities.issubset(detected),
+        "changed": (
+            bool(dropped_fact_entities)
+            or bool(dropped_date_entities)
+            or not required_entities.issubset(detected)
+        ),
     }
 
 

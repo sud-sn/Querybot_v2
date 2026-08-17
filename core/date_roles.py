@@ -331,6 +331,28 @@ def is_plain_surrogate_date_role_column(column_name: str) -> bool:
     return is_date_role_column(col)
 
 
+def is_surrogate_date_role_key_column(column_name: str) -> bool:
+    """True for ANY date-role FK/key column, whatever the key convention.
+
+    Deliberately broader than ``is_plain_surrogate_date_role_column``, which
+    excludes the ``_DT_DMS_KEY``/``_DATE_DMS_KEY`` family because those have
+    their own arithmetic-decode rule. That exclusion is about *how a key may be
+    converted to a calendar value* and says nothing about *which business date a
+    query is allowed to use* — so reusing it to police role substitution left
+    every warehouse on the DMS convention unguarded: a query could filter and
+    anchor entirely on LAST_MOD_DT_DMS_KEY while the approved role was
+    INVOICE_DT_DMS_KEY, and validation passed clean.
+
+    Native date columns (ORDER_DATE, with no key suffix) are still excluded:
+    calendar functions apply to them directly and they are matched by name
+    elsewhere.
+    """
+    col = (column_name or "").strip()
+    if not col or not _SURROGATE_KEY_SUFFIX_RE.search(col):
+        return False
+    return is_date_role_column(col)
+
+
 def date_role_terms(role: DateRole) -> list[str]:
     terms = [role.label.lower(), role.key.replace("_", " ")]
     terms.extend(role.synonyms)
