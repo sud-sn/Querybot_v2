@@ -14,6 +14,7 @@ v7 additions:
 
 import json
 import logging
+import os
 from pathlib import Path
 
 from core.synthetic import generate_synthetic_sample, should_use_synthetic
@@ -406,9 +407,21 @@ _DEFAULT_QUERY_TIMEOUT_SECONDS = 120
 
 
 def _query_timeout_seconds(cfg: dict) -> int:
-    """Return a bounded driver-level statement timeout for user queries."""
+    """Return a bounded driver-level statement timeout for user queries.
+
+    Precedence: the db_config's own value, then QUERYBOT_QUERY_TIMEOUT_SECONDS,
+    then the 120 s default; always clamped to 1..600.
+
+    The env override exists because nothing writes ``query_timeout_seconds``
+    into db_config today, so a deployment whose warehouse legitimately needs
+    longer than two minutes — a large fact with no index on the filtered key,
+    for instance — had no way to say so and simply lost those answers.
+    """
+    raw = (cfg or {}).get("query_timeout_seconds")
+    if raw in (None, ""):
+        raw = os.getenv("QUERYBOT_QUERY_TIMEOUT_SECONDS", "")
     try:
-        value = int((cfg or {}).get("query_timeout_seconds", _DEFAULT_QUERY_TIMEOUT_SECONDS))
+        value = int(raw) if str(raw).strip() else _DEFAULT_QUERY_TIMEOUT_SECONDS
     except (TypeError, ValueError):
         value = _DEFAULT_QUERY_TIMEOUT_SECONDS
     return max(1, min(value, 600))

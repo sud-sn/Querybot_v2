@@ -1120,8 +1120,7 @@ def build_seekable_date_window(
         ),
         (
             f"SELECT window_date.{quote(dim_key)} AS business_date_key\n"
-            f"    FROM {dim_sql} AS window_date\n"
-            f"    CROSS JOIN anchor\n"
+            f"    FROM {dim_sql} AS window_date{{anchor_join}}\n"
             f"    WHERE {{window_predicate}}"
         ),
         (
@@ -1273,6 +1272,15 @@ def compile_governed_temporal_metric_sql(
     # question scan the whole invoice fact and hit the statement timeout.
     seekable = date_key_type == "surrogate_fk"
     anchor_body = window_keys_body = key_filter = ""
+    # A pre-resolved anchor lets the window become two literals, so nothing has
+    # to read the fact just to discover its newest date. Only accepted when it
+    # was probed for THIS fact and date key — see core.date_anchor.
+    from core.date_anchor import anchor_for_policy
+
+    resolved_anchor = anchor_for_policy(
+        context.get("resolved_date_anchor"), policy,
+    )
+    literal_window_predicate = ""
     if seekable:
         anchor_body, window_keys_body, key_filter = build_seekable_date_window(
             db_type=db_type,
@@ -1335,6 +1343,25 @@ def compile_governed_temporal_metric_sql(
             f"{window_date_ref} > {start_expr}\n"
             f"      AND {window_date_ref} <= anchor.max_business_date"
         )
+        if resolved_anchor.get("value"):
+            _anchor_literal = f"CAST('{resolved_anchor['value']}' AS date)"
+            if dialect in {"azure_sql", "snowflake"}:
+                _start_literal = f"DATEADD({unit}, -{amount}, {_anchor_literal})"
+            elif dialect == "oracle":
+                if unit == "day":
+                    _start_literal = f"{_anchor_literal} - {amount}"
+                elif unit == "week":
+                    _start_literal = f"{_anchor_literal} - {amount * 7}"
+                else:
+                    _months = amount * {"month": 1, "quarter": 3, "year": 12}[unit]
+                    _start_literal = f"ADD_MONTHS({_anchor_literal}, -{_months})"
+            else:
+                _start_literal = ""
+            if _start_literal:
+                literal_window_predicate = (
+                    f"{window_date_ref} > {_start_literal}\n"
+                    f"      AND {window_date_ref} <= {_anchor_literal}"
+                )
         where_sql = key_filter if seekable else (
             f"{date_ref} > {start_expr}\n"
             f"  AND {date_ref} <= anchor.max_business_date"
@@ -1368,6 +1395,19 @@ def compile_governed_temporal_metric_sql(
             return ""
         window_predicate = f"{window_day} = {selected_day}"
         where_sql = key_filter if seekable else f"{date_day} = {selected_day}"
+        if resolved_anchor.get("value"):
+            _anchor_literal = f"CAST('{resolved_anchor['value']}' AS date)"
+            if dialect == "oracle":
+                _selected_literal = (
+                    _anchor_literal if window_kind == "today"
+                    else f"{_anchor_literal} - 1"
+                )
+            else:
+                _selected_literal = (
+                    _anchor_literal if window_kind == "today"
+                    else f"DATEADD(day, -1, {_anchor_literal})"
+                )
+            literal_window_predicate = f"{window_day} = {_selected_literal}"
 
     metric_alias = (
         re.sub(r"[^A-Za-z0-9_]", "_", str(metric.get("name") or "metric")).upper()
@@ -1403,6 +1443,23 @@ def compile_governed_temporal_metric_sql(
     {select_sql}
 FROM {from_sql}
 WHERE {where_sql}{group_sql}{order_sql}"""
+    elif seekable and resolved_anchor.get("value"):
+        # The anchor was already resolved from the fact's own rows once for this
+        # account+fact+key and cached, so the query does not have to ask the
+        # database "what is the newest date here?" all over again. Nothing reads
+        # the fact to compute an anchor: the window is two literals and the fact
+        # is reached through its own key. This is the shape that survives a large
+        # fact with no index on the date key.
+        window_keys_sql = window_keys_body.replace(
+            "{anchor_join}", "",
+        ).replace("{window_predicate}", literal_window_predicate)
+        compiled = f"""WITH window_keys AS (
+    {window_keys_sql}
+)
+SELECT
+    {select_sql}
+FROM {from_sql}
+WHERE {where_sql}{group_sql}{order_sql}"""
     elif seekable:
         # anchor and window_keys are both computed off the small date dimension.
         # The main query keeps its physical fact-to-dimension join (so the
@@ -1410,8 +1467,8 @@ WHERE {where_sql}{group_sql}{order_sql}"""
         # addressable) but reaches the fact through its own key, which is what
         # makes this an index seek instead of a full scan.
         window_keys_sql = window_keys_body.replace(
-            "{window_predicate}", window_predicate,
-        )
+            "{anchor_join}", "\n    CROSS JOIN anchor",
+        ).replace("{window_predicate}", window_predicate)
         compiled = f"""WITH anchor AS (
     {anchor_body}
 ),

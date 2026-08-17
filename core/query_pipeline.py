@@ -4286,6 +4286,46 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             "an administrator to review the applicable Date Role.",
         )
         return
+    # ── Resolve the business-date anchor once, not per question ───────────────
+    # "The newest date present in this fact" is a question no SQL shape can
+    # answer without reading the fact, and it changes only when the warehouse
+    # loads. Probe it once, cache it per account+fact+key, and the compiled SQL
+    # below carries a literal window instead of a subquery — so nothing reads the
+    # fact merely to discover its own latest date. Still data-relative, never the
+    # clock; see core/date_anchor.py.
+    try:
+        from core.date_anchor import resolve_business_anchor
+
+        _anchor_policies = [
+            policy for policy in ((_semantic_plan or {}).get("temporal_policies") or [])
+            if isinstance(policy, dict)
+            and str(policy.get("anchor_policy") or "") == "latest_available"
+        ]
+        if len(_anchor_policies) == 1:
+            _resolved_anchor = resolve_business_anchor(
+                account_id,
+                _anchor_policies[0],
+                db_cfg.get("db_type", "azure_sql"),
+                lambda probe_sql: _execute_with_policy(probe_sql).rows,
+            )
+            if _resolved_anchor.get("value"):
+                _generation_semantic_context["resolved_date_anchor"] = _resolved_anchor
+                _trace_step(
+                    trace_id,
+                    "business_date_anchor",
+                    output_summary={
+                        "value": _resolved_anchor["value"],
+                        "source": _resolved_anchor["source"],
+                        "cached": _resolved_anchor.get("cached", False),
+                        "probe_ms": _resolved_anchor.get("probe_ms", 0),
+                    },
+                )
+    except Exception as _anchor_exc:
+        log.warning(
+            "Business-date anchor resolution skipped for %s: %s — the compiled "
+            "SQL keeps its in-query anchor", account_id, _anchor_exc,
+        )
+
     try:
         _compiled_governed_sql = compile_governed_temporal_metric_sql(
             db_cfg["db_type"],

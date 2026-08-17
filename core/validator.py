@@ -1873,7 +1873,10 @@ def _top_n_shape_error(tree, semantic_context: dict | None) -> dict | None:
     }
 
 
-def _temporal_anchor_errors(tree, sql: str, policies: list[dict]) -> list[dict]:
+def _temporal_anchor_errors(
+    tree, sql: str, policies: list[dict],
+    semantic_context: dict | None = None,
+) -> list[dict]:
     """Require data-relative anchors for governed relative-date questions."""
     governed = [
         policy for policy in policies or []
@@ -1906,8 +1909,23 @@ def _temporal_anchor_errors(tree, sql: str, policies: list[dict]) -> list[dict]:
             for column in max_node.find_all(sg_exp.Column)
             if column.name
         )
+    # A window anchored on a date the PIPELINE already probed from this fact's own
+    # rows needs no in-query MAX: the anchor is still data-relative, it is just
+    # resolved once and cached instead of recomputed per question (see
+    # core/date_anchor.py). The literal must be the resolved one — this accepts a
+    # governed anchor, never an arbitrary date the model invented.
+    _resolved_anchor = (semantic_context or {}).get("resolved_date_anchor") or {}
+    _anchor_literal_present = bool(
+        _resolved_anchor.get("value")
+        and str(_resolved_anchor["value"]) in str(sql or "")
+    )
     for policy in governed:
         date_column = str(policy.get("date_column") or "").upper()
+        if _anchor_literal_present:
+            from core.date_anchor import anchor_for_policy
+
+            if anchor_for_policy(_resolved_anchor, policy):
+                continue
         if date_column and date_column not in max_columns:
             errors.append({
                 "code": "temporal_anchor_missing",
@@ -2665,6 +2683,7 @@ def validate_sql_detailed(
         tree,
         sql,
         _temporal_policies,
+        semantic_context,
     ) + _temporal_anchor_scope_errors(tree, _temporal_policies) + _observed_period_errors(
         tree, sql, _temporal_policies
     )
