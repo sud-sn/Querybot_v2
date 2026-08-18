@@ -24,6 +24,7 @@ from core.date_roles import (
     generated_date_role_synonyms,
     infer_encoded_date_key,
     is_date_dimension_table,
+    is_date_role_column,
     normalize_date_key_type,
     physical_date_key_type,
     question_has_temporal_intent,
@@ -1326,6 +1327,39 @@ def _runtime_match_terms(text: str) -> set[str]:
     }
 
 
+def _relative_window_terms(question: str) -> set[str]:
+    """Tokens a relative-time expression has already spoken for.
+
+    In "revenue for the last 2 days", "days" is the UNIT of a window, not a
+    request to display a Date column. Scoring it as one promoted the date
+    dimension's own attribute (DT_DMS.DAY_NM, the weekday NAME) to a required
+    display field on a question that asks for a single number.
+
+    That is the same failure the date-role gate fixes one layer up — a generic
+    temporal word read as a request for a specific named thing — and it is
+    expensive here: a required display field is one of the guards that sends a
+    question from the governed compiler to free-form generation, losing the
+    cached anchor and the literal window. The compiled form filters the fact
+    once; the free-form form re-derives MAX(date) in a subquery and scans it
+    twice, which is what exhausted the statement timeout on the live warehouse.
+    """
+    try:
+        from core.contextual_dates import detect_temporal_window
+        window = detect_temporal_window(question) or {}
+    except Exception:
+        return set()
+    kind = str(window.get("kind") or "")
+    if not kind:
+        return set()
+    terms: set[str] = set()
+    unit = str(window.get("unit") or "")
+    if unit:
+        terms |= _terms_for_text(f"{unit} {unit}s")
+    if kind in {"today", "yesterday"}:
+        terms |= _terms_for_text(kind)
+    return terms
+
+
 def _runtime_match_score(question_terms: set[str], values: list[str]) -> int:
     if not question_terms:
         return 0
@@ -1967,6 +2001,7 @@ def build_runtime_semantic_plan(
         return {"enabled": False, "fields": [], "joins": [], "required_tables": [], "reason": "no tables in selected schema"}
 
     q_terms = _terms_for_text(question)
+    window_terms = _relative_window_terms(question)
     preferred_fact_tables = {
         str(name or "").upper() for name in (preferred_fact_tables or set()) if name
     }
@@ -2139,8 +2174,28 @@ def build_runtime_semantic_plan(
             )
             if score <= 0:
                 continue
+            # A date dimension reached through a date-role key must earn its
+            # display slot from something the window did not already consume.
+            # The JOIN below is unaffected — only the claim to be SELECTed is.
+            claims_display = True
+            if window_terms and (
+                is_date_role_column(source_key)
+                or is_date_dimension_table(display_table, [])
+            ):
+                claims_display = _runtime_match_score(
+                    q_terms - window_terms,
+                    [
+                        name,
+                        role_label,
+                        display_col,
+                        display_table,
+                        source_key,
+                        str(dimension.get("approved_meaning") or ""),
+                    ],
+                ) > 0
+
             field_key = (display_table.upper(), display_col.upper())
-            if field_key not in seen_fields:
+            if claims_display and field_key not in seen_fields:
                 seen_fields.add(field_key)
                 fields.append({
                     "term": name,
