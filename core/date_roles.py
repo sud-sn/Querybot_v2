@@ -216,6 +216,25 @@ def classify_date_key(
     return "yyyymmdd_integer" if normalize_date_key_type(declared_encoding) == "yyyymmdd_integer" else "surrogate_fk"
 
 
+def joins_date_dimension(column_name: str, data_type: str = "") -> bool:
+    """True when a date-role column reaches the calendar through a dimension key.
+
+    A column that physically stores a date or timestamp already *is* the
+    calendar value, so it must not be joined to a date dimension. The admin
+    contract states this plainly ("A native date or timestamp is used directly
+    and does not create a graph join"), but the graph and join-map builders
+    were selecting role columns by name alone.
+
+    On an Infor M3 mart that let the audit column ``AZ_LST_UPD_TS`` (datetime2)
+    match the modified-date pattern and emit ``AZ_LST_UPD_TS = DT_DMS_KEY`` —
+    a datetime2/int predicate no dialect can honour — at 88% confidence, and
+    minted a second "Last Modified Date" entity beside the one the real
+    surrogate key already owned. Both were offered for bulk approval.
+    """
+    del column_name  # reserved: name-based encodings are still key-typed
+    return not physical_date_key_type(data_type)
+
+
 def date_key_temporal_grain(date_key_type: str) -> str:
     """Return the finest calendar grain supported by a governed key type."""
     key_type = normalize_date_key_type(date_key_type)

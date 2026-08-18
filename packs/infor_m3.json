@@ -7,97 +7,175 @@
   "table_dict": {
     "OOHEAD": {
       "label": "Customer Order Header",
-      "synonyms": ["sales orders", "customer orders", "order headers"],
+      "synonyms": [
+        "sales orders",
+        "customer orders",
+        "order headers"
+      ],
       "type": "fact"
     },
     "OOLINE": {
       "label": "Customer Order Lines",
-      "synonyms": ["sales order lines", "customer order details", "ordered items"],
+      "synonyms": [
+        "sales order lines",
+        "customer order details",
+        "ordered items"
+      ],
       "type": "fact"
     },
     "OCUSMA": {
       "label": "Customer Master",
-      "synonyms": ["customers", "customer details", "customer accounts"],
+      "synonyms": [
+        "customers",
+        "customer details",
+        "customer accounts"
+      ],
       "type": "dimension"
     },
     "MITMAS": {
       "label": "Item Master",
-      "synonyms": ["items", "products", "product master", "SKUs"],
+      "synonyms": [
+        "items",
+        "products",
+        "product master",
+        "SKUs"
+      ],
       "type": "dimension"
     },
     "MITBAL": {
       "label": "M3 Item Balance",
-      "synonyms": ["M3 balance data", "item warehouse balance", "inventory by warehouse", "current stock balance"],
+      "synonyms": [
+        "M3 balance data",
+        "item warehouse balance",
+        "inventory by warehouse",
+        "current stock balance"
+      ],
       "type": "fact"
     },
     "M3_MITBAL": {
       "label": "M3 Item Balance",
-      "synonyms": ["M3 balance data", "item balance data", "M3 inventory balance"],
+      "synonyms": [
+        "M3 balance data",
+        "item balance data",
+        "M3 inventory balance"
+      ],
       "type": "fact"
     },
     "MITLOC": {
       "label": "Item Location Balance",
-      "synonyms": ["lot inventory", "stock by location", "item location balance"],
+      "synonyms": [
+        "lot inventory",
+        "stock by location",
+        "item location balance"
+      ],
       "type": "fact"
     },
     "MITTRA": {
       "label": "Stock Transactions",
-      "synonyms": ["inventory transactions", "stock movements", "item transactions"],
+      "synonyms": [
+        "inventory transactions",
+        "stock movements",
+        "item transactions"
+      ],
       "type": "fact"
     },
     "MITSTA": {
       "label": "Inventory Statistics",
-      "synonyms": ["item warehouse statistics", "inventory history", "stock statistics"],
+      "synonyms": [
+        "item warehouse statistics",
+        "inventory history",
+        "stock statistics"
+      ],
       "type": "fact"
     },
     "MHDISH": {
       "label": "Delivery Header",
-      "synonyms": ["deliveries", "shipments", "dispatch headers"],
+      "synonyms": [
+        "deliveries",
+        "shipments",
+        "dispatch headers"
+      ],
       "type": "fact"
     },
     "MPHEAD": {
       "label": "Purchase Order Header",
-      "synonyms": ["purchase orders", "supplier orders", "PO headers"],
+      "synonyms": [
+        "purchase orders",
+        "supplier orders",
+        "PO headers"
+      ],
       "type": "fact"
     },
     "MPLINE": {
       "label": "Purchase Order Lines",
-      "synonyms": ["purchase order details", "supplier order lines", "purchased items"],
+      "synonyms": [
+        "purchase order details",
+        "supplier order lines",
+        "purchased items"
+      ],
       "type": "fact"
     },
     "CIDMAS": {
       "label": "Supplier Master",
-      "synonyms": ["suppliers", "vendors", "supplier details"],
+      "synonyms": [
+        "suppliers",
+        "vendors",
+        "supplier details"
+      ],
       "type": "dimension"
     },
     "FSLEDG": {
       "label": "Customer Ledger",
-      "synonyms": ["accounts receivable", "customer invoices", "customer ledger transactions"],
+      "synonyms": [
+        "accounts receivable",
+        "customer invoices",
+        "customer ledger transactions"
+      ],
       "type": "fact"
     },
     "FPLEDG": {
       "label": "Supplier Ledger",
-      "synonyms": ["accounts payable", "supplier invoices", "vendor ledger transactions"],
+      "synonyms": [
+        "accounts payable",
+        "supplier invoices",
+        "vendor ledger transactions"
+      ],
       "type": "fact"
     },
     "FGLEDG": {
       "label": "General Ledger",
-      "synonyms": ["GL transactions", "financial postings", "general ledger transactions"],
+      "synonyms": [
+        "GL transactions",
+        "financial postings",
+        "general ledger transactions"
+      ],
       "type": "fact"
     },
     "OSASTD": {
       "label": "Sales Statistics",
-      "synonyms": ["sales history", "sales statistics dataset", "sales analysis"],
+      "synonyms": [
+        "sales history",
+        "sales statistics dataset",
+        "sales analysis"
+      ],
       "type": "fact"
     },
     "OSBSTD": {
       "label": "Sales Statistics Detail",
-      "synonyms": ["sales history details", "sales transaction statistics", "detailed sales analysis"],
+      "synonyms": [
+        "sales history details",
+        "sales transaction statistics",
+        "detailed sales analysis"
+      ],
       "type": "fact"
     },
     "CSYTAB": {
       "label": "System Code Values",
-      "synonyms": ["code descriptions", "reference codes", "system values"],
+      "synonyms": [
+        "code descriptions",
+        "reference codes",
+        "system values"
+      ],
       "type": "dimension"
     }
   },
@@ -122,49 +200,146 @@
     "CT": "CSYTAB"
   },
   "date_role_patterns": [
-    {"pattern": "^(?:[A-Z0-9]{2})?IVDT$", "role": "invoice_date"},
-    {"pattern": "^(?:[A-Z0-9]{2})?ORDT$", "role": "order_date"},
-    {"pattern": "^(?:[A-Z0-9]{2})?DWDT$", "role": "requested_delivery_date"},
-    {"pattern": "^(?:[A-Z0-9]{2})?CODT$", "role": "confirmed_delivery_date"},
-    {"pattern": "^(?:[A-Z0-9]{2})?PLDT$", "role": "planned_delivery_date"},
-    {"pattern": "^(?:[A-Z0-9]{2})?(?:DLDT|DSDT)$", "role": "delivery_date"},
-    {"pattern": "^(?:[A-Z0-9]{2})?DUDT$", "role": "due_date"},
-    {"pattern": "^(?:[A-Z0-9]{2})?ACDT$", "role": "accounting_date"},
-    {"pattern": "^(?:[A-Z0-9]{2})?RGDT$", "role": "registration_date"},
-    {"pattern": "^(?:[A-Z0-9]{2})?LMDT$", "role": "modified_date"}
+    {
+      "pattern": "(?:^|_)CNL_(?:ORD|ORDER)_DT(?:_|$)",
+      "role": "cancelled_order_date"
+    },
+    {
+      "pattern": "(?:^|_)CFM_DLY_DT(?:_|$)",
+      "role": "confirmed_delivery_date"
+    },
+    {
+      "pattern": "(?:^|_)RQS_DLY_DT(?:_|$)",
+      "role": "requested_delivery_date"
+    },
+    {
+      "pattern": "(?:^|_)PLN_DLY_DT(?:_|$)",
+      "role": "planned_delivery_date"
+    },
+    {
+      "pattern": "(?:^|_)DLY_DT(?:_|$)",
+      "role": "delivery_date"
+    },
+    {
+      "pattern": "(?:^|_)LST_MOD_DT(?:_|$)",
+      "role": "modified_date"
+    },
+    {
+      "pattern": "(?:^|_)ACG_DT(?:_|$)",
+      "role": "accounting_date"
+    },
+    {
+      "pattern": "(?:^|_)ENT_DT(?:_|$)",
+      "role": "registration_date"
+    },
+    {
+      "pattern": "^(?:[A-Z0-9]{2})?IVDT$",
+      "role": "invoice_date"
+    },
+    {
+      "pattern": "^(?:[A-Z0-9]{2})?ORDT$",
+      "role": "order_date"
+    },
+    {
+      "pattern": "^(?:[A-Z0-9]{2})?DWDT$",
+      "role": "requested_delivery_date"
+    },
+    {
+      "pattern": "^(?:[A-Z0-9]{2})?CODT$",
+      "role": "confirmed_delivery_date"
+    },
+    {
+      "pattern": "^(?:[A-Z0-9]{2})?PLDT$",
+      "role": "planned_delivery_date"
+    },
+    {
+      "pattern": "^(?:[A-Z0-9]{2})?(?:DLDT|DSDT)$",
+      "role": "delivery_date"
+    },
+    {
+      "pattern": "^(?:[A-Z0-9]{2})?DUDT$",
+      "role": "due_date"
+    },
+    {
+      "pattern": "^(?:[A-Z0-9]{2})?ACDT$",
+      "role": "accounting_date"
+    },
+    {
+      "pattern": "^(?:[A-Z0-9]{2})?RGDT$",
+      "role": "registration_date"
+    },
+    {
+      "pattern": "^(?:[A-Z0-9]{2})?LMDT$",
+      "role": "modified_date"
+    }
   ],
   "column_dict": {
     "STAT": {
       "label": "Status",
-      "synonyms": ["status", "record status", "item status", "order status"]
+      "synonyms": [
+        "status",
+        "record status",
+        "item status",
+        "order status"
+      ]
     },
     "UNMS": {
       "label": "Basic Unit of Measure",
-      "synonyms": ["unit of measure", "base unit", "UOM", "basic UOM"]
+      "synonyms": [
+        "unit of measure",
+        "base unit",
+        "UOM",
+        "basic UOM"
+      ]
     },
     "STQT": {
       "label": "On-hand Approved Quantity",
-      "synonyms": ["stock on hand", "on-hand quantity", "approved stock", "available stock quantity"]
+      "synonyms": [
+        "stock on hand",
+        "on-hand quantity",
+        "approved stock",
+        "available stock quantity"
+      ]
     },
     "FUDS": {
       "label": "Supplementary Item Description",
-      "synonyms": ["item description", "additional item description", "product description"]
+      "synonyms": [
+        "item description",
+        "additional item description",
+        "product description"
+      ]
     },
     "PUNO": {
       "label": "Purchase Order Number",
-      "synonyms": ["purchase order", "PO number", "supplier order number"]
+      "synonyms": [
+        "purchase order",
+        "PO number",
+        "supplier order number"
+      ]
     },
     "PNLI": {
       "label": "Purchase Order Line Number",
-      "synonyms": ["purchase order line", "PO line", "supplier order line"]
+      "synonyms": [
+        "purchase order line",
+        "PO line",
+        "supplier order line"
+      ]
     },
     "PNLS": {
       "label": "Purchase Order Line Suffix",
-      "synonyms": ["purchase order line suffix", "PO line suffix", "purchase sub-line"]
+      "synonyms": [
+        "purchase order line suffix",
+        "PO line suffix",
+        "purchase sub-line"
+      ]
     },
     "SINO": {
       "label": "Supplier Invoice Number",
-      "synonyms": ["supplier invoice", "vendor invoice", "AP invoice number"]
+      "synonyms": [
+        "supplier invoice",
+        "vendor invoice",
+        "AP invoice number"
+      ]
     },
     "ORNO": {
       "label": "Order Number",
@@ -1542,7 +1717,7 @@
     "RPL": "replacement",
     "RPS": "responsible",
     "RQD": "requested",
-    "RQS": "requesting",
+    "RQS": "requested",
     "RSV": "reserved",
     "RVD": "received",
     "SAL": "sales",
@@ -1571,7 +1746,17 @@
     "WHS": "warehouse",
     "WRG": "wrong",
     "XCH": "exchange",
-    "XTR": "extra"
+    "XTR": "extra",
+    "ACG": "accounting",
+    "ASG": "assignment",
+    "CNL": "cancelled",
+    "DLY": "delivery",
+    "ENT": "entry",
+    "FST": "first",
+    "LST": "last",
+    "MOD": "modified",
+    "PLN": "planned",
+    "UPD": "updated"
   },
   "direct_aliases": {
     "DIVI": [

@@ -745,7 +745,12 @@ def _build_join_map(master: dict) -> str:
     code column (e.g. ORNO) — these would never be detected by shared-name
     matching alone.
     """
-    from core.date_roles import detect_date_role, find_date_dimension_key, is_date_dimension_table
+    from core.date_roles import (
+        detect_date_role,
+        find_date_dimension_key,
+        is_date_dimension_table,
+        joins_date_dimension,
+    )
     from core.schema_enrichment import KNOWN_JOIN_EQUIVALENTS
 
     lines = [
@@ -924,10 +929,15 @@ def _build_join_map(master: dict) -> str:
         for fact_tbl, tbl_info in master.items():
             if not isinstance(tbl_info, dict):
                 continue
-            fact_cols = [c.get("name", "") for c in tbl_info.get("columns", [])]
-            for fact_col in fact_cols:
+            for col in tbl_info.get("columns", []):
+                fact_col = _col_name(col)
                 role = detect_date_role(fact_col)
                 if not role:
+                    continue
+                # A native date/timestamp already holds the calendar value.
+                # Teaching the LLM to join it to an integer dimension key
+                # emits a predicate no dialect can honour.
+                if not joins_date_dimension(fact_col, _col_type(col)):
                     continue
                 for date_tbl, date_pk in date_dims:
                     if fact_tbl == date_tbl:
@@ -1191,6 +1201,18 @@ def _col_name(col) -> str:
     return str(col)
 
 
+def _col_type(col) -> str:
+    """Safe column type extraction — mirrors _col_name across shapes."""
+    if isinstance(col, dict):
+        return str(
+            col.get("type")
+            or col.get("DATA_TYPE")
+            or col.get("data_type")
+            or ""
+        )
+    return ""
+
+
 def _infer_pk_column(table_name: str, columns: list) -> str:
     """Heuristic: find the most likely primary-key column for a table."""
     bare = table_name.split(".")[-1].upper()
@@ -1252,7 +1274,12 @@ def build_entity_graph_from_schema(schema_dir: str) -> dict:
     master: dict = _normalize_schema(json.loads(schema_json.read_text(encoding="utf-8")))
     if not master:
         return {"entities": [], "relationships": []}
-    from core.date_roles import detect_date_role, find_date_dimension_key, is_date_dimension_table
+    from core.date_roles import (
+        detect_date_role,
+        find_date_dimension_key,
+        is_date_dimension_table,
+        joins_date_dimension,
+    )
 
     table_items = [
         (fqn, info) for fqn, info in master.items()
@@ -1342,6 +1369,12 @@ def build_entity_graph_from_schema(schema_dir: str) -> dict:
                 fact_col = _col_name(col)
                 role = detect_date_role(fact_col)
                 if not role:
+                    continue
+                # Role-playing entities exist to carry a JOIN. A column that
+                # physically stores a date needs none, so minting one here
+                # produces both an invalid edge and a duplicate entity for a
+                # role the real surrogate key already owns.
+                if not joins_date_dimension(fact_col, _col_type(col)):
                     continue
                 date_fqn, date_table, date_schema, date_pk = date_dims[0]
                 entity_name = role.label

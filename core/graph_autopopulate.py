@@ -23,6 +23,7 @@ import json
 import logging
 import math
 import re
+from contextlib import contextmanager
 from pathlib import Path
 
 import store
@@ -34,6 +35,42 @@ log = logging.getLogger("querybot.graph_autopopulate")
 # ══════════════════════════════════════════════════════════════════════════════
 # Step 2 — heuristic population (moved from admin/routes.py)
 # ══════════════════════════════════════════════════════════════════════════════
+@contextmanager
+def _account_vocab(account_id: str):
+    """Build the graph with the client's ERP vocabulary loaded.
+
+    KB generation (core.knowledge) and the query runtime (core.query_pipeline)
+    both activate the account's pack before reading identifiers. Graph
+    construction did not, so it alone fell back to the builtin vocabulary and
+    named entities differently from the two layers that consume them.
+
+    On an Infor M3 mart that produced a graph entity "Lst Mod Date" for the
+    same column the runtime resolver called "Last Modified Date" — plus a
+    second entity for the audit spelling the builtin patterns *did* recognize.
+    Pack-specific date-role patterns never reached the graph at all.
+    """
+    token = None
+    try:
+        from core.vocab_packs import activate_vocab, vocab_for_account
+        vocab = vocab_for_account(account_id) if account_id else None
+        if vocab is not None:
+            token = activate_vocab(vocab)
+    except Exception as exc:
+        # Falling back to builtin vocabulary silently is how the mismatch
+        # above survived unnoticed, so this is a warning, not a debug line.
+        log.warning(
+            "Graph build for %s could not load the account vocabulary pack "
+            "(%s). Falling back to builtin terminology — entity names may "
+            "disagree with the KB and the query runtime.", account_id, exc,
+        )
+    try:
+        yield
+    finally:
+        if token is not None:
+            from core.vocab_packs import deactivate_vocab
+            deactivate_vocab(token)
+
+
 
 def auto_populate_from_schema(account_id: str, schema_dir: str) -> tuple[int, int]:
     """
@@ -45,7 +82,8 @@ def auto_populate_from_schema(account_id: str, schema_dir: str) -> tuple[int, in
     """
     from core.schema import build_entity_graph_from_schema
 
-    graph_data = build_entity_graph_from_schema(schema_dir)
+    with _account_vocab(account_id):
+        graph_data = build_entity_graph_from_schema(schema_dir)
     if not graph_data["entities"]:
         return 0, 0
 
@@ -315,6 +353,11 @@ def enrich_graph_from_kb(account_id: str, kb_dir: str, schema_dir: str | None = 
 
     Returns {"descriptions": n, "properties": n}.
     """
+    with _account_vocab(account_id):
+        return _enrich_graph_from_kb(account_id, kb_dir, schema_dir)
+
+
+def _enrich_graph_from_kb(account_id: str, kb_dir: str, schema_dir: str | None) -> dict:
     from store.semantic_store import _extract_synonyms, _extract_key_metrics
 
     kb_path = Path(kb_dir)
