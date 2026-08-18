@@ -2284,7 +2284,23 @@ def build_runtime_semantic_plan(
                         "to": display_table,
                         "conditions": [(source_key, display_key)],
                         "source": "semantic_model",
-                        "enforcement": "required",
+                        # A join earns "required" only by carrying a field the
+                        # answer must show. Every dimension that merely SCORED
+                        # used to contribute a required edge, and
+                        # required_semantic_tables marks both endpoints of a
+                        # required join as required tables — so a dimension
+                        # nobody asked to see still dragged its table into the
+                        # plan.
+                        #
+                        # On EMCO that put CUS_DMS into "total amount of
+                        # confirmed purchase orders by profit center", reached
+                        # through the many-to-many bridge PFT_CTR_CUS_DAT. The
+                        # generator duly joined it, every purchase-order row
+                        # was multiplied by the customers in that profit
+                        # centre, and the total came out roughly 7.5x too
+                        # large. Right label, right filter, valid SQL, no
+                        # error — just a wrong number.
+                        "enforcement": "required" if claims_display else "optional",
                     })
             if len(fields) >= max_fields:
                 break
