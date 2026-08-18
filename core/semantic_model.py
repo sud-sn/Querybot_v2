@@ -259,20 +259,55 @@ def _table_lookup(schema: dict[str, Any]) -> dict[str, tuple[str, dict[str, Any]
 
 
 def _find_dimension_for_key(schema: dict[str, Any], source_key: str) -> tuple[str, dict[str, Any]] | None:
+    """Resolve the dimension a surrogate key points AT.
+
+    A key identifies the dimension where it is the PRIMARY key. A dimension
+    that merely carries the same column is a peer holding a foreign key to it,
+    and binding the term to that table names the wrong business entity.
+
+    This used to return the first dimension that merely CONTAINED the column,
+    which on any snowflaked model is decided by iteration order. On the EMCO
+    mart CUS_DMS carries PFT_CTR_DMS_KEY (customers belong to a profit centre)
+    and sorts before PFT_CTR_DMS, so "profit center" bound to CUS_DMS.CUS_NM
+    and every profit-centre question answered with CUSTOMER NAMES under a
+    column headed PROFIT_CENTER -- confidently, with no validation error,
+    because the SQL was valid and the joins were all real.
+
+    The name-convention match was already here but only as a fallback, and the
+    early return meant it was never reached.
+
+    Priority: primary key, then the name convention, then containment.
+    """
     source_upper = source_key.upper()
-    source_prefix = source_upper[: -len("_DMS_KEY")] if source_upper.endswith("_DMS_KEY") else source_upper
-    best: tuple[str, dict[str, Any]] | None = None
+    source_prefix = (
+        source_upper[: -len("_DMS_KEY")]
+        if source_upper.endswith("_DMS_KEY") else source_upper
+    )
+    keyed: tuple[str, dict[str, Any]] | None = None
+    named: tuple[str, dict[str, Any]] | None = None
+    contains: tuple[str, dict[str, Any]] | None = None
     for fqn, meta in _schema_tables(schema):
         table = _schema_table_name(fqn, meta)
         if _table_type(table, meta, schema) not in {"dimension", "date_dimension"}:
             continue
         cols = {c.upper() for c in _column_names(meta)}
-        if source_upper in cols:
-            return fqn, meta
+        has_column = source_upper in cols
         table_upper = table.upper()
-        if table_upper == f"{source_prefix}_DMS" or table_upper.endswith(f".{source_prefix}_DMS"):
-            best = (fqn, meta)
-    return best
+        if has_column and keyed is None:
+            pk_columns = {
+                str(c).upper() for c in (meta.get("pk_columns") or []) if c
+            }
+            # A composite key means a bridge, which identifies no dimension.
+            if pk_columns == {source_upper}:
+                keyed = (fqn, meta)
+        if named is None and (
+            table_upper == f"{source_prefix}_DMS"
+            or table_upper.endswith(f".{source_prefix}_DMS")
+        ):
+            named = (fqn, meta)
+        if has_column and contains is None:
+            contains = (fqn, meta)
+    return keyed or named or contains
 
 
 def _field_entry(item: EnrichedColumn, meta: dict[str, Any]) -> dict[str, Any]:
