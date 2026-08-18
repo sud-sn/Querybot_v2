@@ -154,11 +154,52 @@ def _compiled_sql_rule_features(semantic_plan: dict | None) -> set[str] | None:
     return features
 
 
-def _filter_sql_rules_for_compiled_plan(prompt: str, semantic_plan: dict | None) -> str:
+# Which core.sql_prompt_rules rule decides each optional block. That module is
+# the FIRST gate: build_sql_system_prompt already asked it whether to emit the
+# block at all. This module is a second pass over the result, and it kept its
+# own parallel phrase lists for the same concepts — which drifted.
+#
+# "show customers with no invoices" is the plain case: gate 1 matches it
+# (_ANTI_JOIN_WORDS carries "with no") and emits the ANTI-JOIN RULE; gate 2's
+# private regex lists "have no" but not "with no", so it deleted the block gate
+# 1 had just decided the question needed, and the model wrote an inner join
+# that silently returns the opposite set of customers. A sweep of the two
+# vocabularies found 13 such phrasings across five rules — "lacking", "not yet",
+# "haven't", "rolling sum", "trailing 3", "outperform", "plot X against Y".
+#
+# So the second pass may narrow only where the first expressed no opinion. It
+# must never overrule an include.
+_GATE1_RULE_FOR_FEATURE: dict[str, str] = {
+    "anti_join":         "anti_join",
+    "benchmark":         "benchmark",
+    "correlation":       "correlation",
+    "moving_average":    "moving_average",
+    "event_interval":    "avg_interval",
+    "year_comparison":   "year_over_year",
+    "period_comparison": "month_over_month",
+}
+
+
+def _filter_sql_rules_for_compiled_plan(
+    prompt: str,
+    semantic_plan: dict | None,
+    rule_ctx=None,
+) -> str:
     """Remove irrelevant advanced rule blocks from a generated SQL prompt."""
     features = _compiled_sql_rule_features(semantic_plan)
     if features is None:
         return prompt
+
+    from core.sql_prompt_rules import rule_applies
+
+    def _first_gate_wants(feature: str) -> bool:
+        rule_id = _GATE1_RULE_FOR_FEATURE.get(feature)
+        if not rule_id or rule_ctx is None:
+            return False
+        try:
+            return rule_applies(rule_id, rule_ctx)
+        except Exception:
+            return True
 
     positions: list[tuple[int, str, str]] = []
     for feature, marker in _OPTIONAL_SQL_RULE_MARKERS.items():
@@ -174,7 +215,7 @@ def _filter_sql_rules_for_compiled_plan(prompt: str, semantic_plan: dict | None)
     boundaries = sorted(boundary_positions + ([kb_pos] if kb_pos >= 0 else []))
     removals: list[tuple[int, int]] = []
     for pos, feature, _ in positions:
-        if feature in features:
+        if feature in features or _first_gate_wants(feature):
             continue
         end = next((boundary for boundary in boundaries if boundary > pos), len(prompt))
         removals.append((pos, end))
@@ -975,7 +1016,7 @@ def build_sql_system_prompt(
         "Always ORDER BY the rank column in the outer query.\n\n"
         f"Knowledge Base — available tables and their business context:\n{table_context}"
     )
-    base = _filter_sql_rules_for_compiled_plan(base, semantic_plan)
+    base = _filter_sql_rules_for_compiled_plan(base, semantic_plan, _rule_ctx)
     if conversation_history:
         history_lines = []
         for i, turn in enumerate(conversation_history, 1):
