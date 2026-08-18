@@ -392,15 +392,53 @@ def test_connection(credentials: dict, db_type: str) -> dict:
         raise ValueError(f"Unsupported db_type: {db_type!r}")
 
 
-def run_query(credentials: dict, db_type: str, sql: str, max_rows: int = 200) -> list[dict]:
+class QueryRows(list):
+    """A result list that remembers whether the fetch stopped at its row cap.
+
+    ``run_query`` overfetches by one row so a caller can tell "exactly
+    max_rows rows exist" from "there were more and we stopped reading". That
+    distinction matters because statistics computed over a truncated prefix
+    are wrong rather than approximate: the SQL hints for box plots and
+    histograms ask for ORDER BY'd row-level data, so the retained rows are the
+    sorted head of one group, not a sample of the population. A median over
+    the first 200 of 9.2M ordered rows is not an estimate of the median.
+
+    Subclasses ``list`` so existing callers, JSON serialisation and isinstance
+    checks are unaffected; ``truncated`` is purely additive.
+    """
+
+    __slots__ = ("truncated",)
+
+    def __init__(self, rows=(), *, truncated: bool = False):
+        super().__init__(rows)
+        self.truncated = bool(truncated)
+
+
+def run_query(credentials: dict, db_type: str, sql: str, max_rows: int = 200) -> QueryRows:
+    """Run a user query, capped at ``max_rows``, reporting whether it was cut short.
+
+    Overfetches one row beyond the cap and trims, so ``QueryRows.truncated`` is
+    exact rather than the ``len(rows) == max_rows`` guess a caller would
+    otherwise have to make.
+    """
+    probe = max_rows + 1 if max_rows > 0 else max_rows
     if db_type == "snowflake":
-        return _run_snowflake(credentials, sql, max_rows)
+        fetched = _run_snowflake(credentials, sql, probe)
     elif db_type == "oracle":
-        return _run_oracle(credentials, sql, max_rows)
+        fetched = _run_oracle(credentials, sql, probe)
     elif db_type == "azure_sql":
-        return _run_azure_sql(credentials, sql, max_rows)
+        fetched = _run_azure_sql(credentials, sql, probe)
     else:
         raise ValueError(f"Unsupported db_type: {db_type!r}")
+
+    truncated = max_rows > 0 and len(fetched) > max_rows
+    if truncated:
+        log.warning(
+            "Query hit the %d-row cap; results are a truncated prefix, not a sample. "
+            "Row-level statistics must not be computed over them.", max_rows,
+        )
+        fetched = fetched[:max_rows]
+    return QueryRows(fetched, truncated=truncated)
 
 
 # 120 s was below the cost of a single scan on a realistic warehouse, so a large

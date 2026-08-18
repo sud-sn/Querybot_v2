@@ -32,6 +32,10 @@ Entry points
 
 from __future__ import annotations
 
+import logging
+
+log = logging.getLogger("querybot.cohort")
+
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -140,6 +144,8 @@ def compute_cohort_matrix(
     cohort_col: str,
     period_col: str,
     value_col: str,
+    *,
+    truncated: bool = False,
 ) -> list[dict]:
     """
     Pivot flat cohort rows into a retention matrix.
@@ -156,6 +162,17 @@ def compute_cohort_matrix(
     Absolute counts preserved in __abs__ variant keys for tooltip.
     """
     if not rows or not cohort_col or not period_col or not value_col:
+        return rows
+
+    # A truncated fetch is the sorted head of the result, not a sample of it
+    # (the SQL hints ask for ORDER BY'd row-level data), so any statistic
+    # computed here would be confidently wrong rather than approximate.
+    # Refuse and hand back the rows unchanged; the caller surfaces a caveat.
+    if truncated:
+        log.warning(
+            "Cohort matrix refused: %d rows are a truncated prefix of a larger result.",
+            len(rows),
+        )
         return rows
 
     # Build nested dict: cohort → period → count

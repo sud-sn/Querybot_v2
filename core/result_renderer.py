@@ -816,6 +816,20 @@ async def _send_results(event, adapter, question, rows, sql, duration_ms,
         except Exception as exc:
             log.debug("Join-coverage check skipped: %s", exc)
 
+    # 3. Truncated result: the query hit its row cap, so what came back is the
+    # head of a larger result rather than a sample of it. Quartiles, histogram
+    # bins, correlation and cohort matrices were refused upstream rather than
+    # computed over the prefix — say so, otherwise the only visible symptom is
+    # a chart that quietly failed to appear.
+    if confidence_context.get("rows_truncated"):
+        coverage_caveats.append(
+            f"Showing the first {len(rows):,} rows — the full result is larger. "
+            "Distribution statistics (median, quartiles, histogram bins, "
+            "correlation) are not shown, because computing them over a partial "
+            "result would give a misleading answer. Narrow the question with a "
+            "filter or a shorter date range to see them."
+        )
+
     rich_sender = getattr(adapter, "send_assistant_response", None)
     if callable(rich_sender):
         if chart_payload:

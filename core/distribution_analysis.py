@@ -35,6 +35,10 @@ Entry points
 
 from __future__ import annotations
 
+import logging
+
+log = logging.getLogger("querybot.distribution")
+
 import re
 import math
 from typing import Any
@@ -151,6 +155,8 @@ def compute_histogram(
     rows: list[dict],
     value_col: str,
     n_bins: int = _DEFAULT_BINS,
+    *,
+    truncated: bool = False,
 ) -> list[dict]:
     """
     Bin value_col into n_bins equal-width buckets.
@@ -163,6 +169,17 @@ def compute_histogram(
       frequency_pct   — count / total * 100
     """
     if not rows or not value_col:
+        return rows
+
+    # A truncated fetch is the sorted head of the result, not a sample of it
+    # (the SQL hints ask for ORDER BY'd row-level data), so any statistic
+    # computed here would be confidently wrong rather than approximate.
+    # Refuse and hand back the rows unchanged; the caller surfaces a caveat.
+    if truncated:
+        log.warning(
+            "Histogram refused: %d rows are a truncated prefix of a larger result.",
+            len(rows),
+        )
         return rows
 
     values = [_to_float(r.get(value_col)) for r in rows]
@@ -231,6 +248,8 @@ def compute_boxplot(
     rows: list[dict],
     value_col: str,
     group_col: str = "",
+    *,
+    truncated: bool = False,
 ) -> list[dict]:
     """
     Compute box-plot statistics per group (or for the entire dataset if no group).
@@ -250,6 +269,17 @@ def compute_boxplot(
     The rows returned include these as separate keys AND as `bp_data` list.
     """
     if not rows or not value_col:
+        return rows
+
+    # A truncated fetch is the sorted head of the result, not a sample of it
+    # (the SQL hints ask for ORDER BY'd row-level data), so any statistic
+    # computed here would be confidently wrong rather than approximate.
+    # Refuse and hand back the rows unchanged; the caller surfaces a caveat.
+    if truncated:
+        log.warning(
+            "Quartiles refused: %d rows are a truncated prefix of a larger result.",
+            len(rows),
+        )
         return rows
 
     # Group the values

@@ -29,6 +29,10 @@ Entry points
 
 from __future__ import annotations
 
+import logging
+
+log = logging.getLogger("querybot.correlation")
+
 import re
 import math
 from dataclasses import dataclass
@@ -136,11 +140,28 @@ def compute_correlation(
     rows: list[dict],
     x_col: str,
     y_col: str,
+    *,
+    truncated: bool = False,
 ) -> CorrelationResult:
     """
     Compute Pearson r between x_col and y_col.
     Annotates each row with pearson_r, interpretation metadata.
     """
+    # A truncated fetch is the sorted head of the result, not a sample of it, so
+    # a coefficient computed here would be confidently wrong rather than noisy —
+    # and sorting on either axis manufactures correlation outright. Report it as
+    # unavailable using the same shape as the insufficient-data path.
+    if truncated:
+        log.warning(
+            "Correlation refused: %d rows are a truncated prefix of a larger result.",
+            len(rows),
+        )
+        return CorrelationResult(
+            x_col=x_col, y_col=y_col, pearson_r=None, r_squared=None,
+            interpretation="unavailable (truncated result)", n=len(rows),
+            x_mean=None, y_mean=None,
+        )
+
     pairs = [
         (_to_float(r.get(x_col)), _to_float(r.get(y_col)))
         for r in rows

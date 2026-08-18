@@ -789,6 +789,11 @@ def _governed_date_anchor_repair_lines(
 
 async def _handle_query_impl(account_id, event, adapter, question, portal_user, is_clarification=False):
     start_ms = int(time.time() * 1000)
+    # Set from every governed execution below. Row-level statistics (quartiles,
+    # histogram bins, correlation, cohort matrices) are only meaningful over a
+    # complete result, so the post-processing block consults this before
+    # computing any of them.
+    _rows_truncated = False
     state    = get_state(account_id)
     db_cfg   = get_client_db(account_id)
     client   = store.get_client(account_id) or {}
@@ -1632,6 +1637,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     )
                     return
                 rows = governed.rows
+                _rows_truncated = bool(getattr(governed, "truncated", False))
                 _regrain_sql = governed.sql
                 duration_ms = int(time.time() * 1000) - start_ms
             except PolicyDeniedError as policy_error:
@@ -1789,6 +1795,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 _trace_finish(trace_id, status="error", answer_type="timeout", error_message="Metric query timed out after 60s")
                 return
             rows = governed.rows
+            _rows_truncated = bool(getattr(governed, "truncated", False))
             sql_from_metric = governed.sql
             duration_ms = int(time.time()*1000) - start_ms
             _log_q(account_id, question, sql_from_metric, len(rows), True, "",
@@ -5009,6 +5016,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 timeout=_query_wait_timeout(db_cfg),
             )
             rows = governed.rows
+            _rows_truncated = bool(getattr(governed, "truncated", False))
             sql = governed.sql
             _trace_step(trace_id, "execute_sql", input_summary=sql, output_summary={"rows": len(rows)}, duration_ms=int((time.time() - _exec_t0) * 1000))
         except asyncio.TimeoutError:
@@ -5510,6 +5518,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                             timeout=_query_wait_timeout(db_cfg),
                         )
                         rows = governed.rows
+                        _rows_truncated = bool(getattr(governed, "truncated", False))
                         sql         = governed.sql
                         exec_error  = None
                         ok, last_reason, last_code = True, "OK", "ok"
@@ -5662,6 +5671,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                             timeout=_query_wait_timeout(db_cfg),
                         )
                         rows = governed.rows
+                        _rows_truncated = bool(getattr(governed, "truncated", False))
                         sql = governed.sql
                         exec_error = None
                         ok, last_reason, last_code = True, "OK", "ok"
@@ -5924,6 +5934,10 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     _confidence_context = {
         "validation_code": last_code or code or "ok",
         "retry_count": retry_count,
+        # The fetch stopped at its row cap, so `rows` is the head of a larger
+        # result. Row-level statistics were refused upstream; the renderer
+        # turns this into a caveat so a missing chart has a stated reason.
+        "rows_truncated": _rows_truncated,
         "has_semantic_plan": bool((_semantic_plan or {}).get("enabled")),
         "has_graph_context": bool((_graph_ctx or {}).get("enabled") or (_graph_ctx or {}).get("detected")),
         "tables_used": extract_sql_tables(sql, db_cfg.get("db_type", "azure_sql")),
@@ -5985,14 +5999,15 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 from core.cohort_analysis import infer_cohort_cols, compute_cohort_matrix
                 _cohort_col, _period_col, _value_col = infer_cohort_cols(rows)
                 if _cohort_col and _period_col and _value_col:
-                    rows = compute_cohort_matrix(rows, _cohort_col, _period_col, _value_col)
+                    rows = compute_cohort_matrix(rows, _cohort_col, _period_col, _value_col,
+                                                 truncated=_rows_truncated)
                     log.info("post_process: cohort matrix built cohort=%s period=%s", _cohort_col, _period_col)
 
             if _post_intents.get("correlation") and not any("__corr_r" in r for r in rows[:1]):
                 from core.correlation_analysis import infer_corr_cols, compute_correlation, annotate_rows_with_correlation
                 _x_col, _y_col = infer_corr_cols(rows, question)
                 if _x_col and _y_col:
-                    _corr = compute_correlation(rows, _x_col, _y_col)
+                    _corr = compute_correlation(rows, _x_col, _y_col, truncated=_rows_truncated)
                     rows = annotate_rows_with_correlation(rows, _corr)
                     log.info("post_process: correlation r=%.4f (%s) n=%d", _corr.pearson_r or 0, _corr.interpretation, _corr.n)
 
@@ -6023,14 +6038,14 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 from core.distribution_analysis import infer_histogram_col, compute_histogram
                 _h_col = infer_histogram_col(rows)
                 if _h_col:
-                    rows = compute_histogram(rows, _h_col)
+                    rows = compute_histogram(rows, _h_col, truncated=_rows_truncated)
                     log.info("post_process: histogram binned col=%s bins=%d", _h_col, len(rows))
 
             if _post_intents.get("boxplot") and not any("bp_data" in r for r in rows[:1]):
                 from core.distribution_analysis import infer_boxplot_cols, compute_boxplot
                 _g_col, _v_col = infer_boxplot_cols(rows)
                 if _v_col:
-                    rows = compute_boxplot(rows, _v_col, _g_col)
+                    rows = compute_boxplot(rows, _v_col, _g_col, truncated=_rows_truncated)
                     log.info("post_process: boxplot computed group=%s value=%s", _g_col, _v_col)
 
             if _post_intents.get("whatif") and not any(k.startswith("scenario_") for k in (rows[0] if rows else {})):

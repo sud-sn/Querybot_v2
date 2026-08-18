@@ -24,6 +24,11 @@ class GovernedQueryResult:
     decision: PolicyDecision
     analysis: SqlPolicyAnalysis
     row_obligations: list[dict]
+    # True when the underlying fetch stopped at its row cap, so ``rows`` is a
+    # truncated prefix rather than the whole result. Consumers that aggregate
+    # across rows (quartiles, histograms, correlation, cohort matrices) must
+    # refuse rather than present a statistic computed over the prefix.
+    truncated: bool = False
 
 
 def execute_governed_query(
@@ -83,6 +88,9 @@ def execute_governed_query(
 
     rewritten_sql, row_obligations = inject_row_policies(sql, db_type, context)
     raw_rows = run_query(credentials, db_type, rewritten_sql, max_rows=max_rows)
+    # Read the flag off the fetch result immediately: masking and row-policy
+    # transforms below return plain lists and would drop it.
+    rows_truncated = bool(getattr(raw_rows, "truncated", False))
 
     release_context = PolicyContext(**{**context.__dict__, "action": "result_release"})
     release_decision = evaluate(release_context, analysis.resources)
@@ -135,4 +143,5 @@ def execute_governed_query(
         decision=release_decision,
         analysis=analysis,
         row_obligations=row_obligations,
+        truncated=rows_truncated,
     )
