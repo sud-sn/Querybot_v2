@@ -3067,6 +3067,30 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         _resolved_metric_tables = metric_source_tables(_metric, all_columns)
         _metric["_resolved_source_tables"] = sorted(_resolved_metric_tables)
         _metric_formula_tables.update(_resolved_metric_tables)
+    # The field plan was built from schema names before metric matching ran, so
+    # it could hard-require a measure the registry does not use. Two validators
+    # then demand contradictory columns and the repair loop oscillates until it
+    # gives up. Resolve it in the registry's favour now that both are known.
+    if _matched_metrics and isinstance(_semantic_plan, dict):
+        from core.semantic_planner import demote_measures_governed_by_a_metric
+        _demoted_measures = demote_measures_governed_by_a_metric(
+            _semantic_plan.get("fields") or [], _matched_metrics,
+        )
+        if _demoted_measures:
+            log.info(
+                "Measure fields demoted for %s — an approved metric already "
+                "governs the measure on that fact: %s",
+                account_id, ", ".join(_demoted_measures),
+            )
+            _trace_step(
+                trace_id,
+                "measure_field_demoted_for_metric",
+                output_summary={
+                    "demoted": _demoted_measures,
+                    "metrics": [m.get("name") for m in _matched_metrics],
+                },
+            )
+
     if metric_formula_context:
         # Prepend metric formulas BEFORE the KB context so the LLM reads them
         # first and they take precedence over any similar-column documentation

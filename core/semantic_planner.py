@@ -994,6 +994,88 @@ def _demote_measures_with_a_rival_at_the_requested_grain(
             )
 
 
+_METRIC_FORMULA_TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+# SQL that appears inside a formula and is never a column name.
+_METRIC_FORMULA_NOISE = {
+    "SUM", "AVG", "MIN", "MAX", "COUNT", "DISTINCT", "NULLIF", "COALESCE",
+    "CAST", "CONVERT", "ISNULL", "ABS", "ROUND", "AS", "AND", "OR", "NOT",
+    "CASE", "WHEN", "THEN", "ELSE", "END", "OVER", "PARTITION", "BY",
+    "DECIMAL", "FLOAT", "INT", "NUMERIC", "DATE",
+}
+
+
+def metric_formula_columns(metric: dict) -> set[str]:
+    """Bare column names an approved metric formula depends on."""
+    columns: set[str] = set()
+    for part in re.split(r"[,;\s]+", str(metric.get("required_columns") or "")):
+        cleaned = part.strip().strip("[]\"`").upper()
+        if cleaned:
+            columns.add(cleaned.split(".")[-1])
+    formula = str(metric.get("sql_template") or metric.get("formula") or "")
+    for token in _METRIC_FORMULA_TOKEN_RE.findall(formula):
+        upper = token.upper()
+        if upper not in _METRIC_FORMULA_NOISE:
+            columns.add(upper)
+    return columns
+
+
+def demote_measures_governed_by_a_metric(
+    fields: list[dict],
+    metrics: list[dict] | None,
+) -> list[str]:
+    """An approved metric outranks a lexically matched measure on its own fact.
+
+    The field plan is built from schema names before metric matching runs, so
+    it cannot know that the measure is already governed. On an Infor M3 mart
+    "total amount of confirmed purchase orders by profit center" matched the
+    term "purchase order" to PCH_ORD_RCT_FCT.PCH_ORD_QTY -- the QUANTITY -- and
+    hard-required it, while the registry required PCH_ORD_LIN_CAD_AMT for the
+    approved metric "Purchase Order Amount".
+
+    Two validators then demanded contradictory things and the repair loop
+    oscillated between them: the model wrote the metric column and was told to
+    use the quantity, wrote the quantity and was told to use the metric, and
+    the question was refused as "I could not build a trusted query". Both
+    errors were individually correct; the plan was self-contradictory.
+
+    The registry is admin-approved and the field match is lexical, so the
+    registry wins. Demote rather than drop: the column stays available as a
+    hint, and only its power to reject correct SQL is withdrawn. A measure the
+    metric actually uses is never touched, and neither is any other fact.
+    """
+    governed: dict[str, set[str]] = {}
+    for metric in metrics or []:
+        if str(metric.get("formula_type") or "expression").lower() != "expression":
+            continue
+        columns = metric_formula_columns(metric)
+        if not columns:
+            continue
+        sources = (
+            metric.get("_resolved_source_tables")
+            or metric.get("source_tables")
+            or ([metric.get("base_table")] if metric.get("base_table") else [])
+        )
+        for source in sources:
+            bare = str(source or "").split(".")[-1].upper()
+            if bare:
+                governed.setdefault(bare, set()).update(columns)
+    if not governed:
+        return []
+
+    demoted: list[str] = []
+    for field in fields or []:
+        if str(field.get("enforcement") or "") == "optional":
+            continue
+        if str(field.get("role") or "") != "measure":
+            continue
+        table = str(field.get("table") or "").split(".")[-1].upper()
+        column = str(field.get("column") or "").upper()
+        if table in governed and column not in governed[table]:
+            field["enforcement"] = "optional"
+            demoted.append(f"{field.get('table')}.{field.get('column')}")
+    return demoted
+
+
 def build_semantic_field_plan(
     question: str,
     table_columns: dict[str, dict[str, str]] | None,
