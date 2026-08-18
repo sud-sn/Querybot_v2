@@ -16,6 +16,7 @@ v8 prompt changes:
 """
 
 import logging
+import os
 import re
 from typing import Literal
 
@@ -1606,39 +1607,91 @@ async def llm_complete(
 
 _llm_client_cache: dict[tuple, object] = {}
 
+# Both vendor SDKs default to a 600 s per-request timeout and 2 automatic
+# retries, so an unresponsive provider could hold one question for ~30 minutes
+# of wall clock — and the SQL path makes up to four sequential calls, none of
+# which the pipeline bounds. That is indistinguishable from a hung product to
+# the person waiting. 180 s is well clear of the slowest legitimate call
+# measured here (KB table description at ~4k output tokens) while capping a
+# single call at 180 s and one whole question's LLM time at roughly 24 minutes
+# worst case instead of two hours. Raise it per deployment if a provider is
+# genuinely slower; the failure mode of too-low is a retried call, of too-high
+# a request nobody can cancel.
+_DEFAULT_LLM_TIMEOUT_SECONDS = 180
+_DEFAULT_LLM_MAX_RETRIES = 1
+
+
+def _llm_timeout_seconds() -> float:
+    """Per-request LLM timeout: QUERYBOT_LLM_TIMEOUT_SECONDS, else 180 s.
+
+    Clamped to 5..600 so a typo cannot restore the unbounded-feeling default
+    or set a value too small for any real completion to finish in.
+    """
+    raw = os.getenv("QUERYBOT_LLM_TIMEOUT_SECONDS", "")
+    try:
+        value = float(raw) if str(raw).strip() else float(_DEFAULT_LLM_TIMEOUT_SECONDS)
+    except (TypeError, ValueError):
+        value = float(_DEFAULT_LLM_TIMEOUT_SECONDS)
+    return max(5.0, min(value, 600.0))
+
+
+def _llm_max_retries() -> int:
+    """Automatic SDK retries: QUERYBOT_LLM_MAX_RETRIES, else 1. Clamped 0..5.
+
+    Explicit rather than inherited, because the retry count multiplies the
+    timeout above into the real worst-case wait.
+    """
+    raw = os.getenv("QUERYBOT_LLM_MAX_RETRIES", "")
+    try:
+        value = int(raw) if str(raw).strip() else _DEFAULT_LLM_MAX_RETRIES
+    except (TypeError, ValueError):
+        value = _DEFAULT_LLM_MAX_RETRIES
+    return max(0, min(value, 5))
+
 
 def _get_anthropic_client(api_key: str):
     import anthropic as _ant
-    key = ("anthropic", api_key)
+    timeout, retries = _llm_timeout_seconds(), _llm_max_retries()
+    key = ("anthropic", api_key, timeout, retries)
     if key not in _llm_client_cache:
-        _llm_client_cache[key] = _ant.AsyncAnthropic(api_key=api_key)
+        _llm_client_cache[key] = _ant.AsyncAnthropic(
+            api_key=api_key, timeout=timeout, max_retries=retries,
+        )
     return _llm_client_cache[key]
 
 
 def _get_openai_client(api_key: str):
     import openai as _oai
-    key = ("openai", api_key)
+    timeout, retries = _llm_timeout_seconds(), _llm_max_retries()
+    key = ("openai", api_key, timeout, retries)
     if key not in _llm_client_cache:
-        _llm_client_cache[key] = _oai.AsyncOpenAI(api_key=api_key)
+        _llm_client_cache[key] = _oai.AsyncOpenAI(
+            api_key=api_key, timeout=timeout, max_retries=retries,
+        )
     return _llm_client_cache[key]
 
 
 def _get_azure_client(api_key: str, endpoint: str, api_version: str):
     import openai as _oai
     base = endpoint.rstrip("/")
-    key = ("azure", api_key, base, api_version)
+    timeout, retries = _llm_timeout_seconds(), _llm_max_retries()
+    key = ("azure", api_key, base, api_version, timeout, retries)
     if key not in _llm_client_cache:
         if "services.ai.azure.com" in base:
             _llm_client_cache[key] = _oai.AsyncOpenAI(
                 api_key=api_key,
                 base_url=f"{base}/openai/v1",
                 default_headers={"api-key": api_key},
+                timeout=timeout,
+                max_retries=retries,
             )
         else:
             _llm_client_cache[key] = _oai.AsyncAzureOpenAI(
                 api_key=api_key,
                 azure_endpoint=base,
                 api_version=api_version or "2024-02-01",
+                timeout=timeout,
+                max_retries=retries,
             )
     return _llm_client_cache[key]
 
