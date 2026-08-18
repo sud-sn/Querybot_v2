@@ -464,7 +464,7 @@ html[data-theme='dark'] .cs-name { color: var(--text); }
 .cs-account-id {
   font-size: 10px;
   color: color-mix(in srgb, white 35%, transparent);
-  font-family: 'SFMono-Regular', Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   margin-top: .35rem;
 }
 html[data-theme='dark'] .cs-account-id { color: var(--text-muted); }

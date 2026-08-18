@@ -1,25 +1,24 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" fill="none" role="img" aria-label="QueryBot">
-  <defs>
-    <linearGradient id="qb-grad" x1="0" y1="0" x2="40" y2="40" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#2563EB"/>
-      <stop offset="100%" stop-color="#6D28D9"/>
-    </linearGradient>
-    <linearGradient id="qb-ring" x1="10" y1="11" x2="29" y2="30" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#FFFFFF"/>
-      <stop offset="100%" stop-color="#DBEAFE"/>
-    </linearGradient>
-  </defs>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" role="img" aria-label="QueryBot">
+  <!--
+    QueryBot mark — a Q whose tail is a terminal caret.
 
-  <!-- Badge -->
-  <rect x="0" y="0" width="40" height="40" rx="10" fill="url(#qb-grad)"/>
-  <rect x="0.75" y="0.75" width="38.5" height="38.5" rx="9.25" stroke="#FFFFFF" stroke-opacity="0.14" stroke-width="1"/>
+    The previous mark carried three things that read as generic AI
+    product rather than as this product: a blue-to-violet gradient,
+    a magnifying glass, and a four-pointed sparkle. All three are
+    gone. A gradient also bands into mud at favicon size, and the
+    sparkle is Gemini's glyph by now.
 
-  <!-- Query Lens: geometric Q, data rows, and connector tail -->
-  <circle cx="19" cy="20" r="8.6" stroke="url(#qb-ring)" stroke-width="3.4" fill="none"/>
-  <path d="M24.3 25.3L29 30L29 27.8" stroke="url(#qb-ring)" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M15.2 17.4H21.8M15.2 20.1H20.2M15.2 22.8H18.7" stroke="#DBEAFE" stroke-width="1.15" stroke-linecap="round" opacity=".9"/>
+    What is left says what the product is: the ring is the Q of
+    Query, and its tail is the block cursor of a prompt — you ask,
+    it answers. Two flat colours, no gradient, strokes at 9% of the
+    canvas so the counter stays open and the caret stays legible
+    down to 16px.
+  -->
+  <rect width="40" height="40" rx="7" fill="#12211D"/>
 
-  <!-- AI sparkle accent -->
-  <path d="M30,3 L31.27,7.73 L36,9 L31.27,10.27 L30,15 L28.73,10.27 L24,9 L28.73,7.73 Z"
-        fill="#BFDBFE" fill-opacity="0.92"/>
+  <!-- Q ring -->
+  <circle cx="17.4" cy="18.4" r="8.9" fill="none" stroke="#2BD4BA" stroke-width="3.6"/>
+
+  <!-- Caret tail: crosses the ring at 4 o'clock, where a Q's tail sits -->
+  <rect x="22.4" y="22.8" width="7.8" height="10.4" rx="1.6" fill="#2BD4BA"/>
 </svg>

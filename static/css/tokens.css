@@ -1,9 +1,50 @@
 /* ============================================================
    QueryBot — Design Tokens
-   Primary palette: graphite neutrals + enterprise cobalt
+   ------------------------------------------------------------
+   Identity: verdigris on green-grey paper, IBM Plex Sans/Mono.
+
+   WHY NOT THE OLD PALETTE. Every value in the previous file was
+   a stock Tailwind default — #2563EB (blue-600), #3B82F6
+   (blue-500), #DBEAFE (blue-100), #EFF6FF (blue-50), #6D28D9
+   (violet-700), and the slate grey ramp verbatim. That set is
+   what code-generating tools emit by default, so it is the
+   single most common look in AI-era software; a product wearing
+   it cannot read as its own thing. The --teal-* ramp also held
+   blue values under a comment calling it "Indigo", so the names
+   were wrong twice over.
+
+   WHY VERDIGRIS (#0E7C6B). The lanes in data tooling are taken:
+   blue by every default and by Metabase/Snowflake, purple by
+   Datadog and now by all of AI, mint-neon by Supabase and Neon,
+   yellow by ClickHouse and Power BI, orange-red by dbt/Grafana/
+   Databricks, terracotta by Claude. Deep blue-green is open, it
+   reads as instrument and ledger rather than as startup, and it
+   is dark enough to hold 4.5:1 on paper. It is deliberately not
+   the mint-green of database infra: much darker, much less
+   saturated.
+
+   Note on green: red and green are reserved for negative and
+   positive deltas, so the brand hue is kept clearly teal (hue
+   ~175) while the positive delta sits at hue ~145, and deltas
+   always carry a sign and an arrow rather than leaning on hue
+   alone.
+
+   NEUTRALS are biased a few points toward green rather than
+   left pure or taken from slate — slate's blue cast is itself a
+   tell. They are also kept greyer and cooler than a warm ivory
+   paper, which is Anthropic's territory.
    ============================================================ */
 
 :root {
+  /* ── Type families ──────────────────────────────────────────
+     These are the tokens the old file was missing entirely,
+     which is why seven different mono stacks had accumulated
+     across the stylesheets. See fonts.css for the @font-face
+     rules and why the previous 'Inter' declaration never loaded. */
+  --font-ui:      'Plex Sans', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-display: 'Plex Mono', ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  --font-mono:    'Plex Mono', ui-monospace, 'Cascadia Mono', Consolas, monospace;
+
   /* Spacing */
   --space-1: 4px;
   --space-2: 8px;
@@ -13,104 +54,124 @@
   --space-6: 24px;
   --space-8: 32px;
 
-  /* Type scale */
-  --font-xs: 11px;
-  --font-sm: 12px;
-  --font-md: 14px;
-  --font-lg: 16px;
-  --font-xl: 20px;
-  --font-2xl: 24px;
-  --line-tight: 1.25;
-  --line-normal: 1.5;
+  /* ── Type scale ─────────────────────────────────────────────
+     Re-keyed to what the product actually uses. 13px was the
+     most common size in the stylesheets and was not a token at
+     all, so most declarations had no token to reach for and
+     went raw. --font-xl was 20px and consumed by nothing. */
+  --font-xs:   11px;
+  --font-sm:   12px;
+  --font-base: 13px;   /* de-facto body size */
+  --font-md:   14px;
+  --font-lg:   16px;
+  --font-xl:   18px;
+  --font-2xl:  22px;
+  --font-3xl:  28px;
+  --line-tight:   1.25;
+  --line-normal:  1.5;
   --line-relaxed: 1.7;
 
-  /* ── Radii ── */
-  --radius:    7px;
-  --radius-sm: 5px;
-  --radius-lg: 9px;
+  /* ── Radii ──────────────────────────────────────────────────
+     Squarer than before (was 7/5/9). A uniform generous radius
+     on every surface is the other half of the generated-UI look;
+     a tighter radius reads as instrument. */
+  --radius:    5px;
+  --radius-sm: 3px;
+  --radius-lg: 8px;
   --radius-pill: 999px;
 
-  /* ── Shadows ── */
-  --shadow:    0 1px 2px rgba(15,23,42,.045);
-  --shadow-md: 0 8px 20px rgba(15,23,42,.075), 0 1px 3px rgba(15,23,42,.05);
-  --shadow-lg: 0 18px 40px rgba(15,23,42,.12), 0 3px 10px rgba(15,23,42,.06);
+  /* ── Shadows ────────────────────────────────────────────────
+     Deliberately restrained: elevation is carried by a 1px line
+     and a surface step, the way Supabase and Linear do it, with
+     shadow reserved for things that genuinely float.
+     --shadow-sm was referenced in seven places and never
+     defined, so those rules computed to nothing. */
+  --shadow-sm: 0 1px 2px rgba(10, 26, 22, .05);
+  --shadow:    0 1px 2px rgba(10, 26, 22, .06);
+  --shadow-md: 0 6px 16px rgba(10, 26, 22, .08), 0 1px 3px rgba(10, 26, 22, .05);
+  --shadow-lg: 0 16px 36px rgba(10, 26, 22, .13), 0 3px 8px rgba(10, 26, 22, .07);
 
-  /* ── Indigo scale (brand) ── */
-  --teal-900: #20242A;   /* legacy alias: navigation ink   */
-  --teal-800: #2D323A;   /* legacy alias: navigation edge  */
-  --teal-700: #1D4ED8;   /* legacy alias: primary hover    */
-  --teal-600: #2563EB;   /* legacy alias: primary blue     */
-  --teal-500: #3B82F6;
-  --teal-400: #76A0F5;
-  --teal-300: #A8C1F7;
-  --teal-200: #BFDBFE;
-  --teal-100: #DBEAFE;
-  --teal-50:  #EFF6FF;
+  /* ── Brand ramp (the --teal-* names are finally accurate) ── */
+  --teal-900: #0A1512;
+  --teal-800: #12211D;
+  --teal-700: #0A6154;
+  --teal-600: #0E7C6B;
+  --teal-500: #14A08A;
+  --teal-400: #3FC0A9;
+  --teal-300: #7FD8C8;
+  --teal-200: #B3E8DE;
+  --teal-100: #D7F2EC;
+  --teal-50:  #EDF9F6;
 
-  /* ── Primary (brand aliases — used everywhere) ── */
-  --blue:       #2563EB;   /* sidebar active, links          */
-  --blue-mid:   #1D4ED8;   /* hover deepening                */
-  --blue-soft:  #3B82F6;   /* accent                         */
-  --blue-light: #EFF6FF;   /* chip backgrounds               */
+  /* ── Primary aliases — the whole product routes through these,
+        so editing this block re-skins every surface. ────────── */
+  --blue:       #0E7C6B;
+  --blue-mid:   #0A6154;
+  --blue-soft:  #14A08A;
+  --blue-light: #E1F2EE;
 
-  /* Portal aliases */
-  --primary:       #2563EB;
-  --primary-hover: #1D4ED8;
-  --primary-soft:  #EFF6FF;
+  --primary:       #0E7C6B;
+  --primary-hover: #0A6154;
+  --primary-soft:  #E1F2EE;
+  /* Filled controls hand-wrote #fff in ~49 places because there
+     was no token for text on a brand fill. */
+  --on-primary:    #FFFFFF;
 
-  /* ── Semantic colours (role badges, status) ── */
-  --green:        #059669;  --green-light:  #D1FAE5;
-  --red:          #DC2626;  --red-light:    #FEE2E2;
-  --amber:        #B45309;  --amber-light:  #FEF3C7;
-  --violet:       #6D28D9;  --violet-light: #EDE9FE;
-  --success:      #059669;  --success-soft: #ECFDF5;
-  --danger:       #DC2626;  --danger-soft:  #FEF2F2;
-  --warning:      #B45309;  --warning-soft: #FEF3C7;
+  /* ── Semantic colours ───────────────────────────────────────
+     Held clearly apart from the brand teal, and desaturated off
+     the Tailwind defaults they used to be. */
+  --green:        #2F7D4F;  --green-light:  #DFF0E5;
+  --red:          #B3402E;  --red-light:    #F8E5E1;
+  --amber:        #8F6410;  --amber-light:  #F7EEDA;
+  --violet:       #6B4FA8;  --violet-light: #ECE6F7;
+  --success:      #2F7D4F;  --success-soft: #EAF4EE;
+  --danger:       #B3402E;  --danger-soft:  #FBEDEA;
+  --warning:      #8F6410;  --warning-soft: #FAF3E4;
 
-  /* ── Backgrounds (neutral slate/blue tint) ── */
-  --navy:      #20242A;
-  --bg:        #F5F6F8;
-  --bg-soft:   #F0F2F5;
-  --bg-muted:  #E3E7EC;
-  --surface:   #FFFFFF;
-  --surface-2: #F0F2F5;
-  --surface-3: #E9EDF2;
+  /* ── Backgrounds (green-grey paper, not slate) ───────────── */
+  --navy:      #14201C;
+  --bg:        #F4F7F5;
+  --bg-soft:   #EDF2EF;
+  --bg-muted:  #DFE7E3;
+  --surface:   #FCFDFC;
+  --surface-2: #F1F5F3;
+  --surface-3: #E6EDE9;
 
   /* ── Borders ── */
-  --border:        #DCE1E8;
-  --border-strong: #B8C0CC;
+  --border:        #D8E2DD;
+  --border-strong: #B2C0BA;
 
-  /* ── Gray scale (slate-based, neutral) ── */
-  --gray-50:  #F8FAFC;
-  --gray-100: #F1F5F9;
-  --gray-200: #E2E8F0;
-  --gray-300: #CBD5E1;
-  --gray-400: #94A3B8;
-  --gray-500: #64748B;
-  --gray-600: #475569;
-  --gray-700: #334155;
-  --gray-800: #1E293B;
-  --gray-900: #0F172A;
+  /* ── Grey ramp (green-cast) ── */
+  --gray-50:  #F7FAF8;
+  --gray-100: #EFF4F1;
+  --gray-200: #E1E9E5;
+  --gray-300: #C8D4CF;
+  --gray-400: #94A5A0;
+  --gray-500: #647873;
+  --gray-600: #4A5C57;
+  --gray-700: #33433E;
+  --gray-800: #1E2C28;
+  --gray-900: #0E1A16;
 
   /* ── Text ── */
-  --text:       #171A1F;
-  --text-soft:  #3F4752;
-  --text-muted: #667085;
+  --text:       #101C18;
+  --text-soft:  #3A4A45;
+  --text-muted: #5E706A;
 
   /* ── Misc ── */
-  --code-bg:   #171A1F;
-  --code-text: #E2E8F0;
-  --row-hover: #EEF3FB;
+  --code-bg:   #12211D;
+  --code-text: #DCE9E4;
+  --row-hover: #EAF3F0;
 
   /* Shared navigation shell */
-  --sidebar-bg:      #20242A;
-  --sidebar-surface: #282D34;
-  --sidebar-border:  #363C45;
-  --sidebar-text:    #E7EAF0;
-  --sidebar-muted:   #AAB2BF;
-  --sidebar-hover:   rgba(255,255,255,.07);
-  --sidebar-active:  rgba(37,99,235,.22);
-  --sidebar-accent:  #76A0F5;
+  --sidebar-bg:      #14201C;
+  --sidebar-surface: #1C2A26;
+  --sidebar-border:  #2B3B36;
+  --sidebar-text:    #E6EFEB;
+  --sidebar-muted:   #9FB0AA;
+  --sidebar-hover:   rgba(255, 255, 255, .06);
+  --sidebar-active:  rgba(43, 212, 186, .16);
+  --sidebar-accent:  #2BD4BA;
 
   /* ── Z-index scale (single source of truth for stacking) ── */
   --z-base:     1;
@@ -127,71 +188,88 @@
   --t-slow:   .35s;
 
   /* ── Focus ring (single source of truth) ── */
-  --focus-ring: 0 0 0 3px color-mix(in srgb, var(--primary) 22%, transparent);
+  --focus-ring: 0 0 0 3px color-mix(in srgb, var(--primary) 26%, transparent);
 
   /* ── Skeleton shimmer surfaces ── */
   --skeleton-base:  color-mix(in srgb, var(--bg-muted) 70%, var(--surface));
   --skeleton-shine: color-mix(in srgb, var(--surface) 88%, var(--bg-muted));
 }
 
-/* ── Dark mode overrides ── */
+/* ── Dark mode overrides ──────────────────────────────────────
+   The brand hue lifts to its bright twin so it still carries on
+   ink; the neutrals keep the same green bias so the two themes
+   read as one family rather than as two products. */
 html[data-theme='dark'],
 body[data-theme='dark'] {
-  --bg:        #121416;
-  --bg-soft:   #15181C;
-  --bg-muted:  #252A31;
-  --surface:   #1A1D21;
-  --surface-2: #21252B;
-  --surface-3: #272C33;
-  --border:        #30353D;
-  --border-strong: #454B55;
+  --bg:        #0D1411;
+  --bg-soft:   #101815;
+  --bg-muted:  #1E2A26;
+  --surface:   #141C19;
+  --surface-2: #1A241F;
+  --surface-3: #212D28;
+  --border:        #26332E;
+  --border-strong: #3A4A44;
 
-  --gray-50:  #121416;
-  --gray-100: #1A1D21;
-  --gray-200: #252A31;
-  --gray-300: #30353D;
-  --gray-400: #545B66;
-  --gray-500: #9CA3AF;
-  --gray-600: #B8BEC8;
-  --gray-700: #D0D5DD;
-  --gray-800: #E4E7EC;
-  --gray-900: #F2F4F7;
+  --gray-50:  #0D1411;
+  --gray-100: #141C19;
+  --gray-200: #1E2A26;
+  --gray-300: #26332E;
+  --gray-400: #4E605A;
+  --gray-500: #92A39D;
+  --gray-600: #AFBEB8;
+  --gray-700: #C9D6D1;
+  --gray-800: #DEE9E4;
+  --gray-900: #EFF6F2;
 
-  --text:       #F2F4F7;
-  --text-soft:  #D0D5DD;
-  --text-muted: #9CA3AF;
+  --text:       #E9F1ED;
+  --text-soft:  #C4D2CD;
+  --text-muted: #90A19B;
 
-  /* lighter indigo in dark */
-  --blue:       #5B8DEF;
-  --blue-mid:   #76A0F5;
-  --blue-soft:  #76A0F5;
-  --blue-light: rgba(91,141,239,.15);
-  --primary:       #5B8DEF;
-  --primary-hover: #76A0F5;
-  --primary-soft:  rgba(91,141,239,.15);
+  /* brighter verdigris on ink */
+  --blue:       #2BD4BA;
+  --blue-mid:   #56E3CD;
+  --blue-soft:  #56E3CD;
+  --blue-light: rgba(43, 212, 186, .15);
+  --primary:       #2BD4BA;
+  --primary-hover: #56E3CD;
+  --primary-soft:  rgba(43, 212, 186, .15);
+  /* On the bright twin, ink beats white for legibility. */
+  --on-primary:    #08201B;
 
-  --green:   #34D399;  --green-light:  rgba(16,185,129,.14);
-  --red:     #F87171;  --red-light:    rgba(248,113,113,.14);
-  --amber:   #FBBF24;  --amber-light:  rgba(251,191,36,.14);
-  --violet:  #A78BFA;  --violet-light: rgba(167,139,250,.14);
-  --success: #34D399;  --success-soft: rgba(16,185,129,.14);
-  --danger:  #F87171;  --danger-soft:  rgba(248,113,113,.14);
-  --warning: #FBBF24;  --warning-soft: rgba(251,191,36,.14);
+  --teal-900: #EDF9F6;
+  --teal-800: #D7F2EC;
+  --teal-700: #56E3CD;
+  --teal-600: #2BD4BA;
+  --teal-500: #14A08A;
+  --teal-400: #3FC0A9;
+  --teal-300: #7FD8C8;
+  --teal-200: #B3E8DE;
+  --teal-100: rgba(43, 212, 186, .18);
+  --teal-50:  rgba(43, 212, 186, .10);
 
-  --code-bg:   #0E1012;
-  --code-text: #E4E7EC;
-  --row-hover: #232933;
+  --green:   #5CBE84;  --green-light:  rgba(92, 190, 132, .15);
+  --red:     #E8836E;  --red-light:    rgba(232, 131, 110, .15);
+  --amber:   #D9A93F;  --amber-light:  rgba(217, 169, 63, .15);
+  --violet:  #A48CD6;  --violet-light: rgba(164, 140, 214, .15);
+  --success: #5CBE84;  --success-soft: rgba(92, 190, 132, .14);
+  --danger:  #E8836E;  --danger-soft:  rgba(232, 131, 110, .14);
+  --warning: #D9A93F;  --warning-soft: rgba(217, 169, 63, .14);
 
-  --sidebar-bg:      #15171A;
-  --sidebar-surface: #1C1F24;
-  --sidebar-border:  #2C3138;
-  --sidebar-text:    #F2F4F7;
-  --sidebar-muted:   #9CA3AF;
-  --sidebar-hover:   rgba(255,255,255,.065);
-  --sidebar-active:  rgba(91,141,239,.18);
-  --sidebar-accent:  #76A0F5;
+  --code-bg:   #0A1110;
+  --code-text: #DEE9E4;
+  --row-hover: #1B2622;
 
-  --shadow:    0 1px 3px rgba(0,0,0,.28), 0 1px 2px rgba(0,0,0,.22);
-  --shadow-md: 0 12px 24px rgba(0,0,0,.32), 0 6px 12px rgba(0,0,0,.22);
-  --shadow-lg: 0 24px 44px rgba(0,0,0,.38), 0 12px 20px rgba(0,0,0,.26);
+  --sidebar-bg:      #0A1110;
+  --sidebar-surface: #141C19;
+  --sidebar-border:  #24312C;
+  --sidebar-text:    #EFF6F2;
+  --sidebar-muted:   #90A19B;
+  --sidebar-hover:   rgba(255, 255, 255, .055);
+  --sidebar-active:  rgba(43, 212, 186, .14);
+  --sidebar-accent:  #2BD4BA;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, .30);
+  --shadow:    0 1px 3px rgba(0, 0, 0, .34), 0 1px 2px rgba(0, 0, 0, .26);
+  --shadow-md: 0 10px 22px rgba(0, 0, 0, .38), 0 4px 10px rgba(0, 0, 0, .26);
+  --shadow-lg: 0 22px 40px rgba(0, 0, 0, .44), 0 10px 18px rgba(0, 0, 0, .30);
 }

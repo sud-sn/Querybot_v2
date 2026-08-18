@@ -6,9 +6,13 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { min-height: 100%; }
 body {
-  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  /* Was 'Inter' with no @font-face anywhere in the repo, so this
+     resolved to Segoe UI / system-ui for every user and the graded
+     weights the stylesheets ask for had no variable axis to land on.
+     See fonts.css. */
+  font-family: var(--font-ui);
   color: var(--text);
-  font-size: 14px;
+  font-size: var(--font-md);
   line-height: var(--line-normal);
   font-variant-numeric: tabular-nums;
   transition: background .2s, color .2s;
@@ -16,7 +20,7 @@ body {
 a { color: var(--primary); text-decoration: none; }
 a:hover { text-decoration: underline; }
 code {
-  font-family: Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   background: var(--surface-2);
   color: var(--text-soft);
@@ -106,8 +110,8 @@ textarea:focus-visible, a:focus-visible {
 }
 .btn:hover { text-decoration: none; transform: translateY(-1px); box-shadow: var(--shadow-md); }
 .btn:active { transform: translateY(0); }
-.btn-primary { background: var(--primary); color: #fff; }
-.btn-primary:hover { background: var(--primary-hover); color: #fff; }
+.btn-primary { background: var(--primary); color: var(--on-primary); }
+.btn-primary:hover { background: var(--primary-hover); color: var(--on-primary); }
 .btn-danger  { background: var(--danger); color: #fff; }
 .btn-danger:hover  { background: #B91C1C; color: #fff; }
 .btn-success { background: var(--success); color: #fff; }
@@ -186,7 +190,7 @@ textarea:focus-visible, a:focus-visible {
 }
 .form-group textarea {
   resize: vertical;
-  font-family: Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.5;
 }
@@ -426,7 +430,7 @@ textarea:focus-visible, a:focus-visible {
 .ui-chip.active {
   background: var(--primary);
   border-color: var(--primary);
-  color: #fff;
+  color: var(--on-primary);
 }
 
 .empty-state-panel {
@@ -455,7 +459,7 @@ textarea:focus-visible, a:focus-visible {
   border-radius: var(--radius);
   background: var(--code-bg);
   color: var(--code-text);
-  font-family: Consolas, 'Cascadia Code', monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.55;
   white-space: pre-wrap;
@@ -837,7 +841,7 @@ html[data-theme='dark'] [style*="background:#DBEAFE"] {
 .text-success{ color: var(--success); }
 .text-danger { color: var(--danger); }
 .text-warning{ color: var(--warning); }
-.text-mono   { font-family: Consolas, 'SFMono-Regular', monospace; }
+.text-mono   { font-family: var(--font-mono); }
 .font-bold   { font-weight: 700; }
 .font-heavy  { font-weight: 800; }
 .truncate    { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -909,7 +913,7 @@ html[data-theme='dark'] [style*="background:#DBEAFE"] {
   letter-spacing: -.01em;
 }
 .ws-nav-id {
-  font-family: 'SFMono-Regular', Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   color: var(--text-muted);
   background: var(--surface-2);
@@ -1036,7 +1040,7 @@ html[data-theme='dark'] [style*="background:#DBEAFE"] {
   background: var(--surface); text-decoration: none; transition: all var(--t-fast) var(--ease-out);
 }
 .qb-pagination a:hover { border-color: var(--primary); color: var(--primary); }
-.qb-pagination .qb-page-current { background: var(--primary); border-color: var(--primary); color: #fff; }
+.qb-pagination .qb-page-current { background: var(--primary); border-color: var(--primary); color: var(--on-primary); }
 .qb-pagination .qb-page-disabled { opacity: .45; pointer-events: none; }
 
 /* ============================================================
@@ -1118,9 +1122,33 @@ html[data-theme='dark'] [style*="background:#DBEAFE"] {
 .qb-tip::after {
   content: attr(data-tip);
   position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%) translateY(4px);
-  background: var(--gray-900); color: #fff; font-size: var(--font-xs); font-weight: 600;
+  /* --gray-900 inverts between themes, so using it as tooltip ink gave
+     white text on a near-white ground in dark mode. These two hold
+     their relationship in both themes. */
+  background: var(--navy); color: var(--sidebar-text); font-size: var(--font-xs); font-weight: 600;
   padding: 5px 8px; border-radius: var(--radius-sm); white-space: nowrap;
   opacity: 0; pointer-events: none; transition: opacity var(--t-fast) var(--ease-out), transform var(--t-fast) var(--ease-out);
   z-index: var(--z-dropdown); box-shadow: var(--shadow-md);
 }
 .qb-tip:hover::after, .qb-tip:focus-visible::after { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+
+/* ── Display face on headings ─────────────────────────────────
+   The brand voice lives in the mono at display sizes; without
+   negative tracking a mono headline reads as a code listing. */
+h1, h2, h3, .page-title, .card-title {
+  font-family: var(--font-display);
+  letter-spacing: -0.028em;
+}
+h1 { font-weight: 600; }
+h2, h3 { font-weight: 600; }
+
+/* Numbers are brand surface in a data product: set every measure,
+   KPI and delta in the display mono with tabular figures so columns
+   align and digits read as data. */
+.metric-value, .kpi-value, .stat-value, td.num, .num {
+  font-family: var(--font-display);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'zero' 1;
+  letter-spacing: -0.015em;
+}

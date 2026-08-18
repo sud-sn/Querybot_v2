@@ -4,15 +4,19 @@
 */
 .qb-brand-motion {
   --qb-mark-size: 32px;
-  --qb-mark-primary: #2563eb;
-  --qb-mark-secondary: #6d28d9;
-  --qb-mark-accent: #bfdbfe;
+  /* Routed through the design tokens rather than held privately, so the
+     animated mark rebrands with the rest of the system instead of staying
+     on whatever hue it was authored against. */
+  --qb-mark-primary: var(--primary, #0E7C6B);
+  --qb-mark-secondary: var(--primary-hover, #0A6154);
+  --qb-mark-accent: var(--teal-200, #B3E8DE);
+  --qb-mark-glyph: var(--on-primary, #FFFFFF);
   --qb-mark-status: var(--qb-mark-primary);
   display: inline-flex;
   align-items: center;
   gap: .65rem;
   min-width: 0;
-  color: var(--text, #0f172a);
+  color: var(--text, #101C18);
 }
 
 .qb-brand-motion--xs { --qb-mark-size: 22px; }
@@ -39,7 +43,7 @@
 
 .qb-brand-motion__ring {
   fill: none;
-  stroke: #fff;
+  stroke: var(--qb-mark-glyph);
   stroke-width: 3.25;
   stroke-linecap: round;
   stroke-dasharray: 54.1;
@@ -48,7 +52,7 @@
 
 .qb-brand-motion__tail {
   fill: none;
-  stroke: #fff;
+  stroke: var(--qb-mark-glyph);
   stroke-width: 3.25;
   stroke-linecap: round;
   stroke-linejoin: round;
@@ -56,7 +60,7 @@
 
 .qb-brand-motion__data {
   fill: none;
-  stroke: #dbeafe;
+  stroke: var(--qb-mark-accent);
   stroke-width: 1.35;
   stroke-linecap: round;
   opacity: .9;
@@ -73,13 +77,13 @@
   font-size: 12px;
   font-weight: 650;
   line-height: 1.35;
-  color: var(--text-muted, #64748b);
+  color: var(--text-muted, #5E706A);
 }
 
 .qb-brand-motion__subtext {
   display: block;
   margin-top: 2px;
-  color: var(--text-muted, #64748b);
+  color: var(--text-muted, #5E706A);
   font-size: 11px;
   font-weight: 500;
 }
@@ -109,16 +113,16 @@
 }
 
 .qb-brand-motion[data-state="success"] {
-  --qb-mark-status: #059669;
+  --qb-mark-status: var(--success, #2F7D4F);
 }
 .qb-brand-motion[data-state="success"] .qb-brand-motion__spark {
   animation: qb-brand-success .7s cubic-bezier(.22, .8, .26, 1) 1;
 }
 
 .qb-brand-motion[data-state="error"] {
-  --qb-mark-primary: #dc2626;
-  --qb-mark-secondary: #991b1b;
-  --qb-mark-accent: #fecaca;
+  --qb-mark-primary: var(--danger, #B3402E);
+  --qb-mark-secondary: color-mix(in srgb, var(--danger, #B3402E) 70%, #000);
+  --qb-mark-accent: var(--danger-soft, #FBEDEA);
 }
 .qb-brand-motion[data-state="error"] .qb-brand-motion__ring {
   animation: qb-brand-error .7s ease-out 1;
@@ -137,7 +141,7 @@
   justify-content: center;
   min-height: 96px;
   padding: 1.25rem;
-  color: var(--text-muted, #64748b);
+  color: var(--text-muted, #5E706A);
   text-align: center;
 }
 .qb-brand-loader-block .qb-brand-motion { margin-inline: auto; }
@@ -180,20 +184,17 @@
   100% { transform: scale(1) rotate(0); opacity: 1; }
 }
 @keyframes qb-brand-error {
-  0% { stroke: #fff; filter: drop-shadow(0 0 0 rgba(220, 38, 38, 0)); }
-  45% { stroke: #fecaca; filter: drop-shadow(0 0 4px rgba(220, 38, 38, .72)); }
-  100% { stroke: #fff; filter: drop-shadow(0 0 0 rgba(220, 38, 38, 0)); }
+  0% { stroke: var(--qb-mark-glyph); filter: drop-shadow(0 0 0 transparent); }
+  45% { stroke: var(--qb-mark-accent); filter: drop-shadow(0 0 4px color-mix(in srgb, var(--danger, #B3402E) 72%, transparent)); }
+  100% { stroke: var(--qb-mark-glyph); filter: drop-shadow(0 0 0 transparent); }
 }
 @keyframes qb-brand-enter {
   from { opacity: 0; transform: translateY(7px) scale(.92); }
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
-html[data-theme="dark"] .qb-brand-motion {
-  --qb-mark-primary: #3b82f6;
-  --qb-mark-secondary: #7c3aed;
-  --qb-mark-accent: #dbeafe;
-}
+/* Nothing to override in dark: the tokens above already swap to the
+   bright verdigris twin, so the mark follows the theme automatically. */
 
 @media (prefers-reduced-motion: reduce) {
   .qb-brand-motion,

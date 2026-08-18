@@ -1,0 +1,78 @@
+/* ============================================================
+   QueryBot — Self-hosted type system
+   ------------------------------------------------------------
+   base.css previously declared font-family: 'Inter' with no
+   @font-face anywhere in the repo, so every user rendered Segoe
+   UI / system-ui instead. The graded weights the CSS asks for
+   (650 / 750 / 760 / 850) only exist on a variable font, so on
+   a static system face they snapped to the nearest available —
+   usually 700 or 900 — which is why headings, labels, badges
+   and table headers all rendered at roughly the same heaviness
+   and nothing in the hierarchy read as distinct.
+
+   These faces are self-hosted because the deployment must not
+   depend on a font CDN. Total cost is ~91 KB for the whole
+   product: one variable sans (every weight from one file) plus
+   three mono weights.
+
+   IBM Plex Sans / IBM Plex Mono — SIL Open Font License 1.1.
+   ============================================================ */
+
+/* UI face — variable weight axis 100..700, so the graded
+   weights in the stylesheets finally render as asked. */
+@font-face {
+  font-family: 'Plex Sans';
+  src: url('/static/fonts/plex-sans-var.woff2') format('woff2-variations'),
+       url('/static/fonts/plex-sans-var.woff2') format('woff2');
+  font-weight: 100 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Display + data face. Carries the brand: headings, the
+   wordmark, and every KPI numeral. A mono is the honest
+   display face for a product whose subject is SQL, and it
+   gives tabular figures for free. */
+@font-face {
+  font-family: 'Plex Mono';
+  src: url('/static/fonts/plex-mono-400.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Plex Mono';
+  src: url('/static/fonts/plex-mono-500.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Plex Mono';
+  src: url('/static/fonts/plex-mono-600.woff2') format('woff2');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* ── Brand type utilities ───────────────────────────────────
+   The signature move for a data product: numbers are set in
+   the display mono, so the figures themselves read as brand
+   rather than as whatever the UI face happens to do with
+   digits. Apply .qb-num to KPI values, deltas and table
+   measure cells. */
+.qb-num,
+.qb-kpi-value {
+  font-family: var(--font-display);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'zero' 1;   /* slashed zero — reads as data, not prose */
+  letter-spacing: -0.015em;
+}
+
+/* Display face for headings and the wordmark. Mono at display
+   sizes needs negative tracking or it reads as a code listing. */
+.qb-display {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: -0.03em;
+}

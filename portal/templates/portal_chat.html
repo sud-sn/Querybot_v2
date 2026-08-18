@@ -4,10 +4,9 @@
 {% block title %}Chat — QueryBot{% endblock %}
 {% block breadcrumb %}{% endblock %}
 {% block head %}
-<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
-<link rel="stylesheet" href="/static/css/chat_workspace.css?v=20260804-graphite-1">
+<script src="/static/vendor/echarts.min.js"></script>
+<link rel="stylesheet" href="/static/css/chat_workspace.css?v=20260818-verdigris-1">
 <style>
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap');
 /* Full-viewport constraints — chat page only */
 html,body{height:100%;overflow:hidden}
 /* Remove .main padding/max-width for the chat page only */
@@ -40,7 +39,7 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .chat-shell-header{padding:.7rem .95rem;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:1rem;background:var(--surface);flex-shrink:0}
 .chat-shell-title{display:flex;align-items:center;gap:.75rem}
 .chat-shell-badge{width:34px;height:34px;border-radius:var(--radius);background:transparent;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;box-shadow:none;flex-shrink:0}
-.qb-logo-mark{width:100%;height:100%;display:block;filter:drop-shadow(0 3px 8px rgba(37,99,235,.35))}
+.qb-logo-mark{width:100%;height:100%;display:block;filter:drop-shadow(0 2px 6px color-mix(in srgb, var(--primary) 32%, transparent))}
 .chat-shell-title h2{font-size:15px;font-weight:800;color:var(--text);margin-bottom:3px}
 .chat-shell-title p{font-size:12px;color:var(--text-muted)}
 .status-wrap{display:flex;align-items:center;gap:.6rem;flex-wrap:wrap}
@@ -69,7 +68,7 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .artifact-tabs{display:flex;align-items:center;gap:.2rem;padding:.45rem .65rem;border-bottom:1px solid var(--border);background:var(--surface)}
 .artifact-tab{border:0;background:transparent;color:var(--text-muted);padding:6px 9px;border-radius:5px;font-size:11px;font-weight:750;cursor:pointer}.artifact-tab.active{background:var(--primary-soft);color:var(--primary)}
 .artifact-panel{display:none;padding:.85rem}.artifact-panel.active{display:block}.artifact-chart{height:clamp(320px,52vh,590px);width:100%}
-.artifact-panel .data-table-wrap{max-height:none}.artifact-query{margin:0;white-space:pre-wrap;word-break:break-word;font:11px/1.65 'JetBrains Mono',monospace;color:var(--text-soft);background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:.8rem}
+.artifact-panel .data-table-wrap{max-height:none}.artifact-query{margin:0;white-space:pre-wrap;word-break:break-word;font:11px/1.65 var(--font-mono),monospace;color:var(--text-soft);background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:.8rem}
 .artifact-actions{display:flex;gap:.45rem;flex-wrap:wrap;padding:.7rem .85rem;border-top:1px solid var(--border);background:var(--surface)}
 .artifact-open-btn{display:inline-flex;align-items:center;gap:.35rem}
 .dashboard-confirm{display:flex;align-items:center;justify-content:space-between;gap:.75rem;padding:.65rem .75rem;margin:.65rem 0 0;border:1px solid color-mix(in srgb,var(--success) 30%,var(--border));background:var(--success-soft);border-radius:7px;color:var(--text);font-size:11px}.dashboard-confirm strong{display:block;font-size:12px}.dashboard-confirm a{color:var(--primary);font-weight:800;white-space:nowrap}
@@ -91,8 +90,8 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .msg-bubble{padding:1rem 1.05rem;border-radius:var(--radius-lg);font-size:13px;line-height:1.72;word-break:break-word;border:1px solid transparent}
 .msg-user .msg-bubble{background:linear-gradient(135deg,var(--primary),var(--primary-hover));color:#fff;border-bottom-right-radius:6px;box-shadow:0 10px 18px rgba(13,115,119,.22)}
 .msg-bot .msg-bubble{background:var(--surface);color:var(--text);border-color:var(--border);border-bottom-left-radius:6px;box-shadow:var(--shadow)}
-.msg-bot .msg-bubble pre{background:var(--bg-soft);border:1px solid var(--border);border-radius:var(--radius);padding:.75rem .85rem;overflow-x:auto;font-family:'JetBrains Mono',monospace;font-size:11px;margin:.55rem 0;white-space:pre-wrap;color:var(--text)}
-.msg-bot .msg-bubble code{font-family:'JetBrains Mono',monospace;font-size:11px;background:var(--surface-2);padding:2px 6px;border-radius:6px}
+.msg-bot .msg-bubble pre{background:var(--bg-soft);border:1px solid var(--border);border-radius:var(--radius);padding:.75rem .85rem;overflow-x:auto;font-family:var(--font-mono),monospace;font-size:11px;margin:.55rem 0;white-space:pre-wrap;color:var(--text)}
+.msg-bot .msg-bubble code{font-family:var(--font-mono),monospace;font-size:11px;background:var(--surface-2);padding:2px 6px;border-radius:6px}
 .msg-bot .msg-bubble strong{color:var(--text)}
 .msg-bot .msg-bubble em{color:var(--text-soft);font-style:normal}
 .msg-actions{display:flex;gap:.45rem;flex-wrap:wrap;padding:0 .1rem}
@@ -120,8 +119,8 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .agent-run-meta[hidden]{display:none}
 .agent-run-governed{display:inline-flex;align-items:center;gap:.3rem;font-weight:750;color:var(--primary)}
 .agent-run-governed::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--primary)}
-.agent-run-tool{font-family:'JetBrains Mono',monospace;color:var(--text-soft);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.agent-run-id{margin-left:auto;font-family:'JetBrains Mono',monospace;color:var(--text-muted);white-space:nowrap}
+.agent-run-tool{font-family:var(--font-mono),monospace;color:var(--text-soft);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.agent-run-id{margin-left:auto;font-family:var(--font-mono),monospace;color:var(--text-muted);white-space:nowrap}
 .agent-run-meta[data-status="completed"] .agent-run-governed{color:var(--green)}
 .agent-run-meta[data-status="completed"] .agent-run-governed::before{background:var(--green)}
 .agent-run-meta[data-status="blocked"] .agent-run-governed,.agent-run-meta[data-status="waiting_for_user"] .agent-run-governed{color:var(--amber)}
@@ -430,12 +429,12 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .confidence-card{margin:.75rem 0;padding:.75rem .85rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface-2);display:flex;flex-direction:column;gap:.45rem}
 .confidence-top{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap}
 .confidence-badge{font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:.06em;border-radius:999px;padding:.25rem .55rem;border:1px solid var(--border)}
-.confidence-badge.high{background:rgba(16,185,129,.13);color:#6ee7b7;border-color:rgba(16,185,129,.35)}
-.confidence-badge.medium{background:rgba(245,158,11,.14);color:#fbbf24;border-color:rgba(245,158,11,.38)}
-.confidence-badge.low{background:rgba(248,113,113,.14);color:#fca5a5;border-color:rgba(248,113,113,.4)}
+.confidence-badge.high{background:var(--success-soft);color:var(--success);border-color:color-mix(in srgb, var(--success) 40%, transparent)}
+.confidence-badge.medium{background:var(--warning-soft);color:var(--warning);border-color:color-mix(in srgb, var(--warning) 42%, transparent)}
+.confidence-badge.low{background:var(--danger-soft);color:var(--danger);border-color:color-mix(in srgb, var(--danger) 42%, transparent)}
 .confidence-score{font-size:12px;color:var(--text-muted);font-weight:750}
 .confidence-lines{font-size:12px;line-height:1.55;color:var(--text-soft)}
-.sql-box{margin:.1rem .85rem .85rem;background:var(--code-bg);border:1px solid var(--border);border-radius:var(--radius);padding:.75rem .85rem;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--code-text);white-space:pre-wrap;overflow:auto;max-height:220px}
+.sql-box{margin:.1rem .85rem .85rem;background:var(--code-bg);border:1px solid var(--border);border-radius:var(--radius);padding:.75rem .85rem;font-family:var(--font-mono),monospace;font-size:11px;color:var(--code-text);white-space:pre-wrap;overflow:auto;max-height:220px}
 .trust-sql-label{padding:0 .85rem .35rem;font-size:10px;font-weight:850;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted);display:flex;align-items:center;justify-content:space-between}
 .sql-copy-btn{font-size:10px;font-weight:600;padding:2px 8px;border-radius:4px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-muted);cursor:pointer;text-transform:none;letter-spacing:0;transition:background .15s}
 .sql-copy-btn:hover{background:var(--surface-3);color:var(--text)}
@@ -4663,11 +4662,10 @@ function connect(){
         } else {
           _markActiveOutbound('complete', 'Clarification requested');
         }
-        // Keep mascot visible, render error after brief reaction
-        setTimeout(() => {
-          appendBot(msgContent);
-          refreshQueryLimitStatus({toast:true});
-        }, 400);
+        // Render immediately: the delay this replaced existed only so a
+        // mascot reaction could play on a visually-hidden element.
+        appendBot(msgContent);
+        refreshQueryLimitStatus({toast:true});
       } else {
         _markActiveOutbound('complete');
         // Success text result — small delay so mascot celebration is seen
@@ -4679,11 +4677,9 @@ function connect(){
           _pendingSuggestion = null;
         }
         // ────────────────────────────────────────────────────────────────────
-        setTimeout(() => {
-          setAgentRunState('completed', msg);
-          appendBot(msgContent);
-          refreshQueryLimitStatus({toast:true});
-        }, 700);
+        setAgentRunState('completed', msg);
+        appendBot(msgContent);
+        refreshQueryLimitStatus({toast:true});
         return;
       }
     } else if (msg.type === 'assistant_action_ack') {
@@ -4713,12 +4709,10 @@ function connect(){
         _pendingSuggestion = null;
       }
       // ─────────────────────────────────────────────────────────────────────────
-      setTimeout(() => {
-        setAgentRunState('completed', msg);
-        appendAssistantResponse(msg);
-        refreshQueryLimitStatus({toast:true});
-        window.dispatchEvent(new CustomEvent('qb-query-success'));
-      }, 900);
+      setAgentRunState('completed', msg);
+      appendAssistantResponse(msg);
+      refreshQueryLimitStatus({toast:true});
+      window.dispatchEvent(new CustomEvent('qb-query-success'));
       return; // prevent falling through to setProcessing(false) in 'typing' event
     } else if (msg.type === 'assistant_dashboard') {
       finishAnalysisAction(msg);
