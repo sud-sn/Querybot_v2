@@ -8,19 +8,15 @@
 <div{% if root_id %} id="{{ root_id }}"{% endif %}
      class="qb-brand-motion qb-brand-motion--{{ size }}{% if extra_class %} {{ extra_class }}{% endif %}"
      data-state="{{ state }}"{% if status %} role="status" aria-live="polite"{% else %} aria-hidden="true"{% endif %}>
+  {# A Q whose tail is a terminal caret. No gradient badge, no magnifier
+     handle, no sparkle: a saturated tile is a large loud area at any size, and
+     the sparkle is Gemini's glyph. A bare glyph also adapts to either theme
+     ground without a contrast problem, because the accent token already
+     swaps. `uid` is retained for call-site compatibility; nothing needs it now
+     that there is no gradient to reference. #}
   <svg class="qb-brand-motion__mark" viewBox="0 0 40 40" fill="none" aria-hidden="true" focusable="false">
-    <defs>
-      <linearGradient id="{{ uid }}-bg" x1="0" y1="0" x2="40" y2="40" gradientUnits="userSpaceOnUse">
-        <stop offset="0" stop-color="var(--qb-mark-primary)"/>
-        <stop offset="1" stop-color="var(--qb-mark-secondary)"/>
-      </linearGradient>
-    </defs>
-    <rect class="qb-brand-motion__badge" width="40" height="40" rx="10" fill="url(#{{ uid }}-bg)"/>
-    <rect x=".75" y=".75" width="38.5" height="38.5" rx="9.25" stroke="#fff" stroke-opacity=".14"/>
-    <circle class="qb-brand-motion__ring" cx="19" cy="20" r="8.6"/>
-    <path class="qb-brand-motion__data" d="M15.2 17.4h6.6M15.2 20.1h5M15.2 22.8h3.5"/>
-    <path class="qb-brand-motion__tail" d="M24.3 25.3 29 30v-2.2"/>
-    <path class="qb-brand-motion__spark" d="m30 3 1.27 4.73L36 9l-4.73 1.27L30 15l-1.27-4.73L24 9l4.73-1.27L30 3Z"/>
+    <circle class="qb-brand-motion__ring" cx="17.4" cy="18.4" r="8.9"/>
+    <rect class="qb-brand-motion__caret" x="22.4" y="22.8" width="7.8" height="10.4" rx="1.6"/>
   </svg>
   {% if label %}<span{% if label_id %} id="{{ label_id }}"{% endif %} class="{{ label_class }}" data-brand-label>{{ label }}</span>{% endif %}
 </div>

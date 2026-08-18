@@ -106,7 +106,7 @@ def test_the_brand_font_is_actually_shipped():
 def test_the_animated_mark_follows_the_theme_tokens():
     """brand-motion.css kept a private copy of the brand palette, so a
     rebrand left the animated logo on the previous hue."""
-    css = _read("static/css/brand-motion.css")
+    css = _strip_css_comments(_read("static/css/brand-motion.css"))
     bare_hex = [
         line.strip() for line in css.splitlines()
         if re.search(r"#[0-9a-fA-F]{3,8}", line) and "var(--" not in line
@@ -301,3 +301,63 @@ def test_no_template_depends_on_an_external_cdn():
             if host in body:
                 offenders.append(f"{Path(path).name} -> {host}")
     assert not offenders, f"external CDN dependencies: {offenders}"
+
+
+# ── The animated mark ──────────────────────────────────────────────────────
+# The static favicon was redesigned first and the animated component was
+# missed, so the gradient badge, magnifier handle and sparkle survived in the
+# most visible place in the product: the sign-in screen. These guard both
+# copies of the macro, which are duplicated between admin and portal.
+
+_GENERIC_AI_MARK_PARTS = (
+    "qb-brand-motion__spark",   # four-pointed sparkle (Gemini's glyph)
+    "qb-brand-motion__tail",    # magnifier handle
+    "qb-brand-motion__data",    # data rows inside the lens
+    "qb-brand-motion__badge",   # saturated tile
+    "linearGradient",           # gradient badge
+)
+
+
+def test_the_animated_mark_carries_none_of_the_generic_ai_motifs():
+    for template in ("admin/templates/macros.html", "portal/templates/macros.html"):
+        source = _read(template)
+        macro = source.split("{% macro brand_motion", 1)[1].split("{%- endmacro %}", 1)[0]
+        found = [part for part in _GENERIC_AI_MARK_PARTS if part in macro]
+        assert not found, f"{template}: brand_motion still contains {found}"
+
+
+def test_the_animated_mark_is_the_q_and_caret():
+    for template in ("admin/templates/macros.html", "portal/templates/macros.html"):
+        macro = _read(template).split("{% macro brand_motion", 1)[1].split("{%- endmacro %}", 1)[0]
+        assert "qb-brand-motion__ring" in macro, f"{template}: the Q ring is missing"
+        assert "qb-brand-motion__caret" in macro, f"{template}: the caret tail is missing"
+
+
+def test_both_macro_copies_render_an_identical_mark():
+    """The macro is duplicated across admin and portal, which is how the two
+    drifted apart in the first place."""
+    marks = []
+    for template in ("admin/templates/macros.html", "portal/templates/macros.html"):
+        macro = _read(template).split("{% macro brand_motion", 1)[1].split("{%- endmacro %}", 1)[0]
+        svg = macro[macro.index("<svg"):macro.index("</svg>")]
+        marks.append(re.sub(r"\s+", " ", svg).strip())
+    assert marks[0] == marks[1], "admin and portal brand_motion marks have drifted apart"
+
+
+def test_the_caret_animates_and_survives_reduced_motion():
+    css = _read("static/css/brand-motion.css")
+    assert "qb-caret-blink" in css, "the caret has no resting animation"
+    assert ".qb-brand-motion__caret" in css
+    reduced = css.split("prefers-reduced-motion", 1)[1]
+    assert "opacity: 1" in reduced, (
+        "the blink animates opacity, so reduced-motion must leave the caret solid "
+        "rather than stuck mid-cycle"
+    )
+
+
+def test_the_mark_carries_no_stale_brand_colour_in_an_rgba():
+    """The old blue survived a hex sweep by hiding in an rgba() drop-shadow,
+    which put a blue halo around a green mark."""
+    css = _strip_css_comments(_read("static/css/brand-motion.css"))
+    stale = re.findall(r"rgba?\(\s*37\s*,\s*99\s*,\s*235", css)
+    assert not stale, f"brand-motion.css still references the old brand blue: {stale}"
