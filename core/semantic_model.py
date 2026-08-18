@@ -310,9 +310,31 @@ def _find_dimension_for_key(schema: dict[str, Any], source_key: str) -> tuple[st
     return keyed or named or contains
 
 
-def _field_entry(item: EnrichedColumn, meta: dict[str, Any]) -> dict[str, Any]:
+# Measures whose value is a level rather than a flow. Summing these across
+# time counts the same stock once per period.
+_SNAPSHOT_FACT_TYPES = {"periodic_snapshot", "accumulating_snapshot"}
+
+
+def _field_entry(
+    item: EnrichedColumn,
+    meta: dict[str, Any],
+    *,
+    snapshot_fact: bool = False,
+) -> dict[str, Any]:
     rule = match_column_suffix(item.column)
     entity_prefix = match_entity_prefix(item.column) or ""
+    aggregation = rule.aggregation if rule else ""
+    # Semi-additivity was recognised only from a column-name SUFFIX (_BAL,
+    # _INV). EMCO's inventory value is BAL_VAL_AMT, where BAL is a PREFIX, so
+    # it fell through to the _AMT rule and was published as "additive - safe to
+    # SUM across all dimensions". Summing a month-end balance across 18 months
+    # of snapshots overstates inventory eighteen-fold, silently.
+    #
+    # The grain is a property of the TABLE, not of how the column happens to be
+    # spelled, and the classifier already identifies a periodic snapshot. Trust
+    # that instead of the naming convention.
+    if snapshot_fact and aggregation in {"", "additive"} and item.role == "measure":
+        aggregation = "semi_additive"
     return {
         "column": item.column,
         "data_type": item.data_type or _field_type(meta, item.column),
@@ -327,7 +349,7 @@ def _field_entry(item: EnrichedColumn, meta: dict[str, Any]) -> dict[str, Any]:
         "join_equivalents": item.join_equivalents,
         "date_role": item.date_role,
         "naming_role": rule.role if rule else "",
-        "aggregation": rule.aggregation if rule else "",
+        "aggregation": aggregation,
         "format_hint": rule.format_hint if rule else "",
         "entity_prefix": entity_prefix,
         "status": "generated" if item.confidence >= 70 else "needs_review",
@@ -790,7 +812,15 @@ def build_semantic_model(schema_dir: str, *, business_desc: str = "", account_id
                 legacy_grain, legacy_status, legacy_confidence
             )
         enriched = enrich_columns(columns)
-        fields = [_field_entry(item, meta) for item in enriched]
+        _snapshot_fact = bool(
+            classification
+            and classification.role == "fact"
+            and classification.fact_type in _SNAPSHOT_FACT_TYPES
+        )
+        fields = [
+            _field_entry(item, meta, snapshot_fact=_snapshot_fact)
+            for item in enriched
+        ]
         date_roles = _date_roles(schema, fqn, meta)
         all_date_roles.extend(date_roles)
         tables.append({
