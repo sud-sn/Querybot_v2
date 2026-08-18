@@ -352,7 +352,18 @@ def get_suggestions(
     cached = _load_cache(kb_dir)
     cache_by_question, cache_by_table = _cache_indexes(cached)
 
-    # Tier 1: validated examples. These have already executed successfully.
+    # Loaded once and shared by tiers 1 and 3. Pure and in-memory — no LLM, no
+    # warehouse round-trip — so every candidate is free to test.
+    _reachable = _graph_reachability_check(account_id)
+
+    # Tier 1: validated examples. Their SQL has executed successfully, which is
+    # why they rank first — but that is a weaker guarantee than it sounds. Most
+    # of them are Q:/SQL: pairs the LLM wrote during the KB build, banked by
+    # core.examples as soon as the hand-written SQL ran. Executing authored SQL
+    # says nothing about whether the NL pipeline can re-plan the question from
+    # the text, so a question naming an entity the graph cannot reach still
+    # dead-ends on "Missing governed path" after the user clicks it. Gate them
+    # on the same reachability check as tier 3.
     try:
         import store
         examples = store.get_validated_examples(account_id, limit=80)
@@ -363,6 +374,8 @@ def get_suggestions(
                 continue
             entry = _entry_from_example(ex, cache_by_question, cache_by_table)
             if not _table_allowed(entry) or not _entry_matches_schema(entry):
+                continue
+            if not _reachable(q):
                 continue
             _add(q, entry.get("fqn", ""))
             if len(suggestions) >= n:
@@ -388,88 +401,25 @@ def get_suggestions(
         except Exception as e:
             log.debug("Suggestion tier 2 (metric registry) failed: %s", e)
 
-    return suggestions
-
-    # ── Tier 1: Validated examples ────────────────────────────────────────────
-    if len(suggestions) < n:
-        try:
-            import store
-            examples = store.get_validated_examples(account_id, limit=60)
-            random.shuffle(examples)
-            for ex in examples:
-                table_name = str(ex.get("table_name", "")).upper()
-                q = (ex.get("question") or "").strip()
-                if not q:
-                    continue
-                entry = {"table": table_name, "fqn": table_name}
-                if not _table_allowed(entry):
-                    continue
-                _add(q, table_name)
-                if len(suggestions) >= n:
-                    break
-        except Exception as e:
-            log.debug("Suggestion tier 2 (validated examples) failed: %s", e)
-
-    # ── Tier 2: Metric registry fallback ─────────────────────────────────────
-    if len(suggestions) < n:
-        try:
-            import store
-            metrics = store.list_metrics(account_id)
-            random.shuffle(metrics)
-            for metric in metrics:
-                name = (metric.get("name") or "").strip()
-                desc = (metric.get("description") or "").strip()
-                sql  = (metric.get("sql_template") or "").upper()
-                if not name:
-                    continue
-                if schema_tables and sql:
-                    tables_in_sql = {
-                        w.strip("[];()") for w in sql.split()
-                        if "." in w or w.strip("[];()").replace("_", "").isalpha()
-                    }
-                    if not any(
-                        any(t in ref.upper() for ref in tables_in_sql)
-                        for t in schema_tables
-                    ):
-                        continue
-                human = name.replace("_", " ")
-                label = desc if (desc and len(desc) <= 60) else human
-                q = f"What is our total {label}?"
-                _add(q, "")
-                if len(suggestions) >= n:
-                    break
-        except Exception as e:
-            log.debug("Suggestion tier 3 (metric registry) failed: %s", e)
-
-    # These are questions the LLM WROTE while generating the knowledge base. They
-    # have never been executed, so they are the least trustworthy source in this
-    # function -- and they were running first, which is how the portal came to
-    # offer clickable questions that fail. This module's own docstring already
-    # said they should be used "as metadata only, not as raw user-facing
-    # prompts"; the implementation had inverted its own contract.
-    #
-    # They still earn their place when the safer tiers cannot fill the list (a
-    # new tenant has no validated examples yet), but only if the entity graph
-    # can actually reach what they name. That check is pure and in-memory -- no
-    # LLM, no warehouse round-trip -- so it costs nothing to refuse a question
-    # we already know will dead-end.
     # ── Tier 3: Stage 2 query patterns — LAST, and only what the graph can reach
-    cached = _load_cache(kb_dir)
-    if cached:
-        scoped = [
-            e for e in cached
-            if _table_allowed(e)
-            and (schema_tables is None or
-                 e.get("table", "").upper() in schema_tables or
-                 # Also check bare part of FQN against schema_tables
-                 (e.get("fqn", "").upper().split(".")[-1] in schema_tables))
-        ]
+    #
+    # These are questions the LLM WROTE while generating the knowledge base.
+    # They have never been executed, so they are the least trustworthy source
+    # here. They still earn a place when the safer tiers cannot fill the list
+    # (a new tenant has no validated examples yet), but only if the entity
+    # graph can actually reach what they name.
+    # Unlike tier 1, this tier is only reached when the check actually ran. An
+    # unreadable or empty graph vouches for nothing, and the least trustworthy
+    # source in the function is exactly the one that must not be offered on the
+    # strength of a check that did not happen.
+    if len(suggestions) < n and cached and getattr(_reachable, "verified", False):
+        scoped = [e for e in cached if _table_allowed(e) and _entry_matches_schema(e)]
         random.shuffle(scoped)
-        _reachable = _graph_reachability_check(account_id)
         for e in scoped:
-            if not _reachable(e["question"]):
+            question_text = str(e.get("question") or "").strip()
+            if not question_text or not _reachable(question_text):
                 continue
-            _add(e["question"], e.get("fqn", ""))
+            _add(question_text, e.get("fqn", ""))
             if len(suggestions) >= n:
                 break
 
@@ -487,17 +437,28 @@ def _graph_reachability_check(account_id: str):
 
     Fails OPEN: any error, or a graph that is empty or review-only, returns True
     so this can only ever remove questions we can prove are dead ends.
+
+    The returned predicate carries ``.verified`` — False when it fell open and
+    is therefore vouching for nothing. Failing open is right when FILTERING a
+    trusted source (never withhold a proven question just because the graph is
+    unreadable) and wrong when PROMOTING an untrusted one, so the caller can
+    tell the two apart.
     """
+    def _open(_reason: str):
+        predicate = lambda question: True  # noqa: E731
+        predicate.verified = False
+        return predicate
+
     try:
         import store
         from core.graph_resolver import detect_entities
 
         graph = store.get_full_graph(account_id) or {}
         if not (graph.get("entities") or []):
-            return lambda question: True
+            return _open("empty graph")
     except Exception as exc:
         log.debug("Suggestion reachability check unavailable: %s", exc)
-        return lambda question: True
+        return _open(str(exc))
 
     # Entities that carry no relationship at all, but whose physical table is
     # also owned by a sibling entity that does. That pairing is always a defect
@@ -529,7 +490,9 @@ def _graph_reachability_check(account_id: str):
         and _table_of(entity) in tables_with_a_connected_owner
     }
     if not jointless_twins:
-        return lambda question: True
+        healthy = lambda question: True  # noqa: E731
+        healthy.verified = True
+        return healthy
     log.info(
         "Suggestion filter active — %d entity/entities have no relationships "
         "while a sibling on the same table does: %s",
@@ -552,4 +515,5 @@ def _graph_reachability_check(account_id: str):
             return False
         return True
 
+    _reachable.verified = True
     return _reachable

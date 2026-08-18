@@ -5726,6 +5726,17 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             await adapter.send_message(event, f"❌ {last_reason}")
         return
 
+    # _timed_out was decided from the FIRST execution, to suppress the repair
+    # loop. But exec_error is reassigned by the retry and progressive-repair
+    # executions below it, either of which can itself time out. Reading the
+    # stale flag here reported those as a generic execution failure — "the
+    # database could not be reached" — for a query that in fact ran to the
+    # statement timeout, hiding the one diagnosis that matters and dropping the
+    # index guidance. Re-derive it from the error actually being reported.
+    _timed_out = _timed_out or (
+        exec_error is not None and is_query_timeout(exec_error)
+    )
+
     if exec_error is not None or rows is None:
         _log_q(account_id, question, sql, 0, False,
                exec_error or "Unknown error",

@@ -70,6 +70,9 @@ SCHEMA = {
             {"name": "LST_MOD_DT_DMS_KEY", "type": "int"},
             # Infrastructure audit column: a real datetime2, not a key.
             {"name": "AZ_LST_UPD_TS", "type": "datetime2"},
+            # The audit *user*. Matches the same modified-date pattern by name,
+            # but is nvarchar - a join to an int dimension key is impossible.
+            {"name": "AZ_LST_UPD_USR", "type": "nvarchar"},
             {"name": "SOP_CUS_IVC_LIN_AMT", "type": "decimal"},
         ],
     },
@@ -98,6 +101,21 @@ def _graph(vocab=None):
 
 
 class TestANativeDateNeverJoinsADateDimension(unittest.TestCase):
+
+    def test_a_character_column_cannot_key_an_integer_date_dimension(self):
+        self.assertFalse(joins_date_dimension("AZ_LST_UPD_USR", "nvarchar", "int"))
+        self.assertFalse(joins_date_dimension("AZ_LST_UPD_USR", "nvarchar(50)", "int"))
+
+    def test_a_character_date_key_is_still_allowed_against_a_character_dimension(self):
+        # char(8) '20260630' is as real a convention as the integer spelling.
+        self.assertTrue(joins_date_dimension("ORDER_DT_KEY", "char(8)", "char(8)"))
+
+    def test_the_graph_emits_no_character_to_integer_edge(self):
+        offending = [
+            r for r in _graph(_m3_vocab())["relationships"]
+            if r.get("from_column", "").upper() == "AZ_LST_UPD_USR"
+        ]
+        self.assertEqual(offending, [], "an nvarchar column was joined to an int key")
 
     def test_the_predicate_helper_separates_keys_from_values(self):
         self.assertTrue(joins_date_dimension("CUS_IVC_DT_DMS_KEY", "int"))

@@ -125,27 +125,138 @@ class TestJointlessTwinsAreNotOffered(unittest.TestCase):
             )
 
 
-class TestTrustOrder(unittest.TestCase):
-    """The proven sources must be consulted before the invented ones."""
+class TestTheGateActuallyRuns(unittest.TestCase):
+    """The gate above was correct and had never executed.
 
-    def test_validated_examples_run_before_the_generated_cache(self):
-        source = (ROOT / "core" / "suggestions.py").read_text(encoding="utf-8")
-        body = source.split("def get_suggestions(", 1)[1]
-        validated = body.find("Tier 1: Validated examples")
-        metrics = body.find("Tier 2: Metric registry")
-        generated = body.find("Tier 3: Stage 2 query patterns")
-        self.assertGreater(validated, 0)
-        self.assertLess(validated, metrics, "validated examples must come first")
-        self.assertLess(
-            metrics, generated,
-            "questions the LLM invented must be the last resort, not the first",
+    95ace2d added the reordered tiers and the reachability check BELOW a
+    `return suggestions` that already existed, leaving 80 lines — including the
+    only call to _graph_reachability_check — statically unreachable. Every
+    assertion that was supposed to protect this searched the SOURCE TEXT of
+    get_suggestions for tier comments, so it matched the dead block and passed
+    while the feature was inert. These tests go through get_suggestions.
+    """
+
+    QUESTION = "What is my revenue by each customer, top 5?"
+
+    def _run(self, *, validated=(), cached=(), metrics=(), n=6, graph=None):
+        with tempfile.TemporaryDirectory() as kb_dir:
+            if cached:
+                (Path(kb_dir) / suggestions._CACHE_FILENAME).write_text(
+                    __import__("json").dumps(list(cached)), encoding="utf-8")
+            with patch("store.get_full_graph",
+                       return_value=_graph_with_twins() if graph is None else graph),                     patch("store.get_validated_examples", return_value=list(validated)),                     patch("store.list_metrics", return_value=list(metrics)):
+                return suggestions.get_suggestions("acct", kb_dir, None, n=n)
+
+    def test_get_suggestions_withholds_a_question_the_graph_cannot_reach(self):
+        offered = self._run(validated=[
+            {"question": self.QUESTION, "table_name": f"{SCHEMA}.CUS_DMS",
+             "sql_query": f"SELECT 1 FROM {SCHEMA}.CUS_DMS"},
+        ])
+        self.assertNotIn(
+            self.QUESTION, [s["question"] for s in offered],
+            "a question that dead-ends on 'Missing governed path' was offered",
         )
 
-    def test_the_generated_tier_is_graph_filtered(self):
-        source = (ROOT / "core" / "suggestions.py").read_text(encoding="utf-8")
-        generated = source.split("Tier 3: Stage 2 query patterns", 1)[1]
-        self.assertIn("_graph_reachability_check(account_id)", generated)
-        self.assertIn("if not _reachable(", generated)
+    def test_the_same_question_is_offered_once_the_graph_is_healthy(self):
+        healthy = _graph_with_twins()
+        healthy["entities"] = [
+            e for e in healthy["entities"]
+            if e["entity_name"] not in {"Customer", "Warehouse"}
+        ]
+        with tempfile.TemporaryDirectory() as kb_dir:
+            with patch("store.get_full_graph", return_value=healthy),                     patch("store.get_validated_examples", return_value=[
+                        {"question": self.QUESTION, "table_name": f"{SCHEMA}.CUS_DMS",
+                         "sql_query": f"SELECT 1 FROM {SCHEMA}.CUS_DMS"}]),                     patch("store.list_metrics", return_value=[]):
+                offered = suggestions.get_suggestions("acct", kb_dir, None)
+        self.assertIn(self.QUESTION, [s["question"] for s in offered])
+
+    def test_the_gate_is_reached_on_every_tier_that_offers_authored_text(self):
+        calls = []
+        real = suggestions._graph_reachability_check
+
+        def counting(account_id):
+            calls.append(account_id)
+            return real(account_id)
+
+        with patch.object(suggestions, "_graph_reachability_check", counting):
+            self._run(
+                validated=[{"question": "revenue by customer",
+                            "table_name": f"{SCHEMA}.CUS_DMS", "sql_query": ""}],
+                cached=[{"question": "revenue by warehouse",
+                         "table": "WHS_DMS", "fqn": f"{SCHEMA}.WHS_DMS"}],
+            )
+        self.assertTrue(calls, "the reachability gate was never invoked")
+
+    def test_the_stage_two_cache_still_reaches_the_user_when_it_is_safe(self):
+        # Tier 3 was also mis-scoped: it compared a bare table name against a
+        # set of fully-qualified names, so it emitted nothing even when live.
+        healthy = _graph_with_twins()
+        healthy["entities"] = [
+            e for e in healthy["entities"]
+            if e["entity_name"] not in {"Customer", "Warehouse"}
+        ]
+        offered = self._run(graph=healthy, cached=[
+            {"question": "How many warehouses are there?",
+             "table": "WHS_DMS", "fqn": f"{SCHEMA}.WHS_DMS"},
+        ])
+        self.assertIn("How many warehouses are there?",
+                      [s["question"] for s in offered])
+
+    def test_validated_examples_outrank_the_invented_cache(self):
+        offered = self._run(
+            validated=[{"question": "proven question", "table_name": f"{SCHEMA}.WHS_DMS",
+                        "sql_query": ""}],
+            cached=[{"question": "invented question", "table": "WHS_DMS",
+                     "fqn": f"{SCHEMA}.WHS_DMS"}],
+            n=1,
+        )
+        self.assertEqual([s["question"] for s in offered], ["proven question"])
+
+
+class TestFailOpenFiltersButDoesNotPromote(unittest.TestCase):
+    """Failing open is right when filtering a trusted source and wrong when
+    promoting an untrusted one, so the predicate reports which it did."""
+
+    def test_a_readable_graph_vouches_for_what_it_checked(self):
+        with patch("store.get_full_graph", return_value=_graph_with_twins()):
+            self.assertTrue(suggestions._graph_reachability_check("acct").verified)
+
+    def test_an_unusable_graph_vouches_for_nothing(self):
+        for graph in ({}, {"entities": [], "relationships": []}, None):
+            with self.subTest(graph=graph):
+                with patch("store.get_full_graph", return_value=graph):
+                    check = suggestions._graph_reachability_check("acct")
+                self.assertTrue(check("anything"), "must not withhold blindly")
+                self.assertFalse(check.verified, "must not vouch blindly")
+
+    def test_the_invented_cache_is_withheld_when_nothing_vouches_for_it(self):
+        with tempfile.TemporaryDirectory() as kb_dir:
+            (Path(kb_dir) / suggestions._CACHE_FILENAME).write_text(
+                __import__("json").dumps(
+                    [{"question": "invented question", "table": "WHS_DMS",
+                      "fqn": f"{SCHEMA}.WHS_DMS"}]), encoding="utf-8")
+            with patch("store.get_full_graph", return_value={"entities": []}),                     patch("store.get_validated_examples", return_value=[]),                     patch("store.list_metrics", return_value=[]):
+                offered = suggestions.get_suggestions("acct", kb_dir, None)
+        self.assertEqual(offered, [])
+
+
+class TestNoUnreachableCode(unittest.TestCase):
+    """A structural guard. The defect above was invisible to every behavioural
+    test because the code simply never ran; this catches the shape directly."""
+
+    def test_get_suggestions_has_no_statements_after_its_return(self):
+        import ast
+        tree = ast.parse((ROOT / "core" / "suggestions.py").read_text(encoding="utf-8"))
+        fn = next(n for n in ast.walk(tree)
+                  if isinstance(n, ast.FunctionDef) and n.name == "get_suggestions")
+        seen_return = False
+        dead = []
+        for stmt in fn.body:
+            if seen_return:
+                dead.append(f"line {stmt.lineno}: {type(stmt).__name__}")
+            if isinstance(stmt, ast.Return):
+                seen_return = True
+        self.assertEqual(dead, [], "unreachable statements after the return")
 
 
 if __name__ == "__main__":

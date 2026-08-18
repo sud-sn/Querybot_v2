@@ -923,7 +923,11 @@ def _build_join_map(master: dict) -> str:
         if is_date_dimension_table(tbl_name, cols):
             pk = find_date_dimension_key(cols)
             if pk:
-                date_dims.append((tbl_name, pk))
+                pk_type = next(
+                    (_col_type(c) for c in cols
+                     if _col_name(c).upper() == pk.upper()), "",
+                )
+                date_dims.append((tbl_name, pk, pk_type))
 
     if date_dims:
         for fact_tbl, tbl_info in master.items():
@@ -937,10 +941,12 @@ def _build_join_map(master: dict) -> str:
                 # A native date/timestamp already holds the calendar value.
                 # Teaching the LLM to join it to an integer dimension key
                 # emits a predicate no dialect can honour.
-                if not joins_date_dimension(fact_col, _col_type(col)):
-                    continue
-                for date_tbl, date_pk in date_dims:
+                for date_tbl, date_pk, date_pk_type in date_dims:
                     if fact_tbl == date_tbl:
+                        continue
+                    if not joins_date_dimension(
+                        fact_col, _col_type(col), date_pk_type,
+                    ):
                         continue
                     key = f"{fact_tbl}|{date_tbl}|{fact_col}={date_pk}|{role.key}"
                     if key in join_pairs_seen:
@@ -1356,7 +1362,11 @@ def build_entity_graph_from_schema(schema_dir: str) -> dict:
         date_schema = parts[-2] if len(parts) >= 2 else ""
         date_pk = find_date_dimension_key(cols)
         if date_pk:
-            date_dims.append((fqn, date_table, date_schema, date_pk))
+            date_pk_type = next(
+                (_col_type(c) for c in cols
+                 if _col_name(c).upper() == date_pk.upper()), "",
+            )
+            date_dims.append((fqn, date_table, date_schema, date_pk, date_pk_type))
 
     role_entity_names: set[str] = {e["entity_name"] for e in entities}
     role_date_relationships: list[dict] = []
@@ -1374,9 +1384,11 @@ def build_entity_graph_from_schema(schema_dir: str) -> dict:
                 # physically stores a date needs none, so minting one here
                 # produces both an invalid edge and a duplicate entity for a
                 # role the real surrogate key already owns.
-                if not joins_date_dimension(fact_col, _col_type(col)):
+                date_fqn, date_table, date_schema, date_pk, date_pk_type = date_dims[0]
+                if not joins_date_dimension(
+                    fact_col, _col_type(col), date_pk_type,
+                ):
                     continue
-                date_fqn, date_table, date_schema, date_pk = date_dims[0]
                 entity_name = role.label
                 if entity_name not in role_entity_names:
                     pos_idx = len(role_entity_names)

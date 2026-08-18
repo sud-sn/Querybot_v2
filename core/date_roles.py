@@ -216,7 +216,36 @@ def classify_date_key(
     return "yyyymmdd_integer" if normalize_date_key_type(declared_encoding) == "yyyymmdd_integer" else "surrogate_fk"
 
 
-def joins_date_dimension(column_name: str, data_type: str = "") -> bool:
+_CHARACTER_TYPE_RE = re.compile(
+    r"^(?:n?var)?char|^n?text|^string|^clob|^uniqueidentifier", re.IGNORECASE
+)
+
+
+def date_key_type_family(data_type: str) -> str:
+    """Coarse storage family of a date-related column.
+
+    ``temporal`` already holds a calendar value, ``numeric`` and ``character``
+    are both legitimate surrogate-key spellings (char(8) '20260630' is as real
+    a convention as int 20260630), and ``""`` means the type was not supplied
+    and nothing can be concluded from it.
+    """
+    raw = " ".join(str(data_type or "").strip().lower().split())
+    if not raw:
+        return ""
+    if physical_date_key_type(raw):
+        return "temporal"
+    if _INTEGER_TYPE_RE.match(raw):
+        return "numeric"
+    if _CHARACTER_TYPE_RE.match(raw):
+        return "character"
+    return ""
+
+
+def joins_date_dimension(
+    column_name: str,
+    data_type: str = "",
+    dimension_key_type: str = "",
+) -> bool:
     """True when a date-role column reaches the calendar through a dimension key.
 
     A column that physically stores a date or timestamp already *is* the
@@ -232,7 +261,17 @@ def joins_date_dimension(column_name: str, data_type: str = "") -> bool:
     surrogate key already owned. Both were offered for bulk approval.
     """
     del column_name  # reserved: name-based encodings are still key-typed
-    return not physical_date_key_type(data_type)
+    fact_family = date_key_type_family(data_type)
+    if fact_family == "temporal":
+        return False
+    # A surrogate key and the dimension key it points at must be the same
+    # kind of value. Selecting the column by NAME alone also matched
+    # AZ_LST_UPD_USR (nvarchar, the audit *user*), which the join map then
+    # documented as `AZ_LST_UPD_USR = DT_DMS_KEY` — nvarchar to int.
+    dimension_family = date_key_type_family(dimension_key_type)
+    if fact_family and dimension_family and fact_family != dimension_family:
+        return False
+    return True
 
 
 def date_key_temporal_grain(date_key_type: str) -> str:
