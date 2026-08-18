@@ -2039,6 +2039,183 @@ def _scope_plan_to_single_fact(
     return anchor
 
 
+def _dimension_label(source_key: str, dimension: dict[str, Any], display_col: str) -> tuple[str, str]:
+    """Business label for a dimension, and the role label behind it.
+
+    _business_role_from_column resolves an entity PREFIX, so CUS_DMS_KEY and
+    CUS_SEG_DMS_KEY both come back as "customer" and the customer-segment
+    dimension ends up labelled "Customer". Two dimensions then answer to one
+    term, and "revenue by customer segment" cannot pick the segment because it
+    is not called that anywhere in the plan.
+
+    The dimension's own name is preferred when it REFINES the role -- more
+    words, all of the role's words among them -- which keeps "Customer Segment"
+    while never swapping in an unrelated label the role did not imply.
+    """
+    role_label = _business_role_from_column(source_key).replace("_", " ") if source_key else ""
+    declared = str(dimension.get("name") or "").strip()
+    if not role_label:
+        return (declared or str(display_col)), ""
+    role_terms = set(re.sub(r"[^a-z0-9]+", " ", role_label.lower()).split())
+    declared_terms = set(re.sub(r"[^a-z0-9]+", " ", declared.lower()).split())
+    if declared and role_terms and role_terms < declared_terms:
+        return declared, role_label
+    return role_label.title(), role_label
+
+
+def _keep_one_binding_per_term(fields: list[dict[str, Any]]) -> list[str]:
+    """A business term names ONE thing, so only its best binding is required.
+
+    Dimension labels come from _business_role_from_column on the source key,
+    which resolves an entity PREFIX. CUS_SEG_DMS_KEY and CUS_DMS_KEY both
+    resolve to "customer", so the customer-segment dimension is labelled
+    "Customer" as well, and "show customers with no invoices" bound the single
+    term to two tables and required BOTH:
+
+        Customer -> CUS_DMS.CUS_NM           required
+        Customer -> CUS_SEG_DMS.CUS_SEG_NM   required
+
+    The anti-join legitimately joins neither segment nor anything else, so the
+    whole answer was refused with graph_plan_mismatch. The same duplication put
+    CUS_SEG_DMS and CUS_TYP_DMS into "revenue by customer, top 5", where it was
+    survivable only because both are many-to-one.
+
+    Rivals for one term are alternatives, not additional requirements. Keep the
+    best-scoring binding required and demote the rest to hints, so a wrong
+    guess between them can no longer reject correct SQL. Ties break on match
+    score, then confidence, then table name, so the choice is deterministic
+    rather than dependent on dimension order.
+    """
+    by_term: dict[str, list[dict[str, Any]]] = {}
+    for field in fields or []:
+        if str(field.get("enforcement") or "") == "optional":
+            continue
+        if str(field.get("role") or "") != "display_dimension":
+            continue
+        term = re.sub(r"[^a-z0-9]+", " ", str(field.get("term") or "").lower()).strip()
+        if term:
+            by_term.setdefault(term, []).append(field)
+
+    demoted: list[str] = []
+    for term, rivals in by_term.items():
+        if len(rivals) < 2:
+            continue
+        rivals.sort(key=lambda f: (
+            -int(f.get("match_score") or 0),
+            -int(f.get("confidence") or 0),
+            str(f.get("table") or ""),
+        ))
+        for loser in rivals[1:]:
+            loser["enforcement"] = "optional"
+            loser["display_required"] = False
+            demoted.append(f"{term}={loser.get('table')}.{loser.get('column')}")
+    return demoted
+
+
+def _demote_joins_not_needed_to_reach_a_required_field(
+    fields: list[dict[str, Any]],
+    joins: list[dict[str, Any]],
+) -> list[str]:
+    """A join earns "required" only by helping reach a field the answer shows.
+
+    required_semantic_tables promotes BOTH endpoints of every non-optional join
+    into required_tables, and a join was emitted for every dimension that merely
+    SCORED. One mechanism, three symptoms on the EMCO mart:
+
+      * "total amount of confirmed purchase orders by profit center" pulled in
+        CUS_DMS through the many-to-many bridge PFT_CTR_CUS_DAT. Every
+        purchase-order row was counted once per customer in that profit centre
+        and the total came out ~7.5x too large -- valid SQL, real declared
+        foreign keys, correct grouping label, no validator error.
+      * "show customers with no invoices" required CUS_SEG_DMS. The anti-join
+        correctly did not join customer segment, so the answer was refused with
+        graph_plan_mismatch.
+      * "revenue by customer, top 5" required CUS_SEG_DMS and CUS_TYP_DMS --
+        harmless there, both many-to-one, but the same mechanism.
+
+    Requirement is transitive, so this cannot simply keep joins whose endpoint
+    hosts a required field: "revenue by customer type" needs
+    fact -> CUS_DMS -> CUS_TYP_DMS and the first hop hosts nothing of its own.
+    Walk out from the FACT and keep the edges on a path to each table that
+    hosts a required field, plus the source tables those fields hang off.
+
+    The fact is recoverable from the join structure -- a join source that is
+    never a join target -- so this still works when fields carry no
+    source_table. Preferring a fact that also sources a required field keeps
+    the choice deterministic when a bridge shares that shape.
+
+    Demotes rather than deletes: the join stays available to the generator as a
+    hint, and only its power to force a table into the plan, and to reject SQL
+    that leaves it out, is withdrawn.
+    """
+    def _norm(value: Any) -> str:
+        return str(value or "").strip().strip('[]"`').upper()
+
+    required = [
+        field for field in (fields or [])
+        if str(field.get("enforcement") or "") != "optional" and field.get("table")
+    ]
+    if not required or not joins:
+        return []
+
+    sources = {
+        _norm(field.get("source_table"))
+        for field in required if field.get("source_table")
+    }
+    sources.discard("")
+
+    adjacency: dict[str, list[tuple[str, int]]] = {}
+    lefts: set[str] = set()
+    rights: set[str] = set()
+    for index, join in enumerate(joins):
+        left, right = _norm(join.get("from")), _norm(join.get("to"))
+        if not left or not right:
+            continue
+        lefts.add(left)
+        rights.add(right)
+        adjacency.setdefault(left, []).append((right, index))
+        adjacency.setdefault(right, []).append((left, index))
+
+    facts = lefts - rights
+    roots = (facts & sources) or facts or sources
+    if not roots:
+        # Nothing anchors the walk; leaving the plan alone beats guessing.
+        return []
+
+    # Intermediate hops are targets too, or a chain keeps only its last edge.
+    needed = {_norm(field.get("table")) for field in required} | sources
+    needed.discard("")
+
+    keep: set[int] = set()
+    for target in needed - roots:
+        previous: dict[str, tuple[str, int]] = {}
+        seen = set(roots)
+        queue = list(roots)
+        while queue:
+            current = queue.pop(0)
+            if current == target:
+                break
+            for neighbour, index in adjacency.get(current, []):
+                if neighbour in seen:
+                    continue
+                seen.add(neighbour)
+                previous[neighbour] = (current, index)
+                queue.append(neighbour)
+        node = target
+        while node in previous:
+            parent, index = previous[node]
+            keep.add(index)
+            node = parent
+
+    demoted: list[str] = []
+    for index, join in enumerate(joins):
+        if index in keep or str(join.get("enforcement") or "") == "optional":
+            continue
+        join["enforcement"] = "optional"
+        demoted.append(f"{join.get('from')} -> {join.get('to')}")
+    return demoted
+
+
 def build_runtime_semantic_plan(
     kb_dir: str,
     *,
@@ -2222,21 +2399,26 @@ def build_runtime_semantic_plan(
             display_key = str(dimension.get("display_key") or source_key)
             if not display_col or not display_table or not source_key:
                 continue
-            role_label = _business_role_from_column(source_key).replace("_", " ") if source_key else ""
-            name = role_label.title() if role_label else str(dimension.get("name") or display_col)
+            name, role_label = _dimension_label(source_key, dimension, display_col)
             if _question_asks_for_key(question, name) or (role_label and _question_asks_for_key(question, role_label)):
                 continue
-            score = _runtime_match_score(
-                q_terms,
-                [
-                    name,
-                    role_label,
-                    display_col,
-                    display_table,
-                    source_key,
-                    str(dimension.get("approved_meaning") or ""),
-                ],
-            )
+            # The bare role label is scored only when it IS this dimension's
+            # identity. Where the declared name refines it — "Customer Segment"
+            # off CUS_SEG_DMS_KEY, whose role resolves to the prefix "customer"
+            # — the role is a family, not a name, and a one-word role counts as
+            # an explicit match in _runtime_match_score. Scoring it let "show
+            # customers with no invoices" bind customer segment as hard as
+            # customer itself.
+            _match_values = [
+                name,
+                display_col,
+                display_table,
+                source_key,
+                str(dimension.get("approved_meaning") or ""),
+            ]
+            if role_label and role_label.title() == name:
+                _match_values.insert(1, role_label)
+            score = _runtime_match_score(q_terms, _match_values)
             if score <= 0:
                 continue
             # A date dimension reached through a date-role key must earn its
@@ -2271,6 +2453,7 @@ def build_runtime_semantic_plan(
                     "source_table": source_table,
                     "source_key_column": source_key,
                     "confidence": dimension.get("confidence", 80),
+                    "match_score": score,
                     "source": "semantic_model",
                     "enforcement": "required",
                 })
@@ -2300,7 +2483,12 @@ def build_runtime_semantic_plan(
                         # centre, and the total came out roughly 7.5x too
                         # large. Right label, right filter, valid SQL, no
                         # error — just a wrong number.
-                        "enforcement": "required" if claims_display else "optional",
+                        # Emitted as required; the closure below decides, once every
+                        # field and join is known, which actually earn it.
+                        # Deciding here cannot work: requirement is
+                        # transitive, and a first hop hosting no field of
+                        # its own may be the only route to one.
+                        "enforcement": "required",
                     })
             if len(fields) >= max_fields:
                 break
@@ -2417,6 +2605,20 @@ def build_runtime_semantic_plan(
         return {"enabled": False, "fields": [], "joins": [], "required_tables": [], "reason": "no matching semantic model fields"}
 
     _scope_plan_to_single_fact(fields, joins, tables)
+
+    _rival_bindings = _keep_one_binding_per_term(fields)
+    if _rival_bindings:
+        log.debug(
+            "Semantic plan: %d rival term binding(s) demoted to optional: %s",
+            len(_rival_bindings), ", ".join(_rival_bindings),
+        )
+
+    _demoted_joins = _demote_joins_not_needed_to_reach_a_required_field(fields, joins)
+    if _demoted_joins:
+        log.debug(
+            "Semantic plan: %d join(s) demoted to optional — not needed to reach "
+            "a required field: %s", len(_demoted_joins), ", ".join(_demoted_joins),
+        )
 
     required_tables = sorted(required_semantic_tables({
         "fields": fields,
