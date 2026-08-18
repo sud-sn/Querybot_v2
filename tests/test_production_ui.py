@@ -311,10 +311,11 @@ def test_no_template_depends_on_an_external_cdn():
 
 _GENERIC_AI_MARK_PARTS = (
     "qb-brand-motion__spark",   # four-pointed sparkle (Gemini's glyph)
-    "qb-brand-motion__tail",    # magnifier handle
-    "qb-brand-motion__data",    # data rows inside the lens
+    "qb-brand-motion__data",    # data rows floating in a lens
     "qb-brand-motion__badge",   # saturated tile
     "linearGradient",           # gradient badge
+    "M24.3 25.3 29 30v-2.2",    # the magnifier handle path
+    "M30 3 1.27",               # the sparkle path
 )
 
 
@@ -326,11 +327,14 @@ def test_the_animated_mark_carries_none_of_the_generic_ai_motifs():
         assert not found, f"{template}: brand_motion still contains {found}"
 
 
-def test_the_animated_mark_is_the_q_and_caret():
+def test_the_animated_mark_is_a_q_built_from_an_analysis():
     for template in ("admin/templates/macros.html", "portal/templates/macros.html"):
         macro = _read(template).split("{% macro brand_motion", 1)[1].split("{%- endmacro %}", 1)[0]
-        assert "qb-brand-motion__ring" in macro, f"{template}: the Q ring is missing"
-        assert "qb-brand-motion__caret" in macro, f"{template}: the caret tail is missing"
+        assert "qb-brand-motion__track" in macro, f"{template}: the donut track is missing"
+        assert "qb-brand-motion__value" in macro, f"{template}: the donut arc is missing"
+        assert "qb-brand-motion__tail" in macro, f"{template}: the Q tail is missing"
+        bars = len(re.findall(r'class="qb-brand-motion__bar"', macro))
+        assert bars == 3, f"{template}: expected three bars in the counter, found {bars}"
 
 
 def test_both_macro_copies_render_an_identical_mark():
@@ -344,15 +348,30 @@ def test_both_macro_copies_render_an_identical_mark():
     assert marks[0] == marks[1], "admin and portal brand_motion marks have drifted apart"
 
 
-def test_the_caret_animates_and_survives_reduced_motion():
+def test_the_bars_carry_the_motion_across_every_state():
+    """A single blinking element is not motion. The bars must animate at rest,
+    while working, and on both terminal states."""
     css = _read("static/css/brand-motion.css")
-    assert "qb-caret-blink" in css, "the caret has no resting animation"
-    assert ".qb-brand-motion__caret" in css
-    reduced = css.split("prefers-reduced-motion", 1)[1]
-    assert "opacity: 1" in reduced, (
-        "the blink animates opacity, so reduced-motion must leave the caret solid "
-        "rather than stuck mid-cycle"
+    for keyframes in ("qb-bar-breathe", "qb-bar-wave", "qb-bar-live",
+                      "qb-bar-rise", "qb-bar-drop",
+                      "qb-donut-spin", "qb-donut-full", "qb-donut-draw"):
+        assert f"@keyframes {keyframes}" in css, f"{keyframes} is not defined"
+        assert css.count(keyframes) >= 2, f"{keyframes} is defined but never applied"
+
+    # Bars grow from their baseline, not their centre, or they float.
+    bar_rule = css.split(".qb-brand-motion__bar {", 1)[1].split("}", 1)[0]
+    assert "transform-origin: bottom" in bar_rule, (
+        "bars must scale from the baseline the way a bar chart does"
     )
+
+
+def test_reduced_motion_leaves_every_animated_part_at_full_value():
+    """The animations drive scaleY and stroke-dashoffset, so switching them off
+    must not leave a bar collapsed or a stroke half-drawn."""
+    css = _read("static/css/brand-motion.css")
+    reduced = css.split("prefers-reduced-motion", 1)[1]
+    assert "scaleY(1)" in reduced, "bars could be left collapsed"
+    assert "stroke-dashoffset: 0" in reduced, "strokes could be left half-drawn"
 
 
 def test_the_mark_carries_no_stale_brand_colour_in_an_rgba():
@@ -361,3 +380,33 @@ def test_the_mark_carries_no_stale_brand_colour_in_an_rgba():
     css = _strip_css_comments(_read("static/css/brand-motion.css"))
     stale = re.findall(r"rgba?\(\s*37\s*,\s*99\s*,\s*235", css)
     assert not stale, f"brand-motion.css still references the old brand blue: {stale}"
+
+
+def test_the_donut_ring_cannot_fail_to_close():
+    """The first version rounded the dash length to 58.4 against a true
+    circumference of 58.4336, leaving a hairline gap in the Q. The track must
+    carry no dasharray at all so the geometry cannot drift again."""
+    css = _read("static/css/brand-motion.css")
+    track = css.split(".qb-brand-motion__track {", 1)[1].split("}", 1)[0]
+    assert "stroke-dasharray" not in track, (
+        "the donut track must not be dashed, or rounding can reopen the ring"
+    )
+
+    svg = _read("static/img/logo-mark.svg")
+    track_rule = svg.split(".qb-track {", 1)[1].split("}", 1)[0]
+    assert "dasharray" not in track_rule, "the static mark's track must not be dashed"
+
+
+def test_every_donut_transform_keyframe_restates_the_rotation():
+    """The arc sits at rotate(-90deg) so it starts at twelve o'clock. A keyframe
+    that sets a bare translate() replaces that rotation and snaps the segment
+    round to three o'clock for the length of the animation."""
+    css = _read("static/css/brand-motion.css")
+    for match in re.finditer(r"@keyframes (qb-donut-[\w-]+)\s*\{(.*?)\}", css, re.S):
+        name, body = match.group(1), match.group(2)
+        if "transform" not in body:
+            continue
+        for frame in re.findall(r"transform:\s*([^;]+);", body):
+            assert "rotate" in frame, (
+                f"{name}: frame 'transform: {frame.strip()}' drops the arc's rotation"
+            )

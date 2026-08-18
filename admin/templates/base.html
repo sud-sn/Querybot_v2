@@ -5,7 +5,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{% block title %}QueryBot Admin{% endblock %}</title>
-<link rel="icon" type="image/svg+xml" href="/static/img/logo-mark.svg?v=20260818-verdigris-2">
+<link rel="icon" type="image/svg+xml" href="/static/img/logo-mark.svg?v=20260818-verdigris-8">
 <link rel="preload" href="/static/fonts/plex-sans-var.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="/static/fonts/plex-mono-500.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/static/css/fonts.css?v=20260818-verdigris-1">
@@ -47,7 +47,7 @@
 </script>
 {% block head %}{% endblock %}
 <link rel="stylesheet" href="/static/css/production.css?v=20260818-verdigris-1">
-<link rel="stylesheet" href="/static/css/brand-motion.css?v=20260818-verdigris-2">
+<link rel="stylesheet" href="/static/css/brand-motion.css?v=20260818-verdigris-8">
 </head>
 <body data-admin-client-id="{% if client is defined %}{{ client.account_id|default('') }}{% endif %}">
 
@@ -475,6 +475,6 @@ window.qbToast = (function(){
 </script>
 
 {% endif %}{# end _auth_page #}
-<script src="/static/js/brand-motion.js?v=20260818-verdigris-2"></script>
+<script src="/static/js/brand-motion.js?v=20260818-verdigris-8"></script>
 </body>
 </html>
