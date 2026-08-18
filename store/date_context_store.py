@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import logging
+
 from store.db import get_db, get_table_columns
+
+log = logging.getLogger("querybot.store.date_context")
 
 
 def _ensure_table(conn) -> None:
@@ -171,3 +175,105 @@ def delete_metric_date_context(binding_id: int, account_id: str) -> bool:
             (binding_id, account_id),
         )
         return bool(cur.rowcount)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Business date anchor — durable across restarts
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# "The latest business date present in this fact" is a property of the WAREHOUSE
+# LOAD, not of a process. Holding it only in memory meant every restart threw it
+# away and the next relative-date question paid the full probe again — 800s on a
+# 9.2M-row unindexed fact on a starved instance, with the user watching a
+# spinner and no explanation.
+#
+# Persisting it makes the probe run once per load rather than once per process,
+# which is what allows a slow warehouse to be handed to a client for testing.
+
+def load_business_date_anchor(
+    account_id: str, fact_table: str, fact_column: str,
+) -> dict:
+    """Return the stored anchor for this fact+key, or {} when none is stored."""
+    try:
+        with get_db() as conn:
+            row = conn.execute(
+                """SELECT anchor_value, date_column, source, resolved_at
+                     FROM business_date_anchor
+                    WHERE account_id=? AND fact_table=? AND fact_column=?""",
+                (str(account_id), str(fact_table).upper(), str(fact_column).upper()),
+            ).fetchone()
+    except Exception as exc:                                  # pragma: no cover
+        log.warning(
+            "Business date anchor read failed for %s (%s.%s): %s — the probe "
+            "will run again, which is slow but correct",
+            account_id, fact_table, fact_column, exc,
+        )
+        return {}
+    if not row or not row["anchor_value"]:
+        return {}
+    return {
+        "value": row["anchor_value"],
+        "fact_table": fact_table,
+        "fact_column": fact_column,
+        "date_column": row["date_column"] or "",
+        "source": row["source"] or "probed_from_fact_rows",
+        "resolved_at": row["resolved_at"] or "",
+        "restored_from": "store",
+    }
+
+
+def save_business_date_anchor(
+    account_id: str, fact_table: str, fact_column: str, anchor: dict,
+) -> None:
+    """Persist a resolved anchor so a restart does not re-probe the warehouse."""
+    value = str((anchor or {}).get("value") or "").strip()
+    if not value:
+        return
+    try:
+        with get_db() as conn:
+            conn.execute(
+                """INSERT INTO business_date_anchor
+                       (account_id, fact_table, fact_column, anchor_value,
+                        date_column, source, probe_ms, resolved_at)
+                   VALUES (?,?,?,?,?,?,?, datetime('now'))
+                   ON CONFLICT(account_id, fact_table, fact_column) DO UPDATE SET
+                       anchor_value = excluded.anchor_value,
+                       date_column  = excluded.date_column,
+                       source       = excluded.source,
+                       probe_ms     = excluded.probe_ms,
+                       resolved_at  = excluded.resolved_at""",
+                (
+                    str(account_id), str(fact_table).upper(), str(fact_column).upper(),
+                    value, str(anchor.get("date_column") or ""),
+                    str(anchor.get("source") or "probed_from_fact_rows"),
+                    int(anchor.get("probe_ms") or 0),
+                ),
+            )
+    except Exception as exc:                                  # pragma: no cover
+        # Loud: a silent failure here reintroduces the 800s probe on every
+        # restart, and nothing else would ever report it.
+        log.warning(
+            "Business date anchor write failed for %s (%s.%s): %s — the anchor "
+            "will not survive a restart",
+            account_id, fact_table, fact_column, exc,
+        )
+
+
+def clear_business_date_anchor(account_id: str, fact_table: str = "") -> int:
+    """Forget stored anchors — after a warehouse reload, or from the admin UI."""
+    try:
+        with get_db() as conn:
+            if fact_table:
+                cur = conn.execute(
+                    "DELETE FROM business_date_anchor WHERE account_id=? AND fact_table=?",
+                    (str(account_id), str(fact_table).upper()),
+                )
+            else:
+                cur = conn.execute(
+                    "DELETE FROM business_date_anchor WHERE account_id=?",
+                    (str(account_id),),
+                )
+            return int(cur.rowcount or 0)
+    except Exception as exc:                                  # pragma: no cover
+        log.warning("Business date anchor clear failed for %s: %s", account_id, exc)
+        return 0

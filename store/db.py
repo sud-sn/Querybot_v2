@@ -1247,6 +1247,18 @@ def _ensure_semantic_compiler_tables(conn: sqlite3.Connection) -> None:
     """Create the tenant-scoped semantic compiler control-plane tables."""
     conn.executescript(
         """
+        CREATE TABLE IF NOT EXISTS business_date_anchor (
+            account_id     TEXT NOT NULL REFERENCES client(account_id) ON DELETE CASCADE,
+            fact_table     TEXT NOT NULL,
+            fact_column    TEXT NOT NULL,
+            anchor_value   TEXT NOT NULL DEFAULT '',
+            date_column    TEXT NOT NULL DEFAULT '',
+            source         TEXT NOT NULL DEFAULT '',
+            probe_ms       INTEGER NOT NULL DEFAULT 0,
+            resolved_at    TEXT DEFAULT (datetime('now')),
+            PRIMARY KEY (account_id, fact_table, fact_column)
+        );
+
         CREATE TABLE IF NOT EXISTS semantic_compiler_state (
             account_id       TEXT PRIMARY KEY REFERENCES client(account_id) ON DELETE CASCADE,
             mode             TEXT NOT NULL DEFAULT 'shadow'

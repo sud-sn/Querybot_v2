@@ -201,19 +201,64 @@ class TestProbeAndCache(unittest.TestCase):
             build_anchor_probe_sql({"fact_table": FACT}, "azure_sql"), "",
         )
 
-    def test_the_probe_runs_once_for_many_questions(self):
+    def test_the_warehouse_is_not_touched_again_after_the_first_question(self):
         calls: list[str] = []
 
         def _probe(sql):
             calls.append(sql)
+            if "out_of_order" in sql:
+                return [{"out_of_order": 0}]
             return [{"max_business_date": "2026-08-15"}]
 
         first = resolve_business_anchor("acct", POLICY, "azure_sql", _probe)
+        after_first = len(calls)
         second = resolve_business_anchor("acct", POLICY, "azure_sql", _probe)
-        self.assertEqual(len(calls), 1, "the second question must hit the cache")
+        third = resolve_business_anchor("acct", POLICY, "azure_sql", _probe)
+
+        self.assertEqual(
+            len(calls), after_first,
+            "a later question re-read the warehouse instead of using the cache",
+        )
         self.assertEqual(first["value"], "2026-08-15")
-        self.assertTrue(second["cached"])
         self.assertFalse(first["cached"])
+        self.assertTrue(second["cached"])
+        self.assertTrue(third["cached"])
+
+    def test_the_cheap_probe_is_used_when_the_key_is_date_ordered(self):
+        seen: list[str] = []
+
+        def _probe(sql):
+            seen.append(sql)
+            if "out_of_order" in sql:
+                return [{"out_of_order": 0}]
+            return [{"max_business_date": "2026-08-15"}]
+
+        resolve_business_anchor("acct", POLICY, "azure_sql", _probe)
+        anchor_sql = seen[-1]
+        self.assertIn("MAX(anchor_fact.[CUS_IVC_DT_DMS_KEY])", anchor_sql)
+        self.assertNotIn("EXISTS", anchor_sql)
+
+    def test_an_unordered_key_keeps_the_semi_join(self):
+        seen: list[str] = []
+
+        def _probe(sql):
+            seen.append(sql)
+            if "out_of_order" in sql:
+                return [{"out_of_order": 37}]
+            return [{"max_business_date": "2026-08-15"}]
+
+        resolve_business_anchor("acct", POLICY, "azure_sql", _probe)
+        self.assertIn("EXISTS", seen[-1])
+
+    def test_a_failing_order_check_falls_back_to_the_semi_join(self):
+        # A wrong guess here may cost time; it must never cost correctness.
+        def _probe(sql):
+            if "out_of_order" in sql:
+                raise RuntimeError("LAG unsupported on this dialect")
+            return [{"max_business_date": "2026-08-15"}]
+
+        anchor = resolve_business_anchor("acct", POLICY, "azure_sql", _probe)
+        self.assertEqual(anchor["value"], "2026-08-15")
 
     def test_a_failed_probe_falls_back_rather_than_guessing(self):
         def _boom(sql):

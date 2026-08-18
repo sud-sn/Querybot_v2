@@ -28,7 +28,7 @@ import logging
 import os
 import threading
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Any, Callable
 
 log = logging.getLogger("querybot.date_anchor")
@@ -43,6 +43,19 @@ _DEFAULT_TTL_SECONDS = 900
 # a two-minute failure that is already known to fail. Kept much shorter than the
 # success TTL so a warehouse that recovers is picked up quickly.
 _DEFAULT_FAILURE_TTL_SECONDS = 300
+
+# How old a PERSISTED anchor may be before it must be re-probed. The in-memory
+# TTL bounds staleness within a process; without this the durable row bounded
+# nothing at all, because every in-memory expiry fell through to the store and
+# re-armed the TTL from the same value. The warehouse would be probed exactly
+# once, ever, and after the client's overnight reload every relative-date
+# question would keep answering against the pre-reload date, silently excluding
+# every newly loaded row.
+#
+# One day is the right default: a nightly-loading warehouse re-probes once per
+# day, which is one slow query rather than one per process. Set
+# QUERYBOT_DATE_ANCHOR_MAX_AGE_SECONDS=0 to keep a stored anchor indefinitely.
+_DEFAULT_MAX_AGE_SECONDS = 86400
 
 _lock = threading.Lock()
 _cache: dict[tuple[str, str, str], dict[str, Any]] = {}
@@ -137,6 +150,77 @@ def build_anchor_probe_sql(policy: dict | None, db_type: str = "azure_sql") -> s
     )
 
 
+def build_key_order_check_sql(policy: dict | None, db_type: str = "azure_sql") -> str:
+    """Does the date dimension's KEY order match its DATE order?
+
+    The expensive probe exists because a surrogate key carries no guarantee of
+    date ordering -- key 4067 need not be later than 4066 -- so proving "the
+    newest date that actually has rows" needs a semi-join across the whole fact.
+
+    But that guarantee is a property of the DIMENSION, which is small, and it is
+    cheap to establish once: count the rows whose date is earlier than the row
+    before them in key order. Zero means the key is monotonic in date, and the
+    anchor can then be read as MAX(fact.key) -- a single-column aggregate with
+    no join at all -- rather than a semi-join over millions of rows.
+
+    On the EMCO mart DT_DMS_KEY is 20250417 for 2025-04-17, so this returns 0
+    and the cheap path applies. On a warehouse with genuinely arbitrary
+    surrogates it returns non-zero and the semi-join is used, unchanged.
+
+    A NULL date is counted as a violation. LAG comparisons silently skip NULLs
+    -- `NULL < prev_d` is UNKNOWN, and the NULL also becomes the next row's
+    prev_d -- so a single NULL-dated member erases the one comparison that
+    spans it and hides any inversion across that gap. Unknown/N-A members are
+    a standard date-dimension pattern, and the consequence of trusting a
+    blinded check is severe: the cheap probe returns a date that is NOT the
+    latest with fact rows, stamped as probed from the fact and persisted. So
+    any NULL makes this dimension ineligible for the cheap path.
+    """
+    policy = policy or {}
+    dimension = str(policy.get("dimension_table") or "")
+    dimension_key = str(policy.get("dimension_key") or "")
+    date_column = str(policy.get("date_column") or "")
+    if not (dimension and dimension_key and date_column):
+        return ""
+    key_sql = _quote_column(dimension_key, db_type)
+    date_sql = _quote_column(date_column, db_type)
+    return "\n".join([
+        "SELECT COUNT(*) AS out_of_order",
+        "FROM (",
+        f"    SELECT {date_sql} AS d,",
+        f"           LAG({date_sql}) OVER (ORDER BY {key_sql}) AS prev_d",
+        f"    FROM {_quote_table(dimension, db_type)}",
+        ") AS ordered",
+        "WHERE d IS NULL OR d < prev_d",
+    ])
+
+
+def build_cheap_anchor_probe_sql(policy: dict | None, db_type: str = "azure_sql") -> str:
+    """Anchor probe for a dimension whose key is monotonic in date.
+
+    Reads MAX of the fact's OWN key -- one column, no join, no EXISTS -- then
+    translates it through the dimension's primary key, which is a seek.
+
+    Only valid when build_key_order_check_sql has returned 0 for this policy.
+    """
+    policy = policy or {}
+    fact = str(policy.get("fact_table") or policy.get("anchor_table") or "")
+    fact_key = str(policy.get("fact_column") or "")
+    dimension = str(policy.get("dimension_table") or "")
+    dimension_key = str(policy.get("dimension_key") or "")
+    date_column = str(policy.get("date_column") or "")
+    if not (fact and fact_key and dimension and dimension_key and date_column):
+        return ""
+    return "\n".join([
+        f"SELECT MAX(anchor_date.{_quote_column(date_column, db_type)}) AS max_business_date",
+        f"FROM {_quote_table(dimension, db_type)} AS anchor_date",
+        f"WHERE anchor_date.{_quote_column(dimension_key, db_type)} = (",
+        f"    SELECT MAX(anchor_fact.{_quote_column(fact_key, db_type)})",
+        f"    FROM {_quote_table(fact, db_type)} AS anchor_fact",
+        ")",
+    ])
+
+
 def _coerce_anchor(value: Any) -> str:
     """Render a probed value as an ISO date literal, or "" if it is not one."""
     if value in (None, ""):
@@ -201,8 +285,29 @@ def _remember_failure(key: tuple[str, str, str]) -> None:
         _failures[key] = time.time() + ttl
 
 
-def clear_cache(account_id: str | None = None) -> None:
-    """Drop cached anchors and failures — for tests, and after a data refresh."""
+def clear_cache(account_id: str | None = None, *, persistent: bool = False) -> None:
+    """Drop cached anchors and failures — for tests, and after a data refresh.
+
+    ``persistent`` also forgets the durable copy. Without it a "refresh the
+    business date" action would clear memory, read the same value straight back
+    out of the store, and appear to do nothing.
+    """
+    if persistent and account_id is not None:
+        try:
+            import store
+            removed = store.clear_business_date_anchor(account_id)
+            if removed:
+                log.info(
+                    "Stored business-date anchor cleared for %s (%d row(s)) — the "
+                    "next relative-date question will re-probe the warehouse",
+                    account_id, removed,
+                )
+        except Exception as exc:
+            log.warning(
+                "Stored business-date anchor could not be cleared for %s: %s — "
+                "memory was cleared but the stale value will be restored",
+                account_id, exc,
+            )
     with _lock:
         if account_id is None:
             _cache.clear()
@@ -212,6 +317,152 @@ def clear_cache(account_id: str | None = None) -> None:
             _cache.pop(key, None)
         for key in [key for key in _failures if key[0] == str(account_id)]:
             _failures.pop(key, None)
+
+
+def _max_age_seconds() -> int:
+    try:
+        return max(0, int(os.getenv("QUERYBOT_DATE_ANCHOR_MAX_AGE_SECONDS", "")
+                          or _DEFAULT_MAX_AGE_SECONDS))
+    except (TypeError, ValueError):
+        return _DEFAULT_MAX_AGE_SECONDS
+
+
+def _anchor_age_seconds(resolved_at: Any) -> float | None:
+    """Seconds since a stored anchor was probed, or None if unreadable."""
+    raw = str(resolved_at or "").strip().replace("Z", "+00:00")
+    if not raw:
+        return None
+    for text in (raw, raw.replace(" ", "T")):
+        try:
+            stamp = datetime.fromisoformat(text)
+        except ValueError:
+            continue
+        if stamp.tzinfo is not None:
+            stamp = stamp.replace(tzinfo=None)
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        return max(0.0, (now - stamp).total_seconds())
+    return None
+
+
+def _stored_anchor(account_id: str, policy: dict | None) -> dict[str, Any]:
+    """Read a previously resolved anchor from the durable store.
+
+    The in-memory cache dies with the process. On a slow warehouse that meant
+    every restart, redeploy or crash re-ran an 800-second probe while a user
+    watched a spinner. The latest loaded date is a property of the WAREHOUSE,
+    not of a process, so it belongs in the database.
+    """
+    fact = str((policy or {}).get("fact_table") or (policy or {}).get("anchor_table") or "")
+    column = str((policy or {}).get("fact_column") or "")
+    if not account_id or not fact or not column:
+        return {}
+    try:
+        import store
+        stored = store.load_business_date_anchor(account_id, fact, column) or {}
+    except Exception as exc:
+        log.debug("Stored anchor unavailable for %s: %s", account_id, exc)
+        return {}
+    if not stored.get("value"):
+        return {}
+
+    max_age = _max_age_seconds()
+    if not max_age:
+        return stored
+    age = _anchor_age_seconds(stored.get("resolved_at"))
+    if age is None:
+        # An unreadable timestamp cannot be shown to be fresh. Re-probe rather
+        # than serve a value of unknown age as though it were current.
+        log.warning(
+            "Stored business-date anchor for %s (%s.%s) has an unreadable "
+            "resolved_at (%r) — re-probing",
+            account_id, fact, column, stored.get("resolved_at"),
+        )
+        return {}
+    if age > max_age:
+        log.info(
+            "Stored business-date anchor for %s (%s.%s) is %.0fh old (max %.0fh) "
+            "— re-probing so a warehouse reload is picked up",
+            account_id, fact, column, age / 3600.0, max_age / 3600.0,
+        )
+        return {}
+    return stored
+
+
+def _persist_anchor(account_id: str, policy: dict | None, anchor: dict) -> None:
+    fact = str((policy or {}).get("fact_table") or (policy or {}).get("anchor_table") or "")
+    column = str((policy or {}).get("fact_column") or "")
+    if not account_id or not fact or not column:
+        return
+    try:
+        import store
+        store.save_business_date_anchor(account_id, fact, column, anchor)
+    except Exception as exc:
+        log.warning(
+            "Business-date anchor could not be persisted for %s (%s.%s): %s — it "
+            "will be re-probed after the next restart",
+            account_id, fact, column, exc,
+        )
+
+
+def _first_scalar(rows: Any) -> Any:
+    """First column of the first row, whatever shape the driver returned."""
+    if not rows:
+        return None
+    first = rows[0]
+    if isinstance(first, dict):
+        return next(iter(first.values()), None)
+    if isinstance(first, (list, tuple)):
+        return first[0] if first else None
+    return first
+
+
+def _select_probe_sql(
+    account_id: str,
+    policy: dict | None,
+    db_type: str,
+    run_probe: Callable[[str], Any],
+) -> str:
+    """Choose the cheapest probe this dimension's key ordering permits.
+
+    The semi-join form is always correct and always expensive: it reads the
+    whole fact to prove which dates have rows. When the dimension's key is
+    monotonic in its date -- which a YYYYMMDD-style key always is -- MAX of the
+    fact's own key identifies the same row, and that is a single-column
+    aggregate with no join.
+
+    The ordering check runs against the date dimension only, which is small.
+    Anything unexpected falls back to the semi-join, so a wrong guess here
+    can cost time but never correctness.
+    """
+    ordering_sql = build_key_order_check_sql(policy, db_type)
+    if ordering_sql:
+        try:
+            out_of_order = _first_scalar(run_probe(ordering_sql))
+            if out_of_order is not None and int(out_of_order) == 0:
+                cheap = build_cheap_anchor_probe_sql(policy, db_type)
+                if cheap:
+                    log.info(
+                        "Business-date anchor for %s will use the cheap probe: "
+                        "%s is monotonic in %s, so MAX(%s) identifies the latest "
+                        "loaded row without a semi-join over the fact",
+                        account_id, (policy or {}).get("dimension_key"),
+                        (policy or {}).get("date_column"),
+                        (policy or {}).get("fact_column"),
+                    )
+                    return cheap
+            else:
+                log.info(
+                    "Business-date anchor for %s must use the semi-join probe: "
+                    "%s rows in %s are out of date order, so the surrogate key "
+                    "cannot identify the latest loaded date",
+                    account_id, out_of_order, (policy or {}).get("dimension_table"),
+                )
+        except Exception as exc:
+            log.info(
+                "Key-order check unavailable for %s (%s) — using the semi-join probe",
+                account_id, exc,
+            )
+    return build_anchor_probe_sql(policy, db_type)
 
 
 def resolve_business_anchor(
@@ -238,6 +489,19 @@ def resolve_business_anchor(
     if hit:
         return {**hit, "cached": True}
 
+    # Durable store next: a restart must not repeat the probe.
+    stored = _stored_anchor(account_id, policy)
+    if stored.get("value"):
+        stored.setdefault("business_role", str(policy.get("business_role") or ""))
+        remember_anchor(account_id, policy, stored)
+        log.info(
+            "Business-date anchor restored from store for %s: %s = %s (resolved %s) "
+            "— no probe needed",
+            account_id, stored.get("fact_table"), stored.get("value"),
+            stored.get("resolved_at") or "unknown",
+        )
+        return {**stored, "cached": True}
+
     key = anchor_key(account_id, policy)
     with _lock:
         failed_until = _failures.get(key, 0.0)
@@ -251,7 +515,7 @@ def resolve_business_anchor(
         )
         return {}
 
-    sql = build_anchor_probe_sql(policy, db_type)
+    sql = _select_probe_sql(account_id, policy, db_type, run_probe)
     if not sql:
         return {}
 
@@ -304,6 +568,7 @@ def resolve_business_anchor(
         "cached": False,
     }
     remember_anchor(account_id, policy, anchor)
+    _persist_anchor(account_id, policy, anchor)
     log.info(
         "Business-date anchor resolved for %s: %s = %s (probe %d ms, cached %d s)",
         account_id, anchor["fact_table"], value, anchor["probe_ms"],

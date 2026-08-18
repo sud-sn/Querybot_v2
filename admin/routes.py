@@ -7055,6 +7055,34 @@ async def date_role_add(
         )
 
 
+@router.post("/clients/{account_id}/date-roles/refresh-anchor")
+async def date_role_refresh_anchor(request: Request, account_id: str):
+    """Forget the stored business-date anchor so the next question re-probes.
+
+    The anchor is the newest date that actually has fact rows. It is resolved
+    with a query no shape can make cheap on an unindexed fact -- 800 seconds on
+    the EMCO warehouse -- so it is probed once and persisted rather than
+    recomputed per process. A maximum age bounds how stale it can get on its
+    own, but a warehouse that reloads off-schedule needs a way to say "the data
+    moved, look again" without waiting for that age out.
+    """
+    if not _is_auth(request):
+        raise HTTPException(status_code=401)
+    cleared = 0
+    try:
+        cleared = int(store.clear_business_date_anchor(account_id) or 0)
+        from core.date_anchor import clear_cache
+        clear_cache(account_id, persistent=False)
+    except Exception as exc:
+        log.warning("Business-date anchor refresh failed for %s: %s", account_id, exc)
+        return JSONResponse({"status": "error", "detail": str(exc)[:200]}, status_code=500)
+    log.info(
+        "Business-date anchor cleared for %s (%d stored) — the next relative-date "
+        "question will re-probe the warehouse", account_id, cleared,
+    )
+    return JSONResponse({"status": "ok", "cleared": cleared})
+
+
 @router.post("/clients/{account_id}/date-roles/set-default")
 async def date_role_set_default(
     request: Request,
