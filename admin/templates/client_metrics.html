@@ -104,15 +104,6 @@
 .col-suggest-col{font-family:Consolas,monospace;font-weight:700;color:var(--text);flex:1}
 .col-suggest-table{font-size:10px;color:var(--text-muted);white-space:nowrap}
 .col-suggest-type{font-size:9px;background:var(--surface-2);border:1px solid var(--border);border-radius:999px;padding:1px 5px;color:var(--text-muted);white-space:nowrap}
-/* ── Field browser panel ──────────────────────────────────────────────── */
-.col-browser{margin-top:.75rem;max-height:240px;overflow-y:auto;border:1px solid var(--border);border-radius:4px}
-.col-browser-search{width:100%;padding:5px 8px;border:none;border-bottom:1px solid var(--border);font-size:12px;outline:none;background:var(--surface-2)}
-.col-browser-item{padding:5px 8px;cursor:pointer;display:flex;align-items:center;gap:6px;border-bottom:1px solid var(--border)}
-.col-browser-item:last-child{border-bottom:none}
-.col-browser-item:hover{background:var(--blue-light)}
-.col-browser-name{flex:1;font-family:Consolas,monospace;font-size:11px;color:var(--text)}
-.col-browser-tbl{font-size:9px;color:var(--text-muted)}
-.col-browser-dtype{font-size:9px;background:var(--surface-2);border:1px solid var(--border);border-radius:999px;padding:1px 5px;color:var(--text-muted)}
 @media(max-width:900px){.metrics-hero{grid-template-columns:1fr}.metrics-hero-actions{justify-content:flex-start}.metrics-stat-grid,.builder-shell,.metric-meta-grid,.metric-meta-grid.two{grid-template-columns:1fr}#fn-popover{width:100%;height:60vh;top:auto;bottom:0;right:0;border-left:none;border-top:1px solid var(--border)}}
 
 /* ── Category badge ────────────────────────────────────────────────── */
@@ -3179,48 +3170,17 @@ async function liveValidate(btn){
 }
 window.liveValidate = liveValidate;
 
-// ══════════════════════════════════════════════════════════════════════
-// FIELD BROWSER (right panel)
-// ══════════════════════════════════════════════════════════════════════
-window.filterColBrowser = function(q){
-  var lc = (q||"").toLowerCase();
-  document.querySelectorAll(".col-browser-item").forEach(function(item){
-    var m = !lc || item.dataset.col.toLowerCase().includes(lc)
-                || (item.dataset.tbl||"").toLowerCase().includes(lc);
-    item.style.display = m ? "" : "none";
-  });
-};
+/* The FIELD BROWSER that lived here is gone. It was the predecessor of the
+   Fields panel in the metric dialog (#mc-fields-list, _buildMcFieldsList) and
+   had stopped shipping: nothing rendered #colBrowserList, so `if(!list) return;`
+   swallowed every call and the panel silently did not exist.
 
-function _buildColBrowser(columns){
-  var list   = document.getElementById("colBrowserList");
-  var status = document.getElementById("col-browser-status");
-  if(!list) return;
-  if(!columns || !columns.length){
-    list.innerHTML = '<div style="padding:8px;font-size:12px;color:var(--text-muted)">Schema not yet discovered — run Discovery first.</div>';
-    if(status) status.textContent = "(no schema)";
-    return;
-  }
-  if(status) status.textContent = "("+columns.length+" cols)";
-  list.innerHTML = columns.map(function(c){
-    var label = _displayLabel(c);
-    return '<div class="col-browser-item" data-col="'+c.column+'" data-tbl="'+c.table
-      +'" onclick="insertColumnFromBrowser(\''+c.column+'\')" title="Click to insert at cursor">'
-      +'<span class="col-browser-name">'+label+'</span>'
-      +'<span class="col-browser-tbl">'+(_dupCols.has(c.column) ? "" : c.table)+'</span>'
-      +'<span class="col-browser-dtype">'+c.type+'</span></div>';
-  }).join("");
-}
-
-window.insertColumnFromBrowser = function(colName){
-  var editor = document.activeElement && document.activeElement.matches(".formula-editor")
-    ? document.activeElement : null;
-  // fall back to last focused editor
-  if(!editor){
-    var editors = document.querySelectorAll(".formula-editor");
-    if(editors.length) editor = editors[0];
-  }
-  if(editor) insertAtCursor(editor, colName);
-};
+   The survivor is strictly better -- grouped by table with collapsible groups,
+   type badges, a live column count, and escHtml on every interpolation, where
+   this one wrote c.column raw into an onclick attribute. Giving it a container
+   would have put a second, worse column picker beside the working one. Typing a
+   column into a formula is still served by the #formula-col-suggest typeahead,
+   live on both the dialog and the inline edit forms. */
 
 // Load columns from API on page load
 (function loadColumns(){
@@ -3233,7 +3193,6 @@ window.insertColumnFromBrowser = function(colName){
       if(data.status === "ok" && data.columns && data.columns.length){
         _allColumns = data.columns;
         _buildDupSet();
-        _buildColBrowser(_allColumns);
         _buildMcFieldsList(_allColumns);
         _populateTimeColSelects(_allColumns);
         _populateBaseTableInputs(_allColumns);
@@ -3244,10 +3203,14 @@ window.insertColumnFromBrowser = function(colName){
         // Re-color already-typed identifiers now that real column names are known
         document.querySelectorAll(".formula-editor,.metric-builder-row-expression").forEach(_initSqlHighlight);
       } else {
-        _buildColBrowser([]);
+        _buildMcFieldsList([]);
       }
     })
-    .catch(function(){ _buildColBrowser([]); });
+    .catch(function(err){
+      // Reset the Fields panel, or its header reads "loading..." for ever.
+      console.error("column load failed:", err);
+      _buildMcFieldsList([]);
+    });
 })();
 
 // Populate date-type columns into time-col-select dropdowns
@@ -3893,7 +3856,12 @@ window._buildMcFieldsList = function(columns){
       var tc  = _mcTypeCls(c.type);
       var til = _mcTypeIcon(tc);
       return '<div class="mc-field-item" data-col="'+escHtml(c.column)+'" data-tbl="'+escHtml(tbl)+'"'
-        +' onclick="insertColumnFromMcDialog(\''+escHtml(c.column)+'\')"'
+        // escHtml covers & < > " but not the apostrophe, which then closes this
+        // handler's string literal early: a column named O'BRIEN would yield
+        // insertColumnFromMcDialog('O'BRIEN') and the click throws "missing )
+        // after argument list", so the field silently refuses to insert. Escape
+        // for the JS context first, as the saved-metrics list below already does.
+        +' onclick="insertColumnFromMcDialog(\''+escHtml(c.column.replace(/'/g,"\\'"))+'\')"'
         +' title="'+escHtml(tbl+'.'+c.column+(c.type?' ('+c.type+')':''))+' — click to insert">'
         +'<span class="mc-type-badge '+tc+'">'+til+'</span>'
         +'<span class="mc-field-name">'+escHtml(c.column)+'</span>'

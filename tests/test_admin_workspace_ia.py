@@ -53,15 +53,11 @@ _NAV_EXPECTATIONS = [
 
 _NEW_ROUTES = ("settings", "queries", "egress", "advanced")
 
-# Pre-existing orphans, quarantined rather than hidden. The metrics editor's
-# field-browser panel is styled (.col-browser* in client_metrics.html) and its
-# handlers are exported to window, but the list element it fills is never
-# rendered — `if(!list) return;` swallows it, so the whole panel is dead. That
-# template needs its own pass; this list must shrink, never grow.
-_KNOWN_ORPHANS = [
-    "client_metrics.html: colBrowserList",
-    "client_metrics.html: col-browser-status",
-]
+# Orphans quarantined rather than hidden, so an existing one cannot mask a new
+# one. Empty, and meant to stay that way: the two entries it held were the
+# metrics editor's dead field browser, which has since been deleted in favour of
+# the Fields panel it was the predecessor of.
+_KNOWN_ORPHANS: list[str] = []
 
 
 def _render_nav(account_id: str, segment: str) -> str:

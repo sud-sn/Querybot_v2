@@ -58,9 +58,9 @@ class TestDuplicateColumnDisplay(unittest.TestCase):
         # data-col must be set to c.column (bare), not the display label
         self.assertIn("data-col=\"'+c.column+'\"", tmpl)
 
-    def test_col_browser_also_uses_display_label(self):
+    def test_suggest_dropdown_uses_display_label(self):
         tmpl = _tmpl()
-        # Field browser should also call _displayLabel for consistency
+        # The autocomplete shows TABLE.COLUMN when the bare name is ambiguous.
         self.assertIn("_displayLabel(c)", tmpl)
 
     def test_insert_suggestion_strips_table_prefix(self):
@@ -68,8 +68,11 @@ class TestDuplicateColumnDisplay(unittest.TestCase):
         tmpl = _tmpl()
         # The click handler reads dataset.col not innerText
         self.assertIn("_insertSuggestion(item.dataset.col)", tmpl)
-        # insertColumnFromBrowser also receives bare name
-        self.assertIn("insertColumnFromBrowser", tmpl)
+        # The dialog's Fields panel also inserts the bare name. This used to name
+        # insertColumnFromBrowser, which lived in the dead predecessor of that
+        # panel -- so the assertion pinned a symbol in code that never ran, and
+        # would have kept passing however broken the live insert became.
+        self.assertIn("insertColumnFromMcDialog", tmpl)
 
 
 # ── 2  Function helper popover ──────────────────────────────────────────────
