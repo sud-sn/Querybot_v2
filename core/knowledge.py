@@ -794,16 +794,32 @@ async def build_kb(
 
         temporal_block = ""
         if _sst["date_coverage"]:
-            from datetime import date as _today_d
-            _cur_yr = _today_d.today().year
-            _tb = ["DATA COVERAGE — reference in ## Overview and time-based examples:"]
+            # Observed range only — no LIVE/ARCHIVE verdict.
+            #
+            # This used to label each column by comparing its newest year to
+            # `date.today().year` AT KB-BUILD TIME, and the KB is only rebuilt on
+            # a re-Discover. So the label described the day the KB was built, not
+            # the data: the same extract ending 2025-04-17 renders "LIVE" when
+            # built in 2025 or 2026 and "ARCHIVE" when built in 2027, with no
+            # input from the data changing. A freshness claim that drifts on its
+            # own is worse than none, because the model is told to reference it
+            # when calibrating time-based examples.
+            #
+            # Whether the data is current is a live question, answered on the
+            # request path by core/date_anchor.py against the fact's own rows.
+            # The KB's job is the observed range, which is a fact about the
+            # extract and does not go stale by the calendar turning over.
+            _tb = ["DATA COVERAGE (observed at discovery) — reference in "
+                   "## Overview and time-based examples:"]
             for _dc in _sst["date_coverage"]:
-                _max_yr = int(_dc["max"][:4]) if _dc["max"] else 0
-                _fresh = "LIVE" if _cur_yr - _max_yr <= 1 else f"ARCHIVE (ends {_dc['max']})"
                 _tb.append(
                     f"- `{_dc['col']}`: {_dc['min']} → {_dc['max']}"
-                    f" ({_dc['range_years']} yrs) — {_fresh}"
+                    f" ({_dc['range_years']} yrs)"
                 )
+            _tb.append(
+                "Do not describe this range as current or out of date; it is what "
+                "the table held when the schema was last discovered."
+            )
             temporal_block = "\n".join(_tb) + "\n"
 
         scale_block = ""

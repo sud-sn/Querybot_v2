@@ -395,6 +395,15 @@ def get_suggestions(
                 if not name or not sql or not _metric_allowed(sql):
                     continue
                 q = f"What is our total {name.replace('_', ' ')}?"
+                # Gated like every other tier. A metric's SQL template having
+                # once been valid says nothing about whether the NL pipeline can
+                # re-plan this sentence: the question goes back through entity
+                # detection and the pathfinder like any other, and a metric
+                # spanning entities the graph cannot join dead-ends on the same
+                # "Missing governed path" the user sees from a typed question.
+                # This tier was the one source offered unchecked.
+                if not _reachable(q):
+                    continue
                 _add(q, "")
                 if len(suggestions) >= n:
                     break
@@ -489,10 +498,51 @@ def _graph_reachability_check(account_id: str):
         if str(entity.get("entity_name") or "") not in connected
         and _table_of(entity) in tables_with_a_connected_owner
     }
-    if not jointless_twins:
-        healthy = lambda question: True  # noqa: E731
-        healthy.verified = True
-        return healthy
+    # Which entities can actually be joined to which. A question naming two
+    # entities in different components has no governed path between them, and
+    # the pipeline refuses it with "Missing governed path" AFTER the user has
+    # clicked a button this module supplied.
+    #
+    # This is the general case; the jointless-twin rule below is one instance of
+    # it. Until now only that instance was checked, so on any graph without a
+    # twin the predicate returned True for every question and reported itself
+    # verified — the gate looked like it was working precisely when it was
+    # doing nothing.
+    _adjacency: dict[str, set[str]] = {}
+    for rel in graph.get("relationships") or []:
+        a, b = str(rel.get("from_entity") or ""), str(rel.get("to_entity") or "")
+        if a and b:
+            _adjacency.setdefault(a, set()).add(b)
+            _adjacency.setdefault(b, set()).add(a)
+
+    _component: dict[str, int] = {}
+    for start in _adjacency:
+        if start in _component:
+            continue
+        marker = len(_component)
+        stack = [start]
+        while stack:
+            node = stack.pop()
+            if node in _component:
+                continue
+            _component[node] = marker
+            stack.extend(_adjacency.get(node, ()) - _component.keys())
+
+    def _spans_components(detected: set[str]) -> set[str]:
+        """Entities that cannot be joined to the rest of what the question names.
+
+        A single entity is always fine — a one-table question needs no path.
+        """
+        if len(detected) < 2:
+            return set()
+        seen = {name: _component.get(name) for name in detected}
+        groups = {marker for marker in seen.values() if marker is not None}
+        unjoinable = {name for name, marker in seen.items() if marker is None}
+        if len(groups) > 1:
+            # More than one island: report the minority side as the blocker.
+            majority = max(groups, key=lambda g: sum(1 for m in seen.values() if m == g))
+            unjoinable |= {n for n, m in seen.items() if m is not None and m != majority}
+        return unjoinable
     log.info(
         "Suggestion filter active — %d entity/entities have no relationships "
         "while a sibling on the same table does: %s",
@@ -505,12 +555,22 @@ def _graph_reachability_check(account_id: str):
         except Exception as exc:
             log.debug("Suggestion reachability check failed for %r: %s", question, exc)
             return True
+
         blocked_by = detected & jointless_twins
         if blocked_by:
             log.info(
                 "Suggestion withheld — %r resolves to %s, which has no governed "
                 "relationships; a sibling entity on the same table does",
                 question, sorted(blocked_by),
+            )
+            return False
+
+        unjoinable = _spans_components(detected)
+        if unjoinable:
+            log.info(
+                "Suggestion withheld — %r names %s, and %s cannot be joined to "
+                "the rest through any governed relationship",
+                question, sorted(detected), sorted(unjoinable),
             )
             return False
         return True

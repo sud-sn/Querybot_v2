@@ -4421,12 +4421,23 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 _anchor_date = _date.fromisoformat(_anchor_value)
                 _drift_days = (_date.today() - _anchor_date).days
             if _drift_days is not None and _drift_days > 1:
+                # Say where the date came from. The anchor may have been read
+                # from cache rather than from the warehouse on this request, and
+                # a cached value stated as bare fact is exactly how a stale
+                # answer passes for a current one: the banner was the one thing
+                # on screen that looked authoritative about the date, and it was
+                # willing to name a specific day it had not checked.
+                _anchor_meta = (_generation_semantic_context.get("resolved_date_anchor") or {})
+                _anchor_checked = "just now" if not _anchor_meta.get("cached") else "from cache"
                 await adapter.send_message(
                     event,
                     f"ℹ️ The most recent business data is "
                     f"**{_anchor_date.strftime('%d %b %Y')}** ({_drift_days} days "
                     f"ago), so \"{_spoken_kind}\" is answered as of that date "
-                    f"rather than the calendar date.",
+                    f"rather than the calendar date. "
+                    f"_(read {_anchor_checked}; if your data has just been "
+                    f"reloaded, ask an administrator to refresh the business "
+                    f"date.)_",
                 )
             elif _drift_days is None:
                 await adapter.send_message(

@@ -52,10 +52,27 @@ _DEFAULT_FAILURE_TTL_SECONDS = 300
 # question would keep answering against the pre-reload date, silently excluding
 # every newly loaded row.
 #
-# One day is the right default: a nightly-loading warehouse re-probes once per
-# day, which is one slow query rather than one per process. Set
-# QUERYBOT_DATE_ANCHOR_MAX_AGE_SECONDS=0 to keep a stored anchor indefinitely.
-_DEFAULT_MAX_AGE_SECONDS = 86400
+# ONE HOUR, not one day. A day was chosen to make a nightly-loading warehouse
+# re-probe once per load, and it is wrong for the same reason the unbounded
+# version was: it assumes data only ever moves FORWARD, on a schedule we guessed.
+# It does not. A reload that replaces the range (a restore, a re-point at another
+# environment, a corrected extract) leaves every relative-date question answering
+# against the old range, confidently and with no way for the user to tell.
+# Measured on the live path, a stored anchor 23.9h old was served with zero
+# probes; the answer was a day's worth of data out of date and looked identical
+# to a correct one.
+#
+# The cost of the tighter bound is one indexed MAX per account per hour, since
+# the 900s in-memory TTL still absorbs everything inside an hour. That is the
+# right trade: the probe is a single-value read over a governed date column, and
+# a wrong answer costs more than a cheap query.
+#
+# Set QUERYBOT_DATE_ANCHOR_MAX_AGE_SECONDS to tune it. NOTE THE ASYMMETRY WITH
+# THE TTL KNOB: 0 here means "keep a stored anchor indefinitely", while 0 on
+# QUERYBOT_DATE_ANCHOR_TTL_SECONDS means "never cache, probe every question".
+# Opposite meanings for the same value on two adjacent settings, so reach for
+# invalidate_anchor() rather than a 0 you have to remember the direction of.
+_DEFAULT_MAX_AGE_SECONDS = 3600
 
 _lock = threading.Lock()
 _cache: dict[tuple[str, str, str], dict[str, Any]] = {}

@@ -8923,6 +8923,31 @@ async def admin_discover_schema(
             if kb_tables_selected:
                 next_state.setdefault("kb_tables", kb_tables_selected)
             save_state(account_id, "SCHEMA_READY", next_state)
+            # ── The data was just re-read, so any cached "newest date" is a
+            # statement about the PREVIOUS contents of this warehouse ────────
+            # Discovery is the product's own signal that the source changed.
+            # Without this the stored business-date anchor survives a reload for
+            # up to its max age, and every relative-date question ("revenue
+            # today", "this month") keeps answering against the pre-reload
+            # range — confidently, and with nothing on screen to say so. There
+            # was a route to clear it by hand, and nothing in the product ever
+            # called it.
+            try:
+                from core.date_anchor import clear_cache as _clear_anchor
+                _clear_anchor(account_id, persistent=True)
+                log.info(
+                    "Business-date anchor invalidated for %s after schema "
+                    "discovery — the next relative-date question re-probes",
+                    account_id,
+                )
+            except Exception as _anchor_exc:
+                # Loud: a silently surviving anchor is the whole bug.
+                log.error(
+                    "Could not invalidate the business-date anchor for %s after "
+                    "discovery (%s) — relative-date answers may use the "
+                    "pre-discovery date range until it ages out",
+                    account_id, _anchor_exc,
+                )
             if allowed_set:
                 log.info("Admin schema discovery: %d/%d selected tables written for %s",
                          count, len(allowed_set), account_id)

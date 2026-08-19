@@ -111,13 +111,27 @@ class TestAStoredAnchorMustAgeOut(unittest.TestCase):
             return anchor._stored_anchor("acct", POLICY)
 
     def test_a_fresh_stored_anchor_is_served(self):
-        self.assertEqual(self._read(self._stored(1)).get("value"), "2025-04-17")
+        # Well inside the one-hour bound.
+        self.assertEqual(self._read(self._stored(0.1)).get("value"), "2025-04-17")
 
     def test_a_stored_anchor_older_than_the_max_age_is_refused(self):
         self.assertEqual(
             self._read(self._stored(48)), {},
             "a day-old anchor was served, so a warehouse reload is never noticed",
         )
+
+    def test_the_bound_is_an_hour_not_a_day(self):
+        """The default was 86400. Measured on the live path, a stored anchor
+        23.9h old was served with zero probes: a full day of answers against a
+        date range the warehouse no longer had, indistinguishable from correct.
+
+        An hour costs one indexed MAX per account per hour, because the 900s
+        in-memory TTL absorbs everything inside it."""
+        self.assertEqual(
+            self._read(self._stored(2)), {},
+            "a two-hour-old anchor was served; the bound is back above an hour",
+        )
+        self.assertTrue(self._read(self._stored(0.5)).get("value"))
 
     def test_an_unreadable_timestamp_is_refused_rather_than_trusted(self):
         stale = {**self._stored(1), "resolved_at": "not a date"}
