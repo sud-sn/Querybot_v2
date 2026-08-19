@@ -64,10 +64,18 @@ class FrontendCoverageCaveatWiringTests(unittest.TestCase):
 
     def test_coverage_caveats_rendered_from_message_field(self):
         self.assertIn("msg.coverage_caveats", self.source)
-        self.assertIn("coverageCaveatHtml", self.source)
 
     def test_coverage_caveat_slotted_into_the_message_template(self):
-        self.assertIn("${coverageCaveatHtml}", self.source)
+        # Caveats used to render as their own band via `coverageCaveatHtml`.
+        # They are now the top tier of the single ranked notes region — see
+        # tests/test_portal_answer_card.py — so what matters is that a caveat
+        # still reaches the card and still outranks everything else in it.
+        self.assertIn("${notesHtml}", self.source)
+        self.assertIn("tier: 'caveat'", self.source)
+
+        rank = self.source[self.source.index("NOTE_RANK"):]
+        rank = rank[: rank.index("}")]
+        self.assertIn("caveat: 0", rank, "caveats no longer sort first")
 
 
 if __name__ == "__main__":

@@ -324,7 +324,8 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .chart-footer{margin-top:.75rem;display:flex;justify-content:space-between;gap:1rem;color:var(--text-muted);font-size:11px;flex-wrap:wrap}
 .assistant-card{background:linear-gradient(180deg,color-mix(in srgb,var(--surface) 98%, var(--primary-soft) 2%),var(--surface));border:1px solid var(--border);border-radius:var(--radius);padding:1rem 1rem .95rem;box-shadow:var(--shadow);position:relative}
 .assistant-card::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:linear-gradient(180deg,var(--primary),color-mix(in srgb,var(--primary) 45%,transparent));border-radius:var(--radius) 0 0 var(--radius)}
-.result-topline{display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;flex-wrap:wrap;margin-bottom:.85rem;padding-left:.15rem}.result-kicker{font-size:11px;font-weight:850;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted)}
+.result-topline{display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;flex-wrap:wrap;margin-bottom:0;padding-left:.15rem}
+.result-answer{flex:1 1 260px;min-width:0}
 .result-layout{display:flex;flex-direction:column;gap:.95rem}.result-chart-wrap{background:color-mix(in srgb,var(--surface-2) 65%, transparent);border:1px solid var(--border);border-radius:var(--radius);padding:.65rem}.chart-canvas.compact{height:320px}
 .data-table-wrap{background:color-mix(in srgb,var(--surface-2) 55%, transparent);border:1px solid var(--border);border-radius:var(--radius);padding:0;overflow:hidden;box-shadow:inset 0 1px 0 color-mix(in srgb,var(--surface) 70%,transparent)}
 .data-table-toolbar{display:flex;align-items:center;gap:.5rem;padding:8px 10px;background:color-mix(in srgb,var(--surface-2) 76%, transparent);border-bottom:1px solid var(--border);flex-wrap:wrap}
@@ -393,8 +394,22 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .rc-scope-strip{display:flex;gap:.45rem;flex-wrap:wrap;padding:.6rem .9rem .15rem;background:color-mix(in srgb,var(--surface-2) 40%,transparent);border-top:1px solid var(--border)}
 .rc-scope-chip{display:inline-flex;align-items:center;gap:.35rem;padding:4px 8px;border-radius:999px;border:1px solid var(--border);background:var(--surface);font-size:10.5px;font-weight:800;color:var(--text-soft)}
 .action-row{display:flex;gap:.5rem;flex-wrap:wrap;margin-top:.2rem}.analysis-card{background:linear-gradient(180deg,color-mix(in srgb,var(--surface) 98%, var(--primary-soft) 2%),var(--surface));border:1px solid var(--border);border-radius:var(--radius);padding:1rem;box-shadow:var(--shadow)}.analysis-title{font-size:15px;font-weight:850;color:var(--text);margin-bottom:.4rem}.analysis-body{font-size:13px;line-height:1.7;color:var(--text)}.analysis-secondary{margin-top:.7rem;padding:.8rem .9rem;border-radius:var(--radius);background:var(--surface-2);border:1px solid var(--border);font-size:12px;line-height:1.65;color:var(--text-soft)}.analysis-list{margin:.8rem 0 0 1rem;color:var(--text);font-size:12px;line-height:1.7}.analysis-list li+li{margin-top:.35rem}.analysis-meta{margin-top:.45rem;font-size:11px;color:var(--text-muted)}.analysis-next{margin-top:.8rem;padding:.7rem .85rem;border-radius:var(--radius);background:color-mix(in srgb,var(--primary-soft) 14%,var(--surface));border-left:3px solid var(--primary);font-size:12.5px;line-height:1.6;color:var(--text)}.analysis-next-label{display:block;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:var(--primary);margin-bottom:.2rem}
-.answer-headline{font-size:18px;font-weight:850;letter-spacing:0;color:var(--text);line-height:1.35;margin-bottom:.45rem}
-.answer-chip{display:inline-flex;align-items:center;gap:.4rem;padding:7px 10px;border-radius:999px;background:var(--surface-2);border:1px solid var(--border);font-size:11px;font-weight:800;color:var(--text-soft);margin-bottom:.8rem}
+/* ── The answer ───────────────────────────────────────────────────────────
+   The value the question asked for, at the size that says so. It used to be an
+   11px chip in the top-right corner — the same size as the word "Result" above
+   it and 61% the size of the sentence beside it — while a restatement of the
+   question took the 18px slot. Everything else on this card exists to qualify
+   this number, so it leads and the rest supports it. */
+.answer-value{font-size:34px;font-weight:800;line-height:1.1;letter-spacing:-.02em;
+  color:var(--text);font-variant-numeric:tabular-nums;word-break:break-word}
+/* Deliberately not coloured by direction: up is not always good, and the
+   product cannot know which way the user wants this number to move. */
+.answer-delta{font-size:14px;font-weight:700;color:var(--text-muted);
+  font-variant-numeric:tabular-nums;white-space:nowrap}
+.answer-line{display:flex;align-items:baseline;gap:.6rem;flex-wrap:wrap}
+.answer-headline{font-size:14px;font-weight:400;letter-spacing:0;color:var(--text-soft);line-height:1.5;margin:.4rem 0 0}
+/* Kept for the no-value case, where the headline is all there is to show. */
+.answer-headline.is-lead{font-size:19px;font-weight:800;color:var(--text);line-height:1.35}
 .scope-badge{display:inline-flex;align-items:center;gap:.35rem;padding:6px 10px;border-radius:999px;background:color-mix(in srgb,var(--primary-soft) 24%, var(--surface));border:1px solid color-mix(in srgb,var(--primary) 18%, var(--border));font-size:11px;font-weight:800;color:var(--primary)}
 .scope-note{font-size:11.5px;color:var(--text-muted);line-height:1.55}
 .answer-sections{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(300px,.8fr);gap:1rem;align-items:start}
@@ -426,14 +441,29 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .trust-k{font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted);margin-bottom:.25rem}
 .trust-v{font-size:12px;color:var(--text);line-height:1.55;word-break:break-word}
 .citation-strip{display:flex;align-items:center;gap:.4rem;flex-wrap:wrap;margin:.75rem 0 0}.citation-label{font-size:10px;font-weight:850;letter-spacing:.07em;text-transform:uppercase;color:var(--text-muted)}.citation-chip{font-size:11px;color:var(--text-soft);border-bottom:1px dotted var(--text-muted);padding:.12rem .18rem}
-.confidence-card{margin:.75rem 0;padding:.75rem .85rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface-2);display:flex;flex-direction:column;gap:.45rem}
-.confidence-top{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap}
-.confidence-badge{font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:.06em;border-radius:999px;padding:.25rem .55rem;border:1px solid var(--border)}
-.confidence-badge.high{background:var(--success-soft);color:var(--success);border-color:color-mix(in srgb, var(--success) 40%, transparent)}
-.confidence-badge.medium{background:var(--warning-soft);color:var(--warning);border-color:color-mix(in srgb, var(--warning) 42%, transparent)}
-.confidence-badge.low{background:var(--danger-soft);color:var(--danger);border-color:color-mix(in srgb, var(--danger) 42%, transparent)}
-.confidence-score{font-size:12px;color:var(--text-muted);font-weight:750}
-.confidence-lines{font-size:12px;line-height:1.55;color:var(--text-soft)}
+/* ── Trust, as one control ────────────────────────────────────────────────
+   Confidence used to be a permanently-expanded card in the card body: a badge,
+   a score, and up to four bullet lines of reasons and warnings — 74px of text
+   above the result, competing with the answer and duplicating what the
+   "How this answer was produced" disclosure already held.
+
+   Now it is a pill in the footer that states the level and score, and the
+   reasons and warnings live inside that disclosure with the rest of the
+   provenance. Someone deciding whether to trust the number sees the verdict at
+   a glance and can open the reasoning; nobody has to scroll past it. */
+.trust-row{display:flex;align-items:center;gap:.6rem;flex-wrap:wrap;margin:.85rem 0 0}
+.trust-pill{display:inline-flex;align-items:center;gap:.4rem;padding:.25rem .6rem;
+  border-radius:999px;font-size:11px;font-weight:800;border:1px solid var(--border);
+  background:var(--surface-2);color:var(--text-soft);cursor:pointer}
+.trust-pill .tp-score{font-weight:600;opacity:.85;font-variant-numeric:tabular-nums}
+.trust-pill.high{background:var(--success-soft);color:var(--success);border-color:color-mix(in srgb,var(--success) 40%,transparent)}
+.trust-pill.medium{background:var(--warning-soft);color:var(--warning);border-color:color-mix(in srgb,var(--warning) 42%,transparent)}
+.trust-pill.low{background:var(--danger-soft);color:var(--danger);border-color:color-mix(in srgb,var(--danger) 42%,transparent)}
+.confidence-detail{display:flex;flex-direction:column;gap:.3rem;padding:.15rem 0 .5rem}
+.confidence-detail .cd-line{display:flex;gap:.5rem;font-size:12px;line-height:1.55;color:var(--text-soft)}
+.confidence-detail .cd-mark{flex-shrink:0;font-weight:800}
+.confidence-detail .cd-line.warn .cd-mark{color:var(--warning)}
+.confidence-detail .cd-line.reason .cd-mark{color:var(--success)}
 .sql-box{margin:.1rem .85rem .85rem;background:var(--code-bg);border:1px solid var(--border);border-radius:var(--radius);padding:.75rem .85rem;font-family:var(--font-mono),monospace;font-size:11px;color:var(--code-text);white-space:pre-wrap;overflow:auto;max-height:220px}
 .trust-sql-label{padding:0 .85rem .35rem;font-size:10px;font-weight:850;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted);display:flex;align-items:center;justify-content:space-between}
 .sql-copy-btn{font-size:10px;font-weight:600;padding:2px 8px;border-radius:4px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-muted);cursor:pointer;text-transform:none;letter-spacing:0;transition:background .15s}
@@ -462,19 +492,35 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .follow-up-chip{border-color:color-mix(in srgb,var(--primary) 30%,var(--border));color:var(--primary);background:color-mix(in srgb,var(--primary) 5%,var(--surface))}
 .follow-up-chip:hover{background:color-mix(in srgb,var(--primary) 12%,var(--surface));border-color:var(--primary)}
 .suggestions-label{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:var(--text-muted);margin-bottom:.6rem}
-/* ── Insight Layer — summary sentence + anomaly callouts ── */
-.insight-summary{font-size:13px;line-height:1.65;color:var(--text-soft);margin:.1rem 0 .85rem;padding:.55rem .8rem;background:color-mix(in srgb,var(--primary-soft) 14%,var(--surface));border-radius:var(--radius);border-left:3px solid var(--primary)}
-.insight-callouts{display:flex;flex-direction:column;gap:.35rem;margin-bottom:.7rem}
-.insight-callout{display:inline-flex;align-items:flex-start;gap:.45rem;padding:.5rem .75rem;border-radius:var(--radius);font-size:12px;line-height:1.5;font-weight:600}
-.insight-callout.warning{background:color-mix(in srgb,var(--warning-soft,#fef3c7) 55%,var(--surface));border:1px solid color-mix(in srgb,var(--warning,#f59e0b) 22%,transparent);color:var(--text)}
-.insight-callout.success{background:color-mix(in srgb,var(--success-soft,#d1fae5) 55%,var(--surface));border:1px solid color-mix(in srgb,var(--success,#10b981) 22%,transparent);color:var(--text)}
-.insight-callout.info{background:color-mix(in srgb,var(--primary-soft) 18%,var(--surface));border:1px solid color-mix(in srgb,var(--primary) 16%,transparent);color:var(--text)}
-/* ── Decision signal — deterministic 'so-what' line ── */
-.decision-signal{display:flex;align-items:flex-start;gap:.5rem;font-size:13px;font-weight:700;line-height:1.55;margin:.1rem 0 .85rem;padding:.6rem .85rem;border-radius:var(--radius);border:1px solid transparent}
-.decision-signal .ds-icon{font-size:14px;line-height:1.2;flex-shrink:0}
-.decision-signal.watch{background:color-mix(in srgb,var(--warning-soft,#fef3c7) 55%,var(--surface));border-color:color-mix(in srgb,var(--warning,#f59e0b) 28%,transparent);color:var(--text)}
-.decision-signal.positive{background:color-mix(in srgb,var(--success-soft,#d1fae5) 55%,var(--surface));border-color:color-mix(in srgb,var(--success,#10b981) 28%,transparent);color:var(--text)}
-.decision-signal.neutral{background:var(--surface-2);border-color:var(--border);color:var(--text-soft)}
+/* ── What to know before reading the number ───────────────────────────────
+   One region, three tiers, ranked. This replaced five separate bands —
+   insight summary, decision signal, coverage caveats, and two flavours of
+   anomaly callout — each with its own box, its own border treatment and its
+   own 12-13px text, stacked in the order the code happened to build them.
+   Together they filled more vertical space than the answer did, and nothing
+   in their presentation said which one to read first.
+
+   The tiers are about consequence, not severity theatre:
+     caveat  something was excluded — the number means less than it appears
+     watch   the number is real, but it is telling you something
+     note    context; safe to skip
+   Caveats sort first because they change what the number IS. */
+.answer-notes{display:flex;flex-direction:column;gap:1px;margin:.9rem 0 0;
+  border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;background:var(--border)}
+.answer-note{display:flex;align-items:flex-start;gap:.55rem;padding:.55rem .75rem;
+  font-size:12.5px;line-height:1.5;background:var(--surface);color:var(--text-soft);
+  border-left:2px solid transparent}
+.answer-note .an-icon{flex-shrink:0;font-size:12px;line-height:1.35;font-weight:700}
+/* Three carriers per tier — background, rail and icon — so the ranking survives
+   greyscale, and so watch is not distinguishable from note by icon colour alone. */
+.answer-note.caveat{background:color-mix(in srgb,var(--warning-soft) 60%,var(--surface));
+  border-left-color:var(--warning);color:var(--text)}
+.answer-note.caveat .an-icon{color:var(--warning)}
+.answer-note.watch{background:var(--surface);
+  border-left-color:color-mix(in srgb,var(--warning) 55%,transparent);color:var(--text)}
+.answer-note.watch .an-icon{color:var(--warning)}
+.answer-note.note{background:var(--surface);border-left-color:transparent}
+.answer-note.note .an-icon{color:var(--text-muted)}
 /* Schema selector tab bar */
 .schema-control-row{display:flex;align-items:center;justify-content:space-between;gap:.8rem;padding:.75rem 1.1rem;border-bottom:1px solid var(--border);background:linear-gradient(135deg,var(--surface-2),color-mix(in srgb,var(--surface) 90%,var(--primary-soft) 10%));flex-shrink:0}
 .schema-bar{display:flex;align-items:center;gap:.4rem;flex-wrap:wrap}
@@ -3373,23 +3419,37 @@ function appendAssistantResponse(msg, opts = {}){
     ? `<div class="scope-note">${escHtml(answer.scope_note || resultScope.note || '')}</div>`
     : '';
 
-  const chipHtml = answer.short_value
-    ? `<div class="answer-chip">${escHtml(answer.short_value || '')}${answer.comparison ? ` • ${escHtml(answer.comparison)}` : ''}</div>`
-    : '';
+  // The value leads. When there is no single value to show — a list, a chart
+  // with no headline number — the headline takes the lead slot instead, so the
+  // card never opens on a whisper.
+  const hasValue = !!answer.short_value;
+  const answerBlockHtml = hasValue
+    ? `<div class="answer-line">
+         <span class="answer-value">${escHtml(answer.short_value)}</span>
+         ${answer.comparison ? `<span class="answer-delta">${escHtml(answer.comparison)}</span>` : ''}
+       </div>
+       ${answer.headline ? `<p class="answer-headline">${escHtml(answer.headline)}</p>` : ''}`
+    : `<p class="answer-headline is-lead">${escHtml(answer.headline || 'Answer ready')}</p>`;
 
+  // Confidence: a verdict in the footer, its reasoning inside the provenance
+  // disclosure. Warnings come before reasons — someone opening this is looking
+  // for what might be wrong, not for reassurance.
   const confidenceLevel = String(confidence.level || 'medium').toLowerCase();
-  const confidenceItems = [
-    ...(Array.isArray(confidence.reasons) ? confidence.reasons.slice(0, 2) : []),
-    ...(Array.isArray(confidence.warnings) ? confidence.warnings.slice(0, 2) : [])
-  ];
-  const confidenceHtml = confidence.score !== undefined
-    ? `<div class="confidence-card">
-        <div class="confidence-top">
-          <span class="confidence-badge ${escHtml(confidenceLevel)}">${escHtml(confidence.label || 'Confidence')}</span>
-          <span class="confidence-score">${escHtml(String(confidence.score))}/100</span>
-        </div>
-        ${confidenceItems.length ? `<div class="confidence-lines">${confidenceItems.map(x => `• ${escHtml(x)}`).join('<br>')}</div>` : ''}
-      </div>`
+  const hasConfidence = confidence.score !== undefined;
+  const confidencePillHtml = hasConfidence
+    ? `<button type="button" class="trust-pill ${escHtml(confidenceLevel)}" data-open-trust
+        title="See how this answer was produced">
+        ${escHtml(confidence.label || 'Confidence')}
+        <span class="tp-score">${escHtml(String(confidence.score))}/100</span>
+      </button>`
+    : '';
+  const confidenceDetailHtml = hasConfidence
+    ? `<div class="confidence-detail">`
+      + (Array.isArray(confidence.warnings) ? confidence.warnings : []).map(w =>
+          `<div class="cd-line warn"><span class="cd-mark">!</span><span>${escHtml(w)}</span></div>`).join('')
+      + (Array.isArray(confidence.reasons) ? confidence.reasons : []).map(r =>
+          `<div class="cd-line reason"><span class="cd-mark">+</span><span>${escHtml(r)}</span></div>`).join('')
+      + `</div>`
     : '';
 
   const msgTraceId = String(msg.trace_id || msg.trust?.trace_id || msg.trust?.question_id || '');
@@ -3398,44 +3458,66 @@ function appendAssistantResponse(msg, opts = {}){
   let bodyHtml = '';
   if (msg.kpi || hasChart || hasData) {
     bodyHtml = `<button type="button" class="msg-action artifact-open-btn" data-open-artifact>Open ${msg.kpi ? 'KPI' : (hasChart ? 'visual' : 'data')} in workspace <span aria-hidden="true">→</span></button>`;
+  } else if (msg.question) {
+    bodyHtml = `<div class="msg-bubble">${formatBotText(msg.question)}</div>`;
   } else {
-    bodyHtml = `<div class="msg-bubble">${formatBotText(msg.question || '')}</div>`;
+    // An answer with no artifact and no question text -- "no rows matched", for
+    // instance -- used to render an empty 33px bubble under the headline. The
+    // headline is the whole answer in that case; nothing else belongs here.
+    bodyHtml = '';
   }
 
-  // ── Insight Layer — summary sentence + anomaly callouts ───────────────────
-  // Generated server-side from pure statistics (no LLM call). Displayed inline
-  // above the result so every answer automatically explains itself.
-  const insightSummary = msg.insight_summary || '';
-  const insightSummaryHtml = insightSummary
-    ? `<div class="insight-summary">${escHtml(insightSummary)}</div>`
-    : '';
-  const callouts = Array.isArray(msg.anomaly_callouts) ? msg.anomaly_callouts : [];
-  const anomalyCalloutsHtml = callouts.length
-    ? `<div class="insight-callouts">${callouts.map(c =>
-        `<div class="insight-callout ${escHtml(c.severity || 'info')}">`
-        + `<span style="font-size:13px;line-height:1">${escHtml(c.icon || '◆')}</span>`
-        + `<span>${escHtml(c.message || '')}</span></div>`
-      ).join('')}</div>`
-    : '';
+  // ── What to know before reading the number ────────────────────────────────
+  // Four server-side signals used to render as four separate bands, each with
+  // its own box and its own 12-13px text, in whatever order the code built
+  // them. All are deterministic (no LLM): coverage caveats from
+  // core/date_coverage.py and core/join_coverage.py, the decision signal, the
+  // statistical anomaly callouts, and the insight summary.
+  //
+  // They are one ranked list now. Tiers describe consequence:
+  //   caveat  something was excluded, so the number means less than it appears
+  //   watch   the number is real, but it is telling you something
+  //   note    context, safe to skip
+  const NOTE_RANK = { caveat: 0, watch: 1, note: 2 };
+  const notes = [];
 
-  // ── Decision signal — deterministic 'so-what' line (zero LLM) ─────────────
+  for (const c of (Array.isArray(msg.coverage_caveats) ? msg.coverage_caveats : [])) {
+    if (c) notes.push({ tier: 'caveat', icon: '!', text: String(c) });
+  }
+
   const ds = msg.decision_signal || {};
-  const dsIcon = { watch: '⚠', positive: '↑', neutral: '•' }[ds.tone] || '•';
-  const decisionSignalHtml = ds.line
-    ? `<div class="decision-signal ${escHtml(ds.tone || 'neutral')}">`
-      + `<span class="ds-icon">${dsIcon}</span><span>${escHtml(ds.line)}</span></div>`
-    : '';
+  if (ds.line) {
+    notes.push({
+      tier: ds.tone === 'watch' ? 'watch' : 'note',
+      icon: { watch: '!', positive: '+', neutral: '-' }[ds.tone] || '-',
+      text: String(ds.line),
+    });
+  }
 
-  // ── Coverage caveats — "the answer looks complete but something got
-  // silently excluded" (core/date_coverage.py, core/join_coverage.py; zero
-  // LLM, deterministic checks). A growing list, not a single field, since
-  // more scenarios follow this same shape — stacks cleanly in this slot. ──
-  const coverageCaveats = Array.isArray(msg.coverage_caveats) ? msg.coverage_caveats : [];
-  const coverageCaveatHtml = coverageCaveats.length
-    ? coverageCaveats.map(c =>
-        `<div class="decision-signal watch">`
-        + `<span class="ds-icon">⚠</span><span>${escHtml(c)}</span></div>`
-      ).join('')
+  for (const c of (Array.isArray(msg.anomaly_callouts) ? msg.anomaly_callouts : [])) {
+    const sev = String(c.severity || 'info').toLowerCase();
+    const isWarn = sev === 'warn' || sev === 'warning';
+    notes.push({
+      tier: isWarn ? 'watch' : 'note',
+      icon: isWarn ? '!' : '-',
+      text: String(c.message || ''),
+    });
+  }
+
+  if (msg.insight_summary) {
+    notes.push({ tier: 'note', icon: '-', text: String(msg.insight_summary) });
+  }
+
+  // Stable within a tier: the server's order carries meaning the client cannot
+  // reconstruct, so only the tier reorders anything.
+  notes.sort((a, b) => NOTE_RANK[a.tier] - NOTE_RANK[b.tier]);
+
+  const notesHtml = notes.length
+    ? `<div class="answer-notes">${notes.filter(n => n.text).map(n =>
+        `<div class="answer-note ${escHtml(n.tier)}">`
+        + `<span class="an-icon" aria-hidden="true">${escHtml(n.icon)}</span>`
+        + `<span>${escHtml(n.text)}</span></div>`
+      ).join('')}</div>`
     : '';
 
   // ── Decision actions — incl. diagnose and other result chips ────────────
@@ -3539,7 +3621,7 @@ function appendAssistantResponse(msg, opts = {}){
     const provenance = ctx.inferred ? 'inferred encoded field' : 'governed date context';
     return `<div class="trust-item"><div class="trust-k">Business date</div><div class="trust-v">${escHtml(ctx.label || 'Business date')} · ${escHtml(grain)} · ${escHtml(physical)} · ${escHtml(provenance)}</div></div>`;
   }).join('');
-  const trustHtml = `<details class="trust-box"><summary>How this answer was produced</summary><div class="trust-grid"><div class="trust-item"><div class="trust-k">Rows</div><div class="trust-v">${escHtml(String(trust.row_count ?? ''))}</div></div><div class="trust-item"><div class="trust-k">Runtime</div><div class="trust-v">${escHtml(trust.duration_label || '')}</div></div><div class="trust-item"><div class="trust-k">Data source</div><div class="trust-v">${escHtml((trust.data_source || '').toUpperCase())}</div></div><div class="trust-item"><div class="trust-k">Schema mode</div><div class="trust-v">${escHtml(trustSchema)}</div></div><div class="trust-item"><div class="trust-k">Result scope</div><div class="trust-v">${escHtml(trust.scope_badge || resultScope.badge || '')}</div></div>${dateContextHtml}</div>${analysisProofHtml}${sqlProofHtml}</details>`;
+  const trustHtml = `<details class="trust-box" data-trust-box><summary>How this answer was produced</summary>${confidenceDetailHtml}<div class="trust-grid"><div class="trust-item"><div class="trust-k">Rows</div><div class="trust-v">${escHtml(String(trust.row_count ?? ''))}</div></div><div class="trust-item"><div class="trust-k">Runtime</div><div class="trust-v">${escHtml(trust.duration_label || '')}</div></div><div class="trust-item"><div class="trust-k">Data source</div><div class="trust-v">${escHtml((trust.data_source || '').toUpperCase())}</div></div><div class="trust-item"><div class="trust-k">Schema mode</div><div class="trust-v">${escHtml(trustSchema)}</div></div><div class="trust-item"><div class="trust-k">Result scope</div><div class="trust-v">${escHtml(trust.scope_badge || resultScope.badge || '')}</div></div>${dateContextHtml}</div>${analysisProofHtml}${sqlProofHtml}</details>`;
 
   // Each result card gets a unique ID for the inline chat
   const rcId = `rc-${chartCounter}`;
@@ -3551,22 +3633,20 @@ function appendAssistantResponse(msg, opts = {}){
     <div class="msg-content">
       <div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timestamp}</span></div>
       <div class="assistant-card">
+        <!-- The answer, then what qualifies it, then what to do with it, then
+             where it came from. The "Result" kicker is gone: it labelled the
+             obvious at the same size as the value it sat above. -->
         <div class="result-topline">
-          <div>
-            <div class="result-kicker">Result</div>
-            <div class="answer-headline">${escHtml(answer.headline || 'Answer ready')}</div>
+          <div class="result-answer">
+            ${answerBlockHtml}
             ${scopeNoteHtml}
           </div>
-          <div style="display:flex;flex-direction:column;gap:.45rem;align-items:flex-end">${scopeBadgeHtml}${chipHtml}</div>
+          ${scopeBadgeHtml}
         </div>
-        ${insightSummaryHtml}
-        ${coverageCaveatHtml}
-        ${decisionSignalHtml}
+        ${notesHtml}
         ${localOperationProofHtml}
-        ${confidenceHtml}
         ${dashboardConfirmHtml}
         <div class="result-layout">
-          ${anomalyCalloutsHtml}
           ${bodyHtml}
           <div class="msg-actions">
             ${nextActionsHtml}
@@ -3574,7 +3654,9 @@ function appendAssistantResponse(msg, opts = {}){
             ${pinBtnHtml}
             <button class="rc-toggle" type="button" data-rc-toggle="${rcId}">Ask about this result</button>
           </div>
-          ${citationsHtml}
+          ${(confidencePillHtml || citationsHtml)
+            ? `<div class="trust-row">${confidencePillHtml}${citationsHtml}</div>`
+            : ''}
           ${trustHtml}
         </div>
       </div>
@@ -3648,6 +3730,17 @@ function appendAssistantResponse(msg, opts = {}){
   // Attach autocomplete to the "Ask about this result" input
   const rcInputEl = div.querySelector(`#${rcId}-input`);
   if (rcInputEl) new AutoSuggest(rcInputEl);
+
+  // The confidence pill states the verdict; the reasoning behind it lives in
+  // the provenance disclosure, so the pill opens it and scrolls it into view.
+  const trustPillEl = div.querySelector('[data-open-trust]');
+  const trustBoxEl = div.querySelector('[data-trust-box]');
+  if (trustPillEl && trustBoxEl) {
+    trustPillEl.addEventListener('click', () => {
+      trustBoxEl.open = !trustBoxEl.open;
+      if (trustBoxEl.open) trustBoxEl.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    });
+  }
 
   // Wire decision / analysis action buttons (Explain, Analyze, Recommend next step…)
   // Server resolves the action against the cached result — no new DB query runs.
