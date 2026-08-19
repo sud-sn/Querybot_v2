@@ -5,6 +5,7 @@
 {% block breadcrumb %}{% endblock %}
 {% block head %}
 <script src="/static/vendor/echarts.min.js"></script>
+<script src="/static/js/chart-palettes.js?v=20260819-1"></script>
 <link rel="stylesheet" href="/static/css/chat_workspace.css?v=20260818-verdigris-1">
 <style>
 /* Full-viewport constraints — chat page only */
@@ -150,97 +151,26 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 }
 .ai-indicator.ai-hidden{opacity:0;pointer-events:none}
 
-/* Core halo — always-on soft glow */
-.ai-indicator .ai-halo{
-  position:absolute;inset:-14px;border-radius:50%;
-  background:radial-gradient(circle,var(--ai-halo) 0%,transparent 70%);
-  opacity:.55;transition:opacity .6s ease,transform .6s ease;
-  pointer-events:none;
-}
 
-/* Outer ring — reacts to attention */
-.ai-indicator .ai-ring{
-  position:absolute;inset:-3px;border-radius:50%;
-  border:1px solid var(--ai-ring);
-  opacity:.5;
-  transition:opacity .4s,transform .6s cubic-bezier(.22,.61,.36,1),border-color .4s;
-  pointer-events:none;
-}
 
-/* Inner core dot */
-.ai-indicator .ai-core{
-  position:absolute;inset:6px;border-radius:50%;
-  background:radial-gradient(circle at 35% 30%, #ffffff 0%, var(--ai-core) 60%, #1e3a8a 100%);
-  box-shadow:0 0 10px var(--ai-halo);
-  transition:background .45s,box-shadow .45s,transform .45s cubic-bezier(.22,.61,.36,1);
-}
 
-/* Data-flow arcs (visible only in thinking/processing) */
-.ai-indicator .ai-arc{
-  position:absolute;inset:-2px;border-radius:50%;
-  border:1px solid transparent;
-  opacity:0;
-  transition:opacity .3s;
-  pointer-events:none;
-}
-.ai-indicator .ai-arc-1{border-top-color:var(--ai-core);border-right-color:var(--ai-core)}
-.ai-indicator .ai-arc-2{border-bottom-color:var(--ai-core);inset:-6px}
 
 /* ── Idle — gentle breathing halo, very low intensity ────────────────────── */
-.ai-indicator.ai-idle .ai-halo{animation:ai-breathe 4.5s ease-in-out infinite}
-.ai-indicator.ai-idle .ai-core{animation:ai-core-breathe 4.5s ease-in-out infinite}
 .ai-indicator.ai-idle{animation:ai-drift 7s ease-in-out infinite}
 
 /* ── Focus — user focused the input; indicator slides in slightly, ring brightens */
 .ai-indicator.ai-focus{animation:none;transform:translate(0,-50%) scale(1.05)}
-.ai-indicator.ai-focus .ai-ring{opacity:.85;transform:scale(1.1)}
-.ai-indicator.ai-focus .ai-halo{opacity:.75}
 
 /* ── Typing — attentive. Core brightens, ring rotates with a data stroke ── */
-.ai-indicator.ai-typing .ai-core{
-  background:radial-gradient(circle at 35% 30%, #ffffff 0%, #818CF8 55%, var(--ai-core) 100%);
-  box-shadow:0 0 14px rgba(96,165,250,.55);
-  animation:ai-pulse 1.2s ease-in-out infinite;
-}
-.ai-indicator.ai-typing .ai-ring{
-  opacity:.9;
-  border-color:transparent;
-  border-top-color:var(--ai-core);
-  border-right-color:var(--ai-core);
-  animation:ai-ring-spin 2.2s linear infinite;
-}
-.ai-indicator.ai-typing .ai-halo{opacity:.9;animation:ai-breathe 1.8s ease-in-out infinite}
 
 /* ── Thinking — user paused. Deeper tone, slower internal motion ─────────── */
-.ai-indicator.ai-thinking .ai-core{
-  background:radial-gradient(circle at 35% 30%, #ddd6fe 0%, #7c3aed 60%, #4c1d95 100%);
-  box-shadow:0 0 14px rgba(124,58,237,.5);
-  animation:ai-core-contract 2.8s ease-in-out infinite;
-}
-.ai-indicator.ai-thinking .ai-ring{opacity:.7;border-color:rgba(124,58,237,.4);animation:ai-ring-spin 4s linear infinite reverse}
-.ai-indicator.ai-thinking .ai-arc-1{opacity:.8;animation:ai-ring-spin 3s linear infinite}
-.ai-indicator.ai-thinking .ai-arc-2{opacity:.5;animation:ai-ring-spin 5s linear infinite reverse;border-top-color:#7c3aed;border-left-color:#7c3aed}
 
 /* ── Processing / Send — focused, stabilized, structured rotation ─────────── */
-.ai-indicator.ai-send .ai-core{
-  background:radial-gradient(circle at 35% 30%, #d1fae5 0%, #10b981 60%, #065f46 100%);
-  box-shadow:0 0 18px rgba(16,185,129,.6);
-  transform:scale(1.15);
-}
-.ai-indicator.ai-send .ai-ring{opacity:1;border-color:rgba(16,185,129,.55);animation:ai-ring-spin 1.4s linear infinite}
-.ai-indicator.ai-send .ai-halo{opacity:1;background:radial-gradient(circle,rgba(16,185,129,.25) 0%,transparent 70%)}
 
 /* ── Response ready — subtle highlight pulse, does not demand attention ──── */
 .ai-indicator.ai-ready{animation:ai-ready-pulse 1.6s ease-out 1}
-.ai-indicator.ai-ready .ai-core{background:radial-gradient(circle at 35% 30%, #ffffff 0%, #10b981 60%, #047857 100%)}
 
 /* ── Error — muted red, no shake. Executive: failure should be informative, not theatrical */
-.ai-indicator.ai-error .ai-core{
-  background:radial-gradient(circle at 35% 30%, #fecaca 0%, #dc2626 60%, #7f1d1d 100%);
-  box-shadow:0 0 14px rgba(220,38,38,.5);
-}
-.ai-indicator.ai-error .ai-ring{opacity:.9;border-color:rgba(220,38,38,.5)}
-.ai-indicator.ai-error .ai-halo{background:radial-gradient(circle,rgba(220,38,38,.22) 0%,transparent 70%);opacity:.9}
 
 /* Tooltip — minimal label, shown on hover/error only */
 .ai-tooltip{
@@ -256,35 +186,15 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .ai-indicator.ai-error .ai-tooltip{opacity:1;transform:translateX(-50%) translateY(0)}
 
 /* Motion keyframes */
-@keyframes ai-breathe{
-  0%,100%{opacity:.45;transform:scale(1)}
-  50%{opacity:.75;transform:scale(1.08)}
-}
-@keyframes ai-core-breathe{
-  0%,100%{transform:scale(1)}
-  50%{transform:scale(1.05)}
-}
 @keyframes ai-drift{
   0%,100%{transform:translate(0,-50%)}
   25%{transform:translate(1px,calc(-50% - 1.5px))}
   50%{transform:translate(2px,-50%)}
   75%{transform:translate(1px,calc(-50% + 1.5px))}
 }
-@keyframes ai-pulse{
-  0%,100%{transform:scale(1)}
-  50%{transform:scale(1.12)}
-}
-@keyframes ai-ring-spin{
-  from{transform:rotate(0deg)}
-  to  {transform:rotate(360deg)}
-}
-@keyframes ai-core-contract{
-  0%,100%{transform:scale(.95)}
-  50%{transform:scale(1.1)}
-}
 @keyframes ai-ready-pulse{
-  0%{box-shadow:0 0 0 0 rgba(16,185,129,.4)}
-  100%{box-shadow:0 0 0 18px rgba(16,185,129,0)}
+  0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--success) 40%,transparent)}
+  100%{box-shadow:0 0 0 18px transparent}
 }
 
 /* Respect reduced-motion preferences (WCAG) */
@@ -538,7 +448,7 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .suggestions::-webkit-scrollbar{height:3px}.suggestions::-webkit-scrollbar-track{background:transparent}.suggestions::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
 .suggestion-chip,.composer-chip{background:var(--surface);border:1px solid var(--border);color:var(--text-soft);font-size:12px;font-weight:700;padding:9px 13px;border-radius:999px;cursor:pointer;transition:all .15s;max-width:320px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;box-shadow:var(--shadow)}
 .suggestion-chip:hover,.composer-chip:hover{background:var(--surface-3);border-color:var(--primary);color:var(--primary);transform:translateY(-1px)}
-.chat-composer{flex-shrink:0;background:var(--surface);border-top:1px solid var(--border);padding:.85rem 1.25rem;position:relative;--ai-core:var(--primary);--ai-halo:color-mix(in srgb,var(--primary) 18%,transparent);--ai-ring:color-mix(in srgb,var(--primary) 35%,transparent)}
+.chat-composer{flex-shrink:0;background:var(--surface);border-top:1px solid var(--border);padding:.85rem 1.25rem;position:relative}
 /* Unified composer pill — the persistent card that makes the whole input read
    as one control at rest, not bare text that only gets a border on focus. */
 .chat-input-bar{display:flex;align-items:flex-end;gap:.5rem;background:var(--surface-2);border:1.5px solid var(--border);border-radius:22px;padding:.4rem .45rem .4rem .55rem;box-shadow:var(--shadow);transition:border-color .15s,box-shadow .15s,background-color .15s}
@@ -765,135 +675,6 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
             {{ brand_motion('processing-brand', 'thinking', 'sm', root_id='processingBrand') }}
             <span class="stage-label" id="stageLabel">Thinking…</span>
           </div>
-          <!-- Legacy mascot stub — invisible, JS element-guards no-op safely -->
-          <span id="mascotWrap" style="display:none">
-            <span id="mascotTooltip"></span>
-            <span id="mascotSvg"></span>
-            <span id="mascotBody"></span>
-            <span id="mSmile"></span><span id="mCore"></span><span id="mArmL"></span><span id="mArmR"></span>
-            <span id="mGlass"></span><span id="mWrench"></span><span id="mGear"></span><span id="mCheck"></span>
-          </span>
-          <!-- REMOVE_SVG_CONTENT_START -->
-          <div style="display:none">
-            <svg id="__unused_mascot_svg__" viewBox="0 0 64 80" xmlns="http://www.w3.org/2000/svg">
-              <defs>
-                <radialGradient id="mg-head" cx="50%" cy="40%" r="55%">
-                  <stop id="mg-head-1" offset="0%" stop-color="#e2e8f0"/>
-                  <stop id="mg-head-2" offset="100%" stop-color="#94a3b8"/>
-                </radialGradient>
-                <radialGradient id="mg-body" cx="50%" cy="30%" r="60%">
-                  <stop id="mg-body-1" offset="0%" stop-color="#e2e8f0"/>
-                  <stop id="mg-body-2" offset="100%" stop-color="#94a3b8"/>
-                </radialGradient>
-                <radialGradient id="mg-visor" cx="50%" cy="45%" r="60%">
-                  <stop offset="0%" stop-color="#1e40af"/>
-                  <stop offset="100%" stop-color="#0f172a"/>
-                </radialGradient>
-                <filter id="mg-glow">
-                  <feGaussianBlur stdDeviation="1.5" result="blur"/>
-                  <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
-                </filter>
-              </defs>
-
-              <!-- whole bot — animation applied here -->
-              <g id="mascotBody">
-                <!-- antenna -->
-                <line x1="32" y1="4" x2="32" y2="11" stroke="#94a3b8" stroke-width="2" stroke-linecap="round"/>
-                <circle id="mAntenna" cx="32" cy="3.5" r="3" fill="#60a5fa" filter="url(#mg-glow)"/>
-
-                <!-- head — rounded white shell like reference image -->
-                <ellipse cx="32" cy="22" rx="18" ry="16" fill="url(#mg-head)" stroke="#cbd5e1" stroke-width=".8"/>
-
-                <!-- ear side panels -->
-                <ellipse cx="14.5" cy="22" rx="3" ry="4.5" fill="#94a3b8" stroke="#cbd5e1" stroke-width=".6"/>
-                <ellipse cx="49.5" cy="22" rx="3" ry="4.5" fill="#94a3b8" stroke="#cbd5e1" stroke-width=".6"/>
-
-                <!-- visor dark screen -->
-                <ellipse cx="32" cy="22" rx="13" ry="9.5" fill="url(#mg-visor)" rx="13"/>
-                <!-- visor shine -->
-                <ellipse cx="27" cy="17" rx="5" ry="2.5" fill="white" opacity=".12" transform="rotate(-15,27,17)"/>
-
-                <!-- eyes — glowing on dark visor, blink via scaleY -->
-                <g id="mEyes" style="transform-origin:32px 22px">
-                  <!-- left eye -->
-                  <g style="transform-origin:26px 22px;animation:mascot-blink 3.8s ease-in-out infinite">
-                    <ellipse cx="26" cy="22" rx="3.8" ry="3.8" fill="#38bdf8" filter="url(#mg-glow)"/>
-                    <ellipse cx="26" cy="22" rx="2" ry="2" fill="#e0f2fe"/>
-                    <circle cx="27.2" cy="20.8" r=".8" fill="white" opacity=".9"/>
-                  </g>
-                  <!-- right eye -->
-                  <g style="transform-origin:38px 22px;animation:mascot-blink 3.8s ease-in-out infinite;animation-delay:.08s">
-                    <ellipse cx="38" cy="22" rx="3.8" ry="3.8" fill="#38bdf8" filter="url(#mg-glow)"/>
-                    <ellipse cx="38" cy="22" rx="2" ry="2" fill="#e0f2fe"/>
-                    <circle cx="39.2" cy="20.8" r=".8" fill="white" opacity=".9"/>
-                  </g>
-                </g>
-                <!-- smile — shown in idle/done states, hidden during work -->
-                <path id="mSmile" d="M 27 27 Q 32 31 37 27" fill="none" stroke="#38bdf8" stroke-width="1.8" stroke-linecap="round" opacity="0"/>
-
-                <!-- neck -->
-                <rect x="27" y="37" width="10" height="4" rx="2" fill="#94a3b8"/>
-
-                <!-- body torso — rounded white shell -->
-                <rect x="14" y="41" width="36" height="24" rx="10" fill="url(#mg-body)" stroke="#cbd5e1" stroke-width=".8"/>
-
-                <!-- chest arc reactor glow -->
-                <circle id="mCore" cx="32" cy="53" r="6" fill="none" stroke="#60a5fa" stroke-width="1.5" opacity=".6"/>
-                <circle cx="32" cy="53" r="3.5" fill="#60a5fa" opacity=".7" filter="url(#mg-glow)"/>
-
-                <!-- left arm -->
-                <g id="mArmL" style="transform-origin:14px 46px">
-                  <rect x="6" y="42" width="9" height="14" rx="4.5" fill="url(#mg-body)" stroke="#cbd5e1" stroke-width=".8"/>
-                  <!-- hand glow -->
-                  <circle id="mHandL" cx="10.5" cy="57" r="3.5" fill="#94a3b8" stroke="#cbd5e1" stroke-width=".6"/>
-                  <circle cx="10.5" cy="57" r="1.5" fill="#60a5fa" opacity=".5"/>
-                </g>
-
-                <!-- right arm -->
-                <g id="mArmR" style="transform-origin:50px 46px">
-                  <rect x="49" y="42" width="9" height="14" rx="4.5" fill="url(#mg-body)" stroke="#cbd5e1" stroke-width=".8"/>
-                  <circle id="mHandR" cx="53.5" cy="57" r="3.5" fill="#94a3b8" stroke="#cbd5e1" stroke-width=".6"/>
-                  <circle cx="53.5" cy="57" r="1.5" fill="#60a5fa" opacity=".5"/>
-                </g>
-
-                <!-- legs -->
-                <rect x="20" y="64" width="10" height="10" rx="4" fill="#94a3b8" stroke="#cbd5e1" stroke-width=".6"/>
-                <rect x="34" y="64" width="10" height="10" rx="4" fill="#94a3b8" stroke="#cbd5e1" stroke-width=".6"/>
-                <!-- feet -->
-                <ellipse cx="25" cy="74.5" rx="7" ry="3" fill="#64748b"/>
-                <ellipse cx="39" cy="74.5" rx="7" ry="3" fill="#64748b"/>
-              </g>
-
-              <!-- Overlays (stage tools — appear above right shoulder) -->
-              <!-- magnifying glass — validating -->
-              <g id="mGlass" style="display:none;opacity:0;transition:opacity .25s">
-                <circle cx="53" cy="10" r="6.5" fill="none" stroke="#38bdf8" stroke-width="2"/>
-                <line x1="57.6" y1="14.6" x2="63" y2="20" stroke="#38bdf8" stroke-width="2.2" stroke-linecap="round"/>
-                <circle cx="53" cy="10" r="3.5" fill="#38bdf8" opacity=".25"/>
-              </g>
-              <!-- wrench — repairing -->
-              <g id="mWrench" style="display:none;opacity:0;transition:opacity .25s;transform-origin:53px 10px">
-                <rect x="50" y="4" width="6" height="14" rx="2" fill="#fbbf24"/>
-                <rect x="48.5" y="4" width="3" height="4" rx="1" fill="#fbbf24"/>
-                <rect x="56.5" y="4" width="3" height="4" rx="1" fill="#fbbf24"/>
-              </g>
-              <!-- gear — executing -->
-              <g id="mGear" style="display:none;opacity:0;transition:opacity .25s;transform-origin:53px 10px">
-                <circle cx="53" cy="10" r="6" fill="none" stroke="#34d399" stroke-width="2"/>
-                <circle cx="53" cy="10" r="2.5" fill="#34d399"/>
-                <line x1="53" y1="2.5" x2="53" y2="1" stroke="#34d399" stroke-width="1.8" stroke-linecap="round"/>
-                <line x1="53" y1="17.5" x2="53" y2="19" stroke="#34d399" stroke-width="1.8" stroke-linecap="round"/>
-                <line x1="45.5" y1="10" x2="44" y2="10" stroke="#34d399" stroke-width="1.8" stroke-linecap="round"/>
-                <line x1="60.5" y1="10" x2="62" y2="10" stroke="#34d399" stroke-width="1.8" stroke-linecap="round"/>
-              </g>
-              <!-- checkmark — done -->
-              <g id="mCheck" style="display:none;opacity:0;transition:opacity .25s">
-                <circle cx="53" cy="10" r="8" fill="#34d399" opacity=".92"/>
-                <polyline points="48.5,10 52,13.5 58,6.5" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
-              </g>
-            </svg>
-          </div>
-          <!-- REMOVE_SVG_CONTENT_END -->
         </div>
 
         {% if suggestions %}
@@ -1356,7 +1137,6 @@ function setProcessing(active){
     processingElapsedTimer = null;
     processingStartedAt = 0;
     _removeSkeletonBubble();
-    stopDoodle();
     _resetStageSteps();
     // Restore composer mascot (reset to idle unless in error state)
     if (cm && !window._mascotInErrorState) {
@@ -1711,71 +1491,10 @@ function _updateMemoryBadge() {
 // ── Per-chart payload registry (for type-toggle re-renders) ──────────────────
 window._chartPayloads = window._chartPayloads || {};
 
-// ── Named colour palettes ─────────────────────────────────────────────────────
-// Mode-aware: each theme carries separate light/dark hex sets, validated with
-// the dataviz skill's scripts/validate_palette.js (OKLCH lightness band,
-// chroma floor, CVD-simulated adjacent separation, unsimulated normal-vision
-// floor, contrast vs the chart surface) against this app's actual chart
-// surfaces (#ffffff light / #0f172a dark), not the validator's generic
-// defaults. The previous single-array-for-both-modes palettes all failed
-// the validator outright (near-duplicate adjacent colors, several outside
-// the lightness/chroma bands) - every set below was re-picked and/or
-// re-ordered to clear the checks; ordering matters as much as the hex
-// values since adjacency is what the CVD/normal-vision checks measure.
-//
-// `sunset` and `forest` are the two exceptions: both are inherently narrow
-// hue-family themes (warm-only, green-only) sitting exactly on the
-// red/green/orange axis that protan/deutan colorblindness confuses most -
-// no reordering or re-hex clears the 15.0 unsimulated-ΔE floor for all 8
-// adjacent pairs simultaneously in both modes (best achieved: sunset ~14.5,
-// forest ~9.4-9.8, vs the 15.0 hard gate). Ship them as documented "fewer
-// safe series" options - fine for 2-4 series with the app's existing table
-// view / direct labels as the required relief, risky past that.
-const _PALETTES = {
-  default: {
-    light: ['#2a78d6','#eb6834','#1baf7a','#eda100','#e87ba4','#008300','#4a3aa7','#e34948'],
-    dark:  ['#3987e5','#d95926','#199e70','#c98500','#d55181','#008300','#9085e9','#e66767'],
-  },
-  ocean: {
-    light: ['#14B8A6','#1D4ED8','#0EA5E9','#2347B8','#0D9488','#2563EB','#38BDF8','#0369A1'],
-    dark:  ['#0E8E7E','#1D4ED8','#1590C4','#2C55C9','#0D9488','#2563EB','#1E9BDB','#0B6598'],
-  },
-  // Best-achievable, not fully passing -- see comment above.
-  sunset: {
-    light: ['#F97316','#9A3412','#F59E0B','#DC2626','#EC4899','#C2410C','#A21CAF','#E11D48'],
-    dark:  ['#EA580C','#A8441A','#B8860B','#DC2626','#EC4899','#C2410C','#A21CAF','#E11D48'],
-  },
-  // Best-achievable, not fully passing -- see comment above.
-  forest: {
-    light: ['#10B981','#00704E','#22C55E','#4D7C0F','#059669','#84CC16','#166534','#2FBF8E'],
-    dark:  ['#0D9668','#00704E','#189A6C','#4D7C0F','#059669','#5CA815','#15803D','#0F9D6D'],
-  },
-  candy: {
-    light: ['#EC4899','#CA8A04','#8B5CF6','#14B8A6','#6366F1','#F97316','#0891B2','#DC2626'],
-    dark:  ['#EC4899','#A8710A','#8B5CF6','#0F9D6D','#6366F1','#EA580C','#0891B2','#DC2626'],
-  },
-  // Reclassified as a one-hue ORDINAL ramp, not an 8-slot categorical set --
-  // true grayscale has ~0 OKLCH chroma, which fails the categorical chroma
-  // floor by design (a hue-based check can't apply to a hue-less palette).
-  // Validated instead with the skill's ordinal checks: monotone lightness,
-  // >=0.06 ΔL between adjacent steps, light/dark-end contrast against the
-  // surface, single-hue spread. Use for genuinely ORDERED series (ranked
-  // tiers, funnel stages) where a light-to-dark reading carries the order,
-  // not for arbitrary unordered category identity.
-  mono: {
-    light: ['#a3acb8','#8a95a3','#69748a','#556173','#3d495c','#293344','#151d2b'],
-    dark:  ['#3f4b5f','#515e73','#657288','#8a95a3','#a3acb8','#bcc5d0','#d5dce4'],
-  },
-};
-// Gradient pair: [bright top, muted bottom] for each palette primary
-const _PAL_GRAD = {
-  default:  ['#4A96E8','#1A68C6'],
-  ocean:    ['#38BDF8','#0369A1'],
-  sunset:   ['#FB923C','#DC2626'],
-  forest:   ['#34D399','#047857'],
-  candy:    ['#A78BFA','#6D28D9'],
-  mono:     ['#64748b','#1e293b'],
-};
+// Palettes live in /static/js/chart-palettes.js so this page and the
+// dashboard cannot drift apart.
+const _PALETTES = window.QB_PALETTES;
+const _PAL_GRAD = window.QB_PALETTE_GRADIENTS;
 
 // ── Number formatter for tooltips / axis labels ───────────────────────────────
 function _fmtNum(v) {
@@ -1838,8 +1557,6 @@ function renderChartWarnings(payload) {
 // palette (dataviz skill: "a status color never impersonates a series") --
 // used only for the biggest-drop/biggest-gain markers below, never as a
 // series color choice.
-const _STATUS_GOOD = '#15803d';
-const _STATUS_CRITICAL = '#dc2626';
 
 // Turns core/insight.py's already-computed biggest_period_drop/gain
 // (reused as-is, not recomputed) into ECharts markPoint entries anchored
@@ -1859,16 +1576,11 @@ function _buildAnnotationMarkPoints(payload, labels, values) {
     const idx = labels.indexOf(String(entry.period ?? ''));
     if (idx < 0 || values[idx] == null) return;
     const isDrop = kind === 'drop';
-    const statusColor = isDrop ? _STATUS_CRITICAL : _STATUS_GOOD;
-    const labelColor = dark
-      ? (isDrop ? '#fca5a5' : '#86efac')
-      : statusColor;
-    const labelBackground = dark
-      ? (isDrop ? 'rgba(220,38,38,.16)' : 'rgba(21,128,61,.16)')
-      : (isDrop ? 'rgba(220,38,38,.09)' : 'rgba(21,128,61,.09)');
-    const labelBorder = dark
-      ? (isDrop ? 'rgba(252,165,165,.32)' : 'rgba(134,239,172,.32)')
-      : (isDrop ? 'rgba(220,38,38,.25)' : 'rgba(21,128,61,.25)');
+    const status = window.QB_CHART_STATUS(dark);
+    const statusColor = status.color[kind];
+    const labelColor = status.label[kind];
+    const labelBackground = status.background[kind];
+    const labelBorder = status.border[kind];
     const pct = Number(entry.pct_change);
     const pctLabel = Number.isFinite(pct)
       ? `${pct > 0 ? '+' : ''}${pct.toFixed(1)}%`
@@ -1882,10 +1594,10 @@ function _buildAnnotationMarkPoints(payload, labels, values) {
       symbolOffset: [0, isDrop ? 3 : -3],
       itemStyle: {
         color: statusColor,
-        borderColor: dark ? '#111827' : '#ffffff',
+        borderColor: status.ring,
         borderWidth: 3,
         shadowBlur: 6,
-        shadowColor: isDrop ? 'rgba(220,38,38,.24)' : 'rgba(21,128,61,.22)',
+        shadowColor: status.shadow[kind],
       },
       emphasis: { scale: 1.12 },
       label: {
@@ -4157,14 +3869,7 @@ function sendMessage(tableHint){
   if (window._mascotInErrorState || window._mascotInClarifyState) {
     window._mascotInErrorState = false;
     window._mascotInClarifyState = false;
-    stopDoodle();
     _resetStageSteps();
-    document.querySelectorAll('#mEyes ellipse[fill]').forEach(el => {
-      const f = el.getAttribute('fill');
-      if (f !== 'white' && f !== '#e0f2fe') el.setAttribute('fill','#38bdf8');
-    });
-    const ant = document.getElementById('mAntenna');
-    if (ant) ant.setAttribute('fill','#60a5fa');
   }
   // Reset composer mascot error state
   if (window._composerMascotReset) window._composerMascotReset();
@@ -4263,83 +3968,6 @@ document.addEventListener('DOMContentLoaded', function() {
 // ── Mascot character controller ───────────────────────────────────────────────
 // Each pipeline stage maps to a specific body animation + overlay element
 // + tooltip. The mascot reacts visually to exactly what the bot is doing.
-const MASCOT_STATES = {
-  authorization: {
-    body: 'mascot-float 1.8s ease-in-out infinite',
-    overlay: null, tooltip: 'Checking your access…',
-    antenna: '#60a5fa', armL: '', armR: '',
-  },
-  metric_registry: {
-    body: 'mascot-bob .55s ease-in-out infinite',
-    overlay: null, tooltip: 'Found a fast answer',
-    antenna: '#fbbf24', armL: '', armR: '',
-  },
-  retrieving_context: {
-    body: 'mascot-scan .85s ease-in-out infinite',
-    overlay: null, tooltip: 'Reading your data schema…',
-    antenna: '#38bdf8', armL: '', armR: '',
-  },
-  generating_sql: {
-    body: 'mascot-type .4s ease-in-out infinite',
-    overlay: null, tooltip: 'Translating to SQL…',
-    antenna: '#a78bfa',
-    armL: 'mascot-wave-arm .35s ease-in-out infinite',
-    armR: 'mascot-wave-arm .35s ease-in-out infinite reverse',
-  },
-  validating_sql: {
-    body: 'mascot-check .65s ease-in-out 4',
-    overlay: 'mGlass', tooltip: 'Checking the query…',
-    antenna: '#38bdf8', armL: '', armR: '',
-  },
-  repairing_query: {
-    body: 'mascot-float 1s ease-in-out infinite',
-    overlay: 'mWrench', tooltip: 'Fixing an issue…',
-    antenna: '#fbbf24', armL: '',
-    armR: 'mascot-wave-arm .5s ease-in-out infinite',
-    overlayAnim: 'mascot-spin 1.1s linear infinite',
-  },
-  executing_query: {
-    body: 'mascot-run .5s ease-in-out infinite',
-    overlay: 'mGear', tooltip: 'Querying your database…',
-    antenna: '#34d399',
-    armL: 'mascot-wave-arm .5s ease-in-out infinite reverse',
-    armR: 'mascot-wave-arm .5s ease-in-out infinite',
-    overlayAnim: 'mascot-spin .65s linear infinite',
-  },
-  formatting_results: {
-    body: 'mascot-bob .65s ease-in-out infinite',
-    overlay: null, tooltip: 'Preparing your answer…',
-    antenna: '#34d399', armL: '', armR: '',
-  },
-  chart_ready: {
-    body: 'mascot-celebrate .5s ease-in-out infinite',
-    overlay: 'mCheck', tooltip: 'Done — your answer is ready',
-    antenna: '#34d399',
-    armL: 'mascot-wave-arm .45s ease-in-out infinite',
-    armR: 'mascot-wave-arm .45s ease-in-out infinite reverse',
-    overlayAnim: 'mascot-pulse .55s ease-in-out infinite',
-  },
-  _idle: {
-    body: 'mascot-float 2.2s ease-in-out infinite',
-    overlay: null, tooltip: 'QueryBot is thinking…',
-    antenna: '#60a5fa', armL: '', armR: '',
-  },
-  _error: {
-    body: 'mascot-error .6s ease-in-out 2',
-    overlay: null, tooltip: 'Something went wrong',
-    antenna: '#f87171', armL: '', armR: '',
-    eyeColor: '#f87171',
-  },
-  _clarify: {
-    body: 'mascot-question .7s ease-in-out infinite',
-    overlay: null, tooltip: 'I need a bit more context',
-    antenna: '#fbbf24', armL: '', armR: '',
-    eyeColor: '#fbbf24',
-  },
-};
-
-const _OVERLAY_IDS = ['mGlass','mWrench','mGear','mCheck'];
-let _currentMascotStage = '_idle';
 
 const BRAND_STAGE_STATES = {
   authorization: 'thinking',
@@ -4356,71 +3984,24 @@ const BRAND_STAGE_STATES = {
   _clarify: 'thinking'
 };
 
-function _setMascotState(stageKey) {
-  const state   = MASCOT_STATES[stageKey] || MASCOT_STATES['_idle'];
+function _setStageState(stageKey) {
+  // Drives the brand-motion mark beside the composer and in the answer
+  // progress row. This was _setMascotState, and everything it did after
+  // `if (!body) return;` addressed a robot SVG that was deleted along with
+  // this comment's ancestors -- animation names, arm poses, tooltips, eye
+  // tints and four tool overlays, none of which had rendered in a long time.
   const brandState = BRAND_STAGE_STATES[stageKey] || 'thinking';
   ['processingBrand', 'answerProgressBrand'].forEach(id => {
     const brand = document.getElementById(id);
     if (brand) brand.dataset.state = brandState;
   });
-  const body    = document.getElementById('mascotBody');
-  const tooltip = document.getElementById('mascotTooltip');
-  const armL    = document.getElementById('mArmL');
-  const armR    = document.getElementById('mArmR');
-  const antenna = document.getElementById('mAntenna');
-  if (!body) return;
-
-  body.style.animation = state.body;
-  if (armL) armL.style.animation = state.armL || '';
-  if (armR) armR.style.animation = state.armR || '';
-  if (antenna && state.antenna) antenna.setAttribute('fill', state.antenna);
-  // Tint eyes for error/clarify states
-  const eyeL = document.querySelector('#mEyes ellipse:first-child');
-  const eyeR = document.querySelector('#mEyes ellipse:nth-child(5)');
-  const eyeColor = state.eyeColor || '#38bdf8';
-  document.querySelectorAll('#mEyes ellipse[fill]').forEach(el => {
-    if (el.getAttribute('fill') !== 'white' && el.getAttribute('fill') !== '#e0f2fe') {
-      el.setAttribute('fill', eyeColor);
-    }
-  });
-  if (tooltip) tooltip.textContent = state.tooltip;
-
-  _OVERLAY_IDS.forEach(id => {
-    const el = document.getElementById(id);
-    if (!el) return;
-    if (id === state.overlay) {
-      el.style.display = '';
-      requestAnimationFrame(() => { el.style.opacity = '1'; });
-      if (state.overlayAnim) el.style.animation = state.overlayAnim;
-    } else {
-      el.style.opacity = '0';
-      setTimeout(() => { if (el.style.opacity === '0') el.style.display = 'none'; }, 250);
-    }
-  });
-  _currentMascotStage = stageKey;
 }
 
 function startDoodle() {
   // Start mascot in idle state
-  _setMascotState('_idle');
+  _setStageState('_idle');
   const sl = document.getElementById('stageLabel');
   if (sl) sl.textContent = 'Thinking…';
-}
-
-function stopDoodle() {
-  // Reset to idle, hide overlays cleanly
-  const body = document.getElementById('mascotBody');
-  if (body) body.style.animation = '';
-  _OVERLAY_IDS.forEach(id => {
-    const el = document.getElementById(id);
-    if (el) { el.style.opacity = '0'; el.style.display = 'none'; }
-  });
-  // Reset LEDs to default
-  const defaultLeds = ['#34d399','#60a5fa','#fbbf24','#f472b6'];
-  ['mLed1','mLed2','mLed3','mLed4'].forEach((id, i) => {
-    const el = document.getElementById(id);
-    if (el) el.setAttribute('fill', defaultLeds[i]);
-  });
 }
 
 // ── Stage step tracker ────────────────────────────────────────────────────────
@@ -4433,7 +4014,7 @@ let _completedStages = [];
 let _currentStage = null;
 
 function _updateStageSteps(stage, label, detail) {
-  if (stage && MASCOT_STATES[stage]) _setMascotState(stage);
+  if (stage && BRAND_STAGE_STATES[stage]) _setStageState(stage);
   if (stage) _currentStage = stage;
   const fallback = (stage && STATUS_FALLBACK[stage]) || ['Working on your answer', 'Preparing a trusted response.'];
   const primaryLabel = label || fallback[0];
@@ -4474,7 +4055,7 @@ function _resetStageSteps() {
 }
 
 function showMascotError() {
-  _setMascotState('_error');
+  _setStageState('_error');
   const row = document.getElementById('processingRow');
   if (row) row.classList.add('active');
   const sl = document.getElementById('stageLabel');
@@ -4483,7 +4064,7 @@ function showMascotError() {
 }
 
 function showMascotClarify() {
-  _setMascotState('_clarify');
+  _setStageState('_clarify');
   const row = document.getElementById('processingRow');
   if (row) row.classList.add('active');
   const sl = document.getElementById('stageLabel');
@@ -4492,26 +4073,6 @@ function showMascotClarify() {
 }
 
 // ── Theme-aware mascot color update ─────────────────────────────────────────
-function _updateMascotTheme() {
-  const dark = document.documentElement.getAttribute('data-theme') === 'dark';
-  // Processing mascot gradients
-  const pairs = [
-    ['mg-head-1', dark ? '#334155' : '#e2e8f0'],
-    ['mg-head-2', dark ? '#1e293b' : '#94a3b8'],
-    ['mg-body-1', dark ? '#334155' : '#e2e8f0'],
-    ['mg-body-2', dark ? '#1e293b' : '#94a3b8'],
-    // Composer mascot
-    ['cm-head-1', dark ? '#334155' : '#e2e8f0'],
-    ['cm-head-2', dark ? '#1e293b' : '#94a3b8'],
-  ];
-  pairs.forEach(([id, color]) => {
-    const el = document.getElementById(id);
-    if (el) el.setAttribute('stop-color', color);
-  });
-}
-// Run on load and on theme change
-document.addEventListener('DOMContentLoaded', _updateMascotTheme);
-window.addEventListener('qb-theme-change', _updateMascotTheme);
 
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -4762,7 +4323,7 @@ function connect(){
       } else {
         _markActiveOutbound('complete');
         // Success text result — small delay so mascot celebration is seen
-        _setMascotState('chart_ready');
+        _setStageState('chart_ready');
         // ── Genie: text answers count as executed (and successful) ──────────
         if (_pendingSuggestion) {
           _genieEvent('executed',    _pendingSuggestion);
@@ -4791,7 +4352,7 @@ function connect(){
       finishAnalysisAction(msg);
       _markActiveOutbound('complete');
       // Show celebration state briefly so the user sees it before result renders
-      _setMascotState('chart_ready');
+      _setStageState('chart_ready');
       const row = document.getElementById('processingRow');
       if (row) row.classList.add('active');
       // ── Genie: record executed + successful for the chip that triggered this ──
@@ -5289,7 +4850,6 @@ class AutoSuggest {
 
 document.addEventListener('DOMContentLoaded', () => {
   _initComposerMascot();
-  _updateMascotTheme();
   _initHeroCollapse();
   const requestedNewThread = _requestedNewThread;
   if (requestedNewThread) {

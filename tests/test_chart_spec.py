@@ -618,6 +618,9 @@ class ChartPaletteValidationTests(unittest.TestCase):
     ROOT = Path(__file__).resolve().parents[1]
     CHAT = ROOT / "portal" / "templates" / "portal_chat.html"
     DASH = ROOT / "portal" / "templates" / "portal_dashboard.html"
+    # The palettes moved out of the two templates into one shared file; the
+    # colour-science gates below now run against that single definition.
+    PALETTES = ROOT / "static" / "js" / "chart-palettes.js"
 
     # -- OKLCH / CVD math, ported from the dataviz skill's
     # scripts/validate_palette.js (same thresholds, same Machado-Oliveira-
@@ -705,7 +708,17 @@ class ChartPaletteValidationTests(unittest.TestCase):
         block is shorter than another's.
         """
         import re
-        outer_start = src.index("const _PALETTES = {") + len("const _PALETTES = ")
+        # The definition lives in static/js/chart-palettes.js as
+        # `window.QB_PALETTES = { ... }`; the templates now only carry
+        # `const _PALETTES = window.QB_PALETTES;`, which has no object literal.
+        # A source with no literal has no palettes of its own -- that is the
+        # answer, not an error.
+        for decl in ("window.QB_PALETTES = {", "const _PALETTES = {"):
+            if decl in src:
+                outer_start = src.index(decl) + len(decl) - 1
+                break
+        else:
+            return {}
         # Find the matching closing brace for the outer object by depth-counting.
         depth = 0
         i = outer_start
@@ -739,17 +752,23 @@ class ChartPaletteValidationTests(unittest.TestCase):
             result[name] = modes
         return result
 
-    def test_both_templates_define_identical_mode_aware_palettes(self):
-        chat_palettes = self._extract_palettes(self.CHAT.read_text(encoding="utf-8"))
-        dash_palettes = self._extract_palettes(self.DASH.read_text(encoding="utf-8"))
-        self.assertEqual(set(chat_palettes), {"default", "ocean", "sunset", "forest", "candy", "mono"})
-        self.assertEqual(chat_palettes, dash_palettes,
-                          "portal_chat.html and portal_dashboard.html palettes drifted out of sync")
+    def test_there_is_exactly_one_palette_definition(self):
+        # This used to compare the two templates' copies for drift. There is
+        # one copy now, in static/js/chart-palettes.js, so the two pages cannot
+        # disagree -- which is a stronger guarantee than detecting it after the
+        # fact. What is checked is that neither template has grown its own set
+        # again, and that the shared file still defines all six.
+        palettes = self._extract_palettes(self.PALETTES.read_text(encoding="utf-8"))
+        self.assertEqual(set(palettes), {"default", "ocean", "sunset", "forest", "candy", "mono"})
+        for path in (self.CHAT, self.DASH):
+            local = self._extract_palettes(path.read_text(encoding="utf-8"))
+            self.assertEqual(local, {},
+                             f"{path.name} declares palettes again; there must be one copy")
 
     def test_default_ocean_candy_pass_every_hard_gate_both_modes(self):
         # These three were tuned to fully pass; a regression here means a
         # future edit broke a previously-clean palette.
-        palettes = self._extract_palettes(self.CHAT.read_text(encoding="utf-8"))
+        palettes = self._extract_palettes(self.PALETTES.read_text(encoding="utf-8"))
         for name in ("default", "ocean", "candy"):
             for mode in ("light", "dark"):
                 hexes = palettes[name][mode]
@@ -781,7 +800,7 @@ class ChartPaletteValidationTests(unittest.TestCase):
         # _PALETTES) -- this pins their best-achieved worst-pair separation
         # so a future change can't silently make them WORSE than what was
         # already accepted as the ceiling.
-        palettes = self._extract_palettes(self.CHAT.read_text(encoding="utf-8"))
+        palettes = self._extract_palettes(self.PALETTES.read_text(encoding="utf-8"))
         minimums = {"sunset": 14.0, "forest": 9.0}
         for name, floor in minimums.items():
             for mode in ("light", "dark"):
@@ -815,12 +834,12 @@ class ChartPaletteValidationTests(unittest.TestCase):
         # can't be a categorical palette, not that nobody checked) and that
         # the code comment documenting its ordinal reclassification is
         # still present.
-        palettes = self._extract_palettes(self.CHAT.read_text(encoding="utf-8"))
+        palettes = self._extract_palettes(self.PALETTES.read_text(encoding="utf-8"))
         for mode in ("light", "dark"):
             for c in palettes["mono"][mode]:
                 _, C = self._oklch(c)
                 self.assertLess(C, self.CHROMA_FLOOR, f"mono/{mode} {c} unexpectedly clears the chroma floor")
-        src = self.CHAT.read_text(encoding="utf-8")
+        src = self.PALETTES.read_text(encoding="utf-8")
         self.assertIn("Reclassified as a one-hue ORDINAL ramp", src)
 
 
