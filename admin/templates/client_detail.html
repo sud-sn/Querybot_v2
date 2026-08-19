@@ -19,10 +19,6 @@
 .bar-wrap{flex:1;background:var(--surface-2);border:1px solid var(--border);border-radius:999px;height:14px;overflow:hidden}
 .bar-fill{height:100%;border-radius:999px;background:linear-gradient(90deg,var(--blue),var(--green))}
 .bar-val{font-size:11px;color:var(--gray-500);width:50px;text-align:right;flex-shrink:0}
-.tab-nav{display:flex;gap:.25rem;border:1px solid var(--border);background:color-mix(in srgb,var(--surface) 82%,var(--surface-2));border-radius:var(--radius);padding:.25rem;margin-bottom:1.25rem;overflow:auto;box-shadow:var(--shadow)}
-.tab-btn{padding:.55rem 1rem;font-size:13px;font-weight:800;color:var(--text-muted);background:transparent;border:1px solid transparent;border-radius:var(--radius-sm);cursor:pointer;white-space:nowrap;transition:background .15s,border-color .15s,color .15s,box-shadow .15s}
-.tab-btn:hover{color:var(--text);background:var(--surface-2)}
-.tab-btn.active{color:var(--on-primary);background:var(--blue);border-color:var(--blue);box-shadow:var(--shadow)}
 .tab-pane{display:none}.tab-pane.active{display:block}
 .sql-cell{display:flex;align-items:center;gap:.4rem;max-width:360px}
 .sql-cell code{flex:1;min-width:0;font-family:monospace;font-size:11px;color:var(--text-soft);background:var(--surface-2);border:1px solid var(--border);
@@ -135,18 +131,14 @@
   </div>
 </div>
 
-<div class="tab-nav">
-  <button class="tab-btn active" onclick="showTab('overview',this)">Overview</button>
-  <button class="tab-btn" onclick="showTab('settings',this)">Settings</button>
-  <button class="tab-btn" onclick="showTab('schema-browser',this)" id="tab-schema-btn">Schema browser</button>
-  <button class="tab-btn" onclick="showTab('queries',this)">Query Log</button>
-  <button class="tab-btn" onclick="showTab('audit',this)">LLM Audit</button>
-  <button class="tab-btn" onclick="showTab('agent-analysis',this)">Agent Analysis</button>
-  <button class="tab-btn" onclick="showTab('danger',this)">Danger Zone</button>
-</div>
+{# The second tab bar that used to live here is gone. These panes are reached
+   from the workspace nav above, which is the console's one navigation system;
+   two stacked bars with different skins and different state mechanics was the
+   thing that made half the product invisible. Agent Analysis is folded into the
+   AI egress log rather than given equal billing with the query log. #}
 
 <!-- OVERVIEW TAB -->
-<div id="tab-overview" class="tab-pane active">
+<div id="tab-overview" class="tab-pane{% if active_tab == 'overview' %} active{% endif %}">
   <div class="overview-grid">
 
     <div class="overview-card">
@@ -288,7 +280,7 @@
 </div>
 
 <!-- SETTINGS TAB -->
-<div id="tab-settings" class="tab-pane">
+<div id="tab-settings" class="tab-pane{% if active_tab == 'settings' %} active{% endif %}">
   <div class="card">
     <div class="card-header"><h2>Client configuration</h2></div>
     <div class="card-body">
@@ -469,7 +461,7 @@
 </script>
 
 <!-- SCHEMA BROWSER TAB -->
-<div id="tab-schema-browser" class="tab-pane">
+<div id="tab-schema-browser" class="tab-pane{% if active_tab == 'schema-browser' %} active{% endif %}">
   <div class="card">
     <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;gap:1rem">
       <div>
@@ -863,15 +855,19 @@
     });
   };
 
-  // Auto-load on first tab click
-  document.getElementById('tab-schema-btn').addEventListener('click', function() {
+  /* Load the tree once, whoever asks first. This used to be a click handler on
+     the schema tab button; that button is gone now the pane has its own path, so
+     the lookup returned null and .addEventListener threw. _loaded stays private
+     in here -- the page-level code below cannot see a `let` in this closure,
+     which is why reaching for it directly silently did nothing at all. */
+  window._sbEnsureLoaded = function() {
     if (!_loaded) { _loaded = true; loadSchemaTree(false); }
-  });
+  };
 })();
 </script>
 
 <!-- QUERIES TAB -->
-<div id="tab-queries" class="tab-pane">
+<div id="tab-queries" class="tab-pane{% if active_tab == 'queries' %} active{% endif %}">
   <div class="card">
     <div class="card-header">
       <h2>Query log (last 50)</h2>
@@ -948,7 +944,7 @@
 </div>
 
 <!-- LLM AUDIT TAB -->
-<div id="tab-audit" class="tab-pane">
+<div id="tab-audit" class="tab-pane{% if active_tab == 'audit' %} active{% endif %}">
   <div class="card">
     <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;gap:1rem">
       <div>
@@ -1187,7 +1183,9 @@
 </div>
 
 <!-- AGENT ANALYSIS TAB -->
-<div id="tab-agent-analysis" class="tab-pane">
+{# Folded into the AI egress destination: governed Python runs are egress, not
+   a peer of the query log. #}
+<div id="tab-agent-analysis" class="tab-pane{% if active_tab in ['audit', 'agent-analysis'] %} active{% endif %}">
   <div class="overview-grid agent-analysis-grid">
     <div class="overview-card">
       <h3>Governed Python policy</h3>
@@ -1236,7 +1234,7 @@
 </div>
 
 <!-- DANGER ZONE TAB -->
-<div id="tab-danger" class="tab-pane">
+<div id="tab-danger" class="tab-pane{% if active_tab == 'danger' %} active{% endif %}">
   <div class="danger-zone">
     <div class="card-header"><h2 style="color:var(--danger)">Danger zone</h2></div>
     <div class="card-body">
@@ -1277,32 +1275,31 @@ function checkDangerConfirm(val) {
 </script>
 
 <script>
-function showTab(name, btn) {
-  document.querySelectorAll('.tab-pane').forEach(el => el.classList.remove('active'));
-  document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
-  document.getElementById('tab-' + name).classList.add('active');
-  btn.classList.add('active');
-  history.replaceState(null, '', '#' + name);
-}
+/* showTab() and the .tab-btn bar it drove are gone: these panes are destinations
+   in the workspace nav now, each with its own path, so the active one is decided
+   server-side like every other tab in the console.
 
-/* Restore tab from URL hash on load */
+   The hash handling stays for one reason only -- links and bookmarks in the wild
+   still point at #queries, #audit and friends. It redirects them to the real
+   path so the URL people copy next is the canonical one. */
 document.addEventListener('DOMContentLoaded', function() {
+  var PATH_FOR_HASH = {
+    'overview': '', 'settings': '/settings', 'schema-browser': '/schema',
+    'queries': '/queries', 'audit': '/egress', 'agent-analysis': '/egress',
+    'danger': '/advanced'
+  };
   var hash = location.hash.replace('#', '');
-  var validTabs = ['overview', 'settings', 'schema-browser', 'queries', 'audit', 'agent-analysis', 'danger'];
-  if (hash && validTabs.indexOf(hash) !== -1) {
-    var pane = document.getElementById('tab-' + hash);
-    var btns = document.querySelectorAll('.tab-btn');
-    if (pane) {
-      document.querySelectorAll('.tab-pane').forEach(el => el.classList.remove('active'));
-      document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
-      pane.classList.add('active');
-      btns.forEach(function(b) {
-        if (b.getAttribute('onclick') && b.getAttribute('onclick').indexOf("'" + hash + "'") !== -1) {
-          b.classList.add('active');
-        }
-      });
-      if (hash === 'schema-browser' && !_loaded) { _loaded = true; loadSchemaTree(false); }
-    }
+  if (hash && Object.prototype.hasOwnProperty.call(PATH_FOR_HASH, hash)) {
+    var base = location.pathname.replace(/\/(settings|schema|queries|egress|advanced)$/, '');
+    location.replace(base + PATH_FOR_HASH[hash]);
+    return;
+  }
+
+  /* Entering via /clients/{id}/schema activates the pane server-side, so the
+     lazy load has to fire here too -- it previously only ran on a tab click. */
+  var active = document.querySelector('.tab-pane.active');
+  if (active && active.id === 'tab-schema-browser' && window._sbEnsureLoaded) {
+    window._sbEnsureLoaded();
   }
 });
 

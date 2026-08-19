@@ -1,11 +1,30 @@
 {% from "icons.html" import ic %}
 {% set _p = request.url.path %}
 {% set _b = "/admin/clients/" ~ client.account_id %}
-{% set _is_overview = (_p == _b or _p == _b ~ "/") %}
-{% set _is_model = ('/setup' in _p or ('/kb' in _p and '/billing' not in _p) or '/graph' in _p or '/date-roles' in _p or '/metrics' in _p or '/glossary' in _p or '/reports' in _p) %}
-{% set _is_quality = ('/model-health' in _p or '/evals' in _p or '/traces' in _p or '/learning-queue' in _p) %}
-{% set _is_access = ('/users' in _p or '/groups' in _p or '/pending-users' in _p) %}
-{% set _is_governance = ('/compliance' in _p or '/billing' in _p) %}
+
+{# Activity is new. Query Log, the AI egress log and the schema browser existed
+   only as location.hash tabs inside the client page, absent from this nav — so
+   the most-visited support surface in the console had no presence in its own
+   information architecture. Each has a path now.
+
+   Overview keeps only the summary. Settings and the destructive actions sit
+   under their own tab, out of the hub they were buried in.
+
+   Matching is on the path segment AFTER the account id, not a substring of the
+   whole path. The account id sits directly after a slash, so a substring test
+   like `'/schema' in _p` also matches /admin/clients/schema-users-co — lighting
+   Activity on every page of that workspace, including the overview, where two
+   primaries then read as active at once. #}
+{% set _tail = _p[_b|length:].strip('/') %}
+{% set _seg  = _tail.split('/')[0] if _tail else '' %}
+
+{% set _is_overview   = (_seg == '') %}
+{% set _is_model      = _seg in ['setup', 'kb', 'graph', 'date-roles', 'metrics', 'glossary', 'reports'] %}
+{% set _is_activity   = _seg in ['queries', 'traces', 'egress', 'schema', 'billing'] %}
+{% set _is_quality    = _seg in ['model-health', 'evals', 'learning-queue'] %}
+{% set _is_access     = _seg in ['users', 'groups', 'pending-users'] %}
+{% set _is_compliance = (_seg == 'compliance') %}
+{% set _is_configure  = _seg in ['settings', 'advanced'] %}
 
 <section class="client-workspace-nav" aria-label="Client workspace">
   <div class="client-workspace-summary">
@@ -22,38 +41,47 @@
   <nav class="client-workspace-primary" aria-label="Client lifecycle areas">
     <a href="{{ _b }}" class="{% if _is_overview %}active{% endif %}">Overview</a>
     <a href="{{ _b }}/setup" class="{% if _is_model %}active{% endif %}">Data &amp; Model</a>
+    <a href="{{ _b }}/queries" class="{% if _is_activity %}active{% endif %}">Activity</a>
     <a href="{{ _b }}/model-health" class="{% if _is_quality %}active{% endif %}">Quality</a>
     <a href="{{ _b }}/users" class="{% if _is_access %}active{% endif %}">Access</a>
-    <a href="{{ _b }}/compliance" class="{% if _is_governance %}active{% endif %}">Governance</a>
+    <a href="{{ _b }}/compliance" class="{% if _is_compliance %}active{% endif %}">Compliance</a>
+    <a href="{{ _b }}/settings" class="{% if _is_configure %}active{% endif %}">Settings</a>
   </nav>
 
   {% if _is_model %}
   <nav class="client-workspace-secondary" aria-label="Data and model tools">
-    <a href="{{ _b }}/setup" class="{% if '/setup' in _p %}active{% endif %}">Setup</a>
-    <a href="{{ _b }}/kb" class="{% if '/kb' in _p and '/billing' not in _p %}active{% endif %}">Knowledge Base</a>
-    <a href="{{ _b }}/graph" class="{% if '/graph' in _p %}active{% endif %}">Entity Graph</a>
-    <a href="{{ _b }}/date-roles" class="{% if '/date-roles' in _p %}active{% endif %}">Date Roles</a>
-    <a href="{{ _b }}/metrics" class="{% if '/metrics' in _p %}active{% endif %}">Metrics</a>
-    <a href="{{ _b }}/reports" class="{% if '/reports' in _p %}active{% endif %}">Reports</a>
-    <a href="{{ _b }}/glossary" class="{% if '/glossary' in _p %}active{% endif %}">Glossary</a>
+    <a href="{{ _b }}/setup" class="{% if _seg == 'setup' %}active{% endif %}">Setup</a>
+    <a href="{{ _b }}/kb" class="{% if _seg == 'kb' %}active{% endif %}">Knowledge Base</a>
+    <a href="{{ _b }}/graph" class="{% if _seg == 'graph' %}active{% endif %}">Relationships</a>
+    <a href="{{ _b }}/date-roles" class="{% if _seg == 'date-roles' %}active{% endif %}">Dates</a>
+    <a href="{{ _b }}/metrics" class="{% if _seg == 'metrics' %}active{% endif %}">Metrics</a>
+    <a href="{{ _b }}/reports" class="{% if _seg == 'reports' %}active{% endif %}">Reports</a>
+    <a href="{{ _b }}/glossary" class="{% if _seg == 'glossary' %}active{% endif %}">Glossary</a>
+  </nav>
+  {% elif _is_activity %}
+  <nav class="client-workspace-secondary" aria-label="Activity and history">
+    <a href="{{ _b }}/queries" class="{% if _seg == 'queries' %}active{% endif %}">Queries</a>
+    <a href="{{ _b }}/traces" class="{% if _seg == 'traces' %}active{% endif %}">Timing</a>
+    <a href="{{ _b }}/egress" class="{% if _seg == 'egress' %}active{% endif %}">AI Egress Log</a>
+    <a href="{{ _b }}/schema" class="{% if _seg == 'schema' %}active{% endif %}">Schema browser</a>
+    <a href="{{ _b }}/billing" class="{% if _seg == 'billing' %}active{% endif %}">Usage &amp; Billing</a>
   </nav>
   {% elif _is_quality %}
   <nav class="client-workspace-secondary" aria-label="Quality tools">
-    <a href="{{ _b }}/model-health" class="{% if '/model-health' in _p %}active{% endif %}">Model Health</a>
-    <a href="{{ _b }}/evals" class="{% if '/evals' in _p %}active{% endif %}">Evaluations</a>
-    <a href="{{ _b }}/traces" class="{% if '/traces' in _p %}active{% endif %}">Traces</a>
-    <a href="{{ _b }}/learning-queue" class="{% if '/learning-queue' in _p %}active{% endif %}">Learning Queue</a>
+    <a href="{{ _b }}/model-health" class="{% if _seg == 'model-health' %}active{% endif %}">Model Health</a>
+    <a href="{{ _b }}/learning-queue" class="{% if _seg == 'learning-queue' %}active{% endif %}">Flagged Answers</a>
+    <a href="{{ _b }}/evals" class="{% if _seg == 'evals' %}active{% endif %}">Evaluations</a>
   </nav>
   {% elif _is_access %}
   <nav class="client-workspace-secondary" aria-label="Access tools">
-    <a href="{{ _b }}/users" class="{% if '/users' in _p %}active{% endif %}">Users</a>
-    <a href="{{ _b }}/groups" class="{% if '/groups' in _p %}active{% endif %}">Groups</a>
-    <a href="{{ _b }}/pending-users" class="{% if '/pending-users' in _p %}active{% endif %}">Access Requests{% if pending_count is defined and pending_count > 0 %}<span class="client-nav-count">{{ pending_count }}</span>{% endif %}</a>
+    <a href="{{ _b }}/users" class="{% if _seg == 'users' %}active{% endif %}">Users</a>
+    <a href="{{ _b }}/groups" class="{% if _seg == 'groups' %}active{% endif %}">Groups</a>
+    <a href="{{ _b }}/pending-users" class="{% if _seg == 'pending-users' %}active{% endif %}">Access Requests{% if pending_count is defined and pending_count > 0 %}<span class="client-nav-count">{{ pending_count }}</span>{% endif %}</a>
   </nav>
-  {% elif _is_governance %}
-  <nav class="client-workspace-secondary" aria-label="Governance tools">
-    <a href="{{ _b }}/compliance" class="{% if '/compliance' in _p %}active{% endif %}">Compliance</a>
-    <a href="{{ _b }}/billing" class="{% if '/billing' in _p %}active{% endif %}">Billing</a>
+  {% elif _is_configure %}
+  <nav class="client-workspace-secondary" aria-label="Configuration">
+    <a href="{{ _b }}/settings" class="{% if _seg == 'settings' %}active{% endif %}">Configuration</a>
+    <a href="{{ _b }}/advanced" class="{% if _seg == 'advanced' %}active{% endif %}">Advanced</a>
   </nav>
   {% endif %}
 </section>

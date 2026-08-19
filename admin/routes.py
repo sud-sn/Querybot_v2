@@ -1829,8 +1829,26 @@ def _attach_failure_rca(queries: list[dict]) -> None:
             )
 
 
+# The workspace's five other destinations — Settings, the schema browser, the
+# query log, the AI egress log and the destructive actions — used to exist only
+# as location.hash tabs inside this one page. They were deep-linkable but absent
+# from the workspace nav, so the most-visited support surface in the console had
+# no presence in its information architecture at all, and they switched via a
+# second tab component with its own skin and its own state mechanic sitting
+# directly under the real nav. Each now has a path, so the nav can mark the
+# active one server-side like every other tab.
+_CLIENT_TABS = {
+    "overview":       "overview",
+    "settings":       "settings",
+    "schema":         "schema-browser",
+    "queries":        "queries",
+    "egress":         "audit",
+    "advanced":       "danger",
+}
+
+
 @router.get("/clients/{account_id}", response_class=HTMLResponse)
-async def client_detail(request: Request, account_id: str):
+async def client_detail(request: Request, account_id: str, active_tab: str = "overview"):
     if not _is_auth(request):
         return RedirectResponse("/admin/login", status_code=303)
     client  = store.get_client(account_id)
@@ -1928,7 +1946,38 @@ async def client_detail(request: Request, account_id: str):
         "latest_sql_eval": latest_sql_eval,
         "latest_sql_pass_rate": latest_sql_pass_rate,
         "teams_platforms": store.list_platforms("teams"),
+        "active_tab":      _CLIENT_TABS.get(active_tab, "overview"),
     })
+
+
+# ── Workspace destinations that share the client page ────────────────────────
+# Thin wrappers rather than separate templates: the panels already exist and are
+# server-rendered, so this buys real URLs and nav presence without splitting a
+# 1,400-line template, which is a separate cleanup.
+
+@router.get("/clients/{account_id}/settings", response_class=HTMLResponse)
+async def client_settings_page(request: Request, account_id: str):
+    return await client_detail(request, account_id, active_tab="settings")
+
+
+@router.get("/clients/{account_id}/schema", response_class=HTMLResponse)
+async def client_schema_page(request: Request, account_id: str):
+    return await client_detail(request, account_id, active_tab="schema")
+
+
+@router.get("/clients/{account_id}/queries", response_class=HTMLResponse)
+async def client_queries_page(request: Request, account_id: str):
+    return await client_detail(request, account_id, active_tab="queries")
+
+
+@router.get("/clients/{account_id}/egress", response_class=HTMLResponse)
+async def client_egress_page(request: Request, account_id: str):
+    return await client_detail(request, account_id, active_tab="egress")
+
+
+@router.get("/clients/{account_id}/advanced", response_class=HTMLResponse)
+async def client_advanced_page(request: Request, account_id: str):
+    return await client_detail(request, account_id, active_tab="advanced")
 
 
 @router.get("/clients/{account_id}/health-score")
