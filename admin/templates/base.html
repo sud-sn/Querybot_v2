@@ -434,7 +434,10 @@ window.qbToast = (function(){
 
   // ── Pending platform-users badge (per-client workspace pages) ────────────────
   function pollPendingUsers(){
-    var tabLink=document.querySelector('.ws-tab-bar a[href*="/pending-users"]');
+    // .ws-tab-bar belonged to the retired client_workspace_nav macro; the live
+    // nav is _client_workspace_nav.html. Querying the old selector meant this
+    // poller returned early on every page and the badge never once updated.
+    var tabLink=document.querySelector('.client-workspace-secondary a[href*="/pending-users"]');
     if(!tabLink) return;
     var m=tabLink.getAttribute('href').match(/\/clients\/([^\/]+)\/pending-users/);
     if(!m) return;

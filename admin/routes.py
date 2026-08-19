@@ -3233,6 +3233,7 @@ async def groups_page(request: Request, account_id: str):
         "client":     client,
         "groups":     groups,
         "all_tables": all_tables,
+        "pending_count": store.get_pending_user_count(account_id),
         "saved":      request.query_params.get("saved"),
         "error":      request.query_params.get("error"),
     })
@@ -3292,6 +3293,10 @@ async def users_page(request: Request, account_id: str):
         "client":    client,
         "users":     users,
         "groups":    groups,
+        # The Access secondary nav renders its badge from this. It used to be
+        # passed only by the graph route, which has no workspace nav at all, so
+        # pending signups were invisible until you already knew to go look.
+        "pending_count": store.get_pending_user_count(account_id),
         "saved":     request.query_params.get("saved"),
         "new_user":  request.query_params.get("new_user"),
         "temp_pw":   request.query_params.get("temp_pw"),
@@ -9618,6 +9623,7 @@ async def admin_pending_users(request: Request, account_id: str):
         "pending_users": pending,
         "groups":        groups,
         "counts":        counts,
+        "pending_count": counts["pending"],
         "status_filter": status_filter,
         "saved":         saved,
     })
