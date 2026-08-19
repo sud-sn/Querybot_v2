@@ -560,53 +560,6 @@ textarea:focus-visible, a:focus-visible {
 .breadcrumb-sep { color: var(--border-strong); user-select: none; }
 .breadcrumb-current { color: var(--text-soft); font-weight: 700; }
 
-/* ── Theme toggle ── */
-.theme-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  border-radius: var(--radius);
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text-soft);
-  cursor: pointer;
-  box-shadow: var(--shadow);
-  transition: background .15s, border-color .15s, color .15s, transform .15s;
-}
-.theme-toggle:hover {
-  background: var(--surface-2);
-  border-color: var(--border-strong);
-  color: var(--text);
-  transform: translateY(-1px);
-}
-.theme-toggle .theme-icon { font-size: 14px; line-height: 1; }
-
-/* ── Dark mode inline-style overrides ── */
-html[data-theme='dark'] [style*="background:#fff"],
-html[data-theme='dark'] [style*="background: #fff"],
-html[data-theme='dark'] [style*="background:#FFFFFF"],
-html[data-theme='dark'] [style*="background: #FFFFFF"] {
-  background: var(--surface) !important;
-  color: var(--text) !important;
-  border-color: var(--border) !important;
-}
-html[data-theme='dark'] [style*="background:#FFFBEB"],
-html[data-theme='dark'] [style*="background:#FEF3C7"] {
-  background: var(--amber-light) !important;
-  border-color: color-mix(in srgb, var(--amber) 28%, transparent) !important;
-}
-html[data-theme='dark'] [style*="background:#FEF2F2"],
-html[data-theme='dark'] [style*="background:#FFF5F5"] {
-  background: var(--red-light) !important;
-  border-color: color-mix(in srgb, var(--red) 28%, transparent) !important;
-}
-html[data-theme='dark'] [style*="background:#EFF6FF"],
-html[data-theme='dark'] [style*="background:#DBEAFE"] {
-  background: var(--primary-soft) !important;
-  border-color: color-mix(in srgb, var(--primary) 28%, transparent) !important;
-}
-
 /* ══════════════════════════════════════════════════════════
    Animation system  (Sprint 6)
    ══════════════════════════════════════════════════════════ */

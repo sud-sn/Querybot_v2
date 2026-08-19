@@ -119,16 +119,18 @@ def test_the_animated_mark_follows_the_theme_tokens():
     assert not bare_hex, f"brand-motion.css hardcodes colour outside the tokens: {bare_hex}"
 
 
-def test_dark_theme_redefines_the_full_surface_and_brand_set():
-    """A colour whose only definition sits in the light block renders one
-    theme's ink on the other theme's ground."""
+def test_there_is_exactly_one_theme_and_it_is_pinned():
+    """The product is light only. `color-scheme: light` is not cosmetic: without
+    it a visitor whose OS is dark gets dark scrollbars, dark form controls and a
+    dark autofill wash on a light page, because the browser still believes it may
+    render UA widgets either way."""
     tokens = _read("static/css/tokens.css")
-    dark = tokens.split("data-theme='dark'", 1)[1]
-    for token in ("--bg:", "--surface:", "--surface-2:", "--surface-3:",
-                  "--border:", "--text:", "--text-muted:", "--primary:",
-                  "--on-primary:", "--sidebar-bg:", "--sidebar-accent:",
-                  "--shadow-sm:"):
-        assert token in dark, f"{token} is never redefined for dark mode"
+    assert "color-scheme: light" in tokens, "the single theme is not pinned"
+    assert "data-theme" not in tokens, "a theme block came back"
+    for stylesheet in ("base.css", "admin.css", "portal.css", "production.css",
+                       "chat_workspace.css", "brand-motion.css"):
+        css = _read(f"static/css/{stylesheet}")
+        assert "data-theme" not in css, f"{stylesheet} still carries theme rules"
 
 
 def test_admin_and_portal_shells_use_shared_sidebar_tokens():
@@ -165,11 +167,11 @@ def test_theme_stylesheets_are_cache_busted_together():
     assert f"chat_workspace.css?v={version}" in chat
 
 
-def test_portal_mobile_shell_exposes_theme_and_settings_actions():
+def test_portal_mobile_shell_exposes_its_account_actions():
     template = _read("portal/templates/portal_base.html")
     assert 'class="portal-mobile-actions"' in template
     assert 'href="/portal/change-password"' in template
-    assert "window.__qbToggleTheme()" in template
+    assert "ToggleTheme" not in template, "the theme toggle is back"
 
 
 def test_production_layer_contains_mobile_and_reduced_motion_guards():
@@ -592,14 +594,11 @@ def test_the_relationship_page_is_not_its_own_document():
 def test_the_canvas_palette_is_a_taxonomy_not_a_status():
     """fact / dimension / bridge are categories. Mapping them onto
     --warning/--primary/--violet would be a lie that happens to compile, so they
-    get their own tokens, defined for both themes."""
+    get their own tokens."""
     tokens = _read("static/css/tokens.css")
-    light, dark = tokens.split("data-theme='dark'", 1)
     for name in ("--entity-fact", "--entity-dim", "--entity-bridge"):
         for suffix in ("", "-soft", "-line"):
-            token = f"{name}{suffix}:"
-            assert token in light, f"{token} missing from the light palette"
-            assert token in dark, f"{token} is never redefined for dark mode"
+            assert f"{name}{suffix}:" in tokens, f"{name}{suffix} is missing"
 
 
 def test_cytoscape_gets_resolved_colours_not_var_references():
@@ -614,27 +613,19 @@ def test_cytoscape_gets_resolved_colours_not_var_references():
     assert "_tok(" in style_block, "cyStyle() no longer reads the design tokens"
 
 
-def test_the_canvas_repaints_when_the_theme_changes():
-    """Colours baked in at load meant the canvas stayed on whichever theme it
-    was opened in while the shell around it changed."""
+def test_the_canvas_reads_its_palette_from_the_tokens():
+    """Cytoscape paints to a canvas and cannot resolve var(), so the colours have
+    to be read out of the stylesheet rather than written twice."""
     source = _read("admin/templates/client_graph.html")
-    assert "qb-theme-change" in source, "the canvas does not listen for theme changes"
-    handler = source.split("qb-theme-change", 1)[1][:600]
-    assert "_readTypePalette()" in handler, "the palette is not re-read"
-    assert "cy.style(cyStyle())" in handler, (
-        "the stylesheet must be rebuilt from cyStyle(); a bare cy.style().update() "
-        "re-applies the sheet that already has the old theme's colours baked in"
+    assert "qb-theme-change" not in source, (
+        "a listener for an event that can no longer fire is dead code"
     )
+    assert "_readTypePalette()" in source, "the palette is never read from the tokens"
+    assert "getComputedStyle" in source, "the canvas hardcodes its colours again"
 
 
-# ── SQL syntax highlighting ───────────────────────────────────────────────────
-# The formula editor's token colours were fixed light-theme hexes, so on the
-# dark editor ground (#141C19) every one of them measured 2.72-3.39 against the
-# 4.5 floor — measured in a browser on .sql-hl-backdrop, the layer that actually
-# carries the spans. That is the one surface in the product where a person reads
-# SQL. Both themes now come from --syntax-* in tokens.css.
-
-_SYNTAX_GROUND = {"light": "#FCFDFC", "dark": "#141C19"}
+# One ground: the editor surface. There is no second theme to satisfy.
+_SYNTAX_GROUND = "#FCFDFC"
 _SYNTAX_TOKENS = ("--syntax-kw", "--syntax-fn", "--syntax-col",
                   "--syntax-str", "--syntax-num")
 
@@ -652,32 +643,19 @@ def _contrast(a: str, b: str) -> float:
     return (hi + 0.05) / (lo + 0.05)
 
 
-def _theme_blocks(css: str) -> dict:
-    """Split tokens.css into its light (:root) and dark declarations.
-
-    The dark selector is written html[data-theme='dark'], body[data-theme='dark']
-    -- single quotes, and matching either element, which is why the portal
-    (which sets it on html) and the admin console (which sets it on body) both
-    theme correctly."""
-    match = re.search(r"""\[data-theme=['"]dark['"]\]""", css)
-    assert match, "tokens.css has no dark-theme block"
-    return {"light": css[:match.start()], "dark": css[match.start():]}
-
-
 def _token(block: str, name: str) -> str:
     match = re.search(rf"{name}:\s*(#[0-9a-fA-F]{{6}})", block)
     assert match, f"{name} missing"
     return match.group(1)
 
 
-def test_sql_syntax_colours_are_legible_on_both_grounds():
-    blocks = _theme_blocks(_strip_css_comments(_read("static/css/tokens.css")))
+def test_sql_syntax_colours_are_legible_on_the_editor_ground():
+    css = _strip_css_comments(_read("static/css/tokens.css"))
     failures = []
-    for theme, ground in _SYNTAX_GROUND.items():
-        for name in _SYNTAX_TOKENS:
-            ratio = _contrast(_token(blocks[theme], name), ground)
-            if ratio < 4.5:
-                failures.append(f"{theme} {name} {ratio:.2f}")
+    for name in _SYNTAX_TOKENS:
+        ratio = _contrast(_token(css, name), _SYNTAX_GROUND)
+        if ratio < 4.5:
+            failures.append(f"{name} {ratio:.2f}")
     assert not failures, (
         "syntax colours below the 4.5 text floor on the editor ground: " + str(failures)
     )
@@ -685,19 +663,18 @@ def test_sql_syntax_colours_are_legible_on_both_grounds():
 
 def test_sql_syntax_colours_stay_distinguishable_from_each_other():
     """A categorical set whose members converge stops doing its only job."""
-    blocks = _theme_blocks(_strip_css_comments(_read("static/css/tokens.css")))
-    for theme in _SYNTAX_GROUND:
-        values = {n: _token(blocks[theme], n) for n in _SYNTAX_TOKENS}
-        names = list(values)
-        for i, a in enumerate(names):
-            for b in names[i + 1:]:
-                ra = [int(values[a][j:j + 2], 16) for j in (1, 3, 5)]
-                rb = [int(values[b][j:j + 2], 16) for j in (1, 3, 5)]
-                distance = sum((x - y) ** 2 for x, y in zip(ra, rb)) ** 0.5
-                assert distance > 40, (
-                    f"{theme}: {a} and {b} are {distance:.0f} apart and will read "
-                    f"as the same token kind"
-                )
+    css = _strip_css_comments(_read("static/css/tokens.css"))
+    values = {n: _token(css, n) for n in _SYNTAX_TOKENS}
+    names = list(values)
+    for i, a in enumerate(names):
+        for b in names[i + 1:]:
+            ra = [int(values[a][j:j + 2], 16) for j in (1, 3, 5)]
+            rb = [int(values[b][j:j + 2], 16) for j in (1, 3, 5)]
+            distance = sum((x - y) ** 2 for x, y in zip(ra, rb)) ** 0.5
+            assert distance > 40, (
+                f"{a} and {b} are {distance:.0f} apart and will read as the same "
+                f"token kind"
+            )
 
 
 def test_the_editor_reads_its_syntax_colours_from_the_tokens():

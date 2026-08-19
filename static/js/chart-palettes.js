@@ -3,9 +3,10 @@
  *
  * These are deliberately literal hex values, not design tokens: ECharts paints
  * to a canvas and cannot resolve var(), and a categorical series set is a
- * designed qualitative ramp rather than a semantic colour. Each palette carries
- * its own light and dark array because a categorical ramp that reads well on
- * white does not read well on #0f172a.
+ * designed qualitative ramp rather than a semantic colour.
+ *
+ * One array per palette: the product is light only, so the second mode each of
+ * these used to carry has been removed along with the theme it served.
  *
  * This file exists because both pages used to hold their own copy of the table,
  * synchronised by a comment. Tuning one and not the other would have drawn the
@@ -35,28 +36,13 @@
 // safe series" options - fine for 2-4 series with the app's existing table
 // view / direct labels as the required relief, risky past that.
 window.QB_PALETTES = {
-  default: {
-    light: ['#2a78d6','#eb6834','#1baf7a','#eda100','#e87ba4','#008300','#4a3aa7','#e34948'],
-    dark:  ['#3987e5','#d95926','#199e70','#c98500','#d55181','#008300','#9085e9','#e66767'],
-  },
-  ocean: {
-    light: ['#14B8A6','#1D4ED8','#0EA5E9','#2347B8','#0D9488','#2563EB','#38BDF8','#0369A1'],
-    dark:  ['#0E8E7E','#1D4ED8','#1590C4','#2C55C9','#0D9488','#2563EB','#1E9BDB','#0B6598'],
-  },
+  default: ['#2a78d6','#eb6834','#1baf7a','#eda100','#e87ba4','#008300','#4a3aa7','#e34948'],
+  ocean: ['#14B8A6','#1D4ED8','#0EA5E9','#2347B8','#0D9488','#2563EB','#38BDF8','#0369A1'],
   // Best-achievable, not fully passing -- see comment above.
-  sunset: {
-    light: ['#F97316','#9A3412','#F59E0B','#DC2626','#EC4899','#C2410C','#A21CAF','#E11D48'],
-    dark:  ['#EA580C','#A8441A','#B8860B','#DC2626','#EC4899','#C2410C','#A21CAF','#E11D48'],
-  },
+  sunset: ['#F97316','#9A3412','#F59E0B','#DC2626','#EC4899','#C2410C','#A21CAF','#E11D48'],
   // Best-achievable, not fully passing -- see comment above.
-  forest: {
-    light: ['#10B981','#00704E','#22C55E','#4D7C0F','#059669','#84CC16','#166534','#2FBF8E'],
-    dark:  ['#0D9668','#00704E','#189A6C','#4D7C0F','#059669','#5CA815','#15803D','#0F9D6D'],
-  },
-  candy: {
-    light: ['#EC4899','#CA8A04','#8B5CF6','#14B8A6','#6366F1','#F97316','#0891B2','#DC2626'],
-    dark:  ['#EC4899','#A8710A','#8B5CF6','#0F9D6D','#6366F1','#EA580C','#0891B2','#DC2626'],
-  },
+  forest: ['#10B981','#00704E','#22C55E','#4D7C0F','#059669','#84CC16','#166534','#2FBF8E'],
+  candy: ['#EC4899','#CA8A04','#8B5CF6','#14B8A6','#6366F1','#F97316','#0891B2','#DC2626'],
   // Reclassified as a one-hue ORDINAL ramp, not an 8-slot categorical set --
   // true grayscale has ~0 OKLCH chroma, which fails the categorical chroma
   // floor by design (a hue-based check can't apply to a hue-less palette).
@@ -65,10 +51,7 @@ window.QB_PALETTES = {
   // surface, single-hue spread. Use for genuinely ORDERED series (ranked
   // tiers, funnel stages) where a light-to-dark reading carries the order,
   // not for arbitrary unordered category identity.
-  mono: {
-    light: ['#a3acb8','#8a95a3','#69748a','#556173','#3d495c','#293344','#151d2b'],
-    dark:  ['#3f4b5f','#515e73','#657288','#8a95a3','#a3acb8','#bcc5d0','#d5dce4'],
-  },
+  mono: ['#a3acb8','#8a95a3','#69748a','#556173','#3d495c','#293344','#151d2b'],
 };
 
 // Gradient pair: [bright top, muted bottom] for each palette primary
@@ -94,7 +77,15 @@ window.QB_PALETTE_GRADIENTS = {
  *
  * The literals below are fallbacks for a missing token, not the design.
  */
-window.QB_CHART_STATUS = function (dark) {
+/*
+ * Sequential ramp for the cohort heatmap. Not categorical: the order carries
+ * magnitude, so it runs light-to-dark through the brand hue rather than using
+ * distinct hues. Kept here with the other chart colours instead of inline in
+ * the template, where it was the one array that escaped the shared file.
+ */
+window.QB_HEATMAP_RAMP = ['#EAF3F0', '#3FC0A9', '#0A6154'];
+
+window.QB_CHART_STATUS = function () {
   const root = getComputedStyle(document.documentElement);
   const token = (name, fallback) => root.getPropertyValue(name).trim() || fallback;
 
@@ -119,15 +110,11 @@ window.QB_CHART_STATUS = function (dark) {
 
   return {
     color:      { gain: good, drop: bad },
-    // In dark mode the tokens are already the lighter variants, so the label
-    // takes the same colour rather than a separately-tuned tint.
     label:      { gain: good, drop: bad },
-    background: { gain: alpha(good, dark ? 0.16 : 0.09),
-                  drop: alpha(bad,  dark ? 0.16 : 0.09) },
-    border:     { gain: alpha(good, dark ? 0.32 : 0.25),
-                  drop: alpha(bad,  dark ? 0.32 : 0.25) },
+    background: { gain: alpha(good, 0.09), drop: alpha(bad, 0.09) },
+    border:     { gain: alpha(good, 0.25), drop: alpha(bad, 0.25) },
     shadow:     { gain: alpha(good, 0.22), drop: alpha(bad, 0.24) },
-    ring:       token(dark ? '--surface' : '--surface', dark ? '#111827' : '#ffffff'),
+    ring:       token('--surface', '#FCFDFC'),
   };
 };
 
@@ -160,23 +147,24 @@ window.QB_CHART_THEME = function () {
   };
   const alpha = (value, a) => 'rgba(' + channels(value).join(',') + ',' + a + ')';
 
-  // The portal sets data-theme on <html>, the admin console on <body>; the
-  // token sheet answers to either, so this does too.
-  const dark = document.documentElement.getAttribute('data-theme') === 'dark'
-    || (document.body && document.body.getAttribute('data-theme') === 'dark');
-
-  const muted = token('--text-muted', dark ? '#90A19B' : '#5E706A');
-  const border = token('--border', dark ? '#26332D' : '#D8E2DD');
-  const surface = token('--surface', dark ? '#141C19' : '#FCFDFC');
-  const text = token('--text', dark ? '#E9F1ED' : '#101C18');
+  const muted = token('--text-muted', '#5E706A');
+  const border = token('--border', '#D8E2DD');
+  const surface = token('--surface', '#FCFDFC');
+  const text = token('--text', '#101C18');
 
   return {
-    dark,
+    // Retained and always false: callers that still pass it through to ECharts'
+    // theme argument keep working, and removing the key would break them
+    // silently rather than loudly.
+    dark: false,
     axis:        muted,
+    // Marks that punch a ring out of the page (pie slice borders, treemap
+    // gaps) need the surface as a concrete value.
+    surface,
     axisLine:    border,
     // Gridlines are structure, not data: present enough to read a value
     // against, quiet enough that the series stays the loudest thing.
-    split:       alpha(border, dark ? 0.55 : 0.85),
+    split:       alpha(border, 0.85),
     tooltipBg:   alpha(surface, 0.97),
     tooltipText: text,
   };

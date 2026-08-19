@@ -12,39 +12,6 @@
 <link rel="stylesheet" href="/static/css/tokens.css?v=20260818-verdigris-1">
 <link rel="stylesheet" href="/static/css/base.css?v=20260818-verdigris-1">
 <link rel="stylesheet" href="/static/css/admin.css?v=20260818-verdigris-1">
-{# Prevent flash of unstyled content — runs before CSS paint #}
-<script>
-(function(){
-  var key='qb-admin-theme';
-  var saved=localStorage.getItem(key);
-  var preferred=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';
-  var theme=saved||preferred;
-  document.documentElement.setAttribute('data-theme',theme);
-  document.documentElement.style.colorScheme=theme;
-  document.addEventListener('DOMContentLoaded',function(){
-    document.body.setAttribute('data-theme',theme);
-    _updateThemeToggle(theme);
-  });
-  window.__qbAdminSetTheme=function(next){
-    document.documentElement.setAttribute('data-theme',next);
-    document.body.setAttribute('data-theme',next);
-    document.documentElement.style.colorScheme=next;
-    localStorage.setItem(key,next);
-    _updateThemeToggle(next);
-    window.dispatchEvent(new CustomEvent('qb-theme-change',{detail:{theme:next}}));
-  };
-  window.__qbAdminToggleTheme=function(){
-    var current=document.documentElement.getAttribute('data-theme')||theme;
-    window.__qbAdminSetTheme(current==='dark'?'light':'dark');
-  };
-  function _updateThemeToggle(current){
-    document.querySelectorAll('[data-theme-toggle]').forEach(function(node){
-      var label=node.querySelector('.theme-label');
-      if(label) label.textContent=current==='dark'?'Light mode':'Dark mode';
-    });
-  }
-})();
-</script>
 {% block head %}{% endblock %}
 <link rel="stylesheet" href="/static/css/production.css?v=20260818-verdigris-1">
 <link rel="stylesheet" href="/static/css/brand-motion.css?v=20260818-bubble-1">
@@ -113,11 +80,6 @@
     </nav>
 
     <div class="sidebar-foot">
-      <button type="button" class="theme-toggle" data-theme-toggle onclick="window.__qbAdminToggleTheme()">
-        <span class="ti-moon">{{ ic("moon", 16) }}</span>
-        <span class="ti-sun">{{ ic("sun", 16) }}</span>
-        <span class="theme-label">Dark mode</span>
-      </button>
       <a href="/admin/logout" class="btn btn-secondary btn-sm">Logout</a>
     </div>
 
@@ -132,10 +94,6 @@
     <header class="admin-topbar">
       <button type="button" class="mobile-menu-btn" aria-label="Open navigation" onclick="openSidebar()">{{ ic("menu", 20) }}</button>
       <span class="admin-topbar-brand">Query<span>Bot</span> Admin</span>
-      <button type="button" class="theme-toggle btn-sm" data-theme-toggle onclick="window.__qbAdminToggleTheme()" style="padding:6px 10px">
-        <span class="ti-moon">{{ ic("moon", 16) }}</span>
-        <span class="ti-sun">{{ ic("sun", 16) }}</span>
-      </button>
     </header>
 
     <main class="page">

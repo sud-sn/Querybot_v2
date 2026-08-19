@@ -13,40 +13,6 @@
 <link rel="stylesheet" href="/static/css/base.css?v=20260818-verdigris-1">
 <link rel="stylesheet" href="/static/css/portal.css?v=20260818-verdigris-1">
 {# Prevent flash of unstyled content #}
-<script>
-(function(){
-  var key='qb-portal-theme';
-  var saved=localStorage.getItem(key);
-  var preferred=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';
-  var theme=saved||preferred;
-  document.documentElement.setAttribute('data-theme',theme);
-  document.documentElement.style.colorScheme=theme;
-  document.addEventListener('DOMContentLoaded',function(){
-    document.body.setAttribute('data-theme',theme);
-    _updateThemeToggle(theme);
-  });
-  window.__qbSetTheme=function(next){
-    document.documentElement.setAttribute('data-theme',next);
-    document.body.setAttribute('data-theme',next);
-    document.documentElement.style.colorScheme=next;
-    localStorage.setItem(key,next);
-    _updateThemeToggle(next);
-    window.dispatchEvent(new CustomEvent('qb-theme-change',{detail:{theme:next}}));
-  };
-  window.__qbToggleTheme=function(){
-    var current=document.documentElement.getAttribute('data-theme')||theme;
-    window.__qbSetTheme(current==='dark'?'light':'dark');
-  };
-  function _updateThemeToggle(current){
-    document.querySelectorAll('[data-theme-toggle]').forEach(function(node){
-      var label=node.querySelector('.theme-label');
-      if(label) label.textContent=current==='dark'?'Light mode':'Dark mode';
-      node.setAttribute('aria-label',current==='dark'?'Switch to light mode':'Switch to dark mode');
-      node.setAttribute('title',current==='dark'?'Switch to light mode':'Switch to dark mode');
-    });
-  }
-})();
-</script>
 {% block head %}{% endblock %}
 <link rel="stylesheet" href="/static/css/production.css?v=20260818-verdigris-1">
 <link rel="stylesheet" href="/static/css/brand-motion.css?v=20260818-bubble-1">
@@ -101,11 +67,6 @@
         </div>
       </div>
       <div class="portal-side-actions" aria-label="Account actions">
-        <button type="button" class="theme-toggle" data-theme-toggle onclick="window.__qbToggleTheme()">
-          <span class="ti-moon">{{ ic("moon", 16) }}</span>
-          <span class="ti-sun">{{ ic("sun", 16) }}</span>
-          <span class="theme-label">Dark mode</span>
-        </button>
         <a href="/portal/change-password" title="Settings">{{ ic("settings", 16) }} <span>Settings</span></a>
         <a href="/portal/logout" title="Logout"><span class="portal-logout-icon" aria-hidden="true">&#8594;</span><span>Logout</span></a>
       </div>
@@ -123,10 +84,6 @@
         <span class="portal-brand-word">Query<span>Bot</span></span>
       </a>
       <div class="portal-mobile-actions">
-        <button type="button" class="theme-toggle btn btn-secondary btn-sm" data-theme-toggle onclick="window.__qbToggleTheme()">
-          <span class="ti-moon">{{ ic("moon", 16) }}</span>
-          <span class="ti-sun">{{ ic("sun", 16) }}</span>
-        </button>
         <a href="/portal/change-password" class="icon-btn" aria-label="Settings" title="Settings">{{ ic("settings", 16) }}</a>
       </div>
     </header>

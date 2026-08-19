@@ -16,11 +16,9 @@ body:has(.chat-page) .portal-sidebar { padding: 14px 10px; align-items: stretch;
 body:has(.chat-page) .portal-brand { justify-content: center; padding-inline: 0; }
 body:has(.chat-page) .portal-brand-word,
 body:has(.chat-page) .portal-nav a span,
-body:has(.chat-page) .portal-theme-toggle .theme-label,
 body:has(.chat-page) .portal-user-meta,
 body:has(.chat-page) .portal-side-actions a > span:last-child { display: none; }
 body:has(.chat-page) .portal-nav a,
-body:has(.chat-page) .portal-theme-toggle,
 body:has(.chat-page) .portal-side-actions .btn { justify-content: center; padding-inline: 0; }
 body:has(.chat-page) .portal-user-card { justify-content: center; padding: 8px 0; }
 body:has(.chat-page) .portal-side-actions { grid-template-columns: 1fr; }
@@ -350,10 +348,6 @@ body:has(.chat-page) .portal-logout-icon { display: inline !important; font-size
   text-decoration: none;
 }
 
-.chat-rail-utility .ti-sun { display: none; }
-html[data-theme='dark'] .chat-rail-utility .ti-moon { display: none; }
-html[data-theme='dark'] .chat-rail-utility .ti-sun { display: inline-flex; }
-
 .chat-rail-account {
   display: flex;
   align-items: center;
@@ -498,12 +492,6 @@ html[data-theme='dark'] .chat-rail-utility .ti-sun { display: inline-flex; }
   width: min(100%, 1180px);
   margin-inline: auto;
 }
-
-html[data-theme='dark'] .chat-conversation-rail {
-  background: color-mix(in srgb, var(--sidebar-bg) 92%, var(--primary) 8%);
-}
-
-html[data-theme='dark'] .chat-rail-account { background: color-mix(in srgb, var(--sidebar-surface) 92%, transparent); }
 
 @media (max-width: 1080px) {
   .chat-workspace { grid-template-columns: minmax(0, 1fr); }

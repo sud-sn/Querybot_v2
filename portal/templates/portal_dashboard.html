@@ -355,14 +355,13 @@ function renderChartWarnings(payload){
 function _buildAnnotationMarkPoints(payload, labels, values){
   const annotations = payload?.annotations;
   if (!annotations) return [];
-  const dark = document.documentElement.getAttribute('data-theme') === 'dark';
   const points = [];
   const add = (entry, kind) => {
     if (!entry) return;
     const idx = labels.indexOf(String(entry.period ?? ''));
     if (idx < 0 || values[idx] == null) return;
     const isDrop = kind === 'drop';
-    const status = window.QB_CHART_STATUS(dark);
+    const status = window.QB_CHART_STATUS();
     const statusColor = status.color[kind];
     const labelColor = status.label[kind];
     const labelBackground = status.background[kind];
@@ -412,7 +411,7 @@ function buildDashboardOption(payload){
   const palName  = payload.color_palette || 'default';
   const theme    = chartThemeTokens();
   const palette  = _PALETTES[palName] || _PALETTES.default;
-  const colors   = (theme.dark ? palette.dark : palette.light) || palette.light;
+  const colors   = palette;
   const gradPair = _PAL_GRAD[palName]  || _PAL_GRAD.default;
   const reqType  = (payload.chart_type || 'bar').toLowerCase();
   const formatFor = col => _chartFormatFor(payload, col);
@@ -452,7 +451,7 @@ function buildDashboardOption(payload){
       legend: { orient:compactPie?'horizontal':'vertical', ...(compactPie?{left:'center',bottom:0}:{right:8,top:'middle'}), textStyle:{color:theme.axis,fontSize:11}, formatter:n=>`${n.length>16?n.slice(0,15)+'…':n} · ${(pieLegend.get(n)||0).toFixed(1)}%` },
       series: [{ type:'pie', radius:[innerR,compactPie?'56%':'68%'], center:compactPie?['50%','40%']:['40%','50%'], data:pieData,
         label:{show:pieData.length<=8,formatter:p=>`${String(p.name||'Unspecified').slice(0,16)}\n${Number(p.percent??pieShare(p.value)).toFixed(1)}%`,color:theme.axis,fontSize:11},
-        itemStyle:{borderRadius:5,borderColor:theme.dark?'#1A1D21':'#fff',borderWidth:2},
+        itemStyle:{borderRadius:5,borderColor:theme.surface,borderWidth:2},
         emphasis:{itemStyle:{shadowBlur:12,shadowColor:'rgba(0,0,0,.18)'},scale:true,scaleSize:5},
       }],
     };
@@ -555,7 +554,7 @@ function initDashboardChart(node) {
   node.querySelector('[data-chart-skeleton]')?.remove();
   const existing = echarts.getInstanceByDom(node);
   if (existing) existing.dispose();
-  const themeKey = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : null;
+  const themeKey = null;
   const chart = echarts.init(node, themeKey, { renderer: 'canvas' });
   chart.setOption(buildDashboardOption(payload));
   if (window.ResizeObserver) {
@@ -649,7 +648,6 @@ document.addEventListener('DOMContentLoaded', () => {
     window.addEventListener('resize', resizeDashboardCharts);
   }
 });
-window.addEventListener('qb-theme-change', () => setTimeout(renderDashboardCharts, 50));
 
 // ── Per-card type toggle + palette switcher ───────────────────────────────────
 const DASH_TYPES = ['bar','line','area','pie','donut','scatter'];
@@ -669,9 +667,8 @@ function mountDashChartControls(ctrlRow) {
   const typeHtml = visibleTypes.map(t =>
     `<button class="dctt-btn${ct===t?' dctt-active':''}" data-type="${t}">${t.charAt(0).toUpperCase()+t.slice(1)}</button>`
   ).join('');
-  const _swatchDark1 = document.documentElement.getAttribute('data-theme') === 'dark';
   const palHtml = Object.entries(_PALETTES).map(([n,modes]) => {
-    const c = (_swatchDark1 ? modes.dark : modes.light) || modes.light;
+    const c = modes;
     return `<button class="dcpt-swatch${pal===n?' dcpt-active':''}" data-palette="${n}" title="${n}"
        style="background:linear-gradient(90deg,${c[0]} 33%,${c[1]} 33%,${c[1]} 66%,${c[2]} 66%)"></button>`;
   }).join('');
@@ -784,13 +781,12 @@ function openChartModal(cardEl) {
     ? payload.renderable_types
     : (Array.isArray(payload.allowed_types) ? payload.allowed_types : DASH_TYPES);
   const modalTypes = DASH_TYPES.filter(t => modalAllowed.includes(t));
-  const _swatchDark2 = document.documentElement.getAttribute('data-theme') === 'dark';
   ctrlEl.innerHTML = modalTypes.map(t =>
     `<button class="dctt-btn${ct===t?' dctt-active':''}" data-type="${t}">${t.charAt(0).toUpperCase()+t.slice(1)}</button>`
   ).join('')
   + `<span class="dash-ctrl-sep"></span>`
   + Object.entries(_PALETTES).map(([n,modes]) => {
-    const c = (_swatchDark2 ? modes.dark : modes.light) || modes.light;
+    const c = modes;
     return `<button class="dcpt-swatch${pal===n?' dcpt-active':''}" data-palette="${n}" title="${n}"
        style="background:linear-gradient(90deg,${c[0]} 33%,${c[1]} 33%,${c[1]} 66%,${c[2]} 66%)"></button>`;
   }).join('');
@@ -798,7 +794,7 @@ function openChartModal(cardEl) {
   const canvas = document.getElementById('chart-modal-canvas');
   const existing = echarts.getInstanceByDom(canvas);
   if (existing) existing.dispose();
-  const themeKey = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : null;
+  const themeKey = null;
   const mc = echarts.init(canvas, themeKey, { renderer: 'canvas' });
   mc.setOption(buildDashboardOption(payload));
   requestAnimationFrame(() => { try { mc.resize(); } catch {} });

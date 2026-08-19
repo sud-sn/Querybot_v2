@@ -589,17 +589,17 @@ class ChartClickToDrillTests(unittest.TestCase):
         # (\bbreak\s+(?:it|this|these|that)\s+down\b) matches on.
         self.assertIn("Break this down for ${label}", src)
 
-    def test_render_chart_into_wires_click_on_initial_render_and_theme_change(self):
+    def test_render_chart_into_wires_click_once_on_the_rendered_chart(self):
         src = self._read()
         start = src.index("function renderChartInto(chartEl, payload)")
         end = src.index("\nfunction ", start + 1)
         block = src[start:end]
-        occurrences = block.count("_wireChartDrillClick(")
-        # Once for the initial chart instance, once for the fresh instance
-        # created inside the qb-theme-change listener (dispose + re-init
-        # drops any handler bound to the old instance).
-        self.assertEqual(occurrences, 2, block)
-        self.assertIn("qb-theme-change", block)
+        # It used to be wired twice: once on the initial instance and once on
+        # the fresh instance a theme change created. The product is light only,
+        # so there is no rebuild, and a second wiring would mean a listener
+        # bound to an instance nothing disposes.
+        self.assertEqual(block.count("_wireChartDrillClick("), 1, block)
+        self.assertNotIn("qb-theme-change", block)
 
 
 class ChartPaletteValidationTests(unittest.TestCase):
@@ -625,12 +625,12 @@ class ChartPaletteValidationTests(unittest.TestCase):
     # -- OKLCH / CVD math, ported from the dataviz skill's
     # scripts/validate_palette.js (same thresholds, same Machado-Oliveira-
     # Fernandes 2009 CVD transforms) --
-    BAND = {"light": (0.43, 0.77), "dark": (0.48, 0.67)}
+    BAND = {"light": (0.43, 0.77)}   # one theme, one band
     CHROMA_FLOOR = 0.10
     CVD_FLOOR = 6.0
     NORMAL_FLOOR = 15.0  # hard gate; sunset/forest are documented exceptions below
     CONTRAST_MIN = 3.0
-    SURFACES = {"light": "#ffffff", "dark": "#0f172a"}
+    SURFACES = {"light": "#FCFDFC"}  # the chart card surface
     MACHADO = {
         "protan": [[0.152286, 1.052583, -0.204868], [0.114503, 0.786281, 0.099216],
                    [-0.003882, -0.048116, 1.051998]],
@@ -731,25 +731,12 @@ class ChartPaletteValidationTests(unittest.TestCase):
                     break
         outer_block = src[outer_start + 1:i]  # contents between the outer { and }
 
+        # One flat array per palette. Each used to nest a light and a dark
+        # array; the second went with the dark theme. The "light" key is kept
+        # in the returned shape so the gates below read unchanged.
         result = {}
-        for name_match in re.finditer(r"(\w+):\s*\{", outer_block):
-            name = name_match.group(1)
-            inner_start = name_match.end()
-            depth = 1
-            j = inner_start
-            for j in range(inner_start, len(outer_block)):
-                if outer_block[j] == "{":
-                    depth += 1
-                elif outer_block[j] == "}":
-                    depth -= 1
-                    if depth == 0:
-                        break
-            inner_block = outer_block[inner_start:j]
-            modes = {}
-            for mode_match in re.finditer(r"(light|dark):\s*\[([^\]]*)\]", inner_block):
-                hexes = re.findall(r"#[0-9a-fA-F]{6}", mode_match.group(2))
-                modes[mode_match.group(1)] = hexes
-            result[name] = modes
+        for name, arr in re.findall(r"^  (\w+):\s*(\[[^\]]*\])", outer_block, re.M):
+            result[name] = {"light": re.findall(r"#[0-9a-fA-F]{6}", arr)}
         return result
 
     def test_there_is_exactly_one_palette_definition(self):
@@ -765,12 +752,12 @@ class ChartPaletteValidationTests(unittest.TestCase):
             self.assertEqual(local, {},
                              f"{path.name} declares palettes again; there must be one copy")
 
-    def test_default_ocean_candy_pass_every_hard_gate_both_modes(self):
+    def test_default_ocean_candy_pass_every_hard_gate(self):
         # These three were tuned to fully pass; a regression here means a
         # future edit broke a previously-clean palette.
         palettes = self._extract_palettes(self.PALETTES.read_text(encoding="utf-8"))
         for name in ("default", "ocean", "candy"):
-            for mode in ("light", "dark"):
+            for mode in ("light",):
                 hexes = palettes[name][mode]
                 with self.subTest(palette=name, mode=mode):
                     lo, hi = self.BAND[mode]
@@ -803,7 +790,7 @@ class ChartPaletteValidationTests(unittest.TestCase):
         palettes = self._extract_palettes(self.PALETTES.read_text(encoding="utf-8"))
         minimums = {"sunset": 14.0, "forest": 9.0}
         for name, floor in minimums.items():
-            for mode in ("light", "dark"):
+            for mode in ("light",):
                 hexes = palettes[name][mode]
                 pairs = list(zip(hexes, hexes[1:]))
                 worst_normal = min(self._delta_e(a, b) for a, b in pairs)
@@ -835,7 +822,7 @@ class ChartPaletteValidationTests(unittest.TestCase):
         # the code comment documenting its ordinal reclassification is
         # still present.
         palettes = self._extract_palettes(self.PALETTES.read_text(encoding="utf-8"))
-        for mode in ("light", "dark"):
+        for mode in ("light",):
             for c in palettes["mono"][mode]:
                 _, C = self._oklch(c)
                 self.assertLess(C, self.CHROMA_FLOOR, f"mono/{mode} {c} unexpectedly clears the chroma floor")

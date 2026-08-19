@@ -723,24 +723,6 @@ function _readTypePalette(){
 }
 _readTypePalette();
 
-/* base.html fires this when the operator toggles the theme. Re-read the palette
-   and restyle in place, so the canvas follows the shell instead of staying on
-   whichever theme it was loaded in. */
-window.addEventListener('qb-theme-change', () => {
-  _readTypePalette();
-  if (typeof cy !== 'undefined' && cy) {
-    cy.nodes().forEach(n => {
-      const et = n.data('entityType');
-      if (!et) return;
-      n.data('color',   TYPE_COLORS[et] || TYPE_COLORS.dimension);
-      n.data('bgColor', TYPE_BG[et]     || TYPE_BG.dimension);
-    });
-    // cyStyle() bakes resolved colours in, so the whole stylesheet is rebuilt
-    // rather than just refreshed -- an update() alone would keep the old theme's
-    // edge and label colours.
-    cy.style(cyStyle()).update();
-  }
-});
 const TYPE_LABELS = { fact:'FACT', dimension:'DIM', bridge:'BRIDGE' };
 const TYPE_ORDER  = ['fact', 'dimension', 'bridge'];
 

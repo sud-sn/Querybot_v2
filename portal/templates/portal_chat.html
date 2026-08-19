@@ -1580,14 +1580,13 @@ function renderChartWarnings(payload) {
 function _buildAnnotationMarkPoints(payload, labels, values) {
   const ann = payload?.annotations;
   if (!ann) return [];
-  const dark = document.documentElement.getAttribute('data-theme') === 'dark';
   const points = [];
   const push = (entry, kind) => {
     if (!entry) return;
     const idx = labels.indexOf(String(entry.period ?? ''));
     if (idx < 0 || values[idx] == null) return;
     const isDrop = kind === 'drop';
-    const status = window.QB_CHART_STATUS(dark);
+    const status = window.QB_CHART_STATUS();
     const statusColor = status.color[kind];
     const labelColor = status.label[kind];
     const labelBackground = status.background[kind];
@@ -1639,9 +1638,8 @@ function buildChartOption(payload) {
   let   yKeys       = Array.isArray(payload?.y_keys) ? payload.y_keys : [];
 
   const palName     = payload?.color_palette || 'default';
-  const dark        = document.documentElement.getAttribute('data-theme') === 'dark';
   const palette     = _PALETTES[palName] || _PALETTES.default;
-  const colors      = (dark ? palette.dark : palette.light) || palette.light;
+  const colors      = palette;
   const gradPair    = _PAL_GRAD[palName]  || _PAL_GRAD.default;
 
   // Series past the palette's length used to wrap round with `i % colors.length`,
@@ -1834,7 +1832,7 @@ function buildChartOption(payload) {
           fontSize: 11,
         },
         labelLine: { show: labels.length <= 8, length: 8, length2: 6 },
-        itemStyle: { borderRadius: 6, borderColor: dark ? '#1A1D21' : '#fff', borderWidth: 2 },
+        itemStyle: { borderRadius: 6, borderColor: chrome.surface, borderWidth: 2 },
         emphasis: { itemStyle: { shadowBlur: 14, shadowColor: 'rgba(0,0,0,.2)' }, scale: true, scaleSize: 6 },
       }],
     };
@@ -1896,7 +1894,7 @@ function buildChartOption(payload) {
         calculable: true,
         orient: 'vertical',
         right: 4, top: 'center',
-        inRange: { color: [dark ? '#1e293b' : '#f0f9ff', '#0ea5e9', '#0369a1'] },
+        inRange: { color: window.QB_HEATMAP_RAMP },
         textStyle: { color: axisColor, fontSize: 10 },
         formatter: v => v.toFixed(0) + '%',
       },
@@ -1906,7 +1904,7 @@ function buildChartOption(payload) {
         label: {
           show: periodKeys.length <= 12,
           formatter: p => p.data[2] != null ? p.data[2].toFixed(0) + '%' : '',
-          color: dark ? '#f8fafc' : '#0f172a',
+          color: chrome.tooltipText,
           fontSize: 9,
         },
         emphasis: { itemStyle: { shadowBlur: 8, shadowColor: 'rgba(0,0,0,.3)' } },
@@ -2287,7 +2285,7 @@ function buildChartOption(payload) {
         },
         itemStyle: { gapWidth: 2, borderWidth: 0 },
         levels: [{
-          itemStyle: { borderWidth: 2, borderColor: dark ? '#0f172a' : '#fff', gapWidth: 2 },
+          itemStyle: { borderWidth: 2, borderColor: chrome.surface, gapWidth: 2 },
           upperLabel: { show: false },
         }],
         emphasis: { itemStyle: { shadowBlur: 8, shadowColor: 'rgba(0,0,0,.3)' } },
@@ -2470,7 +2468,7 @@ function renderChartInto(chartEl, payload){
   try {
     const existing = echarts.getInstanceByDom(chartEl);
     if (existing) existing.dispose();
-    const chart = echarts.init(chartEl, document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : null, { renderer: 'canvas' });
+    const chart = echarts.init(chartEl, null, { renderer: 'canvas' });
     chart.setOption(buildChartOption(payload), true);
     _wireChartDrillClick(chart, payload);
     window.__qbCharts = window.__qbCharts || [];
@@ -2484,16 +2482,6 @@ function renderChartInto(chartEl, payload){
     } else {
       window.addEventListener('resize', () => { try { chart.resize(); } catch {} });
     }
-    window.addEventListener('qb-theme-change', () => {
-      try {
-        chart.dispose();
-        const next = echarts.init(chartEl, document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : null, { renderer: 'canvas' });
-        next.setOption(buildChartOption(payload), true);
-        _wireChartDrillClick(next, payload);
-        window.__qbCharts = window.__qbCharts || [];
-        window.__qbCharts.push(next);
-      } catch {}
-    }, { once: true });
   } catch (err) {
     chartEl.innerHTML = `<div class="msg-system" style="margin:0">Unable to render chart.</div>`;
     console.error('Chart render failed', err, payload);
@@ -2528,9 +2516,8 @@ function _mountChartControls(wrapEl, chartId, onUpdate) {
   ).join('');
 
   // Palette switcher: small gradient swatches
-  const _swatchDark = document.documentElement.getAttribute('data-theme') === 'dark';
   const palHtml = Object.entries(_PALETTES).map(([name, modes]) => {
-    const cols = (_swatchDark ? modes.dark : modes.light) || modes.light;
+    const cols = modes;
     return `<button type="button" class="cpt-swatch${pal===name?' cpt-active':''}"
        data-palette="${name}" title="${name}"
        style="background:linear-gradient(90deg,${cols[0]} 0%,${cols[0]} 33%,${cols[1]} 33%,${cols[1]} 66%,${cols[2]} 66%)">

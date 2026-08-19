@@ -36,6 +36,15 @@
    ============================================================ */
 
 :root {
+  /* ── One theme ──────────────────────────────────────────────
+     The product is light only. This declaration is not cosmetic:
+     without it a visitor whose OS is set to dark gets dark
+     scrollbars, dark form controls and a dark autofill wash on a
+     light page, because the browser still believes it may render
+     UA widgets either way. Pinning it here is what makes the
+     removal of the dark theme complete rather than partial. */
+  color-scheme: light;
+
   /* ── Type families ──────────────────────────────────────────
      These are the tokens the old file was missing entirely,
      which is why seven different mono stacks had accumulated
@@ -226,90 +235,3 @@
 /* ── Dark mode overrides ──────────────────────────────────────
    The brand hue lifts to its bright twin so it still carries on
    ink; the neutrals keep the same green bias so the two themes
-   read as one family rather than as two products. */
-html[data-theme='dark'],
-body[data-theme='dark'] {
-  --bg:        #0D1411;
-  --bg-soft:   #101815;
-  --bg-muted:  #1E2A26;
-  --surface:   #141C19;
-  --surface-2: #1A241F;
-  --surface-3: #212D28;
-  --border:        #26332E;
-  --border-strong: #3A4A44;
-
-  --gray-50:  #0D1411;
-  --gray-100: #141C19;
-  --gray-200: #1E2A26;
-  --gray-300: #26332E;
-  --gray-400: #4E605A;
-  --gray-500: #92A39D;
-  --gray-600: #AFBEB8;
-  --gray-700: #C9D6D1;
-  --gray-800: #DEE9E4;
-  --gray-900: #EFF6F2;
-
-  --text:       #E9F1ED;
-  --text-soft:  #C4D2CD;
-  --text-muted: #90A19B;
-
-  /* brighter verdigris on ink */
-  --blue:       #2BD4BA;
-  --blue-mid:   #56E3CD;
-  --blue-soft:  #56E3CD;
-  --blue-light: rgba(43, 212, 186, .15);
-  --primary:       #2BD4BA;
-  --primary-hover: #56E3CD;
-  --primary-soft:  rgba(43, 212, 186, .15);
-  /* On the bright twin, ink beats white for legibility. */
-  --on-primary:    #08201B;
-
-  --teal-900: #EDF9F6;
-  --teal-800: #D7F2EC;
-  --teal-700: #56E3CD;
-  --teal-600: #2BD4BA;
-  --teal-500: #14A08A;
-  --teal-400: #3FC0A9;
-  --teal-300: #7FD8C8;
-  --teal-200: #B3E8DE;
-  --teal-100: rgba(43, 212, 186, .18);
-  --teal-50:  rgba(43, 212, 186, .10);
-
-  --green:   #5CBE84;  --green-light:  rgba(92, 190, 132, .15);
-  --red:     #E8836E;  --red-light:    rgba(232, 131, 110, .15);
-  --amber:   #D9A93F;  --amber-light:  rgba(217, 169, 63, .15);
-  --violet:  #A48CD6;  --violet-light: rgba(164, 140, 214, .15);
-  --success: #5CBE84;  --success-soft: rgba(92, 190, 132, .14);
-  --danger:  #E8836E;  --danger-soft:  rgba(232, 131, 110, .14);
-
-  /* Entity taxonomy — lifted for the dark ground, same three hues. */
-  --entity-fact:      #D9A857;  --entity-fact-soft:  #2A2114;  --entity-fact-line:  #4A3A1E;
-  --entity-dim:       #8CA8E6;  --entity-dim-soft:   #1A2233;  --entity-dim-line:   #31405C;
-  --entity-bridge:    #B29CE0;  --entity-bridge-soft:#231C33;  --entity-bridge-line:#3D3357;
-
-  /* SQL syntax — same hues, lifted to clear 5.5 on the #141C19 editor ground. */
-  --syntax-kw:   #7B82E0;
-  --syntax-fn:   #C265D2;
-  --syntax-col:  #139D76;
-  --syntax-str:  #CE7222;
-  --syntax-num:  #1E94CA;
-  --warning: #D9A93F;  --warning-soft: rgba(217, 169, 63, .14);
-
-  --code-bg:   #0A1110;
-  --code-text: #DEE9E4;
-  --row-hover: #1B2622;
-
-  --sidebar-bg:      #0A1110;
-  --sidebar-surface: #141C19;
-  --sidebar-border:  #24312C;
-  --sidebar-text:    #EFF6F2;
-  --sidebar-muted:   #90A19B;
-  --sidebar-hover:   rgba(255, 255, 255, .055);
-  --sidebar-active:  rgba(43, 212, 186, .14);
-  --sidebar-accent:  #2BD4BA;
-
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, .30);
-  --shadow:    0 1px 3px rgba(0, 0, 0, .34), 0 1px 2px rgba(0, 0, 0, .26);
-  --shadow-md: 0 10px 22px rgba(0, 0, 0, .38), 0 4px 10px rgba(0, 0, 0, .26);
-  --shadow-lg: 0 22px 40px rgba(0, 0, 0, .44), 0 10px 18px rgba(0, 0, 0, .30);
-}

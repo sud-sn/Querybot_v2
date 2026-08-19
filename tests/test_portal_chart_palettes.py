@@ -65,16 +65,17 @@ def test_each_page_loads_the_shared_file_before_reading_it(name):
 def test_the_shared_file_defines_what_the_pages_expect(shared_source):
     assert "window.QB_PALETTES" in shared_source
 
-    names = re.findall(r"^\s{2}(\w+):\s*\{", shared_source, re.M)
+    names = re.findall(r"^\s{2}(\w+):\s*\[", shared_source, re.M)
     assert set(names) >= {"default", "ocean", "sunset", "forest", "candy", "mono"}, names
 
-    # Every palette needs both modes: a categorical ramp tuned for white does
-    # not survive being dropped on the dark chart surface.
+    # One array per palette now: the second mode went with the dark theme.
     for palette in names:
-        block = re.search(rf"{palette}:\s*\{{(.*?)\}}", shared_source, re.S)
-        assert block, palette
-        assert "light:" in block.group(1), f"{palette} has no light mode"
-        assert "dark:" in block.group(1), f"{palette} has no dark mode"
+        block = re.search(rf"{palette}:\s*(\[[^\]]*\])", shared_source)
+        assert block, f"{palette} is not a flat array"
+        assert "'#" in block.group(1), f"{palette} holds no colours"
+    palettes = shared_source[shared_source.index("window.QB_PALETTES"):
+                             shared_source.index("window.QB_PALETTE_GRADIENTS")]
+    assert "dark:" not in palettes, "a dark array came back"
 
 
 def test_the_validation_rationale_travelled_with_the_values(shared_source):

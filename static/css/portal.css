@@ -4,10 +4,6 @@
    ============================================================ */
 
 /* ── Theme-toggle icon swap ─────────────────────────────── */
-.theme-toggle .ti-sun  { display: none; }
-html[data-theme='dark']  .theme-toggle .ti-moon { display: none; }
-html[data-theme='dark']  .theme-toggle .ti-sun  { display: inline-block; }
-
 body {
   min-height: 100vh;
   overflow: auto;
@@ -90,13 +86,6 @@ body:has(.portal-app-shell) {
 }
 .portal-nav a.active svg { color: var(--sidebar-accent); }
 .portal-sidebar-spacer { flex: 1; min-height: 12px; }
-.portal-theme-toggle {
-  width: 100%;
-  justify-content: flex-start;
-  color: var(--sidebar-text);
-  background: var(--sidebar-surface);
-  border-color: var(--sidebar-border);
-}
 .portal-user-card {
   display: flex;
   gap: 10px;
