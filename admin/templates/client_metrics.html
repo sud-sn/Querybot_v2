@@ -59,11 +59,11 @@
 .fn-helper-btn{background:var(--blue-light);border:1px solid color-mix(in srgb,var(--blue) 25%,transparent);
   color:var(--blue);border-radius:5px;padding:3px 9px;font-size:12px;font-weight:800;cursor:pointer;
   font-family:Consolas,monospace;line-height:1;transition:all .15s}
-.fn-helper-btn:hover{background:var(--blue);color:#fff}
+.fn-helper-btn:hover{background:var(--blue);color:var(--on-primary)}
 .formula-test-btn{background:var(--green-light,#f0fff4);border:1px solid color-mix(in srgb,var(--green,#38a169) 25%,transparent);
   color:var(--green,#38a169);border-radius:5px;padding:3px 9px;font-size:12px;font-weight:800;cursor:pointer;
   font-family:Consolas,monospace;line-height:1;transition:all .15s}
-.formula-test-btn:hover{background:var(--green,#38a169);color:#fff}
+.formula-test-btn:hover{background:var(--green,#38a169);color:var(--on-primary)}
 .formula-test-btn:disabled{opacity:.5;cursor:default}
 /* ── Function helper popover ─────────────────────────────────────────── */
 #fn-popover{position:fixed;top:0;right:0;width:340px;height:100vh;overflow-y:auto;
@@ -131,7 +131,7 @@
 .filter-chip{font-size:11px;font-weight:800;padding:5px 10px;border-radius:999px;cursor:pointer;
   border:1px solid var(--border);background:var(--surface);color:var(--text-muted);transition:all .15s;white-space:nowrap}
 .filter-chip:hover{background:var(--blue-light);color:var(--blue);border-color:color-mix(in srgb,var(--blue) 30%,transparent)}
-.filter-chip.active{background:var(--blue);color:#fff;border-color:var(--blue)}
+.filter-chip.active{background:var(--blue);color:var(--on-primary);border-color:var(--blue)}
 .metrics-toolbar select{padding:7px 9px;border:1px solid var(--border);border-radius:6px;font-size:12px;
   background:var(--surface);color:var(--text);cursor:pointer}
 .metrics-count{font-size:11px;color:var(--text-muted);white-space:nowrap;margin-left:auto}
@@ -256,8 +256,8 @@
 .wizard-step{display:flex;align-items:center;gap:.45rem;flex-shrink:0}
 .mc-wizard-bar .wizard-step:not(:last-child){flex:1}
 .wizard-step-circle{width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;flex-shrink:0;border:2px solid var(--border);color:var(--text-muted);background:var(--surface-2);transition:background .2s,border-color .2s,color .2s}
-.wizard-step.done .wizard-step-circle{background:var(--green);border-color:var(--green);color:#fff}
-.wizard-step.active .wizard-step-circle{background:var(--blue);border-color:var(--blue);color:#fff}
+.wizard-step.done .wizard-step-circle{background:var(--green);border-color:var(--green);color:var(--on-primary)}
+.wizard-step.active .wizard-step-circle{background:var(--blue);border-color:var(--blue);color:var(--on-primary)}
 .wizard-step-label{font-size:12px;font-weight:700;color:var(--text-muted);white-space:nowrap}
 .wizard-step.done .wizard-step-label{color:var(--green)}
 .wizard-step.active .wizard-step-label{color:var(--blue)}
@@ -335,7 +335,7 @@
 #mc-dialog{position:fixed;inset:3% 3%;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:0 28px 80px rgba(0,0,0,.26);display:flex;flex-direction:column;z-index:10001;overflow:hidden}
 .mc-dialog-hd{padding:.85rem 1.1rem;border-bottom:1px solid var(--border);background:linear-gradient(180deg,var(--surface-2),var(--surface));display:flex;align-items:center;justify-content:space-between;gap:.75rem;flex-shrink:0}
 .mc-dialog-hd h2{font-size:15px;font-weight:900;margin:0;display:flex;align-items:center;gap:.5rem}
-.mc-fx-badge{font-family:Consolas,monospace;background:var(--primary,#2B5CE6);color:#fff;border-radius:4px;padding:2px 8px;font-size:13px;font-weight:700;letter-spacing:-.02em}
+.mc-fx-badge{font-family:Consolas,monospace;background:var(--primary,#2B5CE6);color:var(--on-primary);border-radius:4px;padding:2px 8px;font-size:13px;font-weight:700;letter-spacing:-.02em}
 .mc-dialog-close{background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-muted);padding:0 5px;line-height:1;transition:color .12s}
 .mc-dialog-close:hover{color:var(--text)}
 #mc-form{display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden}
@@ -355,7 +355,7 @@
 .mc-metric-item{padding:5px 10px;cursor:pointer;display:flex;align-items:center;gap:6px;border-bottom:1px solid var(--border);transition:background .1s}
 .mc-metric-item:last-child{border-bottom:none}
 .mc-metric-item:hover{background:color-mix(in srgb,var(--blue,#3182ce) 8%,var(--surface))}
-.mc-metric-fx{font-family:Consolas,monospace;background:var(--primary,#2B5CE6);color:#fff;border-radius:3px;padding:1px 5px;font-size:9px;font-weight:700;flex-shrink:0}
+.mc-metric-fx{font-family:Consolas,monospace;background:var(--primary,#2B5CE6);color:var(--on-primary);border-radius:3px;padding:1px 5px;font-size:9px;font-weight:700;flex-shrink:0}
 .mc-metric-nm{font-size:12px;font-weight:600;color:var(--text);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mc-metric-fmt{font-size:9px;color:var(--text-muted);white-space:nowrap}
 .mc-fields-panel{display:flex;flex-direction:column;flex:1;overflow:hidden;min-height:0}
@@ -3992,7 +3992,7 @@ function _showMcMetricSuggest(editor, metrics, partial){
   _mcMetricSuggestEl.innerHTML = metrics.map(function(m, i){
     var hl = '<mark style="background:none;color:var(--primary,#2B5CE6);font-weight:800">'+escHtml(m.name.slice(0, partial.length))+'</mark>'+escHtml(m.name.slice(partial.length));
     return '<div class="fcs-item" data-idx="'+i+'" onclick="_pickMetricSuggest('+i+')" style="padding:6px 12px;cursor:pointer;display:flex;align-items:center;gap:8px;border-radius:4px;margin:1px 3px;font-size:12px">'
-      +'<span style="font-family:Consolas,monospace;background:var(--primary,#2B5CE6);color:#fff;border-radius:3px;padding:1px 5px;font-size:9px;font-weight:700;flex-shrink:0">fx</span>'
+      +'<span style="font-family:Consolas,monospace;background:var(--primary,#2B5CE6);color:var(--on-primary);border-radius:3px;padding:1px 5px;font-size:9px;font-weight:700;flex-shrink:0">fx</span>'
       +'<span style="font-weight:700;flex:1">'+hl+'</span>'
       +'<span style="font-size:9px;color:var(--text-muted)">'+(m.result_format||"")+'</span>'
       +'</div>';

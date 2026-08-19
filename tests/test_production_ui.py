@@ -415,3 +415,74 @@ def test_the_tail_is_a_triangle_not_a_diagonal_stroke():
     css = _read("static/css/brand-motion.css")
     ptr = css.split(".qb-brand-motion__pointer {", 1)[1].split("}", 1)[0]
     assert "stroke" not in ptr, "the pointer is a filled shape, never a stroked line"
+
+
+# ── Admin console: colour must come from the tokens ──────────────────────────
+# Status colours hardcoded into templates were invisible to the theme, so the
+# console had light-only greens/reds/ambers on a dark shell, and white text on
+# fills that turn bright in dark mode.
+
+_STATUS_HEXES = (
+    # greens
+    "#059669", "#10B981", "#16A34A", "#38A169", "#15803D", "#166534", "#065F46",
+    "#DCFCE7", "#ECFDF5", "#A7F3D0", "#D1FAE5",
+    # reds
+    "#DC2626", "#EF4444", "#E53E3E", "#B91C1C", "#991B1B",
+    "#FEE2E2", "#FEF2F2", "#FECACA",
+    # ambers
+    "#D97706", "#F59E0B", "#B45309", "#92400E", "#FEF3C7", "#FFFBEB", "#FDE68A",
+    # blues
+    "#2563EB", "#1D4ED8", "#3B82F6", "#4F46E5", "#EFF6FF", "#DBEAFE", "#BFDBFE",
+)
+
+_STATUS_COLOUR_PAGES = (
+    "base.html",
+    "client_learning_queue.html",
+    "client_compliance.html",
+    "client_pending_users.html",
+    "client_model_health.html",
+)
+
+
+def test_status_colours_in_admin_come_from_tokens():
+    """These pages express success/warning/danger, which the token set already
+    defines for both themes. client_graph and client_metrics are deliberately
+    excluded: their palettes are categorical (entity type, chart series), and
+    mapping 'fact table' onto var(--warning) would be a lie."""
+    offenders = {}
+    for page in _STATUS_COLOUR_PAGES:
+        source = _read(f"admin/templates/{page}").upper()
+        found = sorted({h for h in _STATUS_HEXES if h in source})
+        if found:
+            offenders[page] = found
+    assert not offenders, (
+        f"hardcoded status colours are invisible to the theme: {offenders}"
+    )
+
+
+def test_the_toast_reads_the_theme():
+    """qbToast held a private stock-Tailwind palette with light-only
+    backgrounds, so every toast in the console ignored dark mode."""
+    base = _read("admin/templates/base.html")
+    block = base.split("var colors = {", 1)[1].split("};", 1)[0]
+    assert "#" not in block, f"qbToast still hardcodes colour: {block.strip()[:120]}"
+    for token in ("--success", "--danger", "--warning", "--primary"):
+        assert token in block, f"qbToast does not use {token}"
+
+
+def test_no_white_text_on_a_token_fill():
+    """--primary is the bright verdigris in dark mode, where white text on it
+    measures 1.87:1. --on-primary exists for this and flips to near-black."""
+    offenders = {}
+    for path in sorted((ROOT / "admin" / "templates").glob("*.html")):
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if "svg" in line.lower() or "stroke=" in line or 'fill="' in line:
+                continue
+            if not re.search(r"background:\s*var\(--", line):
+                continue
+            if re.search(r"color:\s*#(fff|ffffff)\b", line, re.I):
+                offenders.setdefault(path.name, []).append(number)
+    assert not offenders, (
+        f"white text on a token fill is unreadable in dark mode; use "
+        f"var(--on-primary): {offenders}"
+    )

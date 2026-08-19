@@ -12,7 +12,7 @@
 <style>
 .compliance-head{display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;margin-bottom:1rem}
 .readiness{padding:.45rem .7rem;border-radius:999px;font-size:12px;font-weight:800;letter-spacing:.03em}
-.ready-green{background:#dcfce7;color:#166534}.ready-amber{background:#fef3c7;color:#92400e}.ready-red{background:#fee2e2;color:#991b1b}
+.ready-green{background:var(--success-soft);color:var(--success)}.ready-amber{background:var(--warning-soft);color:var(--warning)}.ready-red{background:var(--danger-soft);color:var(--danger)}
 .compliance-nav{display:flex;gap:.45rem;overflow:auto;padding:.25rem 0 .55rem;margin-bottom:1rem;position:sticky;top:0;background:var(--surface);z-index:4}
 .compliance-nav button{white-space:nowrap}.compliance-panel{display:none}.compliance-panel.active{display:block}
 .stat-grid{display:grid;grid-template-columns:repeat(4,minmax(140px,1fr));gap:.75rem;margin-bottom:1rem}
@@ -198,7 +198,7 @@
           <strong>{{ item.user_name or ('user #' ~ item.portal_user_id) }}</strong>
           {% if item.user_email %}<span style="font-size:11px;color:var(--text-muted)"> {{ item.user_email }}</span>{% endif %}
           <span class="tag">{{ item.attestation_type }}</span>
-          {% if item.revoked_at %}<span class="tag" style="background:#fee2e2;color:#b91c1c">revoked {{ item.revoked_at[:10] }}</span>{% else %}<span class="tag" style="background:#dcfce7;color:#15803d">active</span>{% endif %}
+          {% if item.revoked_at %}<span class="tag" style="background:var(--danger-soft);color:var(--danger)">revoked {{ item.revoked_at[:10] }}</span>{% else %}<span class="tag" style="background:var(--success-soft);color:var(--success)">active</span>{% endif %}
           <div style="font-size:11px;color:var(--text-muted)">granted {{ item.granted_at[:10] }} by {{ item.granted_by or 'admin' }}{% if item.document_ref %} · {{ item.document_ref }}{% endif %}</div>
         </div>
         {% if not item.revoked_at %}
@@ -248,7 +248,7 @@
 
 <section class="compliance-panel" id="panel-readiness">
   <div class="card"><div class="card-header"><h2>Readiness assessment</h2></div><div class="card-body">
-    {% if assessment %}{% for item in assessment.results %}<div class="assessment-row"><span class="tag">{{ item.severity }}</span><strong style="color:{% if item.status == 'pass' %}#15803d{% else %}#b91c1c{% endif %}">{{ item.status|upper }}</strong><div>{{ item.message }}{% if item.status == 'fail' %}<br><span style="color:var(--text-muted)">{{ item.remediation }}</span>{% endif %}</div></div>{% endfor %}{% else %}<p>No assessment has been run.</p>{% endif %}
+    {% if assessment %}{% for item in assessment.results %}<div class="assessment-row"><span class="tag">{{ item.severity }}</span><strong style="color:{% if item.status == 'pass' %}var(--success){% else %}var(--danger){% endif %}">{{ item.status|upper }}</strong><div>{{ item.message }}{% if item.status == 'fail' %}<br><span style="color:var(--text-muted)">{{ item.remediation }}</span>{% endif %}</div></div>{% endfor %}{% else %}<p>No assessment has been run.</p>{% endif %}
     <div class="sticky-actions"><form method="post" action="/admin/clients/{{ client.account_id }}/compliance/assess"><button class="btn btn-secondary">Run assessment</button></form><form method="post" action="/admin/clients/{{ client.account_id }}/compliance/activate"><button class="btn btn-primary" {% if not _criticals_met %}disabled title="Complete industry profile, classification review, policy, purposes, and provider agreement (if required) first — see the checklist above"{% endif %}>Activate regulated enforcement</button></form></div>
     <p style="font-size:11px;color:var(--text-muted)">Password-only VM tenants can reach PILOT_READY. REGULATED_READY requires MFA/SSO, managed secrets and immutable external audit storage.</p>
   </div></div>
@@ -272,7 +272,7 @@
 
     <div class="stat-grid" style="margin-bottom:.75rem">
       <div class="stat">
-        <strong style="color:{% if trust.result_llm_success == 0 %}#15803d{% else %}#b91c1c{% endif %}">{{ trust.result_llm_success }}</strong>
+        <strong style="color:{% if trust.result_llm_success == 0 %}var(--success){% else %}var(--danger){% endif %}">{{ trust.result_llm_success }}</strong>
         <span>result-carrying LLM calls sent{% if _is_regulated %} (must be 0){% endif %}</span>
       </div>
       <div class="stat"><strong>{{ trust.blocked }}</strong><span>refusals recorded (proof the boundary fired)</span></div>
@@ -343,7 +343,7 @@
             {% if _enforcing %}
             <span class="tag" style="background:var(--green-light);color:var(--green)">Enforce — denials block</span>
             {% else %}
-            <span class="tag" style="background:#fef3c7;color:#92400e">Shadow — logging only, not blocking</span>
+            <span class="tag" style="background:var(--warning-soft);color:var(--warning)">Shadow — logging only, not blocking</span>
             {% endif %}
           </td>
           <td style="font-size:12px">{% if not _enforcing and _is_regulated %}Complete the readiness checklist, then activate on the Readiness tab.{% else %}Readiness tab{% endif %}</td>
@@ -354,7 +354,7 @@
             {% if _has_baa %}
             <span class="tag" style="background:var(--green-light);color:var(--green)">On file</span>
             {% else %}
-            <span class="tag" style="background:#fef3c7;color:#92400e">Not recorded</span>
+            <span class="tag" style="background:var(--warning-soft);color:var(--warning)">Not recorded</span>
             {% endif %}
           </td>
           <td style="font-size:12px">{% if not _has_baa %}Record it under AI &amp; Egress — required before activation.{% else %}AI &amp; Egress tab{% endif %}</td>

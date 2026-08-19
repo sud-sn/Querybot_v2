@@ -373,8 +373,8 @@ function renderSyncRows() {
     tr.dataset.tokensIn  = p.tokens_in;
     tr.dataset.tokensOut = p.tokens_out;
     var badge = p.exists
-      ? '<span style="font-size:10px;background:var(--blue);color:#fff;padding:1px 5px;border-radius:3px">saved</span>'
-      : '<span style="font-size:10px;background:var(--green);color:#fff;padding:1px 5px;border-radius:3px">new</span>';
+      ? '<span style="font-size:10px;background:var(--blue);color:var(--on-primary);padding:1px 5px;border-radius:3px">saved</span>'
+      : '<span style="font-size:10px;background:var(--green);color:var(--on-primary);padding:1px 5px;border-radius:3px">new</span>';
     tr.innerHTML =
       '<td><input type="checkbox" class="sync-chk" onchange="updateSyncCount()" ' + (p.exists ? '' : 'checked') + '></td>' +
       '<td><code style="font-size:12px">' + p.model + '</code></td>' +

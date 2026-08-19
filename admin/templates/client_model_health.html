@@ -293,7 +293,7 @@ table.mh-tbl tr:hover td{background:color-mix(in srgb,var(--primary) 4%,var(--su
     <div class="mh-stat">
       <div class="mh-stat-label">Eval Pass Rate</div>
       {% if eval_pass_rate is not none %}
-      <div class="mh-stat-value" style="color: {{ 'var(--green-600, #16a34a)' if eval_pass_rate >= 90 else ('var(--amber-600, #d97706)' if eval_pass_rate >= 70 else 'var(--red-600, #dc2626)') }}">{{ eval_pass_rate }}%</div>
+      <div class="mh-stat-value" style="color: {{ 'var(--green-600, var(--success))' if eval_pass_rate >= 90 else ('var(--amber-600, var(--warning))' if eval_pass_rate >= 70 else 'var(--red-600, var(--danger))') }}">{{ eval_pass_rate }}%</div>
       <div class="mh-stat-sub">
         {{ latest_eval.passed_cases }}/{{ latest_eval.total_cases }} golden questions ·
         <a href="/admin/clients/{{ client.account_id }}/evals">runs</a>
@@ -521,7 +521,7 @@ table.mh-tbl tr:hover td{background:color-mix(in srgb,var(--primary) 4%,var(--su
           <td style="padding:.35rem .5rem"><code>{{ row.fqn }}</code></td>
           <td style="padding:.35rem .5rem">{{ row.retrieved }}{% if row.floored %} <span style="color:var(--text-muted)" title="dropped by the relevance floor">({{ row.floored }} floored)</span>{% endif %}</td>
           <td style="padding:.35rem .5rem">{{ row.used_in_sql }} ({{ (row.used_rate * 100) | round | int }}%)</td>
-          <td style="padding:.35rem .5rem;{% if row.failure_rate >= 0.3 %}color:var(--red-600,#dc2626);font-weight:700{% endif %}">{{ row.failed }}</td>
+          <td style="padding:.35rem .5rem;{% if row.failure_rate >= 0.3 %}color:var(--red-600,var(--danger));font-weight:700{% endif %}">{{ row.failed }}</td>
           <td style="padding:.35rem .5rem">{{ row.borderline }}</td>
           <td style="padding:.35rem .5rem">{{ row.avg_score if row.avg_score is not none else "—" }}</td>
           <td style="padding:.35rem .5rem;font-weight:700">{{ row.attention_score }}</td>
