@@ -20,6 +20,9 @@
 .bar-fill{height:100%;border-radius:999px;background:linear-gradient(90deg,var(--blue),var(--green))}
 .bar-val{font-size:11px;color:var(--gray-500);width:50px;text-align:right;flex-shrink:0}
 .tab-pane{display:none}.tab-pane.active{display:block}
+.health-arc.green{stroke:var(--success)}
+.health-arc.amber{stroke:var(--warning)}
+.health-arc.red{stroke:var(--danger)}
 .sql-cell{display:flex;align-items:center;gap:.4rem;max-width:360px}
 .sql-cell code{flex:1;min-width:0;font-family:monospace;font-size:11px;color:var(--text-soft);background:var(--surface-2);border:1px solid var(--border);
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
@@ -251,7 +254,7 @@
           <svg viewBox="0 0 110 110" aria-hidden="true">
             <circle cx="55" cy="55" r="44" fill="none" stroke="var(--gray-100)" stroke-width="9"/>
             <circle cx="55" cy="55" r="44" fill="none" id="healthArc"
-              stroke="{% if health_score.color == 'green' %}#10b981{% elif health_score.color == 'amber' %}#f59e0b{% else %}#ef4444{% endif %}"
+              class="health-arc {{ health_score.color if health_score.color in ['green', 'amber', 'red'] else 'green' }}"
               stroke-width="9"
               stroke-dasharray="{{ (health_score.pct * 276.46 / 100)|round(1) }} 276.46"
               stroke-linecap="round"/>
@@ -491,7 +494,7 @@
       <tbody>
       {% for q in queries %}
       {% set is_drilldown = q.parent_question_id and q.parent_question_id != '' %}
-      <tr {% if is_drilldown %}style="background:rgba(99,102,241,0.06);border-left:3px solid var(--indigo-400,#818cf8)"{% endif %}>
+      <tr {% if is_drilldown %}style="background:color-mix(in srgb,var(--primary) 6%,transparent);border-left:3px solid var(--primary)"{% endif %}>
         <td class="text-xs text-muted nowrap">
           {% if is_drilldown %}<span style="color:var(--text-muted);margin-right:4px">↳</span>{% endif %}
           {{ q.created_at[5:16] }}
@@ -504,7 +507,7 @@
         </td>
         <td class="text-sm" style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{ q.question }}">
           {% if is_drilldown %}
-            <span class="badge" style="font-size:10px;background:rgba(99,102,241,0.15);color:#818cf8;margin-right:4px">drill-down</span>
+            <span class="badge" style="font-size:10px;background:color-mix(in srgb,var(--primary) 15%,transparent);color:var(--primary);margin-right:4px">drill-down</span>
           {% endif %}
           {{ q.question }}
         </td>
@@ -952,7 +955,9 @@ function toggleError(badgeEl) {
 
 // ── Client readiness live refresh ───────────────────────────────────────────
 (function(){
-  const COLOR_MAP = { green: '#10b981', amber: '#f59e0b', red: '#ef4444' };
+  // The arc takes its colour from .health-arc.{green,amber,red} in CSS, so it
+  // follows the theme; setting a stroke attribute here would override that.
+  const ARC_CLASSES = ['green', 'amber', 'red'];
   const CIRC = 276.46; // 2π × 44
 
   function _esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
@@ -972,7 +977,9 @@ function toggleError(badgeEl) {
       if (scoreEl) scoreEl.textContent = d.score;
       if (arcEl) {
         arcEl.setAttribute('stroke-dasharray', `${(d.pct * CIRC / 100).toFixed(1)} ${CIRC}`);
-        arcEl.setAttribute('stroke', COLOR_MAP[d.color] || '#10b981');
+        const tone = ARC_CLASSES.includes(d.color) ? d.color : 'green';
+        arcEl.classList.remove(...ARC_CLASSES);
+        arcEl.classList.add(tone);
       }
 
       // Grade badge (the existing static badges are hidden, we show the dynamic one)

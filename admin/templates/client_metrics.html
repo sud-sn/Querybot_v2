@@ -169,12 +169,16 @@
   box-sizing:border-box;
 }
 .sql-hl-wrap textarea{position:relative;background:transparent!important;color:transparent!important;z-index:1}
-.tok-kw{color:#2563EB;font-weight:700}
-.tok-fn{color:#7C3AED;font-weight:700}
-.tok-col{color:#047857;font-weight:600}
-.tok-str{color:#B45309}
-.tok-num{color:#0369A1}
-.tok-op{color:#64748B}
+/* Syntax colours come from tokens.css so the formula editor is readable in
+   both themes. These were fixed light-theme hexes, which measured 2.93-3.65
+   against the dark editor ground -- every token under the 4.5 floor on the one
+   surface in the product where people read SQL. */
+.tok-kw{color:var(--syntax-kw);font-weight:700}
+.tok-fn{color:var(--syntax-fn);font-weight:700}
+.tok-col{color:var(--syntax-col);font-weight:600}
+.tok-str{color:var(--syntax-str)}
+.tok-num{color:var(--syntax-num)}
+.tok-op{color:var(--text-muted)}
 /* ── Synonym collision warning ──────────────────────────────────────── */
 .collision-warn{display:none;margin-top:.35rem;padding:5px 9px;border-radius:5px;font-size:11px;line-height:1.5;
   background:color-mix(in srgb,var(--amber,#d69e2e) 10%,var(--surface));

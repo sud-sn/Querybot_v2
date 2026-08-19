@@ -625,3 +625,89 @@ def test_the_canvas_repaints_when_the_theme_changes():
         "the stylesheet must be rebuilt from cyStyle(); a bare cy.style().update() "
         "re-applies the sheet that already has the old theme's colours baked in"
     )
+
+
+# ── SQL syntax highlighting ───────────────────────────────────────────────────
+# The formula editor's token colours were fixed light-theme hexes, so on the
+# dark editor ground (#141C19) every one of them measured 2.72-3.39 against the
+# 4.5 floor — measured in a browser on .sql-hl-backdrop, the layer that actually
+# carries the spans. That is the one surface in the product where a person reads
+# SQL. Both themes now come from --syntax-* in tokens.css.
+
+_SYNTAX_GROUND = {"light": "#FCFDFC", "dark": "#141C19"}
+_SYNTAX_TOKENS = ("--syntax-kw", "--syntax-fn", "--syntax-col",
+                  "--syntax-str", "--syntax-num")
+
+
+def _relative_luminance(hex_colour: str) -> float:
+    hex_colour = hex_colour.lstrip("#")
+    channels = [int(hex_colour[i:i + 2], 16) / 255 for i in (0, 2, 4)]
+    linear = [c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+              for c in channels]
+    return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+
+
+def _contrast(a: str, b: str) -> float:
+    hi, lo = sorted((_relative_luminance(a), _relative_luminance(b)), reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def _theme_blocks(css: str) -> dict:
+    """Split tokens.css into its light (:root) and dark declarations.
+
+    The dark selector is written html[data-theme='dark'], body[data-theme='dark']
+    -- single quotes, and matching either element, which is why the portal
+    (which sets it on html) and the admin console (which sets it on body) both
+    theme correctly."""
+    match = re.search(r"""\[data-theme=['"]dark['"]\]""", css)
+    assert match, "tokens.css has no dark-theme block"
+    return {"light": css[:match.start()], "dark": css[match.start():]}
+
+
+def _token(block: str, name: str) -> str:
+    match = re.search(rf"{name}:\s*(#[0-9a-fA-F]{{6}})", block)
+    assert match, f"{name} missing"
+    return match.group(1)
+
+
+def test_sql_syntax_colours_are_legible_on_both_grounds():
+    blocks = _theme_blocks(_strip_css_comments(_read("static/css/tokens.css")))
+    failures = []
+    for theme, ground in _SYNTAX_GROUND.items():
+        for name in _SYNTAX_TOKENS:
+            ratio = _contrast(_token(blocks[theme], name), ground)
+            if ratio < 4.5:
+                failures.append(f"{theme} {name} {ratio:.2f}")
+    assert not failures, (
+        "syntax colours below the 4.5 text floor on the editor ground: " + str(failures)
+    )
+
+
+def test_sql_syntax_colours_stay_distinguishable_from_each_other():
+    """A categorical set whose members converge stops doing its only job."""
+    blocks = _theme_blocks(_strip_css_comments(_read("static/css/tokens.css")))
+    for theme in _SYNTAX_GROUND:
+        values = {n: _token(blocks[theme], n) for n in _SYNTAX_TOKENS}
+        names = list(values)
+        for i, a in enumerate(names):
+            for b in names[i + 1:]:
+                ra = [int(values[a][j:j + 2], 16) for j in (1, 3, 5)]
+                rb = [int(values[b][j:j + 2], 16) for j in (1, 3, 5)]
+                distance = sum((x - y) ** 2 for x, y in zip(ra, rb)) ** 0.5
+                assert distance > 40, (
+                    f"{theme}: {a} and {b} are {distance:.0f} apart and will read "
+                    f"as the same token kind"
+                )
+
+
+def test_the_editor_reads_its_syntax_colours_from_the_tokens():
+    """A local hex here is how the dark-mode failure happened the first time."""
+    metrics = _read("admin/templates/client_metrics.html")
+    for name in _SYNTAX_TOKENS:
+        assert f"var({name})" in metrics, f"{name} is not used by the editor"
+    for rule in ("tok-kw", "tok-fn", "tok-col", "tok-str", "tok-num"):
+        match = re.search(rf"\.{rule}\{{color:([^;}}]+)", metrics)
+        assert match, rule
+        assert match.group(1).startswith("var(--"), (
+            f".{rule} hardcodes {match.group(1)} instead of using a token"
+        )

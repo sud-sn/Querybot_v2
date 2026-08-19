@@ -73,9 +73,9 @@
 .btn-use:hover{background:var(--blue);border-color:var(--blue);color:var(--on-primary)}
 .btn-use.selected{background:var(--blue);border-color:var(--blue);color:var(--on-primary)}
 .az-badge{display:inline-flex;align-items:center;gap:3px;font-size:10px;padding:2px 7px;border-radius:8px;font-weight:600}
-.az-badge.succeeded{background:#dcfce7;color:#166534}
-.az-badge.failed{background:#fee2e2;color:#991b1b}
-.az-badge.updating{background:#fef3c7;color:#92400e}
+.az-badge.succeeded{background:var(--success-soft);color:var(--success)}
+.az-badge.failed{background:var(--danger-soft);color:var(--danger)}
+.az-badge.updating{background:var(--warning-soft);color:var(--warning)}
 
 .az-selected-summary{margin-top:.75rem;padding:.65rem .875rem;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;font-size:12px;color:var(--text-muted)}
 .az-selected-summary strong{color:var(--text)}
@@ -113,9 +113,9 @@
 .svc-row{display:flex;align-items:center;gap:.875rem;padding:.75rem 0;border-bottom:1px solid var(--border)}
 .svc-row:last-child{border-bottom:none;padding-bottom:0}
 .svc-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
-.svc-dot.up{background:#16a34a}
-.svc-dot.down{background:#dc2626}
-.svc-dot.checking{background:#d97706;animation:svc-pulse 1s ease-in-out infinite}
+.svc-dot.up{background:var(--success)}
+.svc-dot.down{background:var(--danger)}
+.svc-dot.checking{background:var(--warning);animation:svc-pulse 1s ease-in-out infinite}
 @keyframes svc-pulse{0%,100%{opacity:1}50%{opacity:.4}}
 .svc-name{font-size:13px;font-weight:700;color:var(--text);min-width:80px}
 .svc-meta{font-size:11px;color:var(--text-muted);flex:1}
@@ -124,8 +124,8 @@
 .btn-svc:hover{background:var(--blue);border-color:var(--blue);color:var(--on-primary)}
 .btn-svc:disabled{opacity:.5;cursor:not-allowed}
 .svc-result{font-size:11px;font-weight:600}
-.svc-result.ok{color:#16a34a}
-.svc-result.err{color:#dc2626}
+.svc-result.ok{color:var(--success)}
+.svc-result.err{color:var(--danger)}
 
 /* ── Database backend section ── */
 .db-backend-switch{display:inline-flex;gap:.35rem;padding:.3rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface-2);box-shadow:var(--shadow)}
@@ -136,14 +136,14 @@
 .db-panel.active{display:block}
 .db-active-status{display:inline-flex;align-items:center;gap:.5rem;font-size:12px;padding:.4rem .75rem;border-radius:6px;background:var(--surface-2);border:1px solid var(--border);margin-bottom:1rem}
 .db-active-status .dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
-.db-active-status .dot.sqlite{background:#64748b}
-.db-active-status .dot.postgres{background:#16a34a}
-.db-restart-notice{display:flex;align-items:center;gap:.6rem;padding:.65rem .875rem;border-radius:8px;background:#fef9c3;border:1px solid #fde047;font-size:12px;color:#713f12;margin-top:1rem}
+.db-active-status .dot.sqlite{background:var(--text-muted)}
+.db-active-status .dot.postgres{background:var(--success)}
+.db-restart-notice{display:flex;align-items:center;gap:.6rem;padding:.65rem .875rem;border-radius:8px;background:var(--warning-soft);border:1px solid color-mix(in srgb,var(--warning) 35%,transparent);font-size:12px;color:var(--warning);margin-top:1rem}
 .btn-restart{margin-left:auto;flex-shrink:0;padding:6px 14px;background:#92400e;color:#fff;border:none;border-radius:var(--radius-sm);font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap}
 .btn-restart:hover{filter:brightness(1.15)}
 .btn-restart:disabled{opacity:.55;cursor:not-allowed}
 .restart-strip{display:flex;align-items:center;gap:.6rem;padding:.65rem .875rem;border-radius:8px;font-size:12px;margin-top:.5rem}
-.restart-strip.inprogress{background:#fef3c7;border:1px solid #fde047;color:#713f12}
+.restart-strip.inprogress{background:var(--warning-soft);border:1px solid color-mix(in srgb,var(--warning) 35%,transparent);color:var(--warning)}
 .restart-strip.success{background:#dcfce7;border:1px solid #86efac;color:#166534}
 .restart-strip.error{background:#fee2e2;border:1px solid #fca5a5;color:#991b1b}
 @keyframes restart-spin{to{transform:rotate(360deg)}}
@@ -458,7 +458,7 @@
     <div class="card-header">
       <h2>Database backend</h2>
       {% if restart_needed %}
-      <span class="badge" style="background:#fef9c3;color:#713f12;border:1px solid #fde047;font-size:11px">Restart required</span>
+      <span class="badge" style="background:var(--warning-soft);border:1px solid color-mix(in srgb,var(--warning) 35%,transparent);color:var(--warning);font-size:11px">Restart required</span>
       {% endif %}
     </div>
     <div class="card-body">
@@ -952,7 +952,7 @@ function refreshQdrantStatus() {
         btn.disabled = (d.manager === 'unknown');
       } else {
         dot.className = 'svc-dot down';
-        meta.innerHTML = '<strong style="color:#dc2626">Offline</strong>'
+        meta.innerHTML = '<strong style="color:var(--danger)">Offline</strong>'
           + ' &nbsp;·&nbsp; port 6333 not responding'
           + (d.manager !== 'unknown'
               ? ' &nbsp;·&nbsp; <span style="color:var(--text-muted)">' + d.manager_label + '</span>'

@@ -128,6 +128,23 @@
   --entity-fact:      #8A5A12;  --entity-fact-soft:  #F7EFDF;  --entity-fact-line:  #E0C99B;
   --entity-dim:       #2D4B8E;  --entity-dim-soft:   #E6ECF7;  --entity-dim-line:   #B9C8E5;
   --entity-bridge:    #6B4FA8;  --entity-bridge-soft:#ECE6F7;  --entity-bridge-line:#C7B8E5;
+  /* ── SQL syntax highlighting ─────────────────────────────────
+     A categorical set, like the entity taxonomy above: the hues
+     exist to tell token kinds apart, so they are deliberately not
+     the brand colour. They were hardcoded light-theme values in
+     client_metrics.html — stock Tailwind, and measured 2.72-3.39
+     against the dark editor ground, every token below the 4.5 floor
+     on the one surface in the product where people read SQL. Both
+     sets are derived here rather than inherited: five spread hues,
+     each tuned to clear 5.0 on its own ground, closest pair 67 units
+     apart so no two token kinds read alike.
+     The operator is punctuation, so it takes --text-muted rather
+     than a colour of its own. */
+  --syntax-kw:   #5860D8;   /* keyword   */
+  --syntax-fn:   #AB38C0;   /* function  */
+  --syntax-col:  #0F7D5E;   /* column    */
+  --syntax-str:  #A45B1B;   /* string    */
+  --syntax-num:  #1875A0;   /* number    */
   /* ── Semantic colours ───────────────────────────────────────
      Held clearly apart from the brand teal, and desaturated off
      the Tailwind defaults they used to be. */
@@ -269,6 +286,13 @@ body[data-theme='dark'] {
   --entity-fact:      #D9A857;  --entity-fact-soft:  #2A2114;  --entity-fact-line:  #4A3A1E;
   --entity-dim:       #8CA8E6;  --entity-dim-soft:   #1A2233;  --entity-dim-line:   #31405C;
   --entity-bridge:    #B29CE0;  --entity-bridge-soft:#231C33;  --entity-bridge-line:#3D3357;
+
+  /* SQL syntax — same hues, lifted to clear 5.5 on the #141C19 editor ground. */
+  --syntax-kw:   #7B82E0;
+  --syntax-fn:   #C265D2;
+  --syntax-col:  #139D76;
+  --syntax-str:  #CE7222;
+  --syntax-num:  #1E94CA;
   --warning: #D9A93F;  --warning-soft: rgba(217, 169, 63, .14);
 
   --code-bg:   #0A1110;
