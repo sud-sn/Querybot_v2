@@ -1840,7 +1840,6 @@ def _attach_failure_rca(queries: list[dict]) -> None:
 _CLIENT_TABS = {
     "overview":       "overview",
     "settings":       "settings",
-    "schema":         "schema-browser",
     "queries":        "queries",
     "egress":         "audit",
     "advanced":       "danger",
@@ -1960,9 +1959,20 @@ async def client_settings_page(request: Request, account_id: str):
     return await client_detail(request, account_id, active_tab="settings")
 
 
-@router.get("/clients/{account_id}/schema", response_class=HTMLResponse)
+@router.get("/clients/{account_id}/schema")
 async def client_schema_page(request: Request, account_id: str):
-    return await client_detail(request, account_id, active_tab="schema")
+    """Kept as a redirect only. The tab this served was a second implementation
+    of Setup's step 2 -- same endpoints, same tree, same save -- and its own save
+    confirmation told you to go to Setup to apply the selection. One picker now,
+    in the job it belongs to. The path survives so the tab's URL and its old
+    #schema-browser bookmark still land on the real thing."""
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    # 302, not 301: browsers cache a permanent redirect indefinitely, and this is
+    # an internal console where restoring a path must not need a cache purge.
+    return RedirectResponse(
+        f"/admin/clients/{account_id}/setup#kb-scope", status_code=302
+    )
 
 
 @router.get("/clients/{account_id}/queries", response_class=HTMLResponse)

@@ -39,7 +39,6 @@ _NAV_EXPECTATIONS = [
     ("queries",         "Activity",        "Queries"),
     ("traces",          "Activity",        "Timing"),
     ("egress",          "Activity",        "AI Egress Log"),
-    ("schema",          "Activity",        "Schema browser"),
     ("billing",         "Activity",        "Usage &amp; Billing"),
     ("model-health",    "Quality",         "Model Health"),
     ("learning-queue",  "Quality",         "Flagged Answers"),
@@ -52,7 +51,7 @@ _NAV_EXPECTATIONS = [
     ("advanced",        "Settings",        "Advanced"),
 ]
 
-_NEW_ROUTES = ("settings", "schema", "queries", "egress", "advanced")
+_NEW_ROUTES = ("settings", "queries", "egress", "advanced")
 
 # Pre-existing orphans, quarantined rather than hidden. The metrics editor's
 # field-browser panel is styled (.col-browser* in client_metrics.html) and its
@@ -220,27 +219,53 @@ def test_no_script_looks_up_an_element_the_page_no_longer_renders():
     )
 
 
-def test_the_schema_tree_loads_when_entered_by_its_own_url():
-    """The pane is activated server-side now, so nothing clicks the old tab
-    button. The load has to fire on DOMContentLoaded instead -- and it has to go
-    through an exported symbol: the `_loaded` flag is a `let` inside an IIFE, so
-    page-level code reading it directly sees an undeclared name, `typeof` returns
-    'undefined', and the guard is false forever. That version shipped, and it
-    silently never loaded the tree."""
+
+def test_there_is_only_one_schema_table_picker():
+    """The client page carried a second implementation of Setup's step 2: same
+    GET /schema-tree, same GET+POST /kb-tables, same tree, same checkboxes, same
+    save. Setup's is the one wired into the job — it shows the saved count, warns
+    when nothing is selected, inspects column sensitivity, feeds masking review
+    and chains into discovery. The duplicate could only tell you to go there.
+
+    Two implementations of one thing is how the pending-access badge broke: a
+    selector kept pointing at the copy that no longer shipped."""
+    # Strip Jinja comments: the note left where the duplicate stood names the
+    # endpoints it used, and that prose is not a second implementation.
+    detail = re.sub(
+        r"\{#.*?#\}", "",
+        (TEMPLATES / "client_detail.html").read_text(encoding="utf-8"), flags=re.S)
+    setup = (TEMPLATES / "client_setup.html").read_text(encoding="utf-8")
+
+    assert "kb-tables" not in detail, (
+        "the client page writes KB table selection again; that job belongs to "
+        "Setup step 2, and two writers will diverge"
+    )
+    assert "schema-tree" not in detail, "the client page renders a schema tree again"
+    assert "schema-tree" in setup and "kb-tables" in setup, (
+        "Setup lost the picker — it is now the only one, so this is not optional"
+    )
+
+
+def test_the_removed_schema_path_still_lands_somewhere_useful():
+    """The tab had a URL for one commit and an #schema-browser hash for much
+    longer. Both must resolve, or the removal breaks bookmarks."""
+    routes = (ROOT / "admin" / "routes.py").read_text(encoding="utf-8")
+    handler = routes[routes.index('@router.get("/clients/{account_id}/schema")'):]
+    handler = handler[:handler.index("\n@router.")]
+
+    assert "setup#kb-scope" in handler, "/schema no longer redirects to the picker"
+    assert "_is_auth" in handler, (
+        "the redirect skips the auth check every sibling route performs"
+    )
+    assert "status_code=301" not in handler, (
+        "301 is cached by browsers indefinitely; restoring this path would then "
+        "need a cache purge on every operator's machine"
+    )
+
+    setup = (TEMPLATES / "client_setup.html").read_text(encoding="utf-8")
+    assert 'id="kb-scope"' in setup, "the anchor the redirect targets does not exist"
+
     detail = (TEMPLATES / "client_detail.html").read_text(encoding="utf-8")
-
-    entry = re.search(
-        r"active\.id === 'tab-schema-browser' && ([\w.]+)\)\s*\{\s*([\w.]+)\(\)",
-        detail,
+    assert "'schema-browser': '/setup#kb-scope'" in detail, (
+        "the old #schema-browser bookmark no longer redirects"
     )
-    assert entry, "direct entry to /schema no longer triggers the tree load"
-    guard, call = entry.groups()
-    assert guard == call, f"guarded on {guard!r} but called {call!r}"
-    assert guard.startswith("window."), (
-        f"{guard!r} is not exported; a closure-scoped name is invisible here, so "
-        f"the guard silently evaluates false"
-    )
-    assert f"{guard} = function" in detail, f"{guard} is never defined"
-
-    # And the flag it gates stays private, so there is one gate rather than two.
-    assert "let _loaded" in detail, "the load-once flag was promoted to a global"
