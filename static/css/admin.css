@@ -694,3 +694,101 @@ html[data-theme='dark'] .cs-item.active {
   .client-workspace-primary,
   .client-workspace-secondary { padding-inline: .35rem; }
 }
+
+/* ── Dashboard inbox ───────────────────────────────────────────────────────
+   "What needs me today", above the totals. One row per kind of problem; see
+   admin/inbox.py for why it groups by signal rather than by client.
+
+   Severity reads three ways — the word, the rail colour, and the order — so it
+   survives greyscale and colour-blindness. The rail is a border, not a dot,
+   because a 8px dot at 3:1 is the weakest possible carrier of the most
+   important bit on the page. */
+.inbox { margin-bottom: 1.5rem; }
+
+.inbox-head {
+  display: flex; align-items: baseline; gap: .75rem;
+  margin-bottom: .6rem; flex-wrap: wrap;
+}
+.inbox-head h2 { margin: 0; font-size: 15px; letter-spacing: -.01em; }
+.inbox-tally { font-size: 12px; color: var(--text-muted); }
+
+.inbox-list { list-style: none; margin: 0; padding: 0; display: grid; gap: .5rem; }
+
+.inbox-item {
+  display: flex; align-items: flex-start; gap: .875rem;
+  padding: .8rem .95rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+.inbox-item--action { border-left-color: var(--danger); }
+.inbox-item--warn   { border-left-color: var(--warning); }
+.inbox-item--info   { border-left-color: var(--primary); }
+
+.inbox-sev {
+  flex: 0 0 auto; margin-top: .1rem;
+  font-size: 10px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase;
+  padding: .18rem .45rem; border-radius: 3px; white-space: nowrap;
+}
+.inbox-item--action .inbox-sev { color: var(--danger);  background: var(--danger-soft); }
+.inbox-item--warn   .inbox-sev { color: var(--warning); background: var(--warning-soft); }
+.inbox-item--info   .inbox-sev { color: var(--blue-mid); background: var(--blue-light); }
+
+.inbox-body { flex: 1 1 auto; min-width: 0; }
+.inbox-title { font-size: 13.5px; color: var(--text); }
+.inbox-title strong { font-weight: 800; font-variant-numeric: tabular-nums; }
+.inbox-spread { font-size: 11.5px; color: var(--text-muted); }
+.inbox-detail { margin: .15rem 0 0; font-size: 12px; color: var(--text-muted); }
+
+.inbox-clients { display: flex; flex-wrap: wrap; gap: .35rem; margin-top: .5rem; }
+.inbox-chip {
+  display: inline-flex; align-items: center; gap: .3rem;
+  padding: .2rem .5rem;
+  font-size: 11.5px; font-weight: 600; text-decoration: none;
+  color: var(--text); background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: 999px;
+  transition: background .15s, border-color .15s, color .15s;
+}
+.inbox-chip:hover { background: var(--row-hover); border-color: var(--primary); color: var(--primary); }
+/* The pill takes the row's severity. Brand green inside a BLOCKED row reads as
+   good news attached to a blocker. */
+.inbox-chip-n {
+  font-size: 10px; font-weight: 800; font-variant-numeric: tabular-nums;
+  padding: 0 .32rem; border-radius: 999px; border: 1px solid transparent;
+}
+.inbox-item--action .inbox-chip-n {
+  color: var(--danger);  background: var(--danger-soft);
+  border-color: color-mix(in srgb, var(--danger) 30%, transparent);
+}
+.inbox-item--warn .inbox-chip-n {
+  color: var(--warning); background: var(--warning-soft);
+  border-color: color-mix(in srgb, var(--warning) 30%, transparent);
+}
+.inbox-item--info .inbox-chip-n {
+  /* --blue-mid, not --primary: 6.36 vs 4.41 on this ground, and a 10px badge is
+     not large text, so it needs the full 4.5. Dark mode maps both to the same
+     bright teal, which already measures 6.82 there. */
+  color: var(--blue-mid); background: var(--blue-light);
+  border-color: color-mix(in srgb, var(--primary) 30%, transparent);
+}
+.inbox-more { align-self: center; font-size: 11.5px; color: var(--text-muted); }
+
+.inbox-cta { flex: 0 0 auto; white-space: nowrap; }
+
+.inbox-clear {
+  display: flex; align-items: flex-start; gap: .75rem;
+  padding: .9rem 1rem;
+  background: var(--success-soft);
+  border: 1px solid color-mix(in srgb, var(--success) 26%, transparent);
+  border-radius: var(--radius);
+}
+.inbox-clear-mark { color: var(--success); margin-top: .05rem; }
+.inbox-clear-title { font-size: 13.5px; font-weight: 800; color: var(--success); }
+.inbox-clear-body { font-size: 12px; color: var(--text-muted); margin-top: .1rem; }
+
+@media (max-width: 640px) {
+  .inbox-item { flex-wrap: wrap; }
+  .inbox-cta { margin-left: auto; }
+}

@@ -10,7 +10,7 @@
 <div class="page-header">
   <div class="page-header-body">
     <h1>Dashboard</h1>
-    <p>Live status of all connected clients and integrations.</p>
+    <p>What needs you, then the numbers.</p>
   </div>
   <div class="page-header-actions">
     <a href="/admin/clients/new" class="btn btn-primary btn-sm">{{ ic("plus", 14) }} New client</a>
@@ -38,6 +38,11 @@
     action_label="Add database"
 ) }}
 {% endif %}
+
+{# ── Inbox: the work waiting, before any totals ── #}
+{% with items = inbox, summary = inbox_summary %}
+  {% include "_inbox.html" %}
+{% endwith %}
 
 {# ── Metrics ── #}
 {% set ready_count = clients|selectattr("state","equalto","READY")|list|length %}

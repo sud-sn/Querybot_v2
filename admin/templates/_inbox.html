@@ -1,0 +1,77 @@
+{% from "icons.html" import ic %}
+{#
+  The dashboard's first screen. Above the totals, because totals are not work.
+
+  One row per KIND of problem, not per client — see admin/inbox.py for why. Each
+  affected client is its own link straight to the page that fixes it, so the row
+  is a set of actions rather than a summary the operator has to go re-derive.
+
+  Severity is carried by the word "Blocked"/"Degrading"/"FYI" as well as the
+  colour, so the ranking survives a greyscale print and a colour-blind reader.
+#}
+{% set _sev_label = {"action": "Blocked", "warn": "Degrading", "info": "FYI"} %}
+
+<section class="inbox" aria-labelledby="inbox-heading">
+  <div class="inbox-head">
+    <h2 id="inbox-heading">Needs you</h2>
+    {% if items %}
+    <span class="inbox-tally">
+      {{ summary.action }} blocked{% if summary.warn %} · {{ summary.warn }} degrading{% endif %}
+      · across {{ summary.clients }} client{{ "s" if summary.clients != 1 }}
+    </span>
+    {% endif %}
+  </div>
+
+  {% if not items %}
+  <div class="inbox-clear">
+    <span class="inbox-clear-mark" aria-hidden="true">{{ ic("check-circle", 18) }}</span>
+    <div>
+      <div class="inbox-clear-title">Nothing waiting</div>
+      <div class="inbox-clear-body">
+        No access requests, unreviewed answers, unresolved conflicts or unfinished
+        setups across any client.
+      </div>
+    </div>
+  </div>
+  {% else %}
+  <ul class="inbox-list">
+    {% for item in items %}
+    <li class="inbox-item inbox-item--{{ item.severity }}">
+      <span class="inbox-sev">{{ _sev_label[item.severity] }}</span>
+
+      <div class="inbox-body">
+        <div class="inbox-title">
+          <strong>{{ item.total if item.counted else item.client_count }}</strong>
+          {{ item.label }}
+          {% if item.counted and item.client_count > 1 %}
+          <span class="inbox-spread">in {{ item.client_count }} clients</span>
+          {% endif %}
+        </div>
+        <p class="inbox-detail">{{ item.detail }}</p>
+
+        {% if not item.single %}
+        <div class="inbox-clients">
+          {% for m in item.shown %}
+          <a class="inbox-chip" href="{{ m.href }}">
+            {{ m.client_name }}{% if m.count %}<span class="inbox-chip-n">{{ m.count }}</span>{% endif %}
+          </a>
+          {% endfor %}
+          {% if item.more %}
+          {# No link: there is no page that lists "the rest of these", and a link
+             to every client would be a worse answer than an honest count. #}
+          <span class="inbox-more">+{{ item.more }} more</span>
+          {% endif %}
+        </div>
+        {% endif %}
+      </div>
+
+      {% if item.single %}
+      <a href="{{ item.href }}" class="btn btn-secondary btn-sm inbox-cta">
+        {{ item.cta }} &rarr;
+      </a>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</section>

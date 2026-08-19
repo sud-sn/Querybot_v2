@@ -649,9 +649,15 @@ async def dashboard(request: Request):
         c["platform_name"] = plat_map.get(c["platform_config_id"], "—")
         c["db_name"]       = db_map.get(c["db_config_id"], "Not assigned")
 
+    # What needs the operator today, ahead of the totals. Grouped by kind of
+    # problem rather than by client -- see admin/inbox.py.
+    from admin.inbox import build_inbox, inbox_summary
+    inbox = build_inbox(clients, {d["id"] for d in dbs})
+
     return _resp(request, "dashboard.html", {
         "clients": clients, "platforms": platforms,
         "dbs": dbs, "stats": stats,
+        "inbox": inbox, "inbox_summary": inbox_summary(inbox),
     })
 
 
