@@ -114,10 +114,23 @@ class ModeToggleWiringTests(unittest.TestCase):
             self.assertIn(option, src)
 
     def test_switching_to_enforce_is_confirmed_client_side(self):
+        """Asserts the guarantee, not the API. This used to pin the native
+        confirm() and so broke when the console moved onto its own dialog --
+        the confirmation was never lost, only renamed."""
         src = (ROOT / "admin/templates/client_model_health.html").read_text(encoding="utf-8")
         script = src[src.index("compiler-mode-form"):]
-        self.assertIn("confirm(", script)
-        self.assertIn("enforce", script.split("confirm(", 1)[1][:400].lower())
+
+        # A dialog is raised, and it names the mode being switched to.
+        self.assertIn("qbConfirm(", script)
+        dialog = script.split("qbConfirm(", 1)[1][:600].lower()
+        self.assertIn("enforce", dialog)
+
+        # And the submit cannot proceed without it: the handler prevents the
+        # default and only re-submits from the confirm callback.
+        handler = script.split("addEventListener('submit'", 1)[1][:700]
+        self.assertIn("preventDefault()", handler)
+        self.assertIn("onConfirm", handler)
+        self.assertIn("form.submit()", handler)
 
     def test_open_error_count_warning_shown_before_switching(self):
         src = (ROOT / "admin/templates/client_model_health.html").read_text(encoding="utf-8")

@@ -10,6 +10,14 @@
 {% endblock %}
 {% block head %}
 <style>
+.compliance-nav{display:flex;flex-wrap:wrap;gap:2px;border-bottom:1px solid var(--border);margin-bottom:1.1rem}
+.compliance-tab{appearance:none;background:none;border:0;border-bottom:2px solid transparent;
+  padding:.55rem .85rem;font-size:12.5px;font-weight:600;color:var(--text-muted);cursor:pointer;
+  white-space:nowrap;transition:color var(--t-fast) var(--ease-out),border-color var(--t-fast) var(--ease-out)}
+.compliance-tab:hover{color:var(--text)}
+.compliance-tab.active{color:var(--primary);border-bottom-color:var(--primary)}
+.compliance-tab:focus-visible{outline:none;box-shadow:var(--focus-ring);border-radius:var(--radius-sm)}
+
 .compliance-head{display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;margin-bottom:1rem}
 .readiness{padding:.45rem .7rem;border-radius:999px;font-size:12px;font-weight:800;letter-spacing:.03em}
 .ready-green{background:var(--success-soft);color:var(--success)}.ready-amber{background:var(--warning-soft);color:var(--warning)}.ready-red{background:var(--danger-soft);color:var(--danger)}
@@ -87,7 +95,9 @@
 
 <div class="compliance-nav" role="tablist">
   {% for id,label in [('profile','Profile'),('classification','Classification'),('policies','Policies'),('purposes','Purposes'),('egress','AI & Egress'),('simulator','Simulator'),('readiness','Readiness'),('trust','Trust evidence'),('history','History'),('emergency','Break-glass')] %}
-  <button class="btn btn-secondary btn-sm" type="button" data-panel="{{ id }}">{{ label }}</button>
+  <button class="compliance-tab" type="button" role="tab" data-panel="{{ id }}"
+          id="tab-{{ id }}" aria-controls="panel-{{ id }}"
+          aria-selected="{{ 'true' if loop.first else 'false' }}">{{ label }}</button>
   {% endfor %}
 </div>
 
@@ -202,8 +212,9 @@
           <div style="font-size:11px;color:var(--text-muted)">granted {{ item.granted_at[:10] }} by {{ item.granted_by or 'admin' }}{% if item.document_ref %} · {{ item.document_ref }}{% endif %}</div>
         </div>
         {% if not item.revoked_at %}
-        <form method="post" action="/admin/clients/{{ client.account_id }}/compliance/attestation/{{ item.id }}/revoke" onsubmit="return confirm('Revoke this attestation? The user will see masked values again immediately.')">
-          <button class="btn btn-secondary" style="font-size:11px">Revoke</button>
+        <form method="post" action="/admin/clients/{{ client.account_id }}/compliance/attestation/{{ item.id }}/revoke" id="revoke-att-{{ item.id }}">
+          <button type="button" class="btn btn-secondary" style="font-size:11px"
+            onclick="qbConfirm({title:'Revoke this attestation?',body:'{{ item.user_id or 'This user' }} will see masked values again immediately, on their next query.',confirm:'Revoke',onConfirm:()=>document.getElementById('revoke-att-{{ item.id }}').submit()})">Revoke</button>
         </form>
         {% endif %}
       </div>
@@ -433,11 +444,31 @@
 </section>
 
 <script>
+/* Ten panels behind a tab bar that never showed which one you were on, and
+   reset to Profile on every refresh because the choice lived nowhere. The
+   active tab is now marked, and the panel is reflected in location.hash so a
+   refresh, a bookmark or a deep link all land where you left off. */
 const panels=document.querySelectorAll('.compliance-panel');
-document.querySelectorAll('[data-panel]').forEach(btn=>btn.addEventListener('click',()=>{
+const tabs=[...document.querySelectorAll('[data-panel]')];
+
+function showPanel(id, push){
+  const tab=tabs.find(t=>t.dataset.panel===id);
+  if(!tab) return false;
   panels.forEach(p=>p.classList.remove('active'));
-  document.getElementById('panel-'+btn.dataset.panel).classList.add('active');
-}));
+  document.getElementById('panel-'+id).classList.add('active');
+  tabs.forEach(t=>{
+    const on=t===tab;
+    t.classList.toggle('active',on);
+    t.setAttribute('aria-selected',on?'true':'false');
+  });
+  if(push && location.hash!=='#'+id) history.replaceState(null,'','#'+id);
+  return true;
+}
+
+tabs.forEach(btn=>btn.addEventListener('click',()=>showPanel(btn.dataset.panel,true)));
+window.addEventListener('hashchange',()=>showPanel(location.hash.slice(1),false));
+/* Deep link, or the panel the readiness strip pointed at. */
+showPanel(location.hash.slice(1)||'profile',false);
 document.getElementById('class-search')?.addEventListener('input',e=>{
   const q=e.target.value.toLowerCase();
   document.querySelectorAll('[data-search]').forEach(row=>row.style.display=row.dataset.search.toLowerCase().includes(q)?'':'none');
@@ -467,7 +498,7 @@ document.getElementById('row-policy-form')?.addEventListener('submit',async e=>{
   const next={name:'Admin row policy',subject_type:'role',subject_id:fd.get('subject_id'),table_fqn:fd.get('table_fqn'),condition:{field:fd.get('field'),operator:fd.get('operator'),value_source:fd.get('value_source'),value:value}};
   const clean=existingRowPolicies.map(p=>({name:p.name,subject_type:p.subject_type,subject_id:p.subject_id,table_fqn:p.table_fqn,condition:p.condition}));
   const resp=await fetch('/admin/api/clients/{{ client.account_id }}/compliance/row-policies',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({row_policies:[...clean,next]})});
-  if(resp.ok) location.reload(); else alert('Could not save the row policy.');
+  if(resp.ok) location.reload(); else qbToast.error('Could not save the row policy.');
 });
 </script>
 {% endblock %}

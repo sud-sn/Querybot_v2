@@ -2722,6 +2722,22 @@ function _setMetricJoinStatus(builder, message, tone){
   slot.dataset.tone = tone || "neutral";
 }
 
+/* Writes a looked-up set of date-role joins into a metric builder. Extracted so
+   the two lookup paths can hand it to qbConfirm's callback: qbConfirm cannot
+   block the way the native confirm() it replaced did, so the work that used to
+   sit after the prompt has to be callable later. */
+function _writeDateRoleJoins(form, builder, joinsEl, joins, statusText){
+  joinsEl.value = JSON.stringify(joins, null, 2);
+  var columns = builder.querySelector(".metric-builder-required-columns");
+  if(columns){
+    var existing = (columns.value || "").split(",").map(function(c){ return c.trim(); }).filter(Boolean);
+    joins.forEach(function(j){ if(j.from_column && existing.indexOf(j.from_column) === -1) existing.push(j.from_column); });
+    columns.value = existing.join(", ");
+  }
+  if(statusText) _setMetricJoinStatus(builder, statusText, "ok");
+  _syncMetricBuilder(form);
+}
+
 async function _applyDateRoleJoins(form, opts){
   opts = opts || {};
   var builder = form ? form.querySelector(".metric-builder") : null;
@@ -2736,7 +2752,7 @@ async function _applyDateRoleJoins(form, opts){
   var baseTableInput = form.querySelector("[name='base_table']");
   var table = baseTableInput ? baseTableInput.value.trim() : "";
   if(!table){
-    if(opts.showAlerts) alert("Set the Base table field (Advanced options) first — date roles are looked up per table.");
+    if(opts.showAlerts) qbToast.warning("Set the Base table field (Advanced options) first — date roles are looked up per table.");
     return false;
   }
 
@@ -2759,23 +2775,18 @@ async function _applyDateRoleJoins(form, opts){
       joins = joins.filter(function(j){ return keySet[String(j.from_column || "").toUpperCase()]; });
     }
     if(!joins.length){
-      if(opts.showAlerts) alert("No matching date roles were detected for "+table+". Rebuild the KB, check the Date Roles page, or enter joins manually.");
+      if(opts.showAlerts) qbToast.warning("No matching date roles were detected for "+table+". Rebuild the KB, check the Date Roles page, or enter joins manually.");
       else _setMetricJoinStatus(builder, "No matching date roles found yet", "warn");
       return false;
     }
-    if(joinsEl.value.trim() && opts.confirmReplace && !confirm("Replace the current required joins JSON with "+joins.length+" date role(s) found for "+table+"?")) return false;
-    joinsEl.value = JSON.stringify(joins, null, 2);
-    var columns = builder.querySelector(".metric-builder-required-columns");
-    if(columns){
-      var existing = (columns.value || "").split(",").map(function(c){ return c.trim(); }).filter(Boolean);
-      joins.forEach(function(j){ if(j.from_column && existing.indexOf(j.from_column) === -1) existing.push(j.from_column); });
-      columns.value = existing.join(", ");
+    if(joinsEl.value.trim() && opts.confirmReplace){
+      qbConfirm({title:"Replace the required joins?",body:"This overwrites the joins JSON you have there with the "+joins.length+" date role(s) found for "+table+".",confirm:"Replace",variant:"warning",onConfirm:function(){ _writeDateRoleJoins(form, builder, joinsEl, joins, "Date joins filled from schema"); }});
+      return false;
     }
-    _setMetricJoinStatus(builder, "Date joins filled from schema", "ok");
-    _syncMetricBuilder(form);
+    _writeDateRoleJoins(form, builder, joinsEl, joins, "Date joins filled from schema");
     return true;
   } catch(err) {
-    if(opts.showAlerts) alert("Failed to look up date roles: "+err.message);
+    if(opts.showAlerts) qbToast.error("Failed to look up date roles: "+err.message);
     else _setMetricJoinStatus(builder, "Date join lookup failed", "warn");
     return false;
   } finally {
@@ -2879,7 +2890,7 @@ window.insertDateRoleJoinTemplate = async function(btn){
   var baseTableInput = form.querySelector("[name='base_table']");
   var table = baseTableInput ? baseTableInput.value.trim() : "";
   if(!table){
-    alert("Set the Base table field (Advanced options) first — date roles are looked up per table.");
+    qbToast.warning("Set the Base table field (Advanced options) first — date roles are looked up per table.");
     return;
   }
 
@@ -2894,20 +2905,16 @@ window.insertDateRoleJoinTemplate = async function(btn){
     var data = await resp.json();
     var joins = data.joins || [];
     if(!joins.length){
-      alert("No date roles were detected for "+table+" in the Knowledge Base. Rebuild the KB, check the Date Roles page, or enter joins manually.");
+      qbToast.warning("No date roles were detected for "+table+" in the Knowledge Base. Rebuild the KB, check the Date Roles page, or enter joins manually.");
       return;
     }
-    if(joinsEl.value.trim() && !confirm("Replace the current required joins JSON with "+joins.length+" date role(s) found for "+table+"?")) return;
-    joinsEl.value = JSON.stringify(joins, null, 2);
-    var columns = builder.querySelector(".metric-builder-required-columns");
-    if(columns){
-      var existing = (columns.value || "").split(",").map(function(c){ return c.trim(); }).filter(Boolean);
-      joins.forEach(function(j){ if(j.from_column && existing.indexOf(j.from_column) === -1) existing.push(j.from_column); });
-      columns.value = existing.join(", ");
+    if(joinsEl.value.trim()){
+      qbConfirm({title:"Replace the required joins?",body:"This overwrites the joins JSON you have there with the "+joins.length+" date role(s) found for "+table+".",confirm:"Replace",variant:"warning",onConfirm:function(){ _writeDateRoleJoins(form, builder, joinsEl, joins, null); }});
+      return;
     }
-    _syncMetricBuilder(form);
+    _writeDateRoleJoins(form, builder, joinsEl, joins, null);
   } catch(err) {
-    alert("Failed to look up date roles: "+err.message);
+    qbToast.error("Failed to look up date roles: "+err.message);
   } finally {
     btn.disabled = false;
     btn.textContent = origLabel;
@@ -3411,7 +3418,7 @@ document.addEventListener("submit", function(e){
   var enabled = builder && (builder.querySelector(".metric-builder-enabled")||{}).checked;
   if(enabled && !_syncMetricBuilder(e.target)){
     e.preventDefault();
-    alert("Metric builder is incomplete. Check the measure/row expression and valid filter or join values.");
+    qbToast.error("Metric builder is incomplete. Check the measure/row expression and valid filter or join values.");
   }
 }, true);
 
@@ -3452,10 +3459,10 @@ window.deleteMetricFetch = function(id, name, btn){
           if(row){ row.style.transition = "opacity .18s,transform .18s"; row.style.opacity = "0"; row.style.transform = "translateX(6px)"; setTimeout(function(){ row.remove(); applyFilters(); }, 200); }
           window._metricsData = (window._metricsData || []).filter(function(x){ return x.id !== id; });
         } else {
-          alert("Delete failed (status " + resp.status + "). Please refresh and try again.");
+          qbToast.warning("Delete failed (status " + resp.status + "). Please refresh and try again.");
         }
       } catch(err){
-        alert("Delete failed: " + err.message);
+        qbToast.error("Delete failed: " + err.message);
       }
     }
   });
@@ -3539,10 +3546,10 @@ window.applyFilters = function(){
 window.cloneMetric = function(id){
   var all = window._metricsData || [];
   var m   = all.find(function(x){ return x.id === id; });
-  if(!m){ alert("Metric data not found."); return; }
+  if(!m){ qbToast.error("Metric data not found."); return; }
 
   var addForm = document.getElementById("mc-form") || document.querySelector(".metric-form#mc-form");
-  if(!addForm){ alert("Metric dialog not found on page."); return; }
+  if(!addForm){ qbToast.error("Metric dialog not found on page."); return; }
 
   function _set(name, value){
     var el = addForm.querySelector("[name='"+name+"']");
@@ -3609,7 +3616,7 @@ window.cloneMetric = function(id){
 // ══════════════════════════════════════════════════════════════════════
 window.exportMetricsJSON = function(){
   var all = window._metricsData || [];
-  if(!all.length){ alert("No metrics to export."); return; }
+  if(!all.length){ qbToast.warning("No metrics to export."); return; }
   var cleaned = all.map(function(m){
     return {
       name:                m.name,
@@ -3664,7 +3671,7 @@ function _mcValidateStep(n){
   if(n === 2){
     if(!form.dataset.mcMode){
       if(window.qbToast && qbToast.warning) qbToast.warning("Pick how this metric is calculated first.");
-      else alert("Pick how this metric is calculated first.");
+      else qbToast.warning("Pick how this metric is calculated first.");
       return false;
     }
     var en = form.querySelector(".metric-builder-enabled");

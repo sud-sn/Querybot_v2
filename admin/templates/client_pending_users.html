@@ -182,12 +182,14 @@
               </button>
             </form>
             <form method="post" action="/admin/clients/{{ client.account_id }}/pending-users/{{ u.id }}/reject"
-                  onsubmit="return confirm('Block this user? They will be silently ignored if they message again.')">
-              <button type="submit" class="pu-btn pu-btn-reject">Block User</button>
+                  id="pu-block-{{ u.id }}">
+              <button type="button" class="pu-btn pu-btn-reject"
+                onclick="qbConfirm({title:'Block this user?',body:'They will be silently ignored if they message again. You can unblock them later from the Blocked filter.',confirm:'Block user',onConfirm:()=>document.getElementById('pu-block-{{ u.id }}').submit()})">Block User</button>
             </form>
             <form method="post" action="/admin/clients/{{ client.account_id }}/pending-users/{{ u.id }}/delete"
-                  onsubmit="return confirm('Delete this user completely? Their portal access will also be removed.')">
-              <button type="submit" class="pu-btn" style="border-color:var(--border);color:var(--danger)">Delete</button>
+                  id="pu-del-user-{{ u.id }}">
+              <button type="button" class="pu-btn" style="border-color:var(--border);color:var(--danger)"
+                onclick="qbConfirm({title:'Delete this user?',body:'Their portal access is removed along with the request. This cannot be undone.',confirm:'Delete user',onConfirm:()=>document.getElementById('pu-del-user-{{ u.id }}').submit()})">Delete</button>
             </form>
           </div>
         </div>
@@ -213,8 +215,9 @@
               <button type="submit" class="pu-btn pu-btn-approve">Approve</button>
             </form>
             <form method="post" action="/admin/clients/{{ client.account_id }}/pending-users/{{ u.id }}/delete"
-                  onsubmit="return confirm('Delete this request completely?')">
-              <button type="submit" class="pu-btn" style="border-color:var(--border);color:var(--danger)">Delete Request</button>
+                  id="pu-del-req-{{ u.id }}">
+              <button type="button" class="pu-btn" style="border-color:var(--border);color:var(--danger)"
+                onclick="qbConfirm({title:'Delete this request?',body:'The person can sign up again later. This only removes the pending request.',confirm:'Delete request',onConfirm:()=>document.getElementById('pu-del-req-{{ u.id }}').submit()})">Delete Request</button>
             </form>
           </div>
         </div>

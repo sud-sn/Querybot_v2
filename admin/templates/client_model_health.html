@@ -175,16 +175,20 @@ table.mh-tbl tr:hover td{background:color-mix(in srgb,var(--primary) 4%,var(--su
   var select = document.getElementById('compiler-mode-select');
   if (!form || !select) return;
   var initialMode = select.value;
+  // A submit handler cannot wait on a callback, so this always prevents the
+  // submit and re-submits from onConfirm once the operator agrees.
+  var _confirmed = false;
   form.addEventListener('submit', function (ev) {
-    if (select.value === 'enforce' && initialMode !== 'enforce') {
-      var ok = confirm(
-        'Switch to Enforce mode?\n\n' +
-        'The NEXT compile (the next approval, or a manual recompile) will be ' +
-        'REJECTED if it has any open ERROR-severity conflict — the last known-good ' +
-        'contract stays active instead. This can affect real approvals going forward.'
-      );
-      if (!ok) { ev.preventDefault(); }
-    }
+    if (_confirmed) return;
+    if (select.value !== 'enforce' || initialMode === 'enforce') return;
+    ev.preventDefault();
+    qbConfirm({
+      title: 'Switch to Enforce mode?',
+      body: 'The next compile — the next approval, or a manual recompile — is REJECTED if it has any open error-severity conflict, and the last known-good contract stays active instead. This affects real approvals from now on.',
+      confirm: 'Switch to Enforce',
+      variant: 'warning',
+      onConfirm: function(){ _confirmed = true; form.submit(); }
+    });
   });
 })();
 </script>

@@ -606,7 +606,7 @@ function editDbRow(btn) {
     );
   } catch (e) {
     console.error('editDbRow failed:', e);
-    alert('Could not open edit form: ' + e.message + '\nSee browser console (F12) for details.');
+    qbToast.error('Could not open edit form: ' + e.message + '\nSee browser console (F12) for details.');
   }
 }
 

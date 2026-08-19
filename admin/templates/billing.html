@@ -262,7 +262,7 @@ function savePricingRow(btn, model, accountId) {
   var tIn    = tr.querySelector('.pr-input-in').value;
   var tOut   = tr.querySelector('.pr-input-out').value;
   if (!tIn || !tOut || isNaN(parseFloat(tIn)) || isNaN(parseFloat(tOut))) {
-    alert('Please enter valid numeric rates.');
+    qbToast.warning('Please enter valid numeric rates.');
     return;
   }
   var form = document.createElement('form');

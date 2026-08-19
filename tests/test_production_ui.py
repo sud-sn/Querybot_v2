@@ -486,3 +486,78 @@ def test_no_white_text_on_a_token_fill():
         f"white text on a token fill is unreadable in dark mode; use "
         f"var(--on-primary): {offenders}"
     )
+
+
+# ── Admin console: one dialog system ─────────────────────────────────────────
+
+def test_no_native_browser_dialogs_in_the_admin_console():
+    """The console ships its own qbConfirm/qbToast, styled and themed. Mixing
+    them with browser-chrome confirm()/alert() was the most visible day-to-day
+    inconsistency in the product.
+
+    client_graph.html is excluded on purpose: it is a standalone document that
+    never loads base.html, so it has no qbToast to call. Converting there would
+    trade a working native dialog for a TypeError. It gets fixed when that page
+    comes inside the shell."""
+    native = re.compile(r"(?<![\w.{])(confirm|alert|prompt)\s*\(")
+
+    def _blank_comments(text: str) -> str:
+        """Blank out comments while preserving line count, so reported line
+        numbers stay true. Prose about the old dialogs is not a call to them,
+        and a /* */ continuation line has no marker of its own to match on."""
+        def blank(match):
+            return "\n" * match.group(0).count("\n")
+
+        text = re.sub(r"/\*.*?\*/", blank, text, flags=re.S)
+        text = re.sub(r"<!--.*?-->", blank, text, flags=re.S)
+        return re.sub(r"(?m)^\s*//.*$", "", text)
+
+    offenders = {}
+    for path in sorted((ROOT / "admin" / "templates").glob("*.html")):
+        if path.name in ("client_graph.html", "base.html"):
+            continue
+        source = _blank_comments(path.read_text(encoding="utf-8"))
+        for number, line in enumerate(source.splitlines(), 1):
+            if "{{" in line or "{%" in line:      # the Jinja alert() macro
+                continue
+            if re.search(r"qb(Confirm|Toast|Alert)", line):
+                continue
+            if native.search(line):
+                offenders.setdefault(path.name, []).append(number)
+    assert not offenders, f"native browser dialogs remain: {offenders}"
+
+
+def test_destructive_actions_are_confirmed_not_bare_submits():
+    """Converting a form from onsubmit=confirm() to qbConfirm means giving the
+    form an id and the button an onclick. Doing only the first half leaves the
+    action firing with no confirmation at all -- worse than before."""
+    guarded_ids = ("pu-block-", "pu-del-user-", "pu-del-req-", "revoke-att-",
+                   "publish-v", "delete-kb-form")
+    for path in sorted((ROOT / "admin" / "templates").glob("*.html")):
+        source = path.read_text(encoding="utf-8")
+        for form_id in guarded_ids:
+            if f'id="{form_id}' not in source:
+                continue
+            # The confirming button must reference this form by id.
+            assert f"getElementById('{form_id}" in source, (
+                f"{path.name}: form '{form_id}' has no qbConfirm handler pointing at it"
+            )
+
+
+def test_the_compliance_tabs_show_which_panel_is_open():
+    """Ten panels behind a tab bar with no active state, and no record of the
+    choice, so a refresh silently returned to Profile."""
+    source = _read("admin/templates/client_compliance.html")
+    assert 'aria-selected' in source, "the compliance tabs expose no selected state"
+    assert ".compliance-tab.active" in source, "the active tab is not styled"
+    assert "location.hash" in source, (
+        "the open panel is not reflected in the URL, so refresh and deep links lose it"
+    )
+
+
+def test_the_widget_wall_pages_state_what_they_are():
+    """Both surfaces opened with no h1 at all -- the first strong text was a
+    tool's label, which read as the page title."""
+    for page in ("client_conflict_inbox.html", "client_learning_queue.html"):
+        source = _read(f"admin/templates/{page}")
+        assert "page_header(" in source, f"{page} has no page header"

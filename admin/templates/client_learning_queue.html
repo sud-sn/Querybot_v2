@@ -1,5 +1,5 @@
 {% extends "client_base.html" %}
-{% from "macros.html" import breadcrumb %}
+{% from "macros.html" import breadcrumb, page_header %}
 {% block title %}Learning Queue — {{ client.client_name or client.account_id[:16] }}{% endblock %}
 {% block breadcrumb %}
 {{ breadcrumb([
@@ -15,6 +15,9 @@
 .lq-filter{border:1px solid var(--border);border-radius:999px;padding:4px 10px;font-size:11px;font-weight:800;color:var(--text-muted);background:var(--surface);text-decoration:none}
 .lq-filter.active{background:var(--blue-light,color-mix(in srgb,var(--blue) 12%,var(--surface)));border-color:color-mix(in srgb,var(--blue) 28%,transparent);color:var(--blue)}
 .lq-table{width:100%;border-collapse:collapse;font-size:12px}
+/* Figures in a column line up and read as data. The blanket text-align:left on
+   every th put Score and Votes under left-ragged headers. */
+.lq-table th.num, .lq-table td.num{text-align:right;font-variant-numeric:tabular-nums}
 .lq-table th{padding:.55rem .75rem;background:var(--surface-2);border-bottom:1px solid var(--border);text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);font-weight:800;white-space:nowrap}
 .lq-table td{padding:.75rem;border-bottom:1px solid var(--border);vertical-align:top;color:var(--text-soft)}
 .lq-table tr:last-child td{border-bottom:none}
@@ -62,6 +65,12 @@
 </style>
 {% endblock %}
 {% block content %}
+{# Opened as a wall of widgets -- a flag notice or a lone toggle, no h1 anywhere
+   -- so nothing said what the surface was for. #}
+{{ page_header(
+    "Flagged answers",
+    "Answers people marked wrong or right in chat. Approving one teaches the model; rejecting one keeps it out of future prompts."
+) }}
 
 {% if not flag_enabled %}
 <div class="flag-off-notice" style="display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap">
@@ -148,8 +157,8 @@
       <th style="width:28px"></th>
       <th>Question</th>
       <th>Type</th>
-      <th>Score</th>
-      <th>Votes</th>
+      <th class="num">Score</th>
+      <th class="num">Votes</th>
       <th>Source</th>
       <th>Status</th>
       <th>Created</th>
@@ -179,7 +188,7 @@
     <td>
       <span class="type-{{ c.candidate_type }}">{{ c.candidate_type }}</span>
     </td>
-    <td>
+    <td class="num">
       {% set score = c.final_score %}
       {% if score >= 85 %}
         <span class="score-pill score-positive">{{ score }}</span>
@@ -189,7 +198,7 @@
         <span class="score-pill score-negative">{{ score }}</span>
       {% endif %}
     </td>
-    <td>
+    <td class="num">
       <div class="feedback-votes">
         <span class="vote-stat up" title="Positive votes"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>{{ c.positive_vote_count or 0 }}</span>
         <span class="vote-stat down" title="Negative votes"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M19 12l-7 7-7-7"/></svg>{{ c.negative_vote_count or 0 }}</span>

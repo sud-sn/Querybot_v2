@@ -1,5 +1,5 @@
 {% extends "client_base.html" %}
-{% from "macros.html" import breadcrumb, empty_state %}
+{% from "macros.html" import breadcrumb, empty_state, page_header %}
 {% block title %}Conflict Inbox — {{ client.client_name }}{% endblock %}
 {% block breadcrumb %}
 {{ breadcrumb([
@@ -39,6 +39,13 @@
 </style>
 {% endblock %}
 {% block content %}
+{# The page opened straight into the test-question tool, so its utility read as
+   the page title and the actual purpose -- triage the compiler's conflicts --
+   was never stated. #}
+{{ page_header(
+    "Conflict inbox",
+    "Contradictions the semantic compiler found in this workspace's model. Resolve them here before they reach a published contract."
+) }}
 <div class="ci-shell">
   <div class="ci-card">
     <div class="ci-card-head" style="border-bottom:1px solid var(--border)">

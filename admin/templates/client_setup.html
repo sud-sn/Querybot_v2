@@ -689,8 +689,9 @@
         </div>
       </div>
       <form method="post" action="/admin/clients/{{ client.account_id }}/setup/delete-kb"
-            onsubmit="return confirm('Delete the Knowledge Base?\n\nThis permanently removes all KB files, vector embeddings and cached queries.\nSchema discovery files are kept — you can rebuild immediately.')">
-        <button type="submit" class="btn btn-secondary btn-sm" style="color:var(--red);border-color:var(--red);white-space:nowrap">
+            id="delete-kb-form">
+        <button type="button" class="btn btn-secondary btn-sm" style="color:var(--red);border-color:var(--red);white-space:nowrap"
+          onclick="qbConfirm({title:'Delete the Knowledge Base?',body:'This permanently removes all KB files, vector embeddings and cached queries. Schema discovery files are kept, so you can rebuild immediately.',confirm:'Delete KB',onConfirm:()=>document.getElementById('delete-kb-form').submit()})">
           Delete KB
         </button>
       </form>
@@ -715,7 +716,7 @@
         });
         if (!parts.length) {
           e.preventDefault();
-          alert('Please enter at least one schema description before building the KB.');
+          qbToast.warning('Please enter at least one schema description before building the KB.');
           return;
         }
         combined.value = parts.join('\n\n');
@@ -988,11 +989,11 @@
         window.setTimeout(() => window.location.reload(), 2000);
       } else {
         if (btn) { btn.disabled = false; btn.textContent = '⏹ Stop KB build'; }
-        alert('Could not send stop signal: ' + (data.error || 'unknown error'));
+        qbToast.error('Could not send stop signal: ' + (data.error || 'unknown error'));
       }
     } catch (err) {
       if (btn) { btn.disabled = false; btn.textContent = '⏹ Stop KB build'; }
-      alert('Stop request failed: ' + err);
+      qbToast.error('Stop request failed: ' + err);
     }
   };
 

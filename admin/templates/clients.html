@@ -99,7 +99,7 @@
           <th>State</th>
           <th>Health</th>
           <th>Database</th>
-          <th>Limit</th>
+          <th class="text-right">Limit</th>
           <th>Connected</th>
           <th></th>
         </tr>
@@ -110,7 +110,7 @@
         <tr>
           <td>
             <div class="font-bold">{{ c.client_name or "—" }}</div>
-            <div class="text-xs text-muted text-mono">{{ c.account_id[:26] }}…</div>
+            <div class="text-xs text-muted text-mono">{{ c.account_id[:26] }}{% if c.account_id|length > 26 %}…{% endif %}</div>
           </td>
           <td><span class="badge badge-blue">{{ c.platform_type or "portal" }}</span></td>
           <td>{{ status_badge(c.state) }}</td>
@@ -120,13 +120,13 @@
                 <div class="health-bar-fill {% if hs.color == 'green' %}success{% elif hs.color == 'amber' %}warning{% else %}danger{% endif %}"
                      style="width:{{ hs.pct }}%"></div>
               </div>
-              <span class="health-bar-label {% if hs.color == 'green' %}text-success{% elif hs.color == 'amber' %}text-warning{% else %}text-danger{% endif %}">
+              <span class="health-bar-label num {% if hs.color == 'green' %}text-success{% elif hs.color == 'amber' %}text-warning{% else %}text-danger{% endif %}">
                 {{ hs.score }}<span class="text-muted" style="font-weight:500">/100</span>
               </span>
             </div>
           </td>
           <td class="text-sm text-muted">{{ c.db_name or "—" }}</td>
-          <td class="text-sm text-muted nowrap">{{ c.query_limit_monthly }}/mo</td>
+          <td class="text-sm text-muted nowrap num text-right">{{ c.query_limit_monthly }}/mo</td>
           <td class="text-sm text-muted nowrap">{{ c.created_at[:10] if c.created_at else "—" }}</td>
           <td>
             <div class="flex-center gap-1">

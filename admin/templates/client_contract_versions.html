@@ -79,8 +79,9 @@
           <td style="text-align:right">
             {% if v.status != 'active' %}
             <form method="post" action="/admin/clients/{{ client.account_id }}/model-health/versions/{{ v.version }}/rollback"
-                  onsubmit="return confirm('Publish version {{ v.version }} as the active contract? This supersedes the current active version.');">
-              <button type="submit" class="btn btn-secondary btn-xs">Publish this version</button>
+                  id="publish-v{{ v.version }}">
+              <button type="button" class="btn btn-secondary btn-xs"
+                onclick="qbConfirm({title:'Publish version {{ v.version }}?',body:'This becomes the active semantic contract and supersedes the current one. Questions asked after publishing use this version.',confirm:'Publish',variant:'primary',onConfirm:()=>document.getElementById('publish-v{{ v.version }}').submit()})">Publish this version</button>
             </form>
             {% endif %}
           </td>

@@ -1001,13 +1001,23 @@ function restartQdrant() {
 document.addEventListener('DOMContentLoaded', refreshQdrantStatus);
 
 /* ── Restart application ──────────────────────────────────────────────── */
-function triggerRestart() {
+function triggerRestart(confirmed) {
   var btn    = document.getElementById('restart-btn');
   var notice = document.getElementById('restart-notice');
   var strip  = document.getElementById('restart-status');
   if (!btn || !strip) return;
 
-  if (!confirm('This will restart the server. Any active queries will be interrupted.\n\nContinue?')) return;
+  // qbConfirm is callback-based, so the function re-enters itself once the
+  // operator agrees. Keeps every local above in scope, unlike splitting it.
+  if (!confirmed) {
+    qbConfirm({
+      title: 'Restart the server?',
+      body: 'Any query running right now is interrupted and its user sees an error. The console is unavailable for a few seconds.',
+      confirm: 'Restart',
+      onConfirm: function(){ triggerRestart(true); }
+    });
+    return;
+  }
 
   btn.disabled = true;
   btn.textContent = '⟳ Restarting…';
