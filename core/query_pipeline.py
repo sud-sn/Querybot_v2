@@ -5607,6 +5607,10 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                         context_with_terms,
                         graph_context=_graph_ctx or None,
                         semantic_plan=_retry_plan,
+                        # Without this the question-gate has nothing to read, and
+                        # the repair prompt arrives carrying every optional rule —
+                        # broader than the prompt that just failed.
+                        question=question,
                     ),
                     _progressive_user,
                     provider,

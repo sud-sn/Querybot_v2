@@ -148,3 +148,70 @@ def test_query_pipeline_wires_bounded_progressive_repair():
     assert 'max_attempts=2' in source
     assert 'component="sql_repair_progressive"' in source
     assert "repair_attempt" in source
+
+
+def test_compiled_plan_gates_even_when_no_question_is_supplied():
+    """The two gates are independent.
+
+    rule_applies() returns True for every gated rule when there is no question
+    to match against -- that is its keep-everything default, not a verdict. The
+    second gate used to read that default as an endorsement and skip its own
+    filtering entirely, so any caller that omitted the question received the
+    full rule catalogue despite having a compiled plan.
+    """
+    prompt = build_sql_system_prompt(
+        "azure_sql",
+        "Table sales.fact_invoice(revenue, invoice_date_key)",
+        semantic_plan=_semantic_plan(),
+    )
+    for rule in (
+        "CORRELATION / SCATTER RULE",
+        "MOVING AVERAGE RULE",
+        "FACT-TO-FACT JOIN RULE",
+        "MONTH-OVER-MONTH / QUARTER-OVER-QUARTER RULE",
+    ):
+        assert rule not in prompt, (
+            f"{rule} survived a compiled scalar-metric plan; the second gate is inert"
+        )
+
+
+def test_a_question_can_still_protect_a_rule_the_plan_would_cut():
+    """The reason the first gate is allowed to vote at all: a question that
+    plainly asks for a correlation must keep the correlation rule even when the
+    compiled plan is a plain scalar metric that never mentions one."""
+    plan = _semantic_plan()
+    without = build_sql_system_prompt(
+        "azure_sql", "Table sales.fact_invoice(revenue, discount)",
+        semantic_plan=plan, question="what is total revenue?",
+    )
+    with_q = build_sql_system_prompt(
+        "azure_sql", "Table sales.fact_invoice(revenue, discount)",
+        semantic_plan=plan, question="is revenue correlated with discount?",
+    )
+    assert "CORRELATION / SCATTER RULE" not in without
+    assert "CORRELATION / SCATTER RULE" in with_q, (
+        "the question gate must be able to protect a rule the plan would drop"
+    )
+
+
+def test_every_sql_prompt_call_site_passes_the_question():
+    """Structural guard. The progressive-repair call site omitted question=,
+    which silently disabled rule gating on exactly the path that most needed a
+    focused prompt -- the retry after a failure. A missing keyword argument
+    leaves no trace at runtime, so pin it here."""
+    import ast
+    from pathlib import Path
+
+    source = Path(__file__).resolve().parents[1] / "core" / "query_pipeline.py"
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    sites = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and getattr(node.func, "id", None) == "build_sql_system_prompt"
+    ]
+    assert sites, "no build_sql_system_prompt call sites found"
+    missing = [n.lineno for n in sites if "question" not in {k.arg for k in n.keywords}]
+    assert not missing, (
+        f"build_sql_system_prompt called without question= at line(s) {missing}; "
+        "rule gating is disabled there"
+    )

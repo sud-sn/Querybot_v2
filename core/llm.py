@@ -194,8 +194,23 @@ def _filter_sql_rules_for_compiled_plan(
     from core.sql_prompt_rules import rule_applies
 
     def _first_gate_wants(feature: str) -> bool:
+        """True only when the FIRST gate actively matched this rule.
+
+        With no question to match against, rule_applies() returns True for
+        every gated rule — that is its keep-everything default, not a verdict
+        that the rule belongs. Treating the default as an endorsement made this
+        second gate a no-op on any path that omits the question, which is how
+        the progressive-repair prompt ended up carrying the full rule
+        catalogue: larger and less focused than the prompt that had just
+        failed. Gate 1 may protect a rule it recognised; it may not vote when
+        it has nothing to go on.
+        """
+        if rule_ctx is None:
+            return False
+        if not str(getattr(rule_ctx, "question", "") or "").strip():
+            return False
         rule_id = _GATE1_RULE_FOR_FEATURE.get(feature)
-        if not rule_id or rule_ctx is None:
+        if not rule_id:
             return False
         try:
             return rule_applies(rule_id, rule_ctx)
@@ -418,8 +433,14 @@ def build_sql_system_prompt(
     Injected as session context to resolve follow-up references.
     question: the user's question. Optional — when supplied, narrowly-scoped
     rules (period comparison, moving average, anti-join, …) are gated on it so
-    they stop competing for attention with the rules that do apply. Omitting
-    it keeps every rule, i.e. the pre-gating prompt.
+    they stop competing for attention with the rules that do apply.
+
+    Two gates run, and they are independent. The first reads the question; the
+    second reads a COMPILED semantic_plan. Omitting the question only disables
+    the first — a compiled plan still drops the rules its shape cannot use.
+    Supply both and the question can protect a rule the plan would have cut,
+    which is the point: a question that says "correlated with" keeps the
+    correlation rule even when the plan did not compile a correlation.
     """
     from core.sql_prompt_rules import RuleContext, rule_applies
 
