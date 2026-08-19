@@ -8,27 +8,29 @@
 <div{% if root_id %} id="{{ root_id }}"{% endif %}
      class="qb-brand-motion qb-brand-motion--{{ size }}{% if extra_class %} {{ extra_class }}{% endif %}"
      data-state="{{ state }}"{% if status %} role="status" aria-live="polite"{% else %} aria-hidden="true"{% endif %}>
-  {# A Q whose bowl is a donut chart. The track is the whole, the brighter arc
-     is the measured part, the three ascending bars in the counter are the
-     analysis, and the diagonal stroke at 4 o'clock is the Q's tail.
+  {# A Q that is also a speech bubble. The bowl is the letter; the pointer at
+     4 o'clock is both the Q's tail and the tail of a bubble — which is why this
+     shape can never collapse into a magnifying glass the way a straight
+     diagonal stroke does. It also changes what the mark says: not "search your
+     data" but "ask a question", which is the product.
 
-     The arc's opening is deliberate — it is the donut's remainder. An earlier
-     version had an accidental hairline gap instead, because the dash length
-     was rounded to 58.4 against a circumference of 58.4336; the track circle
-     now carries no dasharray at all, so the ring can never fail to close.
+     The three dots inside the counter are hidden at rest, so the resting mark
+     is just the bowl and the pointer. They appear only while the product is
+     working, where they read as a typing indicator, then stretch into bars as
+     the answer arrives. Hiding them at rest is also what keeps the 16px
+     favicon legible.
 
-     Geometry verified, not eyeballed: r=10.2 with a 4.4 stroke gives an inner
-     counter radius of 8.00, and the furthest bar corner sits at 7.57. `uid` is
-     kept for call-site compatibility; there is no gradient left to reference. #}
+     Geometry verified: counter radius 8.00, the tallest bar corner reaches
+     7.94, and the composite sits on 5.92/7.60 margins in a 40 canvas. `uid` is
+     kept for call-site compatibility. #}
   <svg class="qb-brand-motion__mark" viewBox="0 0 40 40" fill="none" aria-hidden="true" focusable="false">
-    <circle class="qb-brand-motion__track" cx="18" cy="18" r="10.2"/>
-    <circle class="qb-brand-motion__value" cx="18" cy="18" r="10.2"/>
-    <g class="qb-brand-motion__bars">
-      <rect class="qb-brand-motion__bar" x="12.8" y="17.8" width="2.8" height="4.2" rx="1"/>
-      <rect class="qb-brand-motion__bar" x="16.6" y="15.6" width="2.8" height="6.4" rx="1"/>
-      <rect class="qb-brand-motion__bar" x="20.4" y="13.4" width="2.8" height="8.6" rx="1"/>
+    <circle class="qb-brand-motion__bowl" cx="18.32" cy="20" r="10.2"/>
+    <path class="qb-brand-motion__pointer" d="M29.67 22.83 34.08 32.31 23.81 30.33Z"/>
+    <g class="qb-brand-motion__dots">
+      <rect class="qb-brand-motion__dot" x="13.12" y="18.5" width="3" height="3" rx="1.5"/>
+      <rect class="qb-brand-motion__dot" x="16.82" y="18.5" width="3" height="3" rx="1.5"/>
+      <rect class="qb-brand-motion__dot" x="20.52" y="18.5" width="3" height="3" rx="1.5"/>
     </g>
-    <path class="qb-brand-motion__tail" d="M23 23 30 30"/>
   </svg>
   {% if label %}<span{% if label_id %} id="{{ label_id }}"{% endif %} class="{{ label_class }}" data-brand-label>{{ label }}</span>{% endif %}
 </div>

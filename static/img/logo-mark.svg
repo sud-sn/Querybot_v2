@@ -1,76 +1,54 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" role="img" aria-label="QueryBot">
   <!--
-    QueryBot mark — a Q whose bowl is a donut chart.
+    QueryBot mark — a Q that is also a speech bubble.
 
-    The muted track is the whole; the brighter arc is the measured part; the
-    three ascending bars in the counter are the analysis; the diagonal stroke at
-    4 o'clock is the Q's tail. The donut's opening is the remainder and is
-    deliberate — an earlier version had an accidental hairline gap there,
-    because the dash length was rounded to 58.4 against a true circumference of
-    58.4336. The track carries no dasharray now, so the ring cannot fail to
-    close.
+    The ring is the letter's bowl; the pointer at 4 o'clock is both the Q's tail
+    and the tail of a bubble. That is the point: every earlier attempt put a
+    straight diagonal stroke there, and a straight diagonal leaving a circle is
+    a magnifying-glass handle no matter how it is tuned — start it deeper, make
+    it shorter, make it longer, it stays a lens. A triangle cannot be read that
+    way. It also changes what the mark says, from "search your data" to "ask a
+    question", which is the product.
 
     Dropped from the original mark: the blue-to-violet gradient (which bands
     into mud at favicon size), the magnifying glass, and the four-pointed
     sparkle, which is Gemini's glyph by now.
 
-    Geometry verified rather than eyeballed: r=10.2 with a 4.4 stroke gives an
-    inner counter radius of 8.00, and the furthest bar corner sits at 7.57.
+    Geometry verified rather than eyeballed: bowl r=10.2 with a 4.4 stroke, and
+    the composite sits on even 5.92 / 7.60 margins in the 40 canvas.
 
-    MOTION. This file is the favicon *and* the avatar on every assistant
-    message, so it draws itself in once and then holds. Forty marks animating
-    out of sync down a conversation is noise, not life — the resting motion
-    belongs to the single-instance brand moments (sign-in, loaders, the composer
-    indicator), which brand-motion.css drives. Animation is declared inside the
-    file because custom properties and host stylesheets do not reach an <img>.
+    NO DOTS HERE. The animated component carries three dots inside the counter
+    that appear only while the product is working — a typing indicator that
+    stretches into bars as the answer streams. This file is the favicon *and*
+    the avatar on every assistant message, so it stays the resting mark: bowl
+    and pointer, legible at 16px, drawn once and then still. Forty marks
+    animating out of sync down a conversation is noise, not life. Animation is
+    declared inside the file because custom properties and host stylesheets do
+    not reach an SVG loaded through <img>.
   -->
   <style>
-    .qb-tile { fill: #12211D; }
-    .qb-track, .qb-value, .qb-tail {
-      fill: none; stroke-width: 4.4;
-      transform-box: fill-box; transform-origin: center;
-    }
-    .qb-track { stroke: #1FBFA4; stroke-opacity: .34; }
-    .qb-value { stroke: #1FBFA4; stroke-linecap: butt; }
-    .qb-tail  { stroke: #1FBFA4; stroke-linecap: round; stroke-linejoin: round; }
-    .qb-bar   { fill: #1FBFA4; transform-box: fill-box; transform-origin: bottom center; }
+    .qb-tile    { fill: #12211D; }
+    .qb-bowl    { fill: none; stroke: #1FBFA4; stroke-width: 4.4; }
+    .qb-pointer { fill: #1FBFA4; transform-box: view-box; transform-origin: 26.74px 26.58px; }
 
-    /* 2*pi*10.2 = 64.09; 44.9 of it is ~70%. The tail's own length is 9.9. */
-    .qb-value {
-      stroke-dasharray: 44.9 19.2;
-      transform: rotate(-90deg);            /* start the arc at twelve o'clock */
-      animation: qb-arc .72s cubic-bezier(.22,.8,.26,1) both;
-    }
-    .qb-tail { stroke-dasharray: 9.9; animation: qb-tail .3s .6s cubic-bezier(.22,.8,.26,1) both; }
-    .qb-bar  { animation: qb-rise .42s cubic-bezier(.22,.8,.26,1) both; }
-    .qb-bar:nth-of-type(1) { animation-delay: .18s; }
-    .qb-bar:nth-of-type(2) { animation-delay: .28s; }
-    .qb-bar:nth-of-type(3) { animation-delay: .38s; }
+    /* 2*pi*10.2 = 64.09 */
+    .qb-bowl    { stroke-dasharray: 64.1; animation: qb-draw .72s cubic-bezier(.22,.8,.26,1) both; }
+    .qb-pointer { animation: qb-out .4s .46s cubic-bezier(.22,.8,.26,1) both; }
 
-    @keyframes qb-arc  { from { stroke-dashoffset: 44.9; opacity: .35 } to { stroke-dashoffset: 0; opacity: 1 } }
-    @keyframes qb-tail { from { stroke-dashoffset: 9.9 }  to { stroke-dashoffset: 0 } }
-    @keyframes qb-rise { from { transform: scaleY(0); opacity: 0 } to { transform: scaleY(1); opacity: 1 } }
+    @keyframes qb-draw { from { stroke-dashoffset: 64.1; opacity: .35 } to { stroke-dashoffset: 0; opacity: 1 } }
+    @keyframes qb-out  { from { opacity: 0; transform: scale(.2) } to { opacity: 1; transform: scale(1) } }
 
     @media (prefers-reduced-motion: reduce) {
-      .qb-value, .qb-tail, .qb-bar {
-        animation: none; stroke-dashoffset: 0; opacity: 1;
-      }
-      .qb-value { transform: rotate(-90deg); }
-      .qb-bar   { transform: scaleY(1); }
+      .qb-bowl    { animation: none; stroke-dashoffset: 0; opacity: 1; }
+      .qb-pointer { animation: none; opacity: 1; transform: scale(1); }
     }
   </style>
 
   <rect class="qb-tile" width="40" height="40" rx="7"/>
 
-  <!-- Q bowl as a donut: the whole, then the measured part -->
-  <circle class="qb-track" cx="18" cy="18" r="10.2"/>
-  <circle class="qb-value" cx="18" cy="18" r="10.2"/>
+  <!-- The bowl of the Q, and the body of the bubble -->
+  <circle class="qb-bowl" cx="18.32" cy="20" r="10.2"/>
 
-  <!-- The analysis, inside the counter -->
-  <rect class="qb-bar" x="12.8" y="17.8" width="2.8" height="4.2" rx="1"/>
-  <rect class="qb-bar" x="16.6" y="15.6" width="2.8" height="6.4" rx="1"/>
-  <rect class="qb-bar" x="20.4" y="13.4" width="2.8" height="8.6" rx="1"/>
-
-  <!-- Q tail -->
-  <path class="qb-tail" d="M23 23 30 30"/>
+  <!-- The tail of the Q, and the tail of the bubble -->
+  <path class="qb-pointer" d="M29.67 22.83 34.08 32.31 23.81 30.33Z"/>
 </svg>

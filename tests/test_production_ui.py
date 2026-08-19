@@ -330,11 +330,10 @@ def test_the_animated_mark_carries_none_of_the_generic_ai_motifs():
 def test_the_animated_mark_is_a_q_built_from_an_analysis():
     for template in ("admin/templates/macros.html", "portal/templates/macros.html"):
         macro = _read(template).split("{% macro brand_motion", 1)[1].split("{%- endmacro %}", 1)[0]
-        assert "qb-brand-motion__track" in macro, f"{template}: the donut track is missing"
-        assert "qb-brand-motion__value" in macro, f"{template}: the donut arc is missing"
-        assert "qb-brand-motion__tail" in macro, f"{template}: the Q tail is missing"
-        bars = len(re.findall(r'class="qb-brand-motion__bar"', macro))
-        assert bars == 3, f"{template}: expected three bars in the counter, found {bars}"
+        assert "qb-brand-motion__bowl" in macro, f"{template}: the Q bowl is missing"
+        assert "qb-brand-motion__pointer" in macro, f"{template}: the bubble pointer is missing"
+        dots = len(re.findall(r'class="qb-brand-motion__dot"', macro))
+        assert dots == 3, f"{template}: expected three dots in the counter, found {dots}"
 
 
 def test_both_macro_copies_render_an_identical_mark():
@@ -352,16 +351,19 @@ def test_the_bars_carry_the_motion_across_every_state():
     """A single blinking element is not motion. The bars must animate at rest,
     while working, and on both terminal states."""
     css = _read("static/css/brand-motion.css")
-    for keyframes in ("qb-bar-breathe", "qb-bar-wave", "qb-bar-live",
-                      "qb-bar-rise", "qb-bar-drop",
-                      "qb-donut-spin", "qb-donut-full", "qb-donut-draw"):
+    for keyframes in ("qb-dot-type", "qb-dot-stream", "qb-dot-rise", "qb-dot-drop",
+                      "qb-bowl-breathe", "qb-bowl-draw", "qb-pointer-out"):
         assert f"@keyframes {keyframes}" in css, f"{keyframes} is not defined"
         assert css.count(keyframes) >= 2, f"{keyframes} is defined but never applied"
 
     # Bars grow from their baseline, not their centre, or they float.
-    bar_rule = css.split(".qb-brand-motion__bar {", 1)[1].split("}", 1)[0]
-    assert "transform-origin: bottom" in bar_rule, (
-        "bars must scale from the baseline the way a bar chart does"
+    dot_rule = css.split(".qb-brand-motion__dot {", 1)[1].split("}", 1)[0]
+    assert "transform-origin: bottom" in dot_rule, (
+        "dots must stretch upward from their baseline, the way a bar chart does"
+    )
+    assert "opacity: 0" in dot_rule, (
+        "the dots must rest hidden — the resting mark is bowl and pointer only, "
+        "which is what keeps the 16px favicon legible"
     )
 
 
@@ -370,8 +372,11 @@ def test_reduced_motion_leaves_every_animated_part_at_full_value():
     must not leave a bar collapsed or a stroke half-drawn."""
     css = _read("static/css/brand-motion.css")
     reduced = css.split("prefers-reduced-motion", 1)[1]
-    assert "scaleY(1)" in reduced, "bars could be left collapsed"
-    assert "stroke-dashoffset: 0" in reduced, "strokes could be left half-drawn"
+    assert "stroke-dashoffset: 0" in reduced, "the bowl could be left half-drawn"
+    assert "transform: scale(1)" in reduced, "the bowl or pointer could be left shrunk"
+    # The dots rest hidden on purpose: bowl and pointer alone IS the static mark.
+    dot = reduced.split(".qb-brand-motion__dot", 1)[1].split("}", 1)[0]
+    assert "opacity: 0" in dot, "the dots must rest hidden, not frozen mid-animation"
 
 
 def test_the_mark_carries_no_stale_brand_colour_in_an_rgba():
@@ -382,31 +387,31 @@ def test_the_mark_carries_no_stale_brand_colour_in_an_rgba():
     assert not stale, f"brand-motion.css still references the old brand blue: {stale}"
 
 
-def test_the_donut_ring_cannot_fail_to_close():
-    """The first version rounded the dash length to 58.4 against a true
-    circumference of 58.4336, leaving a hairline gap in the Q. The track must
-    carry no dasharray at all so the geometry cannot drift again."""
+def test_the_bowl_cannot_fail_to_close():
+    """An earlier mark rounded a dash length to 58.4 against a circumference of
+    58.4336 and left a hairline gap in the ring. The resting bowl must carry no
+    dasharray at all, so rounding can never reopen it."""
     css = _read("static/css/brand-motion.css")
-    track = css.split(".qb-brand-motion__track {", 1)[1].split("}", 1)[0]
-    assert "stroke-dasharray" not in track, (
-        "the donut track must not be dashed, or rounding can reopen the ring"
+    bowl = css.split(".qb-brand-motion__bowl {", 1)[1].split("}", 1)[0]
+    assert "stroke-dasharray" not in bowl, (
+        "the resting bowl must not be dashed; only the intro adds dashes"
+    )
+    assert "vector-effect" not in bowl, (
+        "non-scaling-stroke makes the browser compute dasharray in screen units, "
+        "which once rendered one arc as six"
     )
 
-    svg = _read("static/img/logo-mark.svg")
-    track_rule = svg.split(".qb-track {", 1)[1].split("}", 1)[0]
-    assert "dasharray" not in track_rule, "the static mark's track must not be dashed"
 
-
-def test_every_donut_transform_keyframe_restates_the_rotation():
-    """The arc sits at rotate(-90deg) so it starts at twelve o'clock. A keyframe
-    that sets a bare translate() replaces that rotation and snaps the segment
-    round to three o'clock for the length of the animation."""
+def test_the_tail_is_a_triangle_not_a_diagonal_stroke():
+    """The whole reason this mark exists. A straight diagonal leaving a circle
+    reads as a magnifying-glass handle however it is tuned; a triangle cannot."""
+    for template in ("admin/templates/macros.html", "portal/templates/macros.html"):
+        macro = _read(template).split("{% macro brand_motion", 1)[1].split("{%- endmacro %}", 1)[0]
+        pointer = re.search(r'class="qb-brand-motion__pointer" d="([^"]+)"', macro)
+        assert pointer, f"{template}: no pointer path"
+        assert pointer.group(1).strip().endswith("Z"), (
+            f"{template}: the pointer must be a closed triangle, not an open stroke"
+        )
     css = _read("static/css/brand-motion.css")
-    for match in re.finditer(r"@keyframes (qb-donut-[\w-]+)\s*\{(.*?)\}", css, re.S):
-        name, body = match.group(1), match.group(2)
-        if "transform" not in body:
-            continue
-        for frame in re.findall(r"transform:\s*([^;]+);", body):
-            assert "rotate" in frame, (
-                f"{name}: frame 'transform: {frame.strip()}' drops the arc's rotation"
-            )
+    ptr = css.split(".qb-brand-motion__pointer {", 1)[1].split("}", 1)[0]
+    assert "stroke" not in ptr, "the pointer is a filled shape, never a stroked line"

@@ -2,30 +2,27 @@
    One restrained motion language for authentication, long-running work, and
    chat generation.
 
-   THE MARK. A Q whose bowl is a donut chart: a muted track for the whole, a
-   brighter arc for the measured part, three ascending bars in the counter for
-   the analysis, and a short diagonal at 4 o'clock for the Q's tail — starting inside the
-   bowl and barely leaving it, which is what separates a Q from a magnifier. The
-   donut's opening is the remainder, and it is deliberate — an earlier version
-   had an accidental hairline gap there from a rounded dash length.
+   THE MARK is a Q that is also a speech bubble: the ring is the letter's bowl,
+   and the pointer at 4 o'clock is both the Q's tail and a bubble's tail. That
+   is deliberate — every earlier attempt used a straight diagonal stroke there,
+   and a straight diagonal leaving a circle is a magnifying-glass handle no
+   matter how it is tuned. A triangle cannot be read that way. It also changes
+   what the mark says, from "search your data" to "ask a question".
 
-   THE MOTION comes from the two chart parts. The measured arc travels the
-   donut while work is in flight, and the bars rise and settle in sequence
-   underneath it, which reads as rows arriving — which is what the product is
-   doing while you wait. The track, the bars and the tail hold their positions,
-   so the Q never dissolves into a spinner.
+   THE MOTION is the sentence the bubble is having. Three dots sit hidden in the
+   counter at rest, so the resting mark is just bowl and pointer. While the
+   product works they appear and bounce — the typing indicator everyone already
+   understands. As the answer streams they stretch upward into bars, so the same
+   three shapes carry the turn from question to data. On success they stand as
+   three ascending bars; on failure they drop and fade.
 
-   Colour comes from the design tokens, so the mark rebrands with the system
-   and adapts to either theme ground. There is no tile: a saturated badge is a
-   large loud area at any size.
+   Colour comes from the design tokens, so the mark rebrands with the system and
+   adapts to either theme ground.
    --------------------------------------------------------------------------- */
 .qb-brand-motion {
   --qb-mark-size: 32px;
   --qb-mark-glyph: var(--primary, #0E7C6B);
   --qb-mark-accent: var(--teal-400, #3FC0A9);
-  /* The donut's unmeasured remainder: the brand hue held well back, so it
-     reads as a track rather than as a second colour competing with the arc. */
-  --qb-mark-track: color-mix(in srgb, var(--qb-mark-glyph) 34%, transparent);
   --qb-mark-status: var(--qb-mark-glyph);
   /* Retained: callers and the error state still set these. */
   --qb-mark-primary: var(--primary, #0E7C6B);
@@ -48,63 +45,45 @@
   display: block;
   flex: 0 0 var(--qb-mark-size);
   overflow: visible;
-  /* No drop-shadow. The previous glow was rgba(37,99,235,.2) — the old brand
+  /* No drop-shadow. The original glow was rgba(37,99,235,.2) — the old brand
      blue, hardcoded in an rgba() where a hex sweep could not find it, casting
      a blue halo around a green mark. */
 }
 
-.qb-brand-motion__track,
-.qb-brand-motion__value,
-.qb-brand-motion__tail {
+/* The bowl. No stroke-dasharray at rest, so the ring cannot fail to close —
+   an earlier mark rounded a dash length to 58.4 against a circumference of
+   58.4336 and left a hairline gap. The intro adds its own dashes.
+   No vector-effect either: non-scaling-stroke makes the browser compute
+   dasharray in screen units, which once turned one arc into six. */
+.qb-brand-motion__bowl {
   fill: none;
-  /* Was 3.3, which read as thin once the mark sat next to the wordmark. */
+  stroke: var(--qb-mark-glyph);
   stroke-width: 4.4;
-  stroke-linecap: butt;
-  /* No non-scaling-stroke. It pins the stroke to screen units, which makes the
-     browser compute stroke-dasharray in screen units too: at the 60px auth size
-     the 39.7/24.4 donut pattern repeated six times round the ring and rendered
-     as a dashed circle instead of one arc and one opening. It would also hold
-     the stroke at a fixed width while the mark scaled from 22px to 260px. */
   transform-box: fill-box;
   transform-origin: center;
 }
 
-/* The whole. No dasharray, so this ring can never fail to close — the previous
-   hairline gap came from rounding a dash length down against the true
-   circumference. */
-.qb-brand-motion__track {
-  stroke: var(--qb-mark-track);
-}
-
-/* The measured part. 2πr for r=10.2 is 64.09; 44.9 of it is ~70%, and the
-   remainder is the donut's track showing through. Rotated so the arc starts at
-   twelve o'clock, the way a donut chart is read. 70% rather than 62% because
-   at 62% the bowl read as broken rather than as a letter. */
-.qb-brand-motion__value {
-  stroke: var(--qb-mark-glyph);
-  stroke-dasharray: 44.9 19.2;
-  stroke-dashoffset: 0;
-  transform: rotate(-90deg);
-}
-
-.qb-brand-motion__tail {
-  stroke: var(--qb-mark-glyph);
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-dasharray: 9.9;      /* the tail's own length, for the draw-in */
-  stroke-dashoffset: 0;
-}
-
-.qb-brand-motion__bar {
+.qb-brand-motion__pointer {
   fill: var(--qb-mark-glyph);
-  /* Grow from the baseline, the way a bar chart does. */
+  /* Scales out of the bowl rather than out of its own middle. */
+  transform-box: view-box;
+  transform-origin: 26.74px 26.58px;
+}
+
+/* Hidden at rest: the resting mark is bowl and pointer only, which is what
+   keeps it legible at 16px. A rounded square rather than a circle, so the same
+   element can stretch into a bar without a shape swap. */
+.qb-brand-motion__dot {
+  fill: var(--qb-mark-glyph);
+  opacity: 0;
   transform-box: fill-box;
   transform-origin: bottom center;
-  animation: qb-bar-breathe 3.2s var(--ease-out, cubic-bezier(.4,0,.2,1)) infinite;
 }
-.qb-brand-motion__bar:nth-child(1) { animation-delay: 0s; }
-.qb-brand-motion__bar:nth-child(2) { animation-delay: .16s; }
-.qb-brand-motion__bar:nth-child(3) { animation-delay: .32s; }
+/* Per-dot bar heights for the landed state. Kept as a custom property so one
+   keyframe can resolve a different target per element. */
+.qb-brand-motion__dot:nth-child(1) { --qb-bar: 1.5; }
+.qb-brand-motion__dot:nth-child(2) { --qb-bar: 2; }
+.qb-brand-motion__dot:nth-child(3) { --qb-bar: 2.5; }
 
 .qb-brand-motion__label {
   min-width: 0;
@@ -122,63 +101,51 @@
   font-weight: 500;
 }
 
-/* ── Working states ────────────────────────────────────────────────────────
-   The measured segment shortens and travels the donut; the bars run a wave
-   beneath it. Reads as query -> rows arriving. */
-.qb-brand-motion[data-state="loading"] .qb-brand-motion__value,
-.qb-brand-motion[data-state="thinking"] .qb-brand-motion__value,
-.qb-brand-motion[data-state="resolving"] .qb-brand-motion__value,
-.qb-brand-motion[data-state="querying"] .qb-brand-motion__value,
-.qb-brand-motion[data-state="answering"] .qb-brand-motion__value {
-  stroke-dasharray: 16 48;
-  animation: qb-donut-spin 1.5s linear infinite;
+/* ── Working: the bubble is typing ────────────────────────────────────────── */
+.qb-brand-motion[data-state="loading"]   .qb-brand-motion__dot,
+.qb-brand-motion[data-state="thinking"]  .qb-brand-motion__dot,
+.qb-brand-motion[data-state="resolving"] .qb-brand-motion__dot,
+.qb-brand-motion[data-state="querying"]  .qb-brand-motion__dot {
+  animation: qb-dot-type 1.15s ease-in-out infinite;
 }
-.qb-brand-motion[data-state="querying"] .qb-brand-motion__value { animation-duration: .9s; }
+.qb-brand-motion[data-state="querying"] .qb-brand-motion__dot { animation-duration: .82s; }
 
-.qb-brand-motion[data-state="loading"] .qb-brand-motion__bar,
-.qb-brand-motion[data-state="thinking"] .qb-brand-motion__bar,
-.qb-brand-motion[data-state="resolving"] .qb-brand-motion__bar,
-.qb-brand-motion[data-state="querying"] .qb-brand-motion__bar {
-  animation: qb-bar-wave 1.05s var(--ease-out, cubic-bezier(.4,0,.2,1)) infinite;
+/* ── Answering: the dots become the data ──────────────────────────────────── */
+.qb-brand-motion[data-state="answering"] .qb-brand-motion__dot {
+  animation: qb-dot-stream 1s ease-in-out infinite;
 }
 
-/* Answering: heights scatter like a chart being written, so streaming reads as
-   output rather than as waiting. */
-.qb-brand-motion[data-state="answering"] .qb-brand-motion__bar {
-  animation: qb-bar-live .82s ease-in-out infinite;
+.qb-brand-motion[data-state="loading"]   .qb-brand-motion__dot:nth-child(2),
+.qb-brand-motion[data-state="thinking"]  .qb-brand-motion__dot:nth-child(2),
+.qb-brand-motion[data-state="resolving"] .qb-brand-motion__dot:nth-child(2),
+.qb-brand-motion[data-state="querying"]  .qb-brand-motion__dot:nth-child(2),
+.qb-brand-motion[data-state="answering"] .qb-brand-motion__dot:nth-child(2) { animation-delay: .15s; }
+.qb-brand-motion[data-state="loading"]   .qb-brand-motion__dot:nth-child(3),
+.qb-brand-motion[data-state="thinking"]  .qb-brand-motion__dot:nth-child(3),
+.qb-brand-motion[data-state="resolving"] .qb-brand-motion__dot:nth-child(3),
+.qb-brand-motion[data-state="querying"]  .qb-brand-motion__dot:nth-child(3),
+.qb-brand-motion[data-state="answering"] .qb-brand-motion__dot:nth-child(3) { animation-delay: .3s; }
+
+/* The bowl breathes underneath, so the whole mark is alive without spinning. */
+.qb-brand-motion[data-state="loading"]   .qb-brand-motion__bowl,
+.qb-brand-motion[data-state="thinking"]  .qb-brand-motion__bowl,
+.qb-brand-motion[data-state="resolving"] .qb-brand-motion__bowl,
+.qb-brand-motion[data-state="querying"]  .qb-brand-motion__bowl,
+.qb-brand-motion[data-state="answering"] .qb-brand-motion__bowl {
+  animation: qb-bowl-breathe 2.1s ease-in-out infinite;
 }
 
-.qb-brand-motion[data-state="loading"] .qb-brand-motion__bar:nth-child(2),
-.qb-brand-motion[data-state="thinking"] .qb-brand-motion__bar:nth-child(2),
-.qb-brand-motion[data-state="resolving"] .qb-brand-motion__bar:nth-child(2),
-.qb-brand-motion[data-state="querying"] .qb-brand-motion__bar:nth-child(2),
-.qb-brand-motion[data-state="answering"] .qb-brand-motion__bar:nth-child(2) {
-  animation-delay: .13s;
-}
-.qb-brand-motion[data-state="loading"] .qb-brand-motion__bar:nth-child(3),
-.qb-brand-motion[data-state="thinking"] .qb-brand-motion__bar:nth-child(3),
-.qb-brand-motion[data-state="resolving"] .qb-brand-motion__bar:nth-child(3),
-.qb-brand-motion[data-state="querying"] .qb-brand-motion__bar:nth-child(3),
-.qb-brand-motion[data-state="answering"] .qb-brand-motion__bar:nth-child(3) {
-  animation-delay: .26s;
-}
-
-/* ── Terminal states ──────────────────────────────────────────────────────
-   Success closes the donut to 100% and stands the bars up in sequence, then
-   stops:
-   a finished operation should not keep moving. */
+/* ── Terminal states ──────────────────────────────────────────────────────── */
 .qb-brand-motion[data-state="success"] {
   --qb-mark-glyph: var(--success, #2F7D4F);
   --qb-mark-status: var(--success, #2F7D4F);
 }
-.qb-brand-motion[data-state="success"] .qb-brand-motion__value {
-  animation: qb-donut-full .6s cubic-bezier(.22, .8, .26, 1) 1 both;
+.qb-brand-motion[data-state="success"] .qb-brand-motion__dot {
+  /* The answer landed: three ascending bars, then stop. */
+  animation: qb-dot-rise .52s cubic-bezier(.22, .8, .26, 1) 1 both;
 }
-.qb-brand-motion[data-state="success"] .qb-brand-motion__bar {
-  animation: qb-bar-rise .5s cubic-bezier(.22, .8, .26, 1) 1 both;
-}
-.qb-brand-motion[data-state="success"] .qb-brand-motion__bar:nth-child(2) { animation-delay: .07s; }
-.qb-brand-motion[data-state="success"] .qb-brand-motion__bar:nth-child(3) { animation-delay: .14s; }
+.qb-brand-motion[data-state="success"] .qb-brand-motion__dot:nth-child(2) { animation-delay: .07s; }
+.qb-brand-motion[data-state="success"] .qb-brand-motion__dot:nth-child(3) { animation-delay: .14s; }
 
 .qb-brand-motion[data-state="error"] {
   --qb-mark-glyph: var(--danger, #B3402E);
@@ -186,35 +153,26 @@
   --qb-mark-status: var(--danger, #B3402E);
   --qb-mark-primary: var(--danger, #B3402E);
 }
-.qb-brand-motion[data-state="error"] .qb-brand-motion__value {
-  animation: qb-donut-shake .5s ease-out 1 both;
+.qb-brand-motion[data-state="error"] .qb-brand-motion__bowl {
+  animation: qb-bowl-shake .5s ease-out 1 both;
 }
-.qb-brand-motion[data-state="error"] .qb-brand-motion__bar {
-  /* The bars collapse and stay down — nothing came back. */
-  animation: qb-bar-drop .42s cubic-bezier(.3, 0, .5, 1) 1 both;
+.qb-brand-motion[data-state="error"] .qb-brand-motion__dot {
+  animation: qb-dot-drop .38s cubic-bezier(.3, 0, .5, 1) 1 both;
 }
-.qb-brand-motion[data-state="error"] .qb-brand-motion__bar:nth-child(2) { animation-delay: .05s; }
-.qb-brand-motion[data-state="error"] .qb-brand-motion__bar:nth-child(3) { animation-delay: .1s; }
 
 /* ── Entrance ─────────────────────────────────────────────────────────────
-   Used on auth pages: the ring draws, the bars rise in sequence, the tail
-   arrives last, then it settles into the resting breathe. */
+   Auth pages: the bowl draws itself, then the pointer pushes out of it. The
+   dots stay hidden — nothing has been asked yet. */
 .qb-brand-motion.qb-brand-motion--intro .qb-brand-motion__mark {
   animation: qb-brand-enter .48s cubic-bezier(.22, .8, .26, 1) both;
 }
-.qb-brand-motion.qb-brand-motion--intro .qb-brand-motion__value {
-  animation: qb-donut-draw .8s cubic-bezier(.22, .8, .26, 1) both;
+.qb-brand-motion.qb-brand-motion--intro .qb-brand-motion__bowl {
+  stroke-dasharray: 64.1;   /* 2πr for r=10.2, for the draw-in only */
+  animation: qb-bowl-draw .78s cubic-bezier(.22, .8, .26, 1) both;
 }
-.qb-brand-motion.qb-brand-motion--intro .qb-brand-motion__tail {
-  animation: qb-tail-draw .34s .62s cubic-bezier(.22, .8, .26, 1) both;
+.qb-brand-motion.qb-brand-motion--intro .qb-brand-motion__pointer {
+  animation: qb-pointer-out .42s .5s cubic-bezier(.22, .8, .26, 1) both;
 }
-.qb-brand-motion.qb-brand-motion--intro .qb-brand-motion__bar {
-  animation: qb-bar-rise .46s cubic-bezier(.22, .8, .26, 1) both,
-             qb-bar-breathe 3.2s 1.3s var(--ease-out, cubic-bezier(.4,0,.2,1)) infinite;
-}
-.qb-brand-motion.qb-brand-motion--intro .qb-brand-motion__bar:nth-child(1) { animation-delay: .18s, 1.3s; }
-.qb-brand-motion.qb-brand-motion--intro .qb-brand-motion__bar:nth-child(2) { animation-delay: .28s, 1.46s; }
-.qb-brand-motion.qb-brand-motion--intro .qb-brand-motion__bar:nth-child(3) { animation-delay: .38s, 1.62s; }
 
 .qb-brand-loader-block {
   display: flex;
@@ -249,60 +207,41 @@
 
 /* ── Keyframes ──────────────────────────────────────────────────────────── */
 
-/* At rest: barely there. Enough that the mark is alive, not enough to pull the
-   eye away from the page. */
-@keyframes qb-bar-breathe {
-  0%, 100% { transform: scaleY(1); }
-  50%      { transform: scaleY(.86); }
+/* Typing: the dot lifts and settles. */
+@keyframes qb-dot-type {
+  0%, 60%, 100% { opacity: .45; transform: translateY(0) scaleY(1); }
+  30%           { opacity: 1;   transform: translateY(-2.2px) scaleY(1); }
 }
-/* Working: a wave travelling across the three bars. */
-@keyframes qb-bar-wave {
-  0%, 100% { transform: scaleY(.42); opacity: .72; }
-  45%      { transform: scaleY(1);   opacity: 1; }
+/* Streaming: the same dot stretches upward into a bar as rows arrive. */
+@keyframes qb-dot-stream {
+  0%, 100% { opacity: .55; transform: scaleY(1); }
+  45%      { opacity: 1;   transform: scaleY(2.1); }
 }
-/* Answering: uneven, like a chart being written row by row. */
-@keyframes qb-bar-live {
-  0%   { transform: scaleY(.5); }
-  30%  { transform: scaleY(1); }
-  55%  { transform: scaleY(.68); }
-  80%  { transform: scaleY(.94); }
-  100% { transform: scaleY(.5); }
+/* Landed: each dot rises to its own height, giving three ascending bars. */
+@keyframes qb-dot-rise {
+  from { opacity: .4; transform: scaleY(1); }
+  to   { opacity: 1;  transform: scaleY(var(--qb-bar, 2)); }
 }
-@keyframes qb-bar-rise {
-  from { transform: scaleY(0); opacity: 0; }
-  to   { transform: scaleY(1); opacity: 1; }
+@keyframes qb-dot-drop {
+  from { opacity: 1; transform: scaleY(1); }
+  to   { opacity: 0; transform: scaleY(.3); }
 }
-@keyframes qb-bar-drop {
-  from { transform: scaleY(1); }
-  to   { transform: scaleY(.22); }
+@keyframes qb-bowl-breathe {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(.965); }
 }
-/* Working: the measured segment travels around the donut. The track, bars and
-   tail stay put, so the Q never dissolves into a spinner. */
-@keyframes qb-donut-spin {
-  from { transform: rotate(-90deg); }
-  to   { transform: rotate(270deg); }
-}
-/* Success: the arc closes the donut to 100%. */
-@keyframes qb-donut-full {
-  from { stroke-dasharray: 44.9 19.2; }
-  to   { stroke-dasharray: 64.1 0; }
-}
-/* Entrance: the measured arc draws itself in from twelve o'clock. */
-@keyframes qb-donut-draw {
-  from { stroke-dashoffset: 44.9; opacity: .35; }
+@keyframes qb-bowl-draw {
+  from { stroke-dashoffset: 64.1; opacity: .35; }
   to   { stroke-dashoffset: 0; opacity: 1; }
 }
-@keyframes qb-tail-draw {
-  from { stroke-dashoffset: 9.9; }
-  to   { stroke-dashoffset: 0; }
+@keyframes qb-bowl-shake {
+  0%, 100% { transform: translateX(0); }
+  25%      { transform: translateX(-1.6px); }
+  60%      { transform: translateX(1.4px); }
 }
-/* The rotation has to be restated in every frame: a bare translateX() would
-   replace the -90deg the arc sits at and snap the segment to three o'clock for
-   the length of the animation. */
-@keyframes qb-donut-shake {
-  0%, 100% { transform: rotate(-90deg) translateX(0); }
-  25%      { transform: rotate(-90deg) translateX(-1.6px); }
-  60%      { transform: rotate(-90deg) translateX(1.4px); }
+@keyframes qb-pointer-out {
+  from { opacity: 0; transform: scale(.2); }
+  to   { opacity: 1; transform: scale(1); }
 }
 @keyframes qb-brand-enter {
   from { opacity: 0; transform: translateY(7px) scale(.92); }
@@ -325,9 +264,10 @@ body[data-theme='dark'] .qb-brand-motion {
     animation: none !important;
     transition: none !important;
   }
-  /* The animations drive scaleY and dashoffset, so with motion off every part
-     must be left at its full resting value rather than stuck mid-cycle. */
-  .qb-brand-motion__bar   { transform: scaleY(1); opacity: 1; }
-  .qb-brand-motion__value { stroke-dashoffset: 0; transform: rotate(-90deg); }
-  .qb-brand-motion__tail  { stroke-dashoffset: 0; }
+  /* The animations drive opacity, scaleY and dashoffset, so with motion off
+     every part must land on its resting value rather than mid-cycle. The dots
+     rest hidden, which is the correct static mark. */
+  .qb-brand-motion__bowl    { stroke-dashoffset: 0; transform: scale(1); }
+  .qb-brand-motion__pointer { opacity: 1; transform: scale(1); }
+  .qb-brand-motion__dot     { opacity: 0; }
 }
