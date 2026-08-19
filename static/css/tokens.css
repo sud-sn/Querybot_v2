@@ -89,128 +89,233 @@
   --radius-lg: 8px;
   --radius-pill: 999px;
 
-  /* ── Shadows ────────────────────────────────────────────────
-     Deliberately restrained: elevation is carried by a 1px line
-     and a surface step, the way Supabase and Linear do it, with
-     shadow reserved for things that genuinely float.
-     --shadow-sm was referenced in seven places and never
-     defined, so those rules computed to nothing. */
-  --shadow-sm: 0 1px 2px rgba(10, 26, 22, .05);
-  --shadow:    0 1px 2px rgba(10, 26, 22, .06);
-  --shadow-md: 0 6px 16px rgba(10, 26, 22, .08), 0 1px 3px rgba(10, 26, 22, .05);
-  --shadow-lg: 0 16px 36px rgba(10, 26, 22, .13), 0 3px 8px rgba(10, 26, 22, .07);
-
-  /* ── Brand ramp (the --teal-* names are finally accurate) ── */
-  --teal-900: #0A1512;
-  --teal-800: #12211D;
-  --teal-700: #0A6154;
+  /* ── Brand ramp ─────────────────────────────────────────────
+     Ten rungs on the verdigris hue. The --teal-* names are the
+     public API and stay; what changed is that the ramp is now a
+     ramp. The shipped one broke twice: chroma jumped 50.6 to 77.8
+     between 400 and 500, and --teal-800/900 were near-neutral
+     darks that were not teal at all — they existed to serve a
+     dark theme that no longer exists. */
+  --teal-50:  #E7F7F3;
+  --teal-100: #D8F3EC;
+  --teal-200: #BAE8DC;
+  --teal-300: #8ED5C4;
+  --teal-400: #53B9A5;
+  --teal-500: #289A86;
   --teal-600: #0E7C6B;
-  --teal-500: #14A08A;
-  --teal-400: #3FC0A9;
-  --teal-300: #7FD8C8;
-  --teal-200: #B3E8DE;
-  --teal-100: #D7F2EC;
-  --teal-50:  #EDF9F6;
+  --teal-700: #16584C;
+  --teal-800: #0D3D34;
+  --teal-900: #031D18;
 
   /* ── Primary aliases — the whole product routes through these,
         so editing this block re-skins every surface. ────────── */
   --blue:       #0E7C6B;
-  --blue-mid:   #0A6154;
-  --blue-soft:  #14A08A;
-  --blue-light: #E1F2EE;
+  --blue-mid:   #16584C;
+  --blue-soft:  #289A86;
+  --blue-light: #D8F3EC;
 
   --primary:       #0E7C6B;
-  --primary-hover: #0A6154;
-  --primary-soft:  #E1F2EE;
+  --primary-hover: #16584C;
+  --primary-soft:  #E7F7F3;
   /* Filled controls hand-wrote #fff in ~49 places because there
-     was no token for text on a brand fill. */
+     was no token for text on a brand fill. 5.10:1 on --primary. */
   --on-primary:    #FFFFFF;
+  /* Brand as ink rather than as fill: link text and headings need
+     7:1, and --primary reaches only 4.47 on paper. */
+  --primary-ink:   #16584C;
+
+  /* ── Neutral ramp ───────────────────────────────────────────
+     One hue (158deg, held off the brand so verdigris still reads
+     as a colour), one interval, one chroma envelope. Every step
+     is exactly 9.5 lightness apart by construction. The shipped
+     ramp stepped 2.8/4.9/9.0/19.4/18.3/10.6/9.4/8.6/6.7 and its
+     chroma dipped then rose, which made the mid-greys the most
+     brand-tinted objects on screen — the actual source of the
+     muddiness, not the paper. Chroma now peaks mid-ramp and eases
+     to a floor at both ends: enough that the near-whites keep the
+     cast, never enough to go mint. */
+  --gray-50:  #F9F9F9;
+  --gray-100: #DFE3E1;
+  --gray-200: #C4CDCA;
+  --gray-300: #A9B8B3;
+  --gray-400: #8EA39B;
+  --gray-500: #738E84;
+  --gray-600: #5E726B;
+  --gray-700: #4A5752;
+  --gray-800: #353B39;
+  --gray-900: #1F2120;
+
+  /* ── Grounds ────────────────────────────────────────────────
+     Six, ordered dark to light, so elevation is carried by the
+     ground itself rather than by a shadow. The shipped set was
+     not ordered at all: --bg sat ABOVE --surface-2, and the four
+     layers separated by 1.06-1.08, which is why nothing on the
+     page looked like it sat on anything. */
+  --paper-recessed: #DBE3DE;   /* table header bands, toolbars, rails   */
+  --paper-sunken:   #E4EAE7;   /* code wells, inset read-only blocks    */
+  --paper:          #ECF1EE;   /* the app page                          */
+  --surface-alt:    #F0F5F2;   /* zebra rows, nested blocks in a card   */
+  --surface:        #F5F8F6;   /* cards, panels, table bodies           */
+  --surface-raised: #FAFCFB;   /* menus, popovers, modals, inputs       */
+
+  /* Legacy ground names, kept as the public API. */
+  --bg:        #ECF1EE;
+  --bg-soft:   #E4EAE7;
+  --bg-muted:  #DBE3DE;
+  --surface-2: #F0F5F2;
+  --surface-3: #E4EAE7;
+  --navy:      #16221E;
+
+  /* ── Lines ──────────────────────────────────────────────────
+     Split by obligation. --border measured 1.30:1 against the
+     surface, so every card edge and every input outline in the
+     product was below the 3:1 floor WCAG sets for a graphic —
+     the boundary was decorative whether or not it was meant to
+     be. --line-control is the one that carries a control edge and
+     is solved to 3.37 against the darkest ground it sits on. It
+     will read heavier than the current fashion. That is what a
+     real 3:1 border on light paper looks like. */
+  --line-subtle: #D4DDD8;      /* gridlines, list separators          */
+  --line:        #B9C6C0;      /* card edge, panel divider            */
+  --line-control:#6F7B74;      /* inputs, selects, checkboxes, radios */
+
+  --border:        #B9C6C0;
+  --border-strong: #6F7B74;
+
+  /* ── Ink ────────────────────────────────────────────────────
+     Five steps. Body clears 7:1 on every one of the six grounds,
+     not just the lightest — a floor solved against the brightest
+     ground is not a floor. */
+  --text-strong:    #161E1A;
+  --text:           #2D3731;
+  --text-secondary: #45504A;
+  --text-muted:     #5A665F;
+  --text-faint:     #78837D;   /* disabled labels only, never body    */
+  --text-inverse:   #E6EDE9;
+  --text-soft:      #45504A;
+
+  /* ── Semantic colours ───────────────────────────────────────
+     Four families, each with ink / pressed / tint / edge, all
+     landing on shared lightness rungs so a success chip and a
+     warning chip have the same optical weight.
+
+     --danger moves from #B3402E to #A73832, which is a deliberate
+     change to a stated identity anchor rather than a slip: the
+     old value sat at hue 31 with high chroma, squarely in the
+     terracotta lane Claude occupies, and it is the one semantic
+     that appears beside the brand most often. */
+  --success:        #337438;  --success-strong: #204E23;
+  --success-soft:   #E2F1E2;  --success-line:   #548356;
+  --danger:         #A73832;  --danger-strong:  #72241F;
+  --danger-soft:    #FCE6E3;  --danger-line:    #A7665F;
+  --warning:        #7D5D25;  --warning-strong: #553E16;
+  --warning-soft:   #F5EADA;  --warning-line:   #907344;
+  --info:           #406788;  --info-strong:    #29455D;
+  --info-soft:      #DFEEFC;  --info-line:      #497CA6;
+
+  --green:  #337438;  --green-light:  #E2F1E2;
+  --red:    #A73832;  --red-light:    #FCE6E3;
+  --amber:  #7D5D25;  --amber-light:  #F5EADA;
+  --violet: #6B4FA8;  --violet-light: #ECE6F7;
+
+  /* ── Interaction states ─────────────────────────────────────
+     Ground-aware, and this is not fussiness. A single hover value
+     against six grounds is arithmetically impossible: the one
+     that shipped measured 1.004 against --paper — invisible — and
+     was LIGHTER than --paper-recessed and --paper-sunken, so a
+     hovered row in a table header band would have brightened
+     instead of darkening. Row hover is the most-used interaction
+     in a product whose main output is a table. */
+  --hover-on-surface:  #EAF1ED;  --active-on-surface:  #E1EAE5;
+  --hover-on-alt:      #E6EDE9;  --active-on-alt:      #DDE6E1;
+  --hover-on-paper:    #E3EAE6;  --active-on-paper:    #DAE3DE;
+  --hover-on-recessed: #D2DCD6;  --active-on-recessed: #C9D4CE;
+  --row-hover:         #EAF1ED;
+
+  /* Selection is separated from hover by chroma, not by another
+     step of grey — otherwise "hovered" and "selected" are the same
+     gesture at two brightnesses and neither reads. */
+  --state-selected:       #DAF9F1;
+  --state-selected-hover: #CCF3E9;
+  --state-selected-line:  #0E7C6B;
+  --state-disabled:       #E4EBE7;
+
+  /* ── Focus ──────────────────────────────────────────────────
+     The offset exists so a ring on a brand-filled button is still
+     visible: ring against offset is 4.95:1. */
+  --focus-ring-color:  #0E7C6B;
+  --focus-ring-offset: #FAFCFB;
+  --focus-ring: 0 0 0 3px color-mix(in srgb, var(--primary) 26%, transparent);
+
+  /* ── Navigation shell ───────────────────────────────────────
+     The rail keeps its dark slab. It is chrome, not content: it
+     frames the light page rather than competing with it, and a
+     light-only product does not mean every pixel is pale. */
+  --shell:          #16221E;
+  --shell-surface:  #212F2A;
+  --shell-line:     #31403A;
+  --shell-text:     #E6EDE9;
+  --shell-muted:    #97A49C;
+  --shell-selected: #1A3C35;
+  --shell-accent:   #53B9A5;
+
+  --sidebar-bg:      #16221E;
+  --sidebar-surface: #212F2A;
+  --sidebar-border:  #31403A;
+  --sidebar-text:    #E6EDE9;
+  --sidebar-muted:   #97A49C;
+  --sidebar-hover:   rgba(255, 255, 255, .06);
+  --sidebar-active:  #1A3C35;
+  --sidebar-accent:  #53B9A5;
+
+  /* ── Code and data surfaces ─────────────────────────────────
+     The code well goes light. It was #12211D — a near-black slab
+     in six places — which is the last dark surface in a product
+     that no longer has a dark theme, and the SQL syntax colours
+     are tuned for a light ground. */
+  --code-bg:   #E4EAE7;
+  --code-text: #2D3731;
+  --grid-line: #D4DDD8;
 
   /* ── Entity taxonomy ───────────────────────────────────────
      A categorical palette, not a semantic one. A fact table is
      not a warning and a dimension is not a link, so these are
      held apart from --warning/--primary rather than borrowed
      from them: mapping the taxonomy onto status colours is a
-     lie that happens to compile. Three hues, each with ink,
-     fill and border, chosen to stay legible beside the brand
-     verdigris without competing with it. */
+     lie that happens to compile. */
   --entity-fact:      #8A5A12;  --entity-fact-soft:  #F7EFDF;  --entity-fact-line:  #E0C99B;
   --entity-dim:       #2D4B8E;  --entity-dim-soft:   #E6ECF7;  --entity-dim-line:   #B9C8E5;
   --entity-bridge:    #6B4FA8;  --entity-bridge-soft:#ECE6F7;  --entity-bridge-line:#C7B8E5;
-  /* ── SQL syntax highlighting ─────────────────────────────────
-     A categorical set, like the entity taxonomy above: the hues
-     exist to tell token kinds apart, so they are deliberately not
-     the brand colour. They were hardcoded light-theme values in
-     client_metrics.html — stock Tailwind, and measured 2.72-3.39
-     against the dark editor ground, every token below the 4.5 floor
-     on the one surface in the product where people read SQL. Both
-     sets are derived here rather than inherited: five spread hues,
-     each tuned to clear 5.0 on its own ground, closest pair 67 units
-     apart so no two token kinds read alike.
-     The operator is punctuation, so it takes --text-muted rather
-     than a colour of its own. */
-  --syntax-kw:   #5860D8;   /* keyword   */
-  --syntax-fn:   #AB38C0;   /* function  */
-  --syntax-col:  #0F7D5E;   /* column    */
-  --syntax-str:  #A45B1B;   /* string    */
-  --syntax-num:  #1875A0;   /* number    */
-  /* ── Semantic colours ───────────────────────────────────────
-     Held clearly apart from the brand teal, and desaturated off
-     the Tailwind defaults they used to be. */
-  --green:        #2F7D4F;  --green-light:  #DFF0E5;
-  --red:          #B3402E;  --red-light:    #F8E5E1;
-  --amber:        #8F6410;  --amber-light:  #F7EEDA;
-  --violet:       #6B4FA8;  --violet-light: #ECE6F7;
-  --success:      #2F7D4F;  --success-soft: #EAF4EE;
-  --danger:       #B3402E;  --danger-soft:  #FBEDEA;
-  --warning:      #8F6410;  --warning-soft: #FAF3E4;
 
-  /* ── Backgrounds (green-grey paper, not slate) ───────────── */
-  --navy:      #14201C;
-  --bg:        #F4F7F5;
-  --bg-soft:   #EDF2EF;
-  --bg-muted:  #DFE7E3;
-  --surface:   #FCFDFC;
-  --surface-2: #F1F5F3;
-  --surface-3: #E6EDE9;
+  /* ── SQL syntax highlighting ────────────────────────────────
+     Also categorical: the hues exist to tell token kinds apart,
+     so they are deliberately not the brand colour. Solved against
+     the code well (#E4EAE7), the darkest ground they appear on,
+     rather than against the brightest — every one clears 5.0
+     there and 5.35-6.03 elsewhere, closest pair 59 units apart.
+     The operator takes --text-muted: it is punctuation, not a
+     category. */
+  --syntax-kw:   #4751D4;
+  --syntax-fn:   #9A32AC;
+  --syntax-col:  #0E6F54;
+  --syntax-str:  #935118;
+  --syntax-num:  #15688E;
 
-  /* ── Borders ── */
-  --border:        #D8E2DD;
-  --border-strong: #B2C0BA;
+  /* ── Shadows ────────────────────────────────────────────────
+     Tinted, never black. A neutral-black shadow over a green-cast
+     paper greys the surface under it; the tint keeps the shade in
+     the same family as the ground. Restrained by design:
+     elevation is carried by the ground ladder above, with shadow
+     reserved for things that genuinely float. */
+  --shadow-tint: #0B1F18;
+  --shadow-sm: 0 1px 2px rgba(11, 31, 24, .05);
+  --shadow:    0 1px 2px rgba(11, 31, 24, .06);
+  --shadow-md: 0 6px 16px rgba(11, 31, 24, .09), 0 1px 3px rgba(11, 31, 24, .05);
+  --shadow-lg: 0 16px 36px rgba(11, 31, 24, .14), 0 3px 8px rgba(11, 31, 24, .08);
+  --scrim: rgba(6, 21, 15, .42);
 
-  /* ── Grey ramp (green-cast) ── */
-  --gray-50:  #F7FAF8;
-  --gray-100: #EFF4F1;
-  --gray-200: #E1E9E5;
-  --gray-300: #C8D4CF;
-  --gray-400: #94A5A0;
-  --gray-500: #647873;
-  --gray-600: #4A5C57;
-  --gray-700: #33433E;
-  --gray-800: #1E2C28;
-  --gray-900: #0E1A16;
 
-  /* ── Text ── */
-  --text:       #101C18;
-  --text-soft:  #3A4A45;
-  --text-muted: #5E706A;
-
-  /* ── Misc ── */
-  --code-bg:   #12211D;
-  --code-text: #DCE9E4;
-  --row-hover: #EAF3F0;
-
-  /* Shared navigation shell */
-  --sidebar-bg:      #14201C;
-  --sidebar-surface: #1C2A26;
-  --sidebar-border:  #2B3B36;
-  --sidebar-text:    #E6EFEB;
-  --sidebar-muted:   #9FB0AA;
-  --sidebar-hover:   rgba(255, 255, 255, .06);
-  --sidebar-active:  rgba(43, 212, 186, .16);
-  --sidebar-accent:  #2BD4BA;
-
-  /* ── Z-index scale (single source of truth for stacking) ── */
+  /* ── Z-index ── */
   --z-base:     1;
   --z-dropdown: 100;
   --z-sticky:   200;
@@ -218,18 +323,17 @@
   --z-modal:    8000;
   --z-toast:    9000;
 
+  /* ── Skeleton shimmer surfaces ── */
+  --skeleton-base:  #E4EAE7;
+  --skeleton-shine: #F5F8F6;
+
   /* ── Motion ── */
   --ease-out: cubic-bezier(.4, 0, .2, 1);
   --t-fast:   .12s;
   --t-med:    .22s;
   --t-slow:   .35s;
 
-  /* ── Focus ring (single source of truth) ── */
-  --focus-ring: 0 0 0 3px color-mix(in srgb, var(--primary) 26%, transparent);
 
-  /* ── Skeleton shimmer surfaces ── */
-  --skeleton-base:  color-mix(in srgb, var(--bg-muted) 70%, var(--surface));
-  --skeleton-shine: color-mix(in srgb, var(--surface) 88%, var(--bg-muted));
 }
 
 /* ── Dark mode overrides ──────────────────────────────────────
