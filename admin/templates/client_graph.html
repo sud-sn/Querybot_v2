@@ -1,30 +1,26 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Entity Graph — {{ client.client_name or client.account_id }}</title>
-<link rel="stylesheet" href="/static/css/tokens.css?v=20260804-graphite-1">
-<link rel="stylesheet" href="/static/css/base.css">
-<script>
-(function(){
-  var k='qb-admin-theme';
-  var t=localStorage.getItem(k)||(window.matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light');
-  document.documentElement.setAttribute('data-theme',t);
-  document.documentElement.style.colorScheme=t;
-})();
-</script>
+{% extends "client_base.html" %}
+{% block title %}Relationships — {{ client.client_name or client.account_id }}{% endblock %}
+
+{# This page was a standalone <!DOCTYPE html> document: its own head, its own
+   theme script, its own stylesheet links, no sidebar and no workspace nav.
+   Opening Relationships teleported you out of the console and back was two
+   small "← Back" links. It now extends the shell like every other surface,
+   which also gives it qbConfirm/qbToast — it had neither, so its 23 native
+   browser dialogs had nowhere else to go. #}
+{% block body_class %}page-bleed{% endblock %}
+
+{% block head %}
 <script src="/static/vendor/cytoscape.min.js"></script>
 <script src="/static/vendor/dagre.min.js"></script>
 <script src="/static/vendor/cytoscape-dagre.min.js"></script>
 <style>
-/* ── Reset & full-page ──────────────────────────────────────────────────────── */
-*,*::before,*::after{box-sizing:border-box}
-html,body{height:100%;margin:0;overflow:hidden}
-body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+/* No document reset here: the page now lives inside the admin shell, which
+   owns box-sizing, the font stack and the scroll behaviour. Overriding them
+   from a child was only possible while this was a standalone document. */
 
 /* ── Page shell ─────────────────────────────────────────────────────────────── */
-#eg-page{display:flex;height:100vh;background:var(--surface-2,#F1F5F9)}
+/* Fills whatever the shell has left rather than the whole viewport. */
+#eg-page{display:flex;flex:1 1 auto;min-height:0;background:var(--surface-2)}
 
 /* ── Sidebar ────────────────────────────────────────────────────────────────── */
 #eg-sb{
@@ -81,9 +77,9 @@ body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-seri
 }
 .sf-btn:hover{color:var(--text)}
 .sf-btn.active{color:var(--primary);border-bottom-color:var(--primary)}
-.sf-btn[data-type="fact"].active{color:#92400E;border-bottom-color:#D97706}
-.sf-btn[data-type="dimension"].active{color:#1D4ED8;border-bottom-color:#2563EB}
-.sf-btn[data-type="bridge"].active{color:#6B21A8;border-bottom-color:#7C3AED}
+.sf-btn[data-type="fact"].active{color:var(--entity-fact);border-bottom-color:var(--entity-fact)}
+.sf-btn[data-type="dimension"].active{color:var(--entity-dim);border-bottom-color:var(--entity-dim)}
+.sf-btn[data-type="bridge"].active{color:var(--entity-bridge);border-bottom-color:var(--entity-bridge)}
 #sb-list{flex:1;overflow-y:auto;min-height:0}
 .sb-row{
   display:flex;align-items:center;gap:.4rem;
@@ -102,9 +98,9 @@ body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-seri
   cursor:pointer;transition:opacity .12s;line-height:1.5;
 }
 .sb-type-pill:hover{opacity:.75}
-.sb-type-pill.fact{background:#FFFBEB;color:#92400E;border-color:#FCD34D}
-.sb-type-pill.dimension{background:#EFF6FF;color:#1D4ED8;border-color:#BFDBFE}
-.sb-type-pill.bridge{background:#F5F3FF;color:#6B21A8;border-color:#DDD6FE}
+.sb-type-pill.fact{background:var(--entity-fact-soft);color:var(--entity-fact);border-color:var(--entity-fact-line)}
+.sb-type-pill.dimension{background:var(--entity-dim-soft);color:var(--entity-dim);border-color:var(--entity-dim-line)}
+.sb-type-pill.bridge{background:var(--entity-bridge-soft);color:var(--entity-bridge);border-color:var(--entity-bridge-line)}
 .sb-jbadge{
   font-size:9px;font-weight:800;min-width:16px;height:16px;
   background:var(--surface-2);border:1px solid var(--border);color:var(--text-muted);border-radius:999px;
@@ -118,7 +114,7 @@ body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-seri
   position:relative;
   background:
     radial-gradient(ellipse at 25% 20%,color-mix(in srgb,var(--primary) 4%,transparent),transparent 55%),
-    radial-gradient(ellipse at 78% 78%,color-mix(in srgb,#7C3AED 3%,transparent),transparent 50%),
+    radial-gradient(ellipse at 78% 78%,color-mix(in srgb,var(--entity-bridge) 3%,transparent),transparent 50%),
     var(--surface-2);
 }
 
@@ -145,12 +141,12 @@ body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-seri
 .tb-btn:hover{background:var(--surface-3,var(--border));border-color:var(--border-strong,var(--border))}
 .tb-btn.primary{background:var(--primary);color:var(--on-primary);border-color:var(--primary)}
 .tb-btn.primary:hover{opacity:.85}
-.tb-btn.suggest{color:#7C3AED;border-color:#C4B5FD}
-.tb-btn.suggest:hover{background:#F5F3FF}
-.tb-btn.danger{background:#FEE2E2;color:#DC2626;border-color:#FECACA}
+.tb-btn.suggest{color:var(--entity-bridge);border-color:var(--entity-bridge-line)}
+.tb-btn.suggest:hover{background:var(--entity-bridge-soft)}
+.tb-btn.danger{background:var(--danger-soft);color:var(--danger);border-color:var(--danger-soft)}
 .tb-btn.danger:hover{opacity:.85}
 .tb-btn.sm{padding:3px 8px;font-size:10px;min-height:24px;border-radius:5px}
-.review-badge{display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 4px;border-radius:8px;background:#D97706;color:#fff;font-size:10px;font-weight:800;margin-left:2px}
+.review-badge{display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 4px;border-radius:8px;background:var(--entity-fact);color:var(--on-primary);font-size:10px;font-weight:800;margin-left:2px}
 
 /* ── Review queue panel ─────────────────────────────────────────────────────── */
 #review-panel{position:absolute;top:0;right:0;bottom:0;width:360px;max-width:85vw;background:var(--surface);border-left:1px solid var(--border);box-shadow:-6px 0 18px rgba(0,0,0,.08);display:flex;flex-direction:column;transform:translateX(101%);transition:transform .2s ease;z-index:30}
@@ -164,8 +160,8 @@ body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-seri
 #chat-log{flex:1;overflow-y:auto;padding:.6rem;display:flex;flex-direction:column;gap:.5rem}
 .chat-msg{font-size:12px;line-height:1.4;padding:.5rem .65rem;border-radius:8px;max-width:100%;word-break:break-word}
 .chat-msg-bot{background:var(--surface-2);color:var(--text)}
-.chat-msg-user{background:var(--primary-soft,#EFF6FF);color:var(--primary);align-self:flex-end;white-space:pre-wrap}
-.chat-msg-error{background:#FFFBEB;color:#92400E;border:1px solid #FDE68A}
+.chat-msg-user{background:var(--primary-soft,var(--entity-dim-soft));color:var(--primary);align-self:flex-end;white-space:pre-wrap}
+.chat-msg-error{background:var(--entity-fact-soft);color:var(--entity-fact);border:1px solid var(--entity-fact-line)}
 .chat-msg-actions{margin-top:.4rem;display:flex;gap:.35rem;flex-wrap:wrap}
 #chat-input-row{padding:.6rem;border-top:1px solid var(--border);display:flex;align-items:flex-end;gap:.4rem}
 #chat-input{flex:1;min-width:0;min-height:72px;max-height:180px;resize:vertical;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font:inherit;font-size:12px;line-height:1.4;padding:7px 9px}
@@ -174,11 +170,11 @@ body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-seri
 #rv-title-row{display:flex;align-items:center;justify-content:space-between}
 #rv-title{font-size:13px;font-weight:900}
 #rv-progress-track{height:5px;border-radius:3px;background:var(--surface-3,var(--border));overflow:hidden}
-#rv-progress-fill{height:100%;border-radius:3px;background:var(--success,#059669);width:0%;transition:width .25s ease}
+#rv-progress-fill{height:100%;border-radius:3px;background:var(--success,var(--success));width:0%;transition:width .25s ease}
 #rv-progress-label{font-size:11px;color:var(--text-muted)}
 #rv-filters{display:flex;gap:.35rem;flex-wrap:wrap}
 .rv-filter{border:1px solid var(--border);background:var(--surface);color:var(--text-muted);border-radius:6px;padding:4px 8px;font-size:10px;font-weight:800;cursor:pointer}
-.rv-filter.active{background:var(--primary-soft,#EFF6FF);border-color:var(--primary);color:var(--primary)}
+.rv-filter.active{background:var(--primary-soft,var(--entity-dim-soft));border-color:var(--primary);color:var(--primary)}
 #rv-entity-filter{display:none;width:100%;min-height:30px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:11px;padding:4px 7px}
 #rv-list{flex:1;overflow-y:auto;padding:.5rem}
 .rv-item{border:1px solid var(--border);border-radius:8px;padding:.55rem .65rem;margin-bottom:.5rem;background:var(--surface);cursor:pointer;transition:border-color .12s,background .12s}
@@ -187,18 +183,18 @@ body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-seri
 .rv-item-title code{font-size:11px}
 .rv-chips{display:flex;flex-wrap:wrap;gap:.3rem;margin:.35rem 0}
 .rv-chip{display:inline-flex;align-items:center;font-size:10px;font-weight:700;padding:1px 7px;border-radius:9px;border:1px solid var(--border);color:var(--text-muted);background:var(--surface-2)}
-.rv-chip.src-llm{color:#7C3AED;border-color:#C4B5FD;background:#F5F3FF}
-.rv-chip.src-heuristic{color:#1D4ED8;border-color:#BFDBFE;background:#EFF6FF}
-.rv-chip.src-kb{color:#92400E;border-color:#FDE68A;background:#FFFBEB}
-.rv-chip.conf-high{color:#059669;border-color:#A7F3D0;background:#ECFDF5}
-.rv-chip.conf-low{color:#D97706;border-color:#FDE68A;background:#FFFBEB}
+.rv-chip.src-llm{color:var(--entity-bridge);border-color:var(--entity-bridge-line);background:var(--entity-bridge-soft)}
+.rv-chip.src-heuristic{color:var(--entity-dim);border-color:var(--entity-dim-line);background:var(--entity-dim-soft)}
+.rv-chip.src-kb{color:var(--entity-fact);border-color:var(--entity-fact-line);background:var(--entity-fact-soft)}
+.rv-chip.conf-high{color:var(--success);border-color:var(--success-soft);background:var(--success-soft)}
+.rv-chip.conf-low{color:var(--entity-fact);border-color:var(--entity-fact-line);background:var(--entity-fact-soft)}
 .rv-reason{font-size:11px;color:var(--text-muted);line-height:1.35;margin:.15rem 0 .35rem;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .rv-actions{display:flex;gap:.35rem}
 .rv-actions .tb-btn.sm{flex:none}
-.rv-accept{color:#059669;border-color:#A7F3D0}
-.rv-accept:hover{background:#ECFDF5}
-.rv-reject{color:#DC2626;border-color:#FECACA}
-.rv-reject:hover{background:#FEF2F2}
+.rv-accept{color:var(--success);border-color:var(--success-soft)}
+.rv-accept:hover{background:var(--success-soft)}
+.rv-reject{color:var(--danger);border-color:var(--danger-soft)}
+.rv-reject:hover{background:var(--danger-soft)}
 #rv-empty{padding:1.4rem .9rem;text-align:center;font-size:12px;color:var(--text-muted)}
 #rv-bulk-row{padding:.55rem .9rem;border-top:1px solid var(--border);display:flex;align-items:center;gap:.4rem;flex-wrap:wrap}
 
@@ -211,8 +207,8 @@ body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-seri
 .gv-row{display:flex;align-items:center;gap:.6rem;padding:.5rem 0;border-bottom:1px solid var(--border);font-size:12px}
 .gv-row code{font-size:11px;color:var(--text-muted)}
 .rt-scope-pill{display:inline-block;font-size:10px;font-weight:800;padding:1px 8px;border-radius:9px;margin-left:.4rem}
-.rt-scope-pill.confirmed{background:#ECFDF5;color:#059669}
-.rt-scope-pill.suggested_fallback{background:#FFFBEB;color:#D97706}
+.rt-scope-pill.confirmed{background:var(--success-soft);color:var(--success)}
+.rt-scope-pill.suggested_fallback{background:var(--entity-fact-soft);color:var(--entity-fact)}
 
 /* ── Cytoscape ──────────────────────────────────────────────────────────────── */
 #cy{flex:1;display:block;cursor:default;min-height:0}
@@ -267,9 +263,9 @@ body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-seri
   cursor:pointer;transition:opacity .12s;flex-shrink:0;line-height:1.5;
 }
 .type-pill:hover{opacity:.75}
-.type-pill.fact{background:#FFFBEB;color:#92400E;border-color:#FCD34D}
-.type-pill.dimension{background:#EFF6FF;color:#1D4ED8;border-color:#BFDBFE}
-.type-pill.bridge{background:#F5F3FF;color:#6B21A8;border-color:#DDD6FE}
+.type-pill.fact{background:var(--entity-fact-soft);color:var(--entity-fact);border-color:var(--entity-fact-line)}
+.type-pill.dimension{background:var(--entity-dim-soft);color:var(--entity-dim);border-color:var(--entity-dim-line)}
+.type-pill.bridge{background:var(--entity-bridge-soft);color:var(--entity-bridge);border-color:var(--entity-bridge-line)}
 #bp-close-btn{
   background:none;border:none;cursor:pointer;
   color:var(--text-muted);font-size:16px;padding:2px 6px;
@@ -344,7 +340,7 @@ body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-seri
 .jc-cond-row input:focus{border-color:var(--primary)}
 .jc-eq{color:var(--text-muted);font-size:12px;font-weight:700;text-align:center}
 .jc-rem{background:none;border:none;cursor:pointer;color:var(--text-muted);font-size:14px;padding:2px;transition:all .12s;border-radius:4px;line-height:1;display:flex;align-items:center;justify-content:center}
-.jc-rem:hover{color:#DC2626;background:#FEE2E2}
+.jc-rem:hover{color:var(--danger);background:var(--danger-soft)}
 .jc-add-btn{font-size:11px;color:var(--primary);background:none;border:1px dashed var(--border);border-radius:5px;padding:4px 10px;cursor:pointer;width:100%;margin-top:.2rem;transition:all .12s;text-align:center}
 .jc-add-btn:hover{border-color:var(--primary);background:color-mix(in srgb,var(--primary) 4%,var(--surface))}
 .jc-meta-grid{display:grid;grid-template-columns:1fr 1fr;gap:.4rem;margin-bottom:.4rem}
@@ -362,7 +358,7 @@ body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-seri
 .jc-save:hover{opacity:.85}
 .jc-cancel{background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:5px;padding:5px 12px;font-size:11px;font-weight:700;cursor:pointer;transition:all .12s}
 .jc-cancel:hover{background:var(--surface-2)}
-.jc-del{background:#FEE2E2;color:#DC2626;border:1px solid #FECACA;border-radius:5px;padding:5px 12px;font-size:11px;font-weight:700;cursor:pointer;transition:opacity .12s}
+.jc-del{background:var(--danger-soft);color:var(--danger);border:1px solid var(--danger-soft);border-radius:5px;padding:5px 12px;font-size:11px;font-weight:700;cursor:pointer;transition:opacity .12s}
 /* ThoughtSpot-style join header */
 .je-header{display:grid;grid-template-columns:1fr 150px 1fr;gap:.5rem;background:var(--surface-alt,var(--surface));border:1px solid var(--border);border-radius:7px;padding:.55rem .75rem;margin-bottom:.5rem;align-items:start}
 .je-th-lbl{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);margin-bottom:3px}
@@ -379,7 +375,7 @@ body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-seri
 .filter-desc{font-size:12px;color:var(--text-muted);line-height:1.6;margin-bottom:.5rem}
 .filter-active{
   display:inline-flex;align-items:center;gap:4px;
-  background:#ECFDF5;color:#059669;border:1px solid #A7F3D0;
+  background:var(--success-soft);color:var(--success);border:1px solid var(--success-soft);
   font-size:10px;font-weight:800;padding:2px 8px;border-radius:999px;margin-bottom:.4rem;
 }
 .filter-ta{
@@ -399,7 +395,7 @@ body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-seri
 .filter-suggest-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:Consolas,monospace;font-size:11px;font-weight:700}
 .filter-suggest-type{max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:9px;color:var(--text-muted)}
 .filter-editor-hint{display:flex;justify-content:space-between;gap:.5rem;padding:4px 8px;border-top:1px solid var(--border);background:var(--surface-2);color:var(--text-muted);font-size:9px}
-.filter-editor-error{display:none;margin-top:.4rem;padding:6px 8px;border:1px solid #FECACA;border-radius:5px;background:#FEF2F2;color:#B91C1C;font-size:11px;line-height:1.4}
+.filter-editor-error{display:none;margin-top:.4rem;padding:6px 8px;border:1px solid var(--danger-soft);border-radius:5px;background:var(--danger-soft);color:var(--danger);font-size:11px;line-height:1.4}
 .filter-editor-error.show{display:block}
 .filter-actions{display:flex;gap:.35rem;margin-top:.45rem}
 .filter-save{background:var(--primary);color:var(--on-primary);border:1px solid var(--primary);border-radius:6px;padding:6px 16px;font-size:12px;font-weight:700;cursor:pointer;transition:opacity .12s}
@@ -425,9 +421,9 @@ body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-seri
 .eg-m-btn.primary{background:var(--primary);color:var(--on-primary);border-color:var(--primary)}
 .eg-m-btn.primary:hover{opacity:.85}
 </style>
-<link rel="stylesheet" href="/static/css/production.css?v=20260804-graphite-1">
-</head>
-<body>
+{% endblock %}
+
+{% block content %}
 
 <div id="eg-page">
 
@@ -714,8 +710,37 @@ let graphData = {
   change_proposals: [],
 };
 
-const TYPE_COLORS = { fact:'#D97706', dimension:'#2563EB', bridge:'#7C3AED' };
-const TYPE_BG     = { fact:'#FFFBEB', dimension:'#EFF6FF', bridge:'#F5F3FF' };
+/* Cytoscape paints on a canvas and cannot resolve var(), so the taxonomy is
+   read out of the tokens once and re-read whenever the theme changes. The
+   canvas used to be a fixed light-mode palette on a shell that had gone dark. */
+function _tok(name){
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+let TYPE_COLORS = {}, TYPE_BG = {};
+function _readTypePalette(){
+  TYPE_COLORS = { fact:_tok('--entity-fact'), dimension:_tok('--entity-dim'), bridge:_tok('--entity-bridge') };
+  TYPE_BG     = { fact:_tok('--entity-fact-soft'), dimension:_tok('--entity-dim-soft'), bridge:_tok('--entity-bridge-soft') };
+}
+_readTypePalette();
+
+/* base.html fires this when the operator toggles the theme. Re-read the palette
+   and restyle in place, so the canvas follows the shell instead of staying on
+   whichever theme it was loaded in. */
+window.addEventListener('qb-theme-change', () => {
+  _readTypePalette();
+  if (typeof cy !== 'undefined' && cy) {
+    cy.nodes().forEach(n => {
+      const et = n.data('entityType');
+      if (!et) return;
+      n.data('color',   TYPE_COLORS[et] || TYPE_COLORS.dimension);
+      n.data('bgColor', TYPE_BG[et]     || TYPE_BG.dimension);
+    });
+    // cyStyle() bakes resolved colours in, so the whole stylesheet is rebuilt
+    // rather than just refreshed -- an update() alone would keep the old theme's
+    // edge and label colours.
+    cy.style(cyStyle()).update();
+  }
+});
 const TYPE_LABELS = { fact:'FACT', dimension:'DIM', bridge:'BRIDGE' };
 const TYPE_ORDER  = ['fact', 'dimension', 'bridge'];
 
@@ -751,8 +776,8 @@ function buildElements() {
         label:   e.display_name || e.entity_name,
         tblFqn:  [e.schema_name, e.table_name].filter(Boolean).join('.') || e.entity_name,
         type:    et,
-        color:   e.color || TYPE_COLORS[et] || '#2563EB',
-        bgColor: TYPE_BG[et] || '#EFF6FF',
+        color:   e.color || TYPE_COLORS[et] || TYPE_COLORS.dimension,
+        bgColor: TYPE_BG[et] || TYPE_BG.dimension,
         status:  e.status || 'confirmed',
         _raw:    e,
       },
@@ -796,17 +821,17 @@ function cyStyle() {
     }},
     { selector:'node.canvas-hover', style:{'underlay-color':'data(color)','underlay-padding':4,'underlay-opacity':0.10}},
     { selector:'edge', style:{
-      'width':2,'line-color':'#94A3B8','target-arrow-color':'#94A3B8',
+      'width':2,'line-color':_tok('--border-strong'),'target-arrow-color':_tok('--border-strong'),
       'target-arrow-shape':'triangle','curve-style':'bezier',
-      'font-size':9,'color':'#64748B',
-      'text-background-color':'white','text-background-opacity':0.85,'text-background-padding':'2px',
+      'font-size':9,'color':_tok('--text-muted'),
+      'text-background-color':_tok('--surface'),'text-background-opacity':0.85,'text-background-padding':'2px',
     }},
-    { selector:'edge[?suggested]', style:{'line-style':'dashed','line-color':'#F59E0B','target-arrow-color':'#F59E0B','opacity':0.75}},
-    { selector:'edge[relStatus="valid"]',   style:{'line-color':'#059669','target-arrow-color':'#059669'}},
-    { selector:'edge[relStatus="warning"]', style:{'line-style':'dashed','line-color':'#D97706','target-arrow-color':'#D97706'}},
-    { selector:'edge[relStatus="broken"]',  style:{'line-style':'dashed','line-color':'#DC2626','target-arrow-color':'#DC2626'}},
-    { selector:'edge:selected', style:{'width':3,'line-color':'#F59E0B','target-arrow-color':'#F59E0B','label':'data(edgeLabel)'}},
-    { selector:'edge.hovered', style:{'label':'data(edgeLabel)','width':2.5,'line-color':'#475569','target-arrow-color':'#475569'}},
+    { selector:'edge[?suggested]', style:{'line-style':'dashed','line-color':_tok('--warning'),'target-arrow-color':_tok('--warning'),'opacity':0.75}},
+    { selector:'edge[relStatus="valid"]',   style:{'line-color':_tok('--success'),'target-arrow-color':_tok('--success')}},
+    { selector:'edge[relStatus="warning"]', style:{'line-style':'dashed','line-color':_tok('--entity-fact'),'target-arrow-color':_tok('--entity-fact')}},
+    { selector:'edge[relStatus="broken"]',  style:{'line-style':'dashed','line-color':_tok('--danger'),'target-arrow-color':_tok('--danger')}},
+    { selector:'edge:selected', style:{'width':3,'line-color':_tok('--warning'),'target-arrow-color':_tok('--warning'),'label':'data(edgeLabel)'}},
+    { selector:'edge.hovered', style:{'label':'data(edgeLabel)','width':2.5,'line-color':_tok('--text-soft'),'target-arrow-color':_tok('--text-soft')}},
   ];
 }
 
@@ -864,7 +889,7 @@ function buildSidebar() {
     if (typ && e.entity_type !== typ) return;
     visible++;
     const et    = e.entity_type || 'dimension';
-    const color = e.color || TYPE_COLORS[et] || '#2563EB';
+    const color = e.color || TYPE_COLORS[et] || TYPE_COLORS.dimension;
     const jc    = graphData.relationships.filter(r => r.from_entity===e.entity_name || r.to_entity===e.entity_name).length;
     const row   = document.createElement('div');
     row.className = 'sb-row' + (e.entity_name===_selectedEntity ? ' active' : '');
@@ -947,7 +972,7 @@ function openBP(entityName, tab='details', highlightRelId=null) {
   if (!e) return;
 
   const et    = e.entity_type || 'dimension';
-  const color = e.color || TYPE_COLORS[et] || '#2563EB';
+  const color = e.color || TYPE_COLORS[et] || TYPE_COLORS.dimension;
 
   const titleEl = document.getElementById('bp-title');
   titleEl.textContent = e.display_name || e.entity_name;
@@ -986,13 +1011,13 @@ function renderDetailsTab(e) {
       <div class="dt-field"><label>Physical Table</label><span><code>${_esc(tblFqn)}</code></span></div>
       <div class="dt-field"><label>Primary Key</label><span>${e.pk_column ? `<code>${_esc(e.pk_column)}</code>` : '<span style="color:var(--text-muted)">—</span>'}</span></div>
       <div class="dt-field"><label>Joins</label><span style="font-weight:700">${joins.length} relationship${joins.length!==1?'s':''}</span></div>
-      <div class="dt-field"><label>Status</label><span style="color:${e.status==='confirmed'?'#059669':'#D97706'}">${(e.status||'confirmed').toUpperCase()}</span></div>
+      <div class="dt-field"><label>Status</label><span style="color:${e.status==='confirmed'?'var(--success)':'var(--entity-fact)'}">${(e.status||'confirmed').toUpperCase()}</span></div>
     </div>
     ${e.description?`<div class="dt-desc">${_esc(e.description)}</div>`:''}
     <div style="display:flex;gap:.4rem;margin-top:.4rem;flex-wrap:wrap">
       <button class="tb-btn sm" onclick="switchTab('joins')">⇢ View joins (${joins.length})</button>
       <button class="tb-btn sm" onclick="switchTab('filter')">⧧ View filter</button>
-      ${e.entity_filter?'<span style="font-size:10px;color:#059669;background:#ECFDF5;border:1px solid #A7F3D0;border-radius:999px;padding:2px 8px;font-weight:800;display:flex;align-items:center">Filter active</span>':''}
+      ${e.entity_filter?'<span style="font-size:10px;color:var(--success);background:var(--success-soft);border:1px solid var(--success-soft);border-radius:999px;padding:2px 8px;font-weight:800;display:flex;align-items:center">Filter active</span>':''}
     </div>
   `;
 }
@@ -1210,7 +1235,7 @@ async function saveJoinEdit(relId) {
   const resp = await fetch(`${API_BASE}/relationships`, {
     method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload),
   });
-  if (!resp.ok) { alert('Save failed'); return; }
+  if (!resp.ok) { qbToast.error('Save failed'); return; }
 
   // Update local state
   const idx = graphData.relationships.findIndex(x => x.id === relId);
@@ -1393,7 +1418,7 @@ async function saveFilter() {
     method:'PATCH', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({entity_filter: val}),
   });
-  if (!resp.ok) { alert('Save failed'); return; }
+  if (!resp.ok) { qbToast.error('Save failed'); return; }
   const e = graphData.entities.find(x => x.entity_name === _selectedEntity);
   if (e) { e.entity_filter = val; renderFilterTab(e); }
 }
@@ -1437,10 +1462,18 @@ function deleteSelected() {
   else if (_selectedEntity) deleteEntity(_selectedEntity);
 }
 
-async function deleteEntity(name) {
-  if (!confirm(`Delete "${name}"?\nAll its joins will also be removed.`)) return;
+async function deleteEntity(name, confirmed) {
+  if (!confirmed) {
+    qbConfirm({
+      title: `Delete "${name}"?`,
+      body: 'Every join that touches this table is removed with it.',
+      confirm: 'Delete table',
+      onConfirm: () => deleteEntity(name, true)
+    });
+    return;
+  }
   const r = await fetch(`${API_BASE}/entities/${encodeURIComponent(name)}`, {method:'DELETE'});
-  if (!r.ok) { alert('Delete failed'); return; }
+  if (!r.ok) { qbToast.error('Delete failed'); return; }
   graphData.entities      = graphData.entities.filter(e => e.entity_name !== name);
   graphData.relationships = graphData.relationships.filter(r => r.from_entity!==name && r.to_entity!==name);
   cy.getElementById(name).remove();
@@ -1449,10 +1482,18 @@ async function deleteEntity(name) {
   buildSidebar();
 }
 
-async function deleteRel(relId) {
-  if (!confirm('Delete this join?')) return;
+async function deleteRel(relId, confirmed) {
+  if (!confirmed) {
+    qbConfirm({
+      title: 'Delete this join?',
+      body: 'Questions that relied on this path stop resolving until another join covers it.',
+      confirm: 'Delete join',
+      onConfirm: () => deleteRel(relId, true)
+    });
+    return;
+  }
   const r = await fetch(`${API_BASE}/relationships/${relId}`, {method:'DELETE'});
-  if (!r.ok) { alert('Delete failed'); return; }
+  if (!r.ok) { qbToast.error('Delete failed'); return; }
   graphData.relationships = graphData.relationships.filter(x => x.id !== relId);
   cy.getElementById(`rel-${relId}`).remove();
   _selectedRelId = null;
@@ -1472,7 +1513,7 @@ function openEntityModal(entityName) {
   document.getElementById('ef-type').value       = e?.entity_type   || 'dimension';
   document.getElementById('ef-desc').value       = e?.description   || '';
   document.getElementById('ef-pk').value         = e?.pk_column     || '';
-  document.getElementById('ef-color').value      = e?.color || TYPE_COLORS[e?.entity_type] || '#2563EB';
+  document.getElementById('ef-color').value      = e?.color || TYPE_COLORS[e?.entity_type] || TYPE_COLORS.dimension;
   document.getElementById('entity-modal').style.display = 'flex';
   setTimeout(() => document.getElementById('ef-name').focus(), 50);
 }
@@ -1493,13 +1534,13 @@ async function saveEntity() {
     color:        document.getElementById('ef-color').value,
     status:       'confirmed',
   };
-  if (!payload.entity_name || !payload.table_name) { alert('Entity name and table are required.'); return; }
+  if (!payload.entity_name || !payload.table_name) { qbToast.warning('Entity name and table are required.'); return; }
   const r = await fetch(`${API_BASE}/entities`, {
     method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload),
   });
-  if (!r.ok) { alert('Save failed'); return; }
+  if (!r.ok) { qbToast.error('Save failed'); return; }
   const saved = await r.json();
-  const color  = payload.color || TYPE_COLORS[payload.entity_type] || '#2563EB';
+  const color  = payload.color || TYPE_COLORS[payload.entity_type] || TYPE_COLORS.dimension;
   const idx    = graphData.entities.findIndex(e => e.entity_name===(origName||payload.entity_name));
   if (idx >= 0) graphData.entities[idx] = {...graphData.entities[idx], ...payload};
   else          graphData.entities.push({...payload, id:saved.id, entity_filter:''});
@@ -1516,7 +1557,7 @@ async function saveEntity() {
   if (!isRename && cy.getElementById(payload.entity_name).length) {
     cy.getElementById(payload.entity_name).data({
       label:   payload.display_name || payload.entity_name,
-      color, bgColor: TYPE_BG[payload.entity_type] || '#EFF6FF',
+      color, bgColor: TYPE_BG[payload.entity_type] || TYPE_BG.dimension,
       type:    payload.entity_type, _raw: payload,
     });
   } else {
@@ -1526,7 +1567,7 @@ async function saveEntity() {
       data:{
         id: payload.entity_name, label: payload.display_name||payload.entity_name,
         tblFqn: [payload.schema_name, payload.table_name].filter(Boolean).join('.'),
-        type: payload.entity_type, color, bgColor: TYPE_BG[payload.entity_type]||'#EFF6FF',
+        type: payload.entity_type, color, bgColor: TYPE_BG[payload.entity_type]||TYPE_BG.dimension,
         status:'confirmed', _raw:payload,
       },
       position: pos,
@@ -1585,7 +1626,7 @@ async function saveNewJoin() {
   const join_type         = document.getElementById('ajm-jtype').value;
   const relationship_type = document.getElementById('ajm-card').value;
 
-  if (from_entity === to_entity) { alert('Cannot join a table to itself.'); return; }
+  if (from_entity === to_entity) { qbToast.warning('Cannot join a table to itself.'); return; }
 
   const join_conditions = from_column && to_column ? [{from_col:from_column, to_col:to_column}] : [];
   const payload = {from_entity, to_entity, from_column, to_column, join_type, relationship_type, join_conditions, status:'confirmed'};
@@ -1593,7 +1634,7 @@ async function saveNewJoin() {
   const r = await fetch(`${API_BASE}/relationships`, {
     method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload),
   });
-  if (!r.ok) { alert('Save failed'); return; }
+  if (!r.ok) { qbToast.error('Save failed'); return; }
   const saved = await r.json();
   const rel   = {...payload, id:saved.id||saved.rel_id, validation_status:'untested', join_conditions: JSON.stringify(join_conditions)};
   graphData.relationships.push(rel);
@@ -1633,10 +1674,10 @@ async function runSuggest() {
       buildSidebar();
       closeBP();
     } else {
-      alert('Suggestion failed. Check the console for details.');
+      qbToast.error('Suggestion failed. Check the console for details.');
     }
   } catch(e) {
-    alert('Suggestion error: ' + e.message);
+    qbToast.error('Suggestion error: ' + e.message);
   } finally {
     btn.textContent = '✦ Suggest'; btn.disabled = false;
   }
@@ -1943,7 +1984,7 @@ async function reviewDecide(idx, decision) {
     if (!resp.ok) throw new Error(body.message || body.detail || `HTTP ${resp.status}`);
     await _reloadGraphData();
   } catch (e) {
-    alert(`Could not ${decision}: ${e.message}`);
+    qbToast.error(`Could not ${decision}: ${e.message}`);
   }
 }
 
@@ -1960,17 +2001,25 @@ async function bulkAcceptHighConf() {
     btn.textContent = `✓ Accepted ${data.entities + data.relationships}`;
     setTimeout(() => { btn.textContent = '✓ Accept all ≥ 85%'; }, 2500);
   } catch (e) {
-    alert('Bulk accept failed: ' + e.message);
+    qbToast.error('Bulk accept failed: ' + e.message);
     btn.textContent = '✓ Accept all ≥ 85%';
   } finally {
     btn.disabled = false;
   }
 }
 
-async function bulkReviewVisible(action) {
+async function bulkReviewVisible(action, confirmed) {
   if (!_rvItems.length) return;
   const labels = {rel: 'joins', entity: 'tables', prop: 'fields', all: 'visible suggestions'};
-  if (action === 'reject' && !confirm(`Reject ${_rvItems.length} ${labels[_rvKind]}? This decision survives future KB rebuilds.`)) return;
+  if (action === 'reject' && !confirmed) {
+    qbConfirm({
+      title: `Reject ${_rvItems.length} ${labels[_rvKind]}?`,
+      body: 'This decision survives future KB rebuilds, so these are not suggested again.',
+      confirm: 'Reject all',
+      onConfirm: () => bulkReviewVisible(action, true)
+    });
+    return;
+  }
   const kinds = _rvKind === 'all' ? ['entity', 'rel', 'prop'] : [_rvKind];
   const entityName = _rvKind === 'prop' ? (document.getElementById('rv-entity-filter').value || '') : '';
   try {
@@ -1981,7 +2030,7 @@ async function bulkReviewVisible(action) {
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     await _reloadGraphData();
   } catch (e) {
-    alert(`Bulk ${action} failed: ${e.message}`);
+    qbToast.error(`Bulk ${action} failed: ${e.message}`);
   }
 }
 
@@ -2097,8 +2146,17 @@ async function loadVersions() {
   }
 }
 
-async function restoreVersion(vid) {
-  if (!confirm(`Restore version v${vid}?\nThe current graph will be replaced (a backup snapshot is taken automatically first).`)) return;
+async function restoreVersion(vid, confirmed) {
+  if (!confirmed) {
+    qbConfirm({
+      title: `Restore version v${vid}?`,
+      body: 'The current graph is replaced. A backup snapshot of it is taken automatically first, so this is reversible.',
+      confirm: 'Restore',
+      variant: 'primary',
+      onConfirm: () => restoreVersion(vid, true)
+    });
+    return;
+  }
   try {
     const r = await fetch(`${API_BASE}/versions/${vid}/restore`, {method: 'POST'});
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -2106,14 +2164,25 @@ async function restoreVersion(vid) {
     await _reloadGraphData();
     fitView();
   } catch (e) {
-    alert('Restore failed: ' + e.message);
+    qbToast.error('Restore failed: ' + e.message);
   }
 }
 
-async function saveVersionPrompt() {
-  toggleToolsMenu();
-  const label = prompt('Label for this snapshot:', 'before cleanup');
-  if (label === null) return;
+async function saveVersionPrompt(label) {
+  // The last native dialog in the console. qbConfirm now takes an optional
+  // text field, so a one-line answer no longer needs browser chrome.
+  if (label === undefined) {
+    toggleToolsMenu();
+    qbConfirm({
+      title: 'Name this snapshot',
+      body: 'A label makes it findable later, once the version list has more than a few entries.',
+      confirm: 'Save snapshot',
+      variant: 'primary',
+      input: { placeholder: 'e.g. before cleanup', value: 'before cleanup' },
+      onConfirm: (value) => saveVersionPrompt(value || 'snapshot')
+    });
+    return;
+  }
   try {
     const r = await fetch(`${API_BASE}/versions`, {
       method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -2121,7 +2190,7 @@ async function saveVersionPrompt() {
     });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
   } catch (e) {
-    alert('Snapshot failed: ' + e.message);
+    qbToast.error('Snapshot failed: ' + e.message);
   }
 }
 
@@ -2138,9 +2207,9 @@ function importGraphFile(input) {
   reader.onload = async () => {
     let data;
     try { data = JSON.parse(reader.result); }
-    catch { alert('Not valid JSON.'); return; }
+    catch { qbToast.warning('Not valid JSON.'); return; }
     const ents = (data.entities || []).length, rels = (data.relationships || []).length;
-    if (!confirm(`Import "${file.name}"?\n${ents} entities and ${rels} joins will REPLACE the current graph.\nA backup snapshot of the current graph is taken automatically first.`)) return;
+    const _doImport = async () => {
     try {
       const r = await fetch(`${API_BASE}/import`, {
         method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -2153,8 +2222,15 @@ function importGraphFile(input) {
       await _reloadGraphData();
       fitView();
     } catch (e) {
-      alert('Import failed: ' + e.message);
+      qbToast.error('Import failed: ' + e.message);
     }
+    };
+    qbConfirm({
+      title: `Import "${file.name}"?`,
+      body: `${ents} tables and ${rels} joins REPLACE the current graph. A backup snapshot of the current graph is taken automatically first, so this is reversible.`,
+      confirm: 'Replace graph',
+      onConfirm: _doImport
+    });
   };
   reader.readAsText(file);
 }
@@ -2186,5 +2262,4 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 });
 </script>
-</body>
-</html>
+{% endblock %}

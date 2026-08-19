@@ -17,7 +17,12 @@ def test_production_stylesheet_is_loaded_after_page_head_blocks():
 
 
 def test_entity_graph_uses_shared_production_layer():
-    assert "production.css" in _read("admin/templates/client_graph.html")
+    """It used to link production.css itself, because it was a standalone
+    document. It now inherits the whole stylesheet set from the shell, which is
+    what stopped it drifting onto its own cache-busted copy of the tokens."""
+    graph = _read("admin/templates/client_graph.html")
+    assert graph.lstrip().startswith('{% extends "client_base.html" %}')
+    assert "production.css" in _read("admin/templates/base.html")
 
 
 # The three tests below used to pin exact hex values from the previous
@@ -561,3 +566,62 @@ def test_the_widget_wall_pages_state_what_they_are():
     for page in ("client_conflict_inbox.html", "client_learning_queue.html"):
         source = _read(f"admin/templates/{page}")
         assert "page_header(" in source, f"{page} has no page header"
+
+
+# ── The relationship canvas lives inside the console ─────────────────────────
+
+def test_the_relationship_page_is_not_its_own_document():
+    """It shipped as a standalone <!DOCTYPE html> with its own head, its own
+    theme script and no navigation, so opening Relationships teleported you out
+    of the console and back was two small text links. Being outside the shell is
+    also why it had no qbConfirm/qbToast to call."""
+    source = _read("admin/templates/client_graph.html")
+    assert source.lstrip().startswith("{% extends"), (
+        "client_graph.html is a standalone document again"
+    )
+    for tag in ("<!DOCTYPE html>", "<html", "<head>", "<body"):
+        # The explanatory comment may name them; the markup must not contain them.
+        markup = re.sub(r"\{#.*?#\}", "", source, flags=re.S)
+        assert tag not in markup, f"client_graph.html still emits {tag}"
+
+    # And it must not re-declare stylesheets the shell already loads, which is
+    # how it ended up serving a cache-busted version nothing else was on.
+    assert "tokens.css" not in source, "the page links its own copy of tokens.css"
+
+
+def test_the_canvas_palette_is_a_taxonomy_not_a_status():
+    """fact / dimension / bridge are categories. Mapping them onto
+    --warning/--primary/--violet would be a lie that happens to compile, so they
+    get their own tokens, defined for both themes."""
+    tokens = _read("static/css/tokens.css")
+    light, dark = tokens.split("data-theme='dark'", 1)
+    for name in ("--entity-fact", "--entity-dim", "--entity-bridge"):
+        for suffix in ("", "-soft", "-line"):
+            token = f"{name}{suffix}:"
+            assert token in light, f"{token} missing from the light palette"
+            assert token in dark, f"{token} is never redefined for dark mode"
+
+
+def test_cytoscape_gets_resolved_colours_not_var_references():
+    """The canvas is painted with a 2D context, which cannot resolve var().
+    A var() reaching cyStyle() renders as no colour at all, silently."""
+    source = _read("admin/templates/client_graph.html")
+    style_block = source[source.index("function cyStyle()"):]
+    style_block = style_block[:style_block.index("function initCytoscape")]
+    assert "var(--" not in style_block, (
+        "cyStyle() passes a CSS variable to the canvas, which cannot resolve it"
+    )
+    assert "_tok(" in style_block, "cyStyle() no longer reads the design tokens"
+
+
+def test_the_canvas_repaints_when_the_theme_changes():
+    """Colours baked in at load meant the canvas stayed on whichever theme it
+    was opened in while the shell around it changed."""
+    source = _read("admin/templates/client_graph.html")
+    assert "qb-theme-change" in source, "the canvas does not listen for theme changes"
+    handler = source.split("qb-theme-change", 1)[1][:600]
+    assert "_readTypePalette()" in handler, "the palette is not re-read"
+    assert "cy.style(cyStyle())" in handler, (
+        "the stylesheet must be rebuilt from cyStyle(); a bare cy.style().update() "
+        "re-applies the sheet that already has the old theme's colours baked in"
+    )

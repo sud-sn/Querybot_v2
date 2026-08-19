@@ -289,6 +289,33 @@ html[data-theme='dark'] .sidebar-foot .btn-secondary:hover {
   width: 100%;
 }
 
+/* ── Full-bleed pages ─────────────────────────────────────────────────────
+   For a surface that owns its own viewport-height layout — the relationship
+   canvas — rather than flowing in the measured column. The shell stops
+   scrolling and hands its remaining height to the page, so the canvas can
+   fill it without reaching for 100vh and overshooting by the height of the
+   topbar and the workspace nav above it. */
+body.page-bleed .shell      { height: 100vh; min-height: 0; overflow: hidden; }
+body.page-bleed .shell-main { min-height: 0; overflow: hidden; }
+body.page-bleed .page {
+  max-width: none;
+  padding: 0;
+  /* Sized by the flex container, not by its own content or a 100% that would
+     resolve against the viewport and overflow by whatever sits above it. */
+  height: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+/* The nav carries a -.15rem top margin to sit tight under the normal page
+   padding. With that padding removed it would hang outside the page box. */
+body.page-bleed .page > .client-workspace-nav { margin-top: 0; }
+/* The workspace nav keeps its own height; whatever follows takes the rest. */
+body.page-bleed .page > .client-workspace-nav { flex: 0 0 auto; }
+body.page-bleed .page > :last-child { flex: 1 1 auto; min-height: 0; }
+
 /* ── Auth pages (login / setup) — centered, no sidebar ── */
 .auth-page {
   flex: 1;

@@ -49,7 +49,7 @@
 <link rel="stylesheet" href="/static/css/production.css?v=20260818-verdigris-1">
 <link rel="stylesheet" href="/static/css/brand-motion.css?v=20260818-bubble-1">
 </head>
-<body data-admin-client-id="{% if client is defined %}{{ client.account_id|default('') }}{% endif %}">
+<body class="{% block body_class %}{% endblock %}" data-admin-client-id="{% if client is defined %}{{ client.account_id|default('') }}{% endif %}">
 
 {# ── Determine if this is a full-shell page or an auth page ── #}
 {% set _auth_page = request.url.path in ['/admin/login', '/admin/setup'] %}
@@ -158,6 +158,7 @@
     <div class="qb-dialog-header">
       <div class="qb-dialog-title" id="qbDialogTitle"></div>
       <div class="qb-dialog-body"  id="qbDialogBody"></div>
+      <input type="text" id="qbDialogInput" class="form-input" style="display:none;margin-top:.7rem">
     </div>
     <div class="qb-dialog-footer">
       <button type="button" class="btn btn-secondary btn-sm" id="qbDialogCancel">Cancel</button>
@@ -171,6 +172,7 @@
   var backdrop   = document.getElementById('qbDialogBackdrop');
   var titleEl    = document.getElementById('qbDialogTitle');
   var bodyEl     = document.getElementById('qbDialogBody');
+  var inputEl    = document.getElementById('qbDialogInput');
   var cancelBtn  = document.getElementById('qbDialogCancel');
   var confirmBtn = document.getElementById('qbDialogConfirm');
 
@@ -183,13 +185,22 @@
   backdrop.addEventListener('click', function(e){ if(e.target === backdrop) close(); });
   document.addEventListener('keydown', function(e){ if(e.key === 'Escape') close(); });
   confirmBtn.addEventListener('click', function(){
-    var cb = _onConfirm;   // save reference BEFORE close() nullifies it
+    var cb    = _onConfirm;   // save reference BEFORE close() nullifies it
+    var value = inputEl.style.display === 'none' ? undefined : inputEl.value;
     close();
-    if(cb) cb();
+    if(cb) cb(value);
+  });
+  /* Enter submits when the dialog is collecting a value, the way a prompt did. */
+  inputEl.addEventListener('keydown', function(e){
+    if(e.key === 'Enter'){ e.preventDefault(); confirmBtn.click(); }
   });
 
   /*
-   * qbConfirm({ title, body, confirm, cancel, variant, onConfirm })
+   * qbConfirm({ title, body, confirm, cancel, variant, input, onConfirm })
+   *
+   * input: {placeholder, value} renders a single text field and passes its
+   *        contents to onConfirm(value). This exists so the console never has
+   *        to fall back to a browser prompt() for a one-line answer.
    *
    * variant: 'danger' (default) | 'primary' | 'warning'
    *
@@ -210,10 +221,22 @@
     var variant = opts.variant || 'danger';
     confirmBtn.className = 'btn btn-' + variant + ' btn-sm';
 
+    if(opts.input){
+      inputEl.style.display = '';
+      inputEl.placeholder = opts.input.placeholder || '';
+      inputEl.value = opts.input.value || '';
+    } else {
+      inputEl.style.display = 'none';
+      inputEl.value = '';
+    }
+
     _onConfirm = opts.onConfirm || null;
     backdrop.style.display = 'flex';
     /* Focus confirm so keyboard users can press Enter immediately */
-    setTimeout(function(){ confirmBtn.focus(); }, 30);
+    setTimeout(function(){
+      if(opts.input){ inputEl.focus(); inputEl.select(); }
+      else { confirmBtn.focus(); }
+    }, 30);
   };
 })();
 </script>

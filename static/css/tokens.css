@@ -117,6 +117,17 @@
      was no token for text on a brand fill. */
   --on-primary:    #FFFFFF;
 
+  /* ── Entity taxonomy ───────────────────────────────────────
+     A categorical palette, not a semantic one. A fact table is
+     not a warning and a dimension is not a link, so these are
+     held apart from --warning/--primary rather than borrowed
+     from them: mapping the taxonomy onto status colours is a
+     lie that happens to compile. Three hues, each with ink,
+     fill and border, chosen to stay legible beside the brand
+     verdigris without competing with it. */
+  --entity-fact:      #8A5A12;  --entity-fact-soft:  #F7EFDF;  --entity-fact-line:  #E0C99B;
+  --entity-dim:       #2D4B8E;  --entity-dim-soft:   #E6ECF7;  --entity-dim-line:   #B9C8E5;
+  --entity-bridge:    #6B4FA8;  --entity-bridge-soft:#ECE6F7;  --entity-bridge-line:#C7B8E5;
   /* ── Semantic colours ───────────────────────────────────────
      Held clearly apart from the brand teal, and desaturated off
      the Tailwind defaults they used to be. */
@@ -253,6 +264,11 @@ body[data-theme='dark'] {
   --violet:  #A48CD6;  --violet-light: rgba(164, 140, 214, .15);
   --success: #5CBE84;  --success-soft: rgba(92, 190, 132, .14);
   --danger:  #E8836E;  --danger-soft:  rgba(232, 131, 110, .14);
+
+  /* Entity taxonomy — lifted for the dark ground, same three hues. */
+  --entity-fact:      #D9A857;  --entity-fact-soft:  #2A2114;  --entity-fact-line:  #4A3A1E;
+  --entity-dim:       #8CA8E6;  --entity-dim-soft:   #1A2233;  --entity-dim-line:   #31405C;
+  --entity-bridge:    #B29CE0;  --entity-bridge-soft:#231C33;  --entity-bridge-line:#3D3357;
   --warning: #D9A93F;  --warning-soft: rgba(217, 169, 63, .14);
 
   --code-bg:   #0A1110;
