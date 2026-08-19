@@ -130,3 +130,54 @@ window.QB_CHART_STATUS = function (dark) {
     ring:       token(dark ? '--surface' : '--surface', dark ? '#111827' : '#ffffff'),
   };
 };
+
+/*
+ * Chart chrome — axis labels, axis line, gridlines, tooltip.
+ *
+ * Same reasoning as the status colours: canvas needs concrete strings, so these
+ * resolve from the theme tokens at call time. Both portal pages previously
+ * carried their own copy of a Tailwind slate set (#94A3B8 / #64748B / #334155 /
+ * #CBD5E1 and matching rgba gridlines), which meant every chart's furniture sat
+ * in a different neutral family from the product around it — the frame told you
+ * it came from somewhere else even when the data was right.
+ */
+window.QB_CHART_THEME = function () {
+  const root = getComputedStyle(document.documentElement);
+  const token = (name, fallback) => root.getPropertyValue(name).trim() || fallback;
+
+  const channels = (value) => {
+    const hex = value.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+    if (hex) {
+      const h = hex[1].length === 3
+        ? hex[1].split('').map((c) => c + c).join('')
+        : hex[1];
+      return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16));
+    }
+    const nums = (value.match(/[\d.]+/g) || []).slice(0, 3).map(Number);
+    return nums.length === 3
+      ? (nums.every((n) => n <= 1) ? nums.map((n) => Math.round(n * 255)) : nums)
+      : [0, 0, 0];
+  };
+  const alpha = (value, a) => 'rgba(' + channels(value).join(',') + ',' + a + ')';
+
+  // The portal sets data-theme on <html>, the admin console on <body>; the
+  // token sheet answers to either, so this does too.
+  const dark = document.documentElement.getAttribute('data-theme') === 'dark'
+    || (document.body && document.body.getAttribute('data-theme') === 'dark');
+
+  const muted = token('--text-muted', dark ? '#90A19B' : '#5E706A');
+  const border = token('--border', dark ? '#26332D' : '#D8E2DD');
+  const surface = token('--surface', dark ? '#141C19' : '#FCFDFC');
+  const text = token('--text', dark ? '#E9F1ED' : '#101C18');
+
+  return {
+    dark,
+    axis:        muted,
+    axisLine:    border,
+    // Gridlines are structure, not data: present enough to read a value
+    // against, quiet enough that the series stays the loudest thing.
+    split:       alpha(border, dark ? 0.55 : 0.85),
+    tooltipBg:   alpha(surface, 0.97),
+    tooltipText: text,
+  };
+};

@@ -396,17 +396,8 @@ function _buildAnnotationMarkPoints(payload, labels, values){
   return points;
 }
 
-function chartThemeTokens(){
-  const dark = document.documentElement.getAttribute('data-theme') === 'dark';
-  return {
-    dark,
-    axis:       dark ? '#94A3B8' : '#64748B',
-    axisLine:   dark ? '#334155' : '#CBD5E1',
-    split:      dark ? 'rgba(148,163,184,.12)' : 'rgba(148,163,184,.15)',
-    tooltipBg:  dark ? 'rgba(26,29,33,.97)' : 'rgba(255,255,255,.98)',
-    tooltipText:dark ? '#F2F4F7' : '#171A1F',
-  };
-}
+// Shared with the chat page so both draw their charts in the same neutrals.
+const chartThemeTokens = window.QB_CHART_THEME;
 
 function isTemporalLabel(v){
   return /(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|q[1-4]|week|month|year|date|day|\d{4}[-/]\d{1,2})/.test(String(v||'').toLowerCase());

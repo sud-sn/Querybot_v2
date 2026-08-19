@@ -1499,11 +1499,22 @@ const _PAL_GRAD = window.QB_PALETTE_GRADIENTS;
 // ── Number formatter for tooltips / axis labels ───────────────────────────────
 function _fmtNum(v) {
   const n = Number(v);
-  if (isNaN(n)) return String(v ?? '');
+  // isNaN() alone let Infinity through to the magnitude ladder below, where it
+  // formatted as "InfinityB".
+  if (!Number.isFinite(n)) return String(v ?? '');
   const abs = Math.abs(n);
-  if (abs >= 1e9)  return (n/1e9).toFixed(1).replace(/\.0$/,'') + 'B';
-  if (abs >= 1e6)  return (n/1e6).toFixed(1).replace(/\.0$/,'') + 'M';
-  if (abs >= 1e3)  return (n/1e3).toFixed(1).replace(/\.0$/,'') + 'K';
+  const trim = x => x.toFixed(1).replace(/\.0$/, '');
+  // A trillion tier: without it a currency total of 1.2e12 rendered "1200B",
+  // which reads as a mistake on an axis.
+  if (abs >= 1e12) return trim(n / 1e12) + 'T';
+  if (abs >= 1e9)  return trim(n / 1e9)  + 'B';
+  if (abs >= 1e6)  return trim(n / 1e6)  + 'M';
+  if (abs >= 1e3)  return trim(n / 1e3)  + 'K';
+  if (n === 0) return '0';
+  // Below 0.01 a fixed two-decimal format collapses everything to "0", so a
+  // chart of rates or conversion fractions drew an axis of zeros. Significant
+  // digits keep the magnitude visible instead.
+  if (abs < 0.01) return Number(n.toPrecision(2)).toString();
   return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 function _chartNormKey(v) {
@@ -1623,16 +1634,29 @@ function _buildAnnotationMarkPoints(payload, labels, values) {
 }
 
 function buildChartOption(payload) {
-  const rows        = Array.isArray(payload?.rows) ? payload.rows : [];
+  let   rows        = Array.isArray(payload?.rows) ? payload.rows : [];
   const xKey        = payload?.x_key;
-  const yKeys       = Array.isArray(payload?.y_keys) ? payload.y_keys : [];
-  const yKey        = yKeys[0];
+  let   yKeys       = Array.isArray(payload?.y_keys) ? payload.y_keys : [];
+
   const palName     = payload?.color_palette || 'default';
   const dark        = document.documentElement.getAttribute('data-theme') === 'dark';
   const palette     = _PALETTES[palName] || _PALETTES.default;
   const colors      = (dark ? palette.dark : palette.light) || palette.light;
   const gradPair    = _PAL_GRAD[palName]  || _PAL_GRAD.default;
-  const labels      = rows.map(r => String((xKey && r?.[xKey]) ?? ''));
+
+  // Series past the palette's length used to wrap round with `i % colors.length`,
+  // so a 12-series chart drew series 9-12 in the same four colours as 1-4 and
+  // the legend carried duplicate swatches. The palettes are validated for
+  // adjacent separation at eight slots and documented as comfortable for far
+  // fewer, so the extra series are dropped rather than drawn ambiguously.
+  const seriesCap   = colors.length;
+  let   droppedSeries = 0;
+  if (yKeys.length > seriesCap) {
+    droppedSeries = yKeys.length - seriesCap;
+    yKeys = yKeys.slice(0, seriesCap);
+  }
+  const yKey        = yKeys[0];
+  let   labels      = rows.map(r => String((xKey && r?.[xKey]) ?? ''));
   const hasAnnotations = Boolean(
     payload?.annotations?.biggest_period_drop || payload?.annotations?.biggest_period_gain
   );
@@ -1640,10 +1664,13 @@ function buildChartOption(payload) {
   const valueFmt    = (value, col, compact=false) => _fmtChartValue(value, formatFor(col), compact);
   const xLabel      = _chartColumnLabel(payload, xKey || 'Category');
   const yLabel      = _chartColumnLabel(payload, yKey || 'Value');
-  const axisColor   = dark ? '#94a3b8' : '#64748b';
-  const gridColor   = dark ? 'rgba(148,163,184,.14)' : 'rgba(100,116,139,.14)';
-  const surface     = dark ? 'rgba(26,29,33,.97)' : 'rgba(255,255,255,.98)';
-  const textColor   = dark ? '#F2F4F7' : '#171A1F';
+  // Chart furniture comes from the theme tokens (see /static/js/chart-palettes.js)
+  // so the frame sits in the same neutrals as the product around it.
+  const chrome      = window.QB_CHART_THEME();
+  const axisColor   = chrome.axis;
+  const gridColor   = chrome.split;
+  const surface     = chrome.tooltipBg;
+  const textColor   = chrome.tooltipText;
   const maxLabel    = labels.reduce((m, v) => Math.max(m, v.length), 0);
   const longLabels  = maxLabel > 14;
   const manyLabels  = labels.length > 9;
@@ -1666,6 +1693,83 @@ function buildChartOption(payload) {
   else if (req === 'treemap')    type = 'treemap';
   else if (req === 'line' || (req !== 'bar' && temporal && req !== 'bar')) type = 'line';
   else                           type = 'bar';
+
+  // ── Density ───────────────────────────────────────────────────────────────
+  // A categorical chart with 500 rows drew 500 bars into a fixed-height grid:
+  // sub-pixel bars, labels overlapping into a smear, and no zoom to escape it.
+  // Past a readable count the chart shows the largest values and says so, which
+  // is the honest version of what the reader can actually see.
+  //
+  // Never for a time series. Ordering carries the meaning there, so taking the
+  // biggest values would silently rewrite the shape of the line; long series
+  // are legible anyway, and get a zoom control instead.
+  // 20, not a rounder 40: a dense categorical chart is drawn horizontally,
+  // and a horizontal bar the reader cannot name is not a data point they can
+  // use. At the ~300px chart height these render at, 40 rows leaves 6px per
+  // category against an 11px label; 20 leaves ~15px, which fits.
+  const CATEGORY_CAP = 20;
+  const PIE_CAP = 12;
+  const ordered = type === 'line' || type === 'area' || type === 'forecast' || temporal;
+  let truncatedFrom = 0;
+
+  if (!ordered && (type === 'bar' || type === 'pie' || type === 'donut') && yKey) {
+    const cap = (type === 'pie' || type === 'donut') ? PIE_CAP : CATEGORY_CAP;
+    if (rows.length > cap) {
+      truncatedFrom = rows.length;
+      const ranked = rows.slice().sort(
+        (a, b) => Math.abs(_chartNumber(b?.[yKey])) - Math.abs(_chartNumber(a?.[yKey])));
+      const head = ranked.slice(0, cap);
+      // A pie is a part-to-whole claim, so the tail cannot simply vanish —
+      // dropping it would make the remaining slices add up to a different total
+      // than the one the answer states. It becomes one aggregated slice.
+      if (type === 'pie' || type === 'donut') {
+        const rest = ranked.slice(cap)
+          .reduce((sum, r) => sum + (_chartNumber(r?.[yKey]) || 0), 0);
+        head.push({ [xKey]: `Other (${truncatedFrom - cap})`, [yKey]: rest });
+      }
+      rows = head;
+      labels = rows.map(r => String((xKey && r?.[xKey]) ?? ''));
+    }
+  }
+
+
+  // ── Nothing to draw ───────────────────────────────────────────────────────
+  // With no rows, or no value column, every branch below still produced a
+  // chart: empty axes, an empty grid, and no indication of why. An empty frame
+  // reads as a broken chart rather than as an empty result.
+  if (!rows.length || !yKey) {
+    return {
+      backgroundColor: 'transparent',
+      graphic: {
+        type: 'text', left: 'center', top: 'middle',
+        style: {
+          text: rows.length ? 'No value column to plot' : 'No rows to plot',
+          fill: axisColor, fontSize: 13,
+          fontFamily: getComputedStyle(document.documentElement)
+            .getPropertyValue('--font-ui').trim() || 'sans-serif',
+        },
+      },
+    };
+  }
+
+  // Say it on the chart, not just in the data. A reader who is not told the
+  // chart shows a subset will read it as the whole answer.
+  const capParts = [];
+  if (truncatedFrom) {
+    capParts.push((type === 'pie' || type === 'donut')
+      ? `Top ${PIE_CAP} of ${truncatedFrom}, remainder grouped`
+      : `Showing the ${CATEGORY_CAP} largest of ${truncatedFrom}`);
+  }
+  if (droppedSeries) {
+    capParts.push(`${droppedSeries} more series not shown`);
+  }
+  const capNotice = capParts.length ? {
+    text: '',
+    subtext: capParts.join(' · '),
+    left: 'center',
+    top: 2,
+    subtextStyle: { color: axisColor, fontSize: 11 },
+  } : undefined;
 
   const horizontal = type === 'bar' && (longLabels || manyLabels) && !temporal;
 
@@ -1701,6 +1805,7 @@ function buildChartOption(payload) {
     const outerR = compactPie ? '58%' : '70%';
     return {
       backgroundColor: 'transparent',
+      title: capNotice,
       animationDuration: 500,
       animationEasing: 'cubicOut',
       color: colors,
@@ -2196,13 +2301,27 @@ function buildChartOption(payload) {
     animationDuration: 400,
     animationEasing: 'cubicOut',
     color: colors,
+    title: capNotice,
+    // A long time series keeps every point — reordering or dropping any of it
+    // would change what the line says — so it gets a way to move through the
+    // data instead. Below the threshold the control is clutter.
+    dataZoom: (ordered && labels.length > 60) ? [
+      { type: 'inside', throttle: 50 },
+      { type: 'slider', height: 16, bottom: 4, borderColor: 'transparent',
+        backgroundColor: gridColor, fillerColor: 'transparent',
+        handleStyle: { color: axisColor }, moveHandleSize: 4,
+        textStyle: { color: axisColor, fontSize: 10 } },
+    ] : undefined,
     grid: horizontal
       ? { left: 148, right: 28, top: 28, bottom: 20, containLabel: false }
       : {
           left: 56,
           right: 24,
           top: hasAnnotations ? (yKeys.length > 1 ? 68 : 58) : (yKeys.length > 1 ? 44 : 24),
-          bottom: longLabels ? 82 : (hasAnnotations ? 58 : 48),
+          // + room for the zoom slider when one is present, or it lands
+          // on top of the axis labels.
+          bottom: (longLabels ? 82 : (hasAnnotations ? 58 : 48))
+                  + ((ordered && labels.length > 60) ? 26 : 0),
         },
     tooltip: {
       ...tooltipStyle,
