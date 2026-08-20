@@ -603,6 +603,28 @@ def _normalize_schema(master: dict) -> dict:
     }
 
 
+def discovered_tables(schema: dict | None) -> dict:
+    """The table entries of a _schema.json, without the bookkeeping ones.
+
+    _schema.json holds discovered tables keyed by FQN AND a small number of
+    non-table entries — "__db_fk_constraints__" is a LIST of the database's
+    declared foreign keys. _normalize_schema marks them with the "__" prefix
+    convention and passes them through untouched, but every consumer that
+    walked .items() and called .get() on the value had to know that
+    independently, and three of them did not: the egress audit loops crashed
+    on the list, schema-drift detection crashed on it, and the discovery
+    counter counted it as a table ("15/14 selected tables written").
+
+    One helper so the next consumer inherits the rule instead of rediscovering
+    it as a warning in a log.
+    """
+    return {
+        key: value
+        for key, value in (schema or {}).items()
+        if not str(key).startswith("__") and isinstance(value, dict)
+    }
+
+
 def load_schema_json(schema_dir: str) -> dict:
     p = Path(schema_dir) / "_schema.json"
     return _normalize_schema(json.loads(p.read_text(encoding="utf-8"))) if p.exists() else {}
@@ -1923,7 +1945,9 @@ def _discover_snowflake(cfg: dict, out: Path, allowed: set[str] | None = None, m
         conn.close()
     _write_schema_json(out, master)
     _write_join_map(out, master)
-    return len(master)
+    # Count TABLES, not bookkeeping entries — master also carries
+    # __db_fk_constraints__, which was making discovery report 15/14.
+    return len(discovered_tables(master))
 
 
 def _run_snowflake(cfg: dict, sql: str, max_rows: int = 200) -> list[dict]:
@@ -2180,7 +2204,9 @@ def _discover_oracle(cfg: dict, out: Path, allowed: set[str] | None = None, mc: 
         conn.close()
     _write_schema_json(out, master)
     _write_join_map(out, master)
-    return len(master)
+    # Count TABLES, not bookkeeping entries — master also carries
+    # __db_fk_constraints__, which was making discovery report 15/14.
+    return len(discovered_tables(master))
 
 
 def _run_oracle(cfg: dict, sql: str, max_rows: int = 200) -> list[dict]:
@@ -2629,7 +2655,9 @@ def _discover_azure_sql(cfg: dict, out: Path, allowed: set[str] | None = None, m
 
     _write_schema_json(out, master)
     _write_join_map(out, master)
-    return len(master)
+    # Count TABLES, not bookkeeping entries — master also carries
+    # __db_fk_constraints__, which was making discovery report 15/14.
+    return len(discovered_tables(master))
 
 
 def _run_azure_sql(cfg: dict, sql: str, max_rows: int = 200) -> list[dict]:

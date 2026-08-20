@@ -3520,6 +3520,14 @@ def _compute_schema_drift(old: dict, new: dict) -> dict:
         "detected_at": ISO-8601 string
       }
     """
+    # Tables only. _schema.json also carries "__db_fk_constraints__", whose
+    # value is a LIST — walking it here as if it were a table crashed the whole
+    # drift report on `.get("columns")`, and the failure was swallowed into a
+    # warning, so a discovery that changed the schema reported no drift at all.
+    from core.schema import discovered_tables as _tables_only
+    old = _tables_only(old)
+    new = _tables_only(new)
+
     old_map = {k.upper(): k for k in old}
     new_map = {k.upper(): k for k in new}
     old_keys = set(old_map)
@@ -9021,7 +9029,8 @@ async def admin_discover_schema(
                 _schema_path = _Path(schema_dir) / "_schema.json"
                 if _schema_path.exists():
                     from core.schema import _normalize_schema as _ns3
-                    _schema = _ns3(_json.loads(_schema_path.read_text()))
+                    from core.schema import discovered_tables as _tables_only3
+                    _schema = _tables_only3(_ns3(_json.loads(_schema_path.read_text())))
                     for _tkey, _tmeta in _schema.items():
                         # _schema.json carries non-table entries alongside the
                         # tables — "__db_fk_constraints__" holds a LIST of the
@@ -9339,7 +9348,8 @@ async def admin_build_kb(
                 _schema_path = _Path(schema_dir) / "_schema.json"
                 if _schema_path.exists():
                     from core.schema import _normalize_schema as _ns4
-                    _schema = _ns4(_json.loads(_schema_path.read_text()))
+                    from core.schema import discovered_tables as _tables_only4
+                    _schema = _tables_only4(_ns4(_json.loads(_schema_path.read_text())))
                     for _tkey, _tmeta in _schema.items():
                         # _schema.json carries non-table entries alongside the
                         # tables — "__db_fk_constraints__" holds a LIST of the

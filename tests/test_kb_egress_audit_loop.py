@@ -22,6 +22,7 @@ first; the same code on a schema where it lands earlier loses the rest silently.
 from __future__ import annotations
 
 import inspect
+import pathlib
 import re
 
 import admin.routes as routes
@@ -45,9 +46,51 @@ def test_both_audit_loops_exist():
 
 
 def test_neither_loop_calls_get_on_a_non_table_entry():
+    """Both loops now narrow to real tables up front, via the shared helper —
+    as does schema-drift detection, the third site with the same defect."""
+    source = inspect.getsource(routes)
+    assert source.count("discovered_tables as _tables_only") == 3
     for body in _audit_loop_bodies():
         assert 'str(_tkey).startswith("__")' in body
         assert "isinstance(_tmeta, dict)" in body
+
+
+def test_schema_drift_only_diffs_real_tables():
+    """Same list, third site: the drift report crashed on it and the failure
+    was swallowed into a warning, so a discovery that DID change the schema
+    reported no drift at all."""
+    source = inspect.getsource(routes._compute_schema_drift)
+    assert "discovered_tables as _tables_only" in source
+
+    drift = routes._compute_schema_drift(
+        {"DB.S.T1": {"columns": [{"name": "A", "type": "int"}]},
+         "__db_fk_constraints__": [{"from": "x"}]},
+        {"DB.S.T1": {"columns": [{"name": "A", "type": "int"},
+                                 {"name": "B", "type": "int"}]},
+         "DB.S.T2": {"columns": []},
+         "__db_fk_constraints__": [{"from": "x"}, {"from": "y"}]},
+    )
+    assert drift["added_tables"] == ["DB.S.T2"]
+    assert drift["removed_tables"] == []
+    assert "__db_fk_constraints__" not in str(drift["added_tables"])
+    assert drift["column_changes"]["DB.S.T1"]["added"] == ["B"]
+
+
+def test_the_discovery_counter_counts_tables_only():
+    """Discovery reported "15/14 selected tables written" — the FK entry was
+    being counted as a table."""
+    from core.schema import discovered_tables
+
+    master = {
+        "DB.S.T1": {"columns": []},
+        "DB.S.T2": {"columns": []},
+        "__db_fk_constraints__": [{"from": "x"}],
+    }
+    assert len(discovered_tables(master)) == 2
+
+    source = pathlib.Path("core/schema.py").read_text(encoding="utf-8")
+    assert source.count("return len(discovered_tables(master))") == 3
+    assert "    return len(master)" not in source
 
 
 def test_the_fk_entry_really_is_a_list_after_normalisation():
