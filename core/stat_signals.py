@@ -51,16 +51,50 @@ def _classify_columns(rows: list[dict]) -> tuple[list[str], list[str]]:
     return numeric, text
 
 
-_TEMPORAL_RE = re.compile(
-    r"(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|"
-    r"q[1-4]|week|month|year|\b\d{4}[-/]\d{1,2}|\b20\d\d\b)",
+# A column NAME that names a period. This is the strong signal and is checked
+# first.
+_TEMPORAL_NAME_RE = re.compile(
+    r"(?:^|[^a-z])(date|day|week|month|quarter|year|period|fiscal|yyyy|mm)(?:[^a-z]|$)",
+    re.IGNORECASE,
+)
+
+# A VALUE that is itself a period label. Anchored, because the previous pattern
+# matched month abbreviations as bare substrings anywhere in the text: "Nova"
+# contains "nov", "Maritime" contains "mar", "Mayfield" contains "may" and
+# "Septic" contains "sep". So a result grouped by profit centre read as a time
+# series, and the answer offered "the trend is downward — what period drove the
+# biggest change?" about a result with no period in it at all.
+_TEMPORAL_VALUE_RE = re.compile(
+    r"^(?:"
+    r"\d{4}[-/]\d{1,2}(?:[-/]\d{1,2})?"          # 2026-06, 2026/06/30
+    r"|\d{1,2}[-/]\d{1,2}[-/]\d{2,4}"            # 30-06-2026
+    r"|(?:19|20)\d{2}"                            # 2026
+    r"|q[1-4][\s-]?(?:19|20)?\d{2}"               # Q2 2026
+    r"|(?:19|20)\d{2}[\s-]?q[1-4]"                # 2026-Q2
+    r"|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?"
+    r"(?:[\s-]+(?:19|20)?\d{2})?"                 # Jun, June 2026
+    r"|(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*"     # weekday labels
+    r")$",
     re.IGNORECASE,
 )
 
 
 def _is_temporal_col(col_name: str, rows: list[dict]) -> bool:
-    sample = " ".join(str(r.get(col_name, "")) for r in rows[:6])
-    return bool(_TEMPORAL_RE.search(sample))
+    """Does this column hold period labels?
+
+    Name first, then the values themselves — and a value only counts when the
+    WHOLE value is a period label, not when a month abbreviation happens to
+    appear inside a business name.
+    """
+    if _TEMPORAL_NAME_RE.search(str(col_name or "")):
+        return True
+    sample = [str(r.get(col_name, "") or "").strip() for r in rows[:6]]
+    sample = [value for value in sample if value]
+    if not sample:
+        return False
+    matched = sum(1 for value in sample if _TEMPORAL_VALUE_RE.match(value))
+    # A majority, so one stray "May" among six branch names cannot carry it.
+    return matched >= max(2, (len(sample) + 1) // 2)
 
 
 def _cv(values: list[float]) -> float | None:

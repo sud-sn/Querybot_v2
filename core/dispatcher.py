@@ -168,6 +168,37 @@ _DATA_REQUEST_SHAPE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# A question ABOUT the assistant or the workspace rather than about the
+# business data in it. These belong to the conversational analyst, which can
+# actually list what the workspace holds; sending them to SQL generation
+# produces a governed refusal about a missing semantic mapping, which answers
+# a question nobody asked.
+_ABOUT_THE_SYSTEM_RE = re.compile(
+    r"\b(?:"
+    r"what\s+(?:can|do)\s+(?:you|querybot)\b"
+    r"|(?:what|which)\s+(?:kind\s+of\s+)?(?:questions?|things?)\s+can\b"
+    r"|(?:what|which)\s+(?:tables?|data|datasets?|sources?|metrics?|reports?)"
+    r"\s+(?:and\s+\w+\s+)?(?:can|do|are)\s+(?:you|available|there)\b"
+    r"|are\s+you\s+able\s+to\b"
+    r"|how\s+(?:do|does)\s+(?:you|this|it|querybot)\s+work\b"
+    r"|your\s+capabilit|what\s+are\s+you\b"
+    r"|who\s+are\s+you\b"
+    r")",
+    re.IGNORECASE,
+)
+
+# Words in workspace metadata that describe the SYSTEM rather than the
+# business it holds — they would match almost any sentence and say nothing
+# about whether the turn is a data request.
+_METADATA_WORD_RE = re.compile(r"[a-z][a-z0-9]{2,}")
+_METADATA_STOPWORDS = {
+    "amount", "code", "data", "date", "description", "detail", "details",
+    "field", "flag", "identifier", "index", "info", "key",
+    "level", "line", "name", "number", "record", "records", "report", "row",
+    "rows", "status", "table", "total", "type", "value", "values",
+}
+
+
 _QUERY_CONFIRM_RE = re.compile(
     r"^\s*(?:go\s+ahead|proceed|continue|run\s+it|do\s+it|sure|ok(?:ay)?|"
     r"yes(?:\s+please)?(?:\s+proceed(?:\s+with\s+(?:the\s+)?retriev(?:al|ing))?)?)"
@@ -190,13 +221,76 @@ def _is_query_confirmation(text: str) -> bool:
     return bool(_QUERY_CONFIRM_RE.match(str(text or "")))
 
 
-def _looks_like_data_request(text: str) -> bool:
+def _workspace_nouns(account_id: str) -> set[str]:
+    """Words this workspace's own metadata uses for the things it holds.
+
+    The shape half of the data-request test is a hand-written list of business
+    nouns, and it grew by incident: customers, orders, invoices, shipments,
+    claims, prescriptions. It has no entry for items, stock, suppliers,
+    warehouses or profit centres, so "which items have the highest on hand
+    quantity" failed it, went to the conversational analyst, and came back
+    "QueryBot can help … if inventory data is available … let me know!" about a
+    table sitting in the workspace with a governed on-hand-quantity column.
+
+    Growing that list per client is the wrong shape of fix. The workspace
+    already states what it holds — its tables, its glossary, its metric
+    registry — so ask it instead of guessing.
+    """
+    nouns: set[str] = set()
+    try:
+        import store
+
+        for term in store.list_terms(account_id, active_only=True):
+            for phrase in [term.get("term") or "",
+                           *str(term.get("aliases") or "").split(",")]:
+                nouns.update(_METADATA_WORD_RE.findall(str(phrase).lower()))
+        for metric in store.list_metrics(account_id):
+            for phrase in [metric.get("name") or "",
+                           *str(metric.get("synonyms") or "").split(",")]:
+                nouns.update(_METADATA_WORD_RE.findall(str(phrase).lower()))
+        graph = store.get_full_graph(account_id) or {}
+        for entity in graph.get("entities") or []:
+            nouns.update(
+                _METADATA_WORD_RE.findall(str(entity.get("entity_name") or "").lower())
+            )
+    except Exception as exc:
+        log.debug("Workspace noun lookup unavailable for %s: %s", account_id, exc)
+    return {word for word in nouns if len(word) >= 4} - _METADATA_STOPWORDS
+
+
+def _looks_like_data_request(text: str, account_id: str = "") -> bool:
     """Recognize explicit record retrieval without making policy decisions."""
     value = (text or "").strip()
-    return bool(
-        _DATA_REQUEST_ACTION_RE.search(value)
-        and _DATA_REQUEST_SHAPE_RE.search(value)
-    )
+    if _ABOUT_THE_SYSTEM_RE.search(value):
+        # A question about the product, not about the business. The shape half
+        # below lists generic system words — "data", "info", "records",
+        # "fields", "columns" — precisely the words a capability question uses,
+        # so "what tables and data can you answer questions about" matched the
+        # fast path, skipped the analyst, entered the SQL pipeline and came
+        # back "I cannot compile a trusted query until the semantic layer
+        # resolves the business event dataset to analyse". The user asked what
+        # the product can do and was told to go and approve a mapping.
+        return False
+    if not _DATA_REQUEST_ACTION_RE.search(value):
+        return False
+    if _DATA_REQUEST_SHAPE_RE.search(value):
+        return True
+    if not account_id:
+        return False
+    words = set(_METADATA_WORD_RE.findall(value.lower()))
+    if not words:
+        return False
+    known = _workspace_nouns(account_id)
+    if not known:
+        return False
+    hit = words & known
+    if hit:
+        log.info(
+            "Treating %r as a data request: it names %s, which this workspace's "
+            "own metadata defines", value[:120], ", ".join(sorted(hit)[:4]),
+        )
+        return True
+    return False
 
 
 # ── Off-topic classifier (LLM-based, dynamic) ────────────────────────────────
@@ -280,7 +374,7 @@ async def _generate_analyst_reply(text: str, account_id: str, client_row: dict) 
     real data rows, so it is safe for regulated tenants.
     """
     # Fast-path: obvious data requests skip the LLM call entirely
-    if _looks_like_data_request(text):
+    if _looks_like_data_request(text, account_id):
         return None
 
     try:
