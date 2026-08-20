@@ -69,6 +69,12 @@ class MergedVocab:
     raw_measure_codes: set[str] = field(default_factory=set)
     raw_date_codes: set[str] = field(default_factory=set)
     raw_status_codes: set[str] = field(default_factory=set)
+    # Identifier codes that are RELATIONAL keys — safe to join two tables on
+    # when both carry them. Deliberately narrower than raw_identifier_codes:
+    # a division or facility code identifies a grouping, appears on many
+    # unrelated tables, and joining on it manufactures a false edge. Which
+    # identifiers are relational is ERP knowledge, so it lives in the pack.
+    join_key_codes: set[str] = field(default_factory=set)
     # [(compiled pattern, date-role key)] — PACK-added patterns only; builtin
     # date-role regexes stay in core/date_roles.py and are checked after these.
     date_role_patterns: list[tuple[re.Pattern, str]] = field(default_factory=list)
@@ -201,6 +207,7 @@ def _merge_pack(vocab: MergedVocab, pack: dict, origin: str) -> None:
     vocab.raw_measure_codes |= {str(c).upper() for c in (pack.get("raw_measure_codes") or [])}
     vocab.raw_date_codes |= {str(c).upper() for c in (pack.get("raw_date_codes") or [])}
     vocab.raw_status_codes |= {str(c).upper() for c in (pack.get("raw_status_codes") or [])}
+    vocab.join_key_codes |= {str(c).upper() for c in (pack.get("join_key_codes") or [])}
 
     new_dr: list[tuple[re.Pattern, str]] = []
     try:
@@ -303,6 +310,7 @@ def _clone_builtin() -> MergedVocab:
         raw_measure_codes=set(b.raw_measure_codes),
         raw_date_codes=set(b.raw_date_codes),
         raw_status_codes=set(b.raw_status_codes),
+        join_key_codes=set(b.join_key_codes),
         date_role_patterns=list(b.date_role_patterns),
         fact_patterns=list(b.fact_patterns),
         dimension_patterns=list(b.dimension_patterns),

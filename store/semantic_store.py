@@ -319,11 +319,38 @@ def filter_metric_colliding_terms(account_id: str, terms: list[dict]) -> list[di
     return [t for t in terms if not _collides(t)]
 
 
+_MAX_DEFINITION_CHARS = 320
+
+
+def _clip_definition(text: str) -> str:
+    """Keep a definition readable when it has to be shortened.
+
+    An admin writes a definition precisely to separate two similar concepts,
+    and the distinguishing half is usually the second clause: "Net of returns
+    and rebates, but BEFORE freight recovery". Cutting at a fixed 100
+    characters removed that half and left the sentence severed mid-word, so
+    the model saw a confident-looking fragment that said the opposite of what
+    was meant. Cut on a sentence boundary where there is one, a word boundary
+    otherwise, and mark the cut so a fragment cannot read as the whole.
+    """
+    definition = " ".join(str(text or "").split())
+    if len(definition) <= _MAX_DEFINITION_CHARS:
+        return definition
+    window = definition[:_MAX_DEFINITION_CHARS]
+    sentence_end = max(window.rfind(". "), window.rfind("; "))
+    if sentence_end >= _MAX_DEFINITION_CHARS // 2:
+        return window[:sentence_end + 1]
+    word_end = window.rfind(" ")
+    if word_end > 0:
+        window = window[:word_end]
+    return window.rstrip(",;: ") + "…"
+
+
 def build_term_injection(
     terms_or_account_id,
     question: Optional[str] = None,
     allowed_tables: Optional[set[str]] = None,
-    max_terms: int = 5,
+    max_terms: int = 12,
     terms: Optional[list[dict]] = None,
 ) -> str:
     """
@@ -381,6 +408,13 @@ def build_term_injection(
         "BUSINESS TERM DEFINITIONS (use these EXACT expressions when the "
         "user's question mentions these terms — do not substitute your own):"
     ]
+    if len(filtered_terms) > max_terms:
+        log.info(
+            "Business-term injection is emitting %d of %d matched term(s); the "
+            "rest contribute nothing to this question's prompt: %s",
+            max_terms, len(filtered_terms),
+            ", ".join(str(t.get("term") or "?") for t in filtered_terms[max_terms:]),
+        )
     for t in filtered_terms[:max_terms]:
         expr = (t.get("canonical_expression") or "").strip()
         if not expr:
@@ -388,7 +422,7 @@ def build_term_injection(
         kind = t.get("kind", "metric")
         line = f"  • {t['term']} ({kind}): `{expr}`"
         if t.get("definition"):
-            line += f" — {t['definition'][:100]}"
+            line += f" — {_clip_definition(str(t['definition']))}"
         lines.append(line)
     if len(lines) == 1:
         return ""  # no terms had usable expressions

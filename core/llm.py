@@ -1215,7 +1215,16 @@ def build_sql_system_prompt(
             + where_instruction + " Do not add or remove JOINs." + anti_join_instruction
             + fanout_instruction
         )
-    if semantic_plan and semantic_plan.get("enabled") and semantic_plan.get("fields"):
+    # `avoid_columns` survives a plan that resolved no fields, and that is
+    # exactly when it is needed: every field the plan proposed was a column an
+    # admin had retired. Gating the whole block on `fields` dropped the one
+    # instruction that would have stopped the model choosing the retired column
+    # again. It is an independent instruction, so it does not need `enabled`.
+    if semantic_plan and (
+        (semantic_plan.get("enabled") and semantic_plan.get("fields"))
+        or semantic_plan.get("avoid_columns")
+        or len(semantic_plan.get("ambiguous_measures") or []) >= 2
+    ):
         try:
             from core.semantic_planner import format_semantic_field_plan
             plan_text = format_semantic_field_plan(semantic_plan, db_type)

@@ -2095,5 +2095,12 @@
     "PLDT",
     "RGDT",
     "RVDT"
+  ],
+  "join_key_codes": [
+    "CONO",
+    "ORNO",
+    "PONR",
+    "POSX",
+    "DLIX"
   ]
 }

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import re
+from dataclasses import dataclass
 from pathlib import Path
 
 log = logging.getLogger("querybot.semantic_kb_patch")
@@ -41,6 +42,26 @@ def locate_kb_file_for_feedback(
     return kb_file.name if kb_file else ""
 
 
+@dataclass(frozen=True)
+class ApprovalResult:
+    """What actually happened when an admin approved a field meaning.
+
+    Approval writes to two places, and they can disagree. The KB markdown is
+    prose the retriever and the prompt read; the structured semantic model is
+    what the planner and validator ENFORCE. Patching the first and failing the
+    second leaves the approval visible everywhere an admin looks while queries
+    carry on using the old column.
+
+    `enforced` is that distinction as a value rather than as a sentence inside
+    `message`, so a caller cannot report success by ignoring it.
+    """
+
+    ok: bool
+    message: str
+    enforced: bool = False
+    enforcement_warning: str = ""
+
+
 def apply_approved_feedback(
     *,
     account_id:       str,
@@ -57,6 +78,36 @@ def apply_approved_feedback(
     persist_override: bool = False,
     infer_synonyms: bool = True,
 ) -> tuple[bool, str]:
+    """Backward-compatible wrapper. Prefer apply_approved_feedback_detailed:
+    this shape cannot tell an enforced approval from an unenforced one without
+    reading English out of the message."""
+    result = apply_approved_feedback_detailed(
+        account_id=account_id, kb_dir=kb_dir, table_fqn=table_fqn,
+        table_name=table_name, schema_name=schema_name, column_name=column_name,
+        approved_meaning=approved_meaning, approved_use_case=approved_use_case,
+        user_comment=user_comment, approved_synonyms=approved_synonyms,
+        admin_note=admin_note, persist_override=persist_override,
+        infer_synonyms=infer_synonyms,
+    )
+    return result.ok, result.message
+
+
+def apply_approved_feedback_detailed(
+    *,
+    account_id:       str,
+    kb_dir:           str,
+    table_fqn:        str,
+    table_name:       str,
+    schema_name:      str,
+    column_name:      str,
+    approved_meaning: str,
+    approved_use_case: str,
+    user_comment:     str = "",
+    approved_synonyms: list[str] | None = None,
+    admin_note: str = "",
+    persist_override: bool = False,
+    infer_synonyms: bool = True,
+) -> ApprovalResult:
     """
     Locate the KB file for this table, patch the column metadata AND the
     Business Synonyms section, then re-embed into Qdrant.
@@ -67,21 +118,22 @@ def apply_approved_feedback(
          (extracted from approved_use_case and user_comment)
 
     Re-embed is called once after both patches are applied.
-    Returns (success: bool, human-readable message).
+    Returns an ApprovalResult; see that class for why `enforced` is separate
+    from `ok`.
     """
     kb_path = Path(kb_dir)
     if not kb_path.exists():
-        return False, f"KB directory not found: {kb_dir}"
+        return ApprovalResult(False, f"KB directory not found: {kb_dir}")
 
     # ── Step 1: find the KB file ──────────────────────────────────────────────
     kb_file = _find_kb_file(kb_path, table_fqn, table_name, schema_name)
     if kb_file is None:
-        return False, (
+        return ApprovalResult(False, (
             f"Could not find a KB file for table {table_fqn}. "
             f"Expected a file like [{schema_name}__{table_name}_kb.md] "
             f"or [{table_name}_kb.md] in {kb_dir}. "
             f"Rebuild the KB first if schema discovery was recently run."
-        )
+        ))
 
     original = kb_file.read_text(encoding="utf-8", errors="replace")
     previous_synonyms: list[str] = []
@@ -154,10 +206,10 @@ def apply_approved_feedback(
     except Exception as e:
         log.error("Re-embed failed for %s: %s", kb_file.name, e)
         kb_file.write_text(original, encoding="utf-8")
-        return False, (
+        return ApprovalResult(False, (
             f"KB file was updated but re-embedding failed: {e}. "
             f"File reverted. Try again or rebuild the full KB."
-        )
+        ))
 
     if persist_override:
         try:
@@ -184,10 +236,10 @@ def apply_approved_feedback(
             except Exception as rollback_error:
                 log.error("Field override rollback re-embed failed for %s: %s",
                           kb_file.name, rollback_error)
-            return False, (
+            return ApprovalResult(False, (
                 f"Field edit could not be persisted: {e}. "
                 "The KB file was reverted."
-            )
+            ))
 
     semantic_model_changed = False
     model_failure = ""
@@ -221,7 +273,15 @@ def apply_approved_feedback(
 
     synonym_note = f" + {len(new_synonyms)} synonym(s) added" if new_synonyms else ""
     model_note = " + semantic model updated" if semantic_model_changed else ""
-    return True, f"Approved and KB re-embedded ({kb_file.name}{synonym_note}{model_note}){model_failure}"
+    return ApprovalResult(
+        ok=True,
+        message=(
+            f"Approved and KB re-embedded ({kb_file.name}{synonym_note}"
+            f"{model_note}){model_failure}"
+        ),
+        enforced=semantic_model_changed,
+        enforcement_warning=model_failure.strip(),
+    )
 
 
 def apply_field_overrides_to_content(
@@ -370,9 +430,16 @@ def _patch_column(
             i += 1
             continue
 
-        # Does this line reference the target column?
+        # Does this line reference the target column — as a whole identifier?
+        #
+        # Without the surrounding guards this matched the approved column name
+        # as a SUBSTRING of any other column on the line, so approving
+        # INVOICE_DATE also rewrote INVOICE_DATE_KEY, and both columns ended up
+        # carrying byte-identical meaning stamped "Confidence: 100%". The
+        # admin's correction made the ambiguity worse than before, and in the
+        # date case documented a join key as a date value.
         col_match = re.search(
-            r"[`*\"\[|]?" + re.escape(column_name) + r"[`*\"\]|]?",
+            r"(?<![A-Za-z0-9_])" + re.escape(column_name) + r"(?![A-Za-z0-9_])",
             stripped, re.I
         )
         if not col_match:
@@ -381,8 +448,8 @@ def _patch_column(
             continue
 
         # ── Format A: bullet  - `ColName` (type): meaning ────────────────────
-        bullet_match = re.match(r"^(-\s*`[^`]+`(?:\s*\([^)]+\))?)\s*:", stripped)
-        if bullet_match:
+        bullet_match = re.match(r"^(-\s*`([^`]+)`(?:\s*\([^)]+\))?)\s*:", stripped)
+        if bullet_match and bullet_match.group(2).strip().upper() == col_upper:
             prefix = bullet_match.group(1)
             new_line = (
                 f"{prefix}: {approved_meaning.strip()}\n"

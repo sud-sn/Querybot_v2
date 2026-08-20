@@ -1361,6 +1361,79 @@ def _terms_for_text(text: str) -> set[str]:
     return expanded
 
 
+def _glossary_expanded_terms(
+    terms: set[str], glossary: list[dict[str, Any]] | None,
+) -> set[str]:
+    """Let the admin's own glossary carry a question to an approved mapping.
+
+    A business term and its aliases are, by the admin's own statement, the same
+    concept. If they wrote "turnover" as an alias of "revenue", a question about
+    turnover is a question about revenue — but approved field meanings are
+    matched on literal token overlap, so the approval written in the admin's
+    wording never reached the user's.
+
+    This is the safe expansion the vocabulary packs cannot provide: every pair
+    here was typed by an admin for this tenant, rather than inferred.
+    """
+    if not terms or not glossary:
+        return terms
+    expanded = set(terms)
+    for row in glossary:
+        phrases = [str(row.get("term") or "")]
+        phrases += [
+            part.strip()
+            for part in str(row.get("aliases") or "").split(",")
+            if part.strip()
+        ]
+        variants = [(_terms_for_text(p), p) for p in phrases if p.strip()]
+        variants = [(tokens, phrase) for tokens, phrase in variants if tokens]
+        if len(variants) < 2:
+            continue
+        if not any(tokens <= terms for tokens, _phrase in variants):
+            continue
+        for tokens, _phrase in variants:
+            expanded |= tokens
+    return expanded
+
+
+def _vocab_expanded_terms(terms: set[str]) -> set[str]:
+    """Add the client vocabulary's reading of the words the user actually typed.
+
+    Approved field meanings reach the prompt only when the question shares a
+    literal token with them, so an admin who approves a mapping, tests it with
+    the wording they typed into the form, and watches it work has verified
+    nothing about how their users ask. A user asking the same thing in their own
+    words got the old column back, with nothing to say an approved mapping had
+    existed and been skipped.
+
+    Expansion runs in ONE direction: a code the user typed gains the business
+    words it stands for. The reverse — a business phrase gaining the tokens of
+    a column that lists it as an alias — looks symmetric and is not: the alias
+    "gross profit" on SOP_CUS_LIN_GRS_PFT_AMT puts the token "cus" into any
+    question about gross profit, and "cus" then matches CUS_NM's single-token
+    value, requiring the customer name on a question about warehouses. Column
+    codes must never enter the question's term set.
+
+    `planner_abbreviations` is used rather than `abbreviations` because the
+    vocabulary packs already draw that line for exactly this reason: it is the
+    conservative subset intended for required-field matching, where a false
+    positive forces a wrong column into the plan.
+    """
+    if not terms:
+        return terms
+    try:
+        from core.vocab_packs import get_active_vocab
+        vocab = get_active_vocab()
+    except Exception:
+        return terms
+
+    expanded = set(terms)
+    for token, expansion in (getattr(vocab, "planner_abbreviations", None) or {}).items():
+        if str(token).lower() in terms:
+            expanded |= _terms_for_text(str(expansion))
+    return expanded
+
+
 _RUNTIME_MATCH_STOPWORDS = {
     "about", "analysis", "business", "column", "data", "description",
     "dimension", "each", "field", "generate", "generated", "highest",
@@ -1673,6 +1746,7 @@ def build_runtime_semantic_context(
     selected_schema: str = "",
     max_lines: int = 18,
     model: dict[str, Any] | None = None,
+    glossary: list[dict[str, Any]] | None = None,
 ) -> str:
     """Return compact model hints for SQL generation.
 
@@ -1695,7 +1769,9 @@ def build_runtime_semantic_context(
     if not tables:
         return ""
 
-    q_terms = _terms_for_text(question)
+    q_terms = _glossary_expanded_terms(
+        _vocab_expanded_terms(_terms_for_text(question)), glossary,
+    )
     has_temporal_intent = question_has_temporal_intent(question)
     scored_lines: list[tuple[int, str]] = []
 
@@ -2262,6 +2338,7 @@ def build_runtime_semantic_plan(
     max_fields: int = 8,
     model: dict[str, Any] | None = None,
     preferred_fact_tables: set[str] | None = None,
+    glossary: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build validator-ready requirements from the structured semantic model.
 
@@ -2280,7 +2357,9 @@ def build_runtime_semantic_plan(
     if not tables:
         return {"enabled": False, "fields": [], "joins": [], "required_tables": [], "reason": "no tables in selected schema"}
 
-    q_terms = _terms_for_text(question)
+    q_terms = _glossary_expanded_terms(
+        _vocab_expanded_terms(_terms_for_text(question)), glossary,
+    )
     window_terms = _relative_window_terms(question)
     preferred_fact_tables = {
         str(name or "").upper() for name in (preferred_fact_tables or set()) if name
@@ -2304,6 +2383,7 @@ def build_runtime_semantic_plan(
     # wording matches an approved field's meaning/use case, require that exact
     # source column so nearby generated columns cannot win by name similarity.
     approved_candidates: list[tuple[tuple[str, tuple[str, ...]], int, dict[str, Any]]] = []
+    approved_in_scope = 0
     for table in tables:
         source_table = str(table.get("qualified_name") or table.get("table") or "")
         for field in table.get("fields", []) or []:
@@ -2312,6 +2392,7 @@ def build_runtime_semantic_plan(
             column = str(field.get("column") or "")
             if not column:
                 continue
+            approved_in_scope += 1
             values = _approved_field_match_values(field)
             score = _runtime_match_score(q_terms, values)
             if score <= 0:
@@ -2338,15 +2419,59 @@ def build_runtime_semantic_plan(
                 },
             ))
 
+    # Two approved fields can score identically — the scores are small discrete
+    # values, so exact ties are readily reachable. One then wins on nothing more
+    # than its column name sorting later, and the trace records the winner as
+    # though it were reasoned. The tie-break stays (a stable pick beats a
+    # varying one), but the ambiguity is no longer invisible: it is an admin
+    # decision that has to be made once, not a coin flip repeated per question.
     best_approved: dict[tuple[str, tuple[str, ...]], tuple[int, dict[str, Any]]] = {}
+    ambiguous_approved: list[dict[str, Any]] = []
     for group, score, field_entry in approved_candidates:
         current = best_approved.get(group)
+        if current is not None and score == current[0]:
+            loser, winner = sorted(
+                (field_entry, current[1]),
+                key=lambda entry: str(entry.get("column") or ""),
+            )
+            ambiguous_approved.append({
+                "term": str(winner.get("term") or field_entry.get("term") or ""),
+                "role": group[0],
+                "chosen_table": str(winner.get("table") or ""),
+                "chosen_column": str(winner.get("column") or ""),
+                "rival_table": str(loser.get("table") or ""),
+                "rival_column": str(loser.get("column") or ""),
+            })
         if (
             current is None
             or score > current[0]
             or (score == current[0] and str(field_entry.get("column") or "") > str(current[1].get("column") or ""))
         ):
             best_approved[group] = (score, field_entry)
+
+    if approved_in_scope and not approved_candidates:
+        # Approvals exist for these tables and not one of them shares a word
+        # with the question, so the answer is about to be planned as if none had
+        # ever been made. Silence here is what let an admin believe a mapping
+        # was in force because it worked with their own phrasing.
+        log.info(
+            "None of the %d admin-approved field meaning(s) in scope matched %r "
+            "— the question shares no term with any approved meaning, use case "
+            "or column name, so this answer is planned without them. Adding the "
+            "user's wording as a synonym on the approved field fixes it.",
+            approved_in_scope, question,
+        )
+
+    for clash in ambiguous_approved:
+        log.warning(
+            "Two admin-approved fields match %r equally well for %r: %s.%s and "
+            "%s.%s. Picking %s.%s by column name, which is arbitrary — narrow "
+            "one of the approved meanings so the choice is yours.",
+            clash["term"], question,
+            clash["chosen_table"], clash["chosen_column"],
+            clash["rival_table"], clash["rival_column"],
+            clash["chosen_table"], clash["chosen_column"],
+        )
 
     approved_winners = [
         (group, score, field_entry)
@@ -2713,6 +2838,10 @@ def build_runtime_semantic_plan(
         "available_dimensions": available_dims,
         "avoid_columns": avoid_columns,
         "date_key_policies": date_key_policies,
+        # Approved mappings that tied and were separated by column name alone.
+        # Carried so the answer trace shows the choice was arbitrary rather
+        # than reasoned; an empty list is the normal case.
+        "ambiguous_approved_fields": ambiguous_approved,
     }
 
 

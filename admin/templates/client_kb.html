@@ -149,6 +149,7 @@
 {% elif saved == "context" %}<div class="alert alert-success">Column context hints saved. They will be applied during the next rebuild.</div>
 {% elif saved == "error" %}<div class="alert alert-error">Save failed.</div>{% endif %}
 {% if field_error %}<div class="alert alert-error">{{ field_error }}</div>{% endif %}
+{% if field_warning %}<div class="alert alert-amber">Saved to the Knowledge Base, but <strong>not enforced at runtime</strong>. {{ field_warning }}</div>{% endif %}
 {% if feedback_saved == "approved" %}<div class="alert alert-success">Semantic Layer correction approved and KB re-embedded. The patched KB file is opened below. {% if feedback_msg %}<span>{{ feedback_msg }}</span>{% endif %}</div>{% endif %}
 {% if feedback_saved == "rejected" %}<div class="alert alert-info">Semantic Layer correction rejected. No KB changes made.</div>{% endif %}
 {% if feedback_saved == "error" %}<div class="alert alert-error">Approval failed: {{ feedback_msg or "KB file could not be updated." }} The item remains pending.</div>{% endif %}

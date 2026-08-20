@@ -2396,6 +2396,7 @@ async def kb_list(request: Request, account_id: str):
         "feedback_saved": request.query_params.get("feedback"),
         "feedback_msg":   request.query_params.get("feedback_msg", ""),
         "field_error": request.query_params.get("field_error", ""),
+        "field_warning": request.query_params.get("field_warning", ""),
         "needs_context":  needs_context,
         "semantic_tables": semantic_tables,
         "field_count": field_count,
@@ -2612,7 +2613,7 @@ async def kb_field_save(
         )
 
     from core.field_overrides import load_field_overrides, parse_synonyms
-    from core.semantic_kb_patch import apply_approved_feedback
+    from core.semantic_kb_patch import apply_approved_feedback_detailed
     from core.semantic_layer import build_semantic_layer_tables, find_semantic_field
 
     approved_feedback, pending_feedback = store.semantic_feedback_maps(account_id)
@@ -2628,7 +2629,7 @@ async def kb_field_save(
         raise HTTPException(status_code=404, detail="Field not found in this Knowledge Base")
     table, field = found
 
-    success, msg = apply_approved_feedback(
+    result = apply_approved_feedback_detailed(
         account_id=account_id,
         kb_dir=kb_dir,
         table_fqn=table["fqn"],
@@ -2642,14 +2643,30 @@ async def kb_field_save(
         persist_override=True,
         infer_synonyms=False,
     )
-    if not success:
+    if not result.ok:
         return RedirectResponse(
-            f"/admin/clients/{account_id}/kb?view=fields&field_error={quote(msg)}"
+            f"/admin/clients/{account_id}/kb?view=fields&field_error={quote(result.message)}"
             f"&table={quote(table['fqn'])}",
             status_code=303,
         )
 
     _after_semantic_approval(account_id, f"field '{column_name}' meaning approved")
+    if not result.enforced:
+        # The KB prose was patched but the structured model has no entry for
+        # this column, so the planner and validator will carry on using the old
+        # one. Showing the ordinary green confirmation here is what made an
+        # enforced approval indistinguishable from an unenforced one.
+        log.warning(
+            "Field approval for %s %s.%s is NOT enforced at runtime: %s",
+            account_id, table["table"], field["column"], result.enforcement_warning,
+        )
+        return RedirectResponse(
+            f"/admin/clients/{account_id}/kb?view=fields"
+            f"&field_warning={quote(result.enforcement_warning)}"
+            f"&table={quote(table['fqn'])}"
+            f"#field-{quote(table['table'])}-{quote(field['column'])}",
+            status_code=303,
+        )
     return RedirectResponse(
         f"/admin/clients/{account_id}/kb?view=fields&saved=field"
         f"&table={quote(table['fqn'])}"

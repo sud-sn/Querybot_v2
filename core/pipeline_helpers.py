@@ -62,17 +62,37 @@ import os as _os
 _PER_DOC_CHAR_CAP = int(_os.getenv("QUERYBOT_KB_DOC_CHAR_CAP", "9000"))
 _PROMPT_CONTEXT_CHAR_CAP = int(_os.getenv("QUERYBOT_PROMPT_CONTEXT_CHAR_CAP", "120000"))
 
-# Sections safe to drop from an oversized KB doc, in drop order. Columns and
-# Join Keys are never dropped — they are what SQL generation actually needs.
+# Sections safe to drop from an oversized KB doc. Columns and Join Keys are
+# never dropped — they are what SQL generation actually needs.
+#
+# ORDER MATTERS, and it is by value, not by position in the file. The previous
+# version walked backwards from the tail, which made "## Business Synonyms" the
+# first thing removed simply because the mandated KB format puts it last. That
+# is the one section mapping plain-English terms to exact columns, and the only
+# one carrying the "could be confused with a generic name" warnings — so the
+# disambiguation material was discarded first, on precisely the biggest,
+# most column-dense tables where disambiguation matters most. It also silently
+# emptied the downstream COLUMN SYNONYM MAP, which is built by re-reading this
+# already-clamped text.
+_DROP_ORDER = (
+    re.compile(r"(?i)^##\s*sample\s+data\b"),
+    re.compile(r"(?i)^##\s*(query\s+patterns|patterns)\b"),
+    re.compile(r"(?i)^##\s*overview\b"),
+    # Last resort among the droppable sections.
+    re.compile(r"(?i)^##\s*business\s+synonyms\b"),
+)
+
+# Kept for callers/tests that ask "is this section droppable at all?"
 _DROPPABLE_SECTION_RE = re.compile(
     r"(?i)^##\s*(business\s+synonyms|sample\s+data|query\s+patterns|patterns|overview)\b"
 )
 
 
 def _clamp_kb_doc(doc: str, cap: int = 0) -> str:
-    """Trim one KB doc to *cap* chars by removing droppable sections from the
-    end first (synonyms/sample-data/patterns/overview), never Columns or Join
-    Keys. Falls back to a hard tail-truncate only if still over after that."""
+    """Trim one KB doc to *cap* chars by removing droppable sections in order of
+    increasing value (sample data first, business synonyms last), never Columns
+    or Join Keys. Falls back to a hard tail-truncate only if still over after
+    every droppable section has gone."""
     cap = cap or _PER_DOC_CHAR_CAP
     if len(doc) <= cap:
         return doc
@@ -80,15 +100,29 @@ def _clamp_kb_doc(doc: str, cap: int = 0) -> str:
     # Split into header + "## " sections, preserving order.
     parts = re.split(r"(?m)^(?=## )", doc)
     kept = list(parts)
-    # Remove droppable sections from the tail end first.
-    for idx in range(len(kept) - 1, 0, -1):
+    dropped: list[str] = []
+    for pattern in _DROP_ORDER:
         if len("".join(kept)) <= cap:
             break
-        if _DROPPABLE_SECTION_RE.match(kept[idx]):
-            kept.pop(idx)
+        for idx in range(len(kept) - 1, 0, -1):
+            if len("".join(kept)) <= cap:
+                break
+            if pattern.match(kept[idx]):
+                dropped.append(kept[idx].splitlines()[0].strip())
+                kept.pop(idx)
     clamped = "".join(kept)
     if len(clamped) > cap:
+        # Only Columns / Join Keys are left and they still do not fit. The cut
+        # lands inside material this function promises to preserve, so say so
+        # rather than letting a table lose its column list without a trace.
+        log.warning(
+            "KB doc still %d chars over the %d cap after dropping %s — "
+            "hard-truncating, which cuts into Columns or Join Keys",
+            len(clamped) - cap, cap, ", ".join(dropped) or "nothing droppable",
+        )
         clamped = clamped[:cap] + "\n[... truncated for prompt size]"
+    elif dropped:
+        log.debug("KB doc clamped to %d chars; dropped %s", cap, ", ".join(dropped))
     return clamped
 
 
@@ -168,17 +202,31 @@ def _extract_kb_synonym_injection(context: str) -> str:
     the already-retrieved KB chunks without needing the glossary DB to be populated.
     It is the last-resort guard against the LLM inventing CamelCase column names.
     """
-    synonym_rows: list[tuple[str, str]] = []   # (plain-english terms, column)
-    metric_rows:  list[tuple[str, str]] = []   # (metric name, column)
+    # (plain-english term, column, owning table FQN)
+    synonym_rows: list[tuple[str, str, str]] = []
+    metric_rows:  list[tuple[str, str, str]] = []
 
     in_synonyms = False
     in_metrics  = False
+    # Every reassembled KB doc opens with a single-# FQN header (see
+    # core/vector_store.py _reconstruct_full_doc). Without tracking it, a row
+    # harvested from one table's synonyms section was emitted as a bare column
+    # name and could be applied to a different table entirely.
+    current_table = ""
 
     for line in context.splitlines():
         stripped = line.strip()
 
         # KB chunk separator — reset section state
         if stripped == "---":
+            in_synonyms = False
+            in_metrics  = False
+            current_table = ""
+            continue
+
+        # Doc header: "# DW.F_SALES"
+        if stripped.startswith("# "):
+            current_table = stripped[2:].strip().strip("`")
             in_synonyms = False
             in_metrics  = False
             continue
@@ -197,7 +245,7 @@ def _extract_kb_synonym_injection(context: str) -> str:
                 eng  = cells[0].strip("`").strip()
                 col  = cells[1].strip("`").strip()
                 if col and eng and eng.lower() not in ("plain english", "column", ""):
-                    synonym_rows.append((eng, col))
+                    synonym_rows.append((eng, col, current_table))
 
         # Key Metrics lines: - **Metric name**: `COLUMN_NAME` — ...
         if in_metrics and stripped.startswith("-"):
@@ -209,27 +257,70 @@ def _extract_kb_synonym_injection(context: str) -> str:
                 metric_name = m.group(1).strip()
                 col_name    = m.group(2).strip()
                 if metric_name and col_name:
-                    metric_rows.append((metric_name, col_name))
+                    metric_rows.append((metric_name, col_name, current_table))
 
     if not synonym_rows and not metric_rows:
         return ""
 
     lines = [
-        "COLUMN SYNONYM MAP (authoritative — use EXACT column names shown here):",
-        "When the user's question mentions any of the plain-English terms below, "
-        "use the exact column name on the right. Do NOT invent CamelCase variants.",
+        "COLUMN SYNONYM MAP (use EXACT column names shown here — never invent "
+        "CamelCase variants):",
+        "Each mapping belongs to the table it is listed under. Apply a mapping "
+        "only to that table.",
     ]
-    seen_cols: set[str] = set()
-    for eng, col in synonym_rows[:25]:
-        if col.upper() not in seen_cols:
-            lines.append(f"  • '{eng}' → exact column: {col}")
-            seen_cols.add(col.upper())
-    for metric, col in metric_rows[:15]:
-        if col.upper() not in seen_cols:
-            lines.append(f"  • '{metric}' → exact column: {col}")
-            seen_cols.add(col.upper())
-
+    lines.extend(_synonym_map_lines(synonym_rows[:25], metric_rows[:15]))
     return "\n".join(lines) + "\n"
+
+
+def _synonym_map_lines(
+    synonym_rows: list[tuple[str, str, str]],
+    metric_rows: list[tuple[str, str, str]],
+) -> list[str]:
+    """Render harvested term→column rows without contradicting ourselves.
+
+    Two tables both documenting "revenue" is normal and not a conflict — one
+    means F_SALES.NET_AMOUNT, the other F_ORDERS.ORDER_VALUE. The previous
+    block dropped the owning table, deduplicated on the COLUMN, and presented
+    whatever survived as "authoritative", so the model received two unqualified
+    and contradictory instructions for the same business word and picked
+    between them arbitrarily. It could also apply a column from one table to
+    another, which is either an invalid-column error or, worse, a valid column
+    that means something else.
+
+    Keying on the column also silently discarded a second TERM for the same
+    column, losing a phrasing users actually type.
+    """
+    by_term: dict[str, list[tuple[str, str]]] = {}
+    order: list[str] = []
+    seen: set[tuple[str, str, str]] = set()
+    for term, column, table in [*synonym_rows, *metric_rows]:
+        key = (term.lower(), table.upper(), column.upper())
+        if key in seen:
+            continue
+        seen.add(key)
+        if term.lower() not in by_term:
+            by_term[term.lower()] = []
+            order.append(term.lower())
+        by_term[term.lower()].append((column, table))
+
+    def qualified(column: str, table: str) -> str:
+        return f"{table}.{column}" if table else column
+
+    lines: list[str] = []
+    for term_key in order:
+        entries = by_term[term_key]
+        display = term_key
+        if len(entries) == 1:
+            column, table = entries[0]
+            lines.append(f"  • '{display}' → exact column: {qualified(column, table)}")
+            continue
+        listed = ", ".join(qualified(column, table) for column, table in entries)
+        lines.append(
+            f"  • '{display}' is documented on more than one table — use the one "
+            f"belonging to the table the query selects FROM: {listed}. If the "
+            f"question does not make the table clear, do not guess."
+        )
+    return lines
 
 
 # ── Live streaming status ─────────────────────────────────────────────────────

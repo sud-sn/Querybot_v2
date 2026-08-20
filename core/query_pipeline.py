@@ -2217,6 +2217,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             question=question,
             selected_schema=schema_hint,
             model=_contract_model,
+            glossary=_planner_terms,
         )
         if _semantic_model_context:
             context_with_terms = _semantic_model_context + "\n\n" + context_with_terms
@@ -2632,6 +2633,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             } | {
                 str(value) for value in (_source_scope.get("selected_facts") or [])
             }) - {""},
+            glossary=_planner_terms,
         )
         _semantic_model_plan["source_scope"] = _source_scope
         if _semantic_model_plan.get("enabled"):
@@ -2840,6 +2842,7 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     selected_schema=schema_hint,
                     model=_contract_model,
                     preferred_fact_tables=_preferred_facts,
+                    glossary=_planner_terms,
                 )
                 _semantic_plan = _merge_semantic_plans(
                     _replanned_fields,
@@ -6207,6 +6210,25 @@ async def handle_query(
     account_id, event, adapter, question, portal_user, is_clarification=False,
 ):
     """Run the governed pipeline with a terminal answer-trace guarantee."""
+    # The client's vocabulary — the ERP pack an admin selected plus the
+    # clients/<id>/vocab.json overlay where they add tenant-specific
+    # abbreviations — was installed only during the KB build and the graph
+    # autopopulate. Nothing installed it for a QUERY, so every query-time
+    # consumer called get_active_vocab(), got the ContextVar's None, and fell
+    # back to the builtin. An abbreviation the admin added expanded correctly in
+    # the generated KB text and then failed to expand the question that needed
+    # it, so the doc documenting that term was not retrieved.
+    _vocab_token = None
+    try:
+        from core.vocab_packs import activate_vocab, vocab_for_account
+        _vocab_token = activate_vocab(vocab_for_account(account_id))
+    except Exception as _vocab_exc:
+        log.error(
+            "Could not activate the vocabulary pack for %s (%s) — this question "
+            "is resolved against the builtin vocabulary only, so tenant-specific "
+            "abbreviations will not expand",
+            account_id, _vocab_exc, exc_info=True,
+        )
     try:
         return await _handle_query_impl(
             account_id,
@@ -6224,6 +6246,9 @@ async def handle_query(
         )
         raise
     finally:
+        if _vocab_token is not None:
+            from core.vocab_packs import deactivate_vocab
+            deactivate_vocab(_vocab_token)
         # Every expected return calls _trace_finish explicitly. This final
         # guard catches future early-return regressions without changing the
         # user-facing response or swallowing an exception.

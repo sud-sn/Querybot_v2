@@ -1160,7 +1160,74 @@ class QdrantKBRetriever:
         hits = self._apply_relevance_floor(hits)
         # Merge section chunks from the same table, preserve global docs
         grouped = _group_chunks_by_table(hits)
+        grouped = self._ensure_column_semantics(grouped, hits)
         return [doc for doc in grouped if doc.strip()]
+
+    def _ensure_column_semantics(
+        self, grouped: list[str], hits: list[dict],
+    ) -> list[str]:
+        """Guarantee every retrieved table arrives with its ## Columns section.
+
+        Re-ranking returns the n best SECTION chunks across all tables, and
+        _reconstruct_full_doc concatenates only the payloads it was handed.
+        A table whose Query Patterns and Join Keys chunks happened to outrank
+        its Columns chunk was therefore documented to the model without any
+        column semantics at all — leaving it to infer columns from the raw
+        names quoted inside example SQL. It also made the same question answer
+        differently on two phrasings, because a different section mix survived
+        each time.
+
+        The repair is the same deterministic filter fetch the pipeline's table
+        coverage guarantee uses: no semantic search, so it always targets the
+        right table.
+        """
+        needs_columns = {
+            str(payload.get("fqn") or "").upper()
+            for payload in hits
+            if payload.get("fqn") and payload.get("fqn") != "_global"
+        }
+        if not needs_columns:
+            return grouped
+
+        repaired: list[str] = []
+        for doc in grouped:
+            first_line = doc.lstrip().splitlines()[0] if doc.strip() else ""
+            fqn = first_line.lstrip("#").strip().upper()
+            if (
+                fqn not in needs_columns
+                or re.search(r"(?mi)^##\s*columns\b", doc)
+            ):
+                repaired.append(doc)
+                continue
+            try:
+                columns_doc = fetch_docs_for_fqn(
+                    self._account_id, fqn, sections=("columns",),
+                )
+            except Exception as exc:
+                log.warning(
+                    "Could not backfill the ## Columns section for %s — the "
+                    "model will see this table without column semantics (%s)",
+                    fqn, exc,
+                )
+                repaired.append(doc)
+                continue
+            if not columns_doc:
+                log.warning(
+                    "No ## Columns section exists for %s — the model is being "
+                    "shown this table with no column semantics", fqn,
+                )
+                repaired.append(doc)
+                continue
+            body = "\n".join(
+                line for line in columns_doc.splitlines()
+                if not (line.strip().startswith("#") and not line.strip().startswith("##"))
+            ).strip()
+            log.info(
+                "Backfilled the ## Columns section for %s: re-ranking returned "
+                "its other sections instead", fqn,
+            )
+            repaired.append(doc.rstrip() + "\n\n" + body + "\n")
+        return repaired
 
     def _apply_relevance_floor(self, hits: list[dict]) -> list[dict]:
         """

@@ -134,6 +134,10 @@ def _merge_semantic_plans(*plans: dict | None) -> dict:
     # dedup key below is (table, column), not business term, so without this
     # both rivals would survive as required fields.
     avoid_columns: list[dict] = []
+    # Measures that share the bare business word the question used. Like the
+    # avoid list, this outlives a plan that resolved no fields — it exists
+    # precisely because nothing resolved.
+    ambiguous_measures: list[str] = []
     seen_avoid: set[tuple[str, str]] = set()
     for plan in plans:
         if not plan:
@@ -152,6 +156,9 @@ def _merge_semantic_plans(*plans: dict | None) -> dict:
             fact_anchor = str(plan.get("fact_anchor") or "")
         if not plan.get("enabled"):
             continue
+        for rival in plan.get("ambiguous_measures") or []:
+            if rival not in ambiguous_measures:
+                ambiguous_measures.append(rival)
         for avoid in plan.get("avoid_columns") or []:
             key = (
                 _semantic_table_identity(avoid.get("table") or ""),
@@ -254,6 +261,7 @@ def _merge_semantic_plans(*plans: dict | None) -> dict:
             "source_scope": source_scope,
             "fact_anchor": fact_anchor,
             "avoid_columns": avoid_columns,
+            "ambiguous_measures": ambiguous_measures,
         }
     return {
         "enabled": True,
@@ -267,6 +275,7 @@ def _merge_semantic_plans(*plans: dict | None) -> dict:
         "advisory_fields": advisory_fields,
         "available_dimensions": available_dimensions,
         "avoid_columns": avoid_columns,
+        "ambiguous_measures": ambiguous_measures,
         "date_key_policies": date_key_policies,
         "temporal_policies": temporal_policies,
         "date_disclosures": date_disclosures,

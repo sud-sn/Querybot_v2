@@ -206,19 +206,42 @@ class WeakRetrievalConfidenceTests(unittest.TestCase):
 # ══════════════════════════════════════════════════════════════════════════════
 
 class PromptClampTests(unittest.TestCase):
+    DOC = (
+        "# ERP.SALES\n## Overview\n" + "x" * 8000
+        + "\n## Columns\nCOL_A int\n## Join Keys\nK1\n## Sample Data\n"
+        + "y" * 4000 + "\n## Query Patterns\n" + "q" * 3000
+        + "\n## Business Synonyms\n" + "z" * 2000
+    )
+
     def test_doc_clamp_drops_droppable_sections_keeps_columns(self):
         from core.pipeline_helpers import _clamp_kb_doc
-        doc = (
-            "# ERP.SALES\n## Overview\n" + "x" * 8000
-            + "\n## Columns\nCOL_A int\n## Join Keys\nK1\n## Sample Data\n"
-            + "y" * 4000 + "\n## Business Synonyms\n" + "z" * 2000
-        )
-        out = _clamp_kb_doc(doc, cap=9000)
+        out = _clamp_kb_doc(self.DOC, cap=9000)
         self.assertLessEqual(len(out), 9000 + 50)
         self.assertIn("## Columns", out)
         self.assertIn("## Join Keys", out)
         self.assertNotIn("## Sample Data", out)
-        self.assertNotIn("## Business Synonyms", out)
+
+    def test_business_synonyms_is_the_last_droppable_section_to_go(self):
+        """It is the only section mapping plain-English terms to exact columns,
+        and the only one carrying the 'could be confused with' warnings — and
+        the downstream COLUMN SYNONYM MAP is rebuilt from this clamped text.
+        Dropping in file order made it the FIRST casualty, on exactly the
+        biggest, most column-dense tables where disambiguation matters most."""
+        from core.pipeline_helpers import _clamp_kb_doc
+
+        out = _clamp_kb_doc(self.DOC, cap=9000)
+        self.assertIn("## Business Synonyms", out)
+        self.assertNotIn("## Sample Data", out)
+
+    def test_the_cheapest_sections_go_first(self):
+        from core.pipeline_helpers import _clamp_kb_doc
+
+        # Only enough must go to fit; sample data alone is 4000 chars.
+        out = _clamp_kb_doc(self.DOC, cap=len(self.DOC) - 3000)
+        self.assertNotIn("## Sample Data", out)
+        self.assertIn("## Query Patterns", out)
+        self.assertIn("## Overview", out)
+        self.assertIn("## Business Synonyms", out)
 
     def test_doc_clamp_untouched_when_under_cap(self):
         from core.pipeline_helpers import _clamp_kb_doc

@@ -2253,6 +2253,45 @@ def _az_connect(cfg: dict, max_retries: int = 4):
     raise RuntimeError("Azure SQL connection failed — no error captured")
 
 
+def _az_column_descriptions(cur, schema: str, name: str) -> dict[str, str]:
+    """Column descriptions a DBA wrote on the SQL Server table itself.
+
+    SQL Server keeps these as the MS_Description extended property rather than
+    in INFORMATION_SCHEMA, which is why reading only INFORMATION_SCHEMA.COLUMNS
+    returned nothing for them. Best-effort: many warehouses set no descriptions
+    at all, and a principal without VIEW DEFINITION cannot read them, so a
+    failure here degrades discovery to what it did before rather than failing
+    the table.
+    """
+    try:
+        cur.execute("""
+            SELECT c.name AS column_name, CAST(p.value AS NVARCHAR(MAX)) AS description
+            FROM   sys.extended_properties p
+            JOIN   sys.columns  c  ON c.object_id = p.major_id
+                                  AND c.column_id = p.minor_id
+            JOIN   sys.tables   t  ON t.object_id = c.object_id
+            JOIN   sys.schemas  s  ON s.schema_id = t.schema_id
+            WHERE  p.class = 1 AND p.name = 'MS_Description'
+              AND  s.name = ? AND t.name = ?
+        """, schema, name)
+        found = {
+            str(row[0]): " ".join(str(row[1] or "").split())
+            for row in cur.fetchall()
+            if row and row[0] and str(row[1] or "").strip()
+        }
+    except Exception as exc:
+        log.debug(
+            "AzSQL: column descriptions unavailable for %s.%s (%s) — the KB will "
+            "describe these columns from their names alone",
+            schema, name, exc,
+        )
+        return {}
+    if found:
+        log.info("AzSQL: read %d column description(s) for %s.%s",
+                 len(found), schema, name)
+    return found
+
+
 def _az_distinct(cur, schema: str, name: str, col_name: str) -> list[str]:
     try:
         cur.execute(
@@ -2341,12 +2380,26 @@ def _discover_azure_sql(cfg: dict, out: Path, allowed: set[str] | None = None, m
                     """, schema, name)
                     columns = [
                         {"COLUMN_NAME": r[0], "DATA_TYPE": r[1], "IS_NULLABLE": r[2],
-                         "CHARACTER_MAXIMUM_LENGTH": r[3], "NUMERIC_PRECISION": r[4]}
+                         "CHARACTER_MAXIMUM_LENGTH": r[3], "NUMERIC_PRECISION": r[4],
+                         "COMMENT": ""}
                         for r in cur.fetchall()
                     ]
                 except Exception as e:
                     log.warning("AzSQL: cannot read columns for %s.%s: %s", schema, name, e)
                     continue
+
+                # A DBA-authored column description is the best business meaning
+                # the warehouse itself holds, and it was never read: the query
+                # above selects five columns and the writer hardcoded an empty
+                # comment, so every Azure SQL column reached the KB with nothing
+                # but its name. The Snowflake and Oracle writers both emit a
+                # Notes cell; Azure had no such cell at all, which left the model
+                # separating GROSS_ from NET_ on near-identical paraphrases of
+                # their own names.
+                _descriptions = _az_column_descriptions(cur, schema, name)
+                if _descriptions:
+                    for _col in columns:
+                        _col["COMMENT"] = _descriptions.get(_col["COLUMN_NAME"], "")
 
                 # ── Masking resolution ────────────────────────────────────
                 _fqn     = f"{db_upper}.{schema}.{name}".upper()
@@ -2464,7 +2517,8 @@ def _discover_azure_sql(cfg: dict, out: Path, allowed: set[str] | None = None, m
                 )
                 master[table_key] = {
                     "columns": [{"name": c["COLUMN_NAME"], "type": c["DATA_TYPE"],
-                                 "nullable": c["IS_NULLABLE"] == "YES", "comment": ""}
+                                 "nullable": c["IS_NULLABLE"] == "YES",
+                                 "comment": c.get("COMMENT") or ""}
                                 for c in columns],
                     "pk_columns":          _pk_cols,
                     "row_count":           row_count,
@@ -2603,10 +2657,11 @@ def _az_md(name, meta, columns, sample, schema, distinct_map: dict,
     if _pk_set:
         lines.append(f"\n**Primary Key:** {', '.join(f'`{c}`' for c in (pk_columns or []))}")
     lines.append("\n## Columns\n")
-    lines.append("| Column | Type | Nullable | Distinct Values |")
-    lines.append("|--------|------|:--------:|-----------------|")
+    lines.append("| Column | Type | Nullable | Notes | Distinct Values |")
+    lines.append("|--------|------|:--------:|-------|-----------------|")
     for c in columns:
         nullable = "Yes" if c["IS_NULLABLE"] == "YES" else "No"
+        comment  = (c.get("COMMENT") or "").replace("|", "\\|")
         col_type = c["DATA_TYPE"]
         if c.get("CHARACTER_MAXIMUM_LENGTH"):
             col_type += f"({c['CHARACTER_MAXIMUM_LENGTH']})"
@@ -2615,7 +2670,7 @@ def _az_md(name, meta, columns, sample, schema, distinct_map: dict,
         cname = c["COLUMN_NAME"]
         dist  = ", ".join(f"'{v}'" for v in distinct_map.get(cname, []))
         label = f"`{cname}` **[PK]**" if cname.upper() in _pk_set else f"`{cname}`"
-        lines.append(f"| {label} | {col_type} | {nullable} | {dist} |")
+        lines.append(f"| {label} | {col_type} | {nullable} | {comment} | {dist} |")
 
     # ── Column Statistics section (numeric/date columns only) ─────────────────
     if stats_map:

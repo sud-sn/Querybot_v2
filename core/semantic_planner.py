@@ -297,8 +297,10 @@ def _role_for_column(column: str, col_type: str = "", vocab=None) -> str:
         governed_code in getattr(v, "raw_status_codes", set())
         or governed_code in v.raw_identifier_codes
         or col.endswith("_DMS_KEY")
-        or governed_code in {"DIVI", "WHLO", "ORNO", "PONR", "POSX"}
     ):
+        # DIVI/WHLO/ORNO/PONR/POSX used to be listed here as literals; every one
+        # of them is already in the pack's raw_identifier_codes, so the list was
+        # duplicated ERP knowledge that only the next Python edit could extend.
         return "dimension"
     if governed_code in v.raw_measure_codes or any(suffix in col for suffix in ("_AMT", "_QTY", "_CST", "_PFT")):
         return "measure"
@@ -331,6 +333,7 @@ def _score_candidate(
     question: str,
     base_tables: set[str],
     preferred_fact_tables: set[str] | None = None,
+    vocab=None,
 ) -> int:
     score = _table_context_score(table, question)
     if table in base_tables:
@@ -341,8 +344,17 @@ def _score_candidate(
         score += 2
     if _table_bare(table).startswith("DIM_"):
         score += 1
-    if column == "DIVI" and "division" in _norm(question):
-        score += 3
+    # A column the vocabulary gives an explicit business alias to, where that
+    # alias is in the question, is a deliberate admin/pack mapping and outranks
+    # a name-similarity match. This was written as `column == "DIVI" and
+    # "division" in question` — the same rule, stated for one client's ERP, so
+    # it could never apply to the next client's equivalent column and gave a
+    # scoring advantage no admin could see or override.
+    _aliases = _planner_vocab(vocab).direct_aliases.get(column.upper(), set())
+    if _aliases:
+        _q = _norm(question)
+        if any(_norm(alias) and _norm(alias) in _q for alias in _aliases):
+            score += 3
     if preferred_fact_tables and role == "measure" and any(
         _same_physical_table(table, preferred)
         for preferred in preferred_fact_tables
@@ -760,9 +772,18 @@ def _join_edges(table_columns: dict[str, dict[str, str]], vocab=None) -> dict[st
         for right in table_list[i + 1:]:
             conditions: list[tuple[str, str]] = []
             common = sorted(tables[left] & tables[right])
-            # DIVI is a grouping/filter dimension, not a relational key — exclude it
-            # from join conditions so it doesn't create false graph edges.
-            conditions.extend((c, c) for c in common if c.endswith("_DMS_KEY") or c in {"CONO", "ORNO", "PONR", "POSX", "DLIX"})
+            # Only identifiers the vocabulary marks as RELATIONAL may become a
+            # join condition. A grouping code such as a division or facility
+            # identifies a category, appears on many unrelated tables, and
+            # joining on it manufactures a false edge — which is why the eligible
+            # set cannot simply be raw_identifier_codes. It used to be a literal
+            # list of one ERP's codes, unreachable for any other client; it now
+            # comes from the pack's join_key_codes.
+            _join_codes = _planner_vocab(None).join_key_codes
+            conditions.extend(
+                (c, c) for c in common
+                if c.endswith("_DMS_KEY") or c.upper() in _join_codes
+            )
             for lcol, rcols in join_synonyms.items():
                 if lcol in tables[left]:
                     conditions.extend((lcol, rc) for rc in rcols if rc in tables[right])
@@ -1076,6 +1097,72 @@ def demote_measures_governed_by_a_metric(
     return demoted
 
 
+def _unqualified_measure_rivals(
+    question: str,
+    normalized_columns: dict[str, dict[str, str]],
+    allowed_tables: set[str] | None,
+    selected_schema: str,
+    vocab,
+    limit: int = 6,
+) -> list[str]:
+    """Measure columns that share the bare business word the question used.
+
+    Alias derivation deliberately stops before stripping a qualified term to
+    its head noun: turning "net revenue" into "revenue" would let a bare noun
+    hard-require one specific column. That is right — but it means a question
+    asking only for "revenue" matches NOTHING, the deterministic plan collapses
+    entirely, and the model picks between GROSS_..., NET_... and other rivals on
+    its own. It answers confidently, and can answer differently next week.
+
+    The ambiguity is fully known to us at that moment. Naming the rivals does
+    not resolve the question, but it stops the choice being invisible.
+    """
+    qn = _norm(question)
+    if not qn:
+        return []
+    question_words = {word for word in qn.split() if len(word) >= 4}
+    if not question_words:
+        return []
+
+    selected_schema = (selected_schema or "").upper().strip()
+    allowed_expanded: set[str] = set()
+    for table in allowed_tables or set():
+        allowed_expanded.update(_table_variants(str(table)))
+
+    by_head: dict[str, list[str]] = {}
+    for table, cols in normalized_columns.items():
+        table_u = str(table).upper()
+        if selected_schema:
+            schema_name = _table_schema(table_u)
+            if schema_name and schema_name != selected_schema:
+                continue
+        if allowed_tables is not None and not (_table_variants(table_u) & allowed_expanded):
+            continue
+        for col, col_type in (cols or {}).items():
+            col_u = str(col).upper()
+            if _role_for_column(col_u, str(col_type), vocab=vocab) != "measure":
+                continue
+            for alias in _aliases_for_column(col_u, vocab=vocab):
+                words = alias.split()
+                # Only a QUALIFIED alias counts: the head of "net revenue" is
+                # the word the user typed, and the modifier is what they left
+                # out. A single-word alias would have matched already.
+                if len(words) < 2:
+                    continue
+                head = words[-1]
+                if head in question_words:
+                    by_head.setdefault(head, [])
+                    reference = f"{table_u}.{col_u}"
+                    if reference not in by_head[head]:
+                        by_head[head].append(reference)
+
+    for head in sorted(by_head):
+        rivals = by_head[head]
+        if len(rivals) >= 2:
+            return sorted(rivals)[:limit]
+    return []
+
+
 def build_semantic_field_plan(
     question: str,
     table_columns: dict[str, dict[str, str]] | None,
@@ -1100,7 +1187,20 @@ def build_semantic_field_plan(
     fields = _choose_fields(question, candidates, preferred_fact_tables)
     fields = _apply_display_dimension_fields(fields, question, normalized_columns, allowed_tables, selected_schema)
     if not fields:
-        return {"enabled": False, "fields": [], "joins": [], "reason": "no matching semantic fields"}
+        rival_measures = _unqualified_measure_rivals(
+            question, normalized_columns, allowed_tables, selected_schema, vocab,
+        )
+        if rival_measures:
+            log.info(
+                "No semantic field matched %r, but %d measure columns share the "
+                "business word used: %s. The question does not say which.",
+                question, len(rival_measures), ", ".join(rival_measures),
+            )
+        return {
+            "enabled": False, "fields": [], "joins": [],
+            "reason": "no matching semantic fields",
+            "ambiguous_measures": rival_measures,
+        }
     for field in fields:
         if (field.get("column") or "").upper() in _DATE_PART_COLUMNS:
             field["role"] = "date_dimension"
@@ -1143,6 +1243,61 @@ def build_semantic_field_plan(
     }
 
 
+def _supersession_lines(avoid: list[dict], *, intro: bool = True) -> list[str]:
+    lines = ["Superseded columns (admin-approved mappings replace these):"] if intro else []
+    for entry in avoid:
+        term = str(entry.get("term") or "this term").strip()
+        lines.append(
+            f"- Do NOT use {entry['table']}.{entry['column']} for \"{term}\" — "
+            f"the admin-approved source is {entry.get('use_instead_table')}."
+            f"{entry.get('use_instead_column')}."
+        )
+    return lines
+
+
+def _ambiguous_measure_lines(plan: dict) -> list[str]:
+    rivals = plan.get("ambiguous_measures") or []
+    if len(rivals) < 2:
+        return []
+    return [
+        "",
+        "Ambiguous measure — the question names a business word that several "
+        "measures share:",
+        "  " + ", ".join(str(r) for r in rivals),
+        "These are different numbers, not spellings of one number. Choose the "
+        "one the question's own wording supports; if the wording does not "
+        "distinguish them, say so in the answer rather than picking silently.",
+    ]
+
+
+def _format_supersession_only(plan: dict) -> str:
+    """The retired-column instruction with no field plan around it, plus any
+    measure ambiguity worth stating.
+
+    Deliberately not headed "Semantic field-source plan": there are no source
+    fields to state, and a header promising them followed by nothing reads as a
+    contradiction the model has to resolve.
+    """
+    avoid = plan.get("avoid_columns") or []
+    ambiguous = _ambiguous_measure_lines(plan)
+    if not avoid:
+        if ambiguous:
+            # ambiguous[0] is a blank spacer and ambiguous[1] restates the
+            # heading, both of which only make sense inline under a field plan.
+            return "\n".join([
+                "## Ambiguous measure",
+                "The question names a business word that several measures share.",
+                "",
+            ] + ambiguous[2:]) + "\n"
+        return ""
+    return "\n".join([
+        "## Superseded columns",
+        "These columns were replaced by admin-approved mappings. "
+        "Do not use them for the terms named below.",
+        "",
+    ] + _supersession_lines(avoid, intro=False)) + "\n"
+
+
 def format_semantic_field_plan(plan: dict, db_type: str = "azure_sql") -> str:
     from core.contextual_dates import (
         format_date_value_expression,
@@ -1156,7 +1311,14 @@ def format_semantic_field_plan(plan: dict, db_type: str = "azure_sql") -> str:
     source_scope = plan.get("source_scope") or {}
     analytical_request_plan = plan.get("analytical_request_plan") or {}
     if not fields and not source_scope.get("selected_fact") and not analytical_request_plan:
-        return ""
+        # An avoid list on its own is still an instruction, and the case where
+        # it stands alone is the one that matters most: a merged plan ends with
+        # no fields precisely when EVERY field it proposed was a column an
+        # admin had superseded. Returning "" here — and the matching gate in
+        # core/llm.py keyed on `fields` — meant the only artifact that would
+        # have forbidden the retired column was suppressed exactly then, and
+        # the model re-picked it.
+        return _format_supersession_only(plan)
     lines = [
         "## Semantic field-source plan",
         "Use these exact source fields when the question mentions the mapped business terms.",
@@ -1230,13 +1392,8 @@ def format_semantic_field_plan(plan: dict, db_type: str = "azure_sql") -> str:
     avoid = plan.get("avoid_columns") or []
     if avoid:
         lines.append("")
-        lines.append("Superseded columns (admin-approved mappings replace these):")
-        for entry in avoid:
-            term = str(entry.get("term") or "this term").strip()
-            lines.append(
-                f"- Do NOT use {entry['table']}.{entry['column']} for \"{term}\" — "
-                f"the admin-approved source is {entry.get('use_instead_table')}.{entry.get('use_instead_column')}."
-            )
+        lines.extend(_supersession_lines(avoid))
+    lines.extend(_ambiguous_measure_lines(plan))
     joins = plan.get("joins") or []
     if joins:
         lines.append("")
