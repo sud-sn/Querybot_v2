@@ -93,5 +93,23 @@
       "pattern": "^(TRANSACTION|TXN|TRANS)_DATE(_KEY|_ID)?$",
       "role": "accounting_date"
     }
-  ]
+  ],
+  "join_qualifier_codes": [
+    "TENANT_ID",
+    "TENANT_KEY",
+    "CLIENT_ID",
+    "COMPANY_ID",
+    "COMPANY_KEY",
+    "COMPANY_CODE"
+  ],
+  "join_key_suffixes": [
+    "_SK",
+    "_SKEY",
+    "_SURROGATE_KEY",
+    "_DIM_KEY",
+    "_DIMENSION_KEY",
+    "_DIM_ID",
+    "_FK"
+  ],
+  "join_notes": "Suffixes rather than codes, because a hand-built or dbt-built warehouse has no ERP short codes. Bare _ID and _KEY are excluded: they are a surrogate key on one warehouse and a sort key, hash key or natural attribute on another. _NK and _BK are excluded too -- a natural or business key identifies a member, but two tables sharing one are not necessarily related."
 }

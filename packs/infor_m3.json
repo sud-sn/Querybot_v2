@@ -2097,10 +2097,15 @@
     "RVDT"
   ],
   "join_key_codes": [
-    "CONO",
     "ORNO",
     "PONR",
     "POSX",
     "DLIX"
+  ],
+  "join_qualifier_codes": [
+    "CONO"
+  ],
+  "join_key_suffixes": [
+    "_DMS_KEY"
   ]
 }

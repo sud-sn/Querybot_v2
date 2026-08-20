@@ -473,8 +473,21 @@ class TestErpKnowledgeLivesInThePackNotInPython:
         assert "join_key_codes" in MergedVocab.__dataclass_fields__
         pack = load_pack("infor_m3") or {}
         assert set(pack.get("join_key_codes") or []) == {
-            "CONO", "ORNO", "PONR", "POSX", "DLIX",
+            "ORNO", "PONR", "POSX", "DLIX",
         }
+
+    def test_the_company_code_qualifies_a_join_and_cannot_create_one(self):
+        """CONO shipped in join_key_codes, which was wrong in the same way
+        DIVI would have been, only worse: every table in an M3 install carries
+        it, so it made every pair of tables adjacent. It belongs in the ON
+        clause -- it is part of the composite key -- but only once a real key
+        has linked the pair. See tests/test_join_key_vocabulary.py for the
+        behaviour."""
+        from core.vocab_packs import load_pack
+
+        pack = load_pack("infor_m3") or {}
+        assert "CONO" in (pack.get("join_qualifier_codes") or [])
+        assert "CONO" not in (pack.get("join_key_codes") or [])
 
     def test_a_grouping_identifier_is_not_join_eligible(self):
         """A division code identifies a category and appears on many unrelated

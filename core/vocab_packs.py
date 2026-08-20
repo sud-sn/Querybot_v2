@@ -75,6 +75,18 @@ class MergedVocab:
     # unrelated tables, and joining on it manufactures a false edge. Which
     # identifiers are relational is ERP knowledge, so it lives in the pack.
     join_key_codes: set[str] = field(default_factory=set)
+    # Codes that belong in an ON clause but must never CREATE one. A client,
+    # company or partition code sits on nearly every table in an ERP, so
+    # letting it establish an edge makes every pair of tables adjacent and the
+    # join planner routes through nonsense. These are added only to a pair a
+    # real key already linked.
+    join_qualifier_codes: set[str] = field(default_factory=set)
+    # Column-name suffixes that may establish a join edge, for warehouses that
+    # use a naming convention instead of fixed short codes. Pack-scoped
+    # because the convention is the modeller's, not ours: "_DMS_KEY" is Infor
+    # M3's, "_SK" is Kimball's, and a generic "_ID" is safe on one warehouse
+    # and a sort key on another.
+    join_key_suffixes: set[str] = field(default_factory=set)
     # [(compiled pattern, date-role key)] — PACK-added patterns only; builtin
     # date-role regexes stay in core/date_roles.py and are checked after these.
     date_role_patterns: list[tuple[re.Pattern, str]] = field(default_factory=list)
@@ -208,6 +220,12 @@ def _merge_pack(vocab: MergedVocab, pack: dict, origin: str) -> None:
     vocab.raw_date_codes |= {str(c).upper() for c in (pack.get("raw_date_codes") or [])}
     vocab.raw_status_codes |= {str(c).upper() for c in (pack.get("raw_status_codes") or [])}
     vocab.join_key_codes |= {str(c).upper() for c in (pack.get("join_key_codes") or [])}
+    vocab.join_qualifier_codes |= {
+        str(c).upper() for c in (pack.get("join_qualifier_codes") or [])
+    }
+    vocab.join_key_suffixes |= {
+        str(c).upper() for c in (pack.get("join_key_suffixes") or []) if str(c).strip()
+    }
 
     new_dr: list[tuple[re.Pattern, str]] = []
     try:
@@ -267,7 +285,9 @@ def builtin_vocab() -> MergedVocab:
         ABBREVIATIONS, _NUMBERED_SERIES,
         RAW_IDENTIFIER_CODES, RAW_MEASURE_CODES, RAW_DATE_CODES,
     )
-    from core.semantic_planner import _DIRECT_ALIASES, _JOIN_SYNONYMS
+    from core.semantic_planner import (
+        _DIRECT_ALIASES, _JOIN_KEY_SUFFIXES, _JOIN_SYNONYMS,
+    )
     from core.semantic_planner import _ABBREVIATIONS as _PLANNER_ABBREVIATIONS
     from core.naming_convention import ENTITY_PREFIX_VOCABULARY
 
@@ -277,6 +297,7 @@ def builtin_vocab() -> MergedVocab:
     vocab.planner_abbreviations = dict(_PLANNER_ABBREVIATIONS)
     vocab.direct_aliases = {k: set(v) for k, v in _DIRECT_ALIASES.items()}
     vocab.join_synonyms = {k: set(v) for k, v in _JOIN_SYNONYMS.items()}
+    vocab.join_key_suffixes = set(_JOIN_KEY_SUFFIXES)
     vocab.entity_prefixes = dict(ENTITY_PREFIX_VOCABULARY)
     vocab.numbered_series = list(_NUMBERED_SERIES)
     vocab.raw_identifier_codes = set(RAW_IDENTIFIER_CODES)
@@ -311,6 +332,8 @@ def _clone_builtin() -> MergedVocab:
         raw_date_codes=set(b.raw_date_codes),
         raw_status_codes=set(b.raw_status_codes),
         join_key_codes=set(b.join_key_codes),
+        join_qualifier_codes=set(b.join_qualifier_codes),
+        join_key_suffixes=set(b.join_key_suffixes),
         date_role_patterns=list(b.date_role_patterns),
         fact_patterns=list(b.fact_patterns),
         dimension_patterns=list(b.dimension_patterns),

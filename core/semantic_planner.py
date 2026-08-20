@@ -151,6 +151,16 @@ _JOIN_SYNONYMS = {
     "CUS_ORD_LIN_SFX": {"POSX"},
 }
 
+# Column-name suffixes that may establish a join edge when no pack is active.
+# Every one of these says, in the modeller's own naming, "this column is a key
+# pointing at a dimension" -- there is no reading of _SK or _DIM_KEY as a sort
+# key, a hash key or a free-text attribute. A bare _ID or _KEY is deliberately
+# absent for exactly that reason; a warehouse that wants them says so in its
+# pack. _DMS_KEY is Infor M3's spelling and is declared in packs/infor_m3.json
+# too, but it stays in the default set because a tenant with no pack selected
+# would otherwise lose every join edge it has today.
+_JOIN_KEY_SUFFIXES = {"_DMS_KEY", "_DIM_KEY", "_DIMENSION_KEY", "_SK", "_FK"}
+
 _MEASURE_HINTS = ("amount", "profit", "quantity", "cost", "margin", "sales", "invoice")
 
 
@@ -764,7 +774,11 @@ def _apply_display_dimension_fields(
 
 
 def _join_edges(table_columns: dict[str, dict[str, str]], vocab=None) -> dict[str, list[dict]]:
-    join_synonyms = _planner_vocab(vocab).join_synonyms
+    _vocab = _planner_vocab(vocab)
+    join_synonyms = _vocab.join_synonyms
+    join_key_codes = {str(c).upper() for c in _vocab.join_key_codes}
+    join_qualifier_codes = {str(c).upper() for c in _vocab.join_qualifier_codes}
+    key_suffixes = tuple(sorted(str(s).upper() for s in _vocab.join_key_suffixes))
     tables = {str(t).upper(): {str(c).upper() for c in (cols or {})} for t, cols in table_columns.items()}
     graph: dict[str, list[dict]] = {t: [] for t in tables}
     table_list = list(tables)
@@ -772,23 +786,32 @@ def _join_edges(table_columns: dict[str, dict[str, str]], vocab=None) -> dict[st
         for right in table_list[i + 1:]:
             conditions: list[tuple[str, str]] = []
             common = sorted(tables[left] & tables[right])
-            # Only identifiers the vocabulary marks as RELATIONAL may become a
-            # join condition. A grouping code such as a division or facility
-            # identifies a category, appears on many unrelated tables, and
-            # joining on it manufactures a false edge — which is why the eligible
-            # set cannot simply be raw_identifier_codes. It used to be a literal
-            # list of one ERP's codes, unreachable for any other client; it now
-            # comes from the pack's join_key_codes.
-            _join_codes = _planner_vocab(None).join_key_codes
+            # Only identifiers the vocabulary marks as RELATIONAL may ESTABLISH
+            # a join. A grouping code such as a division or facility identifies
+            # a category, appears on many unrelated tables, and joining on it
+            # manufactures a false edge — which is why the eligible set cannot
+            # simply be raw_identifier_codes. Both halves come from the active
+            # vocabulary: the codes from the pack's join_key_codes, and the
+            # naming convention from its join_key_suffixes. Neither may be a
+            # literal here, or the rule only ever fires for one ERP.
             conditions.extend(
                 (c, c) for c in common
-                if c.endswith("_DMS_KEY") or c.upper() in _join_codes
+                if (key_suffixes and c.endswith(key_suffixes)) or c in join_key_codes
             )
             for lcol, rcols in join_synonyms.items():
                 if lcol in tables[left]:
                     conditions.extend((lcol, rc) for rc in rcols if rc in tables[right])
                 if lcol in tables[right]:
                     conditions.extend((rc, lcol) for rc in rcols if rc in tables[left])
+            # A client, company or partition code belongs in the ON clause and
+            # nowhere else. It sits on nearly every table in an ERP, so if it
+            # could establish an edge every pair of tables would be adjacent and
+            # the path search below would route through nonsense. Add it only
+            # once a real key has already linked this pair.
+            if conditions and join_qualifier_codes:
+                conditions.extend(
+                    (c, c) for c in common if c in join_qualifier_codes
+                )
             seen = set()
             deduped = []
             for cond in conditions:

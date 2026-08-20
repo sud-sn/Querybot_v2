@@ -22,7 +22,10 @@ _LINE_WORDS = {"detail", "item", "line", "position", "row", "sequence"}
 _IDENTIFIER_WORDS = {
     "business", "code", "id", "identifier", "no", "num", "number", "reference",
 }
-_SURROGATE_SUFFIXES = ("_DMS_KEY", "_KEY", "_SK", "_FK")
+# "_DMS_KEY" is not listed: it is Infor M3's spelling of "_KEY", which is
+# already here, so naming it bought nothing except the impression that this
+# tuple has to learn every ERP's dimension-key convention.
+_SURROGATE_SUFFIXES = ("_KEY", "_SK", "_FK")
 # Words that qualify an identifier without changing which entity it identifies.
 _KEY_WORDS = _IDENTIFIER_WORDS | {"fk", "key", "pk", "sk", "surrogate"}
 _MASTER_TABLE_TYPES = {"dimension", "master", "reference", "lookup"}
@@ -323,7 +326,7 @@ _COLUMN_IDENTIFIER_SUFFIXES = (
     ("_NUMBER", "number"), ("_NUM", "number"), ("_NO", "no"),
     ("_IDENTIFIER", "identifier"), ("_ID", "id"),
     ("_CODE", "code"), ("_CD", "code"),
-    ("_DMS_KEY", "key"), ("_KEY", "key"), ("_SK", "sk"), ("_PK", "pk"),
+    ("_KEY", "key"), ("_SK", "sk"), ("_PK", "pk"),
 )
 
 

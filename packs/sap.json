@@ -3,5 +3,40 @@
   "erp_name": "SAP ERP / S4HANA",
   "version": 0,
   "status": "stub",
-  "description": "Phase 2 - German-origin table and field codes (VBAK, KNA1, KUNNR, MATNR...). This pack is a placeholder; enabling it currently changes nothing."
+  "description": "Phase 2 - German-origin table and field codes (VBAK, KNA1, KUNNR, MATNR...). This pack is a placeholder; enabling it currently changes nothing.",
+  "join_key_codes": [
+    "VBELN",
+    "EBELN",
+    "BANFN",
+    "BELNR",
+    "MBLNR",
+    "AUFNR",
+    "ANLN1",
+    "KNUMV",
+    "INFNR"
+  ],
+  "join_qualifier_codes": [
+    "POSNR",
+    "EBELP",
+    "BNFPO",
+    "BUZEI",
+    "MATNR",
+    "KUNNR",
+    "LIFNR",
+    "ANLN2",
+    "SAKNR",
+    "MANDT",
+    "BUKRS",
+    "RBUKRS",
+    "RLDNR",
+    "RCLNT",
+    "WERKS",
+    "VKORG",
+    "VTWEG",
+    "EKORG",
+    "KOKRS",
+    "GJAHR",
+    "MJAHR"
+  ],
+  "join_notes": "VBELN and BELNR are each reused across document families (order/delivery/billing; FI/logistics/PO history), so they also make VBAK<->LIKP<->VBRK and BSEG<->RSEG adjacent on numbers drawn from different ranges. They stay keys because header-to-item is otherwise unreachable; the accurate cross-document links (LIPS.VGBEL, VBRP.AUBEL, VBFA.VBELV) need join_synonyms. MATNR, KUNNR and LIFNR are qualifiers, not keys: each sits on hundreds of tables, so as keys they would join two fact tables on a shared dimension and inflate sums."
 }

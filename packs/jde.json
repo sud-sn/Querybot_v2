@@ -3,5 +3,24 @@
   "erp_name": "JD Edwards EnterpriseOne",
   "version": 0,
   "status": "stub",
-  "description": "Phase 2 - F-prefixed files (F4211, F0101) and 2-char column prefixes (SDDOCO). This pack is a placeholder; enabling it currently changes nothing."
+  "description": "Phase 2 - F-prefixed files (F4211, F0101) and 2-char column prefixes (SDDOCO). This pack is a placeholder; enabling it currently changes nothing.",
+  "join_key_codes": [
+    "DOCO",
+    "DOC",
+    "DOCM",
+    "AID"
+  ],
+  "join_qualifier_codes": [
+    "LNID",
+    "SFX",
+    "AN8",
+    "CO",
+    "KCOO",
+    "KCO",
+    "MCU",
+    "DCTO",
+    "DCT",
+    "MMCU"
+  ],
+  "join_notes": "JD Edwards prefixes physical columns with a two-character table code (F4211.SDDOCO, F4311.PDDOCO), so these bare names match a normalised mart extract, not a raw F-file extract. Against raw files they are inert until the prefix stripping in record_prefixes covers this ERP."
 }
