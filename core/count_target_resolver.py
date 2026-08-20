@@ -23,6 +23,15 @@ _IDENTIFIER_WORDS = {
     "business", "code", "id", "identifier", "no", "num", "number", "reference",
 }
 _SURROGATE_SUFFIXES = ("_DMS_KEY", "_KEY", "_SK", "_FK")
+# Words that qualify an identifier without changing which entity it identifies.
+_KEY_WORDS = _IDENTIFIER_WORDS | {"fk", "key", "pk", "sk", "surrogate"}
+_MASTER_TABLE_TYPES = {"dimension", "master", "reference", "lookup"}
+# Preference among identifiers that all name the same master-table population.
+# Every one of them counts the same rows, so this only has to be stable.
+_IDENTIFIER_WORD_RANK = {
+    "no": 0, "number": 0, "id": 1, "identifier": 1, "reference": 1,
+    "code": 2, "key": 3, "sk": 4, "fk": 4, "pk": 4,
+}
 
 
 def _norm(value: Any) -> str:
@@ -253,6 +262,192 @@ def _candidate(
         "status": str(field.get("status") or "generated"),
         "evidence": evidence,
     }
+
+
+def _singular_token(token: str) -> str:
+    if token.endswith("ies") and len(token) > 4:
+        return token[:-3] + "y"
+    if token.endswith(("ches", "shes", "sses", "xes", "zes")):
+        return token[:-2]
+    if token.endswith("s") and not token.endswith("ss") and len(token) > 3:
+        return token[:-1]
+    return token
+
+
+def _entity_tokens(value: Any) -> tuple[str, ...]:
+    return tuple(_singular_token(token) for token in _norm(value).split() if token)
+
+
+def _identifies_exactly(field: dict[str, Any], entity_tokens: tuple[str, ...]) -> str:
+    """Return the identifier word by which a field names exactly this entity.
+
+    A master table's own key reads as the entity plus an identifier word --
+    "customer number", "supplier id".  A neighbouring master table's key reads
+    as the entity plus a qualifier -- "customer type code" identifies a type of
+    customer, not a customer.  Requiring the remainder to be exactly the entity
+    is what keeps a population count off the qualifier's table; anything less
+    exact resolves to no candidate and leaves the question as it was.
+    """
+    if not entity_tokens:
+        return ""
+    labels: list[Any] = [
+        field.get("expanded_name"), field.get("business_name"),
+        field.get("display_name"), field.get("column"),
+    ]
+    # An approved synonym is the admin saying in so many words what this field
+    # identifies, which is stronger evidence than any expansion of the physical
+    # name -- and often the only evidence, since abbreviation packs do not
+    # cover every tenant's shorthand (SUP_NO expands to "sup no", not
+    # "supplier no", and would otherwise never match "supplier").
+    for key in ("business_candidates", "synonyms", "approved_synonyms", "aliases"):
+        raw = field.get(key) or []
+        labels.extend(raw if isinstance(raw, (list, tuple, set)) else [raw])
+    suffix_word = _column_identifier_word(field.get("column"))
+    for label in labels:
+        tokens = _entity_tokens(label)
+        identifier_word = ""
+        while tokens and tokens[-1] in _KEY_WORDS:
+            identifier_word = identifier_word or tokens[-1]
+            tokens = tokens[:-1]
+        if tokens != entity_tokens:
+            continue
+        # A label may name the entity without repeating the identifier word --
+        # the alias "supplier" on SUP_NO. The physical suffix then says which
+        # kind of identifier it is. A label with neither is a plain attribute.
+        if identifier_word or suffix_word:
+            return identifier_word or suffix_word
+    return ""
+
+
+_COLUMN_IDENTIFIER_SUFFIXES = (
+    ("_NUMBER", "number"), ("_NUM", "number"), ("_NO", "no"),
+    ("_IDENTIFIER", "identifier"), ("_ID", "id"),
+    ("_CODE", "code"), ("_CD", "code"),
+    ("_DMS_KEY", "key"), ("_KEY", "key"), ("_SK", "sk"), ("_PK", "pk"),
+)
+
+
+def _column_identifier_word(column: Any) -> str:
+    upper = str(column or "").strip().upper()
+    for suffix, word in _COLUMN_IDENTIFIER_SUFFIXES:
+        if upper.endswith(suffix) and len(upper) > len(suffix):
+            return word
+    return ""
+
+
+def _population_candidate(
+    table: dict[str, Any],
+    field: dict[str, Any],
+    entity_tokens: tuple[str, ...],
+) -> dict[str, Any] | None:
+    column = str(field.get("column") or "").strip()
+    if not column:
+        return None
+    identifier_word = _identifies_exactly(field, entity_tokens)
+    if not identifier_word:
+        return None
+    if _norm(field.get("role")) in {"measure", "measure candidate"}:
+        return None
+
+    entity = " ".join(entity_tokens)
+    evidence = [f"master table identifier names exactly one {entity}"]
+    score = 65
+    if _norm(field.get("role")) in {"identifier", "dimension key", "key", "primary key"}:
+        score += 10
+        evidence.append("semantic role is identifier")
+    if _norm(field.get("aggregation")) == "identifier":
+        score += 6
+        evidence.append("aggregation policy is identifier")
+    if str(field.get("status") or "").casefold() == "approved":
+        score += 15
+        evidence.append("admin approved")
+    surrogate = column.upper().endswith(_SURROGATE_SUFFIXES)
+    if surrogate:
+        # A version key counts rows, not members: on a slowly changing master
+        # the business identifier is the one that survives a re-versioned row.
+        score -= 20
+        evidence.append("surrogate-key penalty")
+    return {
+        "table": _table_name(table),
+        "column": column,
+        "business_name": _business_label(field, entity),
+        "business_meaning": _business_meaning(field, table, line_level=False),
+        "score": score,
+        "confidence": max(0, min(100, score)),
+        "line_level": False,
+        "surrogate": surrogate,
+        "source_kind": "master",
+        "identifier_rank": _IDENTIFIER_WORD_RANK.get(identifier_word, 5),
+        "status": str(field.get("status") or "generated"),
+        "evidence": evidence,
+    }
+
+
+def resolve_population_count_target(
+    entity: str,
+    model: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Resolve "how many <entity> are there" against the entity's master table.
+
+    Deliberately separate from the business-event resolver: a population is
+    counted from the table that defines it, so a member with no activity is
+    still a member.  Counting it from a fact answers a different question --
+    how many members have activity on that fact.
+
+    Every candidate returned identifies one row of the same master table, so
+    there is nothing for a user to disambiguate; when nothing matches exactly
+    this returns ``missing`` and the caller leaves the question alone.
+    """
+    entity_tokens = _entity_tokens(entity)
+    if not entity_tokens:
+        return {"status": "not_applicable", "entity": "", "candidates": []}
+
+    candidates = [
+        candidate
+        for table in ((model or {}).get("tables") or [])
+        if isinstance(table, dict)
+        and str(table.get("type") or "").casefold() in _MASTER_TABLE_TYPES
+        and _table_name(table)
+        for field in (table.get("fields") or [])
+        if isinstance(field, dict)
+        for candidate in [_population_candidate(table, field, entity_tokens)]
+        if candidate is not None
+    ]
+    entity_text = " ".join(entity_tokens)
+    if not candidates:
+        return {
+            "status": "missing", "entity": entity_text, "selected": {}, "candidates": [],
+            "reason": "no master table defines this population",
+        }
+
+    tables = {_table_name_key(candidate["table"]) for candidate in candidates}
+    if len(tables) > 1:
+        # Two master tables both claim to define the population.  Counting
+        # either would be a guess about which is authoritative.
+        return {
+            "status": "ambiguous", "entity": entity_text, "selected": {},
+            "candidates": sorted(candidates, key=_population_order)[:6],
+            "reason": f"{len(tables)} master tables define this population",
+        }
+
+    candidates.sort(key=_population_order)
+    return {
+        "status": "selected", "entity": entity_text, "selected": candidates[0],
+        "candidates": candidates[:6],
+        "reason": "master table identifier for the whole population",
+    }
+
+
+def _table_name_key(table: Any) -> str:
+    return str(table or "").strip().strip("[]\"`").upper().split(".")[-1]
+
+
+def _population_order(candidate: dict[str, Any]) -> tuple:
+    return (
+        -int(candidate["score"]),
+        int(candidate.get("identifier_rank") or 5),
+        str(candidate["column"]).upper(),
+    )
 
 
 def resolve_count_target(

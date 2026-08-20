@@ -122,6 +122,65 @@ _EVENT_VALUE_CUE_RE = re.compile(
     r"duration|days?)\b",
     re.I,
 )
+# What a question asks to count is the SUBJECT of the count phrase, not any
+# countable noun that happens to appear later in the sentence. "How many
+# customers placed orders in June" asks about customers; reading the first
+# event noun anywhere in the text answered a question about order volume.
+_COUNT_SUBJECT_CUE_RE = re.compile(
+    r"\b(?:how\s+many|number\s+of|counts?\s+of|total\s+number\s+of)\s+", re.I
+)
+_COUNT_SUBJECT_SKIP = {
+    "active", "different", "distinct", "individual", "separate", "total", "unique",
+}
+_COUNT_SUBJECT_STOP = {
+    "a", "an", "and", "are", "at", "based", "by", "did", "do", "does", "each",
+    "for", "from", "had", "has", "have", "i", "in", "is", "its", "of", "on", "or",
+    "our", "per", "that", "the", "their", "there", "these", "they", "this",
+    "those", "to", "was", "we", "were", "which", "who", "whose", "with",
+    "without", "you",
+}
+# Counting these is a calculation or a question about the product, not a count
+# of a business population, so they must never resolve to a governed identifier.
+_NON_ENTITY_COUNT_SUBJECT = {
+    "column", "dataset", "date", "day", "field", "hour", "minute", "month",
+    "percent", "percentage", "quarter", "query", "question", "record", "report",
+    "result", "row", "second", "table", "time", "week", "year",
+}
+_PLURAL_EXCEPTIONS = {
+    "children": "child", "men": "man", "people": "person", "women": "woman",
+}
+# A count subject ends where a predicate about it begins. The -ed/-ing test
+# covers regular English; the rest is a closed class of irregular past tenses,
+# not business vocabulary, so it does not need to grow per workspace. A word
+# wrongly treated as a verb only shortens the subject, which at worst leaves
+# the reading unchanged.
+_IRREGULAR_VERBS = {
+    "bought", "came", "did", "gave", "got", "held", "kept", "lost", "made",
+    "paid", "ran", "saw", "sent", "sold", "spent", "took", "went", "won",
+}
+# A population question asks how large a business population is and nothing
+# else. The shape is matched against the WHOLE question deliberately: any
+# surviving predicate ("how many drugs are in stock", "how many customers
+# ordered last month") narrows the population to activity, which the master
+# table alone cannot answer, so those must not match and must keep their
+# existing treatment.
+_POPULATION_COUNT_RE = re.compile(
+    r"^\W*(?:so\s+|and\s+|also\s+)?"
+    r"(?:what(?:'s|\s+is)\s+the\s+(?:total\s+)?number\s+of|"
+    r"how\s+many|(?:total\s+)?number\s+of|counts?\s+of)\s+"
+    r"(?:(?:active|different|distinct|individual|separate|total|unique)\s+)*"
+    r"(?P<entity>[A-Za-z][\w-]*(?:\s+[A-Za-z][\w-]*){0,2}?)"
+    r"(?:\s+(?:do|does|did)\s+(?:we|you|i|they)\s+(?:currently\s+)?(?:have|hold))?"
+    r"(?:\s+(?:are|is)\s+there)?"
+    r"(?:\s+(?:exist|exists))?"
+    r"(?:\s+in\s+(?:total|the\s+(?:system|database|data|business|company)|"
+    r"our\s+(?:system|database|data)))?"
+    r"(?:\s+(?:overall|altogether|currently))?"
+    r"(?:\s+(?:by|per|for\s+each|grouped\s+by|split\s+by|across)\s+"
+    r"[A-Za-z][\w-]*(?:\s+[A-Za-z][\w-]*){0,3})?"
+    r"\W*$",
+    re.I,
+)
 _ENTITY_GRAIN_RE = re.compile(
     r"\b(?:by|per|for\s+each)\s+(?:each\s+)?"
     r"(customers?|people|persons?|employees?|suppliers?|items?|products?|"
@@ -186,6 +245,7 @@ class AnalyticalPlan:
     entity_grain: str = ""
     measure_semantics: str = ""
     counted_entity: str = ""
+    population_entity: str = ""
     output: str = "auto"
     top_n: int | None = None
     assumptions: tuple[str, ...] = ()
@@ -214,6 +274,7 @@ class AnalyticalPlan:
             "entity_grain": self.entity_grain,
             "measure_semantics": self.measure_semantics,
             "counted_entity": self.counted_entity,
+            "population_entity": self.population_entity,
             "output": self.output,
             "top_n": self.top_n,
             "assumptions": list(self.assumptions),
@@ -377,6 +438,55 @@ def _unambiguous_relevant_metric(
     return ranked[0][1] if ranked[0][0] > runner_up else ""
 
 
+def _singular(word: str) -> str:
+    lowered = str(word or "").casefold()
+    if lowered in _PLURAL_EXCEPTIONS:
+        return _PLURAL_EXCEPTIONS[lowered]
+    if lowered.endswith("ies") and len(lowered) > 4:
+        return lowered[:-3] + "y"
+    if lowered.endswith(("ches", "shes", "sses", "xes", "zes")):
+        return lowered[:-2]
+    if lowered.endswith("s") and not lowered.endswith("ss") and len(lowered) > 3:
+        return lowered[:-1]
+    return lowered
+
+
+def _is_plural(word: str) -> bool:
+    lowered = str(word or "").casefold()
+    return lowered in _PLURAL_EXCEPTIONS or (
+        lowered.endswith("s") and not lowered.endswith("ss") and len(lowered) > 3
+    )
+
+
+def _looks_like_verb(word: str) -> bool:
+    lowered = str(word or "").casefold()
+    if lowered in _IRREGULAR_VERBS:
+        return True
+    return len(lowered) > 4 and lowered.endswith(("ed", "ing"))
+
+
+def _count_subject(question: str) -> str:
+    """Return the noun phrase the count phrase is asking about, or ``""``."""
+    text = str(question or "")
+    match = _COUNT_SUBJECT_CUE_RE.search(text)
+    if not match:
+        return ""
+    words: list[str] = []
+    for raw in re.findall(r"[A-Za-z][\w-]*", text[match.end():]):
+        word = raw.casefold()
+        if not words and word in _COUNT_SUBJECT_SKIP:
+            continue
+        if word in _COUNT_SUBJECT_STOP or _looks_like_verb(word):
+            break
+        words.append(word)
+        if len(words) >= 3:
+            break
+    if not words:
+        return ""
+    subject = " ".join(words[:-1] + [_singular(words[-1])])
+    return "" if subject in _NON_ENTITY_COUNT_SUBJECT else subject
+
+
 def detect_business_event_count(question: str) -> str:
     """Return the requested countable event, or ``""`` when it asks for value.
 
@@ -392,7 +502,43 @@ def detect_business_event_count(question: str) -> str:
         return ""
     raw = match.group(1).casefold()
     irregular = {"deliveries": "delivery", "purchases": "purchase"}
-    return irregular.get(raw, raw[:-1] if raw.endswith("s") else raw)
+    event = irregular.get(raw, raw[:-1] if raw.endswith("s") else raw)
+    # An explicit count phrase names its own subject. When that subject is a
+    # different business thing, the event noun is a predicate about it, not
+    # what the user asked to count.
+    subject = _count_subject(text)
+    if subject and event not in {subject, subject.split()[-1]}:
+        return ""
+    return event
+
+
+def detect_population_count(question: str) -> str:
+    """Return the entity whose whole population is being asked for, or ``""``.
+
+    This is the "how many customers do we have" family: a request for the size
+    of a business population, with no period, measure or activity narrowing it.
+    Such a count belongs to the entity's own master table — answering it from
+    whichever fact happened to win source arbitration silently drops every
+    member with no activity on that fact.
+    """
+    text = str(question or "").strip()
+    if _EVENT_VALUE_CUE_RE.search(text):
+        return ""
+    match = _POPULATION_COUNT_RE.match(text)
+    if not match:
+        return ""
+    words = [
+        word.casefold()
+        for word in re.findall(r"[A-Za-z][\w-]*", match.group("entity"))
+    ]
+    # "How many" takes a plural. Requiring one keeps a trailing predicate out
+    # of the entity: in "how many suppliers delivered late" the only way the
+    # shape matches at all is by swallowing "delivered late" as part of the
+    # name, and "late" is not a population.
+    if not words or not _is_plural(words[-1]):
+        return ""
+    entity = " ".join(words[:-1] + [_singular(words[-1])])
+    return "" if entity in _NON_ENTITY_COUNT_SUBJECT else entity
 
 
 def _latest_clarification(question: str) -> str:
@@ -503,6 +649,10 @@ def plan_analytical_intent(
     concept_match = _BUSINESS_CONCEPT_RE.search(text)
     business_concepts = [concept_match.group(1).lower()] if concept_match else []
     counted_entity = detect_business_event_count(text)
+    # Advisory, not governing: a population entity only becomes the
+    # counted entity once the semantic layer resolves it to a master
+    # table, so an unresolvable noun costs nothing.
+    population_entity = "" if counted_entity else detect_population_count(text)
     if counted_entity:
         business_concepts.append(f"{counted_entity} count")
     known_concepts = _matched_catalog_names(text, terms) if concept_match else []
@@ -743,6 +893,7 @@ def plan_analytical_intent(
         entity_grain=entity_grain,
         measure_semantics="count_distinct_business_identifier" if counted_entity else "",
         counted_entity=counted_entity,
+        population_entity=population_entity,
         output=output,
         top_n=top_n,
         assumptions=tuple(assumptions),

@@ -95,7 +95,14 @@ def compile_analytical_request_plan(
     _user_confirmed_source = (
         str(source_scope.get("reason") or "") == "user-confirmed governed source"
     )
-    if not _user_confirmed_source:
+    # A population count is anchored on the table that DEFINES the population.
+    # There is no measure to arbitrate over, and letting an incidental numeric
+    # column on that master claim the source would move the request off the
+    # very table the governed count target lives on.
+    _governed_master_source = (
+        str(source_scope.get("source_kind") or "").casefold() == "master"
+    )
+    if not _user_confirmed_source and not _governed_master_source:
         # Governance strength, not list order: enforcement="required" is the
         # structured semantic model's approved binding, while an unset value is
         # the LLM field planner's suggestion — which is how "purchase" bound to
@@ -349,6 +356,7 @@ def compile_analytical_request_plan(
         "missing_slots": list(dict.fromkeys(missing_slots)),
         "source_fact": selected_fact,
         "source_facts": source_facts,
+        "source_kind": str(source_scope.get("source_kind") or "fact"),
         "subrequests": subrequests,
         "measures": measures,
         "dimensions": dimensions,
@@ -398,6 +406,11 @@ def format_analytical_request_plan(plan: dict[str, Any] | None) -> str:
                 f"to {', '.join(subplan.get('group_by') or []) or 'the requested output grain'}"
             )
         lines.append("- Combine only the aggregated subplan outputs; never join physical fact rows.")
+    elif plan.get("source_fact") and str(plan.get("source_kind") or "").casefold() == "master":
+        lines.append(
+            f"- Single source table: {plan['source_fact']}. It defines the "
+            "population being counted, so select from it without joining a fact."
+        )
     elif plan.get("source_fact"):
         lines.append(f"- Single measure fact: {plan['source_fact']}")
     if plan.get("measures"):

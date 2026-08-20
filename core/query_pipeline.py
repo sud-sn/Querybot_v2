@@ -10,6 +10,7 @@ follow-ups and governed source-query fallback.
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace as _dataclass_replace
 import logging
 import time
 
@@ -66,6 +67,7 @@ from core.source_resolution import resolve_source_scope, source_clarification_op
 from core.count_target_resolver import (
     count_target_clarification_options,
     resolve_count_target,
+    resolve_population_count_target,
 )
 from core.semantic_model import (
     build_runtime_semantic_context, build_runtime_semantic_plan,
@@ -2933,6 +2935,112 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                     duration_ms=int(time.time() * 1000) - start_ms,
                 )
                 return
+
+    # "How many customers do we have" asks for the size of a population, not
+    # for how many members had activity. Source arbitration answers it from a
+    # fact, which silently drops every member with no row there — a customer
+    # who has never been invoiced simply does not exist in the answer. Count it
+    # from the table that DEFINES the population instead.
+    #
+    # Advisory by construction: this runs only when the strict business-event
+    # path found nothing, and it governs the question only if the semantic
+    # layer resolves the population to exactly one master table. Anything less
+    # leaves the question exactly as it was, so no question that answers today
+    # can start refusing because of this.
+    elif _analytical_plan.population_entity:
+        _population_resolution = resolve_population_count_target(
+            _analytical_plan.population_entity, _source_model,
+        )
+        _population_selected = _population_resolution.get("selected") or {}
+        _population_table = str(_population_selected.get("table") or "")
+        _trace_step(
+            trace_id,
+            "population_count_resolution",
+            output_summary={
+                "status": _population_resolution.get("status"),
+                "entity": _population_resolution.get("entity"),
+                "selected": (
+                    f"{_population_table}.{_population_selected.get('column')}"
+                    if _population_selected else ""
+                ),
+                "candidate_count": len(_population_resolution.get("candidates") or []),
+            },
+            metadata=_population_resolution,
+        )
+        log.info(
+            "Population count resolution for %s: entity=%s status=%s selected=%s reason=%s",
+            account_id,
+            _analytical_plan.population_entity,
+            _population_resolution.get("status"),
+            f"{_population_table}.{_population_selected.get('column')}"
+            if _population_selected else "",
+            _population_resolution.get("reason"),
+        )
+        if _population_resolution.get("status") == "selected" and _population_table:
+            _population_scope = {
+                "status": "selected",
+                "selected_fact": _population_table,
+                "selected_facts": [],
+                "candidates": [],
+                "source_kind": "master",
+                "reason": "governed population master table",
+            }
+            try:
+                # Build the replacement plan BEFORE committing anything: a
+                # half-applied population target leaves the compiled request
+                # demanding a count target it no longer has, which refuses a
+                # question the ordinary path could still have answered.
+                _population_plan = _merge_semantic_plans(
+                    build_semantic_field_plan(
+                        _semantic_plan_question,
+                        all_columns,
+                        query_scope_tables,
+                        selected_schema=schema_hint,
+                        vocab=_vocab,
+                        fact_tables=_planner_fact_tables,
+                        preferred_fact_tables={_population_table},
+                    ),
+                    build_runtime_semantic_plan(
+                        state.get("kb_dir", ""),
+                        question=_semantic_plan_question,
+                        selected_schema=schema_hint,
+                        model=_contract_model,
+                        preferred_fact_tables={_population_table},
+                        glossary=_planner_terms,
+                    ),
+                )
+            except Exception as _population_replan_exc:
+                log.warning(
+                    "Population master resolved for %s but the semantic-plan "
+                    "rebuild failed — answering without it: %s",
+                    account_id, _population_replan_exc,
+                )
+            else:
+                _count_target_resolution = _population_resolution
+                _semantic_plan = _population_plan
+                _semantic_plan["source_scope"] = _population_scope
+                _semantic_plan["count_target"] = _population_resolution
+                _source_scope = _population_scope
+                _preferred_facts.clear()
+                _preferred_facts.add(_population_table)
+                # The population entity only becomes the governed counted
+                # entity now that a master table has been resolved for it.
+                # Every stage below reads the plan, so replace the plan rather
+                # than the single slot.
+                _analytical_plan = _dataclass_replace(
+                    _analytical_plan,
+                    counted_entity=_analytical_plan.population_entity,
+                    measure_semantics="count_distinct_business_identifier",
+                )
+                log.info(
+                    "Population count for %s governed by master %s.%s: "
+                    "fields=%d joins=%d",
+                    account_id,
+                    _population_table,
+                    _population_selected.get("column"),
+                    len(_semantic_plan.get("fields") or []),
+                    len(_semantic_plan.get("joins") or []),
+                )
 
     # Merged-plan contents, unconditionally. The validator enforces THIS object,
     # so when it rejects correct SQL this line is the ground truth for which

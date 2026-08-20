@@ -1326,7 +1326,23 @@ def format_semantic_field_plan(plan: dict, db_type: str = "azure_sql") -> str:
     ]
     if fields:
         lines.extend(["", "Resolved fields:"])
-    if source_scope.get("selected_fact"):
+    if source_scope.get("selected_fact") and str(
+        source_scope.get("source_kind") or ""
+    ).casefold() == "master":
+        # A population question is answered from the table that defines the
+        # population. Calling that table "the fact for measures" invites the
+        # model to join a fact back in, which re-imposes the activity filter
+        # the master source exists to avoid.
+        lines.extend([
+            "",
+            "Authoritative source:",
+            f"- {source_scope['selected_fact']} defines the population this "
+            "question counts. Select from it directly.",
+            "- Do not join a fact table to reach it: that would drop every "
+            "member with no activity, which the question did not ask for.",
+            "- Reach descriptive attributes only through governed dimensions.",
+        ])
+    elif source_scope.get("selected_fact"):
         lines.extend([
             "",
             "Authoritative measure source:",
