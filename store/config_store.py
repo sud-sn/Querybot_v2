@@ -1680,21 +1680,103 @@ def get_validated_examples(account_id: str, limit: int = 200) -> list[dict]:
             return []
 
 
+# A query answered from the in-memory result snapshot is logged with these
+# markers (see core/query_pipeline.py and gateway/webhooks.py). Its SQL is
+# DuckDB dialect over already-fetched rows: it never touched the warehouse and
+# will not run there. See _harvest_qualifies() below.
+_IN_MEMORY_ROUTE = "governed_result_cache"
+_IN_MEMORY_DIALECT = "duckdb"
+
+# What makes a logged query a usable EXAMPLE, as opposed to merely a query that
+# did not raise.
+#
+#   success=1 alone was the whole test, and it is far weaker than it reads.
+#   A question that returned NO ROWS is logged successful — correctly, nothing
+#   went wrong — but it is not an example of how to answer anything, and it is
+#   the single most common thing a user sees behind "the suggested question did
+#   nothing". A follow-up answered from the in-memory snapshot is logged
+#   successful too, and its SQL is DuckDB dialect against a temporary table; run
+#   against the warehouse it is a hard error.
+#
+#   Both fed validated_examples, which feeds few-shot prompt grounding AND the
+#   tier-1 suggestion chips. So the product was learning from its own empty
+#   answers and offering them back as questions worth asking.
+def _harvest_qualifies(alias: str = "") -> str:
+    """SQL predicate; `alias` prefixes the columns when inside a subquery."""
+    prefix = f"{alias}." if alias else ""
+    return (
+        f"AND COALESCE({prefix}row_count, 0) > 0 "
+        f"AND COALESCE({prefix}llm_provider, '') <> '{_IN_MEMORY_ROUTE}' "
+        f"AND COALESCE({prefix}llm_model, '') <> '{_IN_MEMORY_DIALECT}' "
+    )
+
+
+def purge_unqualified_examples(account_id: str) -> int:
+    """Drop harvested examples that would not be harvested today.
+
+    Rows banked before the harvest gained a quality bar are still in the table
+    and still reaching the prompt and the suggestion chips. Re-checking each
+    against the query log makes the bar retroactive without needing to record
+    anything new on the example itself.
+
+    Only touches rows this function's harvest created (source='query_log').
+    Examples written by the KB build stage keep their own provenance.
+    """
+    from store.db import get_db
+
+    with get_db() as conn:
+        try:
+            cursor = conn.execute(f"""
+                DELETE FROM validated_examples
+                WHERE account_id = ?
+                  AND source = 'query_log'
+                  AND NOT EXISTS (
+                        SELECT 1 FROM query_log q
+                        WHERE q.account_id = validated_examples.account_id
+                          AND q.question   = validated_examples.question
+                          AND q.success = 1
+                          AND COALESCE(q.sql_generated, '') <> ''
+                          {_harvest_qualifies("q")}
+                  )
+            """, (account_id,))
+            removed = cursor.rowcount or 0
+        except Exception as exc:
+            log.warning(
+                "Could not purge unqualified validated examples for %s: %s",
+                account_id, exc,
+            )
+            return 0
+    if removed:
+        log.info(
+            "Removed %d harvested example(s) for %s that returned no rows or "
+            "were answered in-memory — they were feeding prompt grounding and "
+            "the suggested questions", removed, account_id,
+        )
+    return removed
+
+
 def harvest_successful_queries(account_id: str, days_back: int = 30) -> int:
     """
     Step 4 — Query log harvesting.
     Copy successful queries from query_log into validated_examples.
+
+    "Successful" is not enough on its own — see _harvest_qualifies(). Previously
+    banked rows that fail the same bar are removed on every run, so the quality
+    gate applies to what is already in the table and not only to new arrivals.
+
     Returns number of new examples added.
     """
     from store.db import get_db
+    purge_unqualified_examples(account_id)
     added = 0
     with get_db() as conn:
-        rows = conn.execute("""
+        rows = conn.execute(f"""
             SELECT question, sql_generated FROM query_log
             WHERE account_id=?
               AND success=1
               AND sql_generated != ''
               AND question != ''
+              {_harvest_qualifies()}
               AND created_at >= datetime('now', ?)
             ORDER BY created_at DESC
         """, (account_id, f"-{days_back} days")).fetchall()

@@ -913,17 +913,29 @@ def harvest_and_embed(account_id: str, chroma_dir: str = "") -> int:  # chroma_d
     Returns number of new examples added.
     """
     import store
-    from core.vector_store import upsert_examples
+    from core.vector_store import delete_examples, upsert_examples
 
+    # Pruning runs first and is reported separately: an example can be REMOVED
+    # while nothing new is added, and re-embedding only on `added > 0` would
+    # leave the removed question in Qdrant, still reaching the prompt. Removal
+    # is the case this exists for — the harvest used to bank zero-row answers
+    # and in-memory DuckDB SQL, and those rows are already in the table.
+    removed = store.purge_unqualified_examples(account_id)
     added = store.harvest_successful_queries(account_id, days_back=30)
-    if added > 0:
+    if added or removed:
         all_examples = store.get_validated_examples(account_id)
         validated = [
             (ex["question"], ex["sql_query"], ex.get("table_name", ""))
             for ex in all_examples
         ]
+        # Clear first: upsert_examples never deletes, so a survivor-only upsert
+        # leaves every pruned point exactly where it was.
+        delete_examples(account_id)
         if validated:
             upsert_examples(account_id, validated)
-        log.info("Harvested %d new examples from query log for %s", added, account_id)
+        log.info(
+            "Example set for %s: %d harvested, %d pruned, %d embedded",
+            account_id, added, removed, len(validated),
+        )
 
     return added

@@ -375,6 +375,33 @@ def _delete_points_for_fqn_doctype(account_id: str, fqn: str, doc_type: str) -> 
 # BM25 + RRF + Cross-encoder helpers
 # ══════════════════════════════════════════════════════════════════════════════
 
+def delete_examples(account_id: str) -> None:
+    """Remove every embedded example for this account.
+
+    upsert_examples only ever upserts — a question dropped from
+    validated_examples keeps its Qdrant point and keeps being retrieved for
+    few-shot grounding, so removing a bad example from the table alone does not
+    remove it from the prompt. Callers that prune the table must clear the
+    index and re-embed the survivors.
+    """
+    from qdrant_client.models import Filter, FieldCondition, MatchValue
+    try:
+        _qdrant().delete(
+            collection_name=_COLLECTION,
+            points_selector=Filter(must=[
+                FieldCondition(key="account_id", match=MatchValue(value=account_id)),
+                FieldCondition(key="doc_type",   match=MatchValue(value="example")),
+            ]),
+        )
+        _invalidate_bm25_cache(account_id)
+        log.info("Cleared embedded examples for %s ahead of a re-embed", account_id)
+    except Exception as exc:
+        log.warning(
+            "Could not clear embedded examples for %s (%s) — a pruned example "
+            "may still reach the prompt", account_id, exc,
+        )
+
+
 def _bm25_tokenize(text: str) -> list[str]:
     """Tokenize text while preserving and splitting physical identifiers.
 

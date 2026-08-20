@@ -6,7 +6,7 @@ from store.config_store import (
     delete_metric, deprecate_metric, match_metric, list_metric_formula_context,
     validate_metric_refs, increment_metric_usage,
     save_validated_example, get_validated_examples,
-    harvest_successful_queries,
+    harvest_successful_queries, purge_unqualified_examples,
     load_schema_tables,
     set_system, get_system, get_all_system, SYSTEM_KEYS,
     LLM_COST_RATES, calculate_cost, get_all_pricing, save_pricing,
