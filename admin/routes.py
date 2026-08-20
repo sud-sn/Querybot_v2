@@ -9023,6 +9023,18 @@ async def admin_discover_schema(
                     from core.schema import _normalize_schema as _ns3
                     _schema = _ns3(_json.loads(_schema_path.read_text()))
                     for _tkey, _tmeta in _schema.items():
+                        # _schema.json carries non-table entries alongside the
+                        # tables — "__db_fk_constraints__" holds a LIST of the
+                        # database's declared foreign keys. core.schema's
+                        # _normalize_schema already marks them with the "__"
+                        # convention and passes them through untouched; this
+                        # loop did not, so it reached a list, called .get() on
+                        # it, and the whole egress audit write aborted on an
+                        # exception caught one level up and logged as a
+                        # warning. Every table after that key in iteration
+                        # order silently lost its compliance audit row.
+                        if str(_tkey).startswith("__") or not isinstance(_tmeta, dict):
+                            continue
                         _tparts    = _tkey.split(".")
                         _tname     = _tparts[-1]
                         _tschema   = _tparts[-2] if len(_tparts) >= 2 else ""
@@ -9059,8 +9071,10 @@ async def admin_discover_schema(
                             mask_replacement_map=_tmeta.get("mask_replacement_map") or {},
                         )
             except Exception as _elog_exc:
-                log.warning("KB egress log (discovery) write failed for %s: %s",
-                            account_id, _elog_exc)
+                log.error(
+                    "KB egress audit log (discovery) write FAILED for %s (%s) — this is the record of what was sent to the LLM, and the rows for any table not yet written are lost",
+                    account_id, _elog_exc, exc_info=True,
+                )
             # ── Value index (literal grounding) ────────────────────────────
             # Harvest distinct values of filterable display columns so the
             # query pipeline can resolve user-typed WHERE literals to exact
@@ -9327,6 +9341,18 @@ async def admin_build_kb(
                     from core.schema import _normalize_schema as _ns4
                     _schema = _ns4(_json.loads(_schema_path.read_text()))
                     for _tkey, _tmeta in _schema.items():
+                        # _schema.json carries non-table entries alongside the
+                        # tables — "__db_fk_constraints__" holds a LIST of the
+                        # database's declared foreign keys. core.schema's
+                        # _normalize_schema already marks them with the "__"
+                        # convention and passes them through untouched; this
+                        # loop did not, so it reached a list, called .get() on
+                        # it, and the whole egress audit write aborted on an
+                        # exception caught one level up and logged as a
+                        # warning. Every table after that key in iteration
+                        # order silently lost its compliance audit row.
+                        if str(_tkey).startswith("__") or not isinstance(_tmeta, dict):
+                            continue
                         _tparts    = _tkey.split(".")
                         _tname     = _tparts[-1]
                         _tschema   = _tparts[-2] if len(_tparts) >= 2 else ""
@@ -9362,8 +9388,10 @@ async def admin_build_kb(
                             mask_replacement_map=_tmeta.get("mask_replacement_map") or {},
                         )
             except Exception as _elog_exc:
-                log.warning("KB egress log (kb_build) write failed for %s: %s",
-                            account_id, _elog_exc)
+                log.error(
+                    "KB egress audit log (kb_build) write FAILED for %s (%s) — this is the record of what was sent to the LLM, and the rows for any table not yet written are lost",
+                    account_id, _elog_exc, exc_info=True,
+                )
 
             validating_progress = {
                 "status": "building",
