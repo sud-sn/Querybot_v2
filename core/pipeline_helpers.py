@@ -1221,6 +1221,78 @@ def build_seekable_date_window(
     )
 
 
+# Calendar-period windows the compiler can express as an exact date range off
+# the governed anchor. "this_week" is deliberately absent: SQL Server's
+# DATEDIFF(week, …) week boundary is not the same as Oracle's TRUNC(d,'IW'),
+# and a silently different first-day-of-week would move the answer. It keeps
+# falling back to free-form generation until the boundary is stated somewhere
+# governed rather than guessed per dialect.
+_CALENDAR_PERIOD_KINDS = {
+    "this_month", "this_quarter", "this_year",
+    "previous_month", "previous_quarter", "previous_year",
+}
+_COMPILABLE_WINDOW_KINDS = {
+    "last_n", "latest_n_observed", "today", "yesterday",
+} | _CALENDAR_PERIOD_KINDS
+
+# SQL Server / Snowflake / Oracle truncation to the start of a calendar period.
+_PERIOD_UNIT = {"month": "month", "quarter": "quarter", "year": "year"}
+_ORACLE_TRUNC_FMT = {"month": "MM", "quarter": "Q", "year": "YYYY"}
+
+
+def _period_start(dialect: str, expr: str, unit: str) -> str:
+    """First day of the calendar period containing `expr`."""
+    if dialect in {"azure_sql", "snowflake"}:
+        # DATEDIFF from the zero date then back again — the portable T-SQL
+        # truncation idiom, and Snowflake accepts the same shape.
+        return f"DATEADD({unit}, DATEDIFF({unit}, 0, {expr}), 0)"
+    if dialect == "oracle":
+        return f"TRUNC({expr}, '{_ORACLE_TRUNC_FMT[unit]}')"
+    return ""
+
+
+def _shift_period(dialect: str, expr: str, unit: str, periods: int) -> str:
+    if dialect in {"azure_sql", "snowflake"}:
+        return f"DATEADD({unit}, {periods}, {expr})"
+    if dialect == "oracle":
+        months = periods * {"month": 1, "quarter": 3, "year": 12}[unit]
+        return f"ADD_MONTHS({expr}, {months})"
+    return ""
+
+
+def calendar_period_bounds(dialect: str, anchor_expr: str, kind: str) -> tuple[str, str]:
+    """(start, end) SQL expressions for a calendar-period window.
+
+    Both bounds are inclusive and derived from the governed business-date
+    anchor, never from the database clock — "this month" means the month the
+    DATA is in, and it ends at the anchor rather than at a future month-end
+    the warehouse has no rows for.
+    """
+    if kind not in _CALENDAR_PERIOD_KINDS:
+        return "", ""
+    unit = _PERIOD_UNIT[kind.split("_", 1)[1]]
+    current_start = _period_start(dialect, anchor_expr, unit)
+    if not current_start:
+        return "", ""
+    if kind.startswith("this_"):
+        # Ends at the anchor: the current period is only partly loaded, and
+        # extending to its calendar end would claim coverage the data lacks.
+        return current_start, anchor_expr
+    previous_start = _period_start(
+        dialect, _shift_period(dialect, anchor_expr, unit, -1), unit,
+    )
+    if not previous_start:
+        return "", ""
+    # The day before the current period begins — the previous period's last day
+    # regardless of its length, so February and leap years need no special case.
+    previous_end = (
+        f"DATEADD(day, -1, {current_start})"
+        if dialect in {"azure_sql", "snowflake"}
+        else f"{current_start} - 1"
+    )
+    return previous_start, previous_end
+
+
 def compile_governed_temporal_metric_sql(
     db_type: str,
     known_tables: set[str],
@@ -1291,7 +1363,7 @@ def compile_governed_temporal_metric_sql(
 
     policy = policies[0]
     window_kind = str(policy.get("kind") or "")
-    if window_kind not in {"last_n", "latest_n_observed", "today", "yesterday"}:
+    if window_kind not in _COMPILABLE_WINDOW_KINDS:
         return ""
     try:
         amount = int(policy.get("amount"))
@@ -1457,6 +1529,35 @@ def compile_governed_temporal_metric_sql(
             f"{date_ref} > {start_expr}\n"
             f"  AND {date_ref} <= anchor.max_business_date"
         )
+    elif window_kind in _CALENDAR_PERIOD_KINDS:
+        # "this month" / "last quarter" and friends. These were rejected
+        # outright, so every calendar-period question left the governed
+        # contract for free-form SQL — the one shape most likely to get the
+        # boundary subtly wrong, and the reason those answers needed repair
+        # retries that then capped their confidence.
+        _start, _end = calendar_period_bounds(
+            dialect, "anchor.max_business_date", window_kind,
+        )
+        if not _start or not _end:
+            return ""
+        window_predicate = (
+            f"{window_date_ref} >= {_start}\n"
+            f"      AND {window_date_ref} <= {_end}"
+        )
+        where_sql = key_filter if seekable else (
+            f"{date_ref} >= {_start}\n"
+            f"  AND {date_ref} <= {_end}"
+        )
+        if resolved_anchor.get("value"):
+            _anchor_literal = f"CAST('{resolved_anchor['value']}' AS date)"
+            _lit_start, _lit_end = calendar_period_bounds(
+                dialect, _anchor_literal, window_kind,
+            )
+            if _lit_start and _lit_end:
+                literal_window_predicate = (
+                    f"{window_date_ref} >= {_lit_start}\n"
+                    f"      AND {window_date_ref} <= {_lit_end}"
+                )
     else:
         if dialect == "azure_sql":
             selected_day = (

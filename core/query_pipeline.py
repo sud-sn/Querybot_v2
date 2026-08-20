@@ -440,9 +440,21 @@ def _table_matches_policy_scope(table: str, scope: set[str]) -> bool:
 
 
 def _graph_entities_for_verified_values(resolved: dict, graph: dict) -> set[str]:
-    """Map verified filter values to graph entities by physical table."""
+    """Map filter values to graph entities by physical table.
+
+    "narrowed" is included deliberately. That bucket holds a value we refused
+    to SUBSTITUTE — "Calgary Distribution Centre East" is not "Calgary
+    Distribution Centre" — but the near-miss still tells us which table the
+    user is filtering on, and that is a separate question from which value to
+    use. Leaving it out made the warehouse table undetectable, so a question
+    naming a warehouse by value resolved to the fact alone and came back as
+    "I couldn't find the right tables or columns", which is not what went
+    wrong. Including it plans the query against the right table, filters on
+    the user's own words, and lets the zero-row explanation name the closest
+    real value.
+    """
     table_refs: set[str] = set()
-    for bucket in ("verified", "in_lists"):
+    for bucket in ("verified", "in_lists", "narrowed"):
         for item in (resolved or {}).get(bucket) or []:
             ref = str(item.get("table_fqn") or "").upper()
             ref = ref.replace("[", "").replace("]", "").replace('"', "").strip()

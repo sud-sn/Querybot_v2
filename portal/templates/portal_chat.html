@@ -366,6 +366,8 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
   border-radius:999px;font-size:11px;font-weight:800;border:1px solid var(--border);
   background:var(--surface-2);color:var(--text-soft);cursor:pointer}
 .trust-pill .tp-score{font-weight:600;opacity:.85;font-variant-numeric:tabular-nums}
+/* Shown only for a LOW verdict — see the comment at the render site. */
+.trust-warn{font-size:11.5px;line-height:1.5;color:var(--warning,#8F6410);flex:1 1 16rem;min-width:0}
 .trust-pill.high{background:var(--success-soft);color:var(--success);border-color:color-mix(in srgb,var(--success) 40%,transparent)}
 .trust-pill.medium{background:var(--warning-soft);color:var(--warning);border-color:color-mix(in srgb,var(--warning) 42%,transparent)}
 .trust-pill.low{background:var(--danger-soft);color:var(--danger);border-color:color-mix(in srgb,var(--danger) 42%,transparent)}
@@ -3254,12 +3256,20 @@ function appendAssistantResponse(msg, opts = {}){
   // for what might be wrong, not for reassurance.
   const confidenceLevel = String(confidence.level || 'medium').toLowerCase();
   const hasConfidence = confidence.score !== undefined;
+  // A LOW verdict states its reason inline. Reasons and warnings normally live
+  // inside the "How this answer was produced" disclosure so they do not compete
+  // with a good answer — but when the verdict is that the answer may be wrong,
+  // the reason is the thing the reader most needs, and putting it behind a
+  // click meant a 49/100 result looked no different from any other.
+  const lowWarn = (confidenceLevel === 'low' && Array.isArray(confidence.warnings))
+    ? (confidence.warnings[0] || '') : '';
   const confidencePillHtml = hasConfidence
     ? `<button type="button" class="trust-pill ${escHtml(confidenceLevel)}" data-open-trust
         title="See how this answer was produced">
         ${escHtml(confidence.label || 'Confidence')}
         <span class="tp-score">${escHtml(String(confidence.score))}/100</span>
       </button>`
+      + (lowWarn ? `<span class="trust-warn">${escHtml(lowWarn)}</span>` : '')
     : '';
   const confidenceDetailHtml = hasConfidence
     ? `<div class="confidence-detail">`

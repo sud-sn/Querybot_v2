@@ -22,7 +22,22 @@ _NON_PERSON_NAME_RE = re.compile(
     r"^(?:month|day|week|quarter|year|date|weekday|"
     r"category|product|region|schema|table|column|group|status|type|"
     r"plan|brand|generic|drug|medication|medicine|ingredient|compound|therapeutic|therapeutic[_\s]*class|"
-    r"channel|segment|class|tier|state|country|city|currency)s?[\s_]*name$",
+    r"channel|segment|class|tier|state|country|city|currency|"
+    # Physical and organisational entities. A warehouse, a supplier or a
+    # division is not a person under any schema, and leaving them off meant a
+    # result grouped by warehouse rendered its leader as "redacted segment"
+    # while the answer text beside it named the warehouse outright. Worse, it
+    # depended on the ALIAS the generated SQL happened to choose — "warehouse"
+    # rendered fine, "warehouse name" redacted — so the same question could
+    # redact or not between runs.
+    #
+    # Deliberately NOT added: customer, employee, patient, member, contact,
+    # user, owner, rep. Those are genuinely ambiguous — a customer may be a
+    # person — and this list keeps failing toward masking for anything that
+    # could name a human.
+    r"warehouse|supplier|vendor|item|division|branch|store|site|facility|"
+    r"department|location|profit[_\s]*cent(?:er|re)|cost[_\s]*cent(?:er|re)|"
+    r"subsidiary|entity|business[_\s]*unit)s?[\s_]*name$",
     re.I,
 )
 

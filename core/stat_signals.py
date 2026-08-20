@@ -24,6 +24,12 @@ from typing import Any
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
+# Below this first-to-last change a series is reported as flat rather than
+# given a direction. Matches the intent of the "stable" band the narrative
+# layer already applies, so the two cannot contradict each other.
+_FLAT_TREND_PCT = 5.0
+
+
 def _to_float(v: Any) -> float | None:
     try:
         f = float(str(v).replace(",", ""))
@@ -225,15 +231,31 @@ def compute_signals(rows: list[dict]) -> list[dict]:
             first_v = _to_float(rows[0].get(value_col))
             last_v  = _to_float(rows[-1].get(value_col))
             if first_v is not None and last_v is not None and first_v != 0:
-                direction = "upward" if last_v > first_v else "downward"
                 pct = abs((last_v - first_v) / first_v * 100)
-                signals.append({
-                    "type": "temporal",
-                    "col": label_col,
-                    "value": round(pct, 1),
-                    "direction": direction,
-                    "label": f"{direction} trend in {value_col} ({pct:.0f}% change first→last)",
-                })
+                # A flat band, because there was none: any first != last was
+                # called "upward" or "downward", so a 0.7% drift produced a
+                # follow-up reading "the trend in Revenue is downward" beside a
+                # narrative saying "holding steady — no urgent action". Two
+                # classifiers, one series, opposite verdicts. The narrative
+                # layer (core/response_builder) already has a stable band;
+                # this is the same idea at the same place in the reasoning.
+                if pct < _FLAT_TREND_PCT:
+                    signals.append({
+                        "type": "flat_trend",
+                        "col": label_col,
+                        "value": round(pct, 1),
+                        "direction": "flat",
+                        "label": f"{value_col} is broadly flat ({pct:.1f}% change first→last)",
+                    })
+                else:
+                    direction = "upward" if last_v > first_v else "downward"
+                    signals.append({
+                        "type": "temporal",
+                        "col": label_col,
+                        "value": round(pct, 1),
+                        "direction": direction,
+                        "label": f"{direction} trend in {value_col} ({pct:.0f}% change first→last)",
+                    })
 
     # ── Result-size signals ───────────────────────────────────────────────────
     n = len(rows)
@@ -334,6 +356,9 @@ def template_suggestions(
         num_col = num_cols[0] if num_cols else "the metric"
         direction = s.get("direction", "changing")
         _add(f"The trend in {num_col} is {direction} — what period drove the biggest change?")
+    elif "flat_trend" in by_type:
+        num_col = num_cols[0] if num_cols else "the metric"
+        _add(f"{num_col} barely moved across the period — which periods are hiding offsetting swings?")
 
     # 10 — Low variance (curiosity)
     if "low_variance" in by_type:
