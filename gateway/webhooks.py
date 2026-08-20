@@ -3966,6 +3966,12 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                                     account_id = account_id,
                                     user_id    = str(portal_user.get("id") or ""),
                                     purpose_id = _alert_context.purpose_id,
+                                    # Carries the governed temporal policy and
+                                    # the date its relative window resolved to,
+                                    # so later checks can move the window
+                                    # instead of re-running today's query
+                                    # against today's date forever.
+                                    semantic_plan = cached.get("semantic_plan"),
                                 )
                                 await websocket.send_json({
                                     "type":      "assistant_analysis",

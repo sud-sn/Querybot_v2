@@ -34,6 +34,7 @@ def build_answer_confidence(
     zero_match_result: bool = False,
     graph_scope: str = "",
     graph_resolution_failed: bool = False,
+    semantic_planning_failed: bool = False,
     fanout_risk: bool = False,
     result_verification: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -116,6 +117,18 @@ def build_answer_confidence(
     if has_semantic_plan:
         score += 5
         reasons.append("Business terms were mapped through the semantic layer.")
+    elif semantic_planning_failed:
+        # Field planning RAISED rather than finding nothing. Four guarantees
+        # went with it in one step: term-to-column bindings, the required join
+        # path, the superseded-column list, and the temporal policy that scopes
+        # the window. The answer was written from raw prose and looks identical
+        # to a planned one.
+        score -= 30
+        warnings.append(
+            "The business-term mapping could not be built for this question, so "
+            "the columns, joins and date range in this answer were chosen "
+            "without it. Treat the result as unconfirmed."
+        )
 
     if has_graph_context:
         if str(graph_scope or "").lower() == "suggested_fallback":

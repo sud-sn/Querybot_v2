@@ -73,6 +73,92 @@ def _save(alerts: list[dict]) -> None:
     )
 
 
+def _relative_window_of(semantic_plan: dict | None) -> tuple[dict, str]:
+    """The governed temporal policy behind this SQL, and the date it resolved to.
+
+    Returns ({}, "") for a question with no relative window — an alert on
+    "revenue in March 2026" is pinned on purpose and must stay pinned.
+    """
+    plan = semantic_plan or {}
+    policies = [
+        policy for policy in (plan.get("temporal_policies") or [])
+        if str(policy.get("anchor_policy") or "") == "latest_available"
+    ]
+    if not policies:
+        return {}, ""
+    resolved = plan.get("resolved_date_anchor") or {}
+    return dict(policies[0]), str(resolved.get("value") or "")
+
+
+def _question_is_relative(question: str) -> bool:
+    try:
+        from core.contextual_dates import detect_temporal_window
+        return bool(detect_temporal_window(question or ""))
+    except Exception:
+        return False
+
+
+def _refresh_relative_window(alert: dict, db_cfg: dict) -> tuple[str, str]:
+    """Re-anchor the alert's SQL to the newest business date before it runs.
+
+    Returns (sql_to_run, failure_reason). A failure reason means the alert must
+    NOT be evaluated: comparing today's threshold against a window frozen on the
+    day the alert was created is not a check, it is a fixed answer wearing one.
+    """
+    policy = alert.get("anchor_policy") or {}
+    stored_value = str(alert.get("anchor_value") or "")
+    sql = str(alert.get("sql") or "")
+
+    if not policy or not stored_value:
+        # Either the question named no relative window (nothing to move), or
+        # this alert predates the policy being stored and we cannot know which
+        # literal in its SQL was the anchor.
+        if _question_is_relative(alert.get("question", "")):
+            return sql, "relative_window_not_re_anchorable"
+        return sql, ""
+
+    if stored_value not in sql:
+        # The anchor literal is not in the SQL, so re-anchoring cannot be done
+        # by substitution and we would be guessing about what the query means.
+        return sql, "anchor_literal_absent"
+
+    from core.date_anchor import resolve_business_anchor
+    from core.schema import run_query
+
+    def _probe(probe_sql: str):
+        return run_query(
+            db_cfg.get("credentials") or db_cfg,
+            db_cfg.get("db_type", alert.get("db_type", "azure_sql")),
+            probe_sql,
+        )
+
+    try:
+        resolved = resolve_business_anchor(
+            str(alert.get("account_id") or ""),
+            policy,
+            db_cfg.get("db_type", alert.get("db_type", "azure_sql")),
+            _probe,
+        )
+    except Exception as exc:
+        log.warning(
+            "alert_engine: could not re-anchor alert %s (%s) — not evaluating it "
+            "against a window frozen on %s", alert.get("id"), exc, stored_value,
+        )
+        return sql, "anchor_probe_failed"
+
+    current = str((resolved or {}).get("value") or "")
+    if not current:
+        return sql, "anchor_unavailable"
+    if current == stored_value:
+        return sql, ""
+
+    log.info(
+        "alert_engine: alert %s re-anchored from %s to %s before checking",
+        alert.get("id"), stored_value, current,
+    )
+    return sql.replace(stored_value, current), ""
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Public API
 # ══════════════════════════════════════════════════════════════════════════════
@@ -90,6 +176,7 @@ def create_alert(
     account_id: str = "",
     user_id: str = "",
     purpose_id: str = "",
+    semantic_plan: dict | None = None,
 ) -> dict:
     """
     Create and persist a new alert definition.
@@ -120,11 +207,22 @@ def create_alert(
         )
         condition = "change_pct"
 
+    # A relative window ("today", "this month") was resolved to a LITERAL date
+    # when this SQL was generated, and the SQL is then re-run unchanged forever.
+    # Without the policy that produced that literal there is no way to move the
+    # window on later checks, so the alert monitors the day it was created on:
+    # a change alert that can never fire, or an above/below alert that fires on
+    # every check and never stops. Keep the policy and the literal so
+    # _refresh_relative_window() can re-anchor before each comparison.
+    anchor_policy, anchor_value = _relative_window_of(semantic_plan)
+
     alert: dict[str, Any] = {
         "id": str(uuid.uuid4())[:8],
         "question": (question or "").strip(),
         "sql": sql or "",
         "metric_col": metric_col or "",
+        "anchor_policy": anchor_policy,
+        "anchor_value": anchor_value,
         "baseline_value": round(float(baseline_value), 4),
         "condition": condition,
         "threshold": float(threshold),
@@ -208,6 +306,23 @@ def check_alert_now(alert_id: str, db_cfg: dict) -> dict:
     if alert.get("status") != "active":
         return {"ok": False, "reason": "alert_inactive", "alert_id": alert_id}
 
+    # ── Move the window before running anything ───────────────────────────────
+    sql_to_run, window_problem = _refresh_relative_window(alert, db_cfg or {})
+    if window_problem:
+        log.warning(
+            "alert_engine: alert %s monitors a relative window that cannot be "
+            "moved (%s) — refusing to compare against the window it was created "
+            "on. Recreate the alert to re-anchor it.", alert_id, window_problem,
+        )
+        return {
+            "ok": False, "reason": window_problem, "alert_id": alert_id,
+            "detail": (
+                "This alert watches a relative period, and its query is fixed "
+                "to the date it was created on. Recreate it so it follows the "
+                "latest available data."
+            ),
+        }
+
     # ── Execute SQL ───────────────────────────────────────────────────────────
     try:
         if alert.get("account_id") and alert.get("user_id"):
@@ -227,7 +342,7 @@ def check_alert_now(alert_id: str, db_cfg: dict) -> dict:
             governed = execute_governed_query(
                 db_cfg.get("credentials") or db_cfg,
                 db_cfg.get("db_type", alert.get("db_type", "azure_sql")),
-                alert["sql"],
+                sql_to_run,
                 context=context,
                 known_tables=load_known_tables(state.get("schema_dir", "")),
                 table_columns=load_schema_columns(state.get("schema_dir", "")),
@@ -248,7 +363,7 @@ def check_alert_now(alert_id: str, db_cfg: dict) -> dict:
             rows = run_query(
                 db_cfg.get("credentials") or db_cfg,
                 db_cfg.get("db_type", alert.get("db_type", "azure_sql")),
-                alert["sql"],
+                sql_to_run,
             )
     except Exception as exc:
         return {

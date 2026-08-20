@@ -138,6 +138,12 @@ def _merge_semantic_plans(*plans: dict | None) -> dict:
     # avoid list, this outlives a plan that resolved no fields — it exists
     # precisely because nothing resolved.
     ambiguous_measures: list[str] = []
+    # True when a source plan reports that deterministic planning RAISED, as
+    # opposed to finding nothing. The merged plan is empty either way; only
+    # this tells the difference.
+    planning_failed = any(
+        (plan or {}).get("planning_failed") for plan in plans
+    )
     seen_avoid: set[tuple[str, str]] = set()
     for plan in plans:
         if not plan:
@@ -154,11 +160,15 @@ def _merge_semantic_plans(*plans: dict | None) -> dict:
                         source_scope[key] = value
         if not fact_anchor and plan.get("fact_anchor"):
             fact_anchor = str(plan.get("fact_anchor") or "")
-        if not plan.get("enabled"):
-            continue
+        # Collected BEFORE the enabled check: a plan only reports ambiguous
+        # measures when it resolved nothing, which is exactly when it is
+        # disabled. Gathering it below the check would mean it could never
+        # survive the merge at all.
         for rival in plan.get("ambiguous_measures") or []:
             if rival not in ambiguous_measures:
                 ambiguous_measures.append(rival)
+        if not plan.get("enabled"):
+            continue
         for avoid in plan.get("avoid_columns") or []:
             key = (
                 _semantic_table_identity(avoid.get("table") or ""),
@@ -262,6 +272,7 @@ def _merge_semantic_plans(*plans: dict | None) -> dict:
             "fact_anchor": fact_anchor,
             "avoid_columns": avoid_columns,
             "ambiguous_measures": ambiguous_measures,
+        "planning_failed": planning_failed,
         }
     return {
         "enabled": True,
@@ -276,6 +287,7 @@ def _merge_semantic_plans(*plans: dict | None) -> dict:
         "available_dimensions": available_dimensions,
         "avoid_columns": avoid_columns,
         "ambiguous_measures": ambiguous_measures,
+        "planning_failed": planning_failed,
         "date_key_policies": date_key_policies,
         "temporal_policies": temporal_policies,
         "date_disclosures": date_disclosures,

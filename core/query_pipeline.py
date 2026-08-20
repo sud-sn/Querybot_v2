@@ -2619,8 +2619,29 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
                 len(_semantic_plan.get("joins") or []),
             )
     except Exception as _sp_exc:
-        _semantic_plan = {}
-        log.debug("Semantic field planning skipped: %s", _sp_exc)
+        # Not "skipped" — this is the deterministic field plan failing, and an
+        # empty dict removes four separate guarantees at once: the term→column
+        # bindings, the required join path, the supersession block that forbids
+        # a retired column, and the temporal policy that scopes the window to
+        # the governed date. Every one of those is silently absent from the
+        # prompt afterwards, so the model answers from raw KB prose while the
+        # answer looks exactly like a planned one. At debug level none of it
+        # was visible.
+        _semantic_plan = {"planning_failed": True}
+        log.error(
+            "Deterministic semantic field planning FAILED for %s on %r — this "
+            "answer has no field bindings, no required joins, no superseded-"
+            "column list and no temporal policy",
+            account_id, _semantic_plan_question[:200], exc_info=True,
+        )
+        _trace_step(
+            trace_id,
+            "semantic_field_plan",
+            input_summary={"question": _semantic_plan_question},
+            output_summary=str(_sp_exc)[:500],
+            status="error",
+            metadata={"field_governance": "not_enforced"},
+        )
 
     try:
         _semantic_model_plan = build_runtime_semantic_plan(
@@ -4398,6 +4419,14 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
             )
             if _resolved_anchor.get("value"):
                 _generation_semantic_context["resolved_date_anchor"] = _resolved_anchor
+                # Also on the plan itself, so the plan travels self-describing.
+                # The result cache carries semantic_plan into anything built
+                # from an answer — an alert, a saved report — and those need to
+                # know WHICH date the relative window resolved to in order to
+                # move it later. Without it they re-run a query pinned to the
+                # day they were created on, forever.
+                if isinstance(_semantic_plan, dict):
+                    _semantic_plan["resolved_date_anchor"] = _resolved_anchor
                 _trace_step(
                     trace_id,
                     "business_date_anchor",
@@ -5979,6 +6008,8 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         # turns this into a caveat so a missing chart has a stated reason.
         "rows_truncated": _rows_truncated,
         "has_semantic_plan": bool((_semantic_plan or {}).get("enabled")),
+        # Planning raised, as opposed to finding nothing to bind.
+        "semantic_planning_failed": bool((_semantic_plan or {}).get("planning_failed")),
         "has_graph_context": bool((_graph_ctx or {}).get("enabled") or (_graph_ctx or {}).get("detected")),
         # Resolution raised rather than returning "no graph". The difference
         # matters to the reader: a single-table answer needs no join governance,
